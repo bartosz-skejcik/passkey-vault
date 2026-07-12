@@ -92,6 +92,35 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 
 <!-- Wypełnia roadmapper: REQ-ID → faza -->
 
-| REQ-ID | Faza |
-|--------|------|
-| _(pending roadmap)_ | |
+| REQ-ID | Faza | Status |
+|--------|------|--------|
+| UI-01 | Phase 1: WASM Crypto Bridge & Web App Shell | Pending |
+| AUTH-01 | Phase 2: Password Auth & Vault Core | Pending |
+| AUTH-02 | Phase 2: Password Auth & Vault Core | Pending |
+| AUTH-08 | Phase 2: Password Auth & Vault Core | Pending |
+| VAULT-01 | Phase 2: Password Auth & Vault Core | Pending |
+| VAULT-02 | Phase 2: Password Auth & Vault Core | Pending |
+| VAULT-03 | Phase 2: Password Auth & Vault Core | Pending |
+| VAULT-04 | Phase 2: Password Auth & Vault Core | Pending |
+| VAULT-05 | Phase 2: Password Auth & Vault Core | Pending |
+| VAULT-06 | Phase 2: Password Auth & Vault Core | Pending |
+| UI-03 | Phase 2: Password Auth & Vault Core | Pending |
+| AUTH-03 | Phase 3: Passkey Enrollment & Account Security | Pending |
+| AUTH-05 | Phase 3: Passkey Enrollment & Account Security | Pending |
+| AUTH-06 | Phase 3: Passkey Enrollment & Account Security | Pending |
+| AUTH-07 | Phase 3: Passkey Enrollment & Account Security | Pending |
+| UI-05 | Phase 3: Passkey Enrollment & Account Security | Pending |
+| AUTH-04 | Phase 4: PRF Unlock & Login Unification | Pending |
+| AUTH-09 | Phase 4: PRF Unlock & Login Unification | Pending |
+| UI-02 | Phase 4: PRF Unlock & Login Unification | Pending |
+| SYNC-01 | Phase 5: Multi-Device Sync | Pending |
+| SYNC-02 | Phase 5: Multi-Device Sync | Pending |
+| SYNC-03 | Phase 5: Multi-Device Sync | Pending |
+| VAULT-07 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
+| IMPEX-01 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
+| IMPEX-02 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
+| IMPEX-03 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
+| IMPEX-04 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
+| UI-04 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
+| DEPLOY-01 | Phase 7: Self-Host Packaging & Deployment | Pending |
+| DEPLOY-02 | Phase 7: Self-Host Packaging & Deployment | Pending |
