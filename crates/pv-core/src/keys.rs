@@ -46,6 +46,16 @@ pub struct WrappedKey {
     pub ciphertext: Vec<u8>,
 }
 
+/// Generuje `len` losowych bajtów (OsRng). To jawna losowość (np. sól) —
+/// NIE materiał kluczowy, stąd zwykły `Vec<u8>` jest tu poprawny (w
+/// przeciwieństwie do kluczy, które muszą zostać nieprzezroczyste — patrz
+/// `UserKey`).
+pub fn random_bytes(len: usize) -> Vec<u8> {
+    let mut bytes = vec![0u8; len];
+    OsRng.fill_bytes(&mut bytes);
+    bytes
+}
+
 pub fn hkdf_expand_key(ikm: &[u8], info: &[u8]) -> [u8; KEY_LEN] {
     let hk = Hkdf::<Sha256>::new(None, ikm);
     let mut okm = [0u8; KEY_LEN];
