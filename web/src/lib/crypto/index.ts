@@ -62,71 +62,81 @@ export async function runSelfTest(): Promise<StepResult[]> {
 
   let wrappingKey: WasmWrappingKey | undefined;
   let userKey: WasmUserKey | undefined;
-  try {
-    const salt = new Uint8Array(randomSalt(16));
-    wrappingKey = WasmWrappingKey.fromPassword(
-      SELF_TEST_PASSWORD,
-      salt,
-      defaultKdfParamsJson(),
-    );
-    userKey = WasmUserKey.generate();
-    results.push({ name: "Derive User Key", ok: true });
-  } catch (e) {
-    results.push({ name: "Derive User Key", ok: false, error: errorMessage(e) });
-  }
-
-  let wrappedJson: string | undefined;
-  try {
-    if (!wrappingKey || !userKey) {
-      throw new Error("prerequisite step failed");
-    }
-    wrappedJson = wrapUserKey(wrappingKey, userKey);
-    results.push({ name: "Wrap", ok: true, detail: truncate(wrappedJson) });
-  } catch (e) {
-    results.push({ name: "Wrap", ok: false, error: errorMessage(e) });
-  }
-
   // Deliberately re-unwrap and use THIS handle (not the original `userKey`)
   // for the remaining steps, so a broken unwrap surfaces as a downstream
   // decrypt failure rather than a silently-ignored discrepancy.
   let unwrappedKey: WasmUserKey | undefined;
   try {
-    if (!wrappingKey || !wrappedJson) {
-      throw new Error("prerequisite step failed");
+    try {
+      const salt = new Uint8Array(randomSalt(16));
+      wrappingKey = WasmWrappingKey.fromPassword(
+        SELF_TEST_PASSWORD,
+        salt,
+        defaultKdfParamsJson(),
+      );
+      userKey = WasmUserKey.generate();
+      results.push({ name: "Derive User Key", ok: true });
+    } catch (e) {
+      results.push({ name: "Derive User Key", ok: false, error: errorMessage(e) });
     }
-    unwrappedKey = unwrapUserKey(wrappingKey, wrappedJson);
-    results.push({ name: "Unwrap", ok: true });
-  } catch (e) {
-    results.push({ name: "Unwrap", ok: false, error: errorMessage(e) });
-  }
 
-  let encryptedItemJson: string | undefined;
-  try {
-    if (!unwrappedKey) {
-      throw new Error("prerequisite step failed");
+    let wrappedJson: string | undefined;
+    try {
+      if (!wrappingKey || !userKey) {
+        throw new Error("prerequisite step failed");
+      }
+      wrappedJson = wrapUserKey(wrappingKey, userKey);
+      results.push({ name: "Wrap", ok: true, detail: truncate(wrappedJson) });
+    } catch (e) {
+      results.push({ name: "Wrap", ok: false, error: errorMessage(e) });
     }
-    encryptedItemJson = encryptItem(unwrappedKey, SELF_TEST_PLAINTEXT);
-    results.push({
-      name: "Encrypt item",
-      ok: true,
-      detail: truncate(encryptedItemJson),
-    });
-  } catch (e) {
-    results.push({ name: "Encrypt item", ok: false, error: errorMessage(e) });
-  }
 
-  try {
-    if (!unwrappedKey || !encryptedItemJson) {
-      throw new Error("prerequisite step failed");
+    try {
+      if (!wrappingKey || !wrappedJson) {
+        throw new Error("prerequisite step failed");
+      }
+      unwrappedKey = unwrapUserKey(wrappingKey, wrappedJson);
+      results.push({ name: "Unwrap", ok: true });
+    } catch (e) {
+      results.push({ name: "Unwrap", ok: false, error: errorMessage(e) });
     }
-    const plaintext = decryptItem(unwrappedKey, encryptedItemJson);
-    if (plaintext !== SELF_TEST_PLAINTEXT) {
-      throw new Error("decrypted plaintext did not match the original fixture");
-    }
-    results.push({ name: "Decrypt item", ok: true, detail: truncate(plaintext) });
-  } catch (e) {
-    results.push({ name: "Decrypt item", ok: false, error: errorMessage(e) });
-  }
 
-  return results;
+    let encryptedItemJson: string | undefined;
+    try {
+      if (!unwrappedKey) {
+        throw new Error("prerequisite step failed");
+      }
+      encryptedItemJson = encryptItem(unwrappedKey, SELF_TEST_PLAINTEXT);
+      results.push({
+        name: "Encrypt item",
+        ok: true,
+        detail: truncate(encryptedItemJson),
+      });
+    } catch (e) {
+      results.push({ name: "Encrypt item", ok: false, error: errorMessage(e) });
+    }
+
+    try {
+      if (!unwrappedKey || !encryptedItemJson) {
+        throw new Error("prerequisite step failed");
+      }
+      const plaintext = decryptItem(unwrappedKey, encryptedItemJson);
+      if (plaintext !== SELF_TEST_PLAINTEXT) {
+        throw new Error("decrypted plaintext did not match the original fixture");
+      }
+      results.push({ name: "Decrypt item", ok: true, detail: truncate(plaintext) });
+    } catch (e) {
+      results.push({ name: "Decrypt item", ok: false, error: errorMessage(e) });
+    }
+
+    return results;
+  } finally {
+    // Real wasm-bindgen handles always expose `.free()`, which runs the
+    // Rust-side Zeroize/Drop glue deterministically instead of relying on
+    // the non-deterministic FinalizationRegistry. The optional `?.free?.()`
+    // call also tolerates plain test doubles that don't implement `.free()`.
+    unwrappedKey?.free?.();
+    userKey?.free?.();
+    wrappingKey?.free?.();
+  }
 }
