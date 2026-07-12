@@ -1,0 +1,19 @@
+[package]
+name = "pv-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared crypto core: key hierarchy, PRF unlock, item encryption. WASM-compatible."
+
+[dependencies]
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+serde.workspace = true
+thiserror.workspace = true
+base64 = "0.22"
+
+[dev-dependencies]
+serde_json.workspace = true
