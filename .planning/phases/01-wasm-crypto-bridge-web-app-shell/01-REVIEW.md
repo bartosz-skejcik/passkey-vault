@@ -1,6 +1,6 @@
 ---
 phase: 01-wasm-crypto-bridge-web-app-shell
-reviewed: 2026-07-12T00:00:00Z
+reviewed: 2026-07-12T22:20:00Z
 depth: standard
 files_reviewed: 19
 files_reviewed_list:
@@ -25,153 +25,101 @@ files_reviewed_list:
   - web/tsconfig.json
   - web/vitest.config.ts
 findings:
-  critical: 2
-  warning: 3
-  info: 3
-  total: 8
-status: issues_found
+  critical: 0
+  warning: 0
+  info: 6
+  total: 6
+status: clean
 ---
 
 # Phase 01: Code Review Report
 
-**Reviewed:** 2026-07-12T00:00:00Z
+**Reviewed:** 2026-07-12T22:20:00Z
 **Depth:** standard
 **Files Reviewed:** 19
-**Status:** issues_found
+**Status:** clean
 
 ## Summary
 
-Reviewed the pv-wasm FFI bridge, its Rust key-handling primitives, the build script that produces the JS/TS glue, and the Next.js web app shell that consumes it (crypto self-test module + layout/shell components). The opaque-handle design (`WasmUserKey`/`WasmWrappingKey`) and the AEAD/HKDF primitives in `pv-core::keys` are sound in isolation (nonce is freshly randomized per seal, wrong-key/short-nonce/short-plaintext paths are rejected, error variants carry no secret material). However, tracing key material **all the way to where the opaque handles are actually consumed in TypeScript** surfaces two BLOCKER-level gaps in the zero-knowledge/zeroization guarantee that the module's own doc comments claim to provide:
+Iteration 3 (final) of the fix loop. Since iteration 2, only commit `87205a8` landed, touching a single file: `web/src/components/self-test/SelfTestCard.tsx`, replacing the `mountedRef` boolean guard with a per-invocation `runIdRef` generation counter to close WR-04. No other file in the 19-file review scope changed (`git status`/`git log` confirm no drift since iteration 2's commits `d5b4741`, `fb7c314`, `00f9745`, `0d7baa4`, `d523b5e`, `87205a8`).
 
-1. None of the `WasmWrappingKey`/`WasmUserKey` handles created in `web/src/lib/crypto/index.ts` are ever explicitly `.free()`'d, so the deterministic `Drop`/`ZeroizeOnDrop` wipe this design is built around never actually runs in the traced code path — it relies entirely on a non-deterministic `FinalizationRegistry` callback that browsers are not required to ever invoke.
-2. The password itself crosses the WASM boundary as a `&str` (`WasmWrappingKey::from_password`), which is exactly the pattern CLAUDE.md's Security Patterns section explicitly forbids ("DO NOT use String or Vec<u8> for keys/passwords") — the password bytes sit in WASM linear memory and are only `free()`'d (deallocated), never zeroized, after the KDF call.
+**WR-04 — confirmed fixed, verified by hand-tracing both races it was meant to close.** I traced the new `run()`/`useEffect` pair against the exact Strict Mode double-invocation sequence the original finding described:
 
-Because `lib/crypto/index.ts` is documented as "the sole choke-point importer" of the WASM bindings for the entire app, both patterns will propagate to every future caller (real vault unlock/encrypt/decrypt flows) unless corrected now, in this foundational phase.
+1. Effect setup #1 (mount) → `run()` → `myRunId = ++runIdRef.current` = 1 → awaits `runSelfTest()` (task A).
+2. Strict Mode cleanup → no-op (the effect no longer registers a cleanup function at all).
+3. Effect setup #2 (remount) → `run()` → `myRunId = ++runIdRef.current` = 2 → awaits `runSelfTest()` (task B).
+4. Task A resolves: `runIdRef.current` (2) `=== myRunId` (1) is `false` → stale result correctly discarded, no `setState`.
+5. Task B resolves: `runIdRef.current` (2) `=== myRunId` (2) is `true` → wins, commits the final render state.
 
-Also found: a promise-memoization bug that permanently poisons crypto initialization after any transient WASM-load failure, a missing unmount guard in the self-test UI, and a couple of minor robustness/test-coverage gaps.
+This is the correct fix: unlike the old `mountedRef` boolean (which setup #2 unconditionally reset to `true`, letting task A's stale `setState` fire anyway), the counter is monotonically increasing and each invocation captures its own value at start, so only the *last* invocation's result can ever be committed — regardless of resolution order. The retry button (`onClick={run}`) also gets this for free: each click mints its own `myRunId`, so a superseded click's result is discarded the same way. Re-ran `cargo test -p pv-core -p pv-wasm`, `cargo clippy -p pv-core -p pv-wasm --all-targets`, `npm test` (vitest, 4/4 passing), and `npm run build` (which runs `prebuild` → `build-wasm.sh` → `next build`'s TypeScript check) — all clean.
 
-## Critical Issues
+Two minor, non-blocking observations from this trace are recorded as Info below (IN-05, IN-06); neither is a functional regression.
 
-### CR-01: Opaque key handles are never `.free()`'d — key material relies on non-deterministic GC to be zeroized
+**`npx tsc --noEmit` "5 errors" vs. clean `npm run build` — confirmed tooling-context artifact, not a defect.** I reproduced this directly: `web/src/lib/crypto/wasm/` (the `wasm-bindgen`-generated glue imported by `index.ts`) is listed in `.gitignore` (`web/src/lib/crypto/wasm/`) and only exists after `scripts/build-wasm.sh` runs. `npm run build` has a `"prebuild": "bash ../scripts/build-wasm.sh"` script that regenerates it before `next build`'s TypeScript pass, so that path is always clean. Running the bare `npx tsc --noEmit` command directly — without first running `npm run build`/`npm run dev` (which trigger the `prebuild`/`predev` hooks) or `scripts/build-wasm.sh` manually — hits `index.ts`'s `import ... from "./wasm/pv_wasm.js"` before the module exists. I confirmed this empirically: moving `web/src/lib/crypto/wasm/` aside and re-running bare `npx tsc --noEmit` reproduces exactly 5 errors, all cascading from the single `TS2307: Cannot find module './wasm/pv_wasm.js'` (the other 4 are downstream type-inference failures — implicit `any`, nullable-promise assignment, `string | undefined` argument mismatches — that only appear because the module's real types are unavailable). Restoring the directory and re-running immediately returns exit 0 with no errors. **Verdict: not a defect.** It's expected behavior for a gitignored, script-generated import target — the shipping build path (`npm run build`) is unaffected. See IN-05 for a low-cost documentation improvement.
 
-**File:** `web/src/lib/crypto/index.ts:63-129`
-**Issue:** `runSelfTest()` creates `wrappingKey` (derived from the password), `userKey` (the freshly generated vault-root User Key), and `unwrappedKey` (the User Key round-tripped through wrap/unwrap) — all `wasm-bindgen` classes backed by Rust structs whose `Zeroize`/`ZeroizeOnDrop` guarantees only fire when the Rust value is actually dropped, i.e. when JS calls `.free()` (confirmed in the generated glue: `free()` → `wasm.__wbg_wasmuserkey_free(ptr, 0)` runs real `Drop` glue). None of these three handles are ever freed in this file. The only cleanup path is the `FinalizationRegistry` wasm-bindgen registers per-instance (`web/src/lib/crypto/wasm/pv_wasm.js:315-320`), which per spec browsers are permitted to delay indefinitely or skip entirely (e.g. on tab close). The result: the vault-root User Key and the password-derived wrapping key sit unzeroized in WASM linear memory for an unbounded period after use — the exact outcome the module's own doc comment (`crates/pv-wasm/src/lib.rs:1-10`) says the opaque-handle design exists to prevent. Because this file is the mandated single entry point for all future WASM crypto calls, this leak pattern will be inherited by the real unlock/encrypt/decrypt flows built on top of it.
-**Fix:**
-```ts
-export async function runSelfTest(): Promise<StepResult[]> {
-  await initCrypto();
-  const results: StepResult[] = [];
-  let wrappingKey: WasmWrappingKey | undefined;
-  let userKey: WasmUserKey | undefined;
-  let unwrappedKey: WasmUserKey | undefined;
-  try {
-    // ...existing step logic building wrappingKey/userKey/unwrappedKey...
-    return results;
-  } finally {
-    unwrappedKey?.free();
-    userKey?.free();
-    wrappingKey?.free();
-  }
-}
-```
-Every future caller of `wrapUserKey`/`unwrapUserKey`/`encryptItem`/`decryptItem` in this module must follow the same try/finally-with-explicit-free discipline — consider wrapping it in a small `using`/`withHandle` helper (the generated glue already sets up `Symbol.dispose` on both classes — `pv_wasm.js:32,75` — so `using wrappingKey = ...` in a TS target that supports explicit resource management would get deterministic cleanup for free).
-
-### CR-02: Password crosses the WASM boundary as `&str`/`String`, violating the project's explicit "no String/Vec<u8> for keys/passwords" rule, and is never zeroized after use
-
-**File:** `crates/pv-wasm/src/lib.rs:65-76`
-**Issue:** `WasmWrappingKey::from_password(password: &str, ...)` accepts the master password as a JS string. wasm-bindgen marshals it into WASM linear memory via `passStringToWasm0(password, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc)` (`web/src/lib/crypto/wasm/pv_wasm.js:62`) and releases it after the call with `wasm.__wbindgen_free(...)` (a plain deallocation, not a zeroing wipe — confirmed by inspecting the generated glue, no zero-fill occurs anywhere in that path). CLAUDE.md's Security Patterns section states explicitly: *"Sensitive data ... DO NOT use `String` or `Vec<u8>` for keys/passwords"* — this function does exactly that for the single most sensitive user secret in the whole system (the master password). Once the call returns, the raw password bytes remain resident and recoverable in the WASM heap's freed-but-not-overwritten region until that memory happens to be reused.
-**Fix:** Accept the password as raw bytes owned by the caller (`&[u8]`/`Uint8Array`) instead of `&str`, and explicitly zero the WASM-side copy before returning:
-```rust
-pub fn from_password(
-    password: &mut [u8], // caller passes a Uint8Array it also zeroes on its side after the call
-    salt: &[u8],
-    kdf_params_json: &str,
-) -> Result<WasmWrappingKey, JsValue> {
-    let params: KdfParams = serde_json::from_str(kdf_params_json)
-        .map_err(|e| to_js_str_err(&e.to_string()))?;
-    let result = wrapping_key_from_password(password, salt, &params).map_err(to_js_err);
-    password.zeroize(); // wipe the WASM-side copy regardless of outcome
-    let wk = result?;
-    Ok(WasmWrappingKey(*wk))
-}
-```
-and update `web/src/lib/crypto/index.ts` callers to build the password as a `Uint8Array` (e.g. `new TextEncoder().encode(password)`) and zero that array themselves once `fromPassword` resolves.
-
-## Warnings
-
-### WR-01: `initCrypto()`'s memoized promise is never reset after rejection — a transient WASM-load failure permanently disables crypto for the session
-
-**File:** `web/src/lib/crypto/index.ts:25-32`
-**Issue:** `ready` is a module-level singleton that is assigned once and never cleared. If `init("/wasm/pv_wasm_bg.wasm")` rejects (e.g. transient network hiccup, CDN blip, or the WASM binary briefly 404s during a deploy), `ready` is left holding the *rejected* promise forever. Every subsequent call to `initCrypto()` (including from `SelfTestCard`'s "Uruchom ponownie" retry button) returns that same already-rejected promise, so the app can never recover from a transient init failure without a full page reload — `initCrypto`'s own retry test only checks a single failing call, not that a later call can succeed once the transient condition clears.
-**Fix:**
-```ts
-export function initCrypto(): Promise<void> {
-  if (ready === null) {
-    ready = init("/wasm/pv_wasm_bg.wasm")
-      .then(() => undefined)
-      .catch((e) => {
-        ready = null; // allow a future call to retry instead of replaying this rejection forever
-        throw e;
-      });
-  }
-  return ready;
-}
-```
-
-### WR-02: `SelfTestCard`'s async effect has no unmount guard
-
-**File:** `web/src/components/self-test/SelfTestCard.tsx:15-31`
-**Issue:** `run()` is an async function kicked off from `useEffect` with no cleanup/cancellation. If the component unmounts while `runSelfTest()`'s WASM init or crypto steps are still pending (e.g. user navigates away quickly), the subsequent `setState(...)` calls fire on an unmounted component, producing React warnings and doing unnecessary work.
-**Fix:**
-```tsx
-useEffect(() => {
-  let cancelled = false;
-  (async () => {
-    setState({ kind: "loading" });
-    try {
-      const results = await runSelfTest();
-      if (!cancelled) setState({ kind: "results", results });
-    } catch (e) {
-      if (!cancelled) setState({ kind: "fatal", error: e instanceof Error ? e.message : String(e) });
-    }
-  })();
-  return () => { cancelled = true; };
-}, []);
-```
-
-### WR-03: Inline theme-init script doesn't validate the stored theme value against the known allow-list
-
-**File:** `web/src/app/layout.tsx:27-37`
-**Issue:** `theme = stored || (...)` trusts whatever is in `localStorage.getItem('pv-theme')` verbatim and assigns it straight to `data-theme`. If that value is ever anything other than `'vault-light'`/`'vault-dark'` (corrupted storage, a stale value from a future/removed theme, or third-party tampering via a shared-origin script), DaisyUI silently fails to match a theme block and the page renders unstyled instead of falling back to `'vault-dark'`. `Sidebar.tsx:19-24` already implements the correct allow-list check for its own theme-sync effect — this script should mirror it instead of trusting the raw value.
-**Fix:**
-```js
-var stored = localStorage.getItem('pv-theme');
-var valid = stored === 'vault-light' || stored === 'vault-dark';
-var theme = valid ? stored : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'vault-light' : 'vault-dark');
-```
+No new files outside the single touched file were modified since iteration 2, so the remaining 18 files carry forward unchanged and were not re-audited beyond confirming `git status`/`git log` show no drift.
 
 ## Info
 
+### IN-05: Bare `npx tsc --noEmit` fails without a prior WASM build step, with no documented workaround
+
+**File:** `web/package.json`, `web/tsconfig.json`
+**Issue:** `web/src/lib/crypto/wasm/` is gitignored and only generated by `scripts/build-wasm.sh` (invoked automatically via the `prebuild`/`predev` npm scripts). A developer or CI step that runs `npx tsc --noEmit` directly — e.g. as a standalone lint/typecheck step, an editor's "run typecheck" command, or a pre-commit hook — without having first run `npm run dev`/`npm run build` at least once, will see 5 confusing errors rooted entirely in the missing generated module, none of which reflect a real code defect. This is a real (if minor) developer-experience footgun: the errors don't mention the WASM build step at all, so someone unfamiliar with the codebase would likely misdiagnose them as a genuine type error in `index.ts`.
+**Fix:** Add a dedicated `"typecheck": "bash ../scripts/build-wasm.sh && tsc --noEmit"` script to `web/package.json` (mirroring the existing `prebuild`/`predev` pattern) so there's one documented, correct way to run a standalone typecheck, and reference it from CLAUDE.md or a README note near the WASM build instructions.
+
+### IN-06: WR-04 fix's code comment overstates what the generation-counter guard covers for a genuine (non-remount) unmount
+
+**File:** `web/src/components/self-test/SelfTestCard.tsx:44-47`
+**Issue:** The comment states: "a genuine unmount and a Strict Mode remount both bump `runIdRef` on the next `run()` call, so only the latest call ever commits." This is accurate for a Strict Mode remount (a second `run()` call does happen and bumps the counter) but not for a genuine, permanent unmount: if the component unmounts for good (e.g., user navigates away) while `runSelfTest()` is still in flight, no further `run()` call ever happens, so `runIdRef.current` stays equal to the in-flight call's `myRunId` forever, and the guard check (`runIdRef.current === myRunId`) evaluates `true` — the post-await `setState` fires on an already-unmounted component. This is not a functional bug in practice: React 18+ (this project is on React 19.2.7) intentionally treats `setState` calls on an unmounted fiber as a safe no-op and no longer emits the "Can't perform a React state update on an unmounted component" warning, so nothing crashes, corrupts, or leaks user-visible state. But the comment's claim is factually incomplete, and a future maintainer reading it in isolation could reasonably conclude the counter fully replicates the old `mountedRef`-on-cleanup behavior, when it actually relies on an unstated assumption about the React runtime's unmount-update semantics.
+**Fix:** Tighten the comment to scope its claim accurately, e.g.:
+```tsx
+// Guards against a stale run committing state after a *newer* run has
+// started (covers both the button's re-click and React Strict Mode's
+// mount -> cleanup -> remount cycle, since the remount's run() bumps the
+// counter before the stale run resolves). It does not need to guard a
+// genuine, permanent unmount separately: React 18+ silently no-ops
+// setState calls on an already-unmounted component, so a stale run that
+// never gets superseded by a new run() is harmless even without an
+// explicit unmount flag.
+```
+
 ### IN-01: Redundant `Uint8Array` wrapping of an already-typed return value
 
-**File:** `web/src/lib/crypto/index.ts:66`
-**Issue:** `randomSalt(len: number): Uint8Array` (per `web/src/lib/crypto/wasm/pv_wasm.d.ts:36`) already returns a `Uint8Array`. Wrapping it again in `new Uint8Array(randomSalt(16))` allocates and copies an identical second array for no behavioral benefit.
+**File:** `web/src/lib/crypto/index.ts:83`
+**Issue:** `randomSalt(len: number): Uint8Array` already returns a `Uint8Array`. Wrapping it again in `new Uint8Array(randomSalt(16))` allocates and copies an identical second array for no behavioral benefit. (Carried forward from iteration 1 — intentionally deferred.)
 **Fix:** `const salt = randomSalt(16);`
 
 ### IN-02: No test exercises the real compiled WASM module through the JS/TS boundary
 
-**File:** `web/src/lib/crypto/index.test.ts:28-38`
-**Issue:** `index.test.ts` mocks `./wasm/pv_wasm.js` entirely via `vi.mock`, so it only verifies `index.ts`'s own orchestration logic (step ordering, error propagation, memoization). Nothing in the JS test suite loads the actual `pv_wasm_bg.wasm` binary and drives it through `wasm-bindgen`'s marshalling/finalization code — that surface is currently only covered by `cargo test -p pv-wasm`, which calls the Rust functions natively and bypasses the JS glue (string marshalling, `passStringToWasm0`, `FinalizationRegistry`, etc.) entirely.
+**File:** `web/src/lib/crypto/index.test.ts`
+**Issue:** `index.test.ts` mocks `./wasm/pv_wasm.js` entirely, so it only verifies `index.ts`'s own orchestration logic. Nothing in the JS test suite loads the actual `pv_wasm_bg.wasm` binary and drives it through `wasm-bindgen`'s marshalling/finalization code in CI. (Carried forward from iteration 1 — intentionally deferred. This reviewer manually performed exactly this kind of end-to-end verification out-of-band across iterations 2 and 3, which increases confidence the underlying fixes are sound, but that verification is not captured as a repeatable CI test.)
 **Fix:** Consider a browser-mode (e.g. Vitest `--browser` or Playwright) smoke test that loads the real `pv_wasm.js`/`.wasm` pair and runs `runSelfTest()` unmocked at least once in CI.
 
 ### IN-03: Malformed-input error paths in the WASM bindings are untested on every target
 
-**File:** `crates/pv-wasm/src/lib.rs:44-55, 98-121`
-**Issue:** `to_js_str_err` (hit when `kdf_params_json`, `wrapped_json`, or `item_json` fail to deserialize) is only referenced from error branches that no test in `#[cfg(test)] mod tests` (`crates/pv-wasm/src/lib.rs:135-170`) exercises — both tests only cover the happy path and the wrong-password path, never malformed JSON input from an untrusted/corrupted source (e.g. a tampered `wrapped_json` blob coming back from server storage).
+**File:** `crates/pv-wasm/src/lib.rs:47-55, 106-127`
+**Issue:** `to_js_str_err` (hit when `kdf_params_json`, `wrapped_json`, or `item_json` fail to deserialize) is only referenced from error branches that no test in `#[cfg(test)] mod tests` exercises — both tests only cover the happy path and the wrong-password path, never malformed JSON input from an untrusted/corrupted source. (Carried forward from iteration 1 — intentionally deferred.)
 **Fix:** Add a test asserting `unwrap_user_key(&wrapping_key, "not json")` and `decrypt_item(&uk, "not json")` return `Err(...)` rather than panicking.
+
+### IN-04: No regression test exercises "retry succeeds after a transient `initCrypto()` failure" (WR-01)
+
+**File:** `web/src/lib/crypto/index.test.ts:73-79`
+**Issue:** The existing test only asserts that a single failing `init()` call rejects; nothing calls `initCrypto()` a second time after the rejection to confirm `ready` was actually reset and a fresh attempt is made. The fix is correct (verified by inspection), but the specific regression this fix targets — "crypto permanently disabled after a transient failure" — has no test guarding against it being silently reintroduced later. (Carried forward from iteration 2 — intentionally deferred.)
+**Fix:**
+```ts
+it("allows a later call to retry after a rejected init()", async () => {
+  const initError = new Error("transient failure");
+  mockInit.mockRejectedValueOnce(initError).mockResolvedValueOnce(undefined);
+  const { initCrypto } = await import("./index");
+
+  await expect(initCrypto()).rejects.toThrow("transient failure");
+  await expect(initCrypto()).resolves.toBeUndefined();
+  expect(mockInit).toHaveBeenCalledTimes(2);
+});
+```
 
 ---
 
-_Reviewed: 2026-07-12T00:00:00Z_
+_Reviewed: 2026-07-12T22:20:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
