@@ -26,7 +26,12 @@ let ready: Promise<void> | null = null;
 
 export function initCrypto(): Promise<void> {
   if (ready === null) {
-    ready = init("/wasm/pv_wasm_bg.wasm").then(() => undefined);
+    ready = init("/wasm/pv_wasm_bg.wasm")
+      .then(() => undefined)
+      .catch((e) => {
+        ready = null; // allow a future call to retry instead of replaying this rejection forever
+        throw e;
+      });
   }
   return ready;
 }
