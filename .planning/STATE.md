@@ -6,14 +6,14 @@ current_phase: 1
 current_phase_name: WASM Crypto Bridge & Web App Shell
 status: executing
 stopped_at: Phase 1 UI-SPEC approved
-last_updated: "2026-07-12T15:34:14.388Z"
+last_updated: "2026-07-12T18:59:13.671Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 1 execution started
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 ## Current Position
 
 Phase: 1 (WASM Crypto Bridge & Web App Shell) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-07-12 — Phase 1 execution started
 
@@ -56,6 +56,7 @@ Progress: [░░░░░░░░░░] 0%
 
 *Updated after each plan completion*
 | Phase 01 P01 | 35min | 2 tasks | 6 files |
+| Phase 01 P02 | 30min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,8 @@ Recent decisions affecting current work:
 - Roadmap: Docker packaging (DEPLOY-01/02) deferred to a final phase (Phase 7) even though `ServeDir`/env-config groundwork will exist earlier; RP_ID fail-loud behavior verified end-to-end only once the full app is packageable.
 - [Phase 1]: cfg-split JsValue error conversion (wasm32 vs native) — wasm-bindgen JsValue construction panics natively on the Err path; native returns JsValue::NULL, wasm32 keeps real .to_string() messages
 - [Phase 1]: getrandom duplicate-major audit in build-wasm.sh greps only root 'getrandom vX.Y.Z' lines from cargo tree -i output, not every version substring in the whole tree
+- [Phase 1]: TypeScript pinned to 5.9.3 instead of npm-latest 7.0.2 — TS7's package exports point to a new native/Go compiler entry (lib/version.cjs), breaking Next.js 16.2.10's classic-API type-checking build worker
+- [Phase 1]: Turbopack processes DaisyUI 5/Tailwind v4 CSS-first theme blocks with zero PostCSS config — @tailwindcss/postcss is unnecessary under Next.js 16.2.10
 
 ### Pending Todos
 
@@ -94,6 +97,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-12T15:32:45.116Z
+Last session: 2026-07-12T18:57:19.028Z
 Stopped at: Phase 1 UI-SPEC approved
 Resume file: .planning/phases/01-wasm-crypto-bridge-web-app-shell/01-UI-SPEC.md
