@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { runSelfTest, type StepResult } from "@/lib/crypto";
 import StepRow from "./StepRow";
 
@@ -11,22 +11,33 @@ type LoadState =
 
 export default function SelfTestCard() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  // `run` is invoked both from the mount effect below and from the "Uruchom
+  // ponownie" retry button — a plain effect-local `cancelled` flag can't
+  // cover the button-triggered call, so use a ref that tracks mount state
+  // across both call sites and guard every post-await setState with it.
+  const mountedRef = useRef(true);
 
   async function run() {
     setState({ kind: "loading" });
     try {
       const results = await runSelfTest();
-      setState({ kind: "results", results });
+      if (mountedRef.current) setState({ kind: "results", results });
     } catch (e) {
-      setState({
-        kind: "fatal",
-        error: e instanceof Error ? e.message : String(e),
-      });
+      if (mountedRef.current) {
+        setState({
+          kind: "fatal",
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
   }
 
   useEffect(() => {
+    mountedRef.current = true;
     run();
+    return () => {
+      mountedRef.current = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
