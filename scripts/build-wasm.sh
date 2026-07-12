@@ -66,6 +66,18 @@ wasm-bindgen --target web \
   --out-dir web/src/lib/crypto/wasm \
   target/wasm32-unknown-unknown/release/pv_wasm.wasm
 
+# 6b. Neutralize wasm-bindgen's zero-arg-default fallback in the generated
+#     glue. lib/crypto/index.ts's initCrypto() always calls init() with an
+#     explicit string path (RESEARCH.md Pattern 1), so this branch never
+#     executes at runtime — but Turbopack's asset scanner statically matches
+#     the literal `new URL('pv_wasm_bg.wasm', import.meta.url)` pattern
+#     regardless of reachability and fails the build trying to resolve a
+#     file that (by design, see step 7) doesn't live next to pv_wasm.js.
+#     Replacing the dead branch with a runtime throw removes the pattern
+#     without changing observable behavior for our always-explicit-path call.
+sed -i.bak "s#module_or_path = new URL('pv_wasm_bg.wasm', import.meta.url);#throw new Error('pv-wasm: init() must be called with an explicit wasm URL, see lib/crypto/index.ts');#" web/src/lib/crypto/wasm/pv_wasm.js
+rm -f web/src/lib/crypto/wasm/pv_wasm.js.bak
+
 # 7. Move the compiled binary into the static-asset directory (Turbopack-safe
 #    split — see 01-RESEARCH.md Pitfall 1: Turbopack can't resolve
 #    wasm-bindgen's default `new URL(..., import.meta.url)` asset reference,
