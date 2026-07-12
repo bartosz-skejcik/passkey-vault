@@ -28,7 +28,8 @@ const themeInitScript = `
 (function () {
   try {
     var stored = localStorage.getItem('pv-theme');
-    var theme = stored || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'vault-light' : 'vault-dark');
+    var valid = stored === 'vault-light' || stored === 'vault-dark';
+    var theme = valid ? stored : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'vault-light' : 'vault-dark');
     document.documentElement.setAttribute('data-theme', theme);
   } catch (e) {
     document.documentElement.setAttribute('data-theme', 'vault-dark');
