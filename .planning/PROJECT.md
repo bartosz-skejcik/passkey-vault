@@ -39,7 +39,7 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 
 <!-- Po v0.1, w ramach v1: -->
 
-- [ ] Extension (WXT, MV3, Chrome + Firefox): popup, autofill, **passkey provider** (MAIN-world patch navigator.credentials, passkey-rs→WASM, fall-through do natywnych)
+- [ ] Extension (WXT, MV3, Chrome + Firefox): popup, autofill, **passkey provider** (MAIN-world patch navigator.credentials, passkey-rs→WASM, fall-through do natywnych) — obejmuje OBA przepływy: **rejestrację nowego passkeya na cudzej stronie** (`credentials.create` — np. GitHub → Settings → dodaj passkey → zapisuje się do naszego vaulta) i **logowanie zapisanym passkeyem** (`credentials.get`)
 - [ ] Sharing: zaszyfrowane linki (klucz w URL fragment) + współdzielenie rodzinne w ramach instancji
 - [ ] Password Health dashboard (hero-score, słabe/powtórzone/stare) + breach monitor (HIBP k-anonymity)
 - [ ] Załączniki za trait-em storage (implementacja dyskowa w v1)
