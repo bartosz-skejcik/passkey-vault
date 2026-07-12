@@ -41,7 +41,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 
 ### Web App / UI
 
-- [ ] **UI-01**: Web app (Next.js 16, `output: "export"`, Tailwind v4 + DaisyUI 5) w theme datafa.st — dark default, pełnoprawny light; cała kryptografia wyłącznie przez choke-point moduł importujący pv-core WASM
+- [x] **UI-01**: Web app (Next.js 16, `output: "export"`, Tailwind v4 + DaisyUI 5) w theme datafa.st — dark default, pełnoprawny light; cała kryptografia wyłącznie przez choke-point moduł importujący pv-core WASM
 - [ ] **UI-02**: Ekran unlock/login: PRF-first — duży tealowy przycisk „Odblokuj passkeyem" nad polem master password
 - [ ] **UI-03**: Vault: lista itemów (favicon, nazwa, username, badge typu) + panel boczny szczegółów z copy-buttonami i sekcją passkey
 - [ ] **UI-04**: Onboarding (3 kroki) z importem z innego menedżera jako pierwszym krokiem
@@ -55,12 +55,14 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 ## v2 Requirements (deferred — kolejne milestone'y wg roadmapy docs/)
 
 ### v0.2 — Extension
+
 - **EXT-01**: Extension WXT (MV3, Chrome + Firefox): popup w estetyce vaulta
 - **EXT-02**: Passkey provider — logowanie zapisanym passkeyem na cudzych stronach (`credentials.get`, MAIN-world patch z fall-through do natywnych)
 - **EXT-03**: Passkey provider — rejestracja NOWEGO passkeya na cudzej stronie (`credentials.create`, np. GitHub → dodaj passkey → zapis do vaulta)
 - **EXT-04**: Autofill loginów/haseł dopasowanych do bieżącej domeny
 
 ### v0.3 — Sharing & Health
+
 - **SHARE-01**: Zaszyfrowane linki sharingowe (klucz w URL fragment, expiry, max views)
 - **SHARE-02**: Współdzielenie rodzinne w ramach instancji (flat shared-vault membership, bez org/ról)
 - **HEALTH-01**: Password Health dashboard (hero-score, słabe/powtórzone/stare)
@@ -68,6 +70,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 - **ATTACH-01**: Załączniki za trait-em storage (implementacja dyskowa)
 
 ### v0.4+
+
 - **CXF-01**: Import/eksport FIDO CXF (crate credential-exchange-format)
 - **MASK-01**: Integracja email masking (SimpleLogin/Addy)
 - **HARD-01**: Drukowany recovery code (dodatkowy wrap User Key) — hardening przed v1.0
@@ -94,7 +97,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 
 | REQ-ID | Faza | Status |
 |--------|------|--------|
-| UI-01 | Phase 1: WASM Crypto Bridge & Web App Shell | Pending |
+| UI-01 | Phase 1: WASM Crypto Bridge & Web App Shell | Complete |
 | AUTH-01 | Phase 2: Password Auth & Vault Core | Pending |
 | AUTH-02 | Phase 2: Password Auth & Vault Core | Pending |
 | AUTH-08 | Phase 2: Password Auth & Vault Core | Pending |

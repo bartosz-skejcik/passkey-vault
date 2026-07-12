@@ -6,14 +6,14 @@ current_phase: 1
 current_phase_name: WASM Crypto Bridge & Web App Shell
 status: executing
 stopped_at: Phase 1 UI-SPEC approved
-last_updated: "2026-07-12T15:20:52.875Z"
+last_updated: "2026-07-12T15:34:14.388Z"
 last_activity: 2026-07-12
-last_activity_desc: ROADMAP.md created for v0.1 (7 phases, 30/30 requirements mapped)
+last_activity_desc: Phase 1 execution started
 progress:
   total_phases: 7
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 3
+  completed_plans: 1
   percent: 0
 ---
 
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 
 ## Current Position
 
-Phase: 1 of 7 (WASM Crypto Bridge & Web App Shell)
-Plan: 0 of TBD in current phase
+Phase: 1 (WASM Crypto Bridge & Web App Shell) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-07-12 — ROADMAP.md created for v0.1 (7 phases, 30/30 requirements mapped)
+Last activity: 2026-07-12 — Phase 1 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -55,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 01 P01 | 35min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -66,6 +67,8 @@ Recent decisions affecting current work:
 - Roadmap: Password auth + vault CRUD merged into one phase (Phase 2) for a real end-to-end vertical slice, rather than splitting login-only and CRUD-only phases.
 - Roadmap: Passkey enrollment/management (Phase 3) and PRF unlock/login (Phase 4) kept as separate phases — the passkey-deletion recovery invariant belongs with enrollment/management; PRF-unavailable fallback UX belongs with unlock.
 - Roadmap: Docker packaging (DEPLOY-01/02) deferred to a final phase (Phase 7) even though `ServeDir`/env-config groundwork will exist earlier; RP_ID fail-loud behavior verified end-to-end only once the full app is packageable.
+- [Phase 1]: cfg-split JsValue error conversion (wasm32 vs native) — wasm-bindgen JsValue construction panics natively on the Err path; native returns JsValue::NULL, wasm32 keeps real .to_string() messages
+- [Phase 1]: getrandom duplicate-major audit in build-wasm.sh greps only root 'getrandom vX.Y.Z' lines from cargo tree -i output, not every version substring in the whole tree
 
 ### Pending Todos
 
@@ -91,6 +94,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-12T10:57:48.383Z
+Last session: 2026-07-12T15:32:45.116Z
 Stopped at: Phase 1 UI-SPEC approved
 Resume file: .planning/phases/01-wasm-crypto-bridge-web-app-shell/01-UI-SPEC.md
