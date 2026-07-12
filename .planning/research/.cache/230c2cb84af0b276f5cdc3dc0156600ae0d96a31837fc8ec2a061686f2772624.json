@@ -1,0 +1,1 @@
+{"content":"axum websocket sync/push: tokio::sync::broadcast::channel for fan-out to N connected clients of the same user, shared AppState broadcast::Sender keyed by user_id.","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-07-12T09:35:06.209Z","ttl":86400000,"kind":"web"}

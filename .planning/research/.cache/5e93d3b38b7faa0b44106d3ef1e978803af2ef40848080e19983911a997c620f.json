@@ -1,0 +1,1 @@
+{"content":"totp-rs 5.7.2 (crates.io, 2026-06-23). Required deps: base32, constant_time_eq, hmac, sha1, sha2 only -- no network, no forced RNG. WASM-friendly with default-features=false.","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-07-12T09:35:06.266Z","ttl":86400000,"kind":"web"}

@@ -1,0 +1,1 @@
+{"content":"sqlx overall latest stable is 0.9.0 (2026-05-21), latest 0.8.x is 0.8.6. 0.9 introduces breaking SqlSafeStr trait for query strings. Project pins '0.8' caret (resolves <0.9).","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-07-12T09:35:06.435Z","ttl":86400000,"kind":"web"}
