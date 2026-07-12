@@ -85,7 +85,7 @@ Unchanged 60/30/10 split and hex/OKLCH values from Phase 1 (`vault-dark` default
 |------|-------|-------|
 | Dominant (60%) | `#1F1F1F` base-300 dark / see **Light theme fix** below | Page background, main-column canvas, blurred-shell scrim |
 | Secondary (30%) | `#262626` base-100 (cards, detail panel, dialogs) + `#212121` base-200 (sidebar, top bar) | Cards, panels, sidebar, top bar |
-| Accent (10%) | `#E16540` primary coral | "+ Nowy item" CTA (now live), primary submit buttons (Zaloguj się / Zarejestruj się / Zapisz item), active/selected sidebar nav + folder/tag indicator, focus rings, "Odblokuj" button on the unlock overlay's password path |
+| Accent (10%) | `#E16540` primary coral | "+ Nowy item" CTA (now live), primary submit buttons (Zaloguj się / Załóż konto / Zapisz item), active/selected sidebar nav + folder/tag indicator, focus rings, "Odblokuj" button on the unlock overlay's password path |
 | Destructive | `#FF5861` error | Delete-item confirm button, delete-confirm warning icon, form validation error text/borders, revision-conflict (409) banner, self-test fail (carried) |
 
 Accent reserved for: the elements listed above only. **Never** used for item-type badges, health-dot, or decorative fills — those stay neutral (see below).
@@ -122,8 +122,8 @@ i18n PL+EN from day one (CONTEXT.md decision). All Phase 1 hardcoded Polish stri
 | Vault empty state heading | `Vault jeszcze pusty` (carried, Fuzzy Bubbles-eligible) | `Your vault is empty` |
 | Vault empty state body | `Dodaj pierwszy item — hasło, kartę albo notatkę 👇` | `Add your first item — a password, a card, or a note 👇` |
 | Item create — type picker | `Wybierz typ itemu` | `Choose item type` |
-| Item save | `Zapisz` | `Save` |
-| Item edit | `Edytuj` | `Edit` |
+| Item save | `Zapisz item` | `Save item` |
+| Item edit | `Edytuj item` | `Edit item` |
 | Passkey placeholder section | `Brak passkeyów — enrollment dostępny wkrótce` | `No passkeys yet — enrollment coming soon` |
 | Delete confirmation (destructive) | Title: `Usunąć „{name}"?` Body: `Tej operacji nie da się cofnąć — item zniknie na stałe.` Confirm: `Usuń na stałe` Cancel: `Anuluj` | Title: `Delete "{name}"?` Body: `This can't be undone — the item will be gone for good.` Confirm: `Delete permanently` Cancel: `Cancel` |
 | Copy toast | `Skopiowano {field}. Wyczyści się za {n}s.` → on expiry: `Schowek wyczyszczony.` | `Copied {field}. Clears in {n}s.` → on expiry: `Clipboard cleared.` |
@@ -195,6 +195,26 @@ No third-party registries declared. Registry vetting gate not triggered.
 
 - No dedicated Settings screen yet (UI-05 is Phase 3). Auto-lock idle timeout, clipboard-clear duration, language switcher, and a manual "Lock now" (`Lock` icon) action live in a lightweight `dropdown` menu opened from the existing Sidebar account block (extends, doesn't replace, the Phase 1 avatar+name+theme-toggle row). Idle timeout options: 1/5/15/30/60 min, default 15 (per AUTH-08's "np. 15 min").
 - Language switcher: icon-only button (`Languages`) beside the existing theme toggle, same interaction pattern (click cycles PL↔EN, persists to `localStorage['pv-locale']`, updates `<html lang>`), same FOUC-avoidance approach as the theme's inline pre-hydration script — no flash of wrong-language text on load.
+
+### Icon-only controls — accessibility contract
+
+Every icon-only interactive control MUST carry an `aria-label` (localized through the same i18n dictionary as visible copy — not hardcoded), following the pattern Phase 1 established with the theme toggle's `aria-label="Przełącz motyw"`:
+
+| Control | PL `aria-label` | EN `aria-label` |
+|---|---|---|
+| Row-hover copy button | `Kopiuj {field}` | `Copy {field}` |
+| Row-hover delete button | `Usuń „{name}"` | `Delete "{name}"` |
+| Detail-panel field copy button | `Kopiuj {field}` | `Copy {field}` |
+| Password visibility toggle | `Pokaż hasło` / `Ukryj hasło` | `Show password` / `Hide password` |
+| Toast dismiss X | `Zamknij powiadomienie` | `Dismiss notification` |
+| Generator popover trigger | `Generuj hasło` | `Generate password` |
+| Generator regenerate (if icon-only) | `Losuj ponownie` | `Regenerate` |
+| Locale switcher | `Zmień język` | `Change language` |
+| "Lock now" action | `Zablokuj teraz` | `Lock now` |
+| Detail-panel edit button (if icon-only) | `Edytuj item` | `Edit item` |
+| Sidebar "+" (new folder/tag) | `Nowy folder` / `Nowy tag` | `New folder` / `New tag` |
+
+A visible `title` tooltip may accompany the `aria-label` but never replaces it. Decorative icons inside labeled controls stay `aria-hidden="true"` (Phase 1 pattern, carried forward).
 
 ### Carried-forward fixes from Phase 1 UI-REVIEW (folded into this phase's shell touches)
 
