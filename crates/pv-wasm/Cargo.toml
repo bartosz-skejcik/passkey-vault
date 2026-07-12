@@ -1,0 +1,18 @@
+[package]
+name = "pv-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "wasm-bindgen bindings for pv-core — thin FFI layer, no crypto logic of its own."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pv-core = { path = "../pv-core" }
+wasm-bindgen = "=0.2.126"
+serde_json.workspace = true
+zeroize = { version = "1", features = ["derive"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
