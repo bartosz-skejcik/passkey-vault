@@ -1,7 +1,8 @@
 ---
 phase: 1
 slug: wasm-crypto-bridge-web-app-shell
-status: draft
+status: approved
+reviewed_at: 2026-07-12
 shadcn_initialized: false
 preset: none
 created: 2026-07-12
