@@ -12,18 +12,25 @@ type LoadState =
 export default function SelfTestCard() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   // `run` is invoked both from the mount effect below and from the "Uruchom
-  // ponownie" retry button — a plain effect-local `cancelled` flag can't
-  // cover the button-triggered call, so use a ref that tracks mount state
-  // across both call sites and guard every post-await setState with it.
-  const mountedRef = useRef(true);
+  // ponownie" retry button. A single persistent `mountedRef` boolean isn't
+  // enough to guard against React Strict Mode's mount -> cleanup -> remount
+  // cycle: cleanup resets it to false, but the next effect setup resets it
+  // back to true before the *stale* run from the first invocation resolves,
+  // so its post-await setState fires anyway. Use a per-invocation
+  // generation counter instead — only the run that owns the *current*
+  // counter value is allowed to commit state, so a stale invocation (from
+  // an unmount, a Strict Mode remount, or a superseded retry click) never
+  // wins the race.
+  const runIdRef = useRef(0);
 
   async function run() {
+    const myRunId = ++runIdRef.current;
     setState({ kind: "loading" });
     try {
       const results = await runSelfTest();
-      if (mountedRef.current) setState({ kind: "results", results });
+      if (runIdRef.current === myRunId) setState({ kind: "results", results });
     } catch (e) {
-      if (mountedRef.current) {
+      if (runIdRef.current === myRunId) {
         setState({
           kind: "fatal",
           error: e instanceof Error ? e.message : String(e),
@@ -33,11 +40,11 @@ export default function SelfTestCard() {
   }
 
   useEffect(() => {
-    mountedRef.current = true;
     run();
-    return () => {
-      mountedRef.current = false;
-    };
+    // Invalidate this invocation's in-flight run without needing a separate
+    // "mounted" concept — a genuine unmount and a Strict Mode remount both
+    // bump runIdRef on the next `run()` call, so only the latest call ever
+    // commits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
