@@ -1,9 +1,9 @@
 ---
 phase: 1
 slug: wasm-crypto-bridge-web-app-shell
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: approved
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-07-12
 ---
 
@@ -38,7 +38,11 @@ created: 2026-07-12
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| *(filled by planner)* | | | UI-01 | | | | | | ⬜ pending |
+| 01-01-01 | 01 | 1 | UI-01 | T-01-01 | Raw key bytes never returned across WASM boundary (opaque handles) | unit | `cargo test -p pv-wasm` | ✅ | ✅ green |
+| 01-01-02 | 01 | 1 | UI-01 | — | Version-pinned reproducible WASM build; single getrandom major | build | `bash scripts/build-wasm.sh && cargo build -p pv-wasm --target wasm32-unknown-unknown --release` | ✅ | ✅ green |
+| 01-02-02 | 02 | 2 | UI-01 | T-02-SC | Static export only (no SSR — zero-knowledge) | build | `cd web && npm run build` | ✅ | ✅ green |
+| 01-03-01 | 03 | 3 | UI-01 | — | lib/crypto sole WASM importer; handles freed on all paths; password zeroized | unit | `cd web && npm test` | ✅ | ✅ green |
+| 01-03-02 | 03 | 3 | UI-01 | — | Self-test round-trip wired to real facade | build+manual | `cd web && npm run build` + human checkpoint (approved 2026-07-12) | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -46,9 +50,9 @@ created: 2026-07-12
 
 ## Wave 0 Requirements
 
-- [ ] `crates/pv-wasm` test module — round-trip unit tests compiled natively (derive → wrap → unwrap → encrypt → decrypt)
-- [ ] `web/` vitest install + config — facade-level tests for `lib/crypto/`
-- [ ] `scripts/build-wasm.sh` — build must succeed as a checkable command
+- [x] `crates/pv-wasm` test module — round-trip unit tests compiled natively (derive → wrap → unwrap → encrypt → decrypt)
+- [x] `web/` vitest install + config — facade-level tests for `lib/crypto/`
+- [x] `scripts/build-wasm.sh` — build must succeed as a checkable command
 
 ---
 
@@ -63,11 +67,23 @@ created: 2026-07-12
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 120s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 120s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-07-12
+
+---
+
+## Validation Audit 2026-07-12
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+
+All automatable UI-01 behaviors covered green (cargo 10 tests, vitest 4 tests, WASM + static-export builds). Visual checks are manual-only and were human-verified at the plan 01-03 blocking checkpoint. Deferred info items from code review (IN-01..IN-06, incl. real-WASM integration test) tracked in 01-REVIEW.md.
