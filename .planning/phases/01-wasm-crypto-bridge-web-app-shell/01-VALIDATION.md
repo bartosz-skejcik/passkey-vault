@@ -57,7 +57,7 @@ created: 2026-07-12
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
 | Themed shell renders correctly (dark default, light toggle) | UI-01 | Visual appearance not assertable in unit tests | `cd web && npm run dev`, load app, toggle theme, compare to docs/UI-DESIGN.md tokens |
-| Crypto self-test card shows all steps ✓ in a real browser | UI-01 | Requires real browser WASM runtime + getrandom wasm_js path | Load home route, observe per-step ✓ results |
+| Crypto self-test card shows all steps ✓ in a real browser | UI-01 | Requires real browser WASM runtime + getrandom 0.2 `js` path | Load home route, observe per-step ✓ results |
 
 ---
 

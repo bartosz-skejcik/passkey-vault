@@ -16,7 +16,7 @@ The web app can load `pv-core`'s crypto entirely inside a WASM boundary, inside 
 ### WASM Boundary & Crypto API
 - Bindings live in a new thin `crates/pv-wasm` crate wrapping pv-core — pv-core stays pure (no wasm-bindgen, no I/O) and auditable.
 - Keys cross the boundary as opaque exported structs (e.g. `WasmUserKey`) — JS holds handles; raw key bytes stay in WASM linear memory, zeroized via explicit `free()`. Satisfies the "no raw key bytes returned across the boundary more than once per operation" success criterion by construction.
-- RNG: `getrandom` with the `wasm_js` feature; salts/nonces generated inside WASM. Build script includes a `cargo tree -i getrandom` duplicate-major audit (research flags this as the top runtime-panic pitfall).
+- RNG: browser RNG enabled via `getrandom` **0.2 `js` feature** (matching pv-core's actual dependency graph: `chacha20poly1305` 0.10.1 → `aead` 0.5.2 → `rand_core` 0.6.4 → `getrandom` 0.2.17, measured via `cargo tree` — the original `wasm_js` wording assumed `getrandom` 0.4 and was corrected during plan verification; the 0.4/`wasm_js` form applies only after the deferred `chacha20poly1305` 0.11 bump); salts/nonces generated inside WASM. Build script includes a `cargo tree -i getrandom` duplicate-major audit (research flags this as the top runtime-panic pitfall).
 - TS facade: singleton `lib/crypto/` module with explicit `initCrypto()` (dynamic WASM import) + typed async wrappers. Only this module imports the wasm package — grep-auditable.
 
 ### Build Pipeline & Layout
@@ -55,7 +55,7 @@ The web app can load `pv-core`'s crypto entirely inside a WASM boundary, inside 
 ### Integration Points
 - pv-wasm depends on pv-core only; exposes wasm-bindgen API mirroring pv-core operations.
 - `web/src/lib/crypto/` imports generated bindings from `web/src/lib/crypto/wasm/` (gitignored build artifact).
-- Research pins (2026-07-12): wasm-bindgen 0.2.126, getrandom 0.4.x (`wasm_js`), Next.js 16.2.x, Tailwind 4.3.x, DaisyUI 5.6.x. Verify current patches at plan time.
+- Research pins (2026-07-12): wasm-bindgen 0.2.126, getrandom 0.2.x (`js` — corrected during plan verification from an initial 0.4.x/`wasm_js` assumption; see the RNG decision bullet above for the measured resolution chain), Next.js 16.2.x, Tailwind 4.3.x, DaisyUI 5.6.x. Verify current patches at plan time.
 
 </code_context>
 

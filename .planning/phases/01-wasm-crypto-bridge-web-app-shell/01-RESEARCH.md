@@ -12,7 +12,7 @@
 **WASM Boundary & Crypto API**
 - Bindings live in a new thin `crates/pv-wasm` crate wrapping pv-core — pv-core stays pure (no wasm-bindgen, no I/O) and auditable.
 - Keys cross the boundary as opaque exported structs (e.g. `WasmUserKey`) — JS holds handles; raw key bytes stay in WASM linear memory, zeroized via explicit `free()`. Satisfies the "no raw key bytes returned across the boundary more than once per operation" success criterion by construction.
-- RNG: `getrandom` with the `wasm_js` feature; salts/nonces generated inside WASM. Build script includes a `cargo tree -i getrandom` duplicate-major audit (research flags this as the top runtime-panic pitfall).
+- RNG: `getrandom` 0.2 with the `js` feature (corrected during plan verification — matches pv-core's measured dependency graph); salts/nonces generated inside WASM. Build script includes a `cargo tree -i getrandom` duplicate-major audit (research flags this as the top runtime-panic pitfall).
 - TS facade: singleton `lib/crypto/` module with explicit `initCrypto()` (dynamic WASM import) + typed async wrappers. Only this module imports the wasm package — grep-auditable.
 
 **Build Pipeline & Layout**
@@ -49,7 +49,7 @@
 
 This phase has one genuinely hard technical risk and one well-trodden path. The hard risk: **Turbopack (Next.js 16's default bundler) does not statically resolve the `new URL('foo_bg.wasm', import.meta.url)` pattern that wasm-bindgen's `--target web` glue code uses internally for its zero-argument `init()`** [CITED: multiple 2026 sources, see below]. This is confirmed across three independent sources (a GitHub discussion on `vercel/next.js`, and two 2026 blog write-ups specifically about Rust/WASM + Next.js 16/Turbopack). The fix is not exotic: `--target web` output's `init()` function accepts an explicit URL/Response/BufferSource argument by design [CITED: wasm-bindgen official docs, "Without a Bundler"] — so the build script copies the compiled `.wasm` binary into `web/public/`, and `lib/crypto/` calls `init('/wasm/pv_wasm_bg.wasm')` explicitly instead of relying on the zero-arg default that Turbopack can't trace. This sidesteps the bundler problem entirely rather than fighting it with `next.config.ts` asset-alias workarounds (which exist for other WASM use cases like Emscripten modules, but are unnecessary here since we already control the JS glue's init call).
 
-The well-trodden path: `wasm-bindgen`/`wasm-bindgen-cli` at the exact-match pinned version (0.2.126, confirmed current via crates.io), `getrandom` 0.4.3 with the `wasm_js` Cargo feature (confirmed sufficient alone — no `RUSTFLAGS` cfg required for this feature specifically, per current docs.rs), and DaisyUI 5's CSS-first `@plugin "daisyui/theme"` syntax (already correctly drafted in `docs/UI-DESIGN.md` §5) are all stable, current, and match what CONTEXT.md already locked in.
+The well-trodden path: `wasm-bindgen`/`wasm-bindgen-cli` at the exact-match pinned version (0.2.126, confirmed current via crates.io), `getrandom` 0.2.x with the `js` Cargo feature — the version actually resolved in this workspace's dependency graph, measured via `cargo tree -i getrandom`: `chacha20poly1305` 0.10.1 → `aead` 0.5.2 → `rand_core` 0.6.4 → `getrandom` 0.2.17 (`getrandom` 0.4.3 exists on crates.io and is the modern `wasm_js`-feature release, but only becomes the correct pin here after a future `chacha20poly1305` 0.10→0.11 bump, deferred per CONTEXT.md's Deferred Ideas — see corrected Standard Stack entry and Assumptions Log A1 below) — and DaisyUI 5's CSS-first `@plugin "daisyui/theme"` syntax (already correctly drafted in `docs/UI-DESIGN.md` §5) are all stable, current, and match what CONTEXT.md already locked in.
 
 **Primary recommendation:** Build `pv-wasm` with `wasm-bindgen --target web`, copy the resulting `.wasm` binary into `web/public/wasm/` (not `lib/crypto/wasm/` as CONTEXT.md's literal wording suggests — see Architecture Patterns for the split), keep the JS/TS glue in `web/src/lib/crypto/wasm/` (gitignored, imported only by `lib/crypto/`), and call `init('/wasm/pv_wasm_bg.wasm')` explicitly in `initCrypto()` to bypass Turbopack's unresolved WASM-asset-detection gap.
 
@@ -71,7 +71,7 @@ The well-trodden path: `wasm-bindgen`/`wasm-bindgen-cli` at the exact-match pinn
 |---------|---------|---------|--------------|
 | `wasm-bindgen` (crate) | 0.2.126 [VERIFIED: crates.io, published 2026-06-24] | Rust↔JS glue macro for `pv-wasm` | Canonical Rust WASM interop; the crate/CLI schema is versioned and must match exactly |
 | `wasm-bindgen-cli` | 0.2.126 (exact match to crate) [VERIFIED: crates.io] | Generates JS/TS glue + `.wasm` from `cargo build --target wasm32-unknown-unknown` output | Direct invocation (not `wasm-pack`) — see Alternatives |
-| `getrandom` | 0.4.3 [VERIFIED: crates.io, published 2026-06-17] | RNG backend for `pv-core`'s `OsRng`/`rand_core` on `wasm32-unknown-unknown` | `wasm_js` feature routes to `Crypto.getRandomValues` — the only correct browser RNG source |
+| `getrandom` | 0.2.17 (resolved; measured via `cargo tree -i getrandom`: `chacha20poly1305` 0.10.1 → `aead` 0.5.2 → `rand_core` 0.6.4 → `getrandom` 0.2.17) [CORRECTED — see Assumptions Log A1] | RNG backend for `pv-core`'s `OsRng`/`rand_core` on `wasm32-unknown-unknown` | `js` feature routes to `Crypto.getRandomValues` — the only correct browser RNG source for this crate's actual resolved major (0.4.3's `wasm_js` feature is the modern equivalent but not what this dependency graph resolves to until a future `chacha20poly1305` 0.11 bump) |
 | `next` | 16.2.10 [VERIFIED: npm registry `latest` dist-tag] | Web app framework, static export | Matches locked decision; `15.5.20` exists only on the `backport` dist-tag (maintenance-only) |
 | `react` / `react-dom` | 19.2.7 [VERIFIED: npm registry] | UI library (Next 16 peer requirement) | — |
 | `typescript` | 7.0.2 [VERIFIED: npm registry] | Type checking | Current major; use with `create-next-app`'s TS template |
@@ -180,7 +180,7 @@ crates/
 ├── pv-core/                  # unchanged — pure crypto, no wasm-bindgen
 ├── pv-server/                # unchanged this phase
 └── pv-wasm/                  # NEW — thin wasm-bindgen binding crate
-    ├── Cargo.toml             # depends on pv-core (path) + wasm-bindgen + getrandom(wasm_js)
+    ├── Cargo.toml             # depends on pv-core (path) + wasm-bindgen + getrandom(0.2, js)
     └── src/
         └── lib.rs             # #[wasm_bindgen] opaque structs + fns mirroring pv-core ops
 
@@ -369,14 +369,15 @@ async function run() {
 }
 ```
 
-### getrandom wasm_js Cargo feature (pv-wasm's Cargo.toml)
+### getrandom js feature (pv-wasm's Cargo.toml) — CORRECTED, see Assumptions Log A1
 ```toml
-# Source: docs.rs/getrandom/latest/getrandom — "enable the wasm_js crate feature"
-# The Cargo feature alone is sufficient for 0.4.x; no RUSTFLAGS/.cargo/config.toml
-# cfg flag is required for wasm_js specifically (that mechanism is for OPT-IN
-# backends like rdrand/linux_getrandom, not the default web backend).
+# Source: measured via `cargo tree -i getrandom --target wasm32-unknown-unknown -p pv-wasm`
+# pv-core's chacha20poly1305::aead::OsRng resolves through chacha20poly1305 0.10.1 ->
+# aead 0.5.2 -> rand_core 0.6.4 -> getrandom 0.2.17 (NOT the 0.4.x line). getrandom 0.2's
+# `js` feature (renamed to `wasm_js` starting in 0.3) is what must be enabled here.
+# getrandom 0.4/wasm_js only applies once chacha20poly1305 is bumped to 0.11 (deferred).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.4", features = ["wasm_js"] }
+getrandom = { version = "0.2", features = ["js"] }
 ```
 
 ## State of the Art
@@ -384,7 +385,7 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 | Old Approach | Current Approach | When Changed | Impact |
 |--------------|-------------------|---------------|--------|
 | Webpack 5 as Next.js default bundler (special-cases `new URL(..., import.meta.url)` for WASM) | Turbopack as Next.js 16 default (does not yet special-case this pattern) | Next.js 16.0 (Turbopack became default) | Any wasm-bindgen tutorial/example written before ~2025 that relies on `init()`'s zero-arg default will silently break under a fresh Next.js 16 scaffold; must use explicit-URL `init()` pattern from day one of this phase |
-| `getrandom` 0.2.x `js` feature | `getrandom` 0.4.x `wasm_js` feature | renamed across 0.2→0.3→0.4 | Any tutorial/AI-generated snippet referencing `features = ["js"]` is stale; `.planning/research/PITFALLS.md` and `STACK.md` already flag this |
+| `getrandom` 0.2.x `js` feature | `getrandom` 0.4.x `wasm_js` feature | renamed across 0.2→0.3→0.4 | The 0.4.x/`wasm_js` line is the modern API and the general-purpose guidance for new projects, but this workspace's actual dependency graph (measured via `cargo tree`) resolves `pv-core`'s `OsRng` usage to `getrandom` 0.2.17 via `chacha20poly1305` 0.10.1 → `aead` 0.5.2 → `rand_core` 0.6.4, so `pv-wasm`'s `Cargo.toml` must pin `getrandom = { version = "0.2", features = ["js"] }` until a future `chacha20poly1305` 0.11 bump (deferred, see CONTEXT.md Deferred Ideas) moves the resolved chain onto `getrandom` 0.4 — see corrected Standard Stack entry and Assumptions Log A1 |
 | `tailwind.config.js` `daisyui.themes` array | `@plugin "daisyui/theme" { ... }` in CSS | DaisyUI 5 (2025) | Already correctly reflected in `docs/UI-DESIGN.md` — no drift to correct here, just confirming currency |
 
 **Deprecated/outdated:**
@@ -394,18 +395,20 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 
 | # | Claim | Section | Risk if Wrong |
 |---|-------|---------|----------------|
-| A1 | `getrandom` 0.4.x's `wasm_js` feature requires no additional `RUSTFLAGS`/`.cargo/config.toml` cfg flag (contradicted by one lower-confidence WebSearch snippet that suggested a `getrandom_backend="wasm_js"` cfg is needed) — this research's docs.rs fetch is the higher-confidence, more current source and states the Cargo feature alone is sufficient | Code Examples, Common Pitfalls | If wrong: WASM build compiles but panics at runtime with "unsupported target" when `pv-wasm` calls into `OsRng`. Low-cost to verify — the very first `cargo build -p pv-wasm --target wasm32-unknown-unknown` in this phase will either work or fail loudly; not a silent risk. Planner should add a smoke-test task early (build + load in browser) before building out the full self-test UI. |
+| A1 | **CORRECTED (plan-verification pass, superseding the original claim below):** this research originally assumed `getrandom` 0.4.x's `wasm_js` feature was the correct pin, based on `getrandom` being a direct dependency choice rather than measuring the actual resolved graph. Live measurement (`cargo tree -i getrandom` against this workspace's `Cargo.lock`) shows `pv-core`'s `chacha20poly1305::aead::OsRng` resolves through `chacha20poly1305` 0.10.1 → `aead` 0.5.2 → `rand_core` 0.6.4 → `getrandom` 0.2.17 — NOT 0.4.x. `cargo build -p pv-core --target wasm32-unknown-unknown` with a `getrandom = "0.4"` pin fails at compile time with `getrandom` 0.2's `compile_error!` demanding the `js` feature, because Cargo does not unify features across semver-incompatible majors (a `0.4`/`wasm_js` pin creates an unrelated second `getrandom` major rather than satisfying the 0.2.17 resolution). The correct pin is `getrandom = { version = "0.2", features = ["js"] }`; `0.4`/`wasm_js` only becomes correct after a future `chacha20poly1305` 0.10→0.11 bump (deferred). Original (superseded) claim: "`getrandom` 0.4.x's `wasm_js` feature requires no additional `RUSTFLAGS`/`.cargo/config.toml` cfg flag... the Cargo feature alone is sufficient" — this was true in isolation but irrelevant, since 0.4.x is not the version actually resolved in this dependency graph. | Code Examples, Common Pitfalls, Standard Stack | Resolved — see 01-01-PLAN.md Task 1/Task 2 for the corrected pin and build-time audit. No remaining risk: the fix is a one-line `Cargo.toml` dependency version change, verified by `cargo build -p pv-wasm --target wasm32-unknown-unknown`. |
 | A2 | The exact `init('/wasm/pv_wasm_bg.wasm')` explicit-URL pattern resolves Turbopack's asset-detection gap in Next.js 16.2.x specifically (verified against wasm-bindgen's own documented `init()` API, but not executed end-to-end against a live Turbopack 16.2 build in this research session) | Summary, Architecture Patterns Pattern 1, Pitfall 1 | If wrong (e.g. Turbopack also intercepts and mis-resolves the runtime `fetch('/wasm/...')` call, not just the build-time `new URL` pattern): the fallback is `next dev --webpack` / a Turbopack-disabling flag for local dev, or serving the `.wasm` from an explicit Next.js Route Handler — both add complexity CONTEXT.md's static-export-only architecture doesn't currently need. Should be the very first thing verified when this phase starts execution (a minimal `init()` + one exported function call, before building the full self-test UI). |
 | A3 | `lucide-react` 1.24.0 and `next`/`tailwindcss`/`daisyui`'s `[SUS]` "too-new" verdicts are recency-heuristic false positives, not actual legitimacy concerns (based on download counts and matching established source repos, not an independent trust audit of this specific patch release) | Package Legitimacy Audit | Low — these are among the most widely-used packages in the JS ecosystem; a supply-chain compromise of any of them would be a major, immediately-public incident, not a silent risk specific to this project. Per protocol, planner still gates the `npm install` behind a `checkpoint:human-verify` task. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Exact `pv-wasm` exported function/struct surface for the self-test round-trip**
+   - RESOLVED: resolved by Plan 01-01's Task 1, which specifies the concrete exported API (`WasmWrappingKey::fromPassword`, `WasmUserKey::generate`, `wrapUserKey`/`unwrapUserKey`, `encryptItem`/`decryptItem`, `defaultKdfParamsJson`, `randomSalt`) — see 01-01-PLAN.md Task 1 `<action>`.
    - What we know: the round-trip is derive → wrap → unwrap → encrypt → decrypt, mapping directly onto `pv-core`'s existing `kdf::wrapping_key_from_password`, `keys::wrap_user_key`/`unwrap_user_key`, `items::encrypt_item`/`decrypt_item`.
    - What's unclear: exact TS type shapes and whether intermediate values (e.g. the wrapped-key blob) are returned as opaque handles too, or as serializable JSON (safe, since `WrappedKey` is ciphertext, not secret) — CONTEXT.md explicitly leaves this to Claude's discretion.
    - Recommendation: `WrappedKey`-shaped return values (nonce + ciphertext, already `Serialize`/`Deserialize` in `pv-core`) can safely cross the boundary as plain JS objects since they're not secret; only `UserKey`/derived-key material needs the opaque-handle treatment. Planner should design the `pv-wasm` API surface as the first concrete task of this phase.
 
 2. **Whether the `.wasm` binary needs a cache-busting filename or explicit no-cache header from the static export**
+   - RESOLVED: deferred to Phase 7 (Self-Host Packaging) deployment/cache-header research; non-blocking for Phase 1's local-iteration scope.
    - What we know: `wasm-bindgen`'s output filename includes a content hash suffix already in some configurations, but not universally, and this phase serves the export via `next dev`/local static preview only (axum `ServeDir` integration is Phase 7).
    - What's unclear: whether a stale-cached `.wasm` in `public/wasm/` could cause a version mismatch between the JS glue and the binary during local iteration.
    - Recommendation: not a blocking concern for this phase (single-developer local iteration); flag for Phase 7's deployment research to set appropriate cache headers on the static export.
