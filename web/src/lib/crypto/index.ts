@@ -60,6 +60,13 @@ export async function runSelfTest(): Promise<StepResult[]> {
 
   const results: StepResult[] = [];
 
+  // Password crosses the WASM boundary as raw bytes (never a `&str`/String)
+  // per CLAUDE.md's "no String/Vec<u8> for keys/passwords" rule — the
+  // wasm-bindgen side zeroes its copy on the way out (and, via mutable-slice
+  // copy-back, this JS-side view too), so we also zero it explicitly here
+  // as defense in depth.
+  const passwordBytes = new TextEncoder().encode(SELF_TEST_PASSWORD);
+
   let wrappingKey: WasmWrappingKey | undefined;
   let userKey: WasmUserKey | undefined;
   // Deliberately re-unwrap and use THIS handle (not the original `userKey`)
@@ -70,7 +77,7 @@ export async function runSelfTest(): Promise<StepResult[]> {
     try {
       const salt = new Uint8Array(randomSalt(16));
       wrappingKey = WasmWrappingKey.fromPassword(
-        SELF_TEST_PASSWORD,
+        passwordBytes,
         salt,
         defaultKdfParamsJson(),
       );
@@ -135,6 +142,7 @@ export async function runSelfTest(): Promise<StepResult[]> {
     // Rust-side Zeroize/Drop glue deterministically instead of relying on
     // the non-deterministic FinalizationRegistry. The optional `?.free?.()`
     // call also tolerates plain test doubles that don't implement `.free()`.
+    passwordBytes.fill(0);
     unwrappedKey?.free?.();
     userKey?.free?.();
     wrappingKey?.free?.();

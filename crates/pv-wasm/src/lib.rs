@@ -62,16 +62,23 @@ pub struct WasmWrappingKey([u8; KEY_LEN]);
 
 #[wasm_bindgen]
 impl WasmWrappingKey {
+    /// `password` is a caller-owned byte buffer (JS `Uint8Array`), never a
+    /// `&str`/String — per CLAUDE.md's "no String/Vec<u8> for keys/passwords"
+    /// rule. wasm-bindgen marshals `&mut [u8]` by copying the JS array into
+    /// WASM linear memory and copying it back out after the call, so
+    /// zeroizing it here also wipes the caller's JS-side view; the caller is
+    /// still responsible for not retaining any other copy of the password.
     #[wasm_bindgen(js_name = fromPassword)]
     pub fn from_password(
-        password: &str,
+        password: &mut [u8],
         salt: &[u8],
         kdf_params_json: &str,
     ) -> Result<WasmWrappingKey, JsValue> {
         let params: KdfParams = serde_json::from_str(kdf_params_json)
             .map_err(|e| to_js_str_err(&e.to_string()))?;
-        let wk = wrapping_key_from_password(password.as_bytes(), salt, &params)
-            .map_err(to_js_err)?;
+        let result = wrapping_key_from_password(password, salt, &params).map_err(to_js_err);
+        password.zeroize(); // wipe the WASM-side (and, via copy-back, JS-side) copy regardless of outcome
+        let wk = result?;
         Ok(WasmWrappingKey(*wk))
     }
 }
@@ -140,7 +147,8 @@ mod tests {
     fn full_roundtrip() {
         let salt = pv_core::keys::random_bytes(16);
         let kdf_json = default_kdf_params_json();
-        let wrapping_key = WasmWrappingKey::from_password("test-password", &salt, &kdf_json)
+        let mut password = b"test-password".to_vec();
+        let wrapping_key = WasmWrappingKey::from_password(&mut password, &salt, &kdf_json)
             .expect("from_password should succeed");
         let user_key = WasmUserKey::generate();
         let wrapped_json = wrap_user_key(&wrapping_key, &user_key).expect("wrap should succeed");
@@ -156,13 +164,16 @@ mod tests {
     fn wrong_password_fails_to_unwrap() {
         let salt = pv_core::keys::random_bytes(16);
         let kdf_json = default_kdf_params_json();
-        let wrapping_key = WasmWrappingKey::from_password("correct-password", &salt, &kdf_json)
-            .expect("from_password should succeed");
+        let mut correct_password = b"correct-password".to_vec();
+        let wrapping_key =
+            WasmWrappingKey::from_password(&mut correct_password, &salt, &kdf_json)
+                .expect("from_password should succeed");
         let user_key = WasmUserKey::generate();
         let wrapped_json = wrap_user_key(&wrapping_key, &user_key).expect("wrap should succeed");
 
+        let mut different_password = b"different-password".to_vec();
         let other_wrapping_key =
-            WasmWrappingKey::from_password("different-password", &salt, &kdf_json)
+            WasmWrappingKey::from_password(&mut different_password, &salt, &kdf_json)
                 .expect("from_password should succeed");
         let result = unwrap_user_key(&other_wrapping_key, &wrapped_json);
         assert!(result.is_err());
