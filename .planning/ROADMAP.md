@@ -13,7 +13,7 @@ v0.1 delivers a self-hostable, zero-knowledge password manager (server + web app
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: WASM Crypto Bridge & Web App Shell** - Bridge `pv-core` to WASM behind a themed Next.js shell; prove a full crypto round-trip through the choke-point module
+- [x] **Phase 1: WASM Crypto Bridge & Web App Shell** - Bridge `pv-core` to WASM behind a themed Next.js shell; prove a full crypto round-trip through the choke-point module (completed 2026-07-12)
 - [ ] **Phase 2: Password Auth & Vault Core** - Register, log in with a master password, and fully manage an encrypted vault of items — the first real end-to-end zero-knowledge slice
 - [ ] **Phase 3: Passkey Enrollment & Account Security** - Enroll a PRF passkey, manage passkeys/sessions, with the recovery invariant server-enforced
 - [ ] **Phase 4: PRF Unlock & Login Unification** - Log in and unlock the vault in one passkey gesture, with an honest fallback when PRF isn't available
@@ -36,11 +36,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A demoable round-trip (derive a key, wrap it, unwrap it, encrypt+decrypt a sample item) succeeds entirely inside `lib/crypto/`, the sole module importing the WASM bindings
   4. No raw key bytes are ever returned across the WASM boundary more than once per operation (grep-auditable: only `lib/crypto/` imports the wasm package)
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 
 - [x] 01-01-PLAN.md
 - [x] 01-02-PLAN.md
-- [ ] 01-03-PLAN.md
+- [x] 01-03-PLAN.md
 
 **UI hint**: yes
 
@@ -145,7 +145,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. WASM Crypto Bridge & Web App Shell | 2/3 | In Progress|  |
+| 1. WASM Crypto Bridge & Web App Shell | 3/3 | Complete   | 2026-07-12 |
 | 2. Password Auth & Vault Core | 0/TBD | Not started | - |
 | 3. Passkey Enrollment & Account Security | 0/TBD | Not started | - |
 | 4. PRF Unlock & Login Unification | 0/TBD | Not started | - |
