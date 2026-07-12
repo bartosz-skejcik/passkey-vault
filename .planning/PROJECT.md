@@ -22,6 +22,7 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 - ✓ Zeroize/ZeroizeOnDrop na wszystkich materiałach kluczowych — existing
 - ✓ Szkielet serwera axum + SQLx/SQLite, migracja 0001, endpoint prelogin (KDF params + salt) — existing
 - ✓ pv-core kompilowalny do WASM (bez I/O) — współdzielenie krypto z klientami — existing
+- ✓ Most WASM: crate `pv-wasm` (opaque-handle keys, klucze nigdy nie opuszczają pamięci WASM) + themed shell Next.js 16 (static export, DaisyUI vault-dark/vault-light) + choke-point `lib/crypto/` z działającym round-tripem w przeglądarce — Phase 1 (UI-01)
 
 ### Active
 
@@ -31,7 +32,7 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 - [ ] Rejestracja + logowanie hasłem (hash-po-KDF, hasło nigdy nie leci na serwer)
 - [ ] **PRF unlock**: enrollment passkeya z rozszerzeniem PRF + odblokowanie vaulta passkeyem (webauthn-rs po stronie RP)
 - [ ] Recovery obowiązkowe: User Key zawsze wrapowany też pod master password — UI wymusza, żeby passkey nigdy nie był jedyną kopią klucza
-- [ ] Web app (Next.js 15 + Tailwind v4 + DaisyUI 5, theme datafa.st) z krypto w pv-core→WASM
+- [ ] Web app (Next.js 16 + Tailwind v4 + DaisyUI 5, theme datafa.st) z krypto w pv-core→WASM — shell + krypto gotowe (Phase 1), ekrany funkcjonalne w Phases 2–6
 - [ ] Sync revision-based (GET/PUT /sync) + WebSocket push
 - [ ] Import z Bitwardena (JSON) i CSV — przetwarzanie klientowe
 - [ ] Wbudowany TOTP (generowanie kodów w vaulcie)
@@ -86,6 +87,11 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 | Konta osobiste + rodzina w v1 (bez organizacji) | Sharing linkami + współdzielenie rodzinne wystarcza self-hosterom; organizacje odsuwałyby MVP | — Pending |
 | Załączniki: trait storage + implementacja dyskowa w v1 | Utrzymuje "1 kontener" bez wymuszania S3/Appwrite; backend S3 dodawalny później bez migracji | — Pending |
 | Extension: WXT z dual-output Chrome + Firefox | Plasmo martwy; Chrome+Firefox to część pozycji rynkowej | — Pending |
+| Next.js 16 (nie 15) + wyłącznie static export | 15 tylko w maintenance; breaking changes 16 nie dotyczą static exportu; SSR = naruszenie zero-knowledge | ✓ Good (Phase 1) |
+| pv-wasm: osobny crate bindingów, opaque-handle keys | pv-core zostaje czysty/audytowalny; surowe bajty kluczy nigdy nie przekraczają granicy WASM | ✓ Good (Phase 1) |
+| getrandom 0.2 `js` (nie 0.4 `wasm_js`) | Zmierzony graf zależności: chacha20poly1305 0.10→rand_core 0.6→getrandom 0.2.17; 0.4/wasm_js dopiero po odroczonym bumpie chacha 0.11 | ✓ Good (Phase 1) |
+| TypeScript 5.9.3 (nie 7.x) | TS7 eksportuje natywny kompilator (Go) — łamie classic Compiler API workera Next.js 16 | ✓ Good (Phase 1) |
+| Tailwind v4 wymaga @tailwindcss/postcss pod Turbopackiem | Bez pluginu dyrektywy CSS-first cicho nie kompilują się (build przechodzi, strona bez styli) — złapane na ludzkim checkpoincie | ✓ Good (Phase 1) |
 
 ## Evolution
 
@@ -105,4 +111,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-12 after initialization*
+*Last updated: 2026-07-12 after Phase 1 (WASM Crypto Bridge & Web App Shell)*

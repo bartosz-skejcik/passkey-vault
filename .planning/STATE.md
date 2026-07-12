@@ -4,8 +4,8 @@ milestone: v0.1
 milestone_name: milestone
 current_phase: 2
 current_phase_name: Password Auth & Vault Core
-status: verifying
-stopped_at: Phase 1 UI-SPEC approved
+status: planning
+stopped_at: Phase 1 complete, ready to plan Phase 2
 last_updated: "2026-07-12T20:13:58.611Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 1 complete, transitioned to Phase 2
@@ -24,16 +24,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-12)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 1 — WASM Crypto Bridge & Web App Shell
+**Current focus:** Phase 2 — Password Auth & Vault Core
 
 ## Current Position
 
 Phase: 2 — Password Auth & Vault Core
 Plan: Not started
-Status: Phase complete — ready for verification
+Status: Ready to plan
 Last activity: 2026-07-12 — Phase 1 complete, transitioned to Phase 2
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 14% (1/7 phases)
 
 ## Performance Metrics
 
@@ -86,7 +86,6 @@ None yet.
 [Issues that affect future work]
 
 - Research flags PRF browser/OS support matrix as a moving target — re-verify current-state support at Phase 3/4 planning time, not from the 2026-07-12 research snapshot.
-- Research flags Next.js 15 vs 16 as an explicit pre-Phase-1 decision (leaning 16 given static-export migration cost); confirm at Phase 1 planning.
 - REQUIREMENTS.md contains 30 v1 requirement IDs (not 28) — roadmap coverage validated against the actual file (30/30 mapped).
 
 ## Deferred Items
@@ -99,6 +98,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-12T19:37:40.245Z
-Stopped at: Phase 1 UI-SPEC approved
-Resume file: .planning/phases/01-wasm-crypto-bridge-web-app-shell/01-UI-SPEC.md
+Last session: 2026-07-12
+Stopped at: Phase 1 complete, ready to plan Phase 2
+Resume file: None
