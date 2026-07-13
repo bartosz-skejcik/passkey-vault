@@ -24,11 +24,28 @@ pub fn router(state: AppState) -> Router {
         .route("/api/vault/folders", get(folders::list).post(folders::create))
         .route("/api/vault/folders/{id}", delete(folders::delete))
         .with_state(state)
-        // Permissive CORS is a dev-mode-only convenience: Phase 7's Docker
-        // packaging serves both the API and the static web export from one
-        // origin in production, so there is no cross-origin surface to guard
-        // once packaged.
-        .layer(CorsLayer::permissive())
+        .layer(cors_layer())
+}
+
+/// Permissive CORS is a dev-mode-only convenience: Phase 7's Docker
+/// packaging serves both the API and the static web export from one origin
+/// in production, so there is no cross-origin surface to guard once
+/// packaged. Before that lands, unconditionally applying `permissive()`
+/// would silently reopen an unrestricted cross-origin surface for any
+/// topology that isn't single-origin yet (reverse-proxy misconfiguration, a
+/// separate dev/staging split, a mobile/extension client) — so it's gated
+/// behind an explicit opt-in env var (WR-09) rather than always-on. Set
+/// `PV_DEV_CORS=1` for local frontend-against-separate-origin dev only.
+fn cors_layer() -> CorsLayer {
+    let dev_cors_enabled = std::env::var("PV_DEV_CORS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if dev_cors_enabled {
+        CorsLayer::permissive()
+    } else {
+        CorsLayer::new()
+    }
 }
 
 async fn healthz() -> Json<serde_json::Value> {
