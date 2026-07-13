@@ -42,6 +42,7 @@ pub struct CreateItemRequest {
 pub struct CreateItemResponse {
     pub id: String,
     pub revision: i64,
+    pub updated_at: String,
 }
 
 pub(crate) fn validate_blob_len(field: &'static str, value: &str) -> Result<(), ApiError> {
@@ -66,22 +67,31 @@ pub async fn create(
     // ON CONFLICT guard keeps creation atomic/race-free rather than trusting
     // client-side id uniqueness alone (collisions astronomically unlikely
     // for client-generated UUIDv4s, but the guard is cheap and correct).
+    // RETURNING updated_at yields no row when the ON CONFLICT DO NOTHING arm
+    // fires, so fetch_optional's None is the exact same "conflict" signal
+    // execute()'s rows_affected() == 0 used to be.
     let result = sqlx::query(
         "INSERT INTO vault_items (id, user_id, enc_key, enc_data, revision) VALUES (?, ?, ?, ?, 1) \
-         ON CONFLICT(id) DO NOTHING",
+         ON CONFLICT(id) DO NOTHING \
+         RETURNING updated_at",
     )
     .bind(&req.id)
     .bind(&session.user_id)
     .bind(&req.enc_key)
     .bind(&req.enc_data)
-    .execute(&state.db)
+    .fetch_optional(&state.db)
     .await?;
 
-    if result.rows_affected() == 0 {
-        return Err(ApiError::Conflict("item id already exists".into()));
-    }
+    let row = match result {
+        Some(row) => row,
+        None => return Err(ApiError::Conflict("item id already exists".into())),
+    };
+    let updated_at: String = row.try_get("updated_at").map_err(|_| ApiError::Internal)?;
 
-    Ok((StatusCode::CREATED, Json(CreateItemResponse { id: req.id, revision: 1 })))
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateItemResponse { id: req.id, revision: 1, updated_at }),
+    ))
 }
 
 #[derive(Serialize)]
@@ -90,15 +100,18 @@ pub struct VaultItem {
     pub enc_key: String,
     pub enc_data: String,
     pub revision: i64,
+    pub updated_at: String,
 }
 
 /// `GET /api/vault/items` — only the authenticated user's items, never a
 /// client-supplied user id.
 pub async fn list(State(state): State<AppState>, session: SessionUser) -> Result<Json<Vec<VaultItem>>, ApiError> {
-    let rows = sqlx::query("SELECT id, enc_key, enc_data, revision FROM vault_items WHERE user_id = ?")
-        .bind(&session.user_id)
-        .fetch_all(&state.db)
-        .await?;
+    let rows = sqlx::query(
+        "SELECT id, enc_key, enc_data, revision, updated_at FROM vault_items WHERE user_id = ?",
+    )
+    .bind(&session.user_id)
+    .fetch_all(&state.db)
+    .await?;
 
     let items = rows
         .into_iter()
@@ -108,6 +121,7 @@ pub async fn list(State(state): State<AppState>, session: SessionUser) -> Result
                 enc_key: row.try_get("enc_key").map_err(|_| ApiError::Internal)?,
                 enc_data: row.try_get("enc_data").map_err(|_| ApiError::Internal)?,
                 revision: row.try_get("revision").map_err(|_| ApiError::Internal)?,
+                updated_at: row.try_get("updated_at").map_err(|_| ApiError::Internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
@@ -125,12 +139,16 @@ pub struct UpdateItemRequest {
 #[derive(Serialize)]
 pub struct UpdateItemResponse {
     pub revision: i64,
+    pub updated_at: String,
 }
 
 /// `PUT /api/vault/items/{id}` — single-statement optimistic-concurrency
 /// update (RESEARCH.md Pattern 3): no separate SELECT-then-UPDATE race
-/// window. `rows_affected() == 0` is disambiguated by a follow-up SELECT
-/// into "doesn't exist / not yours" (404) vs. "stale revision" (409).
+/// window. A `None` from `RETURNING updated_at` (no row matched
+/// id+user_id+revision) is disambiguated by a follow-up SELECT into
+/// "doesn't exist / not yours" (404) vs. "stale revision" (409) — the same
+/// disambiguation `rows_affected() == 0` drove before this change, only the
+/// zero-rows signal now comes from `fetch_optional` returning `None`.
 pub async fn update(
     State(state): State<AppState>,
     session: SessionUser,
@@ -142,29 +160,34 @@ pub async fn update(
 
     let result = sqlx::query(
         "UPDATE vault_items SET enc_key = ?, enc_data = ?, revision = revision + 1, updated_at = datetime('now') \
-         WHERE id = ? AND user_id = ? AND revision = ?",
+         WHERE id = ? AND user_id = ? AND revision = ? \
+         RETURNING updated_at",
     )
     .bind(&req.enc_key)
     .bind(&req.enc_data)
     .bind(&id)
     .bind(&session.user_id)
     .bind(req.expected_revision)
-    .execute(&state.db)
+    .fetch_optional(&state.db)
     .await?;
 
-    if result.rows_affected() == 0 {
-        let exists = sqlx::query("SELECT 1 FROM vault_items WHERE id = ? AND user_id = ?")
-            .bind(&id)
-            .bind(&session.user_id)
-            .fetch_optional(&state.db)
-            .await?;
-        return match exists {
-            Some(_) => Err(ApiError::Conflict("stale revision".into())),
-            None => Err(ApiError::NotFound),
-        };
-    }
+    let row = match result {
+        Some(row) => row,
+        None => {
+            let exists = sqlx::query("SELECT 1 FROM vault_items WHERE id = ? AND user_id = ?")
+                .bind(&id)
+                .bind(&session.user_id)
+                .fetch_optional(&state.db)
+                .await?;
+            return match exists {
+                Some(_) => Err(ApiError::Conflict("stale revision".into())),
+                None => Err(ApiError::NotFound),
+            };
+        }
+    };
+    let updated_at: String = row.try_get("updated_at").map_err(|_| ApiError::Internal)?;
 
-    Ok(Json(UpdateItemResponse { revision: req.expected_revision + 1 }))
+    Ok(Json(UpdateItemResponse { revision: req.expected_revision + 1, updated_at }))
 }
 
 /// `DELETE /api/vault/items/{id}` — permanent delete (no trash/soft-delete

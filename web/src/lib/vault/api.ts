@@ -10,6 +10,7 @@ export interface ItemRow {
   enc_key: string;
   enc_data: string;
   revision: number;
+  updated_at: string;
 }
 
 /** Wire shape of a single folder row as returned by GET /api/vault/folders. */
@@ -51,7 +52,7 @@ export function createItem(
   id: string,
   encKey: string,
   encData: string,
-): Promise<{ id: string; revision: number }> {
+): Promise<{ id: string; revision: number; updated_at: string }> {
   return apiJson("/api/vault/items", {
     method: "POST",
     body: JSON.stringify({ id, enc_key: encKey, enc_data: encData }),
@@ -63,7 +64,7 @@ export function updateItem(
   encKey: string,
   encData: string,
   expectedRevision: number,
-): Promise<{ revision: number }> {
+): Promise<{ revision: number; updated_at: string }> {
   return apiJson(`/api/vault/items/${id}`, {
     method: "PUT",
     body: JSON.stringify({

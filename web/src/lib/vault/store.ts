@@ -148,7 +148,7 @@ function decryptItemRow(row: ItemRow, uk: WasmUserKey): VaultItem {
   // normalizeItemFields migrates a legacy login item's bare `url: string`
   // into `urls: string[]` — the only place that legacy shape is ever read.
   const fields = normalizeItemFields(JSON.parse(plaintext) as ItemFields);
-  return { id: row.id, revision: row.revision, fields };
+  return { id: row.id, revision: row.revision, fields, updatedAt: row.updated_at };
 }
 
 function decryptFolderRow(row: FolderRow, uk: WasmUserKey): Folder {
@@ -185,8 +185,8 @@ export async function createVaultItem(fields: ItemFields): Promise<VaultItem> {
   const plaintext = JSON.stringify(fields);
   const combined = encryptItem(uk, plaintext, id, 1);
   const { encKey, encData } = splitCombinedEncryptedItem(combined);
-  await createItem(id, encKey, encData);
-  const item: VaultItem = { id, revision: 1, fields };
+  const created = await createItem(id, encKey, encData);
+  const item: VaultItem = { id, revision: 1, fields, updatedAt: created.updated_at };
   items = [...items, item];
   recomputeAllTags();
   notifyListeners();
@@ -237,8 +237,9 @@ export async function updateVaultItem(
   const plaintext = JSON.stringify(fields);
   const combined = encryptItem(uk, plaintext, id, newRevision);
   const { encKey, encData } = splitCombinedEncryptedItem(combined);
+  let response: { revision: number; updated_at: string };
   try {
-    await updateItem(id, encKey, encData, currentRevision);
+    response = await updateItem(id, encKey, encData, currentRevision);
   } catch (err) {
     if (isConflictError(err)) {
       await loadAndDecryptAll();
@@ -246,7 +247,7 @@ export async function updateVaultItem(
     }
     throw err;
   }
-  const updated: VaultItem = { id, revision: newRevision, fields };
+  const updated: VaultItem = { id, revision: newRevision, fields, updatedAt: response.updated_at };
   const existingIndex = items.findIndex((item) => item.id === id);
   items =
     existingIndex === -1

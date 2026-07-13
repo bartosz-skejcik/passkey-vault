@@ -123,6 +123,11 @@ export const DICTIONARY = {
   "generator.modeCharacter": { pl: "Znaki", en: "Characters" },
   "generator.modePassphrase": { pl: "Passphrase", en: "Passphrase" },
 
+  "time.justNow": { pl: "Przed chwilą", en: "Just now" },
+  "time.minutesAgo": { pl: "{n} min temu", en: "{n}m ago" },
+  "time.hoursAgo": { pl: "{n} godz. temu", en: "{n}h ago" },
+  "time.daysAgo": { pl: "{n} dni temu", en: "{n}d ago" },
+
   "autolock.label": { pl: "Blokuj po bezczynności", en: "Lock after inactivity" },
   "clipboard.durationLabel": {
     pl: "Czyszczenie schowka po",

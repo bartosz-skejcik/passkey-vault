@@ -4,6 +4,7 @@ import { CreditCard, IdCard, StickyNote, Vault } from "lucide-react";
 import type { ItemType, VaultItem } from "@/lib/vault/types";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import type { DICTIONARY } from "@/lib/i18n/dictionary";
+import { formatRelativeTime } from "@/lib/format/relativeTime";
 
 // Documented decision (T-02-18): no per-domain favicon fetch of any kind
 // exists anywhere in this directory — the neutral type-icon alone satisfies
@@ -33,10 +34,11 @@ export default function ItemRow({
   selected: boolean;
   onClick: () => void;
 }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const Icon = TYPE_ICON[item.fields.type];
   const typeLabel = t(TYPE_LABEL_KEY[item.fields.type]);
   const subtitle = item.fields.type === "login" ? item.fields.username : typeLabel;
+  const relativeTime = formatRelativeTime(item.updatedAt, t, locale);
 
   return (
     <button
@@ -58,16 +60,11 @@ export default function ItemRow({
         <span className="truncate text-sm text-base-content/60">{subtitle}</span>
       </span>
 
-      <span className="badge badge-sm gap-1 whitespace-nowrap bg-base-200 text-base-content/70">
-        <Icon size={12} aria-hidden="true" />
-        {typeLabel}
-      </span>
-
-      <span
-        className="h-2 w-2 shrink-0 rounded-full bg-base-content/20"
-        aria-hidden="true"
-        title="Password Health — wkrótce"
-      />
+      {relativeTime !== null ? (
+        <span className="shrink-0 whitespace-nowrap text-xs text-base-content/50">
+          {relativeTime}
+        </span>
+      ) : null}
     </button>
   );
 }

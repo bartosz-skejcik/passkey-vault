@@ -60,6 +60,10 @@ export interface VaultItem {
   id: string;
   revision: number;
   fields: ItemFields;
+  // Server-truthful "last updated" timestamp (GAP-02-03) — optional because
+  // several existing hand-built VaultItem test fixtures across the codebase
+  // construct this type without it; ItemRow.tsx renders nothing when unset.
+  updatedAt?: string;
 }
 
 export interface Folder {
