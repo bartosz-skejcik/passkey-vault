@@ -149,6 +149,11 @@ export const DICTIONARY = {
   "sidebar.generator": { pl: "Generator haseł", en: "Password generator" },
 
   "action.copyPassword": { pl: "Kopiuj hasło", en: "Copy password" },
+  "action.copyUsername": { pl: "Kopiuj nazwę użytkownika", en: "Copy username" },
+  "action.copyCardNumber": { pl: "Kopiuj numer karty", en: "Copy card number" },
+  "action.copyEmail": { pl: "Kopiuj email", en: "Copy email" },
+  "action.move": { pl: "Przenieś", en: "Move" },
+  "action.delete": { pl: "Usuń", en: "Delete" },
 
   "error.revisionConflict": {
     pl: "Ten item zmienił się w międzyczasie (np. na innym urządzeniu). Odśwież i spróbuj ponownie.",
@@ -171,6 +176,7 @@ export const DICTIONARY = {
 
   "aria.copyField": { pl: "Kopiuj {field}", en: "Copy {field}" },
   "aria.deleteItem": { pl: `Usuń „{name}"`, en: `Delete "{name}"` },
+  "aria.itemMenu": { pl: `Więcej opcji dla „{name}"`, en: `More options for "{name}"` },
   "aria.showPassword": { pl: "Pokaż hasło", en: "Show password" },
   "aria.hidePassword": { pl: "Ukryj hasło", en: "Hide password" },
   "aria.dismissToast": { pl: "Zamknij powiadomienie", en: "Dismiss notification" },

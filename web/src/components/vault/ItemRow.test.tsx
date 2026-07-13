@@ -1,5 +1,36 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+
+const {
+  mockUseFolders,
+  mockUpdateVaultItem,
+  mockDeleteVaultItem,
+  mockCopyWithAutoClear,
+  mockReadClipboardSeconds,
+  mockShowCopyToast,
+} = vi.hoisted(() => ({
+  mockUseFolders: vi.fn(),
+  mockUpdateVaultItem: vi.fn(),
+  mockDeleteVaultItem: vi.fn(),
+  mockCopyWithAutoClear: vi.fn(),
+  mockReadClipboardSeconds: vi.fn(() => 40),
+  mockShowCopyToast: vi.fn(),
+}));
+
+vi.mock("@/lib/vault/store", () => ({
+  useFolders: mockUseFolders,
+  updateVaultItem: mockUpdateVaultItem,
+  deleteVaultItem: mockDeleteVaultItem,
+}));
+
+vi.mock("@/lib/clipboard", () => ({
+  copyWithAutoClear: mockCopyWithAutoClear,
+  readClipboardSeconds: mockReadClipboardSeconds,
+}));
+
+vi.mock("@/lib/vault/copyToast", () => ({
+  showCopyToast: mockShowCopyToast,
+}));
 
 vi.mock("@/lib/i18n/LocaleContext", () => ({
   useLocale: () => ({
@@ -11,6 +42,11 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
 
 import ItemRow from "./ItemRow";
 import type { CardFields, LoginFields, VaultItem } from "@/lib/vault/types";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockUseFolders.mockReturnValue([]);
+});
 
 function loginItem(overrides: Partial<LoginFields> = {}): VaultItem {
   const fields: LoginFields = {
@@ -81,5 +117,31 @@ describe("ItemRow", () => {
   it("renders nothing in the trailing time column when item.updatedAt is undefined", () => {
     render(<ItemRow item={loginItem()} selected={false} onClick={vi.fn()} />);
     expect(screen.queryByText("time.justNow")).not.toBeInTheDocument();
+  });
+
+  describe("kebab + right-click context menu", () => {
+    it("clicking the kebab button opens the menu and does not fire the row's onClick", () => {
+      const onClick = vi.fn();
+      render(<ItemRow item={loginItem()} selected={false} onClick={onClick} />);
+      fireEvent.click(screen.getByTestId("item-menu-trigger-item-1"));
+      expect(screen.getByTestId("context-menu-copy-username")).toBeInTheDocument();
+      expect(onClick).not.toHaveBeenCalled();
+    });
+
+    it("right-clicking the row opens the same menu, prevents the native context menu, and does not fire onClick", () => {
+      const onClick = vi.fn();
+      render(<ItemRow item={loginItem()} selected={false} onClick={onClick} />);
+      fireEvent.contextMenu(screen.getByTestId("item-row-item-1"));
+      expect(screen.getByTestId("context-menu-copy-username")).toBeInTheDocument();
+      expect(onClick).not.toHaveBeenCalled();
+    });
+
+    it("clicking Delete in the menu opens DeleteConfirmDialog rather than deleting directly", () => {
+      render(<ItemRow item={loginItem()} selected={false} onClick={vi.fn()} />);
+      fireEvent.click(screen.getByTestId("item-menu-trigger-item-1"));
+      fireEvent.click(screen.getByTestId("context-menu-delete"));
+      expect(screen.getByTestId("delete-confirm-dialog")).toBeInTheDocument();
+      expect(mockDeleteVaultItem).not.toHaveBeenCalled();
+    });
   });
 });
