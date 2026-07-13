@@ -95,11 +95,18 @@ describe("ItemRow", () => {
     expect(container.querySelector(".lucide-credit-card")).not.toBeNull();
   });
 
-  it("calls onClick when the row is clicked", () => {
+  it("calls onClick when the row's selection button is clicked", () => {
     const onClick = vi.fn();
     render(<ItemRow item={loginItem()} selected={false} onClick={onClick} />);
-    fireEvent.click(screen.getByTestId("item-row-item-1"));
+    fireEvent.click(screen.getByTestId("item-row-select-item-1"));
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the selection control as a native button, not a role=button div with interactive descendants (gap-review WR-04)", () => {
+    render(<ItemRow item={loginItem()} selected={false} onClick={vi.fn()} />);
+    const row = screen.getByTestId("item-row-item-1");
+    expect(row).not.toHaveAttribute("role", "button");
+    expect(screen.getByTestId("item-row-select-item-1").tagName).toBe("BUTTON");
   });
 
   it("applies selected styling when selected=true", () => {

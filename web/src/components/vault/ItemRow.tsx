@@ -70,36 +70,41 @@ export default function ItemRow({
   }, [menuOpen]);
 
   return (
+    // Plain container, deliberately NOT role="button" — the kebab trigger
+    // and its ItemContextMenu below are interactive descendants, and the
+    // ARIA spec forbids focusable/interactive content inside a button-roled
+    // element (gap-review WR-04). Selection now activates via the native
+    // <button> below instead, which is a sibling — not a descendant — of
+    // the kebab, and gets Enter/Space activation + focusability for free
+    // from being a real <button>, no manual key handling required.
     <div
-      role="button"
-      tabIndex={0}
       data-testid={`item-row-${item.id}`}
-      onClick={onClick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onClick();
-        }
-      }}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
         setMenuOpen(true);
       }}
-      className={`group flex h-16 w-full cursor-pointer items-center gap-2 px-4 text-left transition-colors ${
+      className={`group flex h-16 w-full items-center gap-2 px-4 transition-colors ${
         selected
           ? "border-l-2 border-primary bg-primary/[0.08]"
           : "border-l-2 border-transparent hover:bg-base-content/[0.06]"
       }`}
     >
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-base-200 text-base-content/70">
-        <Icon size={18} aria-hidden="true" />
-      </span>
+      <button
+        type="button"
+        data-testid={`item-row-select-${item.id}`}
+        onClick={onClick}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+      >
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-base-200 text-base-content/70">
+          <Icon size={18} aria-hidden="true" />
+        </span>
 
-      <span className="flex min-w-0 flex-1 flex-col items-start">
-        <span className="truncate text-base">{item.fields.name}</span>
-        <span className="truncate text-sm text-base-content/60">{subtitle}</span>
-      </span>
+        <span className="flex min-w-0 flex-1 flex-col items-start">
+          <span className="truncate text-base">{item.fields.name}</span>
+          <span className="truncate text-sm text-base-content/60">{subtitle}</span>
+        </span>
+      </button>
 
       {relativeTime !== null ? (
         <span className="shrink-0 whitespace-nowrap text-xs text-base-content/50">
@@ -111,9 +116,10 @@ export default function ItemRow({
         ref={menuWrapperRef}
         className={`dropdown dropdown-end ${menuOpen ? "dropdown-open" : ""}`}
         // Every click inside the trigger/menu (copy/move/edit/delete-request)
-        // must never bubble up into the row's own onClick (item selection) —
-        // a single stopPropagation here covers the kebab button and every
-        // ItemContextMenu action without each of them needing their own.
+        // must never bubble up into the row's selection button (they're no
+        // longer nested inside it, but both are still children of this same
+        // flex row) — a single stopPropagation here covers the kebab button
+        // and every ItemContextMenu action without each needing its own.
         onClick={(e) => e.stopPropagation()}
       >
         <button
