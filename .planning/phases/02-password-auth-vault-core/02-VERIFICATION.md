@@ -2,7 +2,8 @@
 phase: 02-password-auth-vault-core
 verified: 2026-07-13T17:35:36Z
 human_validated: 2026-07-13T18:00:00Z
-status: gaps_found
+gaps_closed: 2026-07-14T01:15:00Z
+status: passed
 score: 5/5 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
@@ -47,7 +48,18 @@ human_verification:
 
 **Phase Goal:** A user can create an account, log in with their master password, and fully manage an encrypted vault of items
 **Verified:** 2026-07-13T17:35:36Z
-**Status:** gaps_found (functional verification passed; UX gaps from human UAT)
+**Status:** passed (gaps GAP-02-01..05 closed by plans 02-07/02-08 + gap-review fixes; verified 2026-07-14)
+
+## Gap Closure Verification (2026-07-14)
+
+All 5 gaps closed by plans 02-07/02-08 (commits 4f8a0f7..0deb45b) plus 5 gap-review fixes (7b83dfe..6eb4a93, from 02-REVIEW-GAPS.md — including context-menu Edit opening edit mode, move-failure toast, ARIA restructure of ItemRow). Automated: 145/145 web tests, 13/13 pv-server tests, tsc clean. Browser-verified via Playwright on a live session (test account uat-test@example.local), per user authorization for Playwright-driven UAT:
+- GAP-02-01 ✓ fixed ten-dot mask + Pokaż/Ukryj toggle; reveal shows exact decrypted password
+- GAP-02-02 ✓ sidebar Kategorie/Foldery/Tagi/Narzędzia; type filtering works; Passkeys disabled with "wkrótce" badge
+- GAP-02-03 ✓ rows show title + username second line + relative time ("Przed chwilą")
+- GAP-02-04 ✓ kebab menu: copy username/password, Przenieś, Edytuj (opens edit form), Usuń
+- GAP-02-05 ✓ popover in viewport at 1710px and 1024px widths (responsive width + dropdown-end)
+
+Screenshot for morning review: .playwright-mcp/phase2-gaps-closed-overview.png
 **Mode:** mvp
 **Re-verification:** No — initial verification
 
