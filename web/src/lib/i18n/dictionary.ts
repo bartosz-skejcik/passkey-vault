@@ -136,6 +136,14 @@ export const DICTIONARY = {
     pl: "Ten item zmienił się w międzyczasie (np. na innym urządzeniu). Odśwież i spróbuj ponownie.",
     en: "This item changed elsewhere in the meantime. Refresh and try again.",
   },
+  "error.itemSaveFailed": {
+    pl: "Nie udało się zapisać itemu. Spróbuj ponownie.",
+    en: "Failed to save item. Please try again.",
+  },
+  "error.folderCreateFailed": {
+    pl: "Nie udało się utworzyć folderu. Spróbuj ponownie.",
+    en: "Failed to create folder. Please try again.",
+  },
 
   "validation.required": { pl: "To pole jest wymagane", en: "This field is required" },
   "validation.passwordMismatch": {

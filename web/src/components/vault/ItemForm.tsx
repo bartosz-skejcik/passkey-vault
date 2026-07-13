@@ -139,6 +139,8 @@ export default function ItemForm({
   const allTags = useAllTags();
   const [fields, setFields] = useState<ItemFields>(() => initialFields ?? emptyFieldsFor(type));
   const [nameError, setNameError] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [folderError, setFolderError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showCardNumber, setShowCardNumber] = useState(false);
@@ -201,11 +203,16 @@ export default function ItemForm({
   async function handleCreateFolder() {
     const name = newFolderName.trim();
     if (name === "") return;
-    const folder = await createVaultFolder(name);
-    setPendingFolder(folder);
-    setFields((prev) => ({ ...prev, folderId: folder.id }));
-    setNewFolderName("");
-    setAddingFolder(false);
+    setFolderError(null);
+    try {
+      const folder = await createVaultFolder(name);
+      setPendingFolder(folder);
+      setFields((prev) => ({ ...prev, folderId: folder.id }));
+      setNewFolderName("");
+      setAddingFolder(false);
+    } catch {
+      setFolderError(t("error.folderCreateFailed"));
+    }
   }
 
   function cleanFields(f: ItemFields): ItemFields {
@@ -220,6 +227,7 @@ export default function ItemForm({
       return;
     }
     setNameError(false);
+    setSubmitError(null);
     setSubmitting(true);
     const cleaned = cleanFields(fields);
     try {
@@ -233,7 +241,7 @@ export default function ItemForm({
       if (mode === "edit") {
         onError?.(err as Error);
       } else {
-        throw err;
+        setSubmitError(t("error.itemSaveFailed"));
       }
     } finally {
       setSubmitting(false);
@@ -514,6 +522,11 @@ export default function ItemForm({
             </button>
           </div>
         ) : null}
+        {folderError ? (
+          <p data-testid="folder-create-error" className="text-sm text-error">
+            {folderError}
+          </p>
+        ) : null}
       </div>
 
       <div className="flex flex-col gap-1">
@@ -554,6 +567,12 @@ export default function ItemForm({
           ))}
         </datalist>
       </div>
+
+      {submitError ? (
+        <p data-testid="item-form-submit-error" className="text-sm text-error">
+          {submitError}
+        </p>
+      ) : null}
 
       <button
         type="submit"

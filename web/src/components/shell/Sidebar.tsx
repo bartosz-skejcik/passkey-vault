@@ -60,6 +60,7 @@ export default function Sidebar({
   const [tagsExpanded, setTagsExpanded] = useState(false);
   const [addingFolder, setAddingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [folderError, setFolderError] = useState<string | null>(null);
 
   const folders = useFolders();
   const allTags = useAllTags();
@@ -146,9 +147,14 @@ export default function Sidebar({
   async function handleCreateFolder() {
     const name = newFolderName.trim();
     if (name === "") return;
-    await createVaultFolder(name);
-    setNewFolderName("");
-    setAddingFolder(false);
+    setFolderError(null);
+    try {
+      await createVaultFolder(name);
+      setNewFolderName("");
+      setAddingFolder(false);
+    } catch {
+      setFolderError(t("error.folderCreateFailed"));
+    }
   }
 
   function selectFilter(filter: VaultFilter) {
@@ -216,7 +222,13 @@ export default function Sidebar({
                     <Plus size={12} aria-hidden="true" />
                   </button>
                 </div>
-              ) : (
+              ) : null}
+              {addingFolder && folderError ? (
+                <p data-testid="sidebar-folder-create-error" className="px-1 text-xs text-error">
+                  {folderError}
+                </p>
+              ) : null}
+              {!addingFolder ? (
                 <button
                   type="button"
                   data-testid="sidebar-new-folder-button"
@@ -227,7 +239,7 @@ export default function Sidebar({
                   <Plus size={14} aria-hidden="true" />
                   <span>{t("aria.newFolder")}</span>
                 </button>
-              )}
+              ) : null}
             </div>
           ) : null}
         </div>
