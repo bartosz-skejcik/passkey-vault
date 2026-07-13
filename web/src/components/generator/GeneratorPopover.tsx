@@ -122,7 +122,7 @@ export default function GeneratorPopover({
   const meter = scorePasswordMeter(preview);
 
   return (
-    <div className="dropdown">
+    <div className="dropdown dropdown-end">
       <button
         type="button"
         data-testid="generator-trigger"
@@ -136,7 +136,7 @@ export default function GeneratorPopover({
       {open ? (
         <div
           data-testid="generator-popover"
-          className="dropdown-content menu z-10 mt-2 w-[320px] flex-col gap-3 rounded-box border border-base-300 bg-base-100 p-4 shadow"
+          className="dropdown-content menu z-10 mt-2 w-[min(320px,calc(100vw-2rem))] flex-col gap-3 rounded-box border border-base-300 bg-base-100 p-4 shadow"
         >
           <div className="join w-full">
             <button

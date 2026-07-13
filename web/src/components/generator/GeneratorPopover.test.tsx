@@ -66,6 +66,13 @@ describe("GeneratorPopover", () => {
     expect(onApply).toHaveBeenCalledWith(value);
   });
 
+  it("anchors the popover to the trigger's right edge so it stays inside the viewport", () => {
+    render(<GeneratorPopover onApply={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("generator-trigger"));
+
+    expect(screen.getByTestId("generator-popover").parentElement).toHaveClass("dropdown-end");
+  });
+
   it("unchecking every character-set checkbox falls back to a safe default rather than throwing", () => {
     render(<GeneratorPopover onApply={vi.fn()} />);
     fireEvent.click(screen.getByTestId("generator-trigger"));
