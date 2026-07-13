@@ -66,6 +66,36 @@ export const DICTIONARY = {
     pl: "Brak passkeyów — enrollment dostępny wkrótce",
     en: "No passkeys yet — enrollment coming soon",
   },
+  "item.noFolder": { pl: "Bez folderu", en: "No folder" },
+  "item.folderLabel": { pl: "Folder", en: "Folder" },
+  "item.tagsLabel": { pl: "Tagi", en: "Tags" },
+
+  // Item-type labels (badges, type picker) — Claude's-discretion copy, not
+  // explicitly enumerated in UI-SPEC's Copywriting Contract table.
+  "itemType.login": { pl: "Login", en: "Login" },
+  "itemType.card": { pl: "Karta", en: "Card" },
+  "itemType.identity": { pl: "Tożsamość", en: "Identity" },
+  "itemType.note": { pl: "Notatka", en: "Note" },
+
+  // Detail-panel/form field labels — Claude's-discretion copy, shared by
+  // DetailPanel's view mode and ItemForm's create/edit fields.
+  "field.name": { pl: "Nazwa", en: "Name" },
+  "field.username": { pl: "Użytkownik", en: "Username" },
+  "field.password": { pl: "Hasło", en: "Password" },
+  "field.url": { pl: "URL", en: "URL" },
+  "field.notes": { pl: "Notatki", en: "Notes" },
+  "field.cardholderName": { pl: "Właściciel karty", en: "Cardholder name" },
+  "field.number": { pl: "Numer karty", en: "Card number" },
+  "field.expiry": { pl: "Data ważności", en: "Expiry" },
+  "field.cvv": { pl: "CVV", en: "CVV" },
+  "field.firstName": { pl: "Imię", en: "First name" },
+  "field.lastName": { pl: "Nazwisko", en: "Last name" },
+  "field.email": { pl: "Email", en: "Email" },
+  "field.phone": { pl: "Telefon", en: "Phone" },
+  "field.address": { pl: "Adres", en: "Address" },
+  "field.body": { pl: "Treść", en: "Content" },
+
+  "aria.closePanel": { pl: "Zamknij panel", en: "Close panel" },
 
   "delete.title": { pl: `Usunąć „{name}"?`, en: `Delete "{name}"?` },
   "delete.body": {

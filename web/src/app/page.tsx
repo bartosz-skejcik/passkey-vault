@@ -12,10 +12,14 @@ import AuthCard from "@/components/auth/AuthCard";
 import RegisterForm from "@/components/auth/RegisterForm";
 import LoginForm from "@/components/auth/LoginForm";
 import UnlockOverlay from "@/components/auth/UnlockOverlay";
+import ItemList from "@/components/vault/ItemList";
+import DetailPanel from "@/components/vault/DetailPanel";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { getSessionToken } from "@/lib/auth/session";
 import { lockVault, useIsUnlocked } from "@/lib/crypto";
 import { useIdleTimer } from "@/lib/idle/useIdleTimer";
+import { useVaultItems } from "@/lib/vault/store";
+import type { VaultItem } from "@/lib/vault/types";
 
 function readAutolockMinutes(): number {
   try {
@@ -35,6 +39,9 @@ export default function Home() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [mode, setMode] = useState<"login" | "register">("login");
   const [autolockMinutes, setAutolockMinutes] = useState(Number(DEFAULT_AUTOLOCK_MINUTES));
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedItem, setSelectedItem] = useState<VaultItem | null>(null);
+  const items = useVaultItems();
 
   useEffect(() => {
     setAuthed(getSessionToken() !== null);
@@ -78,8 +85,19 @@ export default function Home() {
         <div className="flex h-screen flex-col md:flex-row">
           <Sidebar />
           <div className="flex flex-1 flex-col">
-            <TopBar />
-            <MainColumn>{null}</MainColumn>
+            <TopBar searchQuery={searchQuery} onSearchChange={setSearchQuery} />
+            <div className="flex flex-1 overflow-hidden">
+              <MainColumn showEmptyState={items.length === 0}>
+                <ItemList
+                  searchQuery={searchQuery}
+                  selectedItemId={selectedItem?.id ?? null}
+                  onSelect={setSelectedItem}
+                />
+              </MainColumn>
+              {selectedItem ? (
+                <DetailPanel item={selectedItem} onClose={() => setSelectedItem(null)} />
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
