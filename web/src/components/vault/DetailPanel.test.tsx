@@ -55,6 +55,37 @@ const item: VaultItem = {
   },
 };
 
+const loginItem: VaultItem = {
+  id: "item-login",
+  revision: 1,
+  fields: {
+    type: "login",
+    name: "GitHub",
+    username: "octocat",
+    password: "hunter2",
+    urls: ["https://github.com"],
+    notes: "",
+    folderId: null,
+    tags: [],
+  },
+};
+
+const cardItem: VaultItem = {
+  id: "item-card",
+  revision: 1,
+  fields: {
+    type: "card",
+    name: "Visa",
+    cardholderName: "Jane Doe",
+    number: "4111111111111111",
+    expiry: "12/28",
+    cvv: "123",
+    notes: "",
+    folderId: null,
+    tags: [],
+  },
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseFolders.mockReturnValue([]);
@@ -105,5 +136,48 @@ describe("DetailPanel", () => {
     fireEvent.click(screen.getByTestId("detail-panel-delete"));
 
     expect(screen.getByTestId("delete-confirm-dialog")).toBeInTheDocument();
+  });
+
+  it("masks a login item's password by default and reveals it after clicking the reveal toggle", () => {
+    render(<DetailPanel item={loginItem} onClose={vi.fn()} />);
+
+    expect(screen.queryByText("hunter2")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("reveal-password"));
+
+    expect(screen.getByText("hunter2")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("reveal-password"));
+
+    expect(screen.queryByText("hunter2")).not.toBeInTheDocument();
+  });
+
+  it("masks a card item's number by default and reveals it independently from other fields", () => {
+    render(<DetailPanel item={cardItem} onClose={vi.fn()} />);
+
+    expect(screen.queryByText("4111111111111111")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("reveal-number"));
+
+    expect(screen.getByText("4111111111111111")).toBeInTheDocument();
+  });
+
+  it("always renders the cvv field masked with no reveal toggle", () => {
+    render(<DetailPanel item={cardItem} onClose={vi.fn()} />);
+
+    expect(screen.queryByText("123")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("reveal-cvv")).not.toBeInTheDocument();
+  });
+
+  it("resets a revealed field back to masked when the item prop changes", () => {
+    const { rerender } = render(<DetailPanel item={loginItem} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("reveal-password"));
+    expect(screen.getByText("hunter2")).toBeInTheDocument();
+
+    rerender(<DetailPanel item={cardItem} onClose={vi.fn()} />);
+    rerender(<DetailPanel item={loginItem} onClose={vi.fn()} />);
+
+    expect(screen.queryByText("hunter2")).not.toBeInTheDocument();
   });
 });

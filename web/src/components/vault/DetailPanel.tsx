@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useState } from "react";
-import { Check, Copy, Pencil, Trash2, X } from "lucide-react";
+import { Fragment, useEffect, useState } from "react";
+import { Check, Copy, Eye, EyeOff, Pencil, Trash2, X } from "lucide-react";
 import type { ItemFields, VaultItem } from "@/lib/vault/types";
 import { RevisionConflictError, useFolders } from "@/lib/vault/store";
 import { useLocale } from "@/lib/i18n/LocaleContext";
@@ -27,6 +27,15 @@ const FIELD_ORDER: Record<ItemFields["type"], string[]> = {
 
 const MONO_FIELDS = new Set(["password", "number", "cvv"]);
 
+// Fields that get a per-field reveal toggle next to the copy button — `cvv`
+// deliberately has no entry here, matching ItemForm.tsx's explicit
+// no-reveal-for-CVV convention (masked via MONO_FIELDS, never revealable).
+const REVEALABLE_FIELDS = new Set(["password", "number"]);
+
+// A fixed-length mask so the visible placeholder never leaks the real
+// value's character count.
+const MASK = "•".repeat(10);
+
 export default function DetailPanel({
   item,
   onClose,
@@ -45,6 +54,38 @@ export default function DetailPanel({
   const fieldValues = item.fields as unknown as Record<string, string>;
   const folder = folders.find((f) => f.id === item.fields.folderId);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
+
+  // The panel is not remounted between item selections (page.tsx renders
+  // <DetailPanel item={selectedItem} /> with no `key`), so a previously
+  // revealed field must be explicitly re-masked whenever the item changes.
+  useEffect(() => {
+    setRevealedKeys(new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
+
+  function isRevealed(key: string): boolean {
+    return revealedKeys.has(key);
+  }
+
+  function toggleReveal(key: string) {
+    setRevealedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  function displayValueFor(key: string, value: string): string {
+    if (!value) return "—";
+    if (MONO_FIELDS.has(key) && !REVEALABLE_FIELDS.has(key)) return MASK;
+    if (REVEALABLE_FIELDS.has(key) && !isRevealed(key)) return MASK;
+    return value;
+  }
 
   function startEditing() {
     setConflict(false);
@@ -172,8 +213,23 @@ export default function DetailPanel({
                   </span>
                   <div className="flex items-center gap-1">
                     <span className={`text-base ${MONO_FIELDS.has(key) ? "font-mono" : ""}`}>
-                      {fieldValues[key] || "—"}
+                      {displayValueFor(key, fieldValues[key])}
                     </span>
+                    {fieldValues[key] && REVEALABLE_FIELDS.has(key) ? (
+                      <button
+                        type="button"
+                        data-testid={`reveal-${key}`}
+                        aria-label={isRevealed(key) ? t("aria.hidePassword") : t("aria.showPassword")}
+                        className="btn btn-ghost btn-square btn-sm shrink-0"
+                        onClick={() => toggleReveal(key)}
+                      >
+                        {isRevealed(key) ? (
+                          <EyeOff size={16} aria-hidden="true" />
+                        ) : (
+                          <Eye size={16} aria-hidden="true" />
+                        )}
+                      </button>
+                    ) : null}
                     {fieldValues[key] ? renderCopyButton(key, fieldValues[key]) : null}
                   </div>
                 </div>
