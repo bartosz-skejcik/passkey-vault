@@ -12,15 +12,30 @@ import {
   subscribeLockState,
   type WasmUserKey,
 } from "@/lib/crypto";
+import { ApiClientError } from "@/lib/auth/api";
 import {
   createFolder,
   createItem,
+  deleteFolder,
+  deleteItem,
   listFolders,
   listItems,
+  updateItem,
   type FolderRow,
   type ItemRow,
 } from "./api";
 import type { Folder, ItemFields, VaultItem } from "./types";
+
+/** Distinguishable error type for a stale-revision (409) PUT — lets the UI
+ * layer (DetailPanel) tell "the item changed elsewhere" apart from any other
+ * failure and show T-02-22's clear conflict message instead of silently
+ * overwriting or discarding the user's edit. */
+export class RevisionConflictError extends Error {
+  constructor() {
+    super("item revision changed elsewhere — refresh and try again");
+    this.name = "RevisionConflictError";
+  }
+}
 
 /** Combined JSON shape encryptItem produces / decryptItem expects:
  * `{"enc_key": WrappedKey, "enc_data": WrappedKey}`. The server instead
@@ -174,16 +189,22 @@ export async function createVaultFolder(name: string): Promise<Folder> {
   return folder;
 }
 
+// useSyncExternalStore wymaga, by getServerSnapshot zwracał tę samą
+// referencję przy każdym wywołaniu — inline `() => []` tworzy nową tablicę
+// i React zgłasza "should be cached to avoid an infinite loop".
+const EMPTY_SNAPSHOT: never[] = [];
+const getEmptySnapshot = () => EMPTY_SNAPSHOT;
+
 export function useVaultItems(): VaultItem[] {
-  return useSyncExternalStore(subscribeItems, getItems, () => []);
+  return useSyncExternalStore(subscribeItems, getItems, getEmptySnapshot);
 }
 
 export function useFolders(): Folder[] {
-  return useSyncExternalStore(subscribeFolders, getFolders, () => []);
+  return useSyncExternalStore(subscribeFolders, getFolders, getEmptySnapshot);
 }
 
 export function useAllTags(): string[] {
-  return useSyncExternalStore(subscribeItems, getAllTags, () => []);
+  return useSyncExternalStore(subscribeItems, getAllTags, getEmptySnapshot);
 }
 
 // Module-level side effect (mirrors lib/crypto/index.ts's own singleton
