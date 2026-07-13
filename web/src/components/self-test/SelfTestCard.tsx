@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { runSelfTest, type StepResult } from "@/lib/crypto";
+import { useLocale } from "@/lib/i18n/LocaleContext";
 import StepRow from "./StepRow";
 
 type LoadState =
@@ -10,6 +11,7 @@ type LoadState =
   | { kind: "fatal"; error: string };
 
 export default function SelfTestCard() {
+  const { t } = useLocale();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   // `run` is invoked both from the mount effect below and from the "Uruchom
   // ponownie" retry button. A single persistent `mountedRef` boolean isn't
@@ -51,10 +53,17 @@ export default function SelfTestCard() {
   if (state.kind === "fatal") {
     return (
       <div className="rounded-box border border-base-300 bg-base-100 p-6">
-        <h2 className="text-[20px] font-bold leading-[1.2]">Self-test nie przeszedł</h2>
+        <h2 className="text-[20px] font-bold leading-[1.2]">{t("self-test.fatalHeading")}</h2>
         <p className="mt-2 text-base leading-[1.5]">
-          {`Krok „initCrypto" zwrócił błąd: ${state.error}. Sprawdź konsolę przeglądarki.`}
+          {t("self-test.fatalBody").replace("{error}", state.error)}
         </p>
+        {/* Carried-forward Phase 1 UI-REVIEW fix: the fatal branch was
+            previously missing this retry affordance entirely, leaving a
+            fatal initCrypto() failure unrecoverable without a full page
+            reload. */}
+        <button type="button" className="btn btn-sm btn-outline mt-4" onClick={run}>
+          {t("self-test.retry")}
+        </button>
       </div>
     );
   }
@@ -65,11 +74,11 @@ export default function SelfTestCard() {
 
   return (
     <div className="rounded-box border border-base-300 bg-base-100 p-6">
-      <h2 className="text-[20px] font-bold leading-[1.2]">Crypto Self-Test</h2>
+      <h2 className="text-[20px] font-bold leading-[1.2]">{t("self-test.title")}</h2>
 
       <div className="mt-4 flex flex-col divide-y divide-base-300">
         {state.kind === "loading" ? (
-          <p className="py-2 text-sm text-base-content/60">Uruchamianie...</p>
+          <p className="py-2 text-sm text-base-content/60">{t("self-test.running")}</p>
         ) : (
           results.map((step) => <StepRow key={step.name} step={step} />)
         )}
@@ -77,9 +86,10 @@ export default function SelfTestCard() {
 
       {state.kind === "results" ? (
         <p className="mt-4 text-base leading-[1.5]">
-          {allPassed
-            ? `${passedCount}/5 kroków przeszło`
-            : `${passedCount}/5 kroków przeszło — patrz błąd poniżej`}
+          {(allPassed ? t("self-test.allPassed") : t("self-test.partialFailed")).replace(
+            "{passed}",
+            String(passedCount),
+          )}
         </p>
       ) : null}
 
@@ -89,7 +99,7 @@ export default function SelfTestCard() {
         onClick={run}
         disabled={state.kind === "loading"}
       >
-        Uruchom ponownie
+        {t("self-test.retry")}
       </button>
     </div>
   );

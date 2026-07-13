@@ -29,7 +29,7 @@
   color-scheme: light;
   --color-base-100: oklch(100% 0 0);
   --color-base-200: oklch(98.86% 0.0017 67.80);
-  --color-base-300: oklch(98.86% 0.0017 67.80);
+  --color-base-300: oklch(93% 0.004 67.80);
   --color-base-content: oklch(26.86% 0 0);
   /* primary/secondary/accent/semantic tokens unchanged from vault-dark — OKLCH
      hue/chroma is theme-invariant per UI-SPEC.md's Color section */

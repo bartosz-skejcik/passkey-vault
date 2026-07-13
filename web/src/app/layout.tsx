@@ -38,15 +38,31 @@ const themeInitScript = `
 })();
 `;
 
+// Reads the persisted locale and sets lang on <html> BEFORE first paint —
+// same FOUC-avoidance shape as themeInitScript above (an inline <script>,
+// not a client useEffect, since a useEffect only runs after hydration).
+const localeInitScript = `
+(function () {
+  try {
+    var stored = localStorage.getItem('pv-locale');
+    var locale = (stored === 'pl' || stored === 'en') ? stored : 'pl';
+    document.documentElement.setAttribute('lang', locale);
+  } catch (e) {
+    document.documentElement.setAttribute('lang', 'pl');
+  }
+})();
+`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pl">
+    <html>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <script dangerouslySetInnerHTML={{ __html: localeInitScript }} />
       </head>
       <body className={`${dmSans.variable} ${fuzzyBubbles.variable}`}>
         <LocaleProvider>{children}</LocaleProvider>

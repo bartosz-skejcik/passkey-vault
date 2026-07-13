@@ -114,6 +114,26 @@ export const DICTIONARY = {
   "aria.logout": { pl: "Wyloguj się", en: "Log out" },
   "aria.newFolder": { pl: "Nowy folder", en: "New folder" },
   "aria.newTag": { pl: "Nowy tag", en: "New tag" },
+
+  // Self-test (dev diagnostic route, not part of UI-SPEC's copywriting
+  // contract — added here per Task 4's carried-forward Phase 1 UI-REVIEW
+  // fixes, which require these strings to be i18n-sourced, not hardcoded).
+  "self-test.title": { pl: "Crypto Self-Test", en: "Crypto Self-Test" },
+  "self-test.retry": { pl: "Uruchom ponownie", en: "Run again" },
+  "self-test.running": { pl: "Uruchamianie...", en: "Running..." },
+  "self-test.fatalHeading": {
+    pl: "Self-test nie przeszedł",
+    en: "Self-test failed",
+  },
+  "self-test.fatalBody": {
+    pl: `Krok „initCrypto" zwrócił błąd: {error}. Sprawdź konsolę przeglądarki.`,
+    en: `Step "initCrypto" returned an error: {error}. Check the browser console.`,
+  },
+  "self-test.allPassed": { pl: "{passed}/5 kroków przeszło", en: "{passed}/5 steps passed" },
+  "self-test.partialFailed": {
+    pl: "{passed}/5 kroków przeszło — patrz błąd przy kroku powyżej",
+    en: "{passed}/5 steps passed — see the error at the step above",
+  },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {
