@@ -58,7 +58,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Each item's ciphertext is bound via AEAD associated data to its item ID/revision/field context — a test that mutates the AD context proves decryption is rejected, not silently accepted
   5. User can organize items into folders/tags, search instantly client-side, generate a strong password (16+ char default, passphrase mode alongside character mode), copy a field to clipboard (auto-clears in 30-60s, on by default), and the vault auto-locks after a configurable idle period
 
-**Plans**: 3/6 plans executed
+**Plans**: 5/6 plans executed
 
 Plans:
 **Wave 1**
@@ -69,11 +69,11 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 02-03-PLAN.md — Vault items + folders API with optimistic concurrency (pv-server)
-- [ ] 02-04-PLAN.md — Register/Login/Unlock UI + i18n + auto-lock
+- [x] 02-04-PLAN.md — Register/Login/Unlock UI + i18n + auto-lock
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-05-PLAN.md — Vault store + search + list/detail + create (all 4 item types)
+- [x] 02-05-PLAN.md — Vault store + search + list/detail + create (all 4 item types)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -166,7 +166,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. WASM Crypto Bridge & Web App Shell | 3/3 | Complete    | 2026-07-12 |
-| 2. Password Auth & Vault Core | 3/6 | In Progress|  |
+| 2. Password Auth & Vault Core | 5/6 | In Progress|  |
 | 3. Passkey Enrollment & Account Security | 0/TBD | Not started | - |
 | 4. PRF Unlock & Login Unification | 0/TBD | Not started | - |
 | 5. Multi-Device Sync | 0/TBD | Not started | - |

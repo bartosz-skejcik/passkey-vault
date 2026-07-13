@@ -21,7 +21,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 - [x] **VAULT-01**: Użytkownik może tworzyć/edytować/usuwać itemy typów: login (z pod-rekordem passkey), karta, tożsamość, bezpieczna notatka, TOTP — całość szyfrowana klientowo (pv-core→WASM), serwer widzi tylko bloby
 - [x] **VAULT-02**: Szyfrowanie itemów wiąże ciphertext z tożsamością (AEAD associated data: item ID + rewizja + kontekst) — ochrona przed podmianą/przestawieniem blobów przez złośliwy serwer
 - [x] **VAULT-03**: Użytkownik może organizować itemy w foldery i tagi
-- [ ] **VAULT-04**: Użytkownik może natychmiastowo przeszukiwać vault po stronie klienta (nazwa, username, domena)
+- [x] **VAULT-04**: Użytkownik może natychmiastowo przeszukiwać vault po stronie klienta (nazwa, username, domena)
 - [ ] **VAULT-05**: Użytkownik może wygenerować silne hasło (długość-first, default 16+, tryb passphrase obok znakowego)
 - [ ] **VAULT-06**: Użytkownik może skopiować pole do schowka; schowek czyści się automatycznie po 30–60 s (default ON, konfigurowalny)
 - [ ] **VAULT-07**: Użytkownik widzi kody TOTP generowane z sekretu itemu (totp-rs w pv-core/WASM), z odliczaniem ważności
@@ -43,7 +43,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 
 - [x] **UI-01**: Web app (Next.js 16, `output: "export"`, Tailwind v4 + DaisyUI 5) w theme datafa.st — dark default, pełnoprawny light; cała kryptografia wyłącznie przez choke-point moduł importujący pv-core WASM
 - [ ] **UI-02**: Ekran unlock/login: PRF-first — duży tealowy przycisk „Odblokuj passkeyem" nad polem master password
-- [ ] **UI-03**: Vault: lista itemów (favicon, nazwa, username, badge typu) + panel boczny szczegółów z copy-buttonami i sekcją passkey
+- [x] **UI-03**: Vault: lista itemów (favicon, nazwa, username, badge typu) + panel boczny szczegółów z copy-buttonami i sekcją passkey
 - [ ] **UI-04**: Onboarding (3 kroki) z importem z innego menedżera jako pierwszym krokiem
 - [ ] **UI-05**: Ustawienia: enrolled passkeys, sesje/urządzenia, import/eksport, parametry auto-lock/schowka
 
@@ -104,10 +104,10 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 | VAULT-01 | Phase 2: Password Auth & Vault Core | Complete |
 | VAULT-02 | Phase 2: Password Auth & Vault Core | Complete |
 | VAULT-03 | Phase 2: Password Auth & Vault Core | Complete |
-| VAULT-04 | Phase 2: Password Auth & Vault Core | Pending |
+| VAULT-04 | Phase 2: Password Auth & Vault Core | Complete |
 | VAULT-05 | Phase 2: Password Auth & Vault Core | Pending |
 | VAULT-06 | Phase 2: Password Auth & Vault Core | Pending |
-| UI-03 | Phase 2: Password Auth & Vault Core | Pending |
+| UI-03 | Phase 2: Password Auth & Vault Core | Complete |
 | AUTH-03 | Phase 3: Passkey Enrollment & Account Security | Pending |
 | AUTH-05 | Phase 3: Passkey Enrollment & Account Security | Pending |
 | AUTH-06 | Phase 3: Passkey Enrollment & Account Security | Pending |

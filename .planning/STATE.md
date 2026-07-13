@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v0.1
 milestone_name: milestone
 current_phase: 02
-current_phase_name: Password Auth & Vault Core
+current_phase_name: password-auth-vault-core
 status: executing
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-07-13T08:25:03.824Z"
+stopped_at: Completed 02-05-PLAN.md
+last_updated: "2026-07-13T11:38:59.254Z"
 last_activity: 2026-07-13
 last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 9
-  completed_plans: 6
+  completed_plans: 8
   percent: 14
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-12)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 02 — Password Auth & Vault Core
+**Current focus:** Phase 02 — password-auth-vault-core
 
 ## Current Position
 
-Phase: 02 (Password Auth & Vault Core) — EXECUTING
-Plan: 4 of 6
+Phase: 02 (password-auth-vault-core) — EXECUTING
+Plan: 6 of 6 (5 complete: 02-01..02-05)
 Status: Ready to execute
-Last activity: 2026-07-13 — Phase 02 execution started
+Last activity: 2026-07-13 — Completed 02-05-PLAN.md
 
 Progress: [█░░░░░░░░░] 14% (1/7 phases)
 
@@ -61,6 +61,7 @@ Progress: [█░░░░░░░░░] 14% (1/7 phases)
 | Phase 02 P01 | 25min | 2 tasks | 6 files |
 | Phase 02 P02 | 25min | 2 tasks | 12 files |
 | Phase 02 P03 | 20min | 2 tasks | 6 files |
+| Phase 02 P05 | 25min | 3 tasks | 15 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,8 @@ Recent decisions affecting current work:
 - [Phase 2]: vault_items rebuilt via DROP TABLE + CREATE TABLE (not ALTER) - SQLite cannot DROP COLUMN a CHECK-constrained column, and no production data exists yet
 - [Phase 2]: MAX_ITEM_BLOB_BYTES = 64 KiB - discretionary limit against RESEARCH.md's unbounded-storage-abuse gap flag
 - [Phase 2]: Folder deletion has no cascading effect on items - folder membership lives inside each item's encrypted payload, client-side-only concern
+- [Phase 2]: MainColumn's empty state is now conditional on useVaultItems().length===0 (was unconditionally shown, hiding real items behind misleading empty-state copy)
+- [Phase 2]: ItemForm.tsx switches on fields.type (not the type prop) for TS discriminated-union narrowing across all 4 item types
 
 ### Pending Todos
 
@@ -108,6 +111,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-13T08:25:03.819Z
-Stopped at: Completed 02-03-PLAN.md
+Last session: 2026-07-13T11:38:59.249Z
+Stopped at: Completed 02-05-PLAN.md
 Resume file: None
