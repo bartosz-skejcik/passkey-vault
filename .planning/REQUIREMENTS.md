@@ -18,9 +18,9 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 
 ### Vault
 
-- [ ] **VAULT-01**: Użytkownik może tworzyć/edytować/usuwać itemy typów: login (z pod-rekordem passkey), karta, tożsamość, bezpieczna notatka, TOTP — całość szyfrowana klientowo (pv-core→WASM), serwer widzi tylko bloby
+- [x] **VAULT-01**: Użytkownik może tworzyć/edytować/usuwać itemy typów: login (z pod-rekordem passkey), karta, tożsamość, bezpieczna notatka, TOTP — całość szyfrowana klientowo (pv-core→WASM), serwer widzi tylko bloby
 - [x] **VAULT-02**: Szyfrowanie itemów wiąże ciphertext z tożsamością (AEAD associated data: item ID + rewizja + kontekst) — ochrona przed podmianą/przestawieniem blobów przez złośliwy serwer
-- [ ] **VAULT-03**: Użytkownik może organizować itemy w foldery i tagi
+- [x] **VAULT-03**: Użytkownik może organizować itemy w foldery i tagi
 - [ ] **VAULT-04**: Użytkownik może natychmiastowo przeszukiwać vault po stronie klienta (nazwa, username, domena)
 - [ ] **VAULT-05**: Użytkownik może wygenerować silne hasło (długość-first, default 16+, tryb passphrase obok znakowego)
 - [ ] **VAULT-06**: Użytkownik może skopiować pole do schowka; schowek czyści się automatycznie po 30–60 s (default ON, konfigurowalny)
@@ -101,9 +101,9 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 | AUTH-01 | Phase 2: Password Auth & Vault Core | Complete |
 | AUTH-02 | Phase 2: Password Auth & Vault Core | Complete |
 | AUTH-08 | Phase 2: Password Auth & Vault Core | Pending |
-| VAULT-01 | Phase 2: Password Auth & Vault Core | Pending |
+| VAULT-01 | Phase 2: Password Auth & Vault Core | Complete |
 | VAULT-02 | Phase 2: Password Auth & Vault Core | Complete |
-| VAULT-03 | Phase 2: Password Auth & Vault Core | Pending |
+| VAULT-03 | Phase 2: Password Auth & Vault Core | Complete |
 | VAULT-04 | Phase 2: Password Auth & Vault Core | Pending |
 | VAULT-05 | Phase 2: Password Auth & Vault Core | Pending |
 | VAULT-06 | Phase 2: Password Auth & Vault Core | Pending |

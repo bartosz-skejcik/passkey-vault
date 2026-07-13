@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 02
 current_phase_name: Password Auth & Vault Core
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-07-13T08:15:10.430Z"
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-07-13T08:25:03.824Z"
 last_activity: 2026-07-13
 last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 9
-  completed_plans: 5
+  completed_plans: 6
   percent: 14
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 ## Current Position
 
 Phase: 02 (Password Auth & Vault Core) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
 Last activity: 2026-07-13 — Phase 02 execution started
 
@@ -60,6 +60,7 @@ Progress: [█░░░░░░░░░] 14% (1/7 phases)
 | Phase 01 P03 | 40min | 3 tasks | 13 files |
 | Phase 02 P01 | 25min | 2 tasks | 6 files |
 | Phase 02 P02 | 25min | 2 tasks | 12 files |
+| Phase 02 P03 | 20min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,9 @@ Recent decisions affecting current work:
 - [Phase 2]: WasmAuthMaterial extraction uses mutable-borrow take*() methods (std::mem::take/replace) instead of consuming-self methods, since #[derive(ZeroizeOnDrop)] forbids partial by-value moves out of a type with a custom Drop
 - [Phase 2]: pv-server uses runtime-checked sqlx::query (not query!/query_as!) throughout — avoids requiring live DATABASE_URL/.sqlx offline cache; applies to Plan 02-03 too — removes contributor setup friction; CLAUDE.md's compile-time-checked-queries convention explicitly superseded for this crate
 - [Phase 2]: Bearer session tokens are hashed in their base64 wire representation everywhere (login, SessionUser, logout) — never the pre-encoding raw bytes — fixed a real bug where login stored a hash of raw bytes while the extractor hashed the base64 string, breaking every session lookup
+- [Phase 2]: vault_items rebuilt via DROP TABLE + CREATE TABLE (not ALTER) - SQLite cannot DROP COLUMN a CHECK-constrained column, and no production data exists yet
+- [Phase 2]: MAX_ITEM_BLOB_BYTES = 64 KiB - discretionary limit against RESEARCH.md's unbounded-storage-abuse gap flag
+- [Phase 2]: Folder deletion has no cascading effect on items - folder membership lives inside each item's encrypted payload, client-side-only concern
 
 ### Pending Todos
 
@@ -104,6 +108,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-13T08:15:10.424Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-07-13T08:25:03.819Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None
