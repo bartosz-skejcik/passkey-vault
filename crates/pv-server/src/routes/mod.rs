@@ -1,8 +1,9 @@
 pub mod auth;
 pub mod session;
+pub mod vault;
 
 use axum::{
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use tower_http::cors::CorsLayer;
@@ -17,6 +18,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
+        .route("/api/vault/items", get(vault::list).post(vault::create))
+        .route("/api/vault/items/{id}", put(vault::update).delete(vault::delete))
         .with_state(state)
         // Permissive CORS is a dev-mode-only convenience: Phase 7's Docker
         // packaging serves both the API and the static web export from one
