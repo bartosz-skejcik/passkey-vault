@@ -42,8 +42,9 @@ pub async fn prelogin(
     State(state): State<AppState>,
     Json(req): Json<PreloginRequest>,
 ) -> Result<Json<PreloginResponse>, ApiError> {
+    let normalized_email = req.email.trim().to_lowercase();
     let row = sqlx::query("SELECT kdf_params, kdf_salt FROM users WHERE email = ?")
-        .bind(&req.email)
+        .bind(&normalized_email)
         .fetch_optional(&state.db)
         .await?;
 
@@ -53,8 +54,7 @@ pub async fn prelogin(
         let kdf: KdfParams = serde_json::from_str(&kdf_params_json).map_err(|_| ApiError::Internal)?;
         Ok(Json(PreloginResponse { kdf, salt: STANDARD.encode(kdf_salt) }))
     } else {
-        let normalized = req.email.trim().to_lowercase();
-        let digest = Sha256::digest(normalized.as_bytes());
+        let digest = Sha256::digest(normalized_email.as_bytes());
         let dummy_salt = &digest[..MIN_SALT_LEN];
         Ok(Json(PreloginResponse { kdf: KdfParams::default(), salt: STANDARD.encode(dummy_salt) }))
     }
@@ -85,7 +85,8 @@ pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<RegisterResponse>), ApiError> {
-    if req.email.trim().is_empty() || !req.email.contains('@') {
+    let normalized_email = req.email.trim().to_lowercase();
+    if normalized_email.is_empty() || !normalized_email.contains('@') {
         return Err(ApiError::BadRequest("invalid email".into()));
     }
     let salt = STANDARD.decode(&req.salt).map_err(|_| ApiError::BadRequest("invalid salt encoding".into()))?;
@@ -107,7 +108,7 @@ pub async fn register(
          VALUES (?,?,?,?,?,?,?) ON CONFLICT(email) DO NOTHING",
     )
     .bind(&id)
-    .bind(&req.email)
+    .bind(&normalized_email)
     .bind(&kdf_params_json)
     .bind(&salt)
     .bind(&req.pw_wrapped_uk)
@@ -143,8 +144,9 @@ pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, ApiError> {
+    let normalized_email = req.email.trim().to_lowercase();
     let row = sqlx::query("SELECT id, auth_hash, auth_hash_salt, pw_wrapped_uk FROM users WHERE email = ?")
-        .bind(&req.email)
+        .bind(&normalized_email)
         .fetch_optional(&state.db)
         .await?;
 
