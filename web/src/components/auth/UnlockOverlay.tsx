@@ -8,6 +8,7 @@ import {
   setUnlockedUserKey,
   unwrapUserKey,
   deriveAuthMaterial,
+  type WasmWrappingKey,
 } from "@/lib/crypto";
 import { prelogin, me, base64Decode, ApiClientError } from "@/lib/auth/api";
 import {
@@ -66,6 +67,7 @@ export default function UnlockOverlay() {
 
     const passwordBytes = new TextEncoder().encode(password);
     let material: ReturnType<typeof deriveAuthMaterial> | undefined;
+    let wrappingKey: WasmWrappingKey | undefined;
 
     try {
       // WASM musi być zainstancjonowane przed deriveAuthMaterial/unwrapUserKey.
@@ -76,11 +78,10 @@ export default function UnlockOverlay() {
       const decodedSalt = base64Decode(salt);
 
       material = deriveAuthMaterial(passwordBytes, decodedSalt, JSON.stringify(kdf));
-      const wrappingKey = material.takeWrappingKey();
+      wrappingKey = material.takeWrappingKey();
 
       const uk = unwrapUserKey(wrappingKey, account.pw_wrapped_uk);
       setUnlockedUserKey(uk);
-      wrappingKey.free?.();
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 401) {
         // Session actually expired — don't leave the user staring at a
@@ -99,6 +100,7 @@ export default function UnlockOverlay() {
     } finally {
       passwordBytes.fill(0);
       material?.free?.();
+      wrappingKey?.free?.();
       setSubmitting(false);
     }
   }

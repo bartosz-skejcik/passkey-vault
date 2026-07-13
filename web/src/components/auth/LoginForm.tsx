@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
-import { initCrypto, deriveAuthMaterial } from "@/lib/crypto";
+import { initCrypto, deriveAuthMaterial, type WasmWrappingKey } from "@/lib/crypto";
 import { prelogin, login, base64Encode, base64Decode, ApiClientError } from "@/lib/auth/api";
 import { setSessionToken, setStoredEmail } from "@/lib/auth/session";
 import { setPendingUnlock } from "@/lib/auth/pendingUnlock";
@@ -27,6 +27,7 @@ export default function LoginForm({
 
     const passwordBytes = new TextEncoder().encode(password);
     let material: ReturnType<typeof deriveAuthMaterial> | undefined;
+    let wrappingKey: WasmWrappingKey | undefined;
 
     try {
       // WASM musi być zainstancjonowane przed pierwszym wywołaniem krypto.
@@ -36,7 +37,7 @@ export default function LoginForm({
 
       material = deriveAuthMaterial(passwordBytes, decodedSalt, JSON.stringify(kdf));
       const authHash = material.takeAuthHash();
-      const wrappingKey = material.takeWrappingKey();
+      wrappingKey = material.takeWrappingKey();
 
       const { session_token, pw_wrapped_uk } = await login({
         email,
@@ -48,6 +49,7 @@ export default function LoginForm({
       // Never unwraps directly here — that stays UnlockOverlay's job, so
       // the visibly-distinct unlock step is preserved.
       setPendingUnlock(wrappingKey, pw_wrapped_uk);
+      wrappingKey = undefined; // ownership transferred to pendingUnlock
       // Poinformuj rodzica (page.tsx), że sesja istnieje — bez tego jego
       // `authed` zostaje przy wartości z mounta i UI nigdzie nie przechodzi.
       onAuthed?.();
@@ -60,6 +62,7 @@ export default function LoginForm({
     } finally {
       passwordBytes.fill(0);
       material?.free?.();
+      wrappingKey?.free?.();
       setSubmitting(false);
     }
   }
