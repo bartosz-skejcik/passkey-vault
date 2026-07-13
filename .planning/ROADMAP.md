@@ -58,7 +58,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Each item's ciphertext is bound via AEAD associated data to its item ID/revision/field context — a test that mutates the AD context proves decryption is rejected, not silently accepted
   5. User can organize items into folders/tags, search instantly client-side, generate a strong password (16+ char default, passphrase mode alongside character mode), copy a field to clipboard (auto-clears in 30-60s, on by default), and the vault auto-locks after a configurable idle period
 
-**Plans**: 6/6 plans complete
+**Plans**: 6/8 plans complete (2 gap-closure plans pending execution)
 
 Plans:
 **Wave 1**
@@ -78,6 +78,11 @@ Plans:
 **Wave 4** *(blocked on Wave 3 completion)*
 
 - [x] 02-06-PLAN.md — Edit/delete + generator + clipboard + folders/tags UI
+
+**Gap closure (post-UAT, GAP-02-01..05) — Wave 1**
+
+- [ ] 02-07-PLAN.md — Sidebar Categories/Folders/Tags/Tools restructure + item row relative time + item context menu (GAP-02-02/03/04)
+- [ ] 02-08-PLAN.md — Password/card-number reveal toggle in detail panel + generator popover viewport fix (GAP-02-01/05)
 
 **UI hint**: yes
 
