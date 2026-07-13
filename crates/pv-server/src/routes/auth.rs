@@ -20,6 +20,16 @@ const MIN_SALT_LEN: usize = 16;
 /// a wider [16, ...) range (WR-10).
 const EXPECTED_AUTH_HASH_LEN: usize = pv_core::keys::KEY_LEN;
 
+/// Fixed decoy salt/hash pair used only to burn the same CPU work (one
+/// `server_rehash` + one `constant_time_eq`) on `login()`'s unknown-email
+/// path as the known-email path does — otherwise the unknown-email branch
+/// returns `Unauthorized` measurably faster, a timing oracle for email
+/// enumeration on the exact endpoint whose doc-comment claims parity with
+/// `prelogin()`'s T-02-04 mitigation. Values are arbitrary/non-secret; only
+/// their fixed length matters.
+const DUMMY_AUTH_HASH_SALT: [u8; 16] = [0u8; 16];
+const DUMMY_STORED_AUTH_HASH: [u8; 32] = [0u8; 32];
+
 #[derive(Deserialize)]
 pub struct PreloginRequest {
     pub email: String,
@@ -154,7 +164,18 @@ pub async fn login(
         .fetch_optional(&state.db)
         .await?;
 
-    let row = row.ok_or(ApiError::Unauthorized)?;
+    let row = match row {
+        Some(row) => row,
+        None => {
+            // Unknown email: still perform a decode + rehash + constant-time
+            // compare against fixed decoy values so this branch costs the
+            // same as the known-email/wrong-password branch below (WR-07).
+            let decoded = STANDARD.decode(&req.auth_hash).unwrap_or_default();
+            let dummy_expected = crypto::server_rehash(&decoded, &DUMMY_AUTH_HASH_SALT);
+            let _ = crypto::constant_time_eq(&dummy_expected, &DUMMY_STORED_AUTH_HASH);
+            return Err(ApiError::Unauthorized);
+        }
+    };
     let user_id: String = row.try_get("id").map_err(|_| ApiError::Internal)?;
     let stored_hash: Vec<u8> = row.try_get("auth_hash").map_err(|_| ApiError::Internal)?;
     let stored_salt: Vec<u8> = row.try_get("auth_hash_salt").map_err(|_| ApiError::Internal)?;
