@@ -1,6 +1,11 @@
-mod auth;
+pub mod auth;
+pub mod session;
 
-use axum::{routing::get, routing::post, Json, Router};
+use axum::{
+    routing::{get, post},
+    Json, Router,
+};
+use tower_http::cors::CorsLayer;
 
 use crate::AppState;
 
@@ -9,6 +14,11 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/api/auth/prelogin", post(auth::prelogin))
         .with_state(state)
+        // Permissive CORS is a dev-mode-only convenience: Phase 7's Docker
+        // packaging serves both the API and the static web export from one
+        // origin in production, so there is no cross-origin surface to guard
+        // once packaged.
+        .layer(CorsLayer::permissive())
 }
 
 async fn healthz() -> Json<serde_json::Value> {

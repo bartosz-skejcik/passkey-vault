@@ -1,15 +1,7 @@
-mod config;
-mod routes;
-
 use anyhow::Context;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use pv_server::{build_pool, config::Config, routes, AppState};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
-
-#[derive(Clone)]
-pub struct AppState {
-    pub db: sqlx::SqlitePool,
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -17,19 +9,9 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
-    let cfg = config::Config::from_env()?;
+    let cfg = Config::from_env()?;
 
-    let db_opts: SqliteConnectOptions = cfg
-        .db_url
-        .parse::<SqliteConnectOptions>()
-        .context("invalid PV_DB_URL")?
-        .create_if_missing(true);
-    let db = SqlitePoolOptions::new()
-        .max_connections(8)
-        .connect_with(db_opts)
-        .await
-        .context("db connect")?;
-    sqlx::migrate!("./migrations").run(&db).await.context("migrations")?;
+    let db = build_pool(&cfg.db_url).await?;
 
     let state = AppState { db };
     let app = routes::router(state).layer(TraceLayer::new_for_http());
