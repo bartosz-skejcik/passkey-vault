@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { DM_Sans, Fuzzy_Bubbles } from "next/font/google";
+import { LocaleProvider } from "@/lib/i18n/LocaleContext";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -48,7 +49,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className={`${dmSans.variable} ${fuzzyBubbles.variable}`}>
-        {children}
+        <LocaleProvider>{children}</LocaleProvider>
       </body>
     </html>
   );

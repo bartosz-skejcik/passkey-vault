@@ -1,0 +1,156 @@
+"use client";
+
+import { useState, type FormEvent } from "react";
+import { useLocale } from "@/lib/i18n/LocaleContext";
+import { scorePasswordStrength } from "@/lib/generator/strength";
+import {
+  deriveAuthMaterial,
+  generateUserKey,
+  randomSalt,
+  defaultKdfParamsJson,
+  wrapUserKey,
+  setUnlockedUserKey,
+} from "@/lib/crypto";
+import { register, login, base64Encode, ApiClientError } from "@/lib/auth/api";
+import { setSessionToken, setStoredEmail } from "@/lib/auth/session";
+
+export default function RegisterForm({ onToggle }: { onToggle: () => void }) {
+  const { t } = useLocale();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [mismatchError, setMismatchError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const strength = scorePasswordStrength(password);
+  const strengthColor =
+    strength === "strong" ? "success" : strength === "medium" ? "warning" : "error";
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setMismatchError(null);
+    setEmailError(null);
+
+    if (password !== confirmPassword) {
+      setMismatchError(t("validation.passwordMismatch"));
+      return;
+    }
+
+    setSubmitting(true);
+
+    const passwordBytes = new TextEncoder().encode(password);
+    let material: ReturnType<typeof deriveAuthMaterial> | undefined;
+    let wrappingKey: ReturnType<(typeof material)["takeWrappingKey"]> | undefined;
+    let uk: ReturnType<typeof generateUserKey> | undefined;
+
+    try {
+      const salt = randomSalt(16);
+      material = deriveAuthMaterial(passwordBytes, salt, defaultKdfParamsJson());
+      const authHash = material.takeAuthHash();
+      wrappingKey = material.takeWrappingKey();
+      uk = generateUserKey();
+      const pwWrappedUk = wrapUserKey(wrappingKey, uk);
+      const authHashB64 = base64Encode(authHash);
+
+      await register({
+        email,
+        kdf: JSON.parse(defaultKdfParamsJson()),
+        salt: base64Encode(salt),
+        auth_hash: authHashB64,
+        pw_wrapped_uk: pwWrappedUk,
+      });
+
+      // Same derived auth_hash, no second password prompt or Argon2id pass.
+      const { session_token } = await login({ email, auth_hash: authHashB64 });
+
+      setSessionToken(session_token);
+      setStoredEmail(email);
+      setUnlockedUserKey(uk);
+      uk = undefined; // ownership transferred to the lock-state singleton
+    } catch (err) {
+      if (err instanceof ApiClientError && err.status === 409) {
+        setEmailError(t("auth.duplicateEmail"));
+      } else {
+        setEmailError(t("auth.registrationFailed"));
+      }
+    } finally {
+      passwordBytes.fill(0);
+      uk?.free?.();
+      wrappingKey?.free?.();
+      material?.free?.();
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <label htmlFor="register-email" className="text-sm">
+          {t("auth.emailLabel")}
+        </label>
+        <input
+          id="register-email"
+          data-testid="register-email"
+          type="email"
+          required
+          className="input input-bordered w-full"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        {emailError ? <p className="text-sm text-error">{emailError}</p> : null}
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <label htmlFor="register-password" className="text-sm">
+          {t("auth.passwordLabel")}
+        </label>
+        <input
+          id="register-password"
+          data-testid="register-password"
+          type="password"
+          required
+          className="input input-bordered w-full font-mono"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        {password ? (
+          <div className={`h-1 w-full rounded-full bg-${strengthColor}`} aria-hidden="true" />
+        ) : null}
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <label htmlFor="register-confirm-password" className="text-sm">
+          {t("auth.confirmPasswordLabel")}
+        </label>
+        <input
+          id="register-confirm-password"
+          data-testid="register-confirm-password"
+          type="password"
+          required
+          className="input input-bordered w-full font-mono"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+        />
+        {mismatchError ? <p className="text-sm text-error">{mismatchError}</p> : null}
+      </div>
+
+      <div role="alert" className="alert alert-warning text-sm">
+        {t("auth.irrecoverableWarning")}
+      </div>
+
+      <button
+        type="submit"
+        data-testid="register-submit"
+        className="btn btn-primary"
+        disabled={submitting}
+      >
+        {t("auth.registerSubmit")}
+      </button>
+
+      <button type="button" className="link link-secondary text-sm" onClick={onToggle}>
+        {t("auth.toggleToLogin")}
+      </button>
+    </form>
+  );
+}
