@@ -24,3 +24,28 @@ export function scorePasswordStrength(password: string): Strength {
   if (length >= 8 && classes >= 3) return "medium";
   return "weak";
 }
+
+export type MeterColor = "error" | "warning" | "success";
+
+// Progress-bar variant of the heuristic: color = character-class mix
+// (letters only → error, +digits → warning, +specials → success), width =
+// how far the password fills its tier's cap (letters-only can never pass
+// 1/3 of the bar, letters+digits 2/3, full mix up to 100%). Length
+// saturates at METER_FULL_LENGTH characters within the tier.
+const METER_FULL_LENGTH = 12;
+
+export function scorePasswordMeter(password: string): { percent: number; color: MeterColor } {
+  if (password.length === 0) {
+    return { percent: 0, color: "error" };
+  }
+
+  const hasDigit = /[0-9]/.test(password);
+  const hasSpecial = /[^a-zA-Z0-9]/.test(password);
+
+  const tiers = 1 + (hasDigit ? 1 : 0) + (hasSpecial ? 1 : 0);
+  const color: MeterColor = tiers === 3 ? "success" : tiers === 2 ? "warning" : "error";
+  const cap = (tiers / 3) * 100;
+  const lengthFactor = Math.min(1, password.length / METER_FULL_LENGTH);
+
+  return { percent: Math.round(cap * lengthFactor), color };
+}

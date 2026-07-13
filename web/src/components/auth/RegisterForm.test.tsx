@@ -28,6 +28,7 @@ const {
 }));
 
 vi.mock("@/lib/crypto", () => ({
+  initCrypto: () => Promise.resolve(),
   deriveAuthMaterial: mockDeriveAuthMaterial,
   generateUserKey: mockGenerateUserKey,
   randomSalt: mockRandomSalt,

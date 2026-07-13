@@ -30,6 +30,7 @@ const {
 }));
 
 vi.mock("@/lib/crypto", () => ({
+  initCrypto: () => Promise.resolve(),
   useIsUnlocked: mockUseIsUnlocked,
   setUnlockedUserKey: mockSetUnlockedUserKey,
   unwrapUserKey: mockUnwrapUserKey,

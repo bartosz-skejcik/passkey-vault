@@ -18,7 +18,7 @@ import TypePicker from "@/components/vault/TypePicker";
 import ItemForm from "@/components/vault/ItemForm";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { getSessionToken } from "@/lib/auth/session";
-import { lockVault, useIsUnlocked } from "@/lib/crypto";
+import { initCrypto, lockVault, useIsUnlocked } from "@/lib/crypto";
 import { useIdleTimer } from "@/lib/idle/useIdleTimer";
 import { useVaultItems } from "@/lib/vault/store";
 import type { ItemType, VaultItem } from "@/lib/vault/types";
@@ -65,6 +65,10 @@ export default function Home() {
   }
 
   useEffect(() => {
+    // Rozgrzewka WASM przy starcie — fire-and-forget; każde faktyczne użycie
+    // krypto i tak awaituje initCrypto() (memoizowany singleton), więc błąd
+    // instancjacji ujawni się tam, nie tutaj.
+    void initCrypto().catch(() => {});
     setAuthed(getSessionToken() !== null);
     setAutolockMinutes(readAutolockMinutes());
 

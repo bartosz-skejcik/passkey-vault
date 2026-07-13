@@ -2,7 +2,13 @@
 
 import { useState, type FormEvent } from "react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
-import { useIsUnlocked, setUnlockedUserKey, unwrapUserKey, deriveAuthMaterial } from "@/lib/crypto";
+import {
+  initCrypto,
+  useIsUnlocked,
+  setUnlockedUserKey,
+  unwrapUserKey,
+  deriveAuthMaterial,
+} from "@/lib/crypto";
 import { prelogin, me, base64Decode, ApiClientError } from "@/lib/auth/api";
 import {
   getSessionToken,
@@ -42,6 +48,7 @@ export default function UnlockOverlay() {
     if (pending === null) return;
     setSubmitting(true);
     try {
+      await initCrypto();
       const uk = unwrapUserKey(pending.wrappingKey, pending.pwWrappedUk);
       setUnlockedUserKey(uk);
     } catch {
@@ -61,6 +68,8 @@ export default function UnlockOverlay() {
     let material: ReturnType<typeof deriveAuthMaterial> | undefined;
 
     try {
+      // WASM musi być zainstancjonowane przed deriveAuthMaterial/unwrapUserKey.
+      await initCrypto();
       const account = await me();
       const email = getStoredEmail() ?? account.email;
       const { kdf, salt } = await prelogin(email);

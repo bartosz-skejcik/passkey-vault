@@ -25,8 +25,8 @@ export const DICTIONARY = {
     en: "Already have an account? Log in",
   },
   "auth.irrecoverableWarning": {
-    pl: "Zapamiętaj to hasło. Nie da się go odzyskać — nikt, łącznie z nami, nie ma do niego dostępu.",
-    en: "Remember this password. It cannot be recovered — no one, including us, has access to it.",
+    pl: "Zapamiętaj to hasło. Nie da się go odzyskać. Nikt, łącznie z nami, nie ma do niego dostępu.",
+    en: "Remember this password. It cannot be recovered. No one, including us, has access to it.",
   },
   "auth.wrongCredentials": {
     pl: "Nieprawidłowy email lub hasło",

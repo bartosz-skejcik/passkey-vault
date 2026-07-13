@@ -2,8 +2,9 @@
 
 import { useState, type FormEvent } from "react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
-import { scorePasswordStrength } from "@/lib/generator/strength";
+import { scorePasswordMeter, type MeterColor } from "@/lib/generator/strength";
 import {
+  initCrypto,
   deriveAuthMaterial,
   generateUserKey,
   randomSalt,
@@ -25,9 +26,14 @@ export default function RegisterForm({ onToggle }: { onToggle: () => void }) {
   const [emailError, setEmailError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const strength = scorePasswordStrength(password);
-  const strengthColor =
-    strength === "strong" ? "success" : strength === "medium" ? "warning" : "error";
+  const meter = scorePasswordMeter(password);
+  // Statyczna mapa zamiast `bg-${...}` — Tailwind generuje tylko klasy,
+  // które widzi w źródle jako pełne stringi.
+  const METER_BG: Record<MeterColor, string> = {
+    error: "bg-error",
+    warning: "bg-warning",
+    success: "bg-success",
+  };
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -47,6 +53,9 @@ export default function RegisterForm({ onToggle }: { onToggle: () => void }) {
     let uk: WasmUserKey | undefined;
 
     try {
+      // WASM musi być zainstancjonowane przed pierwszym wywołaniem krypto —
+      // memoizowany singleton, więc kolejne wywołania są darmowe.
+      await initCrypto();
       const salt = randomSalt(16);
       material = deriveAuthMaterial(passwordBytes, salt, defaultKdfParamsJson());
       const authHash = material.takeAuthHash();
@@ -116,9 +125,13 @@ export default function RegisterForm({ onToggle }: { onToggle: () => void }) {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-        {password ? (
-          <div className={`h-1 w-full rounded-full bg-${strengthColor}`} aria-hidden="true" />
-        ) : null}
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-base-300" aria-hidden="true">
+          <div
+            data-testid="register-strength-meter"
+            className={`h-full rounded-full transition-all duration-300 ${METER_BG[meter.color]}`}
+            style={{ width: `${meter.percent}%` }}
+          />
+        </div>
       </div>
 
       <div className="flex flex-col gap-1">

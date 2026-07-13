@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
-import { deriveAuthMaterial } from "@/lib/crypto";
+import { initCrypto, deriveAuthMaterial } from "@/lib/crypto";
 import { prelogin, login, base64Encode, base64Decode, ApiClientError } from "@/lib/auth/api";
 import { setSessionToken, setStoredEmail } from "@/lib/auth/session";
 import { setPendingUnlock } from "@/lib/auth/pendingUnlock";
@@ -23,6 +23,8 @@ export default function LoginForm({ onToggle }: { onToggle: () => void }) {
     let material: ReturnType<typeof deriveAuthMaterial> | undefined;
 
     try {
+      // WASM musi być zainstancjonowane przed pierwszym wywołaniem krypto.
+      await initCrypto();
       const { kdf, salt } = await prelogin(email);
       const decodedSalt = base64Decode(salt);
 
