@@ -21,8 +21,10 @@ function matchesQuery(fields: ItemFields, needle: string): boolean {
     if (fields.username.toLowerCase().includes(needle)) {
       return true;
     }
-    if (fields.url && domainFromUrl(fields.url).toLowerCase().includes(needle)) {
-      return true;
+    for (const url of fields.urls) {
+      if (url && domainFromUrl(url).toLowerCase().includes(needle)) {
+        return true;
+      }
     }
   }
   return false;

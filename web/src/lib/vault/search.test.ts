@@ -8,7 +8,7 @@ function loginItem(id: string, overrides: Partial<LoginFields> = {}): VaultItem 
     name: "GitHub",
     username: "bartek",
     password: "s3cret",
-    url: "https://github.com/login",
+    urls: ["https://github.com/login"],
     notes: "",
     folderId: null,
     tags: [],
@@ -48,7 +48,7 @@ describe("searchItems", () => {
   });
 
   it("matches a login item's URL-derived domain", () => {
-    const items = [loginItem("1", { url: "https://github.com/login" }), noteItem("2")];
+    const items = [loginItem("1", { urls: ["https://github.com/login"] }), noteItem("2")];
     expect(searchItems(items, "github.com")).toEqual([items[0]]);
   });
 

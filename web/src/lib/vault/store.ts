@@ -12,7 +12,23 @@ import {
   subscribeLockState,
   type WasmUserKey,
 } from "@/lib/crypto";
-import { ApiClientError } from "@/lib/auth/api";
+// Deliberately NOT importing ApiClientError for an `instanceof` check here:
+// this module is dynamically re-imported per-test via `vi.resetModules()` +
+// `await import("./store")` (see store.test.ts), which re-evaluates every
+// statically-imported module — including @/lib/auth/api — under a fresh
+// module instance each time. A statically-imported `ApiClientError` class
+// reference bound at this file's top level would then be a *different*
+// class object than the one a test constructs its mock rejection with,
+// making `instanceof` silently false. A structural (duck-typed) status
+// check below is immune to that module-identity mismatch.
+function isConflictError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "status" in err &&
+    (err as { status: unknown }).status === 409
+  );
+}
 import {
   createFolder,
   createItem,
@@ -24,7 +40,7 @@ import {
   type FolderRow,
   type ItemRow,
 } from "./api";
-import type { Folder, ItemFields, VaultItem } from "./types";
+import { normalizeItemFields, type Folder, type ItemFields, type VaultItem } from "./types";
 
 /** Distinguishable error type for a stale-revision (409) PUT — lets the UI
  * layer (DetailPanel) tell "the item changed elsewhere" apart from any other
@@ -129,7 +145,9 @@ export function getAllTags(): string[] {
 function decryptItemRow(row: ItemRow, uk: WasmUserKey): VaultItem {
   const combined = recombineEncryptedItem(row.enc_key, row.enc_data);
   const plaintext = decryptItem(uk, combined, row.id, row.revision);
-  const fields = JSON.parse(plaintext) as ItemFields;
+  // normalizeItemFields migrates a legacy login item's bare `url: string`
+  // into `urls: string[]` — the only place that legacy shape is ever read.
+  const fields = normalizeItemFields(JSON.parse(plaintext) as ItemFields);
   return { id: row.id, revision: row.revision, fields };
 }
 
@@ -187,6 +205,65 @@ export async function createVaultFolder(name: string): Promise<Folder> {
   folders = [...folders, folder];
   notifyFolderListeners();
   return folder;
+}
+
+/** Success-gated removal (mirrors deleteVaultItem below): a failed delete
+ * leaves the folder visible in `folders`/`useFolders()`. */
+export async function deleteVaultFolder(id: string): Promise<void> {
+  await deleteFolder(id);
+  folders = folders.filter((folder) => folder.id !== id);
+  notifyFolderListeners();
+}
+
+/**
+ * Re-encrypts `fields` with AD revision `currentRevision + 1` — the value
+ * the server (Plan 02-03) independently increments to on a successful PUT,
+ * so both sides agree on the new revision without a second round trip. On
+ * a 409 (stale revision): the in-memory item is left untouched (never
+ * optimistically overwritten), truth is re-fetched via
+ * loadAndDecryptAll(), and a RevisionConflictError is thrown for the UI
+ * layer to catch and message (T-02-22).
+ */
+export async function updateVaultItem(
+  id: string,
+  fields: ItemFields,
+  currentRevision: number,
+): Promise<VaultItem> {
+  const uk = getUnlockedUserKey();
+  if (uk === null) {
+    throw new Error("cannot update an item while the vault is locked");
+  }
+  const newRevision = currentRevision + 1;
+  const plaintext = JSON.stringify(fields);
+  const combined = encryptItem(uk, plaintext, id, newRevision);
+  const { encKey, encData } = splitCombinedEncryptedItem(combined);
+  try {
+    await updateItem(id, encKey, encData, currentRevision);
+  } catch (err) {
+    if (isConflictError(err)) {
+      await loadAndDecryptAll();
+      throw new RevisionConflictError();
+    }
+    throw err;
+  }
+  const updated: VaultItem = { id, revision: newRevision, fields };
+  const existingIndex = items.findIndex((item) => item.id === id);
+  items =
+    existingIndex === -1
+      ? [...items, updated]
+      : items.map((item, index) => (index === existingIndex ? updated : item));
+  recomputeAllTags();
+  notifyListeners();
+  return updated;
+}
+
+/** Removes the item from the in-memory store only after the API call
+ * succeeds — a failed delete leaves the item visible (T-02-23). */
+export async function deleteVaultItem(id: string): Promise<void> {
+  await deleteItem(id);
+  items = items.filter((item) => item.id !== id);
+  recomputeAllTags();
+  notifyListeners();
 }
 
 // useSyncExternalStore wymaga, by getServerSnapshot zwracał tę samą

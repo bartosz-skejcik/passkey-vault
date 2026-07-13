@@ -24,7 +24,7 @@ function loginItem(id: string, overrides: Partial<LoginFields> = {}): VaultItem 
     name: "GitHub",
     username: "bartek",
     password: "s3cret",
-    url: "https://github.com",
+    urls: ["https://github.com"],
     notes: "",
     folderId: null,
     tags: [],

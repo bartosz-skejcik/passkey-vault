@@ -59,7 +59,7 @@ describe("ItemForm", () => {
     fireEvent.change(screen.getByTestId("item-name"), { target: { value: "GitHub" } });
     fireEvent.change(screen.getByTestId("item-username"), { target: { value: "bartek" } });
     fireEvent.change(screen.getByTestId("item-password"), { target: { value: "s3cret" } });
-    fireEvent.change(screen.getByTestId("item-url"), {
+    fireEvent.change(screen.getByTestId("item-url-0"), {
       target: { value: "https://github.com" },
     });
 
@@ -71,12 +71,35 @@ describe("ItemForm", () => {
       name: "GitHub",
       username: "bartek",
       password: "s3cret",
-      url: "https://github.com",
+      urls: ["https://github.com"],
       notes: "",
       folderId: null,
       tags: [],
     });
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+  });
+
+  it("supports adding and removing multiple URL rows on a login item", async () => {
+    const onCreated = vi.fn();
+    render(<ItemForm type="login" onCreated={onCreated} />);
+
+    fireEvent.change(screen.getByTestId("item-name"), { target: { value: "GitHub" } });
+    fireEvent.change(screen.getByTestId("item-url-0"), {
+      target: { value: "https://github.com" },
+    });
+    fireEvent.click(screen.getByTestId("item-add-url"));
+    fireEvent.change(screen.getByTestId("item-url-1"), {
+      target: { value: "https://github.com/login" },
+    });
+    fireEvent.click(screen.getByTestId("item-add-url"));
+    fireEvent.change(screen.getByTestId("item-url-2"), { target: { value: "" } });
+    fireEvent.click(screen.getByTestId("item-remove-url-2"));
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockCreateVaultItem).toHaveBeenCalledTimes(1));
+    const submitted = mockCreateVaultItem.mock.calls[0][0];
+    expect(submitted.urls).toEqual(["https://github.com", "https://github.com/login"]);
   });
 
   it("submits a correctly-shaped note ItemFields object", async () => {

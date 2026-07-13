@@ -310,6 +310,144 @@ describe("updateVaultItem", () => {
   });
 });
 
+describe("legacy field normalization", () => {
+  it("normalizes a legacy login item's bare `url` string into `urls: [url]` on decrypt", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockListItems.mockResolvedValue([
+      { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
+    ]);
+    mockDecryptItem.mockReturnValue(
+      JSON.stringify({
+        type: "login",
+        name: "GitHub",
+        username: "bartek",
+        password: "s3cret",
+        url: "https://github.com",
+        notes: "",
+        folderId: null,
+        tags: [],
+      }),
+    );
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const item = store.getItems()[0];
+    expect(item.fields.type).toBe("login");
+    if (item.fields.type === "login") {
+      expect(item.fields.urls).toEqual(["https://github.com"]);
+      expect(item.fields).not.toHaveProperty("url");
+    }
+  });
+
+  it("tolerates a legacy login item with a missing url by normalizing to an empty urls array", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockListItems.mockResolvedValue([
+      { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
+    ]);
+    mockDecryptItem.mockReturnValue(
+      JSON.stringify({
+        type: "login",
+        name: "GitHub",
+        username: "bartek",
+        password: "s3cret",
+        notes: "",
+        folderId: null,
+        tags: [],
+      }),
+    );
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const item = store.getItems()[0];
+    if (item.fields.type === "login") {
+      expect(item.fields.urls).toEqual([]);
+    }
+  });
+
+  it("leaves a current-shape login item's urls array untouched", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockListItems.mockResolvedValue([
+      { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
+    ]);
+    mockDecryptItem.mockReturnValue(
+      JSON.stringify({
+        type: "login",
+        name: "GitHub",
+        username: "bartek",
+        password: "s3cret",
+        urls: ["https://github.com", "https://github.com/login"],
+        notes: "",
+        folderId: null,
+        tags: [],
+      }),
+    );
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const item = store.getItems()[0];
+    if (item.fields.type === "login") {
+      expect(item.fields.urls).toEqual([
+        "https://github.com",
+        "https://github.com/login",
+      ]);
+    }
+  });
+});
+
+describe("deleteVaultFolder", () => {
+  it("removes the folder from the store only after the API call succeeds", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockEncryptItem.mockReturnValue("combined-folder-json");
+    mockCreateFolder.mockResolvedValue({ id: "folder-1" });
+
+    const { store } = await importStoreAndGetLockListener();
+    // createVaultFolder generates its own client-side id via
+    // crypto.randomUUID() — the mocked API's returned {id} is discarded
+    // (pre-existing Plan 02-05 behavior) — so the real id must be read
+    // back off the created folder, not assumed.
+    const folder = await store.createVaultFolder("Praca");
+    expect(store.getFolders()).toHaveLength(1);
+
+    mockDeleteFolder.mockResolvedValue(undefined);
+    await store.deleteVaultFolder(folder.id);
+
+    expect(mockDeleteFolder).toHaveBeenCalledWith(folder.id);
+    expect(store.getFolders()).toHaveLength(0);
+  });
+
+  it("leaves the folder in the store if the delete API call fails", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockEncryptItem.mockReturnValue("combined-folder-json");
+    mockCreateFolder.mockResolvedValue({ id: "folder-1" });
+
+    const { store } = await importStoreAndGetLockListener();
+    const folder = await store.createVaultFolder("Praca");
+
+    mockDeleteFolder.mockRejectedValue(new Error("network error"));
+    await expect(store.deleteVaultFolder(folder.id)).rejects.toThrow("network error");
+
+    expect(store.getFolders()).toHaveLength(1);
+  });
+});
+
 describe("deleteVaultItem", () => {
   it("removes the item from the store only after the API call succeeds", async () => {
     mockGetUnlockedUserKey.mockReturnValue({});

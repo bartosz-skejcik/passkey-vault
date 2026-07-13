@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
-class MockRevisionConflictError extends Error {}
-
 const {
   mockUseFolders,
   mockUseAllTags,
@@ -10,6 +8,7 @@ const {
   mockCreateVaultFolder,
   mockUpdateVaultItem,
   mockDeleteVaultItem,
+  MockRevisionConflictError,
 } = vi.hoisted(() => ({
   mockUseFolders: vi.fn(),
   mockUseAllTags: vi.fn(),
@@ -17,6 +16,10 @@ const {
   mockCreateVaultFolder: vi.fn(),
   mockUpdateVaultItem: vi.fn(),
   mockDeleteVaultItem: vi.fn(),
+  // vi.mock factories are hoisted above the rest of the file — any value
+  // they reference (like this error class) must be created inside
+  // vi.hoisted() too, or it's a "Cannot access before initialization" ReferenceError.
+  MockRevisionConflictError: class MockRevisionConflictError extends Error {},
 }));
 
 vi.mock("@/lib/vault/store", () => ({

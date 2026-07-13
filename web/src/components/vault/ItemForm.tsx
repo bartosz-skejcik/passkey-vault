@@ -1,9 +1,15 @@
 "use client";
 
 import { useState, type FormEvent, type KeyboardEvent } from "react";
-import { Eye, EyeOff, Plus } from "lucide-react";
+import { Eye, EyeOff, Plus, X } from "lucide-react";
 import type { Folder, ItemFields, ItemType } from "@/lib/vault/types";
-import { createVaultFolder, createVaultItem, useAllTags, useFolders } from "@/lib/vault/store";
+import {
+  createVaultFolder,
+  createVaultItem,
+  updateVaultItem,
+  useAllTags,
+  useFolders,
+} from "@/lib/vault/store";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import PasskeyPlaceholderSection from "./PasskeyPlaceholderSection";
 
@@ -16,7 +22,7 @@ function emptyFieldsFor(type: ItemType): ItemFields {
         name: "",
         username: "",
         password: "",
-        url: "",
+        urls: [""],
         notes: "",
         ...common,
       };
@@ -112,15 +118,25 @@ function TextAreaField({
 
 export default function ItemForm({
   type,
+  mode = "create",
+  itemId,
+  currentRevision,
+  initialFields,
   onCreated,
+  onError,
 }: {
   type: ItemType;
+  mode?: "create" | "edit";
+  itemId?: string;
+  currentRevision?: number;
+  initialFields?: ItemFields;
   onCreated: () => void;
+  onError?: (err: Error) => void;
 }) {
   const { t } = useLocale();
   const folders = useFolders();
   const allTags = useAllTags();
-  const [fields, setFields] = useState<ItemFields>(() => emptyFieldsFor(type));
+  const [fields, setFields] = useState<ItemFields>(() => initialFields ?? emptyFieldsFor(type));
   const [nameError, setNameError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -160,6 +176,27 @@ export default function ItemForm({
     }
   }
 
+  function updateUrlAt(index: number, value: string) {
+    setFields((prev) => {
+      if (prev.type !== "login") return prev;
+      const urls = [...prev.urls];
+      urls[index] = value;
+      return { ...prev, urls };
+    });
+  }
+
+  function addUrlRow() {
+    setFields((prev) => (prev.type === "login" ? { ...prev, urls: [...prev.urls, ""] } : prev));
+  }
+
+  function removeUrlAt(index: number) {
+    setFields((prev) => {
+      if (prev.type !== "login") return prev;
+      const urls = prev.urls.filter((_, i) => i !== index);
+      return { ...prev, urls: urls.length > 0 ? urls : [""] };
+    });
+  }
+
   async function handleCreateFolder() {
     const name = newFolderName.trim();
     if (name === "") return;
@@ -170,6 +207,11 @@ export default function ItemForm({
     setAddingFolder(false);
   }
 
+  function cleanFields(f: ItemFields): ItemFields {
+    if (f.type !== "login") return f;
+    return { ...f, urls: f.urls.filter((url) => url.trim() !== "") };
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (fields.name.trim() === "") {
@@ -178,9 +220,20 @@ export default function ItemForm({
     }
     setNameError(false);
     setSubmitting(true);
+    const cleaned = cleanFields(fields);
     try {
-      await createVaultItem(fields);
+      if (mode === "edit" && itemId !== undefined && currentRevision !== undefined) {
+        await updateVaultItem(itemId, cleaned, currentRevision);
+      } else {
+        await createVaultItem(cleaned);
+      }
       onCreated();
+    } catch (err) {
+      if (mode === "edit") {
+        onError?.(err as Error);
+      } else {
+        throw err;
+      }
     } finally {
       setSubmitting(false);
     }
@@ -244,12 +297,41 @@ export default function ItemForm({
               </button>
             </div>
           </div>
-          <TextField
-            id="item-url"
-            label={t("field.url")}
-            value={fields.url}
-            onChange={(v) => update("url", v)}
-          />
+          <div className="flex flex-col gap-1">
+            <span className="text-sm">{t("field.url")}</span>
+            <div className="flex flex-col gap-2">
+              {fields.urls.map((url, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    data-testid={`item-url-${i}`}
+                    className="input input-bordered w-full"
+                    value={url}
+                    onChange={(e) => updateUrlAt(i, e.target.value)}
+                  />
+                  {fields.urls.length > 1 ? (
+                    <button
+                      type="button"
+                      data-testid={`item-remove-url-${i}`}
+                      aria-label={t("aria.removeUrl")}
+                      className="btn btn-ghost btn-square btn-sm"
+                      onClick={() => removeUrlAt(i)}
+                    >
+                      <X size={14} aria-hidden="true" />
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              data-testid="item-add-url"
+              className="btn btn-ghost btn-sm w-fit gap-1"
+              onClick={addUrlRow}
+            >
+              <Plus size={14} aria-hidden="true" />
+              {t("item.addUrl")}
+            </button>
+          </div>
           <TextAreaField
             id="item-notes"
             label={t("field.notes")}

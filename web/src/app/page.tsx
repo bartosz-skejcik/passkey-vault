@@ -21,7 +21,7 @@ import { getSessionToken } from "@/lib/auth/session";
 import { initCrypto, lockVault, useIsUnlocked } from "@/lib/crypto";
 import { useIdleTimer } from "@/lib/idle/useIdleTimer";
 import { useVaultItems } from "@/lib/vault/store";
-import type { ItemType, VaultItem } from "@/lib/vault/types";
+import type { ItemType } from "@/lib/vault/types";
 
 function readAutolockMinutes(): number {
   try {
@@ -42,13 +42,19 @@ export default function Home() {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [autolockMinutes, setAutolockMinutes] = useState(Number(DEFAULT_AUTOLOCK_MINUTES));
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedItem, setSelectedItem] = useState<VaultItem | null>(null);
+  // Track only the id, not the full VaultItem object — deriving the live
+  // item from useVaultItems() below means DetailPanel always sees fresh
+  // post-edit/post-delete data instead of a stale snapshot captured at
+  // selection time (a stale snapshot would silently hide a successful
+  // edit's own effect, or keep a deleted item's panel open).
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [creatingType, setCreatingType] = useState<ItemType | null>(null);
   const items = useVaultItems();
+  const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
 
   function handleNewItem() {
-    setSelectedItem(null);
+    setSelectedItemId(null);
     setCreating(true);
     setCreatingType(null);
   }
@@ -59,7 +65,7 @@ export default function Home() {
   }
 
   function closeSidePanel() {
-    setSelectedItem(null);
+    setSelectedItemId(null);
     setCreating(false);
     setCreatingType(null);
   }
@@ -123,7 +129,7 @@ export default function Home() {
                   onSelect={(item) => {
                     setCreating(false);
                     setCreatingType(null);
-                    setSelectedItem(item);
+                    setSelectedItemId(item.id);
                   }}
                 />
               </MainColumn>

@@ -83,6 +83,7 @@ export const DICTIONARY = {
   "field.username": { pl: "Użytkownik", en: "Username" },
   "field.password": { pl: "Hasło", en: "Password" },
   "field.url": { pl: "URL", en: "URL" },
+  "item.addUrl": { pl: "Dodaj URL", en: "Add URL" },
   "field.notes": { pl: "Notatki", en: "Notes" },
   "field.cardholderName": { pl: "Właściciel karty", en: "Cardholder name" },
   "field.number": { pl: "Numer karty", en: "Card number" },
@@ -144,6 +145,8 @@ export const DICTIONARY = {
   "aria.logout": { pl: "Wyloguj się", en: "Log out" },
   "aria.newFolder": { pl: "Nowy folder", en: "New folder" },
   "aria.newTag": { pl: "Nowy tag", en: "New tag" },
+  "aria.removeUrl": { pl: "Usuń URL", en: "Remove URL" },
+  "aria.closeDrawer": { pl: "Zamknij panel", en: "Close panel" },
 
   // Self-test (dev diagnostic route, not part of UI-SPEC's copywriting
   // contract — added here per Task 4's carried-forward Phase 1 UI-REVIEW
@@ -168,4 +171,29 @@ export const DICTIONARY = {
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {
   return DICTIONARY[key][locale];
+}
+
+/**
+ * Substitutes `{token}` placeholders in a translated string with the
+ * given values. Falls back to appending the values (space-joined) when no
+ * placeholder token is found in the template — this keeps components
+ * correct under both the real dictionary (which contains the `{token}`
+ * markers) and test doubles that stub `t()` as an identity function
+ * returning the bare key (which obviously has no placeholder to replace).
+ */
+export function interpolate(template: string, vars: Record<string, string>): string {
+  let result = template;
+  let replacedAny = false;
+  for (const [key, value] of Object.entries(vars)) {
+    const token = `{${key}}`;
+    if (result.includes(token)) {
+      result = result.split(token).join(value);
+      replacedAny = true;
+    }
+  }
+  if (!replacedAny) {
+    const extra = Object.values(vars).join(" ");
+    result = extra ? `${result} ${extra}` : result;
+  }
+  return result;
 }
