@@ -4,17 +4,17 @@ milestone: v0.1
 milestone_name: milestone
 current_phase: 02
 current_phase_name: password-auth-vault-core
-status: executing
-stopped_at: Completed 02-05-PLAN.md
-last_updated: "2026-07-13T11:38:59.254Z"
+status: verifying
+stopped_at: Completed 02-06-PLAN.md (Phase 2 complete)
+last_updated: "2026-07-13T13:35:10.320Z"
 last_activity: 2026-07-13
-last_activity_desc: Phase 02 execution started
+last_activity_desc: Completed 02-05-PLAN.md
 progress:
   total_phases: 7
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 9
-  completed_plans: 8
-  percent: 14
+  completed_plans: 9
+  percent: 29
 ---
 
 # Project State
@@ -28,12 +28,12 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 
 ## Current Position
 
-Phase: 02 (password-auth-vault-core) — EXECUTING
-Plan: 6 of 6 (5 complete: 02-01..02-05)
-Status: Ready to execute
-Last activity: 2026-07-13 — Completed 02-05-PLAN.md
+Phase: 02 (password-auth-vault-core) — COMPLETE
+Plan: 6 of 6 (all complete: 02-01..02-06)
+Status: Phase complete — ready for verification
+Last activity: 2026-07-13 — Completed 02-06-PLAN.md (Phase 2 complete)
 
-Progress: [█░░░░░░░░░] 14% (1/7 phases)
+Progress: [███░░░░░░░] 29% (2/7 phases, 9/9 plans through Phase 2)
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [█░░░░░░░░░] 14% (1/7 phases)
 | Phase 02 P02 | 25min | 2 tasks | 12 files |
 | Phase 02 P03 | 20min | 2 tasks | 6 files |
 | Phase 02 P05 | 25min | 3 tasks | 15 files |
+| Phase 02 P06 | 50min | 3 tasks | 22 files |
 
 ## Accumulated Context
 
@@ -87,6 +88,10 @@ Recent decisions affecting current work:
 - [Phase 2]: Folder deletion has no cascading effect on items - folder membership lives inside each item's encrypted payload, client-side-only concern
 - [Phase 2]: MainColumn's empty state is now conditional on useVaultItems().length===0 (was unconditionally shown, hiding real items behind misleading empty-state copy)
 - [Phase 2]: ItemForm.tsx switches on fields.type (not the type prop) for TS discriminated-union narrowing across all 4 item types
+- [Phase 2]: LoginFields.url -> urls: string[] with transparent legacy normalization on decrypt (user-requested UAT change)
+- [Phase 2]: DetailPanel/TypePicker/ItemForm converted to a fixed z-40 overlay drawer with a click-outside scrim instead of a flex sibling that narrowed the item list (user-requested UAT change), staying below UnlockOverlay's z-50
+- [Phase 2]: store.ts uses a duck-typed isConflictError(err) status check instead of instanceof ApiClientError -- the module is dynamically re-imported per test via vi.resetModules(), which breaks instanceof against a test's own top-level-imported class reference
+- [Phase 2]: interpolate(template, vars) dictionary helper substitutes {token} placeholders and gracefully degrades under identity-mocked t() in tests
 
 ### Pending Todos
 
@@ -111,6 +116,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-13T11:38:59.249Z
-Stopped at: Completed 02-05-PLAN.md
+Last session: 2026-07-13T13:35:10.315Z
+Stopped at: Completed 02-06-PLAN.md (Phase 2 complete)
 Resume file: None

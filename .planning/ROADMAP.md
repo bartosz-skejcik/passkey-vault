@@ -14,7 +14,7 @@ v0.1 delivers a self-hostable, zero-knowledge password manager (server + web app
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: WASM Crypto Bridge & Web App Shell** - Bridge `pv-core` to WASM behind a themed Next.js shell; prove a full crypto round-trip through the choke-point module (completed 2026-07-12)
-- [ ] **Phase 2: Password Auth & Vault Core** - Register, log in with a master password, and fully manage an encrypted vault of items — the first real end-to-end zero-knowledge slice
+- [x] **Phase 2: Password Auth & Vault Core** - Register, log in with a master password, and fully manage an encrypted vault of items — the first real end-to-end zero-knowledge slice (completed 2026-07-13)
 - [ ] **Phase 3: Passkey Enrollment & Account Security** - Enroll a PRF passkey, manage passkeys/sessions, with the recovery invariant server-enforced
 - [ ] **Phase 4: PRF Unlock & Login Unification** - Log in and unlock the vault in one passkey gesture, with an honest fallback when PRF isn't available
 - [ ] **Phase 5: Multi-Device Sync** - Keep the vault in sync across simultaneously-active devices/sessions
@@ -58,7 +58,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Each item's ciphertext is bound via AEAD associated data to its item ID/revision/field context — a test that mutates the AD context proves decryption is rejected, not silently accepted
   5. User can organize items into folders/tags, search instantly client-side, generate a strong password (16+ char default, passphrase mode alongside character mode), copy a field to clipboard (auto-clears in 30-60s, on by default), and the vault auto-locks after a configurable idle period
 
-**Plans**: 5/6 plans executed
+**Plans**: 6/6 plans complete
 
 Plans:
 **Wave 1**
@@ -77,7 +77,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 02-06-PLAN.md — Edit/delete + generator + clipboard + folders/tags UI
+- [x] 02-06-PLAN.md — Edit/delete + generator + clipboard + folders/tags UI
 
 **UI hint**: yes
 
@@ -166,7 +166,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. WASM Crypto Bridge & Web App Shell | 3/3 | Complete    | 2026-07-12 |
-| 2. Password Auth & Vault Core | 5/6 | In Progress|  |
+| 2. Password Auth & Vault Core | 6/6 | Complete   | 2026-07-13 |
 | 3. Passkey Enrollment & Account Security | 0/TBD | Not started | - |
 | 4. PRF Unlock & Login Unification | 0/TBD | Not started | - |
 | 5. Multi-Device Sync | 0/TBD | Not started | - |
