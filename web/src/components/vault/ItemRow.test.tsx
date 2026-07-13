@@ -143,5 +143,24 @@ describe("ItemRow", () => {
       expect(screen.getByTestId("delete-confirm-dialog")).toBeInTheDocument();
       expect(mockDeleteVaultItem).not.toHaveBeenCalled();
     });
+
+    it("clicking Edit calls onEditRequest with the item (not the plain onClick) when provided (gap-review WR-01)", () => {
+      const onClick = vi.fn();
+      const onEditRequest = vi.fn();
+      const item = loginItem();
+      render(<ItemRow item={item} selected={false} onClick={onClick} onEditRequest={onEditRequest} />);
+      fireEvent.click(screen.getByTestId("item-menu-trigger-item-1"));
+      fireEvent.click(screen.getByTestId("context-menu-edit"));
+      expect(onEditRequest).toHaveBeenCalledWith(item);
+      expect(onClick).not.toHaveBeenCalled();
+    });
+
+    it("clicking Edit falls back to onClick when onEditRequest is not provided", () => {
+      const onClick = vi.fn();
+      render(<ItemRow item={loginItem()} selected={false} onClick={onClick} />);
+      fireEvent.click(screen.getByTestId("item-menu-trigger-item-1"));
+      fireEvent.click(screen.getByTestId("context-menu-edit"));
+      expect(onClick).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -25,7 +25,7 @@ import {
   readAutolockMinutes,
 } from "@/lib/idle/autolock";
 import { useVaultItems } from "@/lib/vault/store";
-import type { ItemType, VaultFilter } from "@/lib/vault/types";
+import type { ItemType, VaultFilter, VaultItem } from "@/lib/vault/types";
 
 export default function Home() {
   const { t } = useLocale();
@@ -43,6 +43,12 @@ export default function Home() {
   // selection time (a stale snapshot would silently hide a successful
   // edit's own effect, or keep a deleted item's panel open).
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  // Whether the currently-selected item's panel should open straight into
+  // edit mode — set by ItemContextMenu's "Edit" action (via
+  // handleEditRequest) and cleared by every plain row click (via
+  // handleSelectItem), so re-selecting the same item afterwards falls back
+  // to view mode (gap-review WR-01).
+  const [openInEditMode, setOpenInEditMode] = useState(false);
   const [creating, setCreating] = useState(false);
   const [creatingType, setCreatingType] = useState<ItemType | null>(null);
   const [filter, setFilter] = useState<VaultFilter>({ kind: "all" });
@@ -53,6 +59,7 @@ export default function Home() {
 
   function handleNewItem() {
     setSelectedItemId(null);
+    setOpenInEditMode(false);
     setCreating(true);
     setCreatingType(null);
   }
@@ -64,8 +71,23 @@ export default function Home() {
 
   function closeSidePanel() {
     setSelectedItemId(null);
+    setOpenInEditMode(false);
     setCreating(false);
     setCreatingType(null);
+  }
+
+  function handleSelectItem(item: VaultItem) {
+    setCreating(false);
+    setCreatingType(null);
+    setOpenInEditMode(false);
+    setSelectedItemId(item.id);
+  }
+
+  function handleEditRequest(item: VaultItem) {
+    setCreating(false);
+    setCreatingType(null);
+    setOpenInEditMode(true);
+    setSelectedItemId(item.id);
   }
 
   useEffect(() => {
@@ -130,11 +152,8 @@ export default function Home() {
                   searchQuery={searchQuery}
                   filter={filter}
                   selectedItemId={selectedItem?.id ?? null}
-                  onSelect={(item) => {
-                    setCreating(false);
-                    setCreatingType(null);
-                    setSelectedItemId(item.id);
-                  }}
+                  onSelect={handleSelectItem}
+                  onEditRequest={handleEditRequest}
                 />
               </MainColumn>
 
@@ -150,7 +169,11 @@ export default function Home() {
               ) : null}
 
               {selectedItem ? (
-                <DetailPanel item={selectedItem} onClose={closeSidePanel} />
+                <DetailPanel
+                  item={selectedItem}
+                  initialMode={openInEditMode ? "edit" : "view"}
+                  onClose={closeSidePanel}
+                />
               ) : null}
               {creating && creatingType === null ? (
                 <aside className="fixed inset-y-0 right-0 z-40 flex w-full flex-col gap-4 overflow-y-auto border-l border-base-300 bg-base-100 p-6 shadow-xl md:w-[400px]">

@@ -38,14 +38,16 @@ const MASK = "•".repeat(10);
 
 export default function DetailPanel({
   item,
+  initialMode = "view",
   onClose,
 }: {
   item: VaultItem;
+  initialMode?: "view" | "edit";
   onClose: () => void;
 }) {
   const { t } = useLocale();
   const folders = useFolders();
-  const [mode, setMode] = useState<"view" | "edit">("view");
+  const [mode, setMode] = useState<"view" | "edit">(initialMode);
   const [conflict, setConflict] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   // Safe: every key in FIELD_ORDER[item.fields.type] is a string field of
@@ -63,6 +65,19 @@ export default function DetailPanel({
     setRevealedKeys(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id]);
+
+  // `initialMode` only seeds `useState` on first mount — since the panel is
+  // never remounted between selections (see above), a context-menu "Edit"
+  // request on an item that's already selected (same item.id, so the first
+  // effect above wouldn't fire) still needs to force the panel into edit
+  // mode. Re-applying `initialMode` whenever either it or the item changes
+  // covers both cases: switching to a different item resets to its
+  // requested mode, and re-requesting edit on the same item re-enters it.
+  useEffect(() => {
+    setMode(initialMode);
+    setConflict(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id, initialMode]);
 
   function isRevealed(key: string): boolean {
     return revealedKeys.has(key);

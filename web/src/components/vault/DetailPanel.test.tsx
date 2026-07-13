@@ -169,6 +169,24 @@ describe("DetailPanel", () => {
     expect(screen.queryByTestId("reveal-cvv")).not.toBeInTheDocument();
   });
 
+  it("opens directly in the pre-filled edit form when initialMode='edit' is passed", () => {
+    render(<DetailPanel item={item} initialMode="edit" onClose={vi.fn()} />);
+
+    expect(screen.getByTestId("item-name")).toHaveValue("Wifi");
+    expect(screen.getByTestId("item-body")).toHaveValue("hunter2");
+  });
+
+  it("re-enters edit mode when initialMode flips to 'edit' for the same item without remounting", () => {
+    const { rerender } = render(
+      <DetailPanel item={item} initialMode="view" onClose={vi.fn()} />,
+    );
+    expect(screen.queryByTestId("item-name")).not.toBeInTheDocument();
+
+    rerender(<DetailPanel item={item} initialMode="edit" onClose={vi.fn()} />);
+
+    expect(screen.getByTestId("item-name")).toHaveValue("Wifi");
+  });
+
   it("resets a revealed field back to masked when the item prop changes", () => {
     const { rerender } = render(<DetailPanel item={loginItem} onClose={vi.fn()} />);
 

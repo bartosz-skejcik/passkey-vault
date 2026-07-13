@@ -32,10 +32,17 @@ export default function ItemRow({
   item,
   selected,
   onClick,
+  onEditRequest,
 }: {
   item: VaultItem;
   selected: boolean;
   onClick: () => void;
+  // Distinct from onClick (gap-review WR-01): a plain row click and a
+  // context-menu "Edit" choice must lead to different panel modes
+  // (view vs. edit), so the context menu needs its own handler instead of
+  // reusing onClick. Optional + falls back to onClick so callers that only
+  // care about selection (e.g. existing tests) don't need to supply it.
+  onEditRequest?: (item: VaultItem) => void;
 }) {
   const { t, locale } = useLocale();
   const Icon = TYPE_ICON[item.fields.type];
@@ -123,7 +130,7 @@ export default function ItemRow({
           <ItemContextMenu
             item={item}
             onClose={() => setMenuOpen(false)}
-            onEdit={onClick}
+            onEdit={() => (onEditRequest ? onEditRequest(item) : onClick())}
             onDeleteRequest={() => {
               setMenuOpen(false);
               setShowDeleteDialog(true);

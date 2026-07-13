@@ -11,11 +11,13 @@ export default function ItemList({
   filter = { kind: "all" },
   selectedItemId,
   onSelect,
+  onEditRequest,
 }: {
   searchQuery: string;
   filter?: VaultFilter;
   selectedItemId: string | null;
   onSelect: (item: VaultItem) => void;
+  onEditRequest?: (item: VaultItem) => void;
 }) {
   const { t } = useLocale();
   const items = useVaultItems();
@@ -41,6 +43,7 @@ export default function ItemList({
           item={item}
           selected={item.id === selectedItemId}
           onClick={() => onSelect(item)}
+          onEditRequest={onEditRequest}
         />
       ))}
     </div>

@@ -1,10 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 
-const { mockUseVaultItems } = vi.hoisted(() => ({ mockUseVaultItems: vi.fn() }));
+const { mockUseVaultItems, mockUseFolders, mockUpdateVaultItem, mockDeleteVaultItem } =
+  vi.hoisted(() => ({
+    mockUseVaultItems: vi.fn(),
+    mockUseFolders: vi.fn(),
+    mockUpdateVaultItem: vi.fn(),
+    mockDeleteVaultItem: vi.fn(),
+  }));
 
 vi.mock("@/lib/vault/store", () => ({
   useVaultItems: mockUseVaultItems,
+  useFolders: mockUseFolders,
+  updateVaultItem: mockUpdateVaultItem,
+  deleteVaultItem: mockDeleteVaultItem,
+}));
+
+vi.mock("@/lib/clipboard", () => ({
+  copyWithAutoClear: vi.fn(),
+  readClipboardSeconds: vi.fn(() => 40),
+}));
+
+vi.mock("@/lib/vault/copyToast", () => ({
+  showCopyToast: vi.fn(),
+}));
+
+vi.mock("@/lib/vault/errorToast", () => ({
+  showErrorToast: vi.fn(),
 }));
 
 vi.mock("@/lib/i18n/LocaleContext", () => ({
@@ -47,6 +69,7 @@ function noteItem(id: string, overrides: Partial<NoteFields> = {}): VaultItem {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockUseFolders.mockReturnValue([]);
 });
 
 describe("ItemList", () => {
@@ -69,5 +92,21 @@ describe("ItemList", () => {
     render(<ItemList searchQuery="zzz-no-match" selectedItemId={null} onSelect={vi.fn()} />);
     expect(screen.queryByTestId("item-row-1")).not.toBeInTheDocument();
     expect(screen.getByText(/search.emptyResults/)).toBeInTheDocument();
+  });
+
+  it("forwards onEditRequest through to each row's context menu Edit action", () => {
+    mockUseVaultItems.mockReturnValue([loginItem("1")]);
+    const onEditRequest = vi.fn();
+    render(
+      <ItemList
+        searchQuery=""
+        selectedItemId={null}
+        onSelect={vi.fn()}
+        onEditRequest={onEditRequest}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("item-menu-trigger-1"));
+    fireEvent.click(screen.getByTestId("context-menu-edit"));
+    expect(onEditRequest).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }));
   });
 });
