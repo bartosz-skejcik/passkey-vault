@@ -75,7 +75,7 @@ describe("recombine/split round-trip", () => {
         enc_data: { nonce: [5, 6], ciphertext: [7, 8] },
       }),
     );
-    mockCreateItem.mockResolvedValue({ id: "item-1", revision: 1 });
+    mockCreateItem.mockResolvedValue({ id: "item-1", revision: 1, updated_at: "2026-07-13 12:00:00" });
 
     const { store } = await importStoreAndGetLockListener();
     const fields = {
@@ -133,7 +133,7 @@ describe("recombine/split round-trip", () => {
       enc_data: { nonce: [11], ciphertext: [12] },
     });
     mockEncryptItem.mockReturnValue(combinedJson);
-    mockCreateItem.mockResolvedValue({ id: "item-2", revision: 1 });
+    mockCreateItem.mockResolvedValue({ id: "item-2", revision: 1, updated_at: "2026-07-13 12:00:00" });
     mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
 
     const { store } = await importStoreAndGetLockListener();
@@ -244,7 +244,7 @@ describe("updateVaultItem", () => {
         enc_data: { nonce: [3], ciphertext: [4] },
       }),
     );
-    mockUpdateItem.mockResolvedValue({ revision: 2 });
+    mockUpdateItem.mockResolvedValue({ revision: 2, updated_at: "2026-07-13 12:00:00" });
 
     const { store } = await importStoreAndGetLockListener();
     const fields = {
@@ -264,7 +264,12 @@ describe("updateVaultItem", () => {
       2,
     );
     expect(mockUpdateItem).toHaveBeenCalledWith("item-1", expect.any(String), expect.any(String), 1);
-    expect(result).toEqual({ id: "item-1", revision: 2, fields });
+    expect(result).toEqual({
+      id: "item-1",
+      revision: 2,
+      fields,
+      updatedAt: "2026-07-13 12:00:00",
+    });
     expect(store.getItems()).toContainEqual(result);
   });
 

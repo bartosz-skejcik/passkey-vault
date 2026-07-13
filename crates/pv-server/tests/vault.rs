@@ -212,6 +212,46 @@ async fn update_and_delete_on_other_users_item_returns_404() {
     assert_eq!(delete_res.status(), StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn create_and_list_both_include_a_non_empty_updated_at() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+    let token = register_and_login(&app, "updatedat@example.com").await;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let res = req(&app, "POST", "/api/vault/items", &token, Some(item_body(&id))).await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body = body_json(res).await;
+    assert!(body["updated_at"].as_str().is_some_and(|s| !s.is_empty()));
+
+    let list_res = req(&app, "GET", "/api/vault/items", &token, None).await;
+    assert_eq!(list_res.status(), StatusCode::OK);
+    let items = body_json(list_res).await;
+    let items = items.as_array().unwrap();
+    let item = items.iter().find(|i| i["id"] == id).unwrap();
+    assert!(item["updated_at"].as_str().is_some_and(|s| !s.is_empty()));
+}
+
+#[tokio::test]
+async fn update_response_includes_a_non_empty_updated_at() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+    let token = register_and_login(&app, "updateupdatedat@example.com").await;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    req(&app, "POST", "/api/vault/items", &token, Some(item_body(&id))).await;
+
+    let update_body = json!({
+        "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"key-blob-2\"}",
+        "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"data-blob-2\"}",
+        "expected_revision": 1,
+    });
+    let res = req(&app, "PUT", &format!("/api/vault/items/{id}"), &token, Some(update_body)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = body_json(res).await;
+    assert!(body["updated_at"].as_str().is_some_and(|s| !s.is_empty()));
+}
+
 // --- Folders (Task 2) ---
 
 fn folder_body(name_ciphertext: &str) -> Value {

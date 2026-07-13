@@ -70,4 +70,16 @@ describe("ItemRow", () => {
     render(<ItemRow item={loginItem()} selected onClick={vi.fn()} />);
     expect(screen.getByTestId("item-row-item-1").className).toContain("border-primary");
   });
+
+  it("renders the formatted relative time in the trailing column when item.updatedAt is set", () => {
+    const recentIso = new Date(Date.now() - 5000).toISOString();
+    const item = { ...loginItem(), updatedAt: recentIso };
+    render(<ItemRow item={item} selected={false} onClick={vi.fn()} />);
+    expect(screen.getByText("time.justNow")).toBeInTheDocument();
+  });
+
+  it("renders nothing in the trailing time column when item.updatedAt is undefined", () => {
+    render(<ItemRow item={loginItem()} selected={false} onClick={vi.fn()} />);
+    expect(screen.queryByText("time.justNow")).not.toBeInTheDocument();
+  });
 });
