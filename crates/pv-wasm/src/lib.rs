@@ -11,10 +11,11 @@
 
 use pv_core::{
     items::{decrypt_item as core_decrypt_item, encrypt_item as core_encrypt_item, EncryptedItem},
-    kdf::{wrapping_key_from_password, KdfParams},
+    kdf::{derive_master_key, wrapping_key_from_password, KdfParams},
     keys::{
-        random_bytes, unwrap_user_key as core_unwrap_user_key, wrap_user_key as core_wrap_user_key,
-        UserKey, WrappedKey, KEY_LEN,
+        hkdf_expand_key, random_bytes, unwrap_user_key as core_unwrap_user_key,
+        wrap_user_key as core_wrap_user_key, UserKey, WrappedKey, INFO_AUTH_HASH, INFO_PW_UNLOCK,
+        KEY_LEN,
     },
     CryptoError,
 };
@@ -114,17 +115,82 @@ pub fn unwrap_user_key(
 }
 
 #[wasm_bindgen(js_name = encryptItem)]
-pub fn encrypt_item(uk: &WasmUserKey, plaintext: &str) -> Result<String, JsValue> {
-    let item = core_encrypt_item(&uk.0, plaintext.as_bytes()).map_err(to_js_err)?;
+pub fn encrypt_item(
+    uk: &WasmUserKey,
+    plaintext: &str,
+    item_id: &str,
+    revision: u32,
+) -> Result<String, JsValue> {
+    let item =
+        core_encrypt_item(&uk.0, plaintext.as_bytes(), item_id, revision).map_err(to_js_err)?;
     serde_json::to_string(&item).map_err(|e| to_js_str_err(&e.to_string()))
 }
 
 #[wasm_bindgen(js_name = decryptItem)]
-pub fn decrypt_item(uk: &WasmUserKey, item_json: &str) -> Result<String, JsValue> {
+pub fn decrypt_item(
+    uk: &WasmUserKey,
+    item_json: &str,
+    item_id: &str,
+    revision: u32,
+) -> Result<String, JsValue> {
     let item: EncryptedItem =
         serde_json::from_str(item_json).map_err(|e| to_js_str_err(&e.to_string()))?;
-    let plaintext = core_decrypt_item(&uk.0, &item).map_err(to_js_err)?;
+    let plaintext = core_decrypt_item(&uk.0, &item, item_id, revision).map_err(to_js_err)?;
     String::from_utf8(plaintext).map_err(|e| to_js_str_err(&e.to_string()))
+}
+
+/// Nieprzezroczysty handle zawierający ZAROWNO wrapping key JAK I auth-hash
+/// pochodzące z jednego przebiegu Argon2id (patrz `derive_auth_material`).
+/// Konsumowanie pól odbywa się przez metody `take*` (mutable-borrow), nie
+/// `self`-by-value — `ZeroizeOnDrop` generuje `Drop`, więc Rust nie pozwala
+/// na częściowy move pola ze struktury, która ma niestandardowy Drop.
+#[wasm_bindgen]
+#[derive(Zeroize, ZeroizeOnDrop)]
+pub struct WasmAuthMaterial {
+    wrapping_key: [u8; KEY_LEN],
+    auth_hash: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl WasmAuthMaterial {
+    /// Zabiera auth-hash, zostawiając puste `Vec` na miejscu (zerowalne przy
+    /// ewentualnym Drop `self`). Bezpieczne do wywołania niezależnie od
+    /// kolejności/tego, czy druga metoda `take*` też zostanie wywołana.
+    #[wasm_bindgen(js_name = takeAuthHash)]
+    pub fn take_auth_hash(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.auth_hash)
+    }
+
+    /// Zabiera wrapping key jako nowy `WasmWrappingKey` handle, zostawiając
+    /// wyzerowane bajty na miejscu.
+    #[wasm_bindgen(js_name = takeWrappingKey)]
+    pub fn take_wrapping_key(&mut self) -> WasmWrappingKey {
+        let bytes = std::mem::replace(&mut self.wrapping_key, [0u8; KEY_LEN]);
+        WasmWrappingKey(bytes)
+    }
+}
+
+/// Wykonuje JEDEN przebieg Argon2id (`derive_master_key`) i rozwija jego
+/// wynik przez HKDF dwukrotnie — raz z `INFO_PW_UNLOCK` (wrapping key), raz
+/// z `INFO_AUTH_HASH` (auth-hash) — zamiast wołać
+/// `wrapping_key_from_password`/`auth_hash_from_password`, które każde
+/// niezależnie powtórzyłyby kosztowny przebieg Argon2id. To jest właściwe
+/// miejsce na tę optymalizację: rejestracja/logowanie potrzebują OBU
+/// wyjść z JEDNEGO hasła.
+#[wasm_bindgen(js_name = deriveAuthMaterial)]
+pub fn derive_auth_material(
+    password: &mut [u8],
+    salt: &[u8],
+    kdf_params_json: &str,
+) -> Result<WasmAuthMaterial, JsValue> {
+    let params: KdfParams =
+        serde_json::from_str(kdf_params_json).map_err(|e| to_js_str_err(&e.to_string()))?;
+    let result = derive_master_key(password, salt, &params).map_err(to_js_err);
+    password.zeroize(); // wipe regardless of outcome
+    let mk = result?;
+    let wrapping_key = hkdf_expand_key(mk.as_ref(), INFO_PW_UNLOCK);
+    let auth_hash = hkdf_expand_key(mk.as_ref(), INFO_AUTH_HASH).to_vec();
+    Ok(WasmAuthMaterial { wrapping_key, auth_hash })
 }
 
 #[wasm_bindgen(js_name = defaultKdfParamsJson)]
@@ -154,9 +220,15 @@ mod tests {
         let wrapped_json = wrap_user_key(&wrapping_key, &user_key).expect("wrap should succeed");
         let unwrapped =
             unwrap_user_key(&wrapping_key, &wrapped_json).expect("unwrap should succeed");
-        let item_json = encrypt_item(&unwrapped, "{\"type\":\"note\",\"body\":\"fixture\"}")
-            .expect("encrypt should succeed");
-        let plaintext = decrypt_item(&unwrapped, &item_json).expect("decrypt should succeed");
+        let item_json = encrypt_item(
+            &unwrapped,
+            "{\"type\":\"note\",\"body\":\"fixture\"}",
+            "self-test-item",
+            1,
+        )
+        .expect("encrypt should succeed");
+        let plaintext = decrypt_item(&unwrapped, &item_json, "self-test-item", 1)
+            .expect("decrypt should succeed");
         assert_eq!(plaintext, "{\"type\":\"note\",\"body\":\"fixture\"}");
     }
 
@@ -177,5 +249,65 @@ mod tests {
                 .expect("from_password should succeed");
         let result = unwrap_user_key(&other_wrapping_key, &wrapped_json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn derive_auth_material_single_pass() {
+        let salt = pv_core::keys::random_bytes(16);
+        let kdf_json = default_kdf_params_json();
+
+        let mut password_for_wk = b"test-password".to_vec();
+        let reference_wrapping_key =
+            WasmWrappingKey::from_password(&mut password_for_wk, &salt, &kdf_json)
+                .expect("from_password should succeed");
+
+        let mut password = b"test-password".to_vec();
+        let mut material = derive_auth_material(&mut password, &salt, &kdf_json)
+            .expect("derive_auth_material should succeed");
+
+        let auth_hash = material.take_auth_hash();
+        let wrapping_key = material.take_wrapping_key();
+
+        // auth-hash and wrapping-key diverge (different HKDF info strings).
+        assert_ne!(auth_hash, wrapping_key.0.to_vec());
+
+        // The wrapping key produced by deriveAuthMaterial must be
+        // interoperable with the standalone from_password path: wrap with
+        // one, unwrap with the other.
+        let user_key = WasmUserKey::generate();
+        let wrapped_json =
+            wrap_user_key(&reference_wrapping_key, &user_key).expect("wrap should succeed");
+        let unwrapped =
+            unwrap_user_key(&wrapping_key, &wrapped_json).expect("unwrap should succeed");
+        assert_eq!(unwrapped.0.expose(), user_key.0.expose());
+    }
+
+    #[test]
+    fn derive_auth_material_is_deterministic() {
+        let salt = pv_core::keys::random_bytes(16);
+        let kdf_json = default_kdf_params_json();
+
+        let mut password_a = b"test-password".to_vec();
+        let mut material_a = derive_auth_material(&mut password_a, &salt, &kdf_json)
+            .expect("derive_auth_material should succeed");
+        let auth_hash_a = material_a.take_auth_hash();
+        let wrapping_key_a = material_a.take_wrapping_key();
+
+        let mut password_b = b"test-password".to_vec();
+        let mut material_b = derive_auth_material(&mut password_b, &salt, &kdf_json)
+            .expect("derive_auth_material should succeed");
+        let auth_hash_b = material_b.take_auth_hash();
+        let wrapping_key_b = material_b.take_wrapping_key();
+
+        assert_eq!(auth_hash_a, auth_hash_b);
+
+        // Interoperability check in lieu of comparing raw bytes directly
+        // (WasmWrappingKey's bytes are private): wrap with one, unwrap with
+        // the other.
+        let user_key = WasmUserKey::generate();
+        let wrapped_json = wrap_user_key(&wrapping_key_a, &user_key).expect("wrap should succeed");
+        let unwrapped =
+            unwrap_user_key(&wrapping_key_b, &wrapped_json).expect("unwrap should succeed");
+        assert_eq!(unwrapped.0.expose(), user_key.0.expose());
     }
 }

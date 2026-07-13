@@ -10,13 +10,43 @@
 import init, {
   WasmWrappingKey,
   WasmUserKey,
+  WasmAuthMaterial,
   wrapUserKey,
   unwrapUserKey,
   encryptItem,
   decryptItem,
   defaultKdfParamsJson,
   randomSalt,
+  deriveAuthMaterial as wasmDeriveAuthMaterial,
 } from "./wasm/pv_wasm.js";
+
+export type { WasmWrappingKey, WasmUserKey, WasmAuthMaterial };
+export { wrapUserKey, unwrapUserKey, encryptItem, decryptItem, randomSalt, defaultKdfParamsJson };
+
+/** Generates a fresh User Key — the root of vault access. */
+export function generateUserKey(): WasmUserKey {
+  return WasmUserKey.generate();
+}
+
+/**
+ * Single-Argon2id-pass derivation of both the server-bound auth-hash and the
+ * client-only wrapping key. Thin pass-through to the wasm export of the same
+ * name; the password buffer is zeroized here as defense-in-depth (the
+ * wasm-bindgen side already zeroizes its own copy, and — via mutable-slice
+ * copy-back — this JS-side view too), mirroring `runSelfTest`'s own
+ * `passwordBytes.fill(0)` discipline.
+ */
+export function deriveAuthMaterial(
+  passwordBytes: Uint8Array,
+  salt: Uint8Array,
+  kdfParamsJson: string,
+): WasmAuthMaterial {
+  try {
+    return wasmDeriveAuthMaterial(passwordBytes, salt, kdfParamsJson);
+  } finally {
+    passwordBytes.fill(0);
+  }
+}
 
 // Module-level singleton promise — memoizes the (expensive, one-time) wasm
 // module instantiation. Explicit public-path string (not the zero-arg
@@ -118,7 +148,7 @@ export async function runSelfTest(): Promise<StepResult[]> {
       if (!unwrappedKey) {
         throw new Error("prerequisite step failed");
       }
-      encryptedItemJson = encryptItem(unwrappedKey, SELF_TEST_PLAINTEXT);
+      encryptedItemJson = encryptItem(unwrappedKey, SELF_TEST_PLAINTEXT, "self-test-item", 1);
       results.push({
         name: "Encrypt item",
         ok: true,
@@ -132,7 +162,7 @@ export async function runSelfTest(): Promise<StepResult[]> {
       if (!unwrappedKey || !encryptedItemJson) {
         throw new Error("prerequisite step failed");
       }
-      const plaintext = decryptItem(unwrappedKey, encryptedItemJson);
+      const plaintext = decryptItem(unwrappedKey, encryptedItemJson, "self-test-item", 1);
       if (plaintext !== SELF_TEST_PLAINTEXT) {
         throw new Error("decrypted plaintext did not match the original fixture");
       }

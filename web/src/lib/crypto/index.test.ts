@@ -13,6 +13,7 @@ const {
   mockDecryptItem,
   mockDefaultKdfParamsJson,
   mockRandomSalt,
+  mockDeriveAuthMaterial,
 } = vi.hoisted(() => ({
   mockInit: vi.fn(),
   mockFromPassword: vi.fn(),
@@ -23,6 +24,7 @@ const {
   mockDecryptItem: vi.fn(),
   mockDefaultKdfParamsJson: vi.fn(),
   mockRandomSalt: vi.fn(),
+  mockDeriveAuthMaterial: vi.fn(),
 }));
 
 vi.mock("./wasm/pv_wasm.js", () => ({
@@ -35,6 +37,7 @@ vi.mock("./wasm/pv_wasm.js", () => ({
   decryptItem: mockDecryptItem,
   defaultKdfParamsJson: mockDefaultKdfParamsJson,
   randomSalt: mockRandomSalt,
+  deriveAuthMaterial: mockDeriveAuthMaterial,
 }));
 
 const SELF_TEST_PLAINTEXT = '{"type":"note","body":"self-test fixture"}';
