@@ -1,23 +1,27 @@
 "use client";
 
 import { useVaultItems } from "@/lib/vault/store";
-import { searchItems } from "@/lib/vault/search";
-import type { VaultItem } from "@/lib/vault/types";
+import { filterItems, searchItems } from "@/lib/vault/search";
+import type { VaultFilter, VaultItem } from "@/lib/vault/types";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import ItemRow from "./ItemRow";
 
 export default function ItemList({
   searchQuery,
+  filter = { kind: "all" },
   selectedItemId,
   onSelect,
 }: {
   searchQuery: string;
+  filter?: VaultFilter;
   selectedItemId: string | null;
   onSelect: (item: VaultItem) => void;
 }) {
   const { t } = useLocale();
   const items = useVaultItems();
-  const results = searchItems(items, searchQuery);
+  // Sidebar's folder/tag filter ANDs with the search query — both are
+  // purely client-side over the same in-memory decrypted array.
+  const results = searchItems(filterItems(items, filter), searchQuery);
 
   // Distinct from the zero-items-ever-created Fuzzy-Bubbles empty state
   // (MainColumn owns that one) — this is "zero matches for a live query".

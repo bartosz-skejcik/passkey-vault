@@ -1,7 +1,7 @@
 // Instant client-side search over already-decrypted vault items — no
 // network call (VAULT-04). Called on every keystroke by ItemList against
 // the store's in-memory `useVaultItems()` snapshot.
-import type { ItemFields, VaultItem } from "./types";
+import type { ItemFields, VaultFilter, VaultItem } from "./types";
 
 function domainFromUrl(url: string): string {
   try {
@@ -36,4 +36,23 @@ export function searchItems(items: VaultItem[], query: string): VaultItem[] {
     return items;
   }
   return items.filter((item) => matchesQuery(item.fields, needle));
+}
+
+/** Sidebar's active folder/tag filter — entirely client-side, ANDed with
+ * searchItems' query filter (no new server-side plaintext metadata). */
+function matchesFilter(fields: ItemFields, filter: VaultFilter): boolean {
+  if (filter.kind === "all") {
+    return true;
+  }
+  if (filter.kind === "folder") {
+    return fields.folderId === filter.id;
+  }
+  return fields.tags.includes(filter.tag);
+}
+
+export function filterItems(items: VaultItem[], filter: VaultFilter): VaultItem[] {
+  if (filter.kind === "all") {
+    return items;
+  }
+  return items.filter((item) => matchesFilter(item.fields, filter));
 }

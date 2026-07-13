@@ -67,6 +67,13 @@ export interface Folder {
   name: string;
 }
 
+/** Sidebar's active list filter — client-side only, ANDed with the
+ * existing search-query filter (no new server endpoint). */
+export type VaultFilter =
+  | { kind: "all" }
+  | { kind: "folder"; id: string }
+  | { kind: "tag"; tag: string };
+
 /** Union of the current and legacy (pre-multi-URL) decrypted login shapes —
  * this is the type a raw JSON.parse of a login item's plaintext can
  * actually produce, before normalizeItemFields() runs. */

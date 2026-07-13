@@ -1,11 +1,13 @@
 "use client";
 
 import { Fragment, useState } from "react";
-import { Pencil, Trash2, X } from "lucide-react";
+import { Check, Copy, Pencil, Trash2, X } from "lucide-react";
 import type { ItemFields, VaultItem } from "@/lib/vault/types";
 import { RevisionConflictError, useFolders } from "@/lib/vault/store";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
+import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
+import { showCopyToast } from "@/lib/vault/copyToast";
 import PasskeyPlaceholderSection from "./PasskeyPlaceholderSection";
 import ItemForm from "./ItemForm";
 import DeleteConfirmDialog from "./DeleteConfirmDialog";
@@ -42,10 +44,48 @@ export default function DetailPanel({
   // (those are special-cased separately).
   const fieldValues = item.fields as unknown as Record<string, string>;
   const folder = folders.find((f) => f.id === item.fields.folderId);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   function startEditing() {
     setConflict(false);
     setMode("edit");
+  }
+
+  function fieldLabelFor(fieldKey: string): string {
+    return fieldKey === "url" ? t("field.url") : t(`field.${fieldKey}` as keyof typeof DICTIONARY);
+  }
+
+  function handleCopy(testidSuffix: string, fieldKey: string, value: string) {
+    if (!value) return;
+    const seconds = readClipboardSeconds();
+    copyWithAutoClear(value, seconds * 1000);
+    showCopyToast(fieldLabelFor(fieldKey), seconds * 1000);
+    setCopiedKey(testidSuffix);
+    setTimeout(
+      () => setCopiedKey((current) => (current === testidSuffix ? null : current)),
+      1500,
+    );
+  }
+
+  // A render helper (not a nested component definition — defining a
+  // component function inside another component's body would remount it,
+  // and thus reset its would-be-internal state, on every parent render).
+  function renderCopyButton(fieldKey: string, value: string, testidSuffix = fieldKey) {
+    return (
+      <button
+        type="button"
+        data-testid={`copy-${testidSuffix}`}
+        aria-label={interpolate(t("aria.copyField"), { field: fieldLabelFor(fieldKey) })}
+        className="btn btn-ghost btn-square btn-sm shrink-0"
+        onClick={() => handleCopy(testidSuffix, fieldKey, value)}
+      >
+        {copiedKey === testidSuffix ? (
+          <Check size={16} className="text-success" aria-hidden="true" />
+        ) : (
+          <Copy size={16} aria-hidden="true" />
+        )}
+      </button>
+    );
   }
 
   return (
@@ -130,18 +170,22 @@ export default function DetailPanel({
                   <span className="text-sm text-base-content/60">
                     {t(`field.${key}` as keyof typeof DICTIONARY)}
                   </span>
-                  <span className={`text-base ${MONO_FIELDS.has(key) ? "font-mono" : ""}`}>
-                    {fieldValues[key] || "—"}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className={`text-base ${MONO_FIELDS.has(key) ? "font-mono" : ""}`}>
+                      {fieldValues[key] || "—"}
+                    </span>
+                    {fieldValues[key] ? renderCopyButton(key, fieldValues[key]) : null}
+                  </div>
                 </div>
                 {item.fields.type === "login" && key === "password" ? (
                   <div className="flex flex-col gap-1">
                     <span className="text-sm text-base-content/60">{t("field.url")}</span>
                     {item.fields.urls.length > 0 ? (
                       item.fields.urls.map((url, i) => (
-                        <span key={i} className="text-base">
-                          {url}
-                        </span>
+                        <div key={i} className="flex items-center gap-1">
+                          <span className="text-base">{url}</span>
+                          {renderCopyButton("url", url, `url-${i}`)}
+                        </div>
                       ))
                     ) : (
                       <span className="text-base">—</span>

@@ -1,24 +1,53 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Folder, Lock, LogOut, Languages, Moon, Sun, Tag, User, Vault } from "lucide-react";
+import {
+  ChevronDown,
+  Folder,
+  Lock,
+  LogOut,
+  Languages,
+  Moon,
+  Plus,
+  Sun,
+  Tag,
+  User,
+  Vault,
+} from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { lockVault } from "@/lib/crypto";
 import { logout } from "@/lib/auth/api";
 import { clearSessionToken, clearStoredEmail } from "@/lib/auth/session";
-
-const NAV_ITEMS = [
-  { label: "Vault", icon: Vault },
-  { label: "Foldery", icon: Folder },
-  { label: "Tagi", icon: Tag },
-];
+import { createVaultFolder, useAllTags, useFolders } from "@/lib/vault/store";
+import { CLIPBOARD_SECONDS_KEY, DEFAULT_CLIPBOARD_SECONDS } from "@/lib/clipboard";
+import type { VaultFilter } from "@/lib/vault/types";
 
 const AUTOLOCK_MINUTES_KEY = "pv-autolock-minutes";
 const AUTOLOCK_CHANGED_EVENT = "pv-autolock-changed";
 const AUTOLOCK_OPTIONS = [1, 5, 15, 30, 60];
 const DEFAULT_AUTOLOCK_MINUTES = "15";
+const CLIPBOARD_SECONDS_OPTIONS = [30, 35, 40, 45, 50, 55, 60];
 
-export default function Sidebar() {
+// Every clickable nav element gets a real button + these classes (not a
+// plain inert <div>): cursor-pointer, a visible hover state, and a
+// distinct active/selected state for the current filter (user-requested
+// UAT fix — the "Wszystkie"/folder/tag rows previously had no pointer
+// cursor, no hover feedback, and clicking them did nothing).
+function navItemClass(active: boolean): string {
+  return `flex w-full cursor-pointer items-center gap-2 rounded-field px-3 py-2 text-left text-sm transition-colors ${
+    active
+      ? "bg-primary/[0.08] text-primary"
+      : "text-base-content/70 hover:bg-base-200"
+  }`;
+}
+
+export default function Sidebar({
+  activeFilter = { kind: "all" },
+  onFilterChange,
+}: {
+  activeFilter?: VaultFilter;
+  onFilterChange?: (filter: VaultFilter) => void;
+} = {}) {
   const { locale, setLocale, t } = useLocale();
   // Mirrors — does not duplicate — layout.tsx's inline pre-hydration
   // script, which only resolves the *initial* theme before first paint.
@@ -26,6 +55,14 @@ export default function Sidebar() {
   // keeps its own render in sync with the DOM attribute it just set.
   const [theme, setTheme] = useState<"vault-dark" | "vault-light">("vault-dark");
   const [autolockMinutes, setAutolockMinutes] = useState(DEFAULT_AUTOLOCK_MINUTES);
+  const [clipboardSeconds, setClipboardSeconds] = useState(DEFAULT_CLIPBOARD_SECONDS);
+  const [foldersExpanded, setFoldersExpanded] = useState(false);
+  const [tagsExpanded, setTagsExpanded] = useState(false);
+  const [addingFolder, setAddingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+
+  const folders = useFolders();
+  const allTags = useAllTags();
 
   useEffect(() => {
     const current = document.documentElement.getAttribute("data-theme");
@@ -34,12 +71,16 @@ export default function Sidebar() {
     }
 
     try {
-      const stored = localStorage.getItem(AUTOLOCK_MINUTES_KEY);
-      if (stored !== null && AUTOLOCK_OPTIONS.includes(Number(stored))) {
-        setAutolockMinutes(stored);
+      const storedAutolock = localStorage.getItem(AUTOLOCK_MINUTES_KEY);
+      if (storedAutolock !== null && AUTOLOCK_OPTIONS.includes(Number(storedAutolock))) {
+        setAutolockMinutes(storedAutolock);
+      }
+      const storedClipboard = localStorage.getItem(CLIPBOARD_SECONDS_KEY);
+      if (storedClipboard !== null) {
+        setClipboardSeconds(Number(storedClipboard));
       }
     } catch {
-      // localStorage may be unavailable (private mode); default stands.
+      // localStorage may be unavailable (private mode); defaults stand.
     }
   }, []);
 
@@ -74,6 +115,17 @@ export default function Sidebar() {
     window.dispatchEvent(new Event(AUTOLOCK_CHANGED_EVENT));
   }
 
+  function handleClipboardSecondsChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const next = Number(e.target.value);
+    setClipboardSeconds(next);
+    try {
+      localStorage.setItem(CLIPBOARD_SECONDS_KEY, String(next));
+    } catch {
+      // localStorage may be unavailable (private mode) — the duration
+      // still applies for this in-memory session (read at copy time).
+    }
+  }
+
   async function handleLogout() {
     try {
       await logout();
@@ -91,19 +143,126 @@ export default function Sidebar() {
     }
   }
 
+  async function handleCreateFolder() {
+    const name = newFolderName.trim();
+    if (name === "") return;
+    await createVaultFolder(name);
+    setNewFolderName("");
+    setAddingFolder(false);
+  }
+
+  function selectFilter(filter: VaultFilter) {
+    onFilterChange?.(filter);
+  }
+
   return (
     <aside className="hidden md:flex md:w-64 md:shrink-0 flex-col bg-base-200 p-4">
-      <nav className="flex flex-col gap-2">
-        {NAV_ITEMS.map(({ label, icon: Icon }) => (
-          <div
-            key={label}
-            aria-disabled="true"
-            className="flex items-center gap-2 rounded-field px-3 py-2 text-sm text-base-content/70"
+      <nav className="flex flex-col gap-1">
+        <button
+          type="button"
+          data-testid="sidebar-nav-all"
+          className={navItemClass(activeFilter.kind === "all")}
+          onClick={() => selectFilter({ kind: "all" })}
+        >
+          <Vault size={18} aria-hidden="true" />
+          <span>{t("sidebar.all")}</span>
+        </button>
+
+        <div>
+          <button
+            type="button"
+            data-testid="sidebar-nav-folders"
+            className={navItemClass(false)}
+            onClick={() => setFoldersExpanded((v) => !v)}
           >
-            <Icon size={18} aria-hidden="true" />
-            <span>{label}</span>
-          </div>
-        ))}
+            <Folder size={18} aria-hidden="true" />
+            <span className="flex-1">{t("sidebar.folders")}</span>
+            <ChevronDown
+              size={14}
+              className={foldersExpanded ? "rotate-180 transition-transform" : "transition-transform"}
+              aria-hidden="true"
+            />
+          </button>
+          {foldersExpanded ? (
+            <div className="ml-6 mt-1 flex flex-col gap-1">
+              {folders.map((folder) => (
+                <button
+                  key={folder.id}
+                  type="button"
+                  data-testid={`sidebar-folder-${folder.id}`}
+                  className={navItemClass(
+                    activeFilter.kind === "folder" && activeFilter.id === folder.id,
+                  )}
+                  onClick={() => selectFilter({ kind: "folder", id: folder.id })}
+                >
+                  <span className="truncate">{folder.name}</span>
+                </button>
+              ))}
+              {addingFolder ? (
+                <div className="flex items-center gap-1 px-1">
+                  <input
+                    data-testid="sidebar-new-folder-name"
+                    className="input input-bordered input-xs flex-1"
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    placeholder={t("sidebar.newFolderPlaceholder")}
+                  />
+                  <button
+                    type="button"
+                    data-testid="sidebar-new-folder-confirm"
+                    className="btn btn-primary btn-xs"
+                    onClick={() => void handleCreateFolder()}
+                  >
+                    <Plus size={12} aria-hidden="true" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="sidebar-new-folder-button"
+                  aria-label={t("aria.newFolder")}
+                  className={navItemClass(false)}
+                  onClick={() => setAddingFolder(true)}
+                >
+                  <Plus size={14} aria-hidden="true" />
+                  <span>{t("aria.newFolder")}</span>
+                </button>
+              )}
+            </div>
+          ) : null}
+        </div>
+
+        <div>
+          <button
+            type="button"
+            data-testid="sidebar-nav-tags"
+            className={navItemClass(false)}
+            onClick={() => setTagsExpanded((v) => !v)}
+          >
+            <Tag size={18} aria-hidden="true" />
+            <span className="flex-1">{t("sidebar.tags")}</span>
+            <ChevronDown
+              size={14}
+              className={tagsExpanded ? "rotate-180 transition-transform" : "transition-transform"}
+              aria-hidden="true"
+            />
+          </button>
+          {tagsExpanded ? (
+            <div className="ml-6 mt-1 flex flex-col gap-1">
+              {allTags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  data-testid={`sidebar-tag-${tag}`}
+                  className={navItemClass(activeFilter.kind === "tag" && activeFilter.tag === tag)}
+                  onClick={() => selectFilter({ kind: "tag", tag })}
+                >
+                  <span className="truncate">{tag}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </nav>
 
       <div className="mt-auto flex items-center gap-3 border-t border-base-300 pt-4">
@@ -138,6 +297,27 @@ export default function Sidebar() {
                   </option>
                 ))}
               </select>
+            </li>
+            <li className="menu-title">{t("clipboard.durationLabel")}</li>
+            <li>
+              <input
+                data-testid="sidebar-clipboard-duration"
+                aria-label={t("clipboard.durationLabel")}
+                type="range"
+                list="clipboard-seconds-options"
+                min={30}
+                max={60}
+                step={5}
+                className="range range-sm"
+                value={clipboardSeconds}
+                onChange={handleClipboardSecondsChange}
+              />
+              <datalist id="clipboard-seconds-options">
+                {CLIPBOARD_SECONDS_OPTIONS.map((s) => (
+                  <option key={s} value={s} />
+                ))}
+              </datalist>
+              <span className="text-xs text-base-content/60">{clipboardSeconds}s</span>
             </li>
             <li>
               <button

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { searchItems } from "./search";
+import { filterItems, searchItems } from "./search";
 import type { LoginFields, NoteFields, VaultItem } from "./types";
 
 function loginItem(id: string, overrides: Partial<LoginFields> = {}): VaultItem {
@@ -65,5 +65,32 @@ describe("searchItems", () => {
     // No assertion needed beyond "doesn't throw" — the acceptance criteria's
     // `grep -c "fetch("` check on search.ts is the real enforcement; this
     // test documents the intent.
+  });
+});
+
+describe("filterItems", () => {
+  it("returns items unchanged for the 'all' filter", () => {
+    const items = [loginItem("1"), noteItem("2")];
+    expect(filterItems(items, { kind: "all" })).toBe(items);
+  });
+
+  it("filters to items whose folderId matches the folder filter", () => {
+    const items = [
+      loginItem("1", { folderId: "folder-1" }),
+      noteItem("2", { folderId: "folder-2" }),
+      noteItem("3", { folderId: "folder-1" }),
+    ];
+    const result = filterItems(items, { kind: "folder", id: "folder-1" });
+    expect(result.map((i) => i.id)).toEqual(["1", "3"]);
+  });
+
+  it("filters to items whose tags include the tag filter", () => {
+    const items = [
+      loginItem("1", { tags: ["work"] }),
+      noteItem("2", { tags: ["home"] }),
+      noteItem("3", { tags: ["work", "urgent"] }),
+    ];
+    const result = filterItems(items, { kind: "tag", tag: "work" });
+    expect(result.map((i) => i.id)).toEqual(["1", "3"]);
   });
 });

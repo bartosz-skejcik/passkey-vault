@@ -122,6 +122,15 @@ export const DICTIONARY = {
   "generator.apply": { pl: "Użyj tego hasła", en: "Use this password" },
 
   "autolock.label": { pl: "Blokuj po bezczynności", en: "Lock after inactivity" },
+  "clipboard.durationLabel": {
+    pl: "Czyszczenie schowka po",
+    en: "Clear clipboard after",
+  },
+
+  "sidebar.all": { pl: "Wszystkie", en: "All" },
+  "sidebar.folders": { pl: "Foldery", en: "Folders" },
+  "sidebar.tags": { pl: "Tagi", en: "Tags" },
+  "sidebar.newFolderPlaceholder": { pl: "Nazwa folderu", en: "Folder name" },
 
   "error.revisionConflict": {
     pl: "Ten item zmienił się w międzyczasie (np. na innym urządzeniu). Odśwież i spróbuj ponownie.",

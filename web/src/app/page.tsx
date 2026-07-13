@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { X } from "lucide-react";
 import Sidebar, {
   AUTOLOCK_CHANGED_EVENT,
   AUTOLOCK_MINUTES_KEY,
@@ -16,12 +17,13 @@ import ItemList from "@/components/vault/ItemList";
 import DetailPanel from "@/components/vault/DetailPanel";
 import TypePicker from "@/components/vault/TypePicker";
 import ItemForm from "@/components/vault/ItemForm";
+import CopyToast from "@/components/vault/CopyToast";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { getSessionToken } from "@/lib/auth/session";
 import { initCrypto, lockVault, useIsUnlocked } from "@/lib/crypto";
 import { useIdleTimer } from "@/lib/idle/useIdleTimer";
 import { useVaultItems } from "@/lib/vault/store";
-import type { ItemType } from "@/lib/vault/types";
+import type { ItemType, VaultFilter } from "@/lib/vault/types";
 
 function readAutolockMinutes(): number {
   try {
@@ -50,8 +52,11 @@ export default function Home() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [creatingType, setCreatingType] = useState<ItemType | null>(null);
+  const [filter, setFilter] = useState<VaultFilter>({ kind: "all" });
   const items = useVaultItems();
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
+  // Any side panel being open means the overlay drawer + scrim render.
+  const sidePanelOpen = selectedItem !== null || creating;
 
   function handleNewItem() {
     setSelectedItemId(null);
@@ -114,17 +119,23 @@ export default function Home() {
           is "no data in the render tree" below. */}
       <div className={!unlocked ? "blur-md" : undefined}>
         <div className="flex h-screen flex-col md:flex-row">
-          <Sidebar />
+          <Sidebar activeFilter={filter} onFilterChange={setFilter} />
           <div className="flex flex-1 flex-col">
             <TopBar
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}
               onNewItem={handleNewItem}
             />
-            <div className="flex flex-1 overflow-hidden">
+            {/* The item list keeps its full width whether or not a side
+                panel is open — DetailPanel/TypePicker/ItemForm float OVER
+                it as a fixed-position overlay drawer (user-requested UAT
+                fix) rather than rendering as a flex sibling that narrowed
+                the list. */}
+            <div className="relative flex flex-1 overflow-hidden">
               <MainColumn showEmptyState={items.length === 0 && !creating}>
                 <ItemList
                   searchQuery={searchQuery}
+                  filter={filter}
                   selectedItemId={selectedItem?.id ?? null}
                   onSelect={(item) => {
                     setCreating(false);
@@ -133,16 +144,50 @@ export default function Home() {
                   }}
                 />
               </MainColumn>
+
+              {/* Click-outside scrim — sits below the drawer's z-40 (and
+                  well below UnlockOverlay's z-50), above the main column. */}
+              {sidePanelOpen ? (
+                <div
+                  data-testid="side-panel-scrim"
+                  className="fixed inset-0 z-30 bg-base-300/40"
+                  onClick={closeSidePanel}
+                  aria-hidden="true"
+                />
+              ) : null}
+
               {selectedItem ? (
                 <DetailPanel item={selectedItem} onClose={closeSidePanel} />
               ) : null}
               {creating && creatingType === null ? (
-                <aside className="flex w-full flex-col border-l border-base-300 bg-base-100 p-6 md:w-[400px] md:shrink-0">
+                <aside className="fixed inset-y-0 right-0 z-40 flex w-full flex-col gap-4 overflow-y-auto border-l border-base-300 bg-base-100 p-6 shadow-xl md:w-[400px]">
+                  <div className="flex items-start justify-end">
+                    <button
+                      type="button"
+                      data-testid="type-picker-close"
+                      aria-label={t("aria.closePanel")}
+                      className="btn btn-ghost btn-square btn-sm"
+                      onClick={closeSidePanel}
+                    >
+                      <X size={16} aria-hidden="true" />
+                    </button>
+                  </div>
                   <TypePicker onSelect={setCreatingType} />
                 </aside>
               ) : null}
               {creating && creatingType !== null ? (
-                <aside className="flex w-full flex-col overflow-y-auto border-l border-base-300 bg-base-100 p-6 md:w-[400px] md:shrink-0">
+                <aside className="fixed inset-y-0 right-0 z-40 flex w-full flex-col gap-4 overflow-y-auto border-l border-base-300 bg-base-100 p-6 shadow-xl md:w-[400px]">
+                  <div className="flex items-start justify-end">
+                    <button
+                      type="button"
+                      data-testid="item-form-panel-close"
+                      aria-label={t("aria.closePanel")}
+                      className="btn btn-ghost btn-square btn-sm"
+                      onClick={closeSidePanel}
+                    >
+                      <X size={16} aria-hidden="true" />
+                    </button>
+                  </div>
                   <ItemForm type={creatingType} onCreated={handleCreated} />
                 </aside>
               ) : null}
@@ -150,6 +195,7 @@ export default function Home() {
           </div>
         </div>
       </div>
+      <CopyToast />
       <UnlockOverlay />
     </>
   );
