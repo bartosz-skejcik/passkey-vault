@@ -20,7 +20,11 @@ use crate::{error::ApiError, AppState};
 /// abuse gap with no explicit CONTEXT.md limit. Comfortably fits any of the
 /// four item types' encrypted JSON payload with generous headroom; this
 /// plan's discretionary call.
-const MAX_ITEM_BLOB_BYTES: usize = 64 * 1024;
+///
+/// `pub(crate)`: also reused by `folders::create` (WR-06) so folder blobs
+/// get the same storage-abuse guard as item blobs instead of an unbounded
+/// `enc_name`.
+pub(crate) const MAX_ITEM_BLOB_BYTES: usize = 64 * 1024;
 
 #[derive(Deserialize)]
 pub struct CreateItemRequest {
@@ -40,7 +44,7 @@ pub struct CreateItemResponse {
     pub revision: i64,
 }
 
-fn validate_blob_len(field: &'static str, value: &str) -> Result<(), ApiError> {
+pub(crate) fn validate_blob_len(field: &'static str, value: &str) -> Result<(), ApiError> {
     if value.len() > MAX_ITEM_BLOB_BYTES {
         return Err(ApiError::BadRequest(format!("{field} exceeds max size")));
     }

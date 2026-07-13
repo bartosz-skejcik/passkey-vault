@@ -17,6 +17,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::session::SessionUser;
+use super::vault::validate_blob_len;
 use crate::{error::ApiError, AppState};
 
 #[derive(Deserialize)]
@@ -36,6 +37,11 @@ pub async fn create(
     session: SessionUser,
     Json(req): Json<CreateFolderRequest>,
 ) -> Result<(StatusCode, Json<CreateFolderResponse>), ApiError> {
+    // WR-06: folder rows had no equivalent guard to vault_items' 64 KiB blob
+    // cap — reuse the same limit/helper so folder creation can't be used to
+    // insert unbounded-size rows.
+    validate_blob_len("enc_name", &req.enc_name)?;
+
     let id = Uuid::new_v4().to_string();
 
     sqlx::query("INSERT INTO folders (id, user_id, enc_name) VALUES (?, ?, ?)")
