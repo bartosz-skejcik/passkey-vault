@@ -81,8 +81,8 @@ Plans:
 
 **Gap closure (post-UAT, GAP-02-01..05) — Wave 1**
 
-- [ ] 02-07-PLAN.md — Sidebar Categories/Folders/Tags/Tools restructure + item row relative time + item context menu (GAP-02-02/03/04)
-- [ ] 02-08-PLAN.md — Password/card-number reveal toggle in detail panel + generator popover viewport fix (GAP-02-01/05)
+- [x] 02-07-PLAN.md — Sidebar Categories/Folders/Tags/Tools restructure + item row relative time + item context menu (GAP-02-02/03/04)
+- [x] 02-08-PLAN.md — Password/card-number reveal toggle in detail panel + generator popover viewport fix (GAP-02-01/05)
 
 **UI hint**: yes
 
@@ -171,7 +171,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. WASM Crypto Bridge & Web App Shell | 3/3 | Complete    | 2026-07-12 |
-| 2. Password Auth & Vault Core | 6/6 | Complete   | 2026-07-13 |
+| 2. Password Auth & Vault Core | 8/8 | Complete    | 2026-07-13 |
 | 3. Passkey Enrollment & Account Security | 0/TBD | Not started | - |
 | 4. PRF Unlock & Login Unification | 0/TBD | Not started | - |
 | 5. Multi-Device Sync | 0/TBD | Not started | - |

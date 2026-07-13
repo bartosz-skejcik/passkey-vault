@@ -13,7 +13,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 - [ ] **AUTH-05**: System wymusza inwariant recovery: User Key zawsze wrapowany pod master password; nie istnieje tryb konta passkey-only; serwer i klient blokują operacje, które zostawiłyby vault bez fallbacku hasłowego
 - [ ] **AUTH-06**: Użytkownik może zarządzać enrollowanymi passkeys (lista z nazwą/datą/ostatnim użyciem, zmiana nazwy, usunięcie z wyraźnym ostrzeżeniem recovery)
 - [ ] **AUTH-07**: Użytkownik może zobaczyć aktywne sesje/urządzenia i unieważnić wybrane
-- [ ] **AUTH-08**: Vault auto-blokuje się po konfigurowalnym czasie bezczynności (sensowny, nie-nieskończony default, np. 15 min)
+- [x] **AUTH-08**: Vault auto-blokuje się po konfigurowalnym czasie bezczynności (sensowny, nie-nieskończony default, np. 15 min)
 - [ ] **AUTH-09**: Gdy PRF jest niedostępny (przeglądarka/OS/authenticator bez wsparcia), użytkownik dostaje czytelny fallback do unlocku hasłem — nie generyczny błąd
 
 ### Vault
@@ -100,7 +100,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 | UI-01 | Phase 1: WASM Crypto Bridge & Web App Shell | Complete |
 | AUTH-01 | Phase 2: Password Auth & Vault Core | Complete |
 | AUTH-02 | Phase 2: Password Auth & Vault Core | Complete |
-| AUTH-08 | Phase 2: Password Auth & Vault Core | Pending |
+| AUTH-08 | Phase 2: Password Auth & Vault Core | Complete |
 | VAULT-01 | Phase 2: Password Auth & Vault Core | Complete |
 | VAULT-02 | Phase 2: Password Auth & Vault Core | Complete |
 | VAULT-03 | Phase 2: Password Auth & Vault Core | Complete |
