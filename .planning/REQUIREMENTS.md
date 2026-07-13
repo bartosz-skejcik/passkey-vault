@@ -7,7 +7,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 ### Auth & Konta
 
 - [x] **AUTH-01**: Użytkownik może założyć konto (email + master password); hasło nigdy nie opuszcza klienta — serwer dostaje tylko hash-po-KDF (Argon2id)
-- [ ] **AUTH-02**: Użytkownik może zalogować się master passwordem i otrzymać token sesji; odblokowanie vaulta (odszyfrowanie lokalne) jest architektonicznie odrębne od logowania (uwierzytelnienia na serwerze)
+- [x] **AUTH-02**: Użytkownik może zalogować się master passwordem i otrzymać token sesji; odblokowanie vaulta (odszyfrowanie lokalne) jest architektonicznie odrębne od logowania (uwierzytelnienia na serwerze)
 - [ ] **AUTH-03**: Użytkownik może enrollować passkey z rozszerzeniem PRF (dwuceremonialny enrollment: `create` rejestruje credential, `get` ewaluuje PRF i wrapuje User Key)
 - [ ] **AUTH-04**: Użytkownik może zalogować się i odblokować vault jednym gestem passkeya: assertion → sesja na serwerze, wynik PRF → lokalny unwrap User Key (PRF nigdy nie opuszcza klienta)
 - [ ] **AUTH-05**: System wymusza inwariant recovery: User Key zawsze wrapowany pod master password; nie istnieje tryb konta passkey-only; serwer i klient blokują operacje, które zostawiłyby vault bez fallbacku hasłowego
@@ -99,7 +99,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 |--------|------|--------|
 | UI-01 | Phase 1: WASM Crypto Bridge & Web App Shell | Complete |
 | AUTH-01 | Phase 2: Password Auth & Vault Core | Complete |
-| AUTH-02 | Phase 2: Password Auth & Vault Core | Pending |
+| AUTH-02 | Phase 2: Password Auth & Vault Core | Complete |
 | AUTH-08 | Phase 2: Password Auth & Vault Core | Pending |
 | VAULT-01 | Phase 2: Password Auth & Vault Core | Pending |
 | VAULT-02 | Phase 2: Password Auth & Vault Core | Complete |
