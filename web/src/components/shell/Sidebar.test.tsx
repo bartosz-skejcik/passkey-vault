@@ -154,3 +154,27 @@ describe("Sidebar nav — interactivity + folder/tag filtering", () => {
     expect(screen.getByTestId("sidebar-folder-folder-1").className).toContain("bg-primary");
   });
 });
+
+describe("Sidebar Categories/Tools restructure", () => {
+  it("clicking a category type button calls onFilterChange with an itemType filter", () => {
+    const onFilterChange = vi.fn();
+    render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={onFilterChange} />);
+    fireEvent.click(screen.getByTestId("sidebar-nav-type-login"));
+    expect(onFilterChange).toHaveBeenCalledWith({ kind: "itemType", itemType: "login" });
+  });
+
+  it("renders the Passkeys category entry as a disabled button that never calls onFilterChange", () => {
+    const onFilterChange = vi.fn();
+    render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={onFilterChange} />);
+    const passkeysButton = screen.getByTestId("sidebar-nav-passkeys");
+    expect(passkeysButton).toBeDisabled();
+    fireEvent.click(passkeysButton);
+    expect(onFilterChange).not.toHaveBeenCalled();
+  });
+
+  it("opens GeneratorDialog when the Tools > generator row is clicked", () => {
+    render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("sidebar-generator-trigger"));
+    expect(screen.getByTestId("generator-dialog")).toBeInTheDocument();
+  });
+});

@@ -93,4 +93,10 @@ describe("filterItems", () => {
     const result = filterItems(items, { kind: "tag", tag: "work" });
     expect(result.map((i) => i.id)).toEqual(["1", "3"]);
   });
+
+  it("filters to items whose fields.type matches the itemType filter", () => {
+    const items = [loginItem("1"), noteItem("2"), loginItem("3")];
+    const result = filterItems(items, { kind: "itemType", itemType: "login" });
+    expect(result.map((i) => i.id)).toEqual(["1", "3"]);
+  });
 });
