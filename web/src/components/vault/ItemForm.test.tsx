@@ -1,20 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
-const { mockCreateVaultItem, mockCreateVaultFolder, mockUseFolders, mockUseAllTags } = vi.hoisted(
-  () => ({
-    mockCreateVaultItem: vi.fn(),
-    mockCreateVaultFolder: vi.fn(),
-    mockUseFolders: vi.fn(),
-    mockUseAllTags: vi.fn(),
-  }),
-);
+const {
+  mockCreateVaultItem,
+  mockCreateVaultFolder,
+  mockUseFolders,
+  mockUseAllTags,
+  mockUpdateVaultItem,
+} = vi.hoisted(() => ({
+  mockCreateVaultItem: vi.fn(),
+  mockCreateVaultFolder: vi.fn(),
+  mockUseFolders: vi.fn(),
+  mockUseAllTags: vi.fn(),
+  mockUpdateVaultItem: vi.fn(),
+}));
 
 vi.mock("@/lib/vault/store", () => ({
   createVaultItem: mockCreateVaultItem,
   createVaultFolder: mockCreateVaultFolder,
   useFolders: mockUseFolders,
   useAllTags: mockUseAllTags,
+  updateVaultItem: mockUpdateVaultItem,
 }));
 
 vi.mock("@/lib/i18n/LocaleContext", () => ({
@@ -126,5 +132,79 @@ describe("ItemForm", () => {
     await waitFor(() =>
       expect(screen.getByTestId("item-folder-select")).toHaveValue("folder-new"),
     );
+  });
+
+  it("edit mode pre-fills fields from initialFields and calls updateVaultItem (not createVaultItem) on submit", async () => {
+    mockUpdateVaultItem.mockResolvedValue({
+      id: "item-1",
+      revision: 2,
+      fields: {},
+    });
+    const onCreated = vi.fn();
+    render(
+      <ItemForm
+        type="note"
+        mode="edit"
+        itemId="item-1"
+        currentRevision={1}
+        initialFields={{
+          type: "note",
+          name: "Wifi",
+          body: "hunter2",
+          folderId: null,
+          tags: [],
+        }}
+        onCreated={onCreated}
+      />,
+    );
+
+    expect(screen.getByTestId("item-name")).toHaveValue("Wifi");
+    expect(screen.getByTestId("item-body")).toHaveValue("hunter2");
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockUpdateVaultItem).toHaveBeenCalledTimes(1));
+    expect(mockUpdateVaultItem).toHaveBeenCalledWith(
+      "item-1",
+      {
+        type: "note",
+        name: "Wifi",
+        body: "hunter2",
+        folderId: null,
+        tags: [],
+      },
+      1,
+    );
+    expect(mockCreateVaultItem).not.toHaveBeenCalled();
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+  });
+
+  it("edit mode calls onError (not throwing) when updateVaultItem rejects", async () => {
+    const err = new Error("conflict");
+    mockUpdateVaultItem.mockRejectedValue(err);
+    const onCreated = vi.fn();
+    const onError = vi.fn();
+    render(
+      <ItemForm
+        type="note"
+        mode="edit"
+        itemId="item-1"
+        currentRevision={1}
+        initialFields={{
+          type: "note",
+          name: "Wifi",
+          body: "hunter2",
+          folderId: null,
+          tags: [],
+        }}
+        onCreated={onCreated}
+        onError={onError}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(err));
+    expect(onCreated).not.toHaveBeenCalled();
   });
 });
