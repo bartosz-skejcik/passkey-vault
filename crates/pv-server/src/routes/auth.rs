@@ -14,7 +14,11 @@ use super::session::{extract_bearer_token, SessionUser};
 use crate::{crypto, error::ApiError, AppState};
 
 const MIN_SALT_LEN: usize = 16;
-const MIN_AUTH_HASH_LEN: usize = 16;
+/// `auth_hash` is always exactly `pv_core::keys::KEY_LEN` (32) bytes — it's
+/// HKDF's `INFO_AUTH_HASH` output, a fixed-length value, not a
+/// variable-length one. Reject anything else outright rather than tolerating
+/// a wider [16, ...) range (WR-10).
+const EXPECTED_AUTH_HASH_LEN: usize = pv_core::keys::KEY_LEN;
 
 #[derive(Deserialize)]
 pub struct PreloginRequest {
@@ -93,8 +97,8 @@ pub async fn register(
     let client_auth_hash = STANDARD
         .decode(&req.auth_hash)
         .map_err(|_| ApiError::BadRequest("invalid auth_hash encoding".into()))?;
-    if salt.len() < MIN_SALT_LEN || client_auth_hash.len() < MIN_AUTH_HASH_LEN {
-        return Err(ApiError::BadRequest("salt/auth_hash too short".into()));
+    if salt.len() < MIN_SALT_LEN || client_auth_hash.len() != EXPECTED_AUTH_HASH_LEN {
+        return Err(ApiError::BadRequest("salt too short or auth_hash has wrong length".into()));
     }
 
     let id = Uuid::new_v4().to_string();
