@@ -7,7 +7,13 @@ import { prelogin, login, base64Encode, base64Decode, ApiClientError } from "@/l
 import { setSessionToken, setStoredEmail } from "@/lib/auth/session";
 import { setPendingUnlock } from "@/lib/auth/pendingUnlock";
 
-export default function LoginForm({ onToggle }: { onToggle: () => void }) {
+export default function LoginForm({
+  onToggle,
+  onAuthed,
+}: {
+  onToggle: () => void;
+  onAuthed?: () => void;
+}) {
   const { t } = useLocale();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -42,6 +48,9 @@ export default function LoginForm({ onToggle }: { onToggle: () => void }) {
       // Never unwraps directly here — that stays UnlockOverlay's job, so
       // the visibly-distinct unlock step is preserved.
       setPendingUnlock(wrappingKey, pw_wrapped_uk);
+      // Poinformuj rodzica (page.tsx), że sesja istnieje — bez tego jego
+      // `authed` zostaje przy wartości z mounta i UI nigdzie nie przechodzi.
+      onAuthed?.();
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 401) {
         setError(t("auth.wrongCredentials"));

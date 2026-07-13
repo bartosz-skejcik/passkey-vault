@@ -83,7 +83,8 @@ beforeEach(() => {
 
 describe("LoginForm", () => {
   it("derives once against prelogin's salt/kdf, then stashes the pending unlock instead of unwrapping directly", async () => {
-    render(<LoginForm onToggle={() => {}} />);
+    const onAuthed = vi.fn();
+    render(<LoginForm onToggle={() => {}} onAuthed={onAuthed} />);
 
     fillForm("existing@example.com", "correcthorsebattery1");
     fireEvent.click(screen.getByTestId("login-submit"));
@@ -99,6 +100,8 @@ describe("LoginForm", () => {
     expect(mockSetSessionToken).toHaveBeenCalledWith("session-token");
     expect(mockSetStoredEmail).toHaveBeenCalledWith("existing@example.com");
     expect(mockSetPendingUnlock).toHaveBeenCalledWith(FAKE_WRAPPING_KEY, "wrapped-uk-json");
+    // Regresja z UAT: bez onAuthed page.tsx zostawał na formularzu logowania.
+    await waitFor(() => expect(onAuthed).toHaveBeenCalledTimes(1));
   });
 
   it("surfaces a 401 as a single generic inline error, not an unhandled rejection", async () => {

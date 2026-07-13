@@ -91,11 +91,11 @@ export default function Home() {
   if (!authed) {
     return mode === "login" ? (
       <AuthCard heading={t("auth.loginSubmit")}>
-        <LoginForm onToggle={() => setMode("register")} />
+        <LoginForm onToggle={() => setMode("register")} onAuthed={() => setAuthed(true)} />
       </AuthCard>
     ) : (
       <AuthCard heading={t("auth.registerSubmit")}>
-        <RegisterForm onToggle={() => setMode("login")} />
+        <RegisterForm onToggle={() => setMode("login")} onAuthed={() => setAuthed(true)} />
       </AuthCard>
     );
   }

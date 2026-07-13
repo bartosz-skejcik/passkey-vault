@@ -17,7 +17,13 @@ import {
 import { register, login, base64Encode, ApiClientError } from "@/lib/auth/api";
 import { setSessionToken, setStoredEmail } from "@/lib/auth/session";
 
-export default function RegisterForm({ onToggle }: { onToggle: () => void }) {
+export default function RegisterForm({
+  onToggle,
+  onAuthed,
+}: {
+  onToggle: () => void;
+  onAuthed?: () => void;
+}) {
   const { t } = useLocale();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -79,6 +85,9 @@ export default function RegisterForm({ onToggle }: { onToggle: () => void }) {
       setStoredEmail(email);
       setUnlockedUserKey(uk);
       uk = undefined; // ownership transferred to the lock-state singleton
+      // Poinformuj rodzica (page.tsx), że sesja istnieje — bez tego jego
+      // `authed` zostaje przy wartości z mounta i UI nigdzie nie przechodzi.
+      onAuthed?.();
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 409) {
         setEmailError(t("auth.duplicateEmail"));

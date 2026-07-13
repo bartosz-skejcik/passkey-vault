@@ -102,7 +102,8 @@ describe("RegisterForm", () => {
   });
 
   it("derives auth material once, registers, logs in with the same auth_hash, and unlocks immediately", async () => {
-    render(<RegisterForm onToggle={() => {}} />);
+    const onAuthed = vi.fn();
+    render(<RegisterForm onToggle={() => {}} onAuthed={onAuthed} />);
 
     fillForm("new@example.com", "correcthorsebattery1", "correcthorsebattery1");
     fireEvent.click(screen.getByTestId("register-submit"));
@@ -115,6 +116,9 @@ describe("RegisterForm", () => {
     expect(mockSetSessionToken).toHaveBeenCalledWith("session-token");
     expect(mockSetStoredEmail).toHaveBeenCalledWith("new@example.com");
     expect(mockSetUnlockedUserKey).toHaveBeenCalledTimes(1);
+    // Regresja z UAT: bez onAuthed page.tsx nie przełączał się na shell
+    // po udanej rejestracji (pola zostawały, druga próba dawała 409).
+    await waitFor(() => expect(onAuthed).toHaveBeenCalledTimes(1));
   });
 
   it("surfaces a 409 duplicate-email conflict as a field-level error", async () => {
