@@ -1,14 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
-const { mockLockVault, mockLogout, mockClearSessionToken, mockClearStoredEmail, mockSetLocale } =
-  vi.hoisted(() => ({
-    mockLockVault: vi.fn(),
-    mockLogout: vi.fn(),
-    mockClearSessionToken: vi.fn(),
-    mockClearStoredEmail: vi.fn(),
-    mockSetLocale: vi.fn(),
-  }));
+const {
+  mockLockVault,
+  mockLogout,
+  mockClearSessionToken,
+  mockClearStoredEmail,
+  mockSetLocale,
+  mockUseFolders,
+  mockUseAllTags,
+  mockCreateVaultFolder,
+} = vi.hoisted(() => ({
+  mockLockVault: vi.fn(),
+  mockLogout: vi.fn(),
+  mockClearSessionToken: vi.fn(),
+  mockClearStoredEmail: vi.fn(),
+  mockSetLocale: vi.fn(),
+  mockUseFolders: vi.fn(),
+  mockUseAllTags: vi.fn(),
+  mockCreateVaultFolder: vi.fn(),
+}));
 
 vi.mock("@/lib/crypto", () => ({
   lockVault: mockLockVault,
@@ -21,6 +32,12 @@ vi.mock("@/lib/auth/api", () => ({
 vi.mock("@/lib/auth/session", () => ({
   clearSessionToken: mockClearSessionToken,
   clearStoredEmail: mockClearStoredEmail,
+}));
+
+vi.mock("@/lib/vault/store", () => ({
+  useFolders: mockUseFolders,
+  useAllTags: mockUseAllTags,
+  createVaultFolder: mockCreateVaultFolder,
 }));
 
 vi.mock("@/lib/i18n/LocaleContext", () => ({
@@ -36,6 +53,8 @@ import Sidebar from "./Sidebar";
 beforeEach(() => {
   vi.clearAllMocks();
   mockLogout.mockResolvedValue(undefined);
+  mockUseFolders.mockReturnValue([]);
+  mockUseAllTags.mockReturnValue([]);
   // jsdom doesn't implement navigation — Sidebar's logout handler calls
   // window.location.reload(), which jsdom only logs (doesn't throw), same
   // as UnlockOverlay's 401 path.
@@ -62,5 +81,76 @@ describe("Sidebar settings dropdown", () => {
     render(<Sidebar />);
     fireEvent.click(screen.getByTestId("sidebar-language"));
     expect(mockSetLocale).toHaveBeenCalledWith("en");
+  });
+
+  it("persists the clipboard-clear duration to localStorage when changed", () => {
+    render(<Sidebar />);
+    fireEvent.change(screen.getByTestId("sidebar-clipboard-duration"), {
+      target: { value: "60" },
+    });
+    expect(localStorage.getItem("pv-clipboard-seconds")).toBe("60");
+  });
+});
+
+describe("Sidebar nav — interactivity + folder/tag filtering", () => {
+  it("every nav item (all/folders/tags) is a real interactive button, not an inert div", () => {
+    render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={vi.fn()} />);
+    expect(screen.getByTestId("sidebar-nav-all").tagName).toBe("BUTTON");
+    expect(screen.getByTestId("sidebar-nav-folders").tagName).toBe("BUTTON");
+    expect(screen.getByTestId("sidebar-nav-tags").tagName).toBe("BUTTON");
+  });
+
+  it("clicking 'Wszystkie'/all calls onFilterChange with the all filter", () => {
+    const onFilterChange = vi.fn();
+    render(
+      <Sidebar activeFilter={{ kind: "folder", id: "folder-1" }} onFilterChange={onFilterChange} />,
+    );
+    fireEvent.click(screen.getByTestId("sidebar-nav-all"));
+    expect(onFilterChange).toHaveBeenCalledWith({ kind: "all" });
+  });
+
+  it("expanding Foldery lists folders from useFolders() and selecting one filters the list", () => {
+    mockUseFolders.mockReturnValue([{ id: "folder-1", name: "Praca" }]);
+    const onFilterChange = vi.fn();
+    render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={onFilterChange} />);
+
+    fireEvent.click(screen.getByTestId("sidebar-nav-folders"));
+    fireEvent.click(screen.getByTestId("sidebar-folder-folder-1"));
+
+    expect(onFilterChange).toHaveBeenCalledWith({ kind: "folder", id: "folder-1" });
+  });
+
+  it("expanding Tagi lists tags from useAllTags() and selecting one filters the list", () => {
+    mockUseAllTags.mockReturnValue(["urgent"]);
+    const onFilterChange = vi.fn();
+    render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={onFilterChange} />);
+
+    fireEvent.click(screen.getByTestId("sidebar-nav-tags"));
+    fireEvent.click(screen.getByTestId("sidebar-tag-urgent"));
+
+    expect(onFilterChange).toHaveBeenCalledWith({ kind: "tag", tag: "urgent" });
+  });
+
+  it("creates a new folder via the '+' affordance under Foldery", async () => {
+    mockCreateVaultFolder.mockResolvedValue({ id: "folder-new", name: "Osobiste" });
+    render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("sidebar-nav-folders"));
+    fireEvent.click(screen.getByTestId("sidebar-new-folder-button"));
+    fireEvent.change(screen.getByTestId("sidebar-new-folder-name"), {
+      target: { value: "Osobiste" },
+    });
+    fireEvent.click(screen.getByTestId("sidebar-new-folder-confirm"));
+
+    await waitFor(() => expect(mockCreateVaultFolder).toHaveBeenCalledWith("Osobiste"));
+  });
+
+  it("marks the currently-active folder filter as selected", () => {
+    mockUseFolders.mockReturnValue([{ id: "folder-1", name: "Praca" }]);
+    render(
+      <Sidebar activeFilter={{ kind: "folder", id: "folder-1" }} onFilterChange={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTestId("sidebar-nav-folders"));
+    expect(screen.getByTestId("sidebar-folder-folder-1").className).toContain("bg-primary");
   });
 });
