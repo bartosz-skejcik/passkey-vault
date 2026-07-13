@@ -19,7 +19,11 @@ import { lockVault } from "@/lib/crypto";
 import { logout } from "@/lib/auth/api";
 import { clearSessionToken, clearStoredEmail } from "@/lib/auth/session";
 import { createVaultFolder, useAllTags, useFolders } from "@/lib/vault/store";
-import { CLIPBOARD_SECONDS_KEY, DEFAULT_CLIPBOARD_SECONDS } from "@/lib/clipboard";
+import {
+  CLIPBOARD_SECONDS_KEY,
+  DEFAULT_CLIPBOARD_SECONDS,
+  clampClipboardSeconds,
+} from "@/lib/clipboard";
 import {
   AUTOLOCK_CHANGED_EVENT,
   AUTOLOCK_MINUTES_KEY,
@@ -78,7 +82,7 @@ export default function Sidebar({
       setAutolockMinutes(String(readAutolockMinutes()));
       const storedClipboard = localStorage.getItem(CLIPBOARD_SECONDS_KEY);
       if (storedClipboard !== null) {
-        setClipboardSeconds(Number(storedClipboard));
+        setClipboardSeconds(clampClipboardSeconds(Number(storedClipboard)));
       }
     } catch {
       // localStorage may be unavailable (private mode); defaults stand.
