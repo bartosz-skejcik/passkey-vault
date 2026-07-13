@@ -147,6 +147,7 @@ export const DICTIONARY = {
   "sidebar.passkeysSoon": { pl: "wkrótce", en: "soon" },
   "sidebar.tools": { pl: "Narzędzia", en: "Tools" },
   "sidebar.generator": { pl: "Generator haseł", en: "Password generator" },
+  "sidebar.account": { pl: "Konto", en: "Account" },
 
   "action.copyPassword": { pl: "Kopiuj hasło", en: "Copy password" },
   "action.copyUsername": { pl: "Kopiuj nazwę użytkownika", en: "Copy username" },
@@ -192,6 +193,7 @@ export const DICTIONARY = {
   "aria.newTag": { pl: "Nowy tag", en: "New tag" },
   "aria.removeUrl": { pl: "Usuń URL", en: "Remove URL" },
   "aria.closeDrawer": { pl: "Zamknij panel", en: "Close panel" },
+  "aria.toggleTheme": { pl: "Przełącz motyw", en: "Toggle theme" },
 
   // Self-test (dev diagnostic route, not part of UI-SPEC's copywriting
   // contract — added here per Task 4's carried-forward Phase 1 UI-REVIEW

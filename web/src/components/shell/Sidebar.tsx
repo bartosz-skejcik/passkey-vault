@@ -399,7 +399,7 @@ export default function Sidebar({
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-base-300 text-base-content/60">
               <User size={18} aria-hidden="true" />
             </div>
-            <div className="flex-1 text-sm text-base-content/70">Konto</div>
+            <div className="flex-1 text-sm text-base-content/70">{t("sidebar.account")}</div>
           </div>
 
           <ul
@@ -481,7 +481,7 @@ export default function Sidebar({
 
         <button
           type="button"
-          aria-label="Przełącz motyw"
+          aria-label={t("aria.toggleTheme")}
           className="btn btn-ghost btn-square btn-sm"
           onClick={toggleTheme}
         >

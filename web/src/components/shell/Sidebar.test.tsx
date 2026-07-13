@@ -178,3 +178,11 @@ describe("Sidebar Categories/Tools restructure", () => {
     expect(screen.getByTestId("generator-dialog")).toBeInTheDocument();
   });
 });
+
+describe("Sidebar i18n (gap-review IN-03)", () => {
+  it("sources the account label and theme-toggle aria-label from the dictionary instead of a hardcoded Polish literal", () => {
+    render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={vi.fn()} />);
+    expect(screen.getByText("sidebar.account")).toBeInTheDocument();
+    expect(screen.getByLabelText("aria.toggleTheme")).toBeInTheDocument();
+  });
+});
