@@ -133,6 +133,17 @@ export const DICTIONARY = {
   "sidebar.folders": { pl: "Foldery", en: "Folders" },
   "sidebar.tags": { pl: "Tagi", en: "Tags" },
   "sidebar.newFolderPlaceholder": { pl: "Nazwa folderu", en: "Folder name" },
+  "sidebar.categories": { pl: "Kategorie", en: "Categories" },
+  "sidebar.catLogins": { pl: "Loginy", en: "Logins" },
+  "sidebar.catCards": { pl: "Karty", en: "Cards" },
+  "sidebar.catIdentities": { pl: "Tożsamości", en: "Identities" },
+  "sidebar.catNotes": { pl: "Notatki", en: "Notes" },
+  "sidebar.passkeys": { pl: "Passkeys", en: "Passkeys" },
+  "sidebar.passkeysSoon": { pl: "wkrótce", en: "soon" },
+  "sidebar.tools": { pl: "Narzędzia", en: "Tools" },
+  "sidebar.generator": { pl: "Generator haseł", en: "Password generator" },
+
+  "action.copyPassword": { pl: "Kopiuj hasło", en: "Copy password" },
 
   "error.revisionConflict": {
     pl: "Ten item zmienił się w międzyczasie (np. na innym urządzeniu). Odśwież i spróbuj ponownie.",

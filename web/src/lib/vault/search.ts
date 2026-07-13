@@ -47,6 +47,9 @@ function matchesFilter(fields: ItemFields, filter: VaultFilter): boolean {
   if (filter.kind === "folder") {
     return fields.folderId === filter.id;
   }
+  if (filter.kind === "itemType") {
+    return fields.type === filter.itemType;
+  }
   return fields.tags.includes(filter.tag);
 }
 

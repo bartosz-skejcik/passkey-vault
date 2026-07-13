@@ -72,7 +72,8 @@ export interface Folder {
 export type VaultFilter =
   | { kind: "all" }
   | { kind: "folder"; id: string }
-  | { kind: "tag"; tag: string };
+  | { kind: "tag"; tag: string }
+  | { kind: "itemType"; itemType: ItemType };
 
 /** Union of the current and legacy (pre-multi-URL) decrypted login shapes —
  * this is the type a raw JSON.parse of a login item's plaintext can

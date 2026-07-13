@@ -3,16 +3,22 @@
 import { useEffect, useState } from "react";
 import {
   ChevronDown,
+  CreditCard,
   Folder,
+  IdCard,
+  KeyRound,
+  LayoutGrid,
   Lock,
   LogOut,
   Languages,
   Moon,
   Plus,
+  StickyNote,
   Sun,
   Tag,
   User,
   Vault,
+  Wand2,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { lockVault } from "@/lib/crypto";
@@ -31,7 +37,27 @@ import {
   DEFAULT_AUTOLOCK_MINUTES,
   readAutolockMinutes,
 } from "@/lib/idle/autolock";
-import type { VaultFilter } from "@/lib/vault/types";
+import type { DICTIONARY } from "@/lib/i18n/dictionary";
+import type { ItemType, VaultFilter } from "@/lib/vault/types";
+import GeneratorDialog from "@/components/generator/GeneratorDialog";
+
+// Category buttons mirror ItemRow.tsx's own TYPE_ICON map so a login's icon
+// matches everywhere (sidebar category, list row, list badge).
+const CATEGORY_ICON: Record<ItemType, typeof Vault> = {
+  login: Vault,
+  card: CreditCard,
+  identity: IdCard,
+  note: StickyNote,
+};
+
+const CATEGORY_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
+  login: "sidebar.catLogins",
+  card: "sidebar.catCards",
+  identity: "sidebar.catIdentities",
+  note: "sidebar.catNotes",
+};
+
+const ITEM_TYPES: ItemType[] = ["login", "card", "identity", "note"];
 
 const CLIPBOARD_SECONDS_OPTIONS = [30, 35, 40, 45, 50, 55, 60];
 
@@ -63,11 +89,14 @@ export default function Sidebar({
   const [theme, setTheme] = useState<"vault-dark" | "vault-light">("vault-dark");
   const [autolockMinutes, setAutolockMinutes] = useState(DEFAULT_AUTOLOCK_MINUTES);
   const [clipboardSeconds, setClipboardSeconds] = useState(DEFAULT_CLIPBOARD_SECONDS);
+  const [categoriesExpanded, setCategoriesExpanded] = useState(true);
   const [foldersExpanded, setFoldersExpanded] = useState(false);
   const [tagsExpanded, setTagsExpanded] = useState(false);
+  const [toolsExpanded, setToolsExpanded] = useState(true);
   const [addingFolder, setAddingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [folderError, setFolderError] = useState<string | null>(null);
+  const [showGenerator, setShowGenerator] = useState(false);
 
   const folders = useFolders();
   const allTags = useAllTags();
@@ -167,16 +196,64 @@ export default function Sidebar({
 
   return (
     <aside className="hidden md:flex md:w-64 md:shrink-0 flex-col bg-base-200 p-4">
-      <nav className="flex flex-col gap-1">
-        <button
-          type="button"
-          data-testid="sidebar-nav-all"
-          className={navItemClass(activeFilter.kind === "all")}
-          onClick={() => selectFilter({ kind: "all" })}
-        >
-          <Vault size={18} aria-hidden="true" />
-          <span>{t("sidebar.all")}</span>
-        </button>
+      <nav className="flex flex-col gap-1 overflow-y-auto">
+        <div>
+          <button
+            type="button"
+            data-testid="sidebar-section-categories"
+            className={navItemClass(false)}
+            onClick={() => setCategoriesExpanded((v) => !v)}
+          >
+            <span className="flex-1">{t("sidebar.categories")}</span>
+            <ChevronDown
+              size={14}
+              className={categoriesExpanded ? "rotate-180 transition-transform" : "transition-transform"}
+              aria-hidden="true"
+            />
+          </button>
+          {categoriesExpanded ? (
+            <div className="ml-1 mt-1 flex flex-col gap-1">
+              <button
+                type="button"
+                data-testid="sidebar-nav-all"
+                className={navItemClass(activeFilter.kind === "all")}
+                onClick={() => selectFilter({ kind: "all" })}
+              >
+                <LayoutGrid size={18} aria-hidden="true" />
+                <span>{t("sidebar.all")}</span>
+              </button>
+
+              {ITEM_TYPES.map((type) => {
+                const Icon = CATEGORY_ICON[type];
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    data-testid={`sidebar-nav-type-${type}`}
+                    className={navItemClass(
+                      activeFilter.kind === "itemType" && activeFilter.itemType === type,
+                    )}
+                    onClick={() => selectFilter({ kind: "itemType", itemType: type })}
+                  >
+                    <Icon size={18} aria-hidden="true" />
+                    <span>{t(CATEGORY_LABEL_KEY[type])}</span>
+                  </button>
+                );
+              })}
+
+              <button
+                type="button"
+                data-testid="sidebar-nav-passkeys"
+                disabled
+                className="flex w-full cursor-not-allowed items-center gap-2 rounded-field px-3 py-2 text-left text-sm text-base-content/40"
+              >
+                <KeyRound size={18} className="text-accent" aria-hidden="true" />
+                <span className="flex-1">{t("sidebar.passkeys")}</span>
+                <span className="badge badge-sm">{t("sidebar.passkeysSoon")}</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
 
         <div>
           <button
@@ -279,7 +356,38 @@ export default function Sidebar({
             </div>
           ) : null}
         </div>
+
+        <div>
+          <button
+            type="button"
+            data-testid="sidebar-section-tools"
+            className={navItemClass(false)}
+            onClick={() => setToolsExpanded((v) => !v)}
+          >
+            <span className="flex-1">{t("sidebar.tools")}</span>
+            <ChevronDown
+              size={14}
+              className={toolsExpanded ? "rotate-180 transition-transform" : "transition-transform"}
+              aria-hidden="true"
+            />
+          </button>
+          {toolsExpanded ? (
+            <div className="ml-1 mt-1 flex flex-col gap-1">
+              <button
+                type="button"
+                data-testid="sidebar-generator-trigger"
+                className={navItemClass(false)}
+                onClick={() => setShowGenerator(true)}
+              >
+                <Wand2 size={18} aria-hidden="true" />
+                <span>{t("sidebar.generator")}</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
       </nav>
+
+      {showGenerator ? <GeneratorDialog onClose={() => setShowGenerator(false)} /> : null}
 
       <div className="mt-auto flex items-center gap-3 border-t border-base-300 pt-4">
         <div className="dropdown dropdown-top flex-1">
