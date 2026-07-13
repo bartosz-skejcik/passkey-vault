@@ -211,3 +211,62 @@ async fn update_and_delete_on_other_users_item_returns_404() {
     let delete_res = req(&app, "DELETE", &format!("/api/vault/items/{id}"), &token_b, None).await;
     assert_eq!(delete_res.status(), StatusCode::NOT_FOUND);
 }
+
+// --- Folders (Task 2) ---
+
+fn folder_body(name_ciphertext: &str) -> Value {
+    json!({ "enc_name": format!("{{\"nonce\":\"AAAA\",\"ciphertext\":\"{name_ciphertext}\"}}") })
+}
+
+#[tokio::test]
+async fn create_folder_returns_201_with_id() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+    let token = register_and_login(&app, "folder1@example.com").await;
+
+    let res = req(&app, "POST", "/api/vault/folders", &token, Some(folder_body("work"))).await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body = body_json(res).await;
+    assert!(body["id"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn list_folders_returns_only_own_folders() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+    let token_a = register_and_login(&app, "folderusera@example.com").await;
+    let token_b = register_and_login(&app, "folderuserb@example.com").await;
+
+    req(&app, "POST", "/api/vault/folders", &token_a, Some(folder_body("a-folder"))).await;
+    req(&app, "POST", "/api/vault/folders", &token_b, Some(folder_body("b-folder"))).await;
+
+    let list_res = req(&app, "GET", "/api/vault/folders", &token_a, None).await;
+    assert_eq!(list_res.status(), StatusCode::OK);
+    let folders = body_json(list_res).await;
+    let folders = folders.as_array().unwrap();
+    assert_eq!(folders.len(), 1);
+}
+
+#[tokio::test]
+async fn delete_folder_removes_it_and_cross_user_delete_is_404() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+    let token_a = register_and_login(&app, "folderdela@example.com").await;
+    let token_b = register_and_login(&app, "folderdelb@example.com").await;
+
+    let create_res = req(&app, "POST", "/api/vault/folders", &token_a, Some(folder_body("to-delete"))).await;
+    let created = body_json(create_res).await;
+    let folder_id = created["id"].as_str().unwrap().to_string();
+
+    // Other user cannot delete it.
+    let cross_delete = req(&app, "DELETE", &format!("/api/vault/folders/{folder_id}"), &token_b, None).await;
+    assert_eq!(cross_delete.status(), StatusCode::NOT_FOUND);
+
+    // Owner can delete it.
+    let own_delete = req(&app, "DELETE", &format!("/api/vault/folders/{folder_id}"), &token_a, None).await;
+    assert_eq!(own_delete.status(), StatusCode::NO_CONTENT);
+
+    // Deleting again is 404.
+    let delete_again = req(&app, "DELETE", &format!("/api/vault/folders/{folder_id}"), &token_a, None).await;
+    assert_eq!(delete_again.status(), StatusCode::NOT_FOUND);
+}
