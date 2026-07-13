@@ -2,6 +2,7 @@
 **/*.rs.bk
 /data
 .env
+web/.env.local
 node_modules/
 .next/
 dist/
@@ -14,3 +15,6 @@ web/public/wasm/
 # Next.js static export output (web/node_modules/ and web/.next/ already
 # covered by the bare node_modules/ and .next/ patterns above)
 web/out/
+
+# TypeScript incremental build cache
+web/tsconfig.tsbuildinfo
