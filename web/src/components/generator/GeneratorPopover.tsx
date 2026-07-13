@@ -112,11 +112,9 @@ export default function GeneratorPopover({
   }
 
   function toggleCharsetClass(key: keyof CharacterPasswordOptions) {
-    setCharset((prev) => {
-      const next = { ...prev, [key]: !prev[key] };
-      regenerate(mode, charLength, wordCount, next);
-      return next;
-    });
+    const next = { ...charset, [key]: !charset[key] };
+    setCharset(next);
+    regenerate(mode, charLength, wordCount, next);
   }
 
   const meter = scorePasswordMeter(preview);
