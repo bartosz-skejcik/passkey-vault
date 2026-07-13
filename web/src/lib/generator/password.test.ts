@@ -7,9 +7,13 @@ describe("EFF_WORDLIST", () => {
     expect(EFF_WORDLIST.length).toBe(7776);
   });
 
-  it("every entry is a plain lowercase word with no leftover dice-roll prefix", () => {
+  it("every entry is a plain lowercase word (letters/hyphens only) with no leftover dice-roll prefix", () => {
+    // The EFF Large Wordlist legitimately includes a handful of
+    // hyphenated compound words (e.g. "drop-down") — the invariant this
+    // guards is "no digits/tabs/whitespace survived vendoring", not
+    // "letters only".
     for (const word of EFF_WORDLIST) {
-      expect(word).toMatch(/^[a-z]+$/);
+      expect(word).toMatch(/^[a-z]+(-[a-z]+)*$/);
     }
   });
 });
