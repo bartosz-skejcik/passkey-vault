@@ -1,11 +1,33 @@
 ---
 phase: 02-password-auth-vault-core
 verified: 2026-07-13T17:35:36Z
-status: human_needed
+human_validated: 2026-07-13T18:00:00Z
+status: gaps_found
 score: 5/5 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
 mode: mvp
+gaps:
+  - id: GAP-02-01
+    severity: minor
+    description: "Password fields render in plaintext in the detail panel. Expected: masked with dots by default, with a reveal (eye) toggle button next to the copy button."
+    source: user UAT 2026-07-13
+  - id: GAP-02-02
+    severity: minor
+    description: "Sidebar lacks category/section structure. Expected (Proton Pass-inspired, adapted to our item types): Categories section (All Items, Logins, Cards, Identities, Notes, plus Passkeys as a 'soon' placeholder), Folders section (+ new folder, existing folders), Tags section, Tools section (Password Generator). User provided reference screenshot."
+    source: user UAT 2026-07-13
+  - id: GAP-02-03
+    severity: minor
+    description: "Item list rows should follow the reference layout: type/site icon, title with username on a second line, relative last-used/updated time column. User provided reference screenshot (Proton Pass main list)."
+    source: user UAT 2026-07-13
+  - id: GAP-02-04
+    severity: minor
+    description: "Item rows need a context menu (kebab/right-click) with: Copy Email or Username, Copy Password, Move (to folder), Edit, Delete (opens existing confirm dialog). No Trash — hard delete with confirmation stays (user decision). User provided reference screenshot."
+    source: user UAT 2026-07-13
+  - id: GAP-02-05
+    severity: minor
+    description: "Password generator popover overflows off-screen when creating a new login. Fix positioning using DaisyUI dropdown/popover primitives (dropdown-top/dropdown-end or Popover API anchor positioning) so it stays in the viewport."
+    source: user UAT 2026-07-13
 human_verification:
   - test: "Log in with the master password, then observe the vault shell BEFORE unlocking. Open browser DevTools and inspect the DOM behind the blurred overlay."
     expected: "The unlock overlay is visibly distinct (backdrop-blur over the shell). No plaintext item names, usernames, or field values exist anywhere in the DOM behind the blur — MainColumn's data-bearing children are unmounted, not merely visually hidden."
@@ -25,9 +47,15 @@ human_verification:
 
 **Phase Goal:** A user can create an account, log in with their master password, and fully manage an encrypted vault of items
 **Verified:** 2026-07-13T17:35:36Z
-**Status:** human_needed
+**Status:** gaps_found (functional verification passed; UX gaps from human UAT)
 **Mode:** mvp
 **Re-verification:** No — initial verification
+
+## Human Validation (2026-07-13)
+
+All 4 human_verification items **passed** (confirmed by user): no plaintext behind the unlock blur, full browser→WASM→server E2E item loop, PL↔EN switch persists with no flash, idle auto-lock with surviving session.
+
+During UAT the user requested 5 UX changes (reference screenshots: Proton Pass sidebar, item list, item context menu — adapted to our scope). These are recorded as gaps GAP-02-01..GAP-02-05 in frontmatter and drive one gap-closure round. User decisions: sidebar adapted to our item types (no Shared/Documents/premium placeholders; Passkeys as "soon" placeholder), hard delete + confirm stays (no Trash feature).
 
 ## Goal Achievement
 
