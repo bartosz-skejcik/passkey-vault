@@ -6,9 +6,11 @@ import { useLocale } from "@/lib/i18n/LocaleContext";
 export default function TopBar({
   searchQuery = "",
   onSearchChange = () => {},
+  onNewItem,
 }: {
   searchQuery?: string;
   onSearchChange?: (value: string) => void;
+  onNewItem?: () => void;
 }) {
   const { t } = useLocale();
   return (
@@ -28,7 +30,13 @@ export default function TopBar({
 
       <div className="flex-1" />
 
-      <button type="button" className="btn btn-primary btn-sm" disabled>
+      <button
+        type="button"
+        data-testid="new-item-button"
+        className="btn btn-primary btn-sm"
+        onClick={onNewItem}
+        disabled={!onNewItem}
+      >
         {t("topbar.newItem")}
       </button>
     </header>

@@ -1,10 +1,11 @@
 "use client";
 
-import { KeyRound, X } from "lucide-react";
+import { X } from "lucide-react";
 import type { ItemFields, VaultItem } from "@/lib/vault/types";
 import { useFolders } from "@/lib/vault/store";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import type { DICTIONARY } from "@/lib/i18n/dictionary";
+import PasskeyPlaceholderSection from "./PasskeyPlaceholderSection";
 
 // Fields shaped as generic string values, rendered through a Label+value
 // loop — `folderId` and `tags` are special-cased below instead (they need
@@ -80,12 +81,7 @@ export default function DetailPanel({
         ) : null}
       </div>
 
-      {item.fields.type === "login" ? (
-        <div className="mt-2 flex items-center gap-3 rounded-box border border-base-300 p-4">
-          <KeyRound size={18} className="shrink-0 text-accent" aria-hidden="true" />
-          <span className="text-base">{t("item.passkeyPlaceholder")}</span>
-        </div>
-      ) : null}
+      {item.fields.type === "login" ? <PasskeyPlaceholderSection /> : null}
     </aside>
   );
 }

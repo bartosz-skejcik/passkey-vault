@@ -14,12 +14,14 @@ import LoginForm from "@/components/auth/LoginForm";
 import UnlockOverlay from "@/components/auth/UnlockOverlay";
 import ItemList from "@/components/vault/ItemList";
 import DetailPanel from "@/components/vault/DetailPanel";
+import TypePicker from "@/components/vault/TypePicker";
+import ItemForm from "@/components/vault/ItemForm";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { getSessionToken } from "@/lib/auth/session";
 import { lockVault, useIsUnlocked } from "@/lib/crypto";
 import { useIdleTimer } from "@/lib/idle/useIdleTimer";
 import { useVaultItems } from "@/lib/vault/store";
-import type { VaultItem } from "@/lib/vault/types";
+import type { ItemType, VaultItem } from "@/lib/vault/types";
 
 function readAutolockMinutes(): number {
   try {
@@ -41,7 +43,26 @@ export default function Home() {
   const [autolockMinutes, setAutolockMinutes] = useState(Number(DEFAULT_AUTOLOCK_MINUTES));
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedItem, setSelectedItem] = useState<VaultItem | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [creatingType, setCreatingType] = useState<ItemType | null>(null);
   const items = useVaultItems();
+
+  function handleNewItem() {
+    setSelectedItem(null);
+    setCreating(true);
+    setCreatingType(null);
+  }
+
+  function handleCreated() {
+    setCreating(false);
+    setCreatingType(null);
+  }
+
+  function closeSidePanel() {
+    setSelectedItem(null);
+    setCreating(false);
+    setCreatingType(null);
+  }
 
   useEffect(() => {
     setAuthed(getSessionToken() !== null);
@@ -85,17 +106,35 @@ export default function Home() {
         <div className="flex h-screen flex-col md:flex-row">
           <Sidebar />
           <div className="flex flex-1 flex-col">
-            <TopBar searchQuery={searchQuery} onSearchChange={setSearchQuery} />
+            <TopBar
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              onNewItem={handleNewItem}
+            />
             <div className="flex flex-1 overflow-hidden">
-              <MainColumn showEmptyState={items.length === 0}>
+              <MainColumn showEmptyState={items.length === 0 && !creating}>
                 <ItemList
                   searchQuery={searchQuery}
                   selectedItemId={selectedItem?.id ?? null}
-                  onSelect={setSelectedItem}
+                  onSelect={(item) => {
+                    setCreating(false);
+                    setCreatingType(null);
+                    setSelectedItem(item);
+                  }}
                 />
               </MainColumn>
               {selectedItem ? (
-                <DetailPanel item={selectedItem} onClose={() => setSelectedItem(null)} />
+                <DetailPanel item={selectedItem} onClose={closeSidePanel} />
+              ) : null}
+              {creating && creatingType === null ? (
+                <aside className="flex w-full flex-col border-l border-base-300 bg-base-100 p-6 md:w-[400px] md:shrink-0">
+                  <TypePicker onSelect={setCreatingType} />
+                </aside>
+              ) : null}
+              {creating && creatingType !== null ? (
+                <aside className="flex w-full flex-col overflow-y-auto border-l border-base-300 bg-base-100 p-6 md:w-[400px] md:shrink-0">
+                  <ItemForm type={creatingType} onCreated={handleCreated} />
+                </aside>
               ) : null}
             </div>
           </div>
