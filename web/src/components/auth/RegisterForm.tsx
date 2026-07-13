@@ -10,6 +10,8 @@ import {
   defaultKdfParamsJson,
   wrapUserKey,
   setUnlockedUserKey,
+  type WasmWrappingKey,
+  type WasmUserKey,
 } from "@/lib/crypto";
 import { register, login, base64Encode, ApiClientError } from "@/lib/auth/api";
 import { setSessionToken, setStoredEmail } from "@/lib/auth/session";
@@ -41,8 +43,8 @@ export default function RegisterForm({ onToggle }: { onToggle: () => void }) {
 
     const passwordBytes = new TextEncoder().encode(password);
     let material: ReturnType<typeof deriveAuthMaterial> | undefined;
-    let wrappingKey: ReturnType<(typeof material)["takeWrappingKey"]> | undefined;
-    let uk: ReturnType<typeof generateUserKey> | undefined;
+    let wrappingKey: WasmWrappingKey | undefined;
+    let uk: WasmUserKey | undefined;
 
     try {
       const salt = randomSalt(16);

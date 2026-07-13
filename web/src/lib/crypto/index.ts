@@ -7,6 +7,7 @@
 // Only opaque key handles (WasmWrappingKey/WasmUserKey), booleans,
 // ciphertext/plaintext strings, and StepResult objects cross out of this
 // module — never raw key bytes.
+import { useSyncExternalStore } from "react";
 import init, {
   WasmWrappingKey,
   WasmUserKey,
@@ -64,6 +65,58 @@ export function initCrypto(): Promise<void> {
       });
   }
   return ready;
+}
+
+// Module-level lock-state singleton — the single unlocked-UserKey handle
+// for the whole app (Plan 02-04's AUTH-02/AUTH-08 unlock-overlay + idle
+// auto-lock). Mirrors the `ready` singleton's module-level-state shape
+// above.
+let currentUserKey: WasmUserKey | null = null;
+const lockListeners = new Set<() => void>();
+
+/** Frees any existing unlocked handle first, then assigns and notifies subscribers. */
+export function setUnlockedUserKey(uk: WasmUserKey): void {
+  currentUserKey?.free?.();
+  currentUserKey = uk;
+  lockListeners.forEach((listener) => listener());
+}
+
+export function getUnlockedUserKey(): WasmUserKey | null {
+  return currentUserKey;
+}
+
+/**
+ * Frees the current handle (if any) and clears the lock state. A no-op,
+ * notify-free early return if already locked, so repeated idle-timer
+ * firings (or a double click of "Lock now") stay idempotent.
+ */
+export function lockVault(): void {
+  if (currentUserKey === null) return;
+  currentUserKey.free?.();
+  currentUserKey = null;
+  lockListeners.forEach((listener) => listener());
+}
+
+export function isUnlocked(): boolean {
+  return currentUserKey !== null;
+}
+
+export function subscribeLockState(listener: () => void): () => void {
+  lockListeners.add(listener);
+  return () => {
+    lockListeners.delete(listener);
+  };
+}
+
+/**
+ * React hook wrapper over the lock-state singleton via
+ * useSyncExternalStore. Third arg is a stable `false` snapshot for any
+ * non-browser render path — this app has no server-rendered client
+ * components (static export only), so this is a defensive fallback, not a
+ * real SSR path.
+ */
+export function useIsUnlocked(): boolean {
+  return useSyncExternalStore(subscribeLockState, isUnlocked, () => false);
 }
 
 export type StepResult = {

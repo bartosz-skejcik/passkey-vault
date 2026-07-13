@@ -8,11 +8,14 @@ import SelfTestCard from "@/components/self-test/SelfTestCard";
 import AuthCard from "@/components/auth/AuthCard";
 import RegisterForm from "@/components/auth/RegisterForm";
 import LoginForm from "@/components/auth/LoginForm";
+import UnlockOverlay from "@/components/auth/UnlockOverlay";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { getSessionToken } from "@/lib/auth/session";
+import { useIsUnlocked } from "@/lib/crypto";
 
 export default function Home() {
   const { t } = useLocale();
+  const unlocked = useIsUnlocked();
   // `null` = not yet resolved (avoids a flash of the wrong screen before
   // this mount effect runs); `true`/`false` after resolving the stored
   // session token.
@@ -40,14 +43,21 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen flex-col md:flex-row">
-      <Sidebar />
-      <div className="flex flex-1 flex-col">
-        <TopBar />
-        <MainColumn>
-          <SelfTestCard />
-        </MainColumn>
+    <>
+      {/* Hard requirement, not cosmetic-only (T-02-14): MainColumn's
+          data-bearing children are only mounted while unlocked. blur-md
+          is cosmetic reinforcement on top of that — the real protection
+          is "no data in the render tree" below. */}
+      <div className={!unlocked ? "blur-md" : undefined}>
+        <div className="flex h-screen flex-col md:flex-row">
+          <Sidebar />
+          <div className="flex flex-1 flex-col">
+            <TopBar />
+            <MainColumn>{unlocked ? <SelfTestCard /> : null}</MainColumn>
+          </div>
+        </div>
       </div>
-    </div>
+      <UnlockOverlay />
+    </>
   );
 }
