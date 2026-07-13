@@ -1,7 +1,14 @@
 //! Wspólny harness testów integracyjnych: migrowana, in-memory baza + router
 //! zbudowany na tym samym `pv_server::routes::router`/`AppState` co binarka.
 
+use axum::{
+    body::{to_bytes, Body},
+    http::{Request, StatusCode},
+};
+use base64::{engine::general_purpose::STANDARD, Engine};
+use serde_json::json;
 use sqlx::sqlite::SqlitePoolOptions;
+use tower::ServiceExt;
 
 /// `max_connections(1)` na zwykłym (bez shared-cache) `sqlite::memory:` URI
 /// jest bezpieczne dla tych testów: każdy `oneshot()` obsługuje jedno
@@ -21,4 +28,53 @@ pub async fn test_pool() -> sqlx::SqlitePool {
 
 pub fn test_app(pool: sqlx::SqlitePool) -> axum::Router {
     pv_server::routes::router(pv_server::AppState { db: pool, session_ttl_hours: 168 })
+}
+
+/// Registers a fixture user (deterministic `auth_hash`/`salt`/`kdf`/
+/// `pw_wrapped_uk` values — vault route tests never need real
+/// client-side-derived crypto, just a valid session) and logs in, returning
+/// the bearer token string. Shared by `tests/vault.rs` so individual tests
+/// don't duplicate this register+login boilerplate.
+pub async fn register_and_login(app: &axum::Router, email: &str) -> String {
+    let auth_hash = STANDARD.encode([2u8; 32]);
+    let register_body = json!({
+        "email": email,
+        "kdf": { "m_cost_kib": 65536, "t_cost": 3, "p_cost": 4 },
+        "salt": STANDARD.encode([1u8; 16]),
+        "auth_hash": auth_hash,
+        "pw_wrapped_uk": "{\"nonce\":\"AAAA\",\"ciphertext\":\"BBBB\"}",
+    });
+
+    let register_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/register")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&register_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(register_res.status(), StatusCode::CREATED, "fixture register must succeed");
+
+    let login_body = json!({ "email": email, "auth_hash": auth_hash });
+    let login_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&login_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login_res.status(), StatusCode::OK, "fixture login must succeed");
+
+    let bytes = to_bytes(login_res.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    body["session_token"].as_str().unwrap().to_string()
 }
