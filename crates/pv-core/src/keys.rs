@@ -17,6 +17,7 @@ pub const NONCE_LEN: usize = 24;
 /// Domain separation dla HKDF — wersjonowane, nigdy nie zmieniać wstecznie.
 pub const INFO_PW_UNLOCK: &[u8] = b"pv:pw-unlock:v1";
 pub const INFO_PRF_UNLOCK: &[u8] = b"pv:prf-unlock:v1";
+pub const INFO_AUTH_HASH: &[u8] = b"pv:auth-hash:v1";
 
 /// Losowy 256-bit User Key — korzeń dostępu do vaulta. Nigdy nie opuszcza
 /// klienta w postaci jawnej.
