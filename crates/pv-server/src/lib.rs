@@ -13,6 +13,10 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 #[derive(Clone)]
 pub struct AppState {
     pub db: sqlx::SqlitePool,
+    /// Session TTL used when issuing new bearer tokens on login. Carried on
+    /// `AppState` (not re-read from env per request) so the test harness can
+    /// set a fixed value without needing a live environment.
+    pub session_ttl_hours: u64,
 }
 
 /// Łączy się z bazą (tworząc plik, jeśli brakuje) i uruchamia migracje.

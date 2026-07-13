@@ -20,5 +20,5 @@ pub async fn test_pool() -> sqlx::SqlitePool {
 }
 
 pub fn test_app(pool: sqlx::SqlitePool) -> axum::Router {
-    pv_server::routes::router(pv_server::AppState { db: pool })
+    pv_server::routes::router(pv_server::AppState { db: pool, session_ttl_hours: 168 })
 }
