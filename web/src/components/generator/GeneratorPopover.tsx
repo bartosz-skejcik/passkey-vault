@@ -145,7 +145,7 @@ export default function GeneratorPopover({
               className={`btn join-item btn-sm flex-1 ${mode === "character" ? "btn-active" : ""}`}
               onClick={() => handleModeChange("character")}
             >
-              Znaki
+              {t("generator.modeCharacter")}
             </button>
             <button
               type="button"
@@ -153,7 +153,7 @@ export default function GeneratorPopover({
               className={`btn join-item btn-sm flex-1 ${mode === "passphrase" ? "btn-active" : ""}`}
               onClick={() => handleModeChange("passphrase")}
             >
-              Passphrase
+              {t("generator.modePassphrase")}
             </button>
           </div>
 

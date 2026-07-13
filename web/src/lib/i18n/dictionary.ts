@@ -120,6 +120,8 @@ export const DICTIONARY = {
 
   "generator.regenerate": { pl: "Losuj ponownie", en: "Regenerate" },
   "generator.apply": { pl: "Użyj tego hasła", en: "Use this password" },
+  "generator.modeCharacter": { pl: "Znaki", en: "Characters" },
+  "generator.modePassphrase": { pl: "Passphrase", en: "Passphrase" },
 
   "autolock.label": { pl: "Blokuj po bezczynności", en: "Lock after inactivity" },
   "clipboard.durationLabel": {
