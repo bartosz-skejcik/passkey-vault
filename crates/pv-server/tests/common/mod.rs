@@ -35,6 +35,12 @@ pub fn test_app(pool: sqlx::SqlitePool) -> axum::Router {
 /// client-side-derived crypto, just a valid session) and logs in, returning
 /// the bearer token string. Shared by `tests/vault.rs` so individual tests
 /// don't duplicate this register+login boilerplate.
+///
+/// `#[allow(dead_code)]`: `common/mod.rs` is compiled once per integration
+/// test binary (`tests/auth.rs` and `tests/vault.rs` each get their own
+/// copy); `tests/auth.rs` doesn't call this helper, which would otherwise
+/// warn there even though `tests/vault.rs` uses it throughout.
+#[allow(dead_code)]
 pub async fn register_and_login(app: &axum::Router, email: &str) -> String {
     let auth_hash = STANDARD.encode([2u8; 32]);
     let register_body = json!({
