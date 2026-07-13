@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook } from "@testing-library/react";
 
 // Mock functions must be created via vi.hoisted() so they exist before the
 // hoisted vi.mock() factory below runs (vi.mock is hoisted to the top of
@@ -116,5 +117,61 @@ describe("runSelfTest", () => {
     expect(byName["Encrypt item"].ok).toBe(true);
     expect(byName["Decrypt item"].ok).toBe(false);
     expect(byName["Decrypt item"].error).toContain("decrypt boom");
+  });
+});
+
+describe("lock-state singleton", () => {
+  it("isUnlocked() is false initially, true after setUnlockedUserKey, false again after lockVault", async () => {
+    const { isUnlocked, setUnlockedUserKey, lockVault } = await import("./index");
+    const fakeKey = { free: vi.fn() } as unknown as import("./wasm/pv_wasm.js").WasmUserKey;
+
+    expect(isUnlocked()).toBe(false);
+
+    setUnlockedUserKey(fakeKey);
+    expect(isUnlocked()).toBe(true);
+
+    lockVault();
+    expect(isUnlocked()).toBe(false);
+  });
+
+  it("frees the previous handle exactly once, not on every repeated lockVault() call", async () => {
+    const { setUnlockedUserKey, lockVault } = await import("./index");
+    const fakeKey = { free: vi.fn() } as unknown as import("./wasm/pv_wasm.js").WasmUserKey;
+
+    setUnlockedUserKey(fakeKey);
+    lockVault();
+    lockVault();
+
+    expect(fakeKey.free).toHaveBeenCalledTimes(1);
+  });
+
+  it("setUnlockedUserKey frees any existing handle before replacing it", async () => {
+    const { setUnlockedUserKey } = await import("./index");
+    const firstKey = { free: vi.fn() } as unknown as import("./wasm/pv_wasm.js").WasmUserKey;
+    const secondKey = { free: vi.fn() } as unknown as import("./wasm/pv_wasm.js").WasmUserKey;
+
+    setUnlockedUserKey(firstKey);
+    setUnlockedUserKey(secondKey);
+
+    expect(firstKey.free).toHaveBeenCalledTimes(1);
+    expect(secondKey.free).not.toHaveBeenCalled();
+  });
+
+  it("useIsUnlocked() re-renders a subscribed component on setUnlockedUserKey/lockVault", async () => {
+    const { useIsUnlocked, setUnlockedUserKey, lockVault } = await import("./index");
+    const fakeKey = { free: vi.fn() } as unknown as import("./wasm/pv_wasm.js").WasmUserKey;
+
+    const { result } = renderHook(() => useIsUnlocked());
+    expect(result.current).toBe(false);
+
+    act(() => {
+      setUnlockedUserKey(fakeKey);
+    });
+    expect(result.current).toBe(true);
+
+    act(() => {
+      lockVault();
+    });
+    expect(result.current).toBe(false);
   });
 });
