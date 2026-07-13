@@ -15,6 +15,7 @@ import { updateVaultItem, useFolders } from "@/lib/vault/store";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
 import { showCopyToast } from "@/lib/vault/copyToast";
+import { showErrorToast } from "@/lib/vault/errorToast";
 
 interface CopyAction {
   testId: string;
@@ -95,9 +96,15 @@ export default function ItemContextMenu({
   }
 
   function handleMove(folderId: string | null) {
-    // Fire-and-forget is acceptable here — updateVaultItem's own
-    // RevisionConflictError handling already re-syncs the store on 409.
-    void updateVaultItem(item.id, { ...item.fields, folderId }, item.revision);
+    // The menu closes immediately (matches every other action here), so
+    // failure feedback can't be rendered inline once this component
+    // unmounts — it goes through the same globally-mounted toast pattern
+    // handleCopy already relies on for post-close feedback. A
+    // RevisionConflictError still re-syncs the store on 409 (store.ts), but
+    // the move itself did not apply, so this is surfaced too, not swallowed.
+    updateVaultItem(item.id, { ...item.fields, folderId }, item.revision).catch(() => {
+      showErrorToast(t("error.itemMoveFailed"));
+    });
     onClose();
   }
 

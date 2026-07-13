@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { CardFields, IdentityFields, LoginFields, NoteFields, VaultItem } from "@/lib/vault/types";
 
 const {
@@ -8,12 +8,14 @@ const {
   mockCopyWithAutoClear,
   mockReadClipboardSeconds,
   mockShowCopyToast,
+  mockShowErrorToast,
 } = vi.hoisted(() => ({
   mockUseFolders: vi.fn(),
   mockUpdateVaultItem: vi.fn(),
   mockCopyWithAutoClear: vi.fn(),
   mockReadClipboardSeconds: vi.fn(() => 40),
   mockShowCopyToast: vi.fn(),
+  mockShowErrorToast: vi.fn(),
 }));
 
 vi.mock("@/lib/vault/store", () => ({
@@ -28,6 +30,10 @@ vi.mock("@/lib/clipboard", () => ({
 
 vi.mock("@/lib/vault/copyToast", () => ({
   showCopyToast: mockShowCopyToast,
+}));
+
+vi.mock("@/lib/vault/errorToast", () => ({
+  showErrorToast: mockShowErrorToast,
 }));
 
 vi.mock("@/lib/i18n/LocaleContext", () => ({
@@ -103,6 +109,7 @@ function noteItem(overrides: Partial<NoteFields> = {}): VaultItem {
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseFolders.mockReturnValue([]);
+  mockUpdateVaultItem.mockResolvedValue(undefined);
 });
 
 describe("ItemContextMenu", () => {
@@ -179,6 +186,23 @@ describe("ItemContextMenu", () => {
       { ...item.fields, folderId: null },
       3,
     );
+  });
+
+  it("shows an error toast when a move fails (409 conflict or network error)", async () => {
+    mockUpdateVaultItem.mockRejectedValueOnce(new Error("network error"));
+    const onClose = vi.fn();
+    const item = loginItem();
+    render(
+      <ItemContextMenu item={item} onClose={onClose} onEdit={vi.fn()} onDeleteRequest={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByTestId("context-menu-move-none"));
+
+    // The menu still closes immediately (matches every other action), but
+    // the failure must not become an unhandled promise rejection — it
+    // surfaces via the global error toast instead (gap-review WR-02).
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mockShowErrorToast).toHaveBeenCalledTimes(1));
   });
 
   it("clicking Edit calls onEdit and closes the menu", () => {

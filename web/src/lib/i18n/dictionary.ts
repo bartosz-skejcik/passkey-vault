@@ -167,6 +167,10 @@ export const DICTIONARY = {
     pl: "Nie udało się utworzyć folderu. Spróbuj ponownie.",
     en: "Failed to create folder. Please try again.",
   },
+  "error.itemMoveFailed": {
+    pl: "Nie udało się przenieść itemu. Spróbuj ponownie.",
+    en: "Failed to move item. Please try again.",
+  },
 
   "validation.required": { pl: "To pole jest wymagane", en: "This field is required" },
   "validation.passwordMismatch": {

@@ -14,6 +14,7 @@ import DetailPanel from "@/components/vault/DetailPanel";
 import TypePicker from "@/components/vault/TypePicker";
 import ItemForm from "@/components/vault/ItemForm";
 import CopyToast from "@/components/vault/CopyToast";
+import ErrorToast from "@/components/vault/ErrorToast";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { getSessionToken } from "@/lib/auth/session";
 import { initCrypto, lockVault, useIsUnlocked } from "@/lib/crypto";
@@ -188,6 +189,7 @@ export default function Home() {
         </div>
       </div>
       <CopyToast />
+      <ErrorToast />
       <UnlockOverlay />
     </>
   );
