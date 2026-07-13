@@ -20,12 +20,15 @@ import { logout } from "@/lib/auth/api";
 import { clearSessionToken, clearStoredEmail } from "@/lib/auth/session";
 import { createVaultFolder, useAllTags, useFolders } from "@/lib/vault/store";
 import { CLIPBOARD_SECONDS_KEY, DEFAULT_CLIPBOARD_SECONDS } from "@/lib/clipboard";
+import {
+  AUTOLOCK_CHANGED_EVENT,
+  AUTOLOCK_MINUTES_KEY,
+  AUTOLOCK_OPTIONS,
+  DEFAULT_AUTOLOCK_MINUTES,
+  readAutolockMinutes,
+} from "@/lib/idle/autolock";
 import type { VaultFilter } from "@/lib/vault/types";
 
-const AUTOLOCK_MINUTES_KEY = "pv-autolock-minutes";
-const AUTOLOCK_CHANGED_EVENT = "pv-autolock-changed";
-const AUTOLOCK_OPTIONS = [1, 5, 15, 30, 60];
-const DEFAULT_AUTOLOCK_MINUTES = "15";
 const CLIPBOARD_SECONDS_OPTIONS = [30, 35, 40, 45, 50, 55, 60];
 
 // Every clickable nav element gets a real button + these classes (not a
@@ -72,10 +75,7 @@ export default function Sidebar({
     }
 
     try {
-      const storedAutolock = localStorage.getItem(AUTOLOCK_MINUTES_KEY);
-      if (storedAutolock !== null && AUTOLOCK_OPTIONS.includes(Number(storedAutolock))) {
-        setAutolockMinutes(storedAutolock);
-      }
+      setAutolockMinutes(String(readAutolockMinutes()));
       const storedClipboard = localStorage.getItem(CLIPBOARD_SECONDS_KEY);
       if (storedClipboard !== null) {
         setClipboardSeconds(Number(storedClipboard));

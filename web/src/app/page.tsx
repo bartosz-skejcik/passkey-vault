@@ -2,11 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import Sidebar, {
-  AUTOLOCK_CHANGED_EVENT,
-  AUTOLOCK_MINUTES_KEY,
-  DEFAULT_AUTOLOCK_MINUTES,
-} from "@/components/shell/Sidebar";
+import Sidebar from "@/components/shell/Sidebar";
 import TopBar from "@/components/shell/TopBar";
 import MainColumn from "@/components/shell/MainColumn";
 import AuthCard from "@/components/auth/AuthCard";
@@ -22,17 +18,13 @@ import { useLocale } from "@/lib/i18n/LocaleContext";
 import { getSessionToken } from "@/lib/auth/session";
 import { initCrypto, lockVault, useIsUnlocked } from "@/lib/crypto";
 import { useIdleTimer } from "@/lib/idle/useIdleTimer";
+import {
+  AUTOLOCK_CHANGED_EVENT,
+  DEFAULT_AUTOLOCK_MINUTES,
+  readAutolockMinutes,
+} from "@/lib/idle/autolock";
 import { useVaultItems } from "@/lib/vault/store";
 import type { ItemType, VaultFilter } from "@/lib/vault/types";
-
-function readAutolockMinutes(): number {
-  try {
-    const stored = localStorage.getItem(AUTOLOCK_MINUTES_KEY);
-    return stored !== null ? Number(stored) : Number(DEFAULT_AUTOLOCK_MINUTES);
-  } catch {
-    return Number(DEFAULT_AUTOLOCK_MINUTES);
-  }
-}
 
 export default function Home() {
   const { t } = useLocale();
