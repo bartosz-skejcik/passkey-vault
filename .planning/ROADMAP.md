@@ -61,11 +61,22 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 6 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 02-01-PLAN.md — Crypto foundation: auth-hash derivation + AD-bound item encryption (pv-core/pv-wasm)
 - [ ] 02-02-PLAN.md — Auth API: register/login/logout/me + session extractor (pv-server)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 02-03-PLAN.md — Vault items + folders API with optimistic concurrency (pv-server)
 - [ ] 02-04-PLAN.md — Register/Login/Unlock UI + i18n + auto-lock
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 02-05-PLAN.md — Vault store + search + list/detail + create (all 4 item types)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 02-06-PLAN.md — Edit/delete + generator + clipboard + folders/tags UI
 
 **UI hint**: yes
