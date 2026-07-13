@@ -12,6 +12,7 @@ import {
 } from "@/lib/vault/store";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import PasskeyPlaceholderSection from "./PasskeyPlaceholderSection";
+import GeneratorPopover from "@/components/generator/GeneratorPopover";
 
 function emptyFieldsFor(type: ItemType): ItemFields {
   const common = { folderId: null as string | null, tags: [] as string[] };
@@ -295,6 +296,7 @@ export default function ItemForm({
                   <Eye size={16} aria-hidden="true" />
                 )}
               </button>
+              <GeneratorPopover onApply={(password) => update("password", password)} />
             </div>
           </div>
           <div className="flex flex-col gap-1">
