@@ -228,3 +228,7 @@ None — no external service configuration required, no new dependencies added.
 ---
 *Phase: 02-password-auth-vault-core*
 *Completed: 2026-07-13*
+
+## Self-Check: PASSED
+
+All created/modified files verified present on disk (15/15). All task commit hashes verified present in git log (6/6: `1cf6004`, `a322177`, `294a728`, `88b38b0`, `694f871`, `ad0bbb6`).
