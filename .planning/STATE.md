@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v0.1
 milestone_name: milestone
-current_phase: 2
+current_phase: 02
 current_phase_name: Password Auth & Vault Core
 status: executing
 stopped_at: Phase 2 UI-SPEC approved
-last_updated: "2026-07-13T07:55:24.785Z"
-last_activity: 2026-07-12
-last_activity_desc: Phase 1 complete, transitioned to Phase 2
+last_updated: "2026-07-13T08:03:54.329Z"
+last_activity: 2026-07-13
+last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 7
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 9
+  completed_plans: 4
   percent: 14
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-12)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 2 — Password Auth & Vault Core
+**Current focus:** Phase 02 — Password Auth & Vault Core
 
 ## Current Position
 
-Phase: 2 — Password Auth & Vault Core
-Plan: Not started
+Phase: 02 (Password Auth & Vault Core) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-07-12 — Phase 1 complete, transitioned to Phase 2
+Last activity: 2026-07-13 — Phase 02 execution started
 
 Progress: [█░░░░░░░░░] 14% (1/7 phases)
 
@@ -58,6 +58,7 @@ Progress: [█░░░░░░░░░] 14% (1/7 phases)
 | Phase 01 P01 | 35min | 2 tasks | 6 files |
 | Phase 01 P02 | 30min | 2 tasks | 10 files |
 | Phase 01 P03 | 40min | 3 tasks | 13 files |
+| Phase 02 P01 | 25min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,8 @@ Recent decisions affecting current work:
 - [Phase 1]: TypeScript pinned to 5.9.3 instead of npm-latest 7.0.2 — TS7's package exports point to a new native/Go compiler entry (lib/version.cjs), breaking Next.js 16.2.10's classic-API type-checking build worker
 - [Phase 1]: Tailwind v4 under Next.js 16.2.10 Turbopack REQUIRES @tailwindcss/postcss + postcss.config.mjs — SUPERSEDES the earlier Wave-2 finding that no PostCSS config was needed (that gap is invisible to build exit codes, only observable in a browser; caught at the 01-03 human checkpoint)
 - [Phase 1]: build-wasm.sh neutralizes wasm-bindgen's generated zero-arg-default new URL(...) branch via sed — Turbopack statically matches the literal pattern regardless of reachability
+- [Phase 2]: auth_hash_from_password and wrapping_key_from_password each independently call derive_master_key at the pv-core API level; the single-Argon2id-pass optimization is pushed to pv-wasm::deriveAuthMaterial (the real call site needing both outputs)
+- [Phase 2]: WasmAuthMaterial extraction uses mutable-borrow take*() methods (std::mem::take/replace) instead of consuming-self methods, since #[derive(ZeroizeOnDrop)] forbids partial by-value moves out of a type with a custom Drop
 
 ### Pending Todos
 
@@ -98,6 +101,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-12T20:40:57.718Z
+Last session: 2026-07-13T08:03:47.337Z
 Stopped at: Phase 2 UI-SPEC approved
 Resume file: .planning/phases/02-password-auth-vault-core/02-UI-SPEC.md

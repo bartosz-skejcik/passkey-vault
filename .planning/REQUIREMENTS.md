@@ -6,7 +6,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 
 ### Auth & Konta
 
-- [ ] **AUTH-01**: Użytkownik może założyć konto (email + master password); hasło nigdy nie opuszcza klienta — serwer dostaje tylko hash-po-KDF (Argon2id)
+- [x] **AUTH-01**: Użytkownik może założyć konto (email + master password); hasło nigdy nie opuszcza klienta — serwer dostaje tylko hash-po-KDF (Argon2id)
 - [ ] **AUTH-02**: Użytkownik może zalogować się master passwordem i otrzymać token sesji; odblokowanie vaulta (odszyfrowanie lokalne) jest architektonicznie odrębne od logowania (uwierzytelnienia na serwerze)
 - [ ] **AUTH-03**: Użytkownik może enrollować passkey z rozszerzeniem PRF (dwuceremonialny enrollment: `create` rejestruje credential, `get` ewaluuje PRF i wrapuje User Key)
 - [ ] **AUTH-04**: Użytkownik może zalogować się i odblokować vault jednym gestem passkeya: assertion → sesja na serwerze, wynik PRF → lokalny unwrap User Key (PRF nigdy nie opuszcza klienta)
@@ -19,7 +19,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 ### Vault
 
 - [ ] **VAULT-01**: Użytkownik może tworzyć/edytować/usuwać itemy typów: login (z pod-rekordem passkey), karta, tożsamość, bezpieczna notatka, TOTP — całość szyfrowana klientowo (pv-core→WASM), serwer widzi tylko bloby
-- [ ] **VAULT-02**: Szyfrowanie itemów wiąże ciphertext z tożsamością (AEAD associated data: item ID + rewizja + kontekst) — ochrona przed podmianą/przestawieniem blobów przez złośliwy serwer
+- [x] **VAULT-02**: Szyfrowanie itemów wiąże ciphertext z tożsamością (AEAD associated data: item ID + rewizja + kontekst) — ochrona przed podmianą/przestawieniem blobów przez złośliwy serwer
 - [ ] **VAULT-03**: Użytkownik może organizować itemy w foldery i tagi
 - [ ] **VAULT-04**: Użytkownik może natychmiastowo przeszukiwać vault po stronie klienta (nazwa, username, domena)
 - [ ] **VAULT-05**: Użytkownik może wygenerować silne hasło (długość-first, default 16+, tryb passphrase obok znakowego)
@@ -98,11 +98,11 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 | REQ-ID | Faza | Status |
 |--------|------|--------|
 | UI-01 | Phase 1: WASM Crypto Bridge & Web App Shell | Complete |
-| AUTH-01 | Phase 2: Password Auth & Vault Core | Pending |
+| AUTH-01 | Phase 2: Password Auth & Vault Core | Complete |
 | AUTH-02 | Phase 2: Password Auth & Vault Core | Pending |
 | AUTH-08 | Phase 2: Password Auth & Vault Core | Pending |
 | VAULT-01 | Phase 2: Password Auth & Vault Core | Pending |
-| VAULT-02 | Phase 2: Password Auth & Vault Core | Pending |
+| VAULT-02 | Phase 2: Password Auth & Vault Core | Complete |
 | VAULT-03 | Phase 2: Password Auth & Vault Core | Pending |
 | VAULT-04 | Phase 2: Password Auth & Vault Core | Pending |
 | VAULT-05 | Phase 2: Password Auth & Vault Core | Pending |
