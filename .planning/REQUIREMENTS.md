@@ -34,10 +34,10 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 
 ### Import / Eksport
 
-- [ ] **IMPEX-01**: Użytkownik może zaimportować vault z Bitwardena (JSON i CSV) — przetwarzanie w całości klientowe
-- [ ] **IMPEX-02**: Użytkownik może zaimportować dane z NordPass, 1Password, LastPass i KeePass (ich formaty eksportu CSV) — mappery kolumn per narzędzie
-- [ ] **IMPEX-03**: Użytkownik może zaimportować generyczny CSV/JSON z ręcznym mapowaniem kolumn
-- [ ] **IMPEX-04**: Użytkownik może wyeksportować cały vault do generycznego JSON i CSV (odszyfrowanie klientowe, z ostrzeżeniem o plaintext)
+- [x] **IMPEX-01**: Użytkownik może zaimportować vault z Bitwardena (JSON i CSV) — przetwarzanie w całości klientowe
+- [x] **IMPEX-02**: Użytkownik może zaimportować dane z NordPass, 1Password, LastPass i KeePass (ich formaty eksportu CSV) — mappery kolumn per narzędzie
+- [x] **IMPEX-03**: Użytkownik może zaimportować generyczny CSV/JSON z ręcznym mapowaniem kolumn
+- [x] **IMPEX-04**: Użytkownik może wyeksportować cały vault do generycznego JSON i CSV (odszyfrowanie klientowe, z ostrzeżeniem o plaintext)
 
 ### Web App / UI
 
@@ -120,10 +120,10 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 | SYNC-02 | Phase 5: Multi-Device Sync | Complete |
 | SYNC-03 | Phase 5: Multi-Device Sync | Complete |
 | VAULT-07 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
-| IMPEX-01 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
-| IMPEX-02 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
-| IMPEX-03 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
-| IMPEX-04 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
+| IMPEX-01 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
+| IMPEX-02 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
+| IMPEX-03 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
+| IMPEX-04 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
 | UI-04 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
 | DEPLOY-01 | Phase 7: Self-Host Packaging & Deployment | Pending |
 | DEPLOY-02 | Phase 7: Self-Host Packaging & Deployment | Pending |
