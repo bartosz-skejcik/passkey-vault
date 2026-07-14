@@ -42,7 +42,12 @@ vault.example.com {
         format filter {
             wrap console
             fields {
-                uri query {
+                # Field path must match the log's nesting: Caddy records the
+                # request URI at request.uri, so the filter key is
+                # `request>uri` (`>` is Caddy's field-nesting separator). A
+                # bare `uri` matches nothing and the token leaks through —
+                # verified against a real Caddy run (scripts/verify-container.sh).
+                request>uri query {
                     delete token
                 }
             }
