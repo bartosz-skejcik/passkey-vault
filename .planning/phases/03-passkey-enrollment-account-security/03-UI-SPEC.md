@@ -258,3 +258,16 @@ Taste calls this agent made autonomously overnight (03-CONTEXT.md's decisions we
 4. **Sessions use one generic `Monitor` icon for every row**, not per-device-type icons (phone/desktop/browser). Real device-type detection from a parsed user-agent is a rabbit hole (mobile vs. desktop vs. tablet vs. unknown-UA edge cases) that didn't feel worth the effort for a solo-indie v0.1 — flag if you want it upgraded later; the UA-summary text already conveys the device.
 5. **`prf_capable: false` renders as a neutral/muted badge, not a warning-yellow one** — I read CONTEXT's "no fake success, no hard failure" as ruling out warning-color too (warning implies "you should do something about this," which isn't true here — nothing's wrong, the device just doesn't support PRF). If you'd rather nudge users toward a PRF-capable authenticator with a warning tone, that's a one-color-token swap.
 6. **Per-session revoke has no confirmation dialog; passkey delete does.** Deliberate distinction (destructive+irreversible → dialog; consequential+reversible → immediate action), not explicitly specified in CONTEXT. If session revocation should also get a confirm step (e.g. to guard against fat-fingering the wrong row), that's a small addition mirroring the delete-dialog shape.
+
+---
+
+## Resolutions (Bartek, 2026-07-14 — morning review of the 6 taste calls)
+
+These OVERRIDE the "Morning review notes" recommendations above where they differ. Binding for plan 03-04 execution.
+
+1. **REVERT to Phase 2 dropdown.** The account row does NOT open Settings on click. Restore the Phase 2 `dropdown` wrapper: account button opens a small quick-actions menu (Zablokuj teraz / Wyloguj / **Ustawienia**). Settings opens from the **Ustawienia** entry in that dropdown (or a dedicated gear icon), never by overloading the account-row click. Logout stays in the dropdown (does NOT move into the Settings panel).
+2. **ACCEPTED.** Settings opens to the Passkeys tab.
+3. **ACCEPTED.** Enrollment ceremony uses inline step-text + icon (no DaisyUI `steps`).
+4. **CHANGED → per-device-type icons.** Sessions use device-type icons parsed from the user-agent (desktop / phone / tablet / unknown), NOT one generic Monitor. Icons MUST come from `lucide-react` (already installed) — `Monitor` (desktop), `Smartphone` (phone), `Tablet` (tablet), `MonitorSmartphone` or `HelpCircle` (unknown/unparseable UA). NO hand-rolled SVG. Keep UA-type detection lightweight (coarse buckets, unknown fallback is fine).
+5. **ACCEPTED.** `prf_capable: false` renders as a neutral/muted badge (no warning color).
+6. **CHANGED → both destructive actions get a confirm modal.** Per-session revoke ALSO gets a confirmation dialog (fat-finger / fat-key prevention), mirroring the passkey-delete `DeleteConfirmDialog` shape. So: passkey delete → modal (with recovery warning); session revoke → modal (simpler copy, no recovery warning). Bulk "Wyloguj pozostałe" → modal as well.
