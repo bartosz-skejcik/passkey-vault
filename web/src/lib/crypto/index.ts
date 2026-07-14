@@ -21,7 +21,14 @@ import init, {
   deriveAuthMaterial as wasmDeriveAuthMaterial,
 } from "./wasm/pv_wasm.js";
 
-export type { WasmWrappingKey, WasmUserKey, WasmAuthMaterial };
+export type { WasmUserKey, WasmAuthMaterial };
+// WasmWrappingKey is exported as a VALUE (not just a type) — Plan 03-03's
+// lib/passkeys/enroll.ts needs to call its static `fromPrf` method from
+// outside this module, the same way `WasmWrappingKey.fromPassword` is
+// already called from inside `deriveAuthMaterial` below. This module
+// remains the sole importer of `./wasm/pv_wasm.js` — the class itself,
+// not the raw wasm bindings, is what crosses this boundary.
+export { WasmWrappingKey };
 export { wrapUserKey, unwrapUserKey, encryptItem, decryptItem, randomSalt, defaultKdfParamsJson };
 
 /** Generates a fresh User Key — the root of vault access. */
