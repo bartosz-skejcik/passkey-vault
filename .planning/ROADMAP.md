@@ -194,13 +194,13 @@ Plans:
   4. User can export the full vault to JSON and CSV, with a clear plaintext warning shown before export
   5. Vault items of type TOTP show a live, counting-down code generated locally from the item's secret
 
-**Plans**: 4 plans
+**Plans**: 2/4 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 06-01-PLAN.md — TOTP crypto path: pv-core/pv-wasm totp-rs binding + TotpFields wired into TypePicker/ItemForm/DetailPanel/ItemRow (VAULT-07)
-- [ ] 06-02-PLAN.md — Import mapping layer: papaparse + format detection + Bitwarden/NordPass/1Password/LastPass/KeePass mappers + generic manual mapping (IMPEX-01/02/03)
+- [x] 06-01-PLAN.md — TOTP crypto path: pv-core/pv-wasm totp-rs binding + TotpFields wired into TypePicker/ItemForm/DetailPanel/ItemRow (VAULT-07)
+- [x] 06-02-PLAN.md — Import mapping layer: papaparse + format detection + Bitwarden/NordPass/1Password/LastPass/KeePass mappers + generic manual mapping (IMPEX-01/02/03)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -238,5 +238,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. Passkey Enrollment & Account Security | 3/4 | Complete    | 2026-07-14 |
 | 4. PRF Unlock & Login Unification | 3/3 | Complete    | 2026-07-14 |
 | 5. Multi-Device Sync | 4/4 | Complete    | 2026-07-14 |
-| 6. Import/Export, TOTP & Onboarding | 0/TBD | Not started | - |
+| 6. Import/Export, TOTP & Onboarding | 2/4 | In Progress|  |
 | 7. Self-Host Packaging & Deployment | 0/TBD | Not started | - |
