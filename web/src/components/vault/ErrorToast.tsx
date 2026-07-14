@@ -35,7 +35,11 @@ export default function ErrorToast() {
 
   return (
     <div data-testid="error-toast" className="toast toast-end toast-top z-50">
-      <div className="alert alert-error flex w-[320px] items-center justify-between gap-3 text-sm">
+      <div
+        className={`${
+          state.variant === "info" ? "alert alert-info" : "alert alert-error"
+        } flex w-[320px] items-center justify-between gap-3 text-sm`}
+      >
         <span>{state.message}</span>
         <button
           type="button"

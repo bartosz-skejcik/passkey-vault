@@ -377,6 +377,26 @@ export const DICTIONARY = {
     en: `Sign out session "{device}"`,
   },
   "aria.openSettings": { pl: "Otwórz ustawienia", en: "Open settings" },
+
+  // Sync status dot, live-edit-conflict banner, remote-delete toast (SYNC-03,
+  // Plan 05-04) — copy verbatim from 05-UI-SPEC.md's Copywriting Contract.
+  "sync.reconnecting": {
+    pl: "Łączenie ponownie… dane i tak odświeżają się co 30s",
+    en: "Reconnecting… data still refreshes every 30s",
+  },
+  "sync.itemChangedElsewhere": {
+    pl: "Ten element zmienił się na innym urządzeniu.",
+    en: "This item changed on another device.",
+  },
+  "sync.itemChangedElsewhereConsequence": {
+    pl: "Odświeżenie zastąpi Twoje niezapisane zmiany.",
+    en: "Refreshing will replace your unsaved changes.",
+  },
+  "sync.refreshAction": { pl: "Odśwież", en: "Refresh" },
+  "sync.itemDeletedElsewhere": {
+    pl: "Ten element został usunięty na innym urządzeniu.",
+    en: "This item was deleted on another device.",
+  },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {

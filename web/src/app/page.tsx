@@ -26,6 +26,8 @@ import {
   readAutolockMinutes,
 } from "@/lib/idle/autolock";
 import { useVaultItems } from "@/lib/vault/store";
+import { wasRemotelyDeleted } from "@/lib/vault/remoteDelete";
+import { showErrorToast } from "@/lib/vault/errorToast";
 import type { ItemType, VaultFilter, VaultItem } from "@/lib/vault/types";
 
 export default function Home() {
@@ -122,6 +124,19 @@ export default function Home() {
     window.addEventListener(AUTOLOCK_CHANGED_EVENT, onAutolockChanged);
     return () => window.removeEventListener(AUTOLOCK_CHANGED_EVENT, onAutolockChanged);
   }, []);
+
+  // Remote-delete-while-viewing (SYNC-03): a background sync merge that
+  // drops the currently-selected item's id from the live `items` array
+  // closes the panel and shows a calm info toast — clearing selectedItemId
+  // on the same tick removes the triggering condition, so this fires
+  // exactly once per remote-delete event.
+  useEffect(() => {
+    if (wasRemotelyDeleted(selectedItemId, selectedItem)) {
+      showErrorToast(t("sync.itemDeletedElsewhere"), { variant: "info" });
+      setSelectedItemId(null);
+      setOpenInEditMode(false);
+    }
+  }, [selectedItemId, selectedItem, t]);
 
   // lockVault() is idempotent when already locked (see crypto/index.ts),
   // so this is safe to keep running unconditionally rather than gating it

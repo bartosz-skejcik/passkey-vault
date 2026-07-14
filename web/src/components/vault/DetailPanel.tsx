@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { Check, Copy, Eye, EyeOff, Pencil, Trash2, X } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import type { ItemFields, VaultItem } from "@/lib/vault/types";
 import { RevisionConflictError, useFolders } from "@/lib/vault/store";
 import { useLocale } from "@/lib/i18n/LocaleContext";
@@ -49,6 +49,12 @@ export default function DetailPanel({
   const folders = useFolders();
   const [mode, setMode] = useState<"view" | "edit">(initialMode);
   const [conflict, setConflict] = useState(false);
+  // Proactive live-edit-conflict banner (SYNC-03) — a SECOND, independently
+  // controlled trigger path alongside the reactive save-time `conflict`
+  // state above; never merged into one boolean. Captured only at edit-entry
+  // (startEditing() and the initialMode effect below), never re-derived on
+  // every live `item` prop update.
+  const [editBaselineRevision, setEditBaselineRevision] = useState<number | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   // Safe: every key in FIELD_ORDER[item.fields.type] is a string field of
   // that exact variant — this loop never reads folderId/tags/type/name/urls
@@ -76,6 +82,9 @@ export default function DetailPanel({
   useEffect(() => {
     setMode(initialMode);
     setConflict(false);
+    if (initialMode === "edit") {
+      setEditBaselineRevision(item.revision);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, initialMode]);
 
@@ -104,8 +113,12 @@ export default function DetailPanel({
 
   function startEditing() {
     setConflict(false);
+    setEditBaselineRevision(item.revision);
     setMode("edit");
   }
+
+  const liveConflict =
+    mode === "edit" && editBaselineRevision !== null && item.revision !== editBaselineRevision;
 
   function fieldLabelFor(fieldKey: string): string {
     return fieldKey === "url" ? t("field.url") : t(`field.${fieldKey}` as keyof typeof DICTIONARY);
@@ -200,7 +213,27 @@ export default function DetailPanel({
               {t("error.revisionConflict")}
             </div>
           ) : null}
+          {liveConflict ? (
+            <div data-testid="live-edit-conflict-banner" className="alert alert-error text-sm">
+              <div className="flex w-full flex-col gap-2">
+                <span>{t("sync.itemChangedElsewhere")}</span>
+                <span className="text-xs opacity-70">
+                  {t("sync.itemChangedElsewhereConsequence")}
+                </span>
+                <button
+                  type="button"
+                  data-testid="live-edit-conflict-refresh"
+                  className="btn btn-error btn-outline btn-sm self-start"
+                  onClick={() => setEditBaselineRevision(item.revision)}
+                >
+                  <RefreshCw size={14} aria-hidden="true" />
+                  {t("sync.refreshAction")}
+                </button>
+              </div>
+            </div>
+          ) : null}
           <ItemForm
+            key={`${item.id}-${editBaselineRevision}`}
             type={item.fields.type}
             mode="edit"
             itemId={item.id}

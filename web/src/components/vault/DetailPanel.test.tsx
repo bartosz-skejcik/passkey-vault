@@ -199,3 +199,33 @@ describe("DetailPanel", () => {
     expect(screen.queryByText("hunter2")).not.toBeInTheDocument();
   });
 });
+
+describe("DetailPanel proactive live-edit-conflict banner (SYNC-03, Plan 05-04)", () => {
+  it("shows the proactive live-edit-conflict banner when the live item's revision changes while editing, without discarding the currently-typed field values until Refresh is clicked", () => {
+    const { rerender } = render(<DetailPanel item={item} initialMode="edit" onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByTestId("item-body"), {
+      target: { value: "in-progress-edit" },
+    });
+
+    const bumpedItem: typeof item = { ...item, revision: 2 };
+    rerender(<DetailPanel item={bumpedItem} initialMode="edit" onClose={vi.fn()} />);
+
+    expect(screen.getByTestId("live-edit-conflict-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("item-body")).toHaveValue("in-progress-edit");
+
+    fireEvent.click(screen.getByTestId("live-edit-conflict-refresh"));
+
+    expect(screen.queryByTestId("live-edit-conflict-banner")).not.toBeInTheDocument();
+    expect(screen.getByTestId("item-body")).toHaveValue("hunter2");
+  });
+
+  it("does not show the proactive banner for an item that was never in edit mode", () => {
+    const { rerender } = render(<DetailPanel item={item} initialMode="view" onClose={vi.fn()} />);
+
+    const bumpedItem: typeof item = { ...item, revision: 2 };
+    rerender(<DetailPanel item={bumpedItem} initialMode="view" onClose={vi.fn()} />);
+
+    expect(screen.queryByTestId("live-edit-conflict-banner")).not.toBeInTheDocument();
+  });
+});

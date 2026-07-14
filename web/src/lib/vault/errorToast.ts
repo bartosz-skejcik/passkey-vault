@@ -9,6 +9,11 @@
 // conditional for no benefit (gap-review WR-02).
 export interface ErrorToastState {
   message: string;
+  // Defaults to "error" when omitted — every existing showErrorToast(message)
+  // call site across the codebase keeps working unchanged (additive,
+  // backward-compatible). "info" is used for calm, non-failure notices
+  // (e.g. remote-delete-while-viewing, SYNC-03 Plan 05-04).
+  variant: "error" | "info";
 }
 
 let state: ErrorToastState | null = null;
@@ -31,9 +36,13 @@ export function subscribeErrorToast(listener: () => void): () => void {
 
 /** Shows a new error toast — replaces any currently-showing one rather than
  * stacking a second (only one toast is ever shown at a time, same
- * convention as showCopyToast). */
-export function showErrorToast(message: string): void {
-  state = { message };
+ * convention as showCopyToast). `options.variant` defaults to "error" when
+ * omitted, so every existing call site keeps working unchanged. */
+export function showErrorToast(
+  message: string,
+  options?: { variant?: "error" | "info" },
+): void {
+  state = { message, variant: options?.variant ?? "error" };
   notify();
 }
 
