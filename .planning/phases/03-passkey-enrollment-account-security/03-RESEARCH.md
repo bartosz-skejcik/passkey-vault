@@ -497,7 +497,10 @@ test("passkey enrollment with PRF", async ({ page, context }) => {
 | A3 | Cross-checked-but-single-pass-WebSearch PRF browser/OS support matrix (Chrome 147, Firefox 148, Windows KB5077181, etc. version numbers) is accurate as of 2026-07-14 | Common Pitfalls #5 | Medium — these exact version numbers are a moving target by nature (PITFALLS.md already flags this); if a specific version number is wrong, the *pattern* (treat PRF availability as a first-class honest UI state, never assume universal support) still holds and is unaffected |
 | A4 | `webauthn-rs`'s `Passkey` type has no PRF-related accessor and never surfaces `enabled`/PRF extension results through any public API — based on docs.rs method listing, not exhaustive source review of every version/feature-flag combination | Summary, Architecture Patterns §4 | Medium — if a newer webauthn-rs point release added an extension-results passthrough, the `prf_capable`-derived-from-column-presence design would still be correct/safe (just possibly redundant with an unused crate feature), so this doesn't change the recommended architecture even if the underlying claim is imprecise |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> RESOLVED (planning): register/finish embeds the second ceremony challenge in its response (03-01 Task 3) — no read-after-write race.
+> RESOLVED (planning): migrations numbered 0004-0006 in Plan 03-01; SoftPasskey investigation resolved via Package Legitimacy checkpoint in 03-01 Task 1.
 
 1. **Should the enrollment second ceremony's challenge reuse the registration ceremony's RP config exactly, or does `start_passkey_authentication` need any special handling for "authenticate immediately after registering, same tab, same session"?**
    - What we know: webauthn-rs's `start_passkey_authentication` takes `creds: &[Passkey]` — the just-inserted passkey row (re-fetched after `register/finish` commits) is a valid input; no special-casing appears to be needed in the crate's public API.
