@@ -17,6 +17,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::session::SessionUser;
+use super::sync::{ChangeType, EntityType, SyncEvent};
 use super::vault::validate_blob_len;
 use crate::{error::ApiError, AppState};
 
@@ -53,15 +54,26 @@ pub async fn create(
 
     // SYNC-01: bump the per-user global change counter in the same
     // single-statement discipline as vault.rs's item mutations
-    // (05-RESEARCH.md Pitfall 1 — never SELECT-then-UPDATE). The returned
-    // value is unused by this plan; Plan 05-02 wires it into a
-    // sync_hub.publish() call.
-    let _new_global_revision: i64 = sqlx::query_scalar(
+    // (05-RESEARCH.md Pitfall 1 — never SELECT-then-UPDATE).
+    let new_global_revision: i64 = sqlx::query_scalar(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
     .bind(&session.user_id)
     .fetch_one(&state.db)
     .await?;
+
+    // SYNC-02: folders have no per-row revision column (05-CONTEXT.md's
+    // locked decision) — both folder events use the freshly-bumped global
+    // vault_revision value for SyncEvent.revision.
+    state.sync_hub.publish(
+        &session.user_id,
+        SyncEvent {
+            entity_type: EntityType::Folder,
+            id: id.clone(),
+            revision: new_global_revision,
+            change_type: ChangeType::Create,
+        },
+    );
 
     Ok((StatusCode::CREATED, Json(CreateFolderResponse { id })))
 }
@@ -116,12 +128,24 @@ pub async fn delete(
 
     // SYNC-01: bump the per-user global change counter (see create()'s
     // comment above for the atomicity rationale).
-    let _new_global_revision: i64 = sqlx::query_scalar(
+    let new_global_revision: i64 = sqlx::query_scalar(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
     .bind(&session.user_id)
     .fetch_one(&state.db)
     .await?;
+
+    // SYNC-02: folders have no per-row revision column — use the
+    // freshly-bumped global vault_revision for this event too.
+    state.sync_hub.publish(
+        &session.user_id,
+        SyncEvent {
+            entity_type: EntityType::Folder,
+            id: id.clone(),
+            revision: new_global_revision,
+            change_type: ChangeType::Delete,
+        },
+    );
 
     Ok(StatusCode::NO_CONTENT)
 }

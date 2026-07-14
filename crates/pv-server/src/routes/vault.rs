@@ -14,6 +14,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::session::SessionUser;
+use super::sync::{ChangeType, EntityType, SyncEvent};
 use crate::{error::ApiError, AppState};
 
 /// 64 KiB — RESEARCH.md flagged item payload size as an unbounded-storage-
@@ -90,14 +91,20 @@ pub async fn create(
 
     // SYNC-01: bump the per-user global change counter in the same
     // single-statement discipline as the item's own revision (05-RESEARCH.md
-    // Pitfall 1 — never SELECT-then-UPDATE). The returned value is unused by
-    // this plan; Plan 05-02 wires it into a sync_hub.publish() call.
+    // Pitfall 1 — never SELECT-then-UPDATE).
     let _new_global_revision: i64 = sqlx::query_scalar(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
     .bind(&session.user_id)
     .fetch_one(&state.db)
     .await?;
+
+    // SYNC-02: metadata-only push — a freshly created item is always at its
+    // own revision 1, matching this response's own `revision` field.
+    state.sync_hub.publish(
+        &session.user_id,
+        SyncEvent { entity_type: EntityType::Item, id: req.id.clone(), revision: 1, change_type: ChangeType::Create },
+    );
 
     Ok((
         StatusCode::CREATED,
@@ -212,7 +219,21 @@ pub async fn update(
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(UpdateItemResponse { revision: req.expected_revision + 1, updated_at }))
+    let new_item_revision = req.expected_revision + 1;
+    // SYNC-02: metadata-only push — use the item's OWN per-row revision (the
+    // same value this response's own `revision` field carries), not the
+    // global counter this bump just produced.
+    state.sync_hub.publish(
+        &session.user_id,
+        SyncEvent {
+            entity_type: EntityType::Item,
+            id: id.clone(),
+            revision: new_item_revision,
+            change_type: ChangeType::Update,
+        },
+    );
+
+    Ok(Json(UpdateItemResponse { revision: new_item_revision, updated_at }))
 }
 
 /// `DELETE /api/vault/items/{id}` — permanent delete (no trash/soft-delete
@@ -234,12 +255,25 @@ pub async fn delete(
 
     // SYNC-01: bump the per-user global change counter (see create()'s
     // comment above for the atomicity rationale).
-    let _new_global_revision: i64 = sqlx::query_scalar(
+    let new_global_revision: i64 = sqlx::query_scalar(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
     .bind(&session.user_id)
     .fetch_one(&state.db)
     .await?;
+
+    // SYNC-02: the deleted row no longer exists, so it has no per-row
+    // revision to report — use the freshly-bumped GLOBAL vault_revision for
+    // this one call site only (per 05-02-PLAN's explicit instruction).
+    state.sync_hub.publish(
+        &session.user_id,
+        SyncEvent {
+            entity_type: EntityType::Item,
+            id: id.clone(),
+            revision: new_global_revision,
+            change_type: ChangeType::Delete,
+        },
+    );
 
     Ok(StatusCode::NO_CONTENT)
 }
