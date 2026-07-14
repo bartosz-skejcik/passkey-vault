@@ -17,6 +17,7 @@ import {
   StickyNote,
   Sun,
   Tag,
+  Timer,
   User,
   Vault,
   Wand2,
@@ -39,6 +40,7 @@ const CATEGORY_ICON: Record<ItemType, typeof Vault> = {
   card: CreditCard,
   identity: IdCard,
   note: StickyNote,
+  totp: Timer,
 };
 
 const CATEGORY_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
@@ -46,9 +48,10 @@ const CATEGORY_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
   card: "sidebar.catCards",
   identity: "sidebar.catIdentities",
   note: "sidebar.catNotes",
+  totp: "sidebar.catTotp",
 };
 
-const ITEM_TYPES: ItemType[] = ["login", "card", "identity", "note"];
+const ITEM_TYPES: ItemType[] = ["login", "card", "identity", "note", "totp"];
 
 // Every clickable nav element gets a real button + these classes (not a
 // plain inert <div>): cursor-pointer, a visible hover state, and a

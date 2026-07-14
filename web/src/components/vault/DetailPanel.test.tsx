@@ -8,6 +8,7 @@ const {
   mockCreateVaultFolder,
   mockUpdateVaultItem,
   mockDeleteVaultItem,
+  mockTotpNow,
   MockRevisionConflictError,
 } = vi.hoisted(() => ({
   mockUseFolders: vi.fn(),
@@ -16,6 +17,7 @@ const {
   mockCreateVaultFolder: vi.fn(),
   mockUpdateVaultItem: vi.fn(),
   mockDeleteVaultItem: vi.fn(),
+  mockTotpNow: vi.fn(),
   // vi.mock factories are hoisted above the rest of the file — any value
   // they reference (like this error class) must be created inside
   // vi.hoisted() too, or it's a "Cannot access before initialization" ReferenceError.
@@ -30,6 +32,13 @@ vi.mock("@/lib/vault/store", () => ({
   updateVaultItem: mockUpdateVaultItem,
   deleteVaultItem: mockDeleteVaultItem,
   RevisionConflictError: MockRevisionConflictError,
+}));
+
+// DetailPanel now transitively renders TotpCountdownRing for totp items,
+// which calls @/lib/crypto's totpNow — mocked per store.test.ts's
+// established vi.mock("@/lib/crypto", ...) pattern.
+vi.mock("@/lib/crypto", () => ({
+  totpNow: mockTotpNow,
 }));
 
 vi.mock("@/lib/i18n/LocaleContext", () => ({
@@ -86,10 +95,28 @@ const cardItem: VaultItem = {
   },
 };
 
+const totpItem: VaultItem = {
+  id: "item-totp",
+  revision: 1,
+  fields: {
+    type: "totp",
+    name: "GitHub",
+    secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    issuer: "GitHub Inc",
+    algorithm: "SHA1",
+    digits: 6,
+    period: 30,
+    notes: "",
+    folderId: null,
+    tags: [],
+  },
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseFolders.mockReturnValue([]);
   mockUseAllTags.mockReturnValue([]);
+  mockTotpNow.mockReturnValue({ code: "654321", secondsRemaining: 15 });
 });
 
 describe("DetailPanel", () => {
@@ -185,6 +212,18 @@ describe("DetailPanel", () => {
     rerender(<DetailPanel item={item} initialMode="edit" onClose={vi.fn()} />);
 
     expect(screen.getByTestId("item-name")).toHaveValue("Wifi");
+  });
+
+  it("renders the countdown ring and issuer subtitle, and masks the raw secret by default with a working reveal toggle", () => {
+    render(<DetailPanel item={totpItem} onClose={vi.fn()} />);
+
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    expect(screen.getByText("654321")).toBeInTheDocument();
+    expect(screen.getByText("GitHub Inc")).toBeInTheDocument();
+    expect(screen.queryByText("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("reveal-secret"));
+    expect(screen.getByText("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")).toBeInTheDocument();
   });
 
   it("resets a revealed field back to masked when the item prop changes", () => {

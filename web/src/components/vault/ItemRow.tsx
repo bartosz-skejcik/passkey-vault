@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CreditCard, IdCard, MoreVertical, StickyNote, Vault } from "lucide-react";
+import { CreditCard, IdCard, MoreVertical, StickyNote, Timer, Vault } from "lucide-react";
 import type { ItemType, VaultItem } from "@/lib/vault/types";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
 import { formatRelativeTime } from "@/lib/format/relativeTime";
 import ItemContextMenu from "./ItemContextMenu";
 import DeleteConfirmDialog from "./DeleteConfirmDialog";
+import TotpCountdownRing from "./TotpCountdownRing";
 
 // Documented decision (T-02-18): no per-domain favicon fetch of any kind
 // exists anywhere in this directory — the neutral type-icon alone satisfies
@@ -19,6 +20,7 @@ const TYPE_ICON: Record<ItemType, typeof Vault> = {
   card: CreditCard,
   identity: IdCard,
   note: StickyNote,
+  totp: Timer,
 };
 
 const TYPE_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
@@ -26,6 +28,7 @@ const TYPE_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
   card: "itemType.card",
   identity: "itemType.identity",
   note: "itemType.note",
+  totp: "itemType.totp",
 };
 
 export default function ItemRow({
@@ -47,7 +50,12 @@ export default function ItemRow({
   const { t, locale } = useLocale();
   const Icon = TYPE_ICON[item.fields.type];
   const typeLabel = t(TYPE_LABEL_KEY[item.fields.type]);
-  const subtitle = item.fields.type === "login" ? item.fields.username : typeLabel;
+  const subtitle =
+    item.fields.type === "login"
+      ? item.fields.username
+      : item.fields.type === "totp"
+        ? item.fields.issuer || typeLabel
+        : typeLabel;
   const relativeTime = formatRelativeTime(item.updatedAt, t, locale);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -106,7 +114,15 @@ export default function ItemRow({
         </span>
       </button>
 
-      {relativeTime !== null ? (
+      {item.fields.type === "totp" ? (
+        <TotpCountdownRing
+          secretB32={item.fields.secret}
+          algorithm={item.fields.algorithm}
+          digits={item.fields.digits}
+          period={item.fields.period}
+          size={24}
+        />
+      ) : relativeTime !== null ? (
         <span className="shrink-0 whitespace-nowrap text-xs text-base-content/50">
           {relativeTime}
         </span>

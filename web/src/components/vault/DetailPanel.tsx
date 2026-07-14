@@ -9,6 +9,7 @@ import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
 import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
 import { showCopyToast } from "@/lib/vault/copyToast";
 import PasskeyPlaceholderSection from "./PasskeyPlaceholderSection";
+import TotpCountdownRing from "./TotpCountdownRing";
 import ItemForm from "./ItemForm";
 import DeleteConfirmDialog from "./DeleteConfirmDialog";
 
@@ -17,20 +18,24 @@ import DeleteConfirmDialog from "./DeleteConfirmDialog";
 // a lookup/chip rendering, not a raw value dump); a login item's `urls`
 // (string[], not a plain string) is also special-cased, rendered right
 // after `password` to match 02-UI-SPEC.md's per-type field order
-// (username, password, URL, notes).
+// (username, password, URL, notes). `totp`'s entry is deliberately just
+// `["secret"]` — `algorithm`/`digits`/`period` never render in view mode
+// (06-RESEARCH.md Pattern 2); the live countdown ring is a bespoke block
+// rendered separately, below.
 const FIELD_ORDER: Record<ItemFields["type"], string[]> = {
   login: ["username", "password", "notes"],
   card: ["cardholderName", "number", "expiry", "cvv", "notes"],
   identity: ["firstName", "lastName", "email", "phone", "address", "notes"],
   note: ["body"],
+  totp: ["secret"],
 };
 
-const MONO_FIELDS = new Set(["password", "number", "cvv"]);
+const MONO_FIELDS = new Set(["password", "number", "cvv", "secret"]);
 
 // Fields that get a per-field reveal toggle next to the copy button — `cvv`
 // deliberately has no entry here, matching ItemForm.tsx's explicit
 // no-reveal-for-CVV convention (masked via MONO_FIELDS, never revealable).
-const REVEALABLE_FIELDS = new Set(["password", "number"]);
+const REVEALABLE_FIELDS = new Set(["password", "number", "secret"]);
 
 // A fixed-length mask so the visible placeholder never leaks the real
 // value's character count.
@@ -139,12 +144,17 @@ export default function DetailPanel({
   // A render helper (not a nested component definition — defining a
   // component function inside another component's body would remount it,
   // and thus reset its would-be-internal state, on every parent render).
-  function renderCopyButton(fieldKey: string, value: string, testidSuffix = fieldKey) {
+  function renderCopyButton(
+    fieldKey: string,
+    value: string,
+    testidSuffix = fieldKey,
+    ariaLabelOverride?: string,
+  ) {
     return (
       <button
         type="button"
         data-testid={`copy-${testidSuffix}`}
-        aria-label={interpolate(t("aria.copyField"), { field: fieldLabelFor(fieldKey) })}
+        aria-label={ariaLabelOverride ?? interpolate(t("aria.copyField"), { field: fieldLabelFor(fieldKey) })}
         className="btn btn-ghost btn-square btn-sm shrink-0"
         onClick={() => handleCopy(testidSuffix, fieldKey, value)}
       >
@@ -252,6 +262,26 @@ export default function DetailPanel({
         </>
       ) : (
         <>
+          {item.fields.type === "totp" ? (
+            <div className="flex flex-col items-center gap-2 rounded-box border border-base-300 p-4">
+              <span className="text-sm text-base-content/60">
+                {item.fields.issuer || t("itemType.totp")}
+              </span>
+              <TotpCountdownRing
+                secretB32={item.fields.secret}
+                algorithm={item.fields.algorithm}
+                digits={item.fields.digits}
+                period={item.fields.period}
+                size={64}
+              />
+              {renderCopyButton(
+                "secret",
+                item.fields.secret,
+                "totp-code",
+                t("aria.copyTotpCode"),
+              )}
+            </div>
+          ) : null}
           <div className="flex flex-col gap-3">
             {FIELD_ORDER[item.fields.type].map((key) => (
               <Fragment key={key}>

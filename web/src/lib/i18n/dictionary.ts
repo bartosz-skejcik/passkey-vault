@@ -101,6 +101,7 @@ export const DICTIONARY = {
   "itemType.card": { pl: "Karta", en: "Card" },
   "itemType.identity": { pl: "Tożsamość", en: "Identity" },
   "itemType.note": { pl: "Notatka", en: "Note" },
+  "itemType.totp": { pl: "TOTP", en: "TOTP" },
 
   // Detail-panel/form field labels — Claude's-discretion copy, shared by
   // DetailPanel's view mode and ItemForm's create/edit fields.
@@ -120,6 +121,23 @@ export const DICTIONARY = {
   "field.phone": { pl: "Telefon", en: "Phone" },
   "field.address": { pl: "Adres", en: "Address" },
   "field.body": { pl: "Treść", en: "Content" },
+  "field.secret": { pl: "Sekret (base32)", en: "Secret (base32)" },
+  "field.issuer": { pl: "Wystawca", en: "Issuer" },
+  "field.algorithm": { pl: "Algorytm", en: "Algorithm" },
+  "field.digits": { pl: "Liczba cyfr", en: "Digits" },
+  "field.period": { pl: "Okres (s)", en: "Period (s)" },
+
+  // TOTP manual-add form (VAULT-07, Plan 06-01) — copy verbatim from
+  // 06-UI-SPEC.md's Copywriting Contract.
+  "totp.advancedToggle": { pl: "Zaawansowane", en: "Advanced" },
+  "totp.secretHelper": {
+    pl: "Wklej sekret base32 albo link otpauth://",
+    en: "Paste a base32 secret or an otpauth:// link",
+  },
+  "totp.invalidSecretError": {
+    pl: "Nieprawidłowy sekret TOTP — sprawdź format base32",
+    en: "Invalid TOTP secret — check the base32 format",
+  },
 
   "aria.closePanel": { pl: "Zamknij panel", en: "Close panel" },
 
@@ -168,6 +186,7 @@ export const DICTIONARY = {
   "sidebar.catCards": { pl: "Karty", en: "Cards" },
   "sidebar.catIdentities": { pl: "Tożsamości", en: "Identities" },
   "sidebar.catNotes": { pl: "Notatki", en: "Notes" },
+  "sidebar.catTotp": { pl: "TOTP", en: "TOTP" },
   "sidebar.passkeys": { pl: "Passkeys", en: "Passkeys" },
   "sidebar.passkeysSoon": { pl: "wkrótce", en: "soon" },
   "sidebar.tools": { pl: "Narzędzia", en: "Tools" },
@@ -219,6 +238,11 @@ export const DICTIONARY = {
   "aria.removeUrl": { pl: "Usuń URL", en: "Remove URL" },
   "aria.closeDrawer": { pl: "Zamknij panel", en: "Close panel" },
   "aria.toggleTheme": { pl: "Przełącz motyw", en: "Toggle theme" },
+  "aria.copyTotpCode": { pl: "Kopiuj kod TOTP", en: "Copy TOTP code" },
+  "aria.codeRefreshCountdown": {
+    pl: "Kod odświeży się za {n}s",
+    en: "Code refreshes in {n}s",
+  },
 
   // Self-test (dev diagnostic route, not part of UI-SPEC's copywriting
   // contract — added here per Task 4's carried-forward Phase 1 UI-REVIEW

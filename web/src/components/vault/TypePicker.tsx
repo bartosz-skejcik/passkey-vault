@@ -1,6 +1,6 @@
 "use client";
 
-import { CreditCard, IdCard, StickyNote, Vault } from "lucide-react";
+import { CreditCard, IdCard, StickyNote, Timer, Vault } from "lucide-react";
 import type { ItemType } from "@/lib/vault/types";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import type { DICTIONARY } from "@/lib/i18n/dictionary";
@@ -11,6 +11,7 @@ const TILES: { type: ItemType; icon: typeof Vault; labelKey: keyof typeof DICTIO
   { type: "card", icon: CreditCard, labelKey: "itemType.card" },
   { type: "identity", icon: IdCard, labelKey: "itemType.identity" },
   { type: "note", icon: StickyNote, labelKey: "itemType.note" },
+  { type: "totp", icon: Timer, labelKey: "itemType.totp" },
 ];
 
 export default function TypePicker({ onSelect }: { onSelect: (type: ItemType) => void }) {

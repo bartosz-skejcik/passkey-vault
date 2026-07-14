@@ -20,5 +20,6 @@ pub mod items;
 pub mod kdf;
 pub mod keys;
 pub mod prf;
+pub mod totp;
 
 pub use error::CryptoError;

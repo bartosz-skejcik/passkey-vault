@@ -57,7 +57,61 @@ function emptyFieldsFor(type: ItemType): ItemFields {
         body: "",
         ...common,
       };
+    case "totp":
+      return {
+        type,
+        name: "",
+        secret: "",
+        issuer: "",
+        algorithm: "SHA1" as const,
+        digits: 6,
+        period: 30,
+        notes: "",
+        ...common,
+      };
   }
+}
+
+// otpauth://totp/{label}?secret=BASE32&issuer=X&algorithm=SHA1|SHA256|SHA512
+// &digits=6|8&period=30 (Google Authenticator Key URI Format). `secret` is
+// the only required parameter; everything else falls back to RFC 6238
+// defaults when absent — mirrors 06-RESEARCH.md Pattern 4. Inlined here
+// (not imported from lib/vault/importers/) since this task has no hard
+// dependency on Plan 06-02's importer module.
+function parseTotpValue(raw: string): {
+  secret: string;
+  issuer: string;
+  algorithm: "SHA1" | "SHA256" | "SHA512";
+  digits: number;
+  period: number;
+} | null {
+  if (!raw.startsWith("otpauth://")) return null;
+  try {
+    const url = new URL(raw);
+    const secret = url.searchParams.get("secret");
+    if (!secret) return null;
+    const rawAlgorithm = url.searchParams.get("algorithm");
+    const algorithm: "SHA1" | "SHA256" | "SHA512" =
+      rawAlgorithm === "SHA256" || rawAlgorithm === "SHA512" ? rawAlgorithm : "SHA1";
+    return {
+      secret,
+      issuer: url.searchParams.get("issuer") ?? "",
+      algorithm,
+      digits: Number(url.searchParams.get("digits") ?? 6),
+      period: Number(url.searchParams.get("period") ?? 30),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Base32 (RFC 4648) charset check, tolerant of whitespace and '=' padding
+// (mirrors pv-core's totp::generate_code, which strips both before
+// decoding) — used to validate the secret field on submit, not on every
+// keystroke (an otpauth:// URI is a valid intermediate value while typed).
+function isValidBase32Secret(secret: string): boolean {
+  const cleaned = secret.replace(/\s+/g, "").replace(/=+$/, "");
+  return cleaned.length > 0 && /^[A-Za-z2-7]+$/.test(cleaned);
 }
 
 function TextField({
@@ -144,6 +198,7 @@ export default function ItemForm({
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showCardNumber, setShowCardNumber] = useState(false);
+  const [totpSecretError, setTotpSecretError] = useState(false);
   const [tagInput, setTagInput] = useState("");
   const [addingFolder, setAddingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
@@ -220,6 +275,29 @@ export default function ItemForm({
     return { ...f, urls: f.urls.filter((url) => url.trim() !== "") };
   }
 
+  // The secret field auto-parses an otpauth:// URI on paste (populating
+  // issuer/algorithm/digits/period, Advanced collapse stays closed even
+  // when auto-populated per 06-CONTEXT.md) — anything else (a bare base32
+  // secret, or an unparseable value that's judged on submit, not here) is
+  // stored as-is.
+  function updateTotpSecret(value: string) {
+    setFields((prev) => {
+      if (prev.type !== "totp") return prev;
+      const parsed = parseTotpValue(value);
+      if (parsed !== null) {
+        return {
+          ...prev,
+          secret: parsed.secret,
+          issuer: parsed.issuer,
+          algorithm: parsed.algorithm,
+          digits: parsed.digits,
+          period: parsed.period,
+        };
+      }
+      return { ...prev, secret: value };
+    });
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (fields.name.trim() === "") {
@@ -227,6 +305,11 @@ export default function ItemForm({
       return;
     }
     setNameError(false);
+    if (fields.type === "totp" && !isValidBase32Secret(fields.secret)) {
+      setTotpSecretError(true);
+      return;
+    }
+    setTotpSecretError(false);
     setSubmitError(null);
     setSubmitting(true);
     const cleaned = cleanFields(fields);
@@ -465,6 +548,122 @@ export default function ItemForm({
           value={fields.body}
           onChange={(v) => update("body", v)}
         />
+      ) : null}
+
+      {fields.type === "totp" ? (
+        <>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="item-secret" className="text-sm">
+              {t("field.secret")}
+            </label>
+            <input
+              id="item-secret"
+              data-testid="item-secret"
+              className="input input-bordered w-full font-mono"
+              placeholder={t("totp.secretHelper")}
+              value={fields.secret}
+              onChange={(e) => updateTotpSecret(e.target.value)}
+            />
+            {totpSecretError ? (
+              <p data-testid="totp-secret-error" className="text-sm text-error">
+                {t("totp.invalidSecretError")}
+              </p>
+            ) : null}
+          </div>
+          {/* Advanced RFC 6238 fields — default closed even when otpauth://
+              auto-parse populates them (06-CONTEXT.md, locked). */}
+          <details className="collapse collapse-arrow border border-base-300 bg-base-100">
+            <summary
+              data-testid="totp-advanced-toggle"
+              className="collapse-title text-sm"
+            >
+              {t("totp.advancedToggle")}
+            </summary>
+            <div className="collapse-content flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="item-issuer" className="text-sm">
+                  {t("field.issuer")}
+                </label>
+                <input
+                  id="item-issuer"
+                  data-testid="item-issuer"
+                  className="input input-bordered w-full"
+                  value={fields.issuer}
+                  onChange={(e) => update("issuer", e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="item-algorithm" className="text-sm">
+                  {t("field.algorithm")}
+                </label>
+                <select
+                  id="item-algorithm"
+                  data-testid="item-algorithm"
+                  className="select select-bordered w-full"
+                  value={fields.algorithm}
+                  onChange={(e) =>
+                    setFields((prev) =>
+                      prev.type === "totp"
+                        ? {
+                            ...prev,
+                            algorithm: e.target.value as "SHA1" | "SHA256" | "SHA512",
+                          }
+                        : prev,
+                    )
+                  }
+                >
+                  <option value="SHA1">SHA1</option>
+                  <option value="SHA256">SHA256</option>
+                  <option value="SHA512">SHA512</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="item-digits" className="text-sm">
+                  {t("field.digits")}
+                </label>
+                <input
+                  id="item-digits"
+                  data-testid="item-digits"
+                  type="number"
+                  className="input input-bordered w-full"
+                  value={fields.digits}
+                  onChange={(e) =>
+                    setFields((prev) =>
+                      prev.type === "totp"
+                        ? { ...prev, digits: Number(e.target.value) || 0 }
+                        : prev,
+                    )
+                  }
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="item-period" className="text-sm">
+                  {t("field.period")}
+                </label>
+                <input
+                  id="item-period"
+                  data-testid="item-period"
+                  type="number"
+                  className="input input-bordered w-full"
+                  value={fields.period}
+                  onChange={(e) =>
+                    setFields((prev) =>
+                      prev.type === "totp"
+                        ? { ...prev, period: Number(e.target.value) || 0 }
+                        : prev,
+                    )
+                  }
+                />
+              </div>
+            </div>
+          </details>
+          <TextAreaField
+            id="item-notes"
+            label={t("field.notes")}
+            value={fields.notes}
+            onChange={(v) => update("notes", v)}
+          />
+        </>
       ) : null}
 
       {/* Shared folder/tag block — applies to every item type (VAULT-03),
