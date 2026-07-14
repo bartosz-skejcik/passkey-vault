@@ -7,16 +7,28 @@ pub mod sync;
 pub mod vault;
 pub mod webauthn_state;
 
+use std::path::PathBuf;
+
 use axum::{
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use tower_http::cors::CorsLayer;
+use tower_http::services::{ServeDir, ServeFile};
 
 use crate::AppState;
 
-pub fn router(state: AppState) -> Router {
-    Router::new()
+/// Builds the API router, optionally layering a static-directory SPA
+/// fallback on top of it. When `static_dir` points at a real directory
+/// (Docker-packaged Next.js export, DEPLOY-01), this is the concrete
+/// implementation of the single-origin packaging `cors_layer()`'s doc
+/// comment already anticipates: the same axum process serves `/healthz`,
+/// every `/api/*` route, and the static export all on one port. When
+/// `static_dir` is `None` or doesn't exist, degrades to API-only with a
+/// warning log — never a panic — which is also the path every existing
+/// integration test exercises via `router(state, None)`.
+pub fn router(state: AppState, static_dir: Option<PathBuf>) -> Router {
+    let api = Router::new()
         .route("/healthz", get(healthz))
         .route("/api/auth/prelogin", post(auth::prelogin))
         .route("/api/auth/register", post(auth::register))
@@ -41,7 +53,24 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sessions", get(sessions::list))
         .route("/api/sessions/{id}", delete(sessions::revoke))
         .with_state(state)
-        .layer(cors_layer())
+        .layer(cors_layer());
+
+    match static_dir.filter(|d| d.is_dir()) {
+        Some(dir) => {
+            // NOTE: deliberately `.fallback(...)`, not `.not_found_service(...)` —
+            // `not_found_service` unconditionally rewrites the response status to
+            // 404 (tower-http `SetStatus`), which would make every SPA-fallback
+            // hit report 404 even though `index.html` was served. `.fallback(...)`
+            // preserves the served file's natural 200 status, which is what a real
+            // SPA client-side route needs to render instead of erroring out.
+            let serve = ServeDir::new(&dir).fallback(ServeFile::new(dir.join("index.html")));
+            api.fallback_service(serve)
+        }
+        None => {
+            tracing::warn!("PV_STATIC_DIR not set or not a directory — serving API only");
+            api
+        }
+    }
 }
 
 /// Permissive CORS is a dev-mode-only convenience: Phase 7's Docker

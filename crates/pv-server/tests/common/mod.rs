@@ -31,14 +31,46 @@ pub fn test_app(pool: sqlx::SqlitePool) -> axum::Router {
         .expect("test webauthn instance");
     let dummy_secret: [u8; 32] =
         pv_core::keys::random_bytes(32).try_into().expect("random_bytes(32) must return 32 bytes");
-    pv_server::routes::router(pv_server::AppState {
-        db: pool,
-        session_ttl_hours: 168,
-        webauthn,
-        rp_id: "localhost".to_string(),
-        dummy_secret,
-        sync_hub: Default::default(),
-    })
+    pv_server::routes::router(
+        pv_server::AppState {
+            db: pool,
+            session_ttl_hours: 168,
+            webauthn,
+            rp_id: "localhost".to_string(),
+            dummy_secret,
+            sync_hub: Default::default(),
+        },
+        None,
+    )
+}
+
+/// Same `AppState` construction as `test_app`, but threads `Some(static_dir)`
+/// into `router()` instead of `None` — used only by
+/// `tests/router_static_fallback.rs` to exercise the SPA-fallback contract
+/// (Phase 7, DEPLOY-01).
+///
+/// `#[allow(dead_code)]`: `common/mod.rs` is compiled once per integration
+/// test binary; only `tests/router_static_fallback.rs` calls this helper,
+/// which would otherwise warn in every other test binary compiling this same
+/// `common` module (mirrors `register_and_login`'s/`test_server`'s own
+/// treatment below).
+#[allow(dead_code)]
+pub fn test_app_with_static_dir(pool: sqlx::SqlitePool, static_dir: std::path::PathBuf) -> axum::Router {
+    let webauthn = pv_server::build_webauthn("localhost", "http://localhost:3000")
+        .expect("test webauthn instance");
+    let dummy_secret: [u8; 32] =
+        pv_core::keys::random_bytes(32).try_into().expect("random_bytes(32) must return 32 bytes");
+    pv_server::routes::router(
+        pv_server::AppState {
+            db: pool,
+            session_ttl_hours: 168,
+            webauthn,
+            rp_id: "localhost".to_string(),
+            dummy_secret,
+            sync_hub: Default::default(),
+        },
+        Some(static_dir),
+    )
 }
 
 /// Registers a fixture user (deterministic `auth_hash`/`salt`/`kdf`/

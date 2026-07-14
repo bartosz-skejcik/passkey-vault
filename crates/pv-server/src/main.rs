@@ -29,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
         dummy_secret,
         sync_hub: pv_server::routes::sync::SyncHub::default(),
     };
-    let app = routes::router(state)
+    let app = routes::router(state, None)
         .layer(TraceLayer::new_for_http().make_span_with(make_span));
 
     let listener = tokio::net::TcpListener::bind(&cfg.addr)
