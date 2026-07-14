@@ -159,7 +159,7 @@ Plans:
   2. A WebSocket push notifies other active sessions of a change via metadata only (`{item_id, revision, change_type}`) — traffic inspection confirms ciphertext never traverses the push channel
   3. When two devices edit concurrently, the conflict resolves per-item by revision (last-write-wins is visible and doesn't silently corrupt unrelated items)
 
-**Plans**: 1/4 plans executed
+**Plans**: 2/4 plans executed
 
 Plans:
 **Wave 1**
@@ -168,7 +168,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 05-02-PLAN.md — WebSocket push channel: SyncHub/SyncEvent + GET /api/sync/ws + publish wiring (pv-server)
+- [x] 05-02-PLAN.md — WebSocket push channel: SyncHub/SyncEvent + GET /api/sync/ws + publish wiring (pv-server)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -237,6 +237,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 2. Password Auth & Vault Core | 8/8 | Complete    | 2026-07-13 |
 | 3. Passkey Enrollment & Account Security | 3/4 | Complete    | 2026-07-14 |
 | 4. PRF Unlock & Login Unification | 3/3 | Complete    | 2026-07-14 |
-| 5. Multi-Device Sync | 1/4 | In Progress|  |
+| 5. Multi-Device Sync | 2/4 | In Progress|  |
 | 6. Import/Export, TOTP & Onboarding | 0/TBD | Not started | - |
 | 7. Self-Host Packaging & Deployment | 0/TBD | Not started | - |
