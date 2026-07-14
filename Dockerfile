@@ -58,9 +58,12 @@ COPY web/package.json web/package.json
 # 5. wasm-bindgen-cli is installed from source by build-wasm.sh
 #    (`cargo install wasm-bindgen-cli --version <pinned> --locked`) —
 #    pkg-config + a C toolchain are required for some of its transitive
-#    dependencies to build on a slim base image.
+#    dependencies to build on a slim base image. libssl-dev is required to
+#    compile openssl-sys, pulled in (non-optionally) by webauthn-rs 0.5's
+#    attestation-CA path (openssl v0.10, dynamically linked) — without it
+#    `cargo build -p pv-server` fails with "could not find OpenSSL".
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends pkg-config build-essential \
+    && apt-get install -y --no-install-recommends pkg-config build-essential libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 6. Run build-wasm.sh unmodified. Resolves because all three workspace
@@ -110,9 +113,13 @@ FROM debian:bookworm-slim
 WORKDIR /app
 
 # debian:bookworm-slim ships neither curl nor wget by default — wget is
-# needed for the HEALTHCHECK's HTTP probe against /healthz.
+# needed for the HEALTHCHECK's HTTP probe against /healthz. libssl3 is the
+# runtime shared library the pv-server binary dynamically links (openssl-sys
+# via webauthn-rs); bookworm-slim omits it, so the binary would fail at
+# startup with "libssl.so.3: cannot open shared object file". ca-certificates
+# lets OpenSSL verify trust roots (attestation / any outbound TLS).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends wget \
+    && apt-get install -y --no-install-recommends wget libssl3 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=rust-builder /app/target/release/pv-server /app/pv-server
