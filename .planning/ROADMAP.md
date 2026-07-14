@@ -130,12 +130,12 @@ Plans:
   3. In a fresh browser session on a PRF-enrolled account, the user unlocks with just the passkey gesture — no password entry required
   4. When PRF is unavailable (browser/OS/authenticator lacks support), the user sees a specific, readable explanation and a working password-unlock fallback — never a generic error or a silent hang
 
-**Plans**: 3 plans
+**Plans**: 1/3 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 04-01-PLAN.md — Passkey-login (unauthenticated, session-issuing) + unlock (session-gated, no new session) WebAuthn authentication ceremony endpoints (pv-server)
+- [x] 04-01-PLAN.md — Passkey-login (unauthenticated, session-issuing) + unlock (session-gated, no new session) WebAuthn authentication ceremony endpoints (pv-server)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -236,7 +236,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 1. WASM Crypto Bridge & Web App Shell | 3/3 | Complete    | 2026-07-12 |
 | 2. Password Auth & Vault Core | 8/8 | Complete    | 2026-07-13 |
 | 3. Passkey Enrollment & Account Security | 3/4 | Complete    | 2026-07-14 |
-| 4. PRF Unlock & Login Unification | 0/3 | Not started | - |
+| 4. PRF Unlock & Login Unification | 1/3 | In Progress|  |
 | 5. Multi-Device Sync | 0/4 | Not started | - |
 | 6. Import/Export, TOTP & Onboarding | 0/TBD | Not started | - |
 | 7. Self-Host Packaging & Deployment | 0/TBD | Not started | - |
