@@ -236,7 +236,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 1. WASM Crypto Bridge & Web App Shell | 3/3 | Complete    | 2026-07-12 |
 | 2. Password Auth & Vault Core | 8/8 | Complete    | 2026-07-13 |
 | 3. Passkey Enrollment & Account Security | 3/4 | Complete    | 2026-07-14 |
-| 4. PRF Unlock & Login Unification | 3/3 | Complete   | 2026-07-14 |
+| 4. PRF Unlock & Login Unification | 3/3 | Complete    | 2026-07-14 |
 | 5. Multi-Device Sync | 0/4 | Not started | - |
 | 6. Import/Export, TOTP & Onboarding | 0/TBD | Not started | - |
 | 7. Self-Host Packaging & Deployment | 0/TBD | Not started | - |

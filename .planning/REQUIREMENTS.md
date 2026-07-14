@@ -9,12 +9,12 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 - [x] **AUTH-01**: Użytkownik może założyć konto (email + master password); hasło nigdy nie opuszcza klienta — serwer dostaje tylko hash-po-KDF (Argon2id)
 - [x] **AUTH-02**: Użytkownik może zalogować się master passwordem i otrzymać token sesji; odblokowanie vaulta (odszyfrowanie lokalne) jest architektonicznie odrębne od logowania (uwierzytelnienia na serwerze)
 - [x] **AUTH-03**: Użytkownik może enrollować passkey z rozszerzeniem PRF (dwuceremonialny enrollment: `create` rejestruje credential, `get` ewaluuje PRF i wrapuje User Key)
-- [ ] **AUTH-04**: Użytkownik może zalogować się i odblokować vault jednym gestem passkeya: assertion → sesja na serwerze, wynik PRF → lokalny unwrap User Key (PRF nigdy nie opuszcza klienta)
+- [x] **AUTH-04**: Użytkownik może zalogować się i odblokować vault jednym gestem passkeya: assertion → sesja na serwerze, wynik PRF → lokalny unwrap User Key (PRF nigdy nie opuszcza klienta)
 - [x] **AUTH-05**: System wymusza inwariant recovery: User Key zawsze wrapowany pod master password; nie istnieje tryb konta passkey-only; serwer i klient blokują operacje, które zostawiłyby vault bez fallbacku hasłowego
 - [x] **AUTH-06**: Użytkownik może zarządzać enrollowanymi passkeys (lista z nazwą/datą/ostatnim użyciem, zmiana nazwy, usunięcie z wyraźnym ostrzeżeniem recovery)
 - [x] **AUTH-07**: Użytkownik może zobaczyć aktywne sesje/urządzenia i unieważnić wybrane
 - [x] **AUTH-08**: Vault auto-blokuje się po konfigurowalnym czasie bezczynności (sensowny, nie-nieskończony default, np. 15 min)
-- [ ] **AUTH-09**: Gdy PRF jest niedostępny (przeglądarka/OS/authenticator bez wsparcia), użytkownik dostaje czytelny fallback do unlocku hasłem — nie generyczny błąd
+- [x] **AUTH-09**: Gdy PRF jest niedostępny (przeglądarka/OS/authenticator bez wsparcia), użytkownik dostaje czytelny fallback do unlocku hasłem — nie generyczny błąd
 
 ### Vault
 
@@ -42,7 +42,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 ### Web App / UI
 
 - [x] **UI-01**: Web app (Next.js 16, `output: "export"`, Tailwind v4 + DaisyUI 5) w theme datafa.st — dark default, pełnoprawny light; cała kryptografia wyłącznie przez choke-point moduł importujący pv-core WASM
-- [ ] **UI-02**: Ekran unlock/login: PRF-first — duży tealowy przycisk „Odblokuj passkeyem" nad polem master password
+- [x] **UI-02**: Ekran unlock/login: PRF-first — duży tealowy przycisk „Odblokuj passkeyem" nad polem master password
 - [x] **UI-03**: Vault: lista itemów (favicon, nazwa, username, badge typu) + panel boczny szczegółów z copy-buttonami i sekcją passkey
 - [ ] **UI-04**: Onboarding (3 kroki) z importem z innego menedżera jako pierwszym krokiem
 - [x] **UI-05**: Ustawienia: enrolled passkeys, sesje/urządzenia, import/eksport, parametry auto-lock/schowka
@@ -113,9 +113,9 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 | AUTH-06 | Phase 3: Passkey Enrollment & Account Security | Complete |
 | AUTH-07 | Phase 3: Passkey Enrollment & Account Security | Complete |
 | UI-05 | Phase 3: Passkey Enrollment & Account Security | Complete |
-| AUTH-04 | Phase 4: PRF Unlock & Login Unification | Pending |
-| AUTH-09 | Phase 4: PRF Unlock & Login Unification | Pending |
-| UI-02 | Phase 4: PRF Unlock & Login Unification | Pending |
+| AUTH-04 | Phase 4: PRF Unlock & Login Unification | Complete |
+| AUTH-09 | Phase 4: PRF Unlock & Login Unification | Complete |
+| UI-02 | Phase 4: PRF Unlock & Login Unification | Complete |
 | SYNC-01 | Phase 5: Multi-Device Sync | Pending |
 | SYNC-02 | Phase 5: Multi-Device Sync | Pending |
 | SYNC-03 | Phase 5: Multi-Device Sync | Pending |
