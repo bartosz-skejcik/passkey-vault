@@ -1,0 +1,26 @@
+# Build artifacts — rebuilt inside the image, never useful in the context.
+target/
+web/node_modules/
+web/out/
+web/.next/
+web/src/lib/crypto/wasm/
+web/public/wasm/
+
+# VCS / planning.
+.git/
+.planning/
+
+# Runtime data — never bake a dev SQLite file into an image layer.
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Docs — irrelevant to the build, keeps the context small.
+*.md
+
+# Real secrets file — distinct from the committed .env.example. A missing
+# exclusion here would let real deployment secrets leak into the build
+# context/image layers if a self-hoster ever has one sitting in the repo
+# root at build time.
+.env
