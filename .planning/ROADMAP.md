@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: WASM Crypto Bridge & Web App Shell** - Bridge `pv-core` to WASM behind a themed Next.js shell; prove a full crypto round-trip through the choke-point module (completed 2026-07-12)
 - [x] **Phase 2: Password Auth & Vault Core** - Register, log in with a master password, and fully manage an encrypted vault of items — the first real end-to-end zero-knowledge slice (completed 2026-07-13)
 - [x] **Phase 3: Passkey Enrollment & Account Security** - Enroll a PRF passkey, manage passkeys/sessions, with the recovery invariant server-enforced (completed 2026-07-14)
-- [ ] **Phase 4: PRF Unlock & Login Unification** - Log in and unlock the vault in one passkey gesture, with an honest fallback when PRF isn't available
+- [x] **Phase 4: PRF Unlock & Login Unification** - Log in and unlock the vault in one passkey gesture, with an honest fallback when PRF isn't available (completed 2026-07-14)
 - [ ] **Phase 5: Multi-Device Sync** - Keep the vault in sync across simultaneously-active devices/sessions
 - [ ] **Phase 6: Import/Export, TOTP & Onboarding** - Bring in an existing password manager's data, see live TOTP codes, export back out
 - [ ] **Phase 7: Self-Host Packaging & Deployment** - Ship as one Docker container that fails loudly, not mysteriously, when misconfigured
@@ -130,7 +130,7 @@ Plans:
   3. In a fresh browser session on a PRF-enrolled account, the user unlocks with just the passkey gesture — no password entry required
   4. When PRF is unavailable (browser/OS/authenticator lacks support), the user sees a specific, readable explanation and a working password-unlock fallback — never a generic error or a silent hang
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 
 Plans:
 **Wave 1**
@@ -143,7 +143,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 04-03-PLAN.md — Full regression sweep + real-browser passkey login/unlock UAT
+- [x] 04-03-PLAN.md — Full regression sweep + real-browser passkey login/unlock UAT
 
 **UI hint**: yes
 
@@ -236,7 +236,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 1. WASM Crypto Bridge & Web App Shell | 3/3 | Complete    | 2026-07-12 |
 | 2. Password Auth & Vault Core | 8/8 | Complete    | 2026-07-13 |
 | 3. Passkey Enrollment & Account Security | 3/4 | Complete    | 2026-07-14 |
-| 4. PRF Unlock & Login Unification | 2/3 | In Progress|  |
+| 4. PRF Unlock & Login Unification | 3/3 | Complete   | 2026-07-14 |
 | 5. Multi-Device Sync | 0/4 | Not started | - |
 | 6. Import/Export, TOTP & Onboarding | 0/TBD | Not started | - |
 | 7. Self-Host Packaging & Deployment | 0/TBD | Not started | - |
