@@ -165,6 +165,39 @@ describe("passkeyLogin", () => {
     expect(result).toEqual({ prfUnavailable: true, cancelled: false });
   });
 
+  it("CR-01: strips clientExtensionResults.prf from the credential JSON before POSTing passkeyLoginFinish, even when the browser's toJSON() includes it", async () => {
+    const assertionWithLeakyToJson = {
+      toJSON: vi.fn().mockReturnValue({
+        id: "assertion-1",
+        clientExtensionResults: { prf: { results: { first: "base64url-prf-secret" } } },
+      }),
+      getClientExtensionResults: vi.fn().mockReturnValue({
+        prf: { results: { first: new ArrayBuffer(32) } },
+      }),
+    };
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(
+      assertionWithLeakyToJson,
+    );
+    mockPasskeyLoginFinish.mockResolvedValue({
+      session_token: "session-token",
+      pw_wrapped_uk: "pw-wrapped-uk",
+      prf_wrapped_uk: "prf-wrapped-uk",
+    });
+
+    await passkeyLogin("existing@example.com");
+
+    const postedCredential = mockPasskeyLoginFinish.mock.calls[0][0].credential as {
+      id: string;
+      clientExtensionResults?: { prf?: unknown };
+    };
+    expect(postedCredential.id).toBe("assertion-1");
+    expect(postedCredential.clientExtensionResults?.prf).toBeUndefined();
+    // extractPrfBytes still reads from the ORIGINAL assertion (unaffected by
+    // the strip applied to the toJSON()-derived payload) so the wrapping key
+    // can still be derived.
+    expect(mockFromPrf).toHaveBeenCalled();
+  });
+
   it("never calls passkeyLoginFinish when navigator.credentials.get() rejects with NotAllowedError", async () => {
     (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockRejectedValue(
       new DOMException("dismissed", "NotAllowedError"),
@@ -247,6 +280,38 @@ describe("passkeyUnlock", () => {
     expect(mockSetPendingUnlock).not.toHaveBeenCalled();
     expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "success"]);
     expect(result).toEqual({ prfUnavailable: false, cancelled: false });
+  });
+
+  it("CR-01: strips clientExtensionResults.prf from the credential JSON before POSTing unlockFinish, even when the browser's toJSON() includes it", async () => {
+    mockUnlockStart.mockResolvedValue({
+      state_id: "state-2",
+      challenge: { publicKey: { challenge: "chal2" } },
+      prf_salts: { "cred-2": "c2FsdA==" },
+    });
+    const assertionWithLeakyToJson = {
+      toJSON: vi.fn().mockReturnValue({
+        id: "assertion-2",
+        clientExtensionResults: { prf: { results: { first: "base64url-prf-secret" } } },
+      }),
+      getClientExtensionResults: vi.fn().mockReturnValue({
+        prf: { results: { first: new ArrayBuffer(32) } },
+      }),
+    };
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(
+      assertionWithLeakyToJson,
+    );
+    mockUnlockFinish.mockResolvedValue({ prf_wrapped_uk: "prf-wrapped-uk-2" });
+    mockUnwrapUserKey.mockReturnValue(FAKE_USER_KEY);
+
+    await passkeyUnlock();
+
+    const postedCredential = mockUnlockFinish.mock.calls[0][0].credential as {
+      id: string;
+      clientExtensionResults?: { prf?: unknown };
+    };
+    expect(postedCredential.id).toBe("assertion-2");
+    expect(postedCredential.clientExtensionResults?.prf).toBeUndefined();
+    expect(mockFromPrf).toHaveBeenCalled();
   });
 
   it("cancellation (NotAllowedError) during the ceremony is a silent no-op", async () => {

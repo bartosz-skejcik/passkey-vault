@@ -6,10 +6,14 @@
 // Zero-knowledge boundary: PRF bytes read from
 // `assertion.getClientExtensionResults()` are passed directly into
 // `WasmWrappingKey.fromPrf` (which zeroizes the buffer as a side effect)
-// and never assigned to any other variable, logged, or included in a
-// network request body — only the already-wrapped `prf_wrapped_uk`
-// ciphertext (from the server) and the opaque WebAuthn credential JSON
-// cross the client/server boundary.
+// and never assigned to any other variable or logged. The credential JSON
+// POSTed to the server is explicitly stripped of `clientExtensionResults.prf`
+// (see `stripPrfFromCredentialJson` below) before it ever leaves the client —
+// mirrors `enroll.ts`'s WR-04 defense-in-depth: `PublicKeyCredential.toJSON()`
+// serializes `clientExtensionResults`, which can in principle include the raw
+// PRF eval output bytes, so the zero-knowledge boundary must not rely on any
+// particular browser's current (undocumented, version-dependent) behavior of
+// omitting them.
 import { WasmWrappingKey, unwrapUserKey, setUnlockedUserKey } from "@/lib/crypto";
 import { base64Decode, ApiClientError } from "@/lib/auth/api";
 import { setSessionToken, setStoredEmail } from "@/lib/auth/session";
@@ -47,6 +51,27 @@ function extractPrfBytes(assertion: PublicKeyCredential): ArrayBuffer | undefine
     prf?: { results?: { first?: ArrayBuffer } };
   };
   return results.prf?.results?.first;
+}
+
+/**
+ * CR-01 / mirrors `enroll.ts`'s WR-04 strip: `PublicKeyCredential.toJSON()`
+ * serializes `clientExtensionResults`, which for the PRF extension can in
+ * principle include the raw eval output bytes (mainstream browsers
+ * currently don't appear to put the secret `results.first` bytes there, but
+ * that's undocumented, browser-version-dependent behavior, not a contract).
+ * Neither `finish_passkey_authentication` (login) nor the unlock finish
+ * handler ever needs `prf` output — strip it before the credential JSON
+ * ever leaves the client, so the zero-knowledge boundary doesn't rely on
+ * that assumption holding forever. Must be called on `assertion.toJSON()`
+ * output ONLY — `extractPrfBytes(assertion)` (above) must still read from
+ * the original, unstripped `assertion` object to derive the wrapping key.
+ */
+function stripPrfFromCredentialJson(assertion: PublicKeyCredential): unknown {
+  const json = assertion.toJSON() as { clientExtensionResults?: { prf?: unknown } };
+  if (json.clientExtensionResults?.prf !== undefined) {
+    delete json.clientExtensionResults.prf;
+  }
+  return json;
 }
 
 /**
@@ -91,7 +116,7 @@ export async function passkeyLogin(
 
   const finish = await passkeyLoginFinish({
     state_id: start.state_id,
-    credential: assertion.toJSON(),
+    credential: stripPrfFromCredentialJson(assertion),
   });
 
   // Login succeeded either way — session material is stored regardless of
@@ -169,7 +194,7 @@ export async function passkeyUnlock(
 
   const finish = await unlockFinish({
     state_id: start.state_id,
-    credential: assertion.toJSON(),
+    credential: stripPrfFromCredentialJson(assertion),
   });
 
   if (finish.prf_wrapped_uk !== null) {
