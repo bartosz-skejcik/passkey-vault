@@ -14,6 +14,15 @@ Dokumentacja projektowa: [`docs/`](docs/) — RESEARCH.md, UI-DESIGN.md, ARCHITE
 | `crates/pv-server` | Serwer (axum + SQLx/SQLite + webauthn-rs). |
 | `web/` | Web app (Next.js, Tailwind v4 + DaisyUI 5) — TODO |
 | `extension/` | Rozszerzenie przeglądarkowe (WXT, MV3) — TODO |
+| `docs/SELF-HOSTING.md` | Self-hosting quickstart: `docker compose up`, konfiguracja, backup, troubleshooting. |
+
+## Self-hosting
+
+```sh
+docker compose up -d
+```
+
+Zobacz [`docs/SELF-HOSTING.md`](docs/SELF-HOSTING.md) po pełną instrukcję.
 
 ## Dev
 
