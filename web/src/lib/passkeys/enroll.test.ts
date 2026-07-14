@@ -94,6 +94,37 @@ describe("enrollPasskey", () => {
     });
   });
 
+  it("strips clientExtensionResults.prf from the serialized assertion before POSTing it (WR-04)", async () => {
+    const credential = { toJSON: vi.fn().mockReturnValue({ id: "cred-1" }) };
+    (global.navigator.credentials.create as ReturnType<typeof vi.fn>).mockResolvedValue(
+      credential,
+    );
+    const assertion = {
+      // Simulates a hypothetical future browser that DOES serialize the raw
+      // PRF eval output into `toJSON()`'s clientExtensionResults — the fix
+      // must strip it defensively regardless of whether real browsers
+      // currently do this.
+      toJSON: vi.fn().mockReturnValue({
+        id: "assertion-1",
+        clientExtensionResults: { prf: { results: { first: "c2VjcmV0Ynl0ZXM=" } } },
+      }),
+      getClientExtensionResults: vi.fn().mockReturnValue({
+        prf: { results: { first: new ArrayBuffer(32) } },
+      }),
+    };
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(assertion);
+
+    const onStep = vi.fn();
+    await enrollPasskey("My passkey", onStep);
+
+    expect(onStep.mock.calls.map((c) => c[0])).toEqual(["step1", "step2", "doneWithPrf"]);
+    expect(mockPrfWrap).toHaveBeenCalledWith("passkey-1", {
+      state_id: "state-2",
+      credential: { id: "assertion-1", clientExtensionResults: {} },
+      prf_wrapped_uk: "wrapped-uk-json",
+    });
+  });
+
   it("resolves to doneNoPrf and never calls prfWrap when the authenticator has no PRF support", async () => {
     const credential = { toJSON: vi.fn().mockReturnValue({ id: "cred-1" }) };
     (global.navigator.credentials.create as ReturnType<typeof vi.fn>).mockResolvedValue(

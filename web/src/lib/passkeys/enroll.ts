@@ -90,9 +90,23 @@ export async function enrollPasskey(
     const prfArray = new Uint8Array(prfBytes);
     const wrappingKey = WasmWrappingKey.fromPrf(prfArray); // zeroizes prfArray as a side effect
     const wrappedJson = wrapUserKey(wrappingKey, uk);
+
+    // Defense-in-depth (WR-04): `PublicKeyCredential.toJSON()` serializes
+    // `clientExtensionResults`, which for the PRF extension can in principle
+    // include the raw eval output bytes (mainstream browsers currently don't
+    // appear to put the secret `results.first` bytes there, but that's an
+    // undocumented, browser-version-dependent behavior, not a contract).
+    // The server's `finish_passkey_authentication` never needs `prf` output
+    // — strip it before it ever leaves the client, so the zero-knowledge
+    // boundary doesn't rely on that assumption holding forever.
+    const credentialJson = assertion.toJSON() as { clientExtensionResults?: { prf?: unknown } };
+    if (credentialJson.clientExtensionResults?.prf !== undefined) {
+      delete credentialJson.clientExtensionResults.prf;
+    }
+
     await prfWrap(passkeyId, {
       state_id: prfStateId,
-      credential: assertion.toJSON(),
+      credential: credentialJson,
       prf_wrapped_uk: wrappedJson,
     });
     onStep("doneWithPrf");
