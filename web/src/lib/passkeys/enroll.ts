@@ -71,7 +71,11 @@ export async function enrollPasskey(
     const assertion = (await navigator.credentials.get({
       publicKey: {
         ...requestOptions,
-        extensions: { prf: { eval: { first: base64Decode(prfSaltB64) } } },
+        // Cast needed: TS's DOM lib types `BufferSource` against a plain
+        // `ArrayBuffer`, but `Uint8Array`'s generic buffer type widens to
+        // `ArrayBufferLike` (which also covers `SharedArrayBuffer`) — the
+        // value itself is always a real, non-shared `Uint8Array` here.
+        extensions: { prf: { eval: { first: base64Decode(prfSaltB64) as BufferSource } } },
       },
     })) as PublicKeyCredential;
 
