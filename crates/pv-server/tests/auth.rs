@@ -223,6 +223,61 @@ async fn full_register_login_me_logout_flow() {
     assert_eq!(me_after_logout.status(), StatusCode::UNAUTHORIZED);
 }
 
+/// WR-02 regression: `login`'s INSERT previously never captured the
+/// `User-Agent` header, leaving `sessions.user_agent` permanently NULL and
+/// `SessionsTab`'s AUTH-07 device display always falling back to
+/// "unknown device". Asserts the header now round-trips through
+/// login -> `sessions` table -> `GET /api/sessions`.
+#[tokio::test]
+async fn login_persists_user_agent_and_sessions_list_returns_it() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+
+    let email = "useragent@example.com";
+    let reg = post_json(&app, "/api/auth/register", register_body(email)).await;
+    assert_eq!(reg.status(), StatusCode::CREATED);
+
+    let ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15";
+    let login_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header("content-type", "application/json")
+                .header("user-agent", ua)
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "email": email, "auth_hash": b64(&[2u8; 32]) })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login_res.status(), StatusCode::OK);
+    let token = body_json(login_res).await["session_token"].as_str().unwrap().to_string();
+
+    let list_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/sessions")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_res.status(), StatusCode::OK);
+    let rows = body_json(list_res).await;
+    let rows = rows.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0]["user_agent"],
+        json!(ua),
+        "the login request's User-Agent header must be persisted and returned, not NULL"
+    );
+}
+
 #[tokio::test]
 async fn me_without_token_is_unauthorized() {
     let pool = test_pool().await;

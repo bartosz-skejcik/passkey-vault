@@ -1,6 +1,6 @@
 use axum::{
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     Json,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -156,6 +156,7 @@ pub struct LoginResponse {
 /// auth_hash — patrz threat_model T-02-04 (brak oracle po kształcie odpowiedzi).
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, ApiError> {
     let normalized_email = req.email.trim().to_lowercase();
@@ -199,13 +200,20 @@ pub async fn login(
     let token_hash = crypto::hash_token(token_b64.as_bytes());
     let session_id = Uuid::new_v4().to_string();
 
+    // Captures the request's User-Agent for AUTH-07's per-device display
+    // (`sessions.rs::list` already selects/returns this column — it was
+    // simply never written, so it was always NULL). Missing/non-UTF-8
+    // headers fall back to NULL rather than failing the login (WR-02).
+    let user_agent = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok());
+
     sqlx::query(
-        "INSERT INTO sessions (id, user_id, token_hash, expires_at) \
-         VALUES (?,?,?, datetime('now', '+' || ? || ' hours'))",
+        "INSERT INTO sessions (id, user_id, token_hash, user_agent, expires_at) \
+         VALUES (?,?,?,?, datetime('now', '+' || ? || ' hours'))",
     )
     .bind(&session_id)
     .bind(&user_id)
     .bind(token_hash.as_slice())
+    .bind(user_agent)
     .bind(state.session_ttl_hours as i64)
     .execute(&state.db)
     .await?;
