@@ -1,0 +1,51 @@
+# deploy/Caddyfile.example
+#
+# Reference Caddy reverse-proxy config for pv-server (Phase 7, DEPLOY-01/02,
+# ROADMAP.md Phase 7 success criterion #3). pv-server never terminates TLS
+# itself — that is always this proxy's job. Copy this file and replace
+# `vault.example.com` with your own real domain before using it in
+# production.
+#
+# Validated with: docker run --rm -v "$(pwd)/deploy/Caddyfile.example:/etc/caddy/Caddyfile:ro" \
+#   caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+#
+# This shipped file deliberately has NO `tls internal` (or any other
+# non-default `tls` directive) — it relies on Caddy's real automatic-HTTPS
+# (Let's Encrypt/ACME) default, matching a real self-hoster's actual
+# production deployment against their own real, publicly resolvable domain.
+# scripts/verify-container.sh's own sandboxed E2E run (no public DNS/port
+# 80/443 reachability there) generates a SEPARATE `tls internal`-forced
+# derivative COPY of this file for its own test run — this file itself is
+# never modified to hardcode `tls internal`, since that would ship a
+# production-facing reference config that silently never gets a real,
+# browser-trusted certificate.
+vault.example.com {
+    # WebSocket upgrade for /api/sync/ws is automatic — Caddy's
+    # reverse_proxy detects the client's `Upgrade` header itself and
+    # forwards the handshake correctly with zero extra directives. Contrast
+    # with deploy/nginx.conf.example, which needs an explicit
+    # map/Upgrade/Connection/proxy_http_version block for the same behavior.
+    reverse_proxy pv-server:8620
+
+    # WR-02 (reverse-proxy side): /api/sync/ws carries the live session
+    # bearer token as `?token=...` in its query string — unavoidable, since
+    # the browser WebSocket API can't set custom headers on the upgrade
+    # request. Caddy's structured `query { delete <key> }` log filter strips
+    # just that one query key from the logged request URI before it's ever
+    # written to disk — mirrors crates/pv-server/src/main.rs's `make_span`
+    # doc comment (WR-02), which explicitly names this proxy-side config as
+    # Phase 7's obligation to close that gap; that comment covers pv-server's
+    # own tracing output, this log filter covers the proxy's raw access log
+    # written before pv-server's own middleware ever runs.
+    log {
+        output file /var/log/caddy/access.log
+        format filter {
+            wrap console
+            fields {
+                uri query {
+                    delete token
+                }
+            }
+        }
+    }
+}
