@@ -39,10 +39,14 @@ export default function UnlockOverlay() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  // Read once at mount — a second read would always return null (the
+  // Initialized once at mount — a second read would always return null (the
   // pending material is consumed on the first take), so this must not be
-  // re-derived on every render.
-  const [pending] = useState(() => takePendingUnlock());
+  // re-derived on every render. Needs a setter (not a read-once initializer)
+  // because a failed unlockFromPending() must clear it (WR-02): the
+  // wrappingKey handle is unconditionally freed in that function's
+  // `finally`, so leaving `pending` non-null would let a second click
+  // re-invoke unwrapUserKey on an already-freed wasm-bindgen handle.
+  const [pending, setPending] = useState(() => takePendingUnlock());
   // Same take-once-at-mount idiom — a post-passkey-login "no PRF" landing
   // carries this flag from LoginForm's setPrfUnavailableHint().
   const [prfUnavailableAtMount] = useState(() => takePrfUnavailableHint());
@@ -94,6 +98,12 @@ export default function UnlockOverlay() {
       setUnlockedUserKey(uk);
     } catch {
       setError(t("auth.loginFailed"));
+      // WR-02: drop the consumed/about-to-be-freed pending material and fall
+      // through to the password/passkey branch below — without this, the
+      // failure was previously silent (no `{error}` render existed in the
+      // pending branch's JSX) AND a second click would re-invoke
+      // unwrapUserKey on the wasm handle the `finally` below just freed.
+      setPending(null);
     } finally {
       pending.wrappingKey.free?.();
       setSubmitting(false);
@@ -161,6 +171,7 @@ export default function UnlockOverlay() {
             >
               {t("unlock.submit")}
             </button>
+            {error ? <p className="text-sm text-error">{error}</p> : null}
           </div>
         ) : (
           <div className="mt-6 flex flex-col gap-4">

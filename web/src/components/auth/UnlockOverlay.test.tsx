@@ -131,6 +131,47 @@ describe("UnlockOverlay", () => {
     );
   });
 
+  it("WR-02: on a failed pending unlock, shows the error, clears the pending material, falls back to the password form, and never re-invokes the freed wasm handle on a second click", async () => {
+    mockUseIsUnlocked.mockReturnValue(false);
+    const freeMock = vi.fn();
+    mockTakePendingUnlock.mockReturnValue({
+      wrappingKey: { free: freeMock },
+      pwWrappedUk: "wrapped-uk-json",
+    });
+    mockUnwrapUserKey.mockImplementation(() => {
+      throw new Error("corrupt pw_wrapped_uk");
+    });
+
+    render(<UnlockOverlay />);
+
+    // Starts on the one-click pending fast path — no password field yet.
+    expect(screen.queryByTestId("unlock-password")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("unlock-submit"));
+
+    // Failure must be visible (previously silent — no `{error}` render
+    // existed in the pending branch's JSX).
+    expect(await screen.findByText("auth.loginFailed")).toBeInTheDocument();
+    expect(freeMock).toHaveBeenCalledTimes(1);
+    expect(mockSetUnlockedUserKey).not.toHaveBeenCalled();
+    expect(mockUnwrapUserKey).toHaveBeenCalledTimes(1);
+
+    // Falls through to the password form once `pending` is cleared — the
+    // fast-path button/branch is gone, replaced by the standard password
+    // form (a re-render, not a page reload).
+    await waitFor(() => expect(screen.getByTestId("unlock-password")).toBeInTheDocument());
+
+    // A second click now hits the password form's own submit handler, never
+    // the freed wrappingKey handle — must not throw ("null pointer passed to
+    // rust" was the WR-02 symptom before this fix).
+    fireEvent.change(screen.getByTestId("unlock-password"), {
+      target: { value: "correcthorsebattery1" },
+    });
+    expect(() => fireEvent.click(screen.getByTestId("unlock-submit"))).not.toThrow();
+    // The freed pending wrappingKey is never touched again.
+    expect(mockUnwrapUserKey).toHaveBeenCalledTimes(1);
+    expect(freeMock).toHaveBeenCalledTimes(1);
+  });
+
   it("shows a password field and unwraps via me()+prelogin() when no pending material exists", async () => {
     mockUseIsUnlocked.mockReturnValue(false);
     mockTakePendingUnlock.mockReturnValue(null);
