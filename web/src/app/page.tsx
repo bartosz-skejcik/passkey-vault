@@ -16,6 +16,8 @@ import ItemForm from "@/components/vault/ItemForm";
 import CopyToast from "@/components/vault/CopyToast";
 import ErrorToast from "@/components/vault/ErrorToast";
 import SettingsPanel from "@/components/settings/SettingsPanel";
+import OnboardingWizard from "@/components/onboarding/OnboardingWizard";
+import { isOnboardingComplete } from "@/lib/onboarding/flag";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { getSessionToken } from "@/lib/auth/session";
 import { initCrypto, lockVault, useIsUnlocked } from "@/lib/crypto";
@@ -38,6 +40,11 @@ export default function Home() {
   // session token.
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [mode, setMode] = useState<"login" | "register">("login");
+  // UI-04: shown only immediately after a successful RegisterForm submit
+  // (never after LoginForm's), gated by the per-browser
+  // pv-onboarding-complete localStorage flag. See RegisterForm's onAuthed
+  // wiring below — LoginForm's onAuthed is intentionally left untouched.
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [autolockMinutes, setAutolockMinutes] = useState(Number(DEFAULT_AUTOLOCK_MINUTES));
   const [searchQuery, setSearchQuery] = useState("");
   // Track only the id, not the full VaultItem object — deriving the live
@@ -154,7 +161,13 @@ export default function Home() {
       </AuthCard>
     ) : (
       <AuthCard heading={t("auth.registerSubmit")}>
-        <RegisterForm onToggle={() => setMode("login")} onAuthed={() => setAuthed(true)} />
+        <RegisterForm
+          onToggle={() => setMode("login")}
+          onAuthed={() => {
+            setAuthed(true);
+            if (!isOnboardingComplete()) setShowOnboarding(true);
+          }}
+        />
       </AuthCard>
     );
   }
@@ -248,6 +261,7 @@ export default function Home() {
       <CopyToast />
       <ErrorToast />
       <UnlockOverlay />
+      {showOnboarding ? <OnboardingWizard onFinish={() => setShowOnboarding(false)} /> : null}
     </>
   );
 }
