@@ -1,9 +1,9 @@
 //! Integracyjne testy `GET /api/sync` przeciw realnej (in-memory, migrowanej)
 //! bazie SQLite — tani cheap-check, pełny snapshot przy nieaktualnej
 //! rewizji, atomiczny bump vault_revision przy mutacjach, izolacja między
-//! użytkownikami. Nie testuje WebSocket (Plan 05-02) — SYNC-01's pull
-//! contract jest w pełni funkcjonalny i testowalny niezależnie od SYNC-02's
-//! push channel.
+//! użytkownikami. Also covers `GET /api/sync/ws` (Plan 05-02, SYNC-02) via a
+//! real-socket harness (`test_server`) — `oneshot()` cannot exercise a WS
+//! upgrade handshake at all (05-RESEARCH.md Pitfall 2).
 
 mod common;
 
@@ -11,10 +11,20 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
+use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use common::{register_and_login, test_app, test_pool};
+use common::{register_and_login, test_app, test_pool, test_server};
+
+/// The session token is standard base64 (`A-Za-z0-9+/=`) — placed verbatim
+/// into a WS URL query string, `+` would be decoded as a space by axum's
+/// `Query` extractor (form-urlencoded convention), silently breaking the
+/// token match and returning 401. Percent-encode the three reserved chars
+/// base64's alphabet can contain.
+fn url_encode_token(token: &str) -> String {
+    token.replace('+', "%2B").replace('/', "%2F").replace('=', "%3D")
+}
 
 async fn body_json(response: axum::response::Response) -> Value {
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -150,4 +160,72 @@ async fn sync_is_scoped_to_the_authenticated_user() {
     let body_b = body_json(res_b).await;
     assert_eq!(body_b["revision"], 0);
     assert!(body_b.get("items").is_none(), "user B must not see any effect of user A's mutation");
+}
+
+#[tokio::test]
+async fn ws_rejects_invalid_token() {
+    let pool = test_pool().await;
+    let (_app, port) = test_server(pool).await;
+
+    let url = format!("ws://127.0.0.1:{port}/api/sync/ws?token=not-a-real-token");
+    let result = tokio_tungstenite::connect_async(&url).await;
+    assert!(result.is_err(), "an invalid ?token= must never complete the WS handshake");
+}
+
+#[tokio::test]
+async fn ws_event_contains_no_ciphertext() {
+    let pool = test_pool().await;
+    let (app, port) = test_server(pool).await;
+    let token = register_and_login(&app, "sync-ws-nociphertext@example.com").await;
+
+    let url = format!("ws://127.0.0.1:{port}/api/sync/ws?token={}", url_encode_token(&token));
+    let (mut ws_stream, _) = tokio_tungstenite::connect_async(&url).await.expect("valid token upgrades the socket");
+
+    let id = uuid::Uuid::new_v4().to_string();
+    assert_eq!(
+        req(&app, "POST", "/api/vault/items", &token, Some(item_body(&id))).await.status(),
+        StatusCode::CREATED
+    );
+
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(2), ws_stream.next())
+        .await
+        .expect("WS frame must arrive within 2s")
+        .expect("stream must not end")
+        .expect("frame must not be a protocol error");
+
+    let text = match msg {
+        tokio_tungstenite::tungstenite::Message::Text(text) => text.to_string(),
+        other => panic!("expected a Text frame, got {other:?}"),
+    };
+    let parsed: Value = serde_json::from_str(&text).expect("frame must be valid JSON");
+    let obj = parsed.as_object().expect("frame must be a JSON object");
+    let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec!["change_type", "entity_type", "id", "revision"],
+        "SyncEvent frame must carry exactly these four keys — no ciphertext field"
+    );
+    assert_eq!(parsed["entity_type"], "item");
+    assert_eq!(parsed["change_type"], "create");
+}
+
+#[tokio::test]
+async fn ws_cross_user_isolation() {
+    let pool = test_pool().await;
+    let (app, port) = test_server(pool).await;
+    let token_a = register_and_login(&app, "sync-ws-isolation-a@example.com").await;
+    let token_b = register_and_login(&app, "sync-ws-isolation-b@example.com").await;
+
+    let url_b = format!("ws://127.0.0.1:{port}/api/sync/ws?token={}", url_encode_token(&token_b));
+    let (mut ws_stream_b, _) = tokio_tungstenite::connect_async(&url_b).await.expect("B's token upgrades the socket");
+
+    let id_a = uuid::Uuid::new_v4().to_string();
+    assert_eq!(
+        req(&app, "POST", "/api/vault/items", &token_a, Some(item_body(&id_a))).await.status(),
+        StatusCode::CREATED
+    );
+
+    let result = tokio::time::timeout(std::time::Duration::from_millis(500), ws_stream_b.next()).await;
+    assert!(result.is_err(), "user B's socket must never receive user A's SyncEvent");
 }

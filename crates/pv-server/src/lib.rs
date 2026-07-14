@@ -40,6 +40,12 @@ pub struct AppState {
     /// the same email within one uptime are byte-stable, matching a real
     /// account's stable passkey list), not persisted across restarts.
     pub dummy_secret: [u8; 32],
+    /// In-process per-user WebSocket fan-out hub (SYNC-02, Plan 05-02) — see
+    /// `routes::sync::SyncHub`'s own doc comment. `Clone`-internally shape
+    /// (`Arc<Mutex<...>>`), mirroring this struct's `webauthn` field
+    /// precedent for a shared resource built once and cloned cheaply per
+    /// request via axum's `State` extractor.
+    pub sync_hub: crate::routes::sync::SyncHub,
 }
 
 /// Łączy się z bazą (tworząc plik, jeśli brakuje) i uruchamia migracje.

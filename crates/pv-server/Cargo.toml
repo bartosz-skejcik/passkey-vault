@@ -8,7 +8,7 @@ description = "Self-hostable vault server: axum + SQLx/SQLite + webauthn-rs."
 [dependencies]
 pv-core = { path = "../pv-core" }
 
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "uuid", "migrate"] }
 webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
@@ -26,3 +26,5 @@ uuid.workspace = true
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 webauthn-authenticator-rs = { version = "0.5.5", default-features = false, features = ["softpasskey"] }
+tokio-tungstenite = "0.30"
+futures-util = "0.3"
