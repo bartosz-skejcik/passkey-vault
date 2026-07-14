@@ -393,3 +393,110 @@ async fn passkeys_ownership_rejects_cross_user_access() {
     let (status, body) = req_json(&app, "DELETE", &format!("/api/passkeys/{passkey_id}"), &token_b, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "cross-user delete must be 404, not 403: {body:?}");
 }
+
+// --- WR-01 regression: consume_state atomicity under real concurrency ---
+
+/// `prf_wrap_rejects_replayed_assertion` above exercises the *sequential*
+/// single-use guarantee (second call after the first has already returned).
+/// It does not exercise the TOCTOU the WR-01 fix actually closes: two
+/// `consume_state` calls racing against EACH OTHER on separate DB
+/// connections. `common::test_pool()` is deliberately `max_connections(1)`
+/// (see its doc comment), which would serialize any such race away and
+/// prove nothing — so this test builds its own multi-connection,
+/// shared-cache in-memory pool and drives `webauthn_state::consume_state`
+/// directly (bypassing the HTTP layer, which has no way to force two
+/// requests onto literally the same instant). With the pre-fix SELECT-then-
+/// DELETE, both `tokio::join!`ed calls could observe the row via SELECT
+/// before either DELETE committed, and both would return `Ok`. The atomic
+/// `DELETE ... RETURNING` fix guarantees exactly one winner.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn consume_state_is_atomic_under_concurrent_callers() {
+    use pv_server::routes::webauthn_state;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::sync::Arc;
+    use tokio::sync::Barrier;
+
+    // Unique shared-cache name per test run so parallel `cargo test` runs of
+    // this file don't collide on the same in-memory database.
+    let db_name = format!("webauthn_race_{}", Uuid::new_v4().simple());
+    let db_url = format!("file:{db_name}?mode=memory&cache=shared");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(4)
+        // Shared-cache in-memory DBs are dropped once the last connection to
+        // them closes — keep at least one idle connection alive for the
+        // pool's lifetime so migrations + both racing calls see the same DB.
+        .min_connections(1)
+        .connect(&db_url)
+        .await
+        .expect("connect shared-cache in-memory sqlite pool");
+    sqlx::migrate!("./migrations").run(&pool).await.expect("run migrations");
+
+    // webauthn_states.user_id is FK-enforced (ON DELETE CASCADE) — insert a
+    // minimal fixture user directly rather than pulling in the full
+    // register/login HTTP flow, which this test has no other use for.
+    let user_id = "race-user";
+    sqlx::query(
+        "INSERT INTO users (id, email, kdf_params, kdf_salt, pw_wrapped_uk) VALUES (?, ?, '{}', X'00', '{}')",
+    )
+    .bind(user_id)
+    .bind("race@example.com")
+    .execute(&pool)
+    .await
+    .expect("insert fixture user");
+
+    // A single `tokio::join!` pair is not reliably enough to force the
+    // SELECT-then-DELETE interleaving the old (pre-WR-01) code was
+    // vulnerable to — in-process SQLite queries against a tiny in-memory DB
+    // complete in microseconds, so two tasks racing once mostly just
+    // serialize without ever actually overlapping. Running many trials, each
+    // with a `Barrier` that releases both callers at the same instant on
+    // real OS threads (`flavor = "multi_thread"`), reliably reproduces the
+    // TOCTOU window against the pre-fix implementation while remaining
+    // fast (~ms) against the atomic `DELETE ... RETURNING` fix.
+    const TRIALS: usize = 200;
+    let mut double_wins = 0usize;
+    for i in 0..TRIALS {
+        let state_id = webauthn_state::persist_state(
+            &pool,
+            user_id,
+            "registration",
+            "{\"race\":true}",
+            None,
+            None,
+        )
+        .await
+        .expect("persist_state must succeed");
+
+        let barrier = Arc::new(Barrier::new(2));
+        let pool_a = pool.clone();
+        let pool_b = pool.clone();
+        let state_id_a = state_id.clone();
+        let state_id_b = state_id.clone();
+        let barrier_a = barrier.clone();
+        let barrier_b = barrier.clone();
+
+        let task_a = tokio::spawn(async move {
+            barrier_a.wait().await;
+            webauthn_state::consume_state(&pool_a, user_id, &state_id_a, "registration").await
+        });
+        let task_b = tokio::spawn(async move {
+            barrier_b.wait().await;
+            webauthn_state::consume_state(&pool_b, user_id, &state_id_b, "registration").await
+        });
+        let (result_a, result_b) = tokio::join!(task_a, task_b);
+        let result_a = result_a.expect("task a must not panic");
+        let result_b = result_b.expect("task b must not panic");
+
+        let wins = usize::from(result_a.is_ok()) + usize::from(result_b.is_ok());
+        assert!(wins >= 1, "trial {i}: at least one caller must win a live, unconsumed state_id");
+        if wins == 2 {
+            double_wins += 1;
+        }
+    }
+
+    assert_eq!(
+        double_wins, 0,
+        "{double_wins}/{TRIALS} trials had BOTH concurrent consume_state() calls succeed for the \
+         same state_id — the single-use/anti-replay guarantee (T-03-04, WR-01) is broken"
+    );
+}
