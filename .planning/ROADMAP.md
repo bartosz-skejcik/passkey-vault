@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: WASM Crypto Bridge & Web App Shell** - Bridge `pv-core` to WASM behind a themed Next.js shell; prove a full crypto round-trip through the choke-point module (completed 2026-07-12)
 - [x] **Phase 2: Password Auth & Vault Core** - Register, log in with a master password, and fully manage an encrypted vault of items — the first real end-to-end zero-knowledge slice (completed 2026-07-13)
-- [ ] **Phase 3: Passkey Enrollment & Account Security** - Enroll a PRF passkey, manage passkeys/sessions, with the recovery invariant server-enforced
+- [x] **Phase 3: Passkey Enrollment & Account Security** - Enroll a PRF passkey, manage passkeys/sessions, with the recovery invariant server-enforced (completed 2026-07-14)
 - [ ] **Phase 4: PRF Unlock & Login Unification** - Log in and unlock the vault in one passkey gesture, with an honest fallback when PRF isn't available
 - [ ] **Phase 5: Multi-Device Sync** - Keep the vault in sync across simultaneously-active devices/sessions
 - [ ] **Phase 6: Import/Export, TOTP & Onboarding** - Bring in an existing password manager's data, see live TOTP codes, export back out
@@ -104,12 +104,12 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Passkey enrollment ceremony backend: schema rebuild, webauthn-rs wiring, register/finish/prf-wrap endpoints (pv-server)
+- [x] 03-01-PLAN.md — Passkey enrollment ceremony backend: schema rebuild, webauthn-rs wiring, register/finish/prf-wrap endpoints (pv-server)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-02-PLAN.md — Passkey management + sessions API: list/rename/delete with AUTH-05 guard, session list/revoke (pv-server)
-- [ ] 03-03-PLAN.md — Enrollment ceremony frontend: pv-wasm PRF export, two-ceremony orchestration, EnrollPasskeyDialog
+- [x] 03-02-PLAN.md — Passkey management + sessions API: list/rename/delete with AUTH-05 guard, session list/revoke (pv-server)
+- [x] 03-03-PLAN.md — Enrollment ceremony frontend: pv-wasm PRF export, two-ceremony orchestration, EnrollPasskeyDialog
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -130,7 +130,21 @@ Plans:
   3. In a fresh browser session on a PRF-enrolled account, the user unlocks with just the passkey gesture — no password entry required
   4. When PRF is unavailable (browser/OS/authenticator lacks support), the user sees a specific, readable explanation and a working password-unlock fallback — never a generic error or a silent hang
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 04-01-PLAN.md — Passkey-login (unauthenticated, session-issuing) + unlock (session-gated, no new session) WebAuthn authentication ceremony endpoints (pv-server)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 04-02-PLAN.md — Client orchestration (login.ts) + PasskeyUnlockButton + LoginForm/UnlockOverlay wiring + 3-tier honest fallback (web)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 04-03-PLAN.md — Full regression sweep + real-browser passkey login/unlock UAT
+
 **UI hint**: yes
 
 ### Phase 5: Multi-Device Sync
@@ -145,7 +159,26 @@ Plans:
   2. A WebSocket push notifies other active sessions of a change via metadata only (`{item_id, revision, change_type}`) — traffic inspection confirms ciphertext never traverses the push channel
   3. When two devices edit concurrently, the conflict resolves per-item by revision (last-write-wins is visible and doesn't silently corrupt unrelated items)
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 05-01-PLAN.md — Revision-gated pull endpoint: vault_revision migration + atomic bump wiring + GET /api/sync (pv-server)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 05-02-PLAN.md — WebSocket push channel: SyncHub/SyncEvent + GET /api/sync/ws + publish wiring (pv-server)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 05-03-PLAN.md — Client sync engine: WS reconnect/backoff + poll fallback + store merge (web)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 05-04-PLAN.md — Client UX: sync-status dot + proactive live-edit-conflict banner + remote-delete toast (web)
+
+**UI hint**: yes
 
 ### Phase 6: Import/Export, TOTP & Onboarding
 
@@ -161,7 +194,22 @@ Plans:
   4. User can export the full vault to JSON and CSV, with a clear plaintext warning shown before export
   5. Vault items of type TOTP show a live, counting-down code generated locally from the item's secret
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 06-01-PLAN.md — TOTP crypto path: pv-core/pv-wasm totp-rs binding + TotpFields wired into TypePicker/ItemForm/DetailPanel/ItemRow (VAULT-07)
+- [ ] 06-02-PLAN.md — Import mapping layer: papaparse + format detection + Bitwarden/NordPass/1Password/LastPass/KeePass mappers + generic manual mapping (IMPEX-01/02/03)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 06-03-PLAN.md — ImportWizard + ExportDialog + Settings Import/Eksport tab wiring (IMPEX-01/02/03/04)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 06-04-PLAN.md — Onboarding wizard: 3-step takeover, import-first, per-browser completion flag (UI-04)
+
 **UI hint**: yes
 
 ### Phase 7: Self-Host Packaging & Deployment
@@ -187,8 +235,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 |-------|----------------|--------|-----------|
 | 1. WASM Crypto Bridge & Web App Shell | 3/3 | Complete    | 2026-07-12 |
 | 2. Password Auth & Vault Core | 8/8 | Complete    | 2026-07-13 |
-| 3. Passkey Enrollment & Account Security | 0/TBD | Not started | - |
-| 4. PRF Unlock & Login Unification | 0/TBD | Not started | - |
-| 5. Multi-Device Sync | 0/TBD | Not started | - |
+| 3. Passkey Enrollment & Account Security | 3/4 | Complete    | 2026-07-14 |
+| 4. PRF Unlock & Login Unification | 0/3 | Not started | - |
+| 5. Multi-Device Sync | 0/4 | Not started | - |
 | 6. Import/Export, TOTP & Onboarding | 0/TBD | Not started | - |
 | 7. Self-Host Packaging & Deployment | 0/TBD | Not started | - |
