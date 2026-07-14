@@ -27,22 +27,14 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 - ✓ Enrollment passkeys (two-ceremony PRF), Settings (Passkeys/Sesje/Bezpieczeństwo), server-enforced no-stranding, revoke sesji — Phase 3
 - ✓ PRF unlock vaulta passkeyem + zunifikowany login (passkey-first), pending-unlock recovery — Phase 4
 - ✓ Multi-device sync: revision-gated GET /api/sync, WS push metadata-only (zero ciphertext w kanale push), konflikt per-item po rewizji (409 + banner), reconnecting dot, remote-delete toast — Phase 5 (SYNC-01/02/03), zweryfikowane live w 2 kartach
+- ✓ Import (Bitwarden JSON/CSV, NordPass/1Password/LastPass/KeePass CSV, generic z ręcznym mapowaniem) + eksport JSON/CSV z bramką ostrzeżenia plaintext + TOTP jako typ itemu (RFC 6238 w pv-core/WASM, live coral ring) + onboarding 3-krokowy (import-first, per-browser flag) — Phase 6 (VAULT-07, IMPEX-01..04, UI-04), UAT 4/4 live
+- ✓ Self-host packaging: `Config::validate()` fail-loud na błędny RP_ID/ORIGIN przed bootem, 1 kontener Docker (axum serwuje API + statyczny web app + SQLite WAL na wolumenie), reference nginx/Caddy (strip `?token=` z access-logów WS), SIGTERM graceful — Phase 7 (DEPLOY-01/02); code+runtime zweryfikowane, container E2E → human_needed na hoście z Dockerem
+
+**✅ v0.1 MVP SHIPPED 2026-07-14** — 30/30 requirements, 7/7 faz zweryfikowanych, integracja cross-phase czysta (5/5 flows E2E). Audit: `.planning/milestones/v0.1-MILESTONE-AUDIT.md`.
 
 ### Active
 
-<!-- v0.1 (MVP): serwer + web app -->
-
-- [ ] Vault CRUD (itemy: login, passkey, karta, notatka, TOTP) przez REST API na zaszyfrowanych blobach
-- [ ] Rejestracja + logowanie hasłem (hash-po-KDF, hasło nigdy nie leci na serwer)
-- [ ] **PRF unlock**: enrollment passkeya z rozszerzeniem PRF + odblokowanie vaulta passkeyem (webauthn-rs po stronie RP)
-- [ ] Recovery obowiązkowe: User Key zawsze wrapowany też pod master password — UI wymusza, żeby passkey nigdy nie był jedyną kopią klucza
-- [ ] Web app (Next.js 16 + Tailwind v4 + DaisyUI 5, theme datafa.st) z krypto w pv-core→WASM — shell + krypto gotowe (Phase 1), ekrany funkcjonalne w Phases 2–6
-- [ ] Sync revision-based (GET/PUT /sync) + WebSocket push
-- [ ] Import z Bitwardena (JSON) i CSV — przetwarzanie klientowe
-- [ ] Wbudowany TOTP (generowanie kodów w vaulcie)
-- [ ] Deploy jednym kontenerem Docker (serwer + statyczny web app, SQLite na wolumenie)
-
-<!-- Po v0.1, w ramach v1: -->
+<!-- v0.2 (Browser Extension) i dalej: -->
 
 - [ ] Extension (WXT, MV3, Chrome + Firefox): popup, autofill, **passkey provider** (MAIN-world patch navigator.credentials, passkey-rs→WASM, fall-through do natywnych) — obejmuje OBA przepływy: **rejestrację nowego passkeya na cudzej stronie** (`credentials.create` — np. GitHub → Settings → dodaj passkey → zapisuje się do naszego vaulta) i **logowanie zapisanym passkeyem** (`credentials.get`)
 - [ ] Sharing: zaszyfrowane linki (klucz w URL fragment) + współdzielenie rodzinne w ramach instancji
@@ -115,4 +107,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-14 after Phase 5 (Multi-Device Sync)*
+*Last updated: 2026-07-14 after v0.1 MVP milestone (Phases 1–7 shipped). Next focus: v0.2 Browser Extension.*

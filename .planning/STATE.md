@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v0.1
 milestone_name: milestone
-current_phase: 04
-current_phase_name: PRF Unlock & Login Unification
-status: executing
+current_phase: 1
+status: Awaiting next milestone
 stopped_at: Completed 02-06-PLAN.md (Phase 2 complete)
-last_updated: "2026-07-14T19:21:10.094Z"
+last_updated: "2026-07-14T19:31:14.734Z"
 last_activity: 2026-07-14
-last_activity_desc: Phase 3 complete, transitioned to Phase 04
+last_activity_desc: Milestone v0.1 completed and archived
 progress:
   total_phases: 7
   completed_phases: 7
   total_plans: 29
   completed_plans: 29
   percent: 100
+current_phase_name: PRF Unlock & Login Unification
 ---
 
 # Project State
@@ -28,12 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 
 ## Current Position
 
-Phase: 04 — PRF Unlock & Login Unification
-Plan: Not started
-Status: Executing Phase 07
-Last activity: 2026-07-14 — Phase 3 complete, transitioned to Phase 04
-
-Progress: [█████████░] 93% (27/29 plans)
+Phase: Milestone v0.1 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-14 — Milestone v0.1 completed and archived
 
 ## Performance Metrics
 
@@ -117,14 +115,22 @@ None yet.
 
 ## Deferred Items
 
-Items acknowledged and carried forward from previous milestone close:
+Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_closeout):
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| *(none)* | | | |
+| uat | Phase 07 container/proxy E2E (docker build, compose persistence, nginx -t, caddy validate, verify-container.sh, SIGTERM timing, Playwright-behind-proxy) — Docker/nginx/caddy unavailable in autonomous env; exact commands in 07-UAT.md | human_needed | 2026-07-14 |
+| uat | Phase 05 UAT | passed (0 pending scenarios) | 2026-07-14 |
+| uat | Phase 06 UAT | passed (0 pending scenarios) | 2026-07-14 |
+| todo | 2026-07-12-ui-review-phase1-fixes — 3 WARNING UI findings (light-theme base-300 surface borders, SelfTestCard fatal-branch retry, "patrz błąd poniżej" copy order) — cosmetic, v0.2 polish candidates | open | 2026-07-14 |
+| tech-debt | IMPEX-04 CSV export lossy for non-default TOTP (algorithm/digits/period dropped; JSON lossless) — see v0.1-MILESTONE-AUDIT.md W-1 | open | 2026-07-14 |
 
 ## Session Continuity
 
 Last session: 2026-07-13T13:35:10.315Z
 Stopped at: Completed 02-06-PLAN.md (Phase 2 complete)
 Resume file: None
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone
