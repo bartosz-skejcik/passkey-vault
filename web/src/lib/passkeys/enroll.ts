@@ -89,27 +89,39 @@ export async function enrollPasskey(
     }
     const prfArray = new Uint8Array(prfBytes);
     const wrappingKey = WasmWrappingKey.fromPrf(prfArray); // zeroizes prfArray as a side effect
-    const wrappedJson = wrapUserKey(wrappingKey, uk);
+    // `wrappingKey` is a wasm-bindgen handle: its `ZeroizeOnDrop` only fires
+    // when the underlying Rust value is dropped, which for a wasm-bindgen
+    // object needs an explicit `.free()` (JS garbage collection alone would
+    // eventually zeroize it, but on an unpredictable timeline) — matching
+    // the project's deterministic-zeroization discipline for key material
+    // (IN-02). `wrapUserKey` fully consumes `wrappingKey` synchronously (it
+    // does not hold onto it), so freeing it right after is safe.
+    try {
+      const wrappedJson = wrapUserKey(wrappingKey, uk);
 
-    // Defense-in-depth (WR-04): `PublicKeyCredential.toJSON()` serializes
-    // `clientExtensionResults`, which for the PRF extension can in principle
-    // include the raw eval output bytes (mainstream browsers currently don't
-    // appear to put the secret `results.first` bytes there, but that's an
-    // undocumented, browser-version-dependent behavior, not a contract).
-    // The server's `finish_passkey_authentication` never needs `prf` output
-    // — strip it before it ever leaves the client, so the zero-knowledge
-    // boundary doesn't rely on that assumption holding forever.
-    const credentialJson = assertion.toJSON() as { clientExtensionResults?: { prf?: unknown } };
-    if (credentialJson.clientExtensionResults?.prf !== undefined) {
-      delete credentialJson.clientExtensionResults.prf;
+      // Defense-in-depth (WR-04): `PublicKeyCredential.toJSON()` serializes
+      // `clientExtensionResults`, which for the PRF extension can in
+      // principle include the raw eval output bytes (mainstream browsers
+      // currently don't appear to put the secret `results.first` bytes
+      // there, but that's an undocumented, browser-version-dependent
+      // behavior, not a contract). The server's `finish_passkey_authentication`
+      // never needs `prf` output — strip it before it ever leaves the
+      // client, so the zero-knowledge boundary doesn't rely on that
+      // assumption holding forever.
+      const credentialJson = assertion.toJSON() as { clientExtensionResults?: { prf?: unknown } };
+      if (credentialJson.clientExtensionResults?.prf !== undefined) {
+        delete credentialJson.clientExtensionResults.prf;
+      }
+
+      await prfWrap(passkeyId, {
+        state_id: prfStateId,
+        credential: credentialJson,
+        prf_wrapped_uk: wrappedJson,
+      });
+      onStep("doneWithPrf");
+    } finally {
+      wrappingKey.free();
     }
-
-    await prfWrap(passkeyId, {
-      state_id: prfStateId,
-      credential: credentialJson,
-      prf_wrapped_uk: wrappedJson,
-    });
-    onStep("doneWithPrf");
   } catch {
     // Any step-2 cancel/failure is STILL a successful enrollment: the
     // credential from step 1 already exists server-side. Routing this to

@@ -92,6 +92,30 @@ describe("enrollPasskey", () => {
       credential: { id: "assertion-1" },
       prf_wrapped_uk: "wrapped-uk-json",
     });
+    // IN-02: the PRF-derived WASM wrapping-key handle must be explicitly
+    // freed (ZeroizeOnDrop only fires on Rust-side drop, which for a
+    // wasm-bindgen object requires `.free()` or unpredictable GC).
+    expect(FAKE_WRAPPING_KEY.free).toHaveBeenCalledTimes(1);
+  });
+
+  it("frees the wrapping-key handle even when prfWrap rejects (IN-02 finally)", async () => {
+    const credential = { toJSON: vi.fn().mockReturnValue({ id: "cred-1" }) };
+    (global.navigator.credentials.create as ReturnType<typeof vi.fn>).mockResolvedValue(
+      credential,
+    );
+    const assertion = {
+      toJSON: vi.fn().mockReturnValue({ id: "assertion-1" }),
+      getClientExtensionResults: vi.fn().mockReturnValue({
+        prf: { results: { first: new ArrayBuffer(32) } },
+      }),
+    };
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(assertion);
+    mockPrfWrap.mockRejectedValue(new Error("server rejected prf-wrap"));
+
+    const onStep = vi.fn();
+    await enrollPasskey("My passkey", onStep);
+
+    expect(FAKE_WRAPPING_KEY.free).toHaveBeenCalledTimes(1);
   });
 
   it("strips clientExtensionResults.prf from the serialized assertion before POSTing it (WR-04)", async () => {
