@@ -31,6 +31,17 @@ function emptyRow(): ExportRow {
   return Object.fromEntries(EXPORT_COLUMNS.map((column) => [column, ""])) as ExportRow;
 }
 
+// CSV formula injection (CWE-1236): Papa.unparse correctly quotes/escapes
+// delimiters but does not neutralize a cell value that Excel/Google Sheets
+// will interpret as a formula when opened -- one starting with =, +, -, @,
+// tab, or CR. Vault field values can originate from a previously imported
+// (attacker-influenced) file, so a re-exported CSV could carry a live
+// payload. Prefix at-risk values with a leading apostrophe, which Excel/
+// Sheets both treat as "force text" and strip from display.
+function neutralizeFormulaInjection(value: string): string {
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
 export function buildCsvExport(items: VaultItem[], folders: Folder[]): string {
   const folderNameById = new Map(folders.map((folder) => [folder.id, folder.name]));
 
@@ -71,6 +82,10 @@ export function buildCsvExport(items: VaultItem[], folders: Folder[]): string {
         row.secret = fields.secret;
         row.notes = fields.notes;
         break;
+    }
+
+    for (const column of EXPORT_COLUMNS) {
+      row[column] = neutralizeFormulaInjection(row[column]);
     }
 
     return row;
