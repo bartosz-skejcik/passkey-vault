@@ -99,7 +99,22 @@ Plans:
   3. Deleting a passkey that would leave the vault with no password/recovery fallback is blocked by the server itself (verified by calling the API directly, not just observing the UI), not merely discouraged in copy
   4. From Settings, user sees active sessions/devices and can revoke any of them individually
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 03-01-PLAN.md — Passkey enrollment ceremony backend: schema rebuild, webauthn-rs wiring, register/finish/prf-wrap endpoints (pv-server)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 03-02-PLAN.md — Passkey management + sessions API: list/rename/delete with AUTH-05 guard, session list/revoke (pv-server)
+- [ ] 03-03-PLAN.md — Enrollment ceremony frontend: pv-wasm PRF export, two-ceremony orchestration, EnrollPasskeyDialog
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 03-04-PLAN.md — Settings panel assembly: Passkeys/Sessions/Security tabs, Sidebar restructure, real-browser UAT
+
 **UI hint**: yes
 
 ### Phase 4: PRF Unlock & Login Unification
