@@ -1,0 +1,40 @@
+# docker-compose.proxy-test.yml
+#
+# Compose OVERLAY for scripts/verify-container.sh's scripted end-to-end
+# reverse-proxy check. Used via:
+#   docker compose -f docker-compose.yml -f docker-compose.proxy-test.yml up
+# NEVER a standalone/replacement compose file — always layered on top of the
+# real docker-compose.yml (Plan 07-02), which defines the pv-server service
+# these two proxies front.
+#
+# Both deploy/nginx.conf.example and deploy/Caddyfile.example use a
+# placeholder site address (vault.example.com) — since this is a reference
+# config, not something rewritten per-deployment by this repo. Local/test
+# verification therefore uses a `Host: vault.example.com` header override
+# against 127.0.0.1, e.g.:
+#   curl -k -H "Host: vault.example.com" https://127.0.0.1:8621/healthz
+# rather than rewriting either shipped example file.
+#
+# Both TLS-related mount paths below (${PV_TEST_CERTS_DIR},
+# ${PV_TEST_CADDYFILE}) are script-generated, disposable, test-only material
+# — scripts/verify-container.sh sets these env vars to paths inside its own
+# mktemp -d scratch directory. Never committed, never pointed at real certs.
+services:
+  nginx-test:
+    image: nginx:1-alpine
+    depends_on:
+      - pv-server
+    ports:
+      - "8621:443"
+    volumes:
+      - ./deploy/nginx.conf.example:/etc/nginx/nginx.conf:ro
+      - ${PV_TEST_CERTS_DIR}:/etc/nginx/certs:ro
+
+  caddy-test:
+    image: caddy:2
+    depends_on:
+      - pv-server
+    ports:
+      - "8622:443"
+    volumes:
+      - ${PV_TEST_CADDYFILE}:/etc/caddy/Caddyfile:ro

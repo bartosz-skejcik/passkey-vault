@@ -135,3 +135,57 @@ docker compose up -d
 | Kontener działa, ale `curl http://<host>:8620/healthz` nic nie zwraca z zewnątrz maszyny | `PV_ADDR` przypadkowo nadpisany na `127.0.0.1:8620` (np. przez ręczną edycję `docker-compose.yml`) | Usuń nadpisanie — obraz domyślnie wiąże się na `0.0.0.0:8620`, co jest wymagane do osiągalności z hosta |
 | Po `docker compose down && docker compose up` dane zniknęły | Wolumen `pv_data` nie został użyty (np. uruchomiono `docker run` bez `-v`) | Zawsze uruchamiaj przez `docker compose up` albo jawnie `-v pv_data:/data` — obraz deklaruje `VOLUME /data`, ale nazwany wolumen trzeba utworzyć raz i konsekwentnie podłączać |
 | Passkey/PRF ceremonie failują tylko za reverse proxy, działają lokalnie | Brakujące nagłówki upgrade WebSocket albo zły `PV_ORIGIN` względem faktycznego adresu widzianego przez przeglądarkę | Sprawdź konfigurację w `deploy/` (nginx/Caddy) i upewnij się, że `PV_ORIGIN` odpowiada dokładnie temu, co widzi przeglądarka (łącznie ze schematem) |
+
+## Weryfikacja end-to-end za reverse proxy
+
+Ta sekcja pokrywa ROADMAP.md Phase 7 success criterion #3 — passkey ceremonie
+i sync WebSocket muszą przeżyć realny reverse proxy, nie tylko połączenie
+bezpośrednio do kontenera.
+
+### Automatyczna: transport + zacieranie logów
+
+```sh
+bash scripts/verify-container.sh
+```
+
+Buduje obraz, stawia `pv-server` za realnym, zdockeryzowanym nginx **i**
+realnym, zdockeryzowanym Caddy (`docker-compose.proxy-test.yml`, overlay nad
+`docker-compose.yml` — nigdy osobna, rozjeżdżająca się definicja), rejestruje
+jednorazowe konto i loguje się bezpośrednio na `pv-server`, żeby uzyskać
+prawdziwy token sesji, po czym asertuje: HTTPS `/healthz` (przez `curl -k` z
+nagłówkiem `Host`), kompletny handshake WS `wss://.../api/sync/ws` z tym
+prawdziwym tokenem, oraz brak `token=` we własnym logu dostępu każdego z
+proxy. Skrypt kończy się kodem różnym od zera i nazywa dokładnie, która
+asercja nie przeszła.
+
+HTTPS jest tu osiągane przez jednorazowy, wygenerowany-przez-skrypt
+self-signed certyfikat (nginx) i wymuszone `tls internal` w kopii testowej
+Caddyfile (Caddy) — żaden z tych mechanizmów nie trafia do
+`deploy/nginx.conf.example` ani `deploy/Caddyfile.example`, które pozostają
+realistycznymi konfiguracjami produkcyjnymi (prawdziwe certy / prawdziwe
+ACME, zgodnie z ich własnymi komentarzami).
+
+To sprawdza wyłącznie warstwę transportu HTTP/WS i logowania — pełna
+ceremonia WebAuthn (rejestracja passkeya, PRF unlock) wymaga prawdziwej
+przeglądarki + authenticatora i nie da się jej zeskryptować samym
+`curl`/`websocat`. Do tego służy manualny krok poniżej.
+
+### Manualna: pełna ceremonia passkey za proxy (Playwright-UAT)
+
+Zgodnie z ustaloną w projekcie konwencją Playwright-UAT (self-walidacja przez
+Playwright + jednorazowe konto testowe; zrzuty ekranu tylko dla ocen
+smakowych/UX, nie wymagane tutaj — to czysto funkcjonalny check):
+
+1. Wystaw oba proxy razem z `pv-server`:
+   ```sh
+   docker compose -f docker-compose.yml -f docker-compose.proxy-test.yml up -d
+   ```
+2. Otwórz w realnej przeglądarce zaproxowany adres (np.
+   `https://127.0.0.1:8621/` z nagłówkiem `Host: vault.example.com`, albo
+   dodaj wpis do `/etc/hosts` żeby uniknąć ręcznego nadpisywania nagłówka).
+3. Przejdź pełną rejestrację passkeya + PRF unlock vaulta.
+4. Zasymuluj krótką przerwę w sieci (np. DevTools → Network → Offline na
+   chwilę) i potwierdź, że sync WebSocket ponownie się łączy po jej
+   ustaniu.
+5. Powtórz dla drugiego proxy (port 8622 dla Caddy) — obie konfiguracje
+   referencyjne muszą przejść ten sam manualny check.
