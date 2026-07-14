@@ -157,7 +157,7 @@ export default function EnrollPasskeyDialog({
               data-testid="enroll-no-prf-badge"
               className="badge badge-ghost text-base-content/50"
             >
-              Bez PRF
+              {t("passkeys.noPrfBadge")}
             </span>
             <div className="flex w-full justify-end">
               <button
