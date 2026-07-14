@@ -24,7 +24,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 - [x] **VAULT-04**: Użytkownik może natychmiastowo przeszukiwać vault po stronie klienta (nazwa, username, domena)
 - [x] **VAULT-05**: Użytkownik może wygenerować silne hasło (długość-first, default 16+, tryb passphrase obok znakowego)
 - [x] **VAULT-06**: Użytkownik może skopiować pole do schowka; schowek czyści się automatycznie po 30–60 s (default ON, konfigurowalny)
-- [ ] **VAULT-07**: Użytkownik widzi kody TOTP generowane z sekretu itemu (totp-rs w pv-core/WASM), z odliczaniem ważności
+- [x] **VAULT-07**: Użytkownik widzi kody TOTP generowane z sekretu itemu (totp-rs w pv-core/WASM), z odliczaniem ważności
 
 ### Sync
 
@@ -119,7 +119,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 | SYNC-01 | Phase 5: Multi-Device Sync | Complete |
 | SYNC-02 | Phase 5: Multi-Device Sync | Complete |
 | SYNC-03 | Phase 5: Multi-Device Sync | Complete |
-| VAULT-07 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
+| VAULT-07 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
 | IMPEX-01 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
 | IMPEX-02 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
 | IMPEX-03 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
