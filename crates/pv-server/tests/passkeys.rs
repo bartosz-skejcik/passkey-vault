@@ -500,3 +500,62 @@ async fn consume_state_is_atomic_under_concurrent_callers() {
          same state_id — the single-use/anti-replay guarantee (T-03-04, WR-01) is broken"
     );
 }
+
+// --- WR-05 regression: abandoned webauthn_states rows get swept ---
+
+/// Rows are only ever removed on a successful `consume_state` — a ceremony
+/// a user abandons (closes the WebAuthn prompt, network drop, no-PRF
+/// authenticator, or simply never finishes) previously left a permanent
+/// row with no sweep, letting the table grow without bound on a long-lived
+/// deployment. `persist_state` now opportunistically deletes already-expired
+/// rows before inserting the new one; this test manually backdates a row's
+/// `expires_at` into the past (rather than waiting out a real 5-minute TTL)
+/// and asserts the next `persist_state` call sweeps it.
+#[tokio::test]
+async fn persist_state_sweeps_expired_rows() {
+    use pv_server::routes::webauthn_state;
+
+    let pool = common::test_pool().await;
+    let app = common::test_app(pool.clone());
+    let _token = common::register_and_login(&app, "sweep@example.com").await;
+
+    let row = sqlx::query("SELECT id FROM users WHERE email = ?")
+        .bind("sweep@example.com")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let user_id: String = row.try_get("id").unwrap();
+
+    // Persist a state row, then directly backdate its expires_at into the
+    // past — simulating an abandoned ceremony without waiting out the real
+    // 5-minute TTL.
+    let abandoned_state_id =
+        webauthn_state::persist_state(&pool, &user_id, "registration", "{}", None, None).await.unwrap();
+    sqlx::query("UPDATE webauthn_states SET expires_at = datetime('now', '-1 minutes') WHERE id = ?")
+        .bind(&abandoned_state_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let count_before: i64 = sqlx::query("SELECT COUNT(*) AS c FROM webauthn_states")
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .try_get("c")
+        .unwrap();
+    assert_eq!(count_before, 1, "the backdated abandoned row must still be present before the sweep");
+
+    // Any subsequent persist_state() call (a fresh ceremony) sweeps it.
+    webauthn_state::persist_state(&pool, &user_id, "registration", "{}", None, None).await.unwrap();
+
+    let remaining = sqlx::query("SELECT id FROM webauthn_states")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(remaining.len(), 1, "exactly the fresh (non-expired) row must remain after the sweep");
+    let remaining_id: String = remaining[0].try_get("id").unwrap();
+    assert_ne!(
+        remaining_id, abandoned_state_id,
+        "the abandoned/expired row must have been swept, not the fresh one"
+    );
+}

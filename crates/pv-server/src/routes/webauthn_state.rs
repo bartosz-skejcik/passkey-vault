@@ -20,6 +20,22 @@ pub async fn persist_state(
     prf_salt: Option<&[u8]>,
     passkey_id: Option<&str>,
 ) -> Result<String, ApiError> {
+    // Opportunistic cleanup (WR-05): rows are only ever removed by
+    // `consume_state` on a successful ceremony — any ceremony a user starts
+    // but abandons (closes the prompt, network drop, no-PRF authenticator,
+    // or just never finishes) leaves a permanent row, since expiry is only
+    // enforced at query time, not by any sweep. Piggybacking a cheap
+    // range-delete on `idx_webauthn_states_expiry` here (instead of a
+    // separate background task) bounds table growth without adding a new
+    // dependency. Best-effort: a failure here must not block issuing the
+    // new state.
+    if let Err(err) = sqlx::query("DELETE FROM webauthn_states WHERE expires_at <= datetime('now')")
+        .execute(db)
+        .await
+    {
+        tracing::warn!(?err, "failed to sweep expired webauthn_states rows (best-effort, non-fatal)");
+    }
+
     let id = Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO webauthn_states (id, user_id, state_type, state_json, prf_salt, passkey_id, expires_at) \
