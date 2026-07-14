@@ -22,6 +22,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/passkey-login/start", post(auth::passkey_login_start))
+        .route("/api/auth/passkey-login/finish", post(auth::passkey_login_finish))
         .route("/api/vault/items", get(vault::list).post(vault::create))
         .route("/api/vault/items/{id}", put(vault::update).delete(vault::delete))
         .route("/api/vault/folders", get(folders::list).post(folders::create))

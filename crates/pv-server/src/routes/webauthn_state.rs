@@ -89,3 +89,39 @@ pub async fn consume_state(
 
     Ok((state_json, prf_salt, passkey_id))
 }
+
+/// Sibling of `consume_state` for the ONE call site that structurally cannot
+/// supply a `user_id` ahead of time: the unauthenticated
+/// `passkey_login_finish` handler (Phase 4, AUTH-04). Same atomic
+/// `DELETE ... RETURNING` shape and the SAME not-found error message as
+/// `consume_state` — this string must stay shared, not diverge into a second
+/// message, or the dummy-path/real-path enumeration-resistance parity
+/// (04-RESEARCH.md Architecture Pattern 4) would break. The only differences:
+/// no `user_id` filter on `WHERE` (there is no caller-supplied value to
+/// filter by yet), and `user_id` is additionally read out via `RETURNING` so
+/// the caller can LEARN it from the row itself — the row was written by
+/// `passkey_login_start` using the real, resolved user_id at persist time.
+pub async fn consume_state_any_user(
+    db: &SqlitePool,
+    state_id: &str,
+    expected_type: &str,
+) -> Result<(String, Option<Vec<u8>>, Option<String>, String), ApiError> {
+    let row = sqlx::query(
+        "DELETE FROM webauthn_states \
+         WHERE id = ? AND state_type = ? AND expires_at > datetime('now') \
+         RETURNING state_json, prf_salt, passkey_id, user_id",
+    )
+    .bind(state_id)
+    .bind(expected_type)
+    .fetch_optional(db)
+    .await?;
+
+    let row = row.ok_or_else(|| ApiError::BadRequest("passkey ceremony expired or not found".into()))?;
+
+    let state_json: String = row.try_get("state_json").map_err(|_| ApiError::Internal)?;
+    let prf_salt: Option<Vec<u8>> = row.try_get("prf_salt").map_err(|_| ApiError::Internal)?;
+    let passkey_id: Option<String> = row.try_get("passkey_id").map_err(|_| ApiError::Internal)?;
+    let user_id: String = row.try_get("user_id").map_err(|_| ApiError::Internal)?;
+
+    Ok((state_json, prf_salt, passkey_id, user_id))
+}
