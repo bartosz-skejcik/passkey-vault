@@ -1,0 +1,108 @@
+# deploy/nginx.conf.example
+#
+# Reference nginx reverse-proxy config for pv-server (Phase 7, DEPLOY-01/02,
+# ROADMAP.md Phase 7 success criterion #3). pv-server never terminates TLS
+# itself — that is always this proxy's job. Copy this file, replace
+# `vault.example.com` with your own domain, and mount real certs (see the
+# `ssl_certificate`/`ssl_certificate_key` comment below) before using it in
+# production.
+#
+# This is a full top-level nginx.conf (not a bare `server {}` fragment) so it
+# validates standalone via `nginx -t` against this exact file. If you're
+# `include`-ing just the `server {}` block into an existing nginx.conf's own
+# `http {}` block instead, drop the outer `events {}`/`http {}` wrapper below
+# and keep only the `map`/`log_format`/`server` blocks.
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    # Standard nginx idiom for forwarding a WebSocket upgrade through a
+    # reverse proxy: nginx doesn't forward the client's `Connection: Upgrade`
+    # header automatically, so this `map` computes the correct value to send
+    # upstream ("upgrade" when the client actually asked to upgrade, "close"
+    # otherwise) and proxy_set_header below applies it.
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+
+    # WR-02 (reverse-proxy side): /api/sync/ws carries the live session
+    # bearer token as `?token=...` in its query string — unavoidable, since
+    # the browser WebSocket API can't set custom headers on the upgrade
+    # request. nginx's default access log (`$request`/`$request_uri`) would
+    # write that live token straight to disk on every WS connection. This
+    # log_format logs `$uri` (path only, no query string) instead, and is
+    # used ONLY for the /api/sync/ws location below — every other location
+    # keeps nginx's normal full-URI access log. This mirrors
+    # crates/pv-server/src/main.rs's `make_span` doc comment (WR-02), which
+    # explicitly names this proxy-side config as Phase 7's obligation to
+    # close that gap; that comment covers pv-server's own tracing output,
+    # this log_format covers the proxy's raw access log written before
+    # pv-server's own middleware ever runs.
+    #
+    # Scope note: nginx has no per-query-param log redaction primitive
+    # (unlike Caddy's `query { delete token }` filter — see
+    # deploy/Caddyfile.example) — the only practical option here is dropping
+    # the WHOLE query string for this one route. /api/sync/ws currently has
+    # no other query params worth keeping in logs; if a second query param
+    # is ever added to this specific route, re-check whether dropping the
+    # entire query string is still the right tradeoff.
+    log_format sync_ws_redacted '$remote_addr - [$time_local] "$request_method $uri" $status';
+
+    server {
+        listen 443 ssl;
+        server_name vault.example.com;
+
+        # Real deployment: mount certs issued by certbot/Let's Encrypt (or
+        # your own CA) at these exact paths — that's the operator's own
+        # responsibility, out of scope for this reference config.
+        #
+        # Local/CI syntax-only check or verification with no real domain:
+        # generate a throwaway self-signed pair and mount it at the same
+        # paths, e.g.:
+        #   openssl req -x509 -nodes -newkey rsa:2048 \
+        #     -keyout privkey.pem -out fullchain.pem -days 1 \
+        #     -subj '/CN=vault.example.com'
+        # (exactly what scripts/verify-container.sh does for its own
+        # end-to-end run, and what this file's own `nginx -t` verification
+        # step does.) `listen ... ssl` fails `nginx -t` outright with
+        # "cannot load certificate ... No such file or directory" if no
+        # cert/key files exist at these paths — this file must never ship
+        # in a state that hits that.
+        ssl_certificate     /etc/nginx/certs/fullchain.pem;
+        ssl_certificate_key /etc/nginx/certs/privkey.pem;
+
+        # /api/sync/ws — the sync push WebSocket (SYNC-02). Needs the
+        # Upgrade/Connection header pair + proxy_http_version 1.1 for the
+        # WS upgrade handshake to survive this proxy (Caddy's reverse_proxy
+        # does this automatically — see deploy/Caddyfile.example's contrast
+        # comment; nginx requires these three lines explicitly).
+        location /api/sync/ws {
+            access_log /var/log/nginx/access.log sync_ws_redacted;
+
+            proxy_pass http://pv-server:8620;
+            # Substitute a different reachable address (e.g. 127.0.0.1:8620)
+            # if running nginx outside the same Docker network as pv-server.
+
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header Host $host;
+        }
+
+        # Everything else (API + the static Next.js export served by
+        # pv-server itself, per DEPLOY-01) — normal full-URI access log,
+        # no redaction needed here.
+        location / {
+            proxy_pass http://pv-server:8620;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+}
