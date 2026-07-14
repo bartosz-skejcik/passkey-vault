@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
     let db = build_pool(&cfg.db_url).await?;
     let webauthn = build_webauthn(&cfg.rp_id, &cfg.rp_origin)?;
 
-    let state = AppState { db, session_ttl_hours: cfg.session_ttl_hours, webauthn };
+    let state = AppState { db, session_ttl_hours: cfg.session_ttl_hours, webauthn, rp_id: cfg.rp_id.clone() };
     let app = routes::router(state).layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(&cfg.addr)

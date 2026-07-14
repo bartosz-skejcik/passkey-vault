@@ -21,6 +21,14 @@ pub struct AppState {
     /// `build_webauthn`) — `Webauthn` derives `Clone` internally, no `Arc`
     /// wrapper needed here.
     pub webauthn: webauthn_rs::prelude::Webauthn,
+    /// Same value threaded into `build_webauthn`'s `rp_id` — carried
+    /// separately because `webauthn_rs::prelude::Webauthn` exposes no public
+    /// `rp_id` getter (only `get_allowed_origins()` is public). The
+    /// enumeration-resistant dummy path in `routes::auth::passkey_login_start`
+    /// never calls `start_passkey_authentication` (so never gets a real
+    /// `rpId` for free) and needs its own source of truth to byte-match the
+    /// real path's `rpId` field (Phase 4, AUTH-04).
+    pub rp_id: String,
 }
 
 /// Łączy się z bazą (tworząc plik, jeśli brakuje) i uruchamia migracje.

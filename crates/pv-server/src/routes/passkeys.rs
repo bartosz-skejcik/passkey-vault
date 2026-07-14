@@ -9,12 +9,17 @@
 //! nigdy nie ufamy przesłanemu `prf_wrapped_uk` tylko na podstawie sesji
 //! Bearer (threat_model T-03-01).
 
+use std::collections::HashMap;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use uuid::Uuid;
@@ -385,4 +390,129 @@ pub async fn delete_passkey(
     }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Serialize)]
+pub struct UnlockStartResponse {
+    pub state_id: String,
+    pub challenge: serde_json::Value,
+    /// KEY = `URL_SAFE_NO_PAD`-encoded credential id, VALUE =
+    /// `STANDARD`-encoded PRF salt — same encoding discipline as
+    /// `auth::passkey_login_start`'s `prf_salts` map (04-RESEARCH.md
+    /// Pitfall 2). Every row here IS `prf_capable` (query below filters on
+    /// it), so every row contributes a salt, unlike the login endpoint's
+    /// mixed set.
+    pub prf_salts: HashMap<String, String>,
+}
+
+/// `POST /api/passkeys/unlock/start` — `SessionUser`-gated, no request
+/// body. ONLY `prf_capable` passkeys are offered (unlike
+/// `auth::passkey_login_start`, which offers every enrolled passkey):
+/// unlocking with a non-PRF credential can only ever return `null`, a
+/// pointless physical gesture. Zero eligible passkeys is a 404, routing the
+/// client straight to the tier-2 password fallback WITHOUT ever calling
+/// `navigator.credentials.get()` with an empty `allowCredentials` list
+/// (04-RESEARCH.md Pattern 1).
+pub async fn unlock_start(
+    State(state): State<AppState>,
+    session: SessionUser,
+) -> Result<Json<UnlockStartResponse>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT credential_id, passkey_json, prf_salt FROM passkeys WHERE user_id = ? AND prf_capable = 1",
+    )
+    .bind(&session.user_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    if rows.is_empty() {
+        return Err(ApiError::NotFound);
+    }
+
+    let mut passkeys = Vec::with_capacity(rows.len());
+    let mut prf_salts = HashMap::new();
+    for row in &rows {
+        let credential_id: Vec<u8> = row.try_get("credential_id").map_err(|_| ApiError::Internal)?;
+        let passkey_json: String = row.try_get("passkey_json").map_err(|_| ApiError::Internal)?;
+        let prf_salt: Vec<u8> = row.try_get("prf_salt").map_err(|_| ApiError::Internal)?;
+        let passkey: Passkey = serde_json::from_str(&passkey_json).map_err(|_| ApiError::Internal)?;
+        passkeys.push(passkey);
+        prf_salts.insert(URL_SAFE_NO_PAD.encode(&credential_id), STANDARD.encode(&prf_salt));
+    }
+
+    let (challenge, auth_state) = state.webauthn.start_passkey_authentication(&passkeys).map_err(|e| {
+        tracing::warn!(?e, "unlock start failed");
+        ApiError::BadRequest("passkey ceremony failed".into())
+    })?;
+    let auth_state_json = serde_json::to_string(&auth_state).map_err(|_| ApiError::Internal)?;
+    let state_id =
+        webauthn_state::persist_state(&state.db, &session.user_id, "authentication", &auth_state_json, None, None)
+            .await?;
+
+    Ok(Json(UnlockStartResponse {
+        state_id,
+        challenge: serde_json::to_value(&challenge).map_err(|_| ApiError::Internal)?,
+        prf_salts,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct UnlockFinishRequest {
+    pub state_id: String,
+    pub credential: PublicKeyCredential,
+}
+
+#[derive(Serialize)]
+pub struct UnlockFinishResponse {
+    /// No `session_token` field at all — structurally, not just by runtime
+    /// choice, this handler cannot mint a session (threat_model T-04-03;
+    /// same "nigdy nie ufamy przesłanemu ... tylko na podstawie sesji
+    /// Bearer" discipline as `auth::me`'s doc comment, a second instance of
+    /// avoiding a redundant session row).
+    pub prf_wrapped_uk: Option<String>,
+}
+
+/// `POST /api/passkeys/unlock/finish` — `SessionUser`-gated. A real
+/// `SessionUser` is always available here, so `consume_state` (the
+/// EXISTING, unchanged function — not `consume_state_any_user`) keeps its
+/// extra ownership-scoping `WHERE user_id = ?` defense-in-depth.
+pub async fn unlock_finish(
+    State(state): State<AppState>,
+    session: SessionUser,
+    Json(req): Json<UnlockFinishRequest>,
+) -> Result<Json<UnlockFinishResponse>, ApiError> {
+    let (auth_state_json, _, _) =
+        webauthn_state::consume_state(&state.db, &session.user_id, &req.state_id, "authentication").await?;
+
+    let auth_state: PasskeyAuthentication =
+        serde_json::from_str(&auth_state_json).map_err(|_| ApiError::Internal)?;
+
+    let auth_result = state.webauthn.finish_passkey_authentication(&req.credential, &auth_state).map_err(|e| {
+        tracing::warn!(?e, "unlock finish failed");
+        ApiError::BadRequest("passkey ceremony failed".into())
+    })?;
+
+    let row = sqlx::query(
+        "SELECT id, passkey_json, prf_wrapped_uk FROM passkeys WHERE credential_id = ? AND user_id = ?",
+    )
+    .bind(auth_result.cred_id().as_ref())
+    .bind(&session.user_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::BadRequest("passkey ceremony failed".into()))?;
+
+    let passkey_id: String = row.try_get("id").map_err(|_| ApiError::Internal)?;
+    let passkey_json: String = row.try_get("passkey_json").map_err(|_| ApiError::Internal)?;
+    let prf_wrapped_uk: Option<String> = row.try_get("prf_wrapped_uk").map_err(|_| ApiError::Internal)?;
+
+    let mut passkey: Passkey = serde_json::from_str(&passkey_json).map_err(|_| ApiError::Internal)?;
+    let _ = passkey.update_credential(&auth_result);
+    let updated_passkey_json = serde_json::to_string(&passkey).map_err(|_| ApiError::Internal)?;
+
+    sqlx::query("UPDATE passkeys SET passkey_json = ?, last_used_at = datetime('now') WHERE id = ?")
+        .bind(&updated_passkey_json)
+        .bind(&passkey_id)
+        .execute(&state.db)
+        .await?;
+
+    Ok(Json(UnlockFinishResponse { prf_wrapped_uk }))
 }
