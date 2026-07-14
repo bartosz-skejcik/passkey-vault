@@ -29,11 +29,14 @@ pub async fn test_pool() -> sqlx::SqlitePool {
 pub fn test_app(pool: sqlx::SqlitePool) -> axum::Router {
     let webauthn = pv_server::build_webauthn("localhost", "http://localhost:3000")
         .expect("test webauthn instance");
+    let dummy_secret: [u8; 32] =
+        pv_core::keys::random_bytes(32).try_into().expect("random_bytes(32) must return 32 bytes");
     pv_server::routes::router(pv_server::AppState {
         db: pool,
         session_ttl_hours: 168,
         webauthn,
         rp_id: "localhost".to_string(),
+        dummy_secret,
     })
 }
 

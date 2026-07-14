@@ -338,7 +338,13 @@ pub async fn passkey_login_start(
 
     let user_id = match user_row {
         Some(row) => row.try_get::<String, _>("id").map_err(|_| ApiError::Internal)?,
-        None => return Ok(Json(dummy_passkey_login_start_response(&state.rp_id, &normalized_email))),
+        None => {
+            return Ok(Json(dummy_passkey_login_start_response(
+                &state.rp_id,
+                &normalized_email,
+                &state.dummy_secret,
+            )))
+        }
     };
 
     let passkey_rows = sqlx::query(
@@ -352,7 +358,11 @@ pub async fn passkey_login_start(
         // Same dummy branch as an unknown email — zero enrolled passkeys
         // must not distinguish a known account from an unknown one
         // (threat_model T-04-01).
-        return Ok(Json(dummy_passkey_login_start_response(&state.rp_id, &normalized_email)));
+        return Ok(Json(dummy_passkey_login_start_response(
+            &state.rp_id,
+            &normalized_email,
+            &state.dummy_secret,
+        )));
     }
 
     let mut passkeys = Vec::with_capacity(passkey_rows.len());
@@ -399,31 +409,77 @@ pub async fn passkey_login_start(
 /// Enumeration-resistant dummy `passkey-login/start` response
 /// (threat_model T-04-01): unknown email AND known-email-zero-passkeys
 /// share this exact branch. Comparable *work* (a fresh random challenge, a
-/// deterministic per-email dummy credential id — mirrors `prelogin()`'s own
-/// dummy-salt precedent), but NO persisted `webauthn_states` row —
-/// `webauthn_states.user_id` is `NOT NULL REFERENCES users(id)`, so there is
-/// no legitimate `user_id` to bind for a genuinely unknown email
-/// (04-RESEARCH.md Architecture Pattern 4). `finish()` then 400s against
-/// this `state_id` exactly like any other unknown one via
-/// `consume_state_any_user`'s plain not-found lookup — parity is automatic,
-/// not a separate branch to maintain.
-fn dummy_passkey_login_start_response(rp_id: &str, normalized_email: &str) -> PasskeyLoginStartResponse {
-    // Fresh per-request randomness (NOT deterministic like the credential
-    // id below) — repeated probes of the SAME unknown email must not return
-    // byte-identical challenges.
+/// deterministic-but-secret-keyed per-email `allowCredentials` list — mirrors
+/// `prelogin()`'s own dummy-salt precedent, hardened per WR-01 below), but NO
+/// persisted `webauthn_states` row — `webauthn_states.user_id` is `NOT NULL
+/// REFERENCES users(id)`, so there is no legitimate `user_id` to bind for a
+/// genuinely unknown email (04-RESEARCH.md Architecture Pattern 4).
+/// `finish()` then 400s against this `state_id` exactly like any other
+/// unknown one via `consume_state_any_user`'s plain not-found lookup —
+/// parity is automatic, not a separate branch to maintain.
+///
+/// WR-01 hardening: the previous version emitted exactly ONE `allowCredentials`
+/// entry with a fixed 16-byte id truncated from a PUBLIC per-email hash. That
+/// was a triple oracle: (1) any real account with 2+ passkeys is
+/// distinguishable by count alone, (2) real credential ids are rarely
+/// exactly 16 bytes, and (3) since the derivation formula is public
+/// (open-source server), an attacker could precompute the exact expected
+/// dummy id for any candidate email and use an exact-match test as an
+/// account-existence oracle. This version emits 1-2 entries (matching a
+/// realistic small-passkey-count distribution) of full 32-byte SHA-256
+/// output (realistic authenticator credential-id length), both derived from
+/// `dummy_secret` (server-only, never serialized) mixed with the email — so
+/// the output is indistinguishable from random to anyone who doesn't hold
+/// the secret, while still being STABLE across repeated probes of the same
+/// email (a real account's allowCredentials list doesn't change between
+/// refreshes either — see AppState::dummy_secret's doc comment).
+fn dummy_passkey_login_start_response(
+    rp_id: &str,
+    normalized_email: &str,
+    dummy_secret: &[u8; 32],
+) -> PasskeyLoginStartResponse {
+    // Fresh per-request randomness (NOT deterministic like the
+    // allowCredentials list below) — repeated probes of the SAME unknown
+    // email must not return byte-identical challenges.
     let challenge_bytes = pv_core::keys::random_bytes(32);
-    let digest = Sha256::digest(normalized_email.as_bytes());
-    let dummy_cred_id = &digest[..MIN_SALT_LEN];
+
+    let mut base_hasher = Sha256::new();
+    base_hasher.update(dummy_secret);
+    base_hasher.update(normalized_email.as_bytes());
+    let base_digest = base_hasher.finalize();
+
+    // 1 or 2 dummy entries — most real accounts enroll a small handful of
+    // passkeys; a fixed single entry (the prior implementation) was itself a
+    // tell for any account with 2+ real passkeys.
+    let dummy_cred_count = 1 + (base_digest[0] % 2) as usize;
+    let allow_credentials: Vec<serde_json::Value> = (0..dummy_cred_count)
+        .map(|i| {
+            let mut id_hasher = Sha256::new();
+            id_hasher.update(dummy_secret);
+            id_hasher.update(normalized_email.as_bytes());
+            id_hasher.update([i as u8]);
+            let cred_id: [u8; 32] = id_hasher.finalize().into();
+            serde_json::json!({
+                "type": "public-key",
+                "id": URL_SAFE_NO_PAD.encode(cred_id),
+            })
+        })
+        .collect();
 
     let challenge = serde_json::json!({
         "publicKey": {
             "challenge": URL_SAFE_NO_PAD.encode(&challenge_bytes),
             "timeout": webauthn_rs::DEFAULT_AUTHENTICATOR_TIMEOUT.as_millis() as u32,
             "rpId": rp_id,
-            "allowCredentials": [{
-                "type": "public-key",
-                "id": URL_SAFE_NO_PAD.encode(dummy_cred_id),
-            }],
+            "allowCredentials": allow_credentials,
+            // Byte-matches webauthn-rs 0.5.5's own
+            // `Webauthn::start_passkey_authentication`, which hardcodes
+            // `UserVerificationPolicy::Required` (serializes to "required")
+            // for every passkey-authentication ceremony regardless of the
+            // passed-in credential set — verified today by this module's
+            // `passkey_login_start_shape_parity_...` test, which now asserts
+            // value equality here, not just key-set equality (WR-01 finding
+            // 3).
             "userVerification": "required",
         }
     });

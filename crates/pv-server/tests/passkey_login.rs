@@ -11,6 +11,7 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
+use base64::Engine;
 use serde_json::{json, Value};
 use sqlx::Row;
 use tower::ServiceExt;
@@ -281,6 +282,80 @@ async fn passkey_login_start_shape_parity_unknown_vs_zero_passkey_email() {
     assert_eq!(
         unknown_keys, real_keys,
         "dummy and real publicKey key sets must match exactly (04-RESEARCH.md Assumption A2)"
+    );
+
+    // WR-01: key-set equality alone left three value-level oracles open.
+    // Compare the actual VALUES for every field that must byte-match across
+    // dummy and real responses (everything except `challenge` — freshly
+    // random on every call by design — and the credential ids themselves,
+    // which are only expected to match in shape, not content).
+    for (label, body) in [("unknown", &unknown_body), ("zero-passkey", &zero_body)] {
+        assert_eq!(
+            body["challenge"]["publicKey"]["userVerification"],
+            real_body["challenge"]["publicKey"]["userVerification"],
+            "{label} dummy userVerification must byte-match the real path's value (WR-01 finding 3): {body:?}"
+        );
+        assert_eq!(
+            body["challenge"]["publicKey"]["rpId"], real_body["challenge"]["publicKey"]["rpId"],
+            "{label} dummy rpId must byte-match the real path's value: {body:?}"
+        );
+        assert_eq!(
+            body["challenge"]["publicKey"]["timeout"], real_body["challenge"]["publicKey"]["timeout"],
+            "{label} dummy timeout must byte-match the real path's value: {body:?}"
+        );
+
+        let allow_credentials = body["challenge"]["publicKey"]["allowCredentials"].as_array().unwrap();
+        assert!(
+            (1..=2).contains(&allow_credentials.len()),
+            "{label} dummy allowCredentials count must be a realistic 1-2, not a fixed single entry \
+             (WR-01 finding 1): {body:?}"
+        );
+        for cred in allow_credentials {
+            assert_eq!(cred["type"], "public-key");
+            let id_b64 = cred["id"].as_str().expect("allowCredentials[i].id must be a string");
+            let id_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(id_b64).unwrap();
+            assert_eq!(
+                id_bytes.len(),
+                32,
+                "{label} dummy credential id must be a realistic 32 bytes, not the previous fixed \
+                 16-byte truncation (WR-01 finding 2): {body:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn passkey_login_start_dummy_allow_credentials_stable_across_repeat_probes_same_email() {
+    let app = common::test_app(common::test_pool().await);
+    let email = "repeatprobe@example.com";
+
+    let (status_a, body_a) = post_json(&app, "/api/auth/passkey-login/start", json!({ "email": email })).await;
+    assert_eq!(status_a, StatusCode::OK, "first probe must succeed: {body_a:?}");
+    let (status_b, body_b) = post_json(&app, "/api/auth/passkey-login/start", json!({ "email": email })).await;
+    assert_eq!(status_b, StatusCode::OK, "second probe must succeed: {body_b:?}");
+
+    // The credential ids must be byte-stable across repeat probes of the
+    // SAME unknown email (WR-01) — a real account's allowCredentials list
+    // doesn't change between refreshes either, so a dummy response whose ids
+    // shuffled on every call would itself be an oracle. The challenge itself
+    // (fresh randomness by design) is deliberately excluded from this
+    // comparison.
+    assert_eq!(
+        body_a["challenge"]["publicKey"]["allowCredentials"], body_b["challenge"]["publicKey"]["allowCredentials"],
+        "repeat probes of the same email must return byte-identical dummy allowCredentials: {body_a:?} vs {body_b:?}"
+    );
+    assert_ne!(
+        body_a["challenge"]["publicKey"]["challenge"], body_b["challenge"]["publicKey"]["challenge"],
+        "the challenge itself must still be fresh randomness on every call: {body_a:?} vs {body_b:?}"
+    );
+
+    // A DIFFERENT email must not collide onto the same dummy ids.
+    let (_, body_other) =
+        post_json(&app, "/api/auth/passkey-login/start", json!({ "email": "otherprobe@example.com" })).await;
+    assert_ne!(
+        body_a["challenge"]["publicKey"]["allowCredentials"],
+        body_other["challenge"]["publicKey"]["allowCredentials"],
+        "different emails must not derive the same dummy allowCredentials"
     );
 }
 

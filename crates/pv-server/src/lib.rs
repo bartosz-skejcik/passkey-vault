@@ -29,6 +29,17 @@ pub struct AppState {
     /// `rpId` for free) and needs its own source of truth to byte-match the
     /// real path's `rpId` field (Phase 4, AUTH-04).
     pub rp_id: String,
+    /// Server-only key mixed into the dummy `passkey_login_start` branch's
+    /// per-email `allowCredentials` derivation (WR-01). Never serialized or
+    /// sent to any client. Without this, the derivation formula (per-email
+    /// hash) would be entirely public (open-source server) — an attacker
+    /// could precompute the exact expected dummy credential id for any
+    /// candidate email and use an exact-match test as an account-existence
+    /// oracle. Generated fresh at process startup — it only needs to be
+    /// stable for the lifetime of one running server (so repeated probes of
+    /// the same email within one uptime are byte-stable, matching a real
+    /// account's stable passkey list), not persisted across restarts.
+    pub dummy_secret: [u8; 32],
 }
 
 /// Łączy się z bazą (tworząc plik, jeśli brakuje) i uruchamia migracje.
