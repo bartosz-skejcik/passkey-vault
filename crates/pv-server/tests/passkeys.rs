@@ -40,6 +40,59 @@ async fn post_json(app: &axum::Router, uri: &str, token: &str, body: Value) -> (
     (status, value)
 }
 
+/// Generic `authorization`-only request helper (PATCH/DELETE/GET with no
+/// body, or an optional JSON body) — for Task 2's list/rename/delete tests,
+/// which don't need the full ceremony round trip `post_json` was built for.
+async fn req_json(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let mut builder =
+        Request::builder().method(method).uri(uri).header("authorization", format!("Bearer {token}"));
+    let body = match body {
+        Some(b) => {
+            builder = builder.header("content-type", "application/json");
+            Body::from(serde_json::to_vec(&b).unwrap())
+        }
+        None => Body::empty(),
+    };
+    let res = app.clone().oneshot(builder.body(body).unwrap()).await.unwrap();
+    let status = res.status();
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let value: Value = if bytes.is_empty() { json!({}) } else { serde_json::from_slice(&bytes).unwrap() };
+    (status, value)
+}
+
+/// Drives only the FIRST ceremony (`register/start` + `register/finish`) via
+/// the software authenticator, returning the enrolled passkey's id. Task 2's
+/// list/rename/delete tests don't need `prf_capable = true`, only a real
+/// enrolled row — reuses Plan 03-01's enrollment helper shape rather than a
+/// second, divergent way of enrolling a test passkey.
+async fn enroll_passkey(app: &axum::Router, token: &str, display_name: &str) -> String {
+    let (status, start_body) =
+        post_json(app, "/api/passkeys/register/start", token, json!({ "display_name": display_name })).await;
+    assert_eq!(status, StatusCode::OK, "register/start must succeed: {start_body:?}");
+    let state_id = start_body["state_id"].as_str().unwrap().to_string();
+    let challenge: CreationChallengeResponse = serde_json::from_value(start_body["challenge"].clone()).unwrap();
+
+    let mut authenticator = SoftPasskey::new(true);
+    let register_response =
+        authenticator.perform_register(origin(), challenge.public_key, 60_000).expect("software authenticator registration must succeed");
+
+    let (status, finish_body) = post_json(
+        app,
+        "/api/passkeys/register/finish",
+        token,
+        json!({ "state_id": state_id, "credential": register_response }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "register/finish must succeed: {finish_body:?}");
+    finish_body["passkey_id"].as_str().unwrap().to_string()
+}
+
 fn origin() -> Url {
     Url::parse("http://localhost:3000").unwrap()
 }
@@ -221,4 +274,122 @@ async fn prf_wrap_rejects_replayed_assertion() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "replayed prf-wrap call must be rejected, not a silent 200: {body:?}");
+}
+
+// --- Task 2: list/rename/delete integration coverage ---
+
+#[tokio::test]
+async fn rename_passkey_persists_new_name() {
+    let pool = common::test_pool().await;
+    let app = common::test_app(pool.clone());
+    let token = common::register_and_login(&app, "rename@example.com").await;
+
+    let passkey_id = enroll_passkey(&app, &token, "Old Name").await;
+
+    let (status, _) =
+        req_json(&app, "PATCH", &format!("/api/passkeys/{passkey_id}"), &token, Some(json!({ "name": "New Name" })))
+            .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, list_body) = req_json(&app, "GET", "/api/passkeys", &token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = list_body.as_array().unwrap();
+    let row = rows.iter().find(|r| r["id"] == passkey_id).unwrap();
+    assert_eq!(row["name"], "New Name");
+}
+
+#[tokio::test]
+async fn rename_passkey_rejects_empty_name() {
+    let pool = common::test_pool().await;
+    let app = common::test_app(pool.clone());
+    let token = common::register_and_login(&app, "renameempty@example.com").await;
+
+    let passkey_id = enroll_passkey(&app, &token, "Original Name").await;
+
+    let (status, _) =
+        req_json(&app, "PATCH", &format!("/api/passkeys/{passkey_id}"), &token, Some(json!({ "name": "   " })))
+            .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // The rejected rename had no side effect — original name survives.
+    let (status, list_body) = req_json(&app, "GET", "/api/passkeys", &token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = list_body.as_array().unwrap();
+    let row = rows.iter().find(|r| r["id"] == passkey_id).unwrap();
+    assert_eq!(row["name"], "Original Name");
+}
+
+#[tokio::test]
+async fn delete_passkey_blocked_without_password_wrap() {
+    let pool = common::test_pool().await;
+    let app = common::test_app(pool.clone());
+    let token = common::register_and_login(&app, "strand@example.com").await;
+
+    let passkey_id = enroll_passkey(&app, &token, "Strand Test").await;
+
+    // Construct the otherwise-unreachable state directly against the test's
+    // own DB pool handle — no real registration/API flow can ever leave
+    // pw_wrapped_uk empty; this is the ONLY way to reach this state, which is
+    // itself proof the invariant is structurally sound in the real API
+    // surface.
+    let user_row = sqlx::query("SELECT user_id FROM passkeys WHERE id = ?")
+        .bind(&passkey_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let user_id: String = user_row.try_get("user_id").unwrap();
+    sqlx::query("UPDATE users SET pw_wrapped_uk = '' WHERE id = ?")
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (status, body) = req_json(&app, "DELETE", &format!("/api/passkeys/{passkey_id}"), &token, None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "delete must be blocked with 409: {body:?}");
+
+    // The delete was genuinely blocked, not merely reported as blocked while
+    // still executing — the row must still exist.
+    let row = sqlx::query("SELECT id FROM passkeys WHERE id = ?")
+        .bind(&passkey_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(row.is_some(), "passkey row must survive a blocked delete");
+}
+
+#[tokio::test]
+async fn delete_passkey_succeeds_with_password_wrap_intact() {
+    let pool = common::test_pool().await;
+    let app = common::test_app(pool.clone());
+    let token = common::register_and_login(&app, "normaldelete@example.com").await;
+
+    let passkey_id = enroll_passkey(&app, &token, "Normal Delete").await;
+
+    let (status, body) = req_json(&app, "DELETE", &format!("/api/passkeys/{passkey_id}"), &token, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "delete must succeed: {body:?}");
+
+    let row = sqlx::query("SELECT id FROM passkeys WHERE id = ?")
+        .bind(&passkey_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(row.is_none(), "passkey row must be gone after a successful delete");
+}
+
+#[tokio::test]
+async fn passkeys_ownership_rejects_cross_user_access() {
+    let pool = common::test_pool().await;
+    let app = common::test_app(pool.clone());
+    let token_a = common::register_and_login(&app, "passkeyownera@example.com").await;
+    let token_b = common::register_and_login(&app, "passkeyownerb@example.com").await;
+
+    let passkey_id = enroll_passkey(&app, &token_a, "User A's Passkey").await;
+
+    let (status, body) =
+        req_json(&app, "PATCH", &format!("/api/passkeys/{passkey_id}"), &token_b, Some(json!({ "name": "Hijacked" })))
+            .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "cross-user rename must be 404, not 403: {body:?}");
+
+    let (status, body) = req_json(&app, "DELETE", &format!("/api/passkeys/{passkey_id}"), &token_b, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "cross-user delete must be 404, not 403: {body:?}");
 }
