@@ -228,4 +228,30 @@ describe("DetailPanel proactive live-edit-conflict banner (SYNC-03, Plan 05-04)"
 
     expect(screen.queryByTestId("live-edit-conflict-banner")).not.toBeInTheDocument();
   });
+
+  // CR-01 regression (05-REVIEW.md): background sync must never make Save
+  // silently overwrite a concurrent remote change. Before the fix, ItemForm
+  // received the *live* item.revision as `currentRevision`, so once
+  // background sync advanced item.revision in lockstep with the server, the
+  // reactive 409 → RevisionConflictError path became unreachable and Save
+  // would clobber the other device's edit without any conflict signal.
+  it("sends the edit-session baseline revision (not the live, background-sync-advanced revision) as expected_revision on Save", async () => {
+    mockUpdateVaultItem.mockResolvedValue({ id: "item-1", revision: 3, fields: item.fields });
+    const { rerender } = render(<DetailPanel item={item} initialMode="edit" onClose={vi.fn()} />);
+
+    // Background sync (WS/poll) merges a concurrent remote edit while this
+    // edit session is open: item.revision advances 1 -> 2 under the hood.
+    const bumpedItem: typeof item = { ...item, revision: 2 };
+    rerender(<DetailPanel item={bumpedItem} initialMode="edit" onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    // expected_revision must be the baseline (1) captured at edit-entry, not
+    // the live/background-advanced revision (2) — otherwise the server's
+    // `WHERE revision = ?` guard matches the now-current server revision and
+    // the remote change is silently overwritten with no 409.
+    await waitFor(() =>
+      expect(mockUpdateVaultItem).toHaveBeenCalledWith("item-1", expect.any(Object), 1),
+    );
+  });
 });

@@ -237,7 +237,7 @@ export default function DetailPanel({
             type={item.fields.type}
             mode="edit"
             itemId={item.id}
-            currentRevision={item.revision}
+            currentRevision={editBaselineRevision ?? item.revision}
             initialFields={item.fields}
             onCreated={() => {
               setConflict(false);
