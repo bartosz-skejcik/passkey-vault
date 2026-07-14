@@ -285,9 +285,19 @@ export default function ImportWizard({
         if (existing !== undefined) {
           folderId = existing;
         } else {
-          const created = await createVaultFolder(draft.folder);
-          folderIdByName.set(draft.folder, created.id);
-          folderId = created.id;
+          try {
+            const created = await createVaultFolder(draft.folder);
+            folderIdByName.set(draft.folder, created.id);
+            folderId = created.id;
+          } catch (err) {
+            setSkippedEntries((prev) => [
+              ...prev,
+              { label: draft.name, reason: classifyWriteError(err) },
+            ]);
+            processed += 1;
+            setLoopProgress(processed);
+            continue;
+          }
         }
       }
 
