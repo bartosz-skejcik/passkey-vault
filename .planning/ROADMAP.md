@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: PRF Unlock & Login Unification** - Log in and unlock the vault in one passkey gesture, with an honest fallback when PRF isn't available (completed 2026-07-14)
 - [x] **Phase 5: Multi-Device Sync** - Keep the vault in sync across simultaneously-active devices/sessions (completed 2026-07-14)
 - [x] **Phase 6: Import/Export, TOTP & Onboarding** - Bring in an existing password manager's data, see live TOTP codes, export back out (completed 2026-07-14)
-- [ ] **Phase 7: Self-Host Packaging & Deployment** - Ship as one Docker container that fails loudly, not mysteriously, when misconfigured
+- [x] **Phase 7: Self-Host Packaging & Deployment** - Ship as one Docker container that fails loudly, not mysteriously, when misconfigured (completed 2026-07-14)
 
 ## Phase Details
 
@@ -227,8 +227,8 @@ Plans:
 **Plans**: 1/3 plans executed
 
 - [x] 07-01-PLAN.md
-- [ ] 07-02-PLAN.md
-- [ ] 07-03-PLAN.md
+- [x] 07-02-PLAN.md
+- [x] 07-03-PLAN.md
 
 ## Progress
 
@@ -243,4 +243,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. PRF Unlock & Login Unification | 3/3 | Complete    | 2026-07-14 |
 | 5. Multi-Device Sync | 4/4 | Complete    | 2026-07-14 |
 | 6. Import/Export, TOTP & Onboarding | 4/4 | Complete    | 2026-07-14 |
-| 7. Self-Host Packaging & Deployment | 1/3 | In Progress|  |
+| 7. Self-Host Packaging & Deployment | 3/3 | Complete    | 2026-07-14 |
