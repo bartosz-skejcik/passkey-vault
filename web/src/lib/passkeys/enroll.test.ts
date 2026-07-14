@@ -99,6 +99,7 @@ describe("enrollPasskey", () => {
   });
 
   it("frees the wrapping-key handle even when prfWrap rejects (IN-02 finally)", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const credential = { toJSON: vi.fn().mockReturnValue({ id: "cred-1" }) };
     (global.navigator.credentials.create as ReturnType<typeof vi.fn>).mockResolvedValue(
       credential,
@@ -116,6 +117,7 @@ describe("enrollPasskey", () => {
     await enrollPasskey("My passkey", onStep);
 
     expect(FAKE_WRAPPING_KEY.free).toHaveBeenCalledTimes(1);
+    consoleErrorSpy.mockRestore();
   });
 
   it("strips clientExtensionResults.prf from the serialized assertion before POSTing it (WR-04)", async () => {
@@ -168,6 +170,7 @@ describe("enrollPasskey", () => {
   });
 
   it("resolves a step-2 get() rejection to doneNoPrf, never cancelled/failed (Pitfall 3 regression)", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const credential = { toJSON: vi.fn().mockReturnValue({ id: "cred-1" }) };
     (global.navigator.credentials.create as ReturnType<typeof vi.fn>).mockResolvedValue(
       credential,
@@ -181,6 +184,41 @@ describe("enrollPasskey", () => {
 
     expect(onStep.mock.calls.map((c) => c[0])).toEqual(["step1", "step2", "doneNoPrf"]);
     expect(mockPrfWrap).not.toHaveBeenCalled();
+    // IN-03: an expected user dismissal is not a "real" failure — it must
+    // not be logged as one.
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("resolves a genuine prfWrap failure to doneNoPrf but logs it distinctly from 'no PRF support' (IN-03)", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const credential = { toJSON: vi.fn().mockReturnValue({ id: "cred-1" }) };
+    (global.navigator.credentials.create as ReturnType<typeof vi.fn>).mockResolvedValue(
+      credential,
+    );
+    const assertion = {
+      toJSON: vi.fn().mockReturnValue({ id: "assertion-1" }),
+      getClientExtensionResults: vi.fn().mockReturnValue({
+        prf: { results: { first: new ArrayBuffer(32) } },
+      }),
+    };
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(assertion);
+    const wrapError = new Error("server rejected prf-wrap: assertion verification failed");
+    mockPrfWrap.mockRejectedValue(wrapError);
+
+    const onStep = vi.fn();
+    await enrollPasskey("My passkey", onStep);
+
+    // Outward UI behavior is unchanged (Pitfall 3: the step-1 credential
+    // already exists, so this still reports as a successful, no-PRF
+    // enrollment) — only the observability signal is new.
+    expect(onStep.mock.calls.map((c) => c[0])).toEqual(["step1", "step2", "doneNoPrf"]);
+    // A genuine wrap/verification failure — as opposed to the authenticator
+    // honestly having no PRF support — must be distinguishable in the logs.
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy.mock.calls[0][0]).toMatch(/prf wrap failed/i);
+    expect(consoleErrorSpy.mock.calls[0][1]).toBe(wrapError);
+    consoleErrorSpy.mockRestore();
   });
 
   it("resolves a step-1 create() NotAllowedError rejection to cancelled", async () => {

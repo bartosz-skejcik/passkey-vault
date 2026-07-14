@@ -122,13 +122,28 @@ export async function enrollPasskey(
     } finally {
       wrappingKey.free();
     }
-  } catch {
+  } catch (e) {
     // Any step-2 cancel/failure is STILL a successful enrollment: the
     // credential from step 1 already exists server-side. Routing this to
     // "cancelled"/"failed" (as if nothing happened) would let a naive
     // "retry" restart from Name entry and create a second, orphaned
     // credential while the first silently remains enrolled as a
-    // legitimate no-PRF passkey (03-RESEARCH.md Pitfall 3).
+    // legitimate no-PRF passkey (03-RESEARCH.md Pitfall 3) — so the UI
+    // outcome stays "doneNoPrf" either way; 03-UI-SPEC.md's 7-state design
+    // has no separate screen for "PRF wrap failed" vs "no PRF support".
+    //
+    // IN-03: that UI-level parity previously extended to observability too
+    // — a user simply dismissing the second prompt, an authenticator that
+    // never supported PRF, AND a genuine failure (network error, a bad
+    // `wrapUserKey`, or the T-03-01 assertion-verification gate rejecting
+    // the request) were all silently identical, hiding real failures behind
+    // a false "no PRF support" story. Distinguish them at least here: an
+    // expected dismissal logs nothing, anything else is a real failure and
+    // must be visible for debugging/telemetry even though the reported step
+    // doesn't change.
+    if (!isNotAllowedError(e)) {
+      console.error("passkey enrollment: PRF wrap failed after a successful step-1 registration", e);
+    }
     onStep("doneNoPrf");
   }
 }
