@@ -61,6 +61,13 @@ beforeEach(() => {
 });
 
 describe("Sidebar settings dropdown", () => {
+  // Binding resolution #1 (03-UI-SPEC.md's "Resolutions" section): the
+  // Phase 2 dropdown is restored — Lock now/Logout/language stay in this
+  // dropdown (Logout does NOT move into SettingsPanel). Only the
+  // autolock/clipboard controls moved out (to SecurityTab.tsx, Plan
+  // 03-04's Task 2) — their persistence contract is now proven by
+  // SettingsPanel.test.tsx instead, not here (asserting against them here
+  // would be a false test of a control this file no longer renders).
   it("calls lockVault() when 'Lock now' is clicked", () => {
     render(<Sidebar />);
     fireEvent.click(screen.getByTestId("sidebar-lock-now"));
@@ -83,12 +90,11 @@ describe("Sidebar settings dropdown", () => {
     expect(mockSetLocale).toHaveBeenCalledWith("en");
   });
 
-  it("persists the clipboard-clear duration to localStorage when changed", () => {
-    render(<Sidebar />);
-    fireEvent.change(screen.getByTestId("sidebar-clipboard-duration"), {
-      target: { value: "60" },
-    });
-    expect(localStorage.getItem("pv-clipboard-seconds")).toBe("60");
+  it("calls onOpenSettings when 'Ustawienia' is clicked in the account dropdown", () => {
+    const onOpenSettings = vi.fn();
+    render(<Sidebar onOpenSettings={onOpenSettings} />);
+    fireEvent.click(screen.getByTestId("sidebar-open-settings"));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 });
 
