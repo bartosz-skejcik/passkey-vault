@@ -32,6 +32,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/passkeys/register/start", post(passkeys::register_start))
         .route("/api/passkeys/register/finish", post(passkeys::register_finish))
         .route("/api/passkeys/{id}/prf-wrap", post(passkeys::prf_wrap))
+        .route("/api/passkeys/unlock/start", post(passkeys::unlock_start))
+        .route("/api/passkeys/unlock/finish", post(passkeys::unlock_finish))
         .route("/api/passkeys/{id}", patch(passkeys::rename).delete(passkeys::delete_passkey))
         .route("/api/sessions", get(sessions::list))
         .route("/api/sessions/{id}", delete(sessions::revoke))
