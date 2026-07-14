@@ -34,12 +34,13 @@ import {
   createItem,
   deleteFolder,
   deleteItem,
-  listFolders,
-  listItems,
+  getSyncSnapshot,
   updateItem,
   type FolderRow,
   type ItemRow,
+  type SyncSnapshot,
 } from "./api";
+import { startSync, stopSync, type SyncCallbacks } from "./sync";
 import { normalizeItemFields, type Folder, type ItemFields, type VaultItem } from "./types";
 
 /** Distinguishable error type for a stale-revision (409) PUT — lets the UI
@@ -160,20 +161,46 @@ function decryptFolderRow(row: FolderRow, uk: WasmUserKey): Folder {
   return { id: row.id, name };
 }
 
-async function loadAndDecryptAll(): Promise<void> {
-  const [itemRows, folderRows] = await Promise.all([listItems(), listFolders()]);
-  // Re-check unlock state after the awaited fetches resolve — a lock event
-  // may have fired in the meantime, and we must never populate `items`
-  // with a stale/freed key or after the user has since locked again.
+// Last vault_revision this client has merged — the `since` watermark for
+// every catch-up/poll pull. Reset to 0 on lock so a re-unlock always pulls
+// a full snapshot again.
+let lastKnownRevision = 0;
+
+/** The ONE merge implementation shared by initial load (unlock) and
+ * ongoing background sync (WS/poll via sync.ts). A stale snapshot's
+ * items/folders arrays replace the in-memory arrays WHOLESALE — a
+ * server-side deletion is reflected simply by the deleted id's absence
+ * from the new array (no tombstones, no diff pass; the locked full-
+ * snapshot decision). An up-to-date snapshot (no items/folders keys)
+ * leaves the in-memory state completely untouched — but still advances
+ * the revision watermark, otherwise the NEXT poll tick would immediately
+ * re-detect "stale" against a revision the client already knows about. */
+function applySyncSnapshot(snapshot: SyncSnapshot): void {
+  lastKnownRevision = snapshot.revision;
+  // Re-check unlock state — a lock event may have fired while the fetch
+  // was in flight, and we must never decrypt with a stale/freed key
+  // handle or repopulate state after the user has since locked.
   const uk = getUnlockedUserKey();
   if (uk === null) {
     return;
   }
-  items = itemRows.map((row) => decryptItemRow(row, uk));
-  recomputeAllTags();
-  notifyListeners();
-  folders = folderRows.map((row) => decryptFolderRow(row, uk));
-  notifyFolderListeners();
+  if (snapshot.items !== undefined) {
+    items = snapshot.items.map((row) => decryptItemRow(row, uk));
+    recomputeAllTags();
+    notifyListeners();
+  }
+  if (snapshot.folders !== undefined) {
+    folders = snapshot.folders.map((row) => decryptFolderRow(row, uk));
+    notifyFolderListeners();
+  }
+}
+
+async function loadAndDecryptAll(): Promise<void> {
+  // since=0 unconditionally: a fresh/never-synced client always receives a
+  // full snapshot (a brand-new zero-item account gets an up-to-date-with-
+  // no-items response, which is equally correct — nothing to load).
+  const snapshot = await getSyncSnapshot(0);
+  applySyncSnapshot(snapshot);
 }
 
 export async function createVaultItem(fields: ItemFields): Promise<VaultItem> {
@@ -286,12 +313,22 @@ export function useAllTags(): string[] {
 }
 
 // Module-level side effect (mirrors lib/crypto/index.ts's own singleton
-// shape): unlocking the vault (re-)fetches and decrypts items/folders;
-// locking clears both in-memory arrays immediately.
+// shape): unlocking the vault (re-)fetches and decrypts items/folders AND
+// starts the sync transport (WS + poll); locking stops the transport FIRST
+// (so no in-flight sync callback can fire after the arrays are cleared),
+// then clears both in-memory arrays immediately.
+const syncCallbacks: SyncCallbacks = {
+  getSinceRevision: () => lastKnownRevision,
+  onSnapshot: applySyncSnapshot,
+};
+
 subscribeLockState(() => {
   if (isUnlocked()) {
     void loadAndDecryptAll();
+    startSync(syncCallbacks);
   } else {
+    stopSync();
+    lastKnownRevision = 0;
     items = [];
     folders = [];
     recomputeAllTags();

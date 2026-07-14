@@ -252,8 +252,8 @@ describe("applySyncSnapshot (background sync merge)", () => {
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 2,
       items: [
-        { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
-        { id: "item-2", enc_key: "{}", enc_data: "{}", revision: 1 },
+        { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, updated_at: "2026-07-14 12:00:00" },
+        { id: "item-2", enc_key: "{}", enc_data: "{}", revision: 1, updated_at: "2026-07-14 12:00:00" },
       ],
       folders: [],
     });
@@ -277,7 +277,9 @@ describe("applySyncSnapshot (background sync merge)", () => {
     // longer contains it — deletion via absence, no diff pass.
     const staleSnapshot: SyncSnapshot = {
       revision: 3,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      items: [
+        { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, updated_at: "2026-07-14 12:00:00" },
+      ],
       folders: [],
     };
     act(() => {
@@ -319,8 +321,8 @@ describe("applySyncSnapshot (background sync merge)", () => {
       callbacks.onSnapshot({
         revision: 4,
         items: [
-          { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
-          { id: "item-2", enc_key: "{}", enc_data: "{}", revision: 2 },
+          { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, updated_at: "2026-07-14 12:00:00" },
+          { id: "item-2", enc_key: "{}", enc_data: "{}", revision: 2, updated_at: "2026-07-14 12:00:00" },
         ],
         folders: [],
       });
@@ -343,7 +345,9 @@ describe("applySyncSnapshot (background sync merge)", () => {
     act(() => {
       callbacks.onSnapshot({
         revision: 9,
-        items: [{ id: "item-3", enc_key: "{}", enc_data: "{}", revision: 1 }],
+        items: [
+          { id: "item-3", enc_key: "{}", enc_data: "{}", revision: 1, updated_at: "2026-07-14 12:00:00" },
+        ],
         folders: [],
       });
     });
