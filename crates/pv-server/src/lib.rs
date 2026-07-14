@@ -8,7 +8,8 @@ pub mod error;
 pub mod routes;
 
 use anyhow::Context;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -52,8 +53,12 @@ pub struct AppState {
 /// Wspólna ścieżka dla `main.rs` (produkcyjny URL) i testowego harnessu
 /// (`sqlite::memory:`) — różni się tylko `db_url`.
 pub async fn build_pool(db_url: &str) -> anyhow::Result<sqlx::SqlitePool> {
-    let db_opts: SqliteConnectOptions =
-        db_url.parse::<SqliteConnectOptions>().context("invalid PV_DB_URL")?.create_if_missing(true);
+    let db_opts: SqliteConnectOptions = db_url
+        .parse::<SqliteConnectOptions>()
+        .context("invalid PV_DB_URL")?
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(Duration::from_secs(5));
     let db = SqlitePoolOptions::new().max_connections(8).connect_with(db_opts).await.context("db connect")?;
     sqlx::migrate!("./migrations").run(&db).await.context("migrations")?;
     Ok(db)
@@ -84,5 +89,28 @@ mod tests {
     #[test]
     fn build_webauthn_accepts_matching_pair() {
         assert!(build_webauthn("localhost", "http://localhost:3000").is_ok());
+    }
+
+    /// WAL mode requires real file-backed storage — `sqlite::memory:` cannot
+    /// honor it, so this smoke test MUST use a real on-disk temp file (see
+    /// 07-RESEARCH.md / this plan's `<interfaces>`), or the assertion below
+    /// would not actually exercise the new `journal_mode`/`busy_timeout`
+    /// builder calls.
+    #[tokio::test]
+    async fn build_pool_enables_wal_journal_mode() {
+        let path = std::env::temp_dir().join(format!("pv-test-wal-{}.db", uuid::Uuid::new_v4()));
+        let db_url = format!("sqlite://{}", path.display());
+
+        let pool = build_pool(&db_url).await.expect("build_pool against real temp file");
+        let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&pool)
+            .await
+            .expect("PRAGMA journal_mode");
+        assert_eq!(journal_mode.to_lowercase(), "wal");
+
+        drop(pool);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
     }
 }
