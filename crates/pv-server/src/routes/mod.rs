@@ -3,6 +3,7 @@ pub mod folders;
 pub mod passkeys;
 pub mod session;
 pub mod sessions;
+pub mod sync;
 pub mod vault;
 pub mod webauthn_state;
 
@@ -28,6 +29,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/vault/items/{id}", put(vault::update).delete(vault::delete))
         .route("/api/vault/folders", get(folders::list).post(folders::create))
         .route("/api/vault/folders/{id}", delete(folders::delete))
+        .route("/api/sync", get(sync::pull))
         .route("/api/passkeys", get(passkeys::list))
         .route("/api/passkeys/register/start", post(passkeys::register_start))
         .route("/api/passkeys/register/finish", post(passkeys::register_finish))
