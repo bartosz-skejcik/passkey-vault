@@ -242,7 +242,21 @@ pub struct MeResponse {
 /// wywołujący już udowodnił posiadanie sesji przez bearer token; pozwala
 /// klientowi ponownie wyprowadzić własny materiał odblokowania po reload/
 /// auto-locku bez wywoływania `login` (co utworzyłoby zbędny wiersz sesji).
-pub async fn me(State(state): State<AppState>, session: SessionUser) -> Result<Json<MeResponse>, ApiError> {
+///
+/// Dodatkowo: throttlowany (co 5 minut) update `sessions.last_used_at` dla
+/// BIEŻĄCEJ sesji — 03-RESEARCH.md Pitfall 6's mitigation. Update na KAŻDYM
+/// uwierzytelnionym żądaniu (np. wewnątrz ekstraktora `SessionUser`) mnożyłby
+/// kontencję zapisu SQLite na każde wywołanie vault-item/folder; robienie
+/// tego wyłącznie z `/me` (już wołanego przy unlock/reload w istniejącym
+/// flow Fazy 2) i tylko gdy stale o 5+ minut, utrzymuje to tanio. Błąd tego
+/// update'u NIE może zawalić całego żądania `/me` — loguje i kontynuuje,
+/// podstawowy kontrakt `me()` (zwrócenie `pw_wrapped_uk`) jest best-effort
+/// niezależny od tego pobocznego zapisu.
+pub async fn me(
+    State(state): State<AppState>,
+    session: SessionUser,
+    headers: HeaderMap,
+) -> Result<Json<MeResponse>, ApiError> {
     let row = sqlx::query("SELECT email, pw_wrapped_uk FROM users WHERE id = ?")
         .bind(&session.user_id)
         .fetch_optional(&state.db)
@@ -251,6 +265,20 @@ pub async fn me(State(state): State<AppState>, session: SessionUser) -> Result<J
     let row = row.ok_or(ApiError::Unauthorized)?;
     let email: String = row.try_get("email").map_err(|_| ApiError::Internal)?;
     let pw_wrapped_uk: String = row.try_get("pw_wrapped_uk").map_err(|_| ApiError::Internal)?;
+
+    if let Ok(token) = extract_bearer_token(&headers) {
+        let token_hash = crypto::hash_token(token.as_bytes());
+        let update_result = sqlx::query(
+            "UPDATE sessions SET last_used_at = datetime('now') \
+             WHERE token_hash = ? AND (last_used_at IS NULL OR last_used_at < datetime('now', '-5 minutes'))",
+        )
+        .bind(token_hash.as_slice())
+        .execute(&state.db)
+        .await;
+        if let Err(err) = update_result {
+            tracing::warn!(?err, "failed to update session last_used_at (best-effort, non-fatal)");
+        }
+    }
 
     Ok(Json(MeResponse { user_id: session.user_id, email, pw_wrapped_uk }))
 }

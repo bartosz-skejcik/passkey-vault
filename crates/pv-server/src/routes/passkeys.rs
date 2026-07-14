@@ -11,6 +11,7 @@
 
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     Json,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -281,4 +282,107 @@ pub async fn prf_wrap(
     .await?;
 
     Ok(Json(PrfWrapResponse { prf_capable: true }))
+}
+
+#[derive(Serialize)]
+pub struct PasskeyRow {
+    pub id: String,
+    pub name: String,
+    pub prf_capable: bool,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+}
+
+/// `GET /api/passkeys` — only the authenticated user's own enrolled
+/// passkeys, never a client-supplied user id (mirrors `vault.rs::list`).
+pub async fn list(State(state): State<AppState>, session: SessionUser) -> Result<Json<Vec<PasskeyRow>>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT id, name, prf_capable, created_at, last_used_at FROM passkeys WHERE user_id = ? ORDER BY created_at",
+    )
+    .bind(&session.user_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let passkeys = rows
+        .into_iter()
+        .map(|row| {
+            let prf_capable: i64 = row.try_get("prf_capable").map_err(|_| ApiError::Internal)?;
+            Ok(PasskeyRow {
+                id: row.try_get("id").map_err(|_| ApiError::Internal)?,
+                name: row.try_get("name").map_err(|_| ApiError::Internal)?,
+                prf_capable: prf_capable != 0,
+                created_at: row.try_get("created_at").map_err(|_| ApiError::Internal)?,
+                last_used_at: row.try_get("last_used_at").map_err(|_| ApiError::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    Ok(Json(passkeys))
+}
+
+#[derive(Deserialize)]
+pub struct RenameRequest {
+    pub name: String,
+}
+
+/// `PATCH /api/passkeys/{id}` — rename a passkey. Trim-then-check (mirrors
+/// `auth.rs::register`'s email-validation style, not a regex).
+pub async fn rename(
+    State(state): State<AppState>,
+    session: SessionUser,
+    Path(id): Path<String>,
+    Json(req): Json<RenameRequest>,
+) -> Result<StatusCode, ApiError> {
+    let trimmed = req.name.trim();
+    if trimmed.is_empty() || trimmed.len() > 100 {
+        return Err(ApiError::BadRequest("name must be 1-100 characters".into()));
+    }
+
+    let result = sqlx::query("UPDATE passkeys SET name = ? WHERE id = ? AND user_id = ?")
+        .bind(trimmed)
+        .bind(&id)
+        .bind(&session.user_id)
+        .execute(&state.db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/passkeys/{id}` — AUTH-05's server-enforced no-stranding
+/// guard: re-verifies the CALLER's own `pw_wrapped_uk` exists BEFORE issuing
+/// any DELETE (03-RESEARCH.md Architecture Pattern 3, defense-in-depth on
+/// top of the schema's `NOT NULL` constraint). In v0.1 this branch is
+/// unreachable through any real user flow — registration always sets
+/// `pw_wrapped_uk` and no endpoint ever clears it — but the guard exists and
+/// must be independently testable anyway, per AUTH-05.
+pub async fn delete_passkey(
+    State(state): State<AppState>,
+    session: SessionUser,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let row = sqlx::query("SELECT pw_wrapped_uk FROM users WHERE id = ?")
+        .bind(&session.user_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::Internal)?;
+    let pw_wrapped_uk: String = row.try_get("pw_wrapped_uk").map_err(|_| ApiError::Internal)?;
+    if pw_wrapped_uk.is_empty() {
+        return Err(ApiError::Conflict("would strand vault: no password recovery wrap".into()));
+    }
+
+    let result = sqlx::query("DELETE FROM passkeys WHERE id = ? AND user_id = ?")
+        .bind(&id)
+        .bind(&session.user_id)
+        .execute(&state.db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }
