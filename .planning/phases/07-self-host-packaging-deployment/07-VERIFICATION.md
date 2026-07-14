@@ -45,8 +45,8 @@ human_needed:
 **Phase Goal:** Ship as one Docker container that fails loudly, not mysteriously, when misconfigured.
 **Requirements:** DEPLOY-01, DEPLOY-02
 **Verified:** 2026-07-14 (current HEAD, post-execution)
-**Status:** passed — all code-inspectable + runtime-testable criteria met; container/proxy E2E deferred to `07-UAT.md` as human_needed (Docker/nginx/caddy binaries unavailable in the autonomous environment; not a phase defect)
-**Re-verification:** No — initial verification
+**Status:** passed — all code-inspectable + runtime-testable criteria met. **UPDATE 2026-07-14: the container/proxy E2E (originally deferred human_needed) was subsequently run live on a real Docker daemon (Colima) and PASSED end-to-end** — see `07-UAT.md`. Running it surfaced + fixed 6 real bugs that code inspection could not, including a **Caddy WR-02 token-leak** (`query { delete token }` used field `uri` instead of `request>uri`, so the session token leaked into Caddy's access log — commit `a716f80`) and a Dockerfile OpenSSL build failure (`4e0ee37`). Both nginx and Caddy now proven to strip `token=` from their access logs. This strengthens SC1/SC3 from "verified by inspection" to "verified live."
+**Re-verification:** Yes — container/proxy E2E re-verified live 2026-07-14 (was inspection-only at initial verification)
 
 ## Goal Achievement
 

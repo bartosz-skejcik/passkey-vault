@@ -119,7 +119,7 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| uat | Phase 07 container/proxy E2E (docker build, compose persistence, nginx -t, caddy validate, verify-container.sh, SIGTERM timing, Playwright-behind-proxy) — Docker/nginx/caddy unavailable in autonomous env; exact commands in 07-UAT.md | human_needed | 2026-07-14 |
+| uat | Phase 07 container/proxy E2E — ✅ RESOLVED 2026-07-14: Docker installed (Colima), full E2E run live and PASSED (build, compose persistence+WAL, SIGTERM 1s, nginx+Caddy WS + WR-02 token-log redaction). Surfaced+fixed 6 real bugs incl. a Caddy WR-02 token-leak (a716f80, 4e0ee37, f6ae439). Only the browser passkey-ceremony-behind-proxy remains a manual Playwright item. See 07-UAT.md. | resolved | 2026-07-14 |
 | uat | Phase 05 UAT | passed (0 pending scenarios) | 2026-07-14 |
 | uat | Phase 06 UAT | passed (0 pending scenarios) | 2026-07-14 |
 | todo | 2026-07-12-ui-review-phase1-fixes — 3 WARNING UI findings (light-theme base-300 surface borders, SelfTestCard fatal-branch retry, "patrz błąd poniżej" copy order) — cosmetic, v0.2 polish candidates | open | 2026-07-14 |
