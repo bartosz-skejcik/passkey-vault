@@ -30,6 +30,29 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
   }),
 }));
 
+// Heavy child components -- shallow-mocked so this stays a fast, focused
+// unit test of the Settings tab wiring, not a re-test of either dialog's
+// own internals (both already have their own dedicated test files).
+vi.mock("../vault/ImportWizard", () => ({
+  default: ({ onDone }: { onDone: () => void }) => (
+    <div data-testid="mock-import-wizard">
+      <button type="button" data-testid="mock-import-wizard-done" onClick={onDone}>
+        done
+      </button>
+    </div>
+  ),
+}));
+
+vi.mock("../vault/ExportDialog", () => ({
+  default: ({ onClose }: { onClose: () => void }) => (
+    <div data-testid="mock-export-dialog">
+      <button type="button" data-testid="mock-export-dialog-close" onClick={onClose}>
+        close
+      </button>
+    </div>
+  ),
+}));
+
 import SettingsPanel from "./SettingsPanel";
 import { AUTOLOCK_MINUTES_KEY } from "@/lib/idle/autolock";
 
@@ -78,5 +101,27 @@ describe("SettingsPanel", () => {
 
     fireEvent.click(screen.getByTestId("settings-close"));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces the Phase 3 placeholder with working Import/Export CTAs that open ImportWizard/ExportDialog", () => {
+    render(<SettingsPanel onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("settings-tab-importexport"));
+
+    expect(screen.queryByText("settings.importExportPlaceholder")).not.toBeInTheDocument();
+    expect(screen.getByTestId("settings-import-cta")).toBeInTheDocument();
+    expect(screen.getByTestId("settings-export-cta")).toBeInTheDocument();
+
+    expect(screen.queryByTestId("mock-import-wizard")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("settings-import-cta"));
+    expect(screen.getByTestId("mock-import-wizard")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("mock-import-wizard-done"));
+    expect(screen.queryByTestId("mock-import-wizard")).not.toBeInTheDocument();
+
+    expect(screen.queryByTestId("mock-export-dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("settings-export-cta"));
+    expect(screen.getByTestId("mock-export-dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("mock-export-dialog-close"));
+    expect(screen.queryByTestId("mock-export-dialog")).not.toBeInTheDocument();
   });
 });

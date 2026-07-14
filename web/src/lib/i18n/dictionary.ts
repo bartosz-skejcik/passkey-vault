@@ -139,6 +139,78 @@ export const DICTIONARY = {
     en: "Invalid TOTP secret — check the base32 format",
   },
 
+  // ImportWizard (IMPEX-01/02/03, Plan 06-03) — copy verbatim from
+  // 06-UI-SPEC.md's Copywriting Contract; `import.mappingConfirm`/
+  // `import.reasonUnparseableRow` are Claude's-discretion additions the
+  // spec's table didn't literally name.
+  "import.title": { pl: "Import", en: "Import" },
+  "import.skip": { pl: "Pomiń na razie", en: "Skip for now" },
+  "import.dropzoneLabel": {
+    pl: "Przeciągnij plik tutaj albo kliknij, żeby wybrać",
+    en: "Drag a file here or click to choose one",
+  },
+  "import.dropzoneHint": { pl: "Obsługiwane: .json, .csv", en: "Supported: .json, .csv" },
+  "import.formatDetected": { pl: "Wykryto format: {format}", en: "Detected format: {format}" },
+  "import.formatUnknown": {
+    pl: "Nie rozpoznaliśmy formatu — zmapuj kolumny ręcznie",
+    en: "We didn't recognize this format — map the columns manually",
+  },
+  "import.mappingTitle": { pl: "Dopasuj kolumny", en: "Map columns" },
+  "import.mappingHint": {
+    pl: "Wybierz, która kolumna pliku odpowiada każdemu polu",
+    en: "Choose which column in your file matches each field",
+  },
+  "import.mappingConfirm": { pl: "Zatwierdź mapowanie", en: "Confirm mapping" },
+  "import.previewTitle": {
+    pl: "Podgląd — {n} pozycji do zaimportowania",
+    en: "Preview — {n} items to import",
+  },
+  "import.previewEmpty": {
+    pl: "Nie znaleźliśmy żadnych pozycji do zaimportowania w tym pliku.",
+    en: "We couldn't find any items to import in this file.",
+  },
+  "import.startButton": { pl: "Importuj {n} pozycji", en: "Import {n} items" },
+  "import.progressLabel": { pl: "Importowanie... {n} / {total}", en: "Importing... {n} / {total}" },
+  "import.summaryTitle": { pl: "Import zakończony", en: "Import complete" },
+  "import.summaryPartial": {
+    pl: "Zaimportowano {imported} z {total} — pominięto {skipped}.",
+    en: "Imported {imported} of {total} — {skipped} skipped.",
+  },
+  "import.summaryAllOk": {
+    pl: "Zaimportowano wszystkie {total} pozycje.",
+    en: "Imported all {total} items.",
+  },
+  "import.skippedReasonsToggle": { pl: "Pokaż powody pominięcia", en: "Show skip reasons" },
+  "import.reasonMissingField": { pl: "Brak wymaganego pola", en: "Missing a required field" },
+  "import.reasonOversizedField": { pl: "Pole zbyt duże", en: "Field too large" },
+  "import.reasonUnparseableRow": {
+    pl: "Nie udało się przetworzyć wiersza",
+    en: "Couldn't process this row",
+  },
+  "import.genericFileError": {
+    pl: "Nie udało się odczytać pliku. Sprawdź, czy to poprawny plik .json lub .csv.",
+    en: "Couldn't read the file. Check that it's a valid .json or .csv file.",
+  },
+  "import.doneButton": { pl: "Gotowe", en: "Done" },
+  "import.cancel": { pl: "Anuluj", en: "Cancel" },
+  "import.back": { pl: "Wstecz", en: "Back" },
+
+  // ExportDialog (IMPEX-04, Plan 06-03) — copy verbatim from
+  // 06-UI-SPEC.md's Copywriting Contract.
+  "export.warningTitle": {
+    pl: "Eksportować vault w postaci jawnego tekstu?",
+    en: "Export your vault as plain text?",
+  },
+  "export.warningBody": {
+    pl: "Plik będzie zawierał każde hasło i sekret w czytelnej postaci — bez szyfrowania. Passkeye nie są eksportowane — nie da się ich przenieść. Po pobraniu to Ty odpowiadasz za bezpieczne usunięcie pliku.",
+    en: "The file will contain every password and secret in plain, readable text — no encryption. Passkeys aren't exported — they can't be transferred. Once downloaded, you're responsible for deleting the file securely.",
+  },
+  "export.confirm": { pl: "Pobierz mimo to", en: "Download anyway" },
+  "export.cancel": { pl: "Anuluj", en: "Cancel" },
+  "export.formatJson": { pl: "JSON", en: "JSON" },
+  "export.formatCsv": { pl: "CSV", en: "CSV" },
+
+  "aria.chooseFileToImport": { pl: "Wybierz plik do importu", en: "Choose a file to import" },
   "aria.closePanel": { pl: "Zamknij panel", en: "Close panel" },
 
   "delete.title": { pl: `Usunąć „{name}"?`, en: `Delete "{name}"?` },
@@ -323,6 +395,18 @@ export const DICTIONARY = {
   "settings.importExportPlaceholder": {
     pl: "Import i eksport pojawią się w kolejnej fazie.",
     en: "Import and export are coming in a later phase.",
+  },
+  // Import/Export tab CTAs (IMPEX-01/04, Plan 06-03) — copy verbatim from
+  // 06-UI-SPEC.md's Copywriting Contract, replacing the placeholder above.
+  "settings.importCta": { pl: "Zaimportuj hasła", en: "Import passwords" },
+  "settings.importBody": {
+    pl: "Zaimportuj hasła z Bitwardena, NordPass, 1Password, LastPass, KeePass albo dowolnego CSV/JSON.",
+    en: "Import passwords from Bitwarden, NordPass, 1Password, LastPass, KeePass, or any CSV/JSON file.",
+  },
+  "settings.exportCta": { pl: "Eksportuj vault", en: "Export vault" },
+  "settings.exportBody": {
+    pl: "Pobierz kopię swojego vaulta w formacie JSON lub CSV.",
+    en: "Download a copy of your vault as JSON or CSV.",
   },
 
   "passkeys.emptyState": {
