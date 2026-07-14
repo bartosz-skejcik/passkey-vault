@@ -37,7 +37,7 @@ result: passed
 evidence: |
   Sessions tab shows the active session with "to urządzenie" badge and "Zalogowano … · Ostatnia aktywność 2 min temu" (throttled last_used_at update working).
   Per-session revoke + bulk "Wyloguj pozostałe" both open a confirm modal (binding resolution #6). Ownership/IDOR revoke covered by `sessions_revoke_ownership_check` integration test.
-  NOTE: session device shows "Nieznane urządzenie" under the headless/virtual browser — correct unknown-UA fallback of the deviceType helper (HelpCircle bucket); a real browser resolves to Monitor/Smartphone/Tablet.
+  NOTE: session device showed "Nieznane urządzenie" during the first UAT pass. Root cause was NOT the headless-UA fallback (my initial diagnosis was wrong) — it was code review finding WR-02: the login handler never captured the User-Agent header, so sessions.user_agent was always NULL. Fixed in commit 79b20c7 (login now persists User-Agent). Post-fix the device row resolves through the deviceType helper (unit-tested UA→icon mapping); a real browser session shows Monitor/Smartphone/Tablet. WR-02 fix is backed by cargo test + deviceType.test — full logout/login visual re-confirmation deferred (test-backed).
 
 ## Binding UI resolutions (Bartek, 2026-07-14) — verified
 1. Account dropdown restored (Zmień język / Zablokuj teraz / Wyloguj / Ustawienia); Settings opens from "Ustawienia" entry, not by overloading the account-row click. ✓
