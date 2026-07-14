@@ -1,0 +1,35 @@
+# Reference single-container deployment for pv-server. Build the image
+# locally from the repo root (no registry publishing for v0.1 — see
+# docs/SELF-HOSTING.md).
+#
+# `docker compose up` works out of the box with zero customization
+# (localhost defaults). For a real (non-localhost) deployment, copy
+# .env.example to .env and set PV_RP_ID/PV_ORIGIN — see docs/SELF-HOSTING.md
+# for why those two must be changed together.
+services:
+  pv-server:
+    build: .
+    ports:
+      - "8620:8620"
+    environment:
+      # PV_DB_URL/PV_ADDR are explicitly set here to match the Dockerfile's
+      # own baked-in ENV defaults (belt-and-suspenders documentation of the
+      # value, not the only place it's set) — config.rs's own bare
+      # 127.0.0.1:8620 default would be unreachable from outside the
+      # container's network namespace if both were left unset.
+      PV_DB_URL: sqlite:///data/pv.db
+      PV_ADDR: 0.0.0.0:8620
+      PV_RP_ID: ${PV_RP_ID:-localhost}
+      PV_ORIGIN: ${PV_ORIGIN:-http://localhost:8620}
+      PV_SESSION_TTL_HOURS: ${PV_SESSION_TTL_HOURS:-168}
+    volumes:
+      - pv_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8620/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  pv_data: {}
