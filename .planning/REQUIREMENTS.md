@@ -49,8 +49,8 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 
 ### Deploy / Self-host
 
-- [ ] **DEPLOY-01**: Całość działa w jednym kontenerze Docker: binarka axum serwuje API + WS + statyczny export Next.js (ServeDir); SQLite (WAL + busy_timeout) na wolumenie; migracje na starcie
-- [ ] **DEPLOY-02**: Serwer wymaga jawnego `RP_ID`/`PUBLIC_URL` i failuje głośno na starcie przy błędnej konfiguracji (WebAuthn za reverse proxy — czołowa pułapka self-hosterów)
+- [x] **DEPLOY-01**: Całość działa w jednym kontenerze Docker: binarka axum serwuje API + WS + statyczny export Next.js (ServeDir); SQLite (WAL + busy_timeout) na wolumenie; migracje na starcie
+- [x] **DEPLOY-02**: Serwer wymaga jawnego `RP_ID`/`PUBLIC_URL` i failuje głośno na starcie przy błędnej konfiguracji (WebAuthn za reverse proxy — czołowa pułapka self-hosterów)
 
 ## v2 Requirements (deferred — kolejne milestone'y wg roadmapy docs/)
 
@@ -125,5 +125,5 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 | IMPEX-03 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
 | IMPEX-04 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
 | UI-04 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
-| DEPLOY-01 | Phase 7: Self-Host Packaging & Deployment | Pending |
-| DEPLOY-02 | Phase 7: Self-Host Packaging & Deployment | Pending |
+| DEPLOY-01 | Phase 7: Self-Host Packaging & Deployment | Complete |
+| DEPLOY-02 | Phase 7: Self-Host Packaging & Deployment | Complete |

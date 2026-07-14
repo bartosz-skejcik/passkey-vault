@@ -224,7 +224,11 @@ Plans:
   2. Starting the server without a valid `RP_ID`/`PUBLIC_URL` (for a non-localhost deployment) fails immediately at startup with a specific, actionable error — not a generic runtime WebAuthn `SecurityError` discovered later by a user
   3. Behind a reference nginx/Caddy reverse-proxy config (documented and tested), passkey registration/login and the sync WebSocket both work end-to-end, not just direct-to-container
 
-**Plans**: TBD
+**Plans**: 1/3 plans executed
+
+- [x] 07-01-PLAN.md
+- [ ] 07-02-PLAN.md
+- [ ] 07-03-PLAN.md
 
 ## Progress
 
@@ -239,4 +243,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. PRF Unlock & Login Unification | 3/3 | Complete    | 2026-07-14 |
 | 5. Multi-Device Sync | 4/4 | Complete    | 2026-07-14 |
 | 6. Import/Export, TOTP & Onboarding | 4/4 | Complete    | 2026-07-14 |
-| 7. Self-Host Packaging & Deployment | 0/TBD | Not started | - |
+| 7. Self-Host Packaging & Deployment | 1/3 | In Progress|  |

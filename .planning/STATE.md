@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 07
 current_phase_name: Self-Host Packaging & Deployment
 status: executing
-stopped_at: Completed 02-06-PLAN.md (Phase 2 complete)
-last_updated: "2026-07-14T18:43:04.733Z"
+stopped_at: Completed 07-01-PLAN.md
+last_updated: "2026-07-14T18:59:00.380Z"
 last_activity: 2026-07-14
-last_activity_desc: Phase 6 complete, transitioned to Phase 07
+last_activity_desc: Phase 7 Plan 01 (server readiness) complete
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 29
-  completed_plans: 26
-  percent: 86
+  completed_plans: 27
+  percent: 93
 ---
 
 # Project State
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 ## Current Position
 
 Phase: 07 — Self-Host Packaging & Deployment
-Plan: Not started
-Status: Executing Phase 06
-Last activity: 2026-07-14 — Phase 6 complete, transitioned to Phase 07
+Plan: 01 complete (server readiness) — 02 and 03 pending
+Status: Executing Phase 07
+Last activity: 2026-07-14 — Phase 7 Plan 01 complete (Config::validate(), router() SPA fallback, WAL SQLite, SIGTERM shutdown)
 
-Progress: [███░░░░░░░] 29% (2/7 phases, 9/9 plans through Phase 2)
+Progress: [█████████░] 93% (27/29 plans)
 
 ## Performance Metrics
 
@@ -68,6 +68,7 @@ Progress: [███░░░░░░░] 29% (2/7 phases, 9/9 plans through Ph
 | Phase 02 P03 | 20min | 2 tasks | 6 files |
 | Phase 02 P05 | 25min | 3 tasks | 15 files |
 | Phase 02 P06 | 50min | 3 tasks | 22 files |
+| Phase 07 P01 | 45min | 4 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -97,6 +98,8 @@ Recent decisions affecting current work:
 - [Phase 2]: DetailPanel/TypePicker/ItemForm converted to a fixed z-40 overlay drawer with a click-outside scrim instead of a flex sibling that narrowed the item list (user-requested UAT change), staying below UnlockOverlay's z-50
 - [Phase 2]: store.ts uses a duck-typed isConflictError(err) status check instead of instanceof ApiClientError -- the module is dynamically re-imported per test via vi.resetModules(), which breaks instanceof against a test's own top-level-imported class reference
 - [Phase 2]: interpolate(template, vars) dictionary helper substitutes {token} placeholders and gracefully degrades under identity-mocked t() in tests
+- [Phase 7 P01]: ServeDir::fallback(...) used instead of ServeDir::not_found_service(...) for the SPA fallback — not_found_service forces a 404 status (tower-http SetStatus wrapper), which breaks a real SPA client-side route that must render on a 200 index.html response
+- [Phase 7 P01]: Config::validate()'s localhost exception is scoped to the pair (rp_id == "localhost" OR rp_origin's host is a localhost variant) via OR, not AND — zero-config defaults keep working with no env vars set (07-CONTEXT.md Area 3)
 
 ### Pending Todos
 
