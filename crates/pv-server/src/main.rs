@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::Context;
 use axum::{body::Body, http::Request};
 use pv_server::{build_pool, build_webauthn, config::Config, routes, AppState};
@@ -12,6 +14,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = Config::from_env()?;
+    cfg.validate()?;
 
     let db = build_pool(&cfg.db_url).await?;
     let webauthn = build_webauthn(&cfg.rp_id, &cfg.rp_origin)?;
@@ -29,7 +32,8 @@ async fn main() -> anyhow::Result<()> {
         dummy_secret,
         sync_hub: pv_server::routes::sync::SyncHub::default(),
     };
-    let app = routes::router(state, None)
+    let static_dir = std::env::var("PV_STATIC_DIR").ok().map(PathBuf::from);
+    let app = routes::router(state, static_dir)
         .layer(TraceLayer::new_for_http().make_span_with(make_span));
 
     let listener = tokio::net::TcpListener::bind(&cfg.addr)
@@ -42,8 +46,33 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Traps both SIGINT (Ctrl-C, local dev) and SIGTERM (the signal `docker
+/// stop` actually sends by default) so `axum::serve`'s
+/// `with_graceful_shutdown` drains in-flight requests and open sync
+/// WebSocket connections cleanly on either, instead of every `docker stop`
+/// hitting the container runtime's SIGKILL grace-period timeout because only
+/// SIGINT was handled.
 async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
     tracing::info!("shutting down");
 }
 
