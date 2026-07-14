@@ -36,7 +36,7 @@ findings:
   warning: 2
   info: 2
   total: 5
-status: issues_found
+status: fixed
 ---
 
 # Phase 5: Code Review Report
@@ -130,6 +130,46 @@ Publish the `SyncEvent` only after `commit()` succeeds.
 
 ---
 
+## Fix Report
+
+**Fixed at:** 2026-07-14T13:41:47Z
+
+All Critical and Warning findings were fixed. The two Info findings (IN-01,
+IN-02) were intentionally left unfixed per the fix scope for this pass — see
+their entries above for the still-outstanding issue and suggested fix.
+
+### CR-01: Live-edit save uses the background-updated revision as `expected_revision`, silently overwriting a concurrent remote change
+
+**Status:** fixed
+**Commit:** `81f0e4f`
+**Files:** `web/src/components/vault/DetailPanel.tsx`, `web/src/components/vault/DetailPanel.test.tsx`
+
+`DetailPanel`'s `ItemForm` now receives `currentRevision={editBaselineRevision ?? item.revision}` instead of the live `item.revision`. `store.ts`'s `updateVaultItem` already derived both the AEAD/AD revision (`currentRevision + 1`) and the wire `expected_revision` from whatever revision it's called with, so no change was needed there — passing the baseline through was the only fix required. Added a regression test (`DetailPanel.test.tsx`) proving: open edit at rev 1 → background sync rerenders with a bumped item at rev 2 → Save calls `updateVaultItem` with `expected_revision = 1` (the baseline), not `2` (the live/background-advanced revision). Full web suite (221 tests) and `tsc --noEmit` pass.
+
+### WR-01: Mutation and `vault_revision` bump are not atomic
+
+**Status:** fixed
+**Commit:** `84e019d`
+**Files:** `crates/pv-server/src/routes/vault.rs`, `crates/pv-server/src/routes/folders.rs`
+
+Wrapped each handler's row mutation and its `vault_revision` bump in a single `state.db.begin()` / `tx.commit()` transaction across `vault.rs` (`create`, `update`, `delete`) and `folders.rs` (`create`, `delete`). `SyncEvent` publication now happens only after `commit()` succeeds. Response shapes are unchanged. `cargo test --workspace` (all 13 vault.rs integration tests plus the full suite) passes; `cargo build --workspace` has zero new warnings.
+
+### WR-02: Session token in the WS URL query string is captured by request-logging middleware
+
+**Status:** fixed
+**Commit:** `e221752`
+**Files:** `crates/pv-server/src/main.rs`
+
+Added a custom `make_span` passed to `TraceLayer::new_for_http().make_span_with(...)` in `main.rs` that reports the request `uri` span field as path-only (no query string) for `/api/sync/ws`, leaving `DefaultMakeSpan`'s normal full-URI behavior untouched for every other route. Kept the existing bearer-token-over-query-param auth mechanism as-is (a ticket endpoint was explicitly out of scope for this fix). Added a doc comment noting Phase 7's Docker packaging must separately document reverse-proxy access-log stripping of the `token` query param, since a reverse proxy logs the raw request line before this middleware ever runs. Added two unit tests (`main.rs::tests`) on the extracted pure `span_uri_field` helper, proving the token is stripped for `/api/sync/ws` and every other route's full uri (including its query string) is preserved unchanged. `cargo test --workspace` passes; `cargo build --workspace` has zero new warnings.
+
+### IN-01, IN-02: not fixed (out of scope for this pass)
+
+Left as documented above — see the Info section for file/line references and suggested fixes.
+
+---
+
 _Reviewed: 2026-07-14T00:00:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
+_Fixed: 2026-07-14T13:41:47Z_
+_Fixer: Claude (gsd-code-fixer)_
