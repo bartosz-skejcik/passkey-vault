@@ -18,3 +18,7 @@ web/out/
 
 # TypeScript incremental build cache
 web/tsconfig.tsbuildinfo
+
+# verify-container.sh repo-local scratch (certs/Caddyfile for proxy E2E)
+.verify-scratch.*
+.verify-tmp/

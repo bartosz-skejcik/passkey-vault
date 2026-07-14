@@ -59,7 +59,15 @@ fail() { FAILED_ASSERTION="$1"; echo "FAIL: $1" >&2; exit 1; }
 #    material bridging "real TLS reference config" to "bootable in a
 #    sandboxed test run with no public DNS/port 80/443 reachability."
 # ---------------------------------------------------------------------------
-SCRATCH="$(mktemp -d)"
+# Create the scratch dir INSIDE the repo root (we cd'd here above), not in
+# $TMPDIR/var-folders. The proxy-test containers bind-mount the generated
+# certs + Caddyfile from this dir; on macOS Docker hosts (Colima, Docker
+# Desktop, Rancher) the system temp dir is NOT shared into the Linux VM, so a
+# /var/folders or /tmp scratch fails with "not a directory" on the file
+# bind-mount. The project dir is always shared (it's the build context), so a
+# repo-local scratch works identically on macOS and Linux. Cleanup rm -rf's it.
+SCRATCH="$(mktemp -d ./.verify-scratch.XXXXXX)"
+SCRATCH="$(cd "$SCRATCH" && pwd)"   # absolute path for bind-mount sources
 echo "scratch dir: $SCRATCH"
 
 echo "generating throwaway self-signed TLS pair for nginx-test..."
@@ -70,7 +78,10 @@ openssl req -x509 -nodes -newkey rsa:2048 \
 echo "generating tls-internal-forced test derivative of deploy/Caddyfile.example..."
 echo "(test-only transformation of the shipped file, not a divergent hand-maintained"
 echo " copy — production deployments use deploy/Caddyfile.example verbatim, real ACME)"
-sed '/vault.example.com {/a\    tls internal' deploy/Caddyfile.example > "$SCRATCH/Caddyfile.test"
+# awk (not sed) for BSD/GNU portability: sed's one-line `a\text` append idiom
+# is GNU-only and errors on macOS/BSD sed ("extra characters after \"). awk
+# appends `    tls internal` immediately after the site-address opening line.
+awk '{print} /vault\.example\.com \{/{print "    tls internal"}' deploy/Caddyfile.example > "$SCRATCH/Caddyfile.test"
 
 export PV_TEST_CERTS_DIR="$SCRATCH"
 export PV_TEST_CADDYFILE="$SCRATCH/Caddyfile.test"
@@ -107,10 +118,13 @@ EMAIL="verify-container-$RANDOM@example.invalid"
 SALT_B64=$(openssl rand -base64 16)
 AUTH_HASH_B64=$(openssl rand -base64 32)
 
-REGISTER_STATUS=$(curl -s -o "$SCRATCH/register.json" -w '%{http_code}' \
-    -X POST http://127.0.0.1:8620/api/auth/register \
-    -H 'Content-Type: application/json' \
-    -d "$(python3 -c "
+# Build the JSON body in a variable FIRST, then pass "$VAR" to curl. Do NOT
+# inline `-d "$(python3 -c "...")"`: nesting a python -c double-quoted string
+# (containing `{...}` dicts) inside curl's own -d "..." makes the shell treat
+# the inner quotes as closing the outer, un-quoting the braces so bash brace-
+# expands each dict field into a separate broken statement. The variable-
+# assignment form ($(...) not inside outer double quotes) quotes correctly.
+REGISTER_BODY=$(python3 -c "
 import json, sys
 print(json.dumps({
     'email': sys.argv[1],
@@ -119,17 +133,22 @@ print(json.dumps({
     'auth_hash': sys.argv[3],
     'pw_wrapped_uk': '{}',
 }))
-" "$EMAIL" "$SALT_B64" "$AUTH_HASH_B64")")
+" "$EMAIL" "$SALT_B64" "$AUTH_HASH_B64")
+REGISTER_STATUS=$(curl -s -o "$SCRATCH/register.json" -w '%{http_code}' \
+    -X POST http://127.0.0.1:8620/api/auth/register \
+    -H 'Content-Type: application/json' \
+    -d "$REGISTER_BODY")
 [ "$REGISTER_STATUS" = "201" ] || fail "POST /api/auth/register did not return 201 (got $REGISTER_STATUS, body: $(cat "$SCRATCH/register.json"))"
 pass "registered throwaway account ($EMAIL)"
 
+LOGIN_BODY=$(python3 -c "
+import json, sys
+print(json.dumps({'email': sys.argv[1], 'auth_hash': sys.argv[2]}))
+" "$EMAIL" "$AUTH_HASH_B64")
 LOGIN_STATUS=$(curl -s -o "$SCRATCH/login.json" -w '%{http_code}' \
     -X POST http://127.0.0.1:8620/api/auth/login \
     -H 'Content-Type: application/json' \
-    -d "$(python3 -c "
-import json, sys
-print(json.dumps({'email': sys.argv[1], 'auth_hash': sys.argv[2]}))
-" "$EMAIL" "$AUTH_HASH_B64")")
+    -d "$LOGIN_BODY")
 [ "$LOGIN_STATUS" = "200" ] || fail "POST /api/auth/login did not return 200 (got $LOGIN_STATUS, body: $(cat "$SCRATCH/login.json"))"
 
 SESSION_TOKEN=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['session_token'])" "$SCRATCH/login.json")
@@ -150,7 +169,12 @@ assert_proxy() {
     echo "--- asserting $name (port $port) ---"
 
     local healthz_status
-    healthz_status=$(curl -sk -o /dev/null -w '%{http_code}' -H 'Host: vault.example.com' "https://127.0.0.1:${port}/healthz")
+    # Use --resolve (not a bare Host: header) so the TLS SNI is
+    # vault.example.com, matching the served cert. Caddy selects its cert by
+    # SNI, so a `-H Host:` request to https://127.0.0.1 sends SNI=127.0.0.1,
+    # finds no matching cert, and the handshake fails (000). nginx isn't
+    # SNI-strict so it tolerated the old form; --resolve is correct for both.
+    healthz_status=$(curl -sk -o /dev/null -w '%{http_code}' --resolve "vault.example.com:${port}:127.0.0.1" "https://vault.example.com:${port}/healthz")
     [ "$healthz_status" = "200" ] || fail "$name: HTTPS /healthz did not return 200 (got $healthz_status)"
     pass "$name: HTTPS healthz reachable"
 
@@ -197,7 +221,12 @@ PYEOF
     pass "$name: access log does not contain 'token=' (WR-02 redaction confirmed)"
 }
 
-assert_proxy "nginx-test" 8621 "$COMPOSE exec -T nginx-test cat /var/log/nginx/access.log"
+# nginx's access_log path (/var/log/nginx/access.log) is symlinked to
+# /dev/stdout in the official nginx image, so `cat`-ing it inside the
+# container blocks forever (reading the live stdout stream). Read nginx's
+# captured stdout via `compose logs` instead. Caddy's `output file` writes a
+# REAL file, so `cat` is correct there.
+assert_proxy "nginx-test" 8621 "$COMPOSE logs nginx-test"
 assert_proxy "caddy-test" 8622 "$COMPOSE exec -T caddy-test cat /var/log/caddy/access.log"
 
 echo ""
