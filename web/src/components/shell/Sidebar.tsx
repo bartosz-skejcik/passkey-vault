@@ -26,6 +26,7 @@ import { lockVault } from "@/lib/crypto";
 import { logout } from "@/lib/auth/api";
 import { clearSessionToken, clearStoredEmail } from "@/lib/auth/session";
 import { createVaultFolder, useAllTags, useFolders } from "@/lib/vault/store";
+import { useSyncStatus } from "@/lib/vault/syncStatus";
 import { AUTOLOCK_CHANGED_EVENT, AUTOLOCK_MINUTES_KEY, DEFAULT_AUTOLOCK_MINUTES } from "@/lib/idle/autolock";
 import type { DICTIONARY } from "@/lib/i18n/dictionary";
 import type { ItemType, VaultFilter } from "@/lib/vault/types";
@@ -92,6 +93,7 @@ export default function Sidebar({
 
   const folders = useFolders();
   const allTags = useAllTags();
+  const syncStatus = useSyncStatus();
 
   useEffect(() => {
     const current = document.documentElement.getAttribute("data-theme");
@@ -352,8 +354,19 @@ export default function Sidebar({
             role="button"
             className="flex w-full items-center gap-3 rounded-field p-1 text-left"
           >
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-base-300 text-base-content/60">
+            <div className="relative flex h-9 w-9 items-center justify-center rounded-full bg-base-300 text-base-content/60">
               <User size={18} aria-hidden="true" />
+              {/* Two-visible-states-only rule (05-UI-SPEC.md): render
+                  nothing at all for "connected"/"offline" — the dot only
+                  ever appears while reconnecting. */}
+              {syncStatus === "reconnecting" ? (
+                <span role="status" aria-live="polite" aria-label={t("sync.reconnecting")}>
+                  <span
+                    data-testid="sync-status-dot"
+                    className="absolute bottom-0 right-0 h-2 w-2 animate-pulse rounded-full bg-warning ring-2 ring-base-200"
+                  />
+                </span>
+              ) : null}
             </div>
             <div className="flex-1 text-sm text-base-content/70">{t("sidebar.account")}</div>
           </div>

@@ -10,6 +10,7 @@ const {
   mockUseFolders,
   mockUseAllTags,
   mockCreateVaultFolder,
+  mockUseSyncStatus,
 } = vi.hoisted(() => ({
   mockLockVault: vi.fn(),
   mockLogout: vi.fn(),
@@ -19,6 +20,7 @@ const {
   mockUseFolders: vi.fn(),
   mockUseAllTags: vi.fn(),
   mockCreateVaultFolder: vi.fn(),
+  mockUseSyncStatus: vi.fn(),
 }));
 
 vi.mock("@/lib/crypto", () => ({
@@ -40,6 +42,10 @@ vi.mock("@/lib/vault/store", () => ({
   createVaultFolder: mockCreateVaultFolder,
 }));
 
+vi.mock("@/lib/vault/syncStatus", () => ({
+  useSyncStatus: mockUseSyncStatus,
+}));
+
 vi.mock("@/lib/i18n/LocaleContext", () => ({
   useLocale: () => ({
     locale: "pl",
@@ -55,6 +61,7 @@ beforeEach(() => {
   mockLogout.mockResolvedValue(undefined);
   mockUseFolders.mockReturnValue([]);
   mockUseAllTags.mockReturnValue([]);
+  mockUseSyncStatus.mockReturnValue("connected");
   // jsdom doesn't implement navigation — Sidebar's logout handler calls
   // window.location.reload(), which jsdom only logs (doesn't throw), same
   // as UnlockOverlay's 401 path.
@@ -190,5 +197,21 @@ describe("Sidebar i18n (gap-review IN-03)", () => {
     render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={vi.fn()} />);
     expect(screen.getByText("sidebar.account")).toBeInTheDocument();
     expect(screen.getByLabelText("aria.toggleTheme")).toBeInTheDocument();
+  });
+});
+
+describe("Sidebar sync-status dot (SYNC-03, Plan 05-04)", () => {
+  it("shows the sync-status dot only when useSyncStatus() returns reconnecting", () => {
+    mockUseSyncStatus.mockReturnValue("connected");
+    const { rerender } = render(<Sidebar />);
+    expect(screen.queryByTestId("sync-status-dot")).not.toBeInTheDocument();
+
+    mockUseSyncStatus.mockReturnValue("offline");
+    rerender(<Sidebar />);
+    expect(screen.queryByTestId("sync-status-dot")).not.toBeInTheDocument();
+
+    mockUseSyncStatus.mockReturnValue("reconnecting");
+    rerender(<Sidebar />);
+    expect(screen.getByTestId("sync-status-dot")).toBeInTheDocument();
   });
 });
