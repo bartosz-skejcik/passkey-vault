@@ -8,6 +8,13 @@ export function downloadFile(content: string, filename: string, mimeType: string
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  // Firefox historically ignores .click() on an anchor that is not in the
+  // DOM -- append before clicking, then remove. Revoking the object URL in
+  // the same tick can race the browser's async fetch of the blob and
+  // cancel the download in some browsers, so defer it.
+  a.style.display = "none";
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
