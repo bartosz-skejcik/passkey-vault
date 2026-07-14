@@ -1,7 +1,7 @@
 // Vault item/folder shapes shared by lib/vault/store.ts and every
 // vault/*.tsx component. `ItemFields` field lists match 02-UI-SPEC.md's
 // "Vault list + detail panel" section exactly, per item type.
-export type ItemType = "login" | "card" | "identity" | "note";
+export type ItemType = "login" | "card" | "identity" | "note" | "totp";
 
 interface CommonFields {
   name: string;
@@ -54,7 +54,19 @@ export interface NoteFields extends CommonFields {
   body: string;
 }
 
-export type ItemFields = LoginFields | CardFields | IdentityFields | NoteFields;
+// RFC 6238 defaults (SHA1/6/30) applied whenever a source format (manual-add
+// form, import mapper) doesn't specify these — see 06-RESEARCH.md Pattern 2.
+export interface TotpFields extends CommonFields {
+  type: "totp";
+  secret: string; // base32, required
+  issuer: string; // "" if absent
+  algorithm: "SHA1" | "SHA256" | "SHA512";
+  digits: number;
+  period: number;
+  notes: string;
+}
+
+export type ItemFields = LoginFields | CardFields | IdentityFields | NoteFields | TotpFields;
 
 export interface VaultItem {
   id: string;

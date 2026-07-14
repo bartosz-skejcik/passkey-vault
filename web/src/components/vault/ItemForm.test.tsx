@@ -202,6 +202,73 @@ describe("ItemForm", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
   });
 
+  it("submits a correctly-shaped totp ItemFields object with RFC 6238 defaults", async () => {
+    const onCreated = vi.fn();
+    render(<ItemForm type="totp" onCreated={onCreated} />);
+
+    fireEvent.change(screen.getByTestId("item-name"), { target: { value: "GitHub" } });
+    fireEvent.change(screen.getByTestId("item-secret"), {
+      target: { value: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" },
+    });
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockCreateVaultItem).toHaveBeenCalledTimes(1));
+    expect(mockCreateVaultItem).toHaveBeenCalledWith({
+      type: "totp",
+      name: "GitHub",
+      secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      issuer: "",
+      algorithm: "SHA1",
+      digits: 6,
+      period: 30,
+      notes: "",
+      folderId: null,
+      tags: [],
+    });
+  });
+
+  it("the totp Advanced collapse starts closed even before any interaction", () => {
+    render(<ItemForm type="totp" onCreated={vi.fn()} />);
+    const details = screen.getByTestId("totp-advanced-toggle").closest("details");
+    expect(details).not.toHaveAttribute("open");
+  });
+
+  it("blocks submission and shows an inline error for an invalid (non-base32) totp secret", async () => {
+    const onCreated = vi.fn();
+    render(<ItemForm type="totp" onCreated={onCreated} />);
+
+    fireEvent.change(screen.getByTestId("item-name"), { target: { value: "GitHub" } });
+    fireEvent.change(screen.getByTestId("item-secret"), {
+      target: { value: "not-valid-base32!!!" },
+    });
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    expect(await screen.findByTestId("totp-secret-error")).toBeInTheDocument();
+    expect(mockCreateVaultItem).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it("auto-parses an otpauth:// URI pasted into the secret field, populating issuer/algorithm/digits/period while the Advanced collapse stays closed", () => {
+    render(<ItemForm type="totp" onCreated={vi.fn()} />);
+
+    fireEvent.change(screen.getByTestId("item-secret"), {
+      target: {
+        value:
+          "otpauth://totp/GitHub:bartek?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=GitHub&algorithm=SHA256&digits=8&period=60",
+      },
+    });
+
+    expect(screen.getByTestId("item-secret")).toHaveValue("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ");
+    expect(screen.getByTestId("item-issuer")).toHaveValue("GitHub");
+    expect(screen.getByTestId("item-algorithm")).toHaveValue("SHA256");
+    expect(screen.getByTestId("item-digits")).toHaveValue(8);
+    expect(screen.getByTestId("item-period")).toHaveValue(60);
+    const details = screen.getByTestId("totp-advanced-toggle").closest("details");
+    expect(details).not.toHaveAttribute("open");
+  });
+
   it("edit mode calls onError (not throwing) when updateVaultItem rejects", async () => {
     const err = new Error("conflict");
     mockUpdateVaultItem.mockRejectedValue(err);

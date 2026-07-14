@@ -12,12 +12,13 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
 import TypePicker from "./TypePicker";
 
 describe("TypePicker", () => {
-  it("renders all four item-type tiles", () => {
+  it("renders all five item-type tiles", () => {
     render(<TypePicker onSelect={vi.fn()} />);
     expect(screen.getByTestId("type-tile-login")).toBeInTheDocument();
     expect(screen.getByTestId("type-tile-card")).toBeInTheDocument();
     expect(screen.getByTestId("type-tile-identity")).toBeInTheDocument();
     expect(screen.getByTestId("type-tile-note")).toBeInTheDocument();
+    expect(screen.getByTestId("type-tile-totp")).toBeInTheDocument();
   });
 
   it("calls onSelect with the clicked type", () => {
@@ -25,5 +26,12 @@ describe("TypePicker", () => {
     render(<TypePicker onSelect={onSelect} />);
     fireEvent.click(screen.getByTestId("type-tile-card"));
     expect(onSelect).toHaveBeenCalledWith("card");
+  });
+
+  it("calls onSelect with 'totp' when the TOTP tile is clicked", () => {
+    const onSelect = vi.fn();
+    render(<TypePicker onSelect={onSelect} />);
+    fireEvent.click(screen.getByTestId("type-tile-totp"));
+    expect(onSelect).toHaveBeenCalledWith("totp");
   });
 });

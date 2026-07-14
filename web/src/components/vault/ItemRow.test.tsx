@@ -8,6 +8,7 @@ const {
   mockCopyWithAutoClear,
   mockReadClipboardSeconds,
   mockShowCopyToast,
+  mockTotpNow,
 } = vi.hoisted(() => ({
   mockUseFolders: vi.fn(),
   mockUpdateVaultItem: vi.fn(),
@@ -15,12 +16,20 @@ const {
   mockCopyWithAutoClear: vi.fn(),
   mockReadClipboardSeconds: vi.fn(() => 40),
   mockShowCopyToast: vi.fn(),
+  mockTotpNow: vi.fn(),
 }));
 
 vi.mock("@/lib/vault/store", () => ({
   useFolders: mockUseFolders,
   updateVaultItem: mockUpdateVaultItem,
   deleteVaultItem: mockDeleteVaultItem,
+}));
+
+// ItemRow now transitively renders TotpCountdownRing for totp items, which
+// calls @/lib/crypto's totpNow — mocked per store.test.ts's established
+// vi.mock("@/lib/crypto", ...) pattern.
+vi.mock("@/lib/crypto", () => ({
+  totpNow: mockTotpNow,
 }));
 
 vi.mock("@/lib/clipboard", () => ({
@@ -41,11 +50,12 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
 }));
 
 import ItemRow from "./ItemRow";
-import type { CardFields, LoginFields, VaultItem } from "@/lib/vault/types";
+import type { CardFields, LoginFields, TotpFields, VaultItem } from "@/lib/vault/types";
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseFolders.mockReturnValue([]);
+  mockTotpNow.mockReturnValue({ code: "123456", secondsRemaining: 20 });
 });
 
 function loginItem(overrides: Partial<LoginFields> = {}): VaultItem {
@@ -77,6 +87,23 @@ function cardItem(overrides: Partial<CardFields> = {}): VaultItem {
     ...overrides,
   };
   return { id: "item-2", revision: 1, fields };
+}
+
+function totpItem(overrides: Partial<TotpFields> = {}): VaultItem {
+  const fields: TotpFields = {
+    type: "totp",
+    name: "GitHub",
+    secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    issuer: "GitHub Inc",
+    algorithm: "SHA1",
+    digits: 6,
+    period: 30,
+    notes: "",
+    folderId: null,
+    tags: [],
+    ...overrides,
+  };
+  return { id: "item-3", revision: 1, fields };
 }
 
 describe("ItemRow", () => {
@@ -123,6 +150,23 @@ describe("ItemRow", () => {
 
   it("renders nothing in the trailing time column when item.updatedAt is undefined", () => {
     render(<ItemRow item={loginItem()} selected={false} onClick={vi.fn()} />);
+    expect(screen.queryByText("time.justNow")).not.toBeInTheDocument();
+  });
+
+  it("renders the totp type-icon and the issuer as subtitle for a totp item", () => {
+    const { container } = render(
+      <ItemRow item={totpItem()} selected={false} onClick={vi.fn()} />,
+    );
+    expect(container.querySelector(".lucide-timer")).not.toBeNull();
+    expect(screen.getByText("GitHub Inc")).toBeInTheDocument();
+  });
+
+  it("renders the live countdown ring (not the relative-time timestamp) for a totp item, even when updatedAt is set", () => {
+    const recentIso = new Date(Date.now() - 5000).toISOString();
+    const item = { ...totpItem(), updatedAt: recentIso };
+    render(<ItemRow item={item} selected={false} onClick={vi.fn()} />);
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    expect(screen.getByText("123456")).toBeInTheDocument();
     expect(screen.queryByText("time.justNow")).not.toBeInTheDocument();
   });
 
