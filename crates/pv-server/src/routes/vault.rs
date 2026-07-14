@@ -65,6 +65,12 @@ pub async fn create(
     validate_blob_len("enc_key", &req.enc_key)?;
     validate_blob_len("enc_data", &req.enc_data)?;
 
+    // WR-01: mutation + vault_revision bump run inside one transaction, so a
+    // crash/dropped connection between the two can never durably persist the
+    // row while leaving the counter (and therefore every other device's
+    // catch-up pull) unaware of it.
+    let mut tx = state.db.begin().await?;
+
     // ON CONFLICT guard keeps creation atomic/race-free rather than trusting
     // client-side id uniqueness alone (collisions astronomically unlikely
     // for client-generated UUIDv4s, but the guard is cheap and correct).
@@ -80,7 +86,7 @@ pub async fn create(
     .bind(&session.user_id)
     .bind(&req.enc_key)
     .bind(&req.enc_data)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
 
     let row = match result {
@@ -96,11 +102,14 @@ pub async fn create(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
     .bind(&session.user_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
 
-    // SYNC-02: metadata-only push — a freshly created item is always at its
-    // own revision 1, matching this response's own `revision` field.
+    tx.commit().await?;
+
+    // SYNC-02: metadata-only push — only after commit() succeeds, and a
+    // freshly created item is always at its own revision 1, matching this
+    // response's own `revision` field.
     state.sync_hub.publish(
         &session.user_id,
         SyncEvent { entity_type: EntityType::Item, id: req.id.clone(), revision: 1, change_type: ChangeType::Create },
@@ -181,6 +190,10 @@ pub async fn update(
     validate_blob_len("enc_key", &req.enc_key)?;
     validate_blob_len("enc_data", &req.enc_data)?;
 
+    // WR-01: mutation + vault_revision bump run inside one transaction (see
+    // create()'s comment above for the atomicity rationale).
+    let mut tx = state.db.begin().await?;
+
     let result = sqlx::query(
         "UPDATE vault_items SET enc_key = ?, enc_data = ?, revision = revision + 1, updated_at = datetime('now') \
          WHERE id = ? AND user_id = ? AND revision = ? \
@@ -191,7 +204,7 @@ pub async fn update(
     .bind(&id)
     .bind(&session.user_id)
     .bind(req.expected_revision)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
 
     let row = match result {
@@ -200,7 +213,7 @@ pub async fn update(
             let exists = sqlx::query("SELECT 1 FROM vault_items WHERE id = ? AND user_id = ?")
                 .bind(&id)
                 .bind(&session.user_id)
-                .fetch_optional(&state.db)
+                .fetch_optional(&mut *tx)
                 .await?;
             return match exists {
                 Some(_) => Err(ApiError::Conflict("stale revision".into())),
@@ -216,13 +229,16 @@ pub async fn update(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
     .bind(&session.user_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
 
+    tx.commit().await?;
+
     let new_item_revision = req.expected_revision + 1;
-    // SYNC-02: metadata-only push — use the item's OWN per-row revision (the
-    // same value this response's own `revision` field carries), not the
-    // global counter this bump just produced.
+    // SYNC-02: metadata-only push — only after commit() succeeds; use the
+    // item's OWN per-row revision (the same value this response's own
+    // `revision` field carries), not the global counter this bump just
+    // produced.
     state.sync_hub.publish(
         &session.user_id,
         SyncEvent {
@@ -243,10 +259,14 @@ pub async fn delete(
     session: SessionUser,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
+    // WR-01: mutation + vault_revision bump run inside one transaction (see
+    // create()'s comment above for the atomicity rationale).
+    let mut tx = state.db.begin().await?;
+
     let result = sqlx::query("DELETE FROM vault_items WHERE id = ? AND user_id = ?")
         .bind(&id)
         .bind(&session.user_id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
 
     if result.rows_affected() == 0 {
@@ -259,12 +279,15 @@ pub async fn delete(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
     .bind(&session.user_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
 
-    // SYNC-02: the deleted row no longer exists, so it has no per-row
-    // revision to report — use the freshly-bumped GLOBAL vault_revision for
-    // this one call site only (per 05-02-PLAN's explicit instruction).
+    tx.commit().await?;
+
+    // SYNC-02: only after commit() succeeds — the deleted row no longer
+    // exists, so it has no per-row revision to report — use the
+    // freshly-bumped GLOBAL vault_revision for this one call site only (per
+    // 05-02-PLAN's explicit instruction).
     state.sync_hub.publish(
         &session.user_id,
         SyncEvent {

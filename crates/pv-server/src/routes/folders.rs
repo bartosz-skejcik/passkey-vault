@@ -45,11 +45,15 @@ pub async fn create(
 
     let id = Uuid::new_v4().to_string();
 
+    // WR-01: mutation + vault_revision bump run inside one transaction (see
+    // vault.rs create()'s comment for the atomicity rationale).
+    let mut tx = state.db.begin().await?;
+
     sqlx::query("INSERT INTO folders (id, user_id, enc_name) VALUES (?, ?, ?)")
         .bind(&id)
         .bind(&session.user_id)
         .bind(&req.enc_name)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
 
     // SYNC-01: bump the per-user global change counter in the same
@@ -59,12 +63,15 @@ pub async fn create(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
     .bind(&session.user_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
 
-    // SYNC-02: folders have no per-row revision column (05-CONTEXT.md's
-    // locked decision) — both folder events use the freshly-bumped global
-    // vault_revision value for SyncEvent.revision.
+    tx.commit().await?;
+
+    // SYNC-02: only after commit() succeeds — folders have no per-row
+    // revision column (05-CONTEXT.md's locked decision) — both folder events
+    // use the freshly-bumped global vault_revision value for
+    // SyncEvent.revision.
     state.sync_hub.publish(
         &session.user_id,
         SyncEvent {
@@ -116,10 +123,14 @@ pub async fn delete(
     session: SessionUser,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
+    // WR-01: mutation + vault_revision bump run inside one transaction (see
+    // create()'s comment above for the atomicity rationale).
+    let mut tx = state.db.begin().await?;
+
     let result = sqlx::query("DELETE FROM folders WHERE id = ? AND user_id = ?")
         .bind(&id)
         .bind(&session.user_id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
 
     if result.rows_affected() == 0 {
@@ -132,11 +143,14 @@ pub async fn delete(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
     .bind(&session.user_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
 
-    // SYNC-02: folders have no per-row revision column — use the
-    // freshly-bumped global vault_revision for this event too.
+    tx.commit().await?;
+
+    // SYNC-02: only after commit() succeeds — folders have no per-row
+    // revision column — use the freshly-bumped global vault_revision for
+    // this event too.
     state.sync_hub.publish(
         &session.user_id,
         SyncEvent {
