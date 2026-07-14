@@ -18,6 +18,9 @@ import {
   getStoredEmail,
 } from "@/lib/auth/session";
 import { takePendingUnlock } from "@/lib/auth/pendingUnlock";
+import { takePrfUnavailableHint } from "@/lib/auth/prfUnavailable";
+import { passkeyUnlock } from "@/lib/passkeys/login";
+import PasskeyUnlockButton from "./PasskeyUnlockButton";
 
 /**
  * Renders only when a session exists AND the vault is locked. The real
@@ -40,9 +43,46 @@ export default function UnlockOverlay() {
   // pending material is consumed on the first take), so this must not be
   // re-derived on every render.
   const [pending] = useState(() => takePendingUnlock());
+  // Same take-once-at-mount idiom — a post-passkey-login "no PRF" landing
+  // carries this flag from LoginForm's setPrfUnavailableHint().
+  const [prfUnavailableAtMount] = useState(() => takePrfUnavailableHint());
+  // Capability pre-check, once at mount.
+  const [webauthnSupported] = useState(
+    () => typeof window !== "undefined" && window.PublicKeyCredential !== undefined,
+  );
+  const [passkeyState, setPasskeyState] = useState<"idle" | "busy">("idle");
+  const [passkeyError, setPasskeyError] = useState<string | null>(null);
+  // A same-session passkeyUnlock() call resolving { prfUnavailable: true }
+  // (404 pre-check OR post-ceremony null) must surface the SAME explainer
+  // immediately, without requiring a page reload — this is distinct from
+  // prfUnavailableAtMount, which only covers the LoginForm-then-reload
+  // handoff case.
+  const [unlockPrfUnavailable, setUnlockPrfUnavailable] = useState(false);
+  const showPrfExplainer = prfUnavailableAtMount || unlockPrfUnavailable;
 
   if (sessionToken === null || unlocked) {
     return null;
+  }
+
+  async function handlePasskeyUnlock() {
+    setPasskeyState("busy");
+    setPasskeyError(null);
+    try {
+      // passkeyUnlock() itself silently no-ops on a NotAllowedError
+      // (user-cancelled) ceremony — it never throws for that case, so this
+      // catch block only ever sees a genuine failure.
+      const result = await passkeyUnlock(() => {});
+      if (result.prfUnavailable) {
+        setUnlockPrfUnavailable(true);
+      }
+      // No onAuthed()-equivalent call here — useIsUnlocked()'s own
+      // subscription (wired via setUnlockedUserKey inside passkeyUnlock
+      // itself) is what re-renders the shell away from this overlay.
+    } catch {
+      setPasskeyError(t("unlock.passkeyFailed"));
+    } finally {
+      setPasskeyState("idle");
+    }
   }
 
   async function unlockFromPending() {
@@ -123,33 +163,57 @@ export default function UnlockOverlay() {
             </button>
           </div>
         ) : (
-          <form onSubmit={unlockFromPassword} className="mt-6 flex flex-col gap-4">
-            <div className="flex flex-col gap-1">
-              <label htmlFor="unlock-password" className="text-sm">
-                {t("auth.passwordLabel")}
-              </label>
-              <input
-                id="unlock-password"
-                data-testid="unlock-password"
-                type="password"
-                required
-                className="input input-bordered w-full font-mono"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
+          <div className="mt-6 flex flex-col gap-4">
+            {webauthnSupported ? (
+              <PasskeyUnlockButton
+                label={passkeyState === "busy" ? t("unlock.passkeyBusy") : t("unlock.passkeyCta")}
+                state={passkeyState}
+                onClick={handlePasskeyUnlock}
+                disabled={submitting}
               />
-            </div>
+            ) : (
+              <p className="text-sm text-base-content/70">{t("unlock.passkeyUnsupported")}</p>
+            )}
 
-            {error ? <p className="text-sm text-error">{error}</p> : null}
+            {passkeyError ? <p className="text-sm text-error">{passkeyError}</p> : null}
 
-            <button
-              type="submit"
-              data-testid="unlock-submit"
-              className="btn btn-primary"
-              disabled={submitting}
-            >
-              {t("unlock.submit")}
-            </button>
-          </form>
+            {showPrfExplainer ? (
+              <p className="text-sm text-base-content/70">
+                {t("unlock.prfUnavailableExplainer")}
+              </p>
+            ) : null}
+
+            <div className="divider">{t("unlock.orDivider")}</div>
+
+            <form onSubmit={unlockFromPassword} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="unlock-password" className="text-sm">
+                  {t("auth.passwordLabel")}
+                </label>
+                <input
+                  id="unlock-password"
+                  data-testid="unlock-password"
+                  type="password"
+                  required
+                  autoFocus={showPrfExplainer}
+                  className="input input-bordered w-full font-mono"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+
+              {error ? <p className="text-sm text-error">{error}</p> : null}
+
+              <button
+                type="submit"
+                data-testid="unlock-submit"
+                className="btn btn-primary"
+                disabled={submitting}
+              >
+                {t("unlock.submit")}
+              </button>
+            </form>
+          </div>
         )}
       </div>
     </div>
