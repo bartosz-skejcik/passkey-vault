@@ -100,14 +100,15 @@ describe("reconnect backoff", () => {
     const { startSync } = await import("./sync");
     startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
 
-    // Close three times in a row without ever opening — each close should
-    // schedule a reconnect at the current (jittered) backoff, then double.
-    lastSocket().close();
-    await vi.advanceTimersByTimeAsync(0);
-    lastSocket().close();
-    await vi.advanceTimersByTimeAsync(0);
-    lastSocket().close();
-    await vi.advanceTimersByTimeAsync(0);
+    // Drop three successive connections — each close schedules a reconnect
+    // at the current (jittered) backoff, then doubles; advancing the fake
+    // clock past each delay lets the reconnect create the next socket.
+    lastSocket().close(); // schedules reconnect at 1000ms
+    await vi.advanceTimersByTimeAsync(1000); // fires it → new socket
+    lastSocket().close(); // schedules reconnect at 2000ms
+    await vi.advanceTimersByTimeAsync(2000);
+    lastSocket().close(); // schedules reconnect at 4000ms
+    await vi.advanceTimersByTimeAsync(4000);
 
     const reconnectDelays = setTimeoutSpy.mock.calls
       .map((call) => call[1])
