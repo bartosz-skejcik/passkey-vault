@@ -44,7 +44,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 - [x] **UI-01**: Web app (Next.js 16, `output: "export"`, Tailwind v4 + DaisyUI 5) w theme datafa.st — dark default, pełnoprawny light; cała kryptografia wyłącznie przez choke-point moduł importujący pv-core WASM
 - [x] **UI-02**: Ekran unlock/login: PRF-first — duży tealowy przycisk „Odblokuj passkeyem" nad polem master password
 - [x] **UI-03**: Vault: lista itemów (favicon, nazwa, username, badge typu) + panel boczny szczegółów z copy-buttonami i sekcją passkey
-- [ ] **UI-04**: Onboarding (3 kroki) z importem z innego menedżera jako pierwszym krokiem
+- [x] **UI-04**: Onboarding (3 kroki) z importem z innego menedżera jako pierwszym krokiem
 - [x] **UI-05**: Ustawienia: enrolled passkeys, sesje/urządzenia, import/eksport, parametry auto-lock/schowka
 
 ### Deploy / Self-host
@@ -124,6 +124,6 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 | IMPEX-02 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
 | IMPEX-03 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
 | IMPEX-04 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
-| UI-04 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
+| UI-04 | Phase 6: Import/Export, TOTP & Onboarding | Complete |
 | DEPLOY-01 | Phase 7: Self-Host Packaging & Deployment | Pending |
 | DEPLOY-02 | Phase 7: Self-Host Packaging & Deployment | Pending |

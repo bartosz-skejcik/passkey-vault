@@ -238,5 +238,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. Passkey Enrollment & Account Security | 3/4 | Complete    | 2026-07-14 |
 | 4. PRF Unlock & Login Unification | 3/3 | Complete    | 2026-07-14 |
 | 5. Multi-Device Sync | 4/4 | Complete    | 2026-07-14 |
-| 6. Import/Export, TOTP & Onboarding | 4/4 | Complete   | 2026-07-14 |
+| 6. Import/Export, TOTP & Onboarding | 4/4 | Complete    | 2026-07-14 |
 | 7. Self-Host Packaging & Deployment | 0/TBD | Not started | - |
