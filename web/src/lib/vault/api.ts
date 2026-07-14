@@ -44,6 +44,19 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+/** Wire shape of GET /api/sync?since=N — a cheap `{revision}` body when the
+ * caller is already up to date, or a full `{revision, items, folders}`
+ * snapshot when stale (Plan 05-01's revision-gated pull contract). */
+export interface SyncSnapshot {
+  revision: number;
+  items?: ItemRow[];
+  folders?: FolderRow[];
+}
+
+export function getSyncSnapshot(since: number): Promise<SyncSnapshot> {
+  return apiJson(`/api/sync?since=${since}`);
+}
+
 export function listItems(): Promise<ItemRow[]> {
   return apiJson("/api/vault/items");
 }
