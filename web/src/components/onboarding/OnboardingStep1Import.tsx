@@ -30,7 +30,7 @@ export default function OnboardingStep1Import({
           {t("onboarding.step1Body")}
         </p>
       </div>
-      <ImportWizard onSkip={onSkip} onDone={onDone} />
+      <ImportWizard onSkip={onSkip} onDone={onDone} variant="inline" />
     </div>
   );
 }

@@ -10,10 +10,18 @@ import { Upload, X } from "lucide-react";
 import Papa from "papaparse";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
-import { createVaultFolder, createVaultItem, useFolders } from "@/lib/vault/store";
+import {
+  createVaultFolder,
+  createVaultItem,
+  useFolders,
+} from "@/lib/vault/store";
 import type { ItemFields } from "@/lib/vault/types";
 import { detectFormat, type ImportFormat } from "@/lib/vault/importers/detect";
-import type { MapRowResult, MappedItemDraft, SkipReason } from "@/lib/vault/importers/types";
+import type {
+  MapRowResult,
+  MappedItemDraft,
+  SkipReason,
+} from "@/lib/vault/importers/types";
 import * as bitwardenJson from "@/lib/vault/importers/bitwardenJson";
 import type { BitwardenJsonItem } from "@/lib/vault/importers/bitwardenJson";
 import * as bitwardenCsv from "@/lib/vault/importers/bitwardenCsv";
@@ -41,7 +49,10 @@ interface SkippedEntry {
 }
 
 const CSV_MAPPERS: Partial<
-  Record<ImportFormat, { mapRow: (row: Record<string, string>) => MapRowResult }>
+  Record<
+    ImportFormat,
+    { mapRow: (row: Record<string, string>) => MapRowResult }
+  >
 > = {
   "bitwarden-csv": bitwardenCsv,
   "nordpass-csv": nordpassCsv,
@@ -52,7 +63,9 @@ const CSV_MAPPERS: Partial<
 
 const REASON_KEY: Record<
   SkipReason,
-  "import.reasonMissingField" | "import.reasonOversizedField" | "import.reasonUnparseableRow"
+  | "import.reasonMissingField"
+  | "import.reasonOversizedField"
+  | "import.reasonUnparseableRow"
 > = {
   missingField: "import.reasonMissingField",
   oversizedField: "import.reasonOversizedField",
@@ -84,7 +97,10 @@ function flattenMapResults(results: MapRowResult[]): {
 /** Builds the final ItemFields the write loop POSTs: every draft field
  * carries over unchanged except `folder` (a raw source-file NAME) is
  * dropped in favor of the resolved `folderId`. */
-function buildItemFields(draft: MappedItemDraft, folderId: string | null): ItemFields {
+function buildItemFields(
+  draft: MappedItemDraft,
+  folderId: string | null,
+): ItemFields {
   const { folder, ...rest } = draft;
   void folder;
   return { ...rest, folderId } as ItemFields;
@@ -112,17 +128,25 @@ function classifyWriteError(err: unknown): SkipReason {
 }
 
 function emptyMapping(): GenericFieldMapping {
-  return Object.fromEntries(GENERIC_TARGET_FIELDS.map((field) => [field, ""])) as GenericFieldMapping;
+  return Object.fromEntries(
+    GENERIC_TARGET_FIELDS.map((field) => [field, ""]),
+  ) as GenericFieldMapping;
 }
 
 export default function ImportWizard({
   onDone,
   onSkip,
   onCancel,
+  variant = "overlay",
 }: {
   onDone: () => void;
   onSkip?: () => void;
   onCancel?: () => void;
+  // "overlay" (default) is the standalone full-screen-scrim modal used from
+  // Settings; "inline" drops the `fixed inset-0` scrim wrapper so the
+  // wizard body renders embedded within a parent card (Onboarding step 1),
+  // which otherwise painted on top of its own title/body copy.
+  variant?: "overlay" | "inline";
 }) {
   const { t } = useLocale();
   const folders = useFolders();
@@ -133,7 +157,9 @@ export default function ImportWizard({
 
   const [screen, setScreen] = useState<Screen>("select");
   const [fileError, setFileError] = useState<string | null>(null);
-  const [detectedFormat, setDetectedFormat] = useState<ImportFormat | null>(null);
+  const [detectedFormat, setDetectedFormat] = useState<ImportFormat | null>(
+    null,
+  );
   const [drafts, setDrafts] = useState<MappedItemDraft[]>([]);
   const [skippedEntries, setSkippedEntries] = useState<SkippedEntry[]>([]);
   const [mappingHeaders, setMappingHeaders] = useState<string[]>([]);
@@ -324,6 +350,274 @@ export default function ImportWizard({
     setScreen("summary");
   }
 
+  // "inline" (Onboarding step 1) renders just this panel, embedded in the
+  // parent card -- no full-screen scrim, since ImportWizard is not the only
+  // thing on screen there. "overlay" (Settings, the default) wraps it in
+  // the fixed inset-0 scrim below, matching DeleteConfirmDialog's shape.
+  const panel = (
+    <div
+      className="flex w-full max-w-[640px] flex-col gap-4 rounded-box border border-base-300 bg-base-100 p-6"
+      onClick={variant === "overlay" ? (e) => e.stopPropagation() : undefined}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <h2 className="text-[20px] font-bold leading-[1.2]">
+          {t("import.title")}
+        </h2>
+        {screen !== "progress" ? (
+          <button
+            type="button"
+            data-testid="import-wizard-close"
+            aria-label={t("aria.closePanel")}
+            className="btn btn-ghost btn-square btn-sm"
+            onClick={cancel}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
+
+      {screen === "select" ? (
+        <div className="flex flex-col gap-4">
+          <div className="flex justify-end">
+            <button
+              type="button"
+              data-testid="import-wizard-skip"
+              className="btn btn-ghost btn-sm"
+              onClick={skip}
+            >
+              {t("import.skip")}
+            </button>
+          </div>
+          <label className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-box border border-dashed border-base-300 p-6 text-center">
+            <Upload size={32} aria-hidden="true" />
+            <span>{t("import.dropzoneLabel")}</span>
+            <span className="text-sm text-base-content/60">
+              {t("import.dropzoneHint")}
+            </span>
+            <input
+              type="file"
+              accept=".json,.csv"
+              data-testid="import-wizard-file-input"
+              aria-label={t("aria.chooseFileToImport")}
+              className="file-input file-input-bordered"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  void handleFileSelected(file);
+                }
+              }}
+            />
+          </label>
+          {fileError ? (
+            <p data-testid="import-wizard-file-error" className="text-error">
+              {fileError}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {screen === "mapping" ? (
+        <div className="flex flex-col gap-4">
+          <h3 className="text-base font-bold">{t("import.mappingTitle")}</h3>
+          <p className="text-sm text-base-content/60">
+            {t("import.mappingHint")}
+          </p>
+          <table className="table table-sm">
+            <tbody>
+              {GENERIC_TARGET_FIELDS.map((field) => (
+                <tr key={field}>
+                  <td className="text-sm">{field}</td>
+                  <td>
+                    <select
+                      aria-label={field}
+                      data-testid={`import-wizard-mapping-${field}`}
+                      className="select select-bordered select-sm"
+                      value={mapping[field]}
+                      onChange={(e) =>
+                        setMapping((prev) => ({
+                          ...prev,
+                          [field]: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">—</option>
+                      {mappingHeaders.map((header) => (
+                        <option key={header} value={header}>
+                          {header}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              data-testid="import-wizard-mapping-confirm"
+              className="btn btn-primary"
+              onClick={handleMappingConfirm}
+            >
+              {t("import.mappingConfirm")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {screen === "preview" ? (
+        <div className="flex flex-col gap-4">
+          {detectedFormat ? (
+            <p className="text-sm text-base-content/60">
+              {interpolate(t("import.formatDetected"), {
+                format: detectedFormat,
+              })}
+            </p>
+          ) : null}
+          <h3 className="text-base font-bold">
+            {interpolate(t("import.previewTitle"), {
+              n: String(drafts.length),
+            })}
+          </h3>
+          {drafts.length === 0 ? (
+            <p>{t("import.previewEmpty")}</p>
+          ) : (
+            <table className="table table-zebra table-sm">
+              <tbody>
+                {drafts.map((draft, index) => (
+                  <tr key={index} className="h-12">
+                    <td>{draft.name}</td>
+                    <td>{draft.type}</td>
+                    <td>
+                      {draft.type === "login"
+                        ? draft.username
+                        : draft.type === "totp"
+                          ? draft.issuer
+                          : ""}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div className="flex justify-between gap-2">
+            <div className="flex gap-2">
+              <button
+                type="button"
+                data-testid="import-wizard-back"
+                className="btn btn-ghost"
+                onClick={() => {
+                  setDrafts([]);
+                  setScreen("select");
+                }}
+              >
+                {t("import.back")}
+              </button>
+              <button
+                type="button"
+                data-testid="import-wizard-cancel"
+                className="btn btn-ghost"
+                onClick={cancel}
+              >
+                {t("import.cancel")}
+              </button>
+            </div>
+            <button
+              type="button"
+              data-testid="import-wizard-start"
+              className="btn btn-primary"
+              disabled={drafts.length === 0}
+              onClick={() => void runImport()}
+            >
+              {interpolate(t("import.startButton"), {
+                n: String(drafts.length),
+              })}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {screen === "progress" ? (
+        <div
+          data-testid="import-wizard-progress"
+          className="flex flex-col gap-4"
+        >
+          <progress
+            className="progress progress-primary w-full"
+            value={loopProgress}
+            max={drafts.length}
+          />
+          <p>
+            {interpolate(t("import.progressLabel"), {
+              n: String(loopProgress),
+              total: String(drafts.length),
+            })}
+          </p>
+        </div>
+      ) : null}
+
+      {screen === "summary" ? (
+        <div
+          data-testid="import-wizard-summary"
+          className="flex flex-col gap-4"
+        >
+          <h3 className="text-base font-bold">{t("import.summaryTitle")}</h3>
+          {skippedEntries.length === 0 ? (
+            <p data-testid="import-wizard-summary-all-ok">
+              {interpolate(t("import.summaryAllOk"), {
+                total: String(importedCount),
+              })}
+            </p>
+          ) : (
+            <p
+              data-testid="import-wizard-summary-partial"
+              className="text-warning"
+            >
+              {interpolate(t("import.summaryPartial"), {
+                imported: String(importedCount),
+                total: String(importedCount + skippedEntries.length),
+                skipped: String(skippedEntries.length),
+              })}
+            </p>
+          )}
+          {skippedEntries.length > 0 ? (
+            <details className="collapse collapse-arrow">
+              <summary
+                data-testid="import-wizard-skipped-toggle"
+                className="collapse-title"
+              >
+                {t("import.skippedReasonsToggle")}
+              </summary>
+              <div className="collapse-content">
+                <ul>
+                  {skippedEntries.map((entry, index) => (
+                    <li key={index}>
+                      {entry.label}: {t(REASON_KEY[entry.reason])}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </details>
+          ) : null}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              data-testid="import-wizard-done"
+              className="btn btn-primary"
+              onClick={onDone}
+            >
+              {t("import.doneButton")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  if (variant === "inline") {
+    return panel;
+  }
+
   return (
     <div
       data-testid="import-wizard-scrim"
@@ -336,237 +630,7 @@ export default function ImportWizard({
         }
       }}
     >
-      <div
-        className="flex w-full max-w-[640px] flex-col gap-4 rounded-box border border-base-300 bg-base-100 p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-2">
-          <h2 className="text-[20px] font-bold leading-[1.2]">{t("import.title")}</h2>
-          {screen !== "progress" ? (
-            <button
-              type="button"
-              data-testid="import-wizard-close"
-              aria-label={t("aria.closePanel")}
-              className="btn btn-ghost btn-square btn-sm"
-              onClick={cancel}
-            >
-              <X size={16} aria-hidden="true" />
-            </button>
-          ) : null}
-        </div>
-
-        {screen === "select" ? (
-          <div className="flex flex-col gap-4">
-            <div className="flex justify-end">
-              <button
-                type="button"
-                data-testid="import-wizard-skip"
-                className="btn btn-ghost btn-sm"
-                onClick={skip}
-              >
-                {t("import.skip")}
-              </button>
-            </div>
-            <label className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-box border border-dashed border-base-300 p-6 text-center">
-              <Upload size={32} aria-hidden="true" />
-              <span>{t("import.dropzoneLabel")}</span>
-              <span className="text-sm text-base-content/60">{t("import.dropzoneHint")}</span>
-              <input
-                type="file"
-                accept=".json,.csv"
-                data-testid="import-wizard-file-input"
-                aria-label={t("aria.chooseFileToImport")}
-                className="file-input file-input-bordered"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    void handleFileSelected(file);
-                  }
-                }}
-              />
-            </label>
-            {fileError ? (
-              <p data-testid="import-wizard-file-error" className="text-error">
-                {fileError}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-
-        {screen === "mapping" ? (
-          <div className="flex flex-col gap-4">
-            <h3 className="text-base font-bold">{t("import.mappingTitle")}</h3>
-            <p className="text-sm text-base-content/60">{t("import.mappingHint")}</p>
-            <table className="table table-sm">
-              <tbody>
-                {GENERIC_TARGET_FIELDS.map((field) => (
-                  <tr key={field}>
-                    <td className="text-sm">{field}</td>
-                    <td>
-                      <select
-                        aria-label={field}
-                        data-testid={`import-wizard-mapping-${field}`}
-                        className="select select-bordered select-sm"
-                        value={mapping[field]}
-                        onChange={(e) =>
-                          setMapping((prev) => ({ ...prev, [field]: e.target.value }))
-                        }
-                      >
-                        <option value="">—</option>
-                        {mappingHeaders.map((header) => (
-                          <option key={header} value={header}>
-                            {header}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="flex justify-end">
-              <button
-                type="button"
-                data-testid="import-wizard-mapping-confirm"
-                className="btn btn-primary"
-                onClick={handleMappingConfirm}
-              >
-                {t("import.mappingConfirm")}
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {screen === "preview" ? (
-          <div className="flex flex-col gap-4">
-            {detectedFormat ? (
-              <p className="text-sm text-base-content/60">
-                {interpolate(t("import.formatDetected"), { format: detectedFormat })}
-              </p>
-            ) : null}
-            <h3 className="text-base font-bold">
-              {interpolate(t("import.previewTitle"), { n: String(drafts.length) })}
-            </h3>
-            {drafts.length === 0 ? (
-              <p>{t("import.previewEmpty")}</p>
-            ) : (
-              <table className="table table-zebra table-sm">
-                <tbody>
-                  {drafts.map((draft, index) => (
-                    <tr key={index} className="h-12">
-                      <td>{draft.name}</td>
-                      <td>{draft.type}</td>
-                      <td>
-                        {draft.type === "login"
-                          ? draft.username
-                          : draft.type === "totp"
-                            ? draft.issuer
-                            : ""}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            <div className="flex justify-between gap-2">
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  data-testid="import-wizard-back"
-                  className="btn btn-ghost"
-                  onClick={() => {
-                    setDrafts([]);
-                    setScreen("select");
-                  }}
-                >
-                  {t("import.back")}
-                </button>
-                <button
-                  type="button"
-                  data-testid="import-wizard-cancel"
-                  className="btn btn-ghost"
-                  onClick={cancel}
-                >
-                  {t("import.cancel")}
-                </button>
-              </div>
-              <button
-                type="button"
-                data-testid="import-wizard-start"
-                className="btn btn-primary"
-                disabled={drafts.length === 0}
-                onClick={() => void runImport()}
-              >
-                {interpolate(t("import.startButton"), { n: String(drafts.length) })}
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {screen === "progress" ? (
-          <div data-testid="import-wizard-progress" className="flex flex-col gap-4">
-            <progress
-              className="progress progress-primary w-full"
-              value={loopProgress}
-              max={drafts.length}
-            />
-            <p>
-              {interpolate(t("import.progressLabel"), {
-                n: String(loopProgress),
-                total: String(drafts.length),
-              })}
-            </p>
-          </div>
-        ) : null}
-
-        {screen === "summary" ? (
-          <div data-testid="import-wizard-summary" className="flex flex-col gap-4">
-            <h3 className="text-base font-bold">{t("import.summaryTitle")}</h3>
-            {skippedEntries.length === 0 ? (
-              <p data-testid="import-wizard-summary-all-ok">
-                {interpolate(t("import.summaryAllOk"), { total: String(importedCount) })}
-              </p>
-            ) : (
-              <p data-testid="import-wizard-summary-partial" className="text-warning">
-                {interpolate(t("import.summaryPartial"), {
-                  imported: String(importedCount),
-                  total: String(importedCount + skippedEntries.length),
-                  skipped: String(skippedEntries.length),
-                })}
-              </p>
-            )}
-            {skippedEntries.length > 0 ? (
-              <details className="collapse collapse-arrow">
-                <summary
-                  data-testid="import-wizard-skipped-toggle"
-                  className="collapse-title"
-                >
-                  {t("import.skippedReasonsToggle")}
-                </summary>
-                <div className="collapse-content">
-                  <ul>
-                    {skippedEntries.map((entry, index) => (
-                      <li key={index}>
-                        {entry.label}: {t(REASON_KEY[entry.reason])}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </details>
-            ) : null}
-            <div className="flex justify-end">
-              <button
-                type="button"
-                data-testid="import-wizard-done"
-                className="btn btn-primary"
-                onClick={onDone}
-              >
-                {t("import.doneButton")}
-              </button>
-            </div>
-          </div>
-        ) : null}
-      </div>
+      {panel}
     </div>
   );
 }

@@ -332,6 +332,17 @@ describe("ImportWizard", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it("renders the fixed inset-0 scrim by default (overlay variant)", () => {
+    render(<ImportWizard onDone={vi.fn()} />);
+    expect(screen.getByTestId("import-wizard-scrim")).toBeInTheDocument();
+  });
+
+  it("drops the fixed inset-0 scrim wrapper when variant='inline', still rendering the wizard body", () => {
+    render(<ImportWizard onDone={vi.fn()} variant="inline" />);
+    expect(screen.queryByTestId("import-wizard-scrim")).not.toBeInTheDocument();
+    expect(screen.getByTestId("import-wizard-skip")).toBeInTheDocument();
+  });
+
   it("rejects a file over the defensive size guard with a generic file error, without attempting to parse it", async () => {
     render(<ImportWizard onDone={vi.fn()} />);
     const bigFile = makeFile("huge.csv", "n\nA", 11 * 1024 * 1024);
