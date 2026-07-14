@@ -37,6 +37,7 @@ pub fn test_app(pool: sqlx::SqlitePool) -> axum::Router {
         webauthn,
         rp_id: "localhost".to_string(),
         dummy_secret,
+        sync_hub: Default::default(),
     })
 }
 

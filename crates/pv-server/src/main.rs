@@ -25,6 +25,7 @@ async fn main() -> anyhow::Result<()> {
         webauthn,
         rp_id: cfg.rp_id.clone(),
         dummy_secret,
+        sync_hub: pv_server::routes::sync::SyncHub::default(),
     };
     let app = routes::router(state).layer(TraceLayer::new_for_http());
 

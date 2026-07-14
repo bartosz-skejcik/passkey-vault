@@ -19,17 +19,27 @@ impl FromRequestParts<AppState> for SessionUser {
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
         let token = extract_bearer_token(&parts.headers)?;
-        let token_hash = crypto::hash_token(token.as_bytes());
-
-        let row = sqlx::query("SELECT user_id FROM sessions WHERE token_hash = ? AND expires_at > datetime('now')")
-            .bind(token_hash.as_slice())
-            .fetch_optional(&state.db)
-            .await?;
-
-        let row = row.ok_or(ApiError::Unauthorized)?;
-        let user_id: String = row.try_get("user_id").map_err(|_| ApiError::Internal)?;
+        let user_id = validate_token(&state.db, &token).await?;
         Ok(SessionUser { user_id })
     }
+}
+
+/// Hash-then-lookup-with-expiry logic shared by `SessionUser`'s REST auth
+/// path and `sync::ws_handler`'s `?token=` query-param auth path (05-02-PLAN
+/// Task 1) — exactly one place session-token validation lives, so the WS
+/// upgrade handshake can never drift from the REST `Authorization` header
+/// path's semantics (expiry, hash algorithm, rejection code).
+pub(crate) async fn validate_token(db: &sqlx::SqlitePool, token: &str) -> Result<String, ApiError> {
+    let token_hash = crypto::hash_token(token.as_bytes());
+
+    let row = sqlx::query("SELECT user_id FROM sessions WHERE token_hash = ? AND expires_at > datetime('now')")
+        .bind(token_hash.as_slice())
+        .fetch_optional(db)
+        .await?;
+
+    let row = row.ok_or(ApiError::Unauthorized)?;
+    let user_id: String = row.try_get("user_id").map_err(|_| ApiError::Internal)?;
+    Ok(user_id)
 }
 
 /// Wyciąga surowy token z nagłówka `Authorization: Bearer <token>`. Wydzielone
