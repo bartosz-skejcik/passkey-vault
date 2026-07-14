@@ -66,20 +66,20 @@ Filled by the roadmapper.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EXT-01 | TBD | Pending |
-| EXT-02 | TBD | Pending |
-| EXT-03 | TBD | Pending |
-| EXT-04 | TBD | Pending |
-| PROV-01 | TBD | Pending |
-| PROV-02 | TBD | Pending |
-| PROV-03 | TBD | Pending |
-| PROV-04 | TBD | Pending |
-| PROV-05 | TBD | Pending |
-| FILL-01 | TBD | Pending |
-| FILL-02 | TBD | Pending |
-| FILL-03 | TBD | Pending |
-| FILL-04 | TBD | Pending |
-| CAP-01 | TBD | Pending |
-| CAP-02 | TBD | Pending |
-| CAP-03 | TBD | Pending |
-| XBR-01 | TBD | Pending |
+| EXT-01 | Phase 8 | Pending |
+| EXT-02 | Phase 9 | Pending |
+| EXT-03 | Phase 9 | Pending |
+| EXT-04 | Phase 9 | Pending |
+| PROV-01 | Phase 12 | Pending |
+| PROV-02 | Phase 12 | Pending |
+| PROV-03 | Phase 12 | Pending |
+| PROV-04 | Phase 12 | Pending |
+| PROV-05 | Phase 12 | Pending |
+| FILL-01 | Phase 10 | Pending |
+| FILL-02 | Phase 10 | Pending |
+| FILL-03 | Phase 10 | Pending |
+| FILL-04 | Phase 10 | Pending |
+| CAP-01 | Phase 11 | Pending |
+| CAP-02 | Phase 11 | Pending |
+| CAP-03 | Phase 11 | Pending |
+| XBR-01 | Phase 13 | Pending |
