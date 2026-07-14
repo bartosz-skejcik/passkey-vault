@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod folders;
+pub mod passkeys;
 pub mod session;
 pub mod vault;
 pub mod webauthn_state;
@@ -24,6 +25,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/vault/items/{id}", put(vault::update).delete(vault::delete))
         .route("/api/vault/folders", get(folders::list).post(folders::create))
         .route("/api/vault/folders/{id}", delete(folders::delete))
+        .route("/api/passkeys/register/start", post(passkeys::register_start))
+        .route("/api/passkeys/register/finish", post(passkeys::register_finish))
+        .route("/api/passkeys/{id}/prf-wrap", post(passkeys::prf_wrap))
         .with_state(state)
         .layer(cors_layer())
 }
