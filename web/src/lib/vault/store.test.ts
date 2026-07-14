@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "@testing-library/react";
 import { ApiClientError } from "@/lib/auth/api";
+import type { SyncSnapshot } from "./api";
+import type { SyncCallbacks } from "./sync";
 
 const {
   mockGetUnlockedUserKey,
@@ -8,26 +10,28 @@ const {
   mockSubscribeLockState,
   mockEncryptItem,
   mockDecryptItem,
-  mockListItems,
-  mockListFolders,
+  mockGetSyncSnapshot,
   mockCreateItem,
   mockCreateFolder,
   mockUpdateItem,
   mockDeleteItem,
   mockDeleteFolder,
+  mockStartSync,
+  mockStopSync,
 } = vi.hoisted(() => ({
   mockGetUnlockedUserKey: vi.fn(),
   mockIsUnlocked: vi.fn(),
   mockSubscribeLockState: vi.fn(),
   mockEncryptItem: vi.fn(),
   mockDecryptItem: vi.fn(),
-  mockListItems: vi.fn(),
-  mockListFolders: vi.fn(),
+  mockGetSyncSnapshot: vi.fn(),
   mockCreateItem: vi.fn(),
   mockCreateFolder: vi.fn(),
   mockUpdateItem: vi.fn(),
   mockDeleteItem: vi.fn(),
   mockDeleteFolder: vi.fn(),
+  mockStartSync: vi.fn(),
+  mockStopSync: vi.fn(),
 }));
 
 vi.mock("@/lib/crypto", () => ({
@@ -39,13 +43,17 @@ vi.mock("@/lib/crypto", () => ({
 }));
 
 vi.mock("./api", () => ({
-  listItems: mockListItems,
-  listFolders: mockListFolders,
+  getSyncSnapshot: mockGetSyncSnapshot,
   createItem: mockCreateItem,
   createFolder: mockCreateFolder,
   updateItem: mockUpdateItem,
   deleteItem: mockDeleteItem,
   deleteFolder: mockDeleteFolder,
+}));
+
+vi.mock("./sync", () => ({
+  startSync: mockStartSync,
+  stopSync: mockStopSync,
 }));
 
 const NOTE_PLAINTEXT =
@@ -54,8 +62,8 @@ const NOTE_PLAINTEXT =
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
-  mockListItems.mockResolvedValue([]);
-  mockListFolders.mockResolvedValue([]);
+  // Fresh/never-synced-user fixture: full-but-empty snapshot by default.
+  mockGetSyncSnapshot.mockResolvedValue({ revision: 0, items: [], folders: [] });
 });
 
 /** Grabs the lock-state listener the store registered at import time via
@@ -64,6 +72,16 @@ async function importStoreAndGetLockListener() {
   const store = await import("./store");
   const lockListener = mockSubscribeLockState.mock.calls[0][0] as () => void;
   return { store, lockListener };
+}
+
+/** Returns the SyncCallbacks the store passed to startSync on unlock —
+ * the handle tests use to drive background-sync snapshot merges. */
+function getSyncCallbacks(): SyncCallbacks {
+  const callbacks = mockStartSync.mock.calls[0]?.[0] as SyncCallbacks | undefined;
+  if (!callbacks) {
+    throw new Error("startSync was never called");
+  }
+  return callbacks;
 }
 
 describe("recombine/split round-trip", () => {
@@ -96,14 +114,18 @@ describe("recombine/split round-trip", () => {
 
   it("recombines a server row's separate enc_key/enc_data into the exact combined JSON decryptItem receives", async () => {
     mockGetUnlockedUserKey.mockReturnValue({});
-    mockListItems.mockResolvedValue([
-      {
-        id: "item-1",
-        enc_key: JSON.stringify({ nonce: [1, 2], ciphertext: [3, 4] }),
-        enc_data: JSON.stringify({ nonce: [5, 6], ciphertext: [7, 8] }),
-        revision: 1,
-      },
-    ]);
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [
+        {
+          id: "item-1",
+          enc_key: JSON.stringify({ nonce: [1, 2], ciphertext: [3, 4] }),
+          enc_data: JSON.stringify({ nonce: [5, 6], ciphertext: [7, 8] }),
+          revision: 1,
+        },
+      ],
+      folders: [],
+    });
     mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
 
     const { lockListener } = await importStoreAndGetLockListener();
@@ -147,9 +169,11 @@ describe("recombine/split round-trip", () => {
     await store.createVaultItem(fields);
 
     const [, encKeyArg, encDataArg] = mockCreateItem.mock.calls[0];
-    mockListItems.mockResolvedValue([
-      { id: "item-2", enc_key: encKeyArg, enc_data: encDataArg, revision: 1 },
-    ]);
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "item-2", enc_key: encKeyArg, enc_data: encDataArg, revision: 1 }],
+      folders: [],
+    });
 
     mockIsUnlocked.mockReturnValue(true);
     const { lockListener } = await importStoreAndGetLockListener();
@@ -172,9 +196,11 @@ describe("recombine/split round-trip", () => {
 describe("lock/unlock subscription behavior", () => {
   it("populates items on unlock and clears them (in-memory) on lock", async () => {
     mockGetUnlockedUserKey.mockReturnValue({});
-    mockListItems.mockResolvedValue([
-      { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
-    ]);
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      folders: [],
+    });
     mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
 
     const { store, lockListener } = await importStoreAndGetLockListener();
@@ -192,6 +218,138 @@ describe("lock/unlock subscription behavior", () => {
       lockListener();
     });
     expect(store.getItems()).toHaveLength(0);
+  });
+
+  it("startSync/stopSync are called exactly once each across an unlock-then-lock cycle", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
+
+    const { lockListener } = await importStoreAndGetLockListener();
+
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mockStartSync).toHaveBeenCalledTimes(1);
+    expect(mockStopSync).not.toHaveBeenCalled();
+
+    mockIsUnlocked.mockReturnValue(false);
+    act(() => {
+      lockListener();
+    });
+    expect(mockStartSync).toHaveBeenCalledTimes(1);
+    expect(mockStopSync).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("applySyncSnapshot (background sync merge)", () => {
+  /** Unlocks the vault with an initial two-item snapshot and returns the
+   * sync callbacks startSync received, ready for onSnapshot-driven merges. */
+  async function unlockWithTwoItems() {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 2,
+      items: [
+        { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
+        { id: "item-2", enc_key: "{}", enc_data: "{}", revision: 1 },
+      ],
+      folders: [],
+    });
+    mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(store.getItems()).toHaveLength(2);
+    return { store, callbacks: getSyncCallbacks() };
+  }
+
+  it("merges a stale snapshot by replacing items wholesale, dropping any id absent from the new array", async () => {
+    const { store, callbacks } = await unlockWithTwoItems();
+
+    // item-2 was deleted on another device: the new snapshot simply no
+    // longer contains it — deletion via absence, no diff pass.
+    const staleSnapshot: SyncSnapshot = {
+      revision: 3,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      folders: [],
+    };
+    act(() => {
+      callbacks.onSnapshot(staleSnapshot);
+    });
+
+    const ids = store.getItems().map((item) => item.id);
+    expect(ids).toEqual(["item-1"]);
+  });
+
+  it("an up-to-date snapshot (no items/folders keys) leaves the current in-memory items/folders untouched", async () => {
+    const { store, callbacks } = await unlockWithTwoItems();
+    const itemsBefore = store.getItems();
+    const foldersBefore = store.getFolders();
+
+    act(() => {
+      callbacks.onSnapshot({ revision: 5 }); // cheap-check response: no arrays
+    });
+
+    // Same array references — the merge never touched the in-memory state.
+    expect(store.getItems()).toBe(itemsBefore);
+    expect(store.getFolders()).toBe(foldersBefore);
+    // ...but the revision watermark still advanced, so the NEXT pull does
+    // not immediately re-detect "stale" against an already-known revision.
+    expect(callbacks.getSinceRevision()).toBe(5);
+  });
+
+  it("merging an unrelated item's update does not disturb a different, unmodified item's array entry", async () => {
+    const { store, callbacks } = await unlockWithTwoItems();
+    const item1Before = store.getItems().find((item) => item.id === "item-1");
+
+    // item-2 changed elsewhere (revision bumped); item-1 is byte-identical.
+    mockDecryptItem.mockImplementation((_uk: unknown, _combined: string, id: string) =>
+      id === "item-2"
+        ? '{"type":"note","name":"edited","body":"b2","folderId":null,"tags":[]}'
+        : NOTE_PLAINTEXT,
+    );
+    act(() => {
+      callbacks.onSnapshot({
+        revision: 4,
+        items: [
+          { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
+          { id: "item-2", enc_key: "{}", enc_data: "{}", revision: 2 },
+        ],
+        folders: [],
+      });
+    });
+
+    const item1After = store.getItems().find((item) => item.id === "item-1");
+    expect(item1After).toEqual(item1Before);
+    const item2After = store.getItems().find((item) => item.id === "item-2");
+    expect(item2After?.fields.name).toBe("edited");
+    expect(item2After?.revision).toBe(2);
+  });
+
+  it("applying a snapshot after the vault has since locked is a safe no-op", async () => {
+    const { store, callbacks } = await unlockWithTwoItems();
+
+    // Lock raced the in-flight fetch: the User Key handle is gone by the
+    // time the snapshot arrives — it must never be decrypted/merged.
+    mockGetUnlockedUserKey.mockReturnValue(null);
+    mockDecryptItem.mockClear();
+    act(() => {
+      callbacks.onSnapshot({
+        revision: 9,
+        items: [{ id: "item-3", enc_key: "{}", enc_data: "{}", revision: 1 }],
+        folders: [],
+      });
+    });
+
+    expect(mockDecryptItem).not.toHaveBeenCalled();
+    expect(store.getItems().map((item) => item.id)).toEqual(["item-1", "item-2"]);
   });
 });
 
@@ -211,10 +369,14 @@ describe("folder plumbing", () => {
 
   it("useAllTags returns the deduplicated union of every loaded item's fields.tags", async () => {
     mockGetUnlockedUserKey.mockReturnValue({});
-    mockListItems.mockResolvedValue([
-      { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
-      { id: "item-2", enc_key: "{}", enc_data: "{}", revision: 1 },
-    ]);
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [
+        { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
+        { id: "item-2", enc_key: "{}", enc_data: "{}", revision: 1 },
+      ],
+      folders: [],
+    });
     mockDecryptItem
       .mockReturnValueOnce(
         '{"type":"note","name":"a","body":"b","folderId":null,"tags":["work","urgent"]}',
@@ -275,9 +437,11 @@ describe("updateVaultItem", () => {
 
   it("on a 409, does not optimistically apply the edit, re-fetches truth, and rejects with RevisionConflictError", async () => {
     mockGetUnlockedUserKey.mockReturnValue({});
-    mockListItems.mockResolvedValue([
-      { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
-    ]);
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      folders: [],
+    });
     mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
 
     const { store, lockListener } = await importStoreAndGetLockListener();
@@ -290,10 +454,12 @@ describe("updateVaultItem", () => {
 
     mockEncryptItem.mockReturnValue(JSON.stringify({ enc_key: {}, enc_data: {} }));
     mockUpdateItem.mockRejectedValue(new ApiClientError(409, "stale revision"));
-    mockListItems.mockClear();
-    mockListItems.mockResolvedValue([
-      { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 2 },
-    ]);
+    mockGetSyncSnapshot.mockClear();
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 2,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 2 }],
+      folders: [],
+    });
 
     const conflictingFields = {
       type: "note" as const,
@@ -310,17 +476,19 @@ describe("updateVaultItem", () => {
     // The conflicting edit was never applied optimistically.
     const stored = store.getItems().find((i) => i.id === "item-1");
     expect(stored?.fields.name).not.toBe("conflicting-edit");
-    // Truth was re-fetched (loadAndDecryptAll re-ran listItems).
-    expect(mockListItems).toHaveBeenCalledTimes(1);
+    // Truth was re-fetched (loadAndDecryptAll re-ran the snapshot pull).
+    expect(mockGetSyncSnapshot).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("legacy field normalization", () => {
   it("normalizes a legacy login item's bare `url` string into `urls: [url]` on decrypt", async () => {
     mockGetUnlockedUserKey.mockReturnValue({});
-    mockListItems.mockResolvedValue([
-      { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
-    ]);
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      folders: [],
+    });
     mockDecryptItem.mockReturnValue(
       JSON.stringify({
         type: "login",
@@ -352,9 +520,11 @@ describe("legacy field normalization", () => {
 
   it("tolerates a legacy login item with a missing url by normalizing to an empty urls array", async () => {
     mockGetUnlockedUserKey.mockReturnValue({});
-    mockListItems.mockResolvedValue([
-      { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
-    ]);
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      folders: [],
+    });
     mockDecryptItem.mockReturnValue(
       JSON.stringify({
         type: "login",
@@ -383,9 +553,11 @@ describe("legacy field normalization", () => {
 
   it("leaves a current-shape login item's urls array untouched", async () => {
     mockGetUnlockedUserKey.mockReturnValue({});
-    mockListItems.mockResolvedValue([
-      { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
-    ]);
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      folders: [],
+    });
     mockDecryptItem.mockReturnValue(
       JSON.stringify({
         type: "login",
@@ -456,9 +628,11 @@ describe("deleteVaultFolder", () => {
 describe("deleteVaultItem", () => {
   it("removes the item from the store only after the API call succeeds", async () => {
     mockGetUnlockedUserKey.mockReturnValue({});
-    mockListItems.mockResolvedValue([
-      { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
-    ]);
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      folders: [],
+    });
     mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
 
     const { store, lockListener } = await importStoreAndGetLockListener();
@@ -479,9 +653,11 @@ describe("deleteVaultItem", () => {
 
   it("leaves the item in the store if the delete API call fails", async () => {
     mockGetUnlockedUserKey.mockReturnValue({});
-    mockListItems.mockResolvedValue([
-      { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
-    ]);
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      folders: [],
+    });
     mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
 
     const { store, lockListener } = await importStoreAndGetLockListener();
