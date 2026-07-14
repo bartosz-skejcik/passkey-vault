@@ -1,14 +1,15 @@
 ---
 phase: 03-passkey-enrollment-account-security
-verified: 2026-07-14T10:40:00Z
+verified: 2026-07-14T19:20:00Z
 status: passed
 score: 11/11 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
+revalidated: "2026-07-14 (re-stamp) — original 11/11 verification still holds at current HEAD: passkey-enrollment/session/unlock code is unchanged since phases 4-7 (which touched PRF-login, sync, and server packaging, not the phase-3 enrollment/settings core), and the full `cargo test --workspace` suite is green (passkeys 10, passkey_login 7, sessions 4, unlock 4). The prior 'stale' flag was a timestamp artifact of 03-04-SUMMARY.md being reconstructed after the initial verification (commit dc3459d), not a code change. The one deferred item below is now DELIVERED by the completed Phase 6."
 deferred:
   - truth: "Import/Export functionality in the Settings surface (UI-05)"
-    addressed_in: "Phase 6"
-    evidence: "ROADMAP Phase 6 'Import/Export, TOTP & Onboarding' SC#2/#3 cover client-side import/export. Phase 3 plan 03-04 scopes the Import/Export tab as an explicit placeholder ('Import/Export placeholder'); surface is reachable, functionality deferred."
+    addressed_in: "Phase 6 (COMPLETE 2026-07-14)"
+    evidence: "RESOLVED: Phase 6 shipped working client-side import (Bitwarden/NordPass/1Password/LastPass/KeePass/generic) + JSON/CSV export with a plaintext-warning gate, replacing the phase-3 Import/Eksport placeholder. Verified + UAT-passed (see 06-VERIFICATION.md / 06-UAT.md). No longer deferred."
 ---
 
 # Phase 3: Passkey Enrollment & Account Security Verification Report
