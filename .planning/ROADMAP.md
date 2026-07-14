@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Passkey Enrollment & Account Security** - Enroll a PRF passkey, manage passkeys/sessions, with the recovery invariant server-enforced (completed 2026-07-14)
 - [x] **Phase 4: PRF Unlock & Login Unification** - Log in and unlock the vault in one passkey gesture, with an honest fallback when PRF isn't available (completed 2026-07-14)
 - [x] **Phase 5: Multi-Device Sync** - Keep the vault in sync across simultaneously-active devices/sessions (completed 2026-07-14)
-- [ ] **Phase 6: Import/Export, TOTP & Onboarding** - Bring in an existing password manager's data, see live TOTP codes, export back out
+- [x] **Phase 6: Import/Export, TOTP & Onboarding** - Bring in an existing password manager's data, see live TOTP codes, export back out (completed 2026-07-14)
 - [ ] **Phase 7: Self-Host Packaging & Deployment** - Ship as one Docker container that fails loudly, not mysteriously, when misconfigured
 
 ## Phase Details
@@ -194,7 +194,7 @@ Plans:
   4. User can export the full vault to JSON and CSV, with a clear plaintext warning shown before export
   5. Vault items of type TOTP show a live, counting-down code generated locally from the item's secret
 
-**Plans**: 3/4 plans executed
+**Plans**: 4/4 plans complete
 
 Plans:
 **Wave 1**
@@ -208,7 +208,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 06-04-PLAN.md — Onboarding wizard: 3-step takeover, import-first, per-browser completion flag (UI-04)
+- [x] 06-04-PLAN.md — Onboarding wizard: 3-step takeover, import-first, per-browser completion flag (UI-04)
 
 **UI hint**: yes
 
@@ -238,5 +238,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. Passkey Enrollment & Account Security | 3/4 | Complete    | 2026-07-14 |
 | 4. PRF Unlock & Login Unification | 3/3 | Complete    | 2026-07-14 |
 | 5. Multi-Device Sync | 4/4 | Complete    | 2026-07-14 |
-| 6. Import/Export, TOTP & Onboarding | 3/4 | In Progress|  |
+| 6. Import/Export, TOTP & Onboarding | 4/4 | Complete   | 2026-07-14 |
 | 7. Self-Host Packaging & Deployment | 0/TBD | Not started | - |
