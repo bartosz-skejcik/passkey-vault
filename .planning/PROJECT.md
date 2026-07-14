@@ -10,6 +10,19 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 
 **Lekki self-hostable vault (1 kontener + wtyczka Chrome/Firefox), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.** Jeśli wszystko inne zawiedzie, to musi działać.
 
+## Current Milestone: v0.2 Browser Extension
+
+**Goal:** Wtyczka WXT MV3 (Chrome + Firefox), która czyni Passkey Vault pełnym passkey providerem na cudzych stronach ORAZ kompletnym autofill-companionem dla całego vaulta — reużywając `pv-core` przez WASM, zero-knowledge zachowane.
+
+**Target features:**
+- **Passkey provider** — patch `navigator.credentials` (MAIN world) dla `create` (rejestracja passkeya na cudzej stronie → zapis do naszego vaulta) i `get` (logowanie zapisanym passkeyem), z fall-through do natywnych authenticatorów.
+- **Vault popup** — odblokowanie, przegląd/wyszukiwanie, wybór itemów.
+- **Autofill całego vaulta** — hasła, kody TOTP, karty kredytowe, tożsamości (login/card/identity/TOTP) do właściwych pól/formularzy.
+- **Generate & capture** — na formularzach rejestracji proponuj wygenerowane silne hasło (generator z v0.1); po udanym submit/login zaproponuj **zapis nowego loginu** do vaulta (oraz wykrycie zmiany hasła → propozycja update).
+- **Dual-browser** — Chrome + Firefox od początku (WXT dual-output).
+
+**Key context:** Wszystkie typy itemów już istnieją w vaulcie z v0.1 — v0.2 wystawia je na strony WWW. Zero-knowledge trzyma. Trudne części (do zaprojektowania w planowaniu): wyścig patcha `navigator.credentials` (w3c/webextensions#361), PRF Chromium-first (fallback Firefox), cykl życia MV3 service-workera vs. odblokowany klucz, i niezawodne wykrywanie pól dla kart + tożsamości.
+
 ## Requirements
 
 ### Validated
@@ -107,4 +120,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-14 after v0.1 MVP milestone (Phases 1–7 shipped). Next focus: v0.2 Browser Extension.*
+*Last updated: 2026-07-14 — v0.2 Browser Extension milestone started (after v0.1 MVP shipped, Phases 1–7).*
