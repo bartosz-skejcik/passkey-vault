@@ -187,9 +187,16 @@ export default function ImportWizard({
         for (const folder of parsedJson.folders ?? []) {
           folderNamesById[folder.id] = folder.name;
         }
-        const results = (parsedJson.items ?? []).map((raw) =>
-          bitwardenJson.mapItem(raw, folderNamesById),
-        );
+        const results = (parsedJson.items ?? []).map((raw) => {
+          try {
+            return bitwardenJson.mapItem(raw, folderNamesById);
+          } catch {
+            // A single malformed items[] entry (e.g. null) must not abort
+            // the whole file -- degrade to a counted skip (row-level fault
+            // tolerance, matching the CSV mappers).
+            return { items: [], skipped: "unparseableRow" as const };
+          }
+        });
         const { drafts: newDrafts, skipped } = flattenMapResults(results);
         setDrafts(newDrafts);
         setSkippedEntries(skipped);

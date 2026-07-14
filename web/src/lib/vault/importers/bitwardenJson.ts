@@ -57,13 +57,15 @@ export function mapItem(
   switch (raw.type) {
     case 1: {
       const login = raw.login ?? {};
-      const uris = login.uris ?? [];
+      const uris = login.uris;
       primary = {
         type: "login",
         name,
         username: login.username ?? "",
         password: login.password ?? "",
-        urls: uris.map((u) => u.uri ?? "").filter((uri) => uri !== ""),
+        urls: (Array.isArray(uris) ? uris : [])
+          .map((u) => (u && typeof u === "object" ? (u.uri ?? "") : ""))
+          .filter((uri) => uri !== ""),
         notes,
         folder,
         tags: [],
