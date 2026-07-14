@@ -17,6 +17,7 @@ use pv_core::{
         wrap_user_key as core_wrap_user_key, UserKey, WrappedKey, INFO_AUTH_HASH, INFO_PW_UNLOCK,
         KEY_LEN,
     },
+    prf::wrapping_key_from_prf,
     CryptoError,
 };
 use wasm_bindgen::prelude::*;
@@ -79,6 +80,19 @@ impl WasmWrappingKey {
             .map_err(|e| to_js_str_err(&e.to_string()))?;
         let result = wrapping_key_from_password(password, salt, &params).map_err(to_js_err);
         password.zeroize(); // wipe the WASM-side (and, via copy-back, JS-side) copy regardless of outcome
+        let wk = result?;
+        Ok(WasmWrappingKey(*wk))
+    }
+
+    /// `prf_output` is a caller-owned byte buffer (JS `Uint8Array`) holding
+    /// the raw 32-byte WebAuthn PRF extension result — same marshaling and
+    /// zeroize-regardless-of-outcome discipline as `from_password` above,
+    /// just no salt/KDF params needed (PRF output is already uniformly
+    /// random, unlike a human-chosen password).
+    #[wasm_bindgen(js_name = fromPrf)]
+    pub fn from_prf(prf_output: &mut [u8]) -> Result<WasmWrappingKey, JsValue> {
+        let result = wrapping_key_from_prf(prf_output).map_err(to_js_err);
+        prf_output.zeroize(); // wipe the WASM-side (and, via copy-back, JS-side) copy regardless of outcome
         let wk = result?;
         Ok(WasmWrappingKey(*wk))
     }
@@ -230,6 +244,25 @@ mod tests {
         let plaintext = decrypt_item(&unwrapped, &item_json, "self-test-item", 1)
             .expect("decrypt should succeed");
         assert_eq!(plaintext, "{\"type\":\"note\",\"body\":\"fixture\"}");
+    }
+
+    #[test]
+    fn from_prf_roundtrip() {
+        let mut prf_output = [7u8; 32];
+        let wrapping_key = WasmWrappingKey::from_prf(&mut prf_output)
+            .expect("from_prf should succeed on a 32-byte fixture");
+        let user_key = WasmUserKey::generate();
+        let wrapped_json = wrap_user_key(&wrapping_key, &user_key).expect("wrap should succeed");
+        let unwrapped =
+            unwrap_user_key(&wrapping_key, &wrapped_json).expect("unwrap should succeed");
+        assert_eq!(unwrapped.0.expose(), user_key.0.expose());
+    }
+
+    #[test]
+    fn from_prf_rejects_short_input() {
+        let mut short = [0u8; 16];
+        let result = WasmWrappingKey::from_prf(&mut short);
+        assert!(result.is_err());
     }
 
     #[test]

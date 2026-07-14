@@ -214,6 +214,51 @@ export const DICTIONARY = {
     pl: "{passed}/5 kroków przeszło — patrz błąd przy kroku powyżej",
     en: "{passed}/5 steps passed — see the error at the step above",
   },
+
+  // Passkey enrollment dialog (AUTH-03, Plan 03-03) — copy verbatim from
+  // 03-UI-SPEC.md's Copywriting Contract. `passkeys.*`/`sessions.*`/
+  // `settings.*` keys are deliberately NOT added here — those belong to
+  // Plan 03-04's Settings tabs/panel, which owns the rest of this file's
+  // growth in the next wave.
+  "enroll.title": { pl: "Dodaj passkey", en: "Add passkey" },
+  "enroll.step1Label": {
+    pl: "Krok 1: rejestracja urządzenia",
+    en: "Step 1: registering your device",
+  },
+  "enroll.step1Waiting": {
+    pl: "Potwierdź w oknie przeglądarki lub na urządzeniu...",
+    en: "Confirm in your browser or on your device...",
+  },
+  "enroll.step2Label": {
+    pl: "Krok 2: włączanie odblokowania PRF",
+    en: "Step 2: enabling PRF unlock",
+  },
+  "enroll.step2Waiting": {
+    pl: "Potwierdź jeszcze raz, żeby włączyć odblokowanie vaulta tym passkeyem...",
+    en: "Confirm once more to enable unlocking your vault with this passkey...",
+  },
+  "enroll.nameLabel": {
+    pl: "Nazwa (możesz zmienić później)",
+    en: "Name (you can change this later)",
+  },
+  "enroll.successPrfTitle": { pl: "Passkey dodany", en: "Passkey added" },
+  "enroll.successPrfBody": {
+    pl: "Ten passkey może teraz odblokować Twój vault.",
+    en: "This passkey can now unlock your vault.",
+  },
+  "enroll.successNoPrfTitle": { pl: "Passkey dodany", en: "Passkey added" },
+  "enroll.successNoPrfBody": {
+    pl: "To urządzenie nie obsługuje PRF, więc passkey zadziała do logowania — vault nadal odblokujesz hasłem.",
+    en: "This device doesn't support PRF, so the passkey works for sign-in — you'll still unlock the vault with your password.",
+  },
+  "enroll.cancelled": { pl: "Anulowano dodawanie passkeya.", en: "Passkey setup was cancelled." },
+  "enroll.failed": {
+    pl: "Nie udało się dodać passkeya. Spróbuj ponownie.",
+    en: "Couldn't add the passkey. Please try again.",
+  },
+  "enroll.done": { pl: "Gotowe", en: "Done" },
+  "enroll.retry": { pl: "Spróbuj ponownie", en: "Try again" },
+  "enroll.cancel": { pl: "Anuluj", en: "Cancel" },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {
