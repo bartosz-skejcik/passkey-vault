@@ -51,6 +51,18 @@ pub async fn create(
         .execute(&state.db)
         .await?;
 
+    // SYNC-01: bump the per-user global change counter in the same
+    // single-statement discipline as vault.rs's item mutations
+    // (05-RESEARCH.md Pitfall 1 — never SELECT-then-UPDATE). The returned
+    // value is unused by this plan; Plan 05-02 wires it into a
+    // sync_hub.publish() call.
+    let _new_global_revision: i64 = sqlx::query_scalar(
+        "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
+    )
+    .bind(&session.user_id)
+    .fetch_one(&state.db)
+    .await?;
+
     Ok((StatusCode::CREATED, Json(CreateFolderResponse { id })))
 }
 
@@ -60,23 +72,28 @@ pub struct FolderRecord {
     pub enc_name: String,
 }
 
-/// `GET /api/vault/folders` — only the authenticated user's folders.
-pub async fn list(State(state): State<AppState>, session: SessionUser) -> Result<Json<Vec<FolderRecord>>, ApiError> {
+/// Shared row-fetch body reused by `list()` and `sync::pull`'s snapshot arm
+/// (05-RESEARCH.md Open Question 1 — one SQL source of truth per table,
+/// never duplicated across response shapes).
+pub(crate) async fn fetch_folders_for(pool: &sqlx::SqlitePool, user_id: &str) -> Result<Vec<FolderRecord>, ApiError> {
     let rows = sqlx::query("SELECT id, enc_name FROM folders WHERE user_id = ?")
-        .bind(&session.user_id)
-        .fetch_all(&state.db)
+        .bind(user_id)
+        .fetch_all(pool)
         .await?;
 
-    let folders = rows
-        .into_iter()
+    rows.into_iter()
         .map(|row| {
             Ok(FolderRecord {
                 id: row.try_get("id").map_err(|_| ApiError::Internal)?,
                 enc_name: row.try_get("enc_name").map_err(|_| ApiError::Internal)?,
             })
         })
-        .collect::<Result<Vec<_>, ApiError>>()?;
+        .collect::<Result<Vec<_>, ApiError>>()
+}
 
+/// `GET /api/vault/folders` — only the authenticated user's folders.
+pub async fn list(State(state): State<AppState>, session: SessionUser) -> Result<Json<Vec<FolderRecord>>, ApiError> {
+    let folders = fetch_folders_for(&state.db, &session.user_id).await?;
     Ok(Json(folders))
 }
 
@@ -96,6 +113,15 @@ pub async fn delete(
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound);
     }
+
+    // SYNC-01: bump the per-user global change counter (see create()'s
+    // comment above for the atomicity rationale).
+    let _new_global_revision: i64 = sqlx::query_scalar(
+        "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
+    )
+    .bind(&session.user_id)
+    .fetch_one(&state.db)
+    .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
