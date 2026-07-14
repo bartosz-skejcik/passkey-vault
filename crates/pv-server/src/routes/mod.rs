@@ -2,6 +2,7 @@ pub mod auth;
 pub mod folders;
 pub mod session;
 pub mod vault;
+pub mod webauthn_state;
 
 use axum::{
     routing::{delete, get, post, put},

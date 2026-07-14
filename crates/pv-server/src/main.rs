@@ -1,5 +1,5 @@
 use anyhow::Context;
-use pv_server::{build_pool, config::Config, routes, AppState};
+use pv_server::{build_pool, build_webauthn, config::Config, routes, AppState};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
@@ -12,8 +12,9 @@ async fn main() -> anyhow::Result<()> {
     let cfg = Config::from_env()?;
 
     let db = build_pool(&cfg.db_url).await?;
+    let webauthn = build_webauthn(&cfg.rp_id, &cfg.rp_origin)?;
 
-    let state = AppState { db, session_ttl_hours: cfg.session_ttl_hours };
+    let state = AppState { db, session_ttl_hours: cfg.session_ttl_hours, webauthn };
     let app = routes::router(state).layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(&cfg.addr)
