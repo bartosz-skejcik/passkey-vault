@@ -13,6 +13,7 @@ import {
   Languages,
   Moon,
   Plus,
+  Settings,
   StickyNote,
   Sun,
   Tag,
@@ -25,18 +26,7 @@ import { lockVault } from "@/lib/crypto";
 import { logout } from "@/lib/auth/api";
 import { clearSessionToken, clearStoredEmail } from "@/lib/auth/session";
 import { createVaultFolder, useAllTags, useFolders } from "@/lib/vault/store";
-import {
-  CLIPBOARD_SECONDS_KEY,
-  DEFAULT_CLIPBOARD_SECONDS,
-  clampClipboardSeconds,
-} from "@/lib/clipboard";
-import {
-  AUTOLOCK_CHANGED_EVENT,
-  AUTOLOCK_MINUTES_KEY,
-  AUTOLOCK_OPTIONS,
-  DEFAULT_AUTOLOCK_MINUTES,
-  readAutolockMinutes,
-} from "@/lib/idle/autolock";
+import { AUTOLOCK_CHANGED_EVENT, AUTOLOCK_MINUTES_KEY, DEFAULT_AUTOLOCK_MINUTES } from "@/lib/idle/autolock";
 import type { DICTIONARY } from "@/lib/i18n/dictionary";
 import type { ItemType, VaultFilter } from "@/lib/vault/types";
 import GeneratorDialog from "@/components/generator/GeneratorDialog";
@@ -59,8 +49,6 @@ const CATEGORY_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
 
 const ITEM_TYPES: ItemType[] = ["login", "card", "identity", "note"];
 
-const CLIPBOARD_SECONDS_OPTIONS = [30, 35, 40, 45, 50, 55, 60];
-
 // Every clickable nav element gets a real button + these classes (not a
 // plain inert <div>): cursor-pointer, a visible hover state, and a
 // distinct active/selected state for the current filter (user-requested
@@ -77,9 +65,15 @@ function navItemClass(active: boolean): string {
 export default function Sidebar({
   activeFilter = { kind: "all" },
   onFilterChange,
+  onOpenSettings,
 }: {
   activeFilter?: VaultFilter;
   onFilterChange?: (filter: VaultFilter) => void;
+  // Opens the Settings drawer (UI-05) — called from the "Ustawienia" entry
+  // in this footer's account dropdown, per binding resolution #1
+  // (03-UI-SPEC.md's "Resolutions" section): the account row itself keeps
+  // opening the Phase 2 dropdown, it does NOT open Settings directly.
+  onOpenSettings?: () => void;
 } = {}) {
   const { locale, setLocale, t } = useLocale();
   // Mirrors — does not duplicate — layout.tsx's inline pre-hydration
@@ -87,8 +81,6 @@ export default function Sidebar({
   // This component owns every subsequent user-driven theme change and
   // keeps its own render in sync with the DOM attribute it just set.
   const [theme, setTheme] = useState<"vault-dark" | "vault-light">("vault-dark");
-  const [autolockMinutes, setAutolockMinutes] = useState(DEFAULT_AUTOLOCK_MINUTES);
-  const [clipboardSeconds, setClipboardSeconds] = useState(DEFAULT_CLIPBOARD_SECONDS);
   const [categoriesExpanded, setCategoriesExpanded] = useState(true);
   const [foldersExpanded, setFoldersExpanded] = useState(false);
   const [tagsExpanded, setTagsExpanded] = useState(false);
@@ -106,16 +98,6 @@ export default function Sidebar({
     if (current === "vault-light" || current === "vault-dark") {
       setTheme(current);
     }
-
-    try {
-      setAutolockMinutes(String(readAutolockMinutes()));
-      const storedClipboard = localStorage.getItem(CLIPBOARD_SECONDS_KEY);
-      if (storedClipboard !== null) {
-        setClipboardSeconds(clampClipboardSeconds(Number(storedClipboard)));
-      }
-    } catch {
-      // localStorage may be unavailable (private mode); defaults stand.
-    }
   }, []);
 
   function toggleTheme() {
@@ -132,32 +114,6 @@ export default function Sidebar({
 
   function changeLanguage() {
     setLocale(locale === "pl" ? "en" : "pl");
-  }
-
-  function handleAutolockChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    const next = e.target.value;
-    setAutolockMinutes(next);
-    try {
-      localStorage.setItem(AUTOLOCK_MINUTES_KEY, next);
-    } catch {
-      // localStorage may be unavailable (private mode) — the timer still
-      // applies for this in-memory session.
-    }
-    // localStorage's own "storage" event only fires in *other* tabs — the
-    // page.tsx idle-timer call site (same tab) needs its own notification
-    // to pick up the new duration immediately.
-    window.dispatchEvent(new Event(AUTOLOCK_CHANGED_EVENT));
-  }
-
-  function handleClipboardSecondsChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const next = Number(e.target.value);
-    setClipboardSeconds(next);
-    try {
-      localStorage.setItem(CLIPBOARD_SECONDS_KEY, String(next));
-    } catch {
-      // localStorage may be unavailable (private mode) — the duration
-      // still applies for this in-memory session (read at copy time).
-    }
   }
 
   async function handleLogout() {
@@ -402,47 +358,16 @@ export default function Sidebar({
             <div className="flex-1 text-sm text-base-content/70">{t("sidebar.account")}</div>
           </div>
 
+          {/* Binding resolution #1 (03-UI-SPEC.md's "Resolutions" section):
+              REVERT to the Phase 2 dropdown shape — a small quick-actions
+              menu (Zablokuj teraz / Wyloguj / Ustawienia), not the account
+              row opening Settings directly. Autolock/clipboard controls
+              moved out to SecurityTab.tsx (CONTEXT.md decision, not
+              relitigated by the resolution). */}
           <ul
             tabIndex={0}
             className="dropdown-content menu z-10 mb-2 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow"
           >
-            <li className="menu-title">{t("autolock.label")}</li>
-            <li>
-              <select
-                data-testid="sidebar-autolock-select"
-                aria-label={t("autolock.label")}
-                className="select select-sm select-bordered w-full"
-                value={autolockMinutes}
-                onChange={handleAutolockChange}
-              >
-                {AUTOLOCK_OPTIONS.map((minutes) => (
-                  <option key={minutes} value={minutes}>
-                    {minutes} min
-                  </option>
-                ))}
-              </select>
-            </li>
-            <li className="menu-title">{t("clipboard.durationLabel")}</li>
-            <li>
-              <input
-                data-testid="sidebar-clipboard-duration"
-                aria-label={t("clipboard.durationLabel")}
-                type="range"
-                list="clipboard-seconds-options"
-                min={30}
-                max={60}
-                step={5}
-                className="range range-sm"
-                value={clipboardSeconds}
-                onChange={handleClipboardSecondsChange}
-              />
-              <datalist id="clipboard-seconds-options">
-                {CLIPBOARD_SECONDS_OPTIONS.map((s) => (
-                  <option key={s} value={s} />
-                ))}
-              </datalist>
-              <span className="text-xs text-base-content/60">{clipboardSeconds}s</span>
-            </li>
             <li>
               <button
                 type="button"
@@ -474,6 +399,17 @@ export default function Sidebar({
               >
                 <LogOut size={16} aria-hidden="true" />
                 {t("auth.logout")}
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                data-testid="sidebar-open-settings"
+                aria-label={t("aria.openSettings")}
+                onClick={() => onOpenSettings?.()}
+              >
+                <Settings size={16} aria-hidden="true" />
+                {t("settings.title")}
               </button>
             </li>
           </ul>

@@ -15,6 +15,7 @@ import TypePicker from "@/components/vault/TypePicker";
 import ItemForm from "@/components/vault/ItemForm";
 import CopyToast from "@/components/vault/CopyToast";
 import ErrorToast from "@/components/vault/ErrorToast";
+import SettingsPanel from "@/components/settings/SettingsPanel";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { getSessionToken } from "@/lib/auth/session";
 import { initCrypto, lockVault, useIsUnlocked } from "@/lib/crypto";
@@ -52,16 +53,20 @@ export default function Home() {
   const [creating, setCreating] = useState(false);
   const [creatingType, setCreatingType] = useState<ItemType | null>(null);
   const [filter, setFilter] = useState<VaultFilter>({ kind: "all" });
+  // Settings (UI-05) shares the same z-40 drawer + z-30 scrim slot as the
+  // vault item panels below — they're mutually exclusive, not stacked.
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const items = useVaultItems();
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
   // Any side panel being open means the overlay drawer + scrim render.
-  const sidePanelOpen = selectedItem !== null || creating;
+  const sidePanelOpen = selectedItem !== null || creating || settingsOpen;
 
   function handleNewItem() {
     setSelectedItemId(null);
     setOpenInEditMode(false);
     setCreating(true);
     setCreatingType(null);
+    setSettingsOpen(false);
   }
 
   function handleCreated() {
@@ -74,6 +79,7 @@ export default function Home() {
     setOpenInEditMode(false);
     setCreating(false);
     setCreatingType(null);
+    setSettingsOpen(false);
   }
 
   function handleSelectItem(item: VaultItem) {
@@ -81,6 +87,7 @@ export default function Home() {
     setCreatingType(null);
     setOpenInEditMode(false);
     setSelectedItemId(item.id);
+    setSettingsOpen(false);
   }
 
   function handleEditRequest(item: VaultItem) {
@@ -88,6 +95,17 @@ export default function Home() {
     setCreatingType(null);
     setOpenInEditMode(true);
     setSelectedItemId(item.id);
+    setSettingsOpen(false);
+  }
+
+  function handleOpenSettings() {
+    // Settings and the vault item drawer share the same z-40 slot — close
+    // any open item panel first so they're never stacked.
+    setSelectedItemId(null);
+    setOpenInEditMode(false);
+    setCreating(false);
+    setCreatingType(null);
+    setSettingsOpen(true);
   }
 
   useEffect(() => {
@@ -134,7 +152,7 @@ export default function Home() {
           is "no data in the render tree" below. */}
       <div className={!unlocked ? "blur-md" : undefined}>
         <div className="flex h-screen flex-col md:flex-row">
-          <Sidebar activeFilter={filter} onFilterChange={setFilter} />
+          <Sidebar activeFilter={filter} onFilterChange={setFilter} onOpenSettings={handleOpenSettings} />
           <div className="flex flex-1 flex-col">
             <TopBar
               searchQuery={searchQuery}
@@ -207,6 +225,7 @@ export default function Home() {
                   <ItemForm type={creatingType} onCreated={handleCreated} />
                 </aside>
               ) : null}
+              {settingsOpen ? <SettingsPanel onClose={() => setSettingsOpen(false)} /> : null}
             </div>
           </div>
         </div>
