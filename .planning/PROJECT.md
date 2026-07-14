@@ -23,6 +23,10 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 - ✓ Szkielet serwera axum + SQLx/SQLite, migracja 0001, endpoint prelogin (KDF params + salt) — existing
 - ✓ pv-core kompilowalny do WASM (bez I/O) — współdzielenie krypto z klientami — existing
 - ✓ Most WASM: crate `pv-wasm` (opaque-handle keys, klucze nigdy nie opuszczają pamięci WASM) + themed shell Next.js 16 (static export, DaisyUI vault-dark/vault-light) + choke-point `lib/crypto/` z działającym round-tripem w przeglądarce — Phase 1 (UI-01)
+- ✓ Rejestracja/login hasłem, sesje, vault CRUD (items/foldery/tagi) z per-item encryption end-to-end, generator haseł — Phase 2
+- ✓ Enrollment passkeys (two-ceremony PRF), Settings (Passkeys/Sesje/Bezpieczeństwo), server-enforced no-stranding, revoke sesji — Phase 3
+- ✓ PRF unlock vaulta passkeyem + zunifikowany login (passkey-first), pending-unlock recovery — Phase 4
+- ✓ Multi-device sync: revision-gated GET /api/sync, WS push metadata-only (zero ciphertext w kanale push), konflikt per-item po rewizji (409 + banner), reconnecting dot, remote-delete toast — Phase 5 (SYNC-01/02/03), zweryfikowane live w 2 kartach
 
 ### Active
 
@@ -111,4 +115,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-12 after Phase 1 (WASM Crypto Bridge & Web App Shell)*
+*Last updated: 2026-07-14 after Phase 5 (Multi-Device Sync)*
