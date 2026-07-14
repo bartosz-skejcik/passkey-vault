@@ -108,3 +108,62 @@ export function renamePasskey(id: string, name: string): Promise<void> {
 export function deletePasskey(id: string): Promise<void> {
   return apiJson(`/api/passkeys/${id}`, { method: "DELETE" });
 }
+
+// Passkey-login (unauthenticated) + unlock (SessionUser-gated) ceremony
+// pairs (Plan 04-01). Same thin-wire-client discipline as the rest of this
+// file — `lib/passkeys/login.ts` is the one place that interprets
+// `challenge`/`credential`.
+export interface PasskeyLoginStartResponse {
+  state_id: string;
+  challenge: unknown;
+  /** KEY = URL_SAFE_NO_PAD-encoded credential id, VALUE = STANDARD-encoded PRF salt. */
+  prf_salts: Record<string, string>;
+}
+
+export interface PasskeyLoginFinishResponse {
+  session_token: string;
+  pw_wrapped_uk: string;
+  /** `null` when the matched credential isn't prf_capable. */
+  prf_wrapped_uk: string | null;
+}
+
+export interface UnlockStartResponse {
+  state_id: string;
+  challenge: unknown;
+  prf_salts: Record<string, string>;
+}
+
+export interface UnlockFinishResponse {
+  prf_wrapped_uk: string | null;
+}
+
+export function passkeyLoginStart(body: { email: string }): Promise<PasskeyLoginStartResponse> {
+  return apiJson("/api/auth/passkey-login/start", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function passkeyLoginFinish(body: {
+  state_id: string;
+  credential: unknown;
+}): Promise<PasskeyLoginFinishResponse> {
+  return apiJson("/api/auth/passkey-login/finish", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function unlockStart(): Promise<UnlockStartResponse> {
+  return apiJson("/api/passkeys/unlock/start", { method: "POST" });
+}
+
+export function unlockFinish(body: {
+  state_id: string;
+  credential: unknown;
+}): Promise<UnlockFinishResponse> {
+  return apiJson("/api/passkeys/unlock/finish", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}

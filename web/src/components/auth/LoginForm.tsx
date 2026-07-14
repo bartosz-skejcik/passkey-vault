@@ -4,8 +4,10 @@ import { useState, type FormEvent } from "react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { initCrypto, deriveAuthMaterial, type WasmWrappingKey } from "@/lib/crypto";
 import { prelogin, login, base64Encode, base64Decode, ApiClientError } from "@/lib/auth/api";
-import { setSessionToken, setStoredEmail } from "@/lib/auth/session";
+import { setSessionToken, setStoredEmail, getStoredEmail } from "@/lib/auth/session";
 import { setPendingUnlock } from "@/lib/auth/pendingUnlock";
+import { passkeyLogin } from "@/lib/passkeys/login";
+import PasskeyUnlockButton from "./PasskeyUnlockButton";
 
 export default function LoginForm({
   onToggle,
@@ -15,10 +17,34 @@ export default function LoginForm({
   onAuthed?: () => void;
 }) {
   const { t } = useLocale();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => getStoredEmail() ?? "");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Capability pre-check, once at mount — the caller (this component), not
+  // PasskeyUnlockButton, decides whether to mount the button at all.
+  const [webauthnSupported] = useState(
+    () => typeof window !== "undefined" && window.PublicKeyCredential !== undefined,
+  );
+  const [passkeyState, setPasskeyState] = useState<"idle" | "busy">("idle");
+  const [passkeyError, setPasskeyError] = useState<string | null>(null);
+
+  async function handlePasskeyLogin() {
+    if (email.trim() === "") return;
+    setPasskeyState("busy");
+    setPasskeyError(null);
+    try {
+      // passkeyLogin() itself silently no-ops on a NotAllowedError
+      // (user-cancelled) ceremony — it never throws for that case, so this
+      // catch block only ever sees a genuine failure.
+      await passkeyLogin(email, () => {});
+      onAuthed?.();
+    } catch {
+      setPasskeyError(t("unlock.passkeyFailed"));
+    } finally {
+      setPasskeyState("idle");
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -83,6 +109,21 @@ export default function LoginForm({
           onChange={(e) => setEmail(e.target.value)}
         />
       </div>
+
+      {webauthnSupported ? (
+        <PasskeyUnlockButton
+          label={passkeyState === "busy" ? t("unlock.passkeyBusy") : t("unlock.passkeyLoginCta")}
+          state={passkeyState}
+          onClick={handlePasskeyLogin}
+          disabled={submitting}
+        />
+      ) : (
+        <p className="text-sm text-base-content/70">{t("unlock.passkeyUnsupported")}</p>
+      )}
+
+      {passkeyError ? <p className="text-sm text-error">{passkeyError}</p> : null}
+
+      <div className="divider">{t("unlock.orDivider")}</div>
 
       <div className="flex flex-col gap-1">
         <label htmlFor="login-password" className="text-sm">

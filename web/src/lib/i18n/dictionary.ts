@@ -53,6 +53,31 @@ export const DICTIONARY = {
     en: "Your session expired. Please log in again.",
   },
 
+  // PRF unlock / login unification (AUTH-04, AUTH-09, UI-02, Plan 04-02) —
+  // copy verbatim from 04-UI-SPEC.md's Copywriting Contract.
+  "unlock.passkeyLoginCta": {
+    pl: "Zaloguj i odblokuj passkeyem",
+    en: "Log in and unlock with passkey",
+  },
+  "unlock.passkeyCta": { pl: "Odblokuj passkeyem", en: "Unlock with passkey" },
+  "unlock.passkeyBusy": {
+    pl: "Potwierdź w przeglądarce lub na urządzeniu…",
+    en: "Confirm in your browser or on your device…",
+  },
+  "unlock.orDivider": { pl: "lub", en: "or" },
+  "unlock.passkeyUnsupported": {
+    pl: "Ta przeglądarka nie obsługuje logowania passkeyem na tym urządzeniu — użyj hasła głównego poniżej.",
+    en: "This browser doesn't support passkey sign-in on this device — use your master password below.",
+  },
+  "unlock.prfUnavailableExplainer": {
+    pl: "Twoje passkeye nie wspierają PRF — odblokuj hasłem.",
+    en: "Your passkeys don't support PRF unlock — use your password.",
+  },
+  "unlock.passkeyFailed": {
+    pl: "Nie udało się użyć passkeya. Spróbuj ponownie albo użyj hasła poniżej.",
+    en: "Couldn't use your passkey. Try again — or use your password below.",
+  },
+
   "vault.emptyHeading": { pl: "Vault jeszcze pusty", en: "Your vault is empty" },
   "vault.emptyBody": {
     pl: "Dodaj pierwszy item — hasło, kartę albo notatkę 👇",

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const {
@@ -11,9 +11,11 @@ const {
   mockClearStoredEmail,
   mockGetStoredEmail,
   mockTakePendingUnlock,
+  mockTakePrfUnavailableHint,
   mockMe,
   mockPrelogin,
   mockBase64Decode,
+  mockPasskeyUnlock,
 } = vi.hoisted(() => ({
   mockUseIsUnlocked: vi.fn(),
   mockSetUnlockedUserKey: vi.fn(),
@@ -24,9 +26,11 @@ const {
   mockClearStoredEmail: vi.fn(),
   mockGetStoredEmail: vi.fn(),
   mockTakePendingUnlock: vi.fn(),
+  mockTakePrfUnavailableHint: vi.fn(),
   mockMe: vi.fn(),
   mockPrelogin: vi.fn(),
   mockBase64Decode: vi.fn(),
+  mockPasskeyUnlock: vi.fn(),
 }));
 
 vi.mock("@/lib/crypto", () => ({
@@ -46,6 +50,14 @@ vi.mock("@/lib/auth/session", () => ({
 
 vi.mock("@/lib/auth/pendingUnlock", () => ({
   takePendingUnlock: mockTakePendingUnlock,
+}));
+
+vi.mock("@/lib/auth/prfUnavailable", () => ({
+  takePrfUnavailableHint: mockTakePrfUnavailableHint,
+}));
+
+vi.mock("@/lib/passkeys/login", () => ({
+  passkeyUnlock: mockPasskeyUnlock,
 }));
 
 vi.mock("@/lib/auth/api", async () => {
@@ -68,9 +80,20 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
 
 import UnlockOverlay from "./UnlockOverlay";
 
+const originalPublicKeyCredential = (global as unknown as { PublicKeyCredential?: unknown })
+  .PublicKeyCredential;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  (global as unknown as { PublicKeyCredential: unknown }).PublicKeyCredential = {};
   mockGetSessionToken.mockReturnValue("session-token");
+  mockTakePrfUnavailableHint.mockReturnValue(false);
+  mockPasskeyUnlock.mockResolvedValue({ prfUnavailable: false });
+});
+
+afterEach(() => {
+  (global as unknown as { PublicKeyCredential?: unknown }).PublicKeyCredential =
+    originalPublicKeyCredential;
 });
 
 describe("UnlockOverlay", () => {
@@ -98,6 +121,7 @@ describe("UnlockOverlay", () => {
     render(<UnlockOverlay />);
 
     expect(screen.queryByTestId("unlock-password")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("passkey-unlock-button")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("unlock-submit"));
 
     await waitFor(() => expect(mockSetUnlockedUserKey).toHaveBeenCalledTimes(1));
@@ -158,5 +182,75 @@ describe("UnlockOverlay", () => {
     await waitFor(() => expect(mockClearSessionToken).toHaveBeenCalledTimes(1));
     expect(mockClearStoredEmail).toHaveBeenCalledTimes(1);
     expect(mockSetUnlockedUserKey).not.toHaveBeenCalled();
+  });
+
+  it("renders the passkey button in the pending === null branch when WebAuthn is supported", () => {
+    mockUseIsUnlocked.mockReturnValue(false);
+    mockTakePendingUnlock.mockReturnValue(null);
+
+    render(<UnlockOverlay />);
+
+    expect(screen.getByTestId("passkey-unlock-button")).toBeInTheDocument();
+  });
+
+  it("shows the tier-1 explainer instead of the button when window.PublicKeyCredential is undefined", () => {
+    (global as unknown as { PublicKeyCredential: unknown }).PublicKeyCredential = undefined;
+    mockUseIsUnlocked.mockReturnValue(false);
+    mockTakePendingUnlock.mockReturnValue(null);
+
+    render(<UnlockOverlay />);
+
+    expect(screen.queryByTestId("passkey-unlock-button")).not.toBeInTheDocument();
+    expect(screen.getByText("unlock.passkeyUnsupported")).toBeInTheDocument();
+  });
+
+  it("shows the PRF-unavailable explainer and autofocuses the password field when takePrfUnavailableHint() returns true at mount", () => {
+    mockUseIsUnlocked.mockReturnValue(false);
+    mockTakePendingUnlock.mockReturnValue(null);
+    mockTakePrfUnavailableHint.mockReturnValue(true);
+
+    render(<UnlockOverlay />);
+
+    expect(screen.getByText("unlock.prfUnavailableExplainer")).toBeInTheDocument();
+    expect(screen.getByTestId("unlock-password")).toHaveFocus();
+  });
+
+  it("shows unlock.passkeyFailed on a genuine passkeyUnlock rejection", async () => {
+    mockUseIsUnlocked.mockReturnValue(false);
+    mockTakePendingUnlock.mockReturnValue(null);
+    mockPasskeyUnlock.mockRejectedValue(new Error("network error"));
+
+    render(<UnlockOverlay />);
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+
+    expect(await screen.findByText("unlock.passkeyFailed")).toBeInTheDocument();
+    expect(mockSetUnlockedUserKey).not.toHaveBeenCalled();
+  });
+
+  it("shows no error text when passkeyUnlock resolves a silent cancellation", async () => {
+    mockUseIsUnlocked.mockReturnValue(false);
+    mockTakePendingUnlock.mockReturnValue(null);
+    mockPasskeyUnlock.mockResolvedValue({ prfUnavailable: false });
+
+    render(<UnlockOverlay />);
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+
+    await waitFor(() => expect(mockPasskeyUnlock).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("unlock.passkeyFailed")).not.toBeInTheDocument();
+  });
+
+  it("surfaces the PRF-unavailable explainer in the same session when passkeyUnlock resolves { prfUnavailable: true } (e.g. a same-session 404/null), without a page reload", async () => {
+    mockUseIsUnlocked.mockReturnValue(false);
+    mockTakePendingUnlock.mockReturnValue(null);
+    mockPasskeyUnlock.mockResolvedValue({ prfUnavailable: true });
+
+    render(<UnlockOverlay />);
+    expect(screen.queryByText("unlock.prfUnavailableExplainer")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+
+    await waitFor(() =>
+      expect(screen.getByText("unlock.prfUnavailableExplainer")).toBeInTheDocument(),
+    );
   });
 });

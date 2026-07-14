@@ -12,6 +12,7 @@
 import { WasmWrappingKey, getUnlockedUserKey, wrapUserKey } from "@/lib/crypto";
 import { base64Decode } from "@/lib/auth/api";
 import { registerStart, registerFinish, prfWrap } from "./api";
+import { isNotAllowedError } from "./errors";
 
 export type EnrollStep =
   | "step1"
@@ -20,11 +21,6 @@ export type EnrollStep =
   | "doneNoPrf"
   | "cancelled"
   | "failed";
-
-/** The browser's standard signal for "user dismissed the WebAuthn prompt". */
-function isNotAllowedError(e: unknown): boolean {
-  return e instanceof DOMException && e.name === "NotAllowedError";
-}
 
 export async function enrollPasskey(
   name: string,
