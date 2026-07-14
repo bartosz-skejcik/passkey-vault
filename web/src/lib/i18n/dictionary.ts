@@ -213,6 +213,40 @@ export const DICTIONARY = {
   "aria.chooseFileToImport": { pl: "Wybierz plik do importu", en: "Choose a file to import" },
   "aria.closePanel": { pl: "Zamknij panel", en: "Close panel" },
 
+  // Onboarding wizard (UI-04, Plan 06-04) — copy verbatim from
+  // 06-UI-SPEC.md's Copywriting Contract. `onboarding.step2PrfAnnotation` is
+  // a Claude's-discretion addition (the spec calls for a hand-drawn
+  // annotation near the PRF card but doesn't literally name its copy).
+  "onboarding.step1Title": { pl: "Zaimportuj swoje hasła", en: "Import your passwords" },
+  "onboarding.step1Body": {
+    pl: "Masz już menedżer haseł? Przenieś wszystko w minutę.",
+    en: "Already have a password manager? Bring everything over in a minute.",
+  },
+  "onboarding.step2Title": { pl: "Poznaj swój vault", en: "Meet your vault" },
+  "onboarding.step2PrfHeading": { pl: "Odblokuj passkeyem", en: "Unlock with a passkey" },
+  "onboarding.step2PrfBody": {
+    pl: "Dodaj passkey w Ustawieniach, żeby odblokowywać vault jednym gestem — bez wpisywania hasła.",
+    en: "Add a passkey in Settings to unlock your vault with one gesture — no password typing.",
+  },
+  "onboarding.step2PrfAnnotation": { pl: "nowość", en: "new" },
+  "onboarding.step2AutolockHeading": {
+    pl: "Zawsze pilnujemy Twoich sekretów",
+    en: "We always watch your secrets",
+  },
+  "onboarding.step2AutolockBody": {
+    pl: "Vault blokuje się sam po bezczynności, a skopiowane hasła znikają ze schowka same.",
+    en: "Your vault locks itself after inactivity, and copied passwords clear themselves from your clipboard.",
+  },
+  "onboarding.step3Title": { pl: "Gotowe — Twój vault czeka 🎉", en: "All set — your vault is ready 🎉" },
+  "onboarding.step3Body": {
+    pl: "Możesz dodawać, importować i porządkować hasła w dowolnym momencie.",
+    en: "You can add, import, and organize your passwords any time.",
+  },
+  "onboarding.finish": { pl: "Przejdź do vaulta", en: "Go to your vault" },
+  "onboarding.next": { pl: "Dalej", en: "Next" },
+  "onboarding.skip": { pl: "Pomiń", en: "Skip" },
+  "onboarding.stepIndicator": { pl: "Krok {n} z 3", en: "Step {n} of 3" },
+
   "delete.title": { pl: `Usunąć „{name}"?`, en: `Delete "{name}"?` },
   "delete.body": {
     pl: "Tej operacji nie da się cofnąć — item zniknie na stałe.",
