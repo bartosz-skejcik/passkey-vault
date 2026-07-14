@@ -153,6 +153,31 @@ pub fn decrypt_item(
     String::from_utf8(plaintext).map_err(|e| to_js_str_err(&e.to_string()))
 }
 
+/// Generuje bieżący kod TOTP (RFC 6238) z sekretu itemu — nieprzezroczysty
+/// handle NIE jest tu potrzebny (patrz komentarz na górze pliku): sekret
+/// TOTP nie jest materiałem kluczowym najwyższego rzędu, tylko wartością
+/// przechowywaną per-item, do której klient i tak ma jawny dostęp po
+/// odszyfrowaniu itemu. Ta funkcja NIGDY sama nie odczytuje zegara — czas
+/// zawsze przychodzi jawnie od wywołującego (JS `Date.now()`), zgodnie z
+/// `pv_core::totp::generate_code`'s own contract.
+#[wasm_bindgen(js_name = totpNow)]
+pub fn totp_now(
+    secret_b32: &str,
+    algorithm: &str,
+    digits: usize,
+    period: u64,
+    unix_time_seconds: u64,
+) -> Result<String, JsValue> {
+    let (code, seconds_remaining) =
+        pv_core::totp::generate_code(secret_b32, algorithm, digits, period, unix_time_seconds)
+            .map_err(to_js_err)?;
+    serde_json::to_string(&serde_json::json!({
+        "code": code,
+        "secondsRemaining": seconds_remaining
+    }))
+    .map_err(|e| to_js_str_err(&e.to_string()))
+}
+
 /// Nieprzezroczysty handle zawierający ZAROWNO wrapping key JAK I auth-hash
 /// pochodzące z jednego przebiegu Argon2id (patrz `derive_auth_material`).
 /// Konsumowanie pól odbywa się przez metody `take*` (mutable-borrow), nie
@@ -342,5 +367,27 @@ mod tests {
         let unwrapped =
             unwrap_user_key(&wrapping_key_b, &wrapped_json).expect("unwrap should succeed");
         assert_eq!(unwrapped.0.expose(), user_key.0.expose());
+    }
+
+    #[test]
+    fn totp_now_returns_rfc6238_json_shape() {
+        // RFC 6238 Appendix B SHA1 vector (see pv-core's totp.rs tests).
+        let json = totp_now(
+            "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+            "SHA1",
+            8,
+            30,
+            59,
+        )
+        .expect("totp_now should succeed on a valid RFC 6238 vector");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["code"], "94287082");
+        assert_eq!(parsed["secondsRemaining"], 1);
+    }
+
+    #[test]
+    fn totp_now_rejects_invalid_secret() {
+        let result = totp_now("not-valid-base32!!!", "SHA1", 6, 30, 100);
+        assert!(result.is_err());
     }
 }

@@ -19,6 +19,7 @@ import init, {
   defaultKdfParamsJson,
   randomSalt,
   deriveAuthMaterial as wasmDeriveAuthMaterial,
+  totpNow as wasmTotpNow,
 } from "./wasm/pv_wasm.js";
 
 export type { WasmUserKey, WasmAuthMaterial };
@@ -30,6 +31,30 @@ export type { WasmUserKey, WasmAuthMaterial };
 // not the raw wasm bindings, is what crosses this boundary.
 export { WasmWrappingKey };
 export { wrapUserKey, unwrapUserKey, encryptItem, decryptItem, randomSalt, defaultKdfParamsJson };
+
+export type TotpNowResult = { code: string; secondsRemaining: number };
+
+/**
+ * Thin pass-through wrapper around the `totpNow` wasm export — unlike
+ * `encryptItem`/`decryptItem` (whose callers each do their own JSON.parse at
+ * the call site), every caller of `totpNow` wants the exact same
+ * `{code, secondsRemaining}` shape with no intermediate transform, so the
+ * JSON.parse happens here instead. No zeroize/lifecycle concerns — a TOTP
+ * secret is a per-item stored value, not root key material (see pv-wasm's
+ * own module doc). `period`/`unixTimeSeconds` are `u64` on the Rust side,
+ * which wasm-bindgen marshals as `bigint`, not `number` — converted here so
+ * every caller can keep passing plain numbers.
+ */
+export function totpNow(
+  secretB32: string,
+  algorithm: string,
+  digits: number,
+  period: number,
+  unixTimeSeconds: number,
+): TotpNowResult {
+  const json = wasmTotpNow(secretB32, algorithm, digits, BigInt(period), BigInt(unixTimeSeconds));
+  return JSON.parse(json) as TotpNowResult;
+}
 
 /** Generates a fresh User Key — the root of vault access. */
 export function generateUserKey(): WasmUserKey {
