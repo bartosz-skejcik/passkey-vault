@@ -1,4 +1,8 @@
 import * as bitwardenCsv from "./bitwardenCsv";
+import * as lastpassCsv from "./lastpassCsv";
+import * as keepassCsv from "./keepassCsv";
+import * as nordpassCsv from "./nordpassCsv";
+import * as onePasswordCsv from "./onePasswordCsv";
 
 export type ImportFormat =
   | "bitwarden-json"
@@ -18,9 +22,13 @@ interface CsvDetector {
 // loose match can never shadow a narrower one -- defensive convention, not
 // a strict requirement (none of the per-tool column tables actually
 // overlap per 06-RESEARCH.md/06-02-PLAN.md's <per_tool_column_tables>).
-// NordPass/1Password/LastPass/KeePass dispatchers are added once Task 3's
-// mapper modules exist (see this file's Task 3 revision).
-const CSV_DETECTORS: CsvDetector[] = [{ format: "bitwarden-csv", detect: bitwardenCsv.detect }];
+const CSV_DETECTORS: CsvDetector[] = [
+  { format: "bitwarden-csv", detect: bitwardenCsv.detect },
+  { format: "lastpass-csv", detect: lastpassCsv.detect },
+  { format: "keepass-csv", detect: keepassCsv.detect },
+  { format: "nordpass-csv", detect: nordpassCsv.detect },
+  { format: "1password-csv", detect: onePasswordCsv.detect },
+];
 
 /**
  * Detects which import format a user-selected file is in. JSON-shape check
