@@ -259,6 +259,99 @@ export const DICTIONARY = {
   "enroll.done": { pl: "Gotowe", en: "Done" },
   "enroll.retry": { pl: "Spróbuj ponownie", en: "Try again" },
   "enroll.cancel": { pl: "Anuluj", en: "Cancel" },
+
+  // Settings panel + Passkeys/Sessions tabs (UI-05, AUTH-05/06/07, Plan
+  // 03-04) — copy verbatim from 03-UI-SPEC.md's Copywriting Contract,
+  // extended by this plan's binding morning-review resolutions (see
+  // 03-UI-SPEC.md's "Resolutions" section) with a few keys the spec didn't
+  // anticipate (per-passkey rename failure, per-session revoke confirm
+  // modal — both are Claude's-discretion additions, not spec paraphrases).
+  "settings.title": { pl: "Ustawienia", en: "Settings" },
+  "settings.tabPasskeys": { pl: "Passkeys", en: "Passkeys" },
+  "settings.tabSessions": { pl: "Sesje i urządzenia", en: "Sessions & devices" },
+  "settings.tabSecurity": { pl: "Bezpieczeństwo", en: "Security" },
+  "settings.tabImportExport": { pl: "Import/Eksport", en: "Import/Export" },
+  "settings.importExportPlaceholder": {
+    pl: "Import i eksport pojawią się w kolejnej fazie.",
+    en: "Import and export are coming in a later phase.",
+  },
+
+  "passkeys.emptyState": {
+    pl: "Nie masz jeszcze żadnego passkeya. Dodaj go, żeby móc odblokować vault jednym gestem.",
+    en: "You don't have any passkeys yet. Add one to unlock your vault with a single gesture.",
+  },
+  "passkeys.addCta": { pl: "+ Dodaj passkey", en: "+ Add passkey" },
+  "passkeys.createdLabel": { pl: "Utworzono {date}", en: "Created {date}" },
+  "passkeys.lastUsedLabel": { pl: "Ostatnio użyty {time}", en: "Last used {time}" },
+  "passkeys.neverUsed": { pl: "Nigdy nieużyty", en: "Never used" },
+  "passkeys.prfBadge": { pl: "PRF", en: "PRF" },
+  "passkeys.noPrfBadge": { pl: "Bez PRF", en: "No PRF" },
+  "passkeys.noPrfExplainer": {
+    pl: "Logowanie bez odblokowania PRF — vault odblokujesz hasłem.",
+    en: "Sign-in only, no PRF unlock — you'll unlock the vault with your password.",
+  },
+  "passkeys.loadFailed": { pl: "Nie udało się wczytać passkeyów.", en: "Couldn't load your passkeys." },
+  "passkeys.renameFailed": {
+    pl: "Nie udało się zmienić nazwy. Spróbuj ponownie.",
+    en: "Couldn't rename the passkey. Please try again.",
+  },
+  "passkeys.deleteTitle": { pl: `Usunąć passkey „{name}"?`, en: `Delete passkey "{name}"?` },
+  "passkeys.deleteBody": {
+    pl: "Ten passkey przestanie działać. Hasło główne zawsze pozostaje działającym sposobem odblokowania vaulta.",
+    en: "This passkey will stop working. Your master password always remains a working way to unlock the vault.",
+  },
+  "passkeys.deleteConfirm": { pl: "Usuń passkey", en: "Delete passkey" },
+  "passkeys.deleteBlockedError": {
+    pl: "Nie można usunąć — vault musi mieć działający sposób odblokowania.",
+    en: "Can't delete — the vault must always have a working unlock method.",
+  },
+  "passkeys.deleteFailed": {
+    pl: "Nie udało się usunąć passkeya. Spróbuj ponownie.",
+    en: "Couldn't delete the passkey. Please try again.",
+  },
+
+  "sessions.currentDevice": { pl: "to urządzenie", en: "this device" },
+  "sessions.signedInLabel": { pl: "Zalogowano {date}", en: "Signed in {date}" },
+  "sessions.lastActiveLabel": { pl: "Ostatnia aktywność {time}", en: "Last active {time}" },
+  "sessions.unknownDevice": { pl: "Nieznane urządzenie", en: "Unknown device" },
+  "sessions.revokeOthers": { pl: "Wyloguj pozostałe", en: "Sign out other sessions" },
+  "sessions.revokeOthersConfirmTitle": {
+    pl: "Wylogować pozostałe sesje?",
+    en: "Sign out other sessions?",
+  },
+  "sessions.revokeOthersConfirmBody": {
+    pl: "Wszystkie urządzenia oprócz tego zostaną wylogowane.",
+    en: "All devices except this one will be signed out.",
+  },
+  "sessions.revokeOthersConfirmButton": { pl: "Tak, wyloguj", en: "Yes, sign out" },
+  // Per-session revoke confirm modal (binding resolution #6 — both
+  // destructive actions get a confirm modal, fat-finger/fat-key
+  // prevention) — not in 03-UI-SPEC.md's original inline-confirm design,
+  // added here since the spec never named a single-session confirm copy.
+  "sessions.revokeConfirmTitle": { pl: "Wylogować to urządzenie?", en: "Sign out this device?" },
+  "sessions.revokeConfirmBody": {
+    pl: "To urządzenie zostanie wylogowane. Będziesz mógł/mogła zalogować się na nim ponownie w każdej chwili.",
+    en: "This device will be signed out. You can sign back in on it anytime.",
+  },
+  "sessions.revokeConfirmButton": { pl: "Wyloguj", en: "Sign out" },
+  "sessions.revokeFailed": {
+    pl: "Nie udało się wylogować tej sesji. Spróbuj ponownie.",
+    en: "Couldn't sign out that session. Please try again.",
+  },
+  "sessions.loadFailed": { pl: "Nie udało się wczytać sesji.", en: "Couldn't load your sessions." },
+
+  "aria.renameSaveLabel": { pl: "Zapisz nazwę", en: "Save name" },
+  "aria.renameCancelLabel": { pl: "Anuluj zmianę nazwy", en: "Cancel rename" },
+  "aria.renamePasskeyLabel": {
+    pl: `Zmień nazwę passkeya „{name}"`,
+    en: `Rename passkey "{name}"`,
+  },
+  "aria.deletePasskeyLabel": { pl: `Usuń passkey „{name}"`, en: `Delete passkey "{name}"` },
+  "aria.revokeSessionLabel": {
+    pl: `Wyloguj sesję „{device}"`,
+    en: `Sign out session "{device}"`,
+  },
+  "aria.openSettings": { pl: "Otwórz ustawienia", en: "Open settings" },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {

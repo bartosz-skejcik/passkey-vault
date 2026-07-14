@@ -29,6 +29,17 @@ export interface PrfWrapResponse {
   prf_capable: true;
 }
 
+// Settings surface (AUTH-06, Plan 03-04) — list/rename/delete of already-
+// enrolled passkeys. Same `apiJson<T>` wrapper as the enrollment functions
+// above, reused rather than duplicated.
+export interface PasskeyRow {
+  id: string;
+  name: string;
+  prf_capable: boolean;
+  created_at: string;
+  last_used_at: string | null;
+}
+
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(path, init);
   if (!response.ok) {
@@ -81,4 +92,19 @@ export function prfWrap(
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+export function listPasskeys(): Promise<PasskeyRow[]> {
+  return apiJson("/api/passkeys");
+}
+
+export function renamePasskey(id: string, name: string): Promise<void> {
+  return apiJson(`/api/passkeys/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function deletePasskey(id: string): Promise<void> {
+  return apiJson(`/api/passkeys/${id}`, { method: "DELETE" });
 }
