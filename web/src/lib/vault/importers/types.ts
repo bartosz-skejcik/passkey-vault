@@ -116,12 +116,22 @@ export function parseTotpValue(raw: string | null | undefined): ParsedTotp | nul
     const algorithm: ParsedTotp["algorithm"] =
       algorithmParam === "SHA256" || algorithmParam === "SHA512" ? algorithmParam : "SHA1";
 
+    // `??` only substitutes when the param is absent -- a present-but-empty
+    // or non-numeric value coerces via Number() to 0/NaN, which later
+    // throws in BigInt(period) at render time. Validate/clamp here instead,
+    // falling back to RFC 6238 defaults on any non-finite/out-of-range value.
+    const digitsRaw = Number(url.searchParams.get("digits"));
+    const periodRaw = Number(url.searchParams.get("period"));
+    const digits =
+      Number.isInteger(digitsRaw) && digitsRaw >= 6 && digitsRaw <= 10 ? digitsRaw : 6;
+    const period = Number.isInteger(periodRaw) && periodRaw > 0 ? periodRaw : 30;
+
     return {
       secret,
       issuer: url.searchParams.get("issuer") ?? "",
       algorithm,
-      digits: Number(url.searchParams.get("digits") ?? 6),
-      period: Number(url.searchParams.get("period") ?? 30),
+      digits,
+      period,
     };
   }
 

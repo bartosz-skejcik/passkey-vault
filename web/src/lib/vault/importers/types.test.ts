@@ -65,4 +65,25 @@ describe("parseTotpValue", () => {
       period: 60,
     });
   });
+
+  it("falls back to defaults when digits/period are present but non-numeric", () => {
+    expect(
+      parseTotpValue("otpauth://totp/X:y?secret=ABC234&digits=x&period=x"),
+    ).toMatchObject({ digits: 6, period: 30 });
+  });
+
+  it("falls back to defaults when digits/period are present but empty", () => {
+    expect(
+      parseTotpValue("otpauth://totp/X:y?secret=ABC234&digits=&period="),
+    ).toMatchObject({ digits: 6, period: 30 });
+  });
+
+  it("falls back to defaults when digits/period are out of range or non-integer", () => {
+    expect(
+      parseTotpValue("otpauth://totp/X:y?secret=ABC234&digits=1&period=-5"),
+    ).toMatchObject({ digits: 6, period: 30 });
+    expect(
+      parseTotpValue("otpauth://totp/X:y?secret=ABC234&digits=6.5&period=30.5"),
+    ).toMatchObject({ digits: 6, period: 30 });
+  });
 });
