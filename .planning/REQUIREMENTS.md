@@ -30,7 +30,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 
 - [x] **SYNC-01**: Klient synchronizuje vault przez revision-gated full-snapshot pull (`GET /sync` z tanim revision-checkiem — bez delty/CRDT)
 - [x] **SYNC-02**: Serwer pushuje przez WebSocket wyłącznie metadane zmian `{item_id, revision, change_type}` (nigdy ciphertext); klient reaguje normalnym pullem
-- [ ] **SYNC-03**: Użytkownik może korzystać z vaulta na wielu urządzeniach jednocześnie; konflikty rozstrzygane per-item po rewizji
+- [x] **SYNC-03**: Użytkownik może korzystać z vaulta na wielu urządzeniach jednocześnie; konflikty rozstrzygane per-item po rewizji
 
 ### Import / Eksport
 
@@ -118,7 +118,7 @@ Milestone: **v0.1** — self-hostable serwer (1 kontener) + web app z vault CRUD
 | UI-02 | Phase 4: PRF Unlock & Login Unification | Complete |
 | SYNC-01 | Phase 5: Multi-Device Sync | Complete |
 | SYNC-02 | Phase 5: Multi-Device Sync | Complete |
-| SYNC-03 | Phase 5: Multi-Device Sync | Pending |
+| SYNC-03 | Phase 5: Multi-Device Sync | Complete |
 | VAULT-07 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
 | IMPEX-01 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
 | IMPEX-02 | Phase 6: Import/Export, TOTP & Onboarding | Pending |
