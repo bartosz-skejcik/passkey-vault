@@ -95,3 +95,30 @@ pub async fn register_and_login(app: &axum::Router, email: &str) -> String {
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     body["session_token"].as_str().unwrap().to_string()
 }
+
+/// Binds a real `TcpListener` and serves `app` from it in a background task,
+/// returning the bound port. `oneshot()` cannot perform a real HTTP Upgrade
+/// handshake (05-RESEARCH.md Pitfall 2), so `tests/sync.rs`'s WS tests need
+/// an actual socket to connect `tokio_tungstenite::connect_async` against.
+///
+/// CRITICAL: the caller must keep using the SAME `app` `Router` clone this
+/// function was given for driving mutations via `.oneshot(...)` — `Router`
+/// is cheaply `Clone` (internally `Arc`-based), so both clones share the
+/// exact same `AppState`/`SyncHub`. Calling `test_app(pool)` a SECOND time
+/// instead would construct a DIFFERENT `AppState`/`SyncHub` and silently
+/// break every WS test (a mutation would publish to a hub the WS connection
+/// never subscribed to).
+///
+/// `#[allow(dead_code)]`: only `tests/sync.rs` calls this helper (mirrors
+/// `register_and_login`'s own treatment above).
+#[allow(dead_code)]
+pub async fn test_server(pool: sqlx::SqlitePool) -> (axum::Router, u16) {
+    let app = test_app(pool);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind ephemeral port");
+    let port = listener.local_addr().unwrap().port();
+    let serve_app = app.clone();
+    tokio::spawn(async move {
+        axum::serve(listener, serve_app).await.expect("test server crashed");
+    });
+    (app, port)
+}
