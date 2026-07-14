@@ -145,7 +145,7 @@ describe("passkeyLogin", () => {
     expect(mockSetPendingUnlock).toHaveBeenCalledWith(FAKE_WRAPPING_KEY, "prf-wrapped-uk");
     expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "success"]);
     expect(takePrfUnavailableHint()).toBe(false);
-    expect(result).toEqual({ prfUnavailable: false });
+    expect(result).toEqual({ prfUnavailable: false, cancelled: false });
   });
 
   it("with prf_wrapped_uk: null in the finish response, sets the prfUnavailable hint and the session, but never setPendingUnlock", async () => {
@@ -162,7 +162,7 @@ describe("passkeyLogin", () => {
     expect(mockSetSessionToken).toHaveBeenCalledWith("session-token");
     expect(mockSetPendingUnlock).not.toHaveBeenCalled();
     expect(takePrfUnavailableHint()).toBe(true);
-    expect(result).toEqual({ prfUnavailable: true });
+    expect(result).toEqual({ prfUnavailable: true, cancelled: false });
   });
 
   it("never calls passkeyLoginFinish when navigator.credentials.get() rejects with NotAllowedError", async () => {
@@ -176,7 +176,7 @@ describe("passkeyLogin", () => {
     expect(mockPasskeyLoginFinish).not.toHaveBeenCalled();
     expect(mockSetSessionToken).not.toHaveBeenCalled();
     expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "cancelled"]);
-    expect(result).toEqual({ prfUnavailable: false });
+    expect(result).toEqual({ prfUnavailable: false, cancelled: true });
   });
 
   it("rethrows and reports 'failed' on a genuine (non-cancellation) ceremony rejection", async () => {
@@ -211,7 +211,7 @@ describe("passkeyUnlock", () => {
     const onStep = vi.fn();
     const result = await passkeyUnlock(onStep);
 
-    expect(result).toEqual({ prfUnavailable: true });
+    expect(result).toEqual({ prfUnavailable: true, cancelled: false });
     expect(global.navigator.credentials.get).not.toHaveBeenCalled();
     expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start"]);
   });
@@ -246,7 +246,7 @@ describe("passkeyUnlock", () => {
     expect(mockSetUnlockedUserKey).toHaveBeenCalledWith(FAKE_USER_KEY);
     expect(mockSetPendingUnlock).not.toHaveBeenCalled();
     expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "success"]);
-    expect(result).toEqual({ prfUnavailable: false });
+    expect(result).toEqual({ prfUnavailable: false, cancelled: false });
   });
 
   it("cancellation (NotAllowedError) during the ceremony is a silent no-op", async () => {
@@ -264,6 +264,6 @@ describe("passkeyUnlock", () => {
 
     expect(mockUnlockFinish).not.toHaveBeenCalled();
     expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "cancelled"]);
-    expect(result).toEqual({ prfUnavailable: false });
+    expect(result).toEqual({ prfUnavailable: false, cancelled: true });
   });
 });

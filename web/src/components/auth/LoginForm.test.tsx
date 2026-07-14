@@ -162,7 +162,7 @@ describe("LoginForm", () => {
 
   it("calls onAuthed when passkeyLogin resolves with a PRF-success (prfUnavailable: false)", async () => {
     const onAuthed = vi.fn();
-    mockPasskeyLogin.mockResolvedValue({ prfUnavailable: false });
+    mockPasskeyLogin.mockResolvedValue({ prfUnavailable: false, cancelled: false });
     render(<LoginForm onToggle={() => {}} onAuthed={onAuthed} />);
 
     fireEvent.change(screen.getByTestId("login-email"), {
@@ -176,7 +176,7 @@ describe("LoginForm", () => {
 
   it("still calls onAuthed when passkeyLogin resolves { prfUnavailable: true } — login succeeded even without PRF", async () => {
     const onAuthed = vi.fn();
-    mockPasskeyLogin.mockResolvedValue({ prfUnavailable: true });
+    mockPasskeyLogin.mockResolvedValue({ prfUnavailable: true, cancelled: false });
     render(<LoginForm onToggle={() => {}} onAuthed={onAuthed} />);
 
     fireEvent.change(screen.getByTestId("login-email"), {
@@ -185,6 +185,25 @@ describe("LoginForm", () => {
     fireEvent.click(screen.getByTestId("passkey-unlock-button"));
 
     await waitFor(() => expect(onAuthed).toHaveBeenCalledTimes(1));
+  });
+
+  it("does NOT call onAuthed and shows no error when passkeyLogin resolves cancelled: true (UAT 04-03 step-8 regression)", async () => {
+    const onAuthed = vi.fn();
+    mockPasskeyLogin.mockResolvedValue({ prfUnavailable: false, cancelled: true });
+    render(<LoginForm onToggle={() => {}} onAuthed={onAuthed} />);
+
+    fireEvent.change(screen.getByTestId("login-email"), {
+      target: { value: "existing@example.com" },
+    });
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+
+    // ceremonia anulowana: brak sesji -> brak onAuthed, przycisk wraca do idle bez banera błędu
+    await waitFor(() => expect(mockPasskeyLogin).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByTestId("passkey-unlock-button")).not.toBeDisabled(),
+    );
+    expect(onAuthed).not.toHaveBeenCalled();
+    expect(screen.queryByText("unlock.passkeyFailed")).not.toBeInTheDocument();
   });
 
   it("shows unlock.passkeyFailed on a genuine passkeyLogin rejection", async () => {

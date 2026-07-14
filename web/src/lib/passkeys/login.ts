@@ -61,7 +61,7 @@ function extractPrfBytes(assertion: PublicKeyCredential): ArrayBuffer | undefine
 export async function passkeyLogin(
   email: string,
   onStep?: (step: LoginStep) => void,
-): Promise<{ prfUnavailable: boolean }> {
+): Promise<{ prfUnavailable: boolean; cancelled: boolean }> {
   onStep?.("start");
   const start = await passkeyLoginStart({ email });
 
@@ -79,8 +79,11 @@ export async function passkeyLogin(
     })) as PublicKeyCredential;
   } catch (e) {
     if (isNotAllowedError(e)) {
+      // cancelled: true jest jedynym sygnałem dla LoginForm, że sesja NIE
+      // powstała — bez niego caller brał ciche anulowanie za udany login
+      // (bug znaleziony w UAT 04-03 krok 8).
       onStep?.("cancelled");
-      return { prfUnavailable: false };
+      return { prfUnavailable: false, cancelled: true };
     }
     onStep?.("failed");
     throw e;
@@ -106,7 +109,7 @@ export async function passkeyLogin(
       // pending-material fast path frees this handle after consuming it.
       setPendingUnlock(wrappingKey, finish.prf_wrapped_uk);
       onStep?.("success");
-      return { prfUnavailable: false };
+      return { prfUnavailable: false, cancelled: false };
     }
   }
 
@@ -116,7 +119,7 @@ export async function passkeyLogin(
   // unlock didn't.
   setPrfUnavailableHint();
   onStep?.("success");
-  return { prfUnavailable: true };
+  return { prfUnavailable: true, cancelled: false };
 }
 
 /**
@@ -128,7 +131,7 @@ export async function passkeyLogin(
  */
 export async function passkeyUnlock(
   onStep?: (step: LoginStep) => void,
-): Promise<{ prfUnavailable: boolean }> {
+): Promise<{ prfUnavailable: boolean; cancelled: boolean }> {
   onStep?.("start");
   let start: Awaited<ReturnType<typeof unlockStart>>;
   try {
@@ -137,7 +140,7 @@ export async function passkeyUnlock(
     if (e instanceof ApiClientError && e.status === 404) {
       // Zero PRF-capable passkeys — UI-SPEC's explicit "no browser prompt
       // ever shown" requirement for this case.
-      return { prfUnavailable: true };
+      return { prfUnavailable: true, cancelled: false };
     }
     onStep?.("failed");
     throw e;
@@ -158,7 +161,7 @@ export async function passkeyUnlock(
   } catch (e) {
     if (isNotAllowedError(e)) {
       onStep?.("cancelled");
-      return { prfUnavailable: false };
+      return { prfUnavailable: false, cancelled: true };
     }
     onStep?.("failed");
     throw e;
@@ -181,7 +184,7 @@ export async function passkeyUnlock(
         wrappingKey.free?.();
       }
       onStep?.("success");
-      return { prfUnavailable: false };
+      return { prfUnavailable: false, cancelled: false };
     }
   }
 
@@ -189,5 +192,5 @@ export async function passkeyUnlock(
   // so a null prf_wrapped_uk here should be rare — same two-case collapse
   // as passkeyLogin applies if the extension silently didn't report.
   onStep?.("success");
-  return { prfUnavailable: true };
+  return { prfUnavailable: true, cancelled: false };
 }

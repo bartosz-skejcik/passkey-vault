@@ -34,11 +34,12 @@ export default function LoginForm({
     setPasskeyState("busy");
     setPasskeyError(null);
     try {
-      // passkeyLogin() itself silently no-ops on a NotAllowedError
-      // (user-cancelled) ceremony — it never throws for that case, so this
-      // catch block only ever sees a genuine failure.
-      await passkeyLogin(email, () => {});
-      onAuthed?.();
+      // passkeyLogin() nie rzuca przy NotAllowedError (anulowanie) — wraca
+      // z cancelled: true i ŻADNA sesja wtedy nie istnieje. onAuthed tylko
+      // przy prawdziwym sukcesie, inaczej page.tsx renderuje vault bez
+      // sesji (bug z UAT 04-03 krok 8).
+      const { cancelled } = await passkeyLogin(email, () => {});
+      if (!cancelled) onAuthed?.();
     } catch {
       setPasskeyError(t("unlock.passkeyFailed"));
     } finally {
