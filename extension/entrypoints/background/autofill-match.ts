@@ -49,13 +49,23 @@ import type {
 import type { MessageOf, MessageResponseMap } from "../../lib/messaging/ext-protocol";
 import type { VaultItem } from "../../lib/vault/types";
 
-const EMPTY_DETECTED: DetectedFields = { login: false, totp: false, card: false, identity: false };
+// Exported (not just module-private) so Plan 10-09's autofill-frame.ts can
+// reuse the exact same decrypt/lookup/derive logic for the content-frame
+// channel instead of duplicating it -- these five are pure functions/data
+// with no dependency on this file's popup-driven "resolve the active tab"
+// flow, so they are the natural shared surface between the two channels.
+export const EMPTY_DETECTED: DetectedFields = {
+  login: false,
+  totp: false,
+  card: false,
+  identity: false,
+};
 
 /** The only FillKind values that are ever offered/filled -- "note" is a
  * VaultItem type with no fill target (lib/autofill/types.ts's own header
  * comment), so it is filtered out wherever an item's `fields.type` is
  * compared against a FillKind. */
-function asFillKind(itemType: VaultItem["fields"]["type"]): FillKind | null {
+export function asFillKind(itemType: VaultItem["fields"]["type"]): FillKind | null {
   return itemType === "login" || itemType === "totp" || itemType === "card" || itemType === "identity"
     ? itemType
     : null;
@@ -96,7 +106,7 @@ function maskCardNumber(number: string): string {
   return last4.length === 4 ? `••••${last4}` : "••••";
 }
 
-function maskedHintFor(item: VaultItem): string {
+export function maskedHintFor(item: VaultItem): string {
   switch (item.fields.type) {
     case "login":
       return maskEmailOrText(item.fields.username);
@@ -117,7 +127,7 @@ function maskedHintFor(item: VaultItem): string {
  * shape (defensive; unreachable in practice because callers already
  * refuse a `kind_`/`item.fields.type` mismatch before this runs).
  */
-function buildFillValues(item: VaultItem): FillValues | null {
+export function buildFillValues(item: VaultItem): FillValues | null {
   switch (item.fields.type) {
     case "login":
       return { type: "login", username: item.fields.username, password: item.fields.password };
