@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: Browser Extension
-current_phase: 09
-current_phase_name: Session Unlock Core, Popup & Sync Client
-status: executing
+current_phase: 10
+current_phase_name: Autofill — Login, TOTP, Card & Identity
+status: planning
 stopped_at: Completed 09-06-PLAN.md
-last_updated: "2026-07-15T10:40:29.489Z"
+last_updated: "2026-07-15T18:55:58.769Z"
 last_activity: 2026-07-15
-last_activity_desc: 09-02-PLAN.md complete (session core, autolock, router)
+last_activity_desc: Phase 9 complete, transitioned to Phase 10
 progress:
   total_phases: 6
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 31
-  completed_plans: 9
-  percent: 17
+  completed_plans: 11
+  percent: 33
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 
 ## Current Position
 
-Phase: 09 of 13 (Session Unlock Core, Popup & Sync Client)
-Plan: 7 of 7 complete (09-01, 09-03 Wave 1; 09-02 Wave 2) — next: Wave 3 (09-04, 09-05)
-Status: Ready to execute Wave 3
-Last activity: 2026-07-15 — 09-02-PLAN.md complete (session core, autolock, router)
+Phase: 10 of 13 (Autofill — Login, TOTP, Card & Identity)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-15 — Phase 9 complete, transitioned to Phase 10
 
 Progress: [███░░░░░░░] 29%
 
@@ -39,7 +39,7 @@ Progress: [███░░░░░░░] 29%
 
 **Velocity:**
 
-- Total plans completed: 3 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
+- Total plans completed: 11 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
 - Average duration: - min
 - Total execution time: 0 hours (v0.2)
 
@@ -54,6 +54,7 @@ Progress: [███░░░░░░░] 29%
 | 12. Passkey Provider | TBD | - | - |
 | 13. Dual-Browser Hardening | TBD | - | - |
 | 8 | 3 | - | - |
+| 9 | 8 | - | - |
 
 *Updated after each plan completion*
 **Per-Plan Metrics:**

@@ -41,7 +41,7 @@ Delivered: 30/30 requirements, all phases verified passed, cross-phase integrati
 - **Session key storage**: the unlocked User Key must live only in `chrome.storage.session` — never `chrome.storage.local`, never a module-level JS variable. This constraint is established as the foundation in Phase 9 and must hold through every later phase that touches the unlocked key (autofill in Phase 10, the passkey provider in Phase 12).
 
 - [x] **Phase 8: Extension Bootstrap & WASM-in-Background Spike** - Bare WXT project on both browsers; `pv-wasm` runs in the background service worker and survives an idle-kill/wake cycle (completed 2026-07-15)
-- [ ] **Phase 9: Session Unlock Core, Popup & Sync Client** - Unlock the vault from the popup (password + PRF where supported), browse/search items, real REST+WS sync as a third synced client
+- [x] **Phase 9: Session Unlock Core, Popup & Sync Client** - Unlock the vault from the popup (password + PRF where supported), browse/search items, real REST+WS sync as a third synced client (completed 2026-07-15)
 - [ ] **Phase 10: Autofill — Login, TOTP, Card & Identity** - Detect forms and fill saved logins, live TOTP codes, cards, and identities into the current page
 - [ ] **Phase 11: Generate & Capture** - Suggest a generated password on signup, prompt to save new logins after submit, detect password changes
 - [ ] **Phase 12: Passkey Provider** - `navigator.credentials.create()`/`.get()` on third-party sites via a MAIN-world key-free RPC shim, `passkey-rs` + PRF, native fallback — security-review gated
@@ -105,11 +105,11 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 09-06-PLAN.md — Popup UI: server config, unlock (password + ext-PRF passkey), enrollment prompt, browse/search/pick, open full vault (EXT-02/03/04/06)
+- [x] 09-06-PLAN.md — Popup UI: server config, unlock (password + ext-PRF passkey), enrollment prompt, browse/search/pick, open full vault (EXT-02/03/04/06)
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 09-07-PLAN.md — Manual UAT checkpoint for all 7 success criteria
+- [x] 09-07-PLAN.md — Manual UAT checkpoint for all 7 success criteria
 
 **UI hint**: yes
 
@@ -215,7 +215,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 6. Import/Export, TOTP & Onboarding | v0.1 | 4/4 | Complete | 2026-07-14 |
 | 7. Self-Host Packaging & Deployment | v0.1 | 3/3 | Complete | 2026-07-14 |
 | 8. Extension Bootstrap & WASM-in-Background Spike | v0.2 | 3/3 | Complete    | 2026-07-15 |
-| 9. Session Unlock Core, Popup & Sync Client | v0.2 | 6/8 | In Progress|  |
+| 9. Session Unlock Core, Popup & Sync Client | v0.2 | 8/8 | Complete    | 2026-07-15 |
 | 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 0/7 | Planned | - |
 | 11. Generate & Capture | v0.2 | 0/TBD | Not started | - |
 | 12. Passkey Provider | v0.2 | 0/TBD | Not started | - |

@@ -46,6 +46,7 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 **✅ v0.1 MVP SHIPPED 2026-07-14** — 30/30 requirements, 7/7 faz zweryfikowanych, integracja cross-phase czysta (5/5 flows E2E). Audit: `.planning/milestones/v0.1-MILESTONE-AUDIT.md`.
 
 - ✓ Extension bootstrap (WXT): MV3 Chrome + MV2 Firefox z jednego builda, `pv-wasm` instancjonowany w background service workerze pod CSP `wasm-unsafe-eval`, round-trip krypto przeżywa realny idle-kill/wake (obserwowane w przeglądarce, nie inferowane — CDP kill + marker ground-truth), `build-wasm.sh` rozszerzony addytywnie (jedna ścieżka artefaktu krypto) — Phase 8 (EXT-01)
+- ✓ Extension session core + popup + sync: unlock hasłem i **extension-scoped PRF passkeyem** (RP ID = ext id, HKDF `pv:ext-prf-unlock:v1`, blob `prf_wrapped_uk` na serwerze — serwer bez zmian webauthn-rs), User Key wyłącznie w `chrome.storage.session` (przeżywa idle-kill, auto-lock przez `chrome.alarms` z konfigurowalnym timeoutem), popup browse/search/pick (React+DaisyUI, NordPass-layout), REST+WS sync jako trzeci klient (cross-client push udowodniony żywym drugim klientem), user-configured server URL z walidacją `/healthz` + „Zmień serwer" na unlocku, CORS allowlist na sztywny published extension origin (forged origin odrzucany), fullscreen/settings/new-item = czyste redirecty do web appa — Phase 9 (EXT-02..06), re-weryfikacja 7/7 po gap-closure (1 Critical + 8 Warnings naprawione, 689 linii martwego spike'a usunięte)
 
 ### Active
 
@@ -122,4 +123,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-15 after Phase 8*
+*Last updated: 2026-07-15 after Phase 9*
