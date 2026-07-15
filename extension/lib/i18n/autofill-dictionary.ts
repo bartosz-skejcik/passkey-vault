@@ -70,6 +70,18 @@ export const AUTOFILL_DICTIONARY = {
     pl: "Nie udało się wypełnić — spróbuj ponownie.",
     en: "Couldn't fill — try again.",
   },
+
+  // --- In-page overlay (10-10, Claude's-discretion additions not in
+  // 10-UI-SPEC.md's Copywriting Contract table -- that spec only covers the
+  // popup surface; 10-10-PLAN.md's design_reference names these two
+  // headings directly ("Zaloguj z Passkey Vault" / "Hasła") but leaves the
+  // aria-labels for the close/block-this-site icon buttons to executor
+  // discretion, matched to onThisPage.heading's/autofill.cancelCta's
+  // existing tone) --------------------------------------------------------
+  "overlay.promptTitle": { pl: "Zaloguj z Passkey Vault", en: "Log in with Passkey Vault" },
+  "overlay.fieldDropdownHeading": { pl: "Hasła", en: "Passwords" },
+  "overlay.closeAria": { pl: "Zamknij", en: "Close" },
+  "overlay.blockSiteAria": { pl: "Zablokuj tę stronę", en: "Block this site" },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof AUTOFILL_DICTIONARY): string {
