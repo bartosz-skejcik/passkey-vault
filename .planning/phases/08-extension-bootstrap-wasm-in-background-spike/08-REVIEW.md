@@ -144,3 +144,14 @@ Phase 9 with a TODO if this spike file is discarded as planned.
 _Reviewed: 2026-07-15_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: deep_
+
+## Resolution (2026-07-15, orchestrator fix pass)
+
+| Finding | Outcome | Commit |
+|---------|---------|--------|
+| WR-01 sender validation | FIXED — with a correction: the suggested `sender.tab !== undefined` check broke the extension's own pages opened in tabs (caught by re-running the real-browser UAT); replaced with a sender.url own-origin check | a1c304b |
+| IN-01 dead comparison | FIXED — throw-only semantics on both paths | a1c304b |
+| IN-02 silent sed | FIXED — grep-guard both targets, loud exit 1 on codegen drift | 2523a2a |
+| IN-03 envelope shape trust | FIXED — type guard, malformed envelope fails loudly | a1c304b |
+
+Post-fix evidence: vitest 3/3, tsc clean, both wxt builds green, build-wasm.sh green with guards active, and the full Chrome kill/wake UAT re-run PASSED (survived:true, marker WIPED, 0 console errors).

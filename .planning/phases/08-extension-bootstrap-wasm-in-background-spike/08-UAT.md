@@ -56,3 +56,11 @@ after rebuild.
 Lesson (again, per AUTONOMOUS-MILESTONE-PLAYBOOK §4): permission-manifest correctness is
 invisible to unit tests with injected fakes — every future phase that adds a `chrome.*` API
 must verify against the packaged build in a real browser.
+
+## Addendum — post-review-fix re-run (2026-07-15)
+
+After the code-review fixes (a1c304b, 2523a2a) the harness was re-run against the rebuilt
+packaged chrome-mv3 build: **PASS** — `{ok:true,survived:false}` → CDP kill (marker WIPED) →
+`{ok:true,survived:true}`, zero console errors. Bonus finding: the review's originally
+suggested `sender.tab` check silently broke popup-in-tab messaging — only this re-run caught
+it; the shipped check discriminates on sender.url own-origin instead.
