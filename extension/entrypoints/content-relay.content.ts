@@ -163,20 +163,20 @@ function collectFocusableFields(): Map<Element, FillKind> {
   }
 
   const totpField = detectTotp(document);
-  if (totpField) {
+  if (totpField && !map.has(totpField)) {
     map.set(totpField, "totp");
   }
 
   const card = detectCard(document);
   for (const el of [card.cardholderName, card.number, card.cvv, card.expiry, card.expiryMonth, card.expiryYear]) {
-    if (el) {
+    if (el && !map.has(el)) {
       map.set(el, "card");
     }
   }
 
   const identity = detectIdentity(document);
   for (const el of [identity.firstName, identity.lastName, identity.email, identity.phone, identity.address]) {
-    if (el) {
+    if (el && !map.has(el)) {
       map.set(el, "identity");
     }
   }
