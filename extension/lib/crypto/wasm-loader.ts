@@ -19,6 +19,7 @@ import init, {
   exportUserKeyForSession,
   importUserKeyFromSession,
   deriveAuthMaterial,
+  decryptItem,
 } from "./wasm/pv_wasm.js";
 
 // Both WasmWrappingKey and WasmUserKey are re-exported as VALUES (not just
@@ -42,6 +43,12 @@ export { exportUserKeyForSession, importUserKeyFromSession };
 // function. Only the opaque WasmAuthMaterial handle (takeAuthHash/
 // takeWrappingKey/free) crosses this choke-point, never raw key bytes.
 export { deriveAuthMaterial };
+// Plan 09-05's vault-store.ts needs the item-decryption entry point --
+// mirrors web/src/lib/crypto/index.ts's own re-export of the same wasm
+// function. Only ciphertext/plaintext strings cross this choke-point here,
+// never raw key bytes (the WasmUserKey handle used for decryption is
+// itself an opaque handle, already re-exported above).
+export { decryptItem };
 
 // Module-level singleton promise — memoizes the (expensive, one-time) wasm
 // module instantiation. Mirrors `web/src/lib/crypto/index.ts`'s `ready`/

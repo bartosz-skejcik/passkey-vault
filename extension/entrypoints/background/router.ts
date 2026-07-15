@@ -3,6 +3,11 @@
 // across Waves 3-5 (each adds its own `case` + import) -- 09-04 adds
 // `unlock.*` AND `auth.signIn.*` kinds, 09-05 adds `vault.list` -- by
 // adding a case to the switch below, never by restructuring this shape.
+// `vault.updated` (also added by 09-05) is deliberately NOT one of this
+// router's recognized kinds -- it's a fire-and-forget broadcast FROM the
+// background TO any open popup, not a request this router should dispatch
+// or respond to; isProtocolMessage() below returning false for it lets
+// this listener step aside so a future popup-side listener can react.
 //
 // WR-01 (code review, Phase 8): only this extension's own pages
 // (popup/options -- whether action-hosted or opened in a tab) may trigger
@@ -27,6 +32,7 @@ import {
   handleSignInPrfStart,
   handleSignInPrfFinish,
 } from "./unlock";
+import { getItems, getFolders } from "./vault-store";
 
 export function registerMessageRouter(): void {
   browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
@@ -62,7 +68,8 @@ function isProtocolMessage(message: unknown): message is Message {
     kind === "unlock.prf.finish" ||
     kind === "auth.signIn.password" ||
     kind === "auth.signIn.prf.start" ||
-    kind === "auth.signIn.prf.finish"
+    kind === "auth.signIn.prf.finish" ||
+    kind === "vault.list"
   );
 }
 
@@ -93,9 +100,10 @@ async function handle(message: Message): Promise<unknown> {
         credentialJson: message.credentialJson,
         prfBytes: message.prfBytes,
       });
+    case "vault.list":
+      return { items: getItems(), folders: getFolders() };
     default:
       throw new Error(`unhandled message kind: ${(message as { kind: string }).kind}`);
-    // 09-05-PLAN.md adds: case "vault.list":
   }
 }
 
