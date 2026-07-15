@@ -381,3 +381,34 @@ Enumerated per the orchestrator's "verification honesty" instruction — all def
 - FOUND commits: 64dcd64, 730a811, 2898082, 31d44a3, 3886c54, 42527a7, bdec665
 - Re-ran `cd extension && npx tsc --noEmit && npx vitest run` (89/89 pass) and `cd web && npx vitest run && npx tsc --noEmit` (343/343 pass) — both clean
 - Re-ran both `npx wxt build -b chrome` and `-b firefox` — both exit 0, Chrome manifest has `key`, Firefox manifest does not
+
+## Post-UAT protocol fix — JSON-safe messaging
+
+**Discovered by:** the execute-phase orchestrator's real-browser UAT pass (post-completion), not by any automated test in this plan.
+
+**Root cause:** Chrome's MV3 `chrome.runtime.sendMessage` transport JSON-serializes its payload. Any `Uint8Array` field on `ext-protocol.ts`'s `Message` union arrived in the background as a plain `{"0":..,"1":..}` index-keyed object; any `ArrayBuffer` field arrived as `{}` — both silently losing every byte. In a real Chrome browser this hung/failed password sign-in and unlock outright (`auth.signIn.password` never completed; the harness timed out at 60s) and would have sent empty PRF/enrollment buffers for the ext-scoped PRF passkey flows. Firefox uses the structured clone algorithm instead of JSON, so it was unaffected — making this a silent, Chrome-only breakage. Vitest's mocked `sendMessage` runs entirely in-process and never serializes its argument, so all 89 (now 126) tests in this plan passed despite the bug.
+
+**The fix:**
+
+1. Added `extension/lib/messaging/bytes-b64.ts` — pure `bytesToB64(bytes: Uint8Array): string` / `b64ToBytes(b64: string): Uint8Array` helpers (btoa/atob, no browser-runtime dependency), importable from both the popup and the background without violating D-05.
+2. Renamed every binary field on the `Message` union in `ext-protocol.ts` to a base64 string (`*B64` suffix):
+   - `unlock.password`: `passwordBytes: Uint8Array` → `passwordB64: string`
+   - `unlock.prf.finish`: `prfBytes: ArrayBuffer` → `prfB64: string`
+   - `auth.signIn.password`: `passwordBytes: Uint8Array` → `passwordB64: string`
+   - `auth.signIn.prf.finish`: `prfBytes: ArrayBuffer` → `prfB64: string`
+   - `extPasskey.enroll.finish`: `prfBytes: ArrayBuffer` → `prfB64: string`
+   - `unlock.extPrf.finish`: `prfBytes: ArrayBuffer` → `prfB64: string`
+   - Response-side types (`UnlockResult`, `PrfStartResult`, `ExtEnrollStartResult`, `ExtUnlockResult`, `SessionStatus`, `vault.list`'s items/folders) were audited too — all already JSON-safe (server-sourced JSON or plain strings/booleans/numbers); no changes needed there.
+   - `unlock.prf.finish`/`auth.signIn.prf.finish` (the dead web-RP PRF pair, superseded by the ext-scoped PRF passkey per the 09-CONTEXT AMENDMENT and never dispatched by any popup component) were converted too, for structural consistency and so the union's entire binary surface is safe against a future sender.
+3. Senders — `UnlockView.tsx` (password submit + `unlock.extPrf.finish`) and `EnrollExtPasskeyPrompt.tsx` (`extPasskey.enroll.finish`) — now encode with `bytesToB64` and immediately `fill(0)` the transient source array right after encoding.
+4. `router.ts` decodes with `b64ToBytes` at the handler boundary before calling the existing background handlers in `unlock.ts`/`ext-passkey.ts`, whose internal signatures (`Uint8Array`/`ArrayBuffer`) were left unchanged — their own zeroize-after-use discipline (`WasmWrappingKey.fromPrf`/`fromExtPrf`'s side effect, `handleUnlockPassword`'s own `finally` block) already zeroizes the freshly-decoded buffer router.ts hands it, so no extra `fill(0)` was needed in router.ts itself. This kept `unlock.test.ts`/`ext-passkey.test.ts` unchanged — those tests exercise the internal handler functions directly, not the message protocol.
+5. Added `extension/lib/messaging/ext-protocol.test.ts` as a structural regression gate: one JSON-transport-safety fixture per `Message["kind"]` and per `MessageResponseMap[K]` response shape, asserting `JSON.parse(JSON.stringify(fixture))` deep-equals the original (the in-process stand-in for Chrome's real serialization). Exhaustiveness is enforced at the type level — both fixture maps are typed as `{ [K in Message["kind"]]: ... }`, so `tsc` fails if a future plan adds a new `kind` without adding a matching fixture (missing key) or with a mismatched one (excess key).
+
+**Verification:** `cd extension && npx vitest run` (126/126 pass, +37 new: 3 new files/expansions plus the 34-test `ext-protocol.test.ts`), `npx tsc --noEmit` clean, `npx wxt build -b chrome` and `-b firefox` both succeed.
+
+**Commits:**
+- `7030381` — `feat(09): add bytesToB64/b64ToBytes pure helpers for JSON-safe messaging`
+- `f2ce195` — `fix(09): encode binary message fields as base64 over popup<->background boundary`
+- `8b380e7` — `test(09): add JSON-transport-safety structural gate for message union`
+
+**Nothing else in the protocol was found binary-unsafe beyond the six fields listed above.** All response-map shapes were audited line-by-line (see item 2) and confirmed JSON-safe as originally written.
