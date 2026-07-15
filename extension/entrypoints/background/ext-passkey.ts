@@ -1,12 +1,12 @@
 // entrypoints/background/ext-passkey.ts — enroll/unlock orchestration for
 // the extension-scoped PRF passkey (09-CONTEXT AMENDMENT 2026-07-15: the
-// popup's OWN passkey, rpId = browser.runtime.id, the ONLY rpId Chrome
-// accepts for `navigator.credentials.get()` from a `chrome-extension://`
-// popup page). D-05 preserved: the actual ceremony
-// (`navigator.credentials.create()`/`get()`) runs ONLY in the popup (Plan
-// 09-06) — this file never calls it, and never receives a live
-// `PublicKeyCredential`, only already-stripped ceremony inputs/outputs
-// (credential ids, salts, a transient PRF-bytes `ArrayBuffer`).
+// popup's OWN passkey, rpId = the extension's own runtime id, the ONLY
+// rpId Chrome accepts for a WebAuthn assertion request from a
+// `chrome-extension://` popup page). D-05 preserved: the actual WebAuthn
+// create()/get() ceremony runs ONLY in the popup (Plan 09-06) — this file
+// never calls it, and never receives a live `PublicKeyCredential`, only
+// already-stripped ceremony inputs/outputs (credential ids, salts, a
+// transient PRF-bytes `ArrayBuffer`).
 //
 // Local meta record (chrome.storage.LOCAL, deliberately NOT .session):
 // non-secret routing metadata only — credential id, public PRF salt,
@@ -80,9 +80,9 @@ export type ExtEnrollStartResult =
 /**
  * Generates fresh ceremony inputs (user handle, challenge, PRF salt — all
  * PUBLIC values via `crypto.getRandomValues`, never key material) for the
- * popup's `navigator.credentials.create()` call. Guards on an unlocked
- * session BEFORE generating anything — a locked/no-session vault returns
- * the typed failure without any random-bytes work.
+ * popup's WebAuthn credential-creation call. Guards on an unlocked session
+ * BEFORE generating anything — a locked/no-session vault returns the typed
+ * failure without any random-bytes work.
  */
 export async function handleExtEnrollStart(): Promise<ExtEnrollStartResult> {
   if (!isSessionUnlocked()) {
@@ -157,8 +157,8 @@ export async function handleExtEnrollFinish(args: {
 
 /**
  * Reads the local meta record ONLY — no network call, offline-friendly.
- * The popup needs the credential id + salt BEFORE it can run
- * `navigator.credentials.get()`.
+ * The popup needs the credential id + salt BEFORE it can run the WebAuthn
+ * assertion-request ceremony.
  */
 export async function handleExtPrfUnlockStart(): Promise<
   { credentialIdB64url: string; prfSaltB64: string } | { notEnrolled: true }
