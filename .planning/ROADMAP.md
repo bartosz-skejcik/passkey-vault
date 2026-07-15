@@ -126,13 +126,13 @@ Plans:
   4. Identity fields (name, address, email, phone) fill from a saved identity item.
   5. Nothing autofills without an explicit user gesture, and nothing fills top-level-page credentials into a cross-origin iframe — verified against a deliberately constructed adversarial iframe test page.
 
-**Plans**: 1/7 plans executed
+**Plans**: 4/7 plans executed
 Plans:
 
 - [x] 10-01-PLAN.md — Message contract (autofill.* kinds) + frame-guard origin/frame access-control gate + router sender-threading (D-04/D-09/D-10)
-- [ ] 10-02-PLAN.md — Deterministic login + TOTP detection (type=password/one-time-code, no scoring) (FILL-01/FILL-02, D-06)
-- [ ] 10-03-PLAN.md — Scored autocomplete-first card + identity detection with threshold gate + curated fixtures (FILL-03/FILL-04, D-05)
-- [ ] 10-04-PLAN.md — Background match/fill/totpCode handlers: origin-gated decrypt, live totpNow, frame-addressed dispatch, fill-time re-verification (D-02/D-08)
+- [x] 10-02-PLAN.md — Deterministic login + TOTP detection (type=password/one-time-code, no scoring) (FILL-01/FILL-02, D-06)
+- [x] 10-03-PLAN.md — Scored autocomplete-first card + identity detection with threshold gate + curated fixtures (FILL-03/FILL-04, D-05)
+- [x] 10-04-PLAN.md — Background match/fill/totpCode handlers: origin-gated decrypt, live totpNow, frame-addressed dispatch, fill-time re-verification (D-02/D-08)
 - [ ] 10-05-PLAN.md — ISOLATED content-relay (detect/fill, all-frames, crypto-free) + native-setter React-safe fill-dom (D-01, Pitfall 5)
 - [ ] 10-06-PLAN.md — Popup "Na tej stronie" autofill UI: picker, TOTP fill/copy, card/identity second-confirm (D-07/D-12, UI-SPEC)
 - [ ] 10-07-PLAN.md — Adversarial cross-origin-iframe fixture + SC#5 UAT gate + real-forms framework-fill checklist
@@ -216,7 +216,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 7. Self-Host Packaging & Deployment | v0.1 | 3/3 | Complete | 2026-07-14 |
 | 8. Extension Bootstrap & WASM-in-Background Spike | v0.2 | 3/3 | Complete    | 2026-07-15 |
 | 9. Session Unlock Core, Popup & Sync Client | v0.2 | 8/8 | Complete    | 2026-07-15 |
-| 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 1/7 | In Progress|  |
+| 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 4/7 | In Progress|  |
 | 11. Generate & Capture | v0.2 | 0/TBD | Not started | - |
 | 12. Passkey Provider | v0.2 | 0/TBD | Not started | - |
 | 13. Dual-Browser Hardening | v0.2 | 0/4 | Not started | - |
