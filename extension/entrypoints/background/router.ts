@@ -72,7 +72,17 @@ export function registerMessageRouter(): void {
     if (message.kind !== "session.setAutoLockMinutes") {
       void noteActivity();
     }
-    void handle(message).then(sendResponse);
+    // WR-01 (09-REVIEW.md): several handlers CAN reject (e.g. a corrupt
+    // envelope throwing out of ensureHydrated(), or a short/malformed PRF
+    // buffer). Without a rejection path here, sendResponse() is never
+    // called, the message channel opened by `return true` below just hangs
+    // until it eventually closes with a lastError, and the rejection leaks
+    // as an unhandled promise rejection in the service worker. Every
+    // dispatched message now gets SOME typed response.
+    void handle(message).then(sendResponse, (e: unknown) => {
+      console.error("[passkey-vault] handler failed", message.kind, e);
+      sendResponse({ ok: false, error: "unknown" });
+    });
     return true; // keep the message channel open for the async sendResponse
   });
 }

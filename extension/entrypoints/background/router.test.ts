@@ -145,6 +145,16 @@ describe("noteActivity on other kinds", () => {
   });
 });
 
+describe("WR-01 rejection path", () => {
+  it("a rejecting handler still resolves sendResponse with a typed error, instead of hanging the message channel forever", async () => {
+    hoisted.mockEnsureHydrated.mockRejectedValue(new Error("corrupt envelope"));
+
+    const result = await send({ kind: "session.status" });
+
+    expect(result).toEqual({ ok: false, error: "unknown" });
+  });
+});
+
 describe("WR-01 sender gate", () => {
   it("ignores a message from a tab-hosted content script on a hostile page", async () => {
     const r = hoisted.listeners[0](

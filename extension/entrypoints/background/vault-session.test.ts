@@ -147,6 +147,23 @@ describe("ensureHydrated", () => {
     expect(mod2.getUnlockedUserKey()).toEqual({ tag: "rehydrated-user-key" }); // now cached in-memory
   });
 
+  it("WR-01: a corrupt/un-importable envelope resolves null (treated as locked) instead of throwing, and clears the envelope", async () => {
+    primeHappyPathMocks();
+    hoisted.mockImportUserKeyFromSession.mockImplementation(() => {
+      throw new Error("malformed key bytes");
+    });
+    const { setUnlockedUserKey, ensureHydrated } = await import("./vault-session");
+    const { readKeyEnvelope } = await import("./session-storage");
+    const uk = { tag: "fresh-user-key" } as unknown as import("../../lib/crypto/wasm-loader").WasmUserKey;
+    await setUnlockedUserKey(uk, "a@example.com", "tok123", 15);
+
+    vi.resetModules();
+    const mod2 = await import("./vault-session");
+
+    await expect(mod2.ensureHydrated()).resolves.toBeNull();
+    expect(await readKeyEnvelope()).toBeNull();
+  });
+
   it("returns null on an empty chrome.storage.session (never unlocked) -- no false-positive hydration", async () => {
     primeHappyPathMocks();
     const { ensureHydrated } = await import("./vault-session");

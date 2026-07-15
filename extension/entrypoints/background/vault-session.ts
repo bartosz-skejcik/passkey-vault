@@ -93,12 +93,25 @@ export async function ensureHydrated(): Promise<WasmUserKey | null> {
     return null;
   }
 
-  // A WASM instance killed alongside the SW must be re-instantiated, not
-  // assumed present.
-  await initCrypto();
-  const bytes = base64ToBytes(envelope.userKeyB64);
-  currentUserKey = importUserKeyFromSession(bytes);
-  return currentUserKey;
+  // WR-01 (09-REVIEW.md): a corrupt/un-importable envelope must never
+  // THROW out of session.status -- that rejected App.tsx's
+  // refreshFromScratch() and stranded the popup on the loading spinner
+  // forever (router.ts's own rejection-path fix, WR-01, is the second
+  // layer, but this handler should never need it: an un-importable
+  // envelope is exactly the "locked" state, not an error). Clear the
+  // envelope so the next call doesn't re-throw on the same corruption.
+  try {
+    // A WASM instance killed alongside the SW must be re-instantiated, not
+    // assumed present.
+    await initCrypto();
+    const bytes = base64ToBytes(envelope.userKeyB64);
+    currentUserKey = importUserKeyFromSession(bytes);
+    return currentUserKey;
+  } catch (e) {
+    console.error("[passkey-vault] corrupt key envelope -- treating as locked", e);
+    await clearKeyEnvelope();
+    return null;
+  }
 }
 
 /**
