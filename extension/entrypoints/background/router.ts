@@ -1,8 +1,10 @@
 // entrypoints/background/router.ts — the typed browser.runtime.onMessage
 // dispatch table for the ext-protocol.ts message contract. This grows
 // across Waves 3-5 (each adds its own `case` + import) -- 09-04 adds
-// `unlock.*` AND `auth.signIn.*` kinds, 09-05 adds `vault.list` -- by
-// adding a case to the switch below, never by restructuring this shape.
+// `unlock.*` AND `auth.signIn.*` kinds, 09-05 adds `vault.list`, 09-08 adds
+// `extPasskey.*`/`unlock.extPrf.*` kinds (09-CONTEXT AMENDMENT 2026-07-15)
+// -- by adding a case to the switch below, never by restructuring this
+// shape.
 // `vault.updated` (also added by 09-05) is deliberately NOT one of this
 // router's recognized kinds -- it's a fire-and-forget broadcast FROM the
 // background TO any open popup, not a request this router should dispatch
@@ -33,6 +35,15 @@ import {
   handleSignInPrfFinish,
 } from "./unlock";
 import { getItems, getFolders } from "./vault-store";
+import {
+  handleExtEnrollStart,
+  handleExtEnrollFinish,
+  handleExtPrfUnlockStart,
+  handleExtPrfUnlockFinish,
+  hasEnrolledExtPasskey,
+  readExtPasskeyPromptSuppressed,
+  setExtPasskeyPromptSuppressed,
+} from "./ext-passkey";
 
 export function registerMessageRouter(): void {
   browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
@@ -69,7 +80,12 @@ function isProtocolMessage(message: unknown): message is Message {
     kind === "auth.signIn.password" ||
     kind === "auth.signIn.prf.start" ||
     kind === "auth.signIn.prf.finish" ||
-    kind === "vault.list"
+    kind === "vault.list" ||
+    kind === "extPasskey.enroll.start" ||
+    kind === "extPasskey.enroll.finish" ||
+    kind === "extPasskey.suppressPrompt" ||
+    kind === "unlock.extPrf.start" ||
+    kind === "unlock.extPrf.finish"
   );
 }
 
@@ -102,6 +118,23 @@ async function handle(message: Message): Promise<unknown> {
       });
     case "vault.list":
       return { items: getItems(), folders: getFolders() };
+    case "extPasskey.enroll.start":
+      return handleExtEnrollStart();
+    case "extPasskey.enroll.finish":
+      return handleExtEnrollFinish({
+        credentialIdB64url: message.credentialIdB64url,
+        prfSaltB64: message.prfSaltB64,
+        prfBytes: message.prfBytes,
+      });
+    case "extPasskey.suppressPrompt":
+      return setExtPasskeyPromptSuppressed(message.suppress).then(() => ({ ok: true as const }));
+    case "unlock.extPrf.start":
+      return handleExtPrfUnlockStart();
+    case "unlock.extPrf.finish":
+      return handleExtPrfUnlockFinish({
+        credentialIdB64url: message.credentialIdB64url,
+        prfBytes: message.prfBytes,
+      });
     default:
       throw new Error(`unhandled message kind: ${(message as { kind: string }).kind}`);
   }
@@ -112,19 +145,35 @@ async function handle(message: Message): Promise<unknown> {
 // envelope -- a present meta record with no key material is exactly what
 // "locked" (as opposed to "no-session") means now that lockVaultSession()
 // no longer deletes the meta record.
+//
+// 09-08: enriched with extPasskeyEnrolled/extPasskeyPromptSuppressed so
+// 09-06's popup can gate the PRF button + enrollment prompt purely off this
+// ONE status call, no parallel status kind (09-CONTEXT AMENDMENT 2026-07-15).
 async function getSessionStatus(): Promise<MessageResponseMap["session.status"]> {
   const meta = await readSessionMeta();
   if (meta === null) {
     return { kind: "no-session" };
   }
-  const uk = await ensureHydrated();
+  const [uk, extPasskeyEnrolled, extPasskeyPromptSuppressed] = await Promise.all([
+    ensureHydrated(),
+    hasEnrolledExtPasskey(),
+    readExtPasskeyPromptSuppressed(),
+  ]);
   if (uk === null) {
-    return { kind: "locked", wasAutoLocked: meta.wasAutoLocked, autoLockMinutes: meta.idleTimeoutMinutes };
+    return {
+      kind: "locked",
+      wasAutoLocked: meta.wasAutoLocked,
+      autoLockMinutes: meta.idleTimeoutMinutes,
+      extPasskeyEnrolled,
+      extPasskeyPromptSuppressed,
+    };
   }
   return {
     kind: "unlocked",
     autoLockMinutes: meta.idleTimeoutMinutes,
     accountEmail: meta.accountEmail,
+    extPasskeyEnrolled,
+    extPasskeyPromptSuppressed,
   };
 }
 

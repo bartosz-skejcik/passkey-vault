@@ -9,24 +9,43 @@
 // dispatched by router.ts) and `vault.updated` (fire-and-forget broadcast
 // from vault-store.ts's lock-state subscription -- NOT dispatched by
 // router.ts's switch; it exists here purely so a future popup listener can
-// type-check against the same union). Each later plan ADDS a union member
-// here plus a matching `MessageResponseMap` entry — this file's overall
-// shape (discriminated union + response map + typed sendMessage helper)
-// never gets restructured.
+// type-check against the same union). 09-08 adds `extPasskey.*`/
+// `unlock.extPrf.*` kinds (the extension-scoped PRF passkey, 09-CONTEXT
+// AMENDMENT 2026-07-15). Each later plan ADDS a union member here plus a
+// matching `MessageResponseMap` entry — this file's overall shape
+// (discriminated union + response map + typed sendMessage helper) never
+// gets restructured.
 //
-// `UnlockResult`/`PrfStartResult` are `import type`-only from
-// entrypoints/background/unlock.ts (their canonical definition, per that
-// plan's own export surface) — erased at compile time, so this file (and
-// any popup that imports it) never bundles background-only runtime code,
-// only the type shape.
+// `UnlockResult`/`PrfStartResult`/`ExtEnrollStartResult`/`ExtUnlockResult`
+// are `import type`-only from entrypoints/background/unlock.ts and
+// entrypoints/background/ext-passkey.ts (their canonical definitions, per
+// each plan's own export surface) — erased at compile time, so this file
+// (and any popup that imports it) never bundles background-only runtime
+// code, only the type shape.
 import { browser } from "wxt/browser";
 import type { UnlockResult, PrfStartResult } from "../../entrypoints/background/unlock";
+import type { ExtEnrollStartResult, ExtUnlockResult } from "../../entrypoints/background/ext-passkey";
 import type { Folder, VaultItem } from "../vault/types";
 
 export type SessionStatus =
   | { kind: "no-session" }
-  | { kind: "locked"; wasAutoLocked: boolean; autoLockMinutes: number }
-  | { kind: "unlocked"; autoLockMinutes: number; accountEmail: string };
+  | {
+      kind: "locked";
+      wasAutoLocked: boolean;
+      autoLockMinutes: number;
+      // 09-08: gates the popup's PRF-button visibility / enrollment prompt
+      // (09-CONTEXT AMENDMENT 2026-07-15) purely off this ONE status call —
+      // no parallel status kind is added.
+      extPasskeyEnrolled: boolean;
+      extPasskeyPromptSuppressed: boolean;
+    }
+  | {
+      kind: "unlocked";
+      autoLockMinutes: number;
+      accountEmail: string;
+      extPasskeyEnrolled: boolean;
+      extPasskeyPromptSuppressed: boolean;
+    };
 
 export type Message =
   | { kind: "session.status" }
@@ -54,7 +73,21 @@ export type Message =
   // it). No response payload; a popup listens via its own
   // browser.runtime.onMessage, not via sendMessage()'s request/response
   // round trip.
-  | { kind: "vault.updated" };
+  | { kind: "vault.updated" }
+  // 09-08: extension-scoped PRF passkey (09-CONTEXT AMENDMENT 2026-07-15).
+  // Enroll pair — requires an unlocked session (wraps the CURRENT UK).
+  | { kind: "extPasskey.enroll.start" }
+  | {
+      kind: "extPasskey.enroll.finish";
+      credentialIdB64url: string;
+      prfSaltB64: string;
+      prfBytes: ArrayBuffer;
+    }
+  | { kind: "extPasskey.suppressPrompt"; suppress: boolean }
+  // Unlock pair — existing token, no ceremony verification server-side (the
+  // PRF output IS the secret).
+  | { kind: "unlock.extPrf.start" }
+  | { kind: "unlock.extPrf.finish"; credentialIdB64url: string; prfBytes: ArrayBuffer };
 
 export interface MessageResponseMap {
   "session.status": SessionStatus;
@@ -67,6 +100,11 @@ export interface MessageResponseMap {
   "auth.signIn.prf.finish": UnlockResult;
   "vault.list": { items: VaultItem[]; folders: Folder[] };
   "vault.updated": void;
+  "extPasskey.enroll.start": ExtEnrollStartResult;
+  "extPasskey.enroll.finish": { ok: boolean; error?: "not-unlocked" | "unreachable" | "unknown" };
+  "extPasskey.suppressPrompt": { ok: true };
+  "unlock.extPrf.start": { credentialIdB64url: string; prfSaltB64: string } | { notEnrolled: true };
+  "unlock.extPrf.finish": ExtUnlockResult;
 }
 
 export type MessageOf<K extends Message["kind"]> = Extract<Message, { kind: K }>;

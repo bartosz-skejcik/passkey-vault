@@ -197,3 +197,43 @@ export function unlockFinish(body: {
     body: JSON.stringify(body),
   });
 }
+
+// --- Extension-scoped PRF passkey blob CRUD (Plan 09-08, 09-CONTEXT
+// AMENDMENT 2026-07-15). SessionUser-gated server-side
+// (crates/pv-server/src/routes/extension_passkeys.rs) -- requires an
+// existing valid token, consistent with UNLOCK-ONLY: no unauthenticated
+// variant exists or is needed. `credential_id`/`prf_salt` are already
+// base64url/base64-encoded strings on the wire; this file never decodes
+// them (that's ext-passkey.ts's/ext-prf.ts's job) -- it is a thin transport
+// layer, same as every other export in this file.
+
+export interface ExtensionPasskeyRow {
+  /** base64url (URL_SAFE_NO_PAD). */
+  credential_id: string;
+  /** base64 (STANDARD) — public PRF salt, not secret. */
+  prf_salt: string;
+  /** Opaque `WrappedKey`-shaped JSON — never parsed here or server-side. */
+  prf_wrapped_uk: string;
+  created_at: string;
+}
+
+export function createExtensionPasskey(body: {
+  credential_id: string;
+  prf_salt: string;
+  prf_wrapped_uk: string;
+}): Promise<{ id: string }> {
+  return apiJson("/api/extension-passkeys", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function listExtensionPasskeys(): Promise<ExtensionPasskeyRow[]> {
+  return apiJson("/api/extension-passkeys", { method: "GET" });
+}
+
+export function deleteExtensionPasskey(credentialIdB64url: string): Promise<void> {
+  return apiJson(`/api/extension-passkeys/${encodeURIComponent(credentialIdB64url)}`, {
+    method: "DELETE",
+  });
+}
