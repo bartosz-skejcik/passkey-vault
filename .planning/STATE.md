@@ -5,15 +5,15 @@ milestone_name: Browser Extension
 current_phase: 09
 current_phase_name: Session Unlock Core, Popup & Sync Client
 status: executing
-stopped_at: Completed 09-04-PLAN.md
-last_updated: "2026-07-15T08:35:50.423Z"
+stopped_at: Completed 09-05-PLAN.md
+last_updated: "2026-07-15T08:51:54.409Z"
 last_activity: 2026-07-15
 last_activity_desc: 09-02-PLAN.md complete (session core, autolock, router)
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 30
-  completed_plans: 7
+  completed_plans: 8
   percent: 17
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 09 of 13 (Session Unlock Core, Popup & Sync Client)
-Plan: 4 of 7 complete (09-01, 09-03 Wave 1; 09-02 Wave 2) — next: Wave 3 (09-04, 09-05)
+Plan: 5 of 7 complete (09-01, 09-03 Wave 1; 09-02 Wave 2) — next: Wave 3 (09-04, 09-05)
 Status: Ready to execute Wave 3
 Last activity: 2026-07-15 — 09-02-PLAN.md complete (session core, autolock, router)
 
-Progress: [██░░░░░░░░] 23%
+Progress: [███░░░░░░░] 27%
 
 ## Performance Metrics
 
@@ -66,6 +66,7 @@ Progress: [██░░░░░░░░] 23%
 | Phase 09 P03 | 20min | 2 tasks | 3 files |
 | Phase 09 P02 | 10min | 3 tasks | 8 files |
 | Phase 09 P04 | 25min | 2 tasks | 7 files |
+| Phase 09 P05 | 55min | 3 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -90,6 +91,9 @@ Recent decisions affecting current work:
 - [Phase ?]: unlock.ts's handleUnlockPassword uses one function with an optional email argument (undefined=unlock-only via me(), provided=sign-in via login()) so router.ts dispatches both unlock.password and auth.signIn.password to the same implementation
 - [Phase ?]: prf.ts duplicates a tiny local base64Decode instead of importing auth-api.ts's, keeping the popup-importable PRF helper module free of any background-context (chrome.storage) dependency
 - [Phase ?]: wasm-loader.ts gained a deriveAuthMaterial re-export (Rule 3 fix, mirrors 09-02's precedent) since it is the sole choke-point importer of the generated WASM bindings
+- [Phase ?]: Exported apiFetch from auth-api.ts so vault-api.ts reuses base-URL/auth-header logic instead of duplicating it (mirrors web/'s lib/auth/api.ts -> lib/vault/api.ts relationship)
+- [Phase ?]: vault-store.ts exports applySyncSnapshot directly (unlike v0.1's module-private version) for direct testability; the lock-state wiring is tested separately via the real registered listener
+- [Phase ?]: EXT-04 left unmarked in REQUIREMENTS.md -- this plan delivers only the backing sync/store/search engine; full completion (popup UI) is Plan 09-06's job, same precedent as 09-03 leaving EXT-05 unmarked
 
 ### Pending Todos
 
@@ -119,8 +123,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-15T08:35:50.417Z
-Stopped at: Completed 09-04-PLAN.md
+Last session: 2026-07-15T08:51:54.402Z
+Stopped at: Completed 09-05-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
