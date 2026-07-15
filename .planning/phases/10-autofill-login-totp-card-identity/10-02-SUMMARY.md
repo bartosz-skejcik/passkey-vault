@@ -150,3 +150,10 @@ None — no external service configuration required.
 ---
 *Phase: 10-autofill-login-totp-card-identity*
 *Completed: 2026-07-15*
+
+## Self-Check: PASSED
+
+All claimed files (extension/lib/autofill/detect-login.ts, extension/lib/autofill/detect-login.test.ts,
+extension/lib/autofill/detect-totp.ts, extension/lib/autofill/detect-totp.test.ts, this SUMMARY,
+deferred-items.md) confirmed present on disk. All 6 commit hashes (b23c20c, dea79e1, 929bfb6, 2e66e9a,
+4efa234, 29c5012) confirmed present in git log.
