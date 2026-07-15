@@ -34,6 +34,21 @@ function loginItem(id: string, name: string, username: string): VaultItem {
   return { id, revision: 1, fields: { type: "login", name, folderId: null, tags: [], username, password: "x", urls: [], notes: "" } };
 }
 
+// Phase 10 (Plan 10-06): ItemListView now also mounts OnThisPageSection,
+// which fires its own `autofill.match` on mount via useAutofillMatches.ts.
+// This suite is not about autofill behavior (see OnThisPageSection.test.tsx
+// for that) -- a benign "restricted" response keeps every existing
+// assertion below unaffected (the section renders its plain error banner,
+// no text/role collision with anything these tests query for).
+function autofillMatchRestricted() {
+  return {
+    pageState: "restricted" as const,
+    origin: null,
+    detected: { login: false, totp: false, card: false, identity: false },
+    matches: [],
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   (browser.runtime as unknown as { onMessage: { addListener: typeof mockAddListener; removeListener: typeof mockRemoveListener } }).onMessage = {
@@ -51,6 +66,7 @@ describe("ItemListView", () => {
       if (message.kind === "session.status") {
         return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
       }
+      if (message.kind === "autofill.match") return autofillMatchRestricted();
       throw new Error(`unexpected: ${message.kind}`);
     });
 
@@ -81,6 +97,7 @@ describe("ItemListView", () => {
       if (message.kind === "session.status") {
         return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
       }
+      if (message.kind === "autofill.match") return autofillMatchRestricted();
       throw new Error(`unexpected: ${message.kind}`);
     });
 
@@ -100,6 +117,7 @@ describe("ItemListView", () => {
       if (message.kind === "session.status") {
         return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
       }
+      if (message.kind === "autofill.match") return autofillMatchRestricted();
       throw new Error(`unexpected: ${message.kind}`);
     });
 
@@ -117,6 +135,7 @@ describe("ItemListView", () => {
         return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
       }
       if (message.kind === "session.setAutoLockMinutes") return { ok: true };
+      if (message.kind === "autofill.match") return autofillMatchRestricted();
       throw new Error(`unexpected: ${message.kind}`);
     });
 
@@ -140,6 +159,7 @@ describe("ItemListView", () => {
         return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
       }
       if (message.kind === "config.get") return { baseUrl: "https://my-configured-vault.example" };
+      if (message.kind === "autofill.match") return autofillMatchRestricted();
       throw new Error(`unexpected: ${message.kind}`);
     });
 
@@ -160,6 +180,7 @@ describe("ItemListView", () => {
         return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
       }
       if (message.kind === "config.get") return { baseUrl: "https://my-configured-vault.example" };
+      if (message.kind === "autofill.match") return autofillMatchRestricted();
       throw new Error(`unexpected: ${message.kind}`);
     });
 
@@ -194,6 +215,7 @@ describe("ItemListView", () => {
         return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
       }
       if (message.kind === "config.get") return { baseUrl: "https://my-configured-vault.example" };
+      if (message.kind === "autofill.match") return autofillMatchRestricted();
       throw new Error(`unexpected: ${message.kind}`);
     });
 
@@ -217,6 +239,7 @@ describe("ItemListView", () => {
       if (message.kind === "session.status") {
         return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
       }
+      if (message.kind === "autofill.match") return autofillMatchRestricted();
       throw new Error(`unexpected: ${message.kind}`);
     });
 
