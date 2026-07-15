@@ -15,6 +15,16 @@ import { roundTripSpike } from '../lib/crypto/vault-session';
 
 export default defineBackground({
   type: 'module',
+  // D-08: WXT only emits `background.persistent` into the generated MV2
+  // manifest when this option is set explicitly on the entrypoint itself
+  // (wxt.config.ts has no equivalent knob — see manifest.mjs's
+  // `background.options.persistent` read). Without it, Firefox's MV2
+  // manifest.background omits `persistent` entirely (undefined keys are
+  // dropped by JSON.stringify), leaving the deliberate persistent-background
+  // pin implicit rather than the explicit, generated-output proof plan
+  // 08-03 requires (SC #4). Ignored on Chrome MV3 and Firefox MV3, where
+  // WXT never reads this field.
+  persistent: true,
   main() {
     console.log('[passkey-vault] background context started');
 
