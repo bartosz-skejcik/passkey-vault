@@ -1,0 +1,205 @@
+// lib/i18n/dictionary.ts — the extension popup's i18n dictionary, following
+// web/src/lib/i18n/dictionary.ts's exact structural pattern (same
+// `Locale = "pl" | "en"` type, same `{pl, en}` entry shape, same
+// `interpolate()` helper). Scoped to ONLY the copy 09-UI-SPEC.md's
+// Copywriting Contract table (plus its AMENDMENT 2026-07-15) requires for
+// the popup this phase -- every line marked "reused verbatim" below is
+// copied byte-for-byte from that document, never paraphrased.
+//
+// A few keys are Claude's-discretion additions the spec doesn't literally
+// name (item-type/field labels, the server-config screen's own copy --
+// that screen predates EXT-05 and isn't in 09-UI-SPEC.md at all) --
+// flagged as such inline and called out again in the plan's SUMMARY for
+// UI-checker review, per the plan's own instruction.
+//
+// No LocaleContext/React-context provider exists here (unlike the web
+// app) -- the popup has no locale switcher this phase, so `resolveLocale()`
+// below is a plain one-shot read, not a stateful provider.
+export type Locale = "pl" | "en";
+
+export const DICTIONARY = {
+  // --- Loading / shell state (reused verbatim) -------------------------
+  "loading.vault": { pl: "Ładowanie sejfu…", en: "Loading your vault…" },
+
+  // --- Unlock / Sign-in (reused verbatim from 04-UI-SPEC.md unless noted)
+  "auth.emailLabel": { pl: "Email", en: "Email" },
+  "auth.passwordLabel": { pl: "Hasło główne", en: "Master password" },
+  "auth.loginSubmit": { pl: "Zaloguj się", en: "Log in" },
+  "auth.wrongCredentials": {
+    pl: "Nieprawidłowy email lub hasło",
+    en: "Invalid email or password",
+  },
+  "auth.loginFailed": {
+    pl: "Logowanie nie powiodło się. Spróbuj ponownie.",
+    en: "Login failed. Please try again.",
+  },
+  "unlock.submit": { pl: "Odblokuj", en: "Unlock" },
+  "unlock.passkeyCta": { pl: "Odblokuj passkeyem", en: "Unlock with passkey" },
+  // AMENDMENT 2026-07-15: reserved for the web app / a future options
+  // page -- the Sign-in variant has NO PRF button in the popup this
+  // phase (the extension passkey is UNLOCK-ONLY), so this key is unused
+  // by any popup component, kept only so the string exists if a later
+  // phase needs it.
+  "unlock.passkeyLoginCta": {
+    pl: "Zaloguj i odblokuj passkeyem",
+    en: "Log in and unlock with passkey",
+  },
+  "unlock.passkeyBusy": {
+    pl: "Potwierdź w przeglądarce lub na urządzeniu…",
+    en: "Confirm in your browser or on your device…",
+  },
+  "unlock.passkeyFailed": {
+    pl: "Nie udało się użyć passkeya. Spróbuj ponownie albo użyj hasła poniżej.",
+    en: "Couldn't use your passkey. Try again — or use your password below.",
+  },
+  "unlock.orDivider": { pl: "lub", en: "or" },
+  "unlock.passkeyUnsupported": {
+    pl: "Ta przeglądarka nie obsługuje logowania passkeyem na tym urządzeniu — użyj hasła głównego poniżej.",
+    en: "This browser doesn't support passkey sign-in on this device — use your master password below.",
+  },
+  "unlock.sessionLockedNotice": {
+    pl: "Sesja wygasła po bezczynności — odblokuj ponownie.",
+    en: "Your session locked after being idle — unlock again.",
+  },
+
+  // --- Extension-scoped PRF passkey (AMENDMENT 2026-07-15, verbatim) ---
+  "extPasskey.promptTitle": {
+    pl: "Odblokowuj szybciej passkeyem",
+    en: "Unlock faster with a passkey",
+  },
+  "extPasskey.promptBody": {
+    pl: "Utwórz passkey powiązany z tą wtyczką, aby odblokowywać sejf bez wpisywania hasła głównego.",
+    en: "Create a passkey tied to this extension to unlock your vault without typing your master password.",
+  },
+  "extPasskey.promptCta": { pl: "Utwórz passkey", en: "Create a passkey" },
+  "extPasskey.promptSkip": { pl: "Nie teraz", en: "Not now" },
+  "extPasskey.promptDontAskAgain": { pl: "Nie pytaj ponownie", en: "Don't ask again" },
+  "extPasskey.enrollDone": {
+    pl: "Passkey gotowy — użyjesz go przy następnym odblokowaniu.",
+    en: "Passkey ready — use it the next time you unlock.",
+  },
+  "extPasskey.enrollNoPrf": {
+    pl: "Ten authenticator nie wspiera PRF — odblokowywanie passkeyem nie będzie dostępne. Hasło główne nadal działa.",
+    en: "This authenticator doesn't support PRF — passkey unlock won't be available. Your master password still works.",
+  },
+  "extPasskey.enrollFailed": {
+    pl: "Nie udało się utworzyć passkeya. Spróbuj ponownie albo odblokowuj hasłem.",
+    en: "Couldn't create the passkey. Try again — or keep unlocking with your password.",
+  },
+  "extPasskey.unlockOrphaned": {
+    pl: "Ten passkey nie pasuje do tego sejfu — odblokuj hasłem i utwórz passkey ponownie.",
+    en: "This passkey doesn't match this vault — unlock with your password and create the passkey again.",
+  },
+
+  // --- Item list / search (reused verbatim) ----------------------------
+  "search.placeholder": { pl: "Szukaj...", en: "Search..." },
+  "search.emptyResults": { pl: `Brak wyników dla „{query}"`, en: `No matches for "{query}"` },
+  "vault.emptyHeading": { pl: "Twój sejf jest jeszcze pusty", en: "Your vault is empty so far" },
+  "vault.emptyBody": {
+    pl: "Dodaj pierwszy login w aplikacji webowej — pojawi się tu automatycznie.",
+    en: "Add your first item in the web app — it'll show up here automatically.",
+  },
+  "error.connectionFailed": {
+    pl: "Nie można połączyć z serwerem. Sprawdź połączenie i spróbuj ponownie.",
+    en: "Can't reach the server. Check your connection and try again.",
+  },
+  "autolock.label": { pl: "Automatyczna blokada", en: "Auto-lock" },
+
+  // --- Popup header + delegated-management affordances (BINDING,
+  // Bartek 2026-07-15) --------------------------------------------------
+  "nav.settings": { pl: "Ustawienia", en: "Settings" },
+  "vault.openFullVault": { pl: "Pełny widok", en: "Full screen" },
+  "nav.newItem": { pl: "Nowy element", en: "New item" },
+
+  // --- Server config (EXT-05; this screen predates 09-UI-SPEC.md, so
+  // this copy is Claude's-discretion, kept strictly within the design
+  // contract's existing token/component vocabulary -- flagged for
+  // UI-checker review in the SUMMARY) -----------------------------------
+  "config.heading": { pl: "Połącz z serwerem", en: "Connect to your server" },
+  "config.urlLabel": { pl: "Adres serwera", en: "Server address" },
+  "config.submit": { pl: "Połącz", en: "Connect" },
+  "config.invalidUrl": {
+    pl: "Nieprawidłowy adres — podaj pełny adres zaczynający się od http lub https.",
+    en: "Invalid address — use a full http or https URL.",
+  },
+  "config.unreachable": {
+    pl: "Nie można połączyć z tym serwerem. Sprawdź adres i upewnij się, że działa.",
+    en: "Can't reach that server. Check the address and make sure it's running.",
+  },
+
+  // --- Item type / field labels (Claude's-discretion, mirrors
+  // web/src/lib/i18n/dictionary.ts's own precedent for these -- not in
+  // UI-SPEC's Copywriting Contract table, needed for the item-detail
+  // heading badge and per-type field rows) ------------------------------
+  "itemType.login": { pl: "Login", en: "Login" },
+  "itemType.card": { pl: "Karta", en: "Card" },
+  "itemType.identity": { pl: "Tożsamość", en: "Identity" },
+  "itemType.note": { pl: "Notatka", en: "Note" },
+  "itemType.totp": { pl: "TOTP", en: "TOTP" },
+
+  "field.username": { pl: "Użytkownik", en: "Username" },
+  "field.password": { pl: "Hasło", en: "Password" },
+  "field.notes": { pl: "Notatki", en: "Notes" },
+  "field.cardholderName": { pl: "Właściciel karty", en: "Cardholder name" },
+  "field.number": { pl: "Numer karty", en: "Card number" },
+  "field.expiry": { pl: "Data ważności", en: "Expiry" },
+  "field.cvv": { pl: "CVV", en: "CVV" },
+  "field.firstName": { pl: "Imię", en: "First name" },
+  "field.lastName": { pl: "Nazwisko", en: "Last name" },
+  "field.email": { pl: "Email", en: "Email" },
+  "field.phone": { pl: "Telefon", en: "Phone" },
+  "field.address": { pl: "Adres", en: "Address" },
+  "field.body": { pl: "Treść", en: "Content" },
+  "field.secret": { pl: "Sekret (base32)", en: "Secret (base32)" },
+  // Guaranteed passkey-detail rows (BINDING, Bartek 2026-07-15) -- see
+  // ItemDetailView.tsx; no "passkey" item type exists in the data model
+  // yet (Phase 12 introduces it), so these keys are unused today but
+  // ready the instant that type lands.
+  "field.rpId": { pl: "RP ID", en: "RP ID" },
+  "field.lastUsed": { pl: "Ostatnio użyty", en: "Last used" },
+
+  "aria.copyField": { pl: "Kopiuj {field}", en: "Copy {field}" },
+  "aria.showPassword": { pl: "Pokaż hasło", en: "Show password" },
+  "aria.hidePassword": { pl: "Ukryj hasło", en: "Hide password" },
+  "aria.backToList": { pl: "Wróć do listy", en: "Back to list" },
+} satisfies Record<string, { pl: string; en: string }>;
+
+export function t(locale: Locale, key: keyof typeof DICTIONARY): string {
+  return DICTIONARY[key][locale];
+}
+
+/**
+ * Substitutes `{token}` placeholders in a translated string with the given
+ * values -- same shape as web/src/lib/i18n/dictionary.ts's helper of the
+ * same name.
+ */
+export function interpolate(template: string, vars: Record<string, string>): string {
+  let result = template;
+  let replacedAny = false;
+  for (const [key, value] of Object.entries(vars)) {
+    const token = `{${key}}`;
+    if (result.includes(token)) {
+      result = result.split(token).join(value);
+      replacedAny = true;
+    }
+  }
+  if (!replacedAny) {
+    const extra = Object.values(vars).join(" ");
+    result = extra ? `${result} ${extra}` : result;
+  }
+  return result;
+}
+
+/**
+ * One-shot locale detection (no stateful provider this phase -- the popup
+ * has no language switcher yet, unlike the web app's LocaleContext).
+ * `navigator` is always defined in a popup's DOM document; the
+ * `typeof`-guard only matters for this module being importable from a
+ * Node-environment vitest run (background tests) without crashing.
+ */
+export function resolveLocale(): Locale {
+  if (typeof navigator === "undefined") {
+    return "en";
+  }
+  return navigator.language.toLowerCase().startsWith("pl") ? "pl" : "en";
+}

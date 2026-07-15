@@ -16,8 +16,23 @@ import { defineConfig } from 'wxt';
 //
 // See https://wxt.dev/api/config.html
 export default defineConfig({
-  manifest: {
-    // Pinned dev-build public key (09-08, 09-CONTEXT AMENDMENT 2026-07-15):
+  // Plan 09-06: the real popup (React + DaisyUI + Tailwind v4, reusing
+  // web/'s exact theme) replaces Phase 8's vanilla-TS debug harness.
+  // RESEARCH.md's Assumption A2 ("no framework") branch held through
+  // Phase 8 -- this module is added HERE, not earlier, confirmed against
+  // 08-03-PLAN.md's actual output before assuming.
+  modules: ['@wxt-dev/module-react'],
+  // Per-browser FUNCTION form (not a plain object): the pinned `key` below
+  // is Chrome-only and must NEVER reach the Firefox manifest -- Firefox's
+  // manifest parser rejects unknown top-level keys with a loud warning
+  // ("Reading manifest: Warning processing key: An unexpected property was
+  // found in the WebExtension manifest"), confirmed by Bartek's manual
+  // `about:debugging` load of the firefox-mv2 build. Every other field
+  // below is IDENTICAL across browsers -- only `key`'s presence diverges,
+  // via the `browser === 'chrome'` conditional spread.
+  manifest: ({ browser }) => ({
+    // Pinned dev-build public key (09-08, 09-CONTEXT AMENDMENT 2026-07-15),
+    // Chrome-only (see the per-browser-function comment above):
     //
     // (1) WHY: the extension-scoped PRF passkey (Plan 09-08) binds its
     //     credential to `rpId = <this extension's own id>` -- the ONLY rpId
@@ -38,18 +53,24 @@ export default defineConfig({
     //     stripping/replacing this field for the published build.
     //     Credentials enrolled against a dev build do NOT carry over to a
     //     store build -- that's an accepted, expected divergence, not a bug.
-    // (3) FIREFOX UNAFFECTED: this field is Chrome/MV3-only.
-    //     `browser_specific_settings.gecko.id` below already pins the
-    //     Firefox add-on id -- but `moz-extension://` origins use a
-    //     per-INSTALL internal UUID at runtime, so whether rpId validity
-    //     even works there at all is an OPEN QUESTION the AMENDMENT
-    //     explicitly defers to Phase 13 (expected outcome: honest
-    //     degradation to password unlock on Firefox until proven otherwise).
+    // (3) FIREFOX MUST NOT RECEIVE THIS FIELD (upgraded from "unaffected"
+    //     to "actively excluded" after Bartek's manual load caught the
+    //     Firefox manifest-warning regression): `browser_specific_settings
+    //     .gecko.id` below already pins the Firefox add-on id -- but
+    //     `moz-extension://` origins use a per-INSTALL internal UUID at
+    //     runtime, so whether rpId validity even works there at all is an
+    //     OPEN QUESTION the AMENDMENT explicitly defers to Phase 13
+    //     (expected outcome: honest degradation to password unlock on
+    //     Firefox until proven otherwise).
     //
     // Resulting stable dev Chrome extension id (visible in
     // chrome://extensions after one load of the rebuilt output, needed for
     // PV_EXTENSION_ORIGINS/09-07's UAT): bbpnpamaoddpkfjnohkkepbjgbjpdbfo
-    key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0jLFyYzoV6yS7N+6/YdetllenktSlcgGYFXB6qorXTrfJzT507l2LyaMniofG49kabxHcELfnes0NWqVXaae/y+qV9LwsRSITYgp8b1shFZCKYNbp0X/GIx9nG6f0lE7AKPrbM1z7CJtZW39dQbe+r/txjUmexHCaDWIwT7tJTcafqZ6mHncOIrhG3ihEKgxoqOZUKFkyQFbjoMDYJtFkrskOTelfhDP5BWrYCud3Ijmtfn/cHnGvxu8UMAtFSV951JySCqkzf05PMCitf1I7LFR3zwLI0iNbvygGYXMYonExEeNxaNRU/jrDfMu8UgB2bNzQOKnia0SEg1NuYhEjQIDAQAB',
+    ...(browser === 'chrome'
+      ? {
+          key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0jLFyYzoV6yS7N+6/YdetllenktSlcgGYFXB6qorXTrfJzT507l2LyaMniofG49kabxHcELfnes0NWqVXaae/y+qV9LwsRSITYgp8b1shFZCKYNbp0X/GIx9nG6f0lE7AKPrbM1z7CJtZW39dQbe+r/txjUmexHCaDWIwT7tJTcafqZ6mHncOIrhG3ihEKgxoqOZUKFkyQFbjoMDYJtFkrskOTelfhDP5BWrYCud3Ijmtfn/cHnGvxu8UMAtFSV951JySCqkzf05PMCitf1I7LFR3zwLI0iNbvygGYXMYonExEeNxaNRU/jrDfMu8UgB2bNzQOKnia0SEg1NuYhEjQIDAQAB',
+        }
+      : {}),
     // `chrome.storage.session` (the ONLY sanctioned home for the unlocked
     // User Key, per the v0.2 session-key rule) is undefined at runtime
     // without this permission -- unit tests missed it because they inject a
@@ -84,5 +105,5 @@ export default defineConfig({
         id: 'passkey-vault@extension.local',
       },
     },
-  },
+  }),
 });

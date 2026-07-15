@@ -11,7 +11,8 @@
 // router.ts's switch; it exists here purely so a future popup listener can
 // type-check against the same union). 09-08 adds `extPasskey.*`/
 // `unlock.extPrf.*` kinds (the extension-scoped PRF passkey, 09-CONTEXT
-// AMENDMENT 2026-07-15). Each later plan ADDS a union member here plus a
+// AMENDMENT 2026-07-15). 09-06 adds `config.get`/`config.set`, delegating to
+// server-config.ts (Plan 09-03). Each later plan ADDS a union member here plus a
 // matching `MessageResponseMap` entry — this file's overall shape
 // (discriminated union + response map + typed sendMessage helper) never
 // gets restructured.
@@ -87,7 +88,13 @@ export type Message =
   // Unlock pair — existing token, no ceremony verification server-side (the
   // PRF output IS the secret).
   | { kind: "unlock.extPrf.start" }
-  | { kind: "unlock.extPrf.finish"; credentialIdB64url: string; prfBytes: ArrayBuffer };
+  | { kind: "unlock.extPrf.finish"; credentialIdB64url: string; prfBytes: ArrayBuffer }
+  // 09-06: the popup's server-URL configuration screen (EXT-05) and the
+  // "open full vault" / header redirect controls' sole source of the
+  // configured pv-server origin -- delegates directly to server-config.ts
+  // (Plan 09-03)'s readServerConfig()/configureServer().
+  | { kind: "config.get" }
+  | { kind: "config.set"; rawUrl: string };
 
 export interface MessageResponseMap {
   "session.status": SessionStatus;
@@ -105,6 +112,8 @@ export interface MessageResponseMap {
   "extPasskey.suppressPrompt": { ok: true };
   "unlock.extPrf.start": { credentialIdB64url: string; prfSaltB64: string } | { notEnrolled: true };
   "unlock.extPrf.finish": ExtUnlockResult;
+  "config.get": { baseUrl: string } | null;
+  "config.set": { ok: true } | { ok: false; error: "invalid-url" | "unreachable" };
 }
 
 export type MessageOf<K extends Message["kind"]> = Extract<Message, { kind: K }>;

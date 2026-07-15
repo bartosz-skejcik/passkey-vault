@@ -2,9 +2,9 @@
 // dispatch table for the ext-protocol.ts message contract. This grows
 // across Waves 3-5 (each adds its own `case` + import) -- 09-04 adds
 // `unlock.*` AND `auth.signIn.*` kinds, 09-05 adds `vault.list`, 09-08 adds
-// `extPasskey.*`/`unlock.extPrf.*` kinds (09-CONTEXT AMENDMENT 2026-07-15)
-// -- by adding a case to the switch below, never by restructuring this
-// shape.
+// `extPasskey.*`/`unlock.extPrf.*` kinds (09-CONTEXT AMENDMENT 2026-07-15),
+// 09-06 adds `config.get`/`config.set` -- by adding a case to the switch
+// below, never by restructuring this shape.
 // `vault.updated` (also added by 09-05) is deliberately NOT one of this
 // router's recognized kinds -- it's a fire-and-forget broadcast FROM the
 // background TO any open popup, not a request this router should dispatch
@@ -44,6 +44,12 @@ import {
   readExtPasskeyPromptSuppressed,
   setExtPasskeyPromptSuppressed,
 } from "./ext-passkey";
+import {
+  readServerConfig,
+  configureServer,
+  InvalidServerUrlError,
+  ServerUnreachableError,
+} from "./server-config";
 
 export function registerMessageRouter(): void {
   browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
@@ -85,7 +91,9 @@ function isProtocolMessage(message: unknown): message is Message {
     kind === "extPasskey.enroll.finish" ||
     kind === "extPasskey.suppressPrompt" ||
     kind === "unlock.extPrf.start" ||
-    kind === "unlock.extPrf.finish"
+    kind === "unlock.extPrf.finish" ||
+    kind === "config.get" ||
+    kind === "config.set"
   );
 }
 
@@ -135,6 +143,10 @@ async function handle(message: Message): Promise<unknown> {
         credentialIdB64url: message.credentialIdB64url,
         prfBytes: message.prfBytes,
       });
+    case "config.get":
+      return handleConfigGet();
+    case "config.set":
+      return handleConfigSet(message.rawUrl);
     default:
       throw new Error(`unhandled message kind: ${(message as { kind: string }).kind}`);
   }
@@ -181,4 +193,32 @@ async function setAutoLockMinutes(minutes: number): Promise<{ ok: true }> {
   // validated against AUTOLOCK_OPTIONS whitelist inside autolock.ts; re-arm immediately
   await armAutoLock(minutes);
   return { ok: true };
+}
+
+// 09-06: delegates directly to server-config.ts (Plan 09-03) -- this
+// router never re-derives, caches, or hard-codes the pv-server base URL
+// itself, per that module's own standing invariant.
+async function handleConfigGet(): Promise<MessageResponseMap["config.get"]> {
+  const config = await readServerConfig();
+  return config === null ? null : { baseUrl: config.baseUrl };
+}
+
+async function handleConfigSet(rawUrl: string): Promise<MessageResponseMap["config.set"]> {
+  try {
+    await configureServer(rawUrl);
+    return { ok: true };
+  } catch (e) {
+    if (e instanceof InvalidServerUrlError) {
+      return { ok: false, error: "invalid-url" };
+    }
+    if (e instanceof ServerUnreachableError) {
+      return { ok: false, error: "unreachable" };
+    }
+    // Neither typed error -- a genuine unexpected failure (e.g. the
+    // permissions.request() prompt was dismissed). Surface it as
+    // "unreachable" rather than letting the message channel reject, since
+    // the popup only has these two typed slots to render (Task 1's
+    // response-map contract).
+    return { ok: false, error: "unreachable" };
+  }
 }
