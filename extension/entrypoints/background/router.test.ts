@@ -184,13 +184,17 @@ describe("WR-01 sender gate", () => {
 // widens the WR-01 gate to admit content-relay senders for autofill.*
 // traffic (exactly the scenario the code comments warn about).
 describe("handle() privilege-tier guard (T-10-01)", () => {
-  it("refuses session.status from a sender with `tab` defined, even when id/url otherwise match this extension", async () => {
+  it("refuses session.status when the sender DOCUMENT's origin is a web page, even when id/url would pass the top-level gate", async () => {
+    // The layer-2 guard prefers sender.origin -- a content-script shape
+    // reaching handle() (if layer-1 is ever widened) reports the WEB
+    // page's origin, and that alone must refuse it.
     const result = await new Promise((resolve) => {
       hoisted.listeners[0](
         { kind: "session.status" },
         {
           id: "test-ext-id",
           url: "chrome-extension://test-ext-id/popup.html",
+          origin: "https://evil.example",
           tab: { id: 7 },
         },
         resolve,
@@ -200,19 +204,37 @@ describe("handle() privilege-tier guard (T-10-01)", () => {
     expect(hoisted.mockEnsureHydrated).not.toHaveBeenCalled();
   });
 
-  it("refuses vault.list from the same tab-hosted sender shape", async () => {
+  it("refuses vault.list from the same web-origin sender shape", async () => {
     const result = await new Promise((resolve) => {
       hoisted.listeners[0](
         { kind: "vault.list" },
         {
           id: "test-ext-id",
           url: "chrome-extension://test-ext-id/popup.html",
+          origin: "https://evil.example",
           tab: { id: 7 },
         },
         resolve,
       );
     });
     expect(result).toEqual({ ok: false, error: "forbidden-sender" });
+  });
+
+  it("dispatches session.status normally for popup.html opened AS A TAB -- extension-origin document with `tab` defined (real-Chrome UAT regression)", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(null);
+    const result = await new Promise((resolve) => {
+      hoisted.listeners[0](
+        { kind: "session.status" },
+        {
+          id: "test-ext-id",
+          url: "chrome-extension://test-ext-id/popup.html",
+          origin: "chrome-extension://test-ext-id",
+          tab: { id: 12 },
+        },
+        resolve,
+      );
+    });
+    expect(result).not.toEqual({ ok: false, error: "forbidden-sender" });
   });
 
   it("still dispatches session.status normally for the ordinary popup sender (no `tab`)", async () => {

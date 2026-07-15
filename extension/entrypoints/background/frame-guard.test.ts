@@ -7,7 +7,10 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("wxt/browser", () => ({
   browser: {
-    runtime: { id: "test-ext-id" },
+    runtime: {
+      id: "test-ext-id",
+      getURL: (path: string) => `chrome-extension://test-ext-id/${path}`,
+    },
   },
 }));
 
@@ -144,16 +147,45 @@ describe("resolveFillTarget", () => {
 });
 
 describe("assertPopupSender", () => {
-  it("Test 6: refuses (false) a sender with sender.tab defined -- a content script", () => {
-    expect(assertPopupSender({ tab: { id: 7 }, id: "test-ext-id" } as never)).toBe(false);
+  it("Test 6: refuses (false) a content script -- tab defined, web-page origin, own ext id", () => {
+    expect(
+      assertPopupSender({
+        tab: { id: 7 },
+        id: "test-ext-id",
+        origin: "https://evil.example",
+        url: "https://evil.example/page",
+      } as never),
+    ).toBe(false);
   });
 
-  it("Test 6: passes (true) for a sender with no tab and id === browser.runtime.id", () => {
+  it("Test 6: passes (true) for a tab-less action popup with no origin/url reported", () => {
     expect(assertPopupSender({ id: "test-ext-id" } as never)).toBe(true);
   });
 
-  it("Test 6: refuses a sender with no tab but a foreign extension id", () => {
-    expect(assertPopupSender({ id: "some-other-extension-id" } as never)).toBe(false);
+  it("Test 6: passes (true) for popup.html opened AS A TAB -- tab defined but extension-origin document (real-Chrome UAT regression)", () => {
+    expect(
+      assertPopupSender({
+        tab: { id: 12 },
+        id: "test-ext-id",
+        origin: "chrome-extension://test-ext-id",
+        url: "chrome-extension://test-ext-id/popup.html",
+      } as never),
+    ).toBe(true);
+  });
+
+  it("Test 6: refuses a web-origin sender even without a tab (origin wins over tab-lessness)", () => {
+    expect(
+      assertPopupSender({ id: "test-ext-id", origin: "https://evil.example" } as never),
+    ).toBe(false);
+  });
+
+  it("Test 6: refuses a sender with a foreign extension id even at extension origin", () => {
+    expect(
+      assertPopupSender({
+        id: "some-other-extension-id",
+        origin: "chrome-extension://some-other-extension-id",
+      } as never),
+    ).toBe(false);
   });
 });
 

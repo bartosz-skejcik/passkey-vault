@@ -34,15 +34,34 @@ export type MessageSender = Browser.runtime.MessageSender;
 /**
  * True only when the message came from THIS extension's own page (popup or
  * options, whether action-hosted or opened in a tab) -- never from a
- * content script. `sender.tab` is present ONLY when the connection was
- * opened from a tab (including content scripts); an extension page sender
- * never has one. Phase 10 is the first phase a content script shares the
+ * content script. The discriminator is the sender DOCUMENT's origin, not
+ * tab-hosting: popup.html opened as a regular tab has `sender.tab` DEFINED
+ * yet its document origin is still `chrome-extension://<own-id>`
+ * (`moz-extension://` on Firefox), while a content script -- even though it
+ * also reports `sender.id === browser.runtime.id` -- always carries the WEB
+ * page's http(s) origin in `sender.origin`/`sender.url`. (An earlier
+ * `sender.tab === undefined` check wrongly refused the tab-hosted popup;
+ * found by packaged-build UAT in real Chrome, invisible to unit tests.)
+ * Extension pages cannot be framed by web pages here (popup.html is not
+ * web_accessible), so an extension-origin document is popup-tier by
+ * construction. Phase 10 is the first phase a content script shares the
  * `runtime.onMessage` channel that previously only the popup used, so this
  * turns the previously-ASSUMED popup-only privilege tier into an enforced
  * check.
  */
 export function assertPopupSender(sender: MessageSender): boolean {
-  return sender.tab === undefined && sender.id === browser.runtime.id;
+  if (sender.id !== browser.runtime.id) return false;
+  // String-prefix comparison, deliberately NOT `new URL(...).origin`:
+  // chrome-extension:// / moz-extension:// are non-special schemes for
+  // WHATWG URL, so `.origin` degrades to "null" outside the browser's own
+  // parser (Node/vitest) -- a runtime-vs-test divergence trap.
+  const ownBase = browser.runtime.getURL(""); // "chrome-extension://<id>/"
+  const ownOrigin = ownBase.endsWith("/") ? ownBase.slice(0, -1) : ownBase;
+  if (sender.origin !== undefined) return sender.origin === ownOrigin;
+  if (sender.url !== undefined) return sender.url.startsWith(ownBase);
+  // Neither origin nor url reported (some Firefox action-popup paths):
+  // only the tab-less action popup is acceptable then.
+  return sender.tab === undefined;
 }
 
 /**
