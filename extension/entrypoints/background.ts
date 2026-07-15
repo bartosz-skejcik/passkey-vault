@@ -12,6 +12,10 @@
 // listener's own callback body is async.
 import { browser } from 'wxt/browser';
 import { roundTripSpike } from '../lib/crypto/vault-session';
+import { registerMessageRouter } from './background/router';
+import { registerAutoLockAlarmListener, armAutoLock } from './background/autolock';
+import { ensureHydrated } from './background/vault-session';
+import { readSessionMeta } from './background/session-storage';
 
 export default defineBackground({
   type: 'module',
@@ -27,6 +31,42 @@ export default defineBackground({
   persistent: true,
   main() {
     console.log('[passkey-vault] background context started');
+
+    // Plan 09-02: the real session router (session.status/
+    // session.setAutoLockMinutes this wave; unlock.*/auth.*/vault.* in
+    // 09-03/09-04/09-05, see router.ts) and the chrome.alarms auto-lock
+    // listener. Both must be registered synchronously at startup — an
+    // MV3 service worker that misses registering its onMessage/onAlarm
+    // listeners on a given wake will silently drop messages/alarms fired
+    // during that wake window. This is a SEPARATE onMessage listener from
+    // the spike.roundtrip one below (WebExtensions supports multiple
+    // listeners; each independently decides whether to handle a given
+    // message) — router.ts enforces its own copy of the WR-01
+    // sender-validation gate, so it stays secure regardless of whether
+    // this file's other listener exists.
+    registerMessageRouter();
+    registerAutoLockAlarmListener();
+
+    // T-09-07: defensively re-arm the auto-lock alarm whenever a mid-
+    // session SW restart finds the vault still logically unlocked — the
+    // key envelope and the alarm are independent platform primitives
+    // (09-RESEARCH.md Pattern 3), so losing the alarm without losing the
+    // envelope is a real, if rare, failure mode this guards against.
+    // Usually a no-op: chrome.storage.session itself clears on a genuine
+    // browser restart, so ensureHydrated() only finds something to
+    // re-arm here after e.g. a service-worker crash/reload mid-session.
+    // Fire-and-forget IIFE, not a top-level await (see this file's own
+    // header comment on why main() must stay synchronous).
+    void (async () => {
+      const uk = await ensureHydrated();
+      if (uk === null) {
+        return;
+      }
+      const meta = await readSessionMeta();
+      if (meta !== null) {
+        await armAutoLock(meta.idleTimeoutMinutes);
+      }
+    })();
 
     browser.runtime.onMessage.addListener((message: unknown, sender) => {
       // WR-01: only this extension's own pages (popup/options — whether
