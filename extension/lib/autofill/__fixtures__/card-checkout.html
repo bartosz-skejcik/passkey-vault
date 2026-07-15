@@ -1,0 +1,31 @@
+<!--
+  Source: modeled on a typical hosted checkout form's payment step (generic
+  shape shared by many small-merchant checkout pages: labeled inputs with
+  standardized autocomplete tokens plus a submit button and a promo-code
+  field that must NOT be scored as card evidence). No live PII, no scripts,
+  no external asset references.
+  Captured: 2026-07-15
+-->
+<form id="payment-form" autocomplete="on">
+  <div class="field">
+    <label for="cc-name">Name on card</label>
+    <input id="cc-name" name="ccname" type="text" autocomplete="cc-name" />
+  </div>
+  <div class="field">
+    <label for="cc-num">Card number</label>
+    <input id="cc-num" name="cardnumber" type="text" autocomplete="cc-number" inputmode="numeric" />
+  </div>
+  <div class="field">
+    <label for="cc-expiry">Expiration</label>
+    <input id="cc-expiry" name="cc-exp" type="text" autocomplete="cc-exp" placeholder="MM/YY" />
+  </div>
+  <div class="field">
+    <label for="cc-cvc">Security code</label>
+    <input id="cc-cvc" name="cvc" type="text" autocomplete="cc-csc" inputmode="numeric" />
+  </div>
+  <div class="field">
+    <label for="promo">Promo code</label>
+    <input id="promo" name="promo-code" type="text" />
+  </div>
+  <button type="submit">Pay now</button>
+</form>
