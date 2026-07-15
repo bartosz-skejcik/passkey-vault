@@ -411,4 +411,33 @@ Enumerated per the orchestrator's "verification honesty" instruction — all def
 - `f2ce195` — `fix(09): encode binary message fields as base64 over popup<->background boundary`
 - `8b380e7` — `test(09): add JSON-transport-safety structural gate for message union`
 
+## Post-UAT UX fix — FAB type menu (Bartek's NordPass pattern, live feedback)
+
+**Discovered by:** Bartek, testing the live extension in real Chrome (this plan's own preliminary UAT pass had already gone 15/15 GREEN — this is a UX-correctness gap the UAT checklist didn't probe for, not a regression).
+
+**What was wrong:** The "+" FAB redirected straight to `${baseUrl}/?action=new-item`, skipping any in-popup type choice. Bartek's original NordPass reference screenshots — the binding UX direction for this whole popup ("Popup header + delegated-management affordances") — actually show the FAB expanding an in-popup TYPE MENU first (Password / Secure Note / Credit Card / Contact Info / …), and only the type choice opens the fullscreen editor. The orchestrator had flattened that two-step interaction into a single direct redirect. EXT-06's "no in-popup forms" doctrine was never violated by the original build, but it also wasn't what was asked for — a type MENU (no input fields, just navigation) is explicitly fine under EXT-06; only FORMS are forbidden.
+
+**The fix:**
+
+1. `extension/entrypoints/popup/ItemListView.tsx`: the FAB now toggles a `typeMenuOpen` boolean instead of redirecting directly. A `DaisyUI` `menu` (`<ul role="menu">`/`<li><button role="menuitem">`) renders absolutely positioned above the FAB inside a shared wrapper `<div>` (so a click on the FAB itself is never treated as an "outside click" while the menu is open — the FAB's own toggle handles that case). Entries, in NordPass-reference order: Login (`KeyRound`), TOTP (`Timer`), Card (`CreditCard`), Identity (`IdCard`), Note (`StickyNote`) — reusing the file's own existing `TYPE_ICON`/`TYPE_LABEL_KEY` maps and the dictionary's existing `itemType.*` keys (no new dictionary entries were needed — checked first, per the task's own instruction). Choosing an entry closes the menu and calls `config.get -> browser.tabs.create({ url: \`${baseUrl}/?action=new-item&type=${itemType}\` })`, preserving the file's no-hard-coded-URL invariant. A `mousedown` document listener (added only while the menu is open, removed on close/unmount) closes the menu on any outside click.
+2. `web/src/app/page.tsx`: `action=new-item`'s deep-link handling gained an optional `type=<id>` param. Validated against a new `VALID_ITEM_TYPES: ItemType[]` allowlist (an unrecognized/tampered value falls back to the normal TypePicker step rather than being trusted — a small Rule 2 input-validation addition, since this is a URL query param and thus attacker-influenceable in principle). `pendingUrlAction`'s state shape changed from a bare string union to a discriminated object (`{ kind: "settings" } | { kind: "new-item"; type: ItemType | null }`) to carry the type through to the deferred-until-unlock effect. `handleNewItem()` gained an optional `presetType: ItemType | null = null` parameter (default preserves the old plain "open TypePicker" behavior for the TopBar's own `+` button) — **a real bug avoided along the way:** `TopBar`'s `onClick={onNewItem}` forwards the raw DOM `MouseEvent` as `onNewItem`'s first argument; wiring `onNewItem={handleNewItem}` directly (as the file previously did) would have passed that `MouseEvent` into the new `presetType` parameter position the instant it gained one. Fixed by changing the call site to `onNewItem={() => handleNewItem()}`, which was necessary regardless of anything else in this fix.
+3. Tests (TDD'd both sides): `extension/entrypoints/popup/ItemListView.test.tsx` Test 6 was split into three — the FAB opening the menu (no `tabs.create` yet, all five `menuitem` roles present), choosing an entry (Test 7: `tabs.create` called with the `&type=` param, menu closes), and outside-click (Test 8: `mousedown` on `document.body` closes the menu, no `tabs.create`). `web/src/app/page.test.tsx` gained two RED-then-GREEN cases: a valid `type=login` param opens `ItemForm` directly with `type="login"` (asserted via the `ItemForm` mock's `data-type` attribute) and skips `type-picker-close` entirely; an invalid `type=bogus` param falls back to the TypePicker (`type-picker-close` renders, `ItemForm` doesn't).
+4. `.planning/phases/09-session-unlock-core-popup-sync-client/09-UI-SPEC.md`'s "Popup header + delegated-management affordances" section was amended in place to describe the type-menu interaction (superseding its prior "NO type-picker menu in the popup this phase" line) and the web-side `type=<id>` param.
+
+**No dictionary changes were needed** — `extension/lib/i18n/dictionary.ts` already had all five `itemType.*` PL/EN label keys from this same plan's original Item List work; the menu reuses them verbatim.
+
+**Judgment calls:**
+- Menu entry order (Login, TOTP, Card, Identity, Note) follows Bartek's NordPass reference screenshots' own ordering (primary type first, then the two "quick-add" types, then the remainder) rather than the arbitrary `ItemType` declaration order in `types.ts`.
+- The menu uses `role="menu"`/`role="menuitem"` (not a `<dialog>` or any DaisyUI `modal`), so the existing "no in-popup dialog" test assertion in Test 6 continues to hold — this was a deliberate signal that the fix stays a navigation menu, never a form.
+- `web/src/app/page.tsx`'s `VALID_ITEM_TYPES` allowlist is a small unplanned Rule 2 addition (missing input validation on a URL-controlled value) rather than trusting the raw query param — flagged here since it wasn't explicitly requested but is a correctness/security baseline for any query-param-driven state.
+
+**Verification:** `cd extension && npx vitest run` (128/128 pass, +3 new in `ItemListView.test.tsx`), `npx tsc --noEmit` clean, `npx wxt build -b chrome` and `-b firefox` both succeed. `cd web && npx vitest run` (345/345 pass, +2 new in `page.test.tsx`), `npx tsc --noEmit` clean.
+
+**Commits:**
+- `943b936` — `test(09): RED — page.tsx preselects/validates action=new-item's type param`
+- `7d56a99` — `feat(09): page.tsx preselects item type from new-item deep-link's type param`
+- `c4f3e68` — `test(09): extend ItemListView FAB tests for type menu open/choose/outside-click`
+- `6026c97` — `fix(09): FAB expands in-popup type menu before redirecting to new-item editor`
+- (this commit) — `docs(09): document FAB type-menu post-UAT UX fix`
+
 **Nothing else in the protocol was found binary-unsafe beyond the six fields listed above.** All response-map shapes were audited line-by-line (see item 2) and confirmed JSON-safe as originally written.
