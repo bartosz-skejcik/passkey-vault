@@ -5,16 +5,16 @@ milestone_name: Browser Extension
 current_phase: 09
 current_phase_name: Session Unlock Core, Popup & Sync Client
 status: executing
-stopped_at: Completed 09-02-PLAN.md
-last_updated: "2026-07-15T08:13:01.083Z"
+stopped_at: Completed 09-04-PLAN.md
+last_updated: "2026-07-15T08:35:50.423Z"
 last_activity: 2026-07-15
 last_activity_desc: 09-02-PLAN.md complete (session core, autolock, router)
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 30
-  completed_plans: 6
-  percent: 20
+  completed_plans: 7
+  percent: 17
 ---
 
 # Project State
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 09 of 13 (Session Unlock Core, Popup & Sync Client)
-Plan: 3 of 7 complete (09-01, 09-03 Wave 1; 09-02 Wave 2) — next: Wave 3 (09-04, 09-05)
+Plan: 4 of 7 complete (09-01, 09-03 Wave 1; 09-02 Wave 2) — next: Wave 3 (09-04, 09-05)
 Status: Ready to execute Wave 3
 Last activity: 2026-07-15 — 09-02-PLAN.md complete (session core, autolock, router)
 
-Progress: [██░░░░░░░░] 20%
+Progress: [██░░░░░░░░] 23%
 
 ## Performance Metrics
 
@@ -65,6 +65,7 @@ Progress: [██░░░░░░░░] 20%
 | Phase 08 P03 | 10min | 2 tasks | 5 files |
 | Phase 09 P03 | 20min | 2 tasks | 3 files |
 | Phase 09 P02 | 10min | 3 tasks | 8 files |
+| Phase 09 P04 | 25min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,9 @@ Recent decisions affecting current work:
 - [Phase ?]: 09-03: Firefox MV2 manifest strips optional_host_permissions entirely (WXT's mv3OnlyKeys) -- Firefox-side runtime permission parity deferred to Phase 13 (dual-browser-hardening)
 - [Phase 09]: 09-02: background.ts (not entrypoints/background/index.ts) is Phase 8's real WXT background entrypoint -- edited the actual file; router.ts added as a second, independent onMessage listener alongside the untouched Phase-8 spike.roundtrip listener — WXT treats a directory index.ts as an alternate way to define the same entrypoint; creating both risks a duplicate background entrypoint. Confirmed via both wxt build -b chrome/-b firefox producing exactly one background.js each.
 - [Phase 09]: 09-02: lockVaultSession() clears ONLY the key envelope, never the session-meta record (token/email/idle-minutes) -- the bearer token survives an auto-lock so session.status's locked branch is reachable — Blocker-2 fix in the plan itself; matches v0.1's own posture (UnlockOverlay.tsx re-derives the key from an existing token after a lock, never re-logs-in).
+- [Phase ?]: unlock.ts's handleUnlockPassword uses one function with an optional email argument (undefined=unlock-only via me(), provided=sign-in via login()) so router.ts dispatches both unlock.password and auth.signIn.password to the same implementation
+- [Phase ?]: prf.ts duplicates a tiny local base64Decode instead of importing auth-api.ts's, keeping the popup-importable PRF helper module free of any background-context (chrome.storage) dependency
+- [Phase ?]: wasm-loader.ts gained a deriveAuthMaterial re-export (Rule 3 fix, mirrors 09-02's precedent) since it is the sole choke-point importer of the generated WASM bindings
 
 ### Pending Todos
 
@@ -115,8 +119,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-15T08:12:28.099Z
-Stopped at: Completed 09-02-PLAN.md
+Last session: 2026-07-15T08:35:50.417Z
+Stopped at: Completed 09-04-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

@@ -83,7 +83,7 @@ Plans:
   6. The self-hosted `pv-server`'s CORS allowlist accepts the fixed published extension origin (`chrome-extension://<published-id>` / `moz-extension://<id>`), verified end-to-end against a real request, not assumed. (EXT-05)
   7. The popup exposes a "fullscreen / open full vault" action that opens the configured server's v0.1 web-app frontend in a new browser tab; the popup does not re-implement full vault management. (EXT-06)
 
-**Plans**: 7 plans
+**Plans**: 4/7 plans executed
 Plans:
 **Wave 1**
 
@@ -96,7 +96,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 09-04-PLAN.md — Password + PRF unlock ceremony (EXT-02)
+- [x] 09-04-PLAN.md — Password + PRF unlock ceremony (EXT-02)
 - [ ] 09-05-PLAN.md — REST + WS sync client, vault store, search (EXT-04)
 
 **Wave 4** *(blocked on Wave 3 completion)*
@@ -211,7 +211,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 6. Import/Export, TOTP & Onboarding | v0.1 | 4/4 | Complete | 2026-07-14 |
 | 7. Self-Host Packaging & Deployment | v0.1 | 3/3 | Complete | 2026-07-14 |
 | 8. Extension Bootstrap & WASM-in-Background Spike | v0.2 | 3/3 | Complete    | 2026-07-15 |
-| 9. Session Unlock Core, Popup & Sync Client | v0.2 | 0/7 | Planned | - |
+| 9. Session Unlock Core, Popup & Sync Client | v0.2 | 4/7 | In Progress|  |
 | 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 0/7 | Planned | - |
 | 11. Generate & Capture | v0.2 | 0/TBD | Not started | - |
 | 12. Passkey Provider | v0.2 | 0/TBD | Not started | - |
