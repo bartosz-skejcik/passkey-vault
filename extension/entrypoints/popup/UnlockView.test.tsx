@@ -1,8 +1,8 @@
 // UnlockView.tsx — password + extension-scoped PRF unlock, thin
 // message-dispatch layer only. Tests 4/4b are REPLACED per the plan's
 // AMENDMENT 2026-07-15 (extension-scoped PRF passkey, Plan 09-08) — the
-// popup never dispatches unlock.prf.*/auth.signIn.prf.* (dead this phase),
-// only unlock.extPrf.*. Tests 4c/4d are NEW per the same amendment (4d
+// popup never dispatches the web-RP PRF message pair (dead this phase),
+// only the ext-PRF pair. Tests 4c/4d are NEW per the same amendment (4d
 // lives in its own EnrollExtPasskeyPrompt.test.tsx file).
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";

@@ -1,0 +1,61 @@
+/* Plan 09-06: the popup's Tailwind v4 + DaisyUI 5 theme -- byte-identical
+   `vault-dark`/`vault-light` token values to web/src/app/globals.css,
+   duplicated (not cross-package-imported) into the extension's own build
+   pipeline, per this codebase's standing "verbatim port" precedent
+   (extension/lib/vault/types.ts, search.ts, lib/passkeys/prf.ts all copy
+   rather than reach across the workspace boundary). 09-UI-SPEC.md requires
+   these be "consumed IDENTICALLY, not re-created" -- the VALUES here are
+   unchanged from web's; only the file's physical location differs, since
+   each package needs its own self-contained Vite/PostCSS build. Keep in
+   sync with web/src/app/globals.css by hand if that file's tokens ever
+   change. */
+@import "tailwindcss";
+@plugin "daisyui";
+
+@plugin "daisyui/theme" {
+  name: "vault-dark";
+  default: true;
+  color-scheme: dark;
+  --color-primary: oklch(65.31% 0.1637 37.22);
+  --color-primary-content: oklch(100% 0 0);
+  --color-secondary: oklch(82.36% 0.0962 242.82);
+  --color-accent: oklch(74.51% 0.167 183.61);
+  --color-neutral: oklch(42.02% 0 0);
+  --color-base-100: oklch(26.86% 0 0);
+  --color-base-200: oklch(24.78% 0 0);
+  --color-base-300: oklch(23.93% 0 0);
+  --color-base-content: oklch(89.80% 0.0017 67.80);
+  --color-info: oklch(72.06% 0.191 231.6);
+  --color-success: oklch(64.80% 0.150 160);
+  --color-warning: oklch(84.71% 0.199 83.87);
+  --color-error: oklch(71.76% 0.221 22.18);
+  --radius-box: 1rem;
+  --radius-field: 0.5rem;
+  --radius-selector: 1.9rem;
+  --border: 1px;
+}
+
+@plugin "daisyui/theme" {
+  name: "vault-light";
+  color-scheme: light;
+  --color-base-100: oklch(100% 0 0);
+  --color-base-200: oklch(98.86% 0.0017 67.80);
+  --color-base-300: oklch(93% 0.004 67.80);
+  --color-base-content: oklch(26.86% 0 0);
+  /* primary/secondary/accent/semantic tokens unchanged from vault-dark --
+     OKLCH hue/chroma is theme-invariant, per web/src/app/globals.css. */
+}
+
+/* NOTE (flagged for UI-checker/visual review): unlike the web app's
+   next/font/google-optimized DM Sans (self-hosted at build time by
+   Next.js), this popup has no equivalent font-bundling step this phase --
+   `font-family` below names "DM Sans" but falls back to the platform's
+   default sans-serif stack when the font file isn't locally available.
+   Real DM Sans bundling (a static font-file asset under extension/public/)
+   is a follow-up, not blocking for this phase's functional scope. Fuzzy
+   Bubbles is intentionally never referenced anywhere in this file or any
+   popup component, per 09-UI-SPEC.md's "no Fuzzy Bubbles in the popup"
+   rule. */
+body {
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+}

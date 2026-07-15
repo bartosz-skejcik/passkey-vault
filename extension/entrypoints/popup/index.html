@@ -1,40 +1,18 @@
 <!doctype html>
 <!--
-  Plan 08-03: throwaway debug harness (per 08-CONTEXT.md) — vanilla HTML/TS,
-  no framework, no design-system work. Phase 9 replaces this popup entirely
-  per 09-UI-SPEC.md. This popup performs NO crypto itself (D-04) — it only
-  triggers the background round-trip via runtime.sendMessage and renders
-  whatever booleans/status strings come back.
+  Plan 09-06 REPLACES Phase 8's vanilla debug harness (08-03-PLAN.md)
+  entirely with the real popup: React + DaisyUI + Tailwind v4, reusing
+  web/'s exact vault-dark/vault-light theme. Fixed 360-400px viewport per
+  09-UI-SPEC.md's Popup shell section.
 -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Passkey Vault — Debug Spike</title>
-    <style>
-      body {
-        font-family: monospace;
-        width: 320px;
-        padding: 12px;
-      }
-      button {
-        display: block;
-        width: 100%;
-        margin-bottom: 8px;
-        padding: 6px;
-      }
-      pre {
-        white-space: pre-wrap;
-        word-break: break-word;
-        background: #f0f0f0;
-        padding: 8px;
-        min-height: 3em;
-      }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Passkey Vault</title>
   </head>
-  <body>
-    <button id="run">Run round-trip spike</button>
-    <button id="check-again">Check again</button>
-    <pre id="result"></pre>
-    <script type="module" src="./main.ts"></script>
+  <body data-theme="vault-dark" style="width: 380px">
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
   </body>
 </html>

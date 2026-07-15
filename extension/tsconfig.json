@@ -1,3 +1,14 @@
 {
-  "extends": "./.wxt/tsconfig.json"
+  "extends": "./.wxt/tsconfig.json",
+  "compilerOptions": {
+    // Plan 09-06: @wxt-dev/module-react (wired in wxt.config.ts) only
+    // registers the Vite/esbuild react() plugin for the actual build --
+    // it does NOT add `jsx`/`lib: dom` to the generated .wxt/tsconfig.json
+    // (confirmed by reading the module's own source before assuming), so
+    // `tsc --noEmit` needs this declared here, matching web/tsconfig.json's
+    // exact `jsx: "react-jsx"` convention (React 19's automatic runtime,
+    // same as the web app).
+    "jsx": "react-jsx",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+  }
 }
