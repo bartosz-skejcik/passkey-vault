@@ -56,12 +56,28 @@ export function __getShadowRootForTests(host: HTMLElement): ShadowRoot | null {
   return shadowRoots.get(host) ?? null;
 }
 
+// Inline lucide SVG markup (geometry copied verbatim from lucide-react's
+// own icon source -- node_modules/lucide-react/dist/esm/icons/{vault,timer,
+// credit-card,id-card}.mjs -- not approximated) -- set via `.innerHTML`,
+// never `.textContent`, so the markup actually renders as vector paths.
+// `fill="currentColor"` is only re-declared per-node where the source icon
+// itself uses a filled dot (Vault's/KeyRound's corner pips); the outer
+// `fill="none"` keeps every stroked shape (rects, paths, the outline
+// circles) unfilled, matching lucide's real rendering.
 const ROW_ICON: Record<FillKind, string> = {
-  login: "🔑",
-  totp: "⏱",
-  card: "💳",
-  identity: "🪪",
+  login: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/><path d="m7.9 7.9 2.7 2.7"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/><path d="m13.4 10.6 2.7-2.7"/><circle cx="7.5" cy="16.5" r=".5" fill="currentColor"/><path d="m7.9 16.1 2.7-2.7"/><circle cx="16.5" cy="16.5" r=".5" fill="currentColor"/><path d="m13.4 13.4 2.7 2.7"/><circle cx="12" cy="12" r="2"/></svg>`,
+  totp: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/></svg>`,
+  card: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>`,
+  identity: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M16 10h2"/><path d="M16 14h2"/><path d="M6.17 15a3 3 0 0 1 5.66 0"/><circle cx="9" cy="11" r="2"/><rect x="2" y="5" width="20" height="14" rx="2"/></svg>`,
 };
+
+// ChevronRight, same lucide-source provenance as ROW_ICON above.
+const CHEVRON_RIGHT_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="m9 18 6-6-6-6"/></svg>`;
+
+// KeyRound, replacing the illegible 8px "PV" text on the in-field
+// affordance icon (~renderFieldDropdown below) -- sized to fill the
+// 16x16 .pv-field-icon box exactly.
+const KEY_ROUND_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>`;
 
 // Brand tokens inlined as literal OKLCH values -- the host page's own
 // stylesheet never reaches a shadow root, so nothing here can rely on it.
@@ -74,18 +90,32 @@ const OVERLAY_CSS = `
 * { box-sizing: border-box; }
 .pv-panel, .pv-field-icon {
   font-family: "DM Sans", system-ui, -apple-system, sans-serif;
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.4;
 }
 .pv-panel {
   position: fixed;
   z-index: 2147483647;
-  background: oklch(26.86% 0 0);
+  /* base-300 (page/popup surface, per docs/UI-DESIGN.md's dominant-60%
+     token) -- NOT base-100 (card surface); the audit flagged the prior
+     base-100 fill as diverging from the rest of the app. The 1px border
+     below steps UP to base-100 so the floating panel still reads as a
+     distinct surface against the host page, matching the "insets on
+     base-200/base-100" instruction (row dividers/hover states below step
+     up to base-200, one level lighter than this base-300 canvas). */
+  background: oklch(23.93% 0 0);
   color: oklch(89.80% 0.0017 67.80);
-  border: 1px solid oklch(23.93% 0 0);
-  border-radius: 12px;
+  border: 1px solid oklch(26.86% 0 0);
+  border-radius: 16px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   overflow: hidden;
+}
+.pv-row:focus-visible,
+.pv-btn:focus-visible,
+.pv-icon-btn:focus-visible,
+.pv-field-icon:focus-visible {
+  outline: 2px solid oklch(65.31% 0.1637 37.22);
+  outline-offset: 2px;
 }
 .pv-panel-prompt { top: 16px; right: 16px; width: 320px; }
 .pv-panel-dropdown { min-width: 240px; }
@@ -103,7 +133,7 @@ const OVERLAY_CSS = `
   justify-content: center;
   width: 20px;
   height: 20px;
-  border-radius: 6px;
+  border-radius: 8px;
   background: oklch(65.31% 0.1637 37.22);
   color: oklch(26.86% 0 0);
   font-weight: 700;
@@ -119,10 +149,13 @@ const OVERLAY_CSS = `
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: 8px;
   flex-shrink: 0;
 }
-.pv-icon-btn:hover { background: oklch(23.93% 0 0); }
+/* base-200 -- one step lighter than the panel's base-300 canvas, so the
+   hover state is actually visible (a same-as-background base-300 hover
+   would be invisible now that the panel itself is base-300). */
+.pv-icon-btn:hover { background: oklch(24.78% 0 0); }
 .pv-list { max-height: 320px; overflow-y: auto; }
 .pv-row {
   all: unset;
@@ -132,11 +165,11 @@ const OVERLAY_CSS = `
   width: 100%;
   padding: 10px 12px;
   cursor: pointer;
-  border-bottom: 1px solid oklch(23.93% 0 0);
+  border-bottom: 1px solid oklch(24.78% 0 0);
   box-sizing: border-box;
 }
-.pv-row:hover { background: oklch(23.93% 0 0); }
-.pv-row-icon { font-size: 16px; flex-shrink: 0; }
+.pv-row:hover { background: oklch(24.78% 0 0); }
+.pv-row-icon { width: 16px; height: 16px; flex-shrink: 0; }
 .pv-row-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .pv-row-label { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-row-sub {
@@ -152,13 +185,13 @@ const OVERLAY_CSS = `
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
-  border-bottom: 1px solid oklch(23.93% 0 0);
+  border-bottom: 1px solid oklch(24.78% 0 0);
 }
 .pv-confirm-copy { margin: 0; }
 .pv-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.pv-btn { all: unset; cursor: pointer; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 700; }
+.pv-btn { all: unset; cursor: pointer; padding: 6px 12px; border-radius: 8px; font-size: 14px; font-weight: 700; }
 .pv-btn-ghost { color: oklch(89.80% 0.0017 67.80); }
-.pv-btn-ghost:hover { background: oklch(23.93% 0 0); }
+.pv-btn-ghost:hover { background: oklch(24.78% 0 0); }
 .pv-btn-primary { background: oklch(65.31% 0.1637 37.22); color: oklch(26.86% 0 0); }
 .pv-field-icon {
   all: unset;
@@ -169,11 +202,9 @@ const OVERLAY_CSS = `
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 8px;
   background: oklch(65.31% 0.1637 37.22);
   color: oklch(26.86% 0 0);
-  font-size: 8px;
-  font-weight: 700;
   cursor: pointer;
 }
 [hidden] { display: none !important; }
@@ -279,7 +310,9 @@ function buildRow(match: AutofillMatch, doc: Document, onActivate: () => void): 
   const icon = doc.createElement("span");
   icon.className = "pv-row-icon";
   icon.setAttribute("aria-hidden", "true");
-  icon.textContent = ROW_ICON[match.kind];
+  // innerHTML, not textContent -- ROW_ICON entries are lucide SVG markup,
+  // not glyph characters, and need to actually parse as elements.
+  icon.innerHTML = ROW_ICON[match.kind];
 
   const text = doc.createElement("span");
   text.className = "pv-row-text";
@@ -294,7 +327,7 @@ function buildRow(match: AutofillMatch, doc: Document, onActivate: () => void): 
   const chevron = doc.createElement("span");
   chevron.className = "pv-row-chevron";
   chevron.setAttribute("aria-hidden", "true");
-  chevron.textContent = "›";
+  chevron.innerHTML = CHEVRON_RIGHT_ICON;
 
   row.append(icon, text, chevron);
   row.addEventListener("click", onActivate);
@@ -451,7 +484,9 @@ export function createOverlayController(options: OverlayControllerOptions): Over
     icon.className = "pv-field-icon";
     icon.setAttribute("data-pv-field-icon", "");
     icon.setAttribute("aria-label", t(locale, "overlay.fieldDropdownHeading"));
-    icon.textContent = "PV";
+    // KeyRound SVG, not the illegible 8px "PV" text -- sized to fill the
+    // 16x16 .pv-field-icon box exactly.
+    icon.innerHTML = KEY_ROUND_ICON;
     icon.style.top = `${rect.top + rect.height / 2 - 8}px`;
     icon.style.left = `${rect.right - 24}px`;
 
