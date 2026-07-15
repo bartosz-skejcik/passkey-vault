@@ -90,8 +90,22 @@ export default defineConfig({
     // Opening the action popup is activeTab's classic trigger, which grants
     // temporary host access to exactly the tab the user is filling into --
     // the minimal, gesture-bound grant matching FILL's "explicit user
-    // gesture" requirement. No broad `tabs` permission, no blanket hosts.
-    permissions: ['storage', 'alarms', 'activeTab'],
+    // gesture" requirement.
+    //
+    // `tabs`: origin VISIBILITY (tab.url in tabs.query) independent of
+    // activeTab's gesture timing. Industry-standard for password managers
+    // (Bitwarden and 1Password both declare it), and it adds ZERO new
+    // install-warning surface here: the content-relay's `<all_urls>`
+    // content script already triggers Chrome's broadest "read and change
+    // all your data on all websites" warning, which subsumes tabs'. It
+    // also makes the packaged build honestly UAT-able under automation
+    // (Playwright cannot click the real toolbar action, so activeTab never
+    // fires there) -- and this project's standing rule is that every phase
+    // UATs the exact shipping artifact. NOTE for the phase-10 security
+    // review: `tabs` grants URL visibility only; frame-guard.ts still
+    // derives fill targets exclusively from platform data and re-verifies
+    // origin at fill time.
+    permissions: ['storage', 'alarms', 'activeTab', 'tabs'],
     // EXT-05: deliberately `optional_host_permissions`, NOT `host_permissions`
     // -- the extension is ONE public build with no origin known at compile
     // time (each user self-hosts pv-server at their own URL).
