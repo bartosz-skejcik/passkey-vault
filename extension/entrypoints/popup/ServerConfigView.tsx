@@ -6,17 +6,28 @@
 // UI-checker review, per the orchestrator's explicit instruction.
 //
 // Thin message-dispatch layer only (D-05): URL probing and persistence
-// happen in the background via config.set. ONE thing must run here, in
-// this component, inside the submit click: the T-09-14 runtime
-// host-permission grant. `browser.permissions.request()` requires a live
-// user gesture, and the gesture does NOT survive the sendMessage hop into
-// the service worker (Chrome throws "must be called during a user
-// gesture" there — found by the real-browser Phase 9 UAT). Normalizing
-// the URL locally via the PURE lib/server-url module (no crypto, no
-// storage, no browser APIs) keeps D-05 intact — this component still
-// never imports WASM bindings, the choke-point loader, or the web app's
-// crypto module, and never constructs a URL literal itself (EXT-06's
-// no-hard-coded-URL invariant applies here too).
+// happen in the background via config.set. Normalizing the URL locally
+// via the PURE lib/server-url module (no crypto, no storage, no browser
+// APIs) keeps D-05 intact — this component still never imports WASM
+// bindings, the choke-point loader, or the web app's crypto module, and
+// never constructs a URL literal itself (EXT-06's no-hard-coded-URL
+// invariant applies here too).
+//
+// POST-UAT FIX (real-browser Phase 9 UAT, second pass): config.set now
+// dispatches BEFORE the T-09-14 permission grant, and the grant's outcome
+// no longer gates onConfigured(). `browser.permissions.request()` opens a
+// native browser prompt that steals focus and CLOSES the MV3 popup. With
+// the OLD order (permission request -> config.set), the popup closing
+// mid-await meant config.set's persistence never ran on the first submit
+// -- the user had to click Allow, get bounced back to this same screen,
+// and submit a SECOND time (config already permitted by then, no prompt,
+// popup stays open). Persisting first means config.set survives even if
+// the permission prompt that follows kills the popup: the URL is already
+// saved, so reopening the popup advances straight past this screen. The
+// grant is now a best-effort nicety, fired-and-forgotten after
+// onConfigured() -- the extension's own pv-server already CORS-allowlists
+// this origin for the healthz probe / config.set, so the host permission
+// is not required for the first-run flow to succeed.
 import { useState, type FormEvent } from "react";
 import { browser } from "wxt/browser";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
@@ -32,15 +43,15 @@ export default function ServerConfigView({
 }) {
   const [rawUrl, setRawUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<"invalid-url" | "unreachable" | "permission-denied" | null>(null);
+  const [error, setError] = useState<"invalid-url" | "unreachable" | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      // Validate locally FIRST so a malformed URL never triggers a
-      // permission prompt (and its error copy stays accurate).
+      // Validate locally FIRST so a malformed URL never dispatches
+      // anything (and its error copy stays accurate).
       let normalized: string;
       try {
         normalized = normalizeServerUrl(rawUrl);
@@ -49,24 +60,22 @@ export default function ServerConfigView({
         return;
       }
 
-      // T-09-14: the runtime grant for exactly this one origin, requested
-      // HERE because the submit click's user gesture only exists in this
-      // context (see the header comment). Denial is a first-class,
-      // honestly-labeled outcome — not "unreachable".
-      const granted = await browser.permissions
-        .request({ origins: [`${normalized}/*`] })
-        .catch(() => false);
-      if (!granted) {
-        setError("permission-denied");
+      // Persist FIRST (see header comment): config.set probes healthz and
+      // saves the URL without needing the host permission below. A bad/
+      // unreachable server must never trigger a permission prompt, so we
+      // bail out here before touching browser.permissions at all.
+      const result = await sendMessage({ kind: "config.set", rawUrl });
+      if (!result.ok) {
+        setError(result.error);
         return;
       }
+      onConfigured();
 
-      const result = await sendMessage({ kind: "config.set", rawUrl });
-      if (result.ok) {
-        onConfigured();
-      } else {
-        setError(result.error);
-      }
+      // T-09-14: best-effort, NON-blocking permission grant, fired AFTER
+      // onConfigured() so its outcome (including the prompt closing this
+      // popup entirely) can never strand the user on this screen — the
+      // config is already saved by the time this runs.
+      void browser.permissions.request({ origins: [`${normalized}/*`] }).catch(() => false);
     } finally {
       setSubmitting(false);
     }
@@ -92,14 +101,7 @@ export default function ServerConfigView({
 
         {error !== null ? (
           <div className="alert alert-error text-sm">
-            {t(
-              locale,
-              error === "invalid-url"
-                ? "config.invalidUrl"
-                : error === "permission-denied"
-                  ? "config.permissionDenied"
-                  : "config.unreachable",
-            )}
+            {t(locale, error === "invalid-url" ? "config.invalidUrl" : "config.unreachable")}
           </div>
         ) : null}
 

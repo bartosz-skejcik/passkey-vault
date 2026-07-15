@@ -1,8 +1,12 @@
-// ServerConfigView — pins the user-gesture permission-grant contract found
-// by the real-browser Phase 9 UAT: chrome.permissions.request() MUST run in
-// the popup's submit click (the gesture does not survive the sendMessage hop
-// into the service worker, where Chrome throws "must be called during a
-// user gesture" and the old code mislabeled it "unreachable").
+// ServerConfigView — pins the persist-first contract found by the second
+// real-browser Phase 9 UAT pass: chrome.permissions.request() opens a
+// native prompt that steals focus and CLOSES the MV3 popup, so config.set
+// (which persists the server URL) MUST run and complete BEFORE the
+// permission request -- otherwise the popup closing mid-await strands the
+// user on this same screen after clicking Allow, requiring a second submit.
+// onConfigured() therefore fires as soon as config.set succeeds, regardless
+// of whether the subsequent best-effort permission grant is accepted,
+// denied, or rejects outright.
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -32,47 +36,74 @@ async function fillAndSubmit(url: string) {
   await user.click(screen.getByRole("button", { name: /połącz|connect/i }));
 }
 
-describe("ServerConfigView — gesture-bound permission grant", () => {
-  it("requests the normalized single-origin grant IN the submit handler, then dispatches config.set", async () => {
-    mockPermissionsRequest.mockResolvedValue(true);
+describe("ServerConfigView — persist-before-permission-prompt order", () => {
+  it("dispatches config.set BEFORE requesting the permission grant, and fires onConfigured once config.set succeeds", async () => {
     mockSendMessage.mockResolvedValue({ ok: true });
+    mockPermissionsRequest.mockResolvedValue(true);
     const onConfigured = vi.fn();
 
     render(<ServerConfigView locale="en" onConfigured={onConfigured} />);
     await fillAndSubmit("http://LOCALHOST:8620/");
 
     await waitFor(() => expect(onConfigured).toHaveBeenCalled());
-    expect(mockPermissionsRequest).toHaveBeenCalledWith({
-      origins: ["http://localhost:8620/*"],
-    });
-    // grant precedes the background dispatch
-    expect(mockPermissionsRequest.mock.invocationCallOrder[0]).toBeLessThan(
-      mockSendMessage.mock.invocationCallOrder[0],
-    );
     expect(mockSendMessage).toHaveBeenCalledWith({
       kind: "config.set",
       rawUrl: "http://LOCALHOST:8620/",
     });
+    await waitFor(() =>
+      expect(mockPermissionsRequest).toHaveBeenCalledWith({
+        origins: ["http://localhost:8620/*"],
+      }),
+    );
+    // persistence precedes the (best-effort) permission request
+    expect(mockSendMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPermissionsRequest.mock.invocationCallOrder[0],
+    );
   });
 
-  it("denied grant → honest permission-denied copy, config.set never dispatched", async () => {
+  it("onConfigured fires even when the permission prompt is denied — the popup closing/losing the grant never strands the user", async () => {
+    mockSendMessage.mockResolvedValue({ ok: true });
     mockPermissionsRequest.mockResolvedValue(false);
+    const onConfigured = vi.fn();
 
-    render(<ServerConfigView locale="en" onConfigured={vi.fn()} />);
+    render(<ServerConfigView locale="en" onConfigured={onConfigured} />);
+    await fillAndSubmit("http://localhost:8620");
+
+    await waitFor(() => expect(onConfigured).toHaveBeenCalled());
+    await waitFor(() => expect(mockPermissionsRequest).toHaveBeenCalled());
+  });
+
+  it("onConfigured fires even when permissions.request() rejects outright (e.g. the prompt killed the popup mid-await)", async () => {
+    mockSendMessage.mockResolvedValue({ ok: true });
+    mockPermissionsRequest.mockRejectedValue(new Error("popup closed"));
+    const onConfigured = vi.fn();
+
+    render(<ServerConfigView locale="en" onConfigured={onConfigured} />);
+    await fillAndSubmit("http://localhost:8620");
+
+    await waitFor(() => expect(onConfigured).toHaveBeenCalled());
+  });
+
+  it("config.set failure (unreachable server) → error copy shown, onConfigured never fires, permission never requested", async () => {
+    mockSendMessage.mockResolvedValue({ ok: false, error: "unreachable" });
+    const onConfigured = vi.fn();
+
+    render(<ServerConfigView locale="en" onConfigured={onConfigured} />);
     await fillAndSubmit("http://localhost:8620");
 
     await waitFor(() =>
-      expect(screen.getByText(/without this permission/i)).toBeInTheDocument(),
+      expect(screen.getByText(/can't reach that server/i)).toBeInTheDocument(),
     );
-    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(onConfigured).not.toHaveBeenCalled();
+    expect(mockPermissionsRequest).not.toHaveBeenCalled();
   });
 
-  it("invalid URL → no permission prompt, no message, invalid-url copy", async () => {
+  it("invalid URL → no config.set dispatch, no permission prompt, invalid-url copy", async () => {
     render(<ServerConfigView locale="en" onConfigured={vi.fn()} />);
     await fillAndSubmit("ftp://nope");
 
     await waitFor(() => expect(screen.getByText(/invalid address/i)).toBeInTheDocument());
-    expect(mockPermissionsRequest).not.toHaveBeenCalled();
     expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(mockPermissionsRequest).not.toHaveBeenCalled();
   });
 });
