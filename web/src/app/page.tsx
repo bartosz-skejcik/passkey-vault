@@ -32,6 +32,17 @@ import { wasRemotelyDeleted } from "@/lib/vault/remoteDelete";
 import { showErrorToast } from "@/lib/vault/errorToast";
 import type { ItemType, VaultFilter, VaultItem } from "@/lib/vault/types";
 
+// Post-UAT (Bartek 2026-07-15): the popup's in-popup type menu passes its
+// chosen type via `?type=<id>` -- validated against this list before ever
+// being trusted as a `creatingType` (an unrecognized/tampered value falls
+// back to the normal TypePicker step rather than being passed through).
+const VALID_ITEM_TYPES: ItemType[] = ["login", "card", "identity", "note", "totp"];
+
+/** Popup deep-link intent, resolved once at mount from the URL's query
+ * params (Plan 09-06's `panel=settings` / `action=new-item`, extended
+ * post-UAT with `action=new-item`'s optional `type=<id>`). */
+type PendingUrlAction = { kind: "settings" } | { kind: "new-item"; type: ItemType | null } | null;
+
 export default function Home() {
   const { t } = useLocale();
   const unlocked = useIsUnlocked();
@@ -73,11 +84,15 @@ export default function Home() {
   // throughout with no existing use of that hook, and a plain
   // `URLSearchParams` read avoids that hook's Suspense-boundary
   // requirement for no functional gain here).
-  const [pendingUrlAction, setPendingUrlAction] = useState<"settings" | "new-item" | null>(() => {
+  const [pendingUrlAction, setPendingUrlAction] = useState<PendingUrlAction>(() => {
     if (typeof window === "undefined") return null;
     const params = new URLSearchParams(window.location.search);
-    if (params.get("panel") === "settings") return "settings";
-    if (params.get("action") === "new-item") return "new-item";
+    if (params.get("panel") === "settings") return { kind: "settings" };
+    if (params.get("action") === "new-item") {
+      const rawType = params.get("type");
+      const type = VALID_ITEM_TYPES.includes(rawType as ItemType) ? (rawType as ItemType) : null;
+      return { kind: "new-item", type };
+    }
     return null;
   });
   const items = useVaultItems();
@@ -85,11 +100,11 @@ export default function Home() {
   // Any side panel being open means the overlay drawer + scrim render.
   const sidePanelOpen = selectedItem !== null || creating || settingsOpen;
 
-  function handleNewItem() {
+  function handleNewItem(presetType: ItemType | null = null) {
     setSelectedItemId(null);
     setOpenInEditMode(false);
     setCreating(true);
-    setCreatingType(null);
+    setCreatingType(presetType);
     setSettingsOpen(false);
   }
 
@@ -155,16 +170,17 @@ export default function Home() {
     if (pendingUrlAction === null || !unlocked) {
       return;
     }
-    if (pendingUrlAction === "settings") {
+    if (pendingUrlAction.kind === "settings") {
       handleOpenSettings();
     } else {
-      handleNewItem();
+      handleNewItem(pendingUrlAction.type);
     }
     setPendingUrlAction(null);
     try {
       const url = new URL(window.location.href);
       url.searchParams.delete("panel");
       url.searchParams.delete("action");
+      url.searchParams.delete("type");
       window.history.replaceState({}, "", url.pathname + url.search + url.hash);
     } catch {
       // A test/runtime environment without full URL/History support --
@@ -227,7 +243,7 @@ export default function Home() {
             <TopBar
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}
-              onNewItem={handleNewItem}
+              onNewItem={() => handleNewItem()}
             />
             {/* The item list keeps its full width whether or not a side
                 panel is open — DetailPanel/TypePicker/ItemForm float OVER
