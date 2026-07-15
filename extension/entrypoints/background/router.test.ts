@@ -175,3 +175,54 @@ describe("WR-01 sender gate", () => {
     expect(r).toBeUndefined();
   });
 });
+
+// Phase 10 (Plan 10-01, T-10-01): handle()'s own assertPopupSender() guard,
+// independent of the WR-01 top-level gate above. A real hostile content
+// script never reaches this point today (WR-01's sender.url check already
+// rejects it before handle() runs) -- this pins the SECOND, independent
+// layer directly, so it stays proven even if a later plan legitimately
+// widens the WR-01 gate to admit content-relay senders for autofill.*
+// traffic (exactly the scenario the code comments warn about).
+describe("handle() privilege-tier guard (T-10-01)", () => {
+  it("refuses session.status from a sender with `tab` defined, even when id/url otherwise match this extension", async () => {
+    const result = await new Promise((resolve) => {
+      hoisted.listeners[0](
+        { kind: "session.status" },
+        {
+          id: "test-ext-id",
+          url: "chrome-extension://test-ext-id/popup.html",
+          tab: { id: 7 },
+        },
+        resolve,
+      );
+    });
+    expect(result).toEqual({ ok: false, error: "forbidden-sender" });
+    expect(hoisted.mockEnsureHydrated).not.toHaveBeenCalled();
+  });
+
+  it("refuses vault.list from the same tab-hosted sender shape", async () => {
+    const result = await new Promise((resolve) => {
+      hoisted.listeners[0](
+        { kind: "vault.list" },
+        {
+          id: "test-ext-id",
+          url: "chrome-extension://test-ext-id/popup.html",
+          tab: { id: 7 },
+        },
+        resolve,
+      );
+    });
+    expect(result).toEqual({ ok: false, error: "forbidden-sender" });
+  });
+
+  it("still dispatches session.status normally for the ordinary popup sender (no `tab`)", async () => {
+    // Explicit resolved value -- vi.clearAllMocks() in beforeEach clears
+    // call history but not a prior test's mockRejectedValue()
+    // implementation, so this test does not silently inherit another
+    // test's failure-mode mock.
+    hoisted.mockEnsureHydrated.mockResolvedValue(null);
+    const result = await send({ kind: "session.status" });
+    expect(result).not.toEqual({ ok: false, error: "forbidden-sender" });
+    expect(result).toEqual(expect.objectContaining({ kind: "locked" }));
+  });
+});
