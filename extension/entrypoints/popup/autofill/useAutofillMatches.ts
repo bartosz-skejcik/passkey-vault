@@ -24,6 +24,17 @@ export type AutofillPageState = "loading" | "ok" | "restricted" | "unreachable";
 
 const EMPTY_DETECTED: DetectedFields = { login: false, totp: false, card: false, identity: false };
 
+type TotpCodeResponse = MessageResponseMap["autofill.totpCode"];
+
+/** copyTotp's own return shape -- the same autofill.totpCode response,
+ * PLUS the clipboard auto-clear timer's duration (`clearSeconds`) on
+ * success, so a caller can render "Skopiowano kod. Wyczyści się za {n}s."
+ * (toast.copied) without re-deriving the clamped clipboard-seconds value
+ * itself (BUG copy-toast fix: this used to be silently dropped). */
+export type CopyTotpResult =
+  | (Extract<TotpCodeResponse, { ok: true }> & { clearSeconds: number })
+  | Extract<TotpCodeResponse, { ok: false }>;
+
 export interface UseAutofillMatchesResult {
   pageState: AutofillPageState;
   origin: string | null;
@@ -34,10 +45,10 @@ export interface UseAutofillMatchesResult {
   /** Fetches the live code WITHOUT writing to the clipboard -- used by
    * TotpFillRow's countdown-ring ticker so passive display polling never
    * clobbers the user's last explicit "Kopiuj kod" copy. */
-  peekTotp: (itemId: string) => Promise<MessageResponseMap["autofill.totpCode"]>;
+  peekTotp: (itemId: string) => Promise<TotpCodeResponse>;
   /** Fetches the live code AND writes it to the clipboard with the
    * configured auto-clear timer -- the one sanctioned "Kopiuj kod" action. */
-  copyTotp: (itemId: string) => Promise<MessageResponseMap["autofill.totpCode"]>;
+  copyTotp: (itemId: string) => Promise<CopyTotpResult>;
 }
 
 export function useAutofillMatches(): UseAutofillMatchesResult {
@@ -70,13 +81,14 @@ export function useAutofillMatches(): UseAutofillMatchesResult {
   );
 
   const copyTotp = useCallback(
-    async (itemId: string) => {
+    async (itemId: string): Promise<CopyTotpResult> => {
       const result = await peekTotp(itemId);
-      if (result.ok) {
-        const seconds = clampClipboardSeconds(readClipboardSeconds());
-        copyWithAutoClear(result.code, seconds * 1000);
+      if (!result.ok) {
+        return result;
       }
-      return result;
+      const clearSeconds = clampClipboardSeconds(readClipboardSeconds());
+      copyWithAutoClear(result.code, clearSeconds * 1000);
+      return { ...result, clearSeconds };
     },
     [peekTotp],
   );

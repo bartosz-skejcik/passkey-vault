@@ -19,7 +19,7 @@ import { AlertTriangle, ChevronDown, ChevronUp, Globe } from "lucide-react";
 import { useAutofillMatches } from "./useAutofillMatches";
 import AutofillItemRow from "./AutofillItemRow";
 import TotpFillRow from "./TotpFillRow";
-import { t, type Locale } from "../../../lib/i18n/autofill-dictionary";
+import { t, interpolate, type Locale } from "../../../lib/i18n/autofill-dictionary";
 import type { AutofillMatch } from "../../../lib/autofill/types";
 
 const FILL_FAILED_DISPLAY_MS = 4000;
@@ -36,7 +36,11 @@ function hostnameOf(origin: string | null): string {
 function AutofillEmptyState({ locale }: { locale: Locale }) {
   return (
     <div className="flex flex-col items-center gap-1 px-4 py-6 text-center" data-testid="autofill-empty-state">
-      <p className="font-hand text-base">{t(locale, "empty.heading")}</p>
+      {/* font-hand (Fuzzy Bubbles) dropped -- 09-UI-SPEC.md forbids the
+          playful hand-lettered face in the popup, and the popup theme
+          never even registers a --font-hand token, so the class was
+          dead. */}
+      <p className="text-base">{t(locale, "empty.heading")}</p>
       <p className="text-sm text-base-content/60">{t(locale, "empty.body")}</p>
     </div>
   );
@@ -61,12 +65,32 @@ export default function OnThisPageSection({ locale }: { locale: Locale }) {
   const { pageState, origin, detected, matches, fill, copyTotp, peekTotp } = useAutofillMatches();
   const [collapsed, setCollapsed] = useState(false);
   const [fillFailed, setFillFailed] = useState(false);
+  // BUG: TotpFillRow's "Kopiuj kod" wrote the clipboard but rendered no
+  // confirmation at all -- toast.copied/totp.copiedField (autofill-
+  // dictionary.ts) were dead keys. Auto-dismisses after the SAME
+  // clipboard auto-clear window the toast text itself names, mirroring
+  // fillFailed's own self-contained inline-alert pattern above.
+  const [copiedSeconds, setCopiedSeconds] = useState<number | null>(null);
 
   useEffect(() => {
     if (!fillFailed) return;
     const timer = setTimeout(() => setFillFailed(false), FILL_FAILED_DISPLAY_MS);
     return () => clearTimeout(timer);
   }, [fillFailed]);
+
+  useEffect(() => {
+    if (copiedSeconds === null) return;
+    const timer = setTimeout(() => setCopiedSeconds(null), copiedSeconds * 1000);
+    return () => clearTimeout(timer);
+  }, [copiedSeconds]);
+
+  async function handleCopyTotp(itemId: string) {
+    const result = await copyTotp(itemId);
+    if (result.ok) {
+      setCopiedSeconds(result.clearSeconds);
+    }
+    return result;
+  }
 
   // "restricted"/"unreachable" REPLACES the whole section with the plain
   // error banner (10-UI-SPEC.md's Component Inventory) -- no collapse
@@ -90,7 +114,7 @@ export default function OnThisPageSection({ locale }: { locale: Locale }) {
         onClick={() => setCollapsed((v) => !v)}
         aria-expanded={!collapsed}
       >
-        <span className="flex min-w-0 items-center gap-2 text-sm font-bold text-base-content/80">
+        <span className="flex min-w-0 items-center gap-2 text-base font-bold text-base-content/80">
           <Globe size={16} className="shrink-0" aria-hidden="true" />
           <span className="truncate">{heading}</span>
         </span>
@@ -112,7 +136,7 @@ export default function OnThisPageSection({ locale }: { locale: Locale }) {
                   match={match}
                   hasOtpField={detected.totp}
                   onFill={fill}
-                  onCopyTotp={copyTotp}
+                  onCopyTotp={handleCopyTotp}
                   onPeekTotp={peekTotp}
                   onFillFailed={() => setFillFailed(true)}
                 />
@@ -140,6 +164,19 @@ export default function OnThisPageSection({ locale }: { locale: Locale }) {
       {fillFailed ? (
         <div className="alert alert-error text-sm" data-testid="autofill-fill-failed-toast">
           <span>{t(locale, "fill.failed")}</span>
+        </div>
+      ) : null}
+
+      {/* Calm, non-alarming confirmation -- deliberately NOT alert-error/
+          alert-warning styling; a successful copy is not a problem. */}
+      {copiedSeconds !== null ? (
+        <div className="alert text-sm" data-testid="autofill-totp-copied-toast">
+          <span>
+            {interpolate(t(locale, "toast.copied"), {
+              field: t(locale, "totp.copiedField"),
+              n: String(copiedSeconds),
+            })}
+          </span>
         </div>
       ) : null}
     </div>
