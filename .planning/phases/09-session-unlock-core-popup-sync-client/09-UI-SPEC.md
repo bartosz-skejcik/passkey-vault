@@ -168,7 +168,7 @@ Both variants share the exact card vocabulary already established (`AuthCard`/`U
 - Header: `ChevronLeft` back button (40px hit area) + item name (Heading) + item-type badge.
 - Body: field rows only for fields that exist on this item type — label (Label role) + value (Body role, or `font-mono` for password/TOTP/card-number-shaped values) + trailing `Copy`/`Check` icon button (40px hit area, flash-confirm on click, reused verbatim from `02-UI-SPEC.md`).
 - Password fields default **masked** with an `Eye`/`EyeOff` reveal toggle (reused convention) — never rendered in plaintext by default, matching the web app's item-detail security posture.
-- No edit, no delete, no "open in web app" deep-link this phase (all deferred — CONTEXT.md's Deferred Ideas list explicitly keeps CRUD out of this phase's scope). If the item type is a passkey-managed credential, its RP ID / "last used" metadata (from `03-UI-SPEC.md`'s passkey-detail convention) may render read-only if trivially available from the synced item payload, but is not a required deliverable of this phase — a name + username/RP-identifier + copy-able secret fields is the floor.
+- No edit, no delete, no "open in web app" deep-link this phase (all deferred — CONTEXT.md's Deferred Ideas list explicitly keeps CRUD out of this phase's scope). If the item type is a passkey-managed credential, its RP ID / "last used" metadata (from `03-UI-SPEC.md`'s passkey-detail convention) **MUST render read-only whenever present in the synced item payload — RESOLVED by Bartek 2026-07-15 (Review Question 4): guaranteed this phase, not executor discretion.** Fields absent from the payload render as a muted "—" placeholder row, never silently omitted, so the surface is ready when Phase 12's provider starts writing these fields.
 
 ### Auto-lock control (EXT-03, resolves CONTEXT.md's Discretion Area)
 
@@ -184,12 +184,12 @@ Both variants share the exact card vocabulary already established (`AuthCard`/`U
 
 ---
 
-## Review Questions (non-blocking — sensible defaults chosen, flag if Bartek wants different taste calls)
+## Review Questions — RESOLVED by Bartek 2026-07-15 (AskUserQuestion round; binding for executors)
 
-1. **Auto-lock control placement/existence in this phase's popup.** Default chosen: a single footer `select`, not a settings screen. If you'd rather ship EXT-03's "configurable" requirement as a hard-coded 15-minute constant with zero UI this phase (deferring any user control to a later dedicated settings surface), that's an equally valid reading of CONTEXT.md's Discretion Area — flag if you want the control removed from Phase 9's scope entirely.
-2. **Sign-in variant's email field.** Assumed the popup needs a combined email+password login (mirroring `LoginForm`) for a genuinely fresh install, distinct from a shorter unlock-only variant for the common re-lock case. If the extension is always paired to an account via some other mechanism this phase doesn't otherwise describe (e.g., a required first-run "connect to your server" step not covered by EXT-02/03/04's wording), the sign-in variant's shape may need revisiting once Phase 8/9's actual account-pairing mechanics are confirmed in code.
-3. **Zero-item empty state and Fuzzy Bubbles.** This document keeps `13-UI-SPEC.md`'s zero-Fuzzy-Bubbles rule for the whole popup, including the empty state — a genuinely low-stakes, non-security moment where the web app itself *does* allow the hand-drawn annotation font. Flag if you'd rather carve out this one exception now rather than leaving it a standing "not yet revisited" item across two phases.
-4. **Item-detail depth for passkey-managed items.** RP ID / last-used metadata is described as "nice if trivially available, not required." Flag if you want it guaranteed this phase rather than left to executor discretion.
+1. **Auto-lock control placement.** ✅ RESOLVED: footer `select` in the popup (5/15/30/60 min), as specced. No dedicated settings screen this phase.
+2. **Sign-in variant's email field.** ✅ RESOLVED: two variants, as specced — full email+password sign-in (fresh install, after the EXT-05 first-run server-config step) mirroring `LoginForm`, plus short unlock-only variant for the re-lock case. Plans 09-04/09-06 already implement this shape.
+3. **Zero-item empty state and Fuzzy Bubbles.** ✅ RESOLVED: no exception — the whole popup, including the empty state, stays DM Sans-only per `13-UI-SPEC.md`'s rule. Revisitable later with screenshots.
+4. **Item-detail depth for passkey-managed items.** ✅ RESOLVED — OVERRIDE of the spec's default: RP ID / last-used metadata is **guaranteed this phase** (see Phase-Specific Notes above), not left to executor discretion.
 
 ---
 
