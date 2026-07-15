@@ -17,6 +17,7 @@ import { registerAutoLockAlarmListener, armAutoLock } from './background/autoloc
 import { ensureHydrated } from './background/vault-session';
 import { readSessionMeta } from './background/session-storage';
 import { ensureVaultSyncStarted } from './background/vault-store';
+import { registerSyncPollAlarmListener } from './background/sync-client';
 
 export default defineBackground({
   type: 'module',
@@ -47,6 +48,11 @@ export default defineBackground({
     // this file's other listener exists.
     registerMessageRouter();
     registerAutoLockAlarmListener();
+    // WR-06: the sync poll fallback is alarm-backed (a setInterval does not
+    // survive an MV3 idle-kill, which is precisely the WS-stripped-proxy
+    // scenario the fallback exists for). Registered synchronously here for
+    // the same reason as the two above.
+    registerSyncPollAlarmListener();
 
     // T-09-07: defensively re-arm the auto-lock alarm whenever a mid-
     // session SW restart finds the vault still logically unlocked — the

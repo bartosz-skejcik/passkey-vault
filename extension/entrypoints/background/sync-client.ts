@@ -29,11 +29,31 @@
 //      by re-checking `intentionalStop` once those awaits settle, before
 //      ever constructing a socket -- v0.1's synchronous connectWs() had no
 //      equivalent race window.
+import { browser } from "wxt/browser";
 import { readServerConfig, wsUrlFromBase } from "./server-config";
 import { getSessionToken } from "./session-storage";
 import { getSyncSnapshot, type SyncSnapshot } from "./vault-api";
 
-const POLL_INTERVAL_MS = 30_000;
+// WR-06 (09-REVIEW.md): the poll fallback is backed by chrome.alarms, NOT
+// setInterval. The module header above states this fallback exists so sync
+// "must not go silently dead behind a reverse proxy that drops Upgrade
+// headers" -- but a setInterval handle is destroyed by an MV3 idle-kill,
+// and that is EXACTLY the scenario it exists for: behind such a proxy there
+// is no WebSocket to keep the service worker alive, so the SW idles out
+// within ~30s and takes the poll timer with it. The fallback only worked
+// when the WS was healthy -- i.e. only when it wasn't needed. Same
+// reasoning autolock.ts:1-7 already applies to the auto-lock timer.
+//
+// DISTINCT alarm name from autolock.ts's "pv-auto-lock" -- the two alarms
+// are independent and must never collide (re-creating an alarm with the
+// same name replaces the previous one, so a collision would silently
+// disable one of the two controls).
+const POLL_ALARM = "pv-sync-poll";
+// Chrome clamps periodInMinutes to >= 1 minute in release builds, so the
+// old nominal 30s was never honored anyway. An honest 60s poll that
+// actually survives an idle-kill is strictly better than a 30s poll that
+// doesn't.
+const POLL_PERIOD_MINUTES = 1;
 const BACKOFF_START_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 
@@ -44,7 +64,6 @@ export interface SyncCallbacks {
 
 let ws: WebSocket | null = null;
 let backoffMs = BACKOFF_START_MS;
-let pollTimer: ReturnType<typeof setInterval> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let activeCallbacks: SyncCallbacks | null = null;
 // Guards against the CURRENTLY-CLOSING socket's own trailing onclose event
@@ -145,19 +164,36 @@ export function startSync(callbacks: SyncCallbacks): void {
   backoffMs = BACKOFF_START_MS;
   void connectWs();
   // Unconditional poll fallback, regardless of WS state (locked v0.1
-  // decision, carried over unchanged).
-  pollTimer = setInterval(() => {
-    void pullOnce();
-  }, POLL_INTERVAL_MS);
+  // decision, carried over unchanged) -- now alarm-backed so it survives
+  // an idle-kill (WR-06). Re-creating an alarm with the same name replaces
+  // the previous one, so this is safe on startSync's idempotent re-entry.
+  void browser.alarms.create(POLL_ALARM, { periodInMinutes: POLL_PERIOD_MINUTES });
+}
+
+/**
+ * WR-06: must be called synchronously at startup (background.ts), NOT from
+ * startSync() -- an MV3 service worker that misses registering its onAlarm
+ * listener on a given wake silently drops alarms fired during that wake
+ * window, which is the whole failure mode this conversion exists to fix.
+ * Mirrors autolock.ts's registerAutoLockAlarmListener() exactly.
+ *
+ * pullOnce() is itself a no-op when activeCallbacks is null (i.e. sync is
+ * stopped / the vault is locked), so a late alarm firing after stopSync can
+ * never repopulate a locked vault -- the T-09-18/19 property holds through
+ * this path too.
+ */
+export function registerSyncPollAlarmListener(): void {
+  browser.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === POLL_ALARM) {
+      void pullOnce();
+    }
+  });
 }
 
 export function stopSync(): void {
   intentionalStop = true; // set BEFORE closing -- see onclose guard above
   activeCallbacks = null;
-  if (pollTimer !== null) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
+  void browser.alarms.clear(POLL_ALARM);
   if (reconnectTimer !== null) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;

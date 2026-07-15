@@ -7,10 +7,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // 09-03's server-config.ts instead of a compiled-in env var) are why
 // getSessionToken/readServerConfig are mocked as Promise-resolving
 // (mockResolvedValue), unlike v0.1's synchronous localStorage read.
-const { mockGetSessionToken, mockReadServerConfig, mockGetSyncSnapshot } = vi.hoisted(() => ({
+const {
+  mockGetSessionToken,
+  mockReadServerConfig,
+  mockGetSyncSnapshot,
+  mockAlarmsCreate,
+  mockAlarmsClear,
+  alarmListeners,
+} = vi.hoisted(() => ({
   mockGetSessionToken: vi.fn(),
   mockReadServerConfig: vi.fn(),
   mockGetSyncSnapshot: vi.fn(),
+  // WR-06: the poll fallback is chrome.alarms-backed, so the alarm surface
+  // is mocked with a recorded listener array (a test can fire it directly,
+  // simulating a real browser.alarms.onAlarm dispatch on a fresh SW wake)
+  // -- same shape as vault-session.test.ts's own alarm fake.
+  mockAlarmsCreate: vi.fn(),
+  mockAlarmsClear: vi.fn(),
+  alarmListeners: [] as Array<(alarm: { name: string }) => void>,
+}));
+
+vi.mock("wxt/browser", () => ({
+  browser: {
+    alarms: {
+      create: mockAlarmsCreate,
+      clear: mockAlarmsClear,
+      onAlarm: {
+        addListener(fn: (alarm: { name: string }) => void) {
+          alarmListeners.push(fn);
+        },
+      },
+    },
+  },
 }));
 
 vi.mock("./session-storage", () => ({
@@ -69,6 +97,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   MockWebSocket.instances = [];
+  alarmListeners.length = 0;
   vi.stubGlobal("WebSocket", MockWebSocket);
   mockGetSessionToken.mockResolvedValue("session-token");
   mockReadServerConfig.mockResolvedValue({ baseUrl: "http://localhost:8620" });
@@ -165,15 +194,64 @@ describe("reconnect backoff", () => {
   });
 });
 
-describe("poll timer fallback", () => {
-  it("the poll timer independently triggers a pull at the 30s mark even with no WS activity", async () => {
+describe("WR-06: poll fallback is chrome.alarms-backed, not setInterval", () => {
+  it("startSync creates the poll alarm under its own DISTINCT name -- never colliding with autolock's pv-auto-lock", async () => {
     const { startSync } = await import("./sync-client");
     startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+    await vi.advanceTimersByTimeAsync(0);
 
-    // Never trigger onopen -- only the poll timer should fire a pull.
-    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mockAlarmsCreate).toHaveBeenCalledWith("pv-sync-poll", { periodInMinutes: 1 });
+    // A name collision would silently replace the auto-lock alarm and
+    // disable EXT-03 -- assert the two namespaces stay separate.
+    expect(mockAlarmsCreate).not.toHaveBeenCalledWith("pv-auto-lock", expect.anything());
+  });
+
+  it("the registered alarm handler triggers a pull with no WS activity -- the fallback survives an idle-kill", async () => {
+    const { startSync, registerSyncPollAlarmListener } = await import("./sync-client");
+    registerSyncPollAlarmListener();
+    startSync({ getSinceRevision: () => 7, onSnapshot: vi.fn() });
+    await vi.advanceTimersByTimeAsync(0);
+    mockGetSyncSnapshot.mockClear();
+
+    // Never trigger onopen -- this is the WS-stripped-proxy scenario the
+    // fallback exists for. A setInterval would simply be gone by now.
+    expect(alarmListeners).toHaveLength(1);
+    alarmListeners[0]?.({ name: "pv-sync-poll" });
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(mockGetSyncSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockGetSyncSnapshot).toHaveBeenCalledWith(7);
+  });
+
+  it("an unrelated alarm (pv-auto-lock) never triggers a sync pull", async () => {
+    const { startSync, registerSyncPollAlarmListener } = await import("./sync-client");
+    registerSyncPollAlarmListener();
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+    await vi.advanceTimersByTimeAsync(0);
+    mockGetSyncSnapshot.mockClear();
+
+    alarmListeners[0]?.({ name: "pv-auto-lock" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockGetSyncSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("stopSync clears the poll alarm, and a late alarm firing after it never pulls (locked vault stays empty)", async () => {
+    const { startSync, stopSync, registerSyncPollAlarmListener } = await import("./sync-client");
+    registerSyncPollAlarmListener();
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+    await vi.advanceTimersByTimeAsync(0);
+
+    stopSync();
+    expect(mockAlarmsClear).toHaveBeenCalledWith("pv-sync-poll");
+
+    // Belt-and-braces: even if a late alarm fires anyway (a real race on a
+    // fresh wake), pullOnce is a no-op with activeCallbacks null -- so a
+    // locked vault can never be repopulated through this path (T-09-18/19).
+    mockGetSyncSnapshot.mockClear();
+    alarmListeners[0]?.({ name: "pv-sync-poll" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetSyncSnapshot).not.toHaveBeenCalled();
   });
 });
 
