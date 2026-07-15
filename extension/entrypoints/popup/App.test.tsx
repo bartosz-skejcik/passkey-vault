@@ -3,7 +3,7 @@
 // unaffected by the AMENDMENT 2026-07-15 (which only supersedes
 // UnlockView's PRF wiring, not App.tsx's gating order).
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const { mockSendMessage, listeners } = vi.hoisted(() => ({
   mockSendMessage: vi.fn(),
@@ -118,6 +118,93 @@ describe("App.tsx view-state switch", () => {
     });
     expect(screen.queryByLabelText(/hasło|password/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/adres serwera|server address/i)).not.toBeInTheDocument();
+  });
+
+  // EXT-05's "editable later" clause (09-VERIFICATION.md gap 1): before
+  // this, ServerConfigView was reachable ONLY when config === null, so a
+  // user who mistyped their URL or moved their server was stuck forever.
+  describe("EXT-05: Change server re-entry", () => {
+    const LOCKED_STATUS = {
+      kind: "locked",
+      wasAutoLocked: false,
+      autoLockMinutes: 15,
+      extPasskeyEnrolled: false,
+      extPasskeyPromptSuppressed: false,
+    };
+
+    function primeLockedWithConfig(configSet?: (rawUrl: string) => unknown) {
+      mockSendMessage.mockImplementation(async (message: { kind: string; rawUrl?: string }) => {
+        if (message.kind === "config.get") return { baseUrl: "https://old.example.com" };
+        if (message.kind === "session.status") return LOCKED_STATUS;
+        if (message.kind === "config.set") return configSet?.(message.rawUrl ?? "") ?? { ok: true };
+        throw new Error(`unexpected message in this test: ${message.kind}`);
+      });
+    }
+
+    it("renders a Change server link on the unlock view", async () => {
+      primeLockedWithConfig();
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /zmień serwer|change server/i })).toBeInTheDocument();
+      });
+    });
+
+    it("clicking it opens the config view PRE-FILLED with the currently-persisted URL", async () => {
+      primeLockedWithConfig();
+      render(<App />);
+      await waitFor(() => screen.getByRole("button", { name: /zmień serwer|change server/i }));
+
+      screen.getByRole("button", { name: /zmień serwer|change server/i }).click();
+
+      const urlInput = await screen.findByLabelText(/adres serwera|server address/i);
+      // The seed is what makes this usable: a stuck user edits their typo
+      // rather than retyping the whole URL from memory.
+      expect(urlInput).toHaveValue("https://old.example.com");
+    });
+
+    it("cancel returns to the unlock view without changing anything", async () => {
+      primeLockedWithConfig();
+      render(<App />);
+      await waitFor(() => screen.getByRole("button", { name: /zmień serwer|change server/i }));
+      screen.getByRole("button", { name: /zmień serwer|change server/i }).click();
+      await screen.findByLabelText(/adres serwera|server address/i);
+
+      screen.getByRole("button", { name: /anuluj|cancel/i }).click();
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/hasło|password/i)).toBeInTheDocument();
+      });
+      expect(screen.queryByLabelText(/adres serwera|server address/i)).not.toBeInTheDocument();
+      expect(mockSendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "config.set" }),
+      );
+    });
+
+    it("a successful change dispatches config.set (same normalize -> probe -> persist path) and leaves the config view", async () => {
+      const configSetCalls: string[] = [];
+      primeLockedWithConfig((rawUrl) => {
+        configSetCalls.push(rawUrl);
+        return { ok: true };
+      });
+      render(<App />);
+      await waitFor(() => screen.getByRole("button", { name: /zmień serwer|change server/i }));
+      screen.getByRole("button", { name: /zmień serwer|change server/i }).click();
+
+      const urlInput = await screen.findByLabelText(/adres serwera|server address/i);
+      fireEvent.change(urlInput, { target: { value: "https://new.example.com" } });
+      fireEvent.submit(urlInput.closest("form")!);
+
+      // Reconfigure MUST go through the identical validation path as first
+      // run -- config.set is what probes /healthz before persisting, so a
+      // reconfigure can no more save an unreachable server than a first run.
+      await waitFor(() => {
+        expect(configSetCalls).toEqual(["https://new.example.com"]);
+      });
+      await waitFor(() => {
+        expect(screen.queryByLabelText(/adres serwera|server address/i)).not.toBeInTheDocument();
+      });
+    });
   });
 
   it("CR-01: a session.locked broadcast while on ItemDetailView drops back to UnlockView and clears the decrypted item from view", async () => {

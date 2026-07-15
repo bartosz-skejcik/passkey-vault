@@ -62,10 +62,13 @@ export default function UnlockView({
   locale,
   status,
   onUnlocked,
+  onChangeServer,
 }: {
   locale: Locale;
   status: UnlockStatus;
   onUnlocked: (viaPassword: boolean) => void;
+  /** EXT-05's "editable later" re-entry -- see the link at the foot of this view. */
+  onChangeServer: () => void;
 }) {
   const isSignIn = status.kind === "no-session";
   const wasAutoLocked = status.kind === "locked" ? status.wasAutoLocked : false;
@@ -262,6 +265,22 @@ export default function UnlockView({
           {t(locale, "unlock.submit")}
         </button>
       </form>
+
+      {/* EXT-05's "editable later" clause (09-VERIFICATION.md gap 1). This
+          view is where a user with a wrong/moved server is actually stuck
+          -- unlock fails and there was NO path back to the server config
+          once one had been persisted, so a typo meant wiping extension
+          storage or reinstalling. Deliberately discreet (a muted text
+          link, below the primary action): reconfiguring is a rare
+          recovery, not a routine control, and must never compete with
+          Unlock. */}
+      <button
+        type="button"
+        className="btn btn-link btn-xs self-center text-base-content/60 no-underline hover:underline"
+        onClick={onChangeServer}
+      >
+        {t(locale, "config.changeServer")}
+      </button>
     </div>
   );
 }

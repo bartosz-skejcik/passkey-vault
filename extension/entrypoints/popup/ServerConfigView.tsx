@@ -34,14 +34,31 @@ import { sendMessage } from "../../lib/messaging/ext-protocol";
 import { normalizeServerUrl } from "../../lib/server-url";
 import { t, type Locale } from "../../lib/i18n/dictionary";
 
+/**
+ * EXT-05 has TWO entry points, differing only in seed + escape hatch:
+ *   - First run (`initialUrl: ""`, no `onCancel`): the blocking gate.
+ *   - Reconfigure (`initialUrl` = the persisted URL, `onCancel` returns to
+ *     unlock): reached from UnlockView's "Change server" link, closing
+ *     09-VERIFICATION.md's gap 1 -- the SC's "editable later" clause. A
+ *     user who mistypes their URL or moves their self-hosted server was
+ *     otherwise stuck forever (wipe storage / reinstall).
+ *
+ * The VALIDATION PATH IS IDENTICAL for both, deliberately: normalize ->
+ * config.set (which probes /healthz) -> persist. A reconfigure can no more
+ * save an unreachable server than a first run can.
+ */
 export default function ServerConfigView({
   locale,
   onConfigured,
+  initialUrl = "",
+  onCancel,
 }: {
   locale: Locale;
   onConfigured: () => void;
+  initialUrl?: string;
+  onCancel?: () => void;
 }) {
-  const [rawUrl, setRawUrl] = useState("");
+  const [rawUrl, setRawUrl] = useState(initialUrl);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<"invalid-url" | "unreachable" | null>(null);
 
@@ -109,6 +126,19 @@ export default function ServerConfigView({
           {submitting ? <span className="loading loading-spinner loading-sm" aria-hidden="true" /> : null}
           {t(locale, "config.submit")}
         </button>
+
+        {/* Only rendered in reconfigure mode -- the first-run gate has
+            nowhere to back out TO (no config exists yet). */}
+        {onCancel !== undefined ? (
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            disabled={submitting}
+            onClick={onCancel}
+          >
+            {t(locale, "config.cancel")}
+          </button>
+        ) : null}
       </form>
     </div>
   );

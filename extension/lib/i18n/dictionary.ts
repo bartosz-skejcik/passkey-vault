@@ -126,6 +126,14 @@ export const DICTIONARY = {
     pl: "Nie można połączyć z tym serwerem. Sprawdź adres i upewnij się, że działa.",
     en: "Can't reach that server. Check the address and make sure it's running.",
   },
+  // EXT-05's "editable later" clause (09-VERIFICATION.md gap 1): the
+  // discreet re-entry affordance on the UNLOCK view -- where a user with a
+  // wrong/moved server is actually stuck. Deliberately NOT in the list-view
+  // footer (cramped) and NOT the header gear (that redirects to the WEB
+  // app's settings per EXT-06's binding NordPass layout, and could never
+  // change the extension's own chrome.storage.local baseUrl anyway).
+  "config.changeServer": { pl: "Zmień serwer", en: "Change server" },
+  "config.cancel": { pl: "Anuluj", en: "Cancel" },
   "config.permissionDenied": {
     pl: "Bez tej zgody rozszerzenie nie może łączyć się z Twoim serwerem. Spróbuj ponownie i zaakceptuj prośbę o uprawnienie.",
     en: "Without this permission the extension can't talk to your server. Try again and accept the permission prompt.",

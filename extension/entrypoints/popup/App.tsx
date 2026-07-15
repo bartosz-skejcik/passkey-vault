@@ -21,7 +21,12 @@ type UnlockableStatus = Extract<SessionStatus, { kind: "no-session" } | { kind: 
 
 type ViewState =
   | { kind: "loading" }
-  | { kind: "server-config" }
+  // EXT-05 has two modes here, distinguished by `returnTo`: the FIRST-RUN
+  // gate (`returnTo: null` -- no config exists, nowhere to back out to) and
+  // RECONFIGURE (`returnTo` = the unlock status to restore on cancel),
+  // reached from UnlockView's "Change server" link. `initialUrl` seeds the
+  // field with the currently-persisted URL in the latter case.
+  | { kind: "server-config"; initialUrl: string; returnTo: UnlockableStatus | null }
   | { kind: "unlock"; status: UnlockableStatus }
   | { kind: "list" }
   | { kind: "detail"; item: VaultItem };
@@ -34,10 +39,22 @@ export default function App() {
   async function refreshFromScratch() {
     const config = await sendMessage({ kind: "config.get" });
     if (config === null) {
-      setView({ kind: "server-config" });
+      // First-run gate: no config yet, so no seed and no way to cancel.
+      setView({ kind: "server-config", initialUrl: "", returnTo: null });
       return;
     }
     await refreshSessionStatus();
+  }
+
+  /**
+   * EXT-05's "editable later" re-entry (09-VERIFICATION.md gap 1). Seeds the
+   * field with the CURRENTLY-persisted URL (read authoritatively from the
+   * background, never from popup state) and remembers the unlock status to
+   * restore if the user cancels.
+   */
+  async function handleChangeServer(status: UnlockableStatus) {
+    const config = await sendMessage({ kind: "config.get" });
+    setView({ kind: "server-config", initialUrl: config?.baseUrl ?? "", returnTo: status });
   }
 
   async function refreshSessionStatus() {
@@ -111,11 +128,29 @@ export default function App() {
   }
 
   if (view.kind === "server-config") {
-    return <ServerConfigView locale={locale} onConfigured={() => void refreshSessionStatus()} />;
+    const returnTo = view.returnTo;
+    return (
+      <ServerConfigView
+        locale={locale}
+        initialUrl={view.initialUrl}
+        onConfigured={() => void refreshSessionStatus()}
+        // Undefined in first-run mode -- ServerConfigView renders no cancel
+        // button at all without it, keeping that gate blocking.
+        onCancel={returnTo === null ? undefined : () => setView({ kind: "unlock", status: returnTo })}
+      />
+    );
   }
 
   if (view.kind === "unlock") {
-    return <UnlockView locale={locale} status={view.status} onUnlocked={(viaPassword) => void handleUnlocked(viaPassword)} />;
+    const status = view.status;
+    return (
+      <UnlockView
+        locale={locale}
+        status={status}
+        onUnlocked={(viaPassword) => void handleUnlocked(viaPassword)}
+        onChangeServer={() => void handleChangeServer(status)}
+      />
+    );
   }
 
   if (view.kind === "detail") {

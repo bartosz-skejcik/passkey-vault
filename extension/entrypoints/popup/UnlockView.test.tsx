@@ -69,7 +69,7 @@ describe("UnlockView — Unlock-only variant (session.status 'locked')", () => {
       throw new Error(`unexpected: ${message.kind}`);
     });
 
-    render(<UnlockView locale="en" status={lockedStatus()} onUnlocked={vi.fn()} />);
+    render(<UnlockView locale="en" status={lockedStatus()} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />);
 
     expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
 
@@ -102,7 +102,7 @@ describe("UnlockView — Unlock-only variant (session.status 'locked')", () => {
       <UnlockView
         locale="en"
         status={lockedStatus({ extPasskeyEnrolled: true })}
-        onUnlocked={onUnlocked}
+        onUnlocked={onUnlocked} onChangeServer={vi.fn()}
       />,
     );
 
@@ -123,7 +123,7 @@ describe("UnlockView — Unlock-only variant (session.status 'locked')", () => {
 
   it("Test 4b (replaced — visibility gate): extPasskeyEnrolled false renders no PRF button and no explainer line", () => {
     render(
-      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: false })} onUnlocked={vi.fn()} />,
+      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: false })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
     );
     expect(screen.queryByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/passkey/i)).not.toBeInTheDocument();
@@ -134,7 +134,7 @@ describe("UnlockView — Unlock-only variant (session.status 'locked')", () => {
     delete window.PublicKeyCredential;
 
     render(
-      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: true })} onUnlocked={vi.fn()} />,
+      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: true })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
     );
 
     expect(screen.queryByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i })).not.toBeInTheDocument();
@@ -156,7 +156,7 @@ describe("UnlockView — Unlock-only variant (session.status 'locked')", () => {
     });
 
     render(
-      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: true })} onUnlocked={vi.fn()} />,
+      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: true })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i }));
@@ -178,7 +178,7 @@ describe("UnlockView — Sign-in variant (session.status 'no-session')", () => {
       throw new Error(`unexpected: ${message.kind}`);
     });
 
-    render(<UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} />);
+    render(<UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText(/^email$/i), { target: { value: "a@example.com" } });
     const passwordInput = screen.getByLabelText(/master password|hasło/i) as HTMLInputElement;
@@ -195,7 +195,7 @@ describe("UnlockView — Sign-in variant (session.status 'no-session')", () => {
   });
 
   it("Test 5: the Sign-in variant NEVER renders a PRF button or explainer this phase, regardless of PublicKeyCredential support", () => {
-    render(<UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} />);
+    render(<UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />);
     expect(screen.queryByRole("button", { name: /passkey/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/passkey/i)).not.toBeInTheDocument();
   });
