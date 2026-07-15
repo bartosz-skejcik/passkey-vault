@@ -39,7 +39,7 @@
 // re-verification against the target PAGE, which is an orthogonal
 // concern to this router's popup-vs-content-script sender gate.
 import { browser } from "wxt/browser";
-import type { Message, MessageResponseMap } from "../../lib/messaging/ext-protocol";
+import type { Message, MessageOf, MessageResponseMap } from "../../lib/messaging/ext-protocol";
 import { b64ToBytes } from "../../lib/messaging/bytes-b64";
 import { assertPopupSender, type MessageSender } from "./frame-guard";
 import { ensureHydrated, noteActivity } from "./vault-session";
@@ -48,6 +48,7 @@ import { readSessionMeta, writeSessionMeta } from "./session-storage";
 import { handleUnlockPassword } from "./unlock";
 import { getItems, getFolders } from "./vault-store";
 import { handleAutofillFill, handleAutofillMatch, handleAutofillTotpCode } from "./autofill-match";
+import { handleFillFrame, handleMatchFrame } from "./autofill-frame";
 import {
   handleExtEnrollStart,
   handleExtEnrollFinish,
@@ -107,6 +108,62 @@ export function registerMessageRouter(): void {
     });
     return true; // keep the message channel open for the async sendResponse
   });
+}
+
+// Phase 10 (Plan 10-09): the content-relay <-> background channel underlying
+// the in-page overlay (Plan 10-10 is pure UI on top of this). This is a
+// SECOND, INDEPENDENT `runtime.onMessage` listener -- deliberately NOT
+// routed through `handle()` above, and deliberately NOT gated by the
+// popup router's own addListener-level WR-01 sender check (which drops
+// every content-script sender before `handle()` ever runs). Content
+// scripts are exactly the senders this channel exists to serve, so
+// admitting them here does not "loosen" WR-01 -- WR-01 keeps refusing
+// every `session.*`/`vault.*` request from a content script, completely
+// unchanged, in the OTHER listener. Each handler
+// (entrypoints/background/autofill-frame.ts) independently re-verifies its
+// own sender via `assertContentSender()` before touching anything, so this
+// listener's addListener callback itself needs no sender check beyond the
+// kind filter below -- defense-in-depth lives inside the handlers, exactly
+// like `handle()`'s own `assertPopupSender()` re-check does for its tier.
+export function registerAutofillFrameChannel(): void {
+  browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+    if (!isContentFrameMessage(message)) {
+      return undefined; // not one of this channel's kinds -- let the popup router (or another listener) handle it
+    }
+    void handleContentFrameMessage(message, sender).then(sendResponse, (e: unknown) => {
+      console.error("[passkey-vault] autofill-frame handler failed", message.kind, e);
+      sendResponse({ ok: false, reason: "target-unreachable" });
+    });
+    return true; // keep the message channel open for the async sendResponse
+  });
+}
+
+function isContentFrameMessage(
+  message: unknown,
+): message is MessageOf<"autofill.matchFrame"> | MessageOf<"autofill.fillFrame"> {
+  if (
+    typeof message !== "object" ||
+    message === null ||
+    typeof (message as { kind?: unknown }).kind !== "string"
+  ) {
+    return false;
+  }
+  const kind = (message as { kind: string }).kind;
+  return kind === "autofill.matchFrame" || kind === "autofill.fillFrame";
+}
+
+async function handleContentFrameMessage(
+  message: MessageOf<"autofill.matchFrame"> | MessageOf<"autofill.fillFrame">,
+  sender: MessageSender,
+): Promise<unknown> {
+  switch (message.kind) {
+    case "autofill.matchFrame":
+      return handleMatchFrame(message, sender);
+    case "autofill.fillFrame":
+      return handleFillFrame(message, sender);
+    default:
+      throw new Error(`unhandled content-frame message kind: ${(message as { kind: string }).kind}`);
+  }
 }
 
 function isProtocolMessage(message: unknown): message is Message {

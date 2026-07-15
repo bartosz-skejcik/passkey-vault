@@ -18,7 +18,7 @@
 // effects placed outside `main()` would break the build, not just the
 // runtime. Registering the listener itself is synchronous; only the
 // listener's own callback body is async.
-import { registerMessageRouter } from './background/router';
+import { registerMessageRouter, registerAutofillFrameChannel } from './background/router';
 import { registerAutoLockAlarmListener, armAutoLock } from './background/autolock';
 import { ensureHydrated } from './background/vault-session';
 import { readSessionMeta } from './background/session-storage';
@@ -50,6 +50,13 @@ export default defineBackground({
     // WR-01 sender-validation gate, so it stays secure independently of
     // what other listeners exist.
     registerMessageRouter();
+    // Plan 10-09: the content-relay <-> background channel (a SEPARATE
+    // listener from registerMessageRouter() above, see router.ts's own
+    // header comment for why) -- registered synchronously here for the same
+    // reason as every other listener in this function: an MV3 service
+    // worker that misses registering onMessage on a given wake silently
+    // drops messages fired during that wake window.
+    registerAutofillFrameChannel();
     registerAutoLockAlarmListener();
     // WR-06: the sync poll fallback is alarm-backed (a setInterval does not
     // survive an MV3 idle-kill, which is precisely the WS-stripped-proxy

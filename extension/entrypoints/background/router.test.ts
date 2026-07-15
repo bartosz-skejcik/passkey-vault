@@ -19,6 +19,7 @@ const hoisted = vi.hoisted(() => ({
   mockReadSessionMeta: vi.fn(),
   mockWriteSessionMeta: vi.fn(),
   mockEnsureHydrated: vi.fn(),
+  mockHandleMatchFrame: vi.fn(),
   listeners: [] as Array<(m: unknown, s: unknown, r: unknown) => unknown>,
 }));
 
@@ -79,8 +80,12 @@ vi.mock("./vault-store", () => ({
   getVaultList: vi.fn(),
   ensureVaultSyncStarted: vi.fn(),
 }));
+vi.mock("./autofill-frame", () => ({
+  handleMatchFrame: hoisted.mockHandleMatchFrame,
+  handleFillFrame: vi.fn(),
+}));
 
-import { registerMessageRouter } from "./router";
+import { registerAutofillFrameChannel, registerMessageRouter } from "./router";
 
 const OWN_SENDER = { id: "test-ext-id", url: "chrome-extension://test-ext-id/popup.html" };
 
@@ -246,5 +251,56 @@ describe("handle() privilege-tier guard (T-10-01)", () => {
     const result = await send({ kind: "session.status" });
     expect(result).not.toEqual({ ok: false, error: "forbidden-sender" });
     expect(result).toEqual(expect.objectContaining({ kind: "locked" }));
+  });
+});
+
+// Phase 10 (Plan 10-09): registerAutofillFrameChannel() is a SECOND,
+// INDEPENDENT listener from registerMessageRouter() -- this pins that a
+// content-script sender reaches the NEW listener for its two kinds while
+// the popup router's WR-01 addListener-level gate (registered above, in
+// this same beforeEach) still refuses that exact sender shape for
+// session.status, unchanged.
+describe("registerAutofillFrameChannel", () => {
+  const CONTENT_SENDER = { id: "test-ext-id", tab: { id: 7 }, origin: "https://a.example" };
+
+  it("accepts a content-sender autofill.matchFrame message on the frame channel, while the popup router still refuses a content-sender session.status", async () => {
+    hoisted.mockHandleMatchFrame.mockResolvedValue({
+      pageState: "ok",
+      origin: "https://a.example",
+      detected: { login: true, totp: false, card: false, identity: false },
+      matches: [],
+    });
+    registerAutofillFrameChannel();
+    expect(hoisted.listeners).toHaveLength(2); // popup router (index 0) + frame channel (index 1)
+
+    const frameResult = await new Promise((resolve) => {
+      const kept = hoisted.listeners[1](
+        {
+          kind: "autofill.matchFrame",
+          detected: { login: true, totp: false, card: false, identity: false },
+        },
+        CONTENT_SENDER,
+        resolve,
+      );
+      expect(kept).toBe(true); // async channel held open
+    });
+    expect(frameResult).toEqual(expect.objectContaining({ pageState: "ok" }));
+    expect(hoisted.mockHandleMatchFrame).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "autofill.matchFrame" }),
+      CONTENT_SENDER,
+    );
+
+    // The SAME content-script sender still gets refused by the popup
+    // router's own WR-01 addListener-level gate for session.status -- the
+    // new channel does not widen that gate at all.
+    const popupResult = hoisted.listeners[0]({ kind: "session.status" }, CONTENT_SENDER, vi.fn());
+    expect(popupResult).toBeUndefined();
+  });
+
+  it("returns undefined for a kind that isn't one of its two -- steps aside for the popup router", () => {
+    registerAutofillFrameChannel();
+    const result = hoisted.listeners[1]({ kind: "session.status" }, CONTENT_SENDER, vi.fn());
+    expect(result).toBeUndefined();
+    expect(hoisted.mockHandleMatchFrame).not.toHaveBeenCalled();
   });
 });
