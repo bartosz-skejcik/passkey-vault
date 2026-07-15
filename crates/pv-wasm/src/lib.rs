@@ -2,12 +2,21 @@
 //!
 //! Surowe bajty kluczy nigdy nie przekraczają granicy WASM/JS jako
 //! Vec<u8>/&[u8] — tylko nieprzezroczyste handle (patrz WasmUserKey,
-//! WasmWrappingKey). Jedyny wyjątek to `randomSalt`, bo sól jest jawna
-//! (nie jest materiałem kluczowym). Rozpakowanie klucza poza handle
+//! WasmWrappingKey). Jedyny jawny wyjątek to `randomSalt`, bo sól jest
+//! jawna (nie jest materiałem kluczowym). Rozpakowanie klucza poza handle
 //! (np. dodanie metody zwracającej `&[u8]`) zostawiłoby niezerowalną
-//! kopię w pamięci JS — dlatego jedyny sposób, by materiał klucza
+//! kopię w pamięci JS — dlatego zwykły sposób, by materiał klucza
 //! "opuścił" handle, to skarmienie go do `wrap_user_key`/`encrypt_item`,
 //! które produkują ciphertext, nie sekret.
+//!
+//! SANKCJONOWANY WYJĄTEK OD TEJ REGUŁY (CONTEXT.md D-02):
+//! `exportUserKeyForSession`/`importUserKeyFromSession` celowo przepuszczają
+//! surowe bajty `WasmUserKey` jako `Vec<u8>`/`&mut [u8]` — jedyne miejsce w
+//! całym kodzie poza `randomSalt`, gdzie tak się dzieje. Powód: rozszerzenie
+//! (MV3 service worker) traci cały stan WASM (w tym nieprzezroczyste handle)
+//! przy idle-kill, więc musi umieć zserializować User Key do
+//! `chrome.storage.session` i odtworzyć go po przebudzeniu. Patrz komentarz
+//! przy `export_user_key_for_session` poniżej.
 
 use pv_core::{
     items::{decrypt_item as core_decrypt_item, encrypt_item as core_encrypt_item, EncryptedItem},
@@ -109,6 +118,37 @@ impl WasmUserKey {
     pub fn generate() -> WasmUserKey {
         WasmUserKey(UserKey::generate())
     }
+}
+
+// SANCTIONED EXCEPTION (CONTEXT.md D-02): the MV3 extension's service
+// worker destroys its WASM instance (and every opaque handle in its linear
+// memory) on idle-kill, so the extension MUST be able to serialize a
+// WasmUserKey's raw bytes into chrome.storage.session and reconstruct it
+// on wake. This is the ONLY place raw User Key bytes cross the WASM
+// boundary as a Vec<u8> in the whole codebase — web/ NEVER calls these two
+// functions; only extension/entrypoints/background/vault-session.ts may.
+// Callers MUST zeroize the JS-side byte buffer immediately after writing
+// it to chrome.storage.session (Phase 9 Wave 2's responsibility).
+#[wasm_bindgen(js_name = exportUserKeyForSession)]
+pub fn export_user_key_for_session(uk: &WasmUserKey) -> Vec<u8> {
+    uk.0.expose().to_vec()
+}
+
+/// Inverse of `exportUserKeyForSession` — reconstructs a `WasmUserKey` from
+/// its raw exported bytes. `bytes` is zeroized (WASM-side, and via
+/// wasm-bindgen's mutable-slice copy-back, the JS-side view too)
+/// regardless of success or failure, mirroring `from_password`'s/
+/// `from_prf`'s zeroize-regardless-of-outcome discipline.
+#[wasm_bindgen(js_name = importUserKeyFromSession)]
+pub fn import_user_key_from_session(bytes: &mut [u8]) -> Result<WasmUserKey, JsValue> {
+    if bytes.len() != KEY_LEN {
+        bytes.zeroize();
+        return Err(to_js_str_err("expected 32 bytes"));
+    }
+    let mut arr = [0u8; KEY_LEN];
+    arr.copy_from_slice(bytes);
+    bytes.zeroize();
+    Ok(WasmUserKey(UserKey::from_bytes(arr)))
 }
 
 #[wasm_bindgen(js_name = wrapUserKey)]
@@ -389,5 +429,34 @@ mod tests {
     fn totp_now_rejects_invalid_secret() {
         let result = totp_now("not-valid-base32!!!", "SHA1", 6, 30, 100);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn export_import_user_key_roundtrip() {
+        let uk = WasmUserKey::generate();
+        // Capture the original exposed bytes as an owned array before the
+        // export call borrows `uk` — comparing against a second, unrelated
+        // `WasmUserKey::generate()` would be wrong (different key material).
+        let original: [u8; 32] = *uk.0.expose();
+        let mut exported = export_user_key_for_session(&uk);
+        let imported =
+            import_user_key_from_session(&mut exported).expect("import should succeed");
+        assert_eq!(imported.0.expose(), &original);
+    }
+
+    #[test]
+    fn import_user_key_from_session_rejects_wrong_length() {
+        let mut short = vec![0u8; 16];
+        let result = import_user_key_from_session(&mut short);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn import_user_key_from_session_zeroizes_input_on_success() {
+        let uk = WasmUserKey::generate();
+        let mut exported = export_user_key_for_session(&uk);
+        let _imported =
+            import_user_key_from_session(&mut exported).expect("import should succeed");
+        assert!(exported.iter().all(|&b| b == 0));
     }
 }
