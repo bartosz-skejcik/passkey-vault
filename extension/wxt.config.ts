@@ -17,6 +17,11 @@ import { defineConfig } from 'wxt';
 // See https://wxt.dev/api/config.html
 export default defineConfig({
   manifest: {
+    // `chrome.storage.session` (the ONLY sanctioned home for the unlocked
+    // User Key, per the v0.2 session-key rule) is undefined at runtime
+    // without this permission -- unit tests missed it because they inject a
+    // fake storage; the real-browser Phase 8 UAT caught it.
+    permissions: ['storage'],
     // D-07: explicit MV3 CSP permitting WASM compilation in the extension
     // background/pages context. Declared literally so it is never left to
     // an implicit/permissive default -- plan 08-03 grep-verifies the
