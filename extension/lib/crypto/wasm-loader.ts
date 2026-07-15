@@ -16,6 +16,8 @@ import init, {
   unwrapUserKey,
   defaultKdfParamsJson,
   randomSalt,
+  exportUserKeyForSession,
+  importUserKeyFromSession,
 } from "./wasm/pv_wasm.js";
 
 // Both WasmWrappingKey and WasmUserKey are re-exported as VALUES (not just
@@ -28,6 +30,12 @@ import init, {
 // static method must cross this choke-point directly.
 export { WasmWrappingKey, WasmUserKey };
 export { wrapUserKey, unwrapUserKey, defaultKdfParamsJson, randomSalt };
+// Plan 09-01's sanctioned exception (see crates/pv-wasm/src/lib.rs's
+// export_user_key_for_session doc comment, D-02): the ONLY raw-key-bytes
+// crossing this choke-point, required so entrypoints/background/
+// vault-session.ts (Plan 09-02) can survive a service-worker idle-kill by
+// round-tripping a WasmUserKey's bytes through chrome.storage.session.
+export { exportUserKeyForSession, importUserKeyFromSession };
 
 // Module-level singleton promise — memoizes the (expensive, one-time) wasm
 // module instantiation. Mirrors `web/src/lib/crypto/index.ts`'s `ready`/
