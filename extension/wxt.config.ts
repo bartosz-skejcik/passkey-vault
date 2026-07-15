@@ -80,7 +80,18 @@ export default defineConfig({
     // permission -- registerAutoLockAlarmListener() then throws during
     // main(), aborting service-worker startup so EVERY message hangs.
     // Caught by the real-browser Phase 9 UAT, invisible to mocked tests.
-    permissions: ['storage', 'alarms'],
+    //
+    // `activeTab`: WITHOUT it, `tabs.query({active:true,currentWindow:true})`
+    // returns the active tab with `url` STRIPPED, so autofill-match.ts's
+    // resolveFillTarget() sees `tabUrl: undefined` and every match resolves
+    // "restricted" -- autofill dead on arrival (Phase 10, caught by the
+    // packaged-build UAT in real Chrome; 10-04's SUMMARY claimed activeTab
+    // was "implicit", but activeTab has no effect unless DECLARED here).
+    // Opening the action popup is activeTab's classic trigger, which grants
+    // temporary host access to exactly the tab the user is filling into --
+    // the minimal, gesture-bound grant matching FILL's "explicit user
+    // gesture" requirement. No broad `tabs` permission, no blanket hosts.
+    permissions: ['storage', 'alarms', 'activeTab'],
     // EXT-05: deliberately `optional_host_permissions`, NOT `host_permissions`
     // -- the extension is ONE public build with no origin known at compile
     // time (each user self-hosts pv-server at their own URL).
