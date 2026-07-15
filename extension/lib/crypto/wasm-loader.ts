@@ -20,6 +20,7 @@ import init, {
   importUserKeyFromSession,
   deriveAuthMaterial,
   decryptItem,
+  totpNow as wasmTotpNow,
 } from "./wasm/pv_wasm.js";
 
 // Both WasmWrappingKey and WasmUserKey are re-exported as VALUES (not just
@@ -49,6 +50,28 @@ export { deriveAuthMaterial };
 // never raw key bytes (the WasmUserKey handle used for decryption is
 // itself an opaque handle, already re-exported above).
 export { decryptItem };
+
+// Plan 10-04's autofill-match.ts needs the live TOTP derivation entry
+// point -- mirrors web/src/lib/crypto/index.ts's own totpNow wrapper
+// exactly (see that file's header comment for the full rationale): the
+// JSON.parse happens once here so every caller gets the same
+// `{code, secondsRemaining}` shape, and `period`/`unixTimeSeconds` are
+// `u64` on the Rust side (marshaled as `bigint` by wasm-bindgen) --
+// converted here so callers keep passing plain numbers. No zeroize/
+// lifecycle concerns: a TOTP secret is a per-item stored value, not root
+// key material (pv-wasm's own module doc).
+export type TotpNowResult = { code: string; secondsRemaining: number };
+
+export function totpNow(
+  secretB32: string,
+  algorithm: string,
+  digits: number,
+  period: number,
+  unixTimeSeconds: number,
+): TotpNowResult {
+  const json = wasmTotpNow(secretB32, algorithm, digits, BigInt(period), BigInt(unixTimeSeconds));
+  return JSON.parse(json) as TotpNowResult;
+}
 
 // Module-level singleton promise — memoizes the (expensive, one-time) wasm
 // module instantiation. Mirrors `web/src/lib/crypto/index.ts`'s `ready`/
