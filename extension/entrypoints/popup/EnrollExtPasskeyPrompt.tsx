@@ -17,6 +17,7 @@ import { useState } from "react";
 import { browser } from "wxt/browser";
 import { Fingerprint, Loader2 } from "lucide-react";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
+import { bytesToB64 } from "../../lib/messaging/bytes-b64";
 import { buildExtCreateOptions, buildExtGetOptions } from "../../lib/passkeys/ext-prf";
 import { extractPrfBytes } from "../../lib/passkeys/prf";
 import { t, type Locale } from "../../lib/i18n/dictionary";
@@ -98,11 +99,18 @@ export default function EnrollExtPasskeyPrompt({
         return;
       }
 
+      // Post-UAT protocol fix: encode to base64 (JSON-transport-safe over
+      // Chrome's MV3 sendMessage), then zeroize the transient source array
+      // immediately -- same discipline as UnlockView.tsx's PRF-finish path.
+      const prfArray = new Uint8Array(prfBytes);
+      const prfB64 = bytesToB64(prfArray);
+      prfArray.fill(0);
+
       const finish = await sendMessage({
         kind: "extPasskey.enroll.finish",
         credentialIdB64url: created.id,
         prfSaltB64: start.prfSaltB64,
-        prfBytes,
+        prfB64,
       });
 
       if (finish.ok) {

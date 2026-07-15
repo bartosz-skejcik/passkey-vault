@@ -24,6 +24,7 @@
 // by deleting the check.
 import { browser } from "wxt/browser";
 import type { Message, MessageResponseMap } from "../../lib/messaging/ext-protocol";
+import { b64ToBytes } from "../../lib/messaging/bytes-b64";
 import { ensureHydrated, noteActivity } from "./vault-session";
 import { armAutoLock } from "./autolock";
 import { readSessionMeta } from "./session-storage";
@@ -104,17 +105,28 @@ async function handle(message: Message): Promise<unknown> {
     case "session.setAutoLockMinutes":
       return setAutoLockMinutes(message.minutes);
     case "unlock.password":
-      return handleUnlockPassword(message.passwordBytes);
+      // b64ToBytes()'s output is a freshly-allocated Uint8Array -- handed
+      // straight to handleUnlockPassword(), which already zeroizes it (its
+      // own `finally { passwordBytes.fill(0) }`, unl.ts) regardless of
+      // outcome. No separate fill(0) needed here.
+      return handleUnlockPassword(b64ToBytes(message.passwordB64));
     case "unlock.prf.start":
       return handleUnlockPrfStart();
     case "unlock.prf.finish":
+      // `.buffer` on a freshly-decoded Uint8Array is safe (no shared/offset
+      // view) -- handleUnlockPrfFinish's own WasmWrappingKey.fromPrf() call
+      // zeroizes the same underlying buffer as a side effect. The `as
+      // ArrayBuffer` cast below is narrowing lib.dom's generic
+      // `Uint8Array<ArrayBufferLike>.buffer` (which admits `SharedArrayBuffer`)
+      // back to the concrete `ArrayBuffer` this freshly-allocated array is
+      // always backed by -- never a shared buffer.
       return handleUnlockPrfFinish({
         stateId: message.stateId,
         credentialJson: message.credentialJson,
-        prfBytes: message.prfBytes,
+        prfBytes: b64ToBytes(message.prfB64).buffer as ArrayBuffer,
       });
     case "auth.signIn.password":
-      return handleUnlockPassword(message.passwordBytes, message.email);
+      return handleUnlockPassword(b64ToBytes(message.passwordB64), message.email);
     case "auth.signIn.prf.start":
       return handleSignInPrfStart(message.email);
     case "auth.signIn.prf.finish":
@@ -122,7 +134,7 @@ async function handle(message: Message): Promise<unknown> {
         stateId: message.stateId,
         email: message.email,
         credentialJson: message.credentialJson,
-        prfBytes: message.prfBytes,
+        prfBytes: b64ToBytes(message.prfB64).buffer as ArrayBuffer,
       });
     case "vault.list":
       return { items: getItems(), folders: getFolders() };
@@ -132,7 +144,7 @@ async function handle(message: Message): Promise<unknown> {
       return handleExtEnrollFinish({
         credentialIdB64url: message.credentialIdB64url,
         prfSaltB64: message.prfSaltB64,
-        prfBytes: message.prfBytes,
+        prfBytes: b64ToBytes(message.prfB64).buffer as ArrayBuffer,
       });
     case "extPasskey.suppressPrompt":
       return setExtPasskeyPromptSuppressed(message.suppress).then(() => ({ ok: true as const }));
@@ -141,7 +153,7 @@ async function handle(message: Message): Promise<unknown> {
     case "unlock.extPrf.finish":
       return handleExtPrfUnlockFinish({
         credentialIdB64url: message.credentialIdB64url,
-        prfBytes: message.prfBytes,
+        prfBytes: b64ToBytes(message.prfB64).buffer as ArrayBuffer,
       });
     case "config.get":
       return handleConfigGet();

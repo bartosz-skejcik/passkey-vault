@@ -23,6 +23,18 @@
 // each plan's own export surface) — erased at compile time, so this file
 // (and any popup that imports it) never bundles background-only runtime
 // code, only the type shape.
+//
+// Post-UAT protocol fix (JSON-transport safety): every binary field on this
+// union is a base64 STRING (`*B64` suffix), never a raw `Uint8Array`/
+// `ArrayBuffer`/`BufferSource` -- Chrome's MV3 `sendMessage` transport
+// JSON-serializes its payload, which silently mangles those types into
+// `{"0":1,...}`/`{}` (see lib/messaging/bytes-b64.ts's header comment for
+// the full root cause). Senders encode with `bytesToB64`, receivers decode
+// with `b64ToBytes` from that file. `ext-protocol.test.ts`'s
+// JSON-round-trip fixture test is the structural gate against regression:
+// adding a new binary field back to this union without going through
+// bytes-b64.ts will fail that test (and, via its fixture-exhaustiveness
+// switch, fail `tsc` if a new `kind` is added without a fixture at all).
 import { browser } from "wxt/browser";
 import type { UnlockResult, PrfStartResult } from "../../entrypoints/background/unlock";
 import type { ExtEnrollStartResult, ExtUnlockResult } from "../../entrypoints/background/ext-passkey";
@@ -52,18 +64,18 @@ export type Message =
   | { kind: "session.status" }
   | { kind: "session.setAutoLockMinutes"; minutes: number }
   // Unlock-only pair — existing token, SessionUser-gated server routes.
-  | { kind: "unlock.password"; passwordBytes: Uint8Array }
+  | { kind: "unlock.password"; passwordB64: string }
   | { kind: "unlock.prf.start" }
-  | { kind: "unlock.prf.finish"; stateId: string; credentialJson: unknown; prfBytes: ArrayBuffer }
+  | { kind: "unlock.prf.finish"; stateId: string; credentialJson: unknown; prfB64: string }
   // Sign-in pair — fresh install/no-session, mints a new session token.
-  | { kind: "auth.signIn.password"; passwordBytes: Uint8Array; email: string }
+  | { kind: "auth.signIn.password"; passwordB64: string; email: string }
   | { kind: "auth.signIn.prf.start"; email: string }
   | {
       kind: "auth.signIn.prf.finish";
       stateId: string;
       email: string;
       credentialJson: unknown;
-      prfBytes: ArrayBuffer;
+      prfB64: string;
     }
   // Read path only (CONTEXT.md's locked out-of-scope boundary — no
   // create/edit/delete this phase): the popup's current decrypted item/
@@ -82,13 +94,13 @@ export type Message =
       kind: "extPasskey.enroll.finish";
       credentialIdB64url: string;
       prfSaltB64: string;
-      prfBytes: ArrayBuffer;
+      prfB64: string;
     }
   | { kind: "extPasskey.suppressPrompt"; suppress: boolean }
   // Unlock pair — existing token, no ceremony verification server-side (the
   // PRF output IS the secret).
   | { kind: "unlock.extPrf.start" }
-  | { kind: "unlock.extPrf.finish"; credentialIdB64url: string; prfBytes: ArrayBuffer }
+  | { kind: "unlock.extPrf.finish"; credentialIdB64url: string; prfB64: string }
   // 09-06: the popup's server-URL configuration screen (EXT-05) and the
   // "open full vault" / header redirect controls' sole source of the
   // configured pv-server origin -- delegates directly to server-config.ts

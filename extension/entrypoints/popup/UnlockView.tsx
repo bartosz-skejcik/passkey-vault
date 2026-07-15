@@ -32,6 +32,7 @@ import { browser } from "wxt/browser";
 import { Fingerprint, Loader2 } from "lucide-react";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
 import type { SessionStatus } from "../../lib/messaging/ext-protocol";
+import { bytesToB64 } from "../../lib/messaging/bytes-b64";
 import { buildExtGetOptions } from "../../lib/passkeys/ext-prf";
 import { extractPrfBytes } from "../../lib/passkeys/prf";
 import { t, type Locale } from "../../lib/i18n/dictionary";
@@ -99,10 +100,18 @@ export default function UnlockView({
     setPasswordError(null);
     setSubmitting(true);
     const passwordBytes = new TextEncoder().encode(password);
+    // Post-UAT protocol fix: Chrome's MV3 sendMessage JSON-serializes the
+    // payload, mangling a raw Uint8Array field into `{"0":..,"1":..}` --
+    // encode to base64 (already JSON-safe) here, then zeroize the transient
+    // source array immediately. The b64 string is an unavoidable,
+    // equal-to-today exposure (it's the exact same bytes JSON.stringify
+    // would otherwise have already serialized wholesale).
+    const passwordB64 = bytesToB64(passwordBytes);
+    passwordBytes.fill(0);
     try {
       const result = isSignIn
-        ? await sendMessage({ kind: "auth.signIn.password", email, passwordBytes })
-        : await sendMessage({ kind: "unlock.password", passwordBytes });
+        ? await sendMessage({ kind: "auth.signIn.password", email, passwordB64 })
+        : await sendMessage({ kind: "unlock.password", passwordB64 });
       if (result.ok) {
         onUnlocked(true);
       } else {
@@ -151,10 +160,16 @@ export default function UnlockView({
         return;
       }
 
+      // Same JSON-transport-safety encode/zeroize discipline as the
+      // password path above.
+      const prfArray = new Uint8Array(prfBytes);
+      const prfB64 = bytesToB64(prfArray);
+      prfArray.fill(0);
+
       const finish = await sendMessage({
         kind: "unlock.extPrf.finish",
         credentialIdB64url: start.credentialIdB64url,
-        prfBytes,
+        prfB64,
       });
 
       if (finish.ok) {
