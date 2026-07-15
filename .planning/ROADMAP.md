@@ -126,7 +126,7 @@ Plans:
   4. Identity fields (name, address, email, phone) fill from a saved identity item.
   5. Nothing autofills without an explicit user gesture, and nothing fills top-level-page credentials into a cross-origin iframe — verified against a deliberately constructed adversarial iframe test page.
 
-**Plans**: 6/7 plans executed
+**Plans**: 6/10 plans executed
 Plans:
 
 - [x] 10-01-PLAN.md — Message contract (autofill.* kinds) + frame-guard origin/frame access-control gate + router sender-threading (D-04/D-09/D-10)
@@ -135,7 +135,11 @@ Plans:
 - [x] 10-04-PLAN.md — Background match/fill/totpCode handlers: origin-gated decrypt, live totpNow, frame-addressed dispatch, fill-time re-verification (D-02/D-08)
 - [x] 10-05-PLAN.md — ISOLATED content-relay (detect/fill, all-frames, crypto-free) + native-setter React-safe fill-dom (D-01, Pitfall 5)
 - [x] 10-06-PLAN.md — Popup "Na tej stronie" autofill UI: picker, TOTP fill/copy, card/identity second-confirm (D-07/D-12, UI-SPEC)
-- [ ] 10-07-PLAN.md — Adversarial cross-origin-iframe fixture + SC#5 UAT gate + real-forms framework-fill checklist
+- [x] 10-07-PLAN.md — Adversarial cross-origin-iframe fixture + SC#5 UAT gate + real-forms framework-fill checklist (SC#5 proven; blocking-human taste checkpoint surfaced 2 scope decisions below)
+- [ ] 10-09-PLAN.md — Content-frame protocol (autofill.matchFrame/fillFrame) + background handlers + dedicated content-sender guard (Bartek: in-page affordance, security half)
+- [ ] 10-10-PLAN.md — In-page shadow-DOM overlay: in-field dropdown (focus) + form-detect prompt, NordPass-style, crypto-free; blocking-human taste checkpoint (Bartek)
+
+_Note: 10-08's TOTP issuer-match fix (Bartek's checkpoint decision) landed inline as commit ee01c31; 10-09/10-10 add the in-page affordance he requested at the 10-07 checkpoint, replacing the popup-only MVP scope the UI-SPEC had flagged for his confirmation._
 
 **UI hint**: yes
 
