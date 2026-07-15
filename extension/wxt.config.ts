@@ -21,7 +21,12 @@ export default defineConfig({
     // User Key, per the v0.2 session-key rule) is undefined at runtime
     // without this permission -- unit tests missed it because they inject a
     // fake storage; the real-browser Phase 8 UAT caught it.
-    permissions: ['storage'],
+    // `alarms`: chrome.alarms drives the auto-lock timer (09-02, EXT-03).
+    // Same failure mode as storage: undefined API at runtime without the
+    // permission -- registerAutoLockAlarmListener() then throws during
+    // main(), aborting service-worker startup so EVERY message hangs.
+    // Caught by the real-browser Phase 9 UAT, invisible to mocked tests.
+    permissions: ['storage', 'alarms'],
     // EXT-05: deliberately `optional_host_permissions`, NOT `host_permissions`
     // -- the extension is ONE public build with no origin known at compile
     // time (each user self-hosts pv-server at their own URL).
