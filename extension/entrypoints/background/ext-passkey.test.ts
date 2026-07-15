@@ -71,6 +71,7 @@ vi.mock("./auth-api", () => ({
 // mocking this module, not the raw wasm glue, proves that choke-point
 // discipline.
 vi.mock("../../lib/crypto/wasm-loader", () => ({
+  initCrypto: vi.fn().mockResolvedValue(undefined),
   wrapUserKey: hoisted.mockWrapUserKey,
   unwrapUserKey: hoisted.mockUnwrapUserKey,
   WasmWrappingKey: { fromExtPrf: hoisted.mockFromExtPrf },

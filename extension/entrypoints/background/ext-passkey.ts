@@ -21,7 +21,7 @@ import {
   listExtensionPasskeys,
   ApiClientError,
 } from "./auth-api";
-import { WasmWrappingKey, wrapUserKey, unwrapUserKey } from "../../lib/crypto/wasm-loader";
+import { initCrypto, WasmWrappingKey, wrapUserKey, unwrapUserKey } from "../../lib/crypto/wasm-loader";
 import { ensureHydrated, getUnlockedUserKey, isSessionUnlocked, setUnlockedUserKey } from "./vault-session";
 import { readSessionMeta } from "./session-storage";
 import type { UnlockResult } from "./unlock";
@@ -122,6 +122,7 @@ export async function handleExtEnrollFinish(args: {
   const prfArray = new Uint8Array(args.prfBytes);
   let wrappingKey: WasmWrappingKey | undefined;
   try {
+    await initCrypto(); // fresh SW has no WASM yet (see unlock.ts, UAT find #5)
     await ensureHydrated();
     const uk = getUnlockedUserKey();
     if (uk === null) {
@@ -202,6 +203,7 @@ export async function handleExtPrfUnlockFinish(args: {
   const prfArray = new Uint8Array(args.prfBytes);
   let wrappingKey: WasmWrappingKey | undefined;
   try {
+    await initCrypto(); // fresh SW has no WASM yet (see unlock.ts, UAT find #5)
     let rows;
     try {
       rows = await listExtensionPasskeys();

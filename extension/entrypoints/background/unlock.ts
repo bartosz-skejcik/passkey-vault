@@ -23,7 +23,7 @@ import {
   base64Decode,
   ApiClientError,
 } from "./auth-api";
-import { deriveAuthMaterial, unwrapUserKey, WasmWrappingKey } from "../../lib/crypto/wasm-loader";
+import { deriveAuthMaterial, initCrypto, unwrapUserKey, WasmWrappingKey } from "../../lib/crypto/wasm-loader";
 import { setUnlockedUserKey } from "./vault-session";
 import { readSessionMeta } from "./session-storage";
 import { DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
@@ -56,6 +56,12 @@ export async function handleUnlockPassword(
   let wrappingKey: WasmWrappingKey | undefined;
 
   try {
+    // A fresh service-worker instance has NO live WASM until something
+    // initializes it -- only the hydration path did, so a first-ever
+    // sign-in hit an uninitialized module and failed instantly as
+    // "unknown" (real-browser UAT find #5; mocked wasm-loader made unit
+    // tests blind). Idempotent + memoized, so this is cheap on re-entry.
+    await initCrypto();
     if (email === undefined) {
       // Unlock-only, mirrors UnlockOverlay.tsx's unlockFromPassword: a 401
       // here means the session token itself is no longer valid -- return a
@@ -129,6 +135,7 @@ export async function handleUnlockPrfFinish(args: {
   prfBytes: ArrayBuffer;
 }): Promise<UnlockResult> {
   try {
+    await initCrypto(); // see handleUnlockPassword -- fresh SW has no WASM yet
     const finish = await apiUnlockFinish({
       state_id: args.stateId,
       credential: args.credentialJson,
@@ -186,6 +193,7 @@ export async function handleSignInPrfFinish(args: {
   prfBytes: ArrayBuffer;
 }): Promise<UnlockResult> {
   try {
+    await initCrypto(); // see handleUnlockPassword -- fresh SW has no WASM yet
     const finish = await apiPasskeyLoginFinish({
       state_id: args.stateId,
       credential: args.credentialJson,
