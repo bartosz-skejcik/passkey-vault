@@ -127,12 +127,15 @@ export default function EnrollExtPasskeyPrompt({
     onDone();
   }
 
+  // Ticking the box records the PREFERENCE only — it must never dismiss the
+  // card (Bartek, live test): a checkbox that also closes the surface it
+  // lives on is a trap, and it stole the chance to tick-then-still-enrol.
+  // Dismissal stays an explicit act: "Not now" (handleSkip) or a completed
+  // enrollment. The suppression is already persisted here, so whichever way
+  // the card is dismissed afterwards, the prompt stays gone.
   function handleDontAskAgainChange(checked: boolean) {
     setDontAskAgain(checked);
     void sendMessage({ kind: "extPasskey.suppressPrompt", suppress: checked });
-    if (checked) {
-      onDone();
-    }
   }
 
   return (

@@ -142,7 +142,12 @@ export default function ItemListView({
   const trimmedQuery = query.trim();
 
   return (
-    <div className="flex w-[380px] flex-col gap-2 p-2">
+    // `relative` anchors the FAB + its menu at POPUP level, deliberately
+    // OUTSIDE the scrolling list below: an `overflow-y-auto` ancestor forms
+    // a clipping context, which silently cut the upward-opening type menu
+    // off at the list's edge (Bartek, live test: only the last two entries
+    // were ever visible, which read as "the menu only has Identity+Note").
+    <div className="relative flex w-[380px] flex-col gap-2 p-2">
       <div className="flex items-center justify-between gap-2 px-1 pt-1">
         <button
           type="button"
@@ -173,7 +178,11 @@ export default function ItemListView({
         />
       </div>
 
-      <div className="relative flex min-h-[120px] flex-col divide-y divide-base-300 overflow-y-auto">
+      {/* min-h keeps the popup a stable, comfortable size instead of
+          collapsing around 1-2 rows; max-h keeps it inside the browser's
+          ~600px popup ceiling (09-UI-SPEC "Popup shell"), scrolling beyond
+          that. The FAB is NOT in here -- see the wrapper comment above. */}
+      <div className="flex min-h-[280px] max-h-[380px] flex-col divide-y divide-base-300 overflow-y-auto">
         {trimmedQuery !== "" && results.length === 0 ? (
           // Distinct from the zero-items-ever-created empty state below --
           // this is "zero matches for a live query", checked FIRST so a
@@ -214,40 +223,43 @@ export default function ItemListView({
           })
         )}
 
-        <div ref={fabMenuRef} className="absolute bottom-2 right-2">
-          {typeMenuOpen ? (
-            <ul
-              role="menu"
-              className="menu absolute bottom-12 right-0 z-10 w-44 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
-            >
-              {NEW_ITEM_TYPE_ORDER.map((itemType) => {
-                const Icon = TYPE_ICON[itemType];
-                return (
-                  <li key={itemType}>
-                    <button type="button" role="menuitem" onClick={() => void handleNewItemType(itemType)}>
-                      <Icon size={16} aria-hidden="true" />
-                      {t(locale, TYPE_LABEL_KEY[itemType])}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : null}
-          <button
-            type="button"
-            aria-label={t(locale, "nav.newItem")}
-            aria-haspopup="menu"
-            aria-expanded={typeMenuOpen}
-            className="btn btn-primary btn-circle btn-sm"
-            onClick={() => setTypeMenuOpen((open) => !open)}
+      </div>
+
+      {/* FAB lives at popup level (see wrapper comment) so the menu can
+          overlay the list instead of being clipped by its scroll box. */}
+      <div ref={fabMenuRef} className="absolute bottom-16 right-3 z-50">
+        {typeMenuOpen ? (
+          <ul
+            role="menu"
+            className="menu absolute bottom-12 right-0 max-h-[260px] w-44 flex-nowrap overflow-y-auto rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
           >
-            <Plus size={18} aria-hidden="true" />
-          </button>
-        </div>
+            {NEW_ITEM_TYPE_ORDER.map((itemType) => {
+              const Icon = TYPE_ICON[itemType];
+              return (
+                <li key={itemType}>
+                  <button type="button" role="menuitem" onClick={() => void handleNewItemType(itemType)}>
+                    <Icon size={16} aria-hidden="true" />
+                    {t(locale, TYPE_LABEL_KEY[itemType])}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+        <button
+          type="button"
+          aria-label={t(locale, "nav.newItem")}
+          aria-haspopup="menu"
+          aria-expanded={typeMenuOpen}
+          className="btn btn-primary btn-circle btn-sm shadow-lg"
+          onClick={() => setTypeMenuOpen((open) => !open)}
+        >
+          <Plus size={18} aria-hidden="true" />
+        </button>
       </div>
 
       <div className="flex items-center justify-between gap-2 border-t border-base-300 px-1 pt-2">
-        <label htmlFor="pv-autolock" className="text-sm text-base-content/70">
+        <label htmlFor="pv-autolock" className="whitespace-nowrap text-sm text-base-content/70">
           {t(locale, "autolock.label")}
         </label>
         <select

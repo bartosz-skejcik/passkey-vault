@@ -127,7 +127,7 @@ describe("EnrollExtPasskeyPrompt", () => {
     expect(mockSendMessage.mock.calls.some(([m]) => m.kind === "extPasskey.suppressPrompt")).toBe(false);
   });
 
-  it("checking 'Don't ask again' dispatches extPasskey.suppressPrompt and dismisses", async () => {
+  it("checking 'Don't ask again' records the preference but does NOT dismiss the card", async () => {
     mockSendMessage.mockResolvedValue({ ok: true });
     const onDone = vi.fn();
     render(<EnrollExtPasskeyPrompt locale="en" onDone={onDone} />);
@@ -139,6 +139,41 @@ describe("EnrollExtPasskeyPrompt", () => {
         expect.objectContaining({ kind: "extPasskey.suppressPrompt", suppress: true }),
       );
     });
-    expect(onDone).toHaveBeenCalledTimes(1);
+    // Regression (Bartek, live test): ticking the box used to call onDone(),
+    // yanking the card away mid-interaction. Dismissal must stay explicit.
+    expect(onDone).not.toHaveBeenCalled();
+    expect(screen.getByRole("checkbox", { name: /don't ask again|nie pytaj ponownie/i })).toBeChecked();
+  });
+
+  it("can tick 'Don't ask again' AND still enrol in the same interaction", async () => {
+    const prfBytes = new Uint8Array(32).fill(7).buffer;
+    navigator.credentials.create = vi.fn().mockResolvedValue(mockCreatedCredential(true));
+    navigator.credentials.get = vi.fn().mockResolvedValue(mockGetAssertion(prfBytes));
+
+    const saltB64 = btoa("0123456789abcdef0123456789abcdef");
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "extPasskey.suppressPrompt") return { ok: true };
+      if (message.kind === "extPasskey.enroll.start") {
+        return {
+          ok: true,
+          accountEmail: "a@example.com",
+          userHandleB64: btoa("userhandle"),
+          challengeB64: btoa("challenge"),
+          prfSaltB64: saltB64,
+        };
+      }
+      if (message.kind === "extPasskey.enroll.finish") return { ok: true };
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+    const onDone = vi.fn();
+    render(<EnrollExtPasskeyPrompt locale="en" onDone={onDone} />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /don't ask again|nie pytaj ponownie/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create a passkey|utwórz passkey/i }));
+
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+    expect(mockSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "extPasskey.enroll.finish" }),
+    );
   });
 });
