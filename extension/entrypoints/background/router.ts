@@ -30,8 +30,14 @@
 // gate in front of every `session.*`/`vault.*` kind -- see that function's
 // header for why this is deliberately a SECOND, independent check rather
 // than a replacement for the WR-01 gate above. Plan 10-04 adds the
-// `autofill.*` cases to the switch below (this plan only threads `sender`
-// and adds the guard so those cases have something to enforce against).
+// `autofill.match`/`autofill.fill`/`autofill.totpCode` cases below,
+// dispatching to entrypoints/background/autofill-match.ts -- these kinds
+// are deliberately NOT subject to the `assertPopupSender()` tier guard
+// above (it only gates `session.*`/`vault.*`): they legitimately
+// originate from the popup like every other kind here, and
+// autofill-match.ts's own handlers do their own origin/frame
+// re-verification against the target PAGE, which is an orthogonal
+// concern to this router's popup-vs-content-script sender gate.
 import { browser } from "wxt/browser";
 import type { Message, MessageResponseMap } from "../../lib/messaging/ext-protocol";
 import { b64ToBytes } from "../../lib/messaging/bytes-b64";
@@ -41,6 +47,7 @@ import { armAutoLock, AUTOLOCK_OPTIONS, DEFAULT_AUTOLOCK_MINUTES } from "./autol
 import { readSessionMeta, writeSessionMeta } from "./session-storage";
 import { handleUnlockPassword } from "./unlock";
 import { getItems, getFolders } from "./vault-store";
+import { handleAutofillFill, handleAutofillMatch, handleAutofillTotpCode } from "./autofill-match";
 import {
   handleExtEnrollStart,
   handleExtEnrollFinish,
@@ -123,7 +130,10 @@ function isProtocolMessage(message: unknown): message is Message {
     kind === "unlock.extPrf.start" ||
     kind === "unlock.extPrf.finish" ||
     kind === "config.get" ||
-    kind === "config.set"
+    kind === "config.set" ||
+    kind === "autofill.match" ||
+    kind === "autofill.fill" ||
+    kind === "autofill.totpCode"
   );
 }
 
@@ -185,7 +195,12 @@ async function handle(message: Message, sender: MessageSender): Promise<unknown>
       return handleConfigGet();
     case "config.set":
       return handleConfigSet(message.rawUrl);
-    // Plan 10-04 adds: case "autofill.match": case "autofill.fill": case "autofill.totpCode":
+    case "autofill.match":
+      return handleAutofillMatch(sender);
+    case "autofill.fill":
+      return handleAutofillFill(message, sender);
+    case "autofill.totpCode":
+      return handleAutofillTotpCode(message, sender);
     default:
       throw new Error(`unhandled message kind: ${(message as { kind: string }).kind}`);
   }
