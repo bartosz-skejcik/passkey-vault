@@ -192,6 +192,73 @@ describe("lock-state subscription", () => {
     expect(vaultStore.getFolders()).toEqual([]);
   });
 
+  it("Test 6 (post-UAT regression): ensureVaultSyncStarted() on a fresh module that is ALREADY unlocked (no transition fired) starts sync AND populates items", async () => {
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockDecryptItem.mockReturnValue(
+      JSON.stringify({ type: "note", name: "N1", body: "b", folderId: null, tags: [] }),
+    );
+    hoisted.mockGetSyncSnapshot.mockResolvedValue({ revision: 1, items: [itemRow("i1")] });
+
+    const { ensureVaultSyncStarted, getItems } = await import("./vault-store");
+
+    // No lock-state transition ever fires here -- this simulates a fresh
+    // service worker waking up to find the session already unlocked
+    // (rehydrated from chrome.storage.session), the exact scenario the
+    // subscription-only implementation missed.
+    ensureVaultSyncStarted();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(hoisted.mockStartSync).toHaveBeenCalledTimes(1);
+    expect(hoisted.mockGetSyncSnapshot).toHaveBeenCalledWith(0);
+    expect(getItems()).toEqual([
+      {
+        id: "i1",
+        revision: 1,
+        fields: { type: "note", name: "N1", body: "b", folderId: null, tags: [] },
+        updatedAt: "2026-01-01",
+      },
+    ]);
+  });
+
+  it("Test 7 (post-UAT regression): calling ensureVaultSyncStarted() twice while unlocked does not double-start sync", async () => {
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockGetSyncSnapshot.mockResolvedValue({ revision: 0 });
+
+    const { ensureVaultSyncStarted } = await import("./vault-store");
+
+    ensureVaultSyncStarted();
+    ensureVaultSyncStarted();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(hoisted.mockStartSync).toHaveBeenCalledTimes(1);
+    expect(hoisted.mockGetSyncSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("Test 8 (post-UAT regression): after a lock resets the guard, the NEXT unlock transition starts sync again (not permanently suppressed)", async () => {
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockGetSyncSnapshot.mockResolvedValue({ revision: 0 });
+
+    const vaultStore = await import("./vault-store");
+
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+    vaultStore.ensureVaultSyncStarted();
+    await Promise.resolve();
+    expect(hoisted.mockStartSync).toHaveBeenCalledTimes(1);
+
+    hoisted.mockIsSessionUnlocked.mockReturnValue(false);
+    lockStateListener(); // lock transition -- resets the syncStarted guard
+
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+    lockStateListener(); // re-unlock transition
+    await Promise.resolve();
+
+    expect(hoisted.mockStartSync).toHaveBeenCalledTimes(2);
+  });
+
   it("Test 5: a lock event broadcasts a vault.updated message for any open popup, tolerating no-receiver rejections", async () => {
     hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
     hoisted.mockDecryptItem.mockReturnValue(

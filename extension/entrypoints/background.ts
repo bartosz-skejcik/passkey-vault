@@ -16,6 +16,7 @@ import { registerMessageRouter } from './background/router';
 import { registerAutoLockAlarmListener, armAutoLock } from './background/autolock';
 import { ensureHydrated } from './background/vault-session';
 import { readSessionMeta } from './background/session-storage';
+import { ensureVaultSyncStarted } from './background/vault-store';
 
 export default defineBackground({
   type: 'module',
@@ -57,11 +58,22 @@ export default defineBackground({
     // re-arm here after e.g. a service-worker crash/reload mid-session.
     // Fire-and-forget IIFE, not a top-level await (see this file's own
     // header comment on why main() must stay synchronous).
+    //
+    // Post-UAT fix: this is also the ONLY place a fresh-but-already-
+    // unlocked wake is ever detected (ensureHydrated() returning non-null
+    // here IS that signal) — vault-store.ts's own lock-state subscription
+    // only reacts to a lock->unlock TRANSITION, which never fires on this
+    // path. Without ensureVaultSyncStarted() here, sync/the initial pull
+    // never start and the popup shows an empty vault indefinitely (found
+    // by the real-browser Phase 9 UAT). ensureVaultSyncStarted() is
+    // idempotent, so calling it here is safe even if a real transition
+    // also fires around the same time.
     void (async () => {
       const uk = await ensureHydrated();
       if (uk === null) {
         return;
       }
+      ensureVaultSyncStarted();
       const meta = await readSessionMeta();
       if (meta !== null) {
         await armAutoLock(meta.idleTimeoutMinutes);

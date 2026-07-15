@@ -124,6 +124,36 @@ export function applySyncSnapshot(snapshot: SyncSnapshot): void {
   }
 }
 
+// Post-UAT fix: a fresh MV3 service worker that wakes with the session
+// ALREADY unlocked (rehydrated from chrome.storage.session -- see
+// background.ts's own wake-path comment) never fires a lock->unlock
+// TRANSITION, so the subscription below alone never runs startSync/the
+// initial pull, and the popup shows an empty vault until some unrelated
+// vault.updated broadcast happens to repopulate it (found by the
+// real-browser Phase 9 UAT). `syncStarted` guards against double-starting
+// when BOTH the wake path calls this directly AND a genuine transition
+// fires moments later (startSync() is itself idempotent -- see
+// sync-client.ts -- but the redundant getSyncSnapshot(0) pull below is
+// not, so the flag is still needed here).
+let syncStarted = false;
+
+/**
+ * Idempotent. Starts the sync transport + the initial getSyncSnapshot(0)
+ * pull IF the session is unlocked and sync isn't already running; a no-op
+ * otherwise (including on every call after the first while still
+ * unlocked). The ONE implementation shared by the lock-state subscription
+ * below (real unlock transition) and background.ts's wake path (an
+ * already-unlocked wake with no transition to react to).
+ */
+export function ensureVaultSyncStarted(): void {
+  if (syncStarted || !isSessionUnlocked()) {
+    return;
+  }
+  syncStarted = true;
+  startSync({ getSinceRevision: () => lastKnownRevision, onSnapshot: applySyncSnapshot });
+  void getSyncSnapshot(0).then(applySyncSnapshot);
+}
+
 // Module-level side effect (mirrors web/src/lib/vault/store.ts's own
 // subscribeLockState side effect): unlocking the vault starts the sync
 // transport AND triggers an immediate getSyncSnapshot(0) pull (instant
@@ -134,9 +164,9 @@ export function applySyncSnapshot(snapshot: SyncSnapshot): void {
 // call-order assertion).
 subscribeSessionLockState(() => {
   if (isSessionUnlocked()) {
-    startSync({ getSinceRevision: () => lastKnownRevision, onSnapshot: applySyncSnapshot });
-    void getSyncSnapshot(0).then(applySyncSnapshot);
+    ensureVaultSyncStarted();
   } else {
+    syncStarted = false; // re-arm the guard for the NEXT unlock
     stopSync(); // MUST run before the array-clear below
     lastKnownRevision = 0;
     items = [];
