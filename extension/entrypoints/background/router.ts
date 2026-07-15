@@ -26,8 +26,8 @@ import { browser } from "wxt/browser";
 import type { Message, MessageResponseMap } from "../../lib/messaging/ext-protocol";
 import { b64ToBytes } from "../../lib/messaging/bytes-b64";
 import { ensureHydrated, noteActivity } from "./vault-session";
-import { armAutoLock } from "./autolock";
-import { readSessionMeta } from "./session-storage";
+import { armAutoLock, AUTOLOCK_OPTIONS, DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
+import { readSessionMeta, writeSessionMeta } from "./session-storage";
 import {
   handleUnlockPassword,
   handleUnlockPrfStart,
@@ -63,7 +63,15 @@ export function registerMessageRouter(): void {
       return undefined; // not one of this router's kinds -- let other listeners handle it
     }
 
-    void noteActivity(); // re-arm auto-lock on any popup activity; no-op if locked
+    // Re-arm auto-lock on any popup activity; no-op if locked. EXCEPT for
+    // session.setAutoLockMinutes: that handler is itself authoritative for
+    // the alarm, and noteActivity() reads the PRE-change interval from
+    // session meta, so running both concurrently raced — whichever landed
+    // last won, usually clobbering the user's new choice back to the old
+    // one (real-browser UAT: picking 5 left the alarm at 15).
+    if (message.kind !== "session.setAutoLockMinutes") {
+      void noteActivity();
+    }
     void handle(message).then(sendResponse);
     return true; // keep the message channel open for the async sendResponse
   });
@@ -202,8 +210,25 @@ async function getSessionStatus(): Promise<MessageResponseMap["session.status"]>
 }
 
 async function setAutoLockMinutes(minutes: number): Promise<{ ok: true }> {
-  // validated against AUTOLOCK_OPTIONS whitelist inside autolock.ts; re-arm immediately
-  await armAutoLock(minutes);
+  // EXT-03's "configurable" hinges on this PERSISTING, not just arming:
+  // noteActivity() re-arms from session-meta's idleTimeoutMinutes on every
+  // subsequent message, and session.status seeds the popup's select from
+  // the same field. Arming alone (the original bug) meant the very next
+  // message clobbered the new interval back to the stored one, and
+  // reopening the popup showed the stale value — the control was inert.
+  // Found by real-browser UAT; unit tests mock sendMessage and never
+  // observed the alarm. Whitelist-validate HERE too so a rejected value is
+  // never written to storage (armAutoLock validates independently for its
+  // own callers).
+  const validated = (AUTOLOCK_OPTIONS as readonly number[]).includes(minutes)
+    ? minutes
+    : DEFAULT_AUTOLOCK_MINUTES;
+
+  const meta = await readSessionMeta();
+  if (meta !== null) {
+    await writeSessionMeta({ ...meta, idleTimeoutMinutes: validated });
+  }
+  await armAutoLock(validated);
   return { ok: true };
 }
 
