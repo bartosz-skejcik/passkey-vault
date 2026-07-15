@@ -331,8 +331,35 @@ export default defineContentScript({
       controller.renderFieldDropdown(target, kindMatches);
     }
 
+    function handleFocusOut(event: FocusEvent): void {
+      if (overlay === null) {
+        return; // Surface A was never mounted -- nothing to tear down
+      }
+
+      // Guard: a click on a dropdown row or the "PV" field icon fires
+      // focusout on the field FIRST (its target moves from the input into
+      // the closed shadow root's own DOM). Shadow-DOM event retargeting
+      // means a listener outside the shadow tree observes relatedTarget as
+      // the HOST element, not the actual row/icon inside it -- so
+      // `overlay.host.contains(relatedTarget)` (true for the host itself,
+      // since Node.contains() includes self) is the correct check here,
+      // not a descendant lookup into the (closed, unreachable) shadow tree.
+      // Skipping the clear in this case is what lets the row's own click
+      // handler fire onPick before Surface A is torn down.
+      const related = event.relatedTarget;
+      if (related instanceof Node && overlay.host.contains(related)) {
+        return;
+      }
+
+      overlay.clearFieldDropdown();
+    }
+
     document.addEventListener("focusin", (event) => {
       void handleFocusIn(event as FocusEvent);
+    });
+
+    document.addEventListener("focusout", (event) => {
+      handleFocusOut(event as FocusEvent);
     });
 
     void initialMatchAndPrompt();

@@ -201,6 +201,12 @@ export interface OverlayController {
    * A no-op while blocked (dismissing Surface B does NOT suppress Surface
    * A -- see dismiss()'s own doc comment). */
   renderFieldDropdown(anchorEl: HTMLElement, matches: AutofillMatch[]): void;
+  /** Tears down Surface A (the in-field dropdown panel AND its "PV" field
+   * icon) without touching Surface B or the dismissed/blocked flags -- the
+   * caller (content-relay's focusout handler) calls this when a detected
+   * field loses focus, so the affordance doesn't linger after the user has
+   * moved on. Safe to call when Surface A isn't mounted (no-op). */
+  clearFieldDropdown(): void;
   /** Closes Surface B (the "×" affordance) and suppresses it for the rest
    * of the page session. Surface A is untouched -- the user may still
    * explicitly open the in-field dropdown even after closing the one-time
@@ -498,6 +504,7 @@ export function createOverlayController(options: OverlayControllerOptions): Over
     host,
     renderFormPrompt,
     renderFieldDropdown,
+    clearFieldDropdown: clearDropdown,
     dismiss,
     blockSite,
     isDismissed,
