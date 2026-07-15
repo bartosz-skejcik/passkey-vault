@@ -185,6 +185,13 @@ export interface OverlayControllerOptions {
    * through. Carries metadata only: an itemId the caller already knows
    * about and the FillKind, never a value. */
   onPick: (itemId: string, kind: FillKind) => void;
+  /** Fired from inside blockSite(), after this controller has already torn
+   * down its own in-memory `blocked`/DOM state -- the caller's only hook to
+   * PERSIST the block (Group A's blocked-origins.ts) so a page reload does
+   * not re-mount either surface. This module stays storage-free itself;
+   * persistence is entirely the caller's responsibility (content-relay.
+   * content.ts wires this to `addBlockedOrigin(location.origin)`). */
+  onBlock?: () => void;
   locale?: Locale;
   /** Injectable for tests; defaults to the real `document`. */
   doc?: Document;
@@ -484,6 +491,7 @@ export function createOverlayController(options: OverlayControllerOptions): Over
     dismissed = true;
     clearPromptPanel();
     clearDropdown();
+    options.onBlock?.();
   }
 
   function isDismissed(): boolean {

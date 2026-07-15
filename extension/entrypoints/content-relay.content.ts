@@ -43,6 +43,7 @@ import { detectTotp } from "../lib/autofill/detect-totp";
 import { detectCard, detectIdentity } from "../lib/autofill/detect-scored";
 import { fillValues, type FillTargets } from "../lib/autofill/fill-dom";
 import { createOverlayController, type OverlayController } from "../lib/autofill/inpage-overlay";
+import { addBlockedOrigin, isOriginBlocked } from "../lib/autofill/blocked-origins";
 import { sendMessage } from "../lib/messaging/ext-protocol";
 import type {
   AutofillMatch,
@@ -236,6 +237,9 @@ export default defineContentScript({
           onPick: (itemId, kind) => {
             void handlePick(itemId, kind);
           },
+          onBlock: () => {
+            void addBlockedOrigin(location.origin);
+          },
         });
       }
       return overlay;
@@ -278,6 +282,13 @@ export default defineContentScript({
     }
 
     async function initialMatchAndPrompt(): Promise<void> {
+      if (await isOriginBlocked(location.origin)) {
+        // Persisted block from a prior page load (Group A's blocked-origins
+        // store) -- suppress Surface B entirely, matching blockSite()'s
+        // in-session contract of suppressing BOTH surfaces (FIX B3).
+        return;
+      }
+
       const { detected } = detectAll();
       const anyDetected = detected.login || detected.totp || detected.card || detected.identity;
       if (!anyDetected) {
@@ -304,6 +315,12 @@ export default defineContentScript({
       const kind = collectFocusableFields().get(target);
       if (kind === undefined) {
         return; // not a field this content-relay would ever offer to fill
+      }
+
+      if (await isOriginBlocked(location.origin)) {
+        // Persisted block (FIX B3) -- suppress Surface A too, matching
+        // blockSite()'s "both surfaces" contract across a reload.
+        return;
       }
 
       const controller = ensureOverlay();

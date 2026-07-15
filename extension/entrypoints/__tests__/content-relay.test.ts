@@ -33,6 +33,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const hoisted = vi.hoisted(() => ({
   mockAddListener: vi.fn(),
+  // Backs lib/autofill/blocked-origins.ts's storage.local reads (FIX B3's
+  // isOriginBlocked() gate in initialMatchAndPrompt()/handleFocusIn) --
+  // same Map-backed fake pattern blocked-origins.test.ts itself uses.
+  // Empty by default, so every existing test here still sees "not
+  // blocked" and exercises the same code paths as before.
+  storageStore: new Map<string, unknown>(),
 }));
 
 vi.mock("wxt/browser", () => ({
@@ -40,6 +46,19 @@ vi.mock("wxt/browser", () => ({
     runtime: {
       onMessage: {
         addListener: hoisted.mockAddListener,
+      },
+    },
+    storage: {
+      local: {
+        async get(key: string) {
+          const store = hoisted.storageStore;
+          return store.has(key) ? { [key]: store.get(key) } : {};
+        },
+        async set(items: Record<string, unknown>) {
+          for (const [k, v] of Object.entries(items)) {
+            hoisted.storageStore.set(k, v);
+          }
+        },
       },
     },
   },
@@ -61,6 +80,7 @@ function registeredListener(): Listener {
 beforeEach(() => {
   document.body.innerHTML = "";
   hoisted.mockAddListener.mockClear();
+  hoisted.storageStore.clear();
   // Fresh registration per test, bound to a clean document each time.
   contentRelay.main({} as never);
 });
