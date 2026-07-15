@@ -43,7 +43,12 @@ findings:
   warning: 8
   info: 6
   total: 15
-status: issues_found
+status: resolved
+resolved: 2026-07-15
+resolution: >-
+  All 1 critical + 8 warnings fixed, each with a regression test verified failing
+  against the pre-fix code. The 6 Info findings are deliberately not addressed
+  (out of scope). See 09-06-SUMMARY.md's "Post-review gap closure" section.
 ---
 
 # Phase 9: Code Review Report
@@ -87,6 +92,8 @@ relative to every other handler, and a meaningful volume of the phase's own API 
 ## Critical Issues
 
 ### CR-01: Popup keeps rendering decrypted plaintext after an auto-lock
+
+**OUTCOME: FIXED** (`6c1dff3`). `App.tsx` now owns a top-level lock listener. Implemented via the review's own preferred option — a dedicated `session.locked` broadcast from `lockVaultSession()` rather than overloading `vault.updated` — which also neutralizes IN-02's concern (no `session.status` round trip per sync merge). Regression test: render on the detail view, fire the lock, assert the decrypted fields are gone and UnlockView is shown.
 
 **File:** `extension/entrypoints/popup/App.tsx:28-109`, `extension/entrypoints/popup/ItemDetailView.tsx:40-52`
 
@@ -153,6 +160,8 @@ see IN-02).
 
 ### WR-01: Router has no rejection path — a throwing handler hangs the popup and leaks an unhandled rejection
 
+**OUTCOME: FIXED** (`5ac20bc`). Both halves of the suggested fix applied: the rejection handler on `handle()`, and `ensureHydrated()` treating an un-importable envelope as locked (clearing it, returning `null`) rather than throwing. Tests: a rejecting handler still resolves `sendResponse`; a corrupt envelope resolves `null` and clears itself.
+
 **File:** `extension/entrypoints/background/router.ts:75`
 
 **Issue:** `void handle(message).then(sendResponse);` attaches no rejection handler. When
@@ -185,6 +194,8 @@ and give `ensureHydrated()` a `try/catch` that treats an un-importable envelope 
 (clear it and return `null`) rather than throwing.
 
 ### WR-02: Inverted error classification in `handleExtEnrollFinish`
+
+**OUTCOME: FIXED** (`ef0cdac`). Taxonomy corrected to match `unlock.ts`; `"invalid-credentials"` added to the handler's response union (the review's first option). Test: a 500, a 401, and a network failure each map to the right error.
 
 **File:** `extension/entrypoints/background/ext-passkey.ts:148-152`
 
@@ -227,6 +238,8 @@ inversion.)
 
 ### WR-03: `handleExtPrfUnlockFinish` has no catch — the new ext-PRF unlock path can reject
 
+**OUTCOME: FIXED** (`ef0cdac`). Catch added mirroring `handleUnlockPrfFinish`. Tests: a throwing `fromExtPrf` (reachable from a short `prfB64`) and a rejecting `setUnlockedUserKey` both resolve typed failures; the `finally` zeroize still runs on the throwing path.
+
 **File:** `extension/entrypoints/background/ext-passkey.ts:205-242`
 
 **Issue:** The outer block is `try { ... } finally { prfArray.fill(0); wrappingKey?.free?.(); }`
@@ -253,6 +266,8 @@ the unlock button forever with no error shown.
 ```
 
 ### WR-04: The base64 hop leaves un-zeroizable raw User Key bytes in the SW heap — and the doc comment claims otherwise
+
+**OUTCOME: FIXED via option (a) — documentation corrected; no code change** (`a1ce563`), as scoped by the orchestrator. `bytesToBase64`/`base64ToBytes`/`setUnlockedUserKey`/`ensureHydrated` now state the real bound at the point of risk: the zeroize covers the `Uint8Array` only; the strings are immutable, un-wipeable, not cleared by a lock, bounded to the SW heap. Option (b) (chunking, or moving the b64 encode into `pv-wasm`) is **not** done — it is a real hardening but out of this gap-closure's bounded scope, and is noted inline as the future direction.
 
 **File:** `extension/entrypoints/background/vault-session.ts:61-76`, `:98`, `:131-137`
 
@@ -301,6 +316,8 @@ the ciphertext-equivalent base64 that already lives in `storage.session` by desi
 
 ### WR-05: Unlock never arms the auto-lock alarm — arming is incidental
 
+**OUTCOME: FIXED** (`a1ce563`). `armAutoLock(idleTimeoutMinutes)` called at the end of `setUnlockedUserKey`, exactly as suggested. The review's safety analysis re the `session.setAutoLockMinutes` race is confirmed correct: `router.test.ts`'s 4 assertions (incl. the no-`noteActivity` race regression) stay green, and no double-arm. Tests: unlocking arms an alarm with no `session.status` call; arms exactly once.
+
 **File:** `extension/entrypoints/background/vault-session.ts:114-140`
 
 **Issue:** `setUnlockedUserKey()` imports `armAutoLock` (line 28) but never calls it; the only
@@ -330,6 +347,8 @@ that guard is about `noteActivity()` reading a pre-change interval, whereas this
 interval it is itself writing.
 
 ### WR-06: The MV3 poll fallback is a `setInterval` — it dies in exactly the scenario it exists for
+
+**OUTCOME: FIXED for the poll timer** (`f3374fc`). `chrome.alarms`-backed under the distinct name `pv-sync-poll`, listener registered synchronously at startup, honest 1-minute period (accepting the review's own point that Chrome clamps to ≥1 min). 4 tests incl. an explicit assertion that it never collides with `pv-auto-lock` and that a late fire after `stopSync` cannot repopulate a locked vault. **The reconnect timer is NOT converted** — the review suggested "same treatment", but the orchestrator scoped this item to the poll fallback, and the reconnect backoff is materially different: it is a seconds-scale retry that only has meaning while the SW is alive, and an alarm's ≥1-min floor would make the backoff sequence meaningless. Worth a separate decision rather than a reflex conversion.
 
 **File:** `extension/entrypoints/background/sync-client.ts:149-151`, `:130-133`
 
@@ -364,6 +383,8 @@ actually survives is strictly better than a 30s poll that doesn't. Same treatmen
 reconnect timer.
 
 ### WR-07: `PV_EXTENSION_ORIGINS` silently drops malformed entries and panics the server on `*`
+
+**OUTCOME: FIXED, and escalated to fail-loud** (`1ba1055`). The review suggested log-and-ignore; this project's fail-loud config convention (`Config::validate`, DEPLOY-02) requires a *startup failure* naming the offending value, so validation went into `Config::validate()` (called from `main.rs` before bind), checked before the localhost early-return since `*` panics on any deployment. `build_cors_layer` keeps a log-and-degrade path so it can never panic. 10 tests, incl. the requested `*` test and a `#[should_panic]` test pinning the upstream `AllowOrigin::list` behavior the fix routes around.
 
 **File:** `crates/pv-server/src/routes/mod.rs:100-110`
 
@@ -416,6 +437,8 @@ Add a test for the `*` input so the panic can never come back.
 
 ### WR-08: Substantial dead surface shipped — including Phase 8's debug endpoint the code says should be gone
 
+**OUTCOME: FIXED — all of it deleted** (`9a18594`, 689 net lines). (a) `spike.roundtrip` + `lib/crypto/vault-session.ts` + its tests: gone. (b) The web-RP PRF pair: **deleted outright**, not marked `RESERVED` — an empirical probe proved it is unreachable by construction from a `chrome-extension://` origin, so reserving it would only invite a future caller to reintroduce the bug; the reason is documented in `ext-protocol.ts`'s header instead. (c) `buildPrfExtensions`/`stripPrfFromCredentialJson` deleted and `prf.ts`'s inaccurate header corrected; `deleteExtensionPasskey` deleted. `extractPrfBytes` **kept** — the ext-PRF unlock and enroll paths use it. `ext-protocol.test.ts`'s fixtures are tsc-enforced exhaustive, so the shrunken maps prove the union really shrank.
+
 **Files:** `extension/entrypoints/background.ts:14`, `:83-113`; `extension/lib/crypto/vault-session.ts` (whole file); `extension/entrypoints/background/router.ts:93-97`, `:121-146`; `extension/entrypoints/background/unlock.ts:119-225`; `extension/entrypoints/background/auth-api.ts:187-199`, `:235-239`; `extension/lib/passkeys/prf.ts:40-82`
 
 **Issue:** Verified unreachable by grep across `extension/` (excluding tests):
@@ -454,6 +477,8 @@ options page — move it behind an explicit `// RESERVED (Phase N):` marker and 
 ---
 
 ## Info
+
+_**OUTCOME for IN-01…IN-06: NOT FIXED — out of scope by instruction**_ (address only if trivially free; none were — each needs its own regression test, and IN-04/IN-06 are cross-cutting). Two notes: **IN-02**'s warning that CR-01's fix would double its cost is resolved by construction — the dedicated `session.locked` broadcast means no `session.status` round trip hangs off `vault.updated`, so IN-02 stays a pure efficiency nit. **IN-06** (clipboard never cleared) is a genuine carried-over v0.1 gap and deserves a cross-cutting phase item, as the finding itself suggests.
 
 ### IN-01: `applySyncSnapshot` advances the revision watermark before the lock re-check
 
