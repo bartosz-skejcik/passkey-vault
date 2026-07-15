@@ -42,6 +42,25 @@
 // there is nothing here for a caller to spoof (T-10-02). Handlers are
 // wired up by Plan 10-04; this plan only extends the typed contract.
 //
+// Plan 10-09 adds `autofill.matchFrame`/`autofill.fillFrame` -- the
+// CONTENT-SCRIPT-driven counterpart to `autofill.match`/`autofill.fill`
+// above (the in-page overlay Plan 10-10 builds on top of). These two kinds
+// are additive members of the SAME `Message` union (do not restructure),
+// but they are dispatched by a SEPARATE `browser.runtime.onMessage`
+// listener -- `registerAutofillFrameChannel()` in
+// entrypoints/background/router.ts -- not by this file's popup-facing
+// `handle()`. The popup router's WR-01 sender-origin gate (which refuses
+// every content-script sender) stays completely unchanged; a page's
+// content script reaches ONLY `handleMatchFrame`/`handleFillFrame`
+// (entrypoints/background/autofill-frame.ts), never `session.*`/`vault.*`.
+// `autofill.matchFrame` carries the caller's OWN `detected` map (computed
+// locally, no `content.detect` round-trip needed) but deliberately NO
+// origin field -- the background derives the origin from the platform-
+// provided `sender` (`originFromContentSender()`), exactly the same
+// no-spoofable-origin-field pattern `autofill.match` already uses for the
+// popup-driven tab-derived origin. `autofill.fillFrame` reuses
+// `autofill.fill`'s exact value-free response shape.
+//
 // `UnlockResult`/`PrfStartResult`/`ExtEnrollStartResult`/`ExtUnlockResult`
 // are `import type`-only from entrypoints/background/unlock.ts and
 // entrypoints/background/ext-passkey.ts (their canonical definitions, per
@@ -143,7 +162,13 @@ export type Message =
   // The ONE sanctioned path where a derived-from-secret value reaches the
   // popup: 10-UI-SPEC.md's "Kopiuj kod" clipboard-write action runs in the
   // popup context. Returns the derived code only, never the raw TOTP seed.
-  | { kind: "autofill.totpCode"; itemId: string };
+  | { kind: "autofill.totpCode"; itemId: string }
+  // Phase 10 (Plan 10-09): content-script -> background, dispatched by the
+  // SEPARATE registerAutofillFrameChannel() listener (see header comment).
+  // No origin field on either -- the background derives it from the
+  // platform-provided sender, never from this payload.
+  | { kind: "autofill.matchFrame"; detected: DetectedFields }
+  | { kind: "autofill.fillFrame"; itemId: string; kind_: FillKind };
 
 /**
  * Response to `autofill.match` -- metadata only (item ids, labels, masked
@@ -185,6 +210,12 @@ export interface MessageResponseMap {
   "autofill.totpCode":
     | { ok: true; code: string; secondsRemaining: number }
     | { ok: false; reason: string };
+  // Phase 10 (Plan 10-09): same response shapes as their popup-driven
+  // counterparts above -- metadata-only match, value-free fill.
+  "autofill.matchFrame": AutofillMatchResult;
+  "autofill.fillFrame":
+    | { ok: true }
+    | { ok: false; reason: "no-match" | "origin-mismatch" | "target-unreachable" | "locked" };
 }
 
 export type MessageOf<K extends Message["kind"]> = Extract<Message, { kind: K }>;

@@ -63,6 +63,13 @@ const MESSAGE_FIXTURES: MessageFixtureMap = {
   "autofill.match": { kind: "autofill.match" },
   "autofill.fill": { kind: "autofill.fill", itemId: "item-1", kind_: "login" },
   "autofill.totpCode": { kind: "autofill.totpCode", itemId: "item-2" },
+  // Phase 10 (Plan 10-09): content-script -> background, dispatched by the
+  // separate registerAutofillFrameChannel() listener -- no origin field.
+  "autofill.matchFrame": {
+    kind: "autofill.matchFrame",
+    detected: { login: true, totp: false, card: false, identity: false },
+  },
+  "autofill.fillFrame": { kind: "autofill.fillFrame", itemId: "item-3", kind_: "login" },
 };
 
 type ResponseFixtureMap = { [K in Message["kind"]]: MessageResponseMap[K] };
@@ -121,6 +128,15 @@ const RESPONSE_FIXTURES: ResponseFixtureMap = {
   },
   "autofill.fill": { ok: true },
   "autofill.totpCode": { ok: true, code: "123456", secondsRemaining: 17 },
+  "autofill.matchFrame": {
+    pageState: "ok",
+    origin: "https://example.com",
+    detected: { login: true, totp: false, card: false, identity: false },
+    matches: [
+      { itemId: "item-1", kind: "login", label: "Example", maskedHint: "j***@example.com" },
+    ],
+  },
+  "autofill.fillFrame": { ok: true },
 };
 
 describe("Message JSON-transport safety (Chrome MV3 sendMessage stand-in)", () => {
