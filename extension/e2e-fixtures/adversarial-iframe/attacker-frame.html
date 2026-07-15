@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in -- fixture-app.local</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0.75rem; background: #fafafa; }
+  .brand { font-weight: bold; margin: 0 0 0.5rem 0; }
+  input { display: block; width: 100%; margin: 0.3rem 0; padding: 0.35rem; box-sizing: border-box; }
+</style>
+</head>
+<body>
+  <!--
+    This is Origin B's page, deliberately dressed to LOOK like it belongs
+    to Origin A ("fixture-app.local" brand text, same visual style) --
+    the exact Bitwarden-CVE-class mimicry SC #5 requires. It is served
+    from a genuinely different origin (different hostname+port than
+    top.html) and MUST NEVER receive a fill intended for Origin A. This
+    is a local security-test fixture only -- it makes no outbound
+    network request and impersonates no real brand (frontmatter
+    prohibition, T-10-27).
+  -->
+  <p class="brand">fixture-app.local</p>
+  <h3>Sign in to your account</h3>
+  <form id="frame-form" autocomplete="on">
+    <input id="frame-username" name="username" type="text" autocomplete="username" placeholder="Username">
+    <input id="frame-password" name="password" type="password" autocomplete="current-password" placeholder="Password">
+    <button type="submit">Sign in</button>
+  </form>
+  <script>
+    // Canary for the automated adversarial run: if these EVER fire during
+    // the top-page fill gesture, the origin gate has failed (T-10-25).
+    window.__frameEvents = { username: 0, password: 0 };
+    for (const field of ["username", "password"]) {
+      document.getElementById("frame-" + field).addEventListener("input", () => {
+        window.__frameEvents[field]++;
+      });
+    }
+    document.getElementById("frame-form").addEventListener("submit", (e) => e.preventDefault());
+  </script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Origin A -- fixture-app.local (top.html)</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 760px; }
+  .card { border: 1px solid #ccc; padding: 1rem 1.25rem; margin-bottom: 1.25rem; border-radius: 8px; }
+  .card h2 { margin-top: 0; }
+  input { display: block; width: 100%; margin: 0.4rem 0; padding: 0.4rem; box-sizing: border-box; }
+  .warn { color: #b00; font-weight: bold; }
+  iframe { width: 100%; height: 220px; border: 3px dashed #b00; }
+  code { background: #f3f3f3; padding: 0 0.25rem; }
+</style>
+</head>
+<body>
+  <h1>Origin A -- fixture-app.local</h1>
+  <p>Served from <code id="origin-label">this page's own origin</code>. This is <code>top.html</code>,
+     the SC #5 adversarial-iframe fixture's top-level page (10-07-PLAN.md).</p>
+
+  <div class="card">
+    <h2>1. Origin A's OWN login form (legitimate fill target)</h2>
+    <p>A credential saved for Origin A must fill here.</p>
+    <form id="top-form" autocomplete="on">
+      <input id="top-username" name="username" type="text" autocomplete="username" placeholder="Username">
+      <input id="top-password" name="password" type="password" autocomplete="current-password" placeholder="Password">
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2 class="warn">2. Embedded CROSS-ORIGIN iframe (Origin B) -- must NEVER receive Origin A's fill</h2>
+    <p class="warn">The frame below is served from a genuinely different origin
+       (different hostname AND port) and is styled to mimic this page's own login.
+       The SAME credential that fills the form above must never fill into the
+       form inside this iframe.</p>
+    <iframe id="attacker-iframe" src="http://localhost:8792/attacker-frame.html"
+            title="cross-origin attacker frame (Origin B)"></iframe>
+  </div>
+
+  <script>
+    document.getElementById("origin-label").textContent = window.location.origin;
+
+    // Canary: real 'input' events firing on this page's OWN fields prove a
+    // native-setter write happened here (mirrors the wave-3 UAT probe's
+    // canary pattern) -- used by the automated adversarial run to confirm
+    // the positive path actually wrote through, not just "looks filled".
+    window.__topEvents = { username: 0, password: 0 };
+    for (const field of ["username", "password"]) {
+      document.getElementById("top-" + field).addEventListener("input", () => {
+        window.__topEvents[field]++;
+      });
+    }
+    document.getElementById("top-form").addEventListener("submit", (e) => e.preventDefault());
+  </script>
+</body>
+</html>

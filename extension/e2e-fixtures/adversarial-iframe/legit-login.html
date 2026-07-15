@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Origin A -- fixture-app.local (legit-login.html)</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 760px; }
+  .card { border: 1px solid #ccc; padding: 1rem 1.25rem; margin-bottom: 1.25rem; border-radius: 8px; }
+  .card h2 { margin-top: 0; }
+  input { display: block; width: 100%; margin: 0.4rem 0; padding: 0.4rem; box-sizing: border-box; }
+</style>
+</head>
+<body>
+  <h1>Origin A -- fixture-app.local (same-origin positive-path page)</h1>
+  <p>Same-origin as <code>top.html</code> (both served by <code>serve.mjs</code> as
+     Origin A). No cross-origin iframe here -- this page is purely the
+     positive-path check for all four fill kinds (login+TOTP, card,
+     identity) in one place.</p>
+
+  <div class="card">
+    <h2>Login + TOTP</h2>
+    <form id="login-form" autocomplete="on">
+      <input id="login-username" name="username" type="text" autocomplete="username" placeholder="Username">
+      <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Password">
+      <input id="login-otp" name="otp" type="text" autocomplete="one-time-code" inputmode="numeric" placeholder="One-time code">
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Card</h2>
+    <form id="card-form" autocomplete="on">
+      <input id="cc-name" name="cc-name" type="text" autocomplete="cc-name" placeholder="Name on card">
+      <input id="cc-number" name="cc-number" type="text" autocomplete="cc-number" placeholder="Card number">
+      <input id="cc-exp" name="cc-exp" type="text" autocomplete="cc-exp" placeholder="MM/YY">
+      <input id="cc-csc" name="cc-csc" type="text" autocomplete="cc-csc" placeholder="CVV">
+      <button type="submit">Save card</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Identity</h2>
+    <form id="identity-form" autocomplete="on">
+      <input id="id-given" name="given-name" type="text" autocomplete="given-name" placeholder="First name">
+      <input id="id-family" name="family-name" type="text" autocomplete="family-name" placeholder="Last name">
+      <input id="id-email" name="email" type="email" autocomplete="email" placeholder="Email">
+      <input id="id-phone" name="tel" type="tel" autocomplete="tel" placeholder="Phone">
+      <input id="id-address" name="street-address" type="text" autocomplete="street-address" placeholder="Address">
+      <button type="submit">Save</button>
+    </form>
+  </div>
+
+  <script>
+    // Canary object keyed by element id, same pattern as top.html --
+    // one 'input' event listener per field, used to prove a real DOM
+    // write occurred (not just a value read back after the fact).
+    window.__legitEvents = {};
+    for (const el of document.querySelectorAll("input")) {
+      window.__legitEvents[el.id] = 0;
+      el.addEventListener("input", () => { window.__legitEvents[el.id]++; });
+    }
+    for (const form of document.querySelectorAll("form")) {
+      form.addEventListener("submit", (e) => e.preventDefault());
+    }
+  </script>
+</body>
+</html>
