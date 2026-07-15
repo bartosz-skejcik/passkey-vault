@@ -2,10 +2,18 @@
 // List + Search" section) PLUS the BINDING (Bartek 2026-07-15, NordPass
 // reference screenshots) "Popup header + delegated-management
 // affordances": settings gear + "open full vault" in a slim header row,
-// a "+" new-item FAB, and an auto-lock-only footer -- ALL THREE
-// redirects are PURE tabs.create() opens of the configured server URL,
-// never in-popup forms (EXT-06's doctrine).
-import { useEffect, useState } from "react";
+// a "+" new-item FAB, and an auto-lock-only footer -- settings/full-vault
+// are PURE tabs.create() opens of the configured server URL.
+//
+// Post-UAT (Bartek 2026-07-15, live testing): the "+" FAB does NOT redirect
+// directly. Per Bartek's NordPass reference screenshots, it first expands
+// an in-popup TYPE MENU (Login / TOTP / Card / Identity / Note) -- only
+// choosing a type then opens the fullscreen editor via tabs.create(), with
+// the chosen type passed along as `&type=<id>` so the web app's TypePicker
+// step is skipped. The menu itself is a plain DaisyUI `menu` list, never a
+// form -- EXT-06's doctrine ("no in-popup forms") is about FORMS, not type
+// menus, and stays intact.
+import { useEffect, useRef, useState } from "react";
 import { browser } from "wxt/browser";
 import { Search, Settings, ExternalLink, Plus, KeyRound, CreditCard, IdCard, StickyNote, Timer } from "lucide-react";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
@@ -46,6 +54,10 @@ const TYPE_LABEL_KEY: Record<ItemType, "itemType.login" | "itemType.card" | "ite
   totp: "itemType.totp",
 };
 
+// The FAB's type-menu entry order -- Bartek's NordPass reference screenshots'
+// own ordering (Login, then the two "quick" types, then the rest).
+const NEW_ITEM_TYPE_ORDER: ItemType[] = ["login", "totp", "card", "identity", "note"];
+
 export default function ItemListView({
   locale,
   onSelectItem,
@@ -56,6 +68,8 @@ export default function ItemListView({
   const [items, setItems] = useState<VaultItem[]>([]);
   const [query, setQuery] = useState("");
   const [autoLockMinutes, setAutoLockMinutes] = useState<number>(15);
+  const [typeMenuOpen, setTypeMenuOpen] = useState(false);
+  const fabMenuRef = useRef<HTMLDivElement>(null);
 
   async function refetchItems() {
     const result = await sendMessage({ kind: "vault.list" });
@@ -84,12 +98,34 @@ export default function ItemListView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Closes the FAB's type menu on any click outside its container (the FAB
+  // button + the menu list share one relatively-positioned wrapper, so a
+  // click on the FAB itself -- while the menu is open -- is never seen as
+  // "outside" here; the FAB's own onClick toggle handles that case).
+  useEffect(() => {
+    if (!typeMenuOpen) {
+      return;
+    }
+    function onDocumentMouseDown(event: MouseEvent) {
+      if (fabMenuRef.current && !fabMenuRef.current.contains(event.target as Node)) {
+        setTypeMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocumentMouseDown);
+    return () => document.removeEventListener("mousedown", onDocumentMouseDown);
+  }, [typeMenuOpen]);
+
   async function openInNewTab(pathSuffix: string) {
     const config = await sendMessage({ kind: "config.get" });
     if (config === null) {
       return;
     }
     await browser.tabs.create({ url: `${config.baseUrl}${pathSuffix}` });
+  }
+
+  async function handleNewItemType(itemType: ItemType) {
+    setTypeMenuOpen(false);
+    await openInNewTab(`/?action=new-item&type=${itemType}`);
   }
 
   async function handleAutoLockChange(minutes: number) {
@@ -178,14 +214,36 @@ export default function ItemListView({
           })
         )}
 
-        <button
-          type="button"
-          aria-label={t(locale, "nav.newItem")}
-          className="btn btn-primary btn-circle btn-sm absolute bottom-2 right-2"
-          onClick={() => void openInNewTab("/?action=new-item")}
-        >
-          <Plus size={18} aria-hidden="true" />
-        </button>
+        <div ref={fabMenuRef} className="absolute bottom-2 right-2">
+          {typeMenuOpen ? (
+            <ul
+              role="menu"
+              className="menu absolute bottom-12 right-0 z-10 w-44 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
+            >
+              {NEW_ITEM_TYPE_ORDER.map((itemType) => {
+                const Icon = TYPE_ICON[itemType];
+                return (
+                  <li key={itemType}>
+                    <button type="button" role="menuitem" onClick={() => void handleNewItemType(itemType)}>
+                      <Icon size={16} aria-hidden="true" />
+                      {t(locale, TYPE_LABEL_KEY[itemType])}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+          <button
+            type="button"
+            aria-label={t(locale, "nav.newItem")}
+            aria-haspopup="menu"
+            aria-expanded={typeMenuOpen}
+            className="btn btn-primary btn-circle btn-sm"
+            onClick={() => setTypeMenuOpen((open) => !open)}
+          >
+            <Plus size={18} aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center justify-between gap-2 border-t border-base-300 px-1 pt-2">
