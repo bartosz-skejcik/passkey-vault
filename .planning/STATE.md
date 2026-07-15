@@ -5,16 +5,16 @@ milestone_name: Browser Extension
 current_phase: 09
 current_phase_name: Session Unlock Core, Popup & Sync Client
 status: executing
-stopped_at: Completed 08-03-PLAN.md
-last_updated: "2026-07-15T07:32:26.367Z"
+stopped_at: Completed 09-02-PLAN.md
+last_updated: "2026-07-15T08:13:01.083Z"
 last_activity: 2026-07-15
-last_activity_desc: Phase 8 complete, transitioned to Phase 09
+last_activity_desc: 09-02-PLAN.md complete (session core, autolock, router)
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 30
-  completed_plans: 3
-  percent: 10
+  completed_plans: 6
+  percent: 20
 ---
 
 # Project State
@@ -24,16 +24,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-14)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 8 — Extension Bootstrap & WASM-in-Background Spike
+**Current focus:** Phase 9 — Session Unlock Core, Popup & Sync Client (Wave 2 of 5 complete)
 
 ## Current Position
 
 Phase: 09 of 13 (Session Unlock Core, Popup & Sync Client)
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-15 — Phase 8 complete, transitioned to Phase 09
+Plan: 3 of 7 complete (09-01, 09-03 Wave 1; 09-02 Wave 2) — next: Wave 3 (09-04, 09-05)
+Status: Ready to execute Wave 3
+Last activity: 2026-07-15 — 09-02-PLAN.md complete (session core, autolock, router)
 
-Progress: [█░░░░░░░░░] 10%
+Progress: [██░░░░░░░░] 20%
 
 ## Performance Metrics
 
@@ -63,6 +63,8 @@ Progress: [█░░░░░░░░░] 10%
 | Phase 08 P01 | 20min | 2 tasks | 14 files |
 | Phase 08 P02 | 7min | 3 tasks | 7 files |
 | Phase 08 P03 | 10min | 2 tasks | 5 files |
+| Phase 09 P03 | 20min | 2 tasks | 3 files |
+| Phase 09 P02 | 10min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -80,6 +82,10 @@ Recent decisions affecting current work:
 - [Phase ?]: wasm-loader.ts re-exports WasmUserKey as a value (not type-only) so vault-session.ts can call WasmUserKey.generate() directly
 - [Phase ?]: vault-session.ts uses a fixed spike password + injected SessionStorage dependency to prove chrome.storage.session round-trip survival, mirroring web/'s memoized initCrypto()/lock-state singleton patterns
 - [Phase ?]: Firefox MV2 background.persistent must be set via defineBackground() in background.ts, not wxt.config.ts, to appear in the generated manifest
+- [Phase ?]: 09-03: server-config.ts is the sole pv-server base-URL source; EXT-05 completion deferred to 09-07 (this plan only delivers client-side config + validation, not REST/WS call sites or server CORS)
+- [Phase ?]: 09-03: Firefox MV2 manifest strips optional_host_permissions entirely (WXT's mv3OnlyKeys) -- Firefox-side runtime permission parity deferred to Phase 13 (dual-browser-hardening)
+- [Phase 09]: 09-02: background.ts (not entrypoints/background/index.ts) is Phase 8's real WXT background entrypoint -- edited the actual file; router.ts added as a second, independent onMessage listener alongside the untouched Phase-8 spike.roundtrip listener — WXT treats a directory index.ts as an alternate way to define the same entrypoint; creating both risks a duplicate background entrypoint. Confirmed via both wxt build -b chrome/-b firefox producing exactly one background.js each.
+- [Phase 09]: 09-02: lockVaultSession() clears ONLY the key envelope, never the session-meta record (token/email/idle-minutes) -- the bearer token survives an auto-lock so session.status's locked branch is reachable — Blocker-2 fix in the plan itself; matches v0.1's own posture (UnlockOverlay.tsx re-derives the key from an existing token after a lock, never re-logs-in).
 
 ### Pending Todos
 
@@ -109,10 +115,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-15T07:13:25.633Z
-Stopped at: Completed 08-03-PLAN.md
+Last session: 2026-07-15T08:12:28.099Z
+Stopped at: Completed 09-02-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
 
-- Plan Phase 8 with `/gsd-plan-phase 8`
+- Execute Wave 3 (09-04, 09-05) with `/gsd-execute-phase 09`

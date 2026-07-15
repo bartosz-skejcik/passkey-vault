@@ -92,7 +92,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 09-02-PLAN.md — chrome.storage.session envelope, autolock, router, ext-protocol
+- [x] 09-02-PLAN.md — chrome.storage.session envelope, autolock, router, ext-protocol
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
