@@ -85,13 +85,26 @@ Plans:
 
 **Plans**: 7 plans
 Plans:
+**Wave 1**
 
 - [ ] 09-01-PLAN.md — pv-wasm session export/import pair + pv-server CORS allowlist
-- [ ] 09-02-PLAN.md — chrome.storage.session envelope, autolock, router, ext-protocol
 - [ ] 09-03-PLAN.md — Server URL configuration, healthz validation, optional host permissions (EXT-05)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 09-02-PLAN.md — chrome.storage.session envelope, autolock, router, ext-protocol
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 09-04-PLAN.md — Password + PRF unlock ceremony (EXT-02)
 - [ ] 09-05-PLAN.md — REST + WS sync client, vault store, search (EXT-04)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 09-06-PLAN.md — Popup UI: server config, unlock, browse/search/pick, open full vault (EXT-02/03/04/06)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 09-07-PLAN.md — Manual UAT checkpoint for all 7 success criteria
 
 **UI hint**: yes
@@ -198,7 +211,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 6. Import/Export, TOTP & Onboarding | v0.1 | 4/4 | Complete | 2026-07-14 |
 | 7. Self-Host Packaging & Deployment | v0.1 | 3/3 | Complete | 2026-07-14 |
 | 8. Extension Bootstrap & WASM-in-Background Spike | v0.2 | 3/3 | Complete    | 2026-07-15 |
-| 9. Session Unlock Core, Popup & Sync Client | v0.2 | 0/TBD | Not started | - |
+| 9. Session Unlock Core, Popup & Sync Client | v0.2 | 0/7 | Planned | - |
 | 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 0/7 | Planned | - |
 | 11. Generate & Capture | v0.2 | 0/TBD | Not started | - |
 | 12. Passkey Provider | v0.2 | 0/TBD | Not started | - |
