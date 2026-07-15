@@ -1,6 +1,27 @@
 // @vitest-environment jsdom
-// entrypoints/content-relay.test.ts — jsdom coverage for the ISOLATED-world
-// sensor/writer's 5 required behaviors (10-05-PLAN.md Task 2).
+// entrypoints/__tests__/content-relay.test.ts — jsdom coverage for the
+// ISOLATED-world sensor/writer's 5 required behaviors (10-05-PLAN.md
+// Task 2).
+//
+// Lives in entrypoints/__tests__/ rather than directly in entrypoints/
+// alongside content-relay.content.ts (Rule 3 blocking-issue fix, not the
+// plan's literal files_modified path): WXT's entrypoint auto-discovery
+// (find-entrypoints.mjs) derives an entrypoint's NAME from the string
+// before the first `.`/`/` in its path relative to entrypointsDir, and its
+// TYPE from a `*.[jt]s?(x)` catch-all glob (type "unlisted-script") for
+// any top-level .ts file that doesn't match a more specific pattern.
+// `content-relay.test.ts` sitting directly in entrypoints/ collides on the
+// name "content-relay" with `content-relay.content.ts` (type
+// "content-script") -- `npx wxt build` fails hard with "Multiple
+// entrypoints with the same name detected" before any code even runs.
+// One directory level down, `*.[jt]s?(x)`'s single `*` does not cross a
+// path separator, so a subdirectory is invisible to entrypoint discovery
+// entirely (this is the same reason `entrypoints/background/*.ts`'s many
+// non-entrypoint modules never collide with the top-level
+// `entrypoints/background.ts` entrypoint). vitest's default test-file glob
+// is recursive, so this file is still discovered and run exactly as
+// before.
+//
 // `wxt/browser` is mocked (following autofill-match.test.ts's established
 // direct-mock convention -- `wxt/testing`'s `fakeBrowser` is unused
 // anywhere in this codebase) so the registered `runtime.onMessage` listener
@@ -24,8 +45,8 @@ vi.mock("wxt/browser", () => ({
   },
 }));
 
-import contentRelay from "./content-relay.content";
-import type { ContentDetectResponse, ContentFillResponse } from "../lib/autofill/types";
+import contentRelay from "../content-relay.content";
+import type { ContentDetectResponse, ContentFillResponse } from "../../lib/autofill/types";
 
 type Listener = (message: unknown, sender: unknown, sendResponse: (response?: unknown) => void) => unknown;
 
