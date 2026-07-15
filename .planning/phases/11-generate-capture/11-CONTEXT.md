@@ -1,0 +1,52 @@
+# Phase 11: Generate & Capture - Context
+
+**Gathered:** 2026-07-14
+**Status:** Ready for planning
+**Mode:** Autonomous synthesis (no human review session — decisions below are derived from ROADMAP success criteria, REQUIREMENTS.md, v0.2 research, and locked project invariants; no new UX preference has been invented)
+
+## Phase Boundary
+
+**In scope (this phase, CAP-01/02/03):**
+- Signup/registration form detection (new-password + confirm-password field pair) and an inline generated-password suggestion (character mode + passphrase mode), reusing the v0.1 generator logic (`web/src/lib/generator/password.ts`, `strength.ts`, `wordlist.ts`) via `pv-core`/`pv-wasm` where the logic lives in the shared crate, or the equivalent TS port already used by the web app — planner must confirm which layer actually owns password-generation logic (WASM vs. pure TS) before choosing the extension's call path.
+- Submit-event capture on a login/signup form + a "success" heuristic (no error message shown, navigation/URL change, or a subsequent authenticated-looking page) — since many logins are AJAX-based, not classic form-submit/reload.
+- Save-new-login prompt (toast/banner) after a successful submit, attributed to the correct origin, writing a new vault login item via the background service worker (through the existing sync-capable API, not a new storage path).
+- Password-change detection: on a site where an existing saved login already matches (by origin + username), detect a submitted password that differs from the stored one and offer "update existing item" instead of "save as new" — this is explicitly the CAP-03 requirement, still in-scope for v0.2 (research's SUMMARY/FEATURES lists this as "may slip past MVP" as a general planning risk-note, but it is a locked ROADMAP success criterion #3 for this phase — treat it as required, not optional).
+- Origin-mismatch warning: every save/update prompt must show the actual originating (frame) domain and explicitly warn if it differs from the top-level page's domain (adversarial cross-origin iframe case) — ROADMAP success criterion #4, and PITFALLS.md Pitfall 7 (the historical Bitwarden CVE-class bug).
+
+**Explicitly OUT of scope for Phase 11 (cross-ref neighboring phases):**
+- Any `navigator.credentials.create()/.get()` MAIN-world patch, ES256 soft authenticator, `passkey-rs` integration — that is Phase 12 (Passkey Provider). Phase 11's submit-capture/detection code lives entirely in the ISOLATED content script; no MAIN-world page bridge is needed here (confirmed by ARCHITECTURE.md: "Generate & capture ... still no MAIN-world patch needed yet").
+- Login/TOTP/card/identity **autofill** (filling saved items into forms) — that is Phase 10 (Autofill), a dependency of this phase. Phase 11 assumes autofill's field-detection plumbing already exists and reuses it for submit-capture, but does not build autofill itself.
+- Card and identity item generation/capture — CAP-01/02/03 requirement text is scoped to passwords/logins only; card/identity capture is not a v0.2 requirement (see FUTURE requirements / FEATURES.md P2 backlog).
+- Dual-browser (Chrome vs Firefox) parity verification of these features — that is Phase 13's job (a dedicated hardening pass); Phase 11 should build correctly for both but the formal cross-browser UAT pass happens in Phase 13.
+- Right-click context-menu quick actions ("Generate password" in context menu) — mentioned in research FEATURES.md as a nice-to-have, not part of CAP-01/02/03; treat as a Discretion/Deferred item, not required scope.
+
+## Locked Decisions
+
+- **D-01 (INVARIANT):** All password-generation and login-encryption crypto stays in `pv-core`/`pv-wasm`, invoked only from the background service worker. The content script/UI layer never generates or handles plaintext credentials outside the message-passing round trip to the background — no local reimplementation of the generator or of item-encryption logic in the content script.
+- **D-02 (INVARIANT — MV3 idle-kill):** The unlocked User Key needed to encrypt a newly captured/updated login item lives only in `chrome.storage.session`; the save-new-login and password-change-update flows must re-read the key from session storage at time-of-save (not assume an in-memory reference survives), since the background worker may have been killed and woken between form-submit and the user confirming the save prompt.
+- **D-03 (ROADMAP SC#1 / FEATURES.md):** The generated-password suggestion supports both character mode and passphrase mode, reusing the v0.1 generator (not a reimplementation) — sourced from the existing `web/src/lib/generator/` (or its `pv-core` equivalent if the logic was later moved into the shared WASM crate; planner to verify current source of truth).
+- **D-04 (ROADMAP SC#2 / PITFALLS.md Pitfall 7 + FEATURES.md):** Save-new-login detection requires submit-event capture plus a success heuristic (absence of error state, navigation/URL change, or authenticated-looking follow-on page) because many forms submit via AJAX/SPA patterns rather than a classic full-page form POST.
+- **D-05 (ROADMAP SC#3, CAP-03 requirement text):** Password-change detection is in scope for this phase (not deferred) — it is built as a diff against an already-matched existing item (by origin + username), reusing the same submit-capture plumbing as save-new-login (FEATURES.md: "Save-new-login prompt is the foundation password-change detection builds on").
+- **D-06 (ROADMAP SC#4 / PITFALLS.md Pitfall 7, historical Bitwarden CVE-class bug):** Every save/update prompt must record and display the *form's own frame origin* (not an origin inherited/assumed from the top-level page), and must cross-check it against the top-level page's origin — showing an explicit mismatch warning (e.g., "this form is on a different domain (`x.evil.com`) than the page you're viewing (`bank.com`) — save anyway?") when they differ. This must be part of the initial implementation, not a follow-up hardening pass, and needs an explicit adversarial cross-origin-iframe UAT case before this phase is considered done.
+- **D-07 (ARCHITECTURE.md):** No MAIN-world script/patch is introduced in this phase; all form-submit capture and field detection runs in the ISOLATED content script already established by Phase 10's autofill work, communicating with the background service worker via the existing typed messaging protocol (`lib/messaging/`) — new message kinds for save-prompt/update-prompt/generate-request are added to that single registration point rather than ad-hoc handlers.
+- **D-08 (Depends-on / sequencing, ROADMAP):** This phase depends on Phase 10 (Autofill) being complete — the field-detection and origin-context plumbing it introduces is a prerequisite input, not something Phase 11 rebuilds from scratch.
+- **D-09 (Zero-knowledge INVARIANT):** The save-new-login/update-item flow never sends plaintext password, generated password, or User Key to `pv-server`; only the client-encrypted item (via the same encryption path v0.1 uses for vault items) crosses the network, and CORS/session auth reuse the extension-origin allowlist already established in Phase 9.
+
+## Discretion Areas
+
+- Exact UI treatment of the generated-password suggestion (inline dropdown vs. icon-triggered popover vs. auto-fill-then-editable) — left to executor/UI-researcher, consistent with the datafa.st-inspired warmth from UI-DESIGN.md but keeping security-relevant text (origin, mismatch warnings) always legible/serious per project design constraint ("playfulness nigdy w dialogach bezpieczeństwa").
+- Exact heuristic thresholds for "successful submit" detection (e.g., how long to wait for a URL change / how to detect an "authenticated-looking" follow-on page) — a judgment call for the planner/executor, to be validated empirically against real sites during UAT rather than locked here.
+- Whether password-change detection matches on origin+username exactly or allows fuzzy matching (e.g., partial username match, or same-origin single-saved-item auto-match) — left open for the planner to decide during PLAN.md, informed by whatever matching approach Phase 10's autofill already uses for consistency.
+- Save/update prompt dismissal and "never ask again for this site" preferences — not specified by requirements; executor may add a lightweight per-origin snooze/dismiss if it doesn't complicate the origin-mismatch security path.
+- Right-click context-menu "Generate password" quick action — optional nice-to-have (research FEATURES.md), may be added opportunistically if cheap, otherwise deferred.
+
+## Open Questions for the human
+
+- None required to start planning — CAP-01/02/03 requirement text, ROADMAP success criteria, and the v0.2 research already pin the necessary product behavior. Any UX-polish question (e.g., prompt placement/animation, exact save-toast copy) can be raised at `/gsd-discuss-phase`-style checkpoints during execution if the planner finds a genuine open call, but nothing blocks starting the PLAN.
+
+## Deferred Ideas
+
+- Card and identity item capture/save-prompt (only login/password capture is in v0.2 scope; card/identity autofill exists in Phase 10 but capture-on-submit for those item types is not a v0.2 requirement).
+- Right-click context-menu quick actions for "Generate password" / "Fill Passkey Vault" (FEATURES.md nice-to-have, not required by CAP-01/02/03).
+- Per-origin "don't ask again" preference persistence beyond a simple in-session dismiss, if it turns out to need new storage schema — punt to a future phase/backlog item rather than scope-creep Phase 11.
+- Conditional-mediation / autofill-suggestion UI unification with Phase 12's passkey provider affordances (e.g., a single unified "credential suggestion" UI across passwords and passkeys) — natural follow-on once Phase 12 exists, not buildable yet since Phase 12 hasn't shipped.
