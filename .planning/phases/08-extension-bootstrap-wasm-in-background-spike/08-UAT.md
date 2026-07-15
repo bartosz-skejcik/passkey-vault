@@ -64,3 +64,17 @@ packaged chrome-mv3 build: **PASS** — `{ok:true,survived:false}` → CDP kill 
 `{ok:true,survived:true}`, zero console errors. Bonus finding: the review's originally
 suggested `sender.tab` check silently broke popup-in-tab messaging — only this re-run caught
 it; the shipped check discriminates on sender.url own-origin instead.
+
+## Addendum 2 — Firefox runtime check CLOSED (2026-07-15, human-verified by Bartek)
+
+Firefox 152.0.6 installed (brew cask); extension loaded via `npx wxt -b firefox` (dev mode,
+firefox-mv2-dev build). Bartek clicked the spike in the real popup:
+- First click: `{"survived": false, "ok": true}` — fresh envelope, full WASM round-trip in the
+  MV2 persistent background page. ✅
+- "Check again": `{"survived": true, "ok": true}` — correct storage-side rehydration semantics
+  (MV2 background is persistent, so `survived:true` here reflects the envelope pre-existing in
+  storage, exactly as the spike's contract defines). ✅
+- No console errors reported.
+
+This closes the one item deferred in Addendum 1. Phase 8's SC #1 is now observed on BOTH
+browsers. (The `data_collection_permissions` AMO warning remains a Phase 13 item.)
