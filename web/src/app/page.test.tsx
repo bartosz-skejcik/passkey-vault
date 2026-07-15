@@ -2,9 +2,14 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
-const { mockGetSessionToken, mockIsOnboardingComplete } = vi.hoisted(() => ({
+const { mockGetSessionToken, mockIsOnboardingComplete, mockUseIsUnlocked } = vi.hoisted(() => ({
   mockGetSessionToken: vi.fn(),
   mockIsOnboardingComplete: vi.fn(),
+  // Plan 09-06: mutable (not a fixed `() => true`) so the
+  // panel=settings/action=new-item deep-link tests below can simulate
+  // "locked at load, applies once after unlock" without a second mock
+  // module for the same target.
+  mockUseIsUnlocked: vi.fn(() => true),
 }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -26,7 +31,7 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
 vi.mock("@/lib/crypto", () => ({
   initCrypto: () => Promise.resolve(),
   lockVault: vi.fn(),
-  useIsUnlocked: () => true,
+  useIsUnlocked: mockUseIsUnlocked,
 }));
 
 vi.mock("@/lib/idle/useIdleTimer", () => ({
@@ -67,7 +72,9 @@ vi.mock("@/components/vault/TypePicker", () => ({ default: () => null }));
 vi.mock("@/components/vault/ItemForm", () => ({ default: () => null }));
 vi.mock("@/components/vault/CopyToast", () => ({ default: () => null }));
 vi.mock("@/components/vault/ErrorToast", () => ({ default: () => null }));
-vi.mock("@/components/settings/SettingsPanel", () => ({ default: () => null }));
+vi.mock("@/components/settings/SettingsPanel", () => ({
+  default: () => <div data-testid="mock-settings-panel" />,
+}));
 vi.mock("@/components/auth/UnlockOverlay", () => ({ default: () => null }));
 
 vi.mock("@/components/auth/LoginForm", () => ({
@@ -112,6 +119,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetSessionToken.mockReturnValue(null);
   mockIsOnboardingComplete.mockReturnValue(false);
+  mockUseIsUnlocked.mockReturnValue(true);
+  window.history.pushState({}, "", "/");
 });
 
 describe("Home (page.tsx) onboarding wiring", () => {
@@ -159,5 +168,57 @@ describe("Home (page.tsx) onboarding wiring", () => {
 
     expect(screen.queryByTestId("mock-onboarding-wizard")).not.toBeInTheDocument();
     expect(screen.getByTestId("mock-main-column")).toBeInTheDocument();
+  });
+});
+
+// Plan 09-06: receiving end of the popup's "Popup header + delegated-
+// management affordances" redirects (`${baseUrl}/?panel=settings` and
+// `${baseUrl}/?action=new-item`) -- without this, those deep-links land
+// on a bare vault root.
+describe("Home (page.tsx) — panel=settings / action=new-item query params (Plan 09-06)", () => {
+  it("opens the Settings panel on mount when the URL has panel=settings and the vault is already unlocked, then strips the param", async () => {
+    mockGetSessionToken.mockReturnValue("token");
+    window.history.pushState({}, "", "/?panel=settings");
+
+    render(<Home />);
+
+    await waitFor(() => expect(screen.getByTestId("mock-settings-panel")).toBeInTheDocument());
+    await waitFor(() => expect(window.location.search).toBe(""));
+  });
+
+  it("opens the new-item flow on mount when the URL has action=new-item and the vault is already unlocked, then strips the param", async () => {
+    mockGetSessionToken.mockReturnValue("token");
+    window.history.pushState({}, "", "/?action=new-item");
+
+    render(<Home />);
+
+    await waitFor(() => expect(screen.getByTestId("type-picker-close")).toBeInTheDocument());
+    await waitFor(() => expect(window.location.search).toBe(""));
+  });
+
+  it("waits for unlock before applying a pending panel=settings param, then applies it once unlock completes", async () => {
+    mockGetSessionToken.mockReturnValue("token");
+    mockUseIsUnlocked.mockReturnValue(false);
+    window.history.pushState({}, "", "/?panel=settings");
+
+    const { rerender } = render(<Home />);
+
+    expect(screen.queryByTestId("mock-settings-panel")).not.toBeInTheDocument();
+
+    mockUseIsUnlocked.mockReturnValue(true);
+    rerender(<Home />);
+
+    await waitFor(() => expect(screen.getByTestId("mock-settings-panel")).toBeInTheDocument());
+  });
+
+  it("does nothing when neither query param is present", async () => {
+    mockGetSessionToken.mockReturnValue("token");
+    window.history.pushState({}, "", "/");
+
+    render(<Home />);
+
+    await waitFor(() => expect(screen.getByTestId("mock-main-column")).toBeInTheDocument());
+    expect(screen.queryByTestId("mock-settings-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("type-picker-close")).not.toBeInTheDocument();
   });
 });
