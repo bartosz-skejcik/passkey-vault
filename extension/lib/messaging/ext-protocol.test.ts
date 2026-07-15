@@ -56,6 +56,7 @@ const MESSAGE_FIXTURES: MessageFixtureMap = {
   },
   "vault.list": { kind: "vault.list" },
   "vault.updated": { kind: "vault.updated" },
+  "session.locked": { kind: "session.locked" },
   "extPasskey.enroll.start": { kind: "extPasskey.enroll.start" },
   "extPasskey.enroll.finish": {
     kind: "extPasskey.enroll.finish",
@@ -114,6 +115,7 @@ const RESPONSE_FIXTURES: ResponseFixtureMap = {
     folders: [{ id: "f1", name: "Folder" }],
   },
   "vault.updated": undefined,
+  "session.locked": undefined,
   "extPasskey.enroll.start": {
     ok: true,
     accountEmail: "a@example.com",

@@ -12,6 +12,7 @@
 // itself as possibly-just-woken and re-hydrates from storage.session
 // rather than trusting `currentUserKey` survived a service-worker
 // idle-kill.
+import { browser } from "wxt/browser";
 import {
   initCrypto,
   WasmUserKey,
@@ -158,6 +159,16 @@ export async function lockVaultSession(wasAutoLocked = false): Promise<void> {
   }
 
   notifyLockListeners();
+
+  // CR-01 fix (09-REVIEW.md): a dedicated broadcast, distinct from
+  // vault-store.ts's `vault.updated` (which also fires on every ordinary
+  // sync merge) -- App.tsx's top-level listener reacts to THIS to drop
+  // back to the unlock view from ANY view (including item-detail, which
+  // holds decrypted/possibly-revealed plaintext in React state), without
+  // the popup ever having to poll or infer a lock from a cache change.
+  // Swallowed exactly like vault-store.ts's own broadcast: "no receiver"
+  // (no popup currently open) is the expected common case, not an error.
+  void browser.runtime.sendMessage({ kind: "session.locked" }).catch(() => {});
 }
 
 /**

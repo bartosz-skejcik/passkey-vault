@@ -87,6 +87,13 @@ export type Message =
   // browser.runtime.onMessage, not via sendMessage()'s request/response
   // round trip.
   | { kind: "vault.updated" }
+  // CR-01 fix (09-REVIEW.md): fire-and-forget broadcast sent by
+  // vault-session.ts's lockVaultSession() the instant the vault locks
+  // (auto-lock alarm OR any other caller) — distinct from `vault.updated`
+  // (which also fires on every ordinary sync merge) so App.tsx's top-level
+  // listener can react to a LOCK specifically, from ANY view including
+  // `detail`, without paying a `session.status` round trip on every sync.
+  | { kind: "session.locked" }
   // 09-08: extension-scoped PRF passkey (09-CONTEXT AMENDMENT 2026-07-15).
   // Enroll pair — requires an unlocked session (wraps the CURRENT UK).
   | { kind: "extPasskey.enroll.start" }
@@ -119,6 +126,7 @@ export interface MessageResponseMap {
   "auth.signIn.prf.finish": UnlockResult;
   "vault.list": { items: VaultItem[]; folders: Folder[] };
   "vault.updated": void;
+  "session.locked": void;
   "extPasskey.enroll.start": ExtEnrollStartResult;
   "extPasskey.enroll.finish": { ok: boolean; error?: "not-unlocked" | "unreachable" | "unknown" };
   "extPasskey.suppressPrompt": { ok: true };

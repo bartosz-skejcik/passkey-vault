@@ -26,6 +26,7 @@ const hoisted = vi.hoisted(() => {
     mockInitCrypto: vi.fn(),
     mockExportUserKeyForSession: vi.fn(),
     mockImportUserKeyFromSession: vi.fn(),
+    mockSendMessage: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -55,6 +56,13 @@ vi.mock("wxt/browser", () => ({
           hoisted.alarmListeners.push(fn);
         },
       },
+    },
+    // CR-01 fix: lockVaultSession() broadcasts `session.locked` -- "no
+    // receiver" (no popup open) is the expected common case in a real
+    // browser, mirrored here as an always-resolving mock so the broadcast
+    // is a genuine no-op for every test that doesn't care about it.
+    runtime: {
+      sendMessage: hoisted.mockSendMessage,
     },
   },
 }));
@@ -182,6 +190,19 @@ describe("lockVaultSession", () => {
 
     expect(firedCount).toBe(1);
     unsubscribe();
+  });
+
+  it("CR-01: broadcasts a dedicated session.locked message so any open popup can react from any view", async () => {
+    primeHappyPathMocks();
+    const { setUnlockedUserKey, lockVaultSession } = await import("./vault-session");
+    const uk = { tag: "fresh-user-key" } as unknown as import("../../lib/crypto/wasm-loader").WasmUserKey;
+
+    await setUnlockedUserKey(uk, "a@example.com", "tok123", 15);
+    hoisted.mockSendMessage.mockClear();
+
+    await lockVaultSession(true);
+
+    expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "session.locked" });
   });
 });
 

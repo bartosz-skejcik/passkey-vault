@@ -6,6 +6,7 @@
 // single-view, no tabs.
 //
 import { useEffect, useState } from "react";
+import { browser } from "wxt/browser";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
 import type { SessionStatus } from "../../lib/messaging/ext-protocol";
 import type { VaultItem } from "../../lib/vault/types";
@@ -50,6 +51,33 @@ export default function App() {
 
   useEffect(() => {
     void refreshFromScratch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // CR-01 fix (09-REVIEW.md): App.tsx is the ONE component mounted for
+  // every view (unlike ItemListView's own `vault.updated` listener, which
+  // is unmounted the instant the user is on ItemDetailView) -- so the
+  // lock-state listener lives HERE, at the top level, not in any child
+  // view. On a `session.locked` broadcast (fired by
+  // vault-session.ts's lockVaultSession() -- auto-lock alarm or any other
+  // caller), re-read the AUTHORITATIVE session.status and reset the view
+  // accordingly, from ANY current view including `detail`. Resetting the
+  // view unmounts ItemDetailView, which drops its decrypted (possibly
+  // revealed) fields out of React state -- there is no other place that
+  // plaintext is held once the view changes.
+  useEffect(() => {
+    function onLocked(message: unknown) {
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        (message as { kind?: unknown }).kind === "session.locked"
+      ) {
+        setShowEnrollPrompt(false);
+        void refreshSessionStatus();
+      }
+    }
+    browser.runtime.onMessage.addListener(onLocked);
+    return () => browser.runtime.onMessage.removeListener(onLocked);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
