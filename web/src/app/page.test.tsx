@@ -69,7 +69,9 @@ vi.mock("@/components/shell/MainColumn", () => ({
 vi.mock("@/components/vault/ItemList", () => ({ default: () => <div data-testid="mock-item-list" /> }));
 vi.mock("@/components/vault/DetailPanel", () => ({ default: () => null }));
 vi.mock("@/components/vault/TypePicker", () => ({ default: () => null }));
-vi.mock("@/components/vault/ItemForm", () => ({ default: () => null }));
+vi.mock("@/components/vault/ItemForm", () => ({
+  default: ({ type }: { type: string }) => <div data-testid="mock-item-form" data-type={type} />,
+}));
 vi.mock("@/components/vault/CopyToast", () => ({ default: () => null }));
 vi.mock("@/components/vault/ErrorToast", () => ({ default: () => null }));
 vi.mock("@/components/settings/SettingsPanel", () => ({
@@ -220,5 +222,31 @@ describe("Home (page.tsx) — panel=settings / action=new-item query params (Pla
     await waitFor(() => expect(screen.getByTestId("mock-main-column")).toBeInTheDocument());
     expect(screen.queryByTestId("mock-settings-panel")).not.toBeInTheDocument();
     expect(screen.queryByTestId("type-picker-close")).not.toBeInTheDocument();
+  });
+
+  // Post-UAT (Bartek 2026-07-15): the popup's in-popup type MENU (NordPass
+  // pattern) redirects straight to `?action=new-item&type=<id>` -- the type
+  // must be preselected here so the fullscreen editor skips its own
+  // TypePicker step (the popup already made the type choice).
+  it("preselects the item type and skips the TypePicker when the URL has action=new-item&type=<id>", async () => {
+    mockGetSessionToken.mockReturnValue("token");
+    window.history.pushState({}, "", "/?action=new-item&type=login");
+
+    render(<Home />);
+
+    await waitFor(() => expect(screen.getByTestId("mock-item-form")).toBeInTheDocument());
+    expect(screen.getByTestId("mock-item-form")).toHaveAttribute("data-type", "login");
+    expect(screen.queryByTestId("type-picker-close")).not.toBeInTheDocument();
+    await waitFor(() => expect(window.location.search).toBe(""));
+  });
+
+  it("falls back to the TypePicker when the URL's type param isn't a recognized item type", async () => {
+    mockGetSessionToken.mockReturnValue("token");
+    window.history.pushState({}, "", "/?action=new-item&type=bogus");
+
+    render(<Home />);
+
+    await waitFor(() => expect(screen.getByTestId("type-picker-close")).toBeInTheDocument());
+    expect(screen.queryByTestId("mock-item-form")).not.toBeInTheDocument();
   });
 });
