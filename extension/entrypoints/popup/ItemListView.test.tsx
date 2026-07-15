@@ -153,7 +153,7 @@ describe("ItemListView", () => {
     });
   });
 
-  it("Test 6 (BINDING): the header gear opens '${baseUrl}/?panel=settings' and the '+' new-item button opens '${baseUrl}/?action=new-item', both via config.get -> tabs.create", async () => {
+  it("Test 6 (BINDING): the header gear opens '${baseUrl}/?panel=settings' via config.get -> tabs.create, and the '+' new-item button opens an in-popup type menu (no tabs.create yet)", async () => {
     mockSendMessage.mockImplementation(async (message: { kind: string }) => {
       if (message.kind === "vault.list") return { items: [], folders: [] };
       if (message.kind === "session.status") {
@@ -173,11 +173,62 @@ describe("ItemListView", () => {
 
     mockTabsCreate.mockClear();
     fireEvent.click(screen.getByRole("button", { name: /new item|nowy element/i }));
-    await waitFor(() => {
-      expect(mockTabsCreate).toHaveBeenCalledWith({ url: "https://my-configured-vault.example/?action=new-item" });
+
+    // The menu is showing (all five type entries), but nothing redirected yet.
+    expect(screen.getByRole("menuitem", { name: /^login$/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /totp/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /^card$/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /identity/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /^note$/i })).toBeInTheDocument();
+    expect(mockTabsCreate).not.toHaveBeenCalled();
+
+    // The menu itself is never a form/dialog (EXT-06's doctrine is about
+    // forms, not type menus).
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("Test 7 (BINDING): choosing a type entry opens '${baseUrl}/?action=new-item&type=<id>' via config.get -> tabs.create, and closes the menu", async () => {
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "vault.list") return { items: [], folders: [] };
+      if (message.kind === "session.status") {
+        return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
+      }
+      if (message.kind === "config.get") return { baseUrl: "https://my-configured-vault.example" };
+      throw new Error(`unexpected: ${message.kind}`);
     });
 
-    // Neither renders any in-popup form/type-picker.
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    render(<ItemListView locale="en" onSelectItem={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText(/empty so far/i)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /new item|nowy element/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /totp/i }));
+
+    await waitFor(() => {
+      expect(mockTabsCreate).toHaveBeenCalledWith({
+        url: "https://my-configured-vault.example/?action=new-item&type=totp",
+      });
+    });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("Test 8 (BINDING): clicking outside the open type menu closes it without redirecting", async () => {
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "vault.list") return { items: [], folders: [] };
+      if (message.kind === "session.status") {
+        return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
+      }
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(<ItemListView locale="en" onSelectItem={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText(/empty so far/i)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /new item|nowy element/i }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+
+    fireEvent.mouseDown(document.body);
+
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(mockTabsCreate).not.toHaveBeenCalled();
   });
 });
