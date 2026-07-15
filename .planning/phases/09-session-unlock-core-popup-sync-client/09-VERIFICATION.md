@@ -1,69 +1,49 @@
 ---
 phase: 09-session-unlock-core-popup-sync-client
-verified: 2026-07-15T13:18:04Z
-status: gaps_found
-score: 5/7 must-haves verified
-behavior_unverified: 1
+verified: 2026-07-15T21:05:00Z
+status: passed
+score: 7/7 must-haves verified
+behavior_unverified: 0
 overrides_applied: 0
-gaps:
-  - truth: "SC #1 (EXT-05) — the server URL is persisted AND editable later"
-    status: partial
-    reason: >-
-      Configure + /healthz validation + persist + nothing-hard-coded are all verified live.
-      The SC's explicit "editable later" clause is NOT delivered: ServerConfigView is reachable
-      ONLY when no config exists yet. Once a URL is persisted the user has no path back to it —
-      changing servers requires wiping extension storage / reinstalling.
-      09-CONTEXT.md's Deferred Ideas dropped "server URL reconfiguration" as scope creep on the
-      grounds it is "not implied by EXT-02/03/04" — but it IS explicitly required by ROADMAP
-      SC #1 (EXT-05). A CONTEXT deferral cannot subtract a roadmap Success Criterion.
-      Not deferrable: no later phase (10 autofill / 11 generate+capture / 12 provider /
-      13 hardening) covers it.
-    artifacts:
-      - path: "extension/entrypoints/popup/App.tsx"
-        issue: "Line 36 — setView({kind:'server-config'}) fires only on `config === null`. The only render site (line 85) is unreachable once a config is persisted."
-      - path: "extension/entrypoints/popup/ServerConfigView.tsx"
-        issue: "Props are only {locale, onConfigured} — no existing-value seed, no edit mode. Purpose-built as a first-run gate."
-      - path: "extension/entrypoints/popup/ItemListView.tsx"
-        issue: "Line 156 — the header gear opens the WEB APP's `/?panel=settings` in a new tab. That cannot change the extension's own chrome.storage.local baseUrl."
-    missing:
-      - "A popup affordance to re-open ServerConfigView with the current URL pre-filled (the `config.set` handler + probeServerHealth already exist and are wired — only the UI entry point is absent)."
-      - "OR an options page (none is declared in wxt.config.ts; entrypoints/ has no options entry)."
-behavior_unverified_items:
-  - truth: "SC #5 (EXT-04) — an edit made on another synced device (or the v0.1 web app) appears via the same REST + WebSocket sync used in v0.1"
-    test: >-
-      With the extension unlocked and its popup open against the live pv-server, open the v0.1
-      web app in a tab, sign in to the SAME account (uat-prf04@example.local), and create/edit a
-      vault item there. Confirm the change appears in the popup's list within ~30s (poll
-      fallback) or near-instantly (WS push) WITHOUT reopening the popup. Then confirm the reverse
-      direction. This is 09-07-PLAN.md's own SC #5 checkpoint steps 2-3, whose blocking
-      resume-signal was "Type 'approved' once cross-client sync is confirmed working both
-      directions".
-    expected: "The remote edit propagates into the popup's item list with no manual refresh, in both directions."
-    why_human: >-
-      This is a state transition across two independent clients (remote write -> WS frame ->
-      pullOnce() -> store -> popup re-render). Presence/wiring checks and the mocked-WebSocket
-      unit tests cannot observe it; it needs a live server plus a genuine second client.
+re_verification:
+  previous_status: gaps_found
+  previous_score: 5/7
+  gaps_closed:
+    - "SC #1 (EXT-05) — 'editable later' now has a real, reachable UI path (a9e63ca), verified live by a verifier-owned probe at the real 380px popup width, including that a reconfigure cannot save an unreachable server and a failed reconfigure does not clobber the persisted URL."
+    - "SC #5 (EXT-04) — cross-client sync now proven by a genuine second client (990afa7); re-run first-hand with a fresh unique marker: 7/7, exit 0, WS to /api/sync/ws observed."
+  gaps_remaining: []
+  regressions: []
+deferred:
+  - truth: "SC #6's moz-extension:// half — CORS allowlist against a real Firefox extension origin"
+    addressed_in: "Phase 13"
+    evidence: "13-01/13-04 own the Firefox popup pass, the MV2 optional_host_permissions strip, and the per-profile moz-extension origin/CORS problem. The chrome-extension:// half is VERIFIED here (allowlist proven, forged origin rejected)."
+  - truth: "DM Sans not bundled; ServerConfigView not named in 09-UI-SPEC"
+    addressed_in: "UI-checker"
+    evidence: "Recorded as UI-checker items, not phase-9 SC requirements."
 ---
 
-# Phase 9: Session Unlock Core, Popup & Sync Client — Verification Report
+# Phase 9: Session Unlock Core, Popup & Sync Client — Re-Verification Report
 
 **Phase Goal:** Users can unlock, browse, and search their vault from the extension's popup interface, backed by the real `pv-server` REST/WebSocket API and multi-device sync, with the unlocked key held safely for the session.
-**Verified:** 2026-07-15T13:18:04Z
-**Status:** gaps_found
-**Re-verification:** No — initial verification
+**Verified:** 2026-07-15T21:05:00Z
+**Status:** passed
+**Re-verification:** Yes — after gap closure (previous: `gaps_found` 5/7)
 
 ## Headline
 
-This is a strong phase with unusually honest engineering: the mid-phase pivot to an
-extension-scoped PRF passkey is real, correct, and zero-knowledge; the 9 UAT-found bugs are all
-genuinely fixed in code with regression tests; and one SC (#6) verified *better* than the SUMMARY
-claimed. Two things do not hold up:
+**Both gaps are genuinely closed, and I confirmed each first-hand rather than by reading the
+SUMMARY.** The two closures are of materially different character and I want to be explicit about
+that:
 
-1. **SC #1 is a real gap** — "editable later" was silently dropped by a CONTEXT deferral that
-   overlooked the roadmap SC requiring it. Small fix, real miss.
-2. **SC #5 is overclaimed** — 09-07-SUMMARY marks it ✅ PASS, but the defining half
-   (cross-client REST+**WebSocket** propagation) was never exercised. **No probe touches the
-   WebSocket path at all.**
+- **GAP 1 (SC #1)** is closed by a *structural* fix, not a patched-over one. There is exactly one
+  `handleSubmit` in `ServerConfigView`, and both modes route through it — so "a reconfigure cannot
+  save an unreachable server" is true *by construction*, not by a parallel guard that could drift.
+  I proved it live anyway (below).
+- **GAP 2 (SC #5)** is closed by a harness that is the opposite of the one I rejected. I applied
+  the same skepticism and it survived. Details in "Harness adversarial review".
+
+The previous pass's two criticisms were both accepted rather than argued around, and the
+underlying CONTEXT deferral that caused GAP 1 was explicitly retracted in the commit message.
 
 ## Goal Achievement
 
@@ -71,123 +51,136 @@ claimed. Two things do not hold up:
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | Server URL configured on first run, `/healthz`-validated, persisted, **editable later**, nothing hard-coded (EXT-05) | ✗ PARTIAL | Configure/validate/persist/no-hardcode all verified (`server-config.ts:44` real `${baseUrl}/healthz` probe; `ServerUnreachableError` before any persist; live click-through advances on first submit). **"editable later" has no UI path** — `App.tsx:36` gates ServerConfigView on `config === null`; gear opens the *web app's* settings. GAP. |
-| 2 | Unlock from popup with master password, and with a PRF passkey where supported | ✓ VERIFIED | UAT 15/15 with real `create()`+`get()` + PRF via CDP virtual authenticator. Ext-scoped passkey uses its own `INFO_EXT_PRF_UNLOCK = b"pv:ext-prf-unlock:v1"` (`keys.rs:25`), with `ext_prf_and_web_prf_keys_are_cryptographically_distinct` proving domain separation. `UnlockView.test.tsx` covers both variants + the enrollment gate + honest Tier-1 degradation. |
-| 3 | Unlocked UK only in `storage.session` (never `storage.local`); survives SW idle-kill/wake | ✓ VERIFIED | Independent grep: **no UK/PRF-output/plaintext in `storage.local`** — it holds only non-secret routing metadata (credential id, *public* PRF salt, baseUrl, prompt-suppressed flag), each explicitly justified in-file. No `setAccessLevel`. `ensureHydrated()` re-hydrates from the envelope. UAT killed the worker with a module-state marker read back WIPED (genuine-kill ground truth), then `survived:true`. |
-| 4 | Auto-locks after a **configurable** idle timeout and on browser close (EXT-03) | ✓ VERIFIED | `chrome.alarms` (`pv-auto-lock`), never setTimeout. The UAT-found inert-control defect is really fixed: `router.ts:212-233` persists `idleTimeoutMinutes` *and* whitelist-validates, and `router.ts:72` excludes this kind from `noteActivity()` to kill the race. Backed by 4 real assertions in `router.test.ts`. Browser-close clear is platform-guaranteed by `storage.session`. |
-| 5 | Browse/search/pick **and** an edit on another synced client appears via REST + WebSocket sync (EXT-04) | ⚠️ PRESENT_BEHAVIOR_UNVERIFIED | Browse/search/pick: VERIFIED (3 real decrypted items, search filters, detail opens). Cross-client half: **not exercised**. See "Contradictions" below. Code is present + wired (`/api/sync/ws` routed and live; `onmessage`→`pullOnce()` never parsing `.data`; 30s poll; jittered backoff) and unit-tested against a *mocked* WebSocket. |
-| 6 | pv-server CORS allowlist accepts the fixed extension origin, proven against a real request (EXT-05) | ✓ VERIFIED (exceeds claim) | Independently re-run against the live server. Real origin → `access-control-allow-origin: chrome-extension://bbpnpamaoddpkfjnohkkepbjgbjpdbfo`. **A forged origin gets NO allow-origin header** — proving a true allowlist, not `permissive()`. The SUMMARY only proved the positive; the negative also holds. |
-| 7 | Popup exposes "open full vault" opening the configured server's web app in a new tab (EXT-06) | ✓ VERIFIED | `ItemListView.tsx:118-123` — `openInNewTab()` reads `config.get` and calls `tabs.create({url: config.baseUrl + suffix})`; never a literal. Probe observed the tab at exactly the configured `http://localhost:8620/`. |
+| 1 | Server URL configured on first run, `/healthz`-validated, persisted, **editable later**, nothing hard-coded (EXT-05) | ✓ VERIFIED (gap closed) | Verifier-owned live probe, **8/8, real 380px popup**: link visible & unclipped (box y=228 h=24, inside viewport); config view opens pre-filled `http://localhost:8620`; **reconfigure to an unreachable server REJECTED and persisted URL NOT overwritten**; Cancel returns to unlock, config intact. |
+| 2 | Unlock from popup with master password, and with a PRF passkey where supported (EXT-02) | ✓ VERIFIED | Carried: UAT 15/15 with real `create()`+`get()`+PRF via CDP virtual authenticator; ext-scoped `INFO_EXT_PRF_UNLOCK`. Regression check: 143/143 vitest, tsc clean, both builds green. |
+| 3 | Unlocked UK only in `storage.session`; survives SW idle-kill/wake | ✓ VERIFIED | Carried: no UK/PRF-output/plaintext in `storage.local`; genuine-kill ground truth via wiped module-state marker → `survived:true`. |
+| 4 | Auto-locks after a **configurable** idle timeout and on browser close (EXT-03) | ✓ VERIFIED | Carried: `chrome.alarms` (`pv-auto-lock`), never setTimeout. **Strengthened since**: a1ce563 arms the alarm inside `setUnlockedUserKey()` (WR-04/05), closing the arm-on-unlock hole. |
+| 5 | Browse/search/pick **and** an edit on another synced client appears via REST + WebSocket sync (EXT-04) | ✓ VERIFIED (gap closed) | **Re-ran the harness myself with a fresh unique marker (`XSYNC-VERIFY-1784141410`): 7/7, exit 0.** Item created through the web app's real TypePicker→ItemForm appeared in the popup with no refresh; WS observed at `ws://localhost:8620/api/sync/ws?token=…`. |
+| 6 | pv-server CORS allowlist accepts the fixed extension origin, proven against a real request (EXT-05) | ✓ VERIFIED | Carried: real origin → `access-control-allow-origin: chrome-extension://bbpnp…`; **forged origin gets NO header** (true allowlist). **Strengthened**: WR-07 adds a fail-loud startup gate + 3 tests. `moz-extension://` half deferred → Phase 13. |
+| 7 | Popup exposes "open full vault" opening the configured server's web app (EXT-06) | ✓ VERIFIED | Carried: `openInNewTab()` reads `config.get` → `tabs.create`, never a literal; tab observed at the configured URL. |
 
-**Score:** 5/7 truths verified (1 gap, 1 present-but-behavior-unverified)
-
-### Cheap Evidence (all re-run independently, all match the claims)
-
-| Check | Expected | Result |
-|-------|----------|--------|
-| `extension && npx vitest run` | 141 | ✓ 141 passed (17 files) |
-| `extension && npx tsc --noEmit` | clean | ✓ exit 0 |
-| `wxt build -b chrome` / `-b firefox` | both build | ✓ both |
-| `web && npx vitest run` | ~345 | ✓ 345 passed (49 files) |
-| `web && npx tsc --noEmit` | clean | ✓ exit 0 |
-| `cargo test --workspace` | ~118+ | ✓ 118 passed, 0 failed |
-| `curl /healthz` | ok | ✓ `{"status":"ok"}` |
-
-### Key Link Verification
-
-| From | To | Via | Status |
-|------|----|-----|--------|
-| `ItemListView.tsx` | configured server URL | `config.get` → `tabs.create` | ✓ WIRED |
-| `router.ts` | `session-storage.ts` | `writeSessionMeta({idleTimeoutMinutes})` | ✓ WIRED |
-| `background.ts` (fresh wake) | `vault-store.ts` | `ensureVaultSyncStarted()` on already-unlocked wake | ✓ WIRED |
-| `ext-passkey.ts` / `unlock.ts` | `wasm-loader.ts` | `initCrypto()` guards at every handler entry (6 sites) | ✓ WIRED |
-| `sync-client.ts` | `/api/sync/ws` | `WebSocket` → `onmessage` → `pullOnce()` | ⚠️ WIRED, NEVER EXERCISED LIVE |
-| **`App.tsx` / any popup surface** | **`ServerConfigView`** | **re-entry after first run** | **✗ NOT_WIRED (gap 1)** |
-| popup enroll | `/api/extension-passkeys` | POST `{credential_id, prf_salt, prf_wrapped_uk}` | ✓ WIRED |
-
-### Zero-Knowledge Audit (the pivot's central risk) — HOLDS
-
-- Server stores `prf_wrapped_uk TEXT` as an **opaque blob**, never parsed (migration `0011_extension_passkeys.sql`, comment: *"serwer nigdy nie parsuje treści"*).
-- `extension_passkeys.rs` requires `SessionUser` on every route and scopes list/delete by `user_id`; `cross_user_scoping_on_list_and_delete` proves the isolation.
-- Only `credential_id`, the **public** `prf_salt`, and the wrapped ciphertext ever leave the client. No PRF output, no UK, no plaintext.
-- Distinct HKDF context `pv:ext-prf-unlock:v1`, never reusing `pv:prf-unlock:v1`, with a test asserting cryptographic distinctness.
-- D-02's sanctioned exception (raw UK bytes crossing the WASM boundary to survive idle-kill) is documented exactly where implemented — `pv-wasm/src/lib.rs:138-144` — per the project's convention.
-
-### Structural Gates — all three real
-
-| Gate | Verdict |
-|------|---------|
-| `manifest-permissions.test.ts` | ✓ Real. Built manifest confirms `permissions:["storage","alarms"]`. |
-| `ext-protocol.test.ts` | ✓ Real, and **type-enforced exhaustive**: fixtures are typed `{[K in Message["kind"]]: ...}`, so adding a kind without a fixture fails `tsc`. No `Uint8Array`/`ArrayBuffer` anywhere in the union. |
-| `router.test.ts` | ✓ Real assertions (not tautologies) — incl. the "does NOT run noteActivity" race regression and hostile-sender rejection. |
-
-Chrome manifest pins `key` (deterministic dev id for the credential binding); the Firefox build correctly **omits** it (`key present: false`).
+**Score:** 7/7 truths verified (0 gaps, 0 present-but-behavior-unverified)
 
 ### Requirements Coverage
 
-| Req | Status | Evidence |
-|-----|--------|----------|
-| EXT-02 | ✓ SATISFIED | Password + ext-scoped PRF unlock, UK in `storage.session`, survives idle-kill. |
-| EXT-03 | ✓ SATISFIED | `chrome.alarms` auto-lock, configurable (persist + race fixed and tested), browser-close via `storage.session`. |
-| EXT-04 | ⚠️ PARTIAL | Popup browse/search/pick satisfied. Its "WebSocket sync (multi-device revisions honored)" clause is **not proven live**. Currently marked `Complete` in REQUIREMENTS.md — that is ahead of the evidence. |
-| EXT-05 | ✗ BLOCKED | CORS half fully proven (SC #6, exceeds claim). Config half missing "editable later". Already `Pending` in REQUIREMENTS.md — correctly so. |
-| EXT-06 | ✓ SATISFIED | "Open full vault" → configured URL. **No CRUD forms in the popup** — verified: the FAB's type menu is a DaisyUI `menu`, and every management path is a `tabs.create()` redirect. |
+| Req | Description | Status | Evidence |
+|-----|-------------|--------|----------|
+| EXT-02 | Unlock (password + PRF passkey) from popup | ✓ SATISFIED | SC #2 — real WebAuthn ceremonies, ext-scoped PRF with proven domain separation |
+| EXT-03 | Configurable idle auto-lock + browser-close clear | ✓ SATISFIED | SC #4 — alarms-based; inert-control defect fixed + regression-tested; CR-01 now drops decrypted UI on lock |
+| EXT-04 | REST + WebSocket sync against the configured server | ✓ SATISFIED | SC #5 — genuine second client, re-run first-hand; WS observed |
+| EXT-05 | Server URL configured, validated, persisted, **editable**, CORS allowlist | ✓ SATISFIED | SC #1 + SC #6 — both halves now proven live; the "editable" half was the prior gap |
+| EXT-06 | Open full vault in a new tab; popup doesn't re-implement vault mgmt | ✓ SATISFIED | SC #7 |
 
-### Bartek's Binding UX Decisions
+## Gap Closure — Verified First-Hand
 
-| Decision | Status |
-|----------|--------|
-| NordPass layout (header gear + Full screen, footer = auto-lock only) | ✓ Present |
-| Plus FAB → in-popup TYPE MENU → per-type redirect (`&type=<id>`) | ✓ Present |
-| No in-popup CRUD forms (EXT-06) | ✓ Holds |
-| RP ID + last-used rows guaranteed in ItemDetailView | ✓ Present (`ItemDetailView.tsx:156-161`, `—` fallback) |
-| Two sign-in variants (no-session=email+password / locked=password-only) | ✓ Present + tested |
-| No Fuzzy Bubbles in the popup | ✓ Holds (only a comment noting the exclusion) |
+### GAP 1 (SC #1 / EXT-05) — CLOSED
 
-### Anti-Patterns Found
+The fix is reachable where it matters. `session.status` is a local background read (no network), so
+a user whose server is wrong/moved still lands on the **unlock** view — which is exactly where the
+link lives. That is the stuck-user scenario, and it is covered.
 
-| File | Pattern | Severity | Impact |
-|------|---------|----------|--------|
-| `scratchpad/uat/probe-sc4567.js:50` | `beforeCount` assigned, never read — dead code | ℹ️ Info (harness only, not shipped) | The vestige of the SC #5 assertion that was never written. |
+The security-relevant claim holds **structurally**: `ServerConfigView` has one `handleSubmit`;
+both modes run `normalize → config.set → probe /healthz → persist`, and `if (!result.ok) return`
+fires before `onConfigured()`. There is no reconfigure-specific bypass to drift out of sync.
+`setServerConfig()` throws `ServerUnreachableError` *before* `storage.local.set`
+(`server-config.ts:79-88`).
 
-No `TBD`/`FIXME`/`XXX` debt markers in phase-modified source. No stubs, no hollow props, no hardcoded-empty data reaching render.
+My own probe (`scratchpad/uat/verify-changeserver.js`, **8/8**) confirms it live, and specifically
+that a rejected reconfigure **leaves the previously-persisted URL intact** — a failure mode nobody
+had asserted (a naive implementation could clear config on a failed edit and brick the extension).
 
-## Contradictions with the SUMMARYs
+### GAP 2 (SC #5 / EXT-04) — CLOSED
 
-**1. SC #5 is overclaimed (the significant one).**
+#### Harness adversarial review (`probe-crossclient-sync.js`)
 
-09-07-SUMMARY marks SC #5 **✅ PASS**, evidence: *"Sync engine proven by the fresh-worker-wake repopulation test (probe-realconfig.js), which exercises the REST pull path end-to-end."*
+I checked it against every failure of the harness I rejected:
 
-That substitutes a **single-client REST pull** for what SC #5 actually demands: *"an edit made on another synced device (or the v0.1 web app) appears via the same REST + WebSocket sync"*. The evidence trail contradicts the PASS:
+| Prior theatre | Now |
+|---|---|
+| `beforeCount` captured, never read | **Fixed** — `log('marker item not present before…', before === 0)` is a real assertion |
+| POSTed junk that couldn't decrypt | **Fixed** — client 2 creates through the web app's real TypePicker → ItemForm, real client-side crypto |
+| Logged outside the pass/fail array (couldn't fail) | **Fixed** — every check goes through `log()` into `r`; `process.exit(failed.length ? 1 : 0)` |
+| Never touched the WS | **Fixed** — WebSocket constructor intercepted; `/api/sync/ws` asserted |
 
-- `grep -niE "sync/ws|websocket" *.js` across **every** UAT probe → **no probe touches the WebSocket path at all.**
-- `probe-sc4567.js:48` *does* open an SC #5 cross-client block — and it never asserts anything. It captures `beforeCount` (line 50), POSTs an item, prints a bare `console.log('   (second-client item POST →', created, ')')`, and **never compares an after-count**. It is not in the `r` pass/fail array, so it could not have failed. Every other SC in that probe (#4, #6, #7) goes through `log()`; #5 conspicuously does not.
-- That POST also isn't a real second client — it's a `fetch` from the popup's own context reusing the extension's own bearer token — and its body (`enc_name:'x', enc_key:'x', enc_data:'x'`) is junk that could not decrypt into the list even if sync fired.
-- **09-05-SUMMARY predicted exactly this** and explicitly deferred it: *"A real, live pv-server + a second synced client (the v0.1 web app)… an edit made in the web app becomes visible in the extension's background store via a real WS notification + REST pull, and vice versa"* → *"The orchestrator's Playwright UAT harness is expected to cover this two-client proof; 09-07 is this phase's dedicated manual-verification plan."* 09-07 did not cover it.
-- 09-07-PLAN's own SC #5 checkpoint is a `gate="blocking"` with resume-signal *"Type 'approved' once cross-client sync is confirmed working both directions"*. Steps 2-3 (open the web app, edit, watch it appear) were never performed; the gate was self-discharged on step 1 alone.
+**Is client 2 genuinely separate?** Yes. It shares a browser *process* but nothing that could
+shortcut the test: `http://localhost:8620` and `chrome-extension://…` are separate origins with
+separate storage, separate sessions, separate auth tokens. The propagation genuinely traverses
+web tab → server → sync → extension SW → popup.
 
-This is **not** a code defect — the WS transport is present, correctly wired (`/api/sync/ws` is routed and live; notification-only `onmessage`; poll fallback; jittered backoff), and unit-tested against a mocked socket. It is an **evidence gap on a behavior-dependent truth**, which is why it lands as PRESENT_BEHAVIOR_UNVERIFIED rather than a blocker.
+**Can the load-bearing assertion fail?** Yes — and the harness *proves its own falsifiability*:
+check 3 and check 6 use the **same locator**. Check 3 passing (count 0 before creation) demonstrates
+that locator returns falsy when the item is absent; check 6 then matches only after client 2 creates
+it. That is a genuine built-in negative control, not an assumption.
 
-**2. SC #1's "editable later" was never verified by anyone.**
+**Is the WS observation honest?** Yes. Patching the SW's global `WebSocket` via a `Proxy` intercepts
+the *actual* constructor `sync-client.ts` calls — a real interception, not a simulation. The CDP
+limitation (Playwright 1.61's `newCDPSession` rejects Worker targets) is documented as a *substitute*
+rather than dressed up as CDP observation. Its failure modes all err toward **false negative**
+(an SW restart loses the patch → check fails), never false positive. I accept it.
 
-09-07-SUMMARY's SC #1 PASS evidence covers *"healthz probe + persist, advances on FIRST submit"* — configure, validate, persist. The SC's fourth clause, **"editable later"**, is not mentioned in the evidence and is not implemented. The deferral in 09-CONTEXT.md justified itself against EXT-02/03/04 and missed that SC #1/EXT-05 requires it.
+**Not theatre.** Verdict: genuine.
 
-**3. In the SUMMARY's favour (under-claimed).**
+## Findings (non-blocking)
 
-- SC #6: the SUMMARY proves only that the real origin is echoed. I additionally confirmed a **forged origin receives no `allow-origin` header** — so this is a genuine allowlist, not `permissive()`. Stronger than claimed.
-- The bug-count narrative is accurate: all 9 fixes are present in code, each with a regression test or structural gate. `manifest-permissions`, `ext-protocol` (type-enforced exhaustive), and `router.test.ts` are all real gates, not decorative.
+| # | Finding | Severity | Detail |
+|---|---|---|---|
+| V-01 | `vitest run` reports **"Errors 1 error"** — an unhandled rejection introduced by the gap-closure commit | ⚠️ WARNING | `TypeError: Cannot read properties of undefined (reading 'request')` at `ServerConfigView.tsx:95`, from App.test.tsx's new "successful change" test: the mock lacks `browser.permissions`, and `handleSubmit`'s `try` has `finally` but no `catch`, so the sync throw escapes. **Not a production defect** — `chrome.permissions` always exists in MV3 (proven: Bartek's real prompt click, and the live click-through). But vitest itself warns "might cause false positive tests", and commit a9e63ca's "vitest 143 passed" claim omits the error. Test-mock hygiene; worth a one-line mock fix. |
+| V-02 | The harness's "7/7" is mildly inflated | ℹ️ INFO | Two checks are `log(…, true)` — unconditional, cannot fail *as checks*. Both are genuinely gated by a preceding `waitForSelector` that throws → exit 2, so the failure mode exists; but only 5 of 7 are real assertions. Honest in effect, slightly generous in headline. |
+| V-03 | `appeared` doesn't discriminate WS push from the 30s poll | ℹ️ INFO | The 35s timeout exceeds the 30s poll interval, so check 6 alone can't prove the WS *frame* drove that update. SC #5 asks the edit appear "via the same REST + WebSocket sync" — both paths are that one sync client, and the WS is independently observed open, so the SC is met. The harness's own comment says "(or at minimum the 30s poll)" rather than overclaiming. |
+| V-04 | Changing the server while a session exists | ℹ️ INFO | A reconfigure doesn't invalidate a session tied to the old server, and the old host permission isn't revoked. Not an SC requirement; note for Phase 13 hardening. |
+
+## Judgment on the Deliberate Deviations
+
+| Deviation | Verdict | Reasoning |
+|---|---|---|
+| **WR-07** escalated to fail-loud (vs review's log-and-ignore) | ✓ **Agree** | Consistent with DEPLOY-02. A silently-ignored malformed origin allowlist is a *security-relevant* misconfiguration on a zero-knowledge vault; and `*` would panic the CORS layer at startup anyway — failing loud at boot naming the offending var is strictly better than crashing later or silently widening CORS. Checked *before* the localhost early-return, so dev deployments get the same gate. Backed by 3 real tests. |
+| **WR-08** deleted the web-RP PRF pair (vs marking RESERVED) | ✓ **Agree** | Dead code on a crypto surface is a liability, not an asset — RESERVED code rots unexercised and invites accidental reuse. It was unreachable-by-construction from an extension origin, and git history preserves it if Phase 12 needs it. Confirmed removed: `lib/crypto/vault-session.ts` gone, `spike.roundtrip`/`SPIKE_PASSWORD` survive only in explanatory comments. Removing the second `onMessage` listener also leaves `router.ts` as the single enforcement point for the sender-origin gate — a security simplification. |
+| **WR-06** reconnect backoff left on `setTimeout` | ✓ **Acceptable — not a gap** | Correct call. An alarm's ≥1min floor would make a seconds-scale backoff meaningless. Crucially there's **no durability hole**: the *poll fallback* — the path that must survive idle-kill — **is** alarm-backed (`POLL_ALARM`, `periodInMinutes`), and a fresh wake re-runs `ensureVaultSyncStarted()`. The `setTimeout` backoff is best-effort *within a live worker*, which is exactly the right scope. |
+
+## Critical Fix (CR-01) — Confirmed Real
+
+The Critical is genuinely fixed, and fixed at the right layer:
+
+- `vault-session.ts:239` — `lockVaultSession()` fires a **dedicated** `session.locked` broadcast,
+  deliberately distinct from `vault.updated`'s sync-merge noise (so the popup can't confuse a
+  merge with a lock).
+- `App.tsx:85-99` — a **top-level** listener (App is mounted for *every* view, unlike ItemListView
+  which unmounts on detail — the exact reason the bug existed) re-reads the **authoritative**
+  `session.status` rather than trusting the broadcast, then resets the view from *any* view.
+- Resetting unmounts `ItemDetailView`, dropping the decrypted/revealed password out of React state.
+  Also clears `showEnrollPrompt`.
+- Regression test renders App on ItemDetailView, fires `session.locked`, asserts the decrypted item
+  is gone and UnlockView shown. Listener is removed on cleanup (no leak).
+
+## Cheap Evidence (all re-run independently this pass)
+
+| Check | Expected | Result |
+|-------|----------|--------|
+| `extension && npx vitest run` | 143 | ✓ 143 passed (16 files) — *with 1 unhandled error, see V-01* |
+| `extension && npx tsc --noEmit` | clean | ✓ exit 0 |
+| `wxt build -b chrome` / `-b firefox` | both build | ✓ both (608.64 kB / 608.16 kB) |
+| `cargo test --workspace` | ~129 | ✓ **129 passed, 0 failed** (incl. the new WR-07 tests) |
+| `web && npx vitest run` | 345 untouched | ✓ 345 passed (49 files) |
+| `curl localhost:8620/healthz` | ok | ✓ `{"status":"ok"}` |
+| `probe-crossclient-sync.js` (re-run, fresh marker) | pass | ✓ **7/7, exit 0**, WS observed |
+| `verify-changeserver.js` (verifier-owned) | pass | ✓ **8/8, exit 0** |
+
+## Contradictions With the SUMMARYs
+
+**One, minor:** commit a9e63ca reports "vitest 143 passed" without mentioning the unhandled
+rejection it introduced (V-01). The count is true; the cleanliness is slightly overstated.
+
+Otherwise **no contradictions**. Notably, the previous pass's two criticisms were *accepted rather
+than rationalized* — 09-06-SUMMARY was amended (820c295), 09-REVIEW.md records per-finding outcomes
+(d846565), a stale comment was corrected (8a4c23c), and the SC #5 SUMMARY's overclaim was replaced
+with a harness that earns the claim. The deviations that were taken are documented as deviations.
 
 ## Gaps Summary
 
-One implementation gap and one evidence gap; neither touches the crypto core, and the phase's security posture is sound.
-
-**Gap (blocking):** SC #1's "editable later" — a user who mistypes their server URL, or moves their self-hosted server, is stuck. `config.set` + `probeServerHealth` already exist and are wired; only a popup entry point back into `ServerConfigView` (URL pre-filled) is missing. Plausibly a one-task fix.
-
-**Evidence gap (human):** SC #5's cross-client proof is the last uncovered platform behavior in the phase and is exactly the two-client test 09-05 asked for and 09-07 was chartered to run. Worth running before Phase 10 builds autofill on top of this sync engine.
-
-Correctly deferred, not counted against this phase: Firefox popup pass (Phase 13, owns the MV2 `optional_host_permissions` strip + per-profile `moz-extension` origin), DM Sans bundling / ServerConfigView UI-spec naming (UI review), and the manual permission-prompt click (browser chrome, done by hand).
+None. Both prior gaps are closed with first-hand evidence; the Critical and all 8 Warnings are
+fixed; 7/7 success criteria verified; EXT-02..EXT-06 all satisfied. Phase goal achieved.
 
 ---
 
-_Verified: 2026-07-15T13:18:04Z_
-_Verifier: Claude (gsd-verifier)_
+_Verified: 2026-07-15T21:05:00Z_
+_Verifier: Claude (gsd-verifier) — re-verification after gap closure_
