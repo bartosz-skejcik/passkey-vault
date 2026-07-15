@@ -12,12 +12,14 @@
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "compile": "tsc --noEmit",
+    "test": "vitest run",
     "postinstall": "wxt prepare",
     "predev": "bash ../scripts/build-wasm.sh",
     "prebuild": "bash ../scripts/build-wasm.sh"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
+    "vitest": "^3.2.7",
     "wxt": "^0.20.27"
   },
   "dependencies": {
