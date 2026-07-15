@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod extension_passkeys;
 pub mod folders;
 pub mod passkeys;
 pub mod session;
@@ -50,6 +51,11 @@ pub fn router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/api/passkeys/unlock/start", post(passkeys::unlock_start))
         .route("/api/passkeys/unlock/finish", post(passkeys::unlock_finish))
         .route("/api/passkeys/{id}", patch(passkeys::rename).delete(passkeys::delete_passkey))
+        .route(
+            "/api/extension-passkeys",
+            get(extension_passkeys::list).post(extension_passkeys::create),
+        )
+        .route("/api/extension-passkeys/{credential_id}", delete(extension_passkeys::delete_credential))
         .route("/api/sessions", get(sessions::list))
         .route("/api/sessions/{id}", delete(sessions::revoke))
         .with_state(state)
