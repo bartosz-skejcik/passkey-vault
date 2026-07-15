@@ -124,6 +124,31 @@ describe("setUnlockedUserKey / getUnlockedUserKey", () => {
   });
 });
 
+describe("WR-05: unlock arms the auto-lock alarm itself", () => {
+  it("setUnlockedUserKey arms the alarm with its own interval -- no session.status/noteActivity round trip involved", async () => {
+    primeHappyPathMocks();
+    const { setUnlockedUserKey } = await import("./vault-session");
+    const uk = { tag: "fresh-user-key" } as unknown as import("../../lib/crypto/wasm-loader").WasmUserKey;
+
+    // The ONLY call in this test. Previously the alarm was armed purely as
+    // a side effect of App.tsx's follow-up session.status -- so an unlock
+    // on its own left EXT-03's control completely unarmed.
+    await setUnlockedUserKey(uk, "a@example.com", "tok123", 30);
+
+    expect(hoisted.mockAlarmsCreate).toHaveBeenCalledWith("pv-auto-lock", { delayInMinutes: 30 });
+  });
+
+  it("arms exactly once per unlock -- setUnlockedUserKey must not double-arm", async () => {
+    primeHappyPathMocks();
+    const { setUnlockedUserKey } = await import("./vault-session");
+    const uk = { tag: "fresh-user-key" } as unknown as import("../../lib/crypto/wasm-loader").WasmUserKey;
+
+    await setUnlockedUserKey(uk, "a@example.com", "tok123", 5);
+
+    expect(hoisted.mockAlarmsCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("ensureHydrated", () => {
   it("re-imports the persisted key envelope after a simulated idle-kill (fresh module load, in-memory cache reset)", async () => {
     primeHappyPathMocks();
