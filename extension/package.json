@@ -12,7 +12,9 @@
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "compile": "tsc --noEmit",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "predev": "bash ../scripts/build-wasm.sh",
+    "prebuild": "bash ../scripts/build-wasm.sh"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

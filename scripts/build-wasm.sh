@@ -86,3 +86,28 @@ mv web/src/lib/crypto/wasm/pv_wasm_bg.wasm web/public/wasm/pv_wasm_bg.wasm
 
 echo "==> Done. JS/TS glue: web/src/lib/crypto/wasm/pv_wasm.js"
 echo "==> Done. WASM binary: web/public/wasm/pv_wasm_bg.wasm"
+
+# 8. Additive second output target: extension/ (D-02/D-12 — this script
+#    remains the single source of the pv-wasm artifact; the extension/
+#    output is generated from the exact same compiled .wasm, never a
+#    forked/duplicated build path).
+mkdir -p extension/lib/crypto/wasm extension/public/wasm
+
+echo "==> Running wasm-bindgen (extension/)"
+wasm-bindgen --target web \
+  --out-dir extension/lib/crypto/wasm \
+  target/wasm32-unknown-unknown/release/pv_wasm.wasm
+
+# 8b. Same zero-arg-default neutralization as step 6b, targeted at the
+#     extension's explicit-path init() call (created in plan 08-02, at
+#     extension/lib/crypto/wasm-loader.ts).
+sed -i.bak "s#module_or_path = new URL('pv_wasm_bg.wasm', import.meta.url);#throw new Error('pv-wasm: init() must be called with an explicit wasm URL, see lib/crypto/wasm-loader.ts');#" extension/lib/crypto/wasm/pv_wasm.js
+rm -f extension/lib/crypto/wasm/pv_wasm.js.bak
+
+# 8c. Same Turbopack/bundler-safe split as step 7: the .wasm binary lives
+#     in extension/public/wasm/ as a plain fetch()-able static asset, not
+#     bundled alongside the JS/TS glue.
+mv extension/lib/crypto/wasm/pv_wasm_bg.wasm extension/public/wasm/pv_wasm_bg.wasm
+
+echo "==> Done. JS/TS glue: extension/lib/crypto/wasm/pv_wasm.js"
+echo "==> Done. WASM binary: extension/public/wasm/pv_wasm_bg.wasm"
