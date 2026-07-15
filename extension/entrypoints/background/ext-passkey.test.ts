@@ -170,6 +170,50 @@ describe("handleExtEnrollFinish", () => {
     expect(status).toBe(true);
   });
 
+  it("WR-02: an ApiClientError means the server ANSWERED -> 'unknown' (401 -> 'invalid-credentials'); only a non-API failure is 'unreachable'", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({ tag: "uk" });
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockFromExtPrf.mockReturnValue({ free: vi.fn() });
+    hoisted.mockWrapUserKey.mockReturnValue("wrapped-json-blob");
+
+    // A 500 from a server that clearly IS reachable must never be
+    // reported as "unreachable" -- the taxonomy was inverted here.
+    hoisted.mockCreateExtensionPasskey.mockRejectedValueOnce(
+      new hoisted.ApiClientError(500, "boom"),
+    );
+    expect(
+      await handleExtEnrollFinish({
+        credentialIdB64url: "cred-a",
+        prfSaltB64: "salt",
+        prfBytes: new Uint8Array([1]).buffer,
+      }),
+    ).toEqual({ ok: false, error: "unknown" });
+
+    // An expired token during enrollment must route the popup back to
+    // sign-in, not render a generic failure (there was no 401 branch).
+    hoisted.mockCreateExtensionPasskey.mockRejectedValueOnce(
+      new hoisted.ApiClientError(401, "expired"),
+    );
+    expect(
+      await handleExtEnrollFinish({
+        credentialIdB64url: "cred-b",
+        prfSaltB64: "salt",
+        prfBytes: new Uint8Array([1]).buffer,
+      }),
+    ).toEqual({ ok: false, error: "invalid-credentials" });
+
+    // A genuine network-level failure (never reached the server) IS
+    // "unreachable" -- the only case that should ever claim that.
+    hoisted.mockCreateExtensionPasskey.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    expect(
+      await handleExtEnrollFinish({
+        credentialIdB64url: "cred-c",
+        prfSaltB64: "salt",
+        prfBytes: new Uint8Array([1]).buffer,
+      }),
+    ).toEqual({ ok: false, error: "unreachable" });
+  });
+
   it("Test 4 (guard): with the session locked, returns not-unlocked, never calls createExtensionPasskey, writes nothing to storage", async () => {
     hoisted.mockEnsureHydrated.mockResolvedValue(null);
     hoisted.mockGetUnlockedUserKey.mockReturnValue(null);
@@ -260,6 +304,42 @@ describe("handleExtPrfUnlockFinish", () => {
     });
     expect(result2).toEqual({ ok: false, error: "invalid-credentials" });
     expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+  });
+
+  it("WR-03: a short/malformed prfB64 (fromExtPrf throws) resolves a typed failure instead of rejecting and hanging the unlock button", async () => {
+    hoisted.mockListExtensionPasskeys.mockResolvedValue([
+      { credential_id: "cred-id-9", prf_salt: "salt", prf_wrapped_uk: "wrapped-blob", created_at: "now" },
+    ]);
+    // The popup boundary carries prfB64 as a base64 STRING that b64ToBytes
+    // will happily decode to ANY length -- so a short buffer reaching
+    // fromExtPrf and throwing is reachable from real input, not theoretical.
+    hoisted.mockFromExtPrf.mockImplementation(() => {
+      throw new Error("PRF output must be at least 32 bytes");
+    });
+
+    const prfBytes = new Uint8Array([1, 2]).buffer;
+    await expect(
+      handleExtPrfUnlockFinish({ credentialIdB64url: "cred-id-9", prfBytes }),
+    ).resolves.toEqual({ ok: false, error: "unknown" });
+    // The finally-block zeroize must still run on the throwing path.
+    expect(new Uint8Array(prfBytes).every((b) => b === 0)).toBe(true);
+  });
+
+  it("WR-03: a rejecting setUnlockedUserKey resolves a typed failure rather than rejecting out of the handler", async () => {
+    hoisted.mockListExtensionPasskeys.mockResolvedValue([
+      { credential_id: "cred-id-10", prf_salt: "salt", prf_wrapped_uk: "wrapped-blob", created_at: "now" },
+    ]);
+    hoisted.mockFromExtPrf.mockReturnValue({ free: vi.fn() });
+    hoisted.mockUnwrapUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockReadSessionMeta.mockResolvedValue(FAKE_SESSION_META);
+    hoisted.mockSetUnlockedUserKey.mockRejectedValue(new Error("storage write failed"));
+
+    await expect(
+      handleExtPrfUnlockFinish({
+        credentialIdB64url: "cred-id-10",
+        prfBytes: new Uint8Array([5, 6]).buffer,
+      }),
+    ).resolves.toEqual({ ok: false, error: "unknown" });
   });
 });
 

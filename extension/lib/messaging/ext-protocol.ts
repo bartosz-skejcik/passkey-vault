@@ -128,7 +128,10 @@ export interface MessageResponseMap {
   "vault.updated": void;
   "session.locked": void;
   "extPasskey.enroll.start": ExtEnrollStartResult;
-  "extPasskey.enroll.finish": { ok: boolean; error?: "not-unlocked" | "unreachable" | "unknown" };
+  "extPasskey.enroll.finish": {
+    ok: boolean;
+    error?: "not-unlocked" | "unreachable" | "unknown" | "invalid-credentials";
+  };
   "extPasskey.suppressPrompt": { ok: true };
   "unlock.extPrf.start": { credentialIdB64url: string; prfSaltB64: string } | { notEnrolled: true };
   "unlock.extPrf.finish": ExtUnlockResult;

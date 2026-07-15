@@ -118,7 +118,10 @@ export async function handleExtEnrollFinish(args: {
   credentialIdB64url: string;
   prfSaltB64: string;
   prfBytes: ArrayBuffer;
-}): Promise<{ ok: boolean; error?: "not-unlocked" | "unreachable" | "unknown" }> {
+}): Promise<{
+  ok: boolean;
+  error?: "not-unlocked" | "unreachable" | "unknown" | "invalid-credentials";
+}> {
   const prfArray = new Uint8Array(args.prfBytes);
   let wrappingKey: WasmWrappingKey | undefined;
   try {
@@ -146,8 +149,19 @@ export async function handleExtEnrollFinish(args: {
 
     return { ok: true };
   } catch (e) {
+    // WR-02 (09-REVIEW.md): this was backwards -- an `ApiClientError` means
+    // the server ANSWERED (it is reachable), so it must map to "unknown",
+    // never "unreachable" (that told a user their server was down when it
+    // wasn't). A non-API failure (a WASM error from fromExtPrf, a storage
+    // write failure) is the genuine "can't reach it" case. Mirrors
+    // unlock.ts's/handleExtPrfUnlockFinish's own taxonomy, including the
+    // 401 branch an expired token needs (contrast: no 401 branch here
+    // meant an expired token during enrollment rendered a generic failure
+    // instead of routing back to sign-in).
     if (e instanceof ApiClientError) {
-      return { ok: false, error: "unknown" };
+      return e.status === 401
+        ? { ok: false, error: "invalid-credentials" }
+        : { ok: false, error: "unknown" };
     }
     return { ok: false, error: "unreachable" };
   } finally {
@@ -236,6 +250,18 @@ export async function handleExtPrfUnlockFinish(args: {
     }
     await setUnlockedUserKey(uk, meta.accountEmail, meta.sessionToken, meta.idleTimeoutMinutes);
     return { ok: true };
+  } catch (e) {
+    // WR-03 (09-REVIEW.md): this block previously had NO catch -- a
+    // short/malformed prfB64 (WasmWrappingKey.fromExtPrf throwing),
+    // clearExtPasskeyMeta()/readSessionMeta() failing, or setUnlockedUserKey
+    // rejecting all rejected straight out of this handler with no typed
+    // result, hanging the unlock button forever (compounded by WR-01, since
+    // the router had no rejection path either). Mirrors every sibling
+    // handler's own catch (handleUnlockPassword, handleUnlockPrfFinish).
+    if (e instanceof ApiClientError && e.status === 401) {
+      return { ok: false, error: "invalid-credentials" };
+    }
+    return { ok: false, error: "unknown" };
   } finally {
     prfArray.fill(0);
     wrappingKey?.free?.();
