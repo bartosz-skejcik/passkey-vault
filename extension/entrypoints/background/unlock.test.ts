@@ -96,13 +96,12 @@ vi.mock("./autolock", () => ({
   DEFAULT_AUTOLOCK_MINUTES: 15,
 }));
 
-import {
-  handleUnlockPassword,
-  handleUnlockPrfStart,
-  handleUnlockPrfFinish,
-  handleSignInPrfStart,
-  handleSignInPrfFinish,
-} from "./unlock";
+// WR-08: unlock.ts's four web-RP PRF handlers (and the tests that covered
+// them) are gone -- a chrome-extension:// popup cannot run a web-RP
+// ceremony, so they were unreachable by construction. This file is now the
+// password path's cover only; the extension-scoped PRF path is tested in
+// ./ext-passkey.test.ts.
+import { handleUnlockPassword } from "./unlock";
 
 const FAKE_KDF = { m_cost_kib: 1, t_cost: 1, p_cost: 1 };
 const FAKE_SALT_B64 = "c2FsdA=="; // "salt"
@@ -182,121 +181,5 @@ describe("handleUnlockPassword", () => {
     expect(hoisted.mockLogin).not.toHaveBeenCalled();
     expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
     expect(passwordBytes.every((b) => b === 0)).toBe(true);
-  });
-});
-
-describe("handleUnlockPrfStart / handleUnlockPrfFinish (unlock-only pair)", () => {
-  it("Test 4: returns the ceremony inputs on success; a 404 (zero PRF-capable passkeys) maps to prfUnavailable", async () => {
-    hoisted.mockUnlockStart.mockResolvedValueOnce({
-      state_id: "state1",
-      challenge: { publicKey: {} },
-      prf_salts: { cred1: FAKE_SALT_B64 },
-    });
-
-    const result = await handleUnlockPrfStart();
-    expect(result).toEqual({
-      stateId: "state1",
-      challenge: { publicKey: {} },
-      prfSalts: { cred1: FAKE_SALT_B64 },
-    });
-
-    hoisted.mockUnlockStart.mockRejectedValueOnce(new hoisted.ApiClientError(404, "not found"));
-    const result2 = await handleUnlockPrfStart();
-    expect(result2).toEqual({ prfUnavailable: true });
-  });
-
-  it("Test 5: a non-null prf_wrapped_uk unwraps + calls setUnlockedUserKey with the EXISTING token/email; a null prf_wrapped_uk returns prfUnavailable without calling it", async () => {
-    primeHappyPathMocks();
-    hoisted.mockReadSessionMeta.mockResolvedValue({
-      sessionToken: "tok123",
-      accountEmail: "a@example.com",
-      idleTimeoutMinutes: 15,
-      unlockedAtMs: 0,
-      wasAutoLocked: false,
-    });
-    const fakeUk = { tag: "uk" };
-    hoisted.mockUnwrapUserKey.mockReturnValue(fakeUk);
-    hoisted.mockUnlockFinish.mockResolvedValueOnce({ prf_wrapped_uk: "prf-wrapped-json" });
-
-    const result = await handleUnlockPrfFinish({
-      stateId: "state1",
-      credentialJson: { id: "cred1" },
-      prfBytes: new Uint8Array([1, 2, 3]).buffer,
-    });
-
-    expect(result).toEqual({ ok: true });
-    expect(hoisted.mockSetUnlockedUserKey).toHaveBeenCalledWith(fakeUk, "a@example.com", "tok123", 15);
-
-    hoisted.mockSetUnlockedUserKey.mockClear();
-    hoisted.mockUnlockFinish.mockResolvedValueOnce({ prf_wrapped_uk: null });
-    const result2 = await handleUnlockPrfFinish({
-      stateId: "state1",
-      credentialJson: { id: "cred1" },
-      prfBytes: new Uint8Array([1, 2, 3]).buffer,
-    });
-
-    expect(result2).toEqual({ ok: false, prfUnavailable: true });
-    expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
-  });
-});
-
-describe("handleSignInPrfStart / handleSignInPrfFinish (sign-in pair)", () => {
-  it("Test 6: returns the ceremony inputs on success; a 404 (no enrolled passkey for this email) maps to prfUnavailable", async () => {
-    hoisted.mockPasskeyLoginStart.mockResolvedValueOnce({
-      state_id: "state2",
-      challenge: { publicKey: {} },
-      prf_salts: { cred2: FAKE_SALT_B64 },
-    });
-
-    const result = await handleSignInPrfStart("a@example.com");
-    expect(result).toEqual({
-      stateId: "state2",
-      challenge: { publicKey: {} },
-      prfSalts: { cred2: FAKE_SALT_B64 },
-    });
-    expect(hoisted.mockPasskeyLoginStart).toHaveBeenCalledWith({ email: "a@example.com" });
-
-    hoisted.mockPasskeyLoginStart.mockRejectedValueOnce(new hoisted.ApiClientError(404, "not found"));
-    const result2 = await handleSignInPrfStart("a@example.com");
-    expect(result2).toEqual({ prfUnavailable: true });
-  });
-
-  it("Test 7: a non-null prf_wrapped_uk unwraps + calls setUnlockedUserKey with the JUST-MINTED session_token", async () => {
-    primeHappyPathMocks();
-    const fakeUk = { tag: "uk" };
-    hoisted.mockUnwrapUserKey.mockReturnValue(fakeUk);
-    hoisted.mockPasskeyLoginFinish.mockResolvedValueOnce({
-      session_token: "minted-tok",
-      pw_wrapped_uk: "pw-wrapped-json",
-      prf_wrapped_uk: "prf-wrapped-json",
-    });
-
-    const result = await handleSignInPrfFinish({
-      stateId: "state2",
-      email: "a@example.com",
-      credentialJson: { id: "cred2" },
-      prfBytes: new Uint8Array([4, 5, 6]).buffer,
-    });
-
-    expect(result).toEqual({ ok: true });
-    expect(hoisted.mockSetUnlockedUserKey).toHaveBeenCalledWith(fakeUk, "a@example.com", "minted-tok", 15);
-  });
-
-  it("Test 8: a null prf_wrapped_uk returns prfUnavailable and discards the minted session_token (never calls setUnlockedUserKey)", async () => {
-    hoisted.mockPasskeyLoginFinish.mockResolvedValueOnce({
-      session_token: "minted-tok",
-      pw_wrapped_uk: "pw-wrapped-json",
-      prf_wrapped_uk: null,
-    });
-
-    const result = await handleSignInPrfFinish({
-      stateId: "state2",
-      email: "a@example.com",
-      credentialJson: { id: "cred2" },
-      prfBytes: new Uint8Array([4, 5, 6]).buffer,
-    });
-
-    expect(result).toEqual({ ok: false, prfUnavailable: true });
-    expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
   });
 });

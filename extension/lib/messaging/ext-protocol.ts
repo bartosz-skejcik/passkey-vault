@@ -3,6 +3,20 @@
 // discriminated-union, dispatched over browser.runtime.sendMessage, is the
 // ONLY thing that crosses the popup<->background boundary.
 //
+// WR-08 (09-REVIEW.md) — WHY THERE IS NO WEB-RP PRF PAIR HERE, and why one
+// must never be added back: `unlock.prf.start/finish` and
+// `auth.signIn.prf.start/finish` (plus their handlers, router cases, and
+// auth-api transport) were deleted as unreachable-by-construction. A
+// `chrome-extension://` popup page gets a SecurityError from
+// `navigator.credentials.get()` for ANY web RP ID — empirically probed, and
+// the reason for the 09-CONTEXT AMENDMENT 2026-07-15 pivot to an
+// extension-scoped PRF passkey (`rpId === browser.runtime.id`, the ONLY
+// rpId Chrome accepts from this origin). The extension's PRF path is
+// `unlock.extPrf.*` below; it is not an alternative to the web-RP pair, it
+// is the only thing that can work. Keeping the dead pair only widened
+// isProtocolMessage's accepted surface and invited a future caller to
+// reintroduce a bug no UAT could see.
+//
 // This union grows across Waves 3-5: 09-04 adds `unlock.*` AND
 // `auth.signIn.*` kinds (the unlock-only pair requires an existing token;
 // the sign-in pair mints one), 09-05 adds `vault.list` (request/response,
@@ -36,7 +50,7 @@
 // bytes-b64.ts will fail that test (and, via its fixture-exhaustiveness
 // switch, fail `tsc` if a new `kind` is added without a fixture at all).
 import { browser } from "wxt/browser";
-import type { UnlockResult, PrfStartResult } from "../../entrypoints/background/unlock";
+import type { UnlockResult } from "../../entrypoints/background/unlock";
 import type { ExtEnrollStartResult, ExtUnlockResult } from "../../entrypoints/background/ext-passkey";
 import type { Folder, VaultItem } from "../vault/types";
 
@@ -63,20 +77,10 @@ export type SessionStatus =
 export type Message =
   | { kind: "session.status" }
   | { kind: "session.setAutoLockMinutes"; minutes: number }
-  // Unlock-only pair — existing token, SessionUser-gated server routes.
+  // Unlock-only — existing token, SessionUser-gated server routes.
   | { kind: "unlock.password"; passwordB64: string }
-  | { kind: "unlock.prf.start" }
-  | { kind: "unlock.prf.finish"; stateId: string; credentialJson: unknown; prfB64: string }
-  // Sign-in pair — fresh install/no-session, mints a new session token.
+  // Sign-in — fresh install/no-session, mints a new session token.
   | { kind: "auth.signIn.password"; passwordB64: string; email: string }
-  | { kind: "auth.signIn.prf.start"; email: string }
-  | {
-      kind: "auth.signIn.prf.finish";
-      stateId: string;
-      email: string;
-      credentialJson: unknown;
-      prfB64: string;
-    }
   // Read path only (CONTEXT.md's locked out-of-scope boundary — no
   // create/edit/delete this phase): the popup's current decrypted item/
   // folder list, backed by vault-store.ts's real sync.
@@ -119,11 +123,7 @@ export interface MessageResponseMap {
   "session.status": SessionStatus;
   "session.setAutoLockMinutes": { ok: true };
   "unlock.password": UnlockResult;
-  "unlock.prf.start": PrfStartResult;
-  "unlock.prf.finish": UnlockResult;
   "auth.signIn.password": UnlockResult;
-  "auth.signIn.prf.start": PrfStartResult;
-  "auth.signIn.prf.finish": UnlockResult;
   "vault.list": { items: VaultItem[]; folders: Folder[] };
   "vault.updated": void;
   "session.locked": void;

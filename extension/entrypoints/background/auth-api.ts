@@ -139,64 +139,13 @@ export function login(body: {
   });
 }
 
-export interface PasskeyLoginStartResponse {
-  state_id: string;
-  challenge: unknown;
-  /** KEY = URL_SAFE_NO_PAD-encoded credential id, VALUE = STANDARD-encoded PRF salt. */
-  prf_salts: Record<string, string>;
-}
-
-export interface PasskeyLoginFinishResponse {
-  session_token: string;
-  pw_wrapped_uk: string;
-  /** `null` when the matched credential isn't prf_capable. */
-  prf_wrapped_uk: string | null;
-}
-
-export interface UnlockStartResponse {
-  state_id: string;
-  challenge: unknown;
-  prf_salts: Record<string, string>;
-}
-
-export interface UnlockFinishResponse {
-  prf_wrapped_uk: string | null;
-}
-
-// UNAUTHENTICATED -- the fresh-install PRF sign-in path (mints a
-// session_token regardless of PRF availability, exactly like login() above).
-export function passkeyLoginStart(body: { email: string }): Promise<PasskeyLoginStartResponse> {
-  return apiJson("/api/auth/passkey-login/start", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export function passkeyLoginFinish(body: {
-  state_id: string;
-  credential: unknown;
-}): Promise<PasskeyLoginFinishResponse> {
-  return apiJson("/api/auth/passkey-login/finish", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-// SessionUser-gated (crates/pv-server/src/routes/passkeys.rs) -- requires an
-// existing valid token.
-export function unlockStart(): Promise<UnlockStartResponse> {
-  return apiJson("/api/passkeys/unlock/start", { method: "POST" });
-}
-
-export function unlockFinish(body: {
-  state_id: string;
-  credential: unknown;
-}): Promise<UnlockFinishResponse> {
-  return apiJson("/api/passkeys/unlock/finish", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
+// WR-08 (09-REVIEW.md): the web-RP PRF transport (passkeyLoginStart/Finish,
+// unlockStart/Finish + their response types) is DELETED along with the
+// handlers that were its only callers -- a chrome-extension:// popup cannot
+// run a web-RP WebAuthn ceremony at all (SecurityError), so this transport
+// was unreachable by construction. See lib/messaging/ext-protocol.ts's
+// header for the full rationale. The extension-scoped PRF recipient's own
+// transport is below.
 
 // --- Extension-scoped PRF passkey blob CRUD (Plan 09-08, 09-CONTEXT
 // AMENDMENT 2026-07-15). SessionUser-gated server-side
@@ -230,10 +179,4 @@ export function createExtensionPasskey(body: {
 
 export function listExtensionPasskeys(): Promise<ExtensionPasskeyRow[]> {
   return apiJson("/api/extension-passkeys", { method: "GET" });
-}
-
-export function deleteExtensionPasskey(credentialIdB64url: string): Promise<void> {
-  return apiJson(`/api/extension-passkeys/${encodeURIComponent(credentialIdB64url)}`, {
-    method: "DELETE",
-  });
 }

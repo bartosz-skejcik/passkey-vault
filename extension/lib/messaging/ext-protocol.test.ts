@@ -34,25 +34,10 @@ const MESSAGE_FIXTURES: MessageFixtureMap = {
   // Binary fields are ALWAYS base64 strings (`*B64` suffix) on this union --
   // see lib/messaging/bytes-b64.ts's header comment for why.
   "unlock.password": { kind: "unlock.password", passwordB64: btoa("hunter2") },
-  "unlock.prf.start": { kind: "unlock.prf.start" },
-  "unlock.prf.finish": {
-    kind: "unlock.prf.finish",
-    stateId: "state-1",
-    credentialJson: { id: "cred-1", response: { clientDataJSON: "abc", authenticatorData: "def" } },
-    prfB64: btoa("prf-output-bytes-1"),
-  },
   "auth.signIn.password": {
     kind: "auth.signIn.password",
     passwordB64: btoa("hunter2"),
     email: "a@example.com",
-  },
-  "auth.signIn.prf.start": { kind: "auth.signIn.prf.start", email: "a@example.com" },
-  "auth.signIn.prf.finish": {
-    kind: "auth.signIn.prf.finish",
-    stateId: "state-2",
-    email: "a@example.com",
-    credentialJson: { id: "cred-2" },
-    prfB64: btoa("prf-output-bytes-2"),
   },
   "vault.list": { kind: "vault.list" },
   "vault.updated": { kind: "vault.updated" },
@@ -101,15 +86,7 @@ const RESPONSE_FIXTURES: ResponseFixtureMap = {
   "session.status": UNLOCKED_STATUS,
   "session.setAutoLockMinutes": { ok: true },
   "unlock.password": { ok: true },
-  "unlock.prf.start": {
-    stateId: "state-1",
-    challenge: { publicKey: { challenge: btoa("server-challenge") } },
-    prfSalts: { "cred-1": btoa("salt-bytes") },
-  },
-  "unlock.prf.finish": { ok: true },
   "auth.signIn.password": { ok: true },
-  "auth.signIn.prf.start": { prfUnavailable: true },
-  "auth.signIn.prf.finish": { ok: false, error: "invalid-credentials" },
   "vault.list": {
     items: [],
     folders: [{ id: "f1", name: "Folder" }],

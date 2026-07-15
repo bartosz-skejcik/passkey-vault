@@ -28,13 +28,7 @@ import { b64ToBytes } from "../../lib/messaging/bytes-b64";
 import { ensureHydrated, noteActivity } from "./vault-session";
 import { armAutoLock, AUTOLOCK_OPTIONS, DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
 import { readSessionMeta, writeSessionMeta } from "./session-storage";
-import {
-  handleUnlockPassword,
-  handleUnlockPrfStart,
-  handleUnlockPrfFinish,
-  handleSignInPrfStart,
-  handleSignInPrfFinish,
-} from "./unlock";
+import { handleUnlockPassword } from "./unlock";
 import { getItems, getFolders } from "./vault-store";
 import {
   handleExtEnrollStart,
@@ -100,11 +94,7 @@ function isProtocolMessage(message: unknown): message is Message {
     kind === "session.status" ||
     kind === "session.setAutoLockMinutes" ||
     kind === "unlock.password" ||
-    kind === "unlock.prf.start" ||
-    kind === "unlock.prf.finish" ||
     kind === "auth.signIn.password" ||
-    kind === "auth.signIn.prf.start" ||
-    kind === "auth.signIn.prf.finish" ||
     kind === "vault.list" ||
     kind === "extPasskey.enroll.start" ||
     kind === "extPasskey.enroll.finish" ||
@@ -128,32 +118,8 @@ async function handle(message: Message): Promise<unknown> {
       // own `finally { passwordBytes.fill(0) }`, unl.ts) regardless of
       // outcome. No separate fill(0) needed here.
       return handleUnlockPassword(b64ToBytes(message.passwordB64));
-    case "unlock.prf.start":
-      return handleUnlockPrfStart();
-    case "unlock.prf.finish":
-      // `.buffer` on a freshly-decoded Uint8Array is safe (no shared/offset
-      // view) -- handleUnlockPrfFinish's own WasmWrappingKey.fromPrf() call
-      // zeroizes the same underlying buffer as a side effect. The `as
-      // ArrayBuffer` cast below is narrowing lib.dom's generic
-      // `Uint8Array<ArrayBufferLike>.buffer` (which admits `SharedArrayBuffer`)
-      // back to the concrete `ArrayBuffer` this freshly-allocated array is
-      // always backed by -- never a shared buffer.
-      return handleUnlockPrfFinish({
-        stateId: message.stateId,
-        credentialJson: message.credentialJson,
-        prfBytes: b64ToBytes(message.prfB64).buffer as ArrayBuffer,
-      });
     case "auth.signIn.password":
       return handleUnlockPassword(b64ToBytes(message.passwordB64), message.email);
-    case "auth.signIn.prf.start":
-      return handleSignInPrfStart(message.email);
-    case "auth.signIn.prf.finish":
-      return handleSignInPrfFinish({
-        stateId: message.stateId,
-        email: message.email,
-        credentialJson: message.credentialJson,
-        prfBytes: b64ToBytes(message.prfB64).buffer as ArrayBuffer,
-      });
     case "vault.list":
       return { items: getItems(), folders: getFolders() };
     case "extPasskey.enroll.start":

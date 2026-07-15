@@ -1,17 +1,23 @@
-// Plan 08-02: the onMessage listener below is the message-relay + storage-
-// injection wiring point (D-04) — all actual derive/wrap/unwrap/storage
-// logic lives in ../lib/crypto/vault-session.ts and ./wasm-loader.ts, never
-// here. `type: 'module'` was declared from plan 08-01's first commit
-// onward because MV3 service workers only support `import` syntax when the
-// manifest's background field is a module.
+// The extension's background entry point. All actual derive/wrap/unwrap/
+// storage logic lives in ./background/*.ts (session core, router, autolock,
+// sync), never here — this file only registers listeners and runs the
+// fresh-wake path. `type: 'module'` was declared from plan 08-01's first
+// commit onward because MV3 service workers only support `import` syntax
+// when the manifest's background field is a module.
+//
+// WR-08 (09-REVIEW.md): Phase 8's `spike.roundtrip` debug listener and its
+// hard-coded-password Argon2 path (lib/crypto/vault-session.ts) are DELETED
+// here. That file's own header said it backed the throwaway debug popup
+// "until Plan 09-05 replaces the popup entirely" — 09-06 did replace it
+// (popup/main.ts was deleted) and nothing sent `spike.roundtrip` any more,
+// yet the listener still shipped to users, able to run a full Argon2id
+// derivation under a hard-coded credential on demand.
 //
 // `main()` must stay synchronous with no top-level `await`: WXT imports
 // this file under Node during the build step, so async/browser-only side
 // effects placed outside `main()` would break the build, not just the
 // runtime. Registering the listener itself is synchronous; only the
 // listener's own callback body is async.
-import { browser } from 'wxt/browser';
-import { roundTripSpike } from '../lib/crypto/vault-session';
 import { registerMessageRouter } from './background/router';
 import { registerAutoLockAlarmListener, armAutoLock } from './background/autolock';
 import { ensureHydrated } from './background/vault-session';
@@ -40,12 +46,9 @@ export default defineBackground({
     // listener. Both must be registered synchronously at startup — an
     // MV3 service worker that misses registering its onMessage/onAlarm
     // listeners on a given wake will silently drop messages/alarms fired
-    // during that wake window. This is a SEPARATE onMessage listener from
-    // the spike.roundtrip one below (WebExtensions supports multiple
-    // listeners; each independently decides whether to handle a given
-    // message) — router.ts enforces its own copy of the WR-01
-    // sender-validation gate, so it stays secure regardless of whether
-    // this file's other listener exists.
+    // during that wake window. router.ts enforces its own copy of the
+    // WR-01 sender-validation gate, so it stays secure independently of
+    // what other listeners exist.
     registerMessageRouter();
     registerAutoLockAlarmListener();
     // WR-06: the sync poll fallback is alarm-backed (a setInterval does not
@@ -86,36 +89,5 @@ export default defineBackground({
       }
     })();
 
-    browser.runtime.onMessage.addListener((message: unknown, sender) => {
-      // WR-01: only this extension's own pages (popup/options — whether
-      // action-hosted or opened in a tab) may trigger crypto work. The
-      // discriminator is the browser-constructed sender.url origin: our own
-      // chrome-extension://<id>/ pages pass; content scripts report the
-      // hostile page's http(s) URL and foreign extensions a different id,
-      // so both are rejected. (A bare `sender.tab !== undefined` check is
-      // WRONG here — it would also reject our own pages opened in a tab,
-      // caught by the real-browser UAT.) Phase 10 must widen this into an
-      // explicit allow-list when content scripts legitimately need the
-      // background, never by deleting the check.
-      const ownOrigin = browser.runtime.getURL('');
-      if (sender.id !== browser.runtime.id || !sender.url?.startsWith(ownOrigin)) {
-        return undefined;
-      }
-
-      const isSpikeRoundtrip =
-        typeof message === 'object' &&
-        message !== null &&
-        (message as { kind?: unknown }).kind === 'spike.roundtrip';
-
-      if (!isSpikeRoundtrip) {
-        return undefined;
-      }
-
-      return roundTripSpike(browser.storage.session).catch((e: unknown) => ({
-        survived: false,
-        ok: false,
-        error: e instanceof Error ? e.message : String(e),
-      }));
-    });
   },
 });
