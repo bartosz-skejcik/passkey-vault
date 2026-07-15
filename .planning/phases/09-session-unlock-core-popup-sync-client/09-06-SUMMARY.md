@@ -441,3 +441,42 @@ Enumerated per the orchestrator's "verification honesty" instruction — all def
 - (this commit) — `docs(09): document FAB type-menu post-UAT UX fix`
 
 **Nothing else in the protocol was found binary-unsafe beyond the six fields listed above.** All response-map shapes were audited line-by-line (see item 2) and confirmed JSON-safe as originally written.
+
+## Post-UAT fixes — config-view focus race + fresh-worker sync resume
+
+**Discovered by:** Bartek, live-testing the packaged extension in real Chrome (two separate bugs from the same UAT session).
+
+### Bug 1: server-config screen bounced back after the first "Allow" click
+
+**Symptom:** After entering the server address and clicking Allow on the browser's permission prompt, the server-address input RE-APPEARED instead of advancing to the email/password form; only a SECOND submit (with the permission already granted, no prompt) advanced past the screen.
+
+**Root cause:** `browser.permissions.request()` opens a native browser dialog that steals focus and CLOSES the MV3 popup. The prior `ServerConfigView.tsx` order was: normalize → `permissions.request()` → `sendMessage({kind:"config.set"})` → `onConfigured()`. Because the permission prompt closed the popup mid-await on the first submit, the awaited `config.set` call — which is what actually probes healthz and persists the URL — never completed. On reopen, `config.get` still returned `null`, so the server-config screen rendered again. On the second submit the permission was already granted, no prompt fired, the popup stayed open, and `config.set` finally ran.
+
+**The fix:** Reordered so persistence happens FIRST and the permission grant is a best-effort, non-blocking nicety:
+1. Normalize the URL locally (unchanged) — a malformed URL still short-circuits to the `invalid-url` copy with nothing dispatched.
+2. Dispatch `sendMessage({kind:"config.set", rawUrl})` and await it. This works without the host permission because `pv-server` CORS-allowlists the extension's own origin for the healthz probe. If it returns `{ok:false}`, show the existing invalid-url/unreachable copy and stop — no permission is requested for a server that isn't even reachable.
+3. Call `onConfigured()` as soon as `config.set` succeeds.
+4. Only after that, fire `browser.permissions.request({origins:[...]})` as fire-and-forget (`void ... .catch(() => false)`), never gating `onConfigured()` on its outcome. Even if this prompt kills the popup, the config is already persisted — reopening the popup now advances straight past this screen.
+5. Removed the now-unreachable `permission-denied` error branch from the component's rendered states (the `config.permissionDenied` dictionary key is kept, unused, per instruction — no longer wired to any settable state since the grant never blocks the flow).
+
+**Files modified:** `extension/entrypoints/popup/ServerConfigView.tsx`, `extension/entrypoints/popup/ServerConfigView.test.tsx`
+
+**Commit:** `2c49111` — `fix(09): persist server config before permission prompt in popup`
+
+### Bug 2: popup showed an empty vault after a fresh service-worker wake
+
+**Symptom:** The popup showed "Your vault is empty so far" even though the vault had items; only after ADDING a new item did the existing items appear.
+
+**Root cause:** `vault-store.ts` only ever started the sync transport + ran the initial `getSyncSnapshot(0)` pull inside `subscribeSessionLockState`'s callback, which fires on a lock→unlock TRANSITION. When the MV3 service worker was idle-killed and later woke with the session ALREADY unlocked (rehydrated from `chrome.storage.session` via `ensureHydrated()`), no transition ever fired — so `startSync`/the initial pull never ran, and the in-memory `items` array stayed empty until some unrelated `vault.updated` broadcast (e.g. creating a new item) happened to repopulate it via a later sync tick.
+
+**The fix:** Extracted an idempotent `ensureVaultSyncStarted()` export from `vault-store.ts`, guarded by a module-level `syncStarted` flag: it starts sync + the initial pull only if the session is unlocked and sync isn't already running, and is a no-op on every subsequent call while still unlocked. The lock-state subscription now delegates to it on unlock, and resets `syncStarted = false` on lock so the NEXT unlock (whether via a real transition or another `ensureVaultSyncStarted()` call) restarts sync correctly. `background.ts`'s existing wake-path IIFE — which already calls `ensureHydrated()` and re-arms the auto-lock alarm specifically to handle a mid-session SW restart that finds the vault still unlocked — now also calls `ensureVaultSyncStarted()` right after `ensureHydrated()` confirms a live key. This is the one place an already-unlocked fresh wake is ever detected, since `vault-store.ts`'s own subscription only reacts to transitions.
+
+**Files modified:** `extension/entrypoints/background/vault-store.ts`, `extension/entrypoints/background.ts`, `extension/entrypoints/background/vault-store.test.ts` (3 new regression tests: fresh-already-unlocked module starts sync + populates items; double-call doesn't double-start; the guard resets across a lock/re-unlock cycle so sync isn't permanently suppressed)
+
+**Commit:** `97a279a` — `fix(09): resume vault sync on fresh worker wake with already-unlocked session`
+
+### The harness-shortcut lesson
+
+Bartek's own preliminary UAT for this plan had seeded the server config via a direct background message + popup reload — a shortcut that bypassed `ServerConfigView.tsx`'s real submit handler and `onConfigured()` callback entirely. That path never exercises the permission-prompt/`config.set` ordering at all, so Bug 1 was invisible to it. Only testing the actual first-run submit flow in a real browser (typing a URL, clicking Connect, clicking Allow) surfaced the focus-race. Lesson: a harness shortcut that skips a component's real user-facing entry point can hide bugs that live entirely inside that entry point's own control flow — full manual UAT of first-run/first-touch flows shouldn't be replaced by a config-seeding shortcut, even for speed.
+
+**Verification (both fixes):** `cd extension && npx vitest run` (133/133 pass, +5 new: 2 in `ServerConfigView.test.tsx`, 3 in `vault-store.test.ts`), `npx tsc --noEmit` clean, `npx wxt build -b chrome` and `-b firefox` both succeed, popup-no-crypto-import grep gate green. `crates/` and `web/` untouched.
