@@ -20,6 +20,11 @@
 //      token exists, so their requests naturally carry no Authorization header
 //      (same `token !== null` guard as the web version -- no special-casing
 //      needed).
+// Plan 09-05 reuses apiFetch/ApiClientError/ServerNotConfiguredError below
+// for vault-api.ts's read-path sync-snapshot fetch -- same "export the base
+// helpers so a sibling API client doesn't duplicate the base-URL/auth-
+// header logic" relationship web/src/lib/auth/api.ts has with
+// web/src/lib/vault/api.ts (see that file's own header comment).
 import { readServerConfig } from "./server-config";
 import { getSessionToken } from "./session-storage";
 
@@ -55,7 +60,13 @@ export function base64Decode(b64: string): Uint8Array {
   return bytes;
 }
 
-async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+/**
+ * Prefixes the configured server's base URL, sets Content-Type when a body
+ * is present, and adds a Bearer Authorization header when a session token
+ * is stored. Exported (not just this file's own wrappers below) so Plan
+ * 09-05's vault-api.ts can reuse this exact base-URL/auth-header logic.
+ */
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const config = await readServerConfig();
   if (config === null) {
     throw new ServerNotConfiguredError(

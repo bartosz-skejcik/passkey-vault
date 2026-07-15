@@ -222,6 +222,13 @@ describe("no_other_extension_file_hard_codes_a_server_url", () => {
         }
         if (!/\.(ts|tsx)$/.test(entry)) continue;
         if (allowedFiles.has(fullPath)) continue;
+        // Test files legitimately contain arbitrary URL literals as mock
+        // fixtures (e.g. lib/vault/search.test.ts's login-item
+        // "https://github.com/login" fixture, sync-client.test.ts's mocked
+        // WS URLs) -- this invariant's actual threat model is a hard-coded
+        // pv-server ORIGIN reachable from a real fetch/tabs.create call in
+        // shipped production code, which test files are not.
+        if (entry.endsWith(".test.ts") || entry.endsWith(".test.tsx")) continue;
         const contents = readFileSync(fullPath, "utf-8");
         const lines = contents.split("\n");
         for (const line of lines) {
