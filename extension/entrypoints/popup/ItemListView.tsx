@@ -20,6 +20,12 @@ import { sendMessage } from "../../lib/messaging/ext-protocol";
 import { searchItems, filterItems } from "../../lib/vault/search";
 import type { VaultItem, ItemType } from "../../lib/vault/types";
 import { t, interpolate, type Locale } from "../../lib/i18n/dictionary";
+// Phase 10 (Plan 10-06): the "On this page" autofill section -- the ONE
+// visible surface Phase 10 adds, mounted here per 10-UI-SPEC.md's Scope
+// Note ("every surface is a new section inside the existing popup shell").
+// Owns its own useAutofillMatches() data fetch entirely internally; this
+// view only needs to render it above the existing item list below.
+import OnThisPageSection from "./autofill/OnThisPageSection";
 
 // Duplicated from entrypoints/background/autolock.ts's AUTOLOCK_OPTIONS
 // constant -- NOT imported directly, since that file (and its
@@ -176,6 +182,13 @@ export default function ItemListView({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+      </div>
+
+      {/* lg spacing token (24px, 10-UI-SPEC.md) between this section and
+          the full item list below it -- the "On this page" list IS the
+          D-07 multi-account picker when more than one item matches. */}
+      <div className="px-1 pb-1">
+        <OnThisPageSection locale={locale} />
       </div>
 
       {/* min-h keeps the popup a stable, comfortable size instead of

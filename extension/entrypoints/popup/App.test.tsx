@@ -108,6 +108,17 @@ describe("App.tsx view-state switch", () => {
         };
       }
       if (message.kind === "vault.list") return { items: [], folders: [] };
+      // Phase 10 (Plan 10-06): ItemListView now mounts OnThisPageSection,
+      // which fires its own autofill.match on mount -- benign here, this
+      // test is not about autofill.
+      if (message.kind === "autofill.match") {
+        return {
+          pageState: "restricted",
+          origin: null,
+          detected: { login: false, totp: false, card: false, identity: false },
+          matches: [],
+        };
+      }
       throw new Error(`unexpected message in this test: ${message.kind}`);
     });
 
@@ -243,6 +254,19 @@ describe("App.tsx view-state switch", () => {
             },
           ],
           folders: [],
+        };
+      }
+      // Phase 10 (Plan 10-06): ItemListView now mounts OnThisPageSection,
+      // which fires its own autofill.match on mount -- restricted (no
+      // matches) so this test's single "Example Login" text assertion
+      // stays unambiguous (a match here would duplicate that text into the
+      // on-page section too).
+      if (message.kind === "autofill.match") {
+        return {
+          pageState: "restricted",
+          origin: null,
+          detected: { login: false, totp: false, card: false, identity: false },
+          matches: [],
         };
       }
       throw new Error(`unexpected message in this test: ${message.kind}`);
