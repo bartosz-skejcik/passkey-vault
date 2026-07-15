@@ -72,7 +72,7 @@ Unchanged 60/30/10 split and exact hex/OKLCH values from `docs/UI-DESIGN.md` and
 | Dominant (60%) | `#1F1F1F` base-300 dark / `#FCFBFA` base-200 light | Popup page canvas, ceremony-card scrim backdrop (on the host page, behind the injected consent card) |
 | Secondary (30%) | `#262626` base-100 dark / `#FFFFFF` base-100 light, `#212121` base-200 dark | Popup item-list surface, autofill dropdown surface, ceremony-consent card surface, capture/save-prompt toast surface |
 | Accent (10%, coral `#E16540`) | primary | Popup unlock-form password submit button (`btn-primary`, unchanged meaning from web app), capture-prompt primary "Save" action, generate-password suggestion CTA — i.e. the *generic* primary-action token, exactly as reserved in every prior phase |
-| Destructive | `#FF5861` error | Item-delete confirm button (`btn-error`) in popup item detail, origin-mismatch warning banner in capture prompts (`alert alert-error` or `alert-warning` per severity — see below), tier-3 mid-ceremony genuine-failure text (reused exactly from `04-UI-SPEC.md`'s tier model) |
+| Destructive | `#FF5861` error | Origin-mismatch warning banner in capture prompts (`alert alert-error` or `alert-warning` per severity — see below), tier-3 mid-ceremony genuine-failure text (reused exactly from `04-UI-SPEC.md`'s tier model). (Item deletion is NOT a popup surface in v0.2 — EXT-06 delegates it to the web app; stale in-popup delete reference removed 2026-07-15.) |
 
 **Teal (`#00CDB7`, `accent` token) — reserved for passkey-meaning only, unchanged carve-out from Phase 2–4:**
 - Popup unlock screen's `PasskeyUnlockButton` (`btn btn-accent`, `Fingerprint` icon) — the *exact same component* from `04-UI-SPEC.md`, reused unchanged in the extension popup context, not reinvented.
@@ -106,7 +106,7 @@ i18n PL+EN, following the exact pattern established in `web/src/lib/i18n/diction
 | Error state — sync/connection failure in popup | `Nie można połączyć z serwerem. Sprawdź połączenie i spróbuj ponownie.` | `Can't reach the server. Check your connection and try again.` |
 | **Firefox PRF-gap (D-03) — popup unlock, Tier 2 extended with browser name** | `Szybkie odblokowanie passkeyem nie jest dostępne w tej przeglądarce — użyj hasła.` | `Fast unlock isn't available for this passkey on this browser — use your password.` |
 | **Firefox PRF-gap (D-03) — passkey-provider ceremony** | `Ta przeglądarka nie wspiera szybkiego odblokowania (PRF) dla tego passkeya — potwierdzisz w zwykły sposób.` | `This browser doesn't support fast unlock (PRF) for this passkey — you'll confirm the normal way.` |
-| Destructive confirmation — delete saved item (popup item detail) | `Usuń „{item name}”? Tej operacji nie można cofnąć.` | `Delete "{item name}"? This can't be undone.` |
+| ~~Destructive confirmation — delete saved item (popup item detail)~~ REMOVED 2026-07-15 — the v0.2 popup has no delete (EXT-06 delegates management to the web app); this copy belongs to the web app's existing delete dialog, not any extension surface | — | — |
 | Origin-mismatch warning (capture prompt, CAP-02/03) | `Ten formularz pochodzi z innej domeny niż strona, którą widzisz — sprawdź, zanim zapiszesz.` | `This form comes from a different domain than the page you're viewing — check before saving.` |
 
 **The two D-03 lines above are the literal new deliverable of this phase's UI surface.** Both reuse the exact tone (`text-base-content/70`, no icon, no alert box) already established for `04-UI-SPEC.md`'s Tier 2 — this phase's only genuinely new copy is naming the browser explicitly ("w tej przeglądarce" / "on this browser" / "This browser doesn't support"), which the original web-app Tier 2 line didn't need to do (the web app has no cross-browser axis).
@@ -151,11 +151,16 @@ Button state: the passkey-action button stays visible and clickable in every cas
 
 This is the one piece of genuinely new UI code this phase owns (`PrfUnavailableBanner`-equivalent inline text, per `13-RESEARCH.md`'s Recommended Project Structure) — everything else in this document describes surfaces Phases 9–12 build, reused/confirmed here for hardening-pass consistency.
 
-### Popup shell (Phase 9's surface, described here for contract completeness)
+### Popup shell (Phase 9's surface — 09-UI-SPEC.md is AUTHORITATIVE; superseded sketch note 2026-07-15)
 
-- **Viewport:** fixed width 360–400px (browser-imposed popup constraint), variable height up to ~600px before the browser clips/scrolls it — do not design a screen that assumes more vertical room than that.
-- **Structure, top to bottom:** search bar (`input input-bordered`, `Search` icon leading, sticky top) → item list (rows: favicon 24px, name = Body, username/subtext = Label, trailing `Wypełnij`/`Fill` button on hover/focus for desktop, always-visible on touch — same responsive-reveal convention as `03-UI-SPEC.md`'s row action buttons) → item detail as an **in-popup panel swap**, not a separate window (matches the web app's "panel boczny, nie osobna strona" convention from `docs/UI-DESIGN.md` §3, adapted to the popup's single-column reality: detail replaces the list view, with a back affordance, rather than sliding in beside it — there's no room beside it at 360px).
-- **Row height:** 48px minimum (slightly tighter than the web app's 64px passkey/session rows in `03-UI-SPEC.md`, since popup real estate is scarcer and item rows carry less per-row content — favicon + two lines, no badge-heavy layout).
+> This section was written BEFORE Phase 9's own UI-SPEC existed and before Bartek's NordPass-reference
+> direction (2026-07-15). `09-UI-SPEC.md` ("Popup shell" + "Popup header + delegated-management
+> affordances") is the single source of truth for the popup — this phase RE-VERIFIES that shell on both
+> browsers, it does not redefine it. Corrected outline for cross-reference only:
+
+- **Viewport:** fixed width 360–400px, variable height up to ~600px (unchanged).
+- **Structure, top to bottom (per 09-UI-SPEC + NordPass reference):** slim header row (`Settings` gear icon-button left → opens `${baseUrl}/?panel=settings` in a new tab; "Full screen" `btn btn-ghost btn-sm` + `ExternalLink` right → opens the configured web app) → sticky search bar → item list (48px-min rows; Phase 10 adds the trailing `Wypełnij`/`Fill` affordance) → `Plus` FAB bottom-right (→ `${baseUrl}/?action=new-item` in a new tab — NO in-popup create) → footer row with the auto-lock `select` ONLY. Item detail is an in-popup panel swap with `ChevronLeft` back (unchanged), **read-only**: NO edit, NO delete, NO management actions in the popup — EXT-06 delegates all management to the web app (deletion happens there).
+- **Row height:** 48px minimum (unchanged).
 
 ### In-page autofill dropdown (Phase 10's surface)
 
