@@ -18,6 +18,11 @@ pub const NONCE_LEN: usize = 24;
 pub const INFO_PW_UNLOCK: &[u8] = b"pv:pw-unlock:v1";
 pub const INFO_PRF_UNLOCK: &[u8] = b"pv:prf-unlock:v1";
 pub const INFO_AUTH_HASH: &[u8] = b"pv:auth-hash:v1";
+/// Extension-scoped PRF recipient (rpId = extension ID, 09-CONTEXT AMENDMENT
+/// 2026-07-15) — a DIFFERENT context from `INFO_PRF_UNLOCK` (web-RP
+/// credential), so it gets its own versioned constant. Never reuse
+/// `INFO_PRF_UNLOCK` for this recipient class and vice versa.
+pub const INFO_EXT_PRF_UNLOCK: &[u8] = b"pv:ext-prf-unlock:v1";
 
 /// Losowy 256-bit User Key — korzeń dostępu do vaulta. Nigdy nie opuszcza
 /// klienta w postaci jawnej.

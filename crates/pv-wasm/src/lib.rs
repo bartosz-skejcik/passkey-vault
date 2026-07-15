@@ -26,7 +26,7 @@ use pv_core::{
         wrap_user_key as core_wrap_user_key, UserKey, WrappedKey, INFO_AUTH_HASH, INFO_PW_UNLOCK,
         KEY_LEN,
     },
-    prf::wrapping_key_from_prf,
+    prf::{wrapping_key_from_ext_prf, wrapping_key_from_prf},
     CryptoError,
 };
 use wasm_bindgen::prelude::*;
@@ -101,6 +101,19 @@ impl WasmWrappingKey {
     #[wasm_bindgen(js_name = fromPrf)]
     pub fn from_prf(prf_output: &mut [u8]) -> Result<WasmWrappingKey, JsValue> {
         let result = wrapping_key_from_prf(prf_output).map_err(to_js_err);
+        prf_output.zeroize(); // wipe the WASM-side (and, via copy-back, JS-side) copy regardless of outcome
+        let wk = result?;
+        Ok(WasmWrappingKey(*wk))
+    }
+
+    /// `prf_output` is the raw 32-byte WebAuthn PRF result from the
+    /// EXTENSION-SCOPED passkey (rpId = extension ID, 09-CONTEXT AMENDMENT
+    /// 2026-07-15) — a separate recipient class from `from_prf` above, hence
+    /// `wrapping_key_from_ext_prf`'s own domain-separation constant. Same
+    /// marshaling and zeroize-regardless-of-outcome discipline as `from_prf`.
+    #[wasm_bindgen(js_name = fromExtPrf)]
+    pub fn from_ext_prf(prf_output: &mut [u8]) -> Result<WasmWrappingKey, JsValue> {
+        let result = wrapping_key_from_ext_prf(prf_output).map_err(to_js_err);
         prf_output.zeroize(); // wipe the WASM-side (and, via copy-back, JS-side) copy regardless of outcome
         let wk = result?;
         Ok(WasmWrappingKey(*wk))
@@ -328,6 +341,28 @@ mod tests {
         let mut short = [0u8; 16];
         let result = WasmWrappingKey::from_prf(&mut short);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_ext_prf_roundtrip_and_zeroizes_input() {
+        let mut prf_output = [7u8; 32];
+        let wrapping_key = WasmWrappingKey::from_ext_prf(&mut prf_output)
+            .expect("from_ext_prf should succeed on a 32-byte fixture");
+        assert!(prf_output.iter().all(|&b| b == 0), "input buffer must be zeroized after the call");
+
+        let user_key = WasmUserKey::generate();
+        let wrapped_json = wrap_user_key(&wrapping_key, &user_key).expect("wrap should succeed");
+        let unwrapped =
+            unwrap_user_key(&wrapping_key, &wrapped_json).expect("unwrap should succeed");
+        assert_eq!(unwrapped.0.expose(), user_key.0.expose());
+    }
+
+    #[test]
+    fn from_ext_prf_rejects_short_input_and_still_zeroizes() {
+        let mut short = [9u8; 16];
+        let result = WasmWrappingKey::from_ext_prf(&mut short);
+        assert!(result.is_err());
+        assert!(short.iter().all(|&b| b == 0), "input buffer must be zeroized even on failure");
     }
 
     #[test]
