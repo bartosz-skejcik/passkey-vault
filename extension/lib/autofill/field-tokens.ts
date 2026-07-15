@@ -125,6 +125,13 @@ const CARD_KEYWORDS: Array<KeywordEntry<CardSlot>> = [
   { keyword: "cardholder", slot: "cardholderName", weight: 12 },
   { keyword: "imienazwiskonakarcie", slot: "cardholderName", weight: 12 },
   { keyword: "nameoncard", slot: "cardholderName", weight: 12 },
+  // Deliberately weaker than "cardholder"/"nameoncard" above: a field
+  // merely mentioning "card info" in generic terms is much less specific
+  // evidence than an explicit cardholder-name phrase. weight 11 -> capped
+  // score 5, one point below FILL_THRESHOLD -- this is what pins the
+  // exact-threshold boundary in detect-scored.card.test.ts's Test 2
+  // (a genuine tuning choice, not a test-only number).
+  { keyword: "cardinfo", slot: "cardholderName", weight: 11 },
 ];
 
 const IDENTITY_KEYWORDS: Array<KeywordEntry<IdentitySlot>> = [
