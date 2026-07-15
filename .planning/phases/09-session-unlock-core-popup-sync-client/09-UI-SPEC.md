@@ -135,6 +135,16 @@ No third-party registries declared. Registry vetting gate not triggered.
   4. **Item Detail** — an in-popup panel swap (not a new window, not a side-by-side split — there's no room beside it at 360px), replacing the list view with a `ChevronLeft`-led back affordance at the top.
 - **Row height:** 48px minimum for item-list rows (reused verbatim from `13-UI-SPEC.md` — tighter than the web app's 64px rows since popup real estate is scarcer and rows carry less per-row content this phase: favicon/type-icon + two text lines, no trailing action button yet).
 
+### Popup header + delegated-management affordances (BINDING — Bartek 2026-07-15, NordPass reference screenshots)
+
+Bartek supplied NordPass popup screenshots as the interaction reference: even a mature product implements **neither settings nor item creation inside the popup** — both redirect to the fullscreen web vault. That is exactly our EXT-06 doctrine; the popup gains the affordances but they are PURE REDIRECTS via the configured server URL (`config.get` → `browser.tabs.create`), never in-popup forms:
+
+- **Slim header row** (above the search bar, list view only): `Settings` lucide gear icon-button on the left (aria-label PL `Ustawienia` / EN `Settings`; opens `${baseUrl}/?panel=settings` in a new tab), the existing "open full vault" control on the right as a compact `btn btn-ghost btn-sm` labeled PL `Pełny widok` / EN `Full screen` with the `ExternalLink` icon (relocated from the footer per the NordPass layout).
+- **"+" new-item button**: `Plus` lucide icon-button, bottom-right of the list view (small FAB-style, `btn btn-primary btn-circle btn-sm`, aria-label PL `Nowy element` / EN `New item`; opens `${baseUrl}/?action=new-item` in a new tab). NO in-popup create form, NO type-picker menu in the popup this phase — the web app's own new-item flow handles type selection.
+- **Footer row** keeps the auto-lock `select` only.
+- **Web-app side (small, same phase):** the SPA at `/` reads `panel=settings` / `action=new-item` query params on mount and — after the vault is unlocked — opens the Settings panel / new-item dialog respectively, then strips the param from the URL (history.replaceState) so refresh doesn't re-trigger. If locked, the param survives until unlock completes, then applies once.
+- All three redirect URLs derive EXCLUSIVELY from `config.get` (EXT-06's no-hard-coded-URL invariant applies — the grep gate in 09-06 covers these new controls too).
+
 ### Unlock / Sign-in view
 
 Two sub-variants of one screen, distinguished only by whether an email field is present — mirrors `04-UI-SPEC.md`'s `LoginForm`-vs-`UnlockOverlay` split, relocated into the popup's single-column layout:
