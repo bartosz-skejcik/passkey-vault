@@ -54,3 +54,18 @@
 - Popup settings surface beyond the auto-lock timeout control (e.g., server URL reconfiguration, account switching) — not implied by EXT-02/03/04, would be scope creep.
 - Full Chrome/Firefox dual-browser parity verification and `web-ext lint` — explicitly Phase 13.
 - Any content-script/page-bridge work — explicitly Phase 10 (autofill DOM detection) and Phase 12 (passkey provider MAIN-world patch).
+
+## AMENDMENT 2026-07-15 — Extension-scoped PRF passkey (Bartek's decision, supersedes the popup-PRF assumption)
+
+**Empirical finding (Playwright probe, real Chrome, CDP virtual authenticator):** `navigator.credentials.get()` from a `chrome-extension://` popup page throws `SecurityError` for any web RP ID (`localhost`, `example.com`) and passes the origin check ONLY for `rpId === <extension-id>`. v0.1 server-registered passkeys are therefore permanently unusable from the popup — this is a browser-level rule, not a server-config issue. (Phase 12's provider is unaffected: its ceremonies run in the page's MAIN world on the page's origin.)
+
+**Bartek's decision:** real PRF unlock in the popup via a DEDICATED extension-scoped passkey (RP ID = extension ID) — the Bitwarden pattern. NOT the web-app-handoff option, NOT password-only degradation.
+
+**Locked architecture for the new plan (09-08):**
+- Extension passkey is UNLOCK-ONLY. Popup sign-in (token mint) remains password-based (09-04's auth.signIn.password). No pv-server webauthn-rs changes: enrollment uses attestation 'none' verified client-side; unlock assertions are not server-verified (the PRF output is the secret; the server only stores/serves an opaque wrapped-UK blob for the credential).
+- New domain-separation constant in pv-core (e.g. b"pv:ext-prf-unlock:v1") — never reuse pv:prf-unlock:v1 (different context).
+- Server: minimal CRUD for the new recipient blob (extension-passkey-wrapped UK, keyed by credential id), zero-knowledge preserved (blob opaque).
+- manifest.key MUST be pinned for dev builds — the credential binds to the extension ID; an unstable dev ID orphans enrolled credentials (09-RESEARCH Pitfall 2 upgraded from CORS-nuisance to hard requirement).
+- Enrollment UX: discreet post-password-unlock prompt in the popup ("unlock faster with a passkey"), skippable, one-per-authenticator; PRF-incapable authenticators get the honest-degradation message (D-06).
+- Firefox: attempt the same; if moz-extension origins reject extension-ID RP IDs, honest degradation on Firefox (password) — verified in Phase 13.
+- 09-06's UnlockView shows the PRF button only when an enrolled extension passkey exists for this install; otherwise password + (post-unlock) enrollment prompt.
