@@ -48,6 +48,11 @@ export default function AutofillItemRow({ locale, match, onFill, onFillFailed }:
       const result = await onFill(match.itemId, match.kind);
       if (!result.ok) {
         onFillFailed();
+      } else {
+        // BUG-2: close the popup after a CONFIRMED successful fill --
+        // never on the copy path (see TotpFillRow.handleCopy, which
+        // intentionally leaves the popup open so the user sees the toast).
+        window.close();
       }
       setConfirming(false);
     } finally {

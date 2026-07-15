@@ -116,6 +116,11 @@ export default function TotpFillRow({
       const result = await onFill(match.itemId, "totp");
       if (!result.ok) {
         onFillFailed();
+      } else {
+        // BUG-2: close the popup after a successful fill -- never on the
+        // copy path (handleCopy above intentionally leaves the popup open
+        // so the user sees the toast).
+        window.close();
       }
     } finally {
       setFillPending(false);
@@ -144,7 +149,7 @@ export default function TotpFillRow({
             role="progressbar"
             aria-valuenow={percent}
           />
-          <span className="font-mono text-sm">{code}</span>
+          <span className="font-mono text-base">{code}</span>
         </div>
       )}
 
