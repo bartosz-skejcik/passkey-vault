@@ -204,8 +204,12 @@ describe("no_other_extension_file_hard_codes_a_server_url", () => {
     // does NOT match bare doc-comment prose (e.g. "See https://wxt.dev/..."
     // in wxt.config.ts) -- only a string-literal-quoted URL is a genuine
     // hard-coded-server-URL risk (the thing that could actually flow into
-    // a fetch/tabs.create call).
-    const urlLiteralPattern = /["'`]https?:\/\/[^"'`]+["'`]/;
+    // a fetch/tabs.create call). A wildcard host segment (`*`) is captured
+    // and excluded separately below -- WXT manifest match-patterns like
+    // `http://*/*` (wxt.config.ts's optional_host_permissions) can never
+    // resolve to a concrete origin and are not the hard-coded-URL risk
+    // this test guards against.
+    const urlLiteralPattern = /["'`](https?:\/\/[^"'`]+)["'`]/;
 
     function walk(dir: string, offenders: string[]) {
       for (const entry of readdirSync(dir)) {
@@ -226,7 +230,8 @@ describe("no_other_extension_file_hard_codes_a_server_url", () => {
           // a doc comment referencing e.g. https://developer.chrome.com is
           // not a hard-coded server URL, it never reaches a fetch/tabs call.
           if (trimmed.startsWith("//") || trimmed.startsWith("*")) continue;
-          if (urlLiteralPattern.test(line)) {
+          const match = urlLiteralPattern.exec(line);
+          if (match && !match[1].includes("*")) {
             offenders.push(`${fullPath}: ${trimmed}`);
           }
         }

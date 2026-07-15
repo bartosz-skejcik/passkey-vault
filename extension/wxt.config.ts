@@ -22,6 +22,14 @@ export default defineConfig({
     // without this permission -- unit tests missed it because they inject a
     // fake storage; the real-browser Phase 8 UAT caught it.
     permissions: ['storage'],
+    // EXT-05: deliberately `optional_host_permissions`, NOT `host_permissions`
+    // -- the extension is ONE public build with no origin known at compile
+    // time (each user self-hosts pv-server at their own URL).
+    // `server-config.ts`'s `configureServer()` requests the single concrete
+    // origin at runtime via `browser.permissions.request()`, never a
+    // blanket grant. Verified against the generated Chrome manifest.json in
+    // plan 09-03's Task 2 acceptance criteria.
+    optional_host_permissions: ['http://*/*', 'https://*/*'],
     // D-07: explicit MV3 CSP permitting WASM compilation in the extension
     // background/pages context. Declared literally so it is never left to
     // an implicit/permissive default -- plan 08-03 grep-verifies the

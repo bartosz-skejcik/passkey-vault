@@ -18,14 +18,14 @@ export interface ServerConfig {
   baseUrl: string;
 }
 
-// chrome.storage.LOCAL -- NOT chrome.storage.session. This is user-facing
-// configuration (a server origin), not vault-secret material (D-01/D-02
-// from 09-CONTEXT.md apply to the KEY ENVELOPE only, Plan 09-02's
-// session-storage.ts): it must survive a browser restart, unlike the
-// session envelope which is deliberately wiped on restart. Do NOT
-// "simplify" this later by merging it into session-storage.ts's storage
-// area -- that would force reconfiguration on every browser restart and
-// defeats EXT-05's "persisted" requirement.
+// chrome.storage.LOCAL -- deliberately NOT the extension's other, SESSION-
+// scoped storage area (Plan 09-02's session-storage.ts, wiped on browser
+// restart). This is user-facing configuration (a server origin), not
+// vault-secret material (D-01/D-02 from 09-CONTEXT.md apply to the KEY
+// ENVELOPE only): it must survive a browser restart, unlike that other
+// area which is deliberately wiped on restart. Do NOT "simplify" this
+// later by merging the two -- that would force reconfiguration on every
+// browser restart and defeats EXT-05's "persisted" requirement.
 const STORAGE_KEY = "pv-server-config";
 
 /**
