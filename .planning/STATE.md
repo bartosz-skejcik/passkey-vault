@@ -5,15 +5,15 @@ milestone_name: Browser Extension
 current_phase: 8
 current_phase_name: Extension Bootstrap & WASM-in-Background Spike
 status: executing
-stopped_at: Completed 08-01-PLAN.md
-last_updated: "2026-07-15T06:53:46.079Z"
+stopped_at: Completed 08-02-PLAN.md
+last_updated: "2026-07-15T07:03:51.438Z"
 last_activity: 2026-07-15
 last_activity_desc: 08-01 complete (extension/ WXT scaffold, MV3 CSP + Firefox MV2 pin, build-wasm.sh extended for extension/)
 progress:
   total_phases: 6
   completed_phases: 0
-  total_plans: 19
-  completed_plans: 1
+  total_plans: 29
+  completed_plans: 2
   percent: 0
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 8 of 13 (Extension Bootstrap & WASM-in-Background Spike)
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-07-15 — 08-01 complete (extension/ WXT scaffold, MV3 CSP + Firefox MV2 pin, build-wasm.sh extended for extension/)
 
-Progress: [█░░░░░░░░░] 6%
+Progress: [█░░░░░░░░░] 7%
 
 ## Performance Metrics
 
@@ -60,6 +60,7 @@ Progress: [█░░░░░░░░░] 6%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 08 P01 | 20min | 2 tasks | 14 files |
+| Phase 08 P02 | 7min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,8 @@ Recent decisions affecting current work:
 - [Phase ?]: Package legitimacy checkpoint (wxt@0.20.27, @wxt-dev/browser@0.2.2) approved by Bartek before install — [SUS] flag was a too-new heuristic false-positive.
 - [Phase ?]: Firefox MV2 background (D-08) kept as WXT's own default split vs Chrome MV3 service worker; no manifestVersion override added.
 - [Phase ?]: gecko.id fixed to literal 'passkey-vault@extension.local' (D-09); strict_min_version deferred to Phase 13.
+- [Phase ?]: wasm-loader.ts re-exports WasmUserKey as a value (not type-only) so vault-session.ts can call WasmUserKey.generate() directly
+- [Phase ?]: vault-session.ts uses a fixed spike password + injected SessionStorage dependency to prove chrome.storage.session round-trip survival, mirroring web/'s memoized initCrypto()/lock-state singleton patterns
 
 ### Pending Todos
 
@@ -103,8 +106,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-15T06:53:39.236Z
-Stopped at: Completed 08-01-PLAN.md
+Last session: 2026-07-15T07:03:51.432Z
+Stopped at: Completed 08-02-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

@@ -61,11 +61,11 @@ Delivered: 30/30 requirements, all phases verified passed, cross-phase integrati
   3. A round-trip crypto call executed in the background (e.g., derive → wrap → unwrap) survives a manual service-worker idle-kill/wake cycle without losing correctness.
   4. Firefox's manifest target (MV2 persistent background page vs. MV3 event page) is deliberately pinned in `wxt.config.ts`, not left to WXT's default.
 
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 Plans:
 
 - [x] 08-01-PLAN.md — Scaffold extension/ (WXT), pin CSP/Firefox-MV2/gecko.id, extend build-wasm.sh for extension/ output
-- [ ] 08-02-PLAN.md — wasm-loader.ts + vault-session.ts round-trip proof with chrome.storage.session survival (TDD), wired into background.ts
+- [x] 08-02-PLAN.md — wasm-loader.ts + vault-session.ts round-trip proof with chrome.storage.session survival (TDD), wired into background.ts
 - [ ] 08-03-PLAN.md — Debug popup harness, packaged builds for both browsers, manifest verification + end-of-phase human-check for SC #1/#3/#4
 
 ### Phase 9: Session Unlock Core, Popup & Sync Client
@@ -177,7 +177,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 5. Multi-Device Sync | v0.1 | 4/4 | Complete | 2026-07-14 |
 | 6. Import/Export, TOTP & Onboarding | v0.1 | 4/4 | Complete | 2026-07-14 |
 | 7. Self-Host Packaging & Deployment | v0.1 | 3/3 | Complete | 2026-07-14 |
-| 8. Extension Bootstrap & WASM-in-Background Spike | v0.2 | 1/3 | In Progress|  |
+| 8. Extension Bootstrap & WASM-in-Background Spike | v0.2 | 2/3 | In Progress|  |
 | 9. Session Unlock Core, Popup & Sync Client | v0.2 | 0/TBD | Not started | - |
 | 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 0/TBD | Not started | - |
 | 11. Generate & Capture | v0.2 | 0/TBD | Not started | - |
