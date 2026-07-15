@@ -28,7 +28,22 @@ export default defineBackground({
   main() {
     console.log('[passkey-vault] background context started');
 
-    browser.runtime.onMessage.addListener((message: unknown) => {
+    browser.runtime.onMessage.addListener((message: unknown, sender) => {
+      // WR-01: only this extension's own pages (popup/options — whether
+      // action-hosted or opened in a tab) may trigger crypto work. The
+      // discriminator is the browser-constructed sender.url origin: our own
+      // chrome-extension://<id>/ pages pass; content scripts report the
+      // hostile page's http(s) URL and foreign extensions a different id,
+      // so both are rejected. (A bare `sender.tab !== undefined` check is
+      // WRONG here — it would also reject our own pages opened in a tab,
+      // caught by the real-browser UAT.) Phase 10 must widen this into an
+      // explicit allow-list when content scripts legitimately need the
+      // background, never by deleting the check.
+      const ownOrigin = browser.runtime.getURL('');
+      if (sender.id !== browser.runtime.id || !sender.url?.startsWith(ownOrigin)) {
+        return undefined;
+      }
+
       const isSpikeRoundtrip =
         typeof message === 'object' &&
         message !== null &&

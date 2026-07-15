@@ -25,6 +25,20 @@ export type SessionStorage = {
 
 type SpikeEnvelope = { wrappedJson: string; saltB64: string };
 
+// IN-03: never trust a persisted shape blindly — chrome.storage.session is
+// extension-only (not attacker-writable), but Phase 9's real vault-session
+// inherits this pattern, where the envelope DOES carry security meaning. A
+// malformed envelope is corruption and must fail loudly, not be silently
+// reinitialized (which would mask the corruption) or crash deep in atob().
+function isSpikeEnvelope(value: unknown): value is SpikeEnvelope {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as SpikeEnvelope).wrappedJson === "string" &&
+    typeof (value as SpikeEnvelope).saltB64 === "string"
+  );
+}
+
 // A fixed spike password is intentional here — this file proves the
 // round-trip/storage-survival mechanics only, not a real unlock flow (that's
 // Phase 9's AUTH work). No user-facing password ever flows through this
@@ -71,7 +85,12 @@ export async function roundTripSpike(
   await initCrypto();
 
   const existing = await storage.get(ENVELOPE_KEY);
-  const envelope = existing[ENVELOPE_KEY] as SpikeEnvelope | undefined;
+  const stored = existing[ENVELOPE_KEY];
+
+  if (stored !== undefined && !isSpikeEnvelope(stored)) {
+    throw new Error("persisted spikeEnvelope is malformed — refusing to proceed");
+  }
+  const envelope = stored as SpikeEnvelope | undefined;
 
   if (envelope !== undefined) {
     // Survived-a-wake path: re-derive from the persisted salt, never mint a
@@ -85,8 +104,12 @@ export async function roundTripSpike(
       passwordBytes.fill(0);
     }
 
-    const unwrapped = unwrapUserKey(wrappingKey, envelope.wrappedJson);
-    return { survived: true, ok: unwrapped !== undefined };
+    // unwrapUserKey returns a WasmUserKey or THROWS (Result<_, JsValue> at
+    // the wasm-bindgen boundary) — there is no undefined-returning failure
+    // mode, so success is simply "it did not throw", same as the fresh-init
+    // path's self-verify below.
+    unwrapUserKey(wrappingKey, envelope.wrappedJson);
+    return { survived: true, ok: true };
   }
 
   // Fresh-init path: generate a new UserKey, wrap it under a freshly
