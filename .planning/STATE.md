@@ -5,15 +5,15 @@ milestone_name: Browser Extension
 current_phase: 10
 current_phase_name: Autofill — Login, TOTP, Card & Identity
 status: executing
-stopped_at: Completed 10-01-PLAN.md
-last_updated: "2026-07-15T19:14:39.172Z"
+stopped_at: Completed 10-09-PLAN.md
+last_updated: "2026-07-15T21:33:09.532Z"
 last_activity: 2026-07-15
 last_activity_desc: Phase 10 execution started
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 31
-  completed_plans: 12
+  total_plans: 33
+  completed_plans: 18
   percent: 33
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 10 (Autofill — Login, TOTP, Card & Identity) — EXECUTING
-Plan: 2 of 7
+Plan: 3 of 7
 Status: Ready to execute
 Last activity: 2026-07-15 — Phase 10 execution started
 
-Progress: [████░░░░░░] 39%
+Progress: [██████░░░░] 55%
 
 ## Performance Metrics
 
@@ -71,6 +71,7 @@ Progress: [████░░░░░░] 39%
 | Phase 09 P08 | 55min | 4 tasks | 15 files |
 | Phase 09 P06 | ~90min | 3 tasks | 24 files |
 | Phase 10 P01 | 30min | 3 tasks | 9 files |
+| Phase 10 P09 | 25min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -105,6 +106,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 10-01: itemMatchesOrigin() extends web/src/lib/vault/search.ts's domainFromUrl() parsing shape (not a literal import -- unexported, hostname-only, permissive fallback) with full URL#origin equality that fails closed on unparseable stored URLs -- an access-control gate must never treat a parse failure as a match
 - [Phase ?]: 10-01: totp items always return false from itemMatchesOrigin() -- TotpFields has no stored URL field to compare; TOTP codes reach the popup via the separate autofill.totpCode message keyed by itemId, not this origin gate
 - [Phase ?]: 10-01: requirements-completed left empty for FILL-01..04 -- this plan builds only the contract/gate layer shared by all four fill kinds, matching Phase 9's EXT-04/EXT-05 precedent of not marking a requirement complete until user-facing functionality lands
+- [Phase ?]: [Phase 10]: 10-09: registerAutofillFrameChannel() is a SECOND, independent runtime.onMessage listener from registerMessageRouter() -- content scripts reach ONLY autofill.matchFrame/autofill.fillFrame via assertContentSender()'s guard, never session.*/vault.*; the popup router's WR-01 gate stays textually unchanged
+- [Phase ?]: [Phase 10]: 10-09: autofill-match.ts's EMPTY_DETECTED/asFillKind/maskedHintFor/buildFillValues exported (not duplicated) for autofill-frame.ts to reuse -- one shared decrypt/lookup/derive surface for both the popup-driven and content-frame-driven autofill channels
 
 ### Pending Todos
 
@@ -134,8 +137,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-15T19:14:39.166Z
-Stopped at: Completed 10-01-PLAN.md
+Last session: 2026-07-15T21:33:03.690Z
+Stopped at: Completed 10-09-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
