@@ -5,8 +5,8 @@ milestone_name: Browser Extension
 current_phase: 09
 current_phase_name: Session Unlock Core, Popup & Sync Client
 status: executing
-stopped_at: Completed 09-08-PLAN.md
-last_updated: "2026-07-15T09:38:33.793Z"
+stopped_at: Completed 09-06-PLAN.md
+last_updated: "2026-07-15T10:40:29.489Z"
 last_activity: 2026-07-15
 last_activity_desc: 09-02-PLAN.md complete (session core, autolock, router)
 progress:
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 09 of 13 (Session Unlock Core, Popup & Sync Client)
-Plan: 6 of 7 complete (09-01, 09-03 Wave 1; 09-02 Wave 2) — next: Wave 3 (09-04, 09-05)
+Plan: 7 of 7 complete (09-01, 09-03 Wave 1; 09-02 Wave 2) — next: Wave 3 (09-04, 09-05)
 Status: Ready to execute Wave 3
 Last activity: 2026-07-15 — 09-02-PLAN.md complete (session core, autolock, router)
 
@@ -68,6 +68,7 @@ Progress: [███░░░░░░░] 29%
 | Phase 09 P04 | 25min | 2 tasks | 7 files |
 | Phase 09 P05 | 55min | 3 tasks | 13 files |
 | Phase 09 P08 | 55min | 4 tasks | 15 files |
+| Phase 09 P06 | ~90min | 3 tasks | 24 files |
 
 ## Accumulated Context
 
@@ -96,6 +97,9 @@ Recent decisions affecting current work:
 - [Phase ?]: vault-store.ts exports applySyncSnapshot directly (unlike v0.1's module-private version) for direct testability; the lock-state wiring is tested separately via the real registered listener
 - [Phase ?]: EXT-04 left unmarked in REQUIREMENTS.md -- this plan delivers only the backing sync/store/search engine; full completion (popup UI) is Plan 09-06's job, same precedent as 09-03 leaving EXT-05 unmarked
 - [Phase ?]: Extension-scoped PRF passkey enrollStart guards via cheap isSessionUnlocked(); enrollFinish re-guards via ensureHydrated()+getUnlockedUserKey() before wrapping the current UK
+- [Phase ?]: 09-06: popup replaces Phase 8's vanilla debug harness with React+DaisyUI+Tailwind v4 (reused web theme), thin sendMessage-only dispatch layer per D-05
+- [Phase ?]: 09-06: UnlockView dispatches ONLY unlock.extPrf.*/09-08's ext-scoped PRF kinds per the AMENDMENT -- never 09-04's web-RP unlock.prf.*/auth.signIn.prf.* -- Sign-in variant has no PRF button this phase
+- [Phase ?]: 09-06: popup header/footer redirects (settings gear, full-screen, + new-item) are pure browser.tabs.create opens of config.get's baseUrl -- no in-popup settings/create UI, per Bartek's NordPass-reference decision
 
 ### Pending Todos
 
@@ -125,8 +129,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-15T09:38:33.787Z
-Stopped at: Completed 09-08-PLAN.md
+Last session: 2026-07-15T10:40:29.483Z
+Stopped at: Completed 09-06-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

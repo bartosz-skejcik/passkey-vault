@@ -12,9 +12,9 @@
 - [x] **EXT-01**: Extension loads in Chrome and Firefox (WXT MV3) and runs `pv-core`/`pv-wasm` crypto in the background service worker
 - [x] **EXT-02**: User unlocks the vault from the popup with the master password (and with a PRF passkey where the browser supports it); the unlocked User Key is held in `chrome.storage.session` (never `storage.local`) and survives service-worker idle-termination within the session
 - [x] **EXT-03**: The session key auto-locks — cleared after a configurable idle timeout and on browser close — so an unlocked vault never persists indefinitely
-- [ ] **EXT-04**: In the popup the user can browse, search, and pick any vault item, backed by the existing `pv-server` REST API and WebSocket sync (multi-device revisions honored)
+- [x] **EXT-04**: In the popup the user can browse, search, and pick any vault item, backed by the existing `pv-server` REST API and WebSocket sync (multi-device revisions honored)
 - [ ] **EXT-05**: The extension is ONE public build (Chrome Web Store / AMO) that connects to the user's OWN self-hosted `pv-server` — on first run the user configures their server URL (stored in the extension), it is validated (reachable / `healthz`), and all REST + WebSocket traffic targets that URL; the self-hosted server allowlists the single fixed published extension origin via CORS. No server URL is hard-coded.
-- [ ] **EXT-06**: The popup (icon click) offers a "fullscreen / open full vault" action that opens the configured server's v0.1 web-app frontend in a new browser tab — so the popup stays a focused surface and the full vault-management UI is NOT re-implemented inside the extension
+- [x] **EXT-06**: The popup (icon click) offers a "fullscreen / open full vault" action that opens the configured server's v0.1 web-app frontend in a new browser tab — so the popup stays a focused surface and the full vault-management UI is NOT re-implemented inside the extension
 
 ### PROV — Passkey provider
 
@@ -73,9 +73,9 @@ Filled by the roadmapper.
 | EXT-01 | Phase 8 | Complete |
 | EXT-02 | Phase 9 | Complete |
 | EXT-03 | Phase 9 | Complete |
-| EXT-04 | Phase 9 | Pending |
+| EXT-04 | Phase 9 | Complete |
 | EXT-05 | Phase 9 | Pending |
-| EXT-06 | Phase 9 | Pending |
+| EXT-06 | Phase 9 | Complete |
 | PROV-01 | Phase 12 | Pending |
 | PROV-02 | Phase 12 | Pending |
 | PROV-03 | Phase 12 | Pending |
