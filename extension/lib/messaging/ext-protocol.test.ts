@@ -58,6 +58,11 @@ const MESSAGE_FIXTURES: MessageFixtureMap = {
   },
   "config.get": { kind: "config.get" },
   "config.set": { kind: "config.set", rawUrl: "https://vault.example.com" },
+  // Phase 10 (Plan 10-01): autofill.match carries no fields at all --
+  // nothing to round-trip beyond the discriminant.
+  "autofill.match": { kind: "autofill.match" },
+  "autofill.fill": { kind: "autofill.fill", itemId: "item-1", kind_: "login" },
+  "autofill.totpCode": { kind: "autofill.totpCode", itemId: "item-2" },
 };
 
 type ResponseFixtureMap = { [K in Message["kind"]]: MessageResponseMap[K] };
@@ -106,6 +111,16 @@ const RESPONSE_FIXTURES: ResponseFixtureMap = {
   "unlock.extPrf.finish": { ok: true },
   "config.get": { baseUrl: "https://vault.example.com" },
   "config.set": { ok: true },
+  "autofill.match": {
+    pageState: "ok",
+    origin: "https://example.com",
+    detected: { login: true, totp: false, card: false, identity: false },
+    matches: [
+      { itemId: "item-1", kind: "login", label: "Example", maskedHint: "j***@example.com" },
+    ],
+  },
+  "autofill.fill": { ok: true },
+  "autofill.totpCode": { ok: true, code: "123456", secondsRemaining: 17 },
 };
 
 describe("Message JSON-transport safety (Chrome MV3 sendMessage stand-in)", () => {

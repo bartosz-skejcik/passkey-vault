@@ -31,6 +31,17 @@
 // (discriminated union + response map + typed sendMessage helper) never
 // gets restructured.
 //
+// Phase 10 (Plan 10-01) adds `autofill.match`/`autofill.fill`/
+// `autofill.totpCode` -- the popup-driven autofill contract. Per this
+// plan's architecture_note: the transport is popup-driven, NOT
+// content-driven (content-relay never sends these; it only answers
+// `content.detect`/`content.fill` from the background, defined in
+// lib/autofill/types.ts, a SEPARATE channel). `autofill.match` deliberately
+// carries no origin field -- the background resolves the active tab itself
+// via entrypoints/background/frame-guard.ts's resolveFillTarget(), so
+// there is nothing here for a caller to spoof (T-10-02). Handlers are
+// wired up by Plan 10-04; this plan only extends the typed contract.
+//
 // `UnlockResult`/`PrfStartResult`/`ExtEnrollStartResult`/`ExtUnlockResult`
 // are `import type`-only from entrypoints/background/unlock.ts and
 // entrypoints/background/ext-passkey.ts (their canonical definitions, per
@@ -53,6 +64,7 @@ import { browser } from "wxt/browser";
 import type { UnlockResult } from "../../entrypoints/background/unlock";
 import type { ExtEnrollStartResult, ExtUnlockResult } from "../../entrypoints/background/ext-passkey";
 import type { Folder, VaultItem } from "../vault/types";
+import type { AutofillMatch, DetectedFields, FillKind } from "../autofill/types";
 
 export type SessionStatus =
   | { kind: "no-session" }
@@ -117,7 +129,36 @@ export type Message =
   // configured pv-server origin -- delegates directly to server-config.ts
   // (Plan 09-03)'s readServerConfig()/configureServer().
   | { kind: "config.get" }
-  | { kind: "config.set"; rawUrl: string };
+  | { kind: "config.set"; rawUrl: string }
+  // Phase 10 (Plan 10-01): popup-driven autofill. `autofill.match` carries
+  // no origin (see header comment) -- the background derives the active
+  // tab's origin itself. `autofill.fill` deliberately carries NO field
+  // values in its response -- plaintext flows background -> content-relay
+  // only, never through the popup (D-02). The fill-kind field is named
+  // `kind_` (not `kind`) because `kind` is already this union's own
+  // discriminant; do not rename it and do not add a second name for the
+  // same concept.
+  | { kind: "autofill.match" }
+  | { kind: "autofill.fill"; itemId: string; kind_: FillKind }
+  // The ONE sanctioned path where a derived-from-secret value reaches the
+  // popup: 10-UI-SPEC.md's "Kopiuj kod" clipboard-write action runs in the
+  // popup context. Returns the derived code only, never the raw TOTP seed.
+  | { kind: "autofill.totpCode"; itemId: string };
+
+/**
+ * Response to `autofill.match` -- metadata only (item ids, labels, masked
+ * hints), never field values or derived secrets. `pageState` distinguishes
+ * a genuine "no matches" from a restricted page (`chrome://`, `file://`,
+ * etc. -- see frame-guard.ts's resolveFillTarget()) or an unreachable
+ * content-relay (not yet injected on this page), so the popup can render
+ * three different empty states instead of one ambiguous one.
+ */
+export interface AutofillMatchResult {
+  pageState: "ok" | "restricted" | "unreachable";
+  origin: string | null;
+  detected: DetectedFields;
+  matches: AutofillMatch[];
+}
 
 export interface MessageResponseMap {
   "session.status": SessionStatus;
@@ -137,6 +178,13 @@ export interface MessageResponseMap {
   "unlock.extPrf.finish": ExtUnlockResult;
   "config.get": { baseUrl: string } | null;
   "config.set": { ok: true } | { ok: false; error: "invalid-url" | "unreachable" };
+  "autofill.match": AutofillMatchResult;
+  "autofill.fill":
+    | { ok: true }
+    | { ok: false; reason: "no-match" | "origin-mismatch" | "target-unreachable" | "locked" };
+  "autofill.totpCode":
+    | { ok: true; code: string; secondsRemaining: number }
+    | { ok: false; reason: string };
 }
 
 export type MessageOf<K extends Message["kind"]> = Extract<Message, { kind: K }>;
