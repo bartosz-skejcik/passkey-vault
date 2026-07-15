@@ -5,15 +5,15 @@ milestone_name: Browser Extension
 current_phase: 09
 current_phase_name: Session Unlock Core, Popup & Sync Client
 status: executing
-stopped_at: Completed 09-05-PLAN.md
-last_updated: "2026-07-15T08:51:54.409Z"
+stopped_at: Completed 09-08-PLAN.md
+last_updated: "2026-07-15T09:38:33.793Z"
 last_activity: 2026-07-15
 last_activity_desc: 09-02-PLAN.md complete (session core, autolock, router)
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 30
-  completed_plans: 8
+  total_plans: 31
+  completed_plans: 9
   percent: 17
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 09 of 13 (Session Unlock Core, Popup & Sync Client)
-Plan: 5 of 7 complete (09-01, 09-03 Wave 1; 09-02 Wave 2) — next: Wave 3 (09-04, 09-05)
+Plan: 6 of 7 complete (09-01, 09-03 Wave 1; 09-02 Wave 2) — next: Wave 3 (09-04, 09-05)
 Status: Ready to execute Wave 3
 Last activity: 2026-07-15 — 09-02-PLAN.md complete (session core, autolock, router)
 
-Progress: [███░░░░░░░] 27%
+Progress: [███░░░░░░░] 29%
 
 ## Performance Metrics
 
@@ -67,6 +67,7 @@ Progress: [███░░░░░░░] 27%
 | Phase 09 P02 | 10min | 3 tasks | 8 files |
 | Phase 09 P04 | 25min | 2 tasks | 7 files |
 | Phase 09 P05 | 55min | 3 tasks | 13 files |
+| Phase 09 P08 | 55min | 4 tasks | 15 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,7 @@ Recent decisions affecting current work:
 - [Phase ?]: Exported apiFetch from auth-api.ts so vault-api.ts reuses base-URL/auth-header logic instead of duplicating it (mirrors web/'s lib/auth/api.ts -> lib/vault/api.ts relationship)
 - [Phase ?]: vault-store.ts exports applySyncSnapshot directly (unlike v0.1's module-private version) for direct testability; the lock-state wiring is tested separately via the real registered listener
 - [Phase ?]: EXT-04 left unmarked in REQUIREMENTS.md -- this plan delivers only the backing sync/store/search engine; full completion (popup UI) is Plan 09-06's job, same precedent as 09-03 leaving EXT-05 unmarked
+- [Phase ?]: Extension-scoped PRF passkey enrollStart guards via cheap isSessionUnlocked(); enrollFinish re-guards via ensureHydrated()+getUnlockedUserKey() before wrapping the current UK
 
 ### Pending Todos
 
@@ -123,8 +125,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-15T08:51:54.402Z
-Stopped at: Completed 09-05-PLAN.md
+Last session: 2026-07-15T09:38:33.787Z
+Stopped at: Completed 09-08-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

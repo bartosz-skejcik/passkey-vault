@@ -83,7 +83,7 @@ Plans:
   6. The self-hosted `pv-server`'s CORS allowlist accepts the fixed published extension origin (`chrome-extension://<published-id>` / `moz-extension://<id>`), verified end-to-end against a real request, not assumed. (EXT-05)
   7. The popup exposes a "fullscreen / open full vault" action that opens the configured server's v0.1 web-app frontend in a new browser tab; the popup does not re-implement full vault management. (EXT-06)
 
-**Plans**: 5/8 plans executed
+**Plans**: 6/8 plans executed
 Plans:
 **Wave 1**
 
@@ -101,7 +101,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 09-08-PLAN.md — Extension-scoped PRF passkey: pv-core ext-PRF constant, /api/extension-passkeys blob CRUD, background enroll/unlock kinds, manifest.key pin (EXT-02; added 2026-07-15 per 09-CONTEXT AMENDMENT — web-RP passkeys are unusable from the popup)
+- [x] 09-08-PLAN.md — Extension-scoped PRF passkey: pv-core ext-PRF constant, /api/extension-passkeys blob CRUD, background enroll/unlock kinds, manifest.key pin (EXT-02; added 2026-07-15 per 09-CONTEXT AMENDMENT — web-RP passkeys are unusable from the popup)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -215,7 +215,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 6. Import/Export, TOTP & Onboarding | v0.1 | 4/4 | Complete | 2026-07-14 |
 | 7. Self-Host Packaging & Deployment | v0.1 | 3/3 | Complete | 2026-07-14 |
 | 8. Extension Bootstrap & WASM-in-Background Spike | v0.2 | 3/3 | Complete    | 2026-07-15 |
-| 9. Session Unlock Core, Popup & Sync Client | v0.2 | 5/8 | In Progress|  |
+| 9. Session Unlock Core, Popup & Sync Client | v0.2 | 6/8 | In Progress|  |
 | 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 0/7 | Planned | - |
 | 11. Generate & Capture | v0.2 | 0/TBD | Not started | - |
 | 12. Passkey Provider | v0.2 | 0/TBD | Not started | - |
