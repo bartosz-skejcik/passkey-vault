@@ -5,12 +5,6 @@
 // item-detail. Exactly one view renders at a time -- the popup is
 // single-view, no tabs.
 //
-// NOTE (Task 2 -> Task 3 integration): the "list"/"detail" branches below
-// are a minimal placeholder pending Task 3's ItemListView.tsx/
-// ItemDetailView.tsx (this file is not in Task 3's own <files> list, but
-// wiring the real components in is unavoidably App.tsx's job -- Task 3
-// replaces this placeholder with the real imports in the same plan
-// execution, documented as a deviation in the SUMMARY).
 import { useEffect, useState } from "react";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
 import type { SessionStatus } from "../../lib/messaging/ext-protocol";
@@ -19,6 +13,8 @@ import { resolveLocale, t } from "../../lib/i18n/dictionary";
 import ServerConfigView from "./ServerConfigView";
 import UnlockView from "./UnlockView";
 import EnrollExtPasskeyPrompt from "./EnrollExtPasskeyPrompt";
+import ItemListView from "./ItemListView";
+import ItemDetailView from "./ItemDetailView";
 
 type UnlockableStatus = Extract<SessionStatus, { kind: "no-session" } | { kind: "locked" }>;
 
@@ -95,24 +91,19 @@ export default function App() {
   }
 
   if (view.kind === "detail") {
-    // Task 3 replaces this with the real ItemDetailView.
     return (
-      <div className="flex w-[380px] flex-col gap-2 p-4">
-        <button type="button" className="btn btn-ghost btn-sm self-start" onClick={() => setView({ kind: "list" })}>
-          {"<"}
-        </button>
-        <p>{view.item.fields.name}</p>
-      </div>
+      <ItemDetailView locale={locale} item={view.item} onBack={() => setView({ kind: "list" })} />
     );
   }
 
   return (
-    <div className="flex w-[380px] flex-col gap-2 p-2">
+    <div className="flex w-[380px] flex-col gap-2">
       {showEnrollPrompt ? (
-        <EnrollExtPasskeyPrompt locale={locale} onDone={() => setShowEnrollPrompt(false)} />
+        <div className="p-2">
+          <EnrollExtPasskeyPrompt locale={locale} onDone={() => setShowEnrollPrompt(false)} />
+        </div>
       ) : null}
-      {/* Task 3 replaces this placeholder with the real ItemListView. */}
-      <div data-testid="pv-list-view-placeholder" />
+      <ItemListView locale={locale} onSelectItem={(item) => setView({ kind: "detail", item })} />
     </div>
   );
 }
