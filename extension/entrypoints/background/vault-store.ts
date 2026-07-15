@@ -114,12 +114,41 @@ export function applySyncSnapshot(snapshot: SyncSnapshot): void {
   if (uk === null) {
     return;
   }
+  // BUG-3: a single wrong-key/corrupt row must never abort hydration of
+  // the rest of the vault -- decryptItemRow/decryptFolderRow THROW on
+  // failure, so each row is decrypted inside its own try/catch and skipped
+  // (counted + a single console.warn) rather than letting Array.prototype.map
+  // propagate the first row's exception and drop every item after it.
   if (snapshot.items !== undefined) {
-    items = snapshot.items.map((row) => decryptItemRow(row, uk));
+    let skipped = 0;
+    const decrypted: VaultItem[] = [];
+    for (const row of snapshot.items) {
+      try {
+        decrypted.push(decryptItemRow(row, uk));
+      } catch {
+        skipped += 1;
+      }
+    }
+    if (skipped > 0) {
+      console.warn(`[passkey-vault] skipped ${skipped} undecryptable item(s) during sync`);
+    }
+    items = decrypted;
     notifyListeners();
   }
   if (snapshot.folders !== undefined) {
-    folders = snapshot.folders.map((row) => decryptFolderRow(row, uk));
+    let skipped = 0;
+    const decrypted: Folder[] = [];
+    for (const row of snapshot.folders) {
+      try {
+        decrypted.push(decryptFolderRow(row, uk));
+      } catch {
+        skipped += 1;
+      }
+    }
+    if (skipped > 0) {
+      console.warn(`[passkey-vault] skipped ${skipped} undecryptable folder(s) during sync`);
+    }
+    folders = decrypted;
     notifyListeners();
   }
 }
@@ -151,7 +180,9 @@ export function ensureVaultSyncStarted(): void {
   }
   syncStarted = true;
   startSync({ getSinceRevision: () => lastKnownRevision, onSnapshot: applySyncSnapshot });
-  void getSyncSnapshot(0).then(applySyncSnapshot);
+  void getSyncSnapshot(0)
+    .then(applySyncSnapshot)
+    .catch((e) => console.warn("[passkey-vault] initial sync pull failed", e));
 }
 
 // Module-level side effect (mirrors web/src/lib/vault/store.ts's own

@@ -76,7 +76,10 @@ export function totpNow(
 // Module-level singleton promise — memoizes the (expensive, one-time) wasm
 // module instantiation. Mirrors `web/src/lib/crypto/index.ts`'s `ready`/
 // `initCrypto` shape exactly (lines 84-100), with one deliberate
-// divergence: `init()` is called with an `ArrayBuffer`, never a URL/string.
+// divergence: `init()` is called with an `ArrayBuffer` (via the modern
+// `{ module_or_path }` options-object form, never a bare positional arg --
+// the generated glue warns "using deprecated parameters" otherwise), never
+// a URL/string.
 //
 // pv_wasm.js's generated `__wbg_load` only takes the browser's native
 // streaming-compile WebAssembly API when its argument is a `Response`
@@ -94,7 +97,7 @@ export function initCrypto(): Promise<void> {
   if (ready === null) {
     ready = fetch(browser.runtime.getURL("/wasm/pv_wasm_bg.wasm"))
       .then((response) => response.arrayBuffer())
-      .then((bytes) => init(bytes))
+      .then((bytes) => init({ module_or_path: bytes }))
       .then(() => undefined)
       .catch((e) => {
         ready = null; // allow a future call to retry instead of replaying this rejection forever
