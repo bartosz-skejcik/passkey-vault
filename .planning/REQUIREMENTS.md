@@ -9,7 +9,7 @@
 
 ### EXT — Extension foundation
 
-- [ ] **EXT-01**: Extension loads in Chrome and Firefox (WXT MV3) and runs `pv-core`/`pv-wasm` crypto in the background service worker
+- [x] **EXT-01**: Extension loads in Chrome and Firefox (WXT MV3) and runs `pv-core`/`pv-wasm` crypto in the background service worker
 - [ ] **EXT-02**: User unlocks the vault from the popup with the master password (and with a PRF passkey where the browser supports it); the unlocked User Key is held in `chrome.storage.session` (never `storage.local`) and survives service-worker idle-termination within the session
 - [ ] **EXT-03**: The session key auto-locks — cleared after a configurable idle timeout and on browser close — so an unlocked vault never persists indefinitely
 - [ ] **EXT-04**: In the popup the user can browse, search, and pick any vault item, backed by the existing `pv-server` REST API and WebSocket sync (multi-device revisions honored)
@@ -44,10 +44,12 @@
 ## Future Requirements (deferred beyond v0.2)
 
 ### Extension polish (v0.2.x)
+
 - [ ] Icon-in-field indicator polish and right-click context-menu quick actions
 - [ ] Cross-origin iframe card-field autofill parity (niche complexity)
 
 ### v1+
+
 - [ ] Breach monitor / Password-Health surfaced in-extension (belongs to its own PROJECT.md item, web-app-first)
 - [ ] FIDO CXF import/export inside the extension UI (belongs to the vault data layer)
 - [ ] `chrome.webAuthenticationProxy`-based provider path (revisit only if w3c/webextensions#361 standardizes)
@@ -68,7 +70,7 @@ Filled by the roadmapper.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EXT-01 | Phase 8 | Pending |
+| EXT-01 | Phase 8 | Complete |
 | EXT-02 | Phase 9 | Pending |
 | EXT-03 | Phase 9 | Pending |
 | EXT-04 | Phase 9 | Pending |

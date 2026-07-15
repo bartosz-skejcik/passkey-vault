@@ -2,14 +2,18 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: Browser Extension
-status: planning
-last_updated: "2026-07-14T21:14:11.110Z"
-last_activity: 2026-07-14
+current_phase: 8
+current_phase_name: Extension Bootstrap & WASM-in-Background Spike
+status: executing
+stopped_at: Completed 08-01-PLAN.md
+last_updated: "2026-07-15T06:53:46.079Z"
+last_activity: 2026-07-15
+last_activity_desc: 08-01 complete (extension/ WXT scaffold, MV3 CSP + Firefox MV2 pin, build-wasm.sh extended for extension/)
 progress:
   total_phases: 6
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 19
+  completed_plans: 1
   percent: 0
 ---
 
@@ -25,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 8 of 13 (Extension Bootstrap & WASM-in-Background Spike)
-Plan: — (not yet planned)
-Status: Ready to plan
-Last activity: 2026-07-14 — v0.2 ROADMAP.md created, 6 phases (8–13), 17/17 requirements mapped
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-07-15 — 08-01 complete (extension/ WXT scaffold, MV3 CSP + Firefox MV2 pin, build-wasm.sh extended for extension/)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 6%
 
 ## Performance Metrics
 
@@ -51,6 +55,11 @@ Progress: [░░░░░░░░░░] 0%
 | 13. Dual-Browser Hardening | TBD | - | - |
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 08 P01 | 20min | 2 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -62,6 +71,9 @@ Recent decisions affecting current work:
 - Roadmap (v0.2): 6 phases derived directly from research's build order — bootstrap/WASM-in-background spike first (de-risks idle-kill + CSP before any feature), session/unlock core+popup+sync second (real vault access before autofill/provider touch it), autofill third, generate & capture fourth, passkey provider fifth (deliberately LAST — highest-risk MAIN-world patch, gated by a `/gsd-secure-phase` security-review checkpoint), dual-browser hardening closes the milestone.
 - Roadmap (v0.2): FILL-03/FILL-04 (card/identity autofill) kept in-milestone per REQUIREMENTS.md even though research's FEATURES.md flagged them P2 "add after validation" — REQUIREMENTS.md is the authoritative scope source and lists them as v0.2, not deferred.
 - Roadmap (v0.2): Two cross-cutting technical items threaded through phases rather than given their own phase — `pv-server` CORS allowlist for the extension origin (small server change, surfaces in Phase 9's sync client) and unlocked-key-in-`chrome.storage.session`-only (never `storage.local`; established in Phase 9, must hold through Phases 10 and 12).
+- [Phase ?]: Package legitimacy checkpoint (wxt@0.20.27, @wxt-dev/browser@0.2.2) approved by Bartek before install — [SUS] flag was a too-new heuristic false-positive.
+- [Phase ?]: Firefox MV2 background (D-08) kept as WXT's own default split vs Chrome MV3 service worker; no manifestVersion override added.
+- [Phase ?]: gecko.id fixed to literal 'passkey-vault@extension.local' (D-09); strict_min_version deferred to Phase 13.
 
 ### Pending Todos
 
@@ -91,8 +103,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-14
-Stopped at: v0.2 ROADMAP.md written (Phases 8–13), REQUIREMENTS.md traceability filled (17/17 mapped), STATE.md refreshed
+Last session: 2026-07-15T06:53:39.236Z
+Stopped at: Completed 08-01-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
