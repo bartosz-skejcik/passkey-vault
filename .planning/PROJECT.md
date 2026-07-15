@@ -45,6 +45,8 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 
 **✅ v0.1 MVP SHIPPED 2026-07-14** — 30/30 requirements, 7/7 faz zweryfikowanych, integracja cross-phase czysta (5/5 flows E2E). Audit: `.planning/milestones/v0.1-MILESTONE-AUDIT.md`.
 
+- ✓ Extension bootstrap (WXT): MV3 Chrome + MV2 Firefox z jednego builda, `pv-wasm` instancjonowany w background service workerze pod CSP `wasm-unsafe-eval`, round-trip krypto przeżywa realny idle-kill/wake (obserwowane w przeglądarce, nie inferowane — CDP kill + marker ground-truth), `build-wasm.sh` rozszerzony addytywnie (jedna ścieżka artefaktu krypto) — Phase 8 (EXT-01)
+
 ### Active
 
 <!-- v0.2 (Browser Extension) i dalej: -->
@@ -120,4 +122,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-14 — v0.2 Browser Extension milestone started (after v0.1 MVP shipped, Phases 1–7).*
+*Last updated: 2026-07-15 after Phase 8*

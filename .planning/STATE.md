@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: Browser Extension
-current_phase: 8
-current_phase_name: Extension Bootstrap & WASM-in-Background Spike
-status: verifying
+current_phase: 09
+current_phase_name: Session Unlock Core, Popup & Sync Client
+status: planning
 stopped_at: Completed 08-03-PLAN.md
-last_updated: "2026-07-15T07:13:25.640Z"
+last_updated: "2026-07-15T07:30:31.605Z"
 last_activity: 2026-07-15
-last_activity_desc: 08-01 complete (extension/ WXT scaffold, MV3 CSP + Firefox MV2 pin, build-wasm.sh extended for extension/)
+last_activity_desc: Phase 8 complete, transitioned to Phase 09
 progress:
   total_phases: 6
   completed_phases: 1
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 
 ## Current Position
 
-Phase: 8 of 13 (Extension Bootstrap & WASM-in-Background Spike)
-Plan: 3 of 3
-Status: Phase complete — ready for verification
-Last activity: 2026-07-15 — 08-01 complete (extension/ WXT scaffold, MV3 CSP + Firefox MV2 pin, build-wasm.sh extended for extension/)
+Phase: 09 of 13 (Session Unlock Core, Popup & Sync Client)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-15 — Phase 8 complete, transitioned to Phase 09
 
 Progress: [█░░░░░░░░░] 10%
 
@@ -39,7 +39,7 @@ Progress: [█░░░░░░░░░] 10%
 
 **Velocity:**
 
-- Total plans completed: 29 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
+- Total plans completed: 3 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
 - Average duration: - min
 - Total execution time: 0 hours (v0.2)
 
@@ -53,6 +53,7 @@ Progress: [█░░░░░░░░░] 10%
 | 11. Generate & Capture | TBD | - | - |
 | 12. Passkey Provider | TBD | - | - |
 | 13. Dual-Browser Hardening | TBD | - | - |
+| 8 | 3 | - | - |
 
 *Updated after each plan completion*
 **Per-Plan Metrics:**

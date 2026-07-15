@@ -40,7 +40,7 @@ Delivered: 30/30 requirements, all phases verified passed, cross-phase integrati
 - **Popup delegates full management to the web app (EXT-06)**: The popup is a focused surface (unlock, browse/search/pick, autofill source). A "fullscreen / open full vault" action opens the **configured server's v0.1 web-app frontend in a new tab** — the full vault-management UI is NOT re-implemented inside the extension. This scopes every UI phase: build compact popup/in-page surfaces, defer heavy management to the web app.
 - **Session key storage**: the unlocked User Key must live only in `chrome.storage.session` — never `chrome.storage.local`, never a module-level JS variable. This constraint is established as the foundation in Phase 9 and must hold through every later phase that touches the unlocked key (autofill in Phase 10, the passkey provider in Phase 12).
 
-- [ ] **Phase 8: Extension Bootstrap & WASM-in-Background Spike** - Bare WXT project on both browsers; `pv-wasm` runs in the background service worker and survives an idle-kill/wake cycle
+- [x] **Phase 8: Extension Bootstrap & WASM-in-Background Spike** - Bare WXT project on both browsers; `pv-wasm` runs in the background service worker and survives an idle-kill/wake cycle (completed 2026-07-15)
 - [ ] **Phase 9: Session Unlock Core, Popup & Sync Client** - Unlock the vault from the popup (password + PRF where supported), browse/search items, real REST+WS sync as a third synced client
 - [ ] **Phase 10: Autofill — Login, TOTP, Card & Identity** - Detect forms and fill saved logins, live TOTP codes, cards, and identities into the current page
 - [ ] **Phase 11: Generate & Capture** - Suggest a generated password on signup, prompt to save new logins after submit, detect password changes
@@ -61,7 +61,7 @@ Delivered: 30/30 requirements, all phases verified passed, cross-phase integrati
   3. A round-trip crypto call executed in the background (e.g., derive → wrap → unwrap) survives a manual service-worker idle-kill/wake cycle without losing correctness.
   4. Firefox's manifest target (MV2 persistent background page vs. MV3 event page) is deliberately pinned in `wxt.config.ts`, not left to WXT's default.
 
-**Plans:** 3/3 plans executed
+**Plans:** 3/3 plans complete
 Plans:
 
 - [x] 08-01-PLAN.md — Scaffold extension/ (WXT), pin CSP/Firefox-MV2/gecko.id, extend build-wasm.sh for extension/ output
@@ -85,6 +85,7 @@ Plans:
 
 **Plans**: 7 plans
 Plans:
+
 - [ ] 09-01-PLAN.md — pv-wasm session export/import pair + pv-server CORS allowlist
 - [ ] 09-02-PLAN.md — chrome.storage.session envelope, autolock, router, ext-protocol
 - [ ] 09-03-PLAN.md — Server URL configuration, healthz validation, optional host permissions (EXT-05)
@@ -92,6 +93,7 @@ Plans:
 - [ ] 09-05-PLAN.md — REST + WS sync client, vault store, search (EXT-04)
 - [ ] 09-06-PLAN.md — Popup UI: server config, unlock, browse/search/pick, open full vault (EXT-02/03/04/06)
 - [ ] 09-07-PLAN.md — Manual UAT checkpoint for all 7 success criteria
+
 **UI hint**: yes
 
 ### Phase 10: Autofill — Login, TOTP, Card & Identity
@@ -109,6 +111,7 @@ Plans:
 
 **Plans**: 7 plans
 Plans:
+
 - [ ] 10-01-PLAN.md — Message contract (autofill.* kinds) + frame-guard origin/frame access-control gate + router sender-threading (D-04/D-09/D-10)
 - [ ] 10-02-PLAN.md — Deterministic login + TOTP detection (type=password/one-time-code, no scoring) (FILL-01/FILL-02, D-06)
 - [ ] 10-03-PLAN.md — Scored autocomplete-first card + identity detection with threshold gate + curated fixtures (FILL-03/FILL-04, D-05)
@@ -116,6 +119,7 @@ Plans:
 - [ ] 10-05-PLAN.md — ISOLATED content-relay (detect/fill, all-frames, crypto-free) + native-setter React-safe fill-dom (D-01, Pitfall 5)
 - [ ] 10-06-PLAN.md — Popup "Na tej stronie" autofill UI: picker, TOTP fill/copy, card/identity second-confirm (D-07/D-12, UI-SPEC)
 - [ ] 10-07-PLAN.md — Adversarial cross-origin-iframe fixture + SC#5 UAT gate + real-forms framework-fill checklist
+
 **UI hint**: yes
 
 ### Phase 11: Generate & Capture
@@ -193,7 +197,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 5. Multi-Device Sync | v0.1 | 4/4 | Complete | 2026-07-14 |
 | 6. Import/Export, TOTP & Onboarding | v0.1 | 4/4 | Complete | 2026-07-14 |
 | 7. Self-Host Packaging & Deployment | v0.1 | 3/3 | Complete | 2026-07-14 |
-| 8. Extension Bootstrap & WASM-in-Background Spike | v0.2 | 3/3 | In Progress|  |
+| 8. Extension Bootstrap & WASM-in-Background Spike | v0.2 | 3/3 | Complete    | 2026-07-15 |
 | 9. Session Unlock Core, Popup & Sync Client | v0.2 | 0/TBD | Not started | - |
 | 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 0/7 | Planned | - |
 | 11. Generate & Capture | v0.2 | 0/TBD | Not started | - |
