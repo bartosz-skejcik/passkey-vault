@@ -15,7 +15,7 @@
 // menus, and stays intact.
 import { useEffect, useRef, useState } from "react";
 import { browser } from "wxt/browser";
-import { Search, Settings, ExternalLink, Plus, KeyRound, CreditCard, IdCard, StickyNote, Timer } from "lucide-react";
+import { Search, Settings, ExternalLink, Plus, Vault, CreditCard, IdCard, StickyNote, Timer } from "lucide-react";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
 import { searchItems, filterItems } from "../../lib/vault/search";
 import type { VaultItem, ItemType } from "../../lib/vault/types";
@@ -36,16 +36,18 @@ import OnThisPageSection from "./autofill/OnThisPageSection";
 // two arrays in sync by hand.
 const AUTOLOCK_OPTIONS = [5, 15, 30, 60] as const;
 
-// KeyRound is used for `login` items in the popup per this plan's own
-// action text ("KeyRound teal/muted, CreditCard, IdCard, StickyNote") --
-// a deliberate popup-specific choice, always rendered MUTED here (never
-// teal): teal is reserved for actual `type: "passkey"` items with PRF
-// capability, a type that doesn't exist in the data model yet (Phase 12).
+// Vault matches web/src/components/vault/ItemRow.tsx's own TYPE_ICON
+// exactly (and this popup's own AutofillItemRow.tsx) -- a design-batch
+// correction: the earlier KeyRound choice diverged from the shared
+// icon-per-type convention used everywhere else `login` items render.
+// Always rendered MUTED here (never teal): teal is reserved for actual
+// `type: "passkey"` items with PRF capability, a type that doesn't exist
+// in the data model yet (Phase 12).
 // `totp` has no icon named in 09-UI-SPEC.md's enumerated four -- `Timer`
 // is a Claude's-discretion addition (same icon web/ItemRow.tsx already
 // uses for the same type), flagged for UI-checker review.
-const TYPE_ICON: Record<ItemType, typeof KeyRound> = {
-  login: KeyRound,
+const TYPE_ICON: Record<ItemType, typeof Vault> = {
+  login: Vault,
   card: CreditCard,
   identity: IdCard,
   note: StickyNote,
@@ -153,8 +155,8 @@ export default function ItemListView({
     // a clipping context, which silently cut the upward-opening type menu
     // off at the list's edge (Bartek, live test: only the last two entries
     // were ever visible, which read as "the menu only has Identity+Note").
-    <div className="relative flex w-[380px] flex-col gap-2 p-2">
-      <div className="flex items-center justify-between gap-2 px-1 pt-1">
+    <div className="relative flex w-[380px] flex-col gap-2 p-4">
+      <div className="flex items-center justify-between gap-2">
         <button
           type="button"
           aria-label={t(locale, "nav.settings")}
@@ -169,7 +171,7 @@ export default function ItemListView({
         </button>
       </div>
 
-      <div className="relative px-1">
+      <div className="relative">
         <Search
           size={16}
           className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-base-content/50"
@@ -187,7 +189,7 @@ export default function ItemListView({
       {/* lg spacing token (24px, 10-UI-SPEC.md) between this section and
           the full item list below it -- the "On this page" list IS the
           D-07 multi-account picker when more than one item matches. */}
-      <div className="px-1 pb-1">
+      <div className="pb-1">
         <OnThisPageSection locale={locale} />
       </div>
 
@@ -223,10 +225,16 @@ export default function ItemListView({
               <button
                 key={item.id}
                 type="button"
-                className="flex min-h-[48px] items-center gap-2 px-2 py-2 text-left hover:bg-base-200"
+                // No horizontal px here -- the root container's own p-4
+                // already supplies the 16px rhythm (matching
+                // UnlockView/ServerConfigView/ItemDetailView); adding px-2
+                // on top would double-pad relative to those views.
+                className="flex min-h-[48px] items-center gap-2 py-2 text-left hover:bg-base-content/[0.06]"
                 onClick={() => onSelectItem(item)}
               >
-                <Icon size={20} className="shrink-0 text-base-content/60" aria-hidden="true" />
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-base-200 text-base-content/70">
+                  <Icon size={18} aria-hidden="true" />
+                </span>
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate text-base">{item.fields.name}</span>
                   <span className="truncate text-sm text-base-content/60">{subtitle}</span>
@@ -271,7 +279,7 @@ export default function ItemListView({
         </button>
       </div>
 
-      <div className="flex items-center justify-between gap-2 border-t border-base-300 px-1 pt-2">
+      <div className="flex items-center justify-between gap-2 border-t border-base-300 pt-2">
         <label htmlFor="pv-autolock" className="whitespace-nowrap text-sm text-base-content/70">
           {t(locale, "autolock.label")}
         </label>
@@ -283,7 +291,7 @@ export default function ItemListView({
         >
           {AUTOLOCK_OPTIONS.map((minutes) => (
             <option key={minutes} value={minutes}>
-              {minutes}
+              {minutes} min
             </option>
           ))}
         </select>
