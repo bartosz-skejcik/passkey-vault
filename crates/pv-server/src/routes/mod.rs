@@ -10,7 +10,9 @@ pub mod webauthn_state;
 
 use std::path::PathBuf;
 
+use anyhow::{bail, Result};
 use axum::{
+    http::HeaderValue,
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
@@ -110,20 +112,75 @@ fn build_cors_layer(dev_cors_enabled: bool, extension_origins_csv: &str) -> Cors
     if dev_cors_enabled {
         return CorsLayer::permissive();
     }
-    let origins: Vec<_> = extension_origins_csv
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    // WR-07: `Config::validate()` is the LOUD startup gate for this value
+    // (main.rs calls it before the router is ever built), so an Err here is
+    // unreachable in a real deployment. This branch is belt-and-braces: it
+    // logs and degrades to the no-CORS default rather than ever panicking,
+    // because the one thing this function must never do is abort startup
+    // from inside `router()` with a tower-http panic message.
+    let origins = match parse_extension_origins(extension_origins_csv) {
+        Ok(origins) => origins,
+        Err(e) => {
+            tracing::error!(error = %e, "PV_EXTENSION_ORIGINS is invalid — refusing to build a CORS allowlist from it");
+            Vec::new()
+        }
+    };
     if origins.is_empty() {
         CorsLayer::new() // unchanged existing behavior when unset
     } else {
+        tracing::info!(count = origins.len(), "CORS allowlist active for extension origins");
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(origins))
             .allow_methods(Any)
             .allow_headers(Any)
     }
+}
+
+/// The ONE parser for `PV_EXTENSION_ORIGINS`, shared by `Config::validate()`
+/// (the loud startup gate, per this project's fail-loud config convention /
+/// DEPLOY-02) and `build_cors_layer()` (which must never panic).
+///
+/// WR-07 (09-REVIEW.md) — two operator footguns this closes on a
+/// security-relevant env var:
+///
+/// 1. **Silent drop.** The previous `.filter_map(|s| s.parse().ok())`
+///    discarded a typo'd/whitespace-mangled origin with no log at all. If
+///    every entry got dropped the allowlist collapsed to "no CORS layer",
+///    indistinguishable at runtime from "operator never set the var", and
+///    presenting to the user as an opaque browser CORS error with nothing in
+///    the server log to correlate. It failed closed, which is right; it
+///    failed *silently*, which is not.
+/// 2. **Panic on `*`.** `AllowOrigin::list` PANICS when its iterator
+///    contains `*`. `PV_EXTENSION_ORIGINS=*` is a plausible thing for a
+///    self-hoster to try, and it aborted startup inside `router()` with a
+///    tower-http panic instead of a diagnosable error.
+///
+/// Both now fail loudly at startup with an error naming the offending value,
+/// matching `Config::validate()`'s existing `PV_RP_ID`/`PV_ORIGIN` treatment.
+/// An unset/empty value is NOT an error — it is the documented default
+/// (no CORS layer), so this returns an empty Vec for it.
+pub fn parse_extension_origins(extension_origins_csv: &str) -> Result<Vec<HeaderValue>> {
+    let mut origins = Vec::new();
+    for raw in extension_origins_csv.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        if raw == "*" {
+            bail!(
+                "PV_EXTENSION_ORIGINS contains \"*\" — this variable must list CONCRETE \
+                 extension origins (e.g. chrome-extension://<id>,moz-extension://<id>). A \
+                 wildcard cannot be an allowlist entry, and passing one would abort startup \
+                 inside the CORS layer. Set PV_DEV_CORS=1 if you genuinely want permissive \
+                 CORS for local development."
+            );
+        }
+        let value = raw.parse::<HeaderValue>().map_err(|_| {
+            anyhow::anyhow!(
+                "PV_EXTENSION_ORIGINS entry {:?} is not a valid origin header value — expected \
+                 a concrete origin such as chrome-extension://<id> or moz-extension://<id>",
+                raw
+            )
+        })?;
+        origins.push(value);
+    }
+    Ok(origins)
 }
 
 async fn healthz() -> Json<serde_json::Value> {
@@ -184,5 +241,71 @@ mod tests {
         let layer = build_cors_layer(true, "chrome-extension://abcdefghijklmnop");
         let acao = acao_header_for(layer, "https://some-unrelated-origin.example").await;
         assert!(acao.is_some());
+    }
+
+    // --- WR-07 -----------------------------------------------------------
+
+    /// Pins the exact upstream behavior WR-07 exists to route around: the
+    /// OLD `.filter_map(|s| s.parse().ok())` happily produced a `*`
+    /// HeaderValue, and handing that to `AllowOrigin::list` panics. This is
+    /// the failure the fix prevents — if a future tower-http ever stops
+    /// panicking here, this test fails and the guard can be reconsidered.
+    #[test]
+    #[should_panic(expected = "Wildcard origin")]
+    fn upstream_allow_origin_list_still_panics_on_a_wildcard() {
+        let wildcard: HeaderValue = "*".parse().expect("`*` parses fine as a HeaderValue");
+        let _ = AllowOrigin::list(vec![wildcard]);
+    }
+
+    #[test]
+    fn parse_extension_origins_rejects_the_wildcard_by_name() {
+        let err = parse_extension_origins("*").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("PV_EXTENSION_ORIGINS"));
+        assert!(msg.contains("PV_DEV_CORS"), "should point at the real escape hatch: {msg}");
+    }
+
+    #[test]
+    fn parse_extension_origins_rejects_a_wildcard_mixed_into_an_otherwise_valid_list() {
+        assert!(parse_extension_origins("chrome-extension://abcdefghijklmnop,*").is_err());
+    }
+
+    #[test]
+    fn parse_extension_origins_rejects_a_malformed_entry_rather_than_dropping_it() {
+        // The old `.filter_map(|s| s.parse().ok())` silently discarded this,
+        // collapsing the allowlist to "no CORS" with nothing in the log.
+        let err = parse_extension_origins("chrome-extension://ok,bad\u{7f}value").unwrap_err();
+        assert!(err.to_string().contains("PV_EXTENSION_ORIGINS"));
+    }
+
+    #[test]
+    fn parse_extension_origins_accepts_an_unset_value_and_a_valid_whitespaced_list() {
+        assert_eq!(parse_extension_origins("").unwrap().len(), 0);
+        assert_eq!(parse_extension_origins("   ").unwrap().len(), 0);
+        assert_eq!(
+            parse_extension_origins("chrome-extension://aaa, moz-extension://bbb ,")
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn build_cors_layer_never_panics_on_a_wildcard_and_degrades_to_no_cors() {
+        // The regression that matters: `AllowOrigin::list` panics on `*`,
+        // which aborted server startup from inside `router()` with a
+        // tower-http panic instead of a diagnosable error. Config::validate
+        // is the loud gate; this asserts the layer itself is panic-free even
+        // if somehow reached with the bad value.
+        let layer = build_cors_layer(false, "*");
+        let acao = acao_header_for(layer, "https://evil.example").await;
+        assert_eq!(acao, None, "must fail closed, not open");
+    }
+
+    #[tokio::test]
+    async fn build_cors_layer_never_panics_on_a_malformed_entry() {
+        let layer = build_cors_layer(false, "bad\u{7f}value");
+        let acao = acao_header_for(layer, "https://evil.example").await;
+        assert_eq!(acao, None);
     }
 }

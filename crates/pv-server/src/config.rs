@@ -11,6 +11,15 @@ pub struct Config {
     /// `Webauthn` instance that rejects every ceremony at runtime.
     pub rp_id: String,
     pub rp_origin: String,
+    /// Raw comma-separated `PV_EXTENSION_ORIGINS` value — the production-safe
+    /// CORS allowlist for the browser extension's own origin(s) (EXT-05,
+    /// CONTEXT.md D-08). Parsed and validated by `validate()` below (WR-07):
+    /// a malformed entry, or a `*` wildcard, must fail loudly at startup
+    /// naming the offending value — never be silently dropped (which
+    /// collapses the allowlist to "no CORS" indistinguishably from "unset"),
+    /// and never panic inside the CORS layer. Empty/unset is the documented
+    /// default and is not an error.
+    pub extension_origins: String,
 }
 
 impl Config {
@@ -26,6 +35,7 @@ impl Config {
             rp_id: std::env::var("PV_RP_ID").unwrap_or_else(|_| "localhost".into()),
             rp_origin: std::env::var("PV_ORIGIN")
                 .unwrap_or_else(|_| "http://localhost:3000".into()),
+            extension_origins: std::env::var("PV_EXTENSION_ORIGINS").unwrap_or_default(),
         })
     }
 
@@ -46,6 +56,14 @@ impl Config {
     /// exercised by `build_webauthn_rejects_mismatched_rp_id_origin` in
     /// `lib.rs`), to avoid the two copies drifting apart.
     pub fn validate(&self) -> Result<()> {
+        // WR-07: checked BEFORE the localhost early-return below — a
+        // localhost/dev deployment is exempt from the rp_id/rp_origin
+        // checks, but a malformed or wildcard PV_EXTENSION_ORIGINS is
+        // just as broken there (and `*` would panic the CORS layer at
+        // startup on any deployment). This is the loud startup gate;
+        // routes::build_cors_layer only logs, never aborts.
+        crate::routes::parse_extension_origins(&self.extension_origins)?;
+
         if self.is_localhost_deployment() {
             return Ok(());
         }
@@ -110,18 +128,70 @@ mod tests {
     use super::*;
 
     fn cfg(rp_id: &str, rp_origin: &str) -> Config {
+        cfg_with_extension_origins(rp_id, rp_origin, "")
+    }
+
+    fn cfg_with_extension_origins(rp_id: &str, rp_origin: &str, extension_origins: &str) -> Config {
         Config {
             addr: "127.0.0.1:8620".into(),
             db_url: "sqlite://data/pv.db".into(),
             session_ttl_hours: 168,
             rp_id: rp_id.into(),
             rp_origin: rp_origin.into(),
+            extension_origins: extension_origins.into(),
         }
     }
 
     #[test]
     fn zero_config_localhost_default_is_ok() {
         assert!(cfg("localhost", "http://localhost:3000").validate().is_ok());
+    }
+
+    // --- WR-07: PV_EXTENSION_ORIGINS must fail loudly at startup ---------
+
+    #[test]
+    fn extension_origins_wildcard_fails_loudly_at_startup_instead_of_panicking_the_cors_layer() {
+        let err = cfg_with_extension_origins("localhost", "http://localhost:3000", "*")
+            .validate()
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("PV_EXTENSION_ORIGINS"), "error must name the offending var: {msg}");
+        assert!(msg.contains('*'), "error must name the offending value: {msg}");
+    }
+
+    #[test]
+    fn extension_origins_malformed_entry_fails_loudly_instead_of_being_silently_dropped() {
+        let err = cfg_with_extension_origins(
+            "localhost",
+            "http://localhost:3000",
+            "chrome-extension://good,not a valid header\u{7f}value",
+        )
+        .validate()
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("PV_EXTENSION_ORIGINS"), "error must name the offending var: {msg}");
+    }
+
+    #[test]
+    fn extension_origins_wildcard_is_rejected_even_on_a_non_localhost_deployment() {
+        // The localhost early-return must not skip this check.
+        let err =
+            cfg_with_extension_origins("vault.example.com", "https://vault.example.com", "*")
+                .validate()
+                .unwrap_err();
+        assert!(err.to_string().contains("PV_EXTENSION_ORIGINS"));
+    }
+
+    #[test]
+    fn extension_origins_unset_or_valid_list_validates_ok() {
+        assert!(cfg_with_extension_origins("localhost", "http://localhost:3000", "").validate().is_ok());
+        assert!(cfg_with_extension_origins(
+            "localhost",
+            "http://localhost:3000",
+            "chrome-extension://abcdefghijklmnop, moz-extension://11111111-2222-3333-4444-555555555555",
+        )
+        .validate()
+        .is_ok());
     }
 
     #[test]
