@@ -22,9 +22,20 @@
 // what other listeners exist -- Phase 10 must widen this into an explicit
 // allow-list when content scripts legitimately need the background, never
 // by deleting the check.
+//
+// Phase 10 (Plan 10-01): `sender` is now threaded through to `handle()`
+// (Phase 9 discarded it, unused, under a leading-underscore name), and
+// `handle()` runs its own independent `assertPopupSender()`
+// (entrypoints/background/frame-guard.ts)
+// gate in front of every `session.*`/`vault.*` kind -- see that function's
+// header for why this is deliberately a SECOND, independent check rather
+// than a replacement for the WR-01 gate above. Plan 10-04 adds the
+// `autofill.*` cases to the switch below (this plan only threads `sender`
+// and adds the guard so those cases have something to enforce against).
 import { browser } from "wxt/browser";
 import type { Message, MessageResponseMap } from "../../lib/messaging/ext-protocol";
 import { b64ToBytes } from "../../lib/messaging/bytes-b64";
+import { assertPopupSender, type MessageSender } from "./frame-guard";
 import { ensureHydrated, noteActivity } from "./vault-session";
 import { armAutoLock, AUTOLOCK_OPTIONS, DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
 import { readSessionMeta, writeSessionMeta } from "./session-storage";
@@ -63,6 +74,16 @@ export function registerMessageRouter(): void {
     // session meta, so running both concurrently raced — whichever landed
     // last won, usually clobbering the user's new choice back to the old
     // one (real-browser UAT: picking 5 left the alarm at 15).
+    //
+    // Phase 10 (Plan 10-01): this now also re-arms on every `autofill.*`
+    // message once Plan 10-04 adds those cases. That is a DELIBERATE
+    // decision, not an unaddressed side effect: 10-RESEARCH.md's ASVS V3
+    // note flags "autofill must not extend the session TTL as a side
+    // effect", but every `autofill.*` message originates from an explicit
+    // popup gesture (opening the popup, clicking "Wypełnij") -- the
+    // extension IS the user acting here, exactly like every other kind
+    // this router already re-arms on. Do not special-case autofill.* out
+    // of this re-arm without re-reading that ASVS note first.
     if (message.kind !== "session.setAutoLockMinutes") {
       void noteActivity();
     }
@@ -73,7 +94,7 @@ export function registerMessageRouter(): void {
     // until it eventually closes with a lastError, and the rejection leaks
     // as an unhandled promise rejection in the service worker. Every
     // dispatched message now gets SOME typed response.
-    void handle(message).then(sendResponse, (e: unknown) => {
+    void handle(message, sender).then(sendResponse, (e: unknown) => {
       console.error("[passkey-vault] handler failed", message.kind, e);
       sendResponse({ ok: false, error: "unknown" });
     });
@@ -106,7 +127,28 @@ function isProtocolMessage(message: unknown): message is Message {
   );
 }
 
-async function handle(message: Message): Promise<unknown> {
+// Phase 10 (Plan 10-01): `sender` is now threaded all the way through --
+// Phase 9's addListener callback took it as a parameter but discarded it
+// unused, under a leading-underscore name, all the way down to this
+// function's now-removed single-argument signature.
+// Phase 10's content-relay (Plan 10-05) is the first non-popup caller ever
+// on this channel; the guard below is what lets router.ts keep enforcing
+// the popup-only tier for session/vault operations regardless of who else
+// gains access to runtime.onMessage in a later phase.
+async function handle(message: Message, sender: MessageSender): Promise<unknown> {
+  // T-10-01: a content script running adjacent to a hostile page must
+  // never be able to drive session or vault-listing operations by reaching
+  // this switch. This is a DELIBERATE, independent check -- do not remove
+  // it even if the addListener-level WR-01 origin gate above is ever
+  // loosened to admit non-extension-page senders for autofill.* traffic in
+  // a later plan (defense in depth: this router enforces its own control
+  // regardless of what else changes upstream, per WR-01's own precedent).
+  if (
+    (message.kind.startsWith("session.") || message.kind.startsWith("vault.")) &&
+    !assertPopupSender(sender)
+  ) {
+    return { ok: false, error: "forbidden-sender" };
+  }
   switch (message.kind) {
     case "session.status":
       return getSessionStatus();
@@ -143,6 +185,7 @@ async function handle(message: Message): Promise<unknown> {
       return handleConfigGet();
     case "config.set":
       return handleConfigSet(message.rawUrl);
+    // Plan 10-04 adds: case "autofill.match": case "autofill.fill": case "autofill.totpCode":
     default:
       throw new Error(`unhandled message kind: ${(message as { kind: string }).kind}`);
   }
