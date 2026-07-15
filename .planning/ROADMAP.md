@@ -83,7 +83,15 @@ Plans:
   6. The self-hosted `pv-server`'s CORS allowlist accepts the fixed published extension origin (`chrome-extension://<published-id>` / `moz-extension://<id>`), verified end-to-end against a real request, not assumed. (EXT-05)
   7. The popup exposes a "fullscreen / open full vault" action that opens the configured server's v0.1 web-app frontend in a new browser tab; the popup does not re-implement full vault management. (EXT-06)
 
-**Plans**: TBD
+**Plans**: 7 plans
+Plans:
+- [ ] 09-01-PLAN.md — pv-wasm session export/import pair + pv-server CORS allowlist
+- [ ] 09-02-PLAN.md — chrome.storage.session envelope, autolock, router, ext-protocol
+- [ ] 09-03-PLAN.md — Server URL configuration, healthz validation, optional host permissions (EXT-05)
+- [ ] 09-04-PLAN.md — Password + PRF unlock ceremony (EXT-02)
+- [ ] 09-05-PLAN.md — REST + WS sync client, vault store, search (EXT-04)
+- [ ] 09-06-PLAN.md — Popup UI: server config, unlock, browse/search/pick, open full vault (EXT-02/03/04/06)
+- [ ] 09-07-PLAN.md — Manual UAT checkpoint for all 7 success criteria
 **UI hint**: yes
 
 ### Phase 10: Autofill — Login, TOTP, Card & Identity
@@ -99,7 +107,15 @@ Plans:
   4. Identity fields (name, address, email, phone) fill from a saved identity item.
   5. Nothing autofills without an explicit user gesture, and nothing fills top-level-page credentials into a cross-origin iframe — verified against a deliberately constructed adversarial iframe test page.
 
-**Plans**: TBD
+**Plans**: 7 plans
+Plans:
+- [ ] 10-01-PLAN.md — Message contract (autofill.* kinds) + frame-guard origin/frame access-control gate + router sender-threading (D-04/D-09/D-10)
+- [ ] 10-02-PLAN.md — Deterministic login + TOTP detection (type=password/one-time-code, no scoring) (FILL-01/FILL-02, D-06)
+- [ ] 10-03-PLAN.md — Scored autocomplete-first card + identity detection with threshold gate + curated fixtures (FILL-03/FILL-04, D-05)
+- [ ] 10-04-PLAN.md — Background match/fill/totpCode handlers: origin-gated decrypt, live totpNow, frame-addressed dispatch, fill-time re-verification (D-02/D-08)
+- [ ] 10-05-PLAN.md — ISOLATED content-relay (detect/fill, all-frames, crypto-free) + native-setter React-safe fill-dom (D-01, Pitfall 5)
+- [ ] 10-06-PLAN.md — Popup "Na tej stronie" autofill UI: picker, TOTP fill/copy, card/identity second-confirm (D-07/D-12, UI-SPEC)
+- [ ] 10-07-PLAN.md — Adversarial cross-origin-iframe fixture + SC#5 UAT gate + real-forms framework-fill checklist
 **UI hint**: yes
 
 ### Phase 11: Generate & Capture
@@ -179,7 +195,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 7. Self-Host Packaging & Deployment | v0.1 | 3/3 | Complete | 2026-07-14 |
 | 8. Extension Bootstrap & WASM-in-Background Spike | v0.2 | 2/3 | In Progress|  |
 | 9. Session Unlock Core, Popup & Sync Client | v0.2 | 0/TBD | Not started | - |
-| 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 0/TBD | Not started | - |
+| 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 0/7 | Planned | - |
 | 11. Generate & Capture | v0.2 | 0/TBD | Not started | - |
 | 12. Passkey Provider | v0.2 | 0/TBD | Not started | - |
 | 13. Dual-Browser Hardening | v0.2 | 0/4 | Not started | - |
