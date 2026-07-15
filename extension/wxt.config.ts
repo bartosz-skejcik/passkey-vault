@@ -1,0 +1,37 @@
+import { defineConfig } from 'wxt';
+
+// Firefox MV2 background (D-08): WXT's own per-browser default already
+// produces Chrome -> MV3 service worker, Firefox -> MV2 persistent
+// background page, and that split is exactly the deliberate choice this
+// project makes for Phase 8. MV2 sidesteps the idle-kill/wake problem
+// entirely on Firefox (per PITFALLS.md #8), rather than taking on an MV3
+// event-page implementation there too. Do NOT set a top-level
+// `manifestVersion` override here -- that would force both browsers onto
+// the same manifest version, defeating the point of proving Chrome's MV3
+// service-worker survival independently of Firefox's MV2 path. This pin is
+// verified in plan 08-03 by inspecting the generated Firefox manifest.json
+// for `background.persistent === true` and a `background.scripts` array
+// (Firefox's own field name -- never `background.service_worker`, which is
+// Chrome-only).
+//
+// See https://wxt.dev/api/config.html
+export default defineConfig({
+  manifest: {
+    // D-07: explicit MV3 CSP permitting WASM compilation in the extension
+    // background/pages context. Declared literally so it is never left to
+    // an implicit/permissive default -- plan 08-03 grep-verifies the
+    // *generated, packaged* manifest.json (not just `wxt dev` output)
+    // contains this string unmodified.
+    content_security_policy: {
+      extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
+    },
+    // D-09: fixed literal Firefox add-on id, not left to an ephemeral
+    // dev-mode default that changes across sessions. `strict_min_version`
+    // is deliberately NOT set here -- deferred to Phase 13.
+    browser_specific_settings: {
+      gecko: {
+        id: 'passkey-vault@extension.local',
+      },
+    },
+  },
+});
