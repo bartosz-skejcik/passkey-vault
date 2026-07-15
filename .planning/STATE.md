@@ -4,16 +4,16 @@ milestone: v0.2
 milestone_name: Browser Extension
 current_phase: 10
 current_phase_name: Autofill — Login, TOTP, Card & Identity
-status: planning
-stopped_at: Completed 09-06-PLAN.md
-last_updated: "2026-07-15T18:55:58.769Z"
+status: executing
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-07-15T19:14:39.172Z"
 last_activity: 2026-07-15
-last_activity_desc: Phase 9 complete, transitioned to Phase 10
+last_activity_desc: Phase 10 execution started
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 31
-  completed_plans: 11
+  completed_plans: 12
   percent: 33
 ---
 
@@ -24,16 +24,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-14)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 9 — Session Unlock Core, Popup & Sync Client (Wave 2 of 5 complete)
+**Current focus:** Phase 10 — Autofill — Login, TOTP, Card & Identity
 
 ## Current Position
 
-Phase: 10 of 13 (Autofill — Login, TOTP, Card & Identity)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-07-15 — Phase 9 complete, transitioned to Phase 10
+Phase: 10 (Autofill — Login, TOTP, Card & Identity) — EXECUTING
+Plan: 2 of 7
+Status: Ready to execute
+Last activity: 2026-07-15 — Phase 10 execution started
 
-Progress: [███░░░░░░░] 29%
+Progress: [████░░░░░░] 39%
 
 ## Performance Metrics
 
@@ -70,6 +70,7 @@ Progress: [███░░░░░░░] 29%
 | Phase 09 P05 | 55min | 3 tasks | 13 files |
 | Phase 09 P08 | 55min | 4 tasks | 15 files |
 | Phase 09 P06 | ~90min | 3 tasks | 24 files |
+| Phase 10 P01 | 30min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -101,6 +102,9 @@ Recent decisions affecting current work:
 - [Phase ?]: 09-06: popup replaces Phase 8's vanilla debug harness with React+DaisyUI+Tailwind v4 (reused web theme), thin sendMessage-only dispatch layer per D-05
 - [Phase ?]: 09-06: UnlockView dispatches ONLY unlock.extPrf.*/09-08's ext-scoped PRF kinds per the AMENDMENT -- never 09-04's web-RP unlock.prf.*/auth.signIn.prf.* -- Sign-in variant has no PRF button this phase
 - [Phase ?]: 09-06: popup header/footer redirects (settings gear, full-screen, + new-item) are pure browser.tabs.create opens of config.get's baseUrl -- no in-popup settings/create UI, per Bartek's NordPass-reference decision
+- [Phase ?]: 10-01: itemMatchesOrigin() extends web/src/lib/vault/search.ts's domainFromUrl() parsing shape (not a literal import -- unexported, hostname-only, permissive fallback) with full URL#origin equality that fails closed on unparseable stored URLs -- an access-control gate must never treat a parse failure as a match
+- [Phase ?]: 10-01: totp items always return false from itemMatchesOrigin() -- TotpFields has no stored URL field to compare; TOTP codes reach the popup via the separate autofill.totpCode message keyed by itemId, not this origin gate
+- [Phase ?]: 10-01: requirements-completed left empty for FILL-01..04 -- this plan builds only the contract/gate layer shared by all four fill kinds, matching Phase 9's EXT-04/EXT-05 precedent of not marking a requirement complete until user-facing functionality lands
 
 ### Pending Todos
 
@@ -130,8 +134,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-15T10:40:29.483Z
-Stopped at: Completed 09-06-PLAN.md
+Last session: 2026-07-15T19:14:39.166Z
+Stopped at: Completed 10-01-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
