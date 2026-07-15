@@ -203,6 +203,41 @@ Both variants share the exact card vocabulary already established (`AuthCard`/`U
 
 ---
 
+## AMENDMENT 2026-07-15 — Extension-scoped PRF passkey (BINDING; Bartek's decision, 09-CONTEXT AMENDMENT / Plan 09-08)
+
+The popup's PRF unlock uses a DEDICATED extension-scoped passkey (rpId = extension ID); v0.1's web-RP passkeys are unusable from a `chrome-extension://` page (browser-level SecurityError, empirically proven). This changes two contracts above and adds one small surface. Everything else in this document stands.
+
+### PRF-button visibility contract (supersedes the Unlock/Sign-in view's PRF rows)
+
+- **Unlock-only variant:** the PRF button (`btn btn-accent` + `Fingerprint`, `unlock.passkeyCta` copy — component and copy REUSED verbatim, unchanged) renders **only when** `session.status` reports an enrolled extension passkey for this install (`extPasskeyEnrolled: true`) AND `window.PublicKeyCredential` is defined. Not-enrolled is a **normal state**: the button is simply absent, with **no explainer line** in its slot (the enrollment prompt below is the discovery surface). Enrolled but `PublicKeyCredential === undefined` keeps the Tier-1 explainer rule unchanged.
+- **Sign-in variant:** **no PRF button this phase** — the extension passkey is UNLOCK-ONLY (sign-in stays password-based) and web-RP passkey sign-in is impossible from the popup. `unlock.passkeyLoginCta` remains in the dictionary but is unused by the popup (reserved for the web app).
+- **Orphaned credential** (unlock returns `not-enrolled` — dev-ID change, deleted server row, or re-wrapped vault): render `extPasskey.unlockOrphaned` (below) as a plain Label-role line in the tier-explainer slot, focus the password field, and stop rendering the PRF button on subsequent opens. Sober, never alarming — this is an honest mismatch, not an attack indicator.
+
+### Enrollment prompt (new surface — one card, Item List view, top slot)
+
+Discreet post-password-unlock prompt: a single `base-100` card (16px radius, 1px border, `lg`/24px internal padding — the standing card vocabulary) rendered at the top of the Item List view, at most once per unlock, only after a **password** unlock (never after a PRF unlock), only when not enrolled, not suppressed, and `PublicKeyCredential` is defined. Security-adjacent surface: plain DM Sans, founder-voice-free, no emoji — same rule as every unlock surface.
+
+- Teal is licensed here: the CTA is `btn btn-accent` + `Fingerprint` (passkey meaning carve-out, same as the PRF unlock button). Skip is `btn btn-ghost btn-sm`. "Don't ask again" is a plain `checkbox checkbox-sm` + Label-role text (not a link, not a second button — one decision per control).
+- During the two ceremonies, the CTA shows the reused busy copy (`Potwierdź w przeglądarce lub na urządzeniu…` / `Confirm in your browser or on your device…`, verbatim from 04-UI-SPEC.md).
+
+### Copywriting Contract additions (PL+EN, dictionary keys under `extPasskey.*`)
+
+| Key | Copy |
+|-----|------|
+| `extPasskey.promptTitle` | PL `Odblokowuj szybciej passkeyem` / EN `Unlock faster with a passkey` |
+| `extPasskey.promptBody` | PL `Utwórz passkey powiązany z tą wtyczką, aby odblokowywać sejf bez wpisywania hasła głównego.` / EN `Create a passkey tied to this extension to unlock your vault without typing your master password.` |
+| `extPasskey.promptCta` | PL `Utwórz passkey` / EN `Create a passkey` |
+| `extPasskey.promptSkip` | PL `Nie teraz` / EN `Not now` |
+| `extPasskey.promptDontAskAgain` | PL `Nie pytaj ponownie` / EN `Don't ask again` |
+| `extPasskey.enrollDone` | PL `Passkey gotowy — użyjesz go przy następnym odblokowaniu.` / EN `Passkey ready — use it the next time you unlock.` |
+| `extPasskey.enrollNoPrf` (honest degradation, PRF-less authenticator) | PL `Ten authenticator nie wspiera PRF — odblokowywanie passkeyem nie będzie dostępne. Hasło główne nadal działa.` / EN `This authenticator doesn't support PRF — passkey unlock won't be available. Your master password still works.` |
+| `extPasskey.enrollFailed` | PL `Nie udało się utworzyć passkeya. Spróbuj ponownie albo odblokowuj hasłem.` / EN `Couldn't create the passkey. Try again — or keep unlocking with your password.` |
+| `extPasskey.unlockOrphaned` | PL `Ten passkey nie pasuje do tego sejfu — odblokuj hasłem i utwórz passkey ponownie.` / EN `This passkey doesn't match this vault — unlock with your password and create the passkey again.` |
+
+The existing Tier 1/3 lines and the PRF unlock CTA/busy copy are reused verbatim; Tier 2 (`Twoje passkeye nie wspierają PRF…`) does not apply to the extension passkey path (a PRF-less credential is never enrolled) and is not rendered by the popup this phase.
+
+---
+
 ## Checker Sign-Off
 
 - [ ] Dimension 1 Copywriting: PASS
