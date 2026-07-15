@@ -87,8 +87,8 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 09-01-PLAN.md — pv-wasm session export/import pair + pv-server CORS allowlist
-- [ ] 09-03-PLAN.md — Server URL configuration, healthz validation, optional host permissions (EXT-05)
+- [x] 09-01-PLAN.md — pv-wasm session export/import pair + pv-server CORS allowlist
+- [x] 09-03-PLAN.md — Server URL configuration, healthz validation, optional host permissions (EXT-05)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
