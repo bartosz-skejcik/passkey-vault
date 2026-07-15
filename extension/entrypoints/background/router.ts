@@ -1,9 +1,8 @@
 // entrypoints/background/router.ts — the typed browser.runtime.onMessage
 // dispatch table for the ext-protocol.ts message contract. This grows
-// across Waves 3-4 (each adds its own `case` + import) -- 09-03 adds
-// `unlock.*` kinds, 09-04 adds `auth.signIn.*` kinds, 09-05 adds
-// `vault.list` -- by adding a case to the switch below, never by
-// restructuring this shape.
+// across Waves 3-5 (each adds its own `case` + import) -- 09-04 adds
+// `unlock.*` AND `auth.signIn.*` kinds, 09-05 adds `vault.list` -- by
+// adding a case to the switch below, never by restructuring this shape.
 //
 // WR-01 (code review, Phase 8): only this extension's own pages
 // (popup/options -- whether action-hosted or opened in a tab) may trigger
@@ -21,6 +20,13 @@ import type { Message, MessageResponseMap } from "../../lib/messaging/ext-protoc
 import { ensureHydrated, noteActivity } from "./vault-session";
 import { armAutoLock } from "./autolock";
 import { readSessionMeta } from "./session-storage";
+import {
+  handleUnlockPassword,
+  handleUnlockPrfStart,
+  handleUnlockPrfFinish,
+  handleSignInPrfStart,
+  handleSignInPrfFinish,
+} from "./unlock";
 
 export function registerMessageRouter(): void {
   browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
@@ -40,12 +46,23 @@ export function registerMessageRouter(): void {
 }
 
 function isProtocolMessage(message: unknown): message is Message {
+  if (
+    typeof message !== "object" ||
+    message === null ||
+    typeof (message as { kind?: unknown }).kind !== "string"
+  ) {
+    return false;
+  }
+  const kind = (message as { kind: string }).kind;
   return (
-    typeof message === "object" &&
-    message !== null &&
-    typeof (message as { kind?: unknown }).kind === "string" &&
-    ((message as { kind: string }).kind === "session.status" ||
-      (message as { kind: string }).kind === "session.setAutoLockMinutes")
+    kind === "session.status" ||
+    kind === "session.setAutoLockMinutes" ||
+    kind === "unlock.password" ||
+    kind === "unlock.prf.start" ||
+    kind === "unlock.prf.finish" ||
+    kind === "auth.signIn.password" ||
+    kind === "auth.signIn.prf.start" ||
+    kind === "auth.signIn.prf.finish"
   );
 }
 
@@ -55,9 +72,29 @@ async function handle(message: Message): Promise<unknown> {
       return getSessionStatus();
     case "session.setAutoLockMinutes":
       return setAutoLockMinutes(message.minutes);
+    case "unlock.password":
+      return handleUnlockPassword(message.passwordBytes);
+    case "unlock.prf.start":
+      return handleUnlockPrfStart();
+    case "unlock.prf.finish":
+      return handleUnlockPrfFinish({
+        stateId: message.stateId,
+        credentialJson: message.credentialJson,
+        prfBytes: message.prfBytes,
+      });
+    case "auth.signIn.password":
+      return handleUnlockPassword(message.passwordBytes, message.email);
+    case "auth.signIn.prf.start":
+      return handleSignInPrfStart(message.email);
+    case "auth.signIn.prf.finish":
+      return handleSignInPrfFinish({
+        stateId: message.stateId,
+        email: message.email,
+        credentialJson: message.credentialJson,
+        prfBytes: message.prfBytes,
+      });
     default:
       throw new Error(`unhandled message kind: ${(message as { kind: string }).kind}`);
-    // 09-04-PLAN.md adds: case "unlock.password": case "unlock.prf.start": case "unlock.prf.finish": case "auth.signIn.password": case "auth.signIn.prf.start": case "auth.signIn.prf.finish":
     // 09-05-PLAN.md adds: case "vault.list":
   }
 }

@@ -18,6 +18,7 @@ import init, {
   randomSalt,
   exportUserKeyForSession,
   importUserKeyFromSession,
+  deriveAuthMaterial,
 } from "./wasm/pv_wasm.js";
 
 // Both WasmWrappingKey and WasmUserKey are re-exported as VALUES (not just
@@ -36,6 +37,11 @@ export { wrapUserKey, unwrapUserKey, defaultKdfParamsJson, randomSalt };
 // vault-session.ts (Plan 09-02) can survive a service-worker idle-kill by
 // round-tripping a WasmUserKey's bytes through chrome.storage.session.
 export { exportUserKeyForSession, importUserKeyFromSession };
+// Plan 09-04's unlock.ts needs the password-unlock derivation entry point --
+// mirrors web/src/lib/crypto/index.ts's own re-export of the same wasm
+// function. Only the opaque WasmAuthMaterial handle (takeAuthHash/
+// takeWrappingKey/free) crosses this choke-point, never raw key bytes.
+export { deriveAuthMaterial };
 
 // Module-level singleton promise — memoizes the (expensive, one-time) wasm
 // module instantiation. Mirrors `web/src/lib/crypto/index.ts`'s `ready`/
