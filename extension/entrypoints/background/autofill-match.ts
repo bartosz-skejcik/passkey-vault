@@ -272,12 +272,12 @@ export async function handleAutofillFill(
  * a secret reaches the popup (10-UI-SPEC.md's "Kopiuj kod" clipboard-write
  * action runs in the popup context) -- the raw TOTP seed never crosses
  * this boundary, only the derived `code`. Deliberately has NO origin
- * check: `itemMatchesOrigin()` always returns false for a totp item (no
- * stored URL to compare, frame-guard.ts's own documented policy), so this
- * message is keyed by an `itemId` the popup already knows from a prior
- * match/manual pick, never gated by frame origin (frame-guard.ts header
- * comment). Derives fresh every call -- never caches a code between
- * requests.
+ * check: it is keyed by an `itemId` the popup already surfaced -- and as of
+ * the issuer-match policy (frame-guard.ts `issuerMatchesHost`) a totp item
+ * only reaches the "On this page" list when its issuer names the active
+ * host AND an OTP field was detected, so the itemId handed here was already
+ * origin-vetted upstream. Derives fresh every call -- never caches a code
+ * between requests.
  */
 export async function handleAutofillTotpCode(
   message: MessageOf<"autofill.totpCode">,

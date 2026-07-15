@@ -59,7 +59,7 @@ describe("itemMatchesOrigin", () => {
     expect(itemMatchesOrigin(item, "http://x.example")).toBe(false);
   });
 
-  it("card/identity items match ANY http(s) origin (not origin-bound data), totp items never match this gate (no stored URL to compare, strictly origin-bound by omission)", () => {
+  it("card/identity items match ANY http(s) origin (not origin-bound data); a totp item matches ONLY when its issuer names the frame host", () => {
     const card: VaultItem = {
       id: "card-1",
       revision: 1,
@@ -109,7 +109,55 @@ describe("itemMatchesOrigin", () => {
     };
     expect(itemMatchesOrigin(card, "https://checkout.example")).toBe(true);
     expect(itemMatchesOrigin(identity, "https://any-shop.example")).toBe(true);
+    // issuer "" + name "2FA" -> no issuer signal -> refused on an unrelated host
     expect(itemMatchesOrigin(totp, "https://bank.example")).toBe(false);
+  });
+
+  it("totp item matches a host its ISSUER names (issuer-bound, Bartek 2026-07-15) and refuses an unrelated host", () => {
+    const gh: VaultItem = {
+      id: "totp-gh",
+      revision: 1,
+      fields: {
+        type: "totp",
+        name: "Work 2FA",
+        folderId: null,
+        tags: [],
+        secret: "JBSWY3DPEHPK3PXP",
+        issuer: "GitHub",
+        algorithm: "SHA1",
+        digits: 6,
+        period: 30,
+        notes: "",
+      },
+    };
+    // issuer "GitHub" is offered on github.com...
+    expect(itemMatchesOrigin(gh, "https://github.com")).toBe(true);
+    expect(itemMatchesOrigin(gh, "https://login.github.com")).toBe(true);
+    // ...and refused on a look-alike / unrelated host (no 2FA code on the wrong site)
+    expect(itemMatchesOrigin(gh, "https://gitllhub-phish.example")).toBe(false);
+    expect(itemMatchesOrigin(gh, "https://gitlab.com")).toBe(false);
+    expect(itemMatchesOrigin(gh, "https://bank.example")).toBe(false);
+  });
+
+  it("totp item falls back to its NAME when issuer is empty (imports without issuer metadata)", () => {
+    const named: VaultItem = {
+      id: "totp-named",
+      revision: 1,
+      fields: {
+        type: "totp",
+        name: "Google",
+        folderId: null,
+        tags: [],
+        secret: "JBSWY3DPEHPK3PXP",
+        issuer: "",
+        algorithm: "SHA1",
+        digits: 6,
+        period: 30,
+        notes: "",
+      },
+    };
+    expect(itemMatchesOrigin(named, "https://accounts.google.com")).toBe(true);
+    expect(itemMatchesOrigin(named, "https://bank.example")).toBe(false);
   });
 });
 

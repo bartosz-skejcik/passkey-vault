@@ -148,13 +148,19 @@ function originEquals(storedUrl: string, frameOrigin: string): boolean {
  *
  *  - login: strictly origin-bound -- true only if one of `fields.urls`
  *    origin-equals `frameOrigin`.
- *  - totp: also strictly origin-bound in policy, but the current VaultItem
- *    shape (web/src/lib/vault/types.ts's `TotpFields`) carries no stored
- *    URL at all -- so there is nothing to compare, and this gate ALWAYS
- *    returns false for a totp item. This is intentional, not a missing
- *    feature: a TOTP code is surfaced via the separate `autofill.totpCode`
- *    message, keyed by an itemId the popup already knows (from a prior
- *    login match or a manual pick), never by this origin gate.
+ *  - totp: origin-bound by ISSUER, because `TotpFields` carries no stored
+ *    URL. `issuerMatchesHost()` matches the item's `issuer` (or, as a
+ *    fallback, its `name`) against a hostname label of `frameOrigin` --
+ *    issuer "GitHub" is offered on github.com, "Google" on
+ *    accounts.google.com. This is deliberately NARROWER than card/identity
+ *    (which are offered everywhere): surfacing a 2FA code on the WRONG site
+ *    is a real trust hazard, so a totp item only appears where its issuer
+ *    plausibly belongs. The caller additionally gates on a detected OTP
+ *    field (`autofill-match.ts` only pushes a totp match when
+ *    `detected.totp` is true) -- Bartek's checkpoint decision 2026-07-15:
+ *    "match po issuer i jest pole otp". (Previously this branch returned
+ *    false unconditionally, which made every TotpFillRow dead code and left
+ *    SC#2 unverifiable -- found by 10-07's adversarial UAT.)
  *  - card / identity: offered on ANY http(s) origin -- true unconditionally
  *    -- because a stored card or address is not origin-bound data (a card
  *    is usable at any checkout). `resolveFillTarget()` still gates WHICH
@@ -166,12 +172,43 @@ export function itemMatchesOrigin(item: VaultItem, frameOrigin: string): boolean
   switch (item.fields.type) {
     case "login":
       return item.fields.urls.some((url) => url !== "" && originEquals(url, frameOrigin));
+    case "totp":
+      return issuerMatchesHost(item.fields.issuer, item.fields.name, frameOrigin);
     case "card":
     case "identity":
       return true;
-    case "totp":
     case "note":
     default:
       return false;
   }
+}
+
+/**
+ * True when `issuer` (or, as a fallback, the item `name`) names the host at
+ * `frameOrigin`. A TOTP item stores no URL, so we match its human-facing
+ * issuer against the frame's hostname LABELS: issuer "GitHub" matches
+ * `github.com` (label "github"), "Google" matches `accounts.google.com`
+ * (label "google"). Normalisation lowercases and strips non-alphanumerics
+ * from the issuer ("Google (Work)" -> "googlework" -> token "google" is not
+ * derivable, so we also test the raw normalized issuer as a substring of a
+ * label and each label as a substring of the issuer, bounded to labels of
+ * length >= 3 to avoid "co"/"io" style false hits). Fails CLOSED on an
+ * unparseable origin. This is a heuristic surfacing gate, NOT a security
+ * boundary on its own -- `resolveFillTarget()` + the detected-OTP-field
+ * requirement in `autofill-match.ts` are the hard gates.
+ */
+function issuerMatchesHost(issuer: string, name: string, frameOrigin: string): boolean {
+  let host: string;
+  try {
+    host = new URL(frameOrigin).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  const labels = host
+    .split(".")
+    .filter((l) => l.length >= 3 && l !== "com" && l !== "www" && l !== "net" && l !== "org");
+  const candidates = [issuer, name]
+    .map((s) => s.toLowerCase().replace(/[^a-z0-9]/g, ""))
+    .filter((s) => s.length >= 3);
+  return candidates.some((c) => labels.some((l) => l === c || l.includes(c) || c.includes(l)));
 }
