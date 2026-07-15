@@ -75,6 +75,11 @@ wasm-bindgen --target web \
 #     file that (by design, see step 7) doesn't live next to pv_wasm.js.
 #     Replacing the dead branch with a runtime throw removes the pattern
 #     without changing observable behavior for our always-explicit-path call.
+#     IN-02: sed exits 0 even when the pattern is absent, so guard against
+#     wasm-bindgen codegen drift — a silent no-match would let the
+#     bundler-breaking pattern reappear with no error at build time.
+grep -qF "module_or_path = new URL('pv_wasm_bg.wasm', import.meta.url);" web/src/lib/crypto/wasm/pv_wasm.js \
+  || { echo "ERROR: wasm-bindgen glue pattern not found in web/ output — codegen drifted, neutralization would be silently skipped" >&2; exit 1; }
 sed -i.bak "s#module_or_path = new URL('pv_wasm_bg.wasm', import.meta.url);#throw new Error('pv-wasm: init() must be called with an explicit wasm URL, see lib/crypto/index.ts');#" web/src/lib/crypto/wasm/pv_wasm.js
 rm -f web/src/lib/crypto/wasm/pv_wasm.js.bak
 
@@ -101,6 +106,9 @@ wasm-bindgen --target web \
 # 8b. Same zero-arg-default neutralization as step 6b, targeted at the
 #     extension's explicit-path init() call (created in plan 08-02, at
 #     extension/lib/crypto/wasm-loader.ts).
+#     IN-02: same codegen-drift guard as step 6b.
+grep -qF "module_or_path = new URL('pv_wasm_bg.wasm', import.meta.url);" extension/lib/crypto/wasm/pv_wasm.js \
+  || { echo "ERROR: wasm-bindgen glue pattern not found in extension/ output — codegen drifted, neutralization would be silently skipped" >&2; exit 1; }
 sed -i.bak "s#module_or_path = new URL('pv_wasm_bg.wasm', import.meta.url);#throw new Error('pv-wasm: init() must be called with an explicit wasm URL, see lib/crypto/wasm-loader.ts');#" extension/lib/crypto/wasm/pv_wasm.js
 rm -f extension/lib/crypto/wasm/pv_wasm.js.bak
 
