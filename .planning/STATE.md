@@ -4,17 +4,17 @@ milestone: v0.2
 milestone_name: Browser Extension
 current_phase: 8
 current_phase_name: Extension Bootstrap & WASM-in-Background Spike
-status: executing
-stopped_at: Completed 08-02-PLAN.md
-last_updated: "2026-07-15T07:03:51.438Z"
+status: verifying
+stopped_at: Completed 08-03-PLAN.md
+last_updated: "2026-07-15T07:13:25.640Z"
 last_activity: 2026-07-15
 last_activity_desc: 08-01 complete (extension/ WXT scaffold, MV3 CSP + Firefox MV2 pin, build-wasm.sh extended for extension/)
 progress:
   total_phases: 6
-  completed_phases: 0
-  total_plans: 29
-  completed_plans: 2
-  percent: 0
+  completed_phases: 1
+  total_plans: 30
+  completed_plans: 3
+  percent: 10
 ---
 
 # Project State
@@ -30,10 +30,10 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 
 Phase: 8 of 13 (Extension Bootstrap & WASM-in-Background Spike)
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-15 — 08-01 complete (extension/ WXT scaffold, MV3 CSP + Firefox MV2 pin, build-wasm.sh extended for extension/)
 
-Progress: [█░░░░░░░░░] 7%
+Progress: [█░░░░░░░░░] 10%
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Progress: [█░░░░░░░░░] 7%
 |------|----------|-------|-------|
 | Phase 08 P01 | 20min | 2 tasks | 14 files |
 | Phase 08 P02 | 7min | 3 tasks | 7 files |
+| Phase 08 P03 | 10min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -77,6 +78,7 @@ Recent decisions affecting current work:
 - [Phase ?]: gecko.id fixed to literal 'passkey-vault@extension.local' (D-09); strict_min_version deferred to Phase 13.
 - [Phase ?]: wasm-loader.ts re-exports WasmUserKey as a value (not type-only) so vault-session.ts can call WasmUserKey.generate() directly
 - [Phase ?]: vault-session.ts uses a fixed spike password + injected SessionStorage dependency to prove chrome.storage.session round-trip survival, mirroring web/'s memoized initCrypto()/lock-state singleton patterns
+- [Phase ?]: Firefox MV2 background.persistent must be set via defineBackground() in background.ts, not wxt.config.ts, to appear in the generated manifest
 
 ### Pending Todos
 
@@ -106,8 +108,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-15T07:03:51.432Z
-Stopped at: Completed 08-02-PLAN.md
+Last session: 2026-07-15T07:13:25.633Z
+Stopped at: Completed 08-03-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
