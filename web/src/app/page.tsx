@@ -65,6 +65,21 @@ export default function Home() {
   // Settings (UI-05) shares the same z-40 drawer + z-30 scrim slot as the
   // vault item panels below — they're mutually exclusive, not stacked.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Plan 09-06: receiving end of the popup's header-gear/"+" redirects
+  // (`?panel=settings` / `?action=new-item`). Read ONCE at mount (a
+  // second read would always see the already-stripped URL) — captured via
+  // `window.location.search` directly rather than next/navigation's
+  // `useSearchParams` (this app is `output: "export"`/client-rendered
+  // throughout with no existing use of that hook, and a plain
+  // `URLSearchParams` read avoids that hook's Suspense-boundary
+  // requirement for no functional gain here).
+  const [pendingUrlAction, setPendingUrlAction] = useState<"settings" | "new-item" | null>(() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("panel") === "settings") return "settings";
+    if (params.get("action") === "new-item") return "new-item";
+    return null;
+  });
   const items = useVaultItems();
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
   // Any side panel being open means the overlay drawer + scrim render.
@@ -131,6 +146,33 @@ export default function Home() {
     window.addEventListener(AUTOLOCK_CHANGED_EVENT, onAutolockChanged);
     return () => window.removeEventListener(AUTOLOCK_CHANGED_EVENT, onAutolockChanged);
   }, []);
+
+  // Plan 09-06: applies the popup's pending deep-link action once the
+  // vault is unlocked (immediately, if already unlocked at mount; on the
+  // render after unlock completes, otherwise), then strips the query
+  // param via history.replaceState so a refresh doesn't re-trigger it.
+  useEffect(() => {
+    if (pendingUrlAction === null || !unlocked) {
+      return;
+    }
+    if (pendingUrlAction === "settings") {
+      handleOpenSettings();
+    } else {
+      handleNewItem();
+    }
+    setPendingUrlAction(null);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("panel");
+      url.searchParams.delete("action");
+      window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+    } catch {
+      // A test/runtime environment without full URL/History support --
+      // the in-memory view already applied; a stale query param surviving
+      // a refresh is a cosmetic gap, not a functional one.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingUrlAction, unlocked]);
 
   // Remote-delete-while-viewing (SYNC-03): a background sync merge that
   // drops the currently-selected item's id from the live `items` array
