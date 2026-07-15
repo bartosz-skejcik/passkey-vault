@@ -17,7 +17,7 @@
 // sender.url origin: our own chrome-extension://<id>/ pages pass; content
 // scripts report the hostile page's http(s) URL and foreign extensions a
 // different id, so both are rejected. This gate is replicated here
-// (background.ts's existing spike.roundtrip listener keeps its own copy)
+// (this router is now the ONLY onMessage listener — WR-08 removed the spike one)
 // so this router independently enforces the same control regardless of
 // what other listeners exist -- Phase 10 must widen this into an explicit
 // allow-list when content scripts legitimately need the background, never
