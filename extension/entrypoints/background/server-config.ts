@@ -9,8 +9,12 @@
 // (no_other_extension_file_hard_codes_a_server_url) fails loudly the
 // instant a future file violates this.
 import { browser } from "wxt/browser";
+import { InvalidServerUrlError, normalizeServerUrl } from "../../lib/server-url";
 
-export class InvalidServerUrlError extends Error {}
+// Re-exported so existing importers/tests keep working after the pure
+// normalization logic moved to lib/server-url.ts (shared with the popup —
+// see that file's header for the user-gesture rationale).
+export { InvalidServerUrlError, normalizeServerUrl };
 export class ServerUnreachableError extends Error {}
 
 export interface ServerConfig {
@@ -28,32 +32,6 @@ export interface ServerConfig {
 // browser restart and defeats EXT-05's "persisted" requirement.
 const STORAGE_KEY = "pv-server-config";
 
-/**
- * Normalizes and validates a user-typed pv-server base URL. Only `http:`
- * and `https:` schemes are ever accepted -- this value is later handed
- * unchanged to `browser.tabs.create` by Plan 09-06/EXT-06, and an
- * unvalidated scheme there (`javascript:`, `file:`, `chrome-extension:`,
- * etc.) is a genuine injection vector (T-09-09).
- */
-export function normalizeServerUrl(rawUrl: string): string {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    throw new InvalidServerUrlError(`Not a valid URL: ${rawUrl}`);
-  }
-
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new InvalidServerUrlError(
-      `Unsupported scheme "${url.protocol}" -- only http/https are accepted`,
-    );
-  }
-
-  // Rebuild from protocol+host only -- drops any trailing slash/path/query
-  // the user pasted in by accident. This extension only ever needs the
-  // origin.
-  return `${url.protocol}//${url.host}`;
-}
 
 /**
  * Probes `<baseUrl>/healthz` and resolves `true` only when a genuine
@@ -77,10 +55,23 @@ export async function probeServerHealth(baseUrl: string): Promise<boolean> {
 }
 
 /**
- * Validates, probes, requests the scoped runtime permission, and persists
- * a new pv-server base URL. Rejects with `InvalidServerUrlError` (no I/O
- * performed at all) or `ServerUnreachableError` (probe failed, nothing
- * persisted) before ever touching storage.
+ * Validates, probes, and persists a new pv-server base URL. Rejects with
+ * `InvalidServerUrlError` (no I/O performed at all) or
+ * `ServerUnreachableError` (probe failed, nothing persisted) before ever
+ * touching storage.
+ *
+ * NOTE — the T-09-14 runtime host-permission grant deliberately does NOT
+ * happen here anymore. `browser.permissions.request()` must run during a
+ * user gesture, and the popup's submit click does NOT propagate through
+ * the sendMessage boundary into this service worker — Chrome rejects the
+ * call here with "This function must be called during a user gesture"
+ * (observed in the real-browser Phase 9 UAT; the previous generic catch
+ * then mislabeled every successful probe as "unreachable"). The POPUP
+ * (ServerConfigView) now requests the grant inside the click handler,
+ * BEFORE dispatching config.set. The probe below still works pre-grant
+ * against a conforming pv-server because the server allowlists the
+ * extension origin for CORS (EXT-05) — the host permission is the
+ * belt-and-braces layer for proxies that strip CORS headers.
  */
 export async function configureServer(rawUrl: string): Promise<ServerConfig> {
   const normalizedBaseUrl = normalizeServerUrl(rawUrl);
@@ -91,11 +82,6 @@ export async function configureServer(rawUrl: string): Promise<ServerConfig> {
       `No pv-server responded at ${normalizedBaseUrl}/healthz`,
     );
   }
-
-  // T-09-14: request exactly the single newly-configured origin, never a
-  // standing <all_urls> grant. Backed by wxt.config.ts's
-  // optional_host_permissions declaration (Task 2).
-  await browser.permissions.request({ origins: [`${normalizedBaseUrl}/*`] });
 
   const config: ServerConfig = { baseUrl: normalizedBaseUrl };
   await browser.storage.local.set({ [STORAGE_KEY]: config });

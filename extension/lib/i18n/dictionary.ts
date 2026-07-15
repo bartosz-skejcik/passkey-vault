@@ -126,6 +126,10 @@ export const DICTIONARY = {
     pl: "Nie można połączyć z tym serwerem. Sprawdź adres i upewnij się, że działa.",
     en: "Can't reach that server. Check the address and make sure it's running.",
   },
+  "config.permissionDenied": {
+    pl: "Bez tej zgody rozszerzenie nie może łączyć się z Twoim serwerem. Spróbuj ponownie i zaakceptuj prośbę o uprawnienie.",
+    en: "Without this permission the extension can't talk to your server. Try again and accept the permission prompt.",
+  },
 
   // --- Item type / field labels (Claude's-discretion, mirrors
   // web/src/lib/i18n/dictionary.ts's own precedent for these -- not in

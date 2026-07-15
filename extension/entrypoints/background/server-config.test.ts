@@ -142,7 +142,7 @@ describe("configureServer", () => {
     expect(hoisted.mockPermissionsRequest).not.toHaveBeenCalled();
   });
 
-  it("requests the single origin's permission, persists, and resolves the normalized config on success", async () => {
+  it("persists and resolves the normalized config on success — WITHOUT requesting permissions (gesture-bound, popup's job)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "ok" }) }),
@@ -151,9 +151,11 @@ describe("configureServer", () => {
     const config = await configureServer("http://LOCALHOST:8620/");
 
     expect(config).toEqual({ baseUrl: "http://localhost:8620" });
-    expect(hoisted.mockPermissionsRequest).toHaveBeenCalledWith({
-      origins: ["http://localhost:8620/*"],
-    });
+    // The T-09-14 grant moved to ServerConfigView's submit handler:
+    // permissions.request() must run during a user gesture, which does not
+    // survive the sendMessage hop into the service worker (real-browser
+    // UAT finding). configureServer must therefore NEVER call it.
+    expect(hoisted.mockPermissionsRequest).not.toHaveBeenCalled();
     await expect(readServerConfig()).resolves.toEqual({ baseUrl: "http://localhost:8620" });
   });
 });
