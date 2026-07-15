@@ -178,3 +178,11 @@ None — no external service configuration required.
 ---
 *Phase: 10-autofill-login-totp-card-identity*
 *Completed: 2026-07-15*
+
+## Self-Check: PASSED
+
+All claimed files (extension/lib/autofill/types.ts, extension/entrypoints/background/frame-guard.ts,
+extension/entrypoints/background/frame-guard.test.ts, extension/lib/messaging/ext-protocol.ts,
+extension/entrypoints/background/router.ts, this SUMMARY, deferred-items.md) confirmed present on
+disk. All 6 commit hashes (e381ccb, 7446cfd, 8ce2eef, c463a8c, 42efc33, 24eae51) confirmed present
+in git log.
