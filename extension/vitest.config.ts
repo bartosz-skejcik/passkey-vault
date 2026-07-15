@@ -26,6 +26,7 @@ export default defineConfig({
           name: "popup",
           environment: "jsdom",
           include: ["entrypoints/popup/**/*.test.{ts,tsx}"],
+          setupFiles: ["./vitest.setup.ts"],
         },
       },
     ],
