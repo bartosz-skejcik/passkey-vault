@@ -18,11 +18,15 @@ import init, {
   randomSalt,
 } from "./wasm/pv_wasm.js";
 
-export type { WasmUserKey };
-// WasmWrappingKey is exported as a VALUE (not just a type) — callers need
-// its static `fromPassword` method, the same way `web/src/lib/crypto/index.ts`
-// re-exports it as a value for its own callers.
-export { WasmWrappingKey };
+// Both WasmWrappingKey and WasmUserKey are re-exported as VALUES (not just
+// types): callers need WasmWrappingKey's static `fromPassword` and
+// WasmUserKey's static `generate` factory method directly (vault-session.ts,
+// plan 08-02 Task 2). This is a deliberate divergence from
+// `web/src/lib/crypto/index.ts`, which type-only re-exports `WasmUserKey`
+// because its own `generateUserKey()` wrapper is the sole caller of
+// `.generate()` — this extension has no equivalent wrapper yet, so the
+// static method must cross this choke-point directly.
+export { WasmWrappingKey, WasmUserKey };
 export { wrapUserKey, unwrapUserKey, defaultKdfParamsJson, randomSalt };
 
 // Module-level singleton promise — memoizes the (expensive, one-time) wasm
