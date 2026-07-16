@@ -1,0 +1,22 @@
+{
+  "name": "pv-ui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared design tokens + generator logic for web/ and extension/ (D-13, plan 11-07). First-party, source-only — no build step; consumers transpile it as their own source.",
+  "type": "module",
+  "exports": {
+    "./tokens.css": "./tokens.css",
+    "./generator/password": {
+      "types": "./generator/password.ts",
+      "default": "./generator/password.ts"
+    },
+    "./generator/strength": {
+      "types": "./generator/strength.ts",
+      "default": "./generator/strength.ts"
+    },
+    "./generator/wordlist": {
+      "types": "./generator/wordlist.ts",
+      "default": "./generator/wordlist.ts"
+    }
+  }
+}

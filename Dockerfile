@@ -87,6 +87,17 @@ RUN cargo build -p pv-server --release
 FROM node:20-slim AS web-builder
 WORKDIR /app/web
 
+# D-13 (plan 11-07): web/package.json depends on pv-ui via a `file:../
+# packages/pv-ui` path (deliberately NOT an npm/yarn workspace — web/ and
+# extension/ each keep their own self-contained package-lock.json/build
+# pipeline, matching the existing per-project Docker cache-split this
+# stage relies on). `npm ci` resolves that local dependency by copying the
+# target directory into node_modules, so packages/pv-ui must exist on disk
+# BEFORE the install step below — copied to /app/packages/pv-ui (one level
+# up from this stage's WORKDIR), matching the "../packages/pv-ui"
+# relative path in web/package.json exactly.
+COPY packages/pv-ui/ /app/packages/pv-ui/
+
 # Install deps first for cache reuse. --ignore-scripts is load-bearing:
 # web/package.json's prebuild/predev hooks invoke scripts/build-wasm.sh,
 # which needs the Rust toolchain this stage doesn't have — a bare

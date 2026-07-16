@@ -1,50 +1,16 @@
-/* Plan 09-06: the popup's Tailwind v4 + DaisyUI 5 theme -- byte-identical
-   `vault-dark`/`vault-light` token values to web/src/app/globals.css,
-   duplicated (not cross-package-imported) into the extension's own build
-   pipeline, per this codebase's standing "verbatim port" precedent
-   (extension/lib/vault/types.ts, search.ts, lib/passkeys/prf.ts all copy
-   rather than reach across the workspace boundary). 09-UI-SPEC.md requires
-   these be "consumed IDENTICALLY, not re-created" -- the VALUES here are
-   unchanged from web's; only the file's physical location differs, since
-   each package needs its own self-contained Vite/PostCSS build. Keep in
-   sync with web/src/app/globals.css by hand if that file's tokens ever
-   change. */
+/* D-13 (plan 11-07): the popup's vault-dark/vault-light theme tokens now
+   come from packages/pv-ui/tokens.css -- the single source of truth
+   shared with web/src/app/globals.css and (plan 11-08) the in-page
+   shadow-DOM surfaces. This REPLACES the previous hand-synced verbatim
+   copy (that debt is exactly what this plan kills -- see the plan's
+   objective). Any future token change happens in ONE file:
+   packages/pv-ui/tokens.css; nothing here needs manual sync anymore.
+   CSS spec requires every `@import` to precede all other statements
+   (besides `@charset`/an empty `@layer`) -- this one must stay directly
+   after `@import "tailwindcss"` and before `@plugin "daisyui";` below. */
 @import "tailwindcss";
+@import "pv-ui/tokens.css";
 @plugin "daisyui";
-
-@plugin "daisyui/theme" {
-  name: "vault-dark";
-  default: true;
-  color-scheme: dark;
-  --color-primary: oklch(65.31% 0.1637 37.22);
-  --color-primary-content: oklch(100% 0 0);
-  --color-secondary: oklch(82.36% 0.0962 242.82);
-  --color-accent: oklch(74.51% 0.167 183.61);
-  --color-neutral: oklch(42.02% 0 0);
-  --color-base-100: oklch(26.86% 0 0);
-  --color-base-200: oklch(24.78% 0 0);
-  --color-base-300: oklch(23.93% 0 0);
-  --color-base-content: oklch(89.80% 0.0017 67.80);
-  --color-info: oklch(72.06% 0.191 231.6);
-  --color-success: oklch(64.80% 0.150 160);
-  --color-warning: oklch(84.71% 0.199 83.87);
-  --color-error: oklch(71.76% 0.221 22.18);
-  --radius-box: 1rem;
-  --radius-field: 0.5rem;
-  --radius-selector: 1.9rem;
-  --border: 1px;
-}
-
-@plugin "daisyui/theme" {
-  name: "vault-light";
-  color-scheme: light;
-  --color-base-100: oklch(100% 0 0);
-  --color-base-200: oklch(98.86% 0.0017 67.80);
-  --color-base-300: oklch(93% 0.004 67.80);
-  --color-base-content: oklch(26.86% 0 0);
-  /* primary/secondary/accent/semantic tokens unchanged from vault-dark --
-     OKLCH hue/chroma is theme-invariant, per web/src/app/globals.css. */
-}
 
 /* DM Sans, self-hosted (Group A fix): the two woff2 files below are the
    SAME variable-font subset slices web/'s next/font/google-optimized DM

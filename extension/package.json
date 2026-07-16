@@ -36,6 +36,7 @@
     "@wxt-dev/module-react": "1.2.2",
     "daisyui": "5.6.18",
     "lucide-react": "1.24.0",
+    "pv-ui": "file:../packages/pv-ui",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "tailwindcss": "4.3.2"

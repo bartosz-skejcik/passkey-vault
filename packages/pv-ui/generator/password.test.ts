@@ -1,10 +1,3 @@
-// This file exercises the local shim chain (./password, ./wordlist ->
-// pv-ui/generator/*, D-13 plan 11-07) — the SAME test content as
-// packages/pv-ui/generator/password.test.ts (the canonical source-level
-// test, run alongside the implementation), kept here too so `cd web &&
-// npx vitest run` still covers the generator end-to-end through web's own
-// import path, with zero consumer churn (mirrors extension/lib/generator/
-// password.test.ts, which stays for the same reason).
 import { describe, expect, it } from "vitest";
 import { generateCharacterPassword, generatePassphrase } from "./password";
 import { EFF_WORDLIST } from "./wordlist";

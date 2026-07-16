@@ -1,39 +1,15 @@
 @import "tailwindcss";
+/* D-13 (plan 11-07): the vault-dark/vault-light OKLCH theme tokens moved
+   to packages/pv-ui/tokens.css — the single source of truth shared by
+   this file, the popup (extension/entrypoints/popup/style.css), and
+   (plan 11-08) the in-page shadow-DOM surfaces. See that file's header
+   comment for why it's raw `[data-theme=...]` custom properties instead
+   of a `@plugin "daisyui/theme"` at-rule. CSS spec requires every
+   `@import` to precede all other statements (besides `@charset`/an empty
+   `@layer`) — this one must stay directly after `@import "tailwindcss"`
+   and before `@plugin "daisyui";` below. */
+@import "pv-ui/tokens.css";
 @plugin "daisyui";
-
-@plugin "daisyui/theme" {
-  name: "vault-dark";
-  default: true;
-  color-scheme: dark;
-  --color-primary: oklch(65.31% 0.1637 37.22);
-  --color-primary-content: oklch(100% 0 0);
-  --color-secondary: oklch(82.36% 0.0962 242.82);
-  --color-accent: oklch(74.51% 0.167 183.61);
-  --color-neutral: oklch(42.02% 0 0);
-  --color-base-100: oklch(26.86% 0 0);
-  --color-base-200: oklch(24.78% 0 0);
-  --color-base-300: oklch(23.93% 0 0);
-  --color-base-content: oklch(89.80% 0.0017 67.80);
-  --color-info: oklch(72.06% 0.191 231.6);
-  --color-success: oklch(64.80% 0.150 160);
-  --color-warning: oklch(84.71% 0.199 83.87);
-  --color-error: oklch(71.76% 0.221 22.18);
-  --radius-box: 1rem;
-  --radius-field: 0.5rem;
-  --radius-selector: 1.9rem;
-  --border: 1px;
-}
-
-@plugin "daisyui/theme" {
-  name: "vault-light";
-  color-scheme: light;
-  --color-base-100: oklch(100% 0 0);
-  --color-base-200: oklch(98.86% 0.0017 67.80);
-  --color-base-300: oklch(93% 0.004 67.80);
-  --color-base-content: oklch(26.86% 0 0);
-  /* primary/secondary/accent/semantic tokens unchanged from vault-dark — OKLCH
-     hue/chroma is theme-invariant per UI-SPEC.md's Color section */
-}
 
 body {
   font-family: var(--font-sans), sans-serif;
