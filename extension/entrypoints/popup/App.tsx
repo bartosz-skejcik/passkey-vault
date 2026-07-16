@@ -5,7 +5,7 @@
 // item-detail. Exactly one view renders at a time -- the popup is
 // single-view, no tabs.
 //
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { browser } from "wxt/browser";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
 import type { SessionStatus } from "../../lib/messaging/ext-protocol";
@@ -36,6 +36,19 @@ type UnlockableStatus = Extract<SessionStatus, { kind: "no-session" } | { kind: 
 // payload only appears once `awaitCeremonyConsent()` runs, which now
 // happens unconditionally for every ceremony kind, whether the vault was
 // already unlocked or was JUST unlocked.
+//
+// NEW BLOCKER fix (12-REVIEW.md re-review, Plan 12-06): the paragraph above
+// describes WHEN the payload appears, but 12-05's own read side only ever
+// checked for it ONCE, at mount (`refreshFromScratch()`'s
+// `checkPendingCeremony()` call) -- on the locked-vault sequence the popup
+// is already rendering UnlockView (payload not written yet) by the time
+// that one-shot check ran, so the payload `awaitCeremonyConsent()` writes
+// moments later, post-unlock, was never read and the consent screen simply
+// never appeared. The `storage.session.onChanged` listener below (mirrors
+// the `session.locked` listener's add/removeListener shape) closes this:
+// it re-runs the SAME `checkPendingCeremony()` reactively whenever this key
+// changes, so an already-open popup transitions UnlockView -> (unlock) ->
+// ProviderCeremonyView with no remount required.
 const PENDING_CEREMONY_KEY = "pv-pending-provider-ceremony";
 
 /** Opaque, non-null sentinel sent as the `itemId` of a `create`-kind
@@ -103,6 +116,14 @@ export default function App() {
   const [showEnrollPrompt, setShowEnrollPrompt] = useState(false);
   const [ceremonySelected, setCeremonySelected] = useState<string | null>(null);
   const [ceremonyStatus, setCeremonyStatus] = useState<ProviderCeremonyStatus>("idle");
+  // Phase 12 (Plan 12-06, NEW BLOCKER fix): mirrors `view` on every render so
+  // the storage.session.onChanged listener below (a stable [] -- effect,
+  // registered once) can read the LATEST view kind without a stale closure
+  // -- assigning a ref during the render body (not inside an effect) is the
+  // established way to keep a callback's read of "current React state"
+  // fresh without re-subscribing addListener/removeListener on every render.
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
   /**
    * 12-UI-SPEC.md "Where the ceremony consent UI lives": a pending ceremony
@@ -217,6 +238,51 @@ export default function App() {
     }
     browser.runtime.onMessage.addListener(onLocked);
     return () => browser.runtime.onMessage.removeListener(onLocked);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // NEW BLOCKER fix (12-REVIEW.md re-review, Plan 12-06): the popup's ONLY
+  // pre-fix read of PENDING_CEREMONY_KEY was checkPendingCeremony()'s ONE
+  // call inside refreshFromScratch() at mount -- for the locked-vault
+  // sequence (popup opens on UnlockView because ensureHydrated() found the
+  // vault locked -> user unlocks -> provider-ceremony.ts's
+  // awaitCeremonyConsent() writes the REAL consent payload only AFTER that
+  // unlock resolves) that one-shot check always ran too early and the
+  // payload was never read again, so the consent screen silently never
+  // appeared and the ceremony fell straight through to native (defeating
+  // Decision A on exactly the path CR-03/WR-03 exist to protect). Mirrors
+  // the `session.locked` listener immediately above (same add/removeListener
+  // cleanup shape) but on `browser.storage.session.onChanged` instead of
+  // `browser.runtime.onMessage`, since this key is written directly to
+  // chrome.storage.session, not broadcast as a runtime message.
+  useEffect(() => {
+    function onSessionStorageChanged(
+      changes: Record<string, { newValue?: unknown; oldValue?: unknown }>,
+    ): void {
+      if (!(PENDING_CEREMONY_KEY in changes)) {
+        return; // ignore every other session key -- never re-check on those
+      }
+      const newValue = changes[PENDING_CEREMONY_KEY]?.newValue;
+      if (isPendingCeremonyPayload(newValue)) {
+        // A real consent payload just appeared (or changed) after this
+        // popup instance already mounted -- re-run the SAME check
+        // refreshFromScratch() uses at mount so the already-open popup
+        // reactively mounts ProviderCeremonyView, taking over focus,
+        // without a remount.
+        void checkPendingCeremony();
+        return;
+      }
+      // Key removed (ceremony resolved elsewhere -- e.g. WR-03's background
+      // abandon-timeout firing while this exact popup instance stayed open,
+      // or a second popup/window instance racing this one) -- only unwind
+      // if THIS instance was actually showing the ceremony view for it;
+      // any other current view (list/detail/unlock) is left untouched.
+      if (viewRef.current.kind === "provider-ceremony") {
+        void refreshSessionStatus();
+      }
+    }
+    browser.storage.session.onChanged.addListener(onSessionStorageChanged);
+    return () => browser.storage.session.onChanged.removeListener(onSessionStorageChanged);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

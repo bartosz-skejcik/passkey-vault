@@ -5,7 +5,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const { mockSendMessage, mockStorageSessionGet, listeners } = vi.hoisted(() => ({
+const { mockSendMessage, mockStorageSessionGet, listeners, sessionStorageListeners } = vi.hoisted(() => ({
   mockSendMessage: vi.fn(),
   // Phase 12 (Plan 12-04): App.tsx's checkPendingCeremony() reads this on
   // every refreshFromScratch() -- defaults to "nothing pending" so every
@@ -19,6 +19,12 @@ const { mockSendMessage, mockStorageSessionGet, listeners } = vi.hoisted(() => (
   // called, and removeListener genuinely stops a listener firing after its
   // owning component unmounts.
   listeners: [] as Array<(message: unknown) => void>,
+  // Phase 12 (Plan 12-06, NEW BLOCKER fix): same real addListener/
+  // removeListener pair, but for `browser.storage.session.onChanged` --
+  // backs App.tsx's reactive re-check of PENDING_CEREMONY_KEY.
+  sessionStorageListeners: [] as Array<
+    (changes: Record<string, { newValue?: unknown; oldValue?: unknown }>) => void
+  >,
 }));
 
 vi.mock("../../lib/messaging/ext-protocol", () => ({
@@ -43,6 +49,19 @@ vi.mock("wxt/browser", () => ({
     storage: {
       session: {
         get: mockStorageSessionGet,
+        onChanged: {
+          addListener: (
+            fn: (changes: Record<string, { newValue?: unknown; oldValue?: unknown }>) => void,
+          ) => {
+            sessionStorageListeners.push(fn);
+          },
+          removeListener: (
+            fn: (changes: Record<string, { newValue?: unknown; oldValue?: unknown }>) => void,
+          ) => {
+            const idx = sessionStorageListeners.indexOf(fn);
+            if (idx >= 0) sessionStorageListeners.splice(idx, 1);
+          },
+        },
       },
     },
   },
@@ -54,11 +73,22 @@ function broadcast(message: unknown) {
   }
 }
 
+/** Simulates `browser.storage.session.onChanged` firing -- `changes` mirrors
+ * the real API's shape (`Record<key, {newValue?, oldValue?}>`). */
+function broadcastSessionStorageChange(
+  changes: Record<string, { newValue?: unknown; oldValue?: unknown }>,
+) {
+  for (const listener of [...sessionStorageListeners]) {
+    listener(changes);
+  }
+}
+
 import App from "./App";
 
 beforeEach(() => {
   vi.clearAllMocks();
   listeners.length = 0;
+  sessionStorageListeners.length = 0;
 });
 
 describe("App.tsx view-state switch", () => {
@@ -649,6 +679,180 @@ describe("App.tsx view-state switch", () => {
           kind: "provider.resolveChoice",
           requestId: "req-get-single-1",
           itemId: "cred-solo",
+        });
+      });
+    });
+
+    // Phase 12 (Plan 12-06, NEW BLOCKER fix): 12-05's checkPendingCeremony()
+    // was only ever called ONCE, at mount -- on the locked-vault sequence
+    // (popup opens on UnlockView because the vault is locked -> user
+    // unlocks -> provider-ceremony.ts's awaitCeremonyConsent() writes the
+    // REAL consent payload only AFTER that unlock resolves) that one-shot
+    // check ran too early, so the consent screen never appeared and the
+    // ceremony silently fell through to native. These tests exercise the
+    // new `storage.session.onChanged` reactive listener that closes this
+    // gap.
+    describe("NEW BLOCKER fix (12-06): storage.session.onChanged reactive re-check", () => {
+      it("locked-vault sequence: a 'create' consent payload written AFTER mount (post-unlock) reactively mounts ProviderCeremonyView", async () => {
+        mockStorageSessionGet.mockResolvedValueOnce({}); // nothing pending yet, at mount
+        mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+          if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
+          if (message.kind === "session.status") {
+            return {
+              kind: "locked",
+              wasAutoLocked: false,
+              autoLockMinutes: 15,
+              extPasskeyEnrolled: false,
+              extPasskeyPromptSuppressed: false,
+            };
+          }
+          throw new Error(`unexpected message in this test: ${message.kind}`);
+        });
+
+        render(<App />);
+        await waitFor(() => {
+          expect(screen.getByLabelText(/hasło|password/i)).toBeInTheDocument();
+        });
+
+        // Background writes the real consent payload right after the user
+        // unlocks -- simulated here directly via the storage.session
+        // onChanged broadcast (no real unlock flow needed for this test;
+        // UnlockView's own unlock wiring is exercised elsewhere).
+        const createPayload = {
+          requestId: "req-locked-create",
+          kind: "create",
+          rpId: "example.com",
+          account: "alice@example.com",
+          prfRequested: false,
+          candidates: [],
+        };
+        mockStorageSessionGet.mockResolvedValue({ "pv-pending-provider-ceremony": createPayload });
+        broadcastSessionStorageChange({
+          "pv-pending-provider-ceremony": { newValue: createPayload },
+        });
+
+        await waitFor(() => {
+          expect(screen.getByTestId("provider-confirm")).toBeInTheDocument();
+        });
+        expect(screen.getByText("example.com")).toBeInTheDocument();
+        expect(screen.getByText(/alice@example.com/)).toBeInTheDocument();
+        // The password field is gone -- the ceremony view took over focus,
+        // not merely rendered alongside UnlockView.
+        expect(screen.queryByLabelText(/hasło|password/i)).not.toBeInTheDocument();
+      });
+
+      it("locked-vault sequence: a single-match 'get' consent payload written AFTER mount reactively mounts ProviderCeremonyView, pre-selected", async () => {
+        mockStorageSessionGet.mockResolvedValueOnce({});
+        mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+          if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
+          if (message.kind === "session.status") {
+            return {
+              kind: "locked",
+              wasAutoLocked: false,
+              autoLockMinutes: 15,
+              extPasskeyEnrolled: false,
+              extPasskeyPromptSuppressed: false,
+            };
+          }
+          throw new Error(`unexpected message in this test: ${message.kind}`);
+        });
+
+        render(<App />);
+        await waitFor(() => {
+          expect(screen.getByLabelText(/hasło|password/i)).toBeInTheDocument();
+        });
+
+        const getPayload = {
+          requestId: "req-locked-get-single",
+          kind: "get",
+          rpId: "example.com",
+          prfRequested: false,
+          candidates: [{ itemId: "cred-solo", label: "alice" }],
+        };
+        mockStorageSessionGet.mockResolvedValue({ "pv-pending-provider-ceremony": getPayload });
+        broadcastSessionStorageChange({
+          "pv-pending-provider-ceremony": { newValue: getPayload },
+        });
+
+        await waitFor(() => {
+          expect(screen.getByTestId("provider-confirm")).toBeEnabled();
+        });
+        expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+        expect(screen.queryByLabelText(/hasło|password/i)).not.toBeInTheDocument();
+      });
+
+      it("an onChanged event for an UNRELATED session key does not trigger a ceremony re-check or remount", async () => {
+        mockStorageSessionGet.mockResolvedValue({});
+        mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+          if (message.kind === "config.get") return null;
+          throw new Error(`unexpected message in this test: ${message.kind}`);
+        });
+
+        render(<App />);
+        await waitFor(() => {
+          expect(screen.getByRole("heading")).toBeInTheDocument();
+        });
+
+        const callsBefore = mockStorageSessionGet.mock.calls.length;
+        broadcastSessionStorageChange({ "pv-server-config": { newValue: { baseUrl: "https://x" } } });
+        // Flush any microtask an (incorrect) reactive re-check would have
+        // queued before asserting nothing happened.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(mockStorageSessionGet.mock.calls.length).toBe(callsBefore);
+        expect(screen.queryByTestId("provider-confirm")).not.toBeInTheDocument();
+      });
+
+      it("removing PENDING_CEREMONY_KEY while ProviderCeremonyView is shown returns to the prior/list view", async () => {
+        const pendingPayload = {
+          requestId: "req-abandon-1",
+          kind: "get",
+          rpId: "example.com",
+          prfRequested: false,
+          candidates: CANDIDATES,
+        };
+        mockStorageSessionGet.mockResolvedValue({ "pv-pending-provider-ceremony": pendingPayload });
+        mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+          if (message.kind === "session.status") {
+            return {
+              kind: "unlocked",
+              autoLockMinutes: 15,
+              accountEmail: "a@example.com",
+              extPasskeyEnrolled: false,
+              extPasskeyPromptSuppressed: false,
+            };
+          }
+          if (message.kind === "vault.list") return { items: [], folders: [] };
+          if (message.kind === "autofill.match") {
+            return {
+              pageState: "restricted",
+              origin: null,
+              detected: { login: false, totp: false, card: false, identity: false },
+              matches: [],
+            };
+          }
+          throw new Error(`unexpected message in this test: ${message.kind}`);
+        });
+
+        render(<App />);
+        await waitFor(() => screen.getByTestId("provider-credential-row-cred-1"));
+
+        // The key disappears (background resolved/abandoned the ceremony)
+        // while THIS popup instance is still showing the ceremony view for
+        // it -- the storage.session.get() re-check that follows must see
+        // the key already gone.
+        mockStorageSessionGet.mockResolvedValue({});
+        broadcastSessionStorageChange({
+          "pv-pending-provider-ceremony": { oldValue: pendingPayload, newValue: undefined },
+        });
+
+        await waitFor(() => {
+          expect(screen.queryByTestId("provider-confirm")).not.toBeInTheDocument();
+        });
+        // Returned to the popup's ordinary flow (list, since the payload
+        // only ever exists once the vault is unlocked, D-09).
+        await waitFor(() => {
+          expect(mockSendMessage).toHaveBeenCalledWith({ kind: "session.status" });
         });
       });
     });
