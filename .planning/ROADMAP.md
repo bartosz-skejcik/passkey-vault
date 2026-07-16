@@ -155,7 +155,7 @@ _Note: 10-08's TOTP issuer-match fix (Bartek's checkpoint decision) landed inlin
   3. When the user changes a password on a site with an existing saved login, the extension detects the change and offers to update the stored item instead of creating a duplicate.
   4. Save/update prompts always show the actual originating domain and warn explicitly on any origin mismatch (e.g., a form embedded in a cross-origin iframe).
 
-**Plans**: 5 plans
+**Plans**: 6 plans
 Plans:
 
 - [ ] 11-01-PLAN.md — Messaging protocol extension (generate-request/capture.propose/capture.confirm) + v0.1 generator port + generate-request background handler
@@ -163,6 +163,7 @@ Plans:
 - [ ] 11-03-PLAN.md — Background capture classification (new/update/no-op), independent origin-mismatch verification, and encrypt-then-persist
 - [ ] 11-04-PLAN.md — Shadow-root UI mount + generate-password popover (Surface 1, CAP-01)
 - [ ] 11-05-PLAN.md — Save/update toast + origin-mismatch modal + adversarial cross-origin-iframe UAT fixture (Surfaces 2/3, CAP-02/CAP-03, D-06)
+- [ ] 11-06-PLAN.md — Suggested bez formularza: popupowa sekcja "Na tej stronie" pokazuje loginy origin-match na stronach bez wykrytego formularza (D-11, addendum Bartka 2026-07-16)
 
 **UI hint**: yes
 
