@@ -194,7 +194,33 @@ const OVERLAY_CSS = `
    hover state is actually visible (a same-as-background base-300 hover
    would be invisible now that the panel itself is base-300). */
 .pv-icon-btn:hover { background: var(--color-base-200); }
-.pv-list { max-height: 320px; overflow-y: auto; }
+/* 11-09 (Bartek live-bug 2026-07-16): shared by BOTH surfaces (the
+   in-field dropdown AND the prompt-window account list -- buildList() is
+   the one row-list factory both renderFormPrompt/renderFieldDropdown
+   append after their own pinned .pv-header). max-height is tuned to ~4.5
+   rows (each row is ~60px: 20px vertical padding + a ~39px two-line
+   label/sub stack + 1px border-bottom), so a 5th+ row is visibly cut in
+   half -- a deliberate "there's more, scroll" affordance, not just a
+   round number. The previous 320px (~5.3 rows) let exactly 5 accounts
+   render with no visual hint that a 6th would need scrolling, which read
+   as "I can't scroll to see it" even though overflow-y:auto was already
+   technically present. Scrollbar is styled via a token so it doesn't
+   look like an unstyled OS chrome element sitting on top of this
+   otherwise chrome-free panel, and self-adapts per theme via
+   --color-base-content the same way the row hover states below already
+   do (light base-content is dark, dark base-content is light). */
+.pv-list {
+  max-height: 270px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--color-base-content) 20%, transparent) transparent;
+}
+.pv-list::-webkit-scrollbar { width: 6px; }
+.pv-list::-webkit-scrollbar-track { background: transparent; }
+.pv-list::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklch, var(--color-base-content) 20%, transparent);
+  border-radius: 3px;
+}
 .pv-row {
   all: unset;
   display: flex;

@@ -57,3 +57,52 @@
 body {
   font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
 }
+
+/* 11-09 (Bartek live-bug/design review 2026-07-16): the ONE shared
+   button-style hover affordance for every clickable item row -- the
+   "Wszystkie" list rows (ItemListView.tsx) AND the "Na tej stronie" rows
+   (AutofillItemRow.tsx) both apply this same class so they stay visually
+   identical, per this plan's own key_links requirement.
+
+   Web's own datafa.st button recipe (see daisyUI's real .btn component,
+   node_modules/daisyui/components/button.css): a 1px border mixed toward
+   black by --depth%, a subtle two-layer drop shadow at rest, and on
+   :active the shadow drops out while the button nudges down 0.5px. Item
+   rows deliberately do NOT want that chrome permanently on (a flat list,
+   not a grid of buttons) -- only ON HOVER should a row "become" a
+   button. inset box-shadow (not a real `border`) is used for the ring so
+   it never participates in box-sizing/layout math and is never clipped
+   by an ancestor's overflow-y:auto scroll container the way a real
+   border+padding change could be -- "flat at rest, bordered on hover,
+   zero layout shift" all fall out of one inset-shadow declaration.
+
+   Color direction is var(--color-base-content), never a literal or a
+   base-200/base-300 swap -- this is what actually fixes Bartek's
+   "zamień miejscami kolor hover i zwykły" (swap hover/rest color)
+   report: base-content is near-white in vault-dark (blending toward it
+   LIGHTENS) and near-black in vault-light (blending toward it DARKENS),
+   so the correct per-theme polarity falls out of the token itself,
+   exactly like web/src/components/vault/ItemRow.tsx's own
+   `hover:bg-base-content/[0.06]` already does -- no hand-picked
+   per-theme override needed. */
+.pv-row-hover {
+  box-shadow: inset 0 0 0 1px transparent;
+  transition:
+    background-color 0.2s cubic-bezier(0, 0, 0.2, 1),
+    box-shadow 0.2s cubic-bezier(0, 0, 0.2, 1),
+    translate 0.2s cubic-bezier(0, 0, 0.2, 1);
+}
+
+.pv-row-hover:hover {
+  background-color: color-mix(in oklch, var(--color-base-content) 6%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklch, var(--color-base-content) 15%, transparent),
+    0 3px 2px -2px color-mix(in oklch, var(--color-base-content) 10%, transparent),
+    0 4px 3px -2px color-mix(in oklch, var(--color-base-content) 10%, transparent);
+}
+
+.pv-row-hover:active {
+  background-color: color-mix(in oklch, var(--color-base-content) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-base-content) 20%, transparent);
+  translate: 0 0.5px;
+}
