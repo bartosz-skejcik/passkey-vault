@@ -44,7 +44,12 @@ import { detectCard, detectIdentity } from "../lib/autofill/detect-scored";
 import { fillValues, type FillTargets } from "../lib/autofill/fill-dom";
 import { createOverlayController, type OverlayController } from "../lib/autofill/inpage-overlay";
 import { addBlockedOrigin, isOriginBlocked } from "../lib/autofill/blocked-origins";
-import { classifyForm } from "../lib/autofill/form-detector";
+import { classifyForm, findPasswordFieldPair } from "../lib/autofill/form-detector";
+import {
+  mountGenerateTrigger,
+  teardownGenerateTrigger,
+  getGenerateTriggerHost,
+} from "../lib/autofill/generate-popover";
 import { attachSubmitWatcher, captureFrameOrigin } from "../lib/autofill/submit-capture";
 import { sendMessage } from "../lib/messaging/ext-protocol";
 import type {
@@ -420,6 +425,30 @@ export default defineContentScript({
         return;
       }
 
+      // Generate-password trigger (Plan 11-04, Surface 1): checked BEFORE
+      // the collectFocusableFields()/kind lookup below -- a signup
+      // password field is not necessarily one detect-login.ts's own
+      // heuristic would resolve as a login-fillable target, and the two
+      // affordances must never stack in the same trailing-padding corner
+      // (orchestrator focus-loop coordination note, 2026-07-16). A
+      // signup-classified password field is handled ENTIRELY by this
+      // branch -- it returns unconditionally (gated origin or not) so the
+      // Phase 10 "PV" autofill icon never mounts for it either.
+      if (target instanceof HTMLInputElement && target.type === "password") {
+        const container = target.closest("form") ?? document.body;
+        if (classifyForm(container) === "signup") {
+          if (await isConfiguredServerOrigin()) {
+            return;
+          }
+          if (await isOriginBlocked(location.origin)) {
+            return;
+          }
+          const pair = findPasswordFieldPair(container);
+          mountGenerateTrigger(target, pair);
+          return;
+        }
+      }
+
       const kind = collectFocusableFields().get(target);
       if (kind === undefined) {
         return; // not a field this content-relay would ever offer to fill
@@ -463,6 +492,21 @@ export default defineContentScript({
     }
 
     function handleFocusOut(event: FocusEvent): void {
+      const related = event.relatedTarget;
+
+      // Generate-trigger teardown (Plan 11-04), in the SAME handler that
+      // tears down the Phase 10 "PV" icon below -- not a second, parallel
+      // teardown path. Same shadow-DOM event-retargeting guard as the
+      // overlay check further down: a click on the trigger/popover's own
+      // DOM (inpage-mount.ts's SHARED host, a different element from
+      // inpage-overlay.ts's own `overlay.host`) fires focusout on the
+      // field first, observed here as `relatedTarget === generateHost`.
+      // Idempotent no-op when nothing is mounted.
+      const generateHost = getGenerateTriggerHost();
+      if (!(generateHost && related instanceof Node && generateHost.contains(related))) {
+        teardownGenerateTrigger();
+      }
+
       if (overlay === null) {
         return; // Surface A was never mounted -- nothing to tear down
       }
@@ -477,7 +521,6 @@ export default defineContentScript({
       // not a descendant lookup into the (closed, unreachable) shadow tree.
       // Skipping the clear in this case is what lets the row's own click
       // handler fire onPick before Surface A is torn down.
-      const related = event.relatedTarget;
       if (related instanceof Node && overlay.host.contains(related)) {
         return;
       }

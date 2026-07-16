@@ -84,6 +84,32 @@ export const AUTOFILL_DICTIONARY = {
   "overlay.fieldDropdownHeading": { pl: "Hasła", en: "Passwords" },
   "overlay.closeAria": { pl: "Zamknij", en: "Close" },
   "overlay.blockSiteAria": { pl: "Zablokuj tę stronę", en: "Block this site" },
+
+  // --- Generate-password popover (Phase 11, Plan 11-04, Surface 1) -------
+  // Verbatim from 11-UI-SPEC.md's Copywriting Contract table.
+  "generate.trigger": { pl: "Wygeneruj silne hasło", en: "Generate a strong password" },
+  "generate.title": { pl: "Sugerowane hasło", en: "Suggested password" },
+  "generate.modeCharacter": { pl: "Znaki", en: "Characters" },
+  "generate.modePassphrase": { pl: "Passphrase", en: "Passphrase" },
+  "generate.regenerate": { pl: "Losuj ponownie", en: "Regenerate" },
+  "generate.apply": { pl: "Użyj tego hasła", en: "Use this password" },
+  "generate.failed": {
+    pl: "Nie udało się wygenerować hasła. Spróbuj ponownie.",
+    en: "Couldn't generate a password. Try again.",
+  },
+
+  // X-2 note: 11-04-PLAN.md's own text claims these two keys "do not exist
+  // in either extension dictionary today" -- that's imprecise (they already
+  // exist in lib/i18n/dictionary.ts, the POPUP dictionary, added by an
+  // earlier phase), but this file's own `t()` accessor below is scoped
+  // ONLY to AUTOFILL_DICTIONARY's own keys (a deliberately separate,
+  // smaller `keyof` union from dictionary.ts's DICTIONARY -- see this
+  // file's header comment), so generate-popover.ts's reveal/hide toggle
+  // still needs its OWN copy of these two keys here to compile against
+  // this dictionary's `t()`. Same PL/EN strings as dictionary.ts's
+  // existing entries -- not a new translation, just re-scoped.
+  "aria.showPassword": { pl: "Pokaż hasło", en: "Show password" },
+  "aria.hidePassword": { pl: "Ukryj hasło", en: "Hide password" },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof AUTOFILL_DICTIONARY): string {
