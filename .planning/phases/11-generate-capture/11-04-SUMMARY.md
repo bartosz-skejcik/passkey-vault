@@ -172,3 +172,8 @@ None - no external service configuration required.
 ---
 *Phase: 11-generate-capture*
 *Completed: 2026-07-16*
+
+## Self-Check: PASSED
+
+All 7 created/modified files verified present on disk; all 3 task/summary
+commits (`f878a0a`, `dd417cd`, `fd9fc22`) verified present in git log.
