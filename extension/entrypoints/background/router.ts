@@ -46,6 +46,15 @@
 // generate-handler.ts). It is content-script-only for the same reason
 // `autofill.matchFrame`/`autofill.fillFrame` are: Plan 11-04's generate
 // popover lives inside a content script, never the popup.
+//
+// Phase 11 (Plan 11-03): `capture.propose`/`capture.confirm` are a FOURTH
+// and FIFTH kind added to the SAME content-frame dispatch below -- also
+// NOT to `isProtocolMessage()`/`handle()`. `senderTopOrigin` for
+// classifySubmit is derived EXCLUSIVELY from `sender.tab.url` (the
+// browser-attached, tamper-proof sender metadata), never from
+// `message.frameOrigin` or any other client-supplied field (D-06/T-11-07).
+// Both handlers call `assertContentSender(sender)` first, exactly like
+// `autofill.matchFrame`/`autofill.fillFrame`.
 import { browser } from "wxt/browser";
 import type { Message, MessageOf, MessageResponseMap } from "../../lib/messaging/ext-protocol";
 import { b64ToBytes } from "../../lib/messaging/bytes-b64";
@@ -54,10 +63,11 @@ import { ensureHydrated, noteActivity } from "./vault-session";
 import { armAutoLock, AUTOLOCK_OPTIONS, DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
 import { readSessionMeta, writeSessionMeta } from "./session-storage";
 import { handleUnlockPassword } from "./unlock";
-import { getItems, getFolders } from "./vault-store";
+import { getItems, getFolders, RevisionConflictError } from "./vault-store";
 import { handleAutofillFill, handleAutofillMatch, handleAutofillTotpCode } from "./autofill-match";
-import { handleFillFrame, handleMatchFrame } from "./autofill-frame";
+import { handleFillFrame, handleMatchFrame, assertContentSender } from "./autofill-frame";
 import { handleGenerateRequest } from "./generate-handler";
+import { classifySubmit, confirmNewLogin, confirmUpdateLogin, LockedVaultError } from "./capture-handler";
 import {
   handleExtEnrollStart,
   handleExtEnrollFinish,
@@ -152,7 +162,9 @@ function isContentFrameMessage(
 ): message is
   | MessageOf<"autofill.matchFrame">
   | MessageOf<"autofill.fillFrame">
-  | MessageOf<"generate-request"> {
+  | MessageOf<"generate-request">
+  | MessageOf<"capture.propose">
+  | MessageOf<"capture.confirm"> {
   if (
     typeof message !== "object" ||
     message === null ||
@@ -161,14 +173,22 @@ function isContentFrameMessage(
     return false;
   }
   const kind = (message as { kind: string }).kind;
-  return kind === "autofill.matchFrame" || kind === "autofill.fillFrame" || kind === "generate-request";
+  return (
+    kind === "autofill.matchFrame" ||
+    kind === "autofill.fillFrame" ||
+    kind === "generate-request" ||
+    kind === "capture.propose" ||
+    kind === "capture.confirm"
+  );
 }
 
 async function handleContentFrameMessage(
   message:
     | MessageOf<"autofill.matchFrame">
     | MessageOf<"autofill.fillFrame">
-    | MessageOf<"generate-request">,
+    | MessageOf<"generate-request">
+    | MessageOf<"capture.propose">
+    | MessageOf<"capture.confirm">,
   sender: MessageSender,
 ): Promise<unknown> {
   switch (message.kind) {
@@ -182,8 +202,84 @@ async function handleContentFrameMessage(
       // directly from this async function wraps it in a resolved Promise,
       // same as the two async cases above.
       return handleGenerateRequest(message, sender);
+    case "capture.propose":
+      return handleCaptureProposeMessage(message, sender);
+    case "capture.confirm":
+      return handleCaptureConfirmMessage(message, sender);
     default:
       throw new Error(`unhandled content-frame message kind: ${(message as { kind: string }).kind}`);
+  }
+}
+
+/** Derives the trusted top-level origin EXCLUSIVELY from the platform-
+ * provided `sender.tab.url` -- never from `message.frameOrigin` or any
+ * other client-supplied field (D-06/T-11-07). Fails CLOSED to `""` (never
+ * equal to a real origin, so classifySubmit's mismatch check trips) on an
+ * unparseable/missing tab URL, mirroring frame-guard.ts's originEquals'
+ * own "never treat a parse failure as a match" discipline. */
+function deriveSenderTopOrigin(sender: MessageSender): string {
+  const tabUrl = sender.tab?.url;
+  if (tabUrl === undefined) {
+    return "";
+  }
+  try {
+    return new URL(tabUrl).origin;
+  } catch {
+    return "";
+  }
+}
+
+async function handleCaptureProposeMessage(
+  message: MessageOf<"capture.propose">,
+  sender: MessageSender,
+): Promise<MessageResponseMap["capture.propose"]> {
+  const guard = assertContentSender(sender);
+  if (!guard.ok) {
+    // No legitimate response shape for a rejected sender exists in
+    // MessageResponseMap["capture.propose"] beyond a maximally-inert
+    // no-op — mirrors handleMatchFrame's own "fail closed, empty result"
+    // discipline for a non-content-script sender.
+    return { action: "no-op", frameOrigin: "", topOrigin: "", mismatch: true };
+  }
+  const senderTopOrigin = deriveSenderTopOrigin(sender);
+  return classifySubmit(
+    { frameOrigin: message.frameOrigin, username: message.username, password: message.password },
+    getItems(),
+    senderTopOrigin,
+  );
+}
+
+async function handleCaptureConfirmMessage(
+  message: MessageOf<"capture.confirm">,
+  sender: MessageSender,
+): Promise<MessageResponseMap["capture.confirm"]> {
+  const guard = assertContentSender(sender);
+  if (!guard.ok) {
+    return { status: "error", message: "forbidden-sender" };
+  }
+  const fields = {
+    frameOrigin: message.frameOrigin,
+    username: message.username,
+    password: message.password,
+  };
+  try {
+    if (message.action === "new") {
+      const item = await confirmNewLogin(fields);
+      return { status: "ok", item };
+    }
+    if (message.itemId === undefined || message.currentRevision === undefined) {
+      return { status: "error", message: "missing itemId/currentRevision for an update confirm" };
+    }
+    const item = await confirmUpdateLogin(message.itemId, fields, message.currentRevision);
+    return { status: "ok", item };
+  } catch (e) {
+    if (e instanceof RevisionConflictError) {
+      return { status: "conflict", message: e.message };
+    }
+    if (e instanceof LockedVaultError) {
+      return { status: "error", message: e.message };
+    }
+    throw e;
   }
 }
 

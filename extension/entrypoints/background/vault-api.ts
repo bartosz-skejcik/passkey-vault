@@ -1,18 +1,20 @@
-// entrypoints/background/vault-api.ts — read-path-only port of
-// web/src/lib/vault/api.ts, reusing auth-api.ts's apiFetch/ApiClientError
-// (base-URL/auth-header/wire-encoding logic) rather than duplicating it --
-// the exact same reuse relationship web/src/lib/vault/api.ts has with
-// web/src/lib/auth/api.ts (see that file's own header comment). This gives
-// getSyncSnapshot() the same ServerNotConfiguredError-on-null discipline
-// and getSessionToken()-derived Authorization header as Plan 09-04's
+// entrypoints/background/vault-api.ts — port of web/src/lib/vault/api.ts,
+// reusing auth-api.ts's apiFetch/ApiClientError (base-URL/auth-header/
+// wire-encoding logic) rather than duplicating it -- the exact same reuse
+// relationship web/src/lib/vault/api.ts has with web/src/lib/auth/api.ts
+// (see that file's own header comment). This gives getSyncSnapshot() the
+// same ServerNotConfiguredError-on-null discipline and
+// getSessionToken()-derived Authorization header as Plan 09-04's
 // auth-api.ts, with zero duplicated fetch/base-URL logic.
 //
-// CONTEXT.md's locked OUT-of-scope boundary: only the read path
-// (getSyncSnapshot) is ported this phase. The write-path helpers from
-// web/src/lib/vault/api.ts (list/create/update/delete, for both items and
-// folders) are deliberately NOT ported -- CRUD is out of scope until a
-// future phase re-enables it; porting them now would be dead code an
-// executor might be tempted to wire up prematurely.
+// CONTEXT.md's locked OUT-of-scope boundary from Phase 9 covered only the
+// read path (getSyncSnapshot). Plan 11-03 adds the write path
+// (createItem/updateItem) this file was missing -- required for Generate &
+// Capture's encrypt-then-persist flow (capture-handler.ts). Folder
+// list/create/delete and item delete remain out of scope; only what
+// capture-handler.ts's confirmNewLogin/confirmUpdateLogin actually need is
+// ported here, verbatim from web/src/lib/vault/api.ts's template (same
+// request/response shapes, same apiFetch/ApiClientError reuse).
 import { apiFetch, ApiClientError } from "./auth-api";
 
 /** Wire shape of a single item row as returned by GET /api/vault/items. */
@@ -67,4 +69,34 @@ export interface SyncSnapshot {
 
 export function getSyncSnapshot(since: number): Promise<SyncSnapshot> {
   return apiJson(`/api/sync?since=${since}`);
+}
+
+// Plan 11-03: ported verbatim from web/src/lib/vault/api.ts's
+// createItem/updateItem -- same request/response shapes, reusing this
+// file's own apiFetch/ApiClientError import, not a new fetch wrapper.
+export function createItem(
+  id: string,
+  encKey: string,
+  encData: string,
+): Promise<{ id: string; revision: number; updated_at: string }> {
+  return apiJson("/api/vault/items", {
+    method: "POST",
+    body: JSON.stringify({ id, enc_key: encKey, enc_data: encData }),
+  });
+}
+
+export function updateItem(
+  id: string,
+  encKey: string,
+  encData: string,
+  expectedRevision: number,
+): Promise<{ revision: number; updated_at: string }> {
+  return apiJson(`/api/vault/items/${id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      enc_key: encKey,
+      enc_data: encData,
+      expected_revision: expectedRevision,
+    }),
+  });
 }

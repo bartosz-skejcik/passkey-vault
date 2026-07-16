@@ -19,6 +19,7 @@ import init, {
   exportUserKeyForSession,
   importUserKeyFromSession,
   deriveAuthMaterial,
+  encryptItem,
   decryptItem,
   totpNow as wasmTotpNow,
 } from "./wasm/pv_wasm.js";
@@ -50,6 +51,14 @@ export { deriveAuthMaterial };
 // never raw key bytes (the WasmUserKey handle used for decryption is
 // itself an opaque handle, already re-exported above).
 export { decryptItem };
+// Plan 11-03's capture-handler.ts needs the item-ENCRYPTION entry point --
+// mirrors web/src/lib/crypto/index.ts's own re-export of the same wasm
+// function (that file's line 33). This extension previously had no encrypt
+// path at all (the read-only vault-store.ts only ever decrypted); this is
+// the prerequisite export for confirmNewLogin/confirmUpdateLogin's
+// encrypt-then-persist flow. Only ciphertext/plaintext strings cross this
+// choke-point, never raw key bytes.
+export { encryptItem };
 
 // Plan 10-04's autofill-match.ts needs the live TOTP derivation entry
 // point -- mirrors web/src/lib/crypto/index.ts's own totpNow wrapper
