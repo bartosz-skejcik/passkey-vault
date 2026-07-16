@@ -405,6 +405,13 @@ export function createOverlayController(options: OverlayControllerOptions): Over
   let fieldIcon: HTMLElement | null = null;
   let dismissed = false;
   let blocked = false;
+  // Set only while Surface A (the field dropdown) is mounted -- torn down
+  // by clearDropdown() alongside the panel/icon themselves, so there is
+  // never a dangling scroll/resize listener left registered on `view`
+  // after the dropdown that owns it has been removed (Bitwarden-style
+  // inline-menu reposition-on-scroll, without a whole-document
+  // MutationObserver anywhere in this file).
+  let detachRepositionListeners: (() => void) | null = null;
 
   function clearPromptPanel(): void {
     if (promptPanel) {
@@ -414,6 +421,10 @@ export function createOverlayController(options: OverlayControllerOptions): Over
   }
 
   function clearDropdown(): void {
+    if (detachRepositionListeners) {
+      detachRepositionListeners();
+      detachRepositionListeners = null;
+    }
     if (dropdownPanel) {
       dropdownPanel.remove();
       dropdownPanel = null;
@@ -487,16 +498,27 @@ export function createOverlayController(options: OverlayControllerOptions): Over
     // KeyRound SVG, not the illegible 8px "PV" text -- sized to fill the
     // 16x16 .pv-field-icon box exactly.
     icon.innerHTML = KEY_ROUND_ICON;
-    icon.style.top = `${rect.top + rect.height / 2 - 8}px`;
-    icon.style.left = `${rect.right - 24}px`;
 
     const panel = doc.createElement("div");
     panel.className = "pv-panel pv-panel-dropdown";
     panel.setAttribute("data-pv-surface", "dropdown");
     panel.setAttribute("role", "listbox");
-    panel.style.top = `${rect.bottom + 4}px`;
-    panel.style.left = `${rect.left}px`;
-    panel.style.width = `${Math.max(rect.width, 240)}px`;
+
+    // Shared by the initial mount below AND every subsequent scroll/resize
+    // reposition -- always recomputed from the LIVE anchorEl rect, never
+    // cached, so the panel/icon actually track the field instead of
+    // drifting/detaching as the page scrolls (Bitwarden's own
+    // inline-menu approach; the earlier "anchor once at mount" behavior
+    // is the bug this fixes).
+    function positionFromRect(anchorRect: DOMRect): void {
+      icon.style.top = `${anchorRect.top + anchorRect.height / 2 - 8}px`;
+      icon.style.left = `${anchorRect.right - 24}px`;
+      panel.style.top = `${anchorRect.bottom + 4}px`;
+      panel.style.left = `${anchorRect.left}px`;
+      panel.style.width = `${Math.max(anchorRect.width, 240)}px`;
+    }
+
+    positionFromRect(rect);
 
     const header = doc.createElement("div");
     header.className = "pv-header";
@@ -514,6 +536,42 @@ export function createOverlayController(options: OverlayControllerOptions): Over
     shadow.append(icon, panel);
     fieldIcon = icon;
     dropdownPanel = panel;
+
+    // Reposition-on-scroll/resize + remove-when-offscreen, scoped to this
+    // one dropdown instance (never a whole-document MutationObserver).
+    // `capture: true` on the scroll listener is required, not decorative:
+    // `scroll` fired by an inner scrollable ancestor (a `<div
+    // style="overflow:auto">` around the field, not the document itself)
+    // does not bubble to `view`, but IS still observable during the
+    // capturing pass every scroll dispatch makes on its way down to the
+    // actual target -- a bubble-phase (default) listener on `view` would
+    // silently miss that case and the panel would drift exactly like the
+    // bug this fixes.
+    const view = doc.defaultView;
+    if (view) {
+      const reposition = () => {
+        const liveRect = anchorEl.getBoundingClientRect();
+        const viewportW = view.innerWidth;
+        const viewportH = view.innerHeight;
+        const fullyOffscreen =
+          liveRect.bottom < 0 || liveRect.top > viewportH || liveRect.right < 0 || liveRect.left > viewportW;
+        if (fullyOffscreen) {
+          // The anchored field itself has left the viewport -- follow
+          // Bitwarden's inline-menu behavior and tear the dropdown down
+          // rather than leave a panel floating over content it no longer
+          // corresponds to.
+          clearDropdown();
+          return;
+        }
+        positionFromRect(liveRect);
+      };
+      view.addEventListener("scroll", reposition, { capture: true, passive: true });
+      view.addEventListener("resize", reposition, { passive: true });
+      detachRepositionListeners = () => {
+        view.removeEventListener("scroll", reposition, { capture: true });
+        view.removeEventListener("resize", reposition);
+      };
+    }
   }
 
   function dismiss(): void {
