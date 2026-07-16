@@ -1,5 +1,5 @@
 //! pv-provider — `passkey-rs` (1Password) soft ES256 WebAuthn authenticator
-//! + vault-backed `CredentialStore` adapter for the extension's passkey
+//! and vault-backed `CredentialStore` adapter for the extension's passkey
 //! provider ceremony (Phase 12, PROV-01/PROV-02/PROV-04).
 //!
 //! This crate is the ONLY place `passkey-authenticator`/`passkey-client`/
