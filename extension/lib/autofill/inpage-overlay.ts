@@ -57,15 +57,15 @@ export function __getShadowRootForTests(host: HTMLElement): ShadowRoot | null {
 }
 
 // Inline lucide SVG markup (geometry copied verbatim from lucide-react's
-// own icon source -- node_modules/lucide-react/dist/esm/icons/{vault,timer,
+// own icon source -- node_modules/lucide-react/dist/esm/icons/{globe,timer,
 // credit-card,id-card}.mjs -- not approximated) -- set via `.innerHTML`,
 // never `.textContent`, so the markup actually renders as vector paths.
 // `fill="currentColor"` is only re-declared per-node where the source icon
-// itself uses a filled dot (Vault's/KeyRound's corner pips); the outer
-// `fill="none"` keeps every stroked shape (rects, paths, the outline
-// circles) unfilled, matching lucide's real rendering.
+// itself uses a filled dot (KeyRound's corner pip); the outer `fill="none"`
+// keeps every stroked shape (rects, paths, the outline circles) unfilled,
+// matching lucide's real rendering.
 const ROW_ICON: Record<FillKind, string> = {
-  login: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/><path d="m7.9 7.9 2.7 2.7"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/><path d="m13.4 10.6 2.7-2.7"/><circle cx="7.5" cy="16.5" r=".5" fill="currentColor"/><path d="m7.9 16.1 2.7-2.7"/><circle cx="16.5" cy="16.5" r=".5" fill="currentColor"/><path d="m13.4 13.4 2.7 2.7"/><circle cx="12" cy="12" r="2"/></svg>`,
+  login: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>`,
   totp: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/></svg>`,
   card: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>`,
   identity: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M16 10h2"/><path d="M16 14h2"/><path d="M6.17 15a3 3 0 0 1 5.66 0"/><circle cx="9" cy="11" r="2"/><rect x="2" y="5" width="20" height="14" rx="2"/></svg>`,
