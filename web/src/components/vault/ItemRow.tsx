@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CreditCard, IdCard, MoreVertical, StickyNote, Timer, Vault } from "lucide-react";
+import { CreditCard, Globe, IdCard, MoreVertical, StickyNote, Timer } from "lucide-react";
 import type { ItemType, VaultItem } from "@/lib/vault/types";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
@@ -15,8 +15,8 @@ import TotpCountdownRing from "./TotpCountdownRing";
 // UI-03's baseline visual-differentiator requirement, per RESEARCH.md's
 // finding that third-party favicon services leak visited-site metadata.
 // Favicon fetching is scoped out of Phase 2, not an oversight.
-const TYPE_ICON: Record<ItemType, typeof Vault> = {
-  login: Vault,
+const TYPE_ICON: Record<ItemType, typeof Globe> = {
+  login: Globe,
   card: CreditCard,
   identity: IdCard,
   note: StickyNote,

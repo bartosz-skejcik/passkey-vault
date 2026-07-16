@@ -111,7 +111,7 @@ describe("ItemRow", () => {
     const { container } = render(
       <ItemRow item={loginItem()} selected={false} onClick={vi.fn()} />,
     );
-    expect(container.querySelector(".lucide-vault")).not.toBeNull();
+    expect(container.querySelector(".lucide-globe")).not.toBeNull();
     expect(screen.getByText("bartek")).toBeInTheDocument();
   });
 
