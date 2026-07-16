@@ -41,3 +41,25 @@ suite (only `tsc --noEmit`, `vitest run lib/generator`, and
 out of scope per execute-plan.md's SCOPE BOUNDARY rule -- not fixed here.
 A future plan touching router.test.ts's autofill-match coverage, or a
 wasm-bindgen-cli install to unblock the whole suite, should pick this up.
+
+## Pre-existing unhandled rejection in App.test.tsx / ServerConfigView.tsx (Plan 11-09)
+
+`cd extension && npx vitest run` (and `npx vitest run entrypoints/popup`) both
+report a passing suite (395/395, 42/42 respectively) but also surface one
+"Unhandled Rejection" console warning:
+
+```
+TypeError: Cannot read properties of undefined (reading 'request')
+ at handleSubmit entrypoints/popup/ServerConfigView.tsx:95:32
+```
+
+Neither `App.test.tsx` nor `ServerConfigView.tsx` is in this plan's
+`files_modified` list (`extension/entrypoints/popup/ItemListView.tsx`,
+`ItemListView.test.tsx`, `autofill/AutofillItemRow.tsx`,
+`autofill/OnThisPageSection.tsx`, `style.css`, plus
+`lib/autofill/inpage-overlay.ts`/`.test.ts`) — this plan never touches
+either file. Vitest reports it as a genuine "unhandled" rejection (not
+attached to any specific test's own assertion), meaning it does not fail
+any test in this run; it reads as a pre-existing async-cleanup race in a
+component this plan does not modify. Out of scope per execute-plan.md's
+SCOPE BOUNDARY rule — not fixed here.
