@@ -223,6 +223,80 @@ describe("showMismatchModal", () => {
     expect(banner.textContent).toMatch(/another device|innym urządzeniu/i);
   });
 
+  it("WR-02: Tab from the last focusable button wraps back to the first (shadow-root-aware trap -- doc.activeElement would never have matched inside the closed shadow root)", () => {
+    showMismatchModal({
+      action: "new",
+      frameOrigin: "http://localhost:8792",
+      topOrigin: "http://127.0.0.1:8791",
+      username: "alice",
+      password: "hunter2",
+    });
+
+    const shadow = shadowOf();
+    const cancelBtn = shadow.querySelector<HTMLButtonElement>("[data-pv-mismatch-cancel]")!;
+    const confirmBtn = shadow.querySelector<HTMLButtonElement>("[data-pv-mismatch-confirm]")!;
+    confirmBtn.focus();
+    expect(shadow.activeElement).toBe(confirmBtn);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+
+    expect(shadow.activeElement).toBe(cancelBtn);
+  });
+
+  it("WR-02: Shift+Tab from the first focusable button wraps to the last", () => {
+    showMismatchModal({
+      action: "new",
+      frameOrigin: "http://localhost:8792",
+      topOrigin: "http://127.0.0.1:8791",
+      username: "alice",
+      password: "hunter2",
+    });
+
+    const shadow = shadowOf();
+    const cancelBtn = shadow.querySelector<HTMLButtonElement>("[data-pv-mismatch-cancel]")!;
+    const confirmBtn = shadow.querySelector<HTMLButtonElement>("[data-pv-mismatch-confirm]")!;
+    cancelBtn.focus();
+    expect(shadow.activeElement).toBe(cancelBtn);
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }),
+    );
+
+    expect(shadow.activeElement).toBe(confirmBtn);
+  });
+
+  it("WR-02: while busy (every button disabled), Tab keeps focus pinned to the panel instead of letting it escape the modal", async () => {
+    let resolveConfirm: (value: { status: "ok"; item: { id: string; revision: number } }) => void = () => {};
+    sendMessageMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveConfirm = resolve;
+      }),
+    );
+
+    showMismatchModal({
+      action: "new",
+      frameOrigin: "http://localhost:8792",
+      topOrigin: "http://127.0.0.1:8791",
+      username: "alice",
+      password: "hunter2",
+    });
+
+    const shadow = shadowOf();
+    shadow
+      .querySelector<HTMLButtonElement>("[data-pv-mismatch-confirm]")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve(); // let setBusy(true) run before confirmCapture's own await settles
+
+    expect(shadow.querySelectorAll("button:not([disabled])").length).toBe(0);
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+
+    expect(shadow.activeElement).toBe(shadow.querySelector("[data-pv-mismatch-panel]"));
+
+    resolveConfirm({ status: "ok", item: { id: "item-1", revision: 1 } });
+    await flushAsync();
+  });
+
   it("showing the modal tears down any live save/update toast (mutually exclusive surfaces)", async () => {
     const { showSaveUpdateToast } = await import("./save-update-toast");
     showSaveUpdateToast({

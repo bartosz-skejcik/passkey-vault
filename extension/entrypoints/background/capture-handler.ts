@@ -31,6 +31,7 @@ import {
   RevisionConflictError,
   isConflictError,
   splitCombinedEncryptedItem,
+  getItems,
 } from "./vault-store";
 import type { ItemFields, LoginFields, VaultItem } from "../../lib/vault/types";
 import type { MessageResponseMap } from "../../lib/messaging/ext-protocol";
@@ -42,6 +43,21 @@ export class LockedVaultError extends Error {
   constructor() {
     super("cannot persist a captured login while the vault is locked");
     this.name = "LockedVaultError";
+  }
+}
+
+/** WR-04 (11-REVIEW.md): thrown by confirmUpdateLogin when the target
+ * `itemId` does not re-verify as belonging to the caller's own
+ * (sender-derived) frameOrigin + submitted username. The propose->confirm
+ * round trip hands `itemId` back out through the untrusted content-script
+ * closure -- this is only as trustworthy as that closure, so confirm must
+ * re-derive ownership from scratch rather than trusting the earlier
+ * propose's classification, mirroring handleAutofillFill's own
+ * itemMatchesOrigin re-check (autofill-match.ts, T-10-14). */
+export class OwnershipMismatchError extends Error {
+  constructor() {
+    super("target item does not belong to the requesting origin/account");
+    this.name = "OwnershipMismatchError";
   }
 }
 
@@ -161,6 +177,20 @@ export async function confirmUpdateLogin(
   const uk = await ensureHydrated();
   if (uk === null) {
     throw new LockedVaultError();
+  }
+  // WR-04 (11-REVIEW.md): re-verify ownership from scratch against the
+  // CURRENT decrypted cache before writing -- `fields.frameOrigin` here is
+  // the TRUSTED sender-derived origin the caller (router.ts) resolved via
+  // assertContentSender, never the content script's self-reported payload
+  // field (D-06). Refuses an itemId that isn't a login item, doesn't
+  // origin-match, or doesn't username-match, exactly like
+  // handleAutofillFill's own defense-in-depth re-check.
+  const target = getItems().find((item) => item.id === itemId);
+  if (target === undefined || target.fields.type !== "login") {
+    throw new OwnershipMismatchError();
+  }
+  if (!itemMatchesOrigin(target, fields.frameOrigin) || target.fields.username !== fields.username) {
+    throw new OwnershipMismatchError();
   }
   const newRevision = currentRevision + 1;
   const plaintext = JSON.stringify(buildLoginFields(fields));

@@ -342,15 +342,33 @@ export function showMismatchModal(proposal: MismatchProposal, opts?: { doc?: Doc
       const focusable = Array.from(
         panel.querySelectorAll<HTMLButtonElement>("button:not([disabled])"),
       );
+      // WR-02 (11-REVIEW.md): the panel lives in a CLOSED shadow root, where
+      // `document.activeElement` always resolves to the shadow HOST -- never
+      // the actually-focused inner element (DOM spec's closed-shadow-root
+      // retargeting) -- so a `doc.activeElement` comparison here was never
+      // true and the trap never wrapped (jsdom doesn't model this
+      // retargeting, which is why unit tests didn't catch it). `shadow` is
+      // the ShadowRoot reference this module itself created via
+      // `getOrCreateShadowRoot()` -- holding that reference is exactly what
+      // lets code read `shadow.activeElement` even though the root is
+      // closed to outside script.
+      const active = shadow.activeElement;
       if (focusable.length === 0) {
+        // Every button is disabled (busy spinner / post-success state) --
+        // there is nowhere inside the modal to land, but focus must still
+        // never escape it (T-11-15). Pin it to the panel itself, which
+        // stays programmatically focusable (tabIndex=-1) even though that
+        // takes it out of the natural tab order.
+        event.preventDefault();
+        panel.focus();
         return;
       }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && doc.activeElement === first) {
+      if (event.shiftKey && active === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && doc.activeElement === last) {
+      } else if (!event.shiftKey && active === last) {
         event.preventDefault();
         first.focus();
       }

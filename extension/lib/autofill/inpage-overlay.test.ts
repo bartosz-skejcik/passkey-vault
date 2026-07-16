@@ -319,6 +319,35 @@ describe("renderFieldDropdown", () => {
     addSpy.mockRestore();
     removeSpy.mockRestore();
   });
+
+  it("WR-05 (11-REVIEW.md): clearFieldDropdown() is idempotent even when a racing handler (e.g. the Phase 11 generate-trigger teardown sharing the same focusout) has already detached the dropdown/icon nodes", () => {
+    const anchor = anchorWithRect();
+    const { controller } = makeController();
+
+    controller.renderFieldDropdown(anchor, [LOGIN_MATCH]);
+    const shadow = __getShadowRootForTests(controller.host)!;
+    const dropdownPanel = shadow.querySelector<HTMLElement>('[data-pv-surface="dropdown"]')!;
+    const fieldIcon = shadow.querySelector<HTMLElement>("[data-pv-field-icon]")!;
+
+    // Simulate the real-Chrome double-teardown race (WR-05, mirrors
+    // generate-popover.test.ts's own regression): another handler already
+    // detached these nodes by the time clearFieldDropdown()'s own remove()
+    // calls run.
+    dropdownPanel.remove = () => {
+      throw new DOMException(
+        "Failed to execute 'remove' on 'Element': The node to be removed is no longer a child of this node.",
+        "NotFoundError",
+      );
+    };
+    fieldIcon.remove = () => {
+      throw new DOMException(
+        "Failed to execute 'remove' on 'Element': The node to be removed is no longer a child of this node.",
+        "NotFoundError",
+      );
+    };
+
+    expect(() => controller.clearFieldDropdown()).not.toThrow();
+  });
 });
 
 describe("controller does not hold or leak a live credential value", () => {

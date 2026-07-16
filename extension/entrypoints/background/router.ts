@@ -67,7 +67,13 @@ import { getItems, getFolders, RevisionConflictError } from "./vault-store";
 import { handleAutofillFill, handleAutofillMatch, handleAutofillTotpCode } from "./autofill-match";
 import { handleFillFrame, handleMatchFrame, assertContentSender } from "./autofill-frame";
 import { handleGenerateRequest } from "./generate-handler";
-import { classifySubmit, confirmNewLogin, confirmUpdateLogin, LockedVaultError } from "./capture-handler";
+import {
+  classifySubmit,
+  confirmNewLogin,
+  confirmUpdateLogin,
+  LockedVaultError,
+  OwnershipMismatchError,
+} from "./capture-handler";
 import {
   handleExtEnrollStart,
   handleExtEnrollFinish,
@@ -241,9 +247,33 @@ async function handleCaptureProposeMessage(
     // discipline for a non-content-script sender.
     return { action: "no-op", frameOrigin: "", topOrigin: "", mismatch: true };
   }
+  // WR-03 (11-REVIEW.md): ensure the decrypted item cache is hydrated
+  // BEFORE classifying -- a freshly-woken/idle-killed service worker starts
+  // with an empty in-memory vault-store cache (ensureHydrated() only
+  // re-derives the User Key itself; it does not by itself repopulate
+  // vault-store's items array). Classifying against an empty cache would
+  // misreport an existing credential as 'new', and confirmNewLogin (which
+  // DOES gate on ensureHydrated()) would then create a duplicate item.
+  // Mirrors handleMatchFrame's/handleFillFrame's own ensureHydrated()-
+  // before-getItems() discipline (autofill-frame.ts).
+  const uk = await ensureHydrated();
+  if (uk === null) {
+    // Locked: no legitimate classification is possible. There is no
+    // dedicated "locked" action in MessageResponseMap["capture.propose"]
+    // (frozen by Plan 11-01) -- 'no-op' with mismatch:true is the least-
+    // surprising fail-closed choice, mirroring the rejected-sender branch
+    // above.
+    return { action: "no-op", frameOrigin: guard.origin, topOrigin: "", mismatch: true };
+  }
   const senderTopOrigin = deriveSenderTopOrigin(sender);
+  // CR-01 fix (11-REVIEW.md): the TRUSTED sender-derived origin
+  // (`guard.origin`, from assertContentSender) is the frameOrigin fed into
+  // classifySubmit -- never `message.frameOrigin`, the content script's
+  // self-reported `location.origin`. The payload field is discarded here by
+  // construction; it must never feed a security decision (it may still be
+  // surfaced to the UI as a display candidate elsewhere, but not here).
   return classifySubmit(
-    { frameOrigin: message.frameOrigin, username: message.username, password: message.password },
+    { frameOrigin: guard.origin, username: message.username, password: message.password },
     getItems(),
     senderTopOrigin,
   );
@@ -257,8 +287,14 @@ async function handleCaptureConfirmMessage(
   if (!guard.ok) {
     return { status: "error", message: "forbidden-sender" };
   }
+  // CR-01/WR-01 fix (11-REVIEW.md): the TRUSTED sender-derived origin is
+  // used for both the persisted `urls` (via capture-handler.ts's
+  // buildLoginFields) and the WR-04 ownership re-check inside
+  // confirmUpdateLogin -- never `message.frameOrigin`, which round-trips
+  // through the untrusted content-script closure between propose and
+  // confirm.
   const fields = {
-    frameOrigin: message.frameOrigin,
+    frameOrigin: guard.origin,
     username: message.username,
     password: message.password,
   };
@@ -277,6 +313,9 @@ async function handleCaptureConfirmMessage(
       return { status: "conflict", message: e.message };
     }
     if (e instanceof LockedVaultError) {
+      return { status: "error", message: e.message };
+    }
+    if (e instanceof OwnershipMismatchError) {
       return { status: "error", message: e.message };
     }
     throw e;

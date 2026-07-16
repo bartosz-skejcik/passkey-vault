@@ -203,6 +203,30 @@ function ensureStyle(shadow: ShadowRoot, doc: Document): void {
   shadow.appendChild(styleEl);
 }
 
+/** WR-05 (11-REVIEW.md, packaged-build UAT: probe-phase11-capture.js, real
+ * headless Chromium): a double-teardown race -- this handler firing again
+ * before a previous removal settled, the Phase 10 icon teardown
+ * (inpage-overlay.ts's clearDropdown) racing the SAME focusout, or a
+ * re-mount racing a stale focusout -- can leave a node already detached by
+ * the time this call runs. Chrome raised an uncaught NotFoundError
+ * ("Failed to execute 'remove' on 'Element': The node to be removed is no
+ * longer a child of this node. Perhaps it was moved in a 'blur' event
+ * handler?") in that case, which is console noise at best and can abort
+ * whatever ran after it in the same handler tick at worst. Teardown must
+ * converge regardless of which of the racing handlers "wins" the actual DOM
+ * removal -- the module's own el === null reset is what matters, not
+ * whether this specific remove() call succeeded. */
+function safeRemove(el: Element | null): void {
+  if (!el) {
+    return;
+  }
+  try {
+    el.remove();
+  } catch {
+    // Already detached by a racing teardown -- converged either way.
+  }
+}
+
 /** Writes `password` into both the new-password field and (when present)
  * the confirm-password field via `fill-dom.ts`'s framework-safe
  * `setNativeValue()` -- never a plain `.value =` assignment (10-RESEARCH.md
@@ -228,9 +252,9 @@ export function teardownGenerateTrigger(): void {
     detachTriggerReposition();
     detachTriggerReposition = null;
   }
-  popoverEl?.remove();
+  safeRemove(popoverEl);
   popoverEl = null;
-  triggerEl?.remove();
+  safeRemove(triggerEl);
   triggerEl = null;
 }
 
@@ -244,7 +268,7 @@ export function getGenerateTriggerHost(): HTMLElement | null {
 }
 
 function closePopover(): void {
-  popoverEl?.remove();
+  safeRemove(popoverEl);
   popoverEl = null;
 }
 
