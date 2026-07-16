@@ -166,3 +166,15 @@ None - no external service configuration required.
 ## Self-Check: PASSED
 
 All 6 modified files + this SUMMARY.md exist on disk; both task commit hashes (0631b6d, f5f9122) verified present in git log.
+
+## Addendum (2026-07-16, live-review follow-up fix): missed-scope catch — the popup's own nested scroll
+
+Bartek's live-review scroll complaint that prompted this plan's Task 1 (`.pv-list` scroll affordance for the in-page dropdown/prompt-window account lists) was interpreted narrowly — it turned out to ALSO describe the popup itself: the whole popup page scrolled (header, search box, and the auto-lock footer all scrolling away with it) stacked on top of `ItemListView`'s own "Wszystkie" list scroll, i.e. genuine scroll-in-scroll. That surface was not in this plan's original scope and was caught and fixed in a follow-up commit (`a08e9b2`, `fix(11-09): popup single-scroll shell`), not this plan's own two task commits.
+
+**Root cause:** `index.html`'s `body` had `width: 380px` but no fixed height or `overflow: hidden` — so once `ItemListView`'s natural content height (top bar + search + "Na tej stronie" + "Wszystkie" header + the "Wszystkie" list's own hand-guessed `min-h-[220px] max-h-[440px]` + footer) exceeded Chrome's ~600px popup ceiling, the outer document itself grew a scrollbar on top of the inner list's own `overflow-y-auto` — two scroll containers nested inside one popup.
+
+**Fix:** gave the popup a real fixed-height (600px) shell — `index.html`'s `body` (`height: 600px; overflow: hidden`) plus `style.css`'s `html { overflow: hidden }` / `#root { height: 100% }` — and restructured every view's root to fill that shell via Tailwind `h-full`/`flex-1 min-h-0` so each view has exactly ONE scrollable region: `ItemListView`'s "Wszystkie" row list (now `flex-1 min-h-0 overflow-y-auto`, replacing the old `min-h-[220px] max-h-[440px]` guess, with a new `.pv-scroll-thin` utility matching this plan's own `.pv-list` token-based scrollbar recipe) is the ONE scroll region for the list view; `ServerConfigView`, `UnlockView`, and `ItemDetailView` each get a single whole-view `overflow-y-auto` fallback since they have no pinned-header/footer split to preserve. Presentation-only — 401/401 vitest tests, `tsc --noEmit`, and both `wxt build` targets (chrome-mv3 + firefox-mv2) green, zero behavioral changes.
+
+**Files touched:** `extension/entrypoints/popup/index.html`, `extension/entrypoints/popup/style.css`, `extension/entrypoints/popup/App.tsx`, `extension/entrypoints/popup/ItemListView.tsx`, `extension/entrypoints/popup/ServerConfigView.tsx`, `extension/entrypoints/popup/UnlockView.tsx`, `extension/entrypoints/popup/ItemDetailView.tsx`.
+
+**Lesson for future live-review triage:** "scroll-in-scroll" or "can't scroll" reports from Bartek should be checked against BOTH the in-page/shadow-DOM surfaces AND the popup's own outer document — a fix scoped to only one of the two can leave the other genuinely broken even when the reported symptom sounds identical.
