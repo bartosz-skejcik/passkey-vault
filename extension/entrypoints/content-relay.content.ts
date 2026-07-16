@@ -51,6 +51,8 @@ import {
   getGenerateTriggerHost,
 } from "../lib/autofill/generate-popover";
 import { attachSubmitWatcher, captureFrameOrigin } from "../lib/autofill/submit-capture";
+import { showSaveUpdateToast } from "../lib/autofill/save-update-toast";
+import { showMismatchModal } from "../lib/autofill/mismatch-modal";
 import { sendMessage } from "../lib/messaging/ext-protocol";
 import type {
   AutofillMatch,
@@ -273,20 +275,42 @@ async function initSubmitCapture(): Promise<void> {
     }
 
     attachSubmitWatcher(container, (username, password) => {
-      // Fire-and-forget: Plan 11-03 wires the actual handler (mismatch
-      // computation, vault-item matching); this plan only proves the
-      // detection layer and sends the proposal. A rejected/unhandled
-      // response (no listener registered yet, torn-down extension
-      // context, etc.) is swallowed here -- UI response handling
-      // (toast/modal) is Plan 11-05's job, not this one.
-      void sendMessage({
-        kind: "capture.propose",
-        frameOrigin: captureFrameOrigin(),
-        username,
-        password,
-      }).catch(() => {
-        // Intentionally ignored -- see comment above.
-      });
+      // Plan 11-05's UI response wiring: the ONE integration point tying
+      // 11-02's submit-capture output through 11-03's classification into
+      // the correct surface. Routes on `response.mismatch` -- `true`
+      // ALWAYS goes to mismatch-modal.ts (T-11-14, unconditional on the
+      // origin-mismatch flag, including a rare `action:'no-op'` mismatch);
+      // `false` goes to save-update-toast.ts, which itself renders nothing
+      // for `action:'no-op'` (Pitfall B). A rejected/unhandled response (no
+      // listener registered, torn-down extension context, etc.) shows no
+      // UI at all -- there is nothing to route without a response.
+      const frameOrigin = captureFrameOrigin();
+      void sendMessage({ kind: "capture.propose", frameOrigin, username, password })
+        .then((response) => {
+          if (response.mismatch) {
+            showMismatchModal({
+              action: response.action,
+              itemId: response.itemId,
+              currentRevision: response.currentRevision,
+              frameOrigin: response.frameOrigin,
+              topOrigin: response.topOrigin,
+              username,
+              password,
+            });
+          } else {
+            showSaveUpdateToast({
+              action: response.action,
+              itemId: response.itemId,
+              currentRevision: response.currentRevision,
+              frameOrigin: response.frameOrigin,
+              username,
+              password,
+            });
+          }
+        })
+        .catch(() => {
+          // Intentionally ignored -- see comment above.
+        });
     });
   }
 }
