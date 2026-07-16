@@ -13,6 +13,10 @@ pv-core = { path = "../pv-core" }
 wasm-bindgen = "=0.2.126"
 serde_json.workspace = true
 zeroize = { version = "1", features = ["derive"] }
+pv-provider = { version = "0.1.0", path = "../pv-provider" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+base64 = "0.22"

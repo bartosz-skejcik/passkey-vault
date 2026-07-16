@@ -206,6 +206,124 @@ pub fn decrypt_item(
     String::from_utf8(plaintext).map_err(|e| to_js_str_err(&e.to_string()))
 }
 
+/// Nieprzezroczysty wynik `wasmCreateProviderCredential` — WYŁĄCZNIE dwa
+/// pola: publiczna odpowiedź WebAuthn (`credential_response_json`) i
+/// już-zaszyfrowany vault item (`encrypted_item_json`). `pv_provider`'s
+/// `new_passkey_json` (surowy plaintext Passkey, materiał klucza
+/// prywatnego) NIGDY nie staje się polem tego structu ani wartością zwracaną
+/// do JS — istnieje wyłącznie jako lokalna zmienna wewnątrz
+/// `wasm_create_provider_credential`, skonsumowana przez `core_encrypt_item`
+/// przed returnem (T-12-01 mitigation; PROV-05 grep-audit boundary).
+#[wasm_bindgen]
+pub struct WasmCreateProviderResult {
+    credential_response_json: String,
+    encrypted_item_json: String,
+}
+
+#[wasm_bindgen]
+impl WasmCreateProviderResult {
+    #[wasm_bindgen(js_name = credentialResponseJson)]
+    pub fn credential_response_json(&self) -> String {
+        self.credential_response_json.clone()
+    }
+
+    #[wasm_bindgen(js_name = encryptedItemJson)]
+    pub fn encrypted_item_json(&self) -> String {
+        self.encrypted_item_json.clone()
+    }
+}
+
+/// Nieprzezroczysty wynik `wasmGetProviderAssertion` — WYŁĄCZNIE dwa pola:
+/// publiczna asercja WebAuthn i (opcjonalnie) na nowo zaszyfrowany vault
+/// item, jeśli passkey-rs zmutował stan credentiala (np. sign counter)
+/// podczas ceremonii. `updated_encrypted_item_json` jest `None`, gdy nic się
+/// nie zmieniło (domyślny przypadek — patrz komentarz w `pv-provider`'s
+/// `ceremony.rs`).
+#[wasm_bindgen]
+pub struct WasmGetProviderResult {
+    credential_response_json: String,
+    updated_encrypted_item_json: Option<String>,
+}
+
+#[wasm_bindgen]
+impl WasmGetProviderResult {
+    #[wasm_bindgen(js_name = credentialResponseJson)]
+    pub fn credential_response_json(&self) -> String {
+        self.credential_response_json.clone()
+    }
+
+    #[wasm_bindgen(js_name = updatedEncryptedItemJson)]
+    pub fn updated_encrypted_item_json(&self) -> Option<String> {
+        self.updated_encrypted_item_json.clone()
+    }
+}
+
+/// Rejestruje nowy passkey (`pv_provider::create_provider_credential`) i
+/// NATYCHMIAST, w tej samej funkcji, szyfruje wynikowy plaintext Passkey
+/// (`new_passkey_json`, materiał klucza prywatnego) przez ISTNIEJĄCY
+/// `core_encrypt_item` — zero nowych prymitywów kryptograficznych (D-07).
+/// `new_passkey_json` opuszcza scope tej funkcji jako lokalna `String` i
+/// nigdy nie jest przypisywana do pola zwracanego do JS (T-12-01).
+#[wasm_bindgen(js_name = wasmCreateProviderCredential)]
+pub fn wasm_create_provider_credential(
+    uk: &WasmUserKey,
+    request_json: &str,
+    origin: &str,
+    item_id: &str,
+) -> Result<WasmCreateProviderResult, JsValue> {
+    let result = pv_provider::create_provider_credential(request_json, origin)
+        .map_err(|e| to_js_str_err(&e.to_string()))?;
+    let encrypted_item =
+        core_encrypt_item(&uk.0, result.new_passkey_json.as_bytes(), item_id, 1).map_err(to_js_err)?;
+    let encrypted_item_json =
+        serde_json::to_string(&encrypted_item).map_err(|e| to_js_str_err(&e.to_string()))?;
+    Ok(WasmCreateProviderResult {
+        credential_response_json: result.credential_response_json,
+        encrypted_item_json,
+    })
+}
+
+/// Odszyfrowuje `matching_item_json` (JEDEN pasujący zaszyfrowany vault item)
+/// ISTNIEJĄCYM `core_decrypt_item`, przekazuje odzyskany plaintext Passkey
+/// JSON jako jednoelementową tablicę do `pv_provider::get_provider_assertion`,
+/// i jeśli passkey-rs zwróci `updated_passkey_json` (zmieniony sign
+/// counter), re-szyfruje go `core_encrypt_item`-em z `revision + 1` przed
+/// returnem. Plaintext Passkey JSON (przed i po) istnieje wyłącznie jako
+/// lokalne zmienne — nigdy jako pole zwracane do JS.
+#[wasm_bindgen(js_name = wasmGetProviderAssertion)]
+pub fn wasm_get_provider_assertion(
+    uk: &WasmUserKey,
+    request_json: &str,
+    origin: &str,
+    matching_item_json: &str,
+    item_id: &str,
+    revision: u32,
+) -> Result<WasmGetProviderResult, JsValue> {
+    let item: EncryptedItem =
+        serde_json::from_str(matching_item_json).map_err(|e| to_js_str_err(&e.to_string()))?;
+    let plaintext = core_decrypt_item(&uk.0, &item, item_id, revision).map_err(to_js_err)?;
+    let passkey_json =
+        String::from_utf8(plaintext).map_err(|e| to_js_str_err(&e.to_string()))?;
+    let existing_credentials_json = format!("[{passkey_json}]");
+
+    let result = pv_provider::get_provider_assertion(request_json, origin, &existing_credentials_json)
+        .map_err(|e| to_js_str_err(&e.to_string()))?;
+
+    let updated_encrypted_item_json = match result.updated_passkey_json {
+        Some(updated_json) => {
+            let encrypted = core_encrypt_item(&uk.0, updated_json.as_bytes(), item_id, revision + 1)
+                .map_err(to_js_err)?;
+            Some(serde_json::to_string(&encrypted).map_err(|e| to_js_str_err(&e.to_string()))?)
+        }
+        None => None,
+    };
+
+    Ok(WasmGetProviderResult {
+        credential_response_json: result.credential_response_json,
+        updated_encrypted_item_json,
+    })
+}
+
 /// Generuje bieżący kod TOTP (RFC 6238) z sekretu itemu — nieprzezroczysty
 /// handle NIE jest tu potrzebny (patrz komentarz na górze pliku): sekret
 /// TOTP nie jest materiałem kluczowym najwyższego rzędu, tylko wartością
@@ -493,5 +611,102 @@ mod tests {
         let _imported =
             import_user_key_from_session(&mut exported).expect("import should succeed");
         assert!(exported.iter().all(|&b| b == 0));
+    }
+
+    // --- Task 2 (12-01): provider ceremony bindings -----------------------
+
+    fn provider_base64url(bytes: &[u8]) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    }
+
+    fn provider_fixture_create_request(rp_id: &str) -> String {
+        serde_json::json!({
+            "publicKey": {
+                "rp": { "id": rp_id, "name": "Example" },
+                "user": {
+                    "id": provider_base64url(&[1u8; 16]),
+                    "name": "user@example.com",
+                    "displayName": "User",
+                },
+                "challenge": provider_base64url(&[2u8; 16]),
+                "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
+            }
+        })
+        .to_string()
+    }
+
+    fn provider_fixture_get_request(rp_id: &str) -> String {
+        serde_json::json!({
+            "publicKey": {
+                "challenge": provider_base64url(&[3u8; 16]),
+                "rpId": rp_id,
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn wasm_create_then_get_roundtrip() {
+        let uk = WasmUserKey::generate();
+        let request_json = provider_fixture_create_request("example.com");
+        let result =
+            wasm_create_provider_credential(&uk, &request_json, "https://example.com", "item-1")
+                .expect("wasm_create_provider_credential should succeed");
+
+        // encrypted_item_json decrypts via the EXISTING decrypt_item
+        // binding back to the plaintext Passkey mirror JSON.
+        let plaintext_json = decrypt_item(&uk, &result.encrypted_item_json(), "item-1", 1)
+            .expect("decrypt_item should succeed");
+        let plaintext: serde_json::Value = serde_json::from_str(&plaintext_json).unwrap();
+        let credential_id_bytes: Vec<u8> = plaintext["credential_id"]
+            .as_array()
+            .expect("credential_id must be a JSON array")
+            .iter()
+            .map(|v| v.as_u64().expect("credential_id byte must be a number") as u8)
+            .collect();
+
+        // Consistent with (same credential id as) credential_response_json.
+        let response: serde_json::Value =
+            serde_json::from_str(&result.credential_response_json()).unwrap();
+        let response_id_b64 = response["id"].as_str().expect("id must be a string");
+        use base64::Engine;
+        let response_id_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(response_id_b64)
+            .expect("id must be valid base64url");
+        assert_eq!(credential_id_bytes, response_id_bytes);
+
+        // WasmCreateProviderResult exposes ONLY credential_response_json()/
+        // encrypted_item_json() (see this struct's definition above) — no
+        // method/field returns raw private-key bytes or the intermediate
+        // plaintext Passkey JSON (`new_passkey_json` never leaves
+        // wasm_create_provider_credential's body as anything but ciphertext,
+        // enforced by this file's struct definition + the PROV-05 grep audit).
+    }
+
+    #[test]
+    fn wasm_get_assertion_from_encrypted_item() {
+        let uk = WasmUserKey::generate();
+        let request_json = provider_fixture_create_request("example.com");
+        let create_result =
+            wasm_create_provider_credential(&uk, &request_json, "https://example.com", "item-1")
+                .expect("wasm_create_provider_credential should succeed");
+
+        let get_request_json = provider_fixture_get_request("example.com");
+        let get_result = wasm_get_provider_assertion(
+            &uk,
+            &get_request_json,
+            "https://example.com",
+            &create_result.encrypted_item_json(),
+            "item-1",
+            1,
+        )
+        .expect("wasm_get_provider_assertion should succeed");
+
+        let created: serde_json::Value =
+            serde_json::from_str(&create_result.credential_response_json()).unwrap();
+        let asserted: serde_json::Value =
+            serde_json::from_str(&get_result.credential_response_json()).unwrap();
+        assert_eq!(created["id"], asserted["id"]);
     }
 }

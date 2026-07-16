@@ -22,6 +22,10 @@ import init, {
   encryptItem,
   decryptItem,
   totpNow as wasmTotpNow,
+  wasmCreateProviderCredential,
+  wasmGetProviderAssertion,
+  WasmCreateProviderResult,
+  WasmGetProviderResult,
 } from "./wasm/pv_wasm.js";
 
 // Both WasmWrappingKey and WasmUserKey are re-exported as VALUES (not just
@@ -59,6 +63,20 @@ export { decryptItem };
 // encrypt-then-persist flow. Only ciphertext/plaintext strings cross this
 // choke-point, never raw key bytes.
 export { encryptItem };
+
+// Plan 12-01's provider-ceremony.ts (12-02) needs the two passkey-provider
+// ceremony bindings -- wasmCreateProviderCredential/wasmGetProviderAssertion
+// wrap pv-provider's passkey-rs soft authenticator + this crate's existing
+// encryptItem/decryptItem so the newly-created/read passkey's plaintext
+// private key material never crosses this boundary as anything but the
+// already-encrypted item JSON (T-12-01; grep-auditable at the pv-wasm source
+// level -- see crates/pv-wasm/src/lib.rs's own header comment). Their result
+// types (WasmCreateProviderResult/WasmGetProviderResult) are re-exported
+// alongside so callers can use their getter methods
+// (credentialResponseJson/encryptedItemJson,
+// credentialResponseJson/updatedEncryptedItemJson) without a separate import.
+export { wasmCreateProviderCredential, wasmGetProviderAssertion };
+export { WasmCreateProviderResult, WasmGetProviderResult };
 
 // Plan 10-04's autofill-match.ts needs the live TOTP derivation entry
 // point -- mirrors web/src/lib/crypto/index.ts's own totpNow wrapper
