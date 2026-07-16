@@ -328,7 +328,7 @@ describe("Test 8: D-11 popup login relaxation (11-06, Bartek 2026-07-16)", () =>
 
     expect(result.pageState).toBe("ok");
     expect(result.matches).toEqual([
-      { itemId: "item-1", kind: "login", label: "Login item-1", maskedHint: "u***@example.com" },
+      { itemId: "item-1", kind: "login", label: "Login item-1", maskedHint: "user@example.com" },
     ]);
   });
 

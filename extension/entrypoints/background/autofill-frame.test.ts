@@ -146,7 +146,7 @@ describe("handleMatchFrame", () => {
 
     expect(result.pageState).toBe("ok");
     expect(result.matches).toEqual([
-      { itemId: "item-1", kind: "login", label: "Login item-1", maskedHint: "u***@example.com" },
+      { itemId: "item-1", kind: "login", label: "Login item-1", maskedHint: "user@example.com" },
     ]);
   });
 

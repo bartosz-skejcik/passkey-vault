@@ -90,16 +90,11 @@ async function resolveActiveTarget(): Promise<
   return resolveFillTarget({ tabId: tab.id, tabUrl: tab.url });
 }
 
-/** "••••1234" for a card, "j***@example.com" for an email-shaped login
- * username or identity email -- never a live credential value (D-02). */
-function maskEmailOrText(value: string): string {
-  const at = value.indexOf("@");
-  if (at > 0) {
-    return `${value[0]}***${value.slice(at)}`;
-  }
-  return value.length <= 2 ? "***" : `${value[0]}***`;
-}
-
+/** "••••1234" for a card; the FULL username/email for login and identity
+ * rows (Bartek, live-review 2026-07-16: "musze widziec to" — a username/
+ * email is metadata the popup already shows in full in the Wszystkie list
+ * and the in-page rows live in a closed shadow root the page cannot read;
+ * the datum that is never surfaced remains the password itself, D-02). */
 function maskCardNumber(number: string): string {
   const digits = number.replace(/\D/g, "");
   const last4 = digits.slice(-4);
@@ -109,11 +104,11 @@ function maskCardNumber(number: string): string {
 export function maskedHintFor(item: VaultItem): string {
   switch (item.fields.type) {
     case "login":
-      return maskEmailOrText(item.fields.username);
+      return item.fields.username;
     case "card":
       return maskCardNumber(item.fields.number);
     case "identity":
-      return maskEmailOrText(item.fields.email);
+      return item.fields.email;
     default:
       return "";
   }
