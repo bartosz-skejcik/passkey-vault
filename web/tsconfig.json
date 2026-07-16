@@ -25,6 +25,9 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "pv-ui/generator/*": [
+        "../packages/pv-ui/generator/*"
       ]
     }
   },

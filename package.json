@@ -1,0 +1,5 @@
+{
+  "name": "passkey-vault",
+  "private": true,
+  "description": "Monorepo root. web/ and extension/ each remain independent npm projects (own package-lock.json, own build pipeline) -- they consume packages/pv-ui via a `file:` dependency, not npm/yarn workspaces. See .planning/phases/11-generate-capture/11-07-SUMMARY.md for the mechanism-choice rationale (D-13)."
+}

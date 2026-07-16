@@ -1,0 +1,65 @@
+/* packages/pv-ui/tokens.css — the SINGLE source of truth for the
+   vault-dark/vault-light OKLCH token set (D-13). Consumed as:
+   - web/src/app/globals.css: `@import "pv-ui/tokens.css";` inside the
+     Tailwind v4 + DaisyUI 5 pipeline.
+   - extension/entrypoints/popup/style.css: the same `@import`, same
+     pipeline (Tailwind v4's @tailwindcss/postcss resolves bare package
+     specifiers in `@import` through node_modules, the same way
+     `@import "tailwindcss"` itself resolves).
+   - (plan 11-08) in-page shadow-DOM surfaces: this file's raw CSS text,
+     fetched/inlined directly into a closed shadow root — no build step
+     required to consume it, which is exactly why this file is plain CSS
+     custom properties rather than a DaisyUI `@plugin "daisyui/theme"`
+     at-rule (that at-rule requires the DaisyUI PostCSS plugin to expand;
+     the shape below is EXACTLY what that plugin expands it to, verified
+     by diffing this file's selectors/values against `next build`'s
+     compiled output for web/'s ORIGINAL globals.css before this
+     extraction — `:root, [data-theme="vault-dark"]` carries every OKLCH
+     token as the default theme, `[data-theme="vault-light"]` overrides
+     only `color-scheme` + the three `base-*`/`base-content` tokens and
+     inherits primary/secondary/accent/neutral/semantic/radius/border
+     from `:root` via normal CSS custom-property cascade — this is NOT a
+     simplification, it is what DaisyUI itself generates for a
+     `default: true` theme plus a non-default theme that only overrides a
+     subset).
+
+   DaisyUI's OWN plugin (`@plugin "daisyui";`, kept in globals.css/
+   style.css) still supplies the component classes (`btn`, `card`, ...)
+   that read these variables — this file supplies only the variable
+   VALUES, so it must always be imported alongside `@plugin "daisyui";`,
+   never as a full replacement for it. */
+
+:root,
+[data-theme="vault-dark"] {
+  color-scheme: dark;
+  --color-primary: oklch(65.31% 0.1637 37.22);
+  --color-primary-content: oklch(100% 0 0);
+  --color-secondary: oklch(82.36% 0.0962 242.82);
+  --color-accent: oklch(74.51% 0.167 183.61);
+  --color-neutral: oklch(42.02% 0 0);
+  --color-base-100: oklch(26.86% 0 0);
+  --color-base-200: oklch(24.78% 0 0);
+  --color-base-300: oklch(23.93% 0 0);
+  --color-base-content: oklch(89.80% 0.0017 67.80);
+  --color-info: oklch(72.06% 0.191 231.6);
+  --color-success: oklch(64.80% 0.150 160);
+  --color-warning: oklch(84.71% 0.199 83.87);
+  --color-error: oklch(71.76% 0.221 22.18);
+  --radius-box: 1rem;
+  --radius-field: 0.5rem;
+  --radius-selector: 1.9rem;
+  --border: 1px;
+}
+
+[data-theme="vault-light"] {
+  color-scheme: light;
+  --color-base-100: oklch(100% 0 0);
+  --color-base-200: oklch(98.86% 0.0017 67.80);
+  --color-base-300: oklch(93% 0.004 67.80);
+  --color-base-content: oklch(26.86% 0 0);
+  /* primary/secondary/accent/semantic/radius/border tokens are
+     intentionally NOT redeclared here — they inherit from the
+     `:root` rule above via normal CSS custom-property cascade, since
+     OKLCH hue/chroma is theme-invariant per UI-SPEC.md's Color section
+     (verified against compiled DaisyUI output, see header comment). */
+}
