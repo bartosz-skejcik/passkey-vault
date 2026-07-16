@@ -16,6 +16,13 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock("wxt/browser", () => ({
   browser: {
+    // `runtime.id`/`getURL` are only exercised via the cross-import of
+    // `handleMatchFrame` (autofill-frame.ts) in Test 8's overlay-pinning
+    // case below -- handleAutofillMatch itself never touches `runtime`.
+    runtime: {
+      id: "test-ext-id",
+      getURL: (p: string) => `chrome-extension://test-ext-id/${p}`,
+    },
     tabs: {
       query: hoisted.mockTabsQuery,
       sendMessage: hoisted.mockTabsSendMessage,
@@ -36,6 +43,7 @@ vi.mock("../../lib/crypto/wasm-loader", () => ({
 }));
 
 import { handleAutofillFill, handleAutofillMatch, handleAutofillTotpCode } from "./autofill-match";
+import { handleMatchFrame } from "./autofill-frame";
 import type { VaultItem } from "../../lib/vault/types";
 
 const POPUP_SENDER = {
@@ -64,7 +72,7 @@ function loginItem(id: string, urls: string[], username = "user@example.com"): V
   };
 }
 
-function totpItem(id: string, secret = "JBSWY3DPEHPK3PXP"): VaultItem {
+function totpItem(id: string, secret = "JBSWY3DPEHPK3PXP", issuer = ""): VaultItem {
   return {
     id,
     revision: 1,
@@ -74,7 +82,7 @@ function totpItem(id: string, secret = "JBSWY3DPEHPK3PXP"): VaultItem {
       folderId: null,
       tags: [],
       secret,
-      issuer: "",
+      issuer,
       algorithm: "SHA1",
       digits: 6,
       period: 30,
@@ -82,6 +90,54 @@ function totpItem(id: string, secret = "JBSWY3DPEHPK3PXP"): VaultItem {
     },
   };
 }
+
+function cardItem(id: string): VaultItem {
+  return {
+    id,
+    revision: 1,
+    fields: {
+      type: "card",
+      name: `Card ${id}`,
+      folderId: null,
+      tags: [],
+      cardholderName: "Jane Doe",
+      number: "4111111111111111",
+      expiry: "12/30",
+      cvv: "123",
+      notes: "",
+    },
+  };
+}
+
+function identityItem(id: string): VaultItem {
+  return {
+    id,
+    revision: 1,
+    fields: {
+      type: "identity",
+      name: `Identity ${id}`,
+      folderId: null,
+      tags: [],
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@example.com",
+      phone: "",
+      address: "",
+      notes: "",
+    },
+  };
+}
+
+// Genuine content-script sender shape (mirrors autofill-frame.test.ts's own
+// CONTENT_SENDER fixture) -- only used by Test 8's overlay-pinning case
+// below, which cross-imports handleMatchFrame to prove the relaxation this
+// plan adds to handleAutofillMatch does NOT leak into the overlay channel.
+const CONTENT_SENDER = {
+  id: "test-ext-id",
+  tab: { id: 7 },
+  origin: "https://bank.example",
+  frameId: 0,
+} as never;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -256,5 +312,89 @@ describe("Test 7: idle-kill rehydration", () => {
 
     expect(result).toEqual({ ok: true });
     expect(hoisted.mockEnsureHydrated).toHaveBeenCalled();
+  });
+});
+
+describe("Test 8: D-11 popup login relaxation (11-06, Bartek 2026-07-16)", () => {
+  it("login item, origin matches, detected.login is false (page has no login form) -- still included", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockTabsQuery.mockResolvedValue([{ id: 1, url: "https://bank.example/dashboard" }]);
+    hoisted.mockTabsSendMessage.mockResolvedValue({
+      detected: { login: false, totp: false, card: false, identity: false },
+    });
+    hoisted.mockGetItems.mockReturnValue([loginItem("item-1", ["https://bank.example/x"])]);
+
+    const result = await handleAutofillMatch(POPUP_SENDER);
+
+    expect(result.pageState).toBe("ok");
+    expect(result.matches).toEqual([
+      { itemId: "item-1", kind: "login", label: "Login item-1", maskedHint: "u***@example.com" },
+    ]);
+  });
+
+  it("card item is still excluded when detected.card is false -- cards are not origin-bound, so relaxing them would surface every card everywhere", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockTabsQuery.mockResolvedValue([{ id: 1, url: "https://shop.example/dashboard" }]);
+    hoisted.mockTabsSendMessage.mockResolvedValue({
+      detected: { login: false, totp: false, card: false, identity: false },
+    });
+    hoisted.mockGetItems.mockReturnValue([cardItem("card-1")]);
+
+    const result = await handleAutofillMatch(POPUP_SENDER);
+
+    expect(result.matches).toEqual([]);
+  });
+
+  it("identity item is still excluded when detected.identity is false -- same non-origin-bound rationale as cards", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockTabsQuery.mockResolvedValue([{ id: 1, url: "https://shop.example/dashboard" }]);
+    hoisted.mockTabsSendMessage.mockResolvedValue({
+      detected: { login: false, totp: false, card: false, identity: false },
+    });
+    hoisted.mockGetItems.mockReturnValue([identityItem("identity-1")]);
+
+    const result = await handleAutofillMatch(POPUP_SENDER);
+
+    expect(result.matches).toEqual([]);
+  });
+
+  it("totp item with a matching issuer is still excluded when detected.totp is false -- the 10-08 policy (issuer-match AND detected.totp) is unchanged", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockTabsQuery.mockResolvedValue([{ id: 1, url: "https://github.com/dashboard" }]);
+    hoisted.mockTabsSendMessage.mockResolvedValue({
+      detected: { login: false, totp: false, card: false, identity: false },
+    });
+    hoisted.mockGetItems.mockReturnValue([totpItem("totp-1", "JBSWY3DPEHPK3PXP", "GitHub")]);
+
+    const result = await handleAutofillMatch(POPUP_SENDER);
+
+    expect(result.matches).toEqual([]);
+  });
+
+  it("unreachable content-relay still returns empty matches -- this plan never fabricates reachability, only relaxes the 'detect ran, nothing login-shaped found' case", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockTabsQuery.mockResolvedValue([{ id: 1, url: "https://bank.example/dashboard" }]);
+    hoisted.mockTabsSendMessage.mockRejectedValue(new Error("no receiver"));
+    hoisted.mockGetItems.mockReturnValue([loginItem("item-1", ["https://bank.example/x"])]);
+
+    const result = await handleAutofillMatch(POPUP_SENDER);
+
+    expect(result.pageState).toBe("unreachable");
+    expect(result.matches).toEqual([]);
+  });
+
+  it("overlay channel (handleMatchFrame, autofill-frame.ts) is UNCHANGED by this plan -- a login item is still excluded when the caller's own detected.login is false", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([loginItem("item-1", ["https://bank.example/x"])]);
+
+    const result = await handleMatchFrame(
+      {
+        kind: "autofill.matchFrame",
+        detected: { login: false, totp: false, card: false, identity: false },
+      },
+      CONTENT_SENDER,
+    );
+
+    expect(result.matches).toEqual([]);
   });
 });
