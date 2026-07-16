@@ -232,7 +232,18 @@ export type Message =
   // interprets the shape itself (12-PATTERNS.md), only
   // provider-ceremony.ts (Task 2) does.
   | { kind: "credentials.create"; publicKey: unknown }
-  | { kind: "credentials.get"; publicKey: unknown };
+  | { kind: "credentials.get"; publicKey: unknown }
+  // Phase 12 (Plan 12-04, deviation -- see SUMMARY): popup -> background,
+  // the multi-match credentials.get() picker's confirm/decline (D-11) AND
+  // ProviderCeremonyView's dismissal-as-decline path. Unlike
+  // credentials.create/credentials.get above, this is POPUP-driven (routed
+  // through isProtocolMessage()/handle(), the WR-01-gated channel), not
+  // content-frame-driven -- it is the ONLY way to unblock
+  // provider-ceremony.ts's resolvePasskeyChoice() awaited Promise from
+  // outside that module, since a background service-worker function cannot
+  // be called directly from the popup's separate JS execution context.
+  // `itemId: null` is an explicit decline.
+  | { kind: "provider.resolveChoice"; requestId: string; itemId: string | null };
 
 /**
  * Phase 11 (Plan 11-01): the character-class selection shape shared by
@@ -325,6 +336,10 @@ export interface MessageResponseMap {
   // return type can never drift apart.
   "credentials.create": CreateRpcResponse;
   "credentials.get": GetRpcResponse;
+  // Phase 12 (Plan 12-04, deviation): fire-and-forget from the popup's
+  // point of view -- resolveProviderCredentialChoice() itself returns
+  // void, so this is always a simple ack.
+  "provider.resolveChoice": { ok: true };
 }
 
 export type MessageOf<K extends Message["kind"]> = Extract<Message, { kind: K }>;

@@ -304,6 +304,13 @@ async function resolvePasskeyChoice(
   await browser.storage.session.set({
     [PENDING_CEREMONY_KEY]: {
       requestId,
+      // Plan 12-04 (Rule 2 fix): the popup's multi-match consent screen
+      // must show WHICH site is asking (12-UI-SPEC.md's
+      // signinBodyMultiple `{site}` interpolation) -- omitting it would
+      // defeat the anti-phishing point of a WebAuthn RP-scoped consent
+      // screen. All `candidates` share the same rpId by construction
+      // (findMatchingPasskeyItems filters on a single rpId).
+      rpId: candidates[0]?.fields.rpId ?? "",
       candidates: candidates.map((c) => ({
         itemId: c.item.id,
         label: c.fields.username ?? c.fields.rpId,

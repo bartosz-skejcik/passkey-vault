@@ -23,6 +23,7 @@ const hoisted = vi.hoisted(() => ({
   mockAssertContentSender: vi.fn(),
   mockHandleCredentialsCreate: vi.fn(),
   mockHandleCredentialsGet: vi.fn(),
+  mockResolveProviderCredentialChoice: vi.fn(),
   listeners: [] as Array<(m: unknown, s: unknown, r: unknown) => unknown>,
 }));
 
@@ -94,6 +95,7 @@ vi.mock("./generate-handler", () => ({
 vi.mock("./provider-ceremony", () => ({
   handleCredentialsCreate: hoisted.mockHandleCredentialsCreate,
   handleCredentialsGet: hoisted.mockHandleCredentialsGet,
+  resolveProviderCredentialChoice: hoisted.mockResolveProviderCredentialChoice,
 }));
 
 import { registerAutofillFrameChannel, registerMessageRouter } from "./router";
@@ -413,6 +415,32 @@ describe("credentials.create / credentials.get content-frame dispatch", () => {
     );
     expect(popupResult).toBeUndefined();
     expect(hoisted.mockHandleCredentialsCreate).not.toHaveBeenCalled();
+  });
+
+  // Phase 12 (Plan 12-04, deviation): unlike credentials.create/get,
+  // provider.resolveChoice IS handled by the popup router (handle()) --
+  // it's the popup->background direction, gated by the SAME WR-01
+  // addListener check as every other popup-facing kind (registerMessageRouter's
+  // top-level beforeEach already sets that channel up).
+  it("provider.resolveChoice: dispatches to resolveProviderCredentialChoice for a same-extension-origin (popup) sender", async () => {
+    const result = await send({
+      kind: "provider.resolveChoice",
+      requestId: "req-1",
+      itemId: "item-1",
+    });
+
+    expect(hoisted.mockResolveProviderCredentialChoice).toHaveBeenCalledWith("req-1", "item-1");
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("provider.resolveChoice: a content-script sender is refused by the popup router's WR-01 gate, never reaches resolveProviderCredentialChoice", async () => {
+    const popupResult = hoisted.listeners[0](
+      { kind: "provider.resolveChoice", requestId: "req-1", itemId: null },
+      CONTENT_SENDER,
+      vi.fn(),
+    );
+    expect(popupResult).toBeUndefined();
+    expect(hoisted.mockResolveProviderCredentialChoice).not.toHaveBeenCalled();
   });
 
   it("an unrecognized kind still falls through both dispatch chains unmodified -- no regression against existing phase 9-11 kinds", async () => {

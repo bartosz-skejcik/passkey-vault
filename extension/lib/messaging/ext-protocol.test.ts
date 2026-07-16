@@ -108,6 +108,15 @@ const MESSAGE_FIXTURES: MessageFixtureMap = {
     kind: "credentials.get",
     publicKey: { rpId: "example.com", challenge: "Y2hhbGxlbmdl" },
   },
+  // Phase 12 (Plan 12-04, deviation): popup -> background, no binary
+  // fields -- `itemId: null` (explicit decline) round-trips through JSON
+  // as `null`, not `undefined`, so it survives this gate identically to
+  // the selection case.
+  "provider.resolveChoice": {
+    kind: "provider.resolveChoice",
+    requestId: "req-1",
+    itemId: "item-1",
+  },
 };
 
 type ResponseFixtureMap = { [K in Message["kind"]]: MessageResponseMap[K] };
@@ -192,6 +201,7 @@ const RESPONSE_FIXTURES: ResponseFixtureMap = {
     fallthrough: false,
     credentialResponseJson: '{"id":"cred-1","type":"public-key"}',
   },
+  "provider.resolveChoice": { ok: true },
 };
 
 describe("Message JSON-transport safety (Chrome MV3 sendMessage stand-in)", () => {

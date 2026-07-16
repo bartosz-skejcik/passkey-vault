@@ -86,7 +86,11 @@ import { getItems, getFolders, ensureItemsHydrated, RevisionConflictError } from
 import { handleAutofillFill, handleAutofillMatch, handleAutofillTotpCode } from "./autofill-match";
 import { handleFillFrame, handleMatchFrame, assertContentSender } from "./autofill-frame";
 import { handleGenerateRequest } from "./generate-handler";
-import { handleCredentialsCreate, handleCredentialsGet } from "./provider-ceremony";
+import {
+  handleCredentialsCreate,
+  handleCredentialsGet,
+  resolveProviderCredentialChoice,
+} from "./provider-ceremony";
 import {
   classifySubmit,
   confirmNewLogin,
@@ -419,7 +423,11 @@ function isProtocolMessage(message: unknown): message is Message {
     kind === "config.set" ||
     kind === "autofill.match" ||
     kind === "autofill.fill" ||
-    kind === "autofill.totpCode"
+    kind === "autofill.totpCode" ||
+    // Phase 12 (Plan 12-04, deviation -- see SUMMARY): popup-driven, unlike
+    // credentials.create/credentials.get (content-frame-only, above this
+    // list is irrelevant to those). This IS one of this router's own kinds.
+    kind === "provider.resolveChoice"
   );
 }
 
@@ -487,6 +495,14 @@ async function handle(message: Message, sender: MessageSender): Promise<unknown>
       return handleAutofillFill(message, sender);
     case "autofill.totpCode":
       return handleAutofillTotpCode(message, sender);
+    case "provider.resolveChoice":
+      // Plan 12-04 (deviation): resolveProviderCredentialChoice() itself
+      // is synchronous/void (provider-ceremony.ts) -- it just unblocks
+      // resolvePasskeyChoice()'s awaited Promise; there is nothing to
+      // await or fail here beyond an unknown/already-resolved requestId,
+      // which resolveProviderCredentialChoice already no-ops on.
+      resolveProviderCredentialChoice(message.requestId, message.itemId);
+      return { ok: true as const };
     default:
       throw new Error(`unhandled message kind: ${(message as { kind: string }).kind}`);
   }
