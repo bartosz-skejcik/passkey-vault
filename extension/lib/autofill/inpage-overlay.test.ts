@@ -376,6 +376,79 @@ describe("renderFieldDropdown", () => {
   });
 });
 
+describe("11-09: scrollable account lists (Bartek live-bug 2026-07-16, >4 accounts unreachable)", () => {
+  function sixMatches(): AutofillMatch[] {
+    return Array.from({ length: 6 }, (_, i) => ({
+      itemId: `item-${i}`,
+      kind: "login" as const,
+      label: `Account ${i}`,
+      maskedHint: `user${i}@example.com`,
+    }));
+  }
+
+  it("Test 13: the prompt window's row list renders ALL 6 matches in the DOM (not truncated) with the scroll container's own styling applied", () => {
+    const { controller } = makeController();
+    controller.renderFormPrompt(sixMatches());
+
+    const shadow = __getShadowRootForTests(controller.host)!;
+    const list = shadow.querySelector(".pv-list") as HTMLElement;
+    expect(list).not.toBeNull();
+    expect(list.querySelectorAll("[data-pv-row]").length).toBe(6);
+
+    // The header stays a separate, pinned sibling OUTSIDE the scroll
+    // container -- never swallowed into .pv-list alongside the rows.
+    const panel = shadow.querySelector('[data-pv-surface="prompt"]') as HTMLElement;
+    expect(panel.querySelector(".pv-header")).not.toBeNull();
+    expect(panel.querySelector(".pv-header")?.contains(list)).toBe(false);
+  });
+
+  it("Test 14: the in-field dropdown's row list also renders ALL 6 matches, same scroll container class", () => {
+    const anchor = anchorWithRect();
+    const { controller } = makeController();
+    controller.renderFieldDropdown(anchor, sixMatches());
+
+    const shadow = __getShadowRootForTests(controller.host)!;
+    const panel = shadow.querySelector('[data-pv-surface="dropdown"]') as HTMLElement;
+    const list = panel.querySelector(".pv-list") as HTMLElement;
+    expect(list).not.toBeNull();
+    expect(list.querySelectorAll("[data-pv-row]").length).toBe(6);
+    expect(panel.querySelector(".pv-header")).not.toBeNull();
+  });
+
+  it("Test 15: the shared stylesheet gives .pv-list a bounded max-height + overflow-y:auto (the actual scroll mechanism) and a token-based scrollbar color, not a literal", () => {
+    const { controller } = makeController();
+    const shadow = __getShadowRootForTests(controller.host)!;
+    const styleEls = shadow.querySelectorAll("style");
+    const overlayCss = Array.from(styleEls)
+      .map((el) => el.textContent ?? "")
+      .find((css) => css.includes(".pv-list"))!;
+
+    expect(overlayCss).toMatch(/\.pv-list\s*\{[^}]*max-height:\s*270px/);
+    expect(overlayCss).toMatch(/\.pv-list\s*\{[^}]*overflow-y:\s*auto/);
+    expect(overlayCss).toContain("scrollbar-color");
+    expect(overlayCss).toMatch(/var\(--color-base-content\)/);
+    controller.destroy();
+  });
+
+  function anchorWithRect(): HTMLInputElement {
+    const anchor = document.createElement("input");
+    document.body.appendChild(anchor);
+    anchor.getBoundingClientRect = () =>
+      ({
+        top: 100,
+        left: 50,
+        right: 250,
+        bottom: 130,
+        width: 200,
+        height: 30,
+        x: 50,
+        y: 100,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    return anchor;
+  }
+});
+
 describe("controller does not hold or leak a live credential value", () => {
   it("Test 8: the only channel any data leaves through is onPick(itemId, kind) -- no value argument exists on that callback", () => {
     const { controller, onPick } = makeController();
