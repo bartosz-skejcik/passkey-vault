@@ -79,19 +79,57 @@ interface AllowsFeatureApi {
   allowsFeature(feature: string): boolean;
 }
 
+/** Minimal window-shape this file actually reads for the WR-01
+ * delegation-aware fallback -- `top`/`self` compared by identity,
+ * `location.origin` read only for the (same-origin) frame itself; `top`'s
+ * `.location.origin` is read defensively inside a try/catch since a real
+ * cross-origin ancestor throws a `SecurityError` on that access. */
+interface FrameContext {
+  top: unknown;
+  self: unknown;
+  location: { origin: string };
+}
+
+/** WR-01 fix (12-REVIEW.md, Plan 12-05): when neither detection API is
+ * available, apply the delegation-aware default for
+ * `publickey-credentials-create`/`-get` instead of a blanket fail-open --
+ * per the Permissions-Policy spec, both features' default allowlist is
+ * `"self"`, meaning only the TOP-level document and any SAME-ORIGIN
+ * descendant frame have the feature by default; a cross-origin sub-frame
+ * does NOT. Returns `false` (not blocked) for the top-level frame or a
+ * same-origin sub-frame; `true` (blocked) for a cross-origin sub-frame
+ * (including one where merely READING `top.location.origin` throws --
+ * exactly what a real cross-origin ancestor does per spec, and itself
+ * proof the frame is cross-origin). */
+function isBlockedByDelegationDefault(frame: FrameContext): boolean {
+  if (frame.top === frame.self) {
+    return false; // top-level document -- always has the feature.
+  }
+  try {
+    const top = frame.top as { location?: { origin?: unknown } } | null | undefined;
+    return top?.location?.origin !== frame.location.origin;
+  } catch {
+    return true; // cross-origin access threw -- definitely not same-origin.
+  }
+}
+
 /**
  * D-20(b): respects `Permissions-Policy: publickey-credentials-create/get`
  * BEFORE brokering a ceremony -- silently brokering past a page's own
  * Permissions-Policy is exactly the 1Password-wrapper vulnerability class
  * (Scott Helme 2024/25). Tries the current `document.permissionsPolicy`
- * API first, falls back to the older `document.featurePolicy`, and FAILS
- * OPEN (returns `false`, i.e. "not blocked") when neither detection API
- * exists in this context -- the browser's own native
- * `navigator.credentials.create/get` call still enforces the real policy
- * for us if one applies; failing closed here would incorrectly refuse a
- * working relying party on any browser without this detection surface.
+ * API first, falls back to the older `document.featurePolicy`, and -- WR-01
+ * fix -- applies `isBlockedByDelegationDefault` (never a blanket
+ * fail-open) when neither detection API exists in this context OR the
+ * query itself throws. `frame` defaults to the real `window` in production;
+ * exported (this file's only named export, D-02 -- no new import surface)
+ * SOLELY so tests can simulate a sub-frame/cross-origin-top scenario
+ * without needing to redefine jsdom's own non-configurable `window.top`.
  */
-function isPermissionsPolicyBlocked(kind: "create" | "get"): boolean {
+export function isPermissionsPolicyBlocked(
+  kind: "create" | "get",
+  frame: FrameContext = window,
+): boolean {
   const feature = PERMISSIONS_POLICY_FEATURE[kind];
   try {
     const doc = document as unknown as {
@@ -105,9 +143,10 @@ function isPermissionsPolicyBlocked(kind: "create" | "get"): boolean {
       return doc.featurePolicy.allowsFeature(feature) === false;
     }
   } catch {
-    // Detection itself failed -- fail open, see doc comment above.
+    // Detection itself failed -- fall through to the delegation-aware
+    // default below, same as "neither API exists".
   }
-  return false;
+  return isBlockedByDelegationDefault(frame);
 }
 
 /** Sends the ceremony request to content-relay.content.ts and awaits a

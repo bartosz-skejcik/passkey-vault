@@ -28,7 +28,7 @@
 // the native mock).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import pageBridgeDefinition from "../page-bridge.content";
+import pageBridgeDefinition, { isPermissionsPolicyBlocked } from "../page-bridge.content";
 import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../../lib/messaging/page-protocol";
 
 // `defineContentScript`'s return type is the full ContentScriptDefinition
@@ -142,6 +142,58 @@ describe("D-20(b): Permissions-Policy respected before brokering", () => {
     expect(result).toEqual({ id: "native-get-result" });
     expect(nativeGet).toHaveBeenCalledTimes(1);
     expect(postSpy).not.toHaveBeenCalled();
+  });
+});
+
+// WR-01 fix (12-REVIEW.md, Plan 12-05): when NEITHER `document.permissionsPolicy`
+// nor `document.featurePolicy` exists (routine on Firefox, and the state of
+// every test above that doesn't explicitly stub one), the OLD code
+// blanket-returned "not blocked" -- silently a no-op for D-20(b) on the
+// entire Firefox surface. `isPermissionsPolicyBlocked` now takes an
+// optional frame-context override (production always uses the real
+// `window`) so this suite can simulate a sub-frame/cross-origin-top
+// scenario without needing to redefine jsdom's own non-configurable
+// `window.top`.
+describe("WR-01: delegation-aware default when neither detection API exists", () => {
+  it("top-level frame (window.top === window.self): fails open (not blocked) -- preserves the pre-fix top-level behavior", () => {
+    // No frame argument -- exercises the REAL `window` default, which in
+    // jsdom's single-window test environment is always top-level.
+    expect(isPermissionsPolicyBlocked("get")).toBe(false);
+  });
+
+  it("sub-frame, SAME-origin with top: not blocked (Permissions-Policy's default allowlist for these two features is 'self')", () => {
+    const fakeTop = { location: { origin: location.origin } };
+    const fakeSelf = {};
+    expect(
+      isPermissionsPolicyBlocked("get", { top: fakeTop, self: fakeSelf, location: { origin: location.origin } }),
+    ).toBe(false);
+  });
+
+  it("sub-frame, CROSS-origin with top: BLOCKED -- closes D-20(b)'s Firefox fail-open gap", () => {
+    const fakeTop = { location: { origin: "https://attacker.example" } };
+    const fakeSelf = {};
+    expect(
+      isPermissionsPolicyBlocked("create", {
+        top: fakeTop,
+        self: fakeSelf,
+        location: { origin: location.origin },
+      }),
+    ).toBe(true);
+  });
+
+  it("sub-frame where reading top.location.origin throws (real cross-origin browser behavior): BLOCKED, not a crash", () => {
+    const fakeTop = {
+      get location(): never {
+        throw new DOMException("Blocked a frame with origin from accessing a cross-origin frame.");
+      },
+    };
+    const fakeSelf = {};
+    expect(() =>
+      isPermissionsPolicyBlocked("get", { top: fakeTop, self: fakeSelf, location: { origin: location.origin } }),
+    ).not.toThrow();
+    expect(
+      isPermissionsPolicyBlocked("get", { top: fakeTop, self: fakeSelf, location: { origin: location.origin } }),
+    ).toBe(true);
   });
 });
 
