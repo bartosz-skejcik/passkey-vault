@@ -99,6 +99,7 @@
 import { browser } from "wxt/browser";
 import type { UnlockResult } from "../../entrypoints/background/unlock";
 import type { ExtEnrollStartResult, ExtUnlockResult } from "../../entrypoints/background/ext-passkey";
+import type { CreateRpcResponse, GetRpcResponse } from "../../entrypoints/background/provider-ceremony";
 import type { Folder, VaultItem } from "../vault/types";
 import type { AutofillMatch, DetectedFields, FillKind } from "../autofill/types";
 
@@ -217,7 +218,21 @@ export type Message =
       password: string;
       itemId?: string;
       currentRevision?: number;
-    };
+    }
+  // Phase 12 (Plan 12-02): content-script -> background, dispatched by the
+  // SAME SEPARATE registerAutofillFrameChannel() listener as
+  // autofill.*Frame/generate-request/capture.* above (see header comment).
+  // No origin field, exactly like autofill.matchFrame/generate-request --
+  // the origin is derived from assertContentSender(sender).origin, never
+  // from a caller-supplied field (router.ts, Task 3). `publicKey` is the
+  // RP's spec PublicKeyCredentialCreationOptionsJSON/
+  // PublicKeyCredentialRequestOptionsJSON form -- content-relay.content.ts
+  // (Plan 12-03) base64url-encodes every binary field before this ever
+  // reaches the background (D-21); this thin typed-unknown boundary never
+  // interprets the shape itself (12-PATTERNS.md), only
+  // provider-ceremony.ts (Task 2) does.
+  | { kind: "credentials.create"; publicKey: unknown }
+  | { kind: "credentials.get"; publicKey: unknown };
 
 /**
  * Phase 11 (Plan 11-01): the character-class selection shape shared by
@@ -303,6 +318,13 @@ export interface MessageResponseMap {
     item?: { id: string; revision: number };
     message?: string;
   };
+  // Phase 12 (Plan 12-02): response shapes are provider-ceremony.ts's OWN
+  // CreateRpcResponse/GetRpcResponse types (type-only import, mirrors this
+  // file's existing UnlockResult/ExtEnrollStartResult precedent) -- never
+  // redefined here, so the wire contract and the orchestration function's
+  // return type can never drift apart.
+  "credentials.create": CreateRpcResponse;
+  "credentials.get": GetRpcResponse;
 }
 
 export type MessageOf<K extends Message["kind"]> = Extract<Message, { kind: K }>;
