@@ -39,6 +39,22 @@ const hoisted = vi.hoisted(() => ({
   // Empty by default, so every existing test here still sees "not
   // blocked" and exercises the same code paths as before.
   storageStore: new Map<string, unknown>(),
+  // D-12/plan 11-07: captureThemeFromWebApp() is mocked here rather than
+  // exercised for real -- its own actual behavior (enum validation,
+  // MutationObserver live-update, detach) is already fully pinned by
+  // lib/theme/theme-mirror.test.ts. Exercising the REAL implementation
+  // here would install a genuine MutationObserver on
+  // document.documentElement on every test that reaches this gate, and
+  // jsdom's `document` is shared across every `it` block in THIS file (no
+  // per-test environment reset) -- content-relay.content.ts's main() is
+  // deliberately fire-and-forget with no teardown hook (correct for
+  // production: a real content-script instance's whole JS context is
+  // destroyed on navigation), so a leftover observer from an earlier test
+  // would react to a LATER test's own `data-theme` mutations and corrupt
+  // its assertions. Mocking keeps these tests focused on what they're
+  // actually verifying: is captureThemeFromWebApp() called exactly when
+  // isConfiguredServerOrigin() gates it true, and never otherwise.
+  mockCaptureThemeFromWebApp: vi.fn(),
 }));
 
 vi.mock("wxt/browser", () => ({
@@ -64,6 +80,11 @@ vi.mock("wxt/browser", () => ({
   },
 }));
 
+vi.mock("../../lib/theme/theme-mirror", () => ({
+  THEME_MIRROR_KEY: "pv-theme-mirror",
+  captureThemeFromWebApp: hoisted.mockCaptureThemeFromWebApp,
+}));
+
 import contentRelay, { isConfiguredServerOrigin } from "../content-relay.content";
 import type { ContentDetectResponse, ContentFillResponse } from "../../lib/autofill/types";
 
@@ -81,6 +102,7 @@ beforeEach(() => {
   document.body.innerHTML = "";
   hoisted.mockAddListener.mockClear();
   hoisted.storageStore.clear();
+  hoisted.mockCaptureThemeFromWebApp.mockClear();
   // Fresh registration per test, bound to a clean document each time.
   contentRelay.main({} as never);
 });
@@ -190,6 +212,44 @@ describe("content-relay", () => {
     it("Test 9: resolves false (fails closed) on a corrupt/non-URL persisted baseUrl", async () => {
       hoisted.storageStore.set("pv-server-config", { baseUrl: "not a url" });
       await expect(isConfiguredServerOrigin()).resolves.toBe(false);
+    });
+  });
+
+  describe("theme-mirror capture (D-12, plan 11-07)", () => {
+    async function flushMicrotasks(): Promise<void> {
+      await Promise.resolve();
+      await new Promise((resolve) => queueMicrotask(() => resolve(undefined)));
+    }
+
+    it("Test 10: on the user's own configured pv-server web app, captureThemeFromWebApp(document) is invoked", async () => {
+      hoisted.storageStore.set("pv-server-config", { baseUrl: location.origin });
+
+      // Re-run main() -- beforeEach's own call happened before this test
+      // configured storage above, and initThemeCapture() reads
+      // isConfiguredServerOrigin() at call time.
+      contentRelay.main({} as never);
+      await flushMicrotasks();
+
+      expect(hoisted.mockCaptureThemeFromWebApp).toHaveBeenCalledTimes(1);
+      expect(hoisted.mockCaptureThemeFromWebApp).toHaveBeenCalledWith(document);
+    });
+
+    it("Test 11: on a third-party page (not the configured server origin), captureThemeFromWebApp is never invoked", async () => {
+      // No pv-server-config persisted at all -- isConfiguredServerOrigin()
+      // resolves false, same as any ordinary third-party page.
+      contentRelay.main({} as never);
+      await flushMicrotasks();
+
+      expect(hoisted.mockCaptureThemeFromWebApp).not.toHaveBeenCalled();
+    });
+
+    it("Test 12: a blocked/unrelated origin with no server config still never invokes capture", async () => {
+      hoisted.storageStore.set("pv-server-config", { baseUrl: "https://a-different-vault.example.com" });
+
+      contentRelay.main({} as never);
+      await flushMicrotasks();
+
+      expect(hoisted.mockCaptureThemeFromWebApp).not.toHaveBeenCalled();
     });
   });
 });

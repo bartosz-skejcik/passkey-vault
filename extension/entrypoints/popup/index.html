@@ -4,6 +4,12 @@
   entirely with the real popup: React + DaisyUI + Tailwind v4, reusing
   web/'s exact vault-dark/vault-light theme. Fixed 360-400px viewport per
   09-UI-SPEC.md's Popup shell section.
+
+  D-12/plan 11-07: `data-theme` is deliberately NOT hardcoded here anymore
+  -- main.tsx resolves it (mirror -> prefers-color-scheme -> vault-dark,
+  lib/theme/theme-mirror.ts's resolveTheme()) and stamps <body> BEFORE the
+  first ReactDOM render, then keeps it live via watchMirroredTheme(). A
+  hardcoded default here would fight that resolution on every popup open.
 -->
 <html lang="en">
   <head>
@@ -11,7 +17,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Passkey Vault</title>
   </head>
-  <body data-theme="vault-dark" style="width: 380px">
+  <body style="width: 380px">
     <div id="root"></div>
     <script type="module" src="./main.tsx"></script>
   </body>

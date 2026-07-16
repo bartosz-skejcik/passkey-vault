@@ -53,6 +53,7 @@ import {
 import { attachSubmitWatcher, captureFrameOrigin } from "../lib/autofill/submit-capture";
 import { showSaveUpdateToast } from "../lib/autofill/save-update-toast";
 import { showMismatchModal } from "../lib/autofill/mismatch-modal";
+import { captureThemeFromWebApp } from "../lib/theme/theme-mirror";
 import { sendMessage } from "../lib/messaging/ext-protocol";
 import type {
   AutofillMatch,
@@ -224,6 +225,27 @@ function collectFocusableFields(): Map<Element, FillKind> {
   }
 
   return map;
+}
+
+// -----------------------------------------------------------------------
+// Theme-mirror capture (D-12, plan 11-07). Additive to everything above --
+// it never touches content.detect/content.fill's own code path, the
+// in-page affordance's overlay state, or submit-capture below.
+// -----------------------------------------------------------------------
+
+/**
+ * Runs ONLY on the user's own configured pv-server web app -- the SAME
+ * isConfiguredServerOrigin() gate that already suppresses the autofill
+ * overlay/submit-capture there. Capturing the theme is the ONE job this
+ * content script keeps on the vault app itself (D-12: "capture is the one
+ * job the content script keeps on the vault app"). A third-party page
+ * never has this listener attached at all -- there is nothing there for
+ * this extension to mirror the theme OF.
+ */
+async function initThemeCapture(): Promise<void> {
+  if (await isConfiguredServerOrigin()) {
+    captureThemeFromWebApp(document);
+  }
 }
 
 // -----------------------------------------------------------------------
@@ -562,5 +584,6 @@ export default defineContentScript({
 
     void initialMatchAndPrompt();
     void initSubmitCapture();
+    void initThemeCapture();
   },
 });
