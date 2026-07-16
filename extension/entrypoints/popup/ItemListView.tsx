@@ -262,7 +262,13 @@ export default function ItemListView({
                       <button
                         key={item.id}
                         type="button"
-                        className="flex min-h-[48px] items-center gap-2 py-2 text-left hover:bg-base-content/[0.06]"
+                        // 11-09: pv-row-hover (style.css) replaces the old
+                        // hover:bg-base-content/[0.06] one-off -- same
+                        // token direction, now shared verbatim with
+                        // AutofillItemRow.tsx's "Na tej stronie" rows plus
+                        // the button-style border+press affordance Bartek
+                        // asked for (flat at rest, only on hover).
+                        className="flex min-h-[48px] items-center gap-2 rounded-field px-1 py-2 text-left pv-row-hover"
                         onClick={() => onSelectItem(item)}
                       >
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-base-200 text-base-content/70">

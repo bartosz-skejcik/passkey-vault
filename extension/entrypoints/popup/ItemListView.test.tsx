@@ -281,4 +281,49 @@ describe("ItemListView", () => {
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(mockTabsCreate).not.toHaveBeenCalled();
   });
+
+  it("Test 9 (11-09): both the 'Na tej stronie' row and a 'Wszystkie' row carry the SAME shared pv-row-hover class -- flat-at-rest, button-style hover, identical between row kinds", async () => {
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "vault.list") {
+        return {
+          items: [
+            loginItem("suggested-1", "GitHub", "octo"),
+            loginItem("rest-1", "GitLab", "tanuki"),
+          ],
+          folders: [],
+        };
+      }
+      if (message.kind === "session.status") {
+        return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
+      }
+      if (message.kind === "autofill.match") {
+        return {
+          pageState: "ok" as const,
+          origin: "https://github.com",
+          detected: { login: true, totp: false, card: false, identity: false },
+          matches: [{ itemId: "suggested-1", kind: "login" as const, label: "GitHub", maskedHint: "octo" }],
+        };
+      }
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(<ItemListView locale="en" onSelectItem={vi.fn()} />);
+
+    // "Na tej stronie" row (AutofillItemRow.tsx).
+    const onThisPageRow = await waitFor(() => screen.getByTestId("autofill-row-suggested-1"));
+    const onThisPageInnerRow = onThisPageRow.querySelector(".pv-row-hover");
+    expect(onThisPageInnerRow).not.toBeNull();
+
+    // "Wszystkie" row (ItemListView.tsx itself) -- GitLab, since GitHub is
+    // de-duplicated into the suggested section above.
+    const restRow = await waitFor(() => screen.getByText("GitLab"));
+    const restRowButton = restRow.closest("button");
+    expect(restRowButton).not.toBeNull();
+    expect(restRowButton!.className).toContain("pv-row-hover");
+
+    // Neither row hard-codes a literal color or a base-200/base-300 swap
+    // -- both lean on the SAME shared class for the hover treatment.
+    expect(onThisPageInnerRow!.className).toContain("pv-row-hover");
+    expect(restRowButton!.className).toContain("pv-row-hover");
+  });
 });

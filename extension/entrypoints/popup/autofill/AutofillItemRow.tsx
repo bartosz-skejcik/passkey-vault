@@ -70,7 +70,16 @@ export default function AutofillItemRow({ locale, match, onFill, onFillFailed }:
 
   return (
     <div className="flex flex-col gap-1 py-1" data-testid={`autofill-row-${match.itemId}`}>
-      <div className="flex min-h-[48px] items-center gap-2 px-1">
+      {/* 11-09 (Bartek: hover nearly invisible here -- this row had NO
+          hover styling at all before). pv-row-hover (popup/style.css) is
+          the SAME class ItemListView.tsx's "Wszystkie" rows use, so both
+          row kinds stay visually identical per this plan's key_links
+          requirement -- flat at rest, button-style border+press on
+          hover. Deliberately on the inner row div (not the outer
+          data-testid wrapper below, which also carries the hidden
+          card/identity confirm block) so hovering the confirm affordance
+          never double-applies this row's own hover feedback. */}
+      <div className="flex min-h-[48px] items-center gap-2 rounded-field px-1 pv-row-hover">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-base-200 text-base-content/70">
           <Icon size={18} aria-hidden="true" />
         </span>
