@@ -169,7 +169,22 @@ export default function ItemListView({
     // a clipping context, which silently cut the upward-opening type menu
     // off at the list's edge (Bartek, live test: only the last two entries
     // were ever visible, which read as "the menu only has Identity+Note").
-    <div className="relative flex w-[380px] flex-col gap-2 p-4">
+    //
+    // 11-09 live-review addendum (Bartek 2026-07-16, popup scroll-in-
+    // scroll): this root is now `flex-1 min-h-0` -- it fills whatever
+    // vertical space App.tsx's fixed-height shell hands it (all of it,
+    // unless the enroll-prompt banner is also showing) and `overflow-
+    // hidden` so it can never scroll AS A WHOLE. Everything above the
+    // "Wszystkie" list (top bar, search, the restricted-page banner
+    // OnThisPageSection renders in its `pageState==="restricted"` branch,
+    // "Na tej stronie") plus the footer below it is a normal, naturally-
+    // sized flex child -- PINNED simply by virtue of not being the one
+    // `flex-1 min-h-0` child. The "Wszystkie" row list is that one child:
+    // the ONLY element in this view with `overflow-y-auto`. That is the
+    // fix -- the old `max-h-[440px]` guess on that list, stacked on top of
+    // the outer popup page ALSO scrolling (no fixed shell existed before
+    // this addendum), was Bartek's literal "scroll-in-scroll" report.
+    <div className="relative flex min-h-0 w-[380px] flex-1 flex-col gap-2 overflow-hidden p-4">
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
@@ -236,14 +251,25 @@ export default function ItemListView({
               there is nothing left to show and no active query, so it never
               renders an orphan header over an empty list. */}
           {restResults.length > 0 || trimmedQuery !== "" ? (
-            <div className="flex flex-col gap-1">
+            // 11-09 addendum: this wrapper is itself `flex-1 min-h-0` --
+            // the header (h2) below stays pinned at its natural height,
+            // handing 100% of whatever remains to the actual scroll box.
+            <div className="flex min-h-0 flex-1 flex-col gap-1">
               <h2 className="px-1 text-sm font-normal text-base-content/60">
                 {t(locale, "vault.allItemsHeading")}
               </h2>
-              {/* min-h keeps the popup a stable, comfortable size; max-h keeps
-                  it inside the browser's ~600px popup ceiling, scrolling
-                  beyond. Bumped up a little for breathing room (Bartek). */}
-              <div className="flex min-h-[220px] max-h-[440px] flex-col divide-y divide-base-300 overflow-y-auto">
+              {/* THE popup's one scrollable region (Bartek 2026-07-16
+                  live-review, "no scroll-in-scroll"). Replaces the old
+                  hand-guessed `min-h-[220px] max-h-[440px]` (which, added
+                  to the header/search/on-this-page/footer above and below
+                  it, actually exceeded the fixed 600px shell -- the real
+                  cause of the outer page needing to scroll too) with
+                  `flex-1 min-h-0`: it fills exactly whatever space is left
+                  after every pinned sibling, no more, no less, so IT is
+                  the only element that ever needs `overflow-y-auto`.
+                  pv-scroll-thin (style.css) matches 11-09's own in-page
+                  .pv-list scrollbar recipe. */}
+              <div className="flex min-h-0 flex-1 flex-col divide-y divide-base-300 overflow-y-auto pv-scroll-thin">
                 {trimmedQuery !== "" && restResults.length === 0 ? (
                   <p className="px-4 py-8 text-center text-base text-base-content/60">
                     {interpolate(t(locale, "search.emptyResults"), { query: trimmedQuery })}

@@ -191,8 +191,11 @@ export default function UnlockView({
     }
   }
 
+  // 11-09 addendum: h-full + overflow-y-auto -- see ServerConfigView's
+  // identical comment. A single whole-view scroll region, no nested
+  // doubles, within the fixed popup shell (index.html/style.css).
   return (
-    <div className="flex w-[380px] flex-col gap-4 p-4">
+    <div className="flex h-full w-[380px] flex-col gap-4 overflow-y-auto p-4">
       {wasAutoLocked ? (
         <p className="text-sm text-base-content/70">{t(locale, "unlock.sessionLockedNotice")}</p>
       ) : null}

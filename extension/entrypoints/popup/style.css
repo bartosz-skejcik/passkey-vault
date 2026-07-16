@@ -58,6 +58,47 @@ body {
   font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
+/* 11-09 live-review addendum (Bartek 2026-07-16): completes the
+   fixed-height popup shell index.html's `body` inline style starts
+   (height: 600px; overflow: hidden). `html` gets the same overflow
+   guard defensively (belt-and-suspenders -- body's explicit height
+   already prevents document growth, but a stray margin/box-sizing edge
+   case should never be able to reopen a page-level scrollbar). `#root`
+   propagates body's fixed 600px down as a definite height (`height:
+   100%` resolves against body's own explicit height) so every view's
+   root element can opt into `h-full`/`flex-1 min-h-0` and get a real,
+   percentage-resolvable box to fill -- without this, Tailwind's h-full
+   on a view's root would resolve against an undefined ancestor height
+   and silently do nothing. */
+html {
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+}
+
+/* 11-09 live-review addendum: shared thin, token-colored scrollbar for
+   the popup's ONE main scrollable region (ItemListView's "Wszystkie"
+   list) -- same recipe as extension/lib/autofill/inpage-overlay.ts's
+   `.pv-list` (in-page dropdown/prompt-window account lists), ported
+   here rather than reused verbatim since that stylesheet is injected
+   into a separate shadow-DOM document and unreachable from this one. */
+.pv-scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--color-base-content) 20%, transparent) transparent;
+}
+.pv-scroll-thin::-webkit-scrollbar {
+  width: 6px;
+}
+.pv-scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.pv-scroll-thin::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklch, var(--color-base-content) 20%, transparent);
+  border-radius: 3px;
+}
+
 /* 11-09 (Bartek live-bug/design review 2026-07-16): the ONE shared
    button-style hover affordance for every clickable item row -- the
    "Wszystkie" list rows (ItemListView.tsx) AND the "Na tej stronie" rows

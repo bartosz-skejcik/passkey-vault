@@ -119,8 +119,12 @@ export default function App() {
   }
 
   if (view.kind === "loading") {
+    // 11-09 addendum: h-full (not the old min-h-[200px]) fills the fixed
+    // popup shell (index.html/style.css) so the spinner centers within
+    // the SAME 600px box every other view renders into -- no resize flash
+    // when the next view swaps in.
     return (
-      <div className="flex min-h-[200px] w-[380px] flex-col items-center justify-center gap-2 p-4">
+      <div className="flex h-full w-[380px] flex-col items-center justify-center gap-2 p-4">
         <span className="loading loading-spinner" aria-hidden="true" />
         <p className="text-base text-base-content/70">{t(locale, "loading.vault")}</p>
       </div>
@@ -159,8 +163,16 @@ export default function App() {
     );
   }
 
+  // 11-09 addendum (Bartek live-review, popup scroll-in-scroll): h-full +
+  // overflow-hidden pins this wrapper to the fixed popup shell -- it never
+  // scrolls itself. The enroll-prompt banner (when shown) is a normal,
+  // naturally-sized flex child above ItemListView; ItemListView is handed
+  // whatever vertical space remains (its own root is `flex-1 min-h-0`) so
+  // its internal PINNED-header/ONE-scroll-region layout still gets an
+  // exact, definite height to divide up regardless of the banner's
+  // presence.
   return (
-    <div className="flex w-[380px] flex-col gap-2">
+    <div className="flex h-full w-[380px] flex-col gap-2 overflow-hidden">
       {showEnrollPrompt ? (
         <div className="p-2">
           <EnrollExtPasskeyPrompt locale={locale} onDone={() => setShowEnrollPrompt(false)} />

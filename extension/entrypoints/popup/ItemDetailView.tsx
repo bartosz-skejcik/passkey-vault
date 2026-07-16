@@ -90,8 +90,12 @@ export default function ItemDetailView({
     return `field.${key}` as keyof typeof DICTIONARY;
   }
 
+  // 11-09 addendum: h-full + overflow-y-auto -- see ServerConfigView's
+  // identical comment. A single whole-view scroll region (e.g. a note
+  // field long enough to push past the fixed shell's height), no nested
+  // doubles.
   return (
-    <div className="flex w-[380px] flex-col gap-4 p-4">
+    <div className="flex h-full w-[380px] flex-col gap-4 overflow-y-auto p-4">
       <div className="flex items-center gap-2">
         <button
           type="button"

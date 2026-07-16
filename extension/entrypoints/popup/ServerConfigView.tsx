@@ -98,8 +98,14 @@ export default function ServerConfigView({
     }
   }
 
+  // 11-09 addendum: h-full + overflow-y-auto makes this view's own root the
+  // ONE scroll region if its content ever exceeds the fixed popup shell's
+  // height (index.html/style.css) -- there is no separate pinned
+  // header/footer split here (unlike ItemListView), so a single
+  // whole-view scroll is the correct "no nested doubles" shape for a
+  // plain form.
   return (
-    <div className="flex w-[380px] flex-col gap-4 p-4">
+    <div className="flex h-full w-[380px] flex-col gap-4 overflow-y-auto p-4">
       <h2 className="text-[20px] font-bold leading-[1.2]">{t(locale, "config.heading")}</h2>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
