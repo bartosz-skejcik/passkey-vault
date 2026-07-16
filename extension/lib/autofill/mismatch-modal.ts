@@ -32,7 +32,7 @@
 // (11-UI-SPEC.md Surface 3: "no separate persistence code path"). This is
 // a one-way import (mismatch-modal -> save-update-toast); save-update-
 // toast.ts never imports back from this file, avoiding a cycle.
-import { getOrCreateShadowRoot } from "./inpage-mount";
+import { getOrCreateShadowRoot, getPanelContainer } from "./inpage-mount";
 import { confirmCapture, teardownSaveUpdateToast } from "./save-update-toast";
 import { resolveLocale, type Locale } from "../i18n/dictionary";
 import { t, interpolate } from "../i18n/autofill-dictionary";
@@ -43,13 +43,26 @@ import { t, interpolate } from "../i18n/autofill-dictionary";
 // provenance discipline as every other icon in this phase).
 const ALERT_TRIANGLE_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
 
-// Literal OKLCH values, identical tokens to inpage-overlay.ts/generate-
-// popover.ts/save-update-toast.ts -- the host page's own stylesheet never
-// reaches a shadow root, so nothing here can rely on it. No `@font-face`
-// rule of any kind (T-11-12).
+// D-12/D-13 (plan 11-08): every color is now a `var(--color-...)`
+// reference into packages/pv-ui/tokens.css (injected once, shared, by
+// inpage-mount.ts's `getOrCreateShadowRoot()` -- see inpage-theme.ts). No
+// literal OKLCH/hex value remains here. `font-family` is deliberately
+// dropped from `.pv-mismatch-scrim` -- it now inherits from the
+// theme-stamped panel container's own `[data-theme]` rule
+// (INPAGE_THEME_CSS), which is this element's actual DOM ancestor (see
+// `showMismatchModal()`'s `container.appendChild(scrim)` call below).
+//
+// SECURITY REQUIREMENT (this plan's own `must_haves`, project-wide
+// "playfulness nigdy w dialogach bezpieczeństwa" constraint): the warning
+// banner stays HIGH-CONTRAST in BOTH themes -- `color-mix(in oklch,
+// var(--color-error) ..%, var(--color-base-100))` mixes the error hue into
+// the PANEL's own background token (not a hardcoded dark canvas the way
+// this file's pre-11-08 version did), so a light-theme reader gets a
+// light red-tinted alert box with error-colored border and full-strength
+// `var(--color-base-content)` body text -- exactly as serious and legible
+// as the dark-theme version, never washed out or "cute".
 const MISMATCH_CSS = `
 .pv-mismatch-scrim {
-  font-family: "DM Sans", system-ui, -apple-system, sans-serif;
   position: fixed;
   inset: 0;
   z-index: 2147483647;
@@ -63,10 +76,10 @@ const MISMATCH_CSS = `
 .pv-mismatch-panel {
   width: 400px;
   max-width: 100%;
-  background: oklch(23.93% 0 0);
-  color: oklch(89.80% 0.0017 67.80);
-  border: 1px solid oklch(26.86% 0 0);
-  border-radius: 16px;
+  background: var(--color-base-300);
+  color: var(--color-base-content);
+  border: var(--border, 1px) solid var(--color-base-100);
+  border-radius: var(--radius-box);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   padding: 24px;
   display: flex;
@@ -76,25 +89,25 @@ const MISMATCH_CSS = `
 }
 .pv-mismatch-panel:focus-visible { outline: none; }
 .pv-mismatch-header { display: flex; align-items: center; gap: 12px; }
-.pv-mismatch-icon { color: oklch(71.76% 0.221 22.18); flex-shrink: 0; }
+.pv-mismatch-icon { color: var(--color-error); flex-shrink: 0; }
 .pv-mismatch-title { font-size: 20px; font-weight: 700; line-height: 1.2; margin: 0; }
 .pv-mismatch-banner {
   font-size: 16px;
   line-height: 1.5;
   margin: 0;
   padding: 12px;
-  border-radius: 8px;
-  background: color-mix(in oklch, oklch(71.76% 0.221 22.18) 15%, oklch(23.93% 0 0));
-  border: 1px solid color-mix(in oklch, oklch(71.76% 0.221 22.18) 40%, transparent);
-  color: oklch(89.80% 0.0017 67.80);
+  border-radius: var(--radius-field);
+  background: color-mix(in oklch, var(--color-error) 15%, var(--color-base-100));
+  border: 1px solid color-mix(in oklch, var(--color-error) 40%, transparent);
+  color: var(--color-base-content);
 }
-.pv-mismatch-banner-success { color: oklch(64.80% 0.150 160); font-weight: 700; }
+.pv-mismatch-banner-success { color: var(--color-success); font-weight: 700; }
 .pv-mismatch-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .pv-mismatch-btn {
   all: unset;
   cursor: pointer;
   padding: 8px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-field);
   font-size: 14px;
   font-weight: 700;
   box-sizing: border-box;
@@ -104,12 +117,20 @@ const MISMATCH_CSS = `
   gap: 6px;
 }
 .pv-mismatch-btn:focus-visible {
-  outline: 2px solid oklch(89.80% 0.0017 67.80);
+  outline: 2px solid var(--color-base-content);
   outline-offset: 2px;
 }
-.pv-mismatch-btn-cancel { color: oklch(89.80% 0.0017 67.80); }
-.pv-mismatch-btn-cancel:hover { background: oklch(24.78% 0 0); }
-.pv-mismatch-btn-confirm { background: oklch(71.76% 0.221 22.18); color: oklch(100% 0 0); }
+.pv-mismatch-btn-cancel { color: var(--color-base-content); }
+.pv-mismatch-btn-cancel:hover { background: var(--color-base-200); }
+/* No dedicated error-content token exists in tokens.css -- primary-content
+   is reused here purely because it already resolves to a fixed white in
+   both themes (see tokens.css's :root block), the same "white text on a
+   saturated fill" need as this confirm button's background -- NOT because
+   this button is conceptually a primary action (it isn't; the background
+   below is the error token, never primary). Avoids re-introducing a
+   literal color value into this file (grep-verified, see this plan's
+   verification block). */
+.pv-mismatch-btn-confirm { background: var(--color-error); color: var(--color-primary-content); }
 .pv-mismatch-btn[disabled] { cursor: default; opacity: 0.7; }
 .pv-mismatch-spinner {
   width: 14px;
@@ -191,6 +212,16 @@ export function showMismatchModal(proposal: MismatchProposal, opts?: { doc?: Doc
   const locale = resolveLocale();
   const shadow = getOrCreateShadowRoot(doc);
   ensureStyle(shadow, doc);
+  // D-12/D-13 (plan 11-08): the scrim/panel append into the theme-stamped
+  // panel container (inpage-mount.ts), never straight into `shadow` -- see
+  // inpage-mount.ts's PANEL_CONTAINER_ATTR doc comment. `shadow` itself is
+  // still needed below for `shadow.activeElement` (WR-02's focus-trap fix
+  // -- a ShadowRoot-only property, not something the container element
+  // exposes).
+  const container = getPanelContainer();
+  if (!container) {
+    return; // getOrCreateShadowRoot() above guarantees this is non-null in practice
+  }
 
   previouslyFocused = doc.activeElement instanceof HTMLElement ? doc.activeElement : null;
 
@@ -326,7 +357,7 @@ export function showMismatchModal(proposal: MismatchProposal, opts?: { doc?: Doc
   actions.append(cancelBtn, confirmBtn);
   panel.append(header, banner, actions);
   scrim.appendChild(panel);
-  shadow.appendChild(scrim);
+  container.appendChild(scrim);
   modalEl = scrim;
 
   panel.focus();

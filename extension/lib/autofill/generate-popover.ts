@@ -24,7 +24,7 @@
 // never sends a generated value anywhere except directly into the DOM
 // field(s) the caller resolved via `findPasswordFieldPair()` -- no
 // background message ever carries the applied password back out.
-import { getOrCreateShadowRoot, getMountHost } from "./inpage-mount";
+import { getOrCreateShadowRoot, getMountHost, getPanelContainer } from "./inpage-mount";
 import { setNativeValue } from "./fill-dom";
 import type { PasswordFieldPair } from "./form-detector";
 import { sendMessage } from "../messaging/ext-protocol";
@@ -35,26 +35,42 @@ import { t } from "../i18n/autofill-dictionary";
 
 // Inline lucide SVG markup (geometry copied verbatim from lucide-react
 // 1.24.0's own icon source -- node_modules/lucide-react/dist/esm/icons/
-// {refresh-cw,eye,eye-off}.mjs -- same provenance discipline as
-// inpage-overlay.ts's ROW_ICON/CHEVRON_RIGHT_ICON). Set via `.innerHTML`,
-// never `.textContent`, so the markup actually renders as vector paths.
+// {wand-sparkles,refresh-cw,eye,eye-off}.mjs -- same provenance discipline
+// as inpage-overlay.ts's ROW_ICON/CHEVRON_RIGHT_ICON). Set via
+// `.innerHTML`, never `.textContent`, so the markup actually renders as
+// vector paths.
+//
+// D-12 (plan 11-08): the TRIGGER icon is now `Wand2` (lucide-react's own
+// `Wand2` re-export of `wand-sparkles.mjs`, verified against
+// node_modules/lucide-react/dist/esm/icons/wand-2.mjs at execution time)
+// -- matching web/src/components/generator/GeneratorPopover.tsx's own
+// trigger button 1:1. `RefreshCw` moves to being the REGENERATE icon ONLY
+// (it was, before this plan, incorrectly reused for both the trigger and
+// the in-popover regenerate button).
+const WAND_SPARKLES_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg>`;
 const REFRESH_CW_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>`;
 const EYE_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>`;
 const EYE_OFF_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></svg>`;
 
-// Literal OKLCH values, identical tokens to inpage-overlay.ts's OVERLAY_CSS
-// and web/src/app/globals.css's dark theme (base-300 canvas, base-100
-// border, coral primary) -- the host page's own stylesheet never reaches a
-// shadow root, so nothing here can rely on it. No `@font-face` rule of any
-// kind (T-11-12, same as inpage-mount.ts's shared base stylesheet):
-// `font-family: "DM Sans", system-ui, -apple-system, sans-serif` relies on
-// the system-ui fallback only.
+// D-12/D-13 (plan 11-08): every color is now a `var(--color-...)` reference
+// into packages/pv-ui/tokens.css (injected once, shared, by
+// inpage-mount.ts's `getOrCreateShadowRoot()` -- see inpage-theme.ts). No
+// literal OKLCH/hex value remains here. `font-family` is deliberately
+// dropped from this stylesheet -- it now inherits from the theme-stamped
+// panel container's own `[data-theme]` rule (INPAGE_THEME_CSS), which is
+// this element's actual DOM ancestor (see `mountGenerateTrigger`'s
+// `container.appendChild(...)` calls below -- this module no longer
+// appends straight into the shared ShadowRoot).
+//
+// Panel background/border/radius/padding/gap (`base-100` fill, `base-300`
+// border, `--radius-box`, 16px padding, 12px gap) mirror
+// GeneratorPopover.tsx's own `rounded-box border border-base-300
+// bg-base-100 p-4` classes literally -- the ONE surface in this phase with
+// a direct web component to diff against 1:1. The preview input's
+// background/border follow the same `bg-base-100`/`border-base-300`
+// pairing DaisyUI's own `.input.input-bordered` class resolves to (no
+// separate darker "well" fill, unlike this file's pre-11-08 version).
 const GENERATE_CSS = `
-.pv-gen-trigger, .pv-gen-popover {
-  font-family: "DM Sans", system-ui, -apple-system, sans-serif;
-  font-size: 16px;
-  line-height: 1.4;
-}
 .pv-gen-trigger {
   all: unset;
   position: fixed;
@@ -66,43 +82,50 @@ const GENERATE_CSS = `
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: color-mix(in oklch, oklch(89.80% 0.0017 67.80) 70%, transparent);
-  border-radius: 8px;
+  color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  border-radius: var(--radius-field);
 }
-.pv-gen-trigger:hover { background: oklch(24.78% 0 0); }
+.pv-gen-trigger:hover { background: var(--color-base-200); }
 .pv-gen-trigger:focus-visible {
-  outline: 2px solid oklch(65.31% 0.1637 37.22);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 .pv-gen-popover {
   position: fixed;
   z-index: 2147483647;
-  width: 320px;
-  background: oklch(23.93% 0 0);
-  color: oklch(89.80% 0.0017 67.80);
-  border: 1px solid oklch(26.86% 0 0);
-  border-radius: 16px;
+  width: min(320px, calc(100vw - 32px));
+  background: var(--color-base-100);
+  color: var(--color-base-content);
+  border: var(--border, 1px) solid var(--color-base-300);
+  border-radius: var(--radius-box);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
   box-sizing: border-box;
+  font-size: 16px;
+  line-height: 1.4;
 }
-.pv-gen-title { font-weight: 700; }
-.pv-gen-mode-row { display: flex; gap: 4px; background: oklch(24.78% 0 0); border-radius: 8px; padding: 2px; }
+.pv-gen-mode-row { display: flex; gap: 4px; }
 .pv-gen-mode-btn {
   all: unset;
   flex: 1;
   text-align: center;
   cursor: pointer;
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-field);
   font-size: 14px;
   font-weight: 700;
   box-sizing: border-box;
+  background: var(--color-base-200);
+  color: var(--color-base-content);
 }
-.pv-gen-mode-active { background: oklch(65.31% 0.1637 37.22); color: oklch(26.86% 0 0); }
+.pv-gen-mode-btn:hover { background: var(--color-base-300); }
+.pv-gen-mode-active, .pv-gen-mode-active:hover {
+  background: var(--color-primary);
+  color: var(--color-primary-content);
+}
 .pv-gen-preview-row { display: flex; align-items: center; gap: 8px; }
 .pv-gen-preview {
   all: unset;
@@ -110,9 +133,9 @@ const GENERATE_CSS = `
   min-width: 0;
   font-family: ui-monospace, "SF Mono", "Cascadia Code", monospace;
   font-size: 14px;
-  background: oklch(24.78% 0 0);
-  border: 1px solid oklch(26.86% 0 0);
-  border-radius: 8px;
+  background: var(--color-base-100);
+  border: var(--border, 1px) solid var(--color-base-300);
+  border-radius: var(--radius-field);
   padding: 8px 10px;
   box-sizing: border-box;
   overflow-x: auto;
@@ -126,23 +149,23 @@ const GENERATE_CSS = `
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--radius-field);
   flex-shrink: 0;
   box-sizing: border-box;
 }
-.pv-gen-icon-btn:hover { background: oklch(24.78% 0 0); }
+.pv-gen-icon-btn:hover { background: var(--color-base-200); }
 .pv-gen-icon-btn:focus-visible {
-  outline: 2px solid oklch(65.31% 0.1637 37.22);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
-.pv-gen-error { font-size: 14px; color: oklch(71.76% 0.221 22.18); }
-.pv-gen-meter-track { height: 4px; width: 100%; border-radius: 999px; overflow: hidden; background: oklch(24.78% 0 0); }
+.pv-gen-error { font-size: 14px; color: var(--color-error); }
+.pv-gen-meter-track { height: 4px; width: 100%; border-radius: 999px; overflow: hidden; background: var(--color-base-300); }
 .pv-gen-meter-fill { height: 100%; border-radius: 999px; transition: width 0.2s ease; }
-.pv-gen-meter-error { background: oklch(71.76% 0.221 22.18); }
-.pv-gen-meter-warning { background: oklch(84.71% 0.199 83.87); }
-.pv-gen-meter-success { background: oklch(64.80% 0.150 160); }
+.pv-gen-meter-error { background: var(--color-error); }
+.pv-gen-meter-warning { background: var(--color-warning); }
+.pv-gen-meter-success { background: var(--color-success); }
 .pv-gen-length-row { display: flex; flex-direction: column; gap: 4px; }
-.pv-gen-length-row label { font-size: 12px; color: color-mix(in oklch, oklch(89.80% 0.0017 67.80) 60%, transparent); }
+.pv-gen-length-row label { font-size: 12px; color: color-mix(in oklch, var(--color-base-content) 60%, transparent); }
 .pv-gen-length-row input[type="range"] { width: 100%; }
 .pv-gen-charset-row { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
 .pv-gen-charset-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
@@ -153,15 +176,15 @@ const GENERATE_CSS = `
   text-align: center;
   cursor: pointer;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-field);
   font-size: 14px;
   font-weight: 700;
-  background: oklch(65.31% 0.1637 37.22);
-  color: oklch(26.86% 0 0);
+  background: var(--color-primary);
+  color: var(--color-primary-content);
   box-sizing: border-box;
 }
 .pv-gen-btn-primary:focus-visible {
-  outline: 2px solid oklch(89.80% 0.0017 67.80);
+  outline: 2px solid var(--color-base-content);
   outline-offset: 2px;
 }
 [hidden] { display: none !important; }
@@ -290,15 +313,17 @@ function buildPopover(
   // toggling) before it overwrites the preview with a stale response.
   let requestGeneration = 0;
 
+  // D-12 (plan 11-08): no visible header/title element -- mirrors
+  // GeneratorPopover.tsx's own popover 1:1 (a bare 320px `dropdown-content`
+  // starting directly with the mode-switch join buttons, no heading text
+  // above them). The dialog's `aria-label` below still carries
+  // `generate.title` as its accessible name, same as before -- only the
+  // VISIBLE title row is removed.
   const panel = doc.createElement("div");
   panel.className = "pv-gen-popover";
   panel.setAttribute("data-pv-gen-popover", "");
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-label", t(locale, "generate.title"));
-
-  const title = doc.createElement("div");
-  title.className = "pv-gen-title";
-  title.textContent = t(locale, "generate.title");
 
   const modeRow = doc.createElement("div");
   modeRow.className = "pv-gen-mode-row";
@@ -387,7 +412,7 @@ function buildPopover(
   applyBtn.textContent = t(locale, "generate.apply");
   actionsRow.append(regenBtn, applyBtn);
 
-  panel.append(title, modeRow, previewRow, errorEl, meterTrack, lengthRow, charsetRow, actionsRow);
+  panel.append(modeRow, previewRow, errorEl, meterTrack, lengthRow, charsetRow, actionsRow);
 
   function updateModeUI(): void {
     charBtn.classList.toggle("pv-gen-mode-active", mode === "character");
@@ -494,11 +519,13 @@ function buildPopover(
 }
 
 /**
- * Mounts the 40px click-triggered `RefreshCw` trigger anchored to `fieldEl`
- * (absolutely positioned in the field's trailing padding, same corner
- * convention as inpage-overlay.ts's Surface A field icon), plus the
- * 320px popover it opens on click. Tears down any previously-mounted
- * trigger/popover first -- at most one is ever mounted at a time.
+ * Mounts the 40px click-triggered `Wand2` trigger (D-12, plan 11-08 --
+ * matches GeneratorPopover.tsx's own trigger icon 1:1; was `RefreshCw`
+ * before this plan) anchored to `fieldEl` (absolutely positioned in the
+ * field's trailing padding, same corner convention as inpage-overlay.ts's
+ * Surface A field icon), plus the 320px popover it opens on click. Tears
+ * down any previously-mounted trigger/popover first -- at most one is ever
+ * mounted at a time.
  */
 export function mountGenerateTrigger(
   fieldEl: HTMLInputElement,
@@ -511,13 +538,21 @@ export function mountGenerateTrigger(
   const locale = resolveLocale();
   const shadow = getOrCreateShadowRoot(doc);
   ensureStyle(shadow, doc);
+  // D-12/D-13 (plan 11-08): panels append into the theme-stamped panel
+  // container (inpage-mount.ts), never straight into `shadow` -- see
+  // inpage-mount.ts's PANEL_CONTAINER_ATTR doc comment for why a shadow
+  // tree's `:root` can never carry the `[data-theme]` tokens otherwise.
+  const container = getPanelContainer();
+  if (!container) {
+    return; // getOrCreateShadowRoot() above guarantees this is non-null in practice
+  }
 
   const trigger = doc.createElement("button");
   trigger.type = "button";
   trigger.className = "pv-gen-trigger";
   trigger.setAttribute("data-pv-gen-trigger", "");
   trigger.setAttribute("aria-label", t(locale, "generate.trigger"));
-  trigger.innerHTML = REFRESH_CW_ICON;
+  trigger.innerHTML = WAND_SPARKLES_ICON;
 
   function positionTrigger(): void {
     const rect = fieldEl.getBoundingClientRect();
@@ -528,7 +563,7 @@ export function mountGenerateTrigger(
 
   function positionPopover(panel: HTMLElement): void {
     const rect = fieldEl.getBoundingClientRect();
-    panel.style.top = `${rect.bottom + 4}px`;
+    panel.style.top = `${rect.bottom + 8}px`;
     panel.style.left = `${Math.max(0, rect.right - 320)}px`;
   }
 
@@ -541,11 +576,11 @@ export function mountGenerateTrigger(
     }
     const panel = buildPopover(fieldEl, pair, locale, doc);
     positionPopover(panel);
-    shadow.appendChild(panel);
+    container.appendChild(panel);
     popoverEl = panel;
   });
 
-  shadow.appendChild(trigger);
+  container.appendChild(trigger);
   triggerEl = trigger;
 
   const view = doc.defaultView;
