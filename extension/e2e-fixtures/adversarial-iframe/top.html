@@ -51,7 +51,32 @@
         window.__topEvents[field]++;
       });
     }
-    document.getElementById("top-form").addEventListener("submit", (e) => e.preventDefault());
+
+    // 11-05-PLAN.md Task 2 EXTENSION: submit-capture.ts's success heuristic
+    // (11-02) needs a DOM-removal or URL-change signal to fire against --
+    // this fixture's original submit handler only called preventDefault(),
+    // giving neither. A setTimeout (not a synchronous removal in the SAME
+    // submit-event dispatch) is required: content-relay.content.ts's own
+    // submit listener (registered later, at document_idle) fires AFTER
+    // this page's inline-script listener on the SAME "submit" event --
+    // removing the form synchronously here would tear it down before that
+    // later listener has even started its MutationObserver, so the
+    // watcher would never see the mutation. Deferring to the next
+    // macrotask lets attachSubmitWatcher()'s own submit handler run and
+    // begin observing FIRST, so the removal below is actually witnessed.
+    document.getElementById("top-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      setTimeout(() => {
+        const form = document.getElementById("top-form");
+        if (form) {
+          form.remove();
+          const done = document.createElement("p");
+          done.id = "top-signed-in";
+          done.textContent = "Signed in (Origin A, top-level).";
+          document.querySelector(".card").appendChild(done);
+        }
+      }, 50);
+    });
   </script>
 </body>
 </html>

@@ -36,7 +36,29 @@
         window.__frameEvents[field]++;
       });
     }
-    document.getElementById("frame-form").addEventListener("submit", (e) => e.preventDefault());
+
+    // 11-05-PLAN.md Task 2 EXTENSION: same DOM-removal success signal as
+    // top.html's own submit handler (see that file's comment for the full
+    // ordering rationale -- the setTimeout defer is required so this
+    // (cross-origin) frame's own content-relay.content.ts instance has
+    // already started its MutationObserver before the removal happens).
+    // This frame's content-relay instance self-reports ONLY its own
+    // location.origin (http://localhost:8792) as frameOrigin -- proving
+    // the D-06 mismatch scenario requires a real submit through THIS
+    // form, not top.html's own.
+    document.getElementById("frame-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      setTimeout(() => {
+        const form = document.getElementById("frame-form");
+        if (form) {
+          form.remove();
+          const done = document.createElement("p");
+          done.id = "frame-signed-in";
+          done.textContent = "Signed in (Origin B, attacker frame).";
+          document.body.appendChild(done);
+        }
+      }, 50);
+    });
   </script>
 </body>
 </html>
