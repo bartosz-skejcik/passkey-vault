@@ -74,10 +74,6 @@ const ROW_ICON: Record<FillKind, string> = {
 // ChevronRight, same lucide-source provenance as ROW_ICON above.
 const CHEVRON_RIGHT_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="m9 18 6-6-6-6"/></svg>`;
 
-// KeyRound, replacing the illegible 8px "PV" text on the in-field
-// affordance icon (~renderFieldDropdown below) -- sized to fill the
-// 16x16 .pv-field-icon box exactly.
-const KEY_ROUND_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>`;
 
 // Brand tokens inlined as literal OKLCH values -- the host page's own
 // stylesheet never reaches a shadow root, so nothing here can rely on it.
@@ -197,14 +193,24 @@ const OVERLAY_CSS = `
   all: unset;
   position: fixed;
   z-index: 2147483647;
-  width: 16px;
-  height: 16px;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: 6px;
   background: oklch(65.31% 0.1637 37.22);
-  color: oklch(26.86% 0 0);
+  /* "PV" wordmark (Bartek preferred it over the KeyRound icon, which
+     overflowed the coral box): white, bold, sized to sit inside the 20px
+     box. The 'all: unset' above wipes the inherited font, so it is
+     re-declared here explicitly. */
+  color: oklch(100% 0 0);
+  font-family: "DM Sans", system-ui, -apple-system, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
   cursor: pointer;
 }
 [hidden] { display: none !important; }
@@ -495,9 +501,9 @@ export function createOverlayController(options: OverlayControllerOptions): Over
     icon.className = "pv-field-icon";
     icon.setAttribute("data-pv-field-icon", "");
     icon.setAttribute("aria-label", t(locale, "overlay.fieldDropdownHeading"));
-    // KeyRound SVG, not the illegible 8px "PV" text -- sized to fill the
-    // 16x16 .pv-field-icon box exactly.
-    icon.innerHTML = KEY_ROUND_ICON;
+    // "PV" wordmark (Bartek's call: the KeyRound SVG overflowed the coral
+    // box). Sized in .pv-field-icon CSS to sit inside the 20px box.
+    icon.textContent = "PV";
 
     const panel = doc.createElement("div");
     panel.className = "pv-panel pv-panel-dropdown";
