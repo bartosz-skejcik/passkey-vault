@@ -184,6 +184,55 @@ export const DICTIONARY = {
   "aria.showPassword": { pl: "Pokaż hasło", en: "Show password" },
   "aria.hidePassword": { pl: "Ukryj hasło", en: "Hide password" },
   "aria.backToList": { pl: "Wróć do listy", en: "Back to list" },
+
+  // --- Passkey provider ceremony consent screen (Phase 12, Plan 12-04,
+  // 12-UI-SPEC.md Copywriting Contract table -- reused verbatim, byte-for-
+  // byte, never paraphrased). Rendered ONLY by ProviderCeremonyView.tsx;
+  // scoped to the RP's own create()/get() ceremony, never Phase 3/4's
+  // vault-unlock PRF feature (see that view's own header comment). --------
+  "provider.createTitle": { pl: "Nowy passkey", en: "New passkey" },
+  "provider.createBody": {
+    pl: "{site} chce zapisać nowy passkey w Twoim vaulcie.",
+    en: "{site} wants to save a new passkey to your vault.",
+  },
+  "provider.signinTitle": { pl: "Logowanie passkeyem", en: "Sign in with a passkey" },
+  "provider.signinBodySingle": {
+    pl: "Zaloguj się do {site} jako {account}.",
+    en: "Sign in to {site} as {account}.",
+  },
+  "provider.signinBodyMultiple": {
+    pl: "Wybierz konto, którym chcesz się zalogować do {site}.",
+    en: "Choose the account to sign in to {site} with.",
+  },
+  "provider.accountLabel": { pl: "Konto: {account}", en: "Account: {account}" },
+  "provider.createCta": { pl: "Utwórz passkey", en: "Create passkey" },
+  "provider.signinCta": { pl: "Zaloguj passkeyem", en: "Sign in with passkey" },
+  "provider.useOther": { pl: "Użyj innej metody", en: "Use something else" },
+  "provider.createBusy": { pl: "Tworzymy passkey…", en: "Creating your passkey…" },
+  "provider.signinBusy": { pl: "Podpisujemy logowanie…", en: "Signing you in…" },
+  // D-16: the TRIGGER for these two lines is background's real passkey-rs
+  // capability signal (never browser detection) -- the copy itself is
+  // unchanged by that decision (ADDENDUM 2026-07-16).
+  "provider.prfCapableNote": {
+    pl: "Ten passkey będzie też mógł odblokować Twój vault.",
+    en: "This passkey will also be able to unlock your vault.",
+  },
+  "provider.prfUnavailableNote": {
+    pl: "Ta przeglądarka nie obsługuje rozszerzenia PRF, o które prosi ta strona — część jej funkcji może nie działać.",
+    en: "This browser doesn't support the PRF extension this site requested — some of its features may not work.",
+  },
+  "provider.noMatchTransient": {
+    pl: "Brak zapisanego passkeya dla tej strony — przełączamy na inną metodę.",
+    en: "No saved passkey for this site — switching to another method.",
+  },
+  "provider.failed": {
+    pl: "Nie udało się dokończyć operacji passkey. Spróbuj ponownie albo użyj innej metody.",
+    en: "Couldn't complete the passkey operation. Try again, or use something else.",
+  },
+  "provider.closeAria": {
+    pl: "Zamknij i użyj innej metody",
+    en: "Close and use something else",
+  },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {
