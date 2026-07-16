@@ -125,9 +125,9 @@ describe("D-09: locked vault", () => {
     void handleCredentialsGet({ publicKey: { rpId: "example.com" } }, "https://example.com");
 
     // Flush pending microtasks so the locked branch's async work runs.
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(hoisted.mockOpenPopup).toHaveBeenCalled();
+    });
 
     expect(hoisted.mockOpenPopup).toHaveBeenCalledTimes(1);
     expect(hoisted.mockWasmGetProviderAssertion).not.toHaveBeenCalled();
@@ -141,9 +141,9 @@ describe("D-09: locked vault", () => {
 
     void handleCredentialsCreate({ publicKey: { rp: { id: "example.com" } } }, "https://example.com");
 
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(hoisted.mockWindowsCreate).toHaveBeenCalled();
+    });
 
     expect(hoisted.mockOpenPopup).toHaveBeenCalledTimes(1);
     expect(hoisted.mockWindowsCreate).toHaveBeenCalledWith(
@@ -206,8 +206,9 @@ describe("credentials.get: exactly one matching credential", () => {
     });
 
     await handleCredentialsGet({ publicKey: { rpId: "example.com" } }, "https://example.com");
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(hoisted.mockUpdateItem).toHaveBeenCalled();
+    });
 
     expect(hoisted.mockUpdateItem).toHaveBeenCalledWith(
       "pk-1",

@@ -14,6 +14,11 @@ const FIELD_ORDER: Record<ItemFields["type"], string[]> = {
   identity: ["firstName", "lastName", "email", "phone", "address", "notes"],
   note: ["body"],
   totp: ["secret"],
+  // Phase 12 (Plan 12-02): "passkey" now exists in the data model
+  // (PasskeyFields) -- intentionally empty here, the dedicated
+  // `passkey !== null` block below already renders the guaranteed RP
+  // ID/last-used rows (BINDING, Bartek 2026-07-15).
+  passkey: [],
 };
 
 const MONO_FIELDS = new Set(["password", "number", "cvv", "secret"]);
@@ -21,20 +26,16 @@ const REVEALABLE_FIELDS = new Set(["password", "number", "secret"]);
 const MASK = "•".repeat(10);
 
 /**
- * Forward-compatible, duck-typed check: no `"passkey"` `ItemFields`
- * variant exists in the current data model (Phase 12's provider
- * introduces it -- see 09-UI-SPEC.md's Item Detail section: "ready for
- * Phase 12's provider, which starts writing these fields"). This can
- * never match today's items, but renders the guaranteed RP ID/last-used
- * rows (BINDING, Bartek 2026-07-15) the instant that type exists, without
- * a type-system change out of this plan's bounded scope.
+ * Renders the guaranteed RP ID/last-used rows for a passkey item (BINDING,
+ * Bartek 2026-07-15). `PasskeyFields` (Plan 12-02, lib/vault/types.ts) has
+ * no `lastUsedAt` field -- that row always renders "—" today; a future plan
+ * that tracks last-use time can populate it without touching this view.
  */
 function passkeyMeta(item: VaultItem): { rpId?: string; lastUsedAt?: string } | null {
-  const fields = item.fields as unknown as { type: string; rpId?: string; lastUsedAt?: string };
-  if (fields.type !== "passkey") {
+  if (item.fields.type !== "passkey") {
     return null;
   }
-  return { rpId: fields.rpId, lastUsedAt: fields.lastUsedAt };
+  return { rpId: item.fields.rpId, lastUsedAt: undefined };
 }
 
 export default function ItemDetailView({

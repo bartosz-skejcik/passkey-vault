@@ -15,7 +15,7 @@
 // menus, and stays intact.
 import { useEffect, useRef, useState } from "react";
 import { browser } from "wxt/browser";
-import { Search, Settings, ExternalLink, Plus, Globe, CreditCard, IdCard, StickyNote, Timer } from "lucide-react";
+import { Search, Settings, ExternalLink, Plus, Globe, CreditCard, IdCard, StickyNote, Timer, KeyRound } from "lucide-react";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
 import { searchItems, filterItems } from "../../lib/vault/search";
 import type { VaultItem, ItemType } from "../../lib/vault/types";
@@ -42,26 +42,36 @@ const AUTOLOCK_OPTIONS = [5, 15, 30, 60] as const;
 // correction: login is a website credential, so Globe reads lighter and
 // more distinct than the earlier Vault choice (which now reads as a
 // generic/brand-adjacent glyph rather than a per-type icon).
-// Always rendered MUTED here (never teal): teal is reserved for actual
-// `type: "passkey"` items with PRF capability, a type that doesn't exist
-// in the data model yet (Phase 12).
+// Always rendered MUTED here (never teal): teal is reserved for
+// PRF-capability-specific UI (the provider-ceremony consent view, Plan
+// 12-04), not the plain list-row icon -- this list's own `passkey` icon
+// stays the same neutral treatment as every other type.
 // `totp` has no icon named in 09-UI-SPEC.md's enumerated four -- `Timer`
 // is a Claude's-discretion addition (same icon web/ItemRow.tsx already
 // uses for the same type), flagged for UI-checker review.
+// Phase 12 (Plan 12-02): "passkey" now exists in the data model
+// (PasskeyFields) -- `KeyRound` per 12-UI-SPEC.md's icon convention
+// ("KeyRound (passkey/PRF meaning)"), matching this app's existing
+// passkey-adjacent icon reservation everywhere else.
 const TYPE_ICON: Record<ItemType, typeof Globe> = {
   login: Globe,
   card: CreditCard,
   identity: IdCard,
   note: StickyNote,
   totp: Timer,
+  passkey: KeyRound,
 };
 
-const TYPE_LABEL_KEY: Record<ItemType, "itemType.login" | "itemType.card" | "itemType.identity" | "itemType.note" | "itemType.totp"> = {
+const TYPE_LABEL_KEY: Record<
+  ItemType,
+  "itemType.login" | "itemType.card" | "itemType.identity" | "itemType.note" | "itemType.totp" | "itemType.passkey"
+> = {
   login: "itemType.login",
   card: "itemType.card",
   identity: "itemType.identity",
   note: "itemType.note",
   totp: "itemType.totp",
+  passkey: "itemType.passkey",
 };
 
 // The FAB's type-menu entry order -- Bartek's NordPass reference screenshots'
