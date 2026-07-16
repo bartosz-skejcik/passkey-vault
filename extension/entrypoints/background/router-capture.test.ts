@@ -19,6 +19,7 @@ const hoisted = vi.hoisted(() => ({
   mockEnsureHydrated: vi.fn(),
   mockNoteActivity: vi.fn(),
   mockGetItems: vi.fn(),
+  mockEnsureItemsHydrated: vi.fn(),
   mockAssertContentSender: vi.fn(),
   mockClassifySubmit: vi.fn(),
   mockConfirmNewLogin: vi.fn(),
@@ -48,6 +49,7 @@ vi.mock("./vault-session", () => ({
 vi.mock("./vault-store", () => ({
   getItems: hoisted.mockGetItems,
   getFolders: vi.fn(),
+  ensureItemsHydrated: hoisted.mockEnsureItemsHydrated,
   RevisionConflictError: class RevisionConflictError extends Error {
     constructor() {
       super("item revision changed elsewhere — refresh and try again");
@@ -151,6 +153,7 @@ describe("capture.propose", () => {
       frameId: 0,
     });
     hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockEnsureItemsHydrated.mockResolvedValue({ ok: true });
     hoisted.mockGetItems.mockReturnValue([]);
     hoisted.mockClassifySubmit.mockReturnValue({
       action: "new",
@@ -191,6 +194,7 @@ describe("capture.propose", () => {
 
     expect(hoisted.mockClassifySubmit).not.toHaveBeenCalled();
     expect(hoisted.mockGetItems).not.toHaveBeenCalled();
+    expect(hoisted.mockEnsureItemsHydrated).not.toHaveBeenCalled();
     expect(response).toEqual({
       action: "no-op",
       frameOrigin: "https://trusted.example",
@@ -199,7 +203,82 @@ describe("capture.propose", () => {
     });
   });
 
-  it("fails closed on a rejected sender without calling classifySubmit or ensureHydrated", async () => {
+  it("WR-03 (iteration 2, REGRESSION -- fails on the cosmetic iteration-1 fix): awaits ensureItemsHydrated() before classifying, so a proposal for an already-saved credential that lands mid-pull classifies against the SETTLED cache, not a stale empty one", async () => {
+    hoisted.mockAssertContentSender.mockReturnValue({
+      ok: true,
+      origin: "https://trusted.example",
+      tabId: 7,
+      frameId: 0,
+    });
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+
+    // Simulates the exact race WR-03 (iteration 2) identified: on a
+    // freshly-woken service worker, ensureHydrated() resolves (the User
+    // Key is available) while the item cache's initial sync pull is still
+    // in flight. getItems() only reflects the existing credential AFTER
+    // ensureItemsHydrated() resolves -- on the cosmetic iteration-1 fix
+    // (which never calls ensureItemsHydrated() at all), classifySubmit
+    // would be invoked with the still-empty array below.
+    let hydrated = false;
+    hoisted.mockEnsureItemsHydrated.mockImplementation(async () => {
+      await Promise.resolve();
+      hydrated = true;
+      return { ok: true };
+    });
+    hoisted.mockGetItems.mockImplementation(() => (hydrated ? ["existing-item"] : []));
+    hoisted.mockClassifySubmit.mockImplementation((_fields, decryptedItems: unknown[]) => ({
+      action: decryptedItems.length > 0 ? "update" : "new",
+      itemId: decryptedItems.length > 0 ? "item-1" : undefined,
+      currentRevision: decryptedItems.length > 0 ? 1 : undefined,
+      frameOrigin: "https://trusted.example",
+      topOrigin: "https://top.example",
+      mismatch: false,
+    }));
+
+    const response = await send({
+      kind: "capture.propose",
+      frameOrigin: "https://trusted.example",
+      username: "user@example.com",
+      password: "pw1",
+    });
+
+    expect(hoisted.mockEnsureItemsHydrated).toHaveBeenCalledTimes(1);
+    expect(hoisted.mockClassifySubmit).toHaveBeenCalledWith(
+      expect.anything(),
+      ["existing-item"],
+      "https://top.example",
+    );
+    expect(response).toMatchObject({ action: "update" });
+  });
+
+  it("WR-03 (iteration 2): fails closed (no-op) when the initial item-cache pull fails, rather than classifying against an unknown-state cache", async () => {
+    hoisted.mockAssertContentSender.mockReturnValue({
+      ok: true,
+      origin: "https://trusted.example",
+      tabId: 7,
+      frameId: 0,
+    });
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockEnsureItemsHydrated.mockResolvedValue({ ok: false, error: new Error("network down") });
+
+    const response = await send({
+      kind: "capture.propose",
+      frameOrigin: "https://trusted.example",
+      username: "user@example.com",
+      password: "pw1",
+    });
+
+    expect(hoisted.mockClassifySubmit).not.toHaveBeenCalled();
+    expect(hoisted.mockGetItems).not.toHaveBeenCalled();
+    expect(response).toEqual({
+      action: "no-op",
+      frameOrigin: "https://trusted.example",
+      topOrigin: "",
+      mismatch: true,
+    });
+  });
+
+  it("fails closed on a rejected sender without calling classifySubmit, ensureHydrated, or ensureItemsHydrated", async () => {
     hoisted.mockAssertContentSender.mockReturnValue({ ok: false });
 
     const response = await send({
@@ -211,6 +290,7 @@ describe("capture.propose", () => {
 
     expect(hoisted.mockClassifySubmit).not.toHaveBeenCalled();
     expect(hoisted.mockEnsureHydrated).not.toHaveBeenCalled();
+    expect(hoisted.mockEnsureItemsHydrated).not.toHaveBeenCalled();
     expect(response).toEqual({ action: "no-op", frameOrigin: "", topOrigin: "", mismatch: true });
   });
 });

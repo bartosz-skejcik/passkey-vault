@@ -259,6 +259,87 @@ describe("lock-state subscription", () => {
     expect(hoisted.mockStartSync).toHaveBeenCalledTimes(2);
   });
 
+  it("Test 9 (WR-03, iteration 2): ensureItemsHydrated() resolves ok:true only AFTER the initial pull settles, with items populated by then", async () => {
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockDecryptItem.mockReturnValue(
+      JSON.stringify({ type: "note", name: "N1", body: "b", folderId: null, tags: [] }),
+    );
+    let resolveSnapshot!: (snapshot: { revision: number; items?: unknown[] }) => void;
+    hoisted.mockGetSyncSnapshot.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSnapshot = resolve;
+      }),
+    );
+
+    const { ensureItemsHydrated, getItems } = await import("./vault-store");
+
+    const hydrated = ensureItemsHydrated();
+
+    // Still empty -- the pull hasn't settled yet.
+    expect(getItems()).toEqual([]);
+
+    resolveSnapshot({ revision: 1, items: [itemRow("i1")] });
+    const result = await hydrated;
+
+    expect(result).toEqual({ ok: true });
+    expect(getItems()).toEqual([
+      {
+        id: "i1",
+        revision: 1,
+        fields: { type: "note", name: "N1", body: "b", folderId: null, tags: [] },
+        updatedAt: "2026-01-01",
+      },
+    ]);
+  });
+
+  it("Test 10 (WR-03, iteration 2): ensureItemsHydrated() is single-flight -- concurrent callers share ONE getSyncSnapshot(0) pull", async () => {
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockGetSyncSnapshot.mockResolvedValue({ revision: 0 });
+
+    const { ensureItemsHydrated } = await import("./vault-store");
+
+    const [a, b] = await Promise.all([ensureItemsHydrated(), ensureItemsHydrated()]);
+
+    expect(hoisted.mockGetSyncSnapshot).toHaveBeenCalledTimes(1);
+    expect(a).toEqual({ ok: true });
+    expect(b).toEqual({ ok: true });
+  });
+
+  it("Test 11 (WR-03, iteration 2): ensureItemsHydrated() resolves ok:false when the initial pull fails -- cache state is unknown, not confirmed empty", async () => {
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    const pullError = new Error("network down");
+    hoisted.mockGetSyncSnapshot.mockRejectedValue(pullError);
+
+    const { ensureItemsHydrated } = await import("./vault-store");
+
+    const result = await ensureItemsHydrated();
+
+    expect(result).toEqual({ ok: false, error: pullError });
+  });
+
+  it("Test 12 (WR-03, iteration 2): a re-unlock after a lock awaits a NEW pull, not the previous session's stale settled promise", async () => {
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockGetSyncSnapshot.mockResolvedValueOnce({ revision: 1 }).mockResolvedValueOnce({ revision: 2 });
+
+    const vaultStore = await import("./vault-store");
+
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+    await vaultStore.ensureItemsHydrated();
+    expect(hoisted.mockGetSyncSnapshot).toHaveBeenCalledTimes(1);
+
+    hoisted.mockIsSessionUnlocked.mockReturnValue(false);
+    lockStateListener(); // lock transition -- resets initialPullSettled
+
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+    lockStateListener(); // re-unlock transition
+    await vaultStore.ensureItemsHydrated();
+
+    expect(hoisted.mockGetSyncSnapshot).toHaveBeenCalledTimes(2);
+  });
+
   it("Test 5: a lock event broadcasts a vault.updated message for any open popup, tolerating no-receiver rejections", async () => {
     hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
     hoisted.mockDecryptItem.mockReturnValue(

@@ -63,7 +63,7 @@ import { ensureHydrated, noteActivity } from "./vault-session";
 import { armAutoLock, AUTOLOCK_OPTIONS, DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
 import { readSessionMeta, writeSessionMeta } from "./session-storage";
 import { handleUnlockPassword } from "./unlock";
-import { getItems, getFolders, RevisionConflictError } from "./vault-store";
+import { getItems, getFolders, ensureItemsHydrated, RevisionConflictError } from "./vault-store";
 import { handleAutofillFill, handleAutofillMatch, handleAutofillTotpCode } from "./autofill-match";
 import { handleFillFrame, handleMatchFrame, assertContentSender } from "./autofill-frame";
 import { handleGenerateRequest } from "./generate-handler";
@@ -247,15 +247,15 @@ async function handleCaptureProposeMessage(
     // discipline for a non-content-script sender.
     return { action: "no-op", frameOrigin: "", topOrigin: "", mismatch: true };
   }
-  // WR-03 (11-REVIEW.md): ensure the decrypted item cache is hydrated
-  // BEFORE classifying -- a freshly-woken/idle-killed service worker starts
-  // with an empty in-memory vault-store cache (ensureHydrated() only
-  // re-derives the User Key itself; it does not by itself repopulate
-  // vault-store's items array). Classifying against an empty cache would
-  // misreport an existing credential as 'new', and confirmNewLogin (which
-  // DOES gate on ensureHydrated()) would then create a duplicate item.
-  // Mirrors handleMatchFrame's/handleFillFrame's own ensureHydrated()-
-  // before-getItems() discipline (autofill-frame.ts).
+  // WR-03 (11-REVIEW.md, iteration 1) established the discipline; iteration
+  // 2 found the fix cosmetic -- `ensureHydrated()` only re-derives the User
+  // Key itself, it never touches vault-store's `items` array. The ACTUAL
+  // hydration gate is `ensureItemsHydrated()` below, which awaits
+  // vault-store's own tracked initial `getSyncSnapshot(0)` pull. Without
+  // it, a freshly-woken/idle-killed service worker could classify against
+  // an empty in-memory cache, misreport an existing credential as 'new',
+  // and confirmNewLogin (which does not re-classify) would then create a
+  // duplicate item -- the precise defect this gate exists to close.
   const uk = await ensureHydrated();
   if (uk === null) {
     // Locked: no legitimate classification is possible. There is no
@@ -263,6 +263,18 @@ async function handleCaptureProposeMessage(
     // (frozen by Plan 11-01) -- 'no-op' with mismatch:true is the least-
     // surprising fail-closed choice, mirroring the rejected-sender branch
     // above.
+    return { action: "no-op", frameOrigin: guard.origin, topOrigin: "", mismatch: true };
+  }
+  // WR-03 (11-REVIEW.md, iteration 2): actually wait for the item cache to
+  // reflect the server before classifying -- see vault-store.ts's own
+  // header comment on `ensureItemsHydrated()` for the single-flight/
+  // typed-failure contract. A failed pull means the cache state is
+  // UNKNOWN, not "confirmed empty" -- classifying anyway risks the exact
+  // duplicate-item defect this gate exists to close, so this fails closed
+  // with the same 'no-op'/mismatch:true shape used by the locked and
+  // rejected-sender branches above rather than guessing.
+  const hydration = await ensureItemsHydrated();
+  if (!hydration.ok) {
     return { action: "no-op", frameOrigin: guard.origin, topOrigin: "", mismatch: true };
   }
   const senderTopOrigin = deriveSenderTopOrigin(sender);

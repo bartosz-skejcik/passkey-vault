@@ -214,6 +214,15 @@ export function applySyncSnapshot(snapshot: SyncSnapshot): void {
 // not, so the flag is still needed here).
 let syncStarted = false;
 
+// WR-03 (11-REVIEW.md, iteration 2): tracks the CURRENT unlock session's
+// initial getSyncSnapshot(0) pull so `ensureItemsHydrated()` below can
+// actually AWAIT it, instead of the iteration-1 fix's cosmetic
+// `ensureHydrated()` call which only re-derives the User Key and never
+// touches this promise at all. Reset to `null` on every lock (alongside
+// `syncStarted`/`lastKnownRevision`) so a re-unlock always waits on a NEW
+// pull -- never a stale promise from a previous session (T-09-19).
+let initialPullSettled: Promise<{ ok: true } | { ok: false; error: unknown }> | null = null;
+
 /**
  * Idempotent. Starts the sync transport + the initial getSyncSnapshot(0)
  * pull IF the session is unlocked and sync isn't already running; a no-op
@@ -228,9 +237,63 @@ export function ensureVaultSyncStarted(): void {
   }
   syncStarted = true;
   startSync({ getSinceRevision: () => lastKnownRevision, onSnapshot: applySyncSnapshot });
-  void getSyncSnapshot(0)
-    .then(applySyncSnapshot)
-    .catch((e) => console.warn("[passkey-vault] initial sync pull failed", e));
+  // The `.catch` below still swallows the rejection (so the initial pull's
+  // own failure never becomes an unhandled promise rejection in the
+  // service worker -- unchanged behavior), but now converts it into a
+  // TYPED `{ok:false}` result on `initialPullSettled` instead of silently
+  // discarding it, so `ensureItemsHydrated()` callers can tell "the pull
+  // failed, cache state is unknown" apart from "the pull succeeded, cache
+  // reflects the server" (WR-03, iteration 2).
+  initialPullSettled = getSyncSnapshot(0)
+    .then((snapshot) => {
+      applySyncSnapshot(snapshot);
+      return { ok: true as const };
+    })
+    .catch((e: unknown) => {
+      console.warn("[passkey-vault] initial sync pull failed", e);
+      return { ok: false as const, error: e };
+    });
+}
+
+/**
+ * WR-03 (11-REVIEW.md, iteration 2): the actual fix for the cosmetic
+ * iteration-1 `ensureHydrated()`-before-`getItems()` pattern in
+ * `capture.propose` (router.ts). Callers MUST call `ensureHydrated()`
+ * FIRST to establish a valid User Key -- this function only concerns
+ * itself with the ITEM CACHE, not the key.
+ *
+ * Kicks off `ensureVaultSyncStarted()` (idempotent, safe to call every
+ * time) and returns a promise that resolves once the CURRENT unlock
+ * session's initial `getSyncSnapshot(0)` pull has settled:
+ *  - `{ ok: true }` once `items`/`folders` reflect the server -- including
+ *    the legitimate case of an up-to-date, genuinely empty vault (no
+ *    `items`/`folders` key on the snapshot still counts as "hydrated",
+ *    exactly like `applySyncSnapshot`'s own no-op-but-advance-watermark
+ *    branch).
+ *  - `{ ok: false, error }` if the pull itself failed (network/auth
+ *    error). Callers MUST treat this as "cache state unknown", never as
+ *    "cache is confirmed empty" -- classifying a `capture.propose` against
+ *    an empty cache in this branch would reproduce the exact
+ *    misclassify-as-'new'-then-duplicate defect WR-03 was filed to close.
+ *
+ * Single-flight and idempotent: if sync has already started (this call or
+ * an earlier one, this session), every caller shares the SAME
+ * `initialPullSettled` promise -- a burst of concurrent `capture.propose`
+ * calls during the SW-wake window triggers exactly one
+ * `getSyncSnapshot(0)` request, not one per caller.
+ *
+ * If the session is not unlocked (`ensureVaultSyncStarted()` no-ops and
+ * `initialPullSettled` is still `null`), resolves `{ ok: true }`
+ * vacuously -- there is nothing to hydrate, and the locked case is what
+ * the caller's own `ensureHydrated() === null` check upstream already
+ * gates on.
+ */
+export function ensureItemsHydrated(): Promise<{ ok: true } | { ok: false; error: unknown }> {
+  ensureVaultSyncStarted();
+  if (initialPullSettled === null) {
+    return Promise.resolve({ ok: true });
+  }
+  return initialPullSettled;
 }
 
 // Module-level side effect (mirrors web/src/lib/vault/store.ts's own
@@ -246,6 +309,7 @@ subscribeSessionLockState(() => {
     ensureVaultSyncStarted();
   } else {
     syncStarted = false; // re-arm the guard for the NEXT unlock
+    initialPullSettled = null; // WR-03 (iteration 2): a re-unlock must await a NEW pull
     stopSync(); // MUST run before the array-clear below
     lastKnownRevision = 0;
     items = [];
