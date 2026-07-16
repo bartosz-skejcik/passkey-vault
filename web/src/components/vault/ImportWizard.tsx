@@ -482,23 +482,25 @@ export default function ImportWizard({
           {drafts.length === 0 ? (
             <p>{t("import.previewEmpty")}</p>
           ) : (
-            <table className="table table-zebra table-sm">
-              <tbody>
-                {drafts.map((draft, index) => (
-                  <tr key={index} className="h-12">
-                    <td>{draft.name}</td>
-                    <td>{draft.type}</td>
-                    <td>
-                      {draft.type === "login"
-                        ? draft.username
-                        : draft.type === "totp"
-                          ? draft.issuer
-                          : ""}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="max-h-[50vh] overflow-y-auto overflow-x-auto rounded-box border border-base-300">
+              <table className="table table-zebra table-sm">
+                <tbody>
+                  {drafts.map((draft, index) => (
+                    <tr key={index} className="h-12">
+                      <td>{draft.name}</td>
+                      <td>{draft.type}</td>
+                      <td>
+                        {draft.type === "login"
+                          ? draft.username
+                          : draft.type === "totp"
+                            ? draft.issuer
+                            : ""}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           <div className="flex justify-between gap-2">
             <div className="flex gap-2">
