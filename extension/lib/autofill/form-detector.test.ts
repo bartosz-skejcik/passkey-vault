@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // lib/autofill/form-detector.test.ts — jsdom fixtures for classifyForm()/
 // findPasswordFieldPair() (Phase 11, Plan 11-02, Task 1). Written FIRST
 // (TDD RED) against a form-detector.ts that does not exist yet -- these
