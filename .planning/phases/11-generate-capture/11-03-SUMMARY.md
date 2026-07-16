@@ -162,3 +162,9 @@ None - no external service configuration required.
 ---
 *Phase: 11-generate-capture*
 *Completed: 2026-07-16*
+
+## Self-Check: PASSED
+
+All 6 created/modified files verified present on disk; all 4 task commits
+(`8b05755`, `7795687`, `3f138ed`, `99fa452`) plus this summary's own commit
+(`2d3ed62`) verified present in git log.
