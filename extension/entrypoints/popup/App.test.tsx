@@ -327,7 +327,9 @@ describe("App.tsx view-state switch", () => {
       mockStorageSessionGet.mockResolvedValue({
         "pv-pending-provider-ceremony": {
           requestId: "req-1",
+          kind: "get",
           rpId: "example.com",
+          prfRequested: false,
           candidates: CANDIDATES,
         },
       });
@@ -364,7 +366,9 @@ describe("App.tsx view-state switch", () => {
       mockStorageSessionGet.mockResolvedValue({
         "pv-pending-provider-ceremony": {
           requestId: "req-1",
+          kind: "get",
           rpId: "example.com",
+          prfRequested: false,
           candidates: CANDIDATES,
         },
       });
@@ -425,7 +429,9 @@ describe("App.tsx view-state switch", () => {
       mockStorageSessionGet.mockResolvedValue({
         "pv-pending-provider-ceremony": {
           requestId: "req-2",
+          kind: "get",
           rpId: "example.com",
+          prfRequested: false,
           candidates: CANDIDATES,
         },
       });
@@ -470,7 +476,9 @@ describe("App.tsx view-state switch", () => {
       mockStorageSessionGet.mockResolvedValue({
         "pv-pending-provider-ceremony": {
           requestId: "req-3",
+          kind: "get",
           rpId: "example.com",
+          prfRequested: false,
           candidates: [{ itemId: "cred-1", label: "alice" }],
         },
       });
@@ -484,6 +492,165 @@ describe("App.tsx view-state switch", () => {
         expect(screen.getByTestId("provider-confirm")).toBeEnabled();
       });
       expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    });
+
+    // Phase 12 (Plan 12-05, Decision A): create()/single-match get() now
+    // ALSO write this same payload shape (`kind: "create"`/`"get"`) --
+    // these two tests close 12-04-SUMMARY's documented gap ("the
+    // create()/single-get consent states are unreachable in production
+    // today").
+    it("Decision A: a pending 'create' consent payload mounts the create-consent screen, with no candidate list", async () => {
+      mockStorageSessionGet.mockResolvedValue({
+        "pv-pending-provider-ceremony": {
+          requestId: "req-create-1",
+          kind: "create",
+          rpId: "example.com",
+          account: "alice@example.com",
+          prfRequested: false,
+          candidates: [],
+        },
+      });
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "provider.resolveChoice") return { ok: true };
+        if (message.kind === "session.status") {
+          return {
+            kind: "unlocked",
+            autoLockMinutes: 15,
+            accountEmail: "a@example.com",
+            extPasskeyEnrolled: false,
+            extPasskeyPromptSuppressed: false,
+          };
+        }
+        if (message.kind === "vault.list") return { items: [], folders: [] };
+        if (message.kind === "autofill.match") {
+          return {
+            pageState: "restricted",
+            origin: null,
+            detected: { login: false, totp: false, card: false, identity: false },
+            matches: [],
+          };
+        }
+        throw new Error(`unexpected message in this test: ${message.kind}`);
+      });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("provider-confirm")).toBeInTheDocument();
+      });
+      expect(screen.getByText("example.com")).toBeInTheDocument();
+      expect(screen.getByText(/alice@example.com/)).toBeInTheDocument();
+      expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+      // CTA must be enabled with no candidate to select at all -- create()
+      // has no picker list.
+      expect(screen.getByTestId("provider-confirm")).toBeEnabled();
+
+      screen.getByTestId("provider-confirm").click();
+
+      await waitFor(() => {
+        expect(mockSendMessage).toHaveBeenCalledWith({
+          kind: "provider.resolveChoice",
+          requestId: "req-create-1",
+          itemId: "confirmed",
+        });
+      });
+    });
+
+    it("Decision A: declining a pending 'create' consent payload sends provider.resolveChoice with itemId: null", async () => {
+      mockStorageSessionGet.mockResolvedValue({
+        "pv-pending-provider-ceremony": {
+          requestId: "req-create-2",
+          kind: "create",
+          rpId: "example.com",
+          prfRequested: false,
+          candidates: [],
+        },
+      });
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "provider.resolveChoice") return { ok: true };
+        if (message.kind === "session.status") {
+          return {
+            kind: "unlocked",
+            autoLockMinutes: 15,
+            accountEmail: "a@example.com",
+            extPasskeyEnrolled: false,
+            extPasskeyPromptSuppressed: false,
+          };
+        }
+        if (message.kind === "vault.list") return { items: [], folders: [] };
+        if (message.kind === "autofill.match") {
+          return {
+            pageState: "restricted",
+            origin: null,
+            detected: { login: false, totp: false, card: false, identity: false },
+            matches: [],
+          };
+        }
+        throw new Error(`unexpected message in this test: ${message.kind}`);
+      });
+
+      render(<App />);
+      await waitFor(() => screen.getByTestId("provider-decline"));
+
+      screen.getByTestId("provider-decline").click();
+
+      await waitFor(() => {
+        expect(mockSendMessage).toHaveBeenCalledWith({
+          kind: "provider.resolveChoice",
+          requestId: "req-create-2",
+          itemId: null,
+        });
+      });
+    });
+
+    it("Decision A: a pending single-match 'get' consent payload confirms with the pre-selected candidate's itemId", async () => {
+      mockStorageSessionGet.mockResolvedValue({
+        "pv-pending-provider-ceremony": {
+          requestId: "req-get-single-1",
+          kind: "get",
+          rpId: "example.com",
+          prfRequested: false,
+          candidates: [{ itemId: "cred-solo", label: "alice" }],
+        },
+      });
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "provider.resolveChoice") return { ok: true };
+        if (message.kind === "session.status") {
+          return {
+            kind: "unlocked",
+            autoLockMinutes: 15,
+            accountEmail: "a@example.com",
+            extPasskeyEnrolled: false,
+            extPasskeyPromptSuppressed: false,
+          };
+        }
+        if (message.kind === "vault.list") return { items: [], folders: [] };
+        if (message.kind === "autofill.match") {
+          return {
+            pageState: "restricted",
+            origin: null,
+            detected: { login: false, totp: false, card: false, identity: false },
+            matches: [],
+          };
+        }
+        throw new Error(`unexpected message in this test: ${message.kind}`);
+      });
+
+      render(<App />);
+      await waitFor(() => {
+        expect(screen.getByTestId("provider-confirm")).toBeEnabled();
+      });
+      expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+
+      screen.getByTestId("provider-confirm").click();
+
+      await waitFor(() => {
+        expect(mockSendMessage).toHaveBeenCalledWith({
+          kind: "provider.resolveChoice",
+          requestId: "req-get-single-1",
+          itemId: "cred-solo",
+        });
+      });
     });
   });
 });

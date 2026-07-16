@@ -1,12 +1,15 @@
-// entrypoints/background/provider-ceremony.test.ts — Plan 12-02 Task 2's
-// required behaviors for handleCredentialsCreate/handleCredentialsGet: the
-// locked/unlocked, zero/one/PRF-capable/PRF-unavailable, and genuine-failure
-// decision logic. Mirrors capture-handler.test.ts's precedent: vault-store.ts
-// is mocked with real, pure re-implementations of the exports this suite
-// needs (splitCombinedEncryptedItem) plus vi.fn() stand-ins for the rest, so
+// entrypoints/background/provider-ceremony.test.ts — the locked/unlocked,
+// zero/one/multi-match, PRF-capable/PRF-unavailable, and genuine-failure
+// decision logic of handleCredentialsCreate/handleCredentialsGet, PLUS
+// Plan 12-05's Decision A consent gate (12-REVIEW.md CR-01..IN-04): EVERY
+// ceremony now awaits an explicit popup confirm/decline before minting/
+// persisting or signing anything, never a silent-on-unlocked-vault path.
+// Mirrors capture-handler.test.ts's precedent: vault-store.ts is mocked
+// with real, pure re-implementations of the exports this suite needs
+// (splitCombinedEncryptedItem) plus vi.fn() stand-ins for the rest, so
 // importing this module for real never drags in the transitive sync-client/
 // vault-session/wasm import graph.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hoisted = vi.hoisted(() => ({
   mockEnsureHydrated: vi.fn(),
@@ -77,10 +80,24 @@ vi.mock("../../lib/crypto/wasm-loader", () => ({
   wasmGetProviderAssertion: hoisted.mockWasmGetProviderAssertion,
 }));
 
-import { handleCredentialsCreate, handleCredentialsGet } from "./provider-ceremony";
+import {
+  handleCredentialsCreate,
+  handleCredentialsGet,
+  resolveProviderCredentialChoice,
+} from "./provider-ceremony";
 import type { VaultItem } from "../../lib/vault/types";
 
 const FAKE_UK = { tag: "unlocked-user-key" };
+const PENDING_CEREMONY_KEY = "pv-pending-provider-ceremony";
+
+interface CapturedConsentPayload {
+  requestId: string;
+  kind: "create" | "get";
+  rpId: string;
+  account?: string;
+  prfRequested: boolean;
+  candidates: { itemId: string; label: string }[];
+}
 
 function passkeyItem(id: string, rpId: string, username: string): VaultItem {
   return {
@@ -103,6 +120,25 @@ function combinedEncryptedItemJson(): string {
   return JSON.stringify({ enc_key: { nonce: "n1", ciphertext: "c1" }, enc_data: { nonce: "n2", ciphertext: "c2" } });
 }
 
+/** Decision A (Plan 12-05): every create()/get() ceremony now writes ONE
+ * unified consent payload to `chrome.storage.session` and awaits an
+ * explicit `resolveProviderCredentialChoice` call before proceeding --
+ * this helper reads the LAST such payload written (mirrors how App.tsx
+ * would read it) so tests can drive the confirm/decline step. */
+function lastPendingCeremonyPayload(): CapturedConsentPayload | undefined {
+  const call = hoisted.mockStorageSet.mock.calls
+    .map((args) => (args[0] as Record<string, unknown>)[PENDING_CEREMONY_KEY])
+    .filter((v): v is CapturedConsentPayload => v !== undefined);
+  return call.at(-1);
+}
+
+async function awaitPendingCeremonyPayload(): Promise<CapturedConsentPayload> {
+  await vi.waitFor(() => {
+    expect(lastPendingCeremonyPayload()).toBeDefined();
+  });
+  return lastPendingCeremonyPayload() as CapturedConsentPayload;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   hoisted.mockStorageGet.mockResolvedValue({});
@@ -121,7 +157,9 @@ describe("D-09: locked vault", () => {
     hoisted.mockOpenPopup.mockResolvedValue(undefined);
 
     // Fire the handler but don't await it to completion -- with no unlock
-    // signal ever delivered, waitForUnlock()'s promise never resolves.
+    // signal ever delivered, waitForUnlock()'s promise never resolves
+    // (short of its own WR-03 abandon timeout, far outside this test's
+    // real-time budget).
     void handleCredentialsGet({ publicKey: { rpId: "example.com" } }, "https://example.com");
 
     // Flush pending microtasks so the locked branch's async work runs.
@@ -153,6 +191,53 @@ describe("D-09: locked vault", () => {
   });
 });
 
+describe("WR-04: no dead boolean flag written to pv-pending-provider-ceremony", () => {
+  it("while the vault is locked (never unlocks), every write to the storage key is an OBJECT, never a bare boolean", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(null);
+    hoisted.mockOpenPopup.mockResolvedValue(undefined);
+
+    void handleCredentialsGet({ publicKey: { rpId: "example.com" } }, "https://example.com");
+
+    await vi.waitFor(() => {
+      expect(hoisted.mockOpenPopup).toHaveBeenCalled();
+    });
+
+    for (const call of hoisted.mockStorageSet.mock.calls) {
+      const value = (call[0] as Record<string, unknown>)[PENDING_CEREMONY_KEY];
+      if (value !== undefined) {
+        expect(typeof value).toBe("object");
+        expect(value).not.toBe(true);
+      }
+    }
+  });
+});
+
+describe("WR-03: waitForUnlock cancellation (abandon timeout)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("credentials.get: if the vault never unlocks within the abandon timeout, unsubscribe() is called and the handler falls through without ever calling wasmGetProviderAssertion", async () => {
+    vi.useFakeTimers();
+    hoisted.mockEnsureHydrated.mockResolvedValue(null);
+    hoisted.mockOpenPopup.mockResolvedValue(undefined);
+    const mockUnsubscribe = vi.fn();
+    hoisted.mockSubscribeSessionLockState.mockReturnValue(mockUnsubscribe);
+
+    const resultPromise = handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    const result = await resultPromise;
+
+    expect(result).toEqual({ fallthrough: true });
+    expect(mockUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(hoisted.mockWasmGetProviderAssertion).not.toHaveBeenCalled();
+  });
+});
+
 describe("credentials.get: no matching credential", () => {
   it("returns { fallthrough: true } WITHOUT calling wasmGetProviderAssertion and WITHOUT throwing", async () => {
     hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
@@ -165,57 +250,9 @@ describe("credentials.get: no matching credential", () => {
 
     expect(result).toEqual({ fallthrough: true });
     expect(hoisted.mockWasmGetProviderAssertion).not.toHaveBeenCalled();
-  });
-});
-
-describe("credentials.get: exactly one matching credential", () => {
-  it("calls the (mocked) wasmGetProviderAssertion and returns { fallthrough: false, credentialResponseJson }", async () => {
-    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
-    hoisted.mockGetItems.mockReturnValue([passkeyItem("pk-1", "example.com", "alice")]);
-    hoisted.mockWasmGetProviderAssertion.mockReturnValue({
-      credentialResponseJson: () => '{"id":"cred-pk-1","type":"public-key"}',
-      updatedEncryptedItemJson: () => undefined,
-    });
-
-    const result = await handleCredentialsGet(
-      { publicKey: { rpId: "example.com" } },
-      "https://example.com",
-    );
-
-    expect(result).toEqual({
-      fallthrough: false,
-      credentialResponseJson: '{"id":"cred-pk-1","type":"public-key"}',
-    });
-    expect(hoisted.mockWasmGetProviderAssertion).toHaveBeenCalledTimes(1);
-    expect(hoisted.mockWasmGetProviderAssertion).toHaveBeenCalledWith(
-      FAKE_UK,
-      expect.any(String),
-      "https://example.com",
-      expect.any(String),
-      "pk-1",
-      1,
-    );
-  });
-
-  it("persists a sign-counter mutation via updateItem when updatedEncryptedItemJson is present", async () => {
-    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
-    hoisted.mockGetItems.mockReturnValue([passkeyItem("pk-1", "example.com", "alice")]);
-    hoisted.mockWasmGetProviderAssertion.mockReturnValue({
-      credentialResponseJson: () => '{"id":"cred-pk-1"}',
-      updatedEncryptedItemJson: () => combinedEncryptedItemJson(),
-    });
-
-    await handleCredentialsGet({ publicKey: { rpId: "example.com" } }, "https://example.com");
-    await vi.waitFor(() => {
-      expect(hoisted.mockUpdateItem).toHaveBeenCalled();
-    });
-
-    expect(hoisted.mockUpdateItem).toHaveBeenCalledWith(
-      "pk-1",
-      expect.any(String),
-      expect.any(String),
-      1,
-    );
+    // Zero matches means nothing to ask consent for -- no popup, no
+    // storage write at all.
+    expect(hoisted.mockOpenPopup).not.toHaveBeenCalled();
   });
 });
 
@@ -230,8 +267,12 @@ describe("CR-02: credentials.get with an omitted rpId defaults to the sender ori
 
     // No `rpId` field at all on the request -- the spec-valid omitted case
     // (defaults to the caller origin's effective domain) CR-02 fixes.
-    const result = await handleCredentialsGet({ publicKey: {} }, "https://example.com");
+    const resultPromise = handleCredentialsGet({ publicKey: {} }, "https://example.com");
+    const payload = await awaitPendingCeremonyPayload();
+    expect(payload.rpId).toBe("example.com");
+    resolveProviderCredentialChoice(payload.requestId, "pk-1");
 
+    const result = await resultPromise;
     expect(result).toEqual({
       fallthrough: false,
       credentialResponseJson: '{"id":"cred-pk-1","type":"public-key"}',
@@ -250,6 +291,200 @@ describe("CR-02: credentials.get with an omitted rpId defaults to the sender ori
   });
 });
 
+describe("Decision A (12-05-PLAN.md): credentials.create is consent-gated end-to-end", () => {
+  it("writes a create-kind consent payload and awaits an explicit confirm BEFORE calling wasmCreateProviderCredential", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockWasmCreateProviderCredential.mockReturnValue({
+      credentialResponseJson: () => JSON.stringify({ id: "new-cred", clientExtensionResults: {} }),
+      encryptedItemJson: () => combinedEncryptedItemJson(),
+    });
+
+    const resultPromise = handleCredentialsCreate(
+      { publicKey: { rp: { id: "example.com" }, user: { name: "alice@example.com" } } },
+      "https://example.com",
+    );
+
+    const payload = await awaitPendingCeremonyPayload();
+    expect(payload.kind).toBe("create");
+    expect(payload.rpId).toBe("example.com");
+    expect(payload.account).toBe("alice@example.com");
+    expect(payload.candidates).toEqual([]);
+    // The whole point of the gate: nothing minted yet.
+    expect(hoisted.mockWasmCreateProviderCredential).not.toHaveBeenCalled();
+
+    resolveProviderCredentialChoice(payload.requestId, "confirmed");
+    const result = await resultPromise;
+
+    expect(result.fallthrough).toBe(false);
+    expect(hoisted.mockWasmCreateProviderCredential).toHaveBeenCalledTimes(1);
+  });
+
+  it("decline returns { fallthrough: true } and NEVER calls wasmCreateProviderCredential or createItem (CR-03 orphan-credential fix)", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+
+    const resultPromise = handleCredentialsCreate(
+      { publicKey: { rp: { id: "example.com" } } },
+      "https://example.com",
+    );
+
+    const payload = await awaitPendingCeremonyPayload();
+    resolveProviderCredentialChoice(payload.requestId, null);
+    const result = await resultPromise;
+
+    expect(result).toEqual({ fallthrough: true });
+    expect(hoisted.mockWasmCreateProviderCredential).not.toHaveBeenCalled();
+    expect(hoisted.mockCreateItem).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the origin host for rpId when the create request's rp.id is omitted (CR-02 parity for create())", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+
+    const resultPromise = handleCredentialsCreate({ publicKey: {} }, "https://example.com");
+    const payload = await awaitPendingCeremonyPayload();
+    expect(payload.rpId).toBe("example.com");
+    resolveProviderCredentialChoice(payload.requestId, null);
+    await resultPromise;
+  });
+});
+
+describe("Decision A (12-05-PLAN.md): credentials.get single-match is consent-gated end-to-end", () => {
+  it("writes a get-kind consent payload with the single pre-selected candidate and awaits confirm BEFORE calling wasmGetProviderAssertion", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockGetItems.mockReturnValue([passkeyItem("pk-1", "example.com", "alice")]);
+    hoisted.mockWasmGetProviderAssertion.mockReturnValue({
+      credentialResponseJson: () => '{"id":"cred-pk-1"}',
+      updatedEncryptedItemJson: () => undefined,
+    });
+
+    const resultPromise = handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+
+    const payload = await awaitPendingCeremonyPayload();
+    expect(payload.kind).toBe("get");
+    expect(payload.candidates).toEqual([{ itemId: "pk-1", label: "alice" }]);
+    expect(payload.account).toBe("alice");
+    expect(hoisted.mockWasmGetProviderAssertion).not.toHaveBeenCalled();
+
+    resolveProviderCredentialChoice(payload.requestId, "pk-1");
+    const result = await resultPromise;
+
+    expect(result).toEqual({ fallthrough: false, credentialResponseJson: '{"id":"cred-pk-1"}' });
+    expect(hoisted.mockWasmGetProviderAssertion).toHaveBeenCalledWith(
+      FAKE_UK,
+      expect.any(String),
+      "https://example.com",
+      expect.any(String),
+      "pk-1",
+      1,
+    );
+  });
+
+  it("decline returns { fallthrough: true } and NEVER calls wasmGetProviderAssertion -- no signature produced", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockGetItems.mockReturnValue([passkeyItem("pk-1", "example.com", "alice")]);
+
+    const resultPromise = handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+
+    const payload = await awaitPendingCeremonyPayload();
+    resolveProviderCredentialChoice(payload.requestId, null);
+    const result = await resultPromise;
+
+    expect(result).toEqual({ fallthrough: true });
+    expect(hoisted.mockWasmGetProviderAssertion).not.toHaveBeenCalled();
+  });
+
+  it("persists a sign-counter mutation via updateItem when updatedEncryptedItemJson is present, only after confirm", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockGetItems.mockReturnValue([passkeyItem("pk-1", "example.com", "alice")]);
+    hoisted.mockWasmGetProviderAssertion.mockReturnValue({
+      credentialResponseJson: () => '{"id":"cred-pk-1"}',
+      updatedEncryptedItemJson: () => combinedEncryptedItemJson(),
+    });
+
+    const resultPromise = handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+    const payload = await awaitPendingCeremonyPayload();
+    resolveProviderCredentialChoice(payload.requestId, "pk-1");
+    await resultPromise;
+
+    await vi.waitFor(() => {
+      expect(hoisted.mockUpdateItem).toHaveBeenCalled();
+    });
+
+    expect(hoisted.mockUpdateItem).toHaveBeenCalledWith(
+      "pk-1",
+      expect.any(String),
+      expect.any(String),
+      1,
+    );
+  });
+});
+
+describe("credentials.get (multi-match): picker flow unchanged (regression)", () => {
+  it("more than one match writes a get-kind consent payload with ALL candidates; selecting one signs it", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockGetItems.mockReturnValue([
+      passkeyItem("pk-1", "example.com", "alice"),
+      passkeyItem("pk-2", "example.com", "bob"),
+    ]);
+    hoisted.mockWasmGetProviderAssertion.mockReturnValue({
+      credentialResponseJson: () => '{"id":"cred-pk-2"}',
+      updatedEncryptedItemJson: () => undefined,
+    });
+
+    const resultPromise = handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+    const payload = await awaitPendingCeremonyPayload();
+    expect(payload.candidates).toEqual([
+      { itemId: "pk-1", label: "alice" },
+      { itemId: "pk-2", label: "bob" },
+    ]);
+    // No single pre-selected account for a multi-match payload.
+    expect(payload.account).toBeUndefined();
+
+    resolveProviderCredentialChoice(payload.requestId, "pk-2");
+    const result = await resultPromise;
+
+    expect(result).toEqual({ fallthrough: false, credentialResponseJson: '{"id":"cred-pk-2"}' });
+    expect(hoisted.mockWasmGetProviderAssertion).toHaveBeenCalledWith(
+      FAKE_UK,
+      expect.any(String),
+      "https://example.com",
+      expect.any(String),
+      "pk-2",
+      1,
+    );
+  });
+
+  it("declining a multi-match picker returns { fallthrough: true } without signing", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockGetItems.mockReturnValue([
+      passkeyItem("pk-1", "example.com", "alice"),
+      passkeyItem("pk-2", "example.com", "bob"),
+    ]);
+
+    const resultPromise = handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+    const payload = await awaitPendingCeremonyPayload();
+    resolveProviderCredentialChoice(payload.requestId, null);
+    const result = await resultPromise;
+
+    expect(result).toEqual({ fallthrough: true });
+    expect(hoisted.mockWasmGetProviderAssertion).not.toHaveBeenCalled();
+  });
+});
+
 describe("credentials.create: PRF capability reporting (D-16)", () => {
   it("reports { prfCapable: true } when the ceremony's own clientExtensionResults.prf.enabled is true", async () => {
     hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
@@ -259,10 +494,14 @@ describe("credentials.create: PRF capability reporting (D-16)", () => {
       encryptedItemJson: () => combinedEncryptedItemJson(),
     });
 
-    const result = await handleCredentialsCreate(
+    const resultPromise = handleCredentialsCreate(
       { publicKey: { rp: { id: "example.com" }, extensions: { prf: {} } } },
       "https://example.com",
     );
+    const payload = await awaitPendingCeremonyPayload();
+    expect(payload.prfRequested).toBe(true);
+    resolveProviderCredentialChoice(payload.requestId, "confirmed");
+    const result = await resultPromise;
 
     expect(result.fallthrough).toBe(false);
     expect(result.prfCapable).toBe(true);
@@ -277,10 +516,13 @@ describe("credentials.create: PRF capability reporting (D-16)", () => {
       encryptedItemJson: () => combinedEncryptedItemJson(),
     });
 
-    const result = await handleCredentialsCreate(
+    const resultPromise = handleCredentialsCreate(
       { publicKey: { rp: { id: "example.com" }, extensions: { prf: {} } } },
       "https://example.com",
     );
+    const payload = await awaitPendingCeremonyPayload();
+    resolveProviderCredentialChoice(payload.requestId, "confirmed");
+    const result = await resultPromise;
 
     expect(result.fallthrough).toBe(false);
     expect(result.prfCapable).toBe(false);
@@ -294,10 +536,14 @@ describe("credentials.create: PRF capability reporting (D-16)", () => {
       encryptedItemJson: () => combinedEncryptedItemJson(),
     });
 
-    const result = await handleCredentialsCreate(
+    const resultPromise = handleCredentialsCreate(
       { publicKey: { rp: { id: "example.com" } } },
       "https://example.com",
     );
+    const payload = await awaitPendingCeremonyPayload();
+    expect(payload.prfRequested).toBe(false);
+    resolveProviderCredentialChoice(payload.requestId, "confirmed");
+    const result = await resultPromise;
 
     expect(result.prfCapable).toBeUndefined();
     expect(result.prfUnavailableReason).toBeUndefined();
@@ -305,31 +551,37 @@ describe("credentials.create: PRF capability reporting (D-16)", () => {
 });
 
 describe("genuine WASM failure (not decline/no-match)", () => {
-  it("credentials.create: a thrown exception from the WASM call is caught and converted to { fallthrough: false, failed: true }", async () => {
+  it("credentials.create: a thrown exception from the WASM call (after confirm) is caught and converted to { fallthrough: false, failed: true }", async () => {
     hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
     hoisted.mockWasmCreateProviderCredential.mockImplementation(() => {
       throw new Error("ceremony failed");
     });
 
-    const result = await handleCredentialsCreate(
+    const resultPromise = handleCredentialsCreate(
       { publicKey: { rp: { id: "example.com" } } },
       "https://example.com",
     );
+    const payload = await awaitPendingCeremonyPayload();
+    resolveProviderCredentialChoice(payload.requestId, "confirmed");
+    const result = await resultPromise;
 
     expect(result).toEqual({ fallthrough: false, failed: true });
   });
 
-  it("credentials.get: a thrown exception from the WASM call is caught and converted to { fallthrough: false, failed: true }", async () => {
+  it("credentials.get: a thrown exception from the WASM call (after confirm) is caught and converted to { fallthrough: false, failed: true }", async () => {
     hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
     hoisted.mockGetItems.mockReturnValue([passkeyItem("pk-1", "example.com", "alice")]);
     hoisted.mockWasmGetProviderAssertion.mockImplementation(() => {
       throw new Error("ceremony failed");
     });
 
-    const result = await handleCredentialsGet(
+    const resultPromise = handleCredentialsGet(
       { publicKey: { rpId: "example.com" } },
       "https://example.com",
     );
+    const payload = await awaitPendingCeremonyPayload();
+    resolveProviderCredentialChoice(payload.requestId, "pk-1");
+    const result = await resultPromise;
 
     expect(result).toEqual({ fallthrough: false, failed: true });
   });
@@ -340,6 +592,8 @@ describe("D-10: fresh re-check of chrome.storage.session on every invocation", (
     hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
     hoisted.mockGetItems.mockReturnValue([]);
 
+    // Zero matches both times -- returns before ever reaching the consent
+    // gate, so no confirm/decline needs to be driven here.
     await handleCredentialsGet({ publicKey: { rpId: "example.com" } }, "https://example.com");
     await handleCredentialsGet({ publicKey: { rpId: "example.com" } }, "https://example.com");
 

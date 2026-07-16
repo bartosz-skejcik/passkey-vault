@@ -27,11 +27,49 @@
 // the current lock state before doing anything.
 //
 // D-09 (locked -> open popup, await unlock, never fail outright): if
-// `ensureHydrated()` resolves null, `openPopupAndAwaitUnlock()` writes a
-// pending-ceremony flag to `chrome.storage.session` (12-04's popup reads
-// this on mount), attempts `browser.action.openPopup()`, falls back to
-// `browser.windows.create()`, and returns a promise that resolves once
-// `vault-session.ts`'s lock-state subscription reports an unlock.
+// `ensureHydrated()` resolves null, `openPopupAndAwaitUnlock()` attempts
+// `browser.action.openPopup()`, falls back to `browser.windows.create()`,
+// and awaits `vault-session.ts`'s lock-state subscription reporting an
+// unlock (`waitForUnlock`) -- `null` on abandonment (WR-03 below), never a
+// hung promise.
+//
+// Decision A (Bartek, 2026-07-16, 12-05-PLAN.md): EVERY ceremony -- create(),
+// single-match get(), AND multi-match get() -- now awaits an EXPLICIT popup
+// confirm via `awaitCeremonyConsent` before minting/persisting a passkey or
+// signing an assertion. There is no silent-on-unlocked-vault path left: the
+// prior scope (12-04-SUMMARY's "Scope Clarification #3") only gated the
+// multi-match picker; create()/single-match get() proceeded immediately
+// once the vault was unlocked. `awaitCeremonyConsent` writes ONE unified
+// payload shape (`{requestId, kind, rpId, account?, prfRequested,
+// candidates}`) to `chrome.storage.session` regardless of kind -- App.tsx
+// mounts `ProviderCeremonyView` for all three (create/single-get/multi-get)
+// off this single shape now, not just the multi-match picker.
+//
+// WR-04 fix (12-REVIEW.md): the prior locked-vault path wrote a dead
+// boolean (`{ [PENDING_CEREMONY_KEY]: true }`) that nothing ever read and
+// that was never cleared -- removed entirely. `openPopupAndAwaitUnlock`
+// only opens the popup and waits for unlock now; the SAME popup naturally
+// transitions from `UnlockView` to `ProviderCeremonyView` once
+// `awaitCeremonyConsent` writes the real payload right after unlock
+// resolves, so there is exactly ONE object shape ever written to this key.
+//
+// CR-03 fix (12-REVIEW.md, orphan-credential half): `handleCredentialsCreate`
+// NEVER calls `wasmCreateProviderCredential`/persists anything until
+// `awaitCeremonyConsent` resolves to an explicit confirm -- a decline OR an
+// abandoned/timed-out ceremony (WR-03) returns `{ fallthrough: true }`
+// before the WASM binding is ever invoked, so a page that already gave up
+// can never end up with a vault/server credential it never received.
+//
+// WR-03 fix (12-REVIEW.md): both `waitForUnlock` (locked-vault wait) and
+// `awaitCeremonyConsent` (the popup consent await) are bounded by
+// `CEREMONY_ABANDON_TIMEOUT_MS` -- if the user closes the popup without an
+// explicit decline ever reaching `resolveProviderCredentialChoice`, the
+// promise still resolves (to `null`/abandon), `unsubscribe()` is called,
+// and `PENDING_CEREMONY_KEY` is removed -- no permanently-leaked
+// `subscribeSessionLockState` listener or stale storage key. Mirrors
+// CR-03's page-side 120s backstop (page-bridge.content.ts/
+// page-bridge-firefox.ts) -- same ceiling, same "genuinely stuck ceremony"
+// semantics.
 //
 // D-11/PROV-03 (never dead-end): every exported handler wraps its ENTIRE
 // body in try/catch -- any exception (including from the WASM bindings)
@@ -57,7 +95,7 @@ import { browser } from "wxt/browser";
 import { ensureHydrated, subscribeSessionLockState } from "./vault-session";
 import { getItems, splitCombinedEncryptedItem } from "./vault-store";
 import { createItem, updateItem } from "./vault-api";
-import { findMatchingPasskeyItems, type MatchingPasskeyItem } from "./credential-store";
+import { findMatchingPasskeyItems } from "./credential-store";
 import {
   encryptItem,
   wasmCreateProviderCredential,
@@ -199,30 +237,60 @@ async function tryOpenFallbackWindow(): Promise<void> {
   }
 }
 
+// WR-03 (12-REVIEW.md): shared abandon ceiling for both the locked-vault
+// unlock wait (`waitForUnlock`) and the consent await (`awaitCeremonyConsent`
+// below) -- mirrors CR-03's page-side 120s backstop (page-bridge.content.ts/
+// page-bridge-firefox.ts's `RESPONSE_TIMEOUT_MS`). A plain `setTimeout`
+// (never `chrome.alarms`) is deliberate here, matching sync-client.ts's own
+// `reconnectTimer` precedent: losing this timer to an MV3 service-worker
+// idle-kill is harmless -- the in-memory Promise/Map entry it would clean
+// up is itself garbage-collected the instant the worker dies, so there is
+// nothing left to leak once that happens.
+const CEREMONY_ABANDON_TIMEOUT_MS = 120_000;
+
 /** Resolves once `vault-session.ts` reports an unlock -- re-checks
  * `ensureHydrated()` on every lock-state transition (not just "unlock"
  * events specifically, since `subscribeSessionLockState`'s listener carries
- * no payload) rather than assuming the FIRST notification means unlocked. */
-function waitForUnlock(): Promise<WasmUserKey> {
+ * no payload) rather than assuming the FIRST notification means unlocked.
+ * WR-03 fix: bounded by `CEREMONY_ABANDON_TIMEOUT_MS` -- resolves `null`
+ * (never a permanently-pending Promise) and calls `unsubscribe()` if no
+ * unlock arrives in time, so a user who closes the popup/window while the
+ * vault stays locked no longer leaks this subscription indefinitely. */
+function waitForUnlock(): Promise<WasmUserKey | null> {
   return new Promise((resolve) => {
+    let settled = false;
     const unsubscribe = subscribeSessionLockState(() => {
       void ensureHydrated().then((uk) => {
-        if (uk !== null) {
+        if (uk !== null && !settled) {
+          settled = true;
+          clearTimeout(timeoutId);
           unsubscribe();
           resolve(uk);
         }
       });
     });
+    const timeoutId = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        unsubscribe();
+        resolve(null);
+      }
+    }, CEREMONY_ABANDON_TIMEOUT_MS);
   });
 }
 
-/** D-09: writes the pending-ceremony flag (12-04's popup reads this on
- * mount), attempts `browser.action.openPopup()` first, falls back to a
+/** D-09: attempts `browser.action.openPopup()` first, falls back to a
  * dedicated small `browser.windows.create()` popup window when unavailable/
- * rejected, then awaits the unlock signal -- never proceeds with a null key
- * and never fails the ceremony outright while locked. */
-async function openPopupAndAwaitUnlock(): Promise<WasmUserKey> {
-  await browser.storage.session.set({ [PENDING_CEREMONY_KEY]: true });
+ * rejected, then awaits the unlock signal. Returns `null` on abandonment
+ * (WR-03) -- callers must treat that identically to an explicit decline
+ * (`{ fallthrough: true }`), never proceed with a null key. WR-04 fix: no
+ * longer writes any flag to `PENDING_CEREMONY_KEY` -- the vault-locked
+ * state is already fully conveyed by `session.status` (App.tsx's existing
+ * `UnlockView`, per 12-04-SUMMARY's Scope Clarification #3); the real
+ * consent payload is written by `awaitCeremonyConsent` immediately after
+ * this resolves, so the popup naturally transitions from UnlockView to
+ * ProviderCeremonyView with no intermediate flag needed. */
+async function openPopupAndAwaitUnlock(): Promise<WasmUserKey | null> {
   const opened = await tryOpenPopup();
   if (!opened) {
     await tryOpenFallbackWindow();
@@ -303,74 +371,151 @@ function extractGetRpId(publicKeyRequest: unknown, senderOrigin: string): string
   return extractRpId(publicKeyRequest) || deriveOriginHost(senderOrigin);
 }
 
-// --- Multi-match picker groundwork (Plan 12-04 wires the actual popup UI) ---
+/** `create()`'s RP id lives at `rp.id` (spec-optional there too, same
+ * default-to-origin rule as `get()`'s top-level `rpId`, CR-02) -- never at
+ * `publicKeyRequest.rpId` (a `get()`-only field). */
+function extractCreateRpId(publicKeyRequest: unknown, senderOrigin: string): string {
+  if (typeof publicKeyRequest === "object" && publicKeyRequest !== null) {
+    const rp = (publicKeyRequest as { rp?: unknown }).rp;
+    if (typeof rp === "object" && rp !== null) {
+      const id = (rp as { id?: unknown }).id;
+      if (typeof id === "string" && id.length > 0) {
+        return id;
+      }
+    }
+  }
+  return deriveOriginHost(senderOrigin);
+}
 
-interface PendingPickerResolution {
+/** The account label shown on the `create()` consent screen
+ * (`provider.accountLabel`, 12-UI-SPEC.md) -- `user.name`/`user.displayName`
+ * from the RP's OWN create request, never fabricated. `undefined` (no
+ * account line rendered) if the request carries neither. */
+function extractAccountLabel(publicKeyRequest: unknown): string | undefined {
+  if (typeof publicKeyRequest === "object" && publicKeyRequest !== null) {
+    const user = (publicKeyRequest as { user?: unknown }).user;
+    if (typeof user === "object" && user !== null) {
+      const name = (user as { name?: unknown }).name;
+      if (typeof name === "string" && name.length > 0) {
+        return name;
+      }
+      const displayName = (user as { displayName?: unknown }).displayName;
+      if (typeof displayName === "string" && displayName.length > 0) {
+        return displayName;
+      }
+    }
+  }
+  return undefined;
+}
+
+// --- Decision A: unified popup-consent gate for EVERY ceremony -----------
+
+export interface PendingCeremonyCandidate {
+  itemId: string;
+  label: string;
+}
+
+/** The ONE payload shape `awaitCeremonyConsent` ever writes to
+ * `PENDING_CEREMONY_KEY` -- App.tsx (Plan 12-05) mounts
+ * `ProviderCeremonyView` off this SAME shape for all three ceremony kinds
+ * (create, single-match get, multi-match get), replacing 12-02/12-04's
+ * two-shape split (a dead boolean for the locked-wait path, WR-04, and this
+ * object shape for the multi-match picker only). `candidates` is `[]` for
+ * `create` (no picker list, one implicit "new credential" affordance per
+ * 12-UI-SPEC.md); 1 entry for a single-match `get` (pre-selected, no list
+ * rendered); 2+ for a multi-match `get` (the existing picker). */
+interface PendingCeremonyPayload {
+  requestId: string;
+  kind: "create" | "get";
+  rpId: string;
+  account?: string;
+  prfRequested: boolean;
+  candidates: PendingCeremonyCandidate[];
+}
+
+interface PendingConsentResolution {
   resolve: (itemId: string | null) => void;
 }
 
-const pendingPickerResolutions = new Map<string, PendingPickerResolution>();
+const pendingConsentResolutions = new Map<string, PendingConsentResolution>();
 
-/** More than one vault-stored passkey matches the RP -- signals a picker
- * state for the popup UI (Plan 12-04) and awaits the user's selection
- * before returning. `null` (decline/dismiss) is a legitimate resolution --
- * the caller must fall through, not treat it as a failure. Not yet exercised
- * by this plan's `<behavior>` tests (no multi-match fixture listed) --
- * groundwork for Plan 12-04's picker UI, which calls
- * `resolveProviderCredentialChoice` once the user picks (or the popup is
- * dismissed, per D-11's "popup dismissal = implicit decline"). */
-async function resolvePasskeyChoice(
-  candidates: MatchingPasskeyItem[],
-): Promise<MatchingPasskeyItem | null> {
+/** Decision A: writes the unified consent payload, opens the popup, and
+ * awaits an EXPLICIT confirm/decline before the caller may mint/persist or
+ * sign anything -- called from BOTH `handleCredentialsCreate` and
+ * `handleCredentialsGet` (single- and multi-match), never bypassed for an
+ * already-unlocked vault. Returns the confirmed `itemId` (an opaque
+ * "confirmed" sentinel for `create`, since there is no candidate to choose
+ * there) or `null` for an explicit decline OR an abandoned/timed-out
+ * ceremony (WR-03) -- callers must treat both identically
+ * (`{ fallthrough: true }`, never mint/persist/sign, CR-03's orphan fix). */
+async function awaitCeremonyConsent(
+  payload: Omit<PendingCeremonyPayload, "requestId">,
+): Promise<string | null> {
   const requestId = crypto.randomUUID();
   await browser.storage.session.set({
-    [PENDING_CEREMONY_KEY]: {
-      requestId,
-      // Plan 12-04 (Rule 2 fix): the popup's multi-match consent screen
-      // must show WHICH site is asking (12-UI-SPEC.md's
-      // signinBodyMultiple `{site}` interpolation) -- omitting it would
-      // defeat the anti-phishing point of a WebAuthn RP-scoped consent
-      // screen. All `candidates` share the same rpId by construction
-      // (findMatchingPasskeyItems filters on a single rpId).
-      rpId: candidates[0]?.fields.rpId ?? "",
-      candidates: candidates.map((c) => ({
-        itemId: c.item.id,
-        label: c.fields.username ?? c.fields.rpId,
-      })),
-    },
+    [PENDING_CEREMONY_KEY]: { requestId, ...payload } satisfies PendingCeremonyPayload,
   });
+
   const opened = await tryOpenPopup();
   if (!opened) {
     await tryOpenFallbackWindow();
   }
-  const chosenItemId = await new Promise<string | null>((resolve) => {
-    pendingPickerResolutions.set(requestId, { resolve });
+
+  const resolution = await new Promise<string | null>((resolve) => {
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      pendingConsentResolutions.delete(requestId);
+      resolve(null);
+    }, CEREMONY_ABANDON_TIMEOUT_MS);
+
+    pendingConsentResolutions.set(requestId, {
+      resolve: (itemId) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve(itemId);
+      },
+    });
   });
+
   await browser.storage.session.remove(PENDING_CEREMONY_KEY);
-  if (chosenItemId === null) {
-    return null;
-  }
-  return candidates.find((c) => c.item.id === chosenItemId) ?? null;
+  return resolution;
 }
 
-/** Called by Plan 12-04's popup picker UI once the user selects a
- * credential (or explicitly declines, `itemId: null`) for a multi-match
- * `credentials.get` ceremony. */
+/** Called by the popup UI once the user confirms/selects a credential (or
+ * explicitly declines, `itemId: null`) for ANY pending ceremony (create,
+ * single-match get, or multi-match get, Decision A) -- the ONLY way to
+ * unblock `awaitCeremonyConsent`'s awaited Promise from outside this
+ * module. A no-op for an unknown/already-resolved `requestId` (already
+ * timed out via WR-03's abandon ceiling, or a stale/replayed message). */
 export function resolveProviderCredentialChoice(requestId: string, itemId: string | null): void {
-  const pending = pendingPickerResolutions.get(requestId);
+  const pending = pendingConsentResolutions.get(requestId);
   if (pending === undefined) {
     return;
   }
-  pendingPickerResolutions.delete(requestId);
+  pendingConsentResolutions.delete(requestId);
   pending.resolve(itemId);
 }
 
 // --- Handlers ---------------------------------------------------------
 
 /**
- * `credentials.create`: registers a new vault-backed passkey. Persistence
- * reuses the phase-11 capture write path verbatim (capture-handler.ts:
- * encryptItem -> splitCombinedEncryptedItem -> createItem) via
+ * `credentials.create`: registers a new vault-backed passkey. Decision A:
+ * ALWAYS awaits an explicit popup confirm via `awaitCeremonyConsent` FIRST
+ * -- `wasmCreateProviderCredential` is never called, and nothing is ever
+ * persisted, until that resolves to a confirm; a decline OR an abandoned/
+ * timed-out ceremony (WR-03) returns `{ fallthrough: true }` before the
+ * WASM binding is touched at all (CR-03's orphan-credential fix -- there is
+ * no window where a page that already gave up ends up with a credential it
+ * never received). Persistence, once confirmed, reuses the phase-11
+ * capture write path verbatim (capture-handler.ts: encryptItem ->
+ * splitCombinedEncryptedItem -> createItem) via
  * `wasmCreateProviderCredential`'s combined create+encrypt binding, using
  * the SAME `crypto.randomUUID()` for both the WASM call's `item_id` and
  * `createItem`'s id -- `encrypt_item` binds `item_id`+`revision` as AAD, so
@@ -387,6 +532,21 @@ export async function handleCredentialsCreate(
     let uk = await ensureHydrated();
     if (uk === null) {
       uk = await openPopupAndAwaitUnlock();
+      if (uk === null) {
+        return { fallthrough: true };
+      }
+    }
+
+    const rpId = extractCreateRpId(req.publicKey, senderOrigin);
+    const resolution = await awaitCeremonyConsent({
+      kind: "create",
+      rpId,
+      account: extractAccountLabel(req.publicKey),
+      prfRequested: requestedPrf(req.publicKey),
+      candidates: [],
+    });
+    if (resolution === null) {
+      return { fallthrough: true };
     }
 
     const requestJson = JSON.stringify({ publicKey: req.publicKey });
@@ -410,8 +570,12 @@ export async function handleCredentialsCreate(
 /**
  * `credentials.get`: signs an assertion with a vault-stored passkey
  * matching the RP. Zero matches -> `{ fallthrough: true }` immediately, no
- * WASM call (D-11/PROV-03). Exactly one match -> signs directly. More than
- * one -> awaits the user's choice via `resolvePasskeyChoice` (Plan 12-04).
+ * WASM call, no consent prompt (D-11/PROV-03 -- there is nothing to ask
+ * consent FOR). One or more matches -> Decision A: ALWAYS awaits an
+ * explicit popup confirm/selection via `awaitCeremonyConsent` (single- AND
+ * multi-match alike, closing 12-04-SUMMARY's documented single-match gap)
+ * before `wasmGetProviderAssertion` is ever called; a decline/abandon
+ * (WR-03) returns `{ fallthrough: true }` with no signature produced.
  * `matching_item_json` (the ciphertext `wasmGetProviderAssertion` needs) is
  * reconstructed by re-encrypting the already-decrypted `rawPasskeyJson`
  * with the SAME `item_id`/`revision` -- `encrypt_item`'s AEAD binds those
@@ -429,6 +593,9 @@ export async function handleCredentialsGet(
     let uk = await ensureHydrated();
     if (uk === null) {
       uk = await openPopupAndAwaitUnlock();
+      if (uk === null) {
+        return { fallthrough: true };
+      }
     }
 
     const rpId = extractGetRpId(req.publicKey, senderOrigin);
@@ -438,8 +605,26 @@ export async function handleCredentialsGet(
       return { fallthrough: true };
     }
 
-    const chosen = candidates.length === 1 ? candidates[0] : await resolvePasskeyChoice(candidates);
-    if (chosen === null || chosen === undefined) {
+    const chosenItemId = await awaitCeremonyConsent({
+      kind: "get",
+      rpId,
+      account:
+        candidates.length === 1 ? (candidates[0].fields.username ?? candidates[0].fields.rpId) : undefined,
+      // get() ceremonies never surface a PRF-capability note -- 12-02's
+      // derivePrfCapability() is only ever invoked from
+      // handleCredentialsCreate (D-16's capability signal is a property of
+      // the CREATED credential, not something a get() ceremony reports).
+      prfRequested: false,
+      candidates: candidates.map((c) => ({
+        itemId: c.item.id,
+        label: c.fields.username ?? c.fields.rpId,
+      })),
+    });
+    if (chosenItemId === null) {
+      return { fallthrough: true };
+    }
+    const chosen = candidates.find((c) => c.item.id === chosenItemId);
+    if (chosen === undefined) {
       return { fallthrough: true };
     }
 

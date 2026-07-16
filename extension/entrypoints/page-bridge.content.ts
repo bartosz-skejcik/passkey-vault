@@ -36,13 +36,34 @@ import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../l
 const REQUEST_SOURCE = "pv-page-bridge";
 const RESPONSE_SOURCE = "pv-content-relay";
 
-// D-09: long enough for a popup-unlock round trip (opening the popup,
-// waiting for the user to enter a password/tap a passkey), short enough
-// not to visibly stall the calling page's own ceremony UI indefinitely.
-// This is the plan's own resolution of CONTEXT.md's open "popup-await
-// timeout" discretion item -- 5000ms, documented here as the one place it
-// is chosen.
-const RESPONSE_TIMEOUT_MS = 5000;
+// CR-03 fix (12-REVIEW.md, Plan 12-05): the ORIGINAL 5000ms value here was
+// far shorter than any human-in-the-loop interaction -- it killed the
+// picker/consent popup (the ONLY reachable consent surface) before a human
+// could read it, pick an account, and confirm, AND it made a locked-vault
+// create() orphan a credential (the page falls through to native at 5s
+// while the background is still awaiting unlock, then mints+persists to
+// the vault anyway once the user finally unlocks ~8-15s later -- a
+// credential the RP never received). Decision A (every ceremony now awaits
+// EXPLICIT popup consent, provider-ceremony.ts) makes the human-in-the-loop
+// path the ORDINARY case, not an edge case, so this ceiling is
+// deliberately decoupled from "how long a popup round trip typically
+// takes" and re-scoped to "how long is a genuinely-abandoned ceremony
+// allowed to block before this page gives up" -- 120000ms (2 minutes),
+// well past any real human interaction window. The background's own
+// consent-await/unlock-await have a MATCHING abandon ceiling
+// (`CEREMONY_ABANDON_TIMEOUT_MS`, provider-ceremony.ts, WR-03) that cleans
+// up its own state (unsubscribe, storage key removal) independently of
+// this page-side timer -- the two are not synchronized by a heartbeat
+// (a lighter-weight "still working" ack was considered and rejected as
+// unnecessary complexity for this plan; a shared backstop ceiling is
+// sufficient, per 12-05-PLAN.md's own explicit allowance). A fast
+// fallthrough for a missing/unreachable content-relay is NOT handled by
+// this timer at all -- `relay()`'s `onMessage` listener simply never
+// receives a response in that case, and this same timeout is what
+// eventually resolves it; there is no separate "no relay" fast path
+// because a missing content-relay is indistinguishable, from this file's
+// perspective, from an abandoned ceremony.
+const RESPONSE_TIMEOUT_MS = 120_000;
 
 const PERMISSIONS_POLICY_FEATURE: Record<"create" | "get", string> = {
   create: "publickey-credentials-create",

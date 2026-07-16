@@ -36,10 +36,13 @@ import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../l
 const REQUEST_SOURCE = "pv-page-bridge";
 const RESPONSE_SOURCE = "pv-content-relay";
 
-// D-09: see page-bridge.content.ts's identical constant for the full
-// rationale -- 5000ms, this plan's own resolution of CONTEXT.md's open
-// "popup-await timeout" discretion item.
-const RESPONSE_TIMEOUT_MS = 5000;
+// CR-03 fix (12-REVIEW.md, Plan 12-05): see page-bridge.content.ts's
+// identical constant for the full rationale -- 120000ms (2 minutes),
+// decoupled from "typical popup round trip" and re-scoped to "how long a
+// genuinely-abandoned ceremony blocks before falling through", now that
+// Decision A makes human-in-the-loop consent the ORDINARY path for every
+// ceremony, not an edge case.
+const RESPONSE_TIMEOUT_MS = 120_000;
 
 const PERMISSIONS_POLICY_FEATURE: Record<"create" | "get", string> = {
   create: "publickey-credentials-create",

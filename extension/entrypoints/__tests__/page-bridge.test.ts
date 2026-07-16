@@ -163,7 +163,7 @@ describe("D-11 fallthrough: three required cases", () => {
     vi.useFakeTimers();
     const promise = navigator.credentials.get({ publicKey: { rpId: "example.com" } } as CredentialRequestOptions);
 
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(120_000);
     const result = await promise;
 
     expect(result).toEqual({ id: "native-get-result" });
@@ -246,7 +246,7 @@ describe("D-03: request envelope discipline", () => {
     expect(call?.[1]).toBe(location.origin);
     expect(call?.[1]).not.toBe("*");
 
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(120_000);
     await promise;
   });
 
@@ -264,7 +264,7 @@ describe("D-03: request envelope discipline", () => {
       credentialJson: {},
     });
 
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(120_000);
     const result = await promise;
 
     // The mismatched-nonce message was ignored -- the call still timed out

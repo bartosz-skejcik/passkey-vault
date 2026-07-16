@@ -23,35 +23,48 @@ import ProviderCeremonyView, {
 
 type UnlockableStatus = Extract<SessionStatus, { kind: "no-session" } | { kind: "locked" }>;
 
-// Phase 12 (Plan 12-04): the same key provider-ceremony.ts (Plan 12-02)
-// writes to chrome.storage.session when a multi-match credentials.get()
-// ceremony needs the user's choice -- see that module's own
-// resolvePasskeyChoice() for the writer side. NOT read for the
-// locked-vault-awaiting-unlock case (12-02's `PENDING_CEREMONY_KEY: true`
-// boolean signal): that case carries no ceremony kind/site/candidate data
-// at all (the flag is written BEFORE the RP's request is even parsed), so
-// it is already correctly handled by the EXISTING unlock flow below --
-// `ensureHydrated()` returning null in that scenario means `session.status`
-// already reports "locked", which naturally renders UnlockView and takes
-// over focus with no additional wiring needed. Only the multi-match picker
-// payload (`{requestId, rpId, candidates}`) carries enough real ceremony
-// data to drive a meaningful ProviderCeremonyView -- see 12-04-SUMMARY.md's
-// Deviations section for the full reasoning.
+// Phase 12 (Plan 12-05, Decision A): the same key provider-ceremony.ts
+// writes to chrome.storage.session for EVERY ceremony that needs consent --
+// create(), single-match get(), AND multi-match get() alike -- see that
+// module's own `awaitCeremonyConsent()` for the writer side. This
+// supersedes 12-04's narrower "multi-match picker only" wiring (see that
+// plan's SUMMARY's Scope Clarification #3 for the prior state): the
+// locked-vault-awaiting-unlock phase itself still writes NOTHING to this
+// key (WR-04 killed the dead boolean flag) -- `ensureHydrated()` returning
+// null there means `session.status` reports "locked", which the EXISTING
+// unlock flow below already renders via UnlockView. The REAL consent
+// payload only appears once `awaitCeremonyConsent()` runs, which now
+// happens unconditionally for every ceremony kind, whether the vault was
+// already unlocked or was JUST unlocked.
 const PENDING_CEREMONY_KEY = "pv-pending-provider-ceremony";
 
-interface PendingCeremonyPickerPayload {
+/** Opaque, non-null sentinel sent as the `itemId` of a `create`-kind
+ * ceremony's confirm -- `create()` has no candidate to choose (the
+ * `candidates` array is always `[]` for this kind), so
+ * provider-ceremony.ts's `awaitCeremonyConsent` only distinguishes
+ * null (decline) from non-null (confirmed) on this path; the string value
+ * itself is never interpreted as an item id there. */
+const CREATE_CONFIRM_SENTINEL = "confirmed";
+
+interface PendingCeremonyPayload {
   requestId: string;
-  rpId?: string;
+  kind: "create" | "get";
+  rpId: string;
+  account?: string;
+  prfRequested: boolean;
   candidates: ProviderCredentialCandidate[];
 }
 
-function isPendingCeremonyPickerPayload(value: unknown): value is PendingCeremonyPickerPayload {
+function isPendingCeremonyPayload(value: unknown): value is PendingCeremonyPayload {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
   return (
-    typeof value === "object" &&
-    value !== null &&
-    "requestId" in value &&
-    "candidates" in value &&
-    Array.isArray((value as { candidates: unknown }).candidates)
+    "requestId" in v &&
+    (v.kind === "create" || v.kind === "get") &&
+    "candidates" in v &&
+    Array.isArray(v.candidates)
   );
 }
 
@@ -66,13 +79,23 @@ type ViewState =
   | { kind: "unlock"; status: UnlockableStatus }
   | { kind: "list" }
   | { kind: "detail"; item: VaultItem }
-  // Phase 12 (Plan 12-04): a pending multi-match credentials.get() picker
-  // (provider-ceremony.ts's resolvePasskeyChoice()) -- takes over focus
-  // from whatever view was showing (12-UI-SPEC.md "a pending ceremony
-  // always wins focus"), since reaching this state implies the vault was
-  // ALREADY unlocked (resolvePasskeyChoice is only called after
-  // ensureHydrated() succeeds).
-  | { kind: "provider-ceremony"; requestId: string; site: string; candidates: ProviderCredentialCandidate[] };
+  // Phase 12 (Plan 12-05, Decision A): a pending create()/get() ceremony
+  // AWAITING EXPLICIT CONSENT (provider-ceremony.ts's
+  // `awaitCeremonyConsent()`) -- takes over focus from whatever view was
+  // showing (12-UI-SPEC.md "a pending ceremony always wins focus"), since
+  // reaching this state implies the vault is unlocked (the consent gate
+  // only runs after `ensureHydrated()`/`waitForUnlock()` succeeds).
+  // `ceremonyKind` disambiguates from this discriminated union's own outer
+  // `kind: "provider-ceremony"` tag.
+  | {
+      kind: "provider-ceremony";
+      requestId: string;
+      ceremonyKind: "create" | "get";
+      site: string;
+      account?: string;
+      prfRequested: boolean;
+      candidates: ProviderCredentialCandidate[];
+    };
 
 export default function App() {
   const locale = resolveLocale();
@@ -84,14 +107,15 @@ export default function App() {
   /**
    * 12-UI-SPEC.md "Where the ceremony consent UI lives": a pending ceremony
    * always wins focus, checked FIRST, before anything else this popup would
-   * normally show. Returns true (and mounts the ceremony view) when a
-   * multi-match picker is genuinely pending; false otherwise, letting the
-   * caller fall through to the popup's ordinary init flow.
+   * normally show. Returns true (and mounts the ceremony view) for ANY
+   * pending create()/get() ceremony -- create, single-match get, or
+   * multi-match get alike (Decision A, Plan 12-05); false otherwise,
+   * letting the caller fall through to the popup's ordinary init flow.
    */
   async function checkPendingCeremony(): Promise<boolean> {
     const result = await browser.storage.session.get(PENDING_CEREMONY_KEY);
     const value = (result as Record<string, unknown>)[PENDING_CEREMONY_KEY];
-    if (!isPendingCeremonyPickerPayload(value)) {
+    if (!isPendingCeremonyPayload(value)) {
       return false;
     }
     setCeremonySelected(null);
@@ -99,7 +123,10 @@ export default function App() {
     setView({
       kind: "provider-ceremony",
       requestId: value.requestId,
-      site: value.rpId ?? "",
+      ceremonyKind: value.kind,
+      site: value.rpId,
+      account: value.account,
+      prfRequested: value.prfRequested,
       candidates: value.candidates,
     });
     return true;
@@ -108,12 +135,13 @@ export default function App() {
   /**
    * Reports the user's confirm/select (`itemId`) or explicit decline
    * (`itemId: null`, including D-11 dismissal) back to
-   * provider-ceremony.ts's resolvePasskeyChoice() via the
-   * `provider.resolveChoice` message (Plan 12-04 deviation -- see
-   * SUMMARY), then returns to the popup's ordinary flow. The actual
-   * WebAuthn signing already happened (or fell through) in the
-   * background's own handleCredentialsGet() call -- this popup's job ends
-   * at reporting the choice.
+   * provider-ceremony.ts's `awaitCeremonyConsent()` via the
+   * `provider.resolveChoice` message (Plan 12-04 deviation -- see that
+   * plan's SUMMARY), then returns to the popup's ordinary flow. The actual
+   * WebAuthn ceremony (mint/persist for create, sign for get) only happens
+   * AFTER this call resolves in the background's own
+   * handleCredentialsCreate()/handleCredentialsGet() (Decision A) -- this
+   * popup's job ends at reporting the choice.
    */
   async function resolveCeremony(requestId: string, itemId: string | null) {
     setCeremonyStatus(itemId === null ? "idle" : "busy");
@@ -258,26 +286,40 @@ export default function App() {
   }
 
   if (view.kind === "provider-ceremony") {
-    const singleMatch = view.candidates.length === 1 ? view.candidates[0] : undefined;
+    // Decision A (Plan 12-05): this view now mounts for all three ceremony
+    // kinds off the SAME unified payload -- create (no candidates, one
+    // implicit "new credential" affordance), single-match get (exactly one
+    // candidate, pre-selected, no list rendered), and multi-match get
+    // (2+ candidates, the existing picker). `CREATE_CONFIRM_SENTINEL` is an
+    // opaque, non-null marker sent for a `create` confirm -- there is no
+    // real candidate to choose there, so provider-ceremony.ts's
+    // `awaitCeremonyConsent` only ever checks it for null-ness (decline) vs.
+    // non-null (confirmed) on that path.
+    const isCreate = view.ceremonyKind === "create";
+    const singleMatch = !isCreate && view.candidates.length === 1 ? view.candidates[0] : undefined;
     const selectedItemId = singleMatch ? singleMatch.itemId : ceremonySelected;
     const selectedCandidate = view.candidates.find((c) => c.itemId === selectedItemId);
     return (
       <ProviderCeremonyView
         locale={locale}
-        kind="get"
+        kind={view.ceremonyKind}
         site={view.site}
-        account={selectedCandidate?.label}
-        matches={view.candidates.length > 1 ? view.candidates : undefined}
-        selectedItemId={selectedItemId ?? null}
+        account={isCreate ? view.account : selectedCandidate?.label}
+        matches={!isCreate && view.candidates.length > 1 ? view.candidates : undefined}
+        selectedItemId={isCreate ? null : (selectedItemId ?? null)}
         onSelect={(itemId) => setCeremonySelected(itemId)}
-        // Multi-match get() picker payload carries no PRF signal (12-02's
-        // derivePrfCapability() is only ever invoked from
-        // handleCredentialsCreate, never handleCredentialsGet) -- honestly
-        // reporting "not requested" here, never a guess.
-        prfRequested={false}
+        // D-16: the REAL capability signal (provider-ceremony.ts's
+        // derivePrfCapability) is only known AFTER a create() ceremony
+        // actually runs (post-confirm) -- this payload's `prfRequested`
+        // reflects only whether the RP ASKED, never a guessed capability;
+        // `prfCapable` stays unset pre-confirm (ProviderCeremonyView
+        // renders no note until it is known).
+        prfRequested={view.prfRequested}
         status={ceremonyStatus}
         onConfirm={() => {
-          if (selectedItemId) {
+          if (isCreate) {
+            void resolveCeremony(view.requestId, CREATE_CONFIRM_SENTINEL);
+          } else if (selectedItemId) {
             void resolveCeremony(view.requestId, selectedItemId);
           }
         }}
