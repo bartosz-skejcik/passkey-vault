@@ -111,4 +111,13 @@ describe("OnThisPageSection", () => {
     renderSection({ matches: [] });
     expect(screen.getByTestId("autofill-empty-state")).toBeInTheDocument();
   });
+
+  it("Test 7 (D-11, 11-06): a login match renders even when detected is all-false -- the component never re-gates on `detected`, it renders whatever `matches` it is handed", () => {
+    renderSection({
+      detected: { login: false, totp: false, card: false, identity: false },
+      matches: [loginMatch("1", "GitHub")],
+    });
+    expect(screen.getByText("GitHub")).toBeInTheDocument();
+    expect(screen.queryByTestId("autofill-empty-state")).not.toBeInTheDocument();
+  });
 });

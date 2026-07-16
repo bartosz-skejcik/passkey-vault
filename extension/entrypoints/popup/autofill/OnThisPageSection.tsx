@@ -3,13 +3,21 @@
 // NordPass two-section redesign, 10-POPUP-REDESIGN-SPEC.md).
 //
 // No longer owns useAutofillMatches() itself -- ItemListView.tsx (the new
-// two-section container) owns the ONE hook instance and merges its
-// `matches` with a popup-computed, detection-UNGATED login/origin match set
-// (see ItemListView's own comment for why), then hands the FINAL merged
-// list down here as the `matches` prop. This keeps the hook single-instance
-// (one autofill.match dispatch per popup open) and makes this component
-// purely presentational: header + row list + the two self-dismissing
-// inline alerts (fill-failed, TOTP-copied).
+// two-section container) owns the ONE hook instance and hands its raw
+// `matches` straight down here as the `matches` prop, unmodified (no
+// popup-side merging happens). This keeps the hook single-instance (one
+// autofill.match dispatch per popup open) and makes this component purely
+// presentational: header + row list + the two self-dismissing inline
+// alerts (fill-failed, TOTP-copied).
+//
+// D-11 (11-CONTEXT.md ADDENDUM, Bartek 2026-07-16, delivered by 11-06): a
+// LOGIN match can now appear here even when `detected` is all-false (the
+// page has no login form) -- but that relaxation lives entirely in the
+// BACKGROUND's handleAutofillMatch (autofill-match.ts), which skips its
+// detected[kind] gate for kind === "login" only, origin-match still
+// required. This component never re-derives or second-guesses that
+// decision -- it renders whatever `matches` it is handed, exactly as
+// before. Card/identity/totp gating is unchanged there too.
 //
 // No more collapsible dropdown (Bartek 2026-07-16): this section is now a
 // PERMANENT, always-expanded sibling of the "Wszystkie" section below it in
@@ -64,10 +72,12 @@ export interface OnThisPageSectionProps {
   pageState: AutofillPageState;
   origin: string | null;
   detected: DetectedFields;
-  /** The FINAL, already-merged/deduplicated suggested-for-this-site match
-   * list -- see ItemListView.tsx's own comment for how this differs from
-   * useAutofillMatches()'s raw `matches` (this one is NOT gated on a
-   * detected fillable field for logins, per the NordPass redesign). */
+  /** useAutofillMatches()'s raw `matches`, passed straight through by
+   * ItemListView.tsx with no popup-side merging or re-gating. As of 11-06
+   * (D-11) this can include a LOGIN item even when `detected` is all-false
+   * -- the background (handleAutofillMatch, autofill-match.ts) relaxes its
+   * detection gate for logins only, origin-match still required.
+   * Card/identity/totp remain gated there unchanged. */
   matches: AutofillMatch[];
   fill: (itemId: string, kind: FillKind) => Promise<MessageResponseMap["autofill.fill"]>;
   copyTotp: (itemId: string) => Promise<CopyTotpResult>;
