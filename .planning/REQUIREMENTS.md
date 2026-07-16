@@ -33,9 +33,9 @@
 
 ### CAP — Generate & capture
 
-- [ ] **CAP-01**: On a signup/registration form, the extension offers a generated strong password (reusing the v0.1 generator, character + passphrase modes)
-- [ ] **CAP-02**: After a successful submit/login, the extension prompts the user to save the new login to the vault, attributed to the correct origin
-- [ ] **CAP-03**: When the user changes a password on a site with an existing saved login, the extension detects it and offers to update the stored item
+- [x] **CAP-01**: On a signup/registration form, the extension offers a generated strong password (reusing the v0.1 generator, character + passphrase modes)
+- [x] **CAP-02**: After a successful submit/login, the extension prompts the user to save the new login to the vault, attributed to the correct origin
+- [x] **CAP-03**: When the user changes a password on a site with an existing saved login, the extension detects it and offers to update the stored item
 
 ### XBR — Cross-browser
 
@@ -85,7 +85,7 @@ Filled by the roadmapper.
 | FILL-02 | Phase 10 | Complete |
 | FILL-03 | Phase 10 | Complete |
 | FILL-04 | Phase 10 | Complete |
-| CAP-01 | Phase 11 | Pending |
-| CAP-02 | Phase 11 | Pending |
-| CAP-03 | Phase 11 | Pending |
+| CAP-01 | Phase 11 | Complete |
+| CAP-02 | Phase 11 | Complete |
+| CAP-03 | Phase 11 | Complete |
 | XBR-01 | Phase 13 | Pending |
