@@ -70,6 +70,27 @@ const MESSAGE_FIXTURES: MessageFixtureMap = {
     detected: { login: true, totp: false, card: false, identity: false },
   },
   "autofill.fillFrame": { kind: "autofill.fillFrame", itemId: "item-3", kind_: "login" },
+  // Phase 11 (Plan 11-01): content-script -> background, dispatched by the
+  // same registerAutofillFrameChannel() listener -- no origin field.
+  "generate-request": {
+    kind: "generate-request",
+    mode: "character",
+    length: 16,
+    opts: { lowercase: true, uppercase: true, digits: true, symbols: false },
+  },
+  "capture.propose": {
+    kind: "capture.propose",
+    frameOrigin: "https://example.com",
+    username: "user@example.com",
+    password: "hunter2",
+  },
+  "capture.confirm": {
+    kind: "capture.confirm",
+    action: "new",
+    frameOrigin: "https://example.com",
+    username: "user@example.com",
+    password: "hunter2",
+  },
 };
 
 type ResponseFixtureMap = { [K in Message["kind"]]: MessageResponseMap[K] };
@@ -137,6 +158,14 @@ const RESPONSE_FIXTURES: ResponseFixtureMap = {
     ],
   },
   "autofill.fillFrame": { ok: true },
+  "generate-request": { password: "correct-horse-battery-staple" },
+  "capture.propose": {
+    action: "new",
+    frameOrigin: "https://example.com",
+    topOrigin: "https://example.com",
+    mismatch: false,
+  },
+  "capture.confirm": { status: "ok", item: { id: "item-1", revision: 2 } },
 };
 
 describe("Message JSON-transport safety (Chrome MV3 sendMessage stand-in)", () => {
