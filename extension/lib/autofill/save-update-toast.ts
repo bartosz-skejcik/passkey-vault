@@ -27,7 +27,7 @@
 // never a reference to earlier background state, sidestepping the MV3
 // idle-kill-between-propose-and-confirm gap (11-RESEARCH.md Open Question
 // 2, D-02).
-import { getOrCreateShadowRoot } from "./inpage-mount";
+import { getOrCreateShadowRoot, getPanelContainer } from "./inpage-mount";
 import { sendMessage } from "../messaging/ext-protocol";
 import type { MessageResponseMap } from "../messaging/ext-protocol";
 import { resolveLocale, type Locale } from "../i18n/dictionary";
@@ -45,15 +45,23 @@ const EYE_OFF_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
 const CIRCLE_CHECK_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>`;
 const X_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
 
-// Literal OKLCH values, identical tokens to inpage-overlay.ts's OVERLAY_CSS
-// and generate-popover.ts's GENERATE_CSS -- the host page's own stylesheet
-// never reaches a shadow root, so nothing here can rely on it. No
-// `@font-face` rule of any kind (T-11-12): `font-family: "DM Sans",
-// system-ui, -apple-system, sans-serif` relies on the system-ui fallback
-// only.
+// D-12/D-13 (plan 11-08): every color is now a `var(--color-...)`
+// reference into packages/pv-ui/tokens.css (injected once, shared, by
+// inpage-mount.ts's `getOrCreateShadowRoot()` -- see inpage-theme.ts). No
+// literal OKLCH/hex value remains here. `font-family` is deliberately
+// dropped from `.pv-toast` -- it now inherits from the theme-stamped panel
+// container's own `[data-theme]` rule (INPAGE_THEME_CSS), which is this
+// element's actual DOM ancestor (see `showSaveUpdateToast()`'s
+// `container.appendChild(panel)` call below -- this module no longer
+// appends straight into the shared ShadowRoot). Panel background/border
+// (`base-300` canvas, `base-100` border) and the one-step-lighter
+// `base-200` well/hover fills keep the SAME relative-lightness convention
+// this file's pre-11-08 version documented for inpage-overlay.ts's own
+// floating panels -- there is no direct web-app component for a toast to
+// diff 1:1 against (unlike generate-popover.ts's GeneratorPopover.tsx), so
+// this surface's own established layering is preserved, just token-ized.
 const TOAST_CSS = `
 .pv-toast {
-  font-family: "DM Sans", system-ui, -apple-system, sans-serif;
   font-size: 16px;
   line-height: 1.4;
   position: fixed;
@@ -62,10 +70,10 @@ const TOAST_CSS = `
   right: 24px;
   width: 360px;
   max-width: calc(100vw - 48px);
-  background: oklch(23.93% 0 0);
-  color: oklch(89.80% 0.0017 67.80);
-  border: 1px solid oklch(26.86% 0 0);
-  border-radius: 16px;
+  background: var(--color-base-300);
+  color: var(--color-base-content);
+  border: var(--border, 1px) solid var(--color-base-100);
+  border-radius: var(--radius-box);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   padding: 16px;
   display: flex;
@@ -74,7 +82,7 @@ const TOAST_CSS = `
   box-sizing: border-box;
 }
 .pv-toast-header { display: flex; align-items: flex-start; gap: 8px; }
-.pv-toast-icon { color: color-mix(in oklch, oklch(89.80% 0.0017 67.80) 70%, transparent); flex-shrink: 0; margin-top: 2px; }
+.pv-toast-icon { color: color-mix(in oklch, var(--color-base-content) 70%, transparent); flex-shrink: 0; margin-top: 2px; }
 .pv-toast-title { flex: 1; font-weight: 700; min-width: 0; }
 .pv-toast-close {
   all: unset;
@@ -84,18 +92,18 @@ const TOAST_CSS = `
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--radius-field);
   flex-shrink: 0;
   box-sizing: border-box;
 }
-.pv-toast-close:hover { background: oklch(24.78% 0 0); }
+.pv-toast-close:hover { background: var(--color-base-200); }
 .pv-toast-close:focus-visible {
-  outline: 2px solid oklch(65.31% 0.1637 37.22);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 .pv-toast-body {
   font-size: 14px;
-  color: color-mix(in oklch, oklch(89.80% 0.0017 67.80) 60%, transparent);
+  color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -107,9 +115,9 @@ const TOAST_CSS = `
   min-width: 0;
   font-family: ui-monospace, "SF Mono", "Cascadia Code", monospace;
   font-size: 14px;
-  background: oklch(24.78% 0 0);
-  border: 1px solid oklch(26.86% 0 0);
-  border-radius: 8px;
+  background: var(--color-base-200);
+  border: var(--border, 1px) solid var(--color-base-100);
+  border-radius: var(--radius-field);
   padding: 8px 10px;
   box-sizing: border-box;
   overflow-x: auto;
@@ -123,24 +131,24 @@ const TOAST_CSS = `
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--radius-field);
   flex-shrink: 0;
   box-sizing: border-box;
 }
-.pv-toast-icon-btn:hover { background: oklch(24.78% 0 0); }
+.pv-toast-icon-btn:hover { background: var(--color-base-200); }
 .pv-toast-icon-btn:focus-visible {
-  outline: 2px solid oklch(65.31% 0.1637 37.22);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 .pv-toast-message { font-size: 14px; }
-.pv-toast-message-error { color: oklch(71.76% 0.221 22.18); }
-.pv-toast-message-success { color: oklch(64.80% 0.150 160); display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.pv-toast-message-error { color: var(--color-error); }
+.pv-toast-message-success { color: var(--color-success); display: flex; align-items: center; gap: 8px; font-weight: 700; }
 .pv-toast-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .pv-toast-btn {
   all: unset;
   cursor: pointer;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-field);
   font-size: 14px;
   font-weight: 700;
   box-sizing: border-box;
@@ -150,12 +158,12 @@ const TOAST_CSS = `
   gap: 6px;
 }
 .pv-toast-btn:focus-visible {
-  outline: 2px solid oklch(65.31% 0.1637 37.22);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
-.pv-toast-btn-ghost { color: oklch(89.80% 0.0017 67.80); }
-.pv-toast-btn-ghost:hover { background: oklch(24.78% 0 0); }
-.pv-toast-btn-primary { background: oklch(65.31% 0.1637 37.22); color: oklch(26.86% 0 0); }
+.pv-toast-btn-ghost { color: var(--color-base-content); }
+.pv-toast-btn-ghost:hover { background: var(--color-base-200); }
+.pv-toast-btn-primary { background: var(--color-primary); color: var(--color-primary-content); }
 .pv-toast-btn[disabled] { cursor: default; opacity: 0.7; }
 .pv-toast-spinner {
   width: 14px;
@@ -254,6 +262,13 @@ export function showSaveUpdateToast(proposal: SaveUpdateProposal, opts?: { doc?:
   const locale = resolveLocale();
   const shadow = getOrCreateShadowRoot(doc);
   ensureStyle(shadow, doc);
+  // D-12/D-13 (plan 11-08): the panel appends into the theme-stamped panel
+  // container (inpage-mount.ts), never straight into `shadow` -- see
+  // inpage-mount.ts's PANEL_CONTAINER_ATTR doc comment.
+  const container = getPanelContainer();
+  if (!container) {
+    return; // getOrCreateShadowRoot() above guarantees this is non-null in practice
+  }
 
   let revealed = false;
 
@@ -420,6 +435,6 @@ export function showSaveUpdateToast(proposal: SaveUpdateProposal, opts?: { doc?:
   actionsRow.append(dismissBtn, confirmBtn);
   panel.append(header, bodyEl, previewRow, messageEl, actionsRow);
 
-  shadow.appendChild(panel);
+  container.appendChild(panel);
   toastEl = panel;
 }

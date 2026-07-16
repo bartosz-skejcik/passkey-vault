@@ -40,8 +40,24 @@
 // `inpage-overlay.ts`'s own `OVERLAY_CSS` convention. Callers that append
 // their own `<style>` block into this shared root (this plan's
 // `generate-popover.ts`) MUST follow the same rule -- no `@font-face`, no
-// third-party font fetch.
+// third-party font fetch. Now sourced from `inpage-theme.ts`'s shared
+// `INPAGE_THEME_CSS` (plan 11-08, D-12/D-13) -- this module no longer
+// declares the font stack itself.
+import { INPAGE_THEME_CSS } from "./inpage-theme";
+import { resolveTheme, watchMirroredTheme, type Theme } from "../theme/theme-mirror";
+
 const HOST_ATTR = "data-pv-mount-host";
+// D-12/D-13 (plan 11-08): every surface sharing this mount's shadow root
+// (generate-popover.ts, save-update-toast.ts, mismatch-modal.ts) appends
+// its panels into THIS container -- never straight into `shadow` -- because
+// `[data-theme]` custom-property selectors only resolve for descendants of
+// an element that itself carries the attribute (a shadow tree's `:root`
+// never matches anything; see inpage-theme.ts's header comment). Stamping
+// `data-theme` once here, on a single shared ancestor, is what lets every
+// surface's own stylesheet reference `var(--color-...)` without each one
+// re-stamping its own top-level element individually.
+const PANEL_CONTAINER_ATTR = "data-pv-panel-container";
+const THEME_ATTR = "data-theme";
 
 // Minimal shared reset -- individual surfaces (generate-popover.ts, Plan
 // 11-05's toast/modal) append their OWN `<style>` block with their own
@@ -58,6 +74,12 @@ const MOUNT_CSS = `
 // (one per tab/frame). Never written to any storage API.
 let mountedHost: HTMLElement | null = null;
 let mountedShadow: ShadowRoot | null = null;
+let panelContainer: HTMLElement | null = null;
+let detachThemeWatch: (() => void) | null = null;
+
+function stampTheme(theme: Theme): void {
+  panelContainer?.setAttribute(THEME_ATTR, theme);
+}
 
 /**
  * Returns the SAME closed-mode shadow root instance across repeated calls
@@ -65,6 +87,17 @@ let mountedShadow: ShadowRoot | null = null;
  * stylesheet, then appends the host to `doc.documentElement`) on the FIRST
  * call only; every subsequent call returns the already-mounted root without
  * touching the DOM again.
+ *
+ * D-12/D-13 (plan 11-08): also injects the shared `INPAGE_THEME_CSS`
+ * stylesheet and mounts the theme-stamped panel container (see
+ * `getPanelContainer()`). `resolveTheme()` is async (no synchronous
+ * chrome.storage read API, matching `main.tsx`'s own popup-bootstrap
+ * pattern) -- the container is stamped the instant that resolves, and kept
+ * live afterward via `watchMirroredTheme()`. The watcher is detached only
+ * by `__resetMountForTests()` (there is no real-world "unmount" path for a
+ * content-script instance -- its whole JS context is destroyed on
+ * navigation, same reasoning as `content-relay.content.ts`'s own
+ * deliberately-teardown-free `main()`).
  */
 export function getOrCreateShadowRoot(doc: Document = document): ShadowRoot {
   if (mountedShadow) {
@@ -79,10 +112,23 @@ export function getOrCreateShadowRoot(doc: Document = document): ShadowRoot {
   styleEl.textContent = MOUNT_CSS;
   shadow.appendChild(styleEl);
 
+  const themeStyleEl = doc.createElement("style");
+  themeStyleEl.textContent = INPAGE_THEME_CSS;
+  shadow.appendChild(themeStyleEl);
+
+  const container = doc.createElement("div");
+  container.setAttribute(PANEL_CONTAINER_ATTR, "");
+  shadow.appendChild(container);
+
   doc.documentElement.appendChild(host);
 
   mountedHost = host;
   mountedShadow = shadow;
+  panelContainer = container;
+
+  void resolveTheme().then(stampTheme);
+  detachThemeWatch = watchMirroredTheme(stampTheme);
+
   return shadow;
 }
 
@@ -95,14 +141,29 @@ export function getMountHost(): HTMLElement | null {
 }
 
 /**
- * Test-only reset -- removes the mounted host from the document and clears
- * the module-scope singleton so each test file starts from a clean mount.
- * A page script has no import path into this module's closure, so exposing
- * this here does not weaken the closed-shadow-root guarantee at all (same
- * reasoning as `inpage-overlay.ts`'s `__getShadowRootForTests`).
+ * The theme-stamped panel container every Phase 11 surface sharing this
+ * mount must append its rendered panel INTO (never straight into the
+ * ShadowRoot returned by `getOrCreateShadowRoot()`) -- see this module's
+ * `PANEL_CONTAINER_ATTR` doc comment for why. Returns `null` if
+ * `getOrCreateShadowRoot()` has never been called in this tab/frame.
+ */
+export function getPanelContainer(): HTMLElement | null {
+  return panelContainer;
+}
+
+/**
+ * Test-only reset -- removes the mounted host from the document, detaches
+ * the live theme-mirror watcher, and clears the module-scope singletons so
+ * each test file starts from a clean mount. A page script has no import
+ * path into this module's closure, so exposing this here does not weaken
+ * the closed-shadow-root guarantee at all (same reasoning as
+ * `inpage-overlay.ts`'s `__getShadowRootForTests`).
  */
 export function __resetMountForTests(): void {
+  detachThemeWatch?.();
+  detachThemeWatch = null;
   mountedHost?.remove();
   mountedHost = null;
   mountedShadow = null;
+  panelContainer = null;
 }

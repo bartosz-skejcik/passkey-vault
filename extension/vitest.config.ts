@@ -1,9 +1,44 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import path from "node:path";
 
 export default defineConfig({
   plugins: [react()],
+  // Plan 11-08 (inpage-theme.ts): Vite's `?inline`/`?raw`/`?url` import
+  // suffixes run an EXTRA `server.fs.allow` access check independent of
+  // normal module resolution (`isServerAccessDeniedForTransform` in Vite's
+  // transform middleware) -- confirmed by reading Vite 7.3.6's own source
+  // at execution time after `pv-ui/tokens.css?inline` failed with "Denied
+  // ID" under vitest despite resolving fine through plain `import` (no
+  // suffix) resolution. `fs.allow` defaults to Vite's auto-detected
+  // workspace root, which walks up from `extension/`'s own directory to
+  // its nearest lockfile (`extension/package-lock.json`, i.e. `extension/`
+  // itself) -- the SAME sibling-directory workspace-root boundary problem
+  // 11-07-SUMMARY.md's deviation #1 hit with Next.js's Turbopack for this
+  // exact `packages/pv-ui` package, just enforced by Vite's dev-server
+  // fs-access layer instead of a bundler's module resolver. Widening
+  // `fs.allow` to the monorepo root (one directory up) makes
+  // `packages/pv-ui` (a sibling of `extension/`) servable, mirroring
+  // `web/next.config.ts`'s `turbopack.root` fix.
+  server: {
+    fs: {
+      allow: [path.resolve(__dirname, "..")],
+    },
+  },
   test: {
+    // Plan 11-08 (inpage-theme.ts): vitest's own default `css: false`
+    // stubs EVERY `*.css`-like import (including a `?inline` query
+    // suffix) to an empty module BEFORE Vite's real CSS pipeline (and
+    // therefore its `?inline` transform) ever runs -- confirmed by a
+    // throwaway smoke test at execution time (an unconfigured run
+    // resolved `pv-ui/tokens.css?inline` to a zero-length string, not the
+    // real token CSS). `css: true` opts every project back into Vite's
+    // real CSS processing, which IS what `?inline` needs to actually
+    // return `tokens.css`'s processed text -- this does not change
+    // anything for the popup project's plain `import "./style.css"`
+    // side-effect import (still injected as a no-op style tag under
+    // jsdom, exactly as before).
+    css: true,
     // Background/lib tests (Plans 09-01..09-05/09-08) need "node" -- they
     // exercise chrome.storage/WASM-loader mocks, not the DOM. Plan 09-06's
     // popup component tests need a real DOM (React Testing Library).

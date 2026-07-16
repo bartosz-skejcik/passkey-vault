@@ -36,8 +36,21 @@
 import type { AutofillMatch, FillKind } from "./types";
 import { resolveLocale, type Locale } from "../i18n/dictionary";
 import { t, interpolate } from "../i18n/autofill-dictionary";
+import { INPAGE_THEME_CSS } from "./inpage-theme";
+import { resolveTheme, watchMirroredTheme, type Theme } from "../theme/theme-mirror";
 
 const HOST_ATTR = "data-pv-autofill-host";
+// D-12/D-13 (plan 11-08): this controller owns its OWN separate shadow
+// root (never inpage-mount.ts's shared one -- see this file's own header
+// comment on why Surface A/B stay independent of Phase 11's mount). Same
+// theme-stamping shape as inpage-mount.ts's PANEL_CONTAINER_ATTR: every
+// rendered panel/icon appends into THIS container (never straight into
+// `shadow`), because `[data-theme]` custom-property selectors only
+// resolve for descendants of an element that itself carries the
+// attribute (a shadow tree's `:root` never matches -- see
+// inpage-theme.ts's header comment).
+const PANEL_CONTAINER_ATTR = "data-pv-panel-container";
+const THEME_ATTR = "data-theme";
 
 // Module-scope only -- never written to any storage API. Holds the real
 // ShadowRoot reference `attachShadow()` returned to THIS module, keyed by
@@ -96,17 +109,22 @@ const ROW_ICON: Record<FillKind, string> = {
 const CHEVRON_RIGHT_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="m9 18 6-6-6-6"/></svg>`;
 
 
-// Brand tokens inlined as literal OKLCH values -- the host page's own
-// stylesheet never reaches a shadow root, so nothing here can rely on it.
-// Values match 10-10-PLAN.md's design_reference exactly. DM Sans with a
-// system-ui fallback (the page context may not have DM Sans loaded).
-// Deliberately NEVER "Fuzzy Bubbles" -- this is a security-adjacent
+// D-12/D-13 (plan 11-08): every color is now a `var(--color-...)`
+// reference into packages/pv-ui/tokens.css (injected once, per THIS
+// controller's own instance, via `INPAGE_THEME_CSS` below -- see this
+// file's `PANEL_CONTAINER_ATTR` doc comment above for why an explicit
+// `[data-theme]`-carrying container element is required). `.pv-panel`/
+// `.pv-field-icon` no longer declare `font-family` themselves -- both now
+// inherit it from the theme-stamped container's own `[data-theme]` rule
+// (INPAGE_THEME_CSS), which is their actual DOM ancestor (see
+// `renderFormPrompt`/`renderFieldDropdown`'s `panelRoot.append(...)` calls
+// below -- this module no longer appends straight into `shadow`).
+// Deliberately never "Fuzzy Bubbles" -- this is a security-adjacent
 // surface (fills a form field), not a playful empty-state.
 const OVERLAY_CSS = `
 :host { all: initial; }
 * { box-sizing: border-box; }
 .pv-panel, .pv-field-icon {
-  font-family: "DM Sans", system-ui, -apple-system, sans-serif;
   font-size: 16px;
   line-height: 1.4;
 }
@@ -119,11 +137,14 @@ const OVERLAY_CSS = `
      below steps UP to base-100 so the floating panel still reads as a
      distinct surface against the host page, matching the "insets on
      base-200/base-100" instruction (row dividers/hover states below step
-     up to base-200, one level lighter than this base-300 canvas). */
-  background: oklch(23.93% 0 0);
-  color: oklch(89.80% 0.0017 67.80);
-  border: 1px solid oklch(26.86% 0 0);
-  border-radius: 16px;
+     up to base-200, one level lighter than this base-300 canvas). This
+     relative-lightness convention is preserved unmodified across the
+     light/dark flip -- it is expressed entirely in TOKENS now (var(...)),
+     never a literal, so it follows whichever theme is stamped. */
+  background: var(--color-base-300);
+  color: var(--color-base-content);
+  border: var(--border, 1px) solid var(--color-base-100);
+  border-radius: var(--radius-box);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   overflow: hidden;
 }
@@ -131,7 +152,7 @@ const OVERLAY_CSS = `
 .pv-btn:focus-visible,
 .pv-icon-btn:focus-visible,
 .pv-field-icon:focus-visible {
-  outline: 2px solid oklch(65.31% 0.1637 37.22);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 .pv-panel-prompt { top: 16px; right: 16px; width: 320px; }
@@ -141,8 +162,8 @@ const OVERLAY_CSS = `
   align-items: center;
   gap: 8px;
   padding: 12px;
-  background: oklch(24.78% 0 0);
-  border-bottom: 1px solid oklch(23.93% 0 0);
+  background: var(--color-base-200);
+  border-bottom: var(--border, 1px) solid var(--color-base-300);
 }
 .pv-brand-mark {
   display: inline-flex;
@@ -150,9 +171,9 @@ const OVERLAY_CSS = `
   justify-content: center;
   width: 20px;
   height: 20px;
-  border-radius: 8px;
-  background: oklch(65.31% 0.1637 37.22);
-  color: oklch(26.86% 0 0);
+  border-radius: var(--radius-field);
+  background: var(--color-primary);
+  color: var(--color-primary-content);
   font-weight: 700;
   font-size: 10px;
   flex-shrink: 0;
@@ -166,13 +187,13 @@ const OVERLAY_CSS = `
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--radius-field);
   flex-shrink: 0;
 }
 /* base-200 -- one step lighter than the panel's base-300 canvas, so the
    hover state is actually visible (a same-as-background base-300 hover
    would be invisible now that the panel itself is base-300). */
-.pv-icon-btn:hover { background: oklch(24.78% 0 0); }
+.pv-icon-btn:hover { background: var(--color-base-200); }
 .pv-list { max-height: 320px; overflow-y: auto; }
 .pv-row {
   all: unset;
@@ -182,34 +203,34 @@ const OVERLAY_CSS = `
   width: 100%;
   padding: 10px 12px;
   cursor: pointer;
-  border-bottom: 1px solid oklch(24.78% 0 0);
+  border-bottom: var(--border, 1px) solid var(--color-base-200);
   box-sizing: border-box;
 }
-.pv-row:hover { background: oklch(24.78% 0 0); }
+.pv-row:hover { background: var(--color-base-200); }
 .pv-row-icon { width: 16px; height: 16px; flex-shrink: 0; }
 .pv-row-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .pv-row-label { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-row-sub {
   font-size: 12px;
-  color: color-mix(in oklch, oklch(89.80% 0.0017 67.80) 60%, transparent);
+  color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.pv-row-chevron { color: color-mix(in oklch, oklch(89.80% 0.0017 67.80) 60%, transparent); flex-shrink: 0; }
+.pv-row-chevron { color: color-mix(in oklch, var(--color-base-content) 60%, transparent); flex-shrink: 0; }
 .pv-confirm {
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
-  border-bottom: 1px solid oklch(24.78% 0 0);
+  border-bottom: var(--border, 1px) solid var(--color-base-200);
 }
 .pv-confirm-copy { margin: 0; }
 .pv-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.pv-btn { all: unset; cursor: pointer; padding: 6px 12px; border-radius: 8px; font-size: 14px; font-weight: 700; }
-.pv-btn-ghost { color: oklch(89.80% 0.0017 67.80); }
-.pv-btn-ghost:hover { background: oklch(24.78% 0 0); }
-.pv-btn-primary { background: oklch(65.31% 0.1637 37.22); color: oklch(26.86% 0 0); }
+.pv-btn { all: unset; cursor: pointer; padding: 6px 12px; border-radius: var(--radius-field); font-size: 14px; font-weight: 700; }
+.pv-btn-ghost { color: var(--color-base-content); }
+.pv-btn-ghost:hover { background: var(--color-base-200); }
+.pv-btn-primary { background: var(--color-primary); color: var(--color-primary-content); }
 .pv-field-icon {
   all: unset;
   position: fixed;
@@ -221,13 +242,18 @@ const OVERLAY_CSS = `
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  background: oklch(65.31% 0.1637 37.22);
+  background: var(--color-primary);
   /* "PV" wordmark (Bartek preferred it over the KeyRound icon, which
-     overflowed the coral box): white, bold, sized to sit inside the 20px
-     box. The 'all: unset' above wipes the inherited font, so it is
-     re-declared here explicitly. */
-  color: oklch(100% 0 0);
-  font-family: "DM Sans", system-ui, -apple-system, sans-serif;
+     overflowed the coral box): bold, sized to sit inside the 20px box,
+     colored with the SAME primary-content token GeneratorPopover.tsx's own
+     DaisyUI-generated buttons resolve to for text-on-primary (tokens.css's
+     :root block fixes it to a constant white in both themes, since
+     primary/primary-content are theme-invariant per D-13). The 'all:
+     unset' rule above resets font-family to CSS's unset keyword, which for
+     an inherited property like font-family computes to inherit -- it still
+     picks up the DM Sans/system-ui stack from the theme-stamped container
+     ancestor (INPAGE_THEME_CSS) without needing to be re-declared here. */
+  color: var(--color-primary-content);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -425,7 +451,35 @@ export function createOverlayController(options: OverlayControllerOptions): Over
   styleEl.textContent = OVERLAY_CSS;
   shadow.appendChild(styleEl);
 
+  // D-12/D-13 (plan 11-08): the shared INPAGE_THEME_CSS stylesheet (raw
+  // pv-ui/tokens.css text + font stack) plus the theme-stamped panel
+  // container every rendered panel/icon below appends into -- see this
+  // file's own PANEL_CONTAINER_ATTR doc comment for why a plain `[data-
+  // theme]` selector needs an explicit carrier element inside a shadow
+  // tree. `resolveTheme()` is async (no synchronous chrome.storage read
+  // API); the container is stamped the instant that resolves and kept
+  // live afterward via `watchMirroredTheme()` -- `destroy()` below
+  // detaches the watcher, since (unlike inpage-mount.ts's shared,
+  // content-script-lifetime mount) THIS controller genuinely has a
+  // real-world teardown path (content-relay.content.ts never calls
+  // destroy() today, but the API contract supports it and a leaked
+  // listener on a torn-down controller would be a real bug, not a
+  // theoretical one).
+  const themeStyleEl = doc.createElement("style");
+  themeStyleEl.textContent = INPAGE_THEME_CSS;
+  shadow.appendChild(themeStyleEl);
+
+  const panelRoot = doc.createElement("div");
+  panelRoot.setAttribute(PANEL_CONTAINER_ATTR, "");
+  shadow.appendChild(panelRoot);
+
   doc.documentElement.appendChild(host);
+
+  function stampTheme(theme: Theme): void {
+    panelRoot.setAttribute(THEME_ATTR, theme);
+  }
+  void resolveTheme().then(stampTheme);
+  const detachThemeWatch = watchMirroredTheme(stampTheme);
 
   let promptPanel: HTMLElement | null = null;
   let dropdownPanel: HTMLElement | null = null;
@@ -505,7 +559,7 @@ export function createOverlayController(options: OverlayControllerOptions): Over
     header.append(brand, title, closeBtn, blockBtn);
     panel.append(header, buildList(matches, locale, doc, options.onPick));
 
-    shadow.appendChild(panel);
+    panelRoot.appendChild(panel);
     promptPanel = panel;
   }
 
@@ -560,7 +614,7 @@ export function createOverlayController(options: OverlayControllerOptions): Over
       panel.hidden = !panel.hidden;
     });
 
-    shadow.append(icon, panel);
+    panelRoot.append(icon, panel);
     fieldIcon = icon;
     dropdownPanel = panel;
 
@@ -623,6 +677,7 @@ export function createOverlayController(options: OverlayControllerOptions): Over
   }
 
   function destroy(): void {
+    detachThemeWatch();
     clearPromptPanel();
     clearDropdown();
     safeRemove(host);

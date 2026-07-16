@@ -10,6 +10,32 @@
 // same reference, since it never has access to this module's own closure.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Plan 11-08: createOverlayController() now calls resolveTheme()/
+// watchMirroredTheme() (from ../theme/theme-mirror, which imports
+// `browser` from wxt/browser) at construction time -- same Map-backed
+// fake theme-mirror.test.ts/blocked-origins.test.ts already use. This
+// file's own assertions don't care about the resolved theme, only that
+// construction never throws.
+vi.mock("wxt/browser", () => ({
+  browser: {
+    storage: {
+      local: {
+        async get() {
+          return {};
+        },
+        async set() {
+          // no-op -- no test here asserts on the theme mirror's own value
+        },
+      },
+      onChanged: {
+        addListener() {},
+        removeListener() {},
+      },
+    },
+  },
+}));
+
 import { createOverlayController, __getShadowRootForTests, type OverlayController } from "./inpage-overlay";
 import type { AutofillMatch } from "./types";
 

@@ -13,6 +13,31 @@ vi.mock("../messaging/ext-protocol", () => ({
   sendMessage: (...args: unknown[]) => sendMessageMock(...args),
 }));
 
+// Plan 11-08: inpage-mount.ts's getOrCreateShadowRoot() now calls
+// resolveTheme()/watchMirroredTheme() (from ../theme/theme-mirror, which
+// imports `browser` from wxt/browser) at mount time -- same Map-backed
+// fake theme-mirror.test.ts/blocked-origins.test.ts already use. This
+// file's own assertions don't care about the resolved theme, only that
+// mounting never throws.
+vi.mock("wxt/browser", () => ({
+  browser: {
+    storage: {
+      local: {
+        async get() {
+          return {};
+        },
+        async set() {
+          // no-op -- no test here asserts on the theme mirror's own value
+        },
+      },
+      onChanged: {
+        addListener() {},
+        removeListener() {},
+      },
+    },
+  },
+}));
+
 import { showSaveUpdateToast, teardownSaveUpdateToast, confirmCapture } from "./save-update-toast";
 import { getOrCreateShadowRoot, __resetMountForTests } from "./inpage-mount";
 
