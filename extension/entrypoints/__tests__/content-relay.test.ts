@@ -60,6 +60,19 @@ const hoisted = vi.hoisted(() => ({
   // harmless fallthrough response; individual tests override via
   // `.mockResolvedValueOnce`/`.mockImplementationOnce` as needed.
   mockSendMessage: vi.fn(),
+  // Plan 12-07: the in-page overlay is mocked here (rather than exercised
+  // for real, unlike every OTHER detector/writer in this file) because the
+  // passkey-priority coordination tests below need to assert WHICH overlay
+  // methods were called and with what arguments (renderFormPrompt/
+  // renderFieldDropdown/clearFieldDropdown) -- inpage-overlay.ts's own real
+  // rendering behavior is already fully pinned by inpage-overlay.test.ts.
+  // No pre-existing test in this file touches the overlay at all (none of
+  // Tests 1-15 assert on Surface A/B rendering), so this mock is additive,
+  // not a behavior change to any prior test.
+  mockRenderFormPrompt: vi.fn(),
+  mockRenderFieldDropdown: vi.fn(),
+  mockClearFieldDropdown: vi.fn(),
+  mockIsBlocked: vi.fn(() => false),
 }));
 
 vi.mock("wxt/browser", () => ({
@@ -99,6 +112,24 @@ vi.mock("../../lib/messaging/ext-protocol", () => ({
   sendMessage: hoisted.mockSendMessage,
 }));
 
+// Plan 12-07: see hoisted.mockRenderFormPrompt's own comment above. `host`
+// is a real (unattached) DOM node -- `handleFocusOut`'s
+// `overlay.host.contains(related)` guard needs a real `Node.contains()`
+// implementation, even though none of the tests below exercise focusout.
+vi.mock("../../lib/autofill/inpage-overlay", () => ({
+  createOverlayController: vi.fn(() => ({
+    host: document.createElement("div"),
+    renderFormPrompt: hoisted.mockRenderFormPrompt,
+    renderFieldDropdown: hoisted.mockRenderFieldDropdown,
+    clearFieldDropdown: hoisted.mockClearFieldDropdown,
+    dismiss: vi.fn(),
+    blockSite: vi.fn(),
+    isDismissed: vi.fn(() => false),
+    isBlocked: hoisted.mockIsBlocked,
+    destroy: vi.fn(),
+  })),
+}));
+
 import contentRelay, { isConfiguredServerOrigin } from "../content-relay.content";
 import type { ContentDetectResponse, ContentFillResponse } from "../../lib/autofill/types";
 import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../../lib/messaging/page-protocol";
@@ -118,6 +149,11 @@ beforeEach(() => {
   hoisted.mockAddListener.mockClear();
   hoisted.storageStore.clear();
   hoisted.mockCaptureThemeFromWebApp.mockClear();
+  hoisted.mockRenderFormPrompt.mockClear();
+  hoisted.mockRenderFieldDropdown.mockClear();
+  hoisted.mockClearFieldDropdown.mockClear();
+  hoisted.mockIsBlocked.mockReset();
+  hoisted.mockIsBlocked.mockReturnValue(false);
   // Fresh registration per test, bound to a clean document each time.
   contentRelay.main({} as never);
 });
@@ -539,6 +575,284 @@ describe("content-relay", () => {
         publicKey: { extensions: { prf: { eval: { first: unknown } } } };
       };
       expect(typeof roundTripped.publicKey.extensions.prf.eval.first).toBe("string");
+    });
+  });
+
+  // Plan 12-07 (Bartek live-review 2026-07-17, github.com): PASSKEY ALWAYS
+  // PRIORITY. When a site has both a vault passkey AND a login form, the
+  // provider bridge above and the Phase-10 login overlay (Surface A field
+  // dropdown + Surface B form prompt) used to show at once. These tests
+  // pin the coordination: the overlay is soft-hidden (reversible --
+  // clearFieldDropdown()/renderFormPrompt([]), NEVER dismiss()/blockSite())
+  // for the duration of a ceremony, and re-offered only on a
+  // non-"credential" outcome (fallthrough/error/rejected).
+  describe("passkey-priority overlay coordination (12-07, Bartek live-review 2026-07-17)", () => {
+    async function flushMicrotasks(): Promise<void> {
+      await Promise.resolve();
+      await Promise.resolve();
+      // Same rationale as the provider-bridge describe block above: some
+      // assertions in this block observe a `window.postMessage`-delivered
+      // event, which jsdom queues as a macrotask.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const sampleMatch = { itemId: "item-1", kind: "login", label: "alice@example.com", maskedHint: "a***@example.com" };
+
+    function mountLoginForm(): { username: HTMLInputElement } {
+      document.body.innerHTML = `
+        <form>
+          <input name="user" autocomplete="username">
+          <input type="password" autocomplete="current-password">
+        </form>
+      `;
+      return { username: document.querySelector('input[autocomplete="username"]') as HTMLInputElement };
+    }
+
+    function validRequest(nonce: string): PageBridgeRequestEnvelope {
+      return {
+        source: "pv-page-bridge",
+        nonce,
+        kind: "credentials.get",
+        origin: location.origin,
+        publicKey: { rpId: "example.com" },
+      };
+    }
+
+    /** Routes the shared `sendMessage` mock: `autofill.matchFrame` always
+     * resolves with `sampleMatch` (so the login overlay has something to
+     * show); a `credentials.get`/`credentials.create` ceremony resolves
+     * ONLY when the test explicitly calls the returned function -- this is
+     * what lets a test observe overlay state WHILE a ceremony is still in
+     * flight, before choosing how it resolves. */
+    function wireSendMessage(): (response: unknown) => void {
+      let resolveCeremony!: (value: unknown) => void;
+      const ceremonyPromise = new Promise((resolve) => {
+        resolveCeremony = resolve;
+      });
+      hoisted.mockSendMessage.mockReset();
+      hoisted.mockSendMessage.mockImplementation((message: { kind: string }) => {
+        if (message.kind === "autofill.matchFrame") {
+          return Promise.resolve({ pageState: "ok", matches: [sampleMatch] });
+        }
+        return ceremonyPromise;
+      });
+      return resolveCeremony;
+    }
+
+    it("forwarding a ceremony soft-hides an already-shown overlay -- clearFieldDropdown() + renderFormPrompt([]), never dismiss()/blockSite()", async () => {
+      mountLoginForm();
+      wireSendMessage();
+      contentRelay.main({} as never);
+      await flushMicrotasks();
+
+      // Surface B mounted on the initial pass -- the frame has a match.
+      expect(hoisted.mockRenderFormPrompt).toHaveBeenCalledWith([sampleMatch]);
+      hoisted.mockRenderFormPrompt.mockClear();
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest("nonce-hide"), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+
+      expect(hoisted.mockClearFieldDropdown).toHaveBeenCalledTimes(1);
+      expect(hoisted.mockRenderFormPrompt).toHaveBeenCalledWith([]);
+    });
+
+    it("Surface A: while a ceremony is in flight, focusing a detected login field does not mount the field dropdown", async () => {
+      const { username } = mountLoginForm();
+      wireSendMessage();
+      contentRelay.main({} as never);
+      await flushMicrotasks();
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest("nonce-inflight-a"), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+      hoisted.mockRenderFieldDropdown.mockClear();
+
+      username.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      await flushMicrotasks();
+
+      expect(hoisted.mockRenderFieldDropdown).not.toHaveBeenCalled();
+    });
+
+    it("Surface B: the initial form-prompt render is skipped when a ceremony is already in flight before document-ready fires (conditional-mediation race)", async () => {
+      // Drain the outer beforeEach()'s own `main()` call first -- it ran
+      // its `initialMatchAndPrompt()` synchronously (default jsdom
+      // readyState "complete") against the THEN-empty document, and that
+      // fire-and-forget promise chain is still pending. Without draining
+      // it here (while the document is still empty, so it resolves as a
+      // harmless no-match early-return), it would resume mid-test after
+      // `mountLoginForm()` below has populated the DOM -- a test-only
+      // artifact of `document` being shared across every `it` in this
+      // file (see this file's own header comment), not a real race any
+      // production single-`main()`-invocation page can hit.
+      await flushMicrotasks();
+
+      mountLoginForm();
+      wireSendMessage();
+
+      // Simulate document_start timing (this entrypoint's real `runAt`):
+      // readyState is "loading" so `runWhenDocumentReady()` defers
+      // `initialMatchAndPrompt()` to DOMContentLoaded instead of calling it
+      // synchronously -- exactly like production. Re-invoking `main()`
+      // instead (readyState left at its jsdom-default "complete") would
+      // also reset `passkeyCeremonyInFlight` (test-idempotency hygiene,
+      // mirroring `registeredProviderListener`'s own convention) and mask
+      // the guard this test exists to pin.
+      Object.defineProperty(document, "readyState", { value: "loading", configurable: true });
+      try {
+        contentRelay.main({} as never);
+
+        // The page's own conditional-mediation `credentials.get()` fires
+        // before DOMContentLoaded -- the flag is set before
+        // `initialMatchAndPrompt()` ever gets a chance to run.
+        window.dispatchEvent(
+          new MessageEvent("message", { data: validRequest("nonce-race"), origin: location.origin, source: window }),
+        );
+
+        document.dispatchEvent(new Event("DOMContentLoaded"));
+        await flushMicrotasks();
+
+        expect(hoisted.mockRenderFormPrompt).not.toHaveBeenCalled();
+      } finally {
+        Object.defineProperty(document, "readyState", { value: "complete", configurable: true });
+      }
+    });
+
+    it("on a fallthrough response, the flag clears and the login overlay is re-offered (Surface B re-renders, Surface A can mount again)", async () => {
+      const { username } = mountLoginForm();
+      const resolveCeremony = wireSendMessage();
+      contentRelay.main({} as never);
+      await flushMicrotasks();
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest("nonce-fallthrough"), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+      hoisted.mockRenderFormPrompt.mockClear(); // drop the hide()'s renderFormPrompt([]) call
+
+      resolveCeremony({ fallthrough: true });
+      await flushMicrotasks();
+
+      expect(hoisted.mockRenderFormPrompt).toHaveBeenCalledWith([sampleMatch]);
+
+      username.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      await flushMicrotasks();
+      expect(hoisted.mockRenderFieldDropdown).toHaveBeenCalled();
+    });
+
+    it("on a ceremony error response (response.failed), the flag also clears and the login overlay is re-offered", async () => {
+      mountLoginForm();
+      const resolveCeremony = wireSendMessage();
+      contentRelay.main({} as never);
+      await flushMicrotasks();
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest("nonce-error"), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+      hoisted.mockRenderFormPrompt.mockClear();
+
+      resolveCeremony({ fallthrough: false, failed: true });
+      await flushMicrotasks();
+
+      expect(hoisted.mockRenderFormPrompt).toHaveBeenCalledWith([sampleMatch]);
+    });
+
+    it("regression: a ceremony promise that rejects outright (.catch) also clears the flag and re-offers the overlay", async () => {
+      mountLoginForm();
+      hoisted.mockSendMessage.mockReset();
+      hoisted.mockSendMessage.mockImplementation((message: { kind: string }) => {
+        if (message.kind === "autofill.matchFrame") {
+          return Promise.resolve({ pageState: "ok", matches: [sampleMatch] });
+        }
+        return Promise.reject(new Error("relay unreachable"));
+      });
+      contentRelay.main({} as never);
+      await flushMicrotasks();
+      hoisted.mockRenderFormPrompt.mockClear();
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest("nonce-catch"), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+
+      expect(hoisted.mockRenderFormPrompt).toHaveBeenCalledWith([sampleMatch]);
+    });
+
+    it("on a credential response (passkey used), the overlay stays suppressed -- no re-render, Surface A still does not mount", async () => {
+      const { username } = mountLoginForm();
+      const resolveCeremony = wireSendMessage();
+      contentRelay.main({} as never);
+      await flushMicrotasks();
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest("nonce-credential"), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+      hoisted.mockRenderFormPrompt.mockClear();
+      hoisted.mockRenderFieldDropdown.mockClear();
+
+      resolveCeremony({
+        fallthrough: false,
+        credentialResponseJson: JSON.stringify({
+          id: "cred-1",
+          rawId: "AQID",
+          type: "public-key",
+          response: { clientDataJSON: "AQID", authenticatorData: "AQID", signature: "AQID" },
+        }),
+      });
+      await flushMicrotasks();
+
+      expect(hoisted.mockRenderFormPrompt).not.toHaveBeenCalled();
+
+      username.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      await flushMicrotasks();
+      expect(hoisted.mockRenderFieldDropdown).not.toHaveBeenCalled();
+    });
+
+    it("regression (no security gate weakened): a valid ceremony still acks + forwards + responds exactly as before; an invalid (wrong-origin) request is still silently ignored", async () => {
+      mountLoginForm();
+      const resolveCeremony = wireSendMessage();
+      contentRelay.main({} as never);
+      await flushMicrotasks();
+
+      const received: Array<{ source?: unknown; nonce?: unknown; kind?: unknown }> = [];
+      window.addEventListener("message", (e) => {
+        const data = (e as MessageEvent).data as { source?: unknown };
+        if (data?.source === "pv-content-relay") {
+          received.push(data as { source?: unknown; nonce?: unknown; kind?: unknown });
+        }
+      });
+
+      // Invalid: wrong origin -- D-03/ASVS V5 silent-ignore, unchanged by
+      // this plan (never forwarded, never acked).
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: validRequest("nonce-still-invalid"),
+          origin: "https://attacker.example.com",
+          source: window,
+        }),
+      );
+      await flushMicrotasks();
+      expect(received).toHaveLength(0);
+
+      // Valid: acked, then forwarded, with the same base64url-encoded
+      // publicKey shape as before this plan.
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest("nonce-still-valid"), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+      expect(received).toEqual([{ source: "pv-content-relay", nonce: "nonce-still-valid", kind: "ack" }]);
+      expect(hoisted.mockSendMessage).toHaveBeenCalledWith({
+        kind: "credentials.get",
+        publicKey: { rpId: "example.com" },
+      });
+
+      resolveCeremony({ fallthrough: true });
+      await flushMicrotasks();
+      expect(received).toContainEqual({ source: "pv-content-relay", nonce: "nonce-still-valid", kind: "fallthrough" });
     });
   });
 });

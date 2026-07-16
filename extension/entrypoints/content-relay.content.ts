@@ -392,6 +392,25 @@ const REQUEST_SOURCE = "pv-page-bridge";
 const NONCE_TTL_MS = 30_000;
 const seenNonces = new Map<string, number>();
 
+// Passkey-priority overlay coordination (Plan 12-07, Bartek live-review
+// 2026-07-17): PASSKEY ALWAYS PRIORITY -- when a page runs a WebAuthn
+// ceremony through this bridge, the Phase-10 login autofill overlay (Surface
+// A field dropdown + Surface B form prompt) must not compete with it. This
+// module-level flag/coordinator pair is how the module-level
+// `handleProviderPageMessage` below (registered once, at document_start,
+// independent of any single `main()` invocation) reaches into the
+// `main()`-scoped overlay state without either side needing to know the
+// other's internals: `handleProviderPageMessage` only ever calls
+// `overlayCoordinator?.hide()`/`.allow()`, and `main()` is the only place
+// that assigns what those two calls actually do. `overlayCoordinator` is
+// reassigned on every `main()` invocation (mirrors `overlay`/`frameMatches`
+// being fresh per invocation); `passkeyCeremonyInFlight` is reset to `false`
+// at the top of `main()` too, so a repeated `main()` call (tests; in
+// production a content script's main() runs exactly once) never leaks an
+// in-flight flag from a torn-down prior instance.
+let passkeyCeremonyInFlight = false;
+let overlayCoordinator: { hide(): void; allow(): void } | null = null;
+
 function pruneExpiredNonces(now: number): void {
   for (const [nonce, expiresAt] of seenNonces) {
     if (expiresAt <= now) {
@@ -643,14 +662,22 @@ interface ProviderCeremonyResponseLike {
   prfUnavailableReason?: string;
 }
 
-function respondToPage(nonce: string, response: ProviderCeremonyResponseLike): void {
+/** Returns the `ProviderResponsePayload["kind"]` it posted to the page --
+ * Plan 12-07's `handleProviderPageMessage` uses this return value (rather
+ * than re-deriving its own classification of `response`) to decide whether
+ * to clear `passkeyCeremonyInFlight`/call `overlayCoordinator?.allow()`, so
+ * there is exactly ONE place that decides "credential" vs
+ * "fallthrough"/"error" for a given ceremony response. Every existing
+ * postToPage() call site/argument below is byte-for-byte unchanged from
+ * before this plan -- only the `return` statements are new. */
+function respondToPage(nonce: string, response: ProviderCeremonyResponseLike): ProviderResponsePayload["kind"] {
   if (response.failed) {
     postToPage(nonce, { kind: "error" });
-    return;
+    return "error";
   }
   if (response.fallthrough || typeof response.credentialResponseJson !== "string") {
     postToPage(nonce, { kind: "fallthrough" });
-    return;
+    return "fallthrough";
   }
 
   let credentialJson: unknown;
@@ -658,12 +685,12 @@ function respondToPage(nonce: string, response: ProviderCeremonyResponseLike): v
     credentialJson = JSON.parse(response.credentialResponseJson);
   } catch {
     postToPage(nonce, { kind: "error" });
-    return;
+    return "error";
   }
   const credential = decodeCredentialResponseJson(response.credentialResponseJson);
   if (credential === null) {
     postToPage(nonce, { kind: "error" });
-    return;
+    return "error";
   }
 
   postToPage(nonce, {
@@ -673,6 +700,7 @@ function respondToPage(nonce: string, response: ProviderCeremonyResponseLike): v
     prfCapable: response.prfCapable,
     prfUnavailableReason: response.prfUnavailableReason,
   });
+  return "credential";
 }
 
 /**
@@ -706,14 +734,38 @@ function handleProviderPageMessage(event: MessageEvent): void {
 
   const encodedPublicKey = encodePublicKeyOptions(publicKey);
 
+  // Plan 12-07: the page is running a WebAuthn ceremony through this bridge
+  // -- passkey always takes priority over the Phase-10 login overlay, so
+  // hide it now, BEFORE the forward. This is purely additive coordination
+  // around the existing ack/encode/forward above -- none of those lines
+  // moved or changed.
+  passkeyCeremonyInFlight = true;
+  overlayCoordinator?.hide();
+
   const dispatched =
     kind === "credentials.create"
       ? sendMessage({ kind: "credentials.create", publicKey: encodedPublicKey })
       : sendMessage({ kind: "credentials.get", publicKey: encodedPublicKey });
 
   dispatched
-    .then((response) => respondToPage(nonce, response))
-    .catch(() => postToPage(nonce, { kind: "error" }));
+    .then((response) => {
+      const respondedKind = respondToPage(nonce, response);
+      // A "credential" response means the passkey WAS used -- keep the
+      // login overlay suppressed (there is nothing left to log into with a
+      // fallback credential once a passkey ceremony has completed). Any
+      // other outcome (fallthrough -- no matching vault passkey / user
+      // declined; or a genuine ceremony error) means the passkey path did
+      // NOT complete, so the login overlay is re-offered.
+      if (respondedKind !== "credential") {
+        passkeyCeremonyInFlight = false;
+        overlayCoordinator?.allow();
+      }
+    })
+    .catch(() => {
+      postToPage(nonce, { kind: "error" });
+      passkeyCeremonyInFlight = false;
+      overlayCoordinator?.allow();
+    });
 }
 
 /** D-17: Firefox has no declarative `world:'MAIN'` content-script field
@@ -773,6 +825,13 @@ export default defineContentScript({
     // function -- see handleProviderPageMessage's own header comment.
     registerProviderPageMessageListener();
     injectFirefoxPageBridge();
+
+    // Plan 12-07: fresh per `main()` invocation, same idempotency-hygiene
+    // rationale as `registeredProviderListener` above -- a real content
+    // script only ever calls `main()` once, but tests (and any other
+    // repeated invocation) must not leak an in-flight flag from a
+    // torn-down prior instance into a fresh one.
+    passkeyCeremonyInFlight = false;
 
     // Single onMessage listener dispatching the two background<->
     // content-relay payloads (ContentDetectRequest/ContentFillRequest,
@@ -864,7 +923,33 @@ export default defineContentScript({
       }
     }
 
+    // Plan 12-07: the ONE place Surface B's `renderFormPrompt(frameMatches)`
+    // call is made -- shared by `initialMatchAndPrompt()`'s own render below
+    // and `overlayCoordinator.allow()`'s re-offer after a ceremony falls
+    // through, so there is exactly one implementation of "render the form
+    // prompt if this frame has matches and Surface B isn't blocked", never
+    // two copies that could drift.
+    function renderSurfaceBIfMatches(): void {
+      if (frameMatches.length === 0) {
+        return;
+      }
+      const controller = ensureOverlay();
+      if (!controller.isBlocked()) {
+        controller.renderFormPrompt(frameMatches);
+      }
+    }
+
     async function initialMatchAndPrompt(): Promise<void> {
+      if (passkeyCeremonyInFlight) {
+        // Plan 12-07: a passkey ceremony is already in flight (e.g. a
+        // page's conditional-mediation `credentials.get()` fired at
+        // document_start, before this document-ready-deferred pass even
+        // runs) -- passkey always takes priority, so the login overlay
+        // does not mount at all here. `overlayCoordinator.allow()` is what
+        // re-offers it if/when the ceremony falls through.
+        return;
+      }
+
       if (await isConfiguredServerOrigin()) {
         // The user's own configured pv-server web app -- never show the
         // overlay here (Bartek's decision; see isConfiguredServerOrigin's
@@ -886,14 +971,7 @@ export default defineContentScript({
       }
 
       frameMatches = await requestFrameMatches(detected);
-      if (frameMatches.length === 0) {
-        return;
-      }
-
-      const controller = ensureOverlay();
-      if (!controller.isBlocked()) {
-        controller.renderFormPrompt(frameMatches);
-      }
+      renderSurfaceBIfMatches();
     }
 
     async function handleFocusIn(event: FocusEvent): Promise<void> {
@@ -929,6 +1007,15 @@ export default defineContentScript({
       const kind = collectFocusableFields().get(target);
       if (kind === undefined) {
         return; // not a field this content-relay would ever offer to fill
+      }
+
+      if (passkeyCeremonyInFlight) {
+        // Plan 12-07: a passkey ceremony is in flight -- Surface A does not
+        // mount for the duration (same passkey-priority rule as Surface B
+        // above). The generate-password trigger branch above this point is
+        // a SEPARATE affordance (not part of the login overlay) and is
+        // deliberately unguarded.
+        return;
       }
 
       if (await isConfiguredServerOrigin()) {
@@ -1004,6 +1091,27 @@ export default defineContentScript({
 
       overlay.clearFieldDropdown();
     }
+
+    // Plan 12-07: wires the module-level `handleProviderPageMessage`'s
+    // `overlayCoordinator?.hide()`/`.allow()` calls to THIS `main()`
+    // invocation's overlay state. `hide()` uses only the SOFT/REVERSIBLE
+    // overlay methods (`clearFieldDropdown()`/`renderFormPrompt([])`) --
+    // never `dismiss()`/`blockSite()`, which permanently suppress for the
+    // rest of the page session and would make a fallthrough re-offer
+    // impossible. `allow()` reuses `renderSurfaceBIfMatches()` (the exact
+    // same render call `initialMatchAndPrompt()` makes) rather than
+    // duplicating its match-rendering logic; Surface A simply re-mounts on
+    // the next `focusin` once `passkeyCeremonyInFlight` is cleared, so
+    // `allow()` has nothing further to do for Surface A itself.
+    overlayCoordinator = {
+      hide(): void {
+        overlay?.clearFieldDropdown();
+        overlay?.renderFormPrompt([]);
+      },
+      allow(): void {
+        renderSurfaceBIfMatches();
+      },
+    };
 
     document.addEventListener("focusin", (event) => {
       void handleFocusIn(event as FocusEvent);
