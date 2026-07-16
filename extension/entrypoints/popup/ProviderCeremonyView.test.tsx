@@ -282,7 +282,10 @@ describe("ProviderCeremonyView", () => {
           "This passkey will also be able to unlock your vault.",
         );
         const unavailableNote = screen.queryByText(
-          "This browser doesn't support the PRF extension this site requested — some of its features may not work.",
+          // WR-02 fix (12-REVIEW.md, Plan 12-05): reworded to attribute
+          // unavailability to the site's request / this passkey's
+          // capability, never "this browser" (D-16).
+          "This site requested a PRF feature this passkey can't provide.",
         );
         expect(capableNote !== null).toBe(c.expectCapableNote);
         expect(unavailableNote !== null).toBe(c.expectUnavailableNote);

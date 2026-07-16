@@ -217,9 +217,16 @@ export const DICTIONARY = {
     pl: "Ten passkey będzie też mógł odblokować Twój vault.",
     en: "This passkey will also be able to unlock your vault.",
   },
+  // WR-02 fix (12-REVIEW.md, Plan 12-05): reworded to attribute PRF
+  // unavailability to the SITE's request / THIS passkey's capability, never
+  // "this browser" -- under D-16 the provider computes PRF entirely in
+  // WASM regardless of browser, so blaming the browser here was factually
+  // wrong for the provider role and re-introduced the exact browser-framing
+  // D-16 forbids. The trigger stays wired to the real capability signal
+  // (derivePrfCapability, provider-ceremony.ts) -- only the copy changed.
   "provider.prfUnavailableNote": {
-    pl: "Ta przeglądarka nie obsługuje rozszerzenia PRF, o które prosi ta strona — część jej funkcji może nie działać.",
-    en: "This browser doesn't support the PRF extension this site requested — some of its features may not work.",
+    pl: "Ta strona poprosiła o funkcję PRF, której ten passkey nie obsługuje.",
+    en: "This site requested a PRF feature this passkey can't provide.",
   },
   "provider.noMatchTransient": {
     pl: "Brak zapisanego passkeya dla tej strony — przełączamy na inną metodę.",
