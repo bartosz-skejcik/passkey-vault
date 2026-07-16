@@ -20,6 +20,9 @@ const hoisted = vi.hoisted(() => ({
   mockWriteSessionMeta: vi.fn(),
   mockEnsureHydrated: vi.fn(),
   mockHandleMatchFrame: vi.fn(),
+  mockAssertContentSender: vi.fn(),
+  mockHandleCredentialsCreate: vi.fn(),
+  mockHandleCredentialsGet: vi.fn(),
   listeners: [] as Array<(m: unknown, s: unknown, r: unknown) => unknown>,
 }));
 
@@ -83,9 +86,14 @@ vi.mock("./vault-store", () => ({
 vi.mock("./autofill-frame", () => ({
   handleMatchFrame: hoisted.mockHandleMatchFrame,
   handleFillFrame: vi.fn(),
+  assertContentSender: hoisted.mockAssertContentSender,
 }));
 vi.mock("./generate-handler", () => ({
   handleGenerateRequest: vi.fn(),
+}));
+vi.mock("./provider-ceremony", () => ({
+  handleCredentialsCreate: hoisted.mockHandleCredentialsCreate,
+  handleCredentialsGet: hoisted.mockHandleCredentialsGet,
 }));
 
 import { registerAutofillFrameChannel, registerMessageRouter } from "./router";
@@ -305,5 +313,112 @@ describe("registerAutofillFrameChannel", () => {
     const result = hoisted.listeners[1]({ kind: "session.status" }, CONTENT_SENDER, vi.fn());
     expect(result).toBeUndefined();
     expect(hoisted.mockHandleMatchFrame).not.toHaveBeenCalled();
+  });
+});
+
+// Phase 12 (Plan 12-02): credentials.create/credentials.get dispatch on the
+// SAME content-frame channel as autofill.matchFrame/capture.* above -- NEVER
+// on the popup-facing isProtocolMessage()/handle() channel, whose WR-01 gate
+// rejects every content-script sender and would silently drop every
+// ceremony. Each handler calls assertContentSender(sender) first and passes
+// guard.origin (the sender-verified origin) to handleCredentialsCreate/
+// handleCredentialsGet -- there is no origin field on either message shape
+// for a caller to spoof in the first place (mirrors autofill.matchFrame's
+// own "no origin field" discipline); the fixtures below instead put a
+// deliberately-lying "origin-shaped" value INSIDE `publicKey` (a field the
+// RP legitimately controls) to make the point concrete: only guard.origin
+// ever reaches the handler, regardless of what the payload itself claims.
+describe("credentials.create / credentials.get content-frame dispatch", () => {
+  const CONTENT_SENDER = { id: "test-ext-id", tab: { id: 7 }, origin: "https://trusted.example" };
+
+  beforeEach(() => {
+    registerAutofillFrameChannel();
+  });
+
+  it("credentials.create: dispatches to handleCredentialsCreate with the SENDER-verified guard.origin, never a payload-embedded value", async () => {
+    hoisted.mockAssertContentSender.mockReturnValue({
+      ok: true,
+      origin: "https://trusted.example",
+      tabId: 7,
+      frameId: 0,
+    });
+    hoisted.mockHandleCredentialsCreate.mockResolvedValue({ fallthrough: false, credentialResponseJson: "{}" });
+
+    const result = await new Promise((resolve) => {
+      const kept = hoisted.listeners[1](
+        {
+          kind: "credentials.create",
+          publicKey: { rp: { id: "attacker-lied.example" } }, // RP-controlled, not a sender-origin spoof vector
+        },
+        CONTENT_SENDER,
+        resolve,
+      );
+      expect(kept).toBe(true);
+    });
+
+    expect(hoisted.mockHandleCredentialsCreate).toHaveBeenCalledWith(
+      { publicKey: { rp: { id: "attacker-lied.example" } } },
+      "https://trusted.example",
+    );
+    expect(result).toEqual({ fallthrough: false, credentialResponseJson: "{}" });
+  });
+
+  it("credentials.get: dispatches to handleCredentialsGet with the SENDER-verified guard.origin", async () => {
+    hoisted.mockAssertContentSender.mockReturnValue({
+      ok: true,
+      origin: "https://trusted.example",
+      tabId: 7,
+      frameId: 0,
+    });
+    hoisted.mockHandleCredentialsGet.mockResolvedValue({ fallthrough: true });
+
+    const result = await new Promise((resolve) => {
+      hoisted.listeners[1](
+        { kind: "credentials.get", publicKey: { rpId: "example.com" } },
+        CONTENT_SENDER,
+        resolve,
+      );
+    });
+
+    expect(hoisted.mockHandleCredentialsGet).toHaveBeenCalledWith(
+      { publicKey: { rpId: "example.com" } },
+      "https://trusted.example",
+    );
+    expect(result).toEqual({ fallthrough: true });
+  });
+
+  it("rejects a sender that fails assertContentSender -- handleCredentialsCreate/Get are never called", async () => {
+    hoisted.mockAssertContentSender.mockReturnValue({ ok: false });
+
+    const result = await new Promise((resolve) => {
+      hoisted.listeners[1](
+        { kind: "credentials.create", publicKey: {} },
+        CONTENT_SENDER,
+        resolve,
+      );
+    });
+
+    expect(hoisted.mockHandleCredentialsCreate).not.toHaveBeenCalled();
+    expect(result).toEqual({ fallthrough: true });
+  });
+
+  it("credentials.create/get are NOT handled by isProtocolMessage()/handle() -- the popup router's WR-01 gate would silently drop every ceremony", async () => {
+    // listeners[0] is the popup router (registerMessageRouter(), from the
+    // top-level beforeEach). A same-extension-origin (popup-shaped) sender
+    // still gets undefined -- these kinds simply aren't in its switch.
+    const popupResult = hoisted.listeners[0](
+      { kind: "credentials.create", publicKey: {} },
+      OWN_SENDER,
+      vi.fn(),
+    );
+    expect(popupResult).toBeUndefined();
+    expect(hoisted.mockHandleCredentialsCreate).not.toHaveBeenCalled();
+  });
+
+  it("an unrecognized kind still falls through both dispatch chains unmodified -- no regression against existing phase 9-11 kinds", async () => {
+    const frameResult = hoisted.listeners[1]({ kind: "autofill.match" }, CONTENT_SENDER, vi.fn());
+    expect(frameResult).toBeUndefined();
+    expect(hoisted.mockHandleCredentialsCreate).not.toHaveBeenCalled();
+    expect(hoisted.mockHandleCredentialsGet).not.toHaveBeenCalled();
   });
 });

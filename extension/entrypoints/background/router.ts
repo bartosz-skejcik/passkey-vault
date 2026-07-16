@@ -55,6 +55,25 @@
 // `message.frameOrigin` or any other client-supplied field (D-06/T-11-07).
 // Both handlers call `assertContentSender(sender)` first, exactly like
 // `autofill.matchFrame`/`autofill.fillFrame`.
+//
+// Phase 12 (Plan 12-02): `credentials.create`/`credentials.get` are a
+// SIXTH and SEVENTH kind added to the SAME content-frame dispatch below --
+// also NOT to `isProtocolMessage()`/`handle()`, for the same WR-01 reason
+// every other content-script-only kind here is excluded from that channel
+// (its addListener-level sender.url gate rejects every content-script
+// sender before `handle()` ever runs, so routing a passkey ceremony there
+// would silently drop it). Provider messages come from
+// `content-relay.content.ts` (Plan 12-03), a content script. Each handler
+// calls `assertContentSender(sender)` first and passes `guard.origin` (the
+// sender-verified origin) to `handleCredentialsCreate`/`handleCredentialsGet`
+// (Plan 12-02's provider-ceremony.ts) -- neither message shape carries an
+// origin field at all (ext-protocol.ts), so there is nothing on the payload
+// for a caller to spoof even in principle, exactly like
+// `autofill.matchFrame`'s own "no origin field" discipline. A rejected
+// sender fails open to `{ fallthrough: true }` (D-11/PROV-03) rather than
+// `{ ok: false }` -- there is no legitimate "error" response shape for the
+// page's ceremony promise here, only "hand this back to the native
+// authenticator".
 import { browser } from "wxt/browser";
 import type { Message, MessageOf, MessageResponseMap } from "../../lib/messaging/ext-protocol";
 import { b64ToBytes } from "../../lib/messaging/bytes-b64";
@@ -67,6 +86,7 @@ import { getItems, getFolders, ensureItemsHydrated, RevisionConflictError } from
 import { handleAutofillFill, handleAutofillMatch, handleAutofillTotpCode } from "./autofill-match";
 import { handleFillFrame, handleMatchFrame, assertContentSender } from "./autofill-frame";
 import { handleGenerateRequest } from "./generate-handler";
+import { handleCredentialsCreate, handleCredentialsGet } from "./provider-ceremony";
 import {
   classifySubmit,
   confirmNewLogin,
@@ -170,7 +190,9 @@ function isContentFrameMessage(
   | MessageOf<"autofill.fillFrame">
   | MessageOf<"generate-request">
   | MessageOf<"capture.propose">
-  | MessageOf<"capture.confirm"> {
+  | MessageOf<"capture.confirm">
+  | MessageOf<"credentials.create">
+  | MessageOf<"credentials.get"> {
   if (
     typeof message !== "object" ||
     message === null ||
@@ -184,7 +206,9 @@ function isContentFrameMessage(
     kind === "autofill.fillFrame" ||
     kind === "generate-request" ||
     kind === "capture.propose" ||
-    kind === "capture.confirm"
+    kind === "capture.confirm" ||
+    kind === "credentials.create" ||
+    kind === "credentials.get"
   );
 }
 
@@ -194,7 +218,9 @@ async function handleContentFrameMessage(
     | MessageOf<"autofill.fillFrame">
     | MessageOf<"generate-request">
     | MessageOf<"capture.propose">
-    | MessageOf<"capture.confirm">,
+    | MessageOf<"capture.confirm">
+    | MessageOf<"credentials.create">
+    | MessageOf<"credentials.get">,
   sender: MessageSender,
 ): Promise<unknown> {
   switch (message.kind) {
@@ -212,9 +238,44 @@ async function handleContentFrameMessage(
       return handleCaptureProposeMessage(message, sender);
     case "capture.confirm":
       return handleCaptureConfirmMessage(message, sender);
+    case "credentials.create":
+      return handleCredentialsCreateMessage(message, sender);
+    case "credentials.get":
+      return handleCredentialsGetMessage(message, sender);
     default:
       throw new Error(`unhandled content-frame message kind: ${(message as { kind: string }).kind}`);
   }
+}
+
+// Phase 12 (Plan 12-02): mirrors handleCaptureProposeMessage/
+// handleCaptureConfirmMessage's own shape -- assertContentSender(sender)
+// FIRST, and `guard.origin` (never a payload field, since neither
+// `credentials.create` nor `credentials.get` carries one) is the ONLY
+// origin ever passed to provider-ceremony.ts. A rejected sender fails OPEN
+// to `{ fallthrough: true }` (D-11/PROV-03) -- unlike capture.propose's
+// `{ action: 'no-op', mismatch: true }` shape, there is no legitimate
+// "error" response for a page's WebAuthn ceremony promise, only "hand this
+// back to the native authenticator".
+async function handleCredentialsCreateMessage(
+  message: MessageOf<"credentials.create">,
+  sender: MessageSender,
+): Promise<MessageResponseMap["credentials.create"]> {
+  const guard = assertContentSender(sender);
+  if (!guard.ok) {
+    return { fallthrough: true };
+  }
+  return handleCredentialsCreate({ publicKey: message.publicKey }, guard.origin);
+}
+
+async function handleCredentialsGetMessage(
+  message: MessageOf<"credentials.get">,
+  sender: MessageSender,
+): Promise<MessageResponseMap["credentials.get"]> {
+  const guard = assertContentSender(sender);
+  if (!guard.ok) {
+    return { fallthrough: true };
+  }
+  return handleCredentialsGet({ publicKey: message.publicKey }, guard.origin);
 }
 
 /** Derives the trusted top-level origin EXCLUSIVELY from the platform-

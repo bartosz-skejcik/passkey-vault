@@ -154,6 +154,10 @@ export const DICTIONARY = {
   "itemType.identity": { pl: "Tożsamość", en: "Identity" },
   "itemType.note": { pl: "Notatka", en: "Note" },
   "itemType.totp": { pl: "TOTP", en: "TOTP" },
+  // Phase 12 (Plan 12-02): "passkey" now exists in the data model
+  // (PasskeyFields, lib/vault/types.ts) -- ItemListView.tsx's TYPE_LABEL_KEY
+  // Record needs this entry to stay exhaustive.
+  "itemType.passkey": { pl: "Passkey", en: "Passkey" },
 
   "field.username": { pl: "Użytkownik", en: "Username" },
   "field.password": { pl: "Hasło", en: "Password" },

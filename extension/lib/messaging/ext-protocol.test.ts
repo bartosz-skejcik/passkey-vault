@@ -91,6 +91,23 @@ const MESSAGE_FIXTURES: MessageFixtureMap = {
     username: "user@example.com",
     password: "hunter2",
   },
+  // Phase 12 (Plan 12-02): content-script -> background, no origin field --
+  // `publicKey` binaries are already base64url strings (D-21), never
+  // ArrayBuffer/Uint8Array, so this fixture round-trips cleanly like every
+  // other kind on this union.
+  "credentials.create": {
+    kind: "credentials.create",
+    publicKey: {
+      rp: { id: "example.com", name: "Example" },
+      user: { id: "dXNlci1pZA", name: "user@example.com", displayName: "User" },
+      challenge: "Y2hhbGxlbmdl",
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+    },
+  },
+  "credentials.get": {
+    kind: "credentials.get",
+    publicKey: { rpId: "example.com", challenge: "Y2hhbGxlbmdl" },
+  },
 };
 
 type ResponseFixtureMap = { [K in Message["kind"]]: MessageResponseMap[K] };
@@ -166,6 +183,15 @@ const RESPONSE_FIXTURES: ResponseFixtureMap = {
     mismatch: false,
   },
   "capture.confirm": { status: "ok", item: { id: "item-1", revision: 2 } },
+  "credentials.create": {
+    fallthrough: false,
+    credentialResponseJson: '{"id":"cred-1","type":"public-key"}',
+    prfCapable: true,
+  },
+  "credentials.get": {
+    fallthrough: false,
+    credentialResponseJson: '{"id":"cred-1","type":"public-key"}',
+  },
 };
 
 describe("Message JSON-transport safety (Chrome MV3 sendMessage stand-in)", () => {
