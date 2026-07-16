@@ -37,6 +37,7 @@
 // MutationObserver: Surface A's `focusin` listener is the one guarded,
 // lazy re-detect path the architecture note allows.
 import { defineContentScript } from "wxt/utils/define-content-script";
+import { injectScript } from "wxt/utils/inject-script";
 import { browser } from "wxt/browser";
 import { detectLogin } from "../lib/autofill/detect-login";
 import { detectTotp } from "../lib/autofill/detect-totp";
@@ -63,6 +64,7 @@ import type {
   DetectedFields,
   FillKind,
 } from "../lib/autofill/types";
+import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../lib/messaging/page-protocol";
 
 /**
  * Runs every detector fresh against the current `document` and reduces
@@ -337,12 +339,377 @@ async function initSubmitCapture(): Promise<void> {
   }
 }
 
+/**
+ * D-22: runs `fn` once the document has at least started parsing its body
+ * (`readyState !== "loading"`, i.e. `interactive`/`complete`) -- a close
+ * approximation of the prior `document_idle` entrypoint timing (browsers
+ * inject a document_idle script "between document_end and immediately
+ * after window.onload"), now that this whole entrypoint runs at
+ * `document_start` instead (D-22's early-listener requirement). If the
+ * document is already past "loading" by the time this runs, `fn` executes
+ * immediately/synchronously -- no artificial delay is ever added.
+ */
+function runWhenDocumentReady(fn: () => void): void {
+  if (document.readyState !== "loading") {
+    fn();
+    return;
+  }
+  document.addEventListener("DOMContentLoaded", fn, { once: true });
+}
+
+// -----------------------------------------------------------------------
+// Passkey-provider bridge (Phase 12, Plan 12-03). This is content-relay's
+// half of the D-01 three-hop bridge: page-bridge.content.ts/page-bridge-firefox.ts
+// (MAIN world, key-free) postMessage a WebAuthn ceremony request here;
+// this ISOLATED-world listener validates it (D-03/ASVS V5), forwards it to
+// the background over the content-frame channel (router.ts,
+// registerAutofillFrameChannel()), and relays the response back. This is
+// the ONLY place in this file that ever touches base64url encode/decode --
+// page-bridge itself stays completely free of any encoding logic (D-21),
+// and this file never touches the User Key, PRF output, or any passkey
+// private key material -- only opaque, already-encrypted-or-public
+// ceremony JSON.
+//
+// D-21 (base64url boundary): MAIN<->ISOLATED postMessage is
+// structured-clone (real ArrayBuffers survive the hop), but the
+// ISOLATED->background `runtime.sendMessage` hop JSON-serializes its
+// payload (Chrome mangles ArrayBuffer -> `{}`). Every binary field in the
+// RP's `PublicKeyCredentialCreationOptions`/`RequestOptions` is therefore
+// converted to a base64url STRING (matching the spec's own
+// `*OptionsJSON`/response JSON shape, and `passkey_types`' own
+// `Vec<u8>`<->base64url convention on the Rust side, crates/pv-provider)
+// before `sendMessage`, and every binary field in the background's
+// `credentialResponseJson` response is decoded back into a real
+// `ArrayBuffer` before being handed back to page-bridge -- which never
+// runs a base64 decoder of its own.
+
+const RESPONSE_SOURCE = "pv-content-relay";
+const REQUEST_SOURCE = "pv-page-bridge";
+
+// D-03/ASVS V5: single-use, short-lived (30s) nonce ledger -- a replayed
+// request nonce (the page trying to resubmit a captured earlier message)
+// is silently ignored, never re-forwarded to the background.
+const NONCE_TTL_MS = 30_000;
+const seenNonces = new Map<string, number>();
+
+function pruneExpiredNonces(now: number): void {
+  for (const [nonce, expiresAt] of seenNonces) {
+    if (expiresAt <= now) {
+      seenNonces.delete(nonce);
+    }
+  }
+}
+
+function isPageBridgeRequest(data: unknown): data is PageBridgeRequestEnvelope {
+  if (typeof data !== "object" || data === null) {
+    return false;
+  }
+  const candidate = data as Partial<PageBridgeRequestEnvelope>;
+  return (
+    candidate.source === REQUEST_SOURCE &&
+    typeof candidate.nonce === "string" &&
+    candidate.nonce.length > 0 &&
+    (candidate.kind === "credentials.create" || candidate.kind === "credentials.get")
+  );
+}
+
+function isBufferSource(value: unknown): value is BufferSource {
+  return value instanceof ArrayBuffer || ArrayBuffer.isView(value);
+}
+
+/** Base64url (no padding), matching `passkey_types`' own WebAuthn JSON
+ * encoding on the Rust side (crates/pv-provider) -- deliberately NOT
+ * lib/messaging/bytes-b64.ts's `bytesToB64`, which produces STANDARD
+ * base64 (`+`/`/`/`=`) and would fail `passkey_types`' deserializer. */
+function bufferSourceToB64Url(input: BufferSource): string {
+  const bytes = input instanceof ArrayBuffer ? new Uint8Array(input) : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function b64UrlToArrayBuffer(b64url: string): ArrayBuffer {
+  const padded = b64url.replace(/-/g, "+").replace(/_/g, "/");
+  const paddingNeeded = (4 - (padded.length % 4)) % 4;
+  const binary = atob(padded + "=".repeat(paddingNeeded));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+interface CredentialDescriptorLike {
+  id?: unknown;
+  [key: string]: unknown;
+}
+
+function encodeCredentialDescriptor(descriptor: unknown): unknown {
+  if (typeof descriptor !== "object" || descriptor === null) {
+    return descriptor;
+  }
+  const d = descriptor as CredentialDescriptorLike;
+  if (!isBufferSource(d.id)) {
+    return descriptor;
+  }
+  return { ...d, id: bufferSourceToB64Url(d.id) };
+}
+
+/** Converts the page's raw `PublicKeyCredentialCreationOptions`/
+ * `RequestOptions` (real `ArrayBuffer`/`TypedArray` fields, survived the
+ * MAIN<->ISOLATED structured-clone postMessage hop unmodified) into the
+ * spec `*OptionsJSON` shape -- base64url strings in place of every binary
+ * field -- before this ever reaches `runtime.sendMessage` (D-21). Only the
+ * three binary-bearing fields WebAuthn actually defines on these options
+ * (`challenge`, `user.id`, `excludeCredentials[].id`/`allowCredentials[].id`)
+ * are touched; every other field passes through unchanged. */
+function encodePublicKeyOptions(publicKey: unknown): unknown {
+  if (typeof publicKey !== "object" || publicKey === null) {
+    return publicKey;
+  }
+  const src = publicKey as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...src };
+
+  if (isBufferSource(src.challenge)) {
+    out.challenge = bufferSourceToB64Url(src.challenge);
+  }
+
+  if (typeof src.user === "object" && src.user !== null) {
+    const user = src.user as Record<string, unknown>;
+    if (isBufferSource(user.id)) {
+      out.user = { ...user, id: bufferSourceToB64Url(user.id) };
+    }
+  }
+
+  if (Array.isArray(src.excludeCredentials)) {
+    out.excludeCredentials = src.excludeCredentials.map(encodeCredentialDescriptor);
+  }
+
+  if (Array.isArray(src.allowCredentials)) {
+    out.allowCredentials = src.allowCredentials.map(encodeCredentialDescriptor);
+  }
+
+  return out;
+}
+
+const RESPONSE_BINARY_FIELDS = ["clientDataJSON", "attestationObject", "authenticatorData", "signature", "publicKey"];
+
+/** Decodes the background's `credentialResponseJson` (a JSON STRING whose
+ * binary fields are already base64url per `passkey_types`' own Serialize
+ * impl, matching the spec response JSON shape) back into a plain object
+ * with REAL `ArrayBuffer`s for `rawId`/`response.*`/PRF results -- the
+ * exact reverse of `encodePublicKeyOptions` above (D-21). Returns `null`
+ * on any parse failure (malformed JSON from a genuinely broken ceremony,
+ * never trusted blindly). */
+function decodeCredentialResponseJson(json: string): unknown | null {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  const out: Record<string, unknown> = { ...parsed };
+
+  if (typeof parsed.rawId === "string") {
+    out.rawId = b64UrlToArrayBuffer(parsed.rawId);
+  }
+
+  if (typeof parsed.response === "object" && parsed.response !== null) {
+    const response = parsed.response as Record<string, unknown>;
+    const decodedResponse: Record<string, unknown> = { ...response };
+    for (const field of RESPONSE_BINARY_FIELDS) {
+      if (typeof response[field] === "string") {
+        decodedResponse[field] = b64UrlToArrayBuffer(response[field] as string);
+      }
+    }
+    if (typeof response.userHandle === "string") {
+      decodedResponse.userHandle = b64UrlToArrayBuffer(response.userHandle as string);
+    }
+    out.response = decodedResponse;
+  }
+
+  const extensionResults = parsed.clientExtensionResults;
+  if (typeof extensionResults === "object" && extensionResults !== null) {
+    const ext = extensionResults as Record<string, unknown>;
+    const prf = ext.prf;
+    if (typeof prf === "object" && prf !== null) {
+      const prfObj = prf as Record<string, unknown>;
+      const results = prfObj.results;
+      if (typeof results === "object" && results !== null) {
+        const r = results as Record<string, unknown>;
+        const decodedResults: Record<string, unknown> = { ...r };
+        for (const field of ["first", "second"]) {
+          if (typeof r[field] === "string") {
+            decodedResults[field] = b64UrlToArrayBuffer(r[field] as string);
+          }
+        }
+        out.clientExtensionResults = { ...ext, prf: { ...prfObj, results: decodedResults } };
+      }
+    }
+  }
+
+  return out;
+}
+
+/** `Omit<Union, K>` does not distribute over a discriminated union in
+ * TypeScript (it collapses to the intersection of member keys), so this
+ * payload shape is spelled out directly rather than derived from
+ * `PageBridgeResponseEnvelope` via `Omit`. */
+type ProviderResponsePayload =
+  | {
+      kind: "credential";
+      credential: unknown;
+      credentialJson: unknown;
+      prfCapable?: boolean;
+      prfUnavailableReason?: string;
+    }
+  | { kind: "fallthrough" }
+  | { kind: "error" };
+
+function postToPage(nonce: string, rest: ProviderResponsePayload): void {
+  const envelope: PageBridgeResponseEnvelope = { source: RESPONSE_SOURCE, nonce, ...rest };
+  // D-03: target origin is ALWAYS location.origin, never '*'.
+  window.postMessage(envelope, location.origin);
+}
+
+interface ProviderCeremonyResponseLike {
+  fallthrough: boolean;
+  failed?: boolean;
+  credentialResponseJson?: string;
+  prfCapable?: boolean;
+  prfUnavailableReason?: string;
+}
+
+function respondToPage(nonce: string, response: ProviderCeremonyResponseLike): void {
+  if (response.failed) {
+    postToPage(nonce, { kind: "error" });
+    return;
+  }
+  if (response.fallthrough || typeof response.credentialResponseJson !== "string") {
+    postToPage(nonce, { kind: "fallthrough" });
+    return;
+  }
+
+  let credentialJson: unknown;
+  try {
+    credentialJson = JSON.parse(response.credentialResponseJson);
+  } catch {
+    postToPage(nonce, { kind: "error" });
+    return;
+  }
+  const credential = decodeCredentialResponseJson(response.credentialResponseJson);
+  if (credential === null) {
+    postToPage(nonce, { kind: "error" });
+    return;
+  }
+
+  postToPage(nonce, {
+    kind: "credential",
+    credential,
+    credentialJson,
+    prfCapable: response.prfCapable,
+    prfUnavailableReason: response.prfUnavailableReason,
+  });
+}
+
+/**
+ * D-22: registered at the TOP of `main()`, unconditionally and
+ * synchronously -- NOT gated on this file's document-ready deferral below
+ * -- so a page calling `credentials.get()` before the rest of this content
+ * script's DOM-dependent init has run (e.g. conditional UI, invoked at
+ * `document_start`) never posts into a void. D-03/ASVS V5: rejects/ignores
+ * silently (no forwarding, no response) on ANY validation failure -- wrong
+ * `event.source`, wrong origin, malformed envelope, or a replayed nonce.
+ */
+function handleProviderPageMessage(event: MessageEvent): void {
+  if (event.source !== window || event.origin !== location.origin) {
+    return;
+  }
+  if (!isPageBridgeRequest(event.data)) {
+    return;
+  }
+
+  const { nonce, kind, publicKey } = event.data;
+  const now = Date.now();
+  pruneExpiredNonces(now);
+  if (seenNonces.has(nonce)) {
+    return; // replay -- silently ignored, never re-forwarded (D-03/ASVS V5)
+  }
+  seenNonces.set(nonce, now + NONCE_TTL_MS);
+
+  const encodedPublicKey = encodePublicKeyOptions(publicKey);
+
+  const dispatched =
+    kind === "credentials.create"
+      ? sendMessage({ kind: "credentials.create", publicKey: encodedPublicKey })
+      : sendMessage({ kind: "credentials.get", publicKey: encodedPublicKey });
+
+  dispatched
+    .then((response) => respondToPage(nonce, response))
+    .catch(() => postToPage(nonce, { kind: "error" }));
+}
+
+/** D-17: Firefox has no declarative `world:'MAIN'` content-script field
+ * (Research Architecture Pattern 3) -- page-bridge-firefox.ts (Plan 12-03, Task 2)
+ * is injected manually via WXT's `injectScript()` helper, served from
+ * `web_accessible_resources` (extension/wxt.config.ts). Chrome keeps
+ * page-bridge.content.ts's declarative `world:'MAIN'` field and does NOT
+ * also run this -- `import.meta.env.FIREFOX` gates it so the two injection
+ * tracks never both fire for the same browser (would double-patch). Fired
+ * fire-and-forget at the very top of `main()`, alongside the postMessage
+ * listener above -- not gated on document-ready -- to get Firefox as close
+ * to Chrome's document_start timing as this mechanism allows.
+ */
+function injectFirefoxPageBridge(): void {
+  if (!import.meta.env.FIREFOX) {
+    return;
+  }
+  void injectScript("/page-bridge-firefox.js", { keepInDom: true }).catch((e: unknown) => {
+    console.error("[passkey-vault] failed to inject page-bridge-firefox.js", e);
+  });
+}
+
+// A real browser only ever calls a content script's main() ONCE per
+// injection -- this guard exists so tests (and any other repeated main()
+// invocation) don't accumulate multiple `window` "message" listeners, each
+// racing to consume the same single-use nonce for a later dispatch. Not
+// itself part of any threat-model boundary -- purely idempotency hygiene.
+let registeredProviderListener: ((event: MessageEvent) => void) | null = null;
+
+function registerProviderPageMessageListener(): void {
+  if (registeredProviderListener !== null) {
+    window.removeEventListener("message", registeredProviderListener);
+  }
+  registeredProviderListener = handleProviderPageMessage;
+  window.addEventListener("message", registeredProviderListener);
+}
+
 export default defineContentScript({
   matches: ["<all_urls>"],
   allFrames: true,
-  runAt: "document_idle",
+  // D-22 (Phase 12, Plan 12-03): changed from `document_idle` to
+  // `document_start` so the provider postMessage listener below can
+  // register as early as possible -- a page calling `credentials.get()`
+  // early (conditional UI) must never postMessage into a void. WXT ties
+  // `runAt` to the WHOLE entrypoint file, not to individual statements
+  // inside `main()`, so the pre-existing document_idle-dependent init
+  // calls (`initialMatchAndPrompt`/`initSubmitCapture`/`initThemeCapture`,
+  // all of which query the live DOM) are explicitly deferred below via
+  // `runWhenDocumentReady()` rather than left to run at document_start
+  // where `document.body` may not exist yet -- their OWN timing is
+  // unchanged from before this plan; only the provider listener (and,
+  // fire-and-forget, the Firefox page-bridge injection) now runs earlier.
+  runAt: "document_start",
   world: "ISOLATED",
   main() {
+    // D-22: registered FIRST, synchronously, before anything else in this
+    // function -- see handleProviderPageMessage's own header comment.
+    registerProviderPageMessageListener();
+    injectFirefoxPageBridge();
+
     // Single onMessage listener dispatching the two background<->
     // content-relay payloads (ContentDetectRequest/ContentFillRequest,
     // lib/autofill/types.ts). Writes ONLY happen inside the
@@ -582,8 +949,18 @@ export default defineContentScript({
       handleFocusOut(event as FocusEvent);
     });
 
-    void initialMatchAndPrompt();
-    void initSubmitCapture();
-    void initThemeCapture();
+    // D-22 (see this file's own entrypoint-config comment above): this
+    // entrypoint now runs at document_start, but detectAll()/DOM queries
+    // inside these three calls need at least a parsed `document.body` --
+    // deferring them to the same "DOM ready" point the old document_idle
+    // timing effectively guaranteed keeps their behavior identical to
+    // before this plan, while the provider listener/injection above (and
+    // the two document.addEventListener registrations, which are always
+    // safe to attach regardless of parse state) still run immediately.
+    runWhenDocumentReady(() => {
+      void initialMatchAndPrompt();
+      void initSubmitCapture();
+      void initThemeCapture();
+    });
   },
 });

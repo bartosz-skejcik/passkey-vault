@@ -55,6 +55,11 @@ const hoisted = vi.hoisted(() => ({
   // actually verifying: is captureThemeFromWebApp() called exactly when
   // isConfiguredServerOrigin() gates it true, and never otherwise.
   mockCaptureThemeFromWebApp: vi.fn(),
+  // Plan 12-03: backs the passkey-provider bridge's `sendMessage` calls to
+  // the background (credentials.create/credentials.get). Defaults to a
+  // harmless fallthrough response; individual tests override via
+  // `.mockResolvedValueOnce`/`.mockImplementationOnce` as needed.
+  mockSendMessage: vi.fn(),
 }));
 
 vi.mock("wxt/browser", () => ({
@@ -85,8 +90,18 @@ vi.mock("../../lib/theme/theme-mirror", () => ({
   captureThemeFromWebApp: hoisted.mockCaptureThemeFromWebApp,
 }));
 
+// Plan 12-03: the passkey-provider bridge is the ONLY thing in this file
+// that calls sendMessage() -- every pre-existing test above drives
+// content.detect/content.fill/focusin-focusout directly and never touches
+// this mock, so overriding it here is additive, not a behavior change to
+// any prior test.
+vi.mock("../../lib/messaging/ext-protocol", () => ({
+  sendMessage: hoisted.mockSendMessage,
+}));
+
 import contentRelay, { isConfiguredServerOrigin } from "../content-relay.content";
 import type { ContentDetectResponse, ContentFillResponse } from "../../lib/autofill/types";
+import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../../lib/messaging/page-protocol";
 
 type Listener = (message: unknown, sender: unknown, sendResponse: (response?: unknown) => void) => unknown;
 
@@ -250,6 +265,130 @@ describe("content-relay", () => {
       await flushMicrotasks();
 
       expect(hoisted.mockCaptureThemeFromWebApp).not.toHaveBeenCalled();
+    });
+  });
+
+  // Plan 12-03, Task 3: the provider bridge's `window` "message" listener
+  // (D-22, registered synchronously inside `main()`, independent of the
+  // `browser.runtime.onMessage` listener every other test above exercises).
+  // D-03/ASVS V5 requires REJECT/IGNORE (no forwarding, no response) on any
+  // of: wrong `event.source`, wrong `event.origin`, or a replayed nonce --
+  // three explicit required test cases.
+  describe("passkey-provider bridge: window message validation (D-03/ASVS V5)", () => {
+    async function flushMicrotasks(): Promise<void> {
+      await Promise.resolve();
+      await new Promise((resolve) => queueMicrotask(() => resolve(undefined)));
+      // The response half of this bridge posts back to the page via a
+      // REAL `window.postMessage` (never a synthetic dispatchEvent, unlike
+      // this test file's own request-side simulation) -- jsdom delivers
+      // that asynchronously on a macrotask, so a microtask-only flush is
+      // not enough for tests that assert on the POSTED-BACK response.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    function validRequest(nonce: string): PageBridgeRequestEnvelope {
+      return {
+        source: "pv-page-bridge",
+        nonce,
+        kind: "credentials.get",
+        origin: location.origin,
+        publicKey: { rpId: "example.com" },
+      };
+    }
+
+    beforeEach(() => {
+      hoisted.mockSendMessage.mockReset();
+      hoisted.mockSendMessage.mockResolvedValue({ fallthrough: true });
+    });
+
+    it("Test 13: rejects a message whose event.source is not window -- never forwarded to the background", async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: validRequest("nonce-wrong-source"),
+          origin: location.origin,
+          // A different object than `window` -- simulates a message
+          // relayed from a DIFFERENT frame/window pretending to be the
+          // page's own script.
+          source: {} as unknown as MessageEventSource,
+        }),
+      );
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("Test 14: rejects a message whose event.origin does not match location.origin -- never forwarded", async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: validRequest("nonce-wrong-origin"),
+          origin: "https://attacker.example.com",
+          source: window,
+        }),
+      );
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("Test 15: a replayed (already-consumed) nonce is silently ignored on the second delivery", async () => {
+      const nonce = "nonce-replay-test";
+
+      window.dispatchEvent(new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }));
+      await flushMicrotasks();
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+
+      // Same nonce again -- must NOT be forwarded a second time.
+      window.dispatchEvent(new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }));
+      await flushMicrotasks();
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("a well-formed, valid message IS forwarded via sendMessage with the base64url-encoded publicKey", async () => {
+      const nonce = "nonce-valid";
+      window.dispatchEvent(new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }));
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+      expect(hoisted.mockSendMessage).toHaveBeenCalledWith({
+        kind: "credentials.get",
+        publicKey: { rpId: "example.com" },
+      });
+    });
+
+    it("posts the credential response back to the page with binary fields decoded to ArrayBuffers", async () => {
+      const nonce = "nonce-credential-response";
+      const rawIdB64Url = "AQID"; // base64url for bytes [1,2,3]
+      hoisted.mockSendMessage.mockResolvedValueOnce({
+        fallthrough: false,
+        credentialResponseJson: JSON.stringify({
+          id: "cred-1",
+          rawId: rawIdB64Url,
+          type: "public-key",
+          response: { clientDataJSON: rawIdB64Url, authenticatorData: rawIdB64Url, signature: rawIdB64Url },
+        }),
+      });
+
+      const received: PageBridgeResponseEnvelope[] = [];
+      window.addEventListener("message", (e) => {
+        const data = (e as MessageEvent).data as { source?: unknown };
+        if (data?.source === "pv-content-relay") {
+          received.push((e as MessageEvent).data as PageBridgeResponseEnvelope);
+        }
+      });
+
+      window.dispatchEvent(new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }));
+      await flushMicrotasks();
+
+      expect(received).toHaveLength(1);
+      const response = received[0];
+      expect(response.kind).toBe("credential");
+      if (response.kind === "credential") {
+        expect(response.nonce).toBe(nonce);
+        const credential = response.credential as { rawId: ArrayBuffer; response: { clientDataJSON: ArrayBuffer } };
+        expect(credential.rawId).toBeInstanceOf(ArrayBuffer);
+        expect(new Uint8Array(credential.rawId)).toEqual(new Uint8Array([1, 2, 3]));
+        expect(credential.response.clientDataJSON).toBeInstanceOf(ArrayBuffer);
+      }
     });
   });
 });

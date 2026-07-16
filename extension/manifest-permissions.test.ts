@@ -72,3 +72,37 @@ describe("manifest permissions cover every permission-gated API in use", () => {
     expect(storageUsers.length).toBeGreaterThan(0);
   });
 });
+
+// Phase 12 (Plan 12-03), Task 2: a second structural gate, distinct from
+// the permission-gated-API loop above -- these assert the MAIN-world
+// passkey-provider patch's manifest surface stays pinned by test, the same
+// "green tests, dead extension" failure mode the file's header comment
+// describes, applied to D-17's cross-browser injection wiring instead of a
+// chrome.*/browser.* permission.
+describe("passkey-provider MAIN-world manifest surface (D-17, PROV-05)", () => {
+  const pageBridgeContentSource = readFileSync(
+    join(__dirname, "entrypoints", "page-bridge.content.ts"),
+    "utf8",
+  );
+  const contentRelaySource = readFileSync(join(__dirname, "entrypoints", "content-relay.content.ts"), "utf8");
+  const configText = readFileSync(join(__dirname, "wxt.config.ts"), "utf8");
+
+  it("page-bridge.content.ts declares the Chrome declarative world:'MAIN' content script at document_start", () => {
+    expect(pageBridgeContentSource).toMatch(/world:\s*["']MAIN["']/);
+    expect(pageBridgeContentSource).toMatch(/runAt:\s*["']document_start["']/);
+  });
+
+  it("page-bridge.content.ts is excluded from the Firefox build (declarative world:'MAIN' is Chrome-only)", () => {
+    expect(pageBridgeContentSource).toMatch(/exclude:\s*\[\s*["']firefox["']\s*\]/);
+  });
+
+  it("content-relay.content.ts injects page-bridge-firefox.js via injectScript() on Firefox", () => {
+    expect(contentRelaySource).toMatch(/injectScript\(\s*["']\/page-bridge-firefox\.js["']/);
+    expect(contentRelaySource).toMatch(/import\.meta\.env\.FIREFOX/);
+  });
+
+  it("wxt.config.ts declares web_accessible_resources for page-bridge-firefox.js", () => {
+    expect(configText).toMatch(/web_accessible_resources/);
+    expect(configText).toMatch(/page-bridge-firefox\.js/);
+  });
+});
