@@ -44,6 +44,27 @@ const HOST_ATTR = "data-pv-autofill-host";
 // the (closed-mode) host element a page script can never introspect.
 const shadowRoots = new WeakMap<HTMLElement, ShadowRoot>();
 
+/** WR-05 (11-REVIEW.md, packaged-build UAT: probe-phase11-capture.js, real
+ * headless Chromium): this controller's field-icon/dropdown teardown
+ * (clearDropdown) runs from the SAME focusout handler content-relay.
+ * content.ts also tears the Phase 11 generate-trigger down from (see
+ * generate-popover.ts's own `safeRemove` sibling, same root cause) -- a
+ * double-teardown race between the two, or this handler firing again before
+ * a previous removal settled, can leave a node already detached by the time
+ * this call runs. Chrome raises an uncaught NotFoundError on
+ * Element#remove() in that case; teardown must converge regardless of which
+ * racing handler "wins" the actual DOM removal. */
+function safeRemove(el: Element | null): void {
+  if (!el) {
+    return;
+  }
+  try {
+    el.remove();
+  } catch {
+    // Already detached by a racing teardown -- converged either way.
+  }
+}
+
 /**
  * Test-only accessor. A PAGE script cannot reach this -- it has no import
  * path into this module's closure, and `host.shadowRoot` (the only DOM API
@@ -421,7 +442,7 @@ export function createOverlayController(options: OverlayControllerOptions): Over
 
   function clearPromptPanel(): void {
     if (promptPanel) {
-      promptPanel.remove();
+      safeRemove(promptPanel);
       promptPanel = null;
     }
   }
@@ -432,11 +453,11 @@ export function createOverlayController(options: OverlayControllerOptions): Over
       detachRepositionListeners = null;
     }
     if (dropdownPanel) {
-      dropdownPanel.remove();
+      safeRemove(dropdownPanel);
       dropdownPanel = null;
     }
     if (fieldIcon) {
-      fieldIcon.remove();
+      safeRemove(fieldIcon);
       fieldIcon = null;
     }
   }
@@ -604,7 +625,7 @@ export function createOverlayController(options: OverlayControllerOptions): Over
   function destroy(): void {
     clearPromptPanel();
     clearDropdown();
-    host.remove();
+    safeRemove(host);
   }
 
   return {

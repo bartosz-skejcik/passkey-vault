@@ -175,6 +175,42 @@ describe("mountGenerateTrigger", () => {
     expect(shadow.querySelector("[data-pv-gen-popover]")).toBeNull();
   });
 
+  it("WR-05: teardownGenerateTrigger is idempotent even when a racing handler has already detached the node (packaged-build UAT: real Chrome's NotFoundError on double-remove)", async () => {
+    setBody(`<input type="password" id="pw" />`);
+    const field = document.getElementById("pw") as HTMLInputElement;
+    const pair: PasswordFieldPair = { newPasswordEl: field, confirmPasswordEl: null };
+
+    mountGenerateTrigger(field, pair);
+    const shadow = shadowOf();
+    const trigger = shadow.querySelector<HTMLButtonElement>("[data-pv-gen-trigger]")!;
+    trigger.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushMicrotasks();
+    const popover = shadow.querySelector<HTMLElement>("[data-pv-gen-popover]")!;
+
+    // Simulate the real-Chrome double-teardown race (WR-05): another
+    // handler already detached these nodes by the time this teardown's own
+    // remove() call runs -- Chrome throws a NotFoundError in that case.
+    const originalTriggerRemove = trigger.remove.bind(trigger);
+    const originalPopoverRemove = popover.remove.bind(popover);
+    trigger.remove = () => {
+      throw new DOMException(
+        "Failed to execute 'remove' on 'Element': The node to be removed is no longer a child of this node.",
+        "NotFoundError",
+      );
+    };
+    popover.remove = () => {
+      throw new DOMException(
+        "Failed to execute 'remove' on 'Element': The node to be removed is no longer a child of this node.",
+        "NotFoundError",
+      );
+    };
+
+    expect(() => teardownGenerateTrigger()).not.toThrow();
+
+    trigger.remove = originalTriggerRemove;
+    popover.remove = originalPopoverRemove;
+  });
+
   it("mounting a second trigger tears down the first (at most one mounted at a time)", () => {
     setBody(`<input type="password" id="pw1" /><input type="password" id="pw2" />`);
     const field1 = document.getElementById("pw1") as HTMLInputElement;
