@@ -219,6 +219,37 @@ describe("credentials.get: exactly one matching credential", () => {
   });
 });
 
+describe("CR-02: credentials.get with an omitted rpId defaults to the sender origin host", () => {
+  it("matches a stored credential keyed on the sender origin's hostname when the RP's request omits rpId entirely", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockGetItems.mockReturnValue([passkeyItem("pk-1", "example.com", "alice")]);
+    hoisted.mockWasmGetProviderAssertion.mockReturnValue({
+      credentialResponseJson: () => '{"id":"cred-pk-1","type":"public-key"}',
+      updatedEncryptedItemJson: () => undefined,
+    });
+
+    // No `rpId` field at all on the request -- the spec-valid omitted case
+    // (defaults to the caller origin's effective domain) CR-02 fixes.
+    const result = await handleCredentialsGet({ publicKey: {} }, "https://example.com");
+
+    expect(result).toEqual({
+      fallthrough: false,
+      credentialResponseJson: '{"id":"cred-pk-1","type":"public-key"}',
+    });
+    expect(hoisted.mockWasmGetProviderAssertion).toHaveBeenCalledTimes(1);
+  });
+
+  it("still returns { fallthrough: true } when the origin's hostname matches no stored credential", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockGetItems.mockReturnValue([passkeyItem("pk-1", "other.example", "alice")]);
+
+    const result = await handleCredentialsGet({ publicKey: {} }, "https://example.com");
+
+    expect(result).toEqual({ fallthrough: true });
+    expect(hoisted.mockWasmGetProviderAssertion).not.toHaveBeenCalled();
+  });
+});
+
 describe("credentials.create: PRF capability reporting (D-16)", () => {
   it("reports { prfCapable: true } when the ceremony's own clientExtensionResults.prf.enabled is true", async () => {
     hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);

@@ -281,6 +281,28 @@ function extractRpId(publicKeyRequest: unknown): string {
   return "";
 }
 
+/** CR-02 fix (12-REVIEW.md): `rpId` is spec-OPTIONAL on `get()` -- many real
+ * RPs omit it and rely on the default (the caller origin's effective
+ * domain). `extractRpId` alone returns `""` in that case, which matched no
+ * stored item (every vault passkey has a concrete `rpId`), silently
+ * refusing to serve `get()` for every RP that omits it. Falls back to
+ * `senderOrigin`'s hostname (guarded -- a parse failure yields `""`, same
+ * as before this fix, never a crash). This only WIDENS the candidate
+ * search; `passkey-client`'s own registrable-suffix/origin validation
+ * during signing (D-06, proven by `origin_mismatch_rejected`) is still the
+ * authoritative check, so this never weakens origin binding. */
+function deriveOriginHost(senderOrigin: string): string {
+  try {
+    return new URL(senderOrigin).hostname;
+  } catch {
+    return "";
+  }
+}
+
+function extractGetRpId(publicKeyRequest: unknown, senderOrigin: string): string {
+  return extractRpId(publicKeyRequest) || deriveOriginHost(senderOrigin);
+}
+
 // --- Multi-match picker groundwork (Plan 12-04 wires the actual popup UI) ---
 
 interface PendingPickerResolution {
@@ -409,7 +431,7 @@ export async function handleCredentialsGet(
       uk = await openPopupAndAwaitUnlock();
     }
 
-    const rpId = extractRpId(req.publicKey);
+    const rpId = extractGetRpId(req.publicKey, senderOrigin);
     const candidates = findMatchingPasskeyItems(getItems(), rpId);
 
     if (candidates.length === 0) {
