@@ -166,6 +166,7 @@ Plans:
 - [x] 11-06-PLAN.md — Suggested bez formularza: popupowa sekcja "Na tej stronie" pokazuje loginy origin-match na stronach bez wykrytego formularza (D-11, addendum Bartka 2026-07-16)
 - [x] 11-07-PLAN.md — Parytet motywu i stylu z frontendem: lustro motywu z web appa, tokeny vault-light/dark na wszystkich powierzchniach (in-page + overlay z 10 + popup), generator 1:1 z GeneratorPopover (D-12, Bartek 2026-07-16)
 - [x] 11-08-PLAN.md — Restyling powierzchni in-page na tokenach pv-ui (overlay z 10 + popover/toast/modal z 11), generator layout 1:1 z GeneratorPopover, motyw live za lustrem (D-12/D-13)
+- [ ] 11-09-PLAN.md — Live-review Bartka: scroll list kont w dropdownie/prompcie in-page, button-style hover na wierszach popupu, polaryzacja hover w vault-light
 
 **UI hint**: yes
 
