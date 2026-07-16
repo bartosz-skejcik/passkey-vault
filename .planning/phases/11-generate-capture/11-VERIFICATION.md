@@ -1,19 +1,20 @@
 ---
 phase: 11-generate-capture
-verified: 2026-07-16T12:45:10Z
+verified: 2026-07-16T13:36:35Z
 status: passed
 score: 4/4 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
 re_verification:
-  previous_status: none
-  previous_score: n/a
+  previous_status: passed
+  previous_score: 4/4
+  note: re-stamp po commitach z rund live-review Bartka (62a3df4 popup per-view sizing + merged scroll D-14, 86efa23 unmask username/email w podpowiedziach) — zmiany prezentacyjno-metadanowe, poza zakresem SC; potwierdzone pełną suitą 401/401, tsc, oboma buildami i probe'ami na paczkowanym buildzie (5/5). Bartek zaakceptował explicite ("zamykaj. akceptuje").
 ---
 
 # Phase 11: Generate & Capture Verification Report
 
 **Phase Goal:** Users get proactive help creating strong passwords on signup and keeping saved logins in sync with what they actually use on sites.
-**Verified:** 2026-07-16T12:45:10Z
+**Verified:** 2026-07-16T13:36:35Z (re-stamp, patrz frontmatter)
 **Status:** passed
 **Re-verification:** No — initial verification
 
