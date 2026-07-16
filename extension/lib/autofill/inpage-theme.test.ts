@@ -35,13 +35,21 @@ describe("INPAGE_THEME_CSS", () => {
   });
 
   it("never bare-declares :root as the theme selector (dead inside a shadow tree -- see this file's own header comment)", () => {
-    // tokens.css's OWN `:root, [data-theme="vault-dark"]` selector is
-    // expected verbatim (this file injects the package's raw text
-    // unmodified) -- what matters is that INPAGE_THEME_CSS's OWN
-    // font-stack rule below it never relies on `:root` alone, since a
-    // shadow tree's `:root` never matches. The font-stack block is scoped
-    // to `[data-theme="vault-dark"], [data-theme="vault-light"]` only.
+    // The font-stack rule is scoped to the stamped [data-theme] carriers,
+    // never `:root` (dead inside a shadow tree).
     const fontRuleMatch = INPAGE_THEME_CSS.match(/\[data-theme="vault-dark"\], \[data-theme="vault-light"\] \{[^}]*font-family/);
     expect(fontRuleMatch).not.toBeNull();
+  });
+
+  it("rewrites tokens.css's `:root` default-block alternative to `[data-theme]` so a vault-LIGHT carrier still receives the full token set (UAT theme-parity fix)", () => {
+    // tokens.css's default block is `:root, [data-theme="vault-dark"]` and
+    // vault-light only overrides base-* — with `:root` dead in a shadow
+    // tree, a light carrier would lose --color-primary/--color-error (the
+    // Save / "Use this password" / warning-banner backgrounds). The shadow
+    // copy must therefore open its default block with `[data-theme],`.
+    expect(INPAGE_THEME_CSS).toMatch(/\[data-theme\]\s*,/);
+    // No SELECTOR-position `:root` may remain (start of line/file or after
+    // a closing brace) — comment mentions of ":root" are fine.
+    expect(INPAGE_THEME_CSS).not.toMatch(/(^|\})\s*:root\s*[,{]/);
   });
 });

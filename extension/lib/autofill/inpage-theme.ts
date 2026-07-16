@@ -32,6 +32,26 @@
 // web/'s and the popup's own light-DOM `<html>`/`<body>` get one for free.
 import tokensCss from "pv-ui/tokens.css?inline";
 
+// UAT-caught fix (theme-parity round, 2026-07-16): tokens.css's default
+// block is `:root, [data-theme="vault-dark"] { ...ALL tokens... }` and the
+// vault-light block only OVERRIDES base-*/color-scheme, inheriting
+// primary/secondary/accent/semantic tokens from `:root` via document
+// cascade. Inside a shadow tree `:root` never matches, so a carrier stamped
+// `data-theme="vault-light"` matched ONLY the light override block — every
+// primary/error-styled control (Save, "Use this password", the mismatch
+// modal's warning banner) silently lost its background in the light theme
+// while vault-dark looked fine (its carrier matches the full default block
+// via the `[data-theme="vault-dark"]` selector half). Rewriting the dead
+// `:root` alternative to `[data-theme]` makes the default block apply to
+// ANY stamped carrier; the vault-light overrides still win because they
+// come later at equal specificity. Applies ONLY to this shadow copy —
+// packages/pv-ui/tokens.css stays byte-canonical for web/ and the popup,
+// where `:root` works.
+// Selector-position-only rewrite (start of file/line or right after a `}`),
+// tolerant of both the pretty and the minified form of the processed CSS —
+// comment mentions of ":root" are mid-line/backtick-prefixed and never match.
+const SHADOW_TOKENS_CSS = tokensCss.replace(/(^|\})(\s*):root\s*,/gm, "$1$2[data-theme],");
+
 // T-11-12 (also enforced by inpage-mount.ts's own MOUNT_CSS and every
 // individual surface's own literal font-family declaration prior to this
 // plan): NO `@font-face` rule, NO web-accessible-resource font file, NO
@@ -52,7 +72,7 @@ const FONT_STACK = `"DM Sans", system-ui, -apple-system, sans-serif`;
  * off of -- no separate `:host` rule needed, and no risk of the font stack
  * applying before a theme has even been stamped.
  */
-export const INPAGE_THEME_CSS = `${tokensCss}
+export const INPAGE_THEME_CSS = `${SHADOW_TOKENS_CSS}
 [data-theme="vault-dark"], [data-theme="vault-light"] {
   font-family: ${FONT_STACK};
 }
