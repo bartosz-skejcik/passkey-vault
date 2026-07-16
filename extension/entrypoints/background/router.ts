@@ -38,6 +38,14 @@
 // autofill-match.ts's own handlers do their own origin/frame
 // re-verification against the target PAGE, which is an orthogonal
 // concern to this router's popup-vs-content-script sender gate.
+//
+// Phase 11 (Plan 11-01): `generate-request` (ext-protocol.ts) is a THIRD
+// kind added to `registerAutofillFrameChannel()`'s content-frame dispatch
+// below -- NOT to `isProtocolMessage()`/`handle()`'s popup-facing switch --
+// dispatching to `handleGenerateRequest` (entrypoints/background/
+// generate-handler.ts). It is content-script-only for the same reason
+// `autofill.matchFrame`/`autofill.fillFrame` are: Plan 11-04's generate
+// popover lives inside a content script, never the popup.
 import { browser } from "wxt/browser";
 import type { Message, MessageOf, MessageResponseMap } from "../../lib/messaging/ext-protocol";
 import { b64ToBytes } from "../../lib/messaging/bytes-b64";
@@ -49,6 +57,7 @@ import { handleUnlockPassword } from "./unlock";
 import { getItems, getFolders } from "./vault-store";
 import { handleAutofillFill, handleAutofillMatch, handleAutofillTotpCode } from "./autofill-match";
 import { handleFillFrame, handleMatchFrame } from "./autofill-frame";
+import { handleGenerateRequest } from "./generate-handler";
 import {
   handleExtEnrollStart,
   handleExtEnrollFinish,
@@ -140,7 +149,10 @@ export function registerAutofillFrameChannel(): void {
 
 function isContentFrameMessage(
   message: unknown,
-): message is MessageOf<"autofill.matchFrame"> | MessageOf<"autofill.fillFrame"> {
+): message is
+  | MessageOf<"autofill.matchFrame">
+  | MessageOf<"autofill.fillFrame">
+  | MessageOf<"generate-request"> {
   if (
     typeof message !== "object" ||
     message === null ||
@@ -149,11 +161,14 @@ function isContentFrameMessage(
     return false;
   }
   const kind = (message as { kind: string }).kind;
-  return kind === "autofill.matchFrame" || kind === "autofill.fillFrame";
+  return kind === "autofill.matchFrame" || kind === "autofill.fillFrame" || kind === "generate-request";
 }
 
 async function handleContentFrameMessage(
-  message: MessageOf<"autofill.matchFrame"> | MessageOf<"autofill.fillFrame">,
+  message:
+    | MessageOf<"autofill.matchFrame">
+    | MessageOf<"autofill.fillFrame">
+    | MessageOf<"generate-request">,
   sender: MessageSender,
 ): Promise<unknown> {
   switch (message.kind) {
@@ -161,6 +176,12 @@ async function handleContentFrameMessage(
       return handleMatchFrame(message, sender);
     case "autofill.fillFrame":
       return handleFillFrame(message, sender);
+    case "generate-request":
+      // Phase 11 (Plan 11-01): handleGenerateRequest is a pure, synchronous
+      // dispatcher (see its own header comment) -- returning its value
+      // directly from this async function wraps it in a resolved Promise,
+      // same as the two async cases above.
+      return handleGenerateRequest(message, sender);
     default:
       throw new Error(`unhandled content-frame message kind: ${(message as { kind: string }).kind}`);
   }

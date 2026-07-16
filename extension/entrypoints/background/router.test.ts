@@ -84,6 +84,9 @@ vi.mock("./autofill-frame", () => ({
   handleMatchFrame: hoisted.mockHandleMatchFrame,
   handleFillFrame: vi.fn(),
 }));
+vi.mock("./generate-handler", () => ({
+  handleGenerateRequest: vi.fn(),
+}));
 
 import { registerAutofillFrameChannel, registerMessageRouter } from "./router";
 

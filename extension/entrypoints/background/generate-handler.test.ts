@@ -15,6 +15,19 @@
 // differently-styled mocking mechanism for this one file would be a new,
 // undocumented pattern with no precedent; the existing direct-mock approach
 // is already proven sufficient for a pure, sync handler like this one.
+//
+// `./vault-session`/`./vault-store`/`../../lib/crypto/wasm-loader` are
+// mocked purely to cut off `autofill-frame.ts`'s OWN eager imports (it
+// exports `handleMatchFrame`/`handleFillFrame` alongside the
+// `assertContentSender` this file actually exercises) -- those three
+// modules transitively import the generated WASM bindings
+// (`lib/crypto/wasm/pv_wasm.js`), which do not exist in a checkout that
+// hasn't run `scripts/build-wasm.sh`. `assertContentSender` itself has no
+// dependency on any of the three (verified: it only touches
+// `browser.runtime.id` and `frame-guard.ts`'s pure origin parsing), so
+// mocking them here changes nothing about what this suite actually
+// exercises -- it only prevents an unrelated module's heavy import graph
+// from loading. Mirrors autofill-frame.test.ts's own precedent exactly.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("wxt/browser", () => ({
@@ -24,6 +37,9 @@ vi.mock("wxt/browser", () => ({
     },
   },
 }));
+vi.mock("./vault-session", () => ({ ensureHydrated: vi.fn() }));
+vi.mock("./vault-store", () => ({ getItems: vi.fn() }));
+vi.mock("../../lib/crypto/wasm-loader", () => ({ totpNow: vi.fn() }));
 
 import { handleGenerateRequest } from "./generate-handler";
 
