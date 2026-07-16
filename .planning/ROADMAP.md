@@ -165,6 +165,7 @@ Plans:
 - [x] 11-05-PLAN.md — Save/update toast + origin-mismatch modal + adversarial cross-origin-iframe UAT fixture (Surfaces 2/3, CAP-02/CAP-03, D-06)
 - [x] 11-06-PLAN.md — Suggested bez formularza: popupowa sekcja "Na tej stronie" pokazuje loginy origin-match na stronach bez wykrytego formularza (D-11, addendum Bartka 2026-07-16)
 - [ ] 11-07-PLAN.md — Parytet motywu i stylu z frontendem: lustro motywu z web appa, tokeny vault-light/dark na wszystkich powierzchniach (in-page + overlay z 10 + popup), generator 1:1 z GeneratorPopover (D-12, Bartek 2026-07-16)
+- [ ] 11-08-PLAN.md — Restyling powierzchni in-page na tokenach pv-ui (overlay z 10 + popover/toast/modal z 11), generator layout 1:1 z GeneratorPopover, motyw live za lustrem (D-12/D-13)
 
 **UI hint**: yes
 
