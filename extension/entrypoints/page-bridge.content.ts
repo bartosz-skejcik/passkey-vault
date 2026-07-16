@@ -32,6 +32,7 @@
 // here, mirror the change in page-bridge.ts too.
 import { defineContentScript } from "wxt/utils/define-content-script";
 import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../lib/messaging/page-protocol";
+import { ACK_TIMEOUT_MS, EXTENSION_AUTHORITY_TIMEOUT_MS } from "../lib/messaging/ceremony-timeouts";
 
 const REQUEST_SOURCE = "pv-page-bridge";
 const RESPONSE_SOURCE = "pv-content-relay";
@@ -66,8 +67,9 @@ const RESPONSE_SOURCE = "pv-content-relay";
 //   purely against a truly wedged extension listener -- documented as a
 //   backstop, NOT an interaction budget, since the extension always sends
 //   an explicit terminal message on every real code path.
-const ACK_TIMEOUT_MS = 3_000;
-const EXTENSION_AUTHORITY_TIMEOUT_MS = 300_000;
+// ACK_TIMEOUT_MS / EXTENSION_AUTHORITY_TIMEOUT_MS are imported from the shared
+// lib/messaging/ceremony-timeouts module (single source of truth; CR-03
+// invariant guarded by ceremony-timeouts.test.ts).
 
 const PERMISSIONS_POLICY_FEATURE: Record<"create" | "get", string> = {
   create: "publickey-credentials-create",

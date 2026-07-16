@@ -32,6 +32,7 @@
 // there too.
 import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
 import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../lib/messaging/page-protocol";
+import { ACK_TIMEOUT_MS, EXTENSION_AUTHORITY_TIMEOUT_MS } from "../lib/messaging/ceremony-timeouts";
 
 const REQUEST_SOURCE = "pv-page-bridge";
 const RESPONSE_SOURCE = "pv-content-relay";
@@ -43,8 +44,9 @@ const RESPONSE_SOURCE = "pv-content-relay";
 // this file no longer races a single fixed interaction-budget timeout
 // against the background's own (additive, ~240s worst case) unlock-wait/
 // consent-await ceilings.
-const ACK_TIMEOUT_MS = 3_000;
-const EXTENSION_AUTHORITY_TIMEOUT_MS = 300_000;
+// ACK_TIMEOUT_MS / EXTENSION_AUTHORITY_TIMEOUT_MS are imported from the shared
+// lib/messaging/ceremony-timeouts module (single source of truth; CR-03
+// invariant guarded by ceremony-timeouts.test.ts).
 
 const PERMISSIONS_POLICY_FEATURE: Record<"create" | "get", string> = {
   create: "publickey-credentials-create",

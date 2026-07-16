@@ -96,6 +96,7 @@ import { ensureHydrated, subscribeSessionLockState } from "./vault-session";
 import { getItems, splitCombinedEncryptedItem } from "./vault-store";
 import { createItem, updateItem } from "./vault-api";
 import { findMatchingPasskeyItems } from "./credential-store";
+import { CEREMONY_ABANDON_TIMEOUT_MS } from "../../lib/messaging/ceremony-timeouts";
 import {
   encryptItem,
   wasmCreateProviderCredential,
@@ -246,7 +247,9 @@ async function tryOpenFallbackWindow(): Promise<void> {
 // idle-kill is harmless -- the in-memory Promise/Map entry it would clean
 // up is itself garbage-collected the instant the worker dies, so there is
 // nothing left to leak once that happens.
-const CEREMONY_ABANDON_TIMEOUT_MS = 120_000;
+// CEREMONY_ABANDON_TIMEOUT_MS is imported from the shared
+// lib/messaging/ceremony-timeouts module (single source of truth; CR-03
+// page-authority-backstop invariant guarded by ceremony-timeouts.test.ts).
 
 /** Resolves once `vault-session.ts` reports an unlock -- re-checks
  * `ensureHydrated()` on every lock-state transition (not just "unlock"
