@@ -5,8 +5,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const { mockSendMessage, listeners } = vi.hoisted(() => ({
+const { mockSendMessage, mockStorageSessionGet, listeners } = vi.hoisted(() => ({
   mockSendMessage: vi.fn(),
+  // Phase 12 (Plan 12-04): App.tsx's checkPendingCeremony() reads this on
+  // every refreshFromScratch() -- defaults to "nothing pending" so every
+  // pre-Phase-12 test in this file (which never primes it) keeps its
+  // existing behavior unchanged.
+  mockStorageSessionGet: vi.fn().mockResolvedValue({}),
   // CR-01: a real (not vi.fn()-stubbed) addListener/removeListener pair so
   // tests can fire a broadcast (e.g. `session.locked`) exactly like a real
   // browser.runtime.onMessage dispatch -- every currently-mounted listener
@@ -35,6 +40,11 @@ vi.mock("wxt/browser", () => ({
       },
     },
     tabs: { create: vi.fn() },
+    storage: {
+      session: {
+        get: mockStorageSessionGet,
+      },
+    },
   },
 }));
 
@@ -299,5 +309,181 @@ describe("App.tsx view-state switch", () => {
     });
     expect(screen.queryByRole("heading", { name: "Example Login" })).not.toBeInTheDocument();
     expect(screen.queryByText("s3cr3t!")).not.toBeInTheDocument();
+  });
+
+  // Phase 12 (Plan 12-04, Task 3): the provider-ceremony ViewState takeover
+  // -- mounted when chrome.storage.session carries provider-ceremony.ts's
+  // multi-match picker payload (`{requestId, rpId, candidates}`), checked
+  // FIRST in refreshFromScratch(), before config.get/session.status. No
+  // popup-router.test.tsx exists -- these live here per the plan's own
+  // instruction.
+  describe("Phase 12: provider-ceremony ViewState takeover", () => {
+    const CANDIDATES = [
+      { itemId: "cred-1", label: "alice" },
+      { itemId: "cred-2", label: "bob" },
+    ];
+
+    it("a pending multi-match picker payload takes over focus immediately -- session.status/config.get are never even called", async () => {
+      mockStorageSessionGet.mockResolvedValue({
+        "pv-pending-provider-ceremony": {
+          requestId: "req-1",
+          rpId: "example.com",
+          candidates: CANDIDATES,
+        },
+      });
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        throw new Error(`unexpected message in this test: ${message.kind}`);
+      });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("provider-credential-row-cred-1")).toBeInTheDocument();
+      });
+      expect(screen.getByTestId("provider-credential-row-cred-2")).toBeInTheDocument();
+      expect(screen.getByText("example.com")).toBeInTheDocument();
+      expect(mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("no pending ceremony: renders the ordinary flow unchanged (config.get still runs)", async () => {
+      mockStorageSessionGet.mockResolvedValue({});
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "config.get") return null;
+        throw new Error(`unexpected message in this test: ${message.kind}`);
+      });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("heading")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("provider-confirm")).not.toBeInTheDocument();
+    });
+
+    it("selecting a candidate then confirming sends provider.resolveChoice with that itemId, then returns to the list view", async () => {
+      mockStorageSessionGet.mockResolvedValue({
+        "pv-pending-provider-ceremony": {
+          requestId: "req-1",
+          rpId: "example.com",
+          candidates: CANDIDATES,
+        },
+      });
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "provider.resolveChoice") return { ok: true };
+        if (message.kind === "session.status") {
+          return {
+            kind: "unlocked",
+            autoLockMinutes: 15,
+            accountEmail: "a@example.com",
+            extPasskeyEnrolled: false,
+            extPasskeyPromptSuppressed: false,
+          };
+        }
+        if (message.kind === "vault.list") return { items: [], folders: [] };
+        if (message.kind === "autofill.match") {
+          return {
+            pageState: "restricted",
+            origin: null,
+            detected: { login: false, totp: false, card: false, identity: false },
+            matches: [],
+          };
+        }
+        throw new Error(`unexpected message in this test: ${message.kind}`);
+      });
+
+      render(<App />);
+      await waitFor(() => screen.getByTestId("provider-credential-row-cred-2"));
+
+      screen.getByTestId("provider-credential-row-cred-2").click();
+      // Selection is async React state -- wait for the re-render to reflect
+      // it before clicking confirm, otherwise confirm's click handler still
+      // closes over the PRE-selection render.
+      await waitFor(() => {
+        expect(screen.getByTestId("provider-credential-row-cred-2")).toHaveAttribute(
+          "aria-checked",
+          "true",
+        );
+      });
+      screen.getByTestId("provider-confirm").click();
+
+      await waitFor(() => {
+        expect(mockSendMessage).toHaveBeenCalledWith({
+          kind: "provider.resolveChoice",
+          requestId: "req-1",
+          itemId: "cred-2",
+        });
+      });
+      // Resolution returns to the popup's ordinary flow (list, since the
+      // vault was already unlocked -- resolvePasskeyChoice only runs
+      // post-unlock).
+      await waitFor(() => {
+        expect(screen.queryByTestId("provider-confirm")).not.toBeInTheDocument();
+      });
+    });
+
+    it("declining (Use something else) sends provider.resolveChoice with itemId: null", async () => {
+      mockStorageSessionGet.mockResolvedValue({
+        "pv-pending-provider-ceremony": {
+          requestId: "req-2",
+          rpId: "example.com",
+          candidates: CANDIDATES,
+        },
+      });
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "provider.resolveChoice") return { ok: true };
+        if (message.kind === "session.status") {
+          return {
+            kind: "unlocked",
+            autoLockMinutes: 15,
+            accountEmail: "a@example.com",
+            extPasskeyEnrolled: false,
+            extPasskeyPromptSuppressed: false,
+          };
+        }
+        if (message.kind === "vault.list") return { items: [], folders: [] };
+        if (message.kind === "autofill.match") {
+          return {
+            pageState: "restricted",
+            origin: null,
+            detected: { login: false, totp: false, card: false, identity: false },
+            matches: [],
+          };
+        }
+        throw new Error(`unexpected message in this test: ${message.kind}`);
+      });
+
+      render(<App />);
+      await waitFor(() => screen.getByTestId("provider-decline"));
+
+      screen.getByTestId("provider-decline").click();
+
+      await waitFor(() => {
+        expect(mockSendMessage).toHaveBeenCalledWith({
+          kind: "provider.resolveChoice",
+          requestId: "req-2",
+          itemId: null,
+        });
+      });
+    });
+
+    it("a single-candidate picker payload pre-selects it -- CTA enabled with no radiogroup rendered", async () => {
+      mockStorageSessionGet.mockResolvedValue({
+        "pv-pending-provider-ceremony": {
+          requestId: "req-3",
+          rpId: "example.com",
+          candidates: [{ itemId: "cred-1", label: "alice" }],
+        },
+      });
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        throw new Error(`unexpected message in this test: ${message.kind}`);
+      });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("provider-confirm")).toBeEnabled();
+      });
+      expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    });
   });
 });
