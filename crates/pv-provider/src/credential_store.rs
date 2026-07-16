@@ -263,3 +263,111 @@ impl UserValidationMethod for PvUserValidation {
         Some(true)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ceremony::create_provider_credential;
+
+    fn fixture_create_request(rp_id: &str) -> String {
+        let public_key = serde_json::json!({
+            "rp": { "id": rp_id, "name": "Example" },
+            "user": {
+                "id": passkey_types::encoding::base64url(&[1u8; 16]),
+                "name": "user@example.com",
+                "displayName": "User",
+            },
+            "challenge": passkey_types::encoding::base64url(&[2u8; 16]),
+            "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
+        });
+        serde_json::to_string(&serde_json::json!({ "publicKey": public_key })).unwrap()
+    }
+
+    /// IN-04 (12-REVIEW.md): constructs a FULLY-populated `Passkey` --
+    /// every optional field set, including a `hmac_secret` extension with
+    /// BOTH `cred_with_uv` and `cred_without_uv` -- and asserts
+    /// `passkey_to_json` -> `passkeys_from_json` round-trips it losslessly,
+    /// field-for-field. A real `CoseKey` (not a hand-rolled stub) is
+    /// obtained via a genuine `create_provider_credential` ceremony -- this
+    /// crate has no public `CoseKey` constructor of its own, and the
+    /// `passkey-types` "testable" cargo feature (which would let `Passkey`
+    /// derive `PartialEq` for a one-line `assert_eq!`) is deliberately NOT
+    /// enabled for this crate's normal dependency graph, so equality is
+    /// asserted manually, per field, below instead of adding a test-only
+    /// feature flag to `Cargo.toml`. A future `passkey-types` upstream bump
+    /// that adds a field to `Passkey`/`CredentialExtensions`/
+    /// `StoredHmacSecret` without a matching addition to
+    /// `SerializablePasskey` (this module's hand-rolled DTO) will silently
+    /// drop that field on this EXACT round-trip in production -- this test
+    /// exists to break CI the moment that happens, not to catch it after
+    /// the fact on real stored data.
+    #[test]
+    fn passkey_round_trip_is_lossless_for_a_fully_populated_passkey() {
+        let create_result =
+            create_provider_credential(&fixture_create_request("example.com"), "https://example.com")
+                .expect("create_provider_credential should succeed");
+        let seed_passkeys = passkeys_from_json(&format!("[{}]", create_result.new_passkey_json))
+            .expect("seed passkey JSON should parse");
+        let seed = seed_passkeys.into_iter().next().expect("exactly one seed passkey");
+
+        // Every OPTIONAL field populated -- the create ceremony above only
+        // ever fills key/credential_id/rp_id; the rest are deliberately set
+        // here so the round-trip actually exercises every field this DTO
+        // mirrors, not just the three a real ceremony happens to touch.
+        let full = Passkey {
+            key: seed.key.clone(),
+            credential_id: seed.credential_id.clone(),
+            rp_id: seed.rp_id.clone(),
+            user_handle: Some(vec![9u8, 9, 9].into()),
+            username: Some("alice@example.com".to_string()),
+            user_display_name: Some("Alice Example".to_string()),
+            counter: Some(42),
+            extensions: CredentialExtensions {
+                hmac_secret: Some(StoredHmacSecret {
+                    cred_with_uv: vec![1, 2, 3, 4],
+                    cred_without_uv: Some(vec![5, 6, 7, 8]),
+                }),
+            },
+        };
+
+        let json = passkey_to_json(&full).expect("passkey_to_json should succeed");
+        let round_tripped =
+            passkeys_from_json(&format!("[{}]", json)).expect("passkeys_from_json should succeed");
+        assert_eq!(round_tripped.len(), 1, "exactly one passkey must round-trip");
+        let rt = &round_tripped[0];
+
+        assert_eq!(
+            rt.key.clone().to_vec().unwrap(),
+            full.key.clone().to_vec().unwrap(),
+            "key (CoseKey, compared via its own CBOR encoding) must round-trip losslessly"
+        );
+        assert_eq!(Vec::from(rt.credential_id.clone()), Vec::from(full.credential_id.clone()));
+        assert_eq!(rt.rp_id, full.rp_id);
+        assert_eq!(
+            rt.user_handle.clone().map(Vec::from),
+            full.user_handle.clone().map(Vec::from),
+            "user_handle must round-trip"
+        );
+        assert_eq!(rt.username, full.username, "username must round-trip");
+        assert_eq!(
+            rt.user_display_name, full.user_display_name,
+            "user_display_name must round-trip"
+        );
+        assert_eq!(rt.counter, full.counter, "counter must round-trip");
+
+        let rt_hmac = rt
+            .extensions
+            .hmac_secret
+            .as_ref()
+            .expect("hmac_secret must round-trip as Some, not silently dropped");
+        let full_hmac = full.extensions.hmac_secret.as_ref().unwrap();
+        assert_eq!(
+            rt_hmac.cred_with_uv, full_hmac.cred_with_uv,
+            "hmac_secret.cred_with_uv must round-trip"
+        );
+        assert_eq!(
+            rt_hmac.cred_without_uv, full_hmac.cred_without_uv,
+            "hmac_secret.cred_without_uv must round-trip"
+        );
+    }
+}
