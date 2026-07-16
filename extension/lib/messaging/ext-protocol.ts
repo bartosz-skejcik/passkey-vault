@@ -61,6 +61,23 @@
 // popup-driven tab-derived origin. `autofill.fillFrame` reuses
 // `autofill.fill`'s exact value-free response shape.
 //
+// Phase 11 (Plan 11-01) adds `generate-request`/`capture.propose`/
+// `capture.confirm` -- TYPES ONLY here, no handler logic (that is Task 3 of
+// this plan for `generate-request`; Plans 11-03/11-05 for `capture.*`).
+// All three are CONTENT-SCRIPT-driven, exactly like `autofill.matchFrame`/
+// `autofill.fillFrame` above -- dispatched by the SAME SEPARATE
+// `registerAutofillFrameChannel()` listener in router.ts, never by this
+// file's popup-facing `handle()`/`isProtocolMessage()`. `generate-request`
+// deliberately mirrors `autofill.matchFrame`'s "no origin field" shape --
+// the generator has no origin-scoped state to protect, so there is nothing
+// for a caller to spoof. `capture.propose`/`capture.confirm` DO carry a
+// `frameOrigin` field (unlike the autofill kinds) because the capture flow
+// needs to compare the CLAIMED submit-time frame origin against the
+// SENDER's own origin (assertContentSender-derived) to detect a
+// cross-frame mismatch (`mismatch: boolean` on the `capture.propose`
+// response) -- the field is compared against, never trusted blindly, by
+// the handlers Plan 11-03 adds.
+//
 // `UnlockResult`/`PrfStartResult`/`ExtEnrollStartResult`/`ExtUnlockResult`
 // are `import type`-only from entrypoints/background/unlock.ts and
 // entrypoints/background/ext-passkey.ts (their canonical definitions, per
@@ -168,7 +185,55 @@ export type Message =
   // No origin field on either -- the background derives it from the
   // platform-provided sender, never from this payload.
   | { kind: "autofill.matchFrame"; detected: DetectedFields }
-  | { kind: "autofill.fillFrame"; itemId: string; kind_: FillKind };
+  | { kind: "autofill.fillFrame"; itemId: string; kind_: FillKind }
+  // Phase 11 (Plan 11-01): content-script -> background, dispatched by the
+  // SAME SEPARATE registerAutofillFrameChannel() listener as the
+  // autofill.*Frame kinds above (see header comment). No origin field --
+  // the generator has nothing origin-scoped to protect.
+  | {
+      kind: "generate-request";
+      mode: "character";
+      length: number;
+      opts: GenerateCharacterOptions;
+    }
+  | { kind: "generate-request"; mode: "passphrase"; wordCount: number; separator?: string }
+  // Phase 11 (Plan 11-01, types only -- handlers land in Plan 11-03):
+  // content-script -> background, proposing a just-submitted signup/login
+  // credential for capture. `frameOrigin` is the CLAIMED origin from the
+  // submitting frame; the handler compares it against the SENDER's own
+  // origin (assertContentSender-derived, never trusted from this field
+  // alone) to compute the response's `mismatch` flag.
+  | { kind: "capture.propose"; frameOrigin: string; username: string; password: string }
+  // Confirms (or overrides) the proposed capture after the user's explicit
+  // choice in the capture UI (Plan 11-04/11-05) -- carries the same
+  // frameOrigin/username/password plus the resolved action and, for an
+  // `'update'`, the target item's id/currentRevision (optimistic-concurrency
+  // guard against a stale revision, mirrors vault.list's revision field).
+  | {
+      kind: "capture.confirm";
+      action: "new" | "update";
+      frameOrigin: string;
+      username: string;
+      password: string;
+      itemId?: string;
+      currentRevision?: number;
+    };
+
+/**
+ * Phase 11 (Plan 11-01): the character-class selection shape shared by
+ * `generate-request`'s `'character'` mode and
+ * `extension/lib/generator/password.ts`'s `CharacterPasswordOptions`
+ * (Task 2 of this plan) -- defined inline here rather than imported so this
+ * file never depends on Task 2's not-yet-created module; Task 3 wires the
+ * two together by passing this shape straight through to
+ * `generateCharacterPassword`.
+ */
+export interface GenerateCharacterOptions {
+  lowercase: boolean;
+  uppercase: boolean;
+  digits: boolean;
+  symbols: boolean;
+}
 
 /**
  * Response to `autofill.match` -- metadata only (item ids, labels, masked
@@ -216,6 +281,28 @@ export interface MessageResponseMap {
   "autofill.fillFrame":
     | { ok: true }
     | { ok: false; reason: "no-match" | "origin-mismatch" | "target-unreachable" | "locked" };
+  // Phase 11 (Plan 11-01): the generated password/passphrase, produced
+  // exclusively by the background's ported v0.1 generator (Task 2) --
+  // never by a local reimplementation in the content script (D-01/D-03).
+  "generate-request": { password: string } | { error: string };
+  // Phase 11 (Plan 11-01, types only): `mismatch` flags a claimed
+  // `frameOrigin` that disagrees with the sender's own resolved origin
+  // (Plan 11-03's handler computes this); `topOrigin` is the resolved
+  // top-level frame's origin, distinct from `frameOrigin` for an
+  // iframe-hosted login form.
+  "capture.propose": {
+    action: "new" | "update" | "no-op";
+    itemId?: string;
+    currentRevision?: number;
+    frameOrigin: string;
+    topOrigin: string;
+    mismatch: boolean;
+  };
+  "capture.confirm": {
+    status: "ok" | "conflict" | "error";
+    item?: { id: string; revision: number };
+    message?: string;
+  };
 }
 
 export type MessageOf<K extends Message["kind"]> = Extract<Message, { kind: K }>;
