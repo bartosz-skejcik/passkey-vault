@@ -184,6 +184,12 @@ None — no external service configuration required. The three `passkey-rs` crat
 - `pendingProviderItems` in `chrome.storage.session` (12-02's job) can hold the `encrypted_item_json`/`updated_encrypted_item_json` strings this plan's bindings produce directly — they're already ciphertext under the User Key, no further wrapping needed (D-19).
 - No blockers. The `/gsd-secure-phase` gate (D-15) for this phase should specifically grep-audit `crates/pv-wasm/src/lib.rs` for `new_passkey_json` (confirmed local-variable-only in this plan) and confirm `extension/lib/crypto/wasm-loader.ts` remains the sole importer of `./wasm/pv_wasm.js` once 12-02/12-03/12-04 land.
 
+## Self-Check: PASSED
+
+All 8 created/modified files verified present on disk; all 7 commit hashes
+(`b89e6aa`, `e83ba81`, `34fc72e`, `a376c20`, `ba3287e`, `b8d2230`, `0f1d97b`)
+verified present in `git log --oneline --all`.
+
 ---
 *Phase: 12-passkey-provider*
 *Completed: 2026-07-16*
