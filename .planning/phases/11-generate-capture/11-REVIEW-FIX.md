@@ -1,79 +1,60 @@
 ---
 phase: 11-generate-capture
-fixed_at: 2026-07-16T13:07:00Z
+fixed_at: 2026-07-16T14:24:00Z
 review_path: .planning/phases/11-generate-capture/11-REVIEW.md
-iteration: 1
-findings_in_scope: 6
-fixed: 6
+iteration: 2
+findings_in_scope: 1
+fixed: 1
 skipped: 0
 status: all_fixed
 ---
 
-# Phase 11: Code Review Fix Report
+# Phase 11: Code Review Fix Report (Iteration 2)
 
-**Fixed at:** 2026-07-16T13:07:00Z
+**Fixed at:** 2026-07-16T14:24:00Z
 **Source review:** .planning/phases/11-generate-capture/11-REVIEW.md
-**Iteration:** 1
+**Iteration:** 2
 
 **Summary:**
-- Findings in scope: 6 (CR-01, WR-01, WR-02, WR-03, WR-04, WR-05 — Info findings IN-01..IN-03 were out of scope this pass)
-- Fixed: 6
+- Findings in scope: 1 (WR-01 — critical_warning scope; 0 Critical findings this iteration; IN-01..IN-04 were out of scope)
+- Fixed: 1
 - Skipped: 0
 
 ## Fixed Issues
 
-### CR-01: Origin-mismatch (D-06) decided from self-reported `payload.frameOrigin`, not the sender-supplied origin
+### WR-01: WR-03 fix is cosmetic — `ensureHydrated()` does not hydrate the item cache, so the duplicate-item window remains open
 
-**Files modified:** `extension/entrypoints/background/router.ts`, `extension/entrypoints/background/capture-handler.test.ts`, `extension/entrypoints/background/router-capture.test.ts`
-**Commit:** `a9ce0ed`
-**Applied fix:** `handleCaptureProposeMessage` now feeds `guard.origin` (the `assertContentSender`-derived, browser-verified frame origin) into `classifySubmit`, never `message.frameOrigin`. The self-reported payload field is discarded by construction at the point the trust decision is made. Pinned by `router-capture.test.ts`'s "CR-01: uses the TRUSTED sender-derived origin for classifySubmit" test, which sends a deliberately lying `payload.frameOrigin` and asserts the trusted value is what reaches `classifySubmit`.
+**Files modified:** `extension/entrypoints/background/vault-store.ts`, `extension/entrypoints/background/router.ts`, `extension/entrypoints/background/vault-store.test.ts`, `extension/entrypoints/background/router-capture.test.ts`
+**Commit:** `7b48ba7`
+**Applied fix:** The iteration-1 WR-03 fix added `await ensureHydrated()` before `getItems()`/`classifySubmit` in `handleCaptureProposeMessage`, but `ensureHydrated()` only re-derives the User Key — it never touches `vault-store`'s `items` array, which is populated exclusively and asynchronously by `applySyncSnapshot()` via `ensureVaultSyncStarted()`'s `getSyncSnapshot(0)` pull. On a freshly-woken/idle-killed service worker, this left a real window where `capture.propose` could classify an already-saved credential as `'new'` while the initial pull was still in flight, and `confirmNewLogin` (which does not re-classify) would then persist a duplicate item.
 
-### WR-01: `capture.confirm` persisted `urls:[message.frameOrigin]` and never re-derived origin at confirm time
+Implemented option (a) from the review's Fix section: `vault-store.ts` now exposes `ensureItemsHydrated(): Promise<{ ok: true } | { ok: false; error: unknown }>`, built on a new `initialPullSettled` promise that `ensureVaultSyncStarted()` populates from its `getSyncSnapshot(0)` call. `ensureItemsHydrated()` is single-flight and idempotent (concurrent callers share the same in-flight promise; a burst of `capture.propose` calls during a wake window triggers exactly one pull) and is reset to `null` on every lock so a re-unlock always awaits a fresh pull, never a stale prior-session promise. `router.ts`'s `handleCaptureProposeMessage` now calls `await ensureItemsHydrated()` after `ensureHydrated()` and, per the review's explicit ask to think through the failure path: **fails closed** (`{ action: "no-op", mismatch: true }`) when the pull itself failed, on the reasoning that a failed pull leaves the cache state genuinely *unknown* — treating it as "confirmed empty" would reproduce the exact bug this fix closes. This mirrors the existing locked-branch and rejected-sender fail-closed shapes already used in this handler, so it introduces no new response variant.
 
-**Files modified:** `extension/entrypoints/background/router.ts` (same commit as CR-01 — shared root cause)
-**Commit:** `a9ce0ed`
-**Applied fix:** `handleCaptureConfirmMessage` now builds `fields.frameOrigin = guard.origin` (the same sender-derived, browser-verified value CR-01 uses at propose time) instead of `message.frameOrigin`, so both `confirmNewLogin`'s and `confirmUpdateLogin`'s persisted `urls` are always the TRUSTED origin — satisfying `buildLoginFields`'s own doc-comment invariant. Revision handling was already correctly re-validated (409 → `RevisionConflictError`); origin re-derivation now matches. Pinned by `router-capture.test.ts`'s "CR-01/WR-01: persists a NEW/UPDATE login using the TRUSTED sender-derived frameOrigin" tests.
+`confirmNewLogin`/`confirmUpdateLogin` (`capture-handler.ts`) were deliberately left unchanged — with propose now correctly gated, the classification `confirm` trusts is already correct by the time the user acts on it; adding a second, redundant hydration re-check at confirm time (the review's option (c)) was assessed as unnecessary duplication once option (a) closes the gap at its source.
 
-### WR-02: Mismatch-modal focus trap ineffective inside the closed shadow root
+**Residual (documented, not fixed this pass):** `handleAutofillMatch`/`handleMatchFrame` (`autofill-match.ts`/`autofill-frame.ts`) have the structurally identical `ensureHydrated()`-then-`getItems()` pattern and the same empty-cache window on a freshly-woken SW. Per the review's own severity note, their failure mode is read-only (missing autofill suggestions, user retries) — not a persisted duplicate item — so it was intentionally left unfixed this pass rather than widening this single-finding commit's blast radius across two more production files and their two test suites (`autofill-match.test.ts`, `autofill-frame.test.ts`), which do not currently mock `vault-store`'s new `ensureItemsHydrated` export. Recommended as a small, low-risk follow-up (add the same `await ensureItemsHydrated()` call plus the corresponding mock/test updates) rather than bundling it into this fix.
 
-**Files modified:** `extension/lib/autofill/mismatch-modal.ts`, `extension/lib/autofill/mismatch-modal.test.ts`
-**Commit:** `dc2370c`
-**Applied fix:** The Tab/Shift+Tab trap now reads `shadow.activeElement` (the `ShadowRoot` reference the module itself holds via `getOrCreateShadowRoot()`) instead of `doc.activeElement`, which always resolves to the shadow host per the DOM spec's closed-shadow-root retargeting and was therefore never equal to the tracked first/last button. Also pins focus to the panel itself (`tabIndex=-1`, programmatically focusable) when every button is disabled (busy spinner / post-success state), so Tab has somewhere to land instead of escaping the modal entirely. Contrary to the review's caveat that this is "jsdom-invisible," this project's jsdom (v25.0.1) *does* correctly model shadow-root retargeting — verified empirically, then confirmed by temporarily reverting the fix and observing the new regression tests fail (`shadow.activeElement` assertions mismatched exactly as the bug would predict).
-
-### WR-03: `capture.propose` classified against `getItems()` without ensuring the vault cache was hydrated
-
-**Files modified:** `extension/entrypoints/background/router.ts` (same commit as CR-01/WR-01/WR-04 — shared root cause), `extension/entrypoints/background/router-capture.test.ts`
-**Commit:** `a9ce0ed`
-**Applied fix:** `handleCaptureProposeMessage` now `await ensureHydrated()`s before calling `getItems()`/`classifySubmit`, mirroring `handleMatchFrame`'s/`handleFillFrame`'s own ensureHydrated()-before-getItems() discipline in `autofill-frame.ts`. On a locked/null result it fails closed to `{ action: "no-op", ..., mismatch: true }` rather than classifying against a possibly-empty cache. Pinned by `router-capture.test.ts`'s "WR-03: gates on ensureHydrated() before classifying" test.
-
-### WR-04: `confirmUpdateLogin` trusted the payload `itemId` with no origin/ownership re-check
-
-**Files modified:** `extension/entrypoints/background/capture-handler.ts`, `extension/entrypoints/background/router.ts`, `extension/entrypoints/background/capture-handler.test.ts`, `extension/entrypoints/background/router-capture.test.ts`
-**Commit:** `a9ce0ed`
-**Applied fix:** Added `OwnershipMismatchError` to `capture-handler.ts`. `confirmUpdateLogin` now re-fetches the target item from `getItems()` and refuses (throwing `OwnershipMismatchError`) unless it is a `login`-type item that both `itemMatchesOrigin`s the trusted `fields.frameOrigin` and username-matches — mirroring `handleAutofillFill`'s own re-verification (T-10-14). `router.ts`'s `handleCaptureConfirmMessage` maps this new error to `{ status: "error", message }`. Pinned by 5 new `capture-handler.test.ts` tests (missing item, wrong origin, wrong username, non-login item, and the still-passing legitimate-match case) and `router-capture.test.ts`'s "WR-04: maps an OwnershipMismatchError... to {status:'error'}" test.
-
-### WR-05: Unguarded element removal threw an uncaught NotFoundError during focus-churn teardown (packaged-build UAT)
-
-**Files modified:** `extension/lib/autofill/generate-popover.ts`, `extension/lib/autofill/generate-popover.test.ts`, `extension/lib/autofill/inpage-overlay.ts`, `extension/lib/autofill/inpage-overlay.test.ts`
-**Commit:** `434844d`
-**Applied fix:** Added a `safeRemove()` helper (try/catch around `Element#remove()`) to both `generate-popover.ts` and its sibling `inpage-overlay.ts` (the Phase 10 field-icon/dropdown teardown, which content-relay.content.ts's `handleFocusOut` runs from the SAME handler as the Phase 11 generate-trigger teardown — confirmed as the "sibling focusout teardown with the same pattern"). Applied at every teardown removal site: `teardownGenerateTrigger`/`closePopover` (trigger, popover) and `clearPromptPanel`/`clearDropdown`/`destroy` (prompt panel, dropdown panel, field icon, overlay host). Added regression tests in both files that monkey-patch `.remove()` to throw the exact Chrome `NotFoundError` the UAT observed and assert teardown no longer throws; confirmed both new tests fail against the pre-fix bare `.remove()` calls by temporarily reverting the fix and re-running.
+**Regression tests (non-vacuous):**
+- `router-capture.test.ts`: two new tests — one simulates the exact race (a mid-flight `ensureItemsHydrated()` resolving to a populated cache after `getItems()` would otherwise have been called against an empty one) and asserts `classifySubmit` receives the settled items array (`action: "update"`, not `"new"`); the other asserts the typed pull-failure path fails closed to `no-op` without calling `classifySubmit`. Both **verified to fail** against the pre-fix `router.ts` (temporarily reverted the `ensureItemsHydrated()` call, re-ran the suite, confirmed both new tests failed with the expected assertion errors), then restored and re-confirmed green.
+- `vault-store.test.ts`: four new tests for `ensureItemsHydrated()` itself — resolves only after the pull settles with items populated by then, single-flight (concurrent callers share one `getSyncSnapshot(0)` call), typed `{ok:false}` on pull failure, and a re-unlock after lock awaits a fresh pull rather than a stale settled promise.
+- Existing CR-01/WR-03(iteration-1)/rejected-sender tests in `router-capture.test.ts` were updated to account for the new `ensureItemsHydrated` call in the happy path and to assert it is *not* called on the already-covered locked/rejected-sender fail-closed branches.
 
 ## Skipped Issues
 
-None — all 6 in-scope findings were fixed.
+None — the single in-scope finding was fixed.
 
 ## Verification
 
-Run inside an isolated git worktree (`gsd-reviewfix/11-*`), with `node_modules`, `lib/crypto/wasm/`, and `public/wasm/` (gitignored build artifacts not tracked by git) symlinked in from the main working tree so the suite/build could run unmodified:
+Run inside an isolated git worktree (`gsd-reviewfix/11-*`), with `node_modules` (rebuilt as per-package symlinks into the main working tree rather than one wholesale symlink, so the `pv-ui` workspace package resolves to the worktree's own copy instead of the main tree's — needed to avoid a Vite `fs.deny` false failure on 6 unrelated test files that import `packages/pv-ui/tokens.css`), `.wxt/` (generated types), and `lib/crypto/wasm/` (gitignored WASM build artifacts) copied/symlinked in so the suite/build could run unmodified:
 
-- `npx vitest run` — **362/362 tests passed** (38 test files), up from the 346-test baseline plus 16 new regression tests across `router-capture.test.ts` (new file, 7 tests), `capture-handler.test.ts` (+3), `mismatch-modal.test.ts` (+3), `generate-popover.test.ts` (+1), `inpage-overlay.test.ts` (+1), and 1 test file's existing suite adjusted (not net-new) for the WR-04 ownership check. One pre-existing, unrelated unhandled rejection in `App.test.tsx`/`ServerConfigView.tsx` (present identically in the baseline run before any fixes) — out of this review's scope, not introduced by these changes.
-- `npx tsc --noEmit` — **clean**, no errors in any modified or new file.
-- `npx wxt build` — **succeeded**, produced a valid `chrome-mv3` packaged build (858.85 kB total, including the fixed `background.js`, `content-relay.js`, and `popup` bundles).
+- `npx vitest run` — **397/397 tests passed** (40 test files), up from the iteration-1 exit state (362 tests) plus 6 new regression tests across `router-capture.test.ts` (+2) and `vault-store.test.ts` (+4). One pre-existing, unrelated unhandled rejection in `App.test.tsx`/`ServerConfigView.tsx` (confirmed present identically on the unmodified main working tree) — out of this review's scope, not introduced by this change.
+- `npx tsc --noEmit` — **clean**, no errors in any modified or new file (two pre-existing, unrelated errors from the initial `.wxt`/wasm-artifact-missing worktree state were resolved by copying in those gitignored build outputs from the main tree, not by any source change).
+- `npx wxt build -b chrome` and `npx wxt build -b firefox` — **both succeeded**, producing valid `chrome-mv3` and `firefox-mv2` packaged builds.
 
-All fixes were regression-tested by temporarily reverting each one and confirming the newly added test(s) fail against the pre-fix code, then restoring the fix and confirming green — not just "test exists," but "test actually catches the bug."
+The fix was regression-tested by temporarily reverting the `router.ts` change (removing the `ensureItemsHydrated()` await and its no-op-on-failure branch) and confirming both new `router-capture.test.ts` tests failed with the exact assertion mismatches the bug predicts, then restoring the fix and confirming the full suite returned to green — not just "test exists," but "test actually catches the bug."
 
 ---
 
-_Fixed: 2026-07-16T13:07:00Z_
+_Fixed: 2026-07-16T14:24:00Z_
 _Fixer: Claude (gsd-code-fixer)_
-_Iteration: 1_
+_Iteration: 2_
