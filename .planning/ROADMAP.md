@@ -164,6 +164,7 @@ Plans:
 - [x] 11-04-PLAN.md — Shadow-root UI mount + generate-password popover (Surface 1, CAP-01)
 - [x] 11-05-PLAN.md — Save/update toast + origin-mismatch modal + adversarial cross-origin-iframe UAT fixture (Surfaces 2/3, CAP-02/CAP-03, D-06)
 - [x] 11-06-PLAN.md — Suggested bez formularza: popupowa sekcja "Na tej stronie" pokazuje loginy origin-match na stronach bez wykrytego formularza (D-11, addendum Bartka 2026-07-16)
+- [ ] 11-07-PLAN.md — Parytet motywu i stylu z frontendem: lustro motywu z web appa, tokeny vault-light/dark na wszystkich powierzchniach (in-page + overlay z 10 + popup), generator 1:1 z GeneratorPopover (D-12, Bartek 2026-07-16)
 
 **UI hint**: yes
 
