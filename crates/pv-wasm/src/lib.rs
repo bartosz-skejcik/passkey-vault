@@ -265,28 +265,20 @@ impl WasmGetProviderResult {
 /// `new_passkey_json` opuszcza scope tej funkcji jako lokalna `String` i
 /// nigdy nie jest przypisywana do pola zwracanego do JS (T-12-01).
 #[wasm_bindgen(js_name = wasmCreateProviderCredential)]
-#[allow(unused_variables)]
 pub fn wasm_create_provider_credential(
     uk: &WasmUserKey,
     request_json: &str,
     origin: &str,
     item_id: &str,
 ) -> Result<WasmCreateProviderResult, JsValue> {
-    // RED phase (TDD gate): pv_provider ceremony wiring not implemented yet.
-    // Returns a REAL encrypted item (via the EXISTING core_encrypt_item, on
-    // a deliberately-wrong plaintext) so decrypt_item downstream still
-    // succeeds and the test fails via a normal assert_eq!/expect() on a
-    // non-JsValue type -- never via Debug-formatting a real Err(JsValue),
-    // which aborts the process on native test targets (see this file's
-    // header comment on to_js_err/to_js_str_err). GREEN commit replaces
-    // this body with the real pv_provider::create_provider_credential +
-    // core_encrypt_item wiring.
-    let stub_item =
-        core_encrypt_item(&uk.0, br#"{"credential_id":[9,9,9]}"#, item_id, 1).map_err(to_js_err)?;
+    let result = pv_provider::create_provider_credential(request_json, origin)
+        .map_err(|e| to_js_str_err(&e.to_string()))?;
+    let encrypted_item =
+        core_encrypt_item(&uk.0, result.new_passkey_json.as_bytes(), item_id, 1).map_err(to_js_err)?;
     let encrypted_item_json =
-        serde_json::to_string(&stub_item).map_err(|e| to_js_str_err(&e.to_string()))?;
+        serde_json::to_string(&encrypted_item).map_err(|e| to_js_str_err(&e.to_string()))?;
     Ok(WasmCreateProviderResult {
-        credential_response_json: "{\"id\":\"RED-stub-create-not-implemented\"}".to_string(),
+        credential_response_json: result.credential_response_json,
         encrypted_item_json,
     })
 }
@@ -299,7 +291,6 @@ pub fn wasm_create_provider_credential(
 /// returnem. Plaintext Passkey JSON (przed i po) istnieje wyłącznie jako
 /// lokalne zmienne — nigdy jako pole zwracane do JS.
 #[wasm_bindgen(js_name = wasmGetProviderAssertion)]
-#[allow(unused_variables)]
 pub fn wasm_get_provider_assertion(
     uk: &WasmUserKey,
     request_json: &str,
@@ -308,16 +299,28 @@ pub fn wasm_get_provider_assertion(
     item_id: &str,
     revision: u32,
 ) -> Result<WasmGetProviderResult, JsValue> {
-    // RED phase (TDD gate): not wired up yet -- returns Ok with a
-    // deliberately-DIFFERENT stub id than wasm_create_provider_credential's
-    // RED stub, so the roundtrip test's id comparison fails via a normal
-    // assert_eq! (never via Debug-formatting a real Err(JsValue), which
-    // aborts on native test targets). GREEN commit replaces this body with
-    // the real core_decrypt_item + pv_provider::get_provider_assertion +
-    // core_encrypt_item wiring.
+    let item: EncryptedItem =
+        serde_json::from_str(matching_item_json).map_err(|e| to_js_str_err(&e.to_string()))?;
+    let plaintext = core_decrypt_item(&uk.0, &item, item_id, revision).map_err(to_js_err)?;
+    let passkey_json =
+        String::from_utf8(plaintext).map_err(|e| to_js_str_err(&e.to_string()))?;
+    let existing_credentials_json = format!("[{passkey_json}]");
+
+    let result = pv_provider::get_provider_assertion(request_json, origin, &existing_credentials_json)
+        .map_err(|e| to_js_str_err(&e.to_string()))?;
+
+    let updated_encrypted_item_json = match result.updated_passkey_json {
+        Some(updated_json) => {
+            let encrypted = core_encrypt_item(&uk.0, updated_json.as_bytes(), item_id, revision + 1)
+                .map_err(to_js_err)?;
+            Some(serde_json::to_string(&encrypted).map_err(|e| to_js_str_err(&e.to_string()))?)
+        }
+        None => None,
+    };
+
     Ok(WasmGetProviderResult {
-        credential_response_json: "{\"id\":\"RED-stub-get-not-implemented\"}".to_string(),
-        updated_encrypted_item_json: None,
+        credential_response_json: result.credential_response_json,
+        updated_encrypted_item_json,
     })
 }
 
