@@ -26,10 +26,10 @@
 
 ### FILL — Autofill (full vault)
 
-- [ ] **FILL-01**: The extension detects login forms and offers to fill the saved username + password for the current origin
-- [ ] **FILL-02**: The extension fills (or copies) the live TOTP code into a 2FA field for the current origin
-- [ ] **FILL-03**: The extension fills credit-card fields (number, expiry, CVV, cardholder) from a saved card item
-- [ ] **FILL-04**: The extension fills identity fields (name, address, email, phone — Tożsamości) from a saved identity item
+- [x] **FILL-01**: The extension detects login forms and offers to fill the saved username + password for the current origin
+- [x] **FILL-02**: The extension fills (or copies) the live TOTP code into a 2FA field for the current origin
+- [x] **FILL-03**: The extension fills credit-card fields (number, expiry, CVV, cardholder) from a saved card item
+- [x] **FILL-04**: The extension fills identity fields (name, address, email, phone — Tożsamości) from a saved identity item
 
 ### CAP — Generate & capture
 
@@ -81,10 +81,10 @@ Filled by the roadmapper.
 | PROV-03 | Phase 12 | Pending |
 | PROV-04 | Phase 12 | Pending |
 | PROV-05 | Phase 12 | Pending |
-| FILL-01 | Phase 10 | Pending |
-| FILL-02 | Phase 10 | Pending |
-| FILL-03 | Phase 10 | Pending |
-| FILL-04 | Phase 10 | Pending |
+| FILL-01 | Phase 10 | Complete |
+| FILL-02 | Phase 10 | Complete |
+| FILL-03 | Phase 10 | Complete |
+| FILL-04 | Phase 10 | Complete |
 | CAP-01 | Phase 11 | Pending |
 | CAP-02 | Phase 11 | Pending |
 | CAP-03 | Phase 11 | Pending |
