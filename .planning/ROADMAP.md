@@ -183,7 +183,13 @@ Plans:
   4. PRF is used where the browser allows it (Chromium-first); on Firefox or wherever PRF is unavailable, the flow degrades honestly with a clear, specific fallback message.
   5. A security review (`/gsd-secure-phase`) confirms the MAIN-world `navigator.credentials` patch is a key-free RPC shim — grep-audited to prove no User Key, PRF output, or plaintext ever crosses into MAIN-world JS.
 
-**Plans**: TBD
+**Plans**: 4/4 plans executed
+
+- [x] 12-01-PLAN.md
+- [x] 12-02-PLAN.md
+- [x] 12-03-PLAN.md
+- [x] 12-04-PLAN.md
+
 **UI hint**: yes
 
 ### Phase 13: Dual-Browser Hardening
@@ -226,5 +232,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 9. Session Unlock Core, Popup & Sync Client | v0.2 | 8/8 | Complete    | 2026-07-15 |
 | 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 7/9 | Complete    | 2026-07-16 |
 | 11. Generate & Capture | v0.2 | 9/9 | Complete    | 2026-07-16 |
-| 12. Passkey Provider | v0.2 | 0/TBD | Not started | - |
+| 12. Passkey Provider | v0.2 | 4/4 | In Progress|  |
 | 13. Dual-Browser Hardening | v0.2 | 0/4 | Not started | - |

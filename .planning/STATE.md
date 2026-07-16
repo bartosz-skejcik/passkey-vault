@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: Browser Extension
 current_phase: 12
-current_phase_name: Passkey Provider
-status: planning
+current_phase_name: passkey-provider
+status: executing
 stopped_at: Completed 10-09-PLAN.md
-last_updated: "2026-07-16T13:36:35.650Z"
+last_updated: "2026-07-16T14:14:01.330Z"
 last_activity: 2026-07-16
-last_activity_desc: Phase 11 complete, transitioned to Phase 12
+last_activity_desc: Phase 12 execution started
 progress:
   total_phases: 6
   completed_phases: 3
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-14)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 11 — Generate & Capture
+**Current focus:** Phase 12 — passkey-provider
 
 ## Current Position
 
-Phase: 12 — Passkey Provider
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-07-16 — Phase 11 complete, transitioned to Phase 12
+Phase: 12 (passkey-provider) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 12
+Last activity: 2026-07-16 — Phase 12 execution started
 
 Progress: [██████░░░░] 55%
 
