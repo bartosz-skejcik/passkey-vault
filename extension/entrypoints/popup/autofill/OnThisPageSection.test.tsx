@@ -1,143 +1,114 @@
 // entrypoints/popup/autofill/OnThisPageSection.test.tsx — proves the
 // gesture gate (D-03: popup-open is gesture one, a Wypełnij click is
-// gesture two -- nothing fills on render/open) and D-12's card/identity
-// second-confirm at the COMPONENT level, not just described in prose
-// (10-06-PLAN.md Task 3). Mocks only `sendMessage` -- the component tree
-// under test (OnThisPageSection -> useAutofillMatches -> AutofillItemRow/
-// TotpFillRow/SensitiveFillConfirm) is otherwise real.
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+// gesture two -- nothing fills on render) and D-12's card/identity
+// second-confirm at the COMPONENT level (10-06-PLAN.md Task 3).
+//
+// Restructured 2026-07-16: OnThisPageSection is now purely presentational
+// (Bartek's NordPass two-section redesign) — ItemListView owns the single
+// useAutofillMatches() instance and passes the merged/deduped state down as
+// props. These tests therefore drive it by props directly and assert on the
+// `fill`/`copyTotp` callback props, no sendMessage mock needed.
+import { describe, expect, it, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+import OnThisPageSection, { type OnThisPageSectionProps } from "./OnThisPageSection";
 import type { AutofillMatch } from "../../../lib/autofill/types";
-import type { AutofillMatchResult } from "../../../lib/messaging/ext-protocol";
-
-const { mockSendMessage } = vi.hoisted(() => ({ mockSendMessage: vi.fn() }));
-
-vi.mock("../../../lib/messaging/ext-protocol", () => ({
-  sendMessage: mockSendMessage,
-}));
-
-import OnThisPageSection from "./OnThisPageSection";
 
 function loginMatch(itemId: string, label: string): AutofillMatch {
   return { itemId, kind: "login", label, maskedHint: "user" };
 }
-
 function cardMatch(itemId: string, label: string): AutofillMatch {
   return { itemId, kind: "card", label, maskedHint: "••••1234" };
 }
 
-function matchResult(overrides: Partial<AutofillMatchResult> = {}): AutofillMatchResult {
-  return {
+function renderSection(overrides: Partial<OnThisPageSectionProps> = {}) {
+  const fill = overrides.fill ?? vi.fn().mockResolvedValue({ ok: true });
+  const copyTotp = overrides.copyTotp ?? vi.fn().mockResolvedValue({ ok: true, clearSeconds: 20 });
+  const peekTotp = overrides.peekTotp ?? vi.fn().mockResolvedValue({ ok: true, code: "123456", secondsRemaining: 20 });
+  const props: OnThisPageSectionProps = {
+    locale: "en",
     pageState: "ok",
     origin: "https://example.com",
     detected: { login: false, totp: false, card: false, identity: false },
     matches: [],
+    fill,
+    copyTotp,
+    peekTotp,
     ...overrides,
   };
+  render(<OnThisPageSection {...props} />);
+  return { fill, copyTotp, peekTotp };
 }
 
-beforeEach(() => {
-  vi.clearAllMocks();
-});
-
 describe("OnThisPageSection", () => {
-  it("Test 1: shows a skeleton while autofill.match is pending, then the row list on resolve", async () => {
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "autofill.match") {
-        return matchResult({ matches: [loginMatch("1", "GitHub")] });
-      }
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(<OnThisPageSection locale="en" />);
-
-    // Synchronous initial render, before the pending autofill.match promise
-    // resolves -- the hook's own initial state is "loading".
+  it("Test 1: renders a skeleton while loading, the row list when ok with matches", () => {
+    const { rerender } = ((): { rerender: (ui: React.ReactElement) => void } => {
+      const r = render(
+        <OnThisPageSection
+          locale="en"
+          pageState="loading"
+          origin={null}
+          detected={{ login: false, totp: false, card: false, identity: false }}
+          matches={[]}
+          fill={vi.fn()}
+          copyTotp={vi.fn()}
+          peekTotp={vi.fn()}
+        />,
+      );
+      return { rerender: r.rerender };
+    })();
     expect(screen.getByTestId("autofill-skeleton")).toBeInTheDocument();
 
-    await waitFor(() => expect(screen.getByText("GitHub")).toBeInTheDocument());
+    rerender(
+      <OnThisPageSection
+        locale="en"
+        pageState="ok"
+        origin="https://example.com"
+        detected={{ login: false, totp: false, card: false, identity: false }}
+        matches={[loginMatch("1", "GitHub")]}
+        fill={vi.fn()}
+        copyTotp={vi.fn()}
+        peekTotp={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("GitHub")).toBeInTheDocument();
     expect(screen.queryByTestId("autofill-skeleton")).not.toBeInTheDocument();
   });
 
-  it("Test 2: nothing calls autofill.fill on render/open -- only after a Wypełnij click (the gesture gate)", async () => {
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "autofill.match") {
-        return matchResult({ matches: [loginMatch("1", "GitHub")] });
-      }
-      if (message.kind === "autofill.fill") return { ok: true };
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(<OnThisPageSection locale="en" />);
-    await waitFor(() => expect(screen.getByText("GitHub")).toBeInTheDocument());
-
-    expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ kind: "autofill.match" }));
-    expect(mockSendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "autofill.fill" }));
+  it("Test 2: nothing calls fill on render -- only after a Wypełnij click (the gesture gate)", () => {
+    const { fill } = renderSection({ matches: [loginMatch("1", "GitHub")] });
+    expect(fill).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTestId("autofill-fill-1"));
-
-    await waitFor(() => {
-      expect(mockSendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: "autofill.fill", itemId: "1", kind_: "login" }),
-      );
-    });
+    expect(fill).toHaveBeenCalledWith("1", "login");
   });
 
-  it("Test 3: a card row click opens SensitiveFillConfirm and does NOT call autofill.fill until the inline confirm is clicked (D-12)", async () => {
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "autofill.match") {
-        return matchResult({ matches: [cardMatch("2", "Visa")] });
-      }
-      if (message.kind === "autofill.fill") return { ok: true };
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(<OnThisPageSection locale="en" />);
-    await waitFor(() => expect(screen.getByText("Visa")).toBeInTheDocument());
-
+  it("Test 3: a card row click opens SensitiveFillConfirm and does NOT call fill until the inline confirm is clicked (D-12)", () => {
+    const { fill } = renderSection({ matches: [cardMatch("2", "Visa")] });
     expect(screen.queryByTestId("sensitive-fill-confirm")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("autofill-fill-2"));
-
     expect(screen.getByTestId("sensitive-fill-confirm")).toBeInTheDocument();
-    expect(mockSendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "autofill.fill" }));
+    expect(fill).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTestId("sensitive-fill-confirm-submit"));
-
-    await waitFor(() => {
-      expect(mockSendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: "autofill.fill", itemId: "2", kind_: "card" }),
-      );
-    });
+    expect(fill).toHaveBeenCalledWith("2", "card");
   });
 
-  it("Test 4: multiple matching logins render as multiple rows (the picker), with no separate dialog element", async () => {
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "autofill.match") {
-        return matchResult({ matches: [loginMatch("1", "GitHub"), loginMatch("2", "GitLab")] });
-      }
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(<OnThisPageSection locale="en" />);
-
-    await waitFor(() => expect(screen.getByText("GitHub")).toBeInTheDocument());
+  it("Test 4: multiple matching logins render as multiple rows (the picker), with no separate dialog element", () => {
+    renderSection({ matches: [loginMatch("1", "GitHub"), loginMatch("2", "GitLab")] });
+    expect(screen.getByText("GitHub")).toBeInTheDocument();
     expect(screen.getByText("GitLab")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("Test 5: a restricted pageState renders the plain banner, never the empty-state emoji", async () => {
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "autofill.match") {
-        return matchResult({ pageState: "restricted", origin: null, matches: [] });
-      }
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(<OnThisPageSection locale="pl" />);
-
-    await waitFor(() => expect(screen.getByTestId("autofill-error-banner")).toBeInTheDocument());
+  it("Test 5: a restricted pageState renders the plain banner, never the empty-state hint", () => {
+    renderSection({ pageState: "restricted", origin: null, matches: [] });
+    expect(screen.getByTestId("autofill-error-banner")).toBeInTheDocument();
     expect(screen.queryByTestId("autofill-empty-state")).not.toBeInTheDocument();
-    expect(screen.queryByText("🤷", { exact: false })).not.toBeInTheDocument();
+  });
+
+  it("Test 6: ok pageState with no matches shows the compact one-line hint (not two paragraphs)", () => {
+    renderSection({ matches: [] });
+    expect(screen.getByTestId("autofill-empty-state")).toBeInTheDocument();
   });
 });

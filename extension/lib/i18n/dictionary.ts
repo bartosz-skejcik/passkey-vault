@@ -105,6 +105,12 @@ export const DICTIONARY = {
   },
   "autolock.label": { pl: "Automatyczna blokada", en: "Auto-lock" },
 
+  // NordPass two-section popup redesign (Bartek 2026-07-16,
+  // 10-POPUP-REDESIGN-SPEC.md) -- the permanent "rest of the vault" section
+  // header below "Na tej stronie" (onThisPage.heading, autofill-
+  // dictionary.ts). Label-role weight (14px/400), not a heading.
+  "vault.allItemsHeading": { pl: "Wszystkie", en: "All items" },
+
   // --- Popup header + delegated-management affordances (BINDING,
   // Bartek 2026-07-15) --------------------------------------------------
   "nav.settings": { pl: "Ustawienia", en: "Settings" },

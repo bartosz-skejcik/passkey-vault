@@ -26,6 +26,7 @@ import { t, interpolate, type Locale } from "../../lib/i18n/dictionary";
 // Owns its own useAutofillMatches() data fetch entirely internally; this
 // view only needs to render it above the existing item list below.
 import OnThisPageSection from "./autofill/OnThisPageSection";
+import { useAutofillMatches } from "./autofill/useAutofillMatches";
 
 // Duplicated from entrypoints/background/autolock.ts's AUTOLOCK_OPTIONS
 // constant -- NOT imported directly, since that file (and its
@@ -150,6 +151,18 @@ export default function ItemListView({
   const results = searchItems(filterItems(items, { kind: "all" }), query);
   const trimmedQuery = query.trim();
 
+  // The ONE autofill.match hook instance for the popup (10-06). ItemListView
+  // owns it now (was inside OnThisPageSection before Bartek's 2026-07-16
+  // two-section redesign) so the same result drives BOTH the "Na tej
+  // stronie" section AND the de-duplication of the "Wszystkie" section
+  // below: an item shown as a suggestion is never repeated in the full list.
+  const autofill = useAutofillMatches();
+  const suggestedIds = new Set(autofill.matches.map((m) => m.itemId));
+  // "Wszystkie" = the searched full list minus anything already surfaced in
+  // "Na tej stronie" (dedup by item id, Bartek: "itemy między listami nie są
+  // duplikowane").
+  const restResults = results.filter((item) => !suggestedIds.has(item.id));
+
   return (
     // `relative` anchors the FAB + its menu at POPUP level, deliberately
     // OUTSIDE the scrolling list below: an `overflow-y-auto` ancestor forms
@@ -187,65 +200,87 @@ export default function ItemListView({
         />
       </div>
 
-      {/* lg spacing token (24px, 10-UI-SPEC.md) between this section and
-          the full item list below it -- the "On this page" list IS the
-          D-07 multi-account picker when more than one item matches. */}
-      <div className="pb-1">
-        <OnThisPageSection locale={locale} />
-      </div>
-
-      {/* min-h keeps the popup a stable, comfortable size instead of
-          collapsing around 1-2 rows; max-h keeps it inside the browser's
-          ~600px popup ceiling (09-UI-SPEC "Popup shell"), scrolling beyond
-          that. The FAB is NOT in here -- see the wrapper comment above. */}
-      <div className="flex min-h-[280px] max-h-[380px] flex-col divide-y divide-base-300 overflow-y-auto">
-        {trimmedQuery !== "" && results.length === 0 ? (
-          // Distinct from the zero-items-ever-created empty state below --
-          // this is "zero matches for a live query", checked FIRST so a
-          // query typed against an also-empty vault still renders the
-          // search-specific line, not the generic "vault empty" one.
-          <p className="px-4 py-8 text-center text-base text-base-content/60">
-            {interpolate(t(locale, "search.emptyResults"), { query: trimmedQuery })}
-          </p>
-        ) : items.length === 0 ? (
-          <div className="flex flex-col items-center gap-1 px-4 py-8 text-center">
-            <p className="text-base">{t(locale, "vault.emptyHeading")}</p>
-            <p className="text-sm text-base-content/60">{t(locale, "vault.emptyBody")}</p>
+      {/* Bartek's 2026-07-16 NordPass two-section redesign
+          (10-POPUP-REDESIGN-SPEC.md): "Na tej stronie" and "Wszystkie" are
+          now permanent siblings in one scroll column, de-duplicated by id,
+          with a SINGLE empty state (the old layout stacked two empty blocks
+          -- the "duplikat informacji" he flagged). When the vault has never
+          had an item, show only the one empty state; the autofill section is
+          meaningless then. */}
+      {items.length === 0 ? (
+        <div
+          className="flex min-h-[320px] flex-col items-center justify-center gap-1 px-4 py-8 text-center"
+          data-testid="vault-empty-state"
+        >
+          <p className="text-base">{t(locale, "vault.emptyHeading")}</p>
+          <p className="text-sm text-base-content/60">{t(locale, "vault.emptyBody")}</p>
+        </div>
+      ) : (
+        <>
+          <div className="pb-1">
+            <OnThisPageSection
+              locale={locale}
+              pageState={autofill.pageState}
+              origin={autofill.origin}
+              detected={autofill.detected}
+              matches={autofill.matches}
+              fill={autofill.fill}
+              copyTotp={autofill.copyTotp}
+              peekTotp={autofill.peekTotp}
+            />
           </div>
-        ) : (
-          results.map((item) => {
-            const Icon = TYPE_ICON[item.fields.type];
-            const typeLabel = t(locale, TYPE_LABEL_KEY[item.fields.type]);
-            const subtitle =
-              item.fields.type === "login"
-                ? item.fields.username
-                : item.fields.type === "totp"
-                  ? item.fields.issuer || typeLabel
-                  : typeLabel;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                // No horizontal px here -- the root container's own p-4
-                // already supplies the 16px rhythm (matching
-                // UnlockView/ServerConfigView/ItemDetailView); adding px-2
-                // on top would double-pad relative to those views.
-                className="flex min-h-[48px] items-center gap-2 py-2 text-left hover:bg-base-content/[0.06]"
-                onClick={() => onSelectItem(item)}
-              >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-base-200 text-base-content/70">
-                  <Icon size={18} aria-hidden="true" />
-                </span>
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate text-base">{item.fields.name}</span>
-                  <span className="truncate text-sm text-base-content/60">{subtitle}</span>
-                </span>
-              </button>
-            );
-          })
-        )}
 
-      </div>
+          {/* "Wszystkie" section — the rest of the vault, dedup'd against the
+              suggestions above. Label-role weight (14px/400), not a heavy
+              heading (Bartek: the bold header "nie pasuje tutaj"). Hidden when
+              there is nothing left to show and no active query, so it never
+              renders an orphan header over an empty list. */}
+          {restResults.length > 0 || trimmedQuery !== "" ? (
+            <div className="flex flex-col gap-1">
+              <h2 className="px-1 text-sm font-normal text-base-content/60">
+                {t(locale, "vault.allItemsHeading")}
+              </h2>
+              {/* min-h keeps the popup a stable, comfortable size; max-h keeps
+                  it inside the browser's ~600px popup ceiling, scrolling
+                  beyond. Bumped up a little for breathing room (Bartek). */}
+              <div className="flex min-h-[220px] max-h-[440px] flex-col divide-y divide-base-300 overflow-y-auto">
+                {trimmedQuery !== "" && restResults.length === 0 ? (
+                  <p className="px-4 py-8 text-center text-base text-base-content/60">
+                    {interpolate(t(locale, "search.emptyResults"), { query: trimmedQuery })}
+                  </p>
+                ) : (
+                  restResults.map((item) => {
+                    const Icon = TYPE_ICON[item.fields.type];
+                    const typeLabel = t(locale, TYPE_LABEL_KEY[item.fields.type]);
+                    const subtitle =
+                      item.fields.type === "login"
+                        ? item.fields.username
+                        : item.fields.type === "totp"
+                          ? item.fields.issuer || typeLabel
+                          : typeLabel;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="flex min-h-[48px] items-center gap-2 py-2 text-left hover:bg-base-content/[0.06]"
+                        onClick={() => onSelectItem(item)}
+                      >
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-base-200 text-base-content/70">
+                          <Icon size={18} aria-hidden="true" />
+                        </span>
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate text-base">{item.fields.name}</span>
+                          <span className="truncate text-sm text-base-content/60">{subtitle}</span>
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          ) : null}
+        </>
+      )}
 
       {/* FAB lives at popup level (see wrapper comment) so the menu can
           overlay the list instead of being clipped by its scroll box. */}
@@ -273,7 +308,9 @@ export default function ItemListView({
           aria-label={t(locale, "nav.newItem")}
           aria-haspopup="menu"
           aria-expanded={typeMenuOpen}
-          className="btn btn-primary btn-circle btn-sm shadow-lg"
+          // Square (not circle) to match the web frontend's primary buttons
+          // (btn btn-primary) — Bartek 2026-07-16.
+          className="btn btn-primary btn-square btn-sm shadow-lg"
           onClick={() => setTypeMenuOpen((open) => !open)}
         >
           <Plus size={18} aria-hidden="true" />

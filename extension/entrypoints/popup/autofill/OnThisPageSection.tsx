@@ -1,26 +1,37 @@
 // entrypoints/popup/autofill/OnThisPageSection.tsx — the "Na tej stronie"
-// popup section (10-06, 10-UI-SPEC.md). Owns `useAutofillMatches()`
-// directly (not lifted to a parent) so ItemListView.tsx only needs to
-// mount this ONE component above its existing list -- matching the
-// UI-SPEC's Scope Note: "every surface below is a new section/state
-// inside the existing extension popup shell ... not a new content-script
-// UI".
+// popup section (10-06, 10-UI-SPEC.md; restructured 2026-07-16 per Bartek's
+// NordPass two-section redesign, 10-POPUP-REDESIGN-SPEC.md).
 //
-// This list IS the D-07 multi-account picker when more than one item
+// No longer owns useAutofillMatches() itself -- ItemListView.tsx (the new
+// two-section container) owns the ONE hook instance and merges its
+// `matches` with a popup-computed, detection-UNGATED login/origin match set
+// (see ItemListView's own comment for why), then hands the FINAL merged
+// list down here as the `matches` prop. This keeps the hook single-instance
+// (one autofill.match dispatch per popup open) and makes this component
+// purely presentational: header + row list + the two self-dismissing
+// inline alerts (fill-failed, TOTP-copied).
+//
+// No more collapsible dropdown (Bartek 2026-07-16): this section is now a
+// PERMANENT, always-expanded sibling of the "Wszystkie" section below it in
+// ItemListView -- the collapsed-state/chevron-toggle button that used to
+// live here is gone entirely.
+//
+// This list IS still the D-07 multi-account picker when more than one item
 // matches (10-UI-SPEC.md "Populated — multiple matches"): no separate
 // dialog element exists anywhere in this file.
 //
 // A cross-origin subframe with no match looks IDENTICAL to any innocuous
 // no-match (silent refusal, 10-UI-SPEC.md's Copywriting Contract) --
-// `pageState === "ok"` with `matches: []` always renders the same
-// AutofillEmptyState, never a "blocked for security" banner.
+// `pageState === "ok"` with an empty `matches` prop always renders the same
+// compact one-line hint, never a "blocked for security" banner.
 import { useEffect, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronUp, Globe } from "lucide-react";
-import { useAutofillMatches } from "./useAutofillMatches";
+import { AlertTriangle, Globe } from "lucide-react";
 import AutofillItemRow from "./AutofillItemRow";
 import TotpFillRow from "./TotpFillRow";
 import { t, interpolate, type Locale } from "../../../lib/i18n/autofill-dictionary";
-import type { AutofillMatch } from "../../../lib/autofill/types";
+import type { AutofillMatch, DetectedFields, FillKind } from "../../../lib/autofill/types";
+import type { MessageResponseMap } from "../../../lib/messaging/ext-protocol";
+import type { AutofillPageState, CopyTotpResult } from "./useAutofillMatches";
 
 const FILL_FAILED_DISPLAY_MS = 4000;
 
@@ -31,19 +42,6 @@ function hostnameOf(origin: string | null): string {
   } catch {
     return origin;
   }
-}
-
-function AutofillEmptyState({ locale }: { locale: Locale }) {
-  return (
-    <div className="flex flex-col items-center gap-1 px-4 py-6 text-center" data-testid="autofill-empty-state">
-      {/* font-hand (Fuzzy Bubbles) dropped -- 09-UI-SPEC.md forbids the
-          playful hand-lettered face in the popup, and the popup theme
-          never even registers a --font-hand token, so the class was
-          dead. */}
-      <p className="text-base">{t(locale, "empty.heading")}</p>
-      <p className="text-sm text-base-content/60">{t(locale, "empty.body")}</p>
-    </div>
-  );
 }
 
 function AutofillErrorBanner({ locale }: { locale: Locale }) {
@@ -61,9 +59,31 @@ function AutofillErrorBanner({ locale }: { locale: Locale }) {
   );
 }
 
-export default function OnThisPageSection({ locale }: { locale: Locale }) {
-  const { pageState, origin, detected, matches, fill, copyTotp, peekTotp } = useAutofillMatches();
-  const [collapsed, setCollapsed] = useState(false);
+export interface OnThisPageSectionProps {
+  locale: Locale;
+  pageState: AutofillPageState;
+  origin: string | null;
+  detected: DetectedFields;
+  /** The FINAL, already-merged/deduplicated suggested-for-this-site match
+   * list -- see ItemListView.tsx's own comment for how this differs from
+   * useAutofillMatches()'s raw `matches` (this one is NOT gated on a
+   * detected fillable field for logins, per the NordPass redesign). */
+  matches: AutofillMatch[];
+  fill: (itemId: string, kind: FillKind) => Promise<MessageResponseMap["autofill.fill"]>;
+  copyTotp: (itemId: string) => Promise<CopyTotpResult>;
+  peekTotp: (itemId: string) => Promise<MessageResponseMap["autofill.totpCode"]>;
+}
+
+export default function OnThisPageSection({
+  locale,
+  pageState,
+  origin,
+  detected,
+  matches,
+  fill,
+  copyTotp,
+  peekTotp,
+}: OnThisPageSectionProps) {
   const [fillFailed, setFillFailed] = useState(false);
   // BUG: TotpFillRow's "Kopiuj kod" wrote the clipboard but rendered no
   // confirmation at all -- toast.copied/totp.copiedField (autofill-
@@ -92,75 +112,72 @@ export default function OnThisPageSection({ locale }: { locale: Locale }) {
     return result;
   }
 
-  // "restricted"/"unreachable" REPLACES the whole section with the plain
-  // error banner (10-UI-SPEC.md's Component Inventory) -- no collapse
-  // chrome, no header, never the empty-state emoji.
+  // "restricted"/"unreachable" REPLACES this section's own content with the
+  // plain error banner (10-UI-SPEC.md's Component Inventory) -- no header,
+  // never the compact-hint copy. ItemListView's "Wszystkie" section renders
+  // independently of this branch, so the rest of the vault stays reachable.
   if (pageState === "restricted" || pageState === "unreachable") {
     return <AutofillErrorBanner locale={locale} />;
   }
 
   const headingHost = hostnameOf(origin);
-  const heading = headingHost !== "" ? `${t(locale, "onThisPage.heading")} · ${headingHost}` : t(locale, "onThisPage.heading");
+  const heading =
+    headingHost !== "" ? `${t(locale, "onThisPage.heading")} · ${headingHost}` : t(locale, "onThisPage.heading");
 
   return (
-    <div
-      className="flex flex-col gap-1 rounded-box border border-base-300 bg-base-100 p-2"
-      data-testid="on-this-page-section"
-    >
-      <button
-        type="button"
-        data-testid="on-this-page-toggle"
-        className="flex items-center justify-between gap-2 px-1 py-1 text-left"
-        onClick={() => setCollapsed((v) => !v)}
-        aria-expanded={!collapsed}
-      >
-        <span className="flex min-w-0 items-center gap-2 text-base font-bold text-base-content/80">
-          <Globe size={16} className="shrink-0" aria-hidden="true" />
-          <span className="truncate">{heading}</span>
-        </span>
-        {collapsed ? <ChevronDown size={16} aria-hidden="true" /> : <ChevronUp size={16} aria-hidden="true" />}
-      </button>
+    <div className="flex flex-col gap-1" data-testid="on-this-page-section">
+      {/* Label-role typography (09-UI-SPEC.md's 4-role scale: 14px/400) --
+          deliberately NOT font-bold/text-base like the old collapsible
+          header, which read too heavy for a permanent, always-visible
+          section label (Bartek 2026-07-16, 10-POPUP-REDESIGN-SPEC.md). */}
+      <h2 className="flex min-w-0 items-center gap-2 px-1 text-sm font-normal text-base-content/60">
+        <Globe size={16} className="shrink-0" aria-hidden="true" />
+        <span className="truncate">{heading}</span>
+      </h2>
 
-      {!collapsed ? (
-        pageState === "loading" ? (
-          <div className="skeleton h-12 w-full rounded-box" data-testid="autofill-skeleton" />
-        ) : matches.length === 0 ? (
-          <AutofillEmptyState locale={locale} />
-        ) : (
-          <div className="flex flex-col divide-y divide-base-300">
-            {matches.map((match: AutofillMatch) =>
-              match.kind === "totp" ? (
-                <TotpFillRow
-                  key={match.itemId}
-                  locale={locale}
-                  match={match}
-                  hasOtpField={detected.totp}
-                  onFill={fill}
-                  onCopyTotp={handleCopyTotp}
-                  onPeekTotp={peekTotp}
-                  onFillFailed={() => setFillFailed(true)}
-                />
-              ) : (
-                <AutofillItemRow
-                  key={match.itemId}
-                  locale={locale}
-                  match={match}
-                  onFill={fill}
-                  onFillFailed={() => setFillFailed(true)}
-                />
-              ),
-            )}
-          </div>
-        )
-      ) : null}
+      {pageState === "loading" ? (
+        <div className="skeleton h-12 w-full rounded-box" data-testid="autofill-skeleton" />
+      ) : matches.length === 0 ? (
+        // Compact, single-line hint (Bartek: "one calm line") -- replaces
+        // the old two-paragraph emoji empty state; the full vault is always
+        // right below in ItemListView's "Wszystkie" section.
+        <p className="px-1 py-2 text-sm text-base-content/50" data-testid="autofill-empty-state">
+          {t(locale, "onThisPage.noMatch")}
+        </p>
+      ) : (
+        <div
+          className="flex max-h-[140px] min-h-[52px] flex-col divide-y divide-base-300 overflow-y-auto"
+          data-testid="on-this-page-list"
+        >
+          {matches.map((match: AutofillMatch) =>
+            match.kind === "totp" ? (
+              <TotpFillRow
+                key={match.itemId}
+                locale={locale}
+                match={match}
+                hasOtpField={detected.totp}
+                onFill={fill}
+                onCopyTotp={handleCopyTotp}
+                onPeekTotp={peekTotp}
+                onFillFailed={() => setFillFailed(true)}
+              />
+            ) : (
+              <AutofillItemRow
+                key={match.itemId}
+                locale={locale}
+                match={match}
+                onFill={fill}
+                onFillFailed={() => setFillFailed(true)}
+              />
+            ),
+          )}
+        </div>
+      )}
 
-      {/* Phase 9's real popup has NO toast primitive yet (confirmed by grep
-          at exec time -- see this plan's SUMMARY "Real Phase 9 shapes
-          found"), so this is a minimal, self-contained, auto-dismissing
-          inline alert rather than a second toast SYSTEM (10-UI-SPEC.md's
-          "do not invent a second toast system" is about not building a
-          competing global dispatcher -- this is scoped to this section
-          alone and disappears on its own). */}
+      {/* Phase 9's real popup has NO toast primitive (see original grep
+          note preserved in git history) -- this stays a minimal,
+          self-contained, auto-dismissing inline alert rather than a second
+          toast SYSTEM. */}
       {fillFailed ? (
         <div className="alert alert-error text-sm" data-testid="autofill-fill-failed-toast">
           <span>{t(locale, "fill.failed")}</span>

@@ -51,11 +51,13 @@ export const AUTOFILL_DICTIONARY = {
     en: `Fill identity details for "{label}" on this page?`,
   },
 
-  "empty.heading": { pl: "Nic tu nie pasuje 🤷", en: "Nothing matches here" },
-  "empty.body": {
-    pl: "Żaden zapisany item nie pasuje do tej strony. Przeszukaj cały vault poniżej albo dodaj nowy.",
-    en: "No saved item matches this page. Search your whole vault below, or add a new one.",
-  },
+  // NordPass two-section redesign (Bartek 2026-07-16,
+  // 10-POPUP-REDESIGN-SPEC.md): replaces the old two-line emoji empty block
+  // ("empty.heading"/"empty.body") -- vault non-empty but nothing matches
+  // the active site now gets ONE compact, calm line; the full vault is
+  // always visible right below in ItemListView's "Wszystkie" section, so a
+  // second empty state pointing the user "down below" is no longer needed.
+  "onThisPage.noMatch": { pl: "Nic nie pasuje do tej strony", en: "Nothing matches this page" },
 
   "restricted.heading": {
     pl: "Autofill niedostępny na tej stronie",

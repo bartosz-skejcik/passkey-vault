@@ -111,7 +111,7 @@ describe("ItemListView", () => {
     await waitFor(() => expect(screen.getByText("New Item")).toBeInTheDocument());
   });
 
-  it("Test 3: zero items renders the vault-empty copy; a non-empty search with zero matches renders the reused no-matches line", async () => {
+  it("Test 3a: a truly empty vault renders the SINGLE vault-empty copy — even while a search query is typed (Bartek's single-empty-state redesign)", async () => {
     mockSendMessage.mockImplementation(async (message: { kind: string }) => {
       if (message.kind === "vault.list") return { items: [], folders: [] };
       if (message.kind === "session.status") {
@@ -123,6 +123,33 @@ describe("ItemListView", () => {
 
     render(<ItemListView locale="en" onSelectItem={vi.fn()} />);
     await waitFor(() => expect(screen.getByText(/empty so far/i)).toBeInTheDocument());
+
+    // Typing a query does NOT flip an empty vault to a "no matches" line —
+    // there is nothing to search; the one empty state stands (no double state).
+    fireEvent.change(screen.getByPlaceholderText(/search|szukaj/i), { target: { value: "zzz" } });
+    expect(screen.getByText(/empty so far/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no matches for "zzz"/i)).not.toBeInTheDocument();
+  });
+
+  it("Test 3b: a non-empty vault with a zero-match search renders the no-matches line in the 'Wszystkie' section", async () => {
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "vault.list") {
+        return {
+          items: [
+            { id: "1", revision: 1, fields: { type: "login", name: "GitHub", folderId: null, tags: [], username: "u", password: "p", urls: [], notes: "" } },
+          ],
+          folders: [],
+        };
+      }
+      if (message.kind === "session.status") {
+        return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
+      }
+      if (message.kind === "autofill.match") return autofillMatchRestricted();
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(<ItemListView locale="en" onSelectItem={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText("GitHub")).toBeInTheDocument());
 
     fireEvent.change(screen.getByPlaceholderText(/search|szukaj/i), { target: { value: "zzz" } });
     expect(screen.getByText(/no matches for "zzz"/i)).toBeInTheDocument();
