@@ -110,6 +110,47 @@ export const AUTOFILL_DICTIONARY = {
   // existing entries -- not a new translation, just re-scoped.
   "aria.showPassword": { pl: "Pokaż hasło", en: "Show password" },
   "aria.hidePassword": { pl: "Ukryj hasło", en: "Hide password" },
+
+  // --- Save/update toast (Phase 11, Plan 11-05, Surface 2, CAP-02/CAP-03)
+  // Verbatim from 11-UI-SPEC.md's Copywriting Contract table.
+  "save.title": { pl: "Zapisać to hasło do vaulta?", en: "Save this password to your vault?" },
+  "save.body": { pl: "Dla {origin} · {username}", en: "For {origin} · {username}" },
+  "save.confirm": { pl: "Zapisz", en: "Save" },
+  "save.dismiss": { pl: "Nie teraz", en: "Not now" },
+  "save.saved": { pl: "Zapisano", en: "Saved" },
+  "save.failed": {
+    pl: "Nie udało się zapisać. Sprawdź połączenie i spróbuj ponownie.",
+    en: "Couldn't save. Check your connection and try again.",
+  },
+  "save.retry": { pl: "Spróbuj ponownie", en: "Retry" },
+  "update.title": { pl: "Zaktualizować zapisane hasło?", en: "Update your saved password?" },
+  "update.body": {
+    pl: "Wygląda na to, że zmieniłeś hasło dla {origin} · {username}",
+    en: "Looks like you changed the password for {origin} · {username}",
+  },
+  "update.confirm": { pl: "Zaktualizuj", en: "Update" },
+  "update.dismiss": { pl: "Nie teraz", en: "Not now" },
+  "update.updated": { pl: "Zaktualizowano", en: "Updated" },
+  "update.conflict": {
+    pl: "Ten login zmienił się na innym urządzeniu. Odśwież i spróbuj ponownie.",
+    en: "This login changed on another device. Refresh and try again.",
+  },
+  "toast.closeAria": { pl: "Zamknij powiadomienie", en: "Close notification" },
+
+  // --- Origin-mismatch escalation modal (Phase 11, Plan 11-05, Surface 3,
+  // CAP-02/CAP-03, ROADMAP SC#4, D-06) -- verbatim from 11-UI-SPEC.md's
+  // Copywriting Contract table.
+  "mismatch.title": { pl: "To pole jest na innej domenie", en: "This field is on a different domain" },
+  "mismatch.body": {
+    pl: `Formularz, z którego pochodzi to hasło, działa na {frameOrigin} — inaczej niż strona, którą widzisz ({topOrigin}). Zapisanie tego hasła przypisze je do {frameOrigin}.`,
+    en: `The form this password came from runs on {frameOrigin} — not the page you're viewing ({topOrigin}). Saving will attribute this password to {frameOrigin}.`,
+  },
+  "mismatch.confirm": { pl: "Zapisz mimo to", en: "Save anyway" },
+  "mismatch.cancel": { pl: "Anuluj", en: "Cancel" },
+  "mismatch.warningAria": {
+    pl: "Ostrzeżenie o niezgodności domeny",
+    en: "Domain mismatch warning",
+  },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof AUTOFILL_DICTIONARY): string {
