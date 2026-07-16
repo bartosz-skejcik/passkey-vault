@@ -44,6 +44,11 @@
 
 - None required to start planning — CAP-01/02/03 requirement text, ROADMAP success criteria, and the v0.2 research already pin the necessary product behavior. Any UX-polish question (e.g., prompt placement/animation, exact save-toast copy) can be raised at `/gsd-discuss-phase`-style checkpoints during execution if the planner finds a genuine open call, but nothing blocks starting the PLAN.
 
+## ADDENDUM 2026-07-16 — decyzje Bartka na starcie wykonania fazy 11
+
+- **D-10 (JĘZYK UI — rozstrzygnięte):** UI popupu i powierzchni in-page **idzie za językiem przeglądarki** (status quo: `navigator.language` → pl jeśli polska, inaczej en). NIE wymuszamy polskiego na sztywno. Wszystkie nowe stringi fazy 11 muszą mieć komplet pl+en w słowniku i18n, tak jak dotychczas. Przełącznik języka w ustawieniach = ewentualny przyszły task, poza scope 11.
+- **D-11 (SUGGESTED BEZ FORMULARZA — nowy scope):** Sekcja "Na tej stronie" w popupie ma pokazywać itemy pasujące po originie także na stronach **bez wykrytego formularza logowania** (odroczone z fazy 10). Wchodzi jako dodatkowy plan **11-06** (rozłączny z CAP-01/02/03): wydzielenie czystego modułu maskowania (maskedHintFor) do `lib/`, zdjęcie bramki detekcji dla popupowej sekcji suggested (bramka detekcji ZOSTAJE dla powierzchni in-page — overlay nadal pokazuje się tylko przy formularzu). Origin-match pozostaje warunkiem koniecznym.
+
 ## Deferred Ideas
 
 - Card and identity item capture/save-prompt (only login/password capture is in v0.2 scope; card/identity autofill exists in Phase 10 but capture-on-submit for those item types is not a v0.2 requirement).
