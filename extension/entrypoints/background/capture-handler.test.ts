@@ -5,7 +5,18 @@
 // Mirrors autofill-frame.test.ts's own precedent: frame-guard.ts's real
 // itemMatchesOrigin runs UNMOCKED (this suite exercises the actual
 // origin-matching gate reused from frame-guard.ts, not a stand-in for it).
+// Only vault-session (ensureHydrated), the wasm-loader crypto choke-point
+// (encryptItem), and vault-api's createItem/updateItem are mocked -- these
+// touch chrome.storage.session / the WASM instance / the network, which
+// this suite has no interest in exercising for real.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const hoisted = vi.hoisted(() => ({
+  mockEnsureHydrated: vi.fn(),
+  mockEncryptItem: vi.fn(),
+  mockCreateItem: vi.fn(),
+  mockUpdateItem: vi.fn(),
+}));
 
 vi.mock("wxt/browser", () => ({
   browser: {
@@ -16,7 +27,56 @@ vi.mock("wxt/browser", () => ({
   },
 }));
 
-import { classifySubmit } from "./capture-handler";
+vi.mock("./vault-session", () => ({
+  ensureHydrated: hoisted.mockEnsureHydrated,
+}));
+
+vi.mock("../../lib/crypto/wasm-loader", () => ({
+  encryptItem: hoisted.mockEncryptItem,
+}));
+
+vi.mock("./vault-api", () => ({
+  createItem: hoisted.mockCreateItem,
+  updateItem: hoisted.mockUpdateItem,
+}));
+
+// vault-store.ts's module-level side effect (subscribeSessionLockState at
+// import time, wired to sync-client/vault-session/browser.runtime) has
+// nothing to do with what this suite exercises (splitCombinedEncryptedItem/
+// RevisionConflictError/isConflictError are pure). Mocked here with real
+// re-implementations of just those three exports so importing the module
+// for real (and dragging in its transitive sync-client/vault-session/wasm
+// import graph, which errors on a checkout with no built WASM artifact) is
+// never necessary -- mirrors generate-handler.test.ts's own precedent of
+// mocking a sibling module purely to cut off an unrelated eager import.
+vi.mock("./vault-store", () => ({
+  splitCombinedEncryptedItem: (combinedJson: string) => {
+    const combined = JSON.parse(combinedJson) as { enc_key: unknown; enc_data: unknown };
+    return {
+      encKey: JSON.stringify(combined.enc_key),
+      encData: JSON.stringify(combined.enc_data),
+    };
+  },
+  RevisionConflictError: class RevisionConflictError extends Error {
+    constructor() {
+      super("item revision changed elsewhere — refresh and try again");
+      this.name = "RevisionConflictError";
+    }
+  },
+  isConflictError: (err: unknown) =>
+    typeof err === "object" &&
+    err !== null &&
+    "status" in err &&
+    (err as { status: unknown }).status === 409,
+}));
+
+import {
+  classifySubmit,
+  confirmNewLogin,
+  confirmUpdateLogin,
+  LockedVaultError,
+} from "./capture-handler";
+import { RevisionConflictError } from "./vault-store";
 import type { VaultItem } from "../../lib/vault/types";
 
 function loginItem(id: string, urls: string[], username: string, password: string): VaultItem {
@@ -148,5 +208,98 @@ describe("classifySubmit", () => {
     );
 
     expect(result.action).toBe("new");
+  });
+});
+
+describe("confirmNewLogin", () => {
+  it("persists via encryptItem -> splitCombinedEncryptedItem -> createItem and returns revision 1", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockEncryptItem.mockReturnValue(
+      JSON.stringify({ enc_key: { a: 1 }, enc_data: { b: 2 } }),
+    );
+    hoisted.mockCreateItem.mockResolvedValue({
+      id: "new-id",
+      revision: 1,
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+
+    const result = await confirmNewLogin({
+      frameOrigin: "https://a.example",
+      username: "user@example.com",
+      password: "pw1",
+    });
+
+    expect(result.revision).toBe(1);
+    expect(hoisted.mockCreateItem).toHaveBeenCalledTimes(1);
+    const [, encKey, encData] = hoisted.mockCreateItem.mock.calls[0] as [string, string, string];
+    expect(JSON.parse(encKey)).toEqual({ a: 1 });
+    expect(JSON.parse(encData)).toEqual({ b: 2 });
+  });
+
+  it("throws LockedVaultError when ensureHydrated() resolves null (simulated idle-kill), never calling encryptItem", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(null);
+
+    await expect(
+      confirmNewLogin({
+        frameOrigin: "https://a.example",
+        username: "user@example.com",
+        password: "pw1",
+      }),
+    ).rejects.toThrow(LockedVaultError);
+    expect(hoisted.mockEncryptItem).not.toHaveBeenCalled();
+    expect(hoisted.mockCreateItem).not.toHaveBeenCalled();
+  });
+});
+
+describe("confirmUpdateLogin", () => {
+  it("persists at currentRevision + 1 via updateItem", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockEncryptItem.mockReturnValue(
+      JSON.stringify({ enc_key: { a: 1 }, enc_data: { b: 2 } }),
+    );
+    hoisted.mockUpdateItem.mockResolvedValue({ revision: 3, updated_at: "2026-01-01T00:00:00Z" });
+
+    const result = await confirmUpdateLogin(
+      "item-1",
+      { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+      2,
+    );
+
+    expect(result.revision).toBe(3);
+    expect(hoisted.mockUpdateItem).toHaveBeenCalledWith(
+      "item-1",
+      expect.any(String),
+      expect.any(String),
+      2,
+    );
+  });
+
+  it("a 409 from updateItem throws RevisionConflictError instead of silently overwriting", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockEncryptItem.mockReturnValue(
+      JSON.stringify({ enc_key: { a: 1 }, enc_data: { b: 2 } }),
+    );
+    hoisted.mockUpdateItem.mockRejectedValue({ status: 409 });
+
+    await expect(
+      confirmUpdateLogin(
+        "item-1",
+        { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+        2,
+      ),
+    ).rejects.toThrow(RevisionConflictError);
+  });
+
+  it("throws LockedVaultError when ensureHydrated() resolves null, never calling updateItem", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(null);
+
+    await expect(
+      confirmUpdateLogin(
+        "item-1",
+        { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+        2,
+      ),
+    ).rejects.toThrow(LockedVaultError);
+    expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
   });
 });
