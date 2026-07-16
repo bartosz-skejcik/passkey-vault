@@ -212,7 +212,21 @@ export async function handleAutofillMatch(
     if (kind === null) {
       continue; // "note" -- no fill target
     }
-    if (!detectResponse.detected[kind]) {
+    // D-11 (11-CONTEXT.md ADDENDUM, Bartek 2026-07-16): a LOGIN item is
+    // POPUP-channel-only exempt from the detected[kind] gate -- origin
+    // match alone is sufficient to suggest a saved credential even when
+    // the current page has no detected login form (e.g. a dashboard after
+    // signing in), matching NordPass. Card/identity stay detection-gated
+    // here because they are NOT origin-bound (itemMatchesOrigin returns
+    // true unconditionally for them) -- un-gating them would surface every
+    // card/identity on every page. TOTP keeps the unchanged 10-08 policy
+    // (issuer-match AND detected.totp). This exemption is deliberately
+    // local to handleAutofillMatch: the overlay channel (autofill-frame.ts
+    // handleMatchFrame) reads its OWN `message.detected[kind]` from the
+    // caller's frame and shares no code path with this loop, so it is
+    // structurally unaffected -- pinned by a dedicated test
+    // (autofill-match.test.ts Test 8).
+    if (kind !== "login" && !detectResponse.detected[kind]) {
       continue; // content-relay didn't see a matching field family on this page
     }
     if (!itemMatchesOrigin(item, target.origin)) {
