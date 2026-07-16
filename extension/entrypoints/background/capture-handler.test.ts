@@ -16,6 +16,7 @@ const hoisted = vi.hoisted(() => ({
   mockEncryptItem: vi.fn(),
   mockCreateItem: vi.fn(),
   mockUpdateItem: vi.fn(),
+  mockGetItems: vi.fn(),
 }));
 
 vi.mock("wxt/browser", () => ({
@@ -68,6 +69,7 @@ vi.mock("./vault-store", () => ({
     err !== null &&
     "status" in err &&
     (err as { status: unknown }).status === 409,
+  getItems: hoisted.mockGetItems,
 }));
 
 import {
@@ -75,6 +77,7 @@ import {
   confirmNewLogin,
   confirmUpdateLogin,
   LockedVaultError,
+  OwnershipMismatchError,
 } from "./capture-handler";
 import { RevisionConflictError } from "./vault-store";
 import type { VaultItem } from "../../lib/vault/types";
@@ -252,8 +255,11 @@ describe("confirmNewLogin", () => {
 });
 
 describe("confirmUpdateLogin", () => {
-  it("persists at currentRevision + 1 via updateItem", async () => {
+  it("persists at currentRevision + 1 via updateItem when the target item origin/username-matches (WR-04 re-check)", async () => {
     hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw"),
+    ]);
     hoisted.mockEncryptItem.mockReturnValue(
       JSON.stringify({ enc_key: { a: 1 }, enc_data: { b: 2 } }),
     );
@@ -276,6 +282,9 @@ describe("confirmUpdateLogin", () => {
 
   it("a 409 from updateItem throws RevisionConflictError instead of silently overwriting", async () => {
     hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw"),
+    ]);
     hoisted.mockEncryptItem.mockReturnValue(
       JSON.stringify({ enc_key: { a: 1 }, enc_data: { b: 2 } }),
     );
@@ -300,6 +309,68 @@ describe("confirmUpdateLogin", () => {
         2,
       ),
     ).rejects.toThrow(LockedVaultError);
+    expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
+  });
+
+  it("WR-04: throws OwnershipMismatchError -- never calling updateItem -- when itemId doesn't exist in the current cache", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([]);
+
+    await expect(
+      confirmUpdateLogin(
+        "item-1",
+        { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+        2,
+      ),
+    ).rejects.toThrow(OwnershipMismatchError);
+    expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
+  });
+
+  it("WR-04: throws OwnershipMismatchError when itemId exists but belongs to a DIFFERENT origin (itemId round-tripped through an untrusted closure)", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      loginItem("item-1", ["https://other.example/login"], "user@example.com", "old-pw"),
+    ]);
+
+    await expect(
+      confirmUpdateLogin(
+        "item-1",
+        { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+        2,
+      ),
+    ).rejects.toThrow(OwnershipMismatchError);
+    expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
+  });
+
+  it("WR-04: throws OwnershipMismatchError when itemId exists at the right origin but a DIFFERENT username", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      loginItem("item-1", ["https://a.example/login"], "someone-else@example.com", "old-pw"),
+    ]);
+
+    await expect(
+      confirmUpdateLogin(
+        "item-1",
+        { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+        2,
+      ),
+    ).rejects.toThrow(OwnershipMismatchError);
+    expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
+  });
+
+  it("WR-04: throws OwnershipMismatchError when itemId belongs to a non-login item", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      { id: "item-1", revision: 1, fields: { type: "note", name: "Note", folderId: null, tags: [], body: "hi" } },
+    ]);
+
+    await expect(
+      confirmUpdateLogin(
+        "item-1",
+        { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+        2,
+      ),
+    ).rejects.toThrow(OwnershipMismatchError);
     expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
   });
 });
