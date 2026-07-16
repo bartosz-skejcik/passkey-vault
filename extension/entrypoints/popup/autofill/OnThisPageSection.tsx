@@ -32,6 +32,17 @@
 // no-match (silent refusal, 10-UI-SPEC.md's Copywriting Contract) --
 // `pageState === "ok"` with an empty `matches` prop always renders the same
 // compact one-line hint, never a "blocked for security" banner.
+//
+// 11-09 addendum, ROUND 2 (Bartek 2026-07-16, live-review "nie powinno być
+// 2 scrolli pod sekcjami"): the match-row list below NO LONGER owns its own
+// bounded `max-h`/`overflow-y-auto` scroll box -- ItemListView.tsx now
+// renders this component's normal (non-banner) output INSIDE its own ONE
+// shared scroll container, alongside "Wszystkie", section under section.
+// A second independent scroll region here would have reintroduced exactly
+// the nested-scroll bug this whole addendum exists to fix. The
+// `pageState === "restricted"/"unreachable"` banner branch is unaffected --
+// ItemListView renders that one PINNED, outside the scroll container, since
+// it's static content, never a scrollable list.
 import { useEffect, useState } from "react";
 import { AlertTriangle, Globe } from "lucide-react";
 import AutofillItemRow from "./AutofillItemRow";
@@ -155,8 +166,12 @@ export default function OnThisPageSection({
           {t(locale, "onThisPage.noMatch")}
         </p>
       ) : (
+        // 11-09 addendum, ROUND 2: no `max-h`/`overflow-y-auto` here
+        // anymore -- this list is now a plain, unbounded flex column.
+        // ItemListView.tsx's own shared scroll container is what scrolls
+        // it (together with "Wszystkie" below), never this element itself.
         <div
-          className="flex max-h-[140px] min-h-[52px] flex-col divide-y divide-base-300 overflow-y-auto"
+          className="flex min-h-[52px] flex-col divide-y divide-base-300"
           data-testid="on-this-page-list"
         >
           {matches.map((match: AutofillMatch) =>

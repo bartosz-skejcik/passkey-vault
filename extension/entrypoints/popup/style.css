@@ -58,24 +58,20 @@ body {
   font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
-/* 11-09 live-review addendum (Bartek 2026-07-16): completes the
-   fixed-height popup shell index.html's `body` inline style starts
-   (height: 600px; overflow: hidden). `html` gets the same overflow
-   guard defensively (belt-and-suspenders -- body's explicit height
-   already prevents document growth, but a stray margin/box-sizing edge
-   case should never be able to reopen a page-level scrollbar). `#root`
-   propagates body's fixed 600px down as a definite height (`height:
-   100%` resolves against body's own explicit height) so every view's
-   root element can opt into `h-full`/`flex-1 min-h-0` and get a real,
-   percentage-resolvable box to fill -- without this, Tailwind's h-full
-   on a view's root would resolve against an undefined ancestor height
-   and silently do nothing. */
+/* 11-09 live-review addendum (Bartek 2026-07-16), CORRECTED after a
+   regression report: `html` keeps the overflow guard (belt-and-
+   suspenders alongside `body`'s own `overflow: hidden` in index.html --
+   neither carries an explicit height anymore, so the outer document
+   scrolls Chrome's own popup auto-sizing back into every SHORT view
+   (unlock/server-config/loading/detail), matching pre-11-09 behavior for
+   those. `#root { height: 100% }` was removed here -- with `body` no
+   longer having a definite height, that rule resolved against nothing
+   (a percentage height needs a definite-height ancestor per the CSS
+   spec) and was dead weight now that only ONE view (the item list) needs
+   a hard-pinned height, which it gets locally from its own wrapper in
+   App.tsx (`h-[600px]`) instead of cascading down from `body`. */
 html {
   overflow: hidden;
-}
-
-#root {
-  height: 100%;
 }
 
 /* 11-09 live-review addendum: shared thin, token-colored scrollbar for

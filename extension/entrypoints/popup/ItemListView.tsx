@@ -163,6 +163,32 @@ export default function ItemListView({
   // duplikowane").
   const restResults = results.filter((item) => !suggestedIds.has(item.id));
 
+  // 11-09 addendum, ROUND 2 (Bartek 2026-07-16, further live-review
+  // clarification: "nie powinno być 2 scrolli pod sekcjami -- jeden
+  // kontener scrollowalny w środku z tekstami od sekcji i jedna sekcja
+  // pod drugą z itemkami"). The restricted/unreachable pageState renders
+  // a plain static banner (OnThisPageSection's own early-return branch) --
+  // that stays PINNED above the scroll region below, same as the top bar/
+  // search/footer, since it is not scrollable content. Every OTHER
+  // pageState renders "Na tej stronie"'s real heading+rows/hint, which now
+  // scrolls TOGETHER with "Wszystkie" inside the one shared scroll
+  // container -- computed once here so the single `<OnThisPageSection>`
+  // call site below can be rendered from either branch without duplicating
+  // its prop list.
+  const isBannerPageState = autofill.pageState === "restricted" || autofill.pageState === "unreachable";
+  const onThisPageSection = (
+    <OnThisPageSection
+      locale={locale}
+      pageState={autofill.pageState}
+      origin={autofill.origin}
+      detected={autofill.detected}
+      matches={autofill.matches}
+      fill={autofill.fill}
+      copyTotp={autofill.copyTotp}
+      peekTotp={autofill.peekTotp}
+    />
+  );
+
   return (
     // `relative` anchors the FAB + its menu at POPUP level, deliberately
     // OUTSIDE the scrolling list below: an `overflow-y-auto` ancestor forms
@@ -171,19 +197,18 @@ export default function ItemListView({
     // were ever visible, which read as "the menu only has Identity+Note").
     //
     // 11-09 live-review addendum (Bartek 2026-07-16, popup scroll-in-
-    // scroll): this root is now `flex-1 min-h-0` -- it fills whatever
-    // vertical space App.tsx's fixed-height shell hands it (all of it,
-    // unless the enroll-prompt banner is also showing) and `overflow-
-    // hidden` so it can never scroll AS A WHOLE. Everything above the
-    // "Wszystkie" list (top bar, search, the restricted-page banner
-    // OnThisPageSection renders in its `pageState==="restricted"` branch,
-    // "Na tej stronie") plus the footer below it is a normal, naturally-
-    // sized flex child -- PINNED simply by virtue of not being the one
-    // `flex-1 min-h-0` child. The "Wszystkie" row list is that one child:
-    // the ONLY element in this view with `overflow-y-auto`. That is the
-    // fix -- the old `max-h-[440px]` guess on that list, stacked on top of
-    // the outer popup page ALSO scrolling (no fixed shell existed before
-    // this addendum), was Bartek's literal "scroll-in-scroll" report.
+    // scroll), ROUND 2 CORRECTED: this root is `flex-1 min-h-0` -- it
+    // fills whatever vertical space App.tsx's `h-[600px]` list-view
+    // wrapper hands it (all of it, unless the enroll-prompt banner is also
+    // showing) and `overflow-hidden` so it can never scroll AS A WHOLE.
+    // Top bar, search, the restricted-page banner (when that pageState
+    // applies), and the footer are normal, naturally-sized flex children --
+    // PINNED simply by virtue of not being the one `flex-1 min-h-0` child.
+    // EVERYTHING else -- "Na tej stronie"'s heading+rows/hint AND
+    // "Wszystkie"'s heading+rows -- lives inside that ONE `flex-1 min-h-0
+    // overflow-y-auto` child, section under section, per Bartek's round-2
+    // clarification ("jeden kontener scrollowalny w środku"). No element in
+    // this view has an independent SECOND scroll box anymore.
     <div className="relative flex min-h-0 w-[380px] flex-1 flex-col gap-2 overflow-hidden p-4">
       <div className="flex items-center justify-between gap-2">
         <button
@@ -232,85 +257,83 @@ export default function ItemListView({
         </div>
       ) : (
         <>
-          <div className="pb-1">
-            <OnThisPageSection
-              locale={locale}
-              pageState={autofill.pageState}
-              origin={autofill.origin}
-              detected={autofill.detected}
-              matches={autofill.matches}
-              fill={autofill.fill}
-              copyTotp={autofill.copyTotp}
-              peekTotp={autofill.peekTotp}
-            />
-          </div>
+          {/* Restricted/unreachable pageState's plain warning banner is the
+              ONE piece of "Na tej stronie" content that stays PINNED,
+              outside the scroll region below -- it's static, not a list, so
+              it belongs with the top bar/search/footer, not the scrolling
+              item content. */}
+          {isBannerPageState ? <div className="pb-1">{onThisPageSection}</div> : null}
 
-          {/* "Wszystkie" section — the rest of the vault, dedup'd against the
-              suggestions above. Label-role weight (14px/400), not a heavy
-              heading (Bartek: the bold header "nie pasuje tutaj"). Hidden when
-              there is nothing left to show and no active query, so it never
-              renders an orphan header over an empty list. */}
-          {restResults.length > 0 || trimmedQuery !== "" ? (
-            // 11-09 addendum: this wrapper is itself `flex-1 min-h-0` --
-            // the header (h2) below stays pinned at its natural height,
-            // handing 100% of whatever remains to the actual scroll box.
-            <div className="flex min-h-0 flex-1 flex-col gap-1">
-              <h2 className="px-1 text-sm font-normal text-base-content/60">
-                {t(locale, "vault.allItemsHeading")}
-              </h2>
-              {/* THE popup's one scrollable region (Bartek 2026-07-16
-                  live-review, "no scroll-in-scroll"). Replaces the old
-                  hand-guessed `min-h-[220px] max-h-[440px]` (which, added
-                  to the header/search/on-this-page/footer above and below
-                  it, actually exceeded the fixed 600px shell -- the real
-                  cause of the outer page needing to scroll too) with
-                  `flex-1 min-h-0`: it fills exactly whatever space is left
-                  after every pinned sibling, no more, no less, so IT is
-                  the only element that ever needs `overflow-y-auto`.
-                  pv-scroll-thin (style.css) matches 11-09's own in-page
-                  .pv-list scrollbar recipe. */}
-              <div className="flex min-h-0 flex-1 flex-col divide-y divide-base-300 overflow-y-auto pv-scroll-thin">
-                {trimmedQuery !== "" && restResults.length === 0 ? (
-                  <p className="px-4 py-8 text-center text-base text-base-content/60">
-                    {interpolate(t(locale, "search.emptyResults"), { query: trimmedQuery })}
-                  </p>
-                ) : (
-                  restResults.map((item) => {
-                    const Icon = TYPE_ICON[item.fields.type];
-                    const typeLabel = t(locale, TYPE_LABEL_KEY[item.fields.type]);
-                    const subtitle =
-                      item.fields.type === "login"
-                        ? item.fields.username
-                        : item.fields.type === "totp"
-                          ? item.fields.issuer || typeLabel
-                          : typeLabel;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        // 11-09: pv-row-hover (style.css) replaces the old
-                        // hover:bg-base-content/[0.06] one-off -- same
-                        // token direction, now shared verbatim with
-                        // AutofillItemRow.tsx's "Na tej stronie" rows plus
-                        // the button-style border+press affordance Bartek
-                        // asked for (flat at rest, only on hover).
-                        className="flex min-h-[48px] items-center gap-2 rounded-field px-1 py-2 text-left pv-row-hover"
-                        onClick={() => onSelectItem(item)}
-                      >
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-base-200 text-base-content/70">
-                          <Icon size={18} aria-hidden="true" />
-                        </span>
-                        <span className="flex min-w-0 flex-col">
-                          <span className="truncate text-base">{item.fields.name}</span>
-                          <span className="truncate text-sm text-base-content/60">{subtitle}</span>
-                        </span>
-                      </button>
-                    );
-                  })
-                )}
+          {/* THE popup's one scrollable region (Bartek 2026-07-16
+              live-review round 2: "jeden kontener scrollowalny w środku z
+              tekstami od sekcji i jedna sekcja pod drugą z itemkami").
+              "Na tej stronie" (heading + rows/hint, when NOT a banner
+              pageState) and "Wszystkie" (heading + rows) are section-under-
+              section SIBLINGS inside this ONE container -- both headings
+              scroll away with their own content (deliberately not sticky,
+              per Bartek's "z tekstami od sekcji"). Replaces the earlier
+              two-scrollbox version (OnThisPageSection's own bounded
+              max-h-[140px] internal scroll + this list's independent
+              flex-1) with a single `overflow-y-auto`, `flex-1 min-h-0` so
+              it fills exactly whatever space is left after every pinned
+              sibling. pv-scroll-thin (style.css) matches 11-09's own
+              in-page .pv-list scrollbar recipe. */}
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pv-scroll-thin">
+            {isBannerPageState ? null : onThisPageSection}
+
+            {/* "Wszystkie" section — the rest of the vault, dedup'd against the
+                suggestions above. Label-role weight (14px/400), not a heavy
+                heading (Bartek: the bold header "nie pasuje tutaj"). Hidden when
+                there is nothing left to show and no active query, so it never
+                renders an orphan header over an empty list. */}
+            {restResults.length > 0 || trimmedQuery !== "" ? (
+              <div className="flex flex-col gap-1">
+                <h2 className="px-1 text-sm font-normal text-base-content/60">
+                  {t(locale, "vault.allItemsHeading")}
+                </h2>
+                <div className="flex flex-col divide-y divide-base-300">
+                  {trimmedQuery !== "" && restResults.length === 0 ? (
+                    <p className="px-4 py-8 text-center text-base text-base-content/60">
+                      {interpolate(t(locale, "search.emptyResults"), { query: trimmedQuery })}
+                    </p>
+                  ) : (
+                    restResults.map((item) => {
+                      const Icon = TYPE_ICON[item.fields.type];
+                      const typeLabel = t(locale, TYPE_LABEL_KEY[item.fields.type]);
+                      const subtitle =
+                        item.fields.type === "login"
+                          ? item.fields.username
+                          : item.fields.type === "totp"
+                            ? item.fields.issuer || typeLabel
+                            : typeLabel;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          // 11-09: pv-row-hover (style.css) replaces the old
+                          // hover:bg-base-content/[0.06] one-off -- same
+                          // token direction, now shared verbatim with
+                          // AutofillItemRow.tsx's "Na tej stronie" rows plus
+                          // the button-style border+press affordance Bartek
+                          // asked for (flat at rest, only on hover).
+                          className="flex min-h-[48px] items-center gap-2 rounded-field px-1 py-2 text-left pv-row-hover"
+                          onClick={() => onSelectItem(item)}
+                        >
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-base-200 text-base-content/70">
+                            <Icon size={18} aria-hidden="true" />
+                          </span>
+                          <span className="flex min-w-0 flex-col">
+                            <span className="truncate text-base">{item.fields.name}</span>
+                            <span className="truncate text-sm text-base-content/60">{subtitle}</span>
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </>
       )}
 

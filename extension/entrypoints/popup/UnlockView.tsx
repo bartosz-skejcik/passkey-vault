@@ -191,11 +191,14 @@ export default function UnlockView({
     }
   }
 
-  // 11-09 addendum: h-full + overflow-y-auto -- see ServerConfigView's
-  // identical comment. A single whole-view scroll region, no nested
-  // doubles, within the fixed popup shell (index.html/style.css).
+  // 11-09 addendum, CORRECTED (regression report -- this exact view was
+  // Bartek's screenshot: a huge empty gap below "Change server" once
+  // `h-full` pinned it to 600px). See ServerConfigView's identical
+  // comment: `max-h-[600px] overflow-y-auto` lets Chrome auto-size this
+  // short form to its natural height, only becoming a scroll region in
+  // the rare case content exceeds the popup's own height cap.
   return (
-    <div className="flex h-full w-[380px] flex-col gap-4 overflow-y-auto p-4">
+    <div className="flex w-[380px] max-h-[600px] flex-col gap-4 overflow-y-auto p-4">
       {wasAutoLocked ? (
         <p className="text-sm text-base-content/70">{t(locale, "unlock.sessionLockedNotice")}</p>
       ) : null}

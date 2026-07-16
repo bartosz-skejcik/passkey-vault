@@ -119,12 +119,12 @@ export default function App() {
   }
 
   if (view.kind === "loading") {
-    // 11-09 addendum: h-full (not the old min-h-[200px]) fills the fixed
-    // popup shell (index.html/style.css) so the spinner centers within
-    // the SAME 600px box every other view renders into -- no resize flash
-    // when the next view swaps in.
+    // 11-09 addendum, CORRECTED (regression report): back to its
+    // pre-addendum natural height (min-h-[200px], not h-full) -- only the
+    // item-LIST view needs a hard-pinned 600px shell; every other view,
+    // including this one, keeps Chrome's own popup auto-sizing.
     return (
-      <div className="flex h-full w-[380px] flex-col items-center justify-center gap-2 p-4">
+      <div className="flex min-h-[200px] w-[380px] flex-col items-center justify-center gap-2 p-4">
         <span className="loading loading-spinner" aria-hidden="true" />
         <p className="text-base text-base-content/70">{t(locale, "loading.vault")}</p>
       </div>
@@ -163,16 +163,18 @@ export default function App() {
     );
   }
 
-  // 11-09 addendum (Bartek live-review, popup scroll-in-scroll): h-full +
-  // overflow-hidden pins this wrapper to the fixed popup shell -- it never
-  // scrolls itself. The enroll-prompt banner (when shown) is a normal,
-  // naturally-sized flex child above ItemListView; ItemListView is handed
-  // whatever vertical space remains (its own root is `flex-1 min-h-0`) so
-  // its internal PINNED-header/ONE-scroll-region layout still gets an
-  // exact, definite height to divide up regardless of the banner's
-  // presence.
+  // 11-09 addendum (Bartek live-review, popup scroll-in-scroll), CORRECTED
+  // after a regression report (the fixed height must NOT live on `body` --
+  // that forced every other view to also render at 600px): `h-[600px]` is
+  // now pinned LOCALLY, right here, only for the item-list state. This is
+  // the ONE view that actually needs a hard-pinned shell (its internal
+  // PINNED-header/ONE-scroll-region layout, see ItemListView.tsx); every
+  // other view keeps Chrome's natural popup auto-sizing. The enroll-prompt
+  // banner (when shown) is a normal, naturally-sized flex child above
+  // ItemListView; ItemListView is handed whatever vertical space remains
+  // within these fixed 600px (its own root is `flex-1 min-h-0`).
   return (
-    <div className="flex h-full w-[380px] flex-col gap-2 overflow-hidden">
+    <div className="flex h-[600px] w-[380px] flex-col gap-2 overflow-hidden">
       {showEnrollPrompt ? (
         <div className="p-2">
           <EnrollExtPasskeyPrompt locale={locale} onDone={() => setShowEnrollPrompt(false)} />

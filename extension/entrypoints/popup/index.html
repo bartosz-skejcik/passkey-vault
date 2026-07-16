@@ -11,17 +11,19 @@
   first ReactDOM render, then keeps it live via watchMirroredTheme(). A
   hardcoded default here would fight that resolution on every popup open.
 
-  11-09 live-review addendum (Bartek 2026-07-16, missed in the first pass):
-  `body` now carries a FIXED height (600px -- Chrome's popup ceiling) and
-  `overflow: hidden` alongside the existing width, so the outer document
-  itself can never scroll -- the popup's OWN nested-scroll bug (header,
-  search box, and the auto-lock footer all scrolling away with the page,
-  stacked on top of ItemListView's own "Wszystkie" list scroll) was this
-  missing constraint, not the inner list's overflow-y:auto (which was
-  already correct). Every view's root now sizes itself against this fixed
-  height via `#root { height: 100% }` (style.css) + `h-full`/`flex-1` in
-  the component tree, so there is exactly ONE scrollable region per view,
-  never two.
+  11-09 live-review addendum (Bartek 2026-07-16, missed in the first pass,
+  CORRECTED after a regression report): `body` keeps `overflow: hidden`
+  so the outer document itself can never scroll, but does NOT carry a
+  fixed height anymore -- an earlier version of this fix pinned `body` to
+  600px globally, which forced EVERY view (unlock/server-config/loading/
+  detail, not just the item list) to always render at a fixed 600px,
+  leaving a large empty gap under short views like UnlockView. Chrome's
+  own popup auto-sizing (shrink-to-fit content, up to its own ~600px
+  ceiling) is exactly what those short views need and previously had.
+  Only the item-LIST view actually needs a hard-pinned 600px shell (its
+  single-scroll-region layout, see ItemListView.tsx/App.tsx) -- that
+  height now lives locally on that view's own wrapper (`h-[600px]` in
+  App.tsx's list branch), not globally on `body`.
 -->
 <html lang="en">
   <head>
@@ -29,7 +31,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Passkey Vault</title>
   </head>
-  <body style="width: 380px; height: 600px; overflow: hidden">
+  <body style="width: 380px; overflow: hidden">
     <div id="root"></div>
     <script type="module" src="./main.tsx"></script>
   </body>
