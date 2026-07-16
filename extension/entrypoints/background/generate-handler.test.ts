@@ -119,6 +119,43 @@ describe("handleGenerateRequest", () => {
     expect("error" in result).toBe(true);
   });
 
+  it("T-11-01: rejects an out-of-range length (below v0.1's 8-64 bound) without calling the generator", () => {
+    const result = handleGenerateRequest(
+      {
+        kind: "generate-request",
+        mode: "character",
+        length: 4,
+        opts: { lowercase: true, uppercase: true, digits: true, symbols: true },
+      },
+      CONTENT_SENDER,
+    );
+
+    expect("error" in result).toBe(true);
+  });
+
+  it("T-11-01: rejects an absurdly large length (DoS-shaped) without hanging or throwing", () => {
+    const result = handleGenerateRequest(
+      {
+        kind: "generate-request",
+        mode: "character",
+        length: 100_000_000,
+        opts: { lowercase: true, uppercase: true, digits: true, symbols: true },
+      },
+      CONTENT_SENDER,
+    );
+
+    expect("error" in result).toBe(true);
+  });
+
+  it("T-11-01: rejects an out-of-range wordCount (below v0.1's 3-10 bound) without calling the generator", () => {
+    const result = handleGenerateRequest(
+      { kind: "generate-request", mode: "passphrase", wordCount: 1, separator: "-" },
+      CONTENT_SENDER,
+    );
+
+    expect("error" in result).toBe(true);
+  });
+
   it("a non-content-script sender is rejected via assertContentSender, never reaching the generator", () => {
     const result = handleGenerateRequest(
       {

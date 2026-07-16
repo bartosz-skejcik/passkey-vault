@@ -17,6 +17,21 @@ import type { MessageSender } from "./frame-guard";
 import { generateCharacterPassword, generatePassphrase } from "../../lib/generator/password";
 import type { MessageOf, MessageResponseMap } from "../../lib/messaging/ext-protocol";
 
+// T-11-01: bounds matching v0.1's own generator UI
+// (web/src/components/generator/GeneratorPopover.tsx's CHAR_MIN_LENGTH/
+// CHAR_MAX_LENGTH/PASSPHRASE_MIN_WORDS/PASSPHRASE_MAX_WORDS) -- rejecting
+// anything outside this range with a typed `{error}` BEFORE calling the
+// generator is what prevents an absurd `length`/`wordCount` (e.g. a
+// malformed or adversarial request) from driving `generateCharacterPassword`/
+// `generatePassphrase`'s O(n) loop into a multi-second-or-worse hang on the
+// service worker thread. Neither generator function bounds-checks its own
+// input (a length of 0 just returns "" rather than throwing), so this is
+// the ONLY place this invariant is enforced.
+const CHAR_MIN_LENGTH = 8;
+const CHAR_MAX_LENGTH = 64;
+const PASSPHRASE_MIN_WORDS = 3;
+const PASSPHRASE_MAX_WORDS = 10;
+
 /**
  * T-11-01/T-11-02 (this plan's threat_model): a malformed `mode`, an
  * out-of-range `length`/`wordCount`, or an unselected character-class
@@ -36,8 +51,26 @@ export function handleGenerateRequest(
   try {
     switch (message.mode) {
       case "character":
+        if (
+          !Number.isInteger(message.length) ||
+          message.length < CHAR_MIN_LENGTH ||
+          message.length > CHAR_MAX_LENGTH
+        ) {
+          return {
+            error: `length must be an integer between ${CHAR_MIN_LENGTH} and ${CHAR_MAX_LENGTH}`,
+          };
+        }
         return { password: generateCharacterPassword(message.length, message.opts) };
       case "passphrase":
+        if (
+          !Number.isInteger(message.wordCount) ||
+          message.wordCount < PASSPHRASE_MIN_WORDS ||
+          message.wordCount > PASSPHRASE_MAX_WORDS
+        ) {
+          return {
+            error: `wordCount must be an integer between ${PASSPHRASE_MIN_WORDS} and ${PASSPHRASE_MAX_WORDS}`,
+          };
+        }
         return { password: generatePassphrase(message.wordCount, message.separator) };
       default:
         return { error: `unrecognized generate-request mode: ${(message as { mode: string }).mode}` };
