@@ -1,0 +1,299 @@
+// entrypoints/page-bridge.content.ts — the Chrome MAIN-world, key-free
+// `navigator.credentials` RPC shim (Phase 12, Plan 12-03). This is the
+// phase's single highest-severity file: it runs in the SAME JS context as
+// the (potentially hostile) page, sharing its globals -- 12-CONTEXT.md's
+// D-02/PROV-05 boundary is enforced here by construction, not just by
+// convention: this file imports NOTHING beyond the two typed envelope
+// interfaces from lib/messaging/page-protocol.ts (verified by
+// scripts/audit-mainworld-boundary.sh, Task 3). No WASM bindings, no
+// soft-authenticator crate bindings, no crypto or vault modules -- this
+// file never holds live key material, PRF output, or the unwrapped User
+// Key, even transiently. It only relays opaque, already-serialized
+// ceremony data across `window.postMessage` to content-relay.content.ts
+// (Task 3), which does the actual base64url encode/decode (D-21) and talks
+// to the background.
+//
+// D-17 (cross-browser, Research Architecture Pattern 3): WXT's declarative
+// `world: 'MAIN'` content-script field is Chrome-only. `exclude: ['firefox']`
+// below means WXT never even generates a Firefox manifest entry for this
+// file -- the Firefox variant is `page-bridge-firefox.ts` (Task 2), an
+// unlisted script asset injected manually via `injectScript()` from
+// content-relay.content.ts, since Firefox's MV2 content-script schema has
+// no `world` field at all. (Named `page-bridge-firefox.ts`, not the plan's
+// literal `page-bridge.ts`, to avoid an entrypoint-name collision with THIS
+// file -- see that file's own header comment for the full rationale.)
+//
+// Twin file: `entrypoints/page-bridge-firefox.ts` (Task 2) contains the IDENTICAL
+// patch logic for Firefox. Both files must independently satisfy the
+// D-02 grep-audit, so the ~70-line patch below is duplicated verbatim
+// rather than factored into a shared module (Task 2's own rationale: a
+// third shared file would need its own audit-script entry, and the plan
+// prefers duplication over that complexity). If you change the patch logic
+// here, mirror the change in page-bridge.ts too.
+import { defineContentScript } from "wxt/utils/define-content-script";
+import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../lib/messaging/page-protocol";
+
+const REQUEST_SOURCE = "pv-page-bridge";
+const RESPONSE_SOURCE = "pv-content-relay";
+
+// D-09: long enough for a popup-unlock round trip (opening the popup,
+// waiting for the user to enter a password/tap a passkey), short enough
+// not to visibly stall the calling page's own ceremony UI indefinitely.
+// This is the plan's own resolution of CONTEXT.md's open "popup-await
+// timeout" discretion item -- 5000ms, documented here as the one place it
+// is chosen.
+const RESPONSE_TIMEOUT_MS = 5000;
+
+const PERMISSIONS_POLICY_FEATURE: Record<"create" | "get", string> = {
+  create: "publickey-credentials-create",
+  get: "publickey-credentials-get",
+};
+
+/** Non-standard/experimental Permissions-Policy JS surfaces -- neither
+ * `document.permissionsPolicy` (the current spec name) nor its predecessor
+ * `document.featurePolicy` are in TypeScript's `lib.dom.d.ts` yet, so this
+ * loosely-typed shape is declared locally rather than widening `Document`
+ * globally. */
+interface AllowsFeatureApi {
+  allowsFeature(feature: string): boolean;
+}
+
+/**
+ * D-20(b): respects `Permissions-Policy: publickey-credentials-create/get`
+ * BEFORE brokering a ceremony -- silently brokering past a page's own
+ * Permissions-Policy is exactly the 1Password-wrapper vulnerability class
+ * (Scott Helme 2024/25). Tries the current `document.permissionsPolicy`
+ * API first, falls back to the older `document.featurePolicy`, and FAILS
+ * OPEN (returns `false`, i.e. "not blocked") when neither detection API
+ * exists in this context -- the browser's own native
+ * `navigator.credentials.create/get` call still enforces the real policy
+ * for us if one applies; failing closed here would incorrectly refuse a
+ * working relying party on any browser without this detection surface.
+ */
+function isPermissionsPolicyBlocked(kind: "create" | "get"): boolean {
+  const feature = PERMISSIONS_POLICY_FEATURE[kind];
+  try {
+    const doc = document as unknown as {
+      permissionsPolicy?: AllowsFeatureApi;
+      featurePolicy?: AllowsFeatureApi;
+    };
+    if (doc.permissionsPolicy && typeof doc.permissionsPolicy.allowsFeature === "function") {
+      return doc.permissionsPolicy.allowsFeature(feature) === false;
+    }
+    if (doc.featurePolicy && typeof doc.featurePolicy.allowsFeature === "function") {
+      return doc.featurePolicy.allowsFeature(feature) === false;
+    }
+  } catch {
+    // Detection itself failed -- fail open, see doc comment above.
+  }
+  return false;
+}
+
+/** Sends the ceremony request to content-relay.content.ts and awaits a
+ * single matching-nonce response, bounded by RESPONSE_TIMEOUT_MS (D-09).
+ * Resolves `null` on timeout -- the caller treats `null` identically to an
+ * explicit `"fallthrough"`/`"error"` response (D-11: never a dead-ended
+ * promise, never a new error type the page didn't trigger itself). */
+function relay(
+  kind: "credentials.create" | "credentials.get",
+  publicKey: unknown,
+): Promise<PageBridgeResponseEnvelope | null> {
+  return new Promise((resolve) => {
+    const nonce = crypto.randomUUID();
+    let settled = false;
+
+    function cleanup(): void {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener("message", onMessage);
+    }
+
+    function finish(value: PageBridgeResponseEnvelope | null): void {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(value);
+    }
+
+    function onMessage(event: MessageEvent): void {
+      // D-03/ASVS V5: only a same-window, same-origin message shaped
+      // exactly like content-relay's own response envelope, matching THIS
+      // call's nonce, is ever accepted -- everything else (including the
+      // page's own scripts trying to inject a fake response) is ignored.
+      if (event.source !== window || event.origin !== location.origin) {
+        return;
+      }
+      const data = event.data as Partial<PageBridgeResponseEnvelope> | null | undefined;
+      if (
+        typeof data !== "object" ||
+        data === null ||
+        data.source !== RESPONSE_SOURCE ||
+        data.nonce !== nonce
+      ) {
+        return;
+      }
+      finish(data as PageBridgeResponseEnvelope);
+    }
+
+    const timeoutId = window.setTimeout(() => finish(null), RESPONSE_TIMEOUT_MS);
+    window.addEventListener("message", onMessage);
+
+    const request: PageBridgeRequestEnvelope = {
+      source: REQUEST_SOURCE,
+      nonce,
+      kind,
+      origin: location.origin,
+      publicKey,
+    };
+    // D-03: target origin is ALWAYS location.origin, never '*' -- this
+    // channel is page-readable by any script on the page, so a wildcard
+    // target would let a same-tab-but-different-frame observer read it.
+    window.postMessage(request, location.origin);
+  });
+}
+
+/**
+ * Shapes content-relay's already-decoded `credential` (real ArrayBuffers,
+ * D-21) into a plain object satisfying `PublicKeyCredential`'s enumerable
+ * contract (`id`, `rawId`, `type`, `response`, `getClientExtensionResults()`,
+ * `toJSON()`). A real `PublicKeyCredential` cannot be constructed directly
+ * by page script (WebAuthn has no public constructor for it) -- returning a
+ * spec-shaped plain object instead is the same approach Bitwarden/1Password's
+ * extensions use, not an oversight. `toJSON()` returns `credentialJson`
+ * (the ORIGINAL base64url JSON shape, not the decoded-buffers view) because
+ * that is what a real `PublicKeyCredential.toJSON()` returns per spec.
+ */
+function shapeCredential(
+  credential: unknown,
+  credentialJson: unknown,
+): Credential {
+  const cred = (credential ?? {}) as Record<string, unknown>;
+  const extensionResults = (cred.clientExtensionResults as Record<string, unknown>) ?? {};
+  return {
+    ...cred,
+    getClientExtensionResults: () => extensionResults,
+    toJSON: () => credentialJson,
+  } as unknown as Credential;
+}
+
+/** `original` is deliberately loosely typed (`unknown` options in, real
+ * result out) -- `installPatch()` below always pairs it correctly with a
+ * matching `options` shape at each call site (create with
+ * `CredentialCreationOptions`, get with `CredentialRequestOptions`); trying
+ * to express that pairing as a single intersection parameter type produces
+ * an unsound signature (a value typed as ONLY `CredentialRequestOptions`
+ * does not actually satisfy `CredentialCreationOptions`'s required fields
+ * too), so this internal helper accepts the union of both instead. */
+async function broker(
+  kind: "create" | "get",
+  options: CredentialCreationOptions | CredentialRequestOptions | undefined,
+  original: (options?: CredentialCreationOptions | CredentialRequestOptions) => Promise<Credential | null>,
+): Promise<Credential | null> {
+  try {
+    const publicKey = (options as { publicKey?: unknown } | undefined)?.publicKey;
+    if (publicKey === undefined) {
+      // Not a WebAuthn ceremony (e.g. the page asked for a `password`
+      // credential via the unrelated Credential Management API) -- nothing
+      // for this provider to broker.
+      return original(options);
+    }
+
+    const messageKind = kind === "create" ? "credentials.create" : "credentials.get";
+    if (isPermissionsPolicyBlocked(kind)) {
+      // D-20(b): never broker past a blocking Permissions-Policy -- the
+      // native call correctly rejects on its own.
+      return original(options);
+    }
+
+    const response = await relay(messageKind, publicKey);
+    if (response === null || response.kind !== "credential") {
+      // Timeout (null), explicit fallthrough, or a relay/ceremony error --
+      // D-11: always fall through to the real native result, never a
+      // dead-ended promise or a fabricated error.
+      return original(options);
+    }
+
+    return shapeCredential(response.credential, response.credentialJson);
+  } catch {
+    // ANY exception inside this wrapper (not from the original call
+    // itself) falls through to the original call too -- never propagates a
+    // new/different error to the page (D-11).
+    return original(options);
+  }
+}
+
+/**
+ * Installs the patch. D-20(a): the accessor is installed via
+ * `Object.defineProperty` with `configurable: false` -- `world:'MAIN'` +
+ * `document_start` does NOT guarantee running before the page's own inline
+ * scripts (Chromium bug 634381, still open), so a plainly-assigned patch
+ * could be silently re-defined or restored by a racing page script;
+ * non-configurable closes the re-definition half of that race. Native refs
+ * are captured BEFORE the patch is installed (D-11/D-12) -- this is what
+ * makes fallthrough, and coexistence with another installed
+ * password-manager extension, possible at all.
+ */
+function installPatch(): void {
+  let originalCreate: CredentialsContainer["create"];
+  let originalGet: CredentialsContainer["get"];
+  try {
+    originalCreate = navigator.credentials.create.bind(navigator.credentials);
+    originalGet = navigator.credentials.get.bind(navigator.credentials);
+  } catch {
+    // No navigator.credentials at all in this context -- nothing to patch,
+    // nothing broken either.
+    return;
+  }
+
+  try {
+    Object.defineProperty(navigator.credentials, "create", {
+      configurable: false,
+      enumerable: true,
+      writable: false,
+      value: (options?: CredentialCreationOptions) =>
+        broker(
+          "create",
+          options,
+          originalCreate as (
+            options?: CredentialCreationOptions | CredentialRequestOptions,
+          ) => Promise<Credential | null>,
+        ),
+    });
+    Object.defineProperty(navigator.credentials, "get", {
+      configurable: false,
+      enumerable: true,
+      writable: false,
+      value: (options?: CredentialRequestOptions) =>
+        broker(
+          "get",
+          options,
+          originalGet as (
+            options?: CredentialCreationOptions | CredentialRequestOptions,
+          ) => Promise<Credential | null>,
+        ),
+    });
+  } catch {
+    // Object.defineProperty itself threw -- the property is already
+    // non-configurable (another party, e.g. a second password manager,
+    // got here first). Fail SAFE: leave the environment untouched, native
+    // WebAuthn keeps working, this provider simply doesn't serve this page
+    // (D-12 coexistence).
+  }
+}
+
+export default defineContentScript({
+  matches: ["<all_urls>"],
+  world: "MAIN",
+  runAt: "document_start",
+  // D-17: Firefox has no declarative world:'MAIN' -- page-bridge.ts (Task
+  // 2) is the Firefox variant, injected manually via injectScript() from
+  // content-relay.content.ts. Excluding this entrypoint from the Firefox
+  // build entirely (rather than letting it silently degrade to an
+  // ineffective ISOLATED-world no-op there) keeps exactly one MAIN-world
+  // patch attempt per browser.
+  exclude: ["firefox"],
+  main() {
+    installPatch();
+  },
+});
