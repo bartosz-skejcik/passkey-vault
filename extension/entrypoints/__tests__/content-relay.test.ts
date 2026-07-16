@@ -64,7 +64,7 @@ vi.mock("wxt/browser", () => ({
   },
 }));
 
-import contentRelay from "../content-relay.content";
+import contentRelay, { isConfiguredServerOrigin } from "../content-relay.content";
 import type { ContentDetectResponse, ContentFillResponse } from "../../lib/autofill/types";
 
 type Listener = (message: unknown, sender: unknown, sendResponse: (response?: unknown) => void) => unknown;
@@ -169,5 +169,27 @@ describe("content-relay", () => {
     );
 
     expect(sendResponse).toHaveBeenCalledWith({ ok: false } satisfies ContentFillResponse);
+  });
+
+  describe("isConfiguredServerOrigin (own-vault-app overlay suppression)", () => {
+    it("Test 6: resolves false when no pv-server-config has ever been persisted", async () => {
+      await expect(isConfiguredServerOrigin()).resolves.toBe(false);
+    });
+
+    it("Test 7: resolves false when the persisted baseUrl's origin differs from the current page", async () => {
+      hoisted.storageStore.set("pv-server-config", { baseUrl: "https://vault.example.com" });
+      expect(new URL("https://vault.example.com").origin).not.toBe(location.origin);
+      await expect(isConfiguredServerOrigin()).resolves.toBe(false);
+    });
+
+    it("Test 8: resolves true when the persisted baseUrl's origin matches the current page (jsdom's own location)", async () => {
+      hoisted.storageStore.set("pv-server-config", { baseUrl: location.origin });
+      await expect(isConfiguredServerOrigin()).resolves.toBe(true);
+    });
+
+    it("Test 9: resolves false (fails closed) on a corrupt/non-URL persisted baseUrl", async () => {
+      hoisted.storageStore.set("pv-server-config", { baseUrl: "not a url" });
+      await expect(isConfiguredServerOrigin()).resolves.toBe(false);
+    });
   });
 });
