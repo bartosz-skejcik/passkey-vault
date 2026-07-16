@@ -77,37 +77,55 @@ async function flushMicrotasks(): Promise<void> {
   await new Promise((resolve) => queueMicrotask(() => resolve(undefined)));
 }
 
+// jsdom's `document` is shared across every `it` block in this file (no
+// per-test environment reset), so a MutationObserver created via
+// captureThemeFromWebApp() in one test would otherwise leak into and
+// silently corrupt a LATER test's assertions (most notably the dedicated
+// detach() test below). Every test that creates one registers its own
+// detach here; afterEach sweeps whatever is left.
+let pendingDetaches: Array<() => void> = [];
+
+function trackedCaptureThemeFromWebApp(doc: Document): () => void {
+  const detach = captureThemeFromWebApp(doc);
+  pendingDetaches.push(detach);
+  return detach;
+}
+
 beforeEach(() => {
   hoisted.store.clear();
   hoisted.changeListeners.length = 0;
   document.documentElement.removeAttribute("data-theme");
+  pendingDetaches = [];
 });
 
 afterEach(() => {
+  for (const detach of pendingDetaches) {
+    detach();
+  }
   vi.unstubAllGlobals();
 });
 
 describe("captureThemeFromWebApp", () => {
   it("persists a valid data-theme value from the document immediately", () => {
     document.documentElement.setAttribute("data-theme", "vault-light");
-    captureThemeFromWebApp(document);
+    trackedCaptureThemeFromWebApp(document);
     expect(hoisted.store.get(THEME_MIRROR_KEY)).toBe("vault-light");
   });
 
   it("does NOT persist an invalid/garbage data-theme value (T-11-30 enum validation)", () => {
     document.documentElement.setAttribute("data-theme", "<script>alert(1)</script>");
-    captureThemeFromWebApp(document);
+    trackedCaptureThemeFromWebApp(document);
     expect(hoisted.store.has(THEME_MIRROR_KEY)).toBe(false);
   });
 
   it("does NOT persist anything when data-theme is absent", () => {
-    captureThemeFromWebApp(document);
+    trackedCaptureThemeFromWebApp(document);
     expect(hoisted.store.has(THEME_MIRROR_KEY)).toBe(false);
   });
 
   it("keeps the mirror live via a MutationObserver on attribute flip", async () => {
     document.documentElement.setAttribute("data-theme", "vault-dark");
-    captureThemeFromWebApp(document);
+    trackedCaptureThemeFromWebApp(document);
     expect(hoisted.store.get(THEME_MIRROR_KEY)).toBe("vault-dark");
 
     document.documentElement.setAttribute("data-theme", "vault-light");
@@ -117,6 +135,10 @@ describe("captureThemeFromWebApp", () => {
 
   it("detach() stops the observer from reacting to further flips", async () => {
     document.documentElement.setAttribute("data-theme", "vault-dark");
+    // NOT tracked -- this test detaches immediately itself; tracking it
+    // too would just make the afterEach sweep call an already-detached
+    // (idempotent, harmless) detach a second time, but leaving it
+    // untracked keeps this test's intent legible on its own.
     const detach = captureThemeFromWebApp(document);
     detach();
 
