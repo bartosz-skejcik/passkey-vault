@@ -44,6 +44,8 @@ import { detectCard, detectIdentity } from "../lib/autofill/detect-scored";
 import { fillValues, type FillTargets } from "../lib/autofill/fill-dom";
 import { createOverlayController, type OverlayController } from "../lib/autofill/inpage-overlay";
 import { addBlockedOrigin, isOriginBlocked } from "../lib/autofill/blocked-origins";
+import { classifyForm } from "../lib/autofill/form-detector";
+import { attachSubmitWatcher, captureFrameOrigin } from "../lib/autofill/submit-capture";
 import { sendMessage } from "../lib/messaging/ext-protocol";
 import type {
   AutofillMatch,
@@ -215,6 +217,73 @@ function collectFocusableFields(): Map<Element, FillKind> {
   }
 
   return map;
+}
+
+// -----------------------------------------------------------------------
+// Submit-capture wiring (plan 11-02). Additive to everything above -- it
+// never touches content.detect/content.fill's own code path or the in-page
+// affordance's overlay state. Gated the exact same way the overlay already
+// is (X-4): the user's own configured vault app and any user-blocked
+// origin never get a submit-capture listener at all.
+// -----------------------------------------------------------------------
+
+/**
+ * Every distinct login/signup container on the page: one per `<form>`
+ * ancestor of a password field, or `document.body` for a `<form>`-less SPA
+ * container (Pitfall A -- there is no narrower wrapper element this module
+ * can reliably infer, so the whole-body fallback is deliberate, not an
+ * oversight). Deduplicated via a Set so a form with 2+ password fields
+ * (signup) only yields ONE container, not one per field.
+ */
+function findLoginContainers(): Array<HTMLFormElement | HTMLElement> {
+  const passwordInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="password"]'));
+  const containers = new Set<HTMLFormElement | HTMLElement>();
+  for (const pw of passwordInputs) {
+    containers.add(pw.closest("form") ?? document.body);
+  }
+  return Array.from(containers);
+}
+
+/**
+ * Attaches attachSubmitWatcher() to every login/signup-classified container
+ * found on the page, ONLY after both suppression gates pass (X-4, mirrors
+ * initialMatchAndPrompt()'s identical isConfiguredServerOrigin()/
+ * isOriginBlocked() sequence). Runs once at document_idle -- no
+ * MutationObserver-driven re-scan of the whole page for NEW containers
+ * (attachSubmitWatcher's OWN internal MutationObserver, scoped to a single
+ * already-found container, is a separate and explicitly plan-mandated
+ * mechanism -- see submit-capture.ts's header comment).
+ */
+async function initSubmitCapture(): Promise<void> {
+  if (await isConfiguredServerOrigin()) {
+    return;
+  }
+  if (await isOriginBlocked(location.origin)) {
+    return;
+  }
+
+  for (const container of findLoginContainers()) {
+    if (classifyForm(container) === "none") {
+      continue;
+    }
+
+    attachSubmitWatcher(container, (username, password) => {
+      // Fire-and-forget: Plan 11-03 wires the actual handler (mismatch
+      // computation, vault-item matching); this plan only proves the
+      // detection layer and sends the proposal. A rejected/unhandled
+      // response (no listener registered yet, torn-down extension
+      // context, etc.) is swallowed here -- UI response handling
+      // (toast/modal) is Plan 11-05's job, not this one.
+      void sendMessage({
+        kind: "capture.propose",
+        frameOrigin: captureFrameOrigin(),
+        username,
+        password,
+      }).catch(() => {
+        // Intentionally ignored -- see comment above.
+      });
+    });
+  }
 }
 
 export default defineContentScript({
@@ -425,5 +494,6 @@ export default defineContentScript({
     });
 
     void initialMatchAndPrompt();
+    void initSubmitCapture();
   },
 });
