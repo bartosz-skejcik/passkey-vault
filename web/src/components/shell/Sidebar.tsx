@@ -5,6 +5,7 @@ import {
   ChevronDown,
   CreditCard,
   Folder,
+  Globe,
   IdCard,
   KeyRound,
   LayoutGrid,
@@ -19,7 +20,6 @@ import {
   Tag,
   Timer,
   User,
-  Vault,
   Wand2,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
@@ -35,8 +35,8 @@ import GeneratorDialog from "@/components/generator/GeneratorDialog";
 
 // Category buttons mirror ItemRow.tsx's own TYPE_ICON map so a login's icon
 // matches everywhere (sidebar category, list row, list badge).
-const CATEGORY_ICON: Record<ItemType, typeof Vault> = {
-  login: Vault,
+const CATEGORY_ICON: Record<ItemType, typeof Globe> = {
+  login: Globe,
   card: CreditCard,
   identity: IdCard,
   note: StickyNote,

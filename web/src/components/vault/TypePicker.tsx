@@ -1,13 +1,13 @@
 "use client";
 
-import { CreditCard, IdCard, StickyNote, Timer, Vault } from "lucide-react";
+import { CreditCard, Globe, IdCard, StickyNote, Timer } from "lucide-react";
 import type { ItemType } from "@/lib/vault/types";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import type { DICTIONARY } from "@/lib/i18n/dictionary";
 
 // Same neutral treatment as ItemRow's type badges — no color-coding.
-const TILES: { type: ItemType; icon: typeof Vault; labelKey: keyof typeof DICTIONARY }[] = [
-  { type: "login", icon: Vault, labelKey: "itemType.login" },
+const TILES: { type: ItemType; icon: typeof Globe; labelKey: keyof typeof DICTIONARY }[] = [
+  { type: "login", icon: Globe, labelKey: "itemType.login" },
   { type: "card", icon: CreditCard, labelKey: "itemType.card" },
   { type: "identity", icon: IdCard, labelKey: "itemType.identity" },
   { type: "note", icon: StickyNote, labelKey: "itemType.note" },
