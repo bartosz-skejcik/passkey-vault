@@ -132,5 +132,26 @@ No specific UI mockups or exact wording were dictated for this phase. The resear
 
 ---
 
+## ADDENDUM (2026-07-16) — decyzje Bartka + dyspozycje orkiestratora przed naprawą planów
+
+Kontekst: 12-FRESHNESS-AUDIT.md (Opus) orzekł REPAIRS_NEEDED — plany 12-01..04 powstały przed wykonaniem faz 9-11. Poniższe decyzje ROZSTRZYGAJĄ kwestie, które audyt oznaczył jako pomylone lub otwarte, i NADPISUJĄ sprzeczne z nimi fragmenty D-13 oraz planów.
+
+### Decyzje Bartka (AskUserQuestion, 2026-07-16)
+
+- **D-16 (nadpisuje browser-sniff w D-13/PROV-04): Provider-role PRF jest capability-driven, nigdy browser-sniff.** W roli providera extension JEST authenticatorem (passkey-rs liczy PRF/hmac-secret w całości w WASM; przeglądarka omijana) → provider-PRF działa identycznie na Chrome i Firefoksie. Komunikat "PRF niedostępne" pojawia się WYŁĄCZNIE gdy realny sygnał zdolności z ceremonii passkey-rs (`clientExtensionResults.prf.enabled` / brak wsparcia HmacSecretConfig) mówi, że nie umiemy go policzyć — nigdy z wykrywania przeglądarki. Maszyneria uczciwego komunikatu (prfCapable/prfUnavailableReason, i18n) ZOSTAJE, zmienia się wyzwalacz. UWAGA: nie mylić z vault-unlock PRF fazy 9 — TEN pozostaje browser-limited i niczego tu nie zmieniamy.
+- **D-17: Firefox w fazie 12 = oba tory injection + próba UAT na obu przeglądarkach.** 12-03 buduje Chrome declarative `world:'MAIN'` ORAZ Firefox `injectScript()` (+ web_accessible_resources) teraz. UAT: pełny na paczkowanym Chrome; na Firefoksie 152 podejmujemy próbę zautomatyzowanego/web-ext smoke-testu — jeśli technicznie się nie da, Bartek testuje Firefoksa ręcznie (przekazać mu dokładne kroki). Faza 13 nadal robi dedykowaną weryfikację parity.
+- **D-18: pollster PRE-APPROVED.** Jeśli passkey-client 0.5.0 wymaga async executora, executor 12-01 wykonuje standardową weryfikację crates.io (historia wydań, realne repo, brak typosquatu), odnotowuje wynik w SUMMARY i instaluje BEZ zatrzymywania się na blocking-human gate. 12-01 może przejść na `autonomous: true`.
+
+### Dyspozycje orkiestratora (architektura — dyskrecja Claude'a per standing policy)
+
+- **D-19 (audyt S3): ephemeral-wrap DE-SCOPED.** 12-01 Task 2 (pv-core provider.rs + wrap/unwrap helpers + 2 bindingi wasm) wycięty w całości — re-szyfrowanie już-zaszyfrowanego `EncryptedItem` z seedem OBOK ciphertextu w tym samym storage nie dodaje poufności, a na security review udawałby drugą granicę. `pendingProviderItems` w `chrome.storage.session` trzyma bezpośrednio `EncryptedItem` (już ciphertext pod User Key; storage extension-internal). Bez nowych stałych HKDF (D-08 pozostaje spełnione vacuously — zero nowych kontekstów).
+- **D-20 (audyt S1 — OBOWIĄZKOWE dla bramki bezpieczeństwa): 12-03 musi zawierać** (a) patch przez `Object.defineProperty` z accessorem **non-configurable** (mitygacja injection race, Chromium bug 634381); (b) **respektowanie `Permissions-Policy: publickey-credentials-create/get`** — przed brokerowaniem ceremonii sprawdź, czy polityka nie blokuje WebAuthn w tym kontekście; jeśli blokuje, nie brokeruj (fallthrough do natywnych, które poprawnie odrzucą). Oba wpadają też do checklisty security review.
+- **D-21 (audyt base64 boundary — OBOWIĄZKOWE):** MAIN↔ISOLATED przez postMessage = structured clone (ArrayBuffery przeżywają); ISOLATED→background przez runtime.sendMessage = Chrome JSON-serializuje (ArrayBuffer→`{}`). Content-relay konwertuje binaria do base64url (najczyściej: kształt spec `PublicKeyCredential*OptionsJSON`) przed sendMessage i dekoduje odpowiedzi przed postMessage z powrotem. Struktury w `lib/messaging/ext-protocol.ts` (`*B64` przez `lib/messaging/bytes-b64.ts`) + JSON-round-trip structural gate test dla każdego nowego message kind (standing rule z faz 8-10).
+- **D-22 (audyt runAt gap):** provider postMessage listener w ISOLATED world rejestrowany JAK NAJWCZEŚNIEJ (nie czeka na document_idle main() content-relaya) — strony wołające `credentials.get()` wcześnie (conditional UI) nie mogą trafiać w pustkę. Mechanizm (wydzielenie z main() vs osobny wczesny entrypoint) — do decyzji fixera/executora, z uzasadnieniem w SUMMARY.
+
+*Addendum zapisany po decyzjach Bartka z 2026-07-16; audyt: 12-FRESHNESS-AUDIT.md.*
+
+---
+
 *Phase: 12-passkey-provider*
 *Context gathered: 2026-07-14*
