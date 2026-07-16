@@ -126,6 +126,38 @@ function resolveFillTargets(kind: FillKind): FillTargets | null {
   }
 }
 
+// Reads the persisted pv-server base URL directly out of storage.local
+// (the SAME "pv-server-config" key entrypoints/background/server-config.ts
+// owns as its "SOLE place" write path -- this is a READ-only, best-effort
+// mirror, not a second writer, so it does not violate that module's
+// invariant or its standing no-hard-coded-URL grep test). A content script
+// runs in the ISOLATED world with its own `storage` access (already
+// declared in the manifest), so this reads storage.local directly rather
+// than round-tripping through the background -- same choke-point-free
+// convention lib/autofill/blocked-origins.ts already uses in this file's
+// own module.
+//
+// Purpose: suppress the in-page autofill overlay entirely on the user's
+// OWN configured vault web app (Bartek's decision, Group C review) -- it's
+// vault management, not a third-party login page, and the overlay's
+// top-right prompt overlapped the web app's own controls in UAT. Any parse
+// failure (unconfigured server, corrupt storage, non-URL baseUrl) fails
+// CLOSED to `false` (never suppress based on a guess).
+const SERVER_CONFIG_STORAGE_KEY = "pv-server-config";
+
+export async function isConfiguredServerOrigin(): Promise<boolean> {
+  const result = await browser.storage.local.get(SERVER_CONFIG_STORAGE_KEY);
+  const value = result[SERVER_CONFIG_STORAGE_KEY];
+  if (!value || typeof value !== "object" || typeof (value as { baseUrl?: unknown }).baseUrl !== "string") {
+    return false;
+  }
+  try {
+    return new URL((value as { baseUrl: string }).baseUrl).origin === location.origin;
+  } catch {
+    return false;
+  }
+}
+
 function isContentDetectRequest(message: unknown): boolean {
   return (
     typeof message === "object" &&
@@ -282,6 +314,13 @@ export default defineContentScript({
     }
 
     async function initialMatchAndPrompt(): Promise<void> {
+      if (await isConfiguredServerOrigin()) {
+        // The user's own configured pv-server web app -- never show the
+        // overlay here (Bartek's decision; see isConfiguredServerOrigin's
+        // header comment).
+        return;
+      }
+
       if (await isOriginBlocked(location.origin)) {
         // Persisted block from a prior page load (Group A's blocked-origins
         // store) -- suppress Surface B entirely, matching blockSite()'s
@@ -315,6 +354,12 @@ export default defineContentScript({
       const kind = collectFocusableFields().get(target);
       if (kind === undefined) {
         return; // not a field this content-relay would ever offer to fill
+      }
+
+      if (await isConfiguredServerOrigin()) {
+        // The user's own configured pv-server web app -- never show
+        // Surface A here either (same suppression as initialMatchAndPrompt).
+        return;
       }
 
       if (await isOriginBlocked(location.origin)) {

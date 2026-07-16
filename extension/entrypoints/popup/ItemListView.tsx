@@ -15,7 +15,7 @@
 // menus, and stays intact.
 import { useEffect, useRef, useState } from "react";
 import { browser } from "wxt/browser";
-import { Search, Settings, ExternalLink, Plus, Vault, CreditCard, IdCard, StickyNote, Timer } from "lucide-react";
+import { Search, Settings, ExternalLink, Plus, Globe, CreditCard, IdCard, StickyNote, Timer } from "lucide-react";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
 import { searchItems, filterItems } from "../../lib/vault/search";
 import type { VaultItem, ItemType } from "../../lib/vault/types";
@@ -36,18 +36,19 @@ import OnThisPageSection from "./autofill/OnThisPageSection";
 // two arrays in sync by hand.
 const AUTOLOCK_OPTIONS = [5, 15, 30, 60] as const;
 
-// Vault matches web/src/components/vault/ItemRow.tsx's own TYPE_ICON
+// Globe matches web/src/components/vault/ItemRow.tsx's own TYPE_ICON
 // exactly (and this popup's own AutofillItemRow.tsx) -- a design-batch
-// correction: the earlier KeyRound choice diverged from the shared
-// icon-per-type convention used everywhere else `login` items render.
+// correction: login is a website credential, so Globe reads lighter and
+// more distinct than the earlier Vault choice (which now reads as a
+// generic/brand-adjacent glyph rather than a per-type icon).
 // Always rendered MUTED here (never teal): teal is reserved for actual
 // `type: "passkey"` items with PRF capability, a type that doesn't exist
 // in the data model yet (Phase 12).
 // `totp` has no icon named in 09-UI-SPEC.md's enumerated four -- `Timer`
 // is a Claude's-discretion addition (same icon web/ItemRow.tsx already
 // uses for the same type), flagged for UI-checker review.
-const TYPE_ICON: Record<ItemType, typeof Vault> = {
-  login: Vault,
+const TYPE_ICON: Record<ItemType, typeof Globe> = {
+  login: Globe,
   card: CreditCard,
   identity: IdCard,
   note: StickyNote,

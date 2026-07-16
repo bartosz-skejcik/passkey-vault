@@ -209,6 +209,116 @@ describe("renderFieldDropdown", () => {
     icon!.click();
     expect(panel.hidden).toBe(false);
   });
+
+  it("Test 9: a window scroll event repositions the panel/icon from the LIVE anchorEl rect, not the rect captured at mount", () => {
+    const anchor = anchorWithRect();
+    const { controller } = makeController();
+
+    controller.renderFieldDropdown(anchor, [LOGIN_MATCH]);
+
+    const shadow = __getShadowRootForTests(controller.host)!;
+    const panel = shadow.querySelector('[data-pv-surface="dropdown"]') as HTMLElement;
+    const icon = shadow.querySelector("[data-pv-field-icon]") as HTMLElement;
+    expect(panel.style.top).toBe("134px"); // rect.bottom (130) + 4
+    expect(icon.style.left).toBe("226px"); // rect.right (250) - 24
+
+    // The field moved (page scrolled) -- getBoundingClientRect now returns
+    // a different rect for the SAME anchor element.
+    anchor.getBoundingClientRect = () =>
+      ({
+        top: 0,
+        left: 50,
+        right: 250,
+        bottom: 30,
+        width: 200,
+        height: 30,
+        x: 50,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    window.dispatchEvent(new Event("scroll"));
+
+    expect(panel.style.top).toBe("34px"); // new rect.bottom (30) + 4
+    expect(icon.style.left).toBe("226px"); // rect.right unchanged
+  });
+
+  it("Test 10: a window resize event also repositions from the live rect", () => {
+    const anchor = anchorWithRect();
+    const { controller } = makeController();
+
+    controller.renderFieldDropdown(anchor, [LOGIN_MATCH]);
+
+    const shadow = __getShadowRootForTests(controller.host)!;
+    const panel = shadow.querySelector('[data-pv-surface="dropdown"]') as HTMLElement;
+
+    anchor.getBoundingClientRect = () =>
+      ({
+        top: 200,
+        left: 10,
+        right: 210,
+        bottom: 230,
+        width: 200,
+        height: 30,
+        x: 10,
+        y: 200,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    window.dispatchEvent(new Event("resize"));
+
+    expect(panel.style.top).toBe("234px"); // new rect.bottom (230) + 4
+    expect(panel.style.left).toBe("10px");
+  });
+
+  it("Test 11: when the anchored field's rect moves fully outside the viewport, the dropdown is torn down (matches clearFieldDropdown's own effect)", () => {
+    const anchor = anchorWithRect();
+    const { controller } = makeController();
+
+    controller.renderFieldDropdown(anchor, [LOGIN_MATCH]);
+
+    const shadow = __getShadowRootForTests(controller.host)!;
+    expect(shadow.querySelectorAll('[data-pv-surface="dropdown"]').length).toBe(1);
+    expect(shadow.querySelectorAll("[data-pv-field-icon]").length).toBe(1);
+
+    // Scrolled far enough that the field is entirely above the viewport.
+    anchor.getBoundingClientRect = () =>
+      ({
+        top: -500,
+        left: 50,
+        right: 250,
+        bottom: -470,
+        width: 200,
+        height: 30,
+        x: 50,
+        y: -500,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    window.dispatchEvent(new Event("scroll"));
+
+    expect(shadow.querySelectorAll('[data-pv-surface="dropdown"]').length).toBe(0);
+    expect(shadow.querySelectorAll("[data-pv-field-icon]").length).toBe(0);
+  });
+
+  it("Test 12: clearFieldDropdown() detaches the scroll/resize listeners -- no leak, no further repositioning after teardown", () => {
+    const anchor = anchorWithRect();
+    const { controller } = makeController();
+
+    const addSpy = vi.spyOn(window, "addEventListener");
+    const removeSpy = vi.spyOn(window, "removeEventListener");
+
+    controller.renderFieldDropdown(anchor, [LOGIN_MATCH]);
+    expect(addSpy).toHaveBeenCalledWith("scroll", expect.any(Function), { capture: true, passive: true });
+    expect(addSpy).toHaveBeenCalledWith("resize", expect.any(Function), { passive: true });
+
+    controller.clearFieldDropdown();
+    expect(removeSpy).toHaveBeenCalledWith("scroll", expect.any(Function), { capture: true });
+    expect(removeSpy).toHaveBeenCalledWith("resize", expect.any(Function));
+
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
+  });
 });
 
 describe("controller does not hold or leak a live credential value", () => {

@@ -9,15 +9,15 @@
 // called (D-12) -- the first click only expands the confirm, it never
 // fills.
 import { useState } from "react";
-import { CreditCard, IdCard, Vault } from "lucide-react";
+import { CreditCard, Globe, IdCard } from "lucide-react";
 import SensitiveFillConfirm from "./SensitiveFillConfirm";
 import { t, type Locale } from "../../../lib/i18n/autofill-dictionary";
 import type { AutofillMatch, FillKind } from "../../../lib/autofill/types";
 import type { MessageResponseMap } from "../../../lib/messaging/ext-protocol";
 
 // "totp" is intentionally absent -- TotpFillRow owns that icon/row shape.
-const TYPE_ICON: Partial<Record<FillKind, typeof Vault>> = {
-  login: Vault,
+const TYPE_ICON: Partial<Record<FillKind, typeof Globe>> = {
+  login: Globe,
   card: CreditCard,
   identity: IdCard,
 };
@@ -39,7 +39,7 @@ export interface AutofillItemRowProps {
 export default function AutofillItemRow({ locale, match, onFill, onFillFailed }: AutofillItemRowProps) {
   const [pending, setPending] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const Icon = TYPE_ICON[match.kind] ?? Vault;
+  const Icon = TYPE_ICON[match.kind] ?? Globe;
   const needsConfirm = match.kind === "card" || match.kind === "identity";
 
   async function doFill() {
