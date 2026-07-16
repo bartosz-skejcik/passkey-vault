@@ -491,6 +491,50 @@ function encodePublicKeyOptions(publicKey: unknown): unknown {
     out.allowCredentials = src.allowCredentials.map(encodeCredentialDescriptor);
   }
 
+  // CR-01 fix (12-REVIEW.md): the RP's own `extensions.prf.eval.first`/
+  // `.second` (and every `evalByCredential[*].first`/`.second`) are
+  // real ArrayBuffer/TypedArray inputs too -- they survive the MAIN<->
+  // ISOLATED structured-clone postMessage hop intact, but the SAME
+  // ISOLATED->background `runtime.sendMessage` JSON-serialization that
+  // motivates every other field above mangles them to `{}` just as
+  // surely. Left unencoded, ANY RP that sends PRF `eval` inputs on
+  // create()/get() (the primary provider-PRF use case, D-16) fails to
+  // even PARSE in the background (`serde_json` rejects `{}` where a
+  // base64url string is required) and silently falls through to native.
+  // Only these two binary-bearing sub-fields of `extensions.prf` are
+  // touched; every other extension (and every other `prf` field, e.g.
+  // `results` -- a RESPONSE-side field, never present on a REQUEST) is
+  // left untouched.
+  if (typeof src.extensions === "object" && src.extensions !== null) {
+    const ext = { ...(src.extensions as Record<string, unknown>) };
+    const prf = ext.prf as
+      | { eval?: Record<string, unknown>; evalByCredential?: Record<string, unknown> }
+      | undefined;
+    if (prf?.eval) {
+      const e = { ...prf.eval };
+      if (isBufferSource(e.first)) {
+        e.first = bufferSourceToB64Url(e.first);
+      }
+      if (isBufferSource(e.second)) {
+        e.second = bufferSourceToB64Url(e.second);
+      }
+      ext.prf = { ...prf, eval: e };
+    }
+    if (prf?.evalByCredential) {
+      const byId: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(prf.evalByCredential)) {
+        const vv = v as Record<string, unknown>;
+        byId[k] = {
+          ...vv,
+          ...(isBufferSource(vv.first) ? { first: bufferSourceToB64Url(vv.first) } : {}),
+          ...(isBufferSource(vv.second) ? { second: bufferSourceToB64Url(vv.second) } : {}),
+        };
+      }
+      ext.prf = { ...(ext.prf as object), evalByCredential: byId };
+    }
+    out.extensions = ext;
+  }
+
   return out;
 }
 

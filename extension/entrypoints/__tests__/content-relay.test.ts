@@ -390,5 +390,106 @@ describe("content-relay", () => {
         expect(credential.response.clientDataJSON).toBeInstanceOf(ArrayBuffer);
       }
     });
+
+    // CR-01 fix (12-REVIEW.md, Phase 12 Plan 12-05): before this fix,
+    // `encodePublicKeyOptions` never touched `extensions.prf.eval.first`/
+    // `.second`/`evalByCredential[*].first`/`.second` -- real ArrayBuffers
+    // that survived the MAIN<->ISOLATED postMessage hop intact but were
+    // mangled to `{}` by the ISOLATED->background `runtime.sendMessage`
+    // JSON-serialization, breaking every PRF-with-eval ceremony. These
+    // tests assert the encoded output is a base64url STRING that survives
+    // an actual `JSON.parse(JSON.stringify(...))` round-trip (the exact
+    // hop that used to mangle it) -- never `{}`.
+    it("CR-01: extensions.prf.eval.first/second ArrayBuffers are base64url-encoded before sendMessage, and survive a JSON round-trip", async () => {
+      const nonce = "nonce-prf-eval";
+      const request: PageBridgeRequestEnvelope = {
+        source: "pv-page-bridge",
+        nonce,
+        kind: "credentials.get",
+        origin: location.origin,
+        publicKey: {
+          rpId: "example.com",
+          extensions: {
+            prf: {
+              eval: {
+                first: new Uint8Array([9, 8, 7]).buffer,
+                second: new Uint8Array([6, 5, 4]).buffer,
+              },
+            },
+          },
+        },
+      };
+
+      window.dispatchEvent(new MessageEvent("message", { data: request, origin: location.origin, source: window }));
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+      const sentMessage = hoisted.mockSendMessage.mock.calls[0][0];
+      // The exact hop that used to mangle a raw ArrayBuffer into `{}`.
+      const roundTripped = JSON.parse(JSON.stringify(sentMessage)) as {
+        publicKey: { extensions: { prf: { eval: { first: unknown; second: unknown } } } };
+      };
+      const evalOut = roundTripped.publicKey.extensions.prf.eval;
+      expect(typeof evalOut.first).toBe("string");
+      expect(evalOut.first).not.toEqual({});
+      expect(typeof evalOut.second).toBe("string");
+      expect(evalOut.second).not.toEqual({});
+    });
+
+    it("CR-01: extensions.prf.evalByCredential[*].first/second ArrayBuffers are also base64url-encoded", async () => {
+      const nonce = "nonce-prf-evalbycredential";
+      const request: PageBridgeRequestEnvelope = {
+        source: "pv-page-bridge",
+        nonce,
+        kind: "credentials.get",
+        origin: location.origin,
+        publicKey: {
+          rpId: "example.com",
+          extensions: {
+            prf: {
+              evalByCredential: {
+                "cred-1": { first: new Uint8Array([1, 2, 3]).buffer },
+              },
+            },
+          },
+        },
+      };
+
+      window.dispatchEvent(new MessageEvent("message", { data: request, origin: location.origin, source: window }));
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+      const sentMessage = hoisted.mockSendMessage.mock.calls[0][0];
+      const roundTripped = JSON.parse(JSON.stringify(sentMessage)) as {
+        publicKey: { extensions: { prf: { evalByCredential: Record<string, { first: unknown }> } } };
+      };
+      const byCred = roundTripped.publicKey.extensions.prf.evalByCredential["cred-1"];
+      expect(typeof byCred.first).toBe("string");
+      expect(byCred.first).not.toEqual({});
+    });
+
+    it("CR-01: extensions.prf.eval is also encoded on a credentials.create request (WebAuthn L3 allows prf.eval on create)", async () => {
+      const nonce = "nonce-prf-eval-create";
+      const request: PageBridgeRequestEnvelope = {
+        source: "pv-page-bridge",
+        nonce,
+        kind: "credentials.create",
+        origin: location.origin,
+        publicKey: {
+          rp: { id: "example.com", name: "Example" },
+          extensions: { prf: { eval: { first: new Uint8Array([1, 1, 1]).buffer } } },
+        },
+      };
+
+      window.dispatchEvent(new MessageEvent("message", { data: request, origin: location.origin, source: window }));
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+      const sentMessage = hoisted.mockSendMessage.mock.calls[0][0];
+      const roundTripped = JSON.parse(JSON.stringify(sentMessage)) as {
+        publicKey: { extensions: { prf: { eval: { first: unknown } } } };
+      };
+      expect(typeof roundTripped.publicKey.extensions.prf.eval.first).toBe("string");
+    });
   });
 });
