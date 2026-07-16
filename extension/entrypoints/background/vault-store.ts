@@ -7,10 +7,16 @@
 // state (subscribeSessionLockState/isSessionUnlocked) instead of
 // web's lib/crypto/index.ts.
 //
-// CRUD (createVaultItem/updateVaultItem/deleteVaultItem/
-// RevisionConflictError/splitCombinedEncryptedItem) is deliberately NOT
-// ported -- read path only this phase (CONTEXT.md's locked out-of-scope
-// boundary), same reasoning as Task 1's vault-api.ts.
+// Plan 11-03 adds the write-path counterpart (splitCombinedEncryptedItem,
+// RevisionConflictError, isConflictError) this file was deliberately
+// missing under Phase 9's CONTEXT.md read-only boundary -- required for
+// Generate & Capture's encrypt-then-persist flow (capture-handler.ts).
+// Full CRUD (createVaultItem/updateVaultItem/deleteVaultItem as in-memory-
+// cache-mutating wrappers) is still NOT ported here: capture-handler.ts
+// calls vault-api.ts's createItem/updateItem directly and lets the next
+// sync pull (vault-store.ts's own applySyncSnapshot, already wired) pick up
+// the new/changed item into this cache, rather than duplicating a second
+// optimistic-update path.
 //
 // Pitfall 4 / T-09-18: locking the vault stops sync BEFORE clearing the
 // in-memory decrypted cache, in that exact order -- a stale sync callback
@@ -41,6 +47,48 @@ function recombineEncryptedItem(encKey: string, encData: string): string {
     enc_data: JSON.parse(encData) as unknown,
   };
   return JSON.stringify(combined);
+}
+
+/** Inverse of recombineEncryptedItem: splits encryptItem's combined output
+ * back into its two enc_key/enc_data sub-objects, each re-stringified for
+ * the wire (server columns are opaque strings, not nested JSON). Ported
+ * verbatim from web/src/lib/vault/store.ts's splitCombinedEncryptedItem. */
+export function splitCombinedEncryptedItem(combinedJson: string): {
+  encKey: string;
+  encData: string;
+} {
+  const combined = JSON.parse(combinedJson) as CombinedEncryptedItem;
+  return {
+    encKey: JSON.stringify(combined.enc_key),
+    encData: JSON.stringify(combined.enc_data),
+  };
+}
+
+/** Distinguishable error type for a stale-revision (409) PUT -- lets
+ * capture-handler.ts's confirmUpdateLogin tell "the item changed elsewhere"
+ * apart from any other failure instead of silently overwriting. Ported
+ * verbatim from web/src/lib/vault/store.ts's RevisionConflictError. */
+export class RevisionConflictError extends Error {
+  constructor() {
+    super("item revision changed elsewhere — refresh and try again");
+    this.name = "RevisionConflictError";
+  }
+}
+
+// Deliberately NOT an `instanceof ApiClientError` check here -- ported
+// verbatim from web/src/lib/vault/store.ts's own isConflictError, whose
+// header comment explains why: this module is dynamically re-imported per
+// test via vi.resetModules() in some suites, which would make a
+// statically-imported ApiClientError class reference a DIFFERENT class
+// object than what a test's mock rejection constructs, silently breaking
+// `instanceof`. A structural (duck-typed) status check is immune to that.
+export function isConflictError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "status" in err &&
+    (err as { status: unknown }).status === 409
+  );
 }
 
 let items: VaultItem[] = [];
