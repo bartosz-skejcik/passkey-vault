@@ -168,3 +168,8 @@ None - no external service configuration required for this plan's own automated 
 ---
 *Phase: 11-generate-capture*
 *Completed: 2026-07-16*
+
+## Self-Check: PASSED
+
+All 8 created/modified files verified present on disk; all 3 commits
+(`5fdfb22`, `83226a1`, `183c731`) verified present in git log.
