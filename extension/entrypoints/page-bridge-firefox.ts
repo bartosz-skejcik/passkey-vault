@@ -36,13 +36,15 @@ import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../l
 const REQUEST_SOURCE = "pv-page-bridge";
 const RESPONSE_SOURCE = "pv-content-relay";
 
-// CR-03 fix (12-REVIEW.md, Plan 12-05): see page-bridge.content.ts's
-// identical constant for the full rationale -- 120000ms (2 minutes),
-// decoupled from "typical popup round trip" and re-scoped to "how long a
-// genuinely-abandoned ceremony blocks before falling through", now that
-// Decision A makes human-in-the-loop consent the ORDINARY path for every
-// ceremony, not an edge case.
-const RESPONSE_TIMEOUT_MS = 120_000;
+// CR-03 completion (12-REVIEW.md re-review, Plan 12-06): see
+// page-bridge.content.ts's identical constants for the full rationale --
+// the early-ack handshake (content-relay.content.ts's `postAck`) makes the
+// extension the sole fallthrough authority once it accepts a request, so
+// this file no longer races a single fixed interaction-budget timeout
+// against the background's own (additive, ~240s worst case) unlock-wait/
+// consent-await ceilings.
+const ACK_TIMEOUT_MS = 3_000;
+const EXTENSION_AUTHORITY_TIMEOUT_MS = 300_000;
 
 const PERMISSIONS_POLICY_FEATURE: Record<"create" | "get", string> = {
   create: "publickey-credentials-create",
@@ -125,10 +127,10 @@ export function isPermissionsPolicyBlocked(
 }
 
 /** Sends the ceremony request to content-relay.content.ts and awaits a
- * single matching-nonce response, bounded by RESPONSE_TIMEOUT_MS (D-09).
- * Resolves `null` on timeout -- the caller treats `null` identically to an
- * explicit `"fallthrough"`/`"error"` response (D-11: never a dead-ended
- * promise, never a new error type the page didn't trigger itself). */
+ * single matching-nonce TERMINAL response. See page-bridge.content.ts's
+ * identical function for the full two-phase (`ACK_TIMEOUT_MS` ->
+ * `EXTENSION_AUTHORITY_TIMEOUT_MS`) rationale -- this file duplicates the
+ * patch logic verbatim, per this file's own header comment. */
 function relay(
   kind: "credentials.create" | "credentials.get",
   publicKey: unknown,
@@ -136,6 +138,8 @@ function relay(
   return new Promise((resolve) => {
     const nonce = crypto.randomUUID();
     let settled = false;
+    let acked = false;
+    let timeoutId: number;
 
     function cleanup(): void {
       window.clearTimeout(timeoutId);
@@ -167,10 +171,19 @@ function relay(
       ) {
         return;
       }
+      if (data.kind === "ack") {
+        if (acked || settled) {
+          return; // duplicate/late ack -- ignored
+        }
+        acked = true;
+        window.clearTimeout(timeoutId);
+        timeoutId = window.setTimeout(() => finish(null), EXTENSION_AUTHORITY_TIMEOUT_MS);
+        return;
+      }
       finish(data as PageBridgeResponseEnvelope);
     }
 
-    const timeoutId = window.setTimeout(() => finish(null), RESPONSE_TIMEOUT_MS);
+    timeoutId = window.setTimeout(() => finish(null), ACK_TIMEOUT_MS);
     window.addEventListener("message", onMessage);
 
     const request: PageBridgeRequestEnvelope = {

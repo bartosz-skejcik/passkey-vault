@@ -211,11 +211,17 @@ describe("not a WebAuthn ceremony", () => {
 });
 
 describe("D-11 fallthrough: three required cases", () => {
-  it("Case 1 (timeout): falls through to the native original when no relay response ever arrives", async () => {
+  // CR-03 completion (Plan 12-06): renamed from "(timeout)" -- this is now
+  // specifically the NO-ACK case (content-relay never even accepts the
+  // request), bounded by the SHORT `ACK_TIMEOUT_MS` window, not the old
+  // single 120s interaction-budget timeout. See the dedicated "CR-03
+  // completion" describe block below for the ack-arrives/no-ack-arrives
+  // pair of tests this plan's behavior spec requires.
+  it("Case 1 (no ack): falls through to the native original when content-relay never even acks the request", async () => {
     vi.useFakeTimers();
     const promise = navigator.credentials.get({ publicKey: { rpId: "example.com" } } as CredentialRequestOptions);
 
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     const result = await promise;
 
     expect(result).toEqual({ id: "native-get-result" });
@@ -298,7 +304,7 @@ describe("D-03: request envelope discipline", () => {
     expect(call?.[1]).toBe(location.origin);
     expect(call?.[1]).not.toBe("*");
 
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     await promise;
   });
 
@@ -316,11 +322,105 @@ describe("D-03: request envelope discipline", () => {
       credentialJson: {},
     });
 
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     const result = await promise;
 
     // The mismatched-nonce message was ignored -- the call still timed out
-    // and fell through to native, never resolving with the spoofed value.
+    // (short no-ack window, since the mismatched-nonce message was never
+    // accepted as this call's ack either) and fell through to native, never
+    // resolving with the spoofed value.
+    expect(result).toEqual({ id: "native-get-result" });
+  });
+});
+
+// CR-03 completion (12-REVIEW.md re-review, Plan 12-06): the early-ack
+// handshake -- content-relay.content.ts's `postAck` -- is what makes the
+// extension the SOLE fallthrough authority once it accepts a request. Prior
+// to this fix, the background's `waitForUnlock`+`awaitCeremonyConsent`
+// ceilings were ADDITIVE (~240s worst case) against this file's single
+// fixed 120s timeout, so a slow locked-vault confirm made the page fall
+// through to native mid-ceremony while the background went on to
+// mint+persist a credential the RP never received (12-REVIEW.md CR-03,
+// re-review finding).
+describe("CR-03 completion (Plan 12-06): early-ack handshake", () => {
+  it("an ack cancels the short no-ack fallthrough timer -- a credential resolution arriving well after the OLD 120s interaction-budget window still returns the extension's result, never a native fallthrough", async () => {
+    vi.useFakeTimers();
+    const postSpy = spyOnOutgoingPostMessage();
+    const promise = navigator.credentials.get({ publicKey: { rpId: "example.com" } } as CredentialRequestOptions);
+    const nonce = lastRequestEnvelope(postSpy).nonce;
+
+    // The relay accepts the request and acks it well within the short
+    // no-ack window.
+    dispatchRelayResponse({ source: "pv-content-relay", nonce, kind: "ack" });
+
+    // Advance PAST both the short no-ack window AND the OLD single 120s
+    // interaction-budget timeout -- if the ack hadn't cancelled the
+    // original race and switched to the extension-authority backstop, this
+    // call would already have resolved to native by now.
+    await vi.advanceTimersByTimeAsync(150_000);
+    expect(nativeGet).not.toHaveBeenCalled();
+
+    const decodedCredential = {
+      id: "cred-1",
+      rawId: new ArrayBuffer(4),
+      type: "public-key",
+      response: { clientDataJSON: new ArrayBuffer(8) },
+    };
+    const credentialJson = { id: "cred-1" };
+    dispatchRelayResponse({
+      source: "pv-content-relay",
+      nonce,
+      kind: "credential",
+      credential: decodedCredential,
+      credentialJson,
+    });
+
+    const result = (await promise) as unknown as { id: string };
+    expect(result.id).toBe("cred-1");
+    expect(nativeGet).not.toHaveBeenCalled();
+  });
+
+  it("no ack arrives within the short window (relay absent / non-provider context): falls through to native promptly, not after the old 120s ceiling", async () => {
+    vi.useFakeTimers();
+    const promise = navigator.credentials.get({ publicKey: { rpId: "example.com" } } as CredentialRequestOptions);
+
+    // Well short of the OLD 120s timeout -- proves the fallthrough is now
+    // bounded by the SHORT no-ack window, not the interaction budget.
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    const result = await promise;
+    expect(result).toEqual({ id: "native-get-result" });
+    expect(nativeGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("an ack followed by an explicit fallthrough resolves via that real message, never the extension-authority backstop", async () => {
+    const postSpy = spyOnOutgoingPostMessage();
+    const promise = navigator.credentials.create({
+      publicKey: { rp: { id: "example.com" } },
+    } as CredentialCreationOptions);
+    const nonce = lastRequestEnvelope(postSpy).nonce;
+
+    dispatchRelayResponse({ source: "pv-content-relay", nonce, kind: "ack" });
+    dispatchRelayResponse({ source: "pv-content-relay", nonce, kind: "fallthrough" });
+
+    const result = await promise;
+    expect(result).toEqual({ id: "native-create-result" });
+    expect(nativeCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a duplicate/late ack for an already-acked nonce is ignored -- does not throw, does not re-arm past the already-armed backstop", async () => {
+    const postSpy = spyOnOutgoingPostMessage();
+    const promise = navigator.credentials.get({ publicKey: { rpId: "example.com" } } as CredentialRequestOptions);
+    const nonce = lastRequestEnvelope(postSpy).nonce;
+
+    dispatchRelayResponse({ source: "pv-content-relay", nonce, kind: "ack" });
+    expect(() =>
+      dispatchRelayResponse({ source: "pv-content-relay", nonce, kind: "ack" }),
+    ).not.toThrow();
+
+    dispatchRelayResponse({ source: "pv-content-relay", nonce, kind: "fallthrough" });
+
+    const result = await promise;
     expect(result).toEqual({ id: "native-get-result" });
   });
 });

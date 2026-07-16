@@ -619,6 +619,22 @@ function postToPage(nonce: string, rest: ProviderResponsePayload): void {
   window.postMessage(envelope, location.origin);
 }
 
+/** CR-03 completion (12-REVIEW.md re-review, Plan 12-06): posted the moment
+ * a request passes ALL of handleProviderPageMessage's validation gates
+ * (source/origin/shape/non-replay), BEFORE the sendMessage forward to the
+ * background. This is NOT a response -- it is a "handling" signal that lets
+ * page-bridge's relay() cancel its short no-ack fallthrough window and
+ * become exclusively dependent on the extension's own eventual
+ * `"credential"`/`"fallthrough"` terminal message, so an
+ * extension-accepted ceremony can never ALSO fall through to native
+ * mid-flight (the orphaned-credential race CR-03 exists to close). Never
+ * sent for a rejected/invalid request -- identical to today's silent-ignore
+ * behavior for those. D-03: target origin is ALWAYS location.origin. */
+function postAck(nonce: string): void {
+  const envelope: PageBridgeResponseEnvelope = { source: RESPONSE_SOURCE, nonce, kind: "ack" };
+  window.postMessage(envelope, location.origin);
+}
+
 interface ProviderCeremonyResponseLike {
   fallthrough: boolean;
   failed?: boolean;
@@ -683,6 +699,10 @@ function handleProviderPageMessage(event: MessageEvent): void {
     return; // replay -- silently ignored, never re-forwarded (D-03/ASVS V5)
   }
   seenNonces.set(nonce, now + NONCE_TTL_MS);
+
+  // CR-03 completion: every validation gate above has now passed -- ack
+  // BEFORE forwarding to the background (see postAck's own header comment).
+  postAck(nonce);
 
   const encodedPublicKey = encodePublicKeyOptions(publicKey);
 

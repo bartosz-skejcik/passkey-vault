@@ -43,6 +43,19 @@ export interface PageBridgeRequestEnvelope {
  * against the specific pending ceremony call that requested it (D-22's
  * "single matching-nonce message event" contract).
  *
+ * - `"ack"`: CR-03 completion (12-REVIEW.md re-review, Plan 12-06) -- a
+ *   NON-terminal "handling" signal content-relay posts as soon as a
+ *   request passes ALL its validation gates, BEFORE forwarding to the
+ *   background. This is what lets page-bridge stop racing a fixed
+ *   interaction-budget timeout against the background's own
+ *   unlock-wait/consent-await ceilings (which are ADDITIVE, ~240s, vs. the
+ *   page's prior single 120s): once an ack with a matching nonce arrives,
+ *   the extension is the SOLE authority on when this ceremony resolves --
+ *   page-bridge cancels its short no-ack fallthrough timer and waits
+ *   exclusively for a `"credential"`/`"fallthrough"` terminal message
+ *   (bounded only by a generous backstop against a truly wedged listener,
+ *   never an interaction budget). No ack for an INVALID/rejected request --
+ *   identical to today's silent-ignore behavior.
  * - `"credential"`: a vault-backed ceremony succeeded. `credential` already
  *   has every WebAuthn binary field (`rawId`, `response.*`,
  *   `clientExtensionResults.prf.results.*`) decoded back into real
@@ -63,6 +76,11 @@ export interface PageBridgeRequestEnvelope {
  *   and return/reject with its real result (D-11).
  */
 export type PageBridgeResponseEnvelope =
+  | {
+      source: "pv-content-relay";
+      nonce: string;
+      kind: "ack";
+    }
   | {
       source: "pv-content-relay";
       nonce: string;

@@ -36,34 +36,38 @@ import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../l
 const REQUEST_SOURCE = "pv-page-bridge";
 const RESPONSE_SOURCE = "pv-content-relay";
 
-// CR-03 fix (12-REVIEW.md, Plan 12-05): the ORIGINAL 5000ms value here was
-// far shorter than any human-in-the-loop interaction -- it killed the
-// picker/consent popup (the ONLY reachable consent surface) before a human
-// could read it, pick an account, and confirm, AND it made a locked-vault
-// create() orphan a credential (the page falls through to native at 5s
-// while the background is still awaiting unlock, then mints+persists to
-// the vault anyway once the user finally unlocks ~8-15s later -- a
-// credential the RP never received). Decision A (every ceremony now awaits
-// EXPLICIT popup consent, provider-ceremony.ts) makes the human-in-the-loop
-// path the ORDINARY case, not an edge case, so this ceiling is
-// deliberately decoupled from "how long a popup round trip typically
-// takes" and re-scoped to "how long is a genuinely-abandoned ceremony
-// allowed to block before this page gives up" -- 120000ms (2 minutes),
-// well past any real human interaction window. The background's own
-// consent-await/unlock-await have a MATCHING abandon ceiling
-// (`CEREMONY_ABANDON_TIMEOUT_MS`, provider-ceremony.ts, WR-03) that cleans
-// up its own state (unsubscribe, storage key removal) independently of
-// this page-side timer -- the two are not synchronized by a heartbeat
-// (a lighter-weight "still working" ack was considered and rejected as
-// unnecessary complexity for this plan; a shared backstop ceiling is
-// sufficient, per 12-05-PLAN.md's own explicit allowance). A fast
-// fallthrough for a missing/unreachable content-relay is NOT handled by
-// this timer at all -- `relay()`'s `onMessage` listener simply never
-// receives a response in that case, and this same timeout is what
-// eventually resolves it; there is no separate "no relay" fast path
-// because a missing content-relay is indistinguishable, from this file's
-// perspective, from an abandoned ceremony.
-const RESPONSE_TIMEOUT_MS = 120_000;
+// CR-03 completion (12-REVIEW.md re-review, Plan 12-06): 12-05's single
+// fixed RESPONSE_TIMEOUT_MS (120000ms) was WRONG -- this file's own prior
+// comment here claimed the background's `waitForUnlock`/
+// `awaitCeremonyConsent` ceilings and this page-side timer formed one
+// "shared backstop ceiling," and that a lighter-weight ack was
+// "unnecessary complexity." Both claims were incorrect: the background's
+// two ceilings are ADDITIVE (waitForUnlock's 120s THEN
+// awaitCeremonyConsent's own 120s, ~240s worst case for a locked-vault
+// ceremony), strictly longer than this page's single 120s -- so a slow
+// locked-vault confirm made the page fall through to native at 120s while
+// the background was STILL awaiting the popup, then minted+persisted a
+// credential the RP never received (the exact orphan CR-03 was supposed to
+// close, still open on that path). The real fix is the early-ack
+// handshake: content-relay.content.ts posts a `kind:"ack"` message the
+// moment it accepts a request (BEFORE forwarding to the background,
+// content-relay.content.ts's `postAck`) -- once that arrives, THIS file
+// stops racing a fixed interaction budget entirely and becomes exclusively
+// dependent on the extension's own terminal `"credential"`/`"fallthrough"`
+// message, which provider-ceremony.ts (background) is guaranteed to
+// eventually send (an explicit fallthrough on decline/no-match/error/
+// abandon, never a silently-dropped ceremony). Two ceilings now exist for
+// two DIFFERENT purposes:
+// - `ACK_TIMEOUT_MS`: how long to wait for content-relay to even ACCEPT
+//   the request before assuming no relay is reachable (missing extension,
+//   non-provider context) and falling through to native -- short, because
+//   an ack is a same-tab round trip with no human in it.
+// - `EXTENSION_AUTHORITY_TIMEOUT_MS`: once acked, a generous backstop
+//   purely against a truly wedged extension listener -- documented as a
+//   backstop, NOT an interaction budget, since the extension always sends
+//   an explicit terminal message on every real code path.
+const ACK_TIMEOUT_MS = 3_000;
+const EXTENSION_AUTHORITY_TIMEOUT_MS = 300_000;
 
 const PERMISSIONS_POLICY_FEATURE: Record<"create" | "get", string> = {
   create: "publickey-credentials-create",
@@ -150,10 +154,29 @@ export function isPermissionsPolicyBlocked(
 }
 
 /** Sends the ceremony request to content-relay.content.ts and awaits a
- * single matching-nonce response, bounded by RESPONSE_TIMEOUT_MS (D-09).
- * Resolves `null` on timeout -- the caller treats `null` identically to an
- * explicit `"fallthrough"`/`"error"` response (D-11: never a dead-ended
- * promise, never a new error type the page didn't trigger itself). */
+ * single matching-nonce TERMINAL response (`"credential"`/`"fallthrough"`/
+ * `"error"` -- never `"ack"`, which is intercepted below and never handed
+ * to the caller). CR-03 completion (Plan 12-06): two-phase wait, not one
+ * fixed race.
+ *
+ * Phase A (no ack yet): bounded by `ACK_TIMEOUT_MS`. If no ack (and no
+ * terminal message) arrives in that short window -- content-relay
+ * unreachable, no extension installed, or this isn't a provider context --
+ * `finish(null)` falls through to native promptly (PROV-03, D-11).
+ *
+ * Phase B (acked): the moment a matching-nonce ack arrives, the Phase A
+ * timer is cancelled and the extension becomes the SOLE authority on this
+ * ceremony's outcome -- an already-accepted request can NEVER also run
+ * native, closing CR-03's orphaned-credential race even on a slow
+ * locked-vault confirm. `EXTENSION_AUTHORITY_TIMEOUT_MS` still bounds Phase
+ * B, but only as a backstop against a genuinely wedged extension listener
+ * (the background always sends an explicit terminal message on every real
+ * code path -- decline, abandon-timeout, and genuine failure all resolve
+ * to `{fallthrough: true}`/`{failed: true}`), never as an interaction
+ * budget. Resolves `null` on either timeout -- the caller treats `null`
+ * identically to an explicit `"fallthrough"`/`"error"` response (D-11:
+ * never a dead-ended promise, never a new error type the page didn't
+ * trigger itself). */
 function relay(
   kind: "credentials.create" | "credentials.get",
   publicKey: unknown,
@@ -161,6 +184,8 @@ function relay(
   return new Promise((resolve) => {
     const nonce = crypto.randomUUID();
     let settled = false;
+    let acked = false;
+    let timeoutId: number;
 
     function cleanup(): void {
       window.clearTimeout(timeoutId);
@@ -193,10 +218,22 @@ function relay(
       ) {
         return;
       }
+      if (data.kind === "ack") {
+        if (acked || settled) {
+          return; // duplicate/late ack -- ignored, Phase B already entered (or already settled)
+        }
+        acked = true;
+        // Phase A -> Phase B: cancel the short no-ack window, switch to the
+        // generous wedged-listener backstop, and keep listening -- an ack
+        // is never itself a terminal value handed to the caller.
+        window.clearTimeout(timeoutId);
+        timeoutId = window.setTimeout(() => finish(null), EXTENSION_AUTHORITY_TIMEOUT_MS);
+        return;
+      }
       finish(data as PageBridgeResponseEnvelope);
     }
 
-    const timeoutId = window.setTimeout(() => finish(null), RESPONSE_TIMEOUT_MS);
+    timeoutId = window.setTimeout(() => finish(null), ACK_TIMEOUT_MS);
     window.addEventListener("message", onMessage);
 
     const request: PageBridgeRequestEnvelope = {

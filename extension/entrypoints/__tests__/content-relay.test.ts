@@ -355,7 +355,7 @@ describe("content-relay", () => {
       });
     });
 
-    it("posts the credential response back to the page with binary fields decoded to ArrayBuffers", async () => {
+    it("posts an ack, THEN the credential response, back to the page with binary fields decoded to ArrayBuffers", async () => {
       const nonce = "nonce-credential-response";
       const rawIdB64Url = "AQID"; // base64url for bytes [1,2,3]
       hoisted.mockSendMessage.mockResolvedValueOnce({
@@ -379,8 +379,12 @@ describe("content-relay", () => {
       window.dispatchEvent(new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }));
       await flushMicrotasks();
 
-      expect(received).toHaveLength(1);
-      const response = received[0];
+      // CR-03 completion (Plan 12-06): the ack is posted BEFORE the
+      // background is even called -- it always arrives first, as a
+      // separate, non-terminal message.
+      expect(received).toHaveLength(2);
+      expect(received[0]).toEqual({ source: "pv-content-relay", nonce, kind: "ack" });
+      const response = received[1];
       expect(response.kind).toBe("credential");
       if (response.kind === "credential") {
         expect(response.nonce).toBe(nonce);
@@ -389,6 +393,51 @@ describe("content-relay", () => {
         expect(new Uint8Array(credential.rawId)).toEqual(new Uint8Array([1, 2, 3]));
         expect(credential.response.clientDataJSON).toBeInstanceOf(ArrayBuffer);
       }
+    });
+
+    // CR-03 completion (12-REVIEW.md re-review, Plan 12-06): the early-ack
+    // handshake itself -- content-relay's half. See page-bridge.test.ts's
+    // "CR-03 completion" describe block for the page-bridge half (ack
+    // cancels the no-ack timer / no-ack falls through promptly).
+    it("CR-03 completion: a VALID request is acked immediately, before the background is ever called", async () => {
+      const nonce = "nonce-ack-before-forward";
+      hoisted.mockSendMessage.mockResolvedValueOnce({ fallthrough: true });
+      const postSpy = vi.spyOn(window, "postMessage");
+
+      window.dispatchEvent(new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }));
+      await flushMicrotasks();
+
+      const ackCallIndex = postSpy.mock.calls.findIndex(
+        (call) => (call[0] as { kind?: unknown; nonce?: unknown })?.kind === "ack" && (call[0] as { nonce?: unknown }).nonce === nonce,
+      );
+      expect(ackCallIndex).toBeGreaterThanOrEqual(0);
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+      // The ack's own postMessage call happened strictly BEFORE sendMessage
+      // was invoked -- vitest's invocationCallOrder is a global monotonic
+      // counter shared across every mock/spy in the test.
+      expect(postSpy.mock.invocationCallOrder[ackCallIndex]).toBeLessThan(
+        hoisted.mockSendMessage.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("CR-03 completion: an INVALID request (replayed nonce) gets no ack -- same as no forward", async () => {
+      const nonce = "nonce-ack-replay-test";
+      const acks: unknown[] = [];
+      window.addEventListener("message", (e) => {
+        const data = (e as MessageEvent).data as Partial<PageBridgeResponseEnvelope>;
+        if (data?.source === "pv-content-relay" && data.kind === "ack") {
+          acks.push(data);
+        }
+      });
+
+      window.dispatchEvent(new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }));
+      await flushMicrotasks();
+      expect(acks).toHaveLength(1); // the first, valid delivery IS acked
+
+      // Same nonce again -- a replay, rejected before the ack call site.
+      window.dispatchEvent(new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }));
+      await flushMicrotasks();
+      expect(acks).toHaveLength(1); // still just the one ack -- the replay got none
     });
 
     // CR-01 fix (12-REVIEW.md, Phase 12 Plan 12-05): before this fix,
