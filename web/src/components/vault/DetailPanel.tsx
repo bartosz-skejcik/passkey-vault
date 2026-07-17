@@ -354,7 +354,7 @@ export default function DetailPanel({
               muted plain-language explainer, ahead of the actual fields
               below. */}
           {item.fields.type === "passkey" ? (
-            <div className="flex flex-col gap-3 rounded-box border border-base-300 p-4">
+            <div className="flex flex-col gap-3 pt-1">
               <span className="text-sm font-semibold text-base-content/70">
                 {t("detail.passkeySectionTitle")}
               </span>

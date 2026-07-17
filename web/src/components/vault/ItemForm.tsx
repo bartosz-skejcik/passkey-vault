@@ -215,13 +215,12 @@ function TextAreaField({
 }
 
 // Proton Pass-inspired section grouping (Bartek live-review round 4, TASKS
-// 4/6), adapted to our own 1px-border/rounded-box tokens — mirrors the exact
-// bordered-card treatment DetailPanel.tsx already uses for its passkey/totp
-// call-out sections, so a "section" reads the same whether it's viewing or
-// editing.
+// 4/6). FLAT by explicit Bartek direction ("bez card'ów jako kontenery
+// sekcji") — a section is just its heading + fields with breathing room,
+// never a bordered/rounded box container.
 function FormSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-4 rounded-box border border-base-300 p-4">
+    <div className="flex flex-col gap-4 pt-2">
       <span className="text-sm font-semibold text-base-content/70">{title}</span>
       {children}
     </div>
