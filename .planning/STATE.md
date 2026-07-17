@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 Phase: 13 — Dual-Browser Hardening
 Plan: 4 of 05
 Status: Ready to execute
-Last activity: 2026-07-17 — Plan 13-01 (Firefox manifest/CSP/gecko hardening) complete
+Last activity: 2026-07-17 - Completed quick task 260717-lnx: Extension UX: one-click passkey picker, NordPass-style inpage dropdown restyle, headless e2e fixture
 
 Progress: [█████████░] 93%
 
@@ -137,6 +137,13 @@ None yet.
 - Research flags PRF browser/OS support matrix as a moving target — re-verify current-state support at Phase 12 (Passkey Provider) planning time, not from the 2026-07-14 research snapshot.
 - ARCHITECTURE.md flags `chrome.storage.session` TTL/eviction semantics (survives extension update? idle-time-only eviction?) as needing hands-on verification during Phase 8/9 planning, not assumed from docs.
 - WASM loading inside content-script bundling context specifically (vs. background/popup) is unverified per research STACK.md — validate during Phase 8's bootstrap spike if autofill (Phase 10) ends up needing `pv-core` decrypt calls close to the DOM.
+- **NEEDS BARTEK DECISION**: Quick task 260717-lnx re-enabled `headless: true` in `extension/e2e/fixtures.ts` (was `headless: false` per 13-03's documented finding) and reproduced the exact historical hang on `P12-SC1` (create() ceremony) under headless — 4.0m timeout x2 (attempt + retry), unrelated to the quick task's own one-click-picker changes. `P10-SC1` passed cleanly headless in 8.7s, confirming the hang is WebAuthn-ceremony-specific, not a blanket headless regression. Decide: accept a headed-mode carve-out for provider-ceremony e2e tests specifically (leaving `headless: true` everywhere else), or another mitigation. See `.planning/quick/260717-lnx-extension-ux-one-click-passkey-picker-no/260717-lnx-SUMMARY.md` and `.planning/phases/13-dual-browser-hardening/13-03-SUMMARY.md` for the original investigation.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260717-lnx | Extension UX: one-click passkey picker, NordPass-style inpage dropdown restyle, headless e2e fixture | 2026-07-17 | 115e68d | [260717-lnx-extension-ux-one-click-passkey-picker-no](./quick/260717-lnx-extension-ux-one-click-passkey-picker-no/) |
 
 ## Deferred Items
 
