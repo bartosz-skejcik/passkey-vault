@@ -209,7 +209,7 @@ Plans:
 
 - [ ] 13-01-PLAN.md — Firefox install + manifest/CSP/gecko hardening + web-ext lint (D-02/D-04/D-07/D-09)
 - [ ] 13-02-PLAN.md — PRF honest-degradation cross-browser (feature-detect module + banner copy, D-03/D-06)
-- [ ] 13-03-PLAN.md — Playwright Chromium harness + full Chrome UAT pass (19 SCs)
+- [ ] 13-03-PLAN.md — Playwright Chromium harness + full Chrome UAT pass (21 SCs, 24-row checklist)
 - [ ] 13-04-PLAN.md — Firefox UAT pass + divergence triage/fixes + final sign-off (D-01/D-05/D-08)
 - [ ] 13-05-PLAN.md — moz-extension CORS: server scheme-wildcard mechanism (D-10 tech-debt flagged) + CORS-vs-unreachable UX (D-11) + self-hosting docs
 
