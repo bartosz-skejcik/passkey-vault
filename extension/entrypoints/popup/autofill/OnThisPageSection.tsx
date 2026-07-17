@@ -147,11 +147,15 @@ export default function OnThisPageSection({
 
   return (
     <div className="flex flex-col gap-1" data-testid="on-this-page-section">
-      {/* Label-role typography (09-UI-SPEC.md's 4-role scale: 14px/400) --
-          deliberately NOT font-bold/text-base like the old collapsible
-          header, which read too heavy for a permanent, always-visible
-          section label (Bartek 2026-07-16, 10-POPUP-REDESIGN-SPEC.md). */}
-      <h2 className="flex min-w-0 items-center gap-2 px-1 text-sm font-normal text-base-content/60">
+      {/* Section-label typography (popup UI round, Bartek-decided, decision
+          2: 12px/weight 500) -- matches ItemListView.tsx's own "Wszystkie"
+          heading exactly, so the two permanent section labels read as one
+          consistent typographic family. No horizontal padding of its own
+          (relies on ItemListView.tsx's content-card ancestor's own 16px
+          `px-4`) -- previously carried its own `px-1` on top of that
+          ancestor's padding, which this round's "16px horizontal padding"
+          spec calls out as the section label's own, exact inset. */}
+      <h2 className="flex min-w-0 items-center gap-2 text-xs font-medium text-base-content/60">
         <Globe size={16} className="shrink-0" aria-hidden="true" />
         <span className="truncate">{heading}</span>
       </h2>
