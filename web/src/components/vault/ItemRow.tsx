@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CreditCard, Globe, IdCard, KeyRound, MoreVertical, StickyNote, Timer } from "lucide-react";
+import { MoreVertical } from "lucide-react";
 import type { ItemType, VaultItem } from "@/lib/vault/types";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
@@ -9,23 +9,7 @@ import { formatRelativeTime } from "@/lib/format/relativeTime";
 import ItemContextMenu from "./ItemContextMenu";
 import DeleteConfirmDialog from "./DeleteConfirmDialog";
 import TotpCountdownRing from "./TotpCountdownRing";
-
-// Documented decision (T-02-18): no per-domain favicon fetch of any kind
-// exists anywhere in this directory — the neutral type-icon alone satisfies
-// UI-03's baseline visual-differentiator requirement, per RESEARCH.md's
-// finding that third-party favicon services leak visited-site metadata.
-// Favicon fetching is scoped out of Phase 2, not an oversight.
-// Phase 12: "passkey" now exists in the data model (PasskeyFields) — KeyRound
-// matches the extension popup's own icon for the same type
-// (extension/entrypoints/popup/ItemListView.tsx).
-const TYPE_ICON: Record<ItemType, typeof Globe> = {
-  login: Globe,
-  card: CreditCard,
-  identity: IdCard,
-  note: StickyNote,
-  totp: Timer,
-  passkey: KeyRound,
-};
+import ItemIconTile from "./ItemIconTile";
 
 const TYPE_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
   login: "itemType.login",
@@ -64,7 +48,6 @@ export default function ItemRow({
   onEditRequest?: (item: VaultItem) => void;
 }) {
   const { t, locale } = useLocale();
-  const Icon = TYPE_ICON[item.fields.type];
   const typeLabel = t(TYPE_LABEL_KEY[item.fields.type]);
   // Proton Pass-inspired passkey row (Bartek live-review): the site (rpId)
   // is the primary text, the account (username, falling back to the
@@ -130,9 +113,7 @@ export default function ItemRow({
         onClick={onClick}
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
       >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-base-200 text-base-content/70">
-          <Icon size={18} aria-hidden="true" />
-        </span>
+        <ItemIconTile item={item} />
 
         <span className="flex min-w-0 flex-1 flex-col items-start">
           <span className="truncate text-base">{primaryText}</span>

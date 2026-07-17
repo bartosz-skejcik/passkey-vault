@@ -8,10 +8,12 @@ import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
 import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
 import { showCopyToast } from "@/lib/vault/copyToast";
+import { addressLines } from "@/lib/vault/identityAddress";
 import PasskeyPlaceholderSection from "./PasskeyPlaceholderSection";
 import TotpCountdownRing from "./TotpCountdownRing";
 import ItemForm from "./ItemForm";
 import DeleteConfirmDialog from "./DeleteConfirmDialog";
+import ItemIconTile from "./ItemIconTile";
 
 // Fields shaped as generic string values, rendered through a Label+value
 // loop — `folderId` and `tags` are special-cased below instead (they need
@@ -22,32 +24,42 @@ import DeleteConfirmDialog from "./DeleteConfirmDialog";
 // `["secret"]` — `algorithm`/`digits`/`period` never render in view mode
 // (06-RESEARCH.md Pattern 2); the live countdown ring is a bespoke block
 // rendered separately, below.
-// Passkey items get a fully composed layout (see the `type === "passkey"`
-// branch in the render below), not this generic loop — its FIELD_ORDER entry
-// is intentionally empty; kept only so this Record stays exhaustive over
-// ItemFields["type"].
+// Passkey AND identity items get a fully composed layout (see their own
+// `type === "passkey"`/`type === "identity"` branches in the render below),
+// not this generic loop — their FIELD_ORDER entries are intentionally
+// empty; kept only so this Record stays exhaustive over ItemFields["type"].
 const FIELD_ORDER: Record<ItemFields["type"], string[]> = {
   login: ["username", "password", "notes"],
   // Bartek live-review (Proton Pass-inspired reorder): Card Number first,
   // then Expiration Date, then CVV, then cardholder name — was previously
-  // cardholderName-first.
-  card: ["number", "expiry", "cvv", "cardholderName", "notes"],
-  identity: ["firstName", "lastName", "email", "phone", "address", "notes"],
+  // cardholderName-first. Round 4 (TASK 4) inserts the new optional
+  // pin/zip fields right after CVV, matching the CREATE/EDIT form's own
+  // field grouping; both are skipped entirely (not shown as "—") when
+  // empty — see OPTIONAL_IF_EMPTY_FIELDS below.
+  card: ["number", "expiry", "cvv", "pin", "zip", "cardholderName", "notes"],
+  identity: [],
   note: ["body"],
   totp: ["secret"],
   passkey: [],
 };
 
-const MONO_FIELDS = new Set(["password", "number", "cvv", "secret"]);
+// Fields whose row is entirely OMITTED (not rendered with a "—" placeholder)
+// when empty — currently just the two new optional card fields (Bartek
+// live-review round 4, TASK 4: "omit rows when empty"). Every other
+// FIELD_ORDER entry keeps the pre-existing always-show-the-row behavior.
+const OPTIONAL_IF_EMPTY_FIELDS = new Set(["pin", "zip"]);
+
+const MONO_FIELDS = new Set(["password", "number", "cvv", "pin", "secret"]);
 
 // Fields that get a per-field reveal toggle next to the copy button.
-// `cvv` previously had no entry here, matching ItemForm.tsx's own
+// `cvv`/`pin` previously had no entry here, matching ItemForm.tsx's own
 // no-reveal-for-CVV convention for the ADD/EDIT form (where the user just
 // typed the value and doesn't need it echoed back). DetailPanel's VIEW mode
-// is a different context — reading the CVV back out to type into a checkout
-// form is the whole point — so Bartek's live-review spec adds reveal+copy
-// for it here (matches Proton Pass/other vaults' own card detail views).
-const REVEALABLE_FIELDS = new Set(["password", "number", "secret", "cvv"]);
+// is a different context — reading the CVV/PIN back out to type into a
+// checkout form is the whole point — so Bartek's live-review spec adds
+// reveal+copy for both here (matches Proton Pass/other vaults' own card
+// detail views).
+const REVEALABLE_FIELDS = new Set(["password", "number", "secret", "cvv", "pin"]);
 
 // A fixed-length mask so the visible placeholder never leaks the real
 // value's character count.
@@ -202,8 +214,13 @@ export default function DetailPanel({
       <div className="flex items-start justify-between gap-2">
         {mode === "view" ? (
           <h2 className="flex items-center gap-2 text-[20px] font-bold leading-[1.2]">
-            {item.fields.type === "passkey" ? (
-              <KeyRound size={18} className="shrink-0 text-accent" aria-hidden="true" />
+            {/* Bartek live-review round 3: favicon/card-brand tile also
+                surfaces here "for consistency" with the list row — scoped to
+                the same three types ItemRow's own tile treats specially. */}
+            {item.fields.type === "login" ||
+            item.fields.type === "passkey" ||
+            item.fields.type === "card" ? (
+              <ItemIconTile item={item} variant="header" />
             ) : null}
             {item.fields.name}
           </h2>
@@ -352,7 +369,11 @@ export default function DetailPanel({
             </div>
           ) : null}
           <div className="flex flex-col gap-3">
-            {FIELD_ORDER[item.fields.type].map((key) => (
+            {FIELD_ORDER[item.fields.type].map((key) => {
+              if (OPTIONAL_IF_EMPTY_FIELDS.has(key) && !fieldValues[key]) {
+                return null;
+              }
+              return (
               <Fragment key={key}>
                 <div className="flex flex-col gap-1">
                   <span className="text-sm text-base-content/60">
@@ -396,7 +417,8 @@ export default function DetailPanel({
                   </div>
                 ) : null}
               </Fragment>
-            ))}
+              );
+            })}
 
             {/* FIELD_ORDER.passkey is deliberately empty (see its comment
                 above) — these three rows replace the generic loop for this
@@ -448,6 +470,90 @@ export default function DetailPanel({
                     </div>
                   </div>
                 ) : null}
+              </>
+            ) : null}
+
+            {/* Identity composed layout (Bartek live-review round 4, TASK
+                5): FIELD_ORDER.identity is deliberately empty (see its
+                comment above) — these rows replace the generic loop:
+                a single combined "Full Name" row (not separate
+                firstName/lastName rows), Email, Phone, then a stacked-line
+                Address block that prefers the new structured fields but
+                falls back to the legacy flat `address` string for items
+                that predate this round (identityAddress.ts's
+                addressLines()), then Notes. */}
+            {item.fields.type === "identity" ? (
+              <>
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-base-content/60">{t("field.fullName")}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-base">
+                      {[item.fields.firstName, item.fields.lastName]
+                        .map((v) => v.trim())
+                        .filter((v) => v !== "")
+                        .join(" ") || "—"}
+                    </span>
+                    {item.fields.firstName || item.fields.lastName
+                      ? renderCopyButton(
+                          "fullName",
+                          `${item.fields.firstName} ${item.fields.lastName}`.trim(),
+                        )
+                      : null}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-base-content/60">{t("field.email")}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-base">{item.fields.email || "—"}</span>
+                    {item.fields.email ? renderCopyButton("email", item.fields.email) : null}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-base-content/60">{t("field.phone")}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-base">{item.fields.phone || "—"}</span>
+                    {item.fields.phone ? renderCopyButton("phone", item.fields.phone) : null}
+                  </div>
+                </div>
+
+                {(() => {
+                  const structured = addressLines(item.fields);
+                  const legacyLines = item.fields.address
+                    .split("\n")
+                    .map((line) => line.trim())
+                    .filter((line) => line !== "");
+                  const lines = structured.length > 0 ? structured : legacyLines;
+                  const copyValue = structured.length > 0 ? structured.join(", ") : item.fields.address;
+                  return (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-base-content/60">{t("field.address")}</span>
+                      <div className="flex items-start gap-1">
+                        <div className="flex flex-1 flex-col">
+                          {lines.length > 0 ? (
+                            lines.map((line, i) => (
+                              <span key={i} className="text-base">
+                                {line}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-base">—</span>
+                          )}
+                        </div>
+                        {lines.length > 0 ? renderCopyButton("address", copyValue) : null}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-base-content/60">{t("field.notes")}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-base">{item.fields.notes || "—"}</span>
+                    {item.fields.notes ? renderCopyButton("notes", item.fields.notes) : null}
+                  </div>
+                </div>
               </>
             ) : null}
 

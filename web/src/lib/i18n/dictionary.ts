@@ -83,6 +83,12 @@ export const DICTIONARY = {
     pl: "Dodaj pierwszy item — hasło, kartę albo notatkę 👇",
     en: "Add your first item — a password, a card, or a note 👇",
   },
+  // Dynamic list header (Bartek live-review round 3, TASK 1) — replaces the
+  // previously-static "Vault" heading above the item list with the active
+  // filter's own name; "all"/itemType/folder read straight off existing
+  // sidebar.*/itemType.*/folder.name, so only the tag-filter case needs a
+  // dedicated template key.
+  "vault.tagFilterHeading": { pl: "Tag: {tag}", en: "Tag: {tag}" },
 
   "item.typePicker": { pl: "Wybierz typ itemu", en: "Choose item type" },
   "item.save": { pl: "Zapisz item", en: "Save item" },
@@ -130,6 +136,35 @@ export const DICTIONARY = {
   "field.algorithm": { pl: "Algorytm", en: "Algorithm" },
   "field.digits": { pl: "Liczba cyfr", en: "Digits" },
   "field.period": { pl: "Okres (s)", en: "Period (s)" },
+
+  // Card PIN/ZIP + identity structured address fields (Bartek live-review
+  // round 4, TASKS 4/5/6) — Claude's-discretion copy, not literally named
+  // by any prior UI-SPEC.
+  "field.pin": { pl: "PIN karty", en: "Card PIN" },
+  "field.zip": { pl: "Kod pocztowy", en: "ZIP or Postal Code" },
+  "field.fullName": { pl: "Imię i nazwisko", en: "Full Name" },
+  "field.addressLine1": { pl: "Adres (linia 1)", en: "Address Line 1" },
+  "field.addressLine2": { pl: "Adres (linia 2)", en: "Address Line 2" },
+  "field.city": { pl: "Miasto", en: "City" },
+  "field.state": { pl: "Województwo/Stan", en: "State or Province" },
+  "field.country": { pl: "Kraj lub region", en: "Country or Region" },
+
+  // Card/identity CREATE/EDIT form section headers + address helper texts
+  // (Bartek live-review round 4, TASKS 4/6) — "form.otherSection" is shared
+  // by both the card and identity forms' "Inne"/"Other" section.
+  "form.cardDetailsSection": { pl: "Dane karty", en: "Card Details" },
+  "form.contactDetailsSection": { pl: "Dane kontaktowe", en: "Contact Details" },
+  "form.addressDetailsSection": { pl: "Adres", en: "Address Details" },
+  "form.otherSection": { pl: "Inne", en: "Other" },
+  "form.addressLine1Helper": {
+    pl: "Ulica, numer, skrytka pocztowa…",
+    en: "Street address, P.O. box, etc.",
+  },
+  "form.addressLine2Helper": {
+    pl: "Mieszkanie, piętro, budynek…",
+    en: "Apartment, suite, building, floor, etc.",
+  },
+
   // Passkey read-only metadata (Phase 12 cross-client fix) — "field.rpId"
   // matches the extension's own key verbatim (extension/lib/i18n/
   // dictionary.ts); "field.userDisplayName" is new here (the extension's

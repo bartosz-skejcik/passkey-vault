@@ -123,17 +123,24 @@ function totpItem(overrides: Partial<TotpFields> = {}): VaultItem {
 }
 
 describe("ItemRow", () => {
-  it("renders the login type-icon and the username as subtitle for a login item", () => {
+  // Bartek live-review round 3 (TASK 2): a login item WITH a resolvable
+  // domain now renders a favicon <img> instead of the neutral Globe tile —
+  // see the dedicated favicon describe block below. This fixture has no
+  // urls at all, so the Globe fallback still applies.
+  it("renders the login type-icon and the username as subtitle for a login item with no URL", () => {
     const { container } = render(
-      <ItemRow item={loginItem()} selected={false} onClick={vi.fn()} />,
+      <ItemRow item={loginItem({ urls: [] })} selected={false} onClick={vi.fn()} />,
     );
     expect(container.querySelector(".lucide-globe")).not.toBeNull();
     expect(screen.getByText("bartek")).toBeInTheDocument();
   });
 
-  it("renders the card type-icon for a card item", () => {
+  // Bartek live-review round 3 (TASK 3): a card item whose number resolves
+  // to a known brand now renders that brand's tile instead of the neutral
+  // CreditCard icon — see the dedicated card-brand describe block below.
+  it("renders the CreditCard type-icon for a card item with no number", () => {
     const { container } = render(
-      <ItemRow item={cardItem()} selected={false} onClick={vi.fn()} />,
+      <ItemRow item={cardItem({ number: "" })} selected={false} onClick={vi.fn()} />,
     );
     expect(container.querySelector(".lucide-credit-card")).not.toBeNull();
   });
@@ -213,9 +220,13 @@ describe("ItemRow", () => {
   // TYPE_LABEL_KEY had no "passkey" entry, so `TYPE_ICON[item.fields.type]`
   // was `undefined` and rendering `<Icon />` threw "Cannot read properties
   // of undefined (reading 'en')" at `t(TYPE_LABEL_KEY[item.fields.type])`.
-  it("renders the passkey type-icon for a passkey item", () => {
+  // Bartek live-review round 3 (TASK 2): a passkey item WITH a resolvable
+  // rpId now renders a favicon <img> instead of the neutral KeyRound tile —
+  // see the dedicated favicon describe block below. This fixture clears
+  // rpId, so the KeyRound fallback still applies.
+  it("renders the passkey type-icon for a passkey item with no rpId", () => {
     const { container } = render(
-      <ItemRow item={passkeyItem()} selected={false} onClick={vi.fn()} />,
+      <ItemRow item={passkeyItem({ rpId: "" })} selected={false} onClick={vi.fn()} />,
     );
     expect(container.querySelector(".lucide-key-round")).not.toBeNull();
   });
@@ -284,6 +295,119 @@ describe("ItemRow", () => {
       fireEvent.click(screen.getByTestId("item-menu-trigger-item-1"));
       fireEvent.click(screen.getByTestId("context-menu-edit"));
       expect(onClick).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // Bartek live-review round 3 (TASK 2): zero-knowledge favicon rendering —
+  // a login/passkey row with a resolvable domain shows a direct <img> to
+  // that domain's own /favicon.ico (never a third-party proxy), falling
+  // back to the neutral type-icon tile on load error or when no domain
+  // resolves. Each test below uses a distinct hostname so the module-level
+  // FAILED_FAVICON_HOSTS cache (ItemIconTile.tsx) never leaks a failure
+  // from one test into another within this file.
+  describe("favicon rendering (ItemIconTile)", () => {
+    it("renders a direct favicon <img> from the login item's own domain, never a third-party proxy", () => {
+      const { container } = render(
+        <ItemRow
+          item={loginItem({ urls: ["https://favicon-login-a.test/path"] })}
+          selected={false}
+          onClick={vi.fn()}
+        />,
+      );
+      const img = container.querySelector("img");
+      expect(img).not.toBeNull();
+      expect(img).toHaveAttribute("src", "https://favicon-login-a.test/favicon.ico");
+      expect(img).toHaveAttribute("alt", "");
+      expect(img).toHaveAttribute("referrerpolicy", "no-referrer");
+      expect(container.querySelector(".lucide-globe")).toBeNull();
+    });
+
+    it("tolerates a login URL with no scheme, the same way lib/vault/search.ts's domain parsing does", () => {
+      const { container } = render(
+        <ItemRow
+          item={loginItem({ urls: ["favicon-login-b.test"] })}
+          selected={false}
+          onClick={vi.fn()}
+        />,
+      );
+      expect(container.querySelector("img")).toHaveAttribute(
+        "src",
+        "https://favicon-login-b.test/favicon.ico",
+      );
+    });
+
+    it("falls back to the Globe type-icon when the favicon <img> fires onError, and does not re-flash it on re-render", () => {
+      const { container, rerender } = render(
+        <ItemRow
+          item={loginItem({ urls: ["https://favicon-login-c.test"] })}
+          selected={false}
+          onClick={vi.fn()}
+        />,
+      );
+      const img = container.querySelector("img");
+      expect(img).not.toBeNull();
+      fireEvent.error(img as Element);
+      expect(container.querySelector("img")).toBeNull();
+      expect(container.querySelector(".lucide-globe")).not.toBeNull();
+
+      // Re-rendering the very same item must not attempt the broken
+      // favicon again (the module-level failure cache short-circuits it).
+      rerender(
+        <ItemRow
+          item={loginItem({ urls: ["https://favicon-login-c.test"] })}
+          selected={false}
+          onClick={vi.fn()}
+        />,
+      );
+      expect(container.querySelector("img")).toBeNull();
+      expect(container.querySelector(".lucide-globe")).not.toBeNull();
+    });
+
+    it("renders a direct favicon <img> from a passkey item's rpId", () => {
+      const { container } = render(
+        <ItemRow
+          item={passkeyItem({ rpId: "favicon-passkey-a.test" })}
+          selected={false}
+          onClick={vi.fn()}
+        />,
+      );
+      const img = container.querySelector("img");
+      expect(img).toHaveAttribute("src", "https://favicon-passkey-a.test/favicon.ico");
+      expect(container.querySelector(".lucide-key-round")).toBeNull();
+    });
+
+    it("falls back to the KeyRound type-icon when a passkey favicon fails to load", () => {
+      const { container } = render(
+        <ItemRow
+          item={passkeyItem({ rpId: "favicon-passkey-b.test" })}
+          selected={false}
+          onClick={vi.fn()}
+        />,
+      );
+      fireEvent.error(container.querySelector("img") as Element);
+      expect(container.querySelector("img")).toBeNull();
+      expect(container.querySelector(".lucide-key-round")).not.toBeNull();
+    });
+  });
+
+  // Bartek live-review round 3 (TASK 3): card-brand tiles — a known-brand
+  // number renders that brand's tile instead of the neutral CreditCard
+  // icon. Full prefix-range coverage lives in lib/vault/cardBrand.test.ts;
+  // these just confirm ItemRow actually wires detectCardBrand() in.
+  describe("card brand tile", () => {
+    it("renders a VISA tile for a 4-prefixed card number", () => {
+      const { container } = render(
+        <ItemRow item={cardItem({ number: "4111111111111111" })} selected={false} onClick={vi.fn()} />,
+      );
+      expect(screen.getByText("VISA")).toBeInTheDocument();
+      expect(container.querySelector(".lucide-credit-card")).toBeNull();
+    });
+
+    it("renders the neutral CreditCard icon for an unrecognized card number", () => {
+      const { container } = render(
+        <ItemRow item={cardItem({ number: "9999999999999999" })} selected={false} onClick={vi.fn()} />,
+      );
+      expect(container.querySelector(".lucide-credit-card")).not.toBeNull();
     });
   });
 });

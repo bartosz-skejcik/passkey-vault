@@ -402,4 +402,122 @@ describe("DetailPanel proactive live-edit-conflict banner (SYNC-03, Plan 05-04)"
       expect(mockUpdateVaultItem).toHaveBeenCalledWith("item-1", expect.any(Object), 1),
     );
   });
+
+  // Bartek live-review round 4 (TASK 4): card PIN/ZIP detail rows —
+  // omitted entirely when empty, shown (PIN masked+revealable, ZIP plain)
+  // when present.
+  describe("card pin/zip detail rows (round 4)", () => {
+    it("omits the PIN and ZIP rows entirely for a card item without them", () => {
+      render(<DetailPanel item={cardItem} onClose={vi.fn()} />);
+      expect(screen.queryByText("field.pin")).not.toBeInTheDocument();
+      expect(screen.queryByText("field.zip")).not.toBeInTheDocument();
+    });
+
+    it("shows a masked, revealable PIN row and a plain ZIP row when present", () => {
+      const cardWithPinZip: VaultItem = {
+        id: "item-card-pin-zip",
+        revision: 1,
+        fields: {
+          type: "card",
+          name: "Visa",
+          cardholderName: "Jane Doe",
+          number: "4111111111111111",
+          expiry: "12/28",
+          cvv: "123",
+          pin: "1234",
+          zip: "00-001",
+          notes: "",
+          folderId: null,
+          tags: [],
+        },
+      };
+      render(<DetailPanel item={cardWithPinZip} onClose={vi.fn()} />);
+      expect(screen.getByText("field.pin")).toBeInTheDocument();
+      expect(screen.queryByText("1234")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("reveal-pin"));
+      expect(screen.getByText("1234")).toBeInTheDocument();
+
+      expect(screen.getByText("field.zip")).toBeInTheDocument();
+      expect(screen.getByText("00-001")).toBeInTheDocument();
+    });
+  });
+
+  // Bartek live-review round 4 (TASK 5): identity composed detail layout —
+  // a single "Full Name" row (not separate firstName/lastName rows), Email,
+  // Phone, then a stacked-line Address block.
+  describe("identity composed detail layout (round 4)", () => {
+    const identityItem: VaultItem = {
+      id: "item-identity",
+      revision: 1,
+      fields: {
+        type: "identity",
+        name: "Bartek",
+        firstName: "Bartek",
+        lastName: "Paczesny",
+        email: "bartek@example.com",
+        phone: "+48 000 000 000",
+        address: "",
+        addressLine1: "ul. Prosta 1",
+        addressLine2: "m. 4",
+        city: "Warszawa",
+        state: "",
+        zip: "00-001",
+        country: "Polska",
+        notes: "",
+        folderId: null,
+        tags: [],
+      },
+    };
+
+    it("shows a single combined Full Name row instead of separate First/Last name rows", () => {
+      render(<DetailPanel item={identityItem} onClose={vi.fn()} />);
+      expect(screen.getByText("field.fullName")).toBeInTheDocument();
+      expect(screen.getByText("Bartek Paczesny")).toBeInTheDocument();
+      expect(screen.queryByText("field.firstName")).not.toBeInTheDocument();
+      expect(screen.queryByText("field.lastName")).not.toBeInTheDocument();
+    });
+
+    it("shows Email and Phone rows with copy affordances", () => {
+      render(<DetailPanel item={identityItem} onClose={vi.fn()} />);
+      expect(screen.getByText("bartek@example.com")).toBeInTheDocument();
+      expect(screen.getByTestId("copy-email")).toBeInTheDocument();
+      expect(screen.getByText("+48 000 000 000")).toBeInTheDocument();
+      expect(screen.getByTestId("copy-phone")).toBeInTheDocument();
+    });
+
+    it("renders the structured address as stacked lines, omitting the empty state field", () => {
+      render(<DetailPanel item={identityItem} onClose={vi.fn()} />);
+      expect(screen.getByText("ul. Prosta 1")).toBeInTheDocument();
+      expect(screen.getByText("m. 4")).toBeInTheDocument();
+      expect(screen.getByText("Warszawa")).toBeInTheDocument();
+      expect(screen.getByText("00-001")).toBeInTheDocument();
+      expect(screen.getByText("Polska")).toBeInTheDocument();
+    });
+
+    it("falls back to the legacy flat address string as-is when no structured fields are present", () => {
+      const legacyOnlyItem: VaultItem = {
+        id: "item-identity-legacy",
+        revision: 1,
+        fields: {
+          type: "identity",
+          name: "Bartek",
+          firstName: "Bartek",
+          lastName: "Paczesny",
+          email: "",
+          phone: "",
+          address: "ul. Stara 5, Kraków",
+          notes: "",
+          folderId: null,
+          tags: [],
+        },
+      };
+      render(<DetailPanel item={legacyOnlyItem} onClose={vi.fn()} />);
+      expect(screen.getByText("ul. Stara 5, Kraków")).toBeInTheDocument();
+    });
+
+    it("keeps the Edit button available for identity items (unlike passkey)", () => {
+      render(<DetailPanel item={identityItem} onClose={vi.fn()} />);
+      expect(screen.getByTestId("detail-panel-edit")).toBeInTheDocument();
+    });
+  });
 });

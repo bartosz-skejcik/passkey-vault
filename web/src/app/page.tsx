@@ -251,7 +251,7 @@ export default function Home() {
                 fix) rather than rendering as a flex sibling that narrowed
                 the list. */}
             <div className="relative flex flex-1 overflow-hidden">
-              <MainColumn showEmptyState={items.length === 0 && !creating}>
+              <MainColumn showEmptyState={items.length === 0 && !creating} filter={filter}>
                 <ItemList
                   searchQuery={searchQuery}
                   filter={filter}

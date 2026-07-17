@@ -36,6 +36,16 @@ export interface CardFields extends CommonFields {
   number: string;
   expiry: string;
   cvv: string;
+  // Bartek live-review round 4 (TASK 4, Proton Pass-inspired card layout):
+  // additive-only optional fields — old items without them render/save
+  // fine (ItemForm.tsx's emptyFieldsFor defaults them to "", DetailPanel.tsx
+  // omits their rows entirely when empty). The task's spec also lists a
+  // "note" field for the card form's "Inne"/"Other" section, but this type
+  // already has a required `notes` field serving that exact purpose (shown
+  // identically across every other item type) — reusing it there instead
+  // of adding a same-purpose duplicate field.
+  pin?: string;
+  zip?: string;
   notes: string;
 }
 
@@ -45,7 +55,25 @@ export interface IdentityFields extends CommonFields {
   lastName: string;
   email: string;
   phone: string;
+  // Legacy flat address string — kept as the SOURCE OF TRUTH the
+  // extension's autofill still reads/writes (extension/lib/vault/types.ts's
+  // own IdentityFields.address, filled via a single `street-address`-style
+  // input; see extension/lib/autofill/fill-dom.ts). Bartek live-review
+  // round 4 (TASK 6) adds structured fields below; ItemForm.tsx composes
+  // this flat string from them on every save (lib/vault/identityAddress.ts)
+  // so both the legacy extension autofill and the new structured display
+  // stay in sync — see that module's own doc comment for the full
+  // round-trip rationale.
   address: string;
+  // Additive-only optional structured address fields — old items without
+  // them render/save fine (empty structured fields, legacy `address`
+  // string still authoritative until first edited under the new form).
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  country?: string;
   notes: string;
 }
 
