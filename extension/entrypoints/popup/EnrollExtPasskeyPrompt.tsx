@@ -20,6 +20,7 @@ import { sendMessage } from "../../lib/messaging/ext-protocol";
 import { bytesToB64 } from "../../lib/messaging/bytes-b64";
 import { buildExtCreateOptions, buildExtGetOptions } from "../../lib/passkeys/ext-prf";
 import { extractPrfBytes } from "../../lib/passkeys/prf";
+import { detectPrfCapability } from "../../lib/passkeys/prf-capability";
 import { t, type Locale } from "../../lib/i18n/dictionary";
 
 function randomChallengeB64(): string {
@@ -69,8 +70,7 @@ export default function EnrollExtPasskeyPrompt({
         return;
       }
 
-      const capability = created.getClientExtensionResults() as { prf?: { enabled?: boolean } };
-      if (!capability.prf?.enabled) {
+      if (!detectPrfCapability(created)) {
         // Honest degradation (T-09-... class): create() succeeded but this
         // authenticator can't do PRF -- NEVER call enroll.finish, there is
         // nothing to wrap.
