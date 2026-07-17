@@ -310,7 +310,6 @@ export const DICTIONARY = {
   "sidebar.catNotes": { pl: "Notatki", en: "Notes" },
   "sidebar.catTotp": { pl: "TOTP", en: "TOTP" },
   "sidebar.passkeys": { pl: "Passkeys", en: "Passkeys" },
-  "sidebar.passkeysSoon": { pl: "wkrótce", en: "soon" },
   "sidebar.tools": { pl: "Narzędzia", en: "Tools" },
   "sidebar.generator": { pl: "Generator haseł", en: "Password generator" },
   "sidebar.account": { pl: "Konto", en: "Account" },

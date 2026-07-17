@@ -177,9 +177,7 @@ describe("Sidebar Categories/Tools restructure", () => {
   });
 
   // Phase 12 cross-client fix: provider-created passkey vault items are now
-  // a real category, mirroring the extension popup's own type coverage —
-  // NOT the same element as the pre-existing disabled "sidebar-nav-passkeys"
-  // ("wkrótce"/"soon") placeholder tested below, which is untouched.
+  // a real category, mirroring the extension popup's own type coverage.
   it("clicking the passkey category type button calls onFilterChange with an itemType filter", () => {
     const onFilterChange = vi.fn();
     render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={onFilterChange} />);
@@ -187,13 +185,14 @@ describe("Sidebar Categories/Tools restructure", () => {
     expect(onFilterChange).toHaveBeenCalledWith({ kind: "itemType", itemType: "passkey" });
   });
 
-  it("renders the Passkeys category entry as a disabled button that never calls onFilterChange", () => {
-    const onFilterChange = vi.fn();
-    render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={onFilterChange} />);
-    const passkeysButton = screen.getByTestId("sidebar-nav-passkeys");
-    expect(passkeysButton).toBeDisabled();
-    fireEvent.click(passkeysButton);
-    expect(onFilterChange).not.toHaveBeenCalled();
+  // Bug fix (Bartek live-review): a stale pre-Phase-12 placeholder button
+  // (data-testid="sidebar-nav-passkeys", disabled, "soon"/"wkrótce" badge)
+  // used to render alongside the real passkey category button above,
+  // producing two "Passkeys" nav entries. Assert there is now exactly one.
+  it("renders exactly one Passkeys nav entry (no stale disabled placeholder)", () => {
+    render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={vi.fn()} />);
+    expect(screen.queryByTestId("sidebar-nav-passkeys")).not.toBeInTheDocument();
+    expect(screen.getAllByText("sidebar.passkeys")).toHaveLength(1);
   });
 
   it("opens GeneratorDialog when the Tools > generator row is clicked", () => {
