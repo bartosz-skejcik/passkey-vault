@@ -139,8 +139,86 @@ describe("UnlockView — Unlock-only variant (session.status 'locked')", () => {
 
     expect(screen.queryByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i })).not.toBeInTheDocument();
     expect(
-      screen.getByText(/doesn't support passkey sign-in|nie obsługuje logowania passkeyem/i),
+      screen.getByText(/fast unlock isn't available|szybkie odblokowanie passkeyem nie jest dostępne/i),
     ).toBeInTheDocument();
+  });
+
+  it("D-12 (new — get() throws NotAllowedError): stays silent, no banner, button remains enabled, no unlock.extPrf.finish dispatch", async () => {
+    const getMock = vi.fn().mockRejectedValue(new DOMException("cancelled", "NotAllowedError"));
+    (navigator.credentials.get as unknown as typeof getMock) = getMock;
+
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "unlock.extPrf.start") {
+        return { credentialIdB64url: "cred-123", prfSaltB64: btoa("0123456789abcdef0123456789abcdef") };
+      }
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(
+      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: true })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
+    );
+
+    const prfButton = screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i });
+    fireEvent.click(prfButton);
+
+    await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByText(/fast unlock isn't available|szybkie odblokowanie passkeyem nie jest dostępne/i),
+    ).not.toBeInTheDocument();
+    expect(prfButton).not.toBeDisabled();
+    expect(mockSendMessage.mock.calls.some(([m]) => m.kind === "unlock.extPrf.finish")).toBe(false);
+  });
+
+  it("D-12 (new — get() throws a non-cancel error): renders the neutral D-13 banner and disables the PRF button", async () => {
+    const getMock = vi.fn().mockRejectedValue(new DOMException("no PRF here", "NotSupportedError"));
+    (navigator.credentials.get as unknown as typeof getMock) = getMock;
+
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "unlock.extPrf.start") {
+        return { credentialIdB64url: "cred-123", prfSaltB64: btoa("0123456789abcdef0123456789abcdef") };
+      }
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(
+      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: true })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
+    );
+
+    const prfButton = screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i });
+    fireEvent.click(prfButton);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/fast unlock isn't available|szybkie odblokowanie passkeyem nie jest dostępne/i),
+      ).toBeInTheDocument();
+    });
+    expect(prfButton).toBeDisabled();
+  });
+
+  it("D-12 (new — extractPrfBytes returns undefined): renders the neutral banner (not text-error) and disables the PRF button", async () => {
+    const getMock = vi.fn().mockResolvedValue(mockAssertion(undefined));
+    (navigator.credentials.get as unknown as typeof getMock) = getMock;
+
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "unlock.extPrf.start") {
+        return { credentialIdB64url: "cred-123", prfSaltB64: btoa("0123456789abcdef0123456789abcdef") };
+      }
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(
+      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: true })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
+    );
+
+    const prfButton = screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i });
+    fireEvent.click(prfButton);
+
+    const banner = await screen.findByText(
+      /fast unlock isn't available|szybkie odblokowanie passkeyem nie jest dostępne/i,
+    );
+    expect(banner).toBeInTheDocument();
+    expect(banner).not.toHaveClass("text-error");
+    expect(prfButton).toBeDisabled();
   });
 
   it("Test 4c (new — orphaned credential): unlock.extPrf.finish resolving not-enrolled renders the orphaned-passkey copy and focuses the password field", async () => {

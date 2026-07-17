@@ -32,7 +32,15 @@ function randomChallengeB64(): string {
   return btoa(binary);
 }
 
-type Phase = "idle" | "busy" | "no-prf" | "failed";
+// D-12 (Bartek override, 13-02-PLAN.md): "unusable" is a NEW phase,
+// distinct from "failed" (an enroll.finish/message-level failure) -- it
+// means the create() ceremony itself proved this browser/authenticator
+// can't run the extension-scoped passkey fast-path at all (a genuine,
+// non-cancel throw). Once reached, it persists for the rest of this
+// popup's lifetime (component never unmounts mid-session) and disables
+// the create button, per D-12's visible-but-disabled rule -- "Not now"
+// (skip) stays available throughout (D-06).
+type Phase = "idle" | "busy" | "no-prf" | "failed" | "unusable";
 
 export default function EnrollExtPasskeyPrompt({
   locale,
@@ -63,10 +71,19 @@ export default function EnrollExtPasskeyPrompt({
       let created: PublicKeyCredential;
       try {
         created = (await navigator.credentials.create(createOptions)) as PublicKeyCredential;
-      } catch {
-        // User-cancelled or a genuine ceremony failure -- reset quietly,
-        // same NotAllowedError precedent as UnlockView/web's enroll flow.
-        setPhase("idle");
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "NotAllowedError") {
+          // User-cancelled -- reset quietly. Support is still unknown, so
+          // the create button stays fully clickable for a next attempt.
+          setPhase("idle");
+          return;
+        }
+        // A genuine ceremony failure (SecurityError, NotSupportedError,
+        // ...) -- honest D-03/D-13 degradation (T-13-05) instead of the
+        // old silent idle-reset: this browser/authenticator has proven it
+        // can't run this ceremony, so surface the neutral banner and flip
+        // the create button to disabled (D-12), never hidden.
+        setPhase("unusable");
         return;
       }
 
@@ -149,11 +166,14 @@ export default function EnrollExtPasskeyPrompt({
       {phase === "failed" ? (
         <p className="text-sm text-error">{t(locale, "extPasskey.enrollFailed")}</p>
       ) : null}
+      {phase === "unusable" ? (
+        <p className="text-sm text-base-content/70">{t(locale, "unlock.passkeyUnsupported")}</p>
+      ) : null}
 
       <button
         type="button"
         className="btn btn-accent"
-        disabled={phase === "busy"}
+        disabled={phase === "busy" || phase === "unusable"}
         onClick={() => void handleCreate()}
       >
         <span className="relative inline-flex">

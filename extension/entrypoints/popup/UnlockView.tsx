@@ -86,6 +86,15 @@ export default function UnlockView({
   // its own stale meta record, so the NEXT `session.status` fetch (a
   // fresh popup open) will reflect `extPasskeyEnrolled: false` on its own.
   const [prfOrphanedThisSession, setPrfOrphanedThisSession] = useState(false);
+  // D-12 (Bartek override): once a genuine (non-cancel) PRF-ceremony
+  // failure has been OBSERVED this popup session -- either the get()
+  // ceremony itself throwing something other than a user-cancel, or the
+  // authenticator reporting no PRF result at all -- the PRF button flips
+  // to visible-but-disabled with the neutral D-13 explainer alongside it,
+  // for the rest of this popup's lifetime. Before that first observed
+  // failure (support unknown), the button stays fully clickable: a first
+  // attempt must always be possible.
+  const [prfUnusableThisSession, setPrfUnusableThisSession] = useState(false);
 
   const webauthnSupported = typeof window !== "undefined" && window.PublicKeyCredential !== undefined;
   // Sign-in variant: NO PRF button this phase (AMENDMENT) -- the extension
@@ -150,16 +159,29 @@ export default function UnlockView({
       let assertion: PublicKeyCredential;
       try {
         assertion = (await navigator.credentials.get(options)) as PublicKeyCredential;
-      } catch {
-        // User-cancelled (NotAllowedError) or a genuine ceremony failure --
-        // both silently reset to idle without an alarming error, mirroring
-        // web/src/components/auth/UnlockOverlay.tsx's precedent.
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "NotAllowedError") {
+          // User-cancelled -- silently reset to idle without an alarming
+          // error, mirroring web/src/components/auth/UnlockOverlay.tsx's
+          // precedent. Support is still unknown; the button stays enabled.
+          return;
+        }
+        // A genuine ceremony failure (SecurityError, NotSupportedError, ...)
+        // -- honest D-03/D-13 degradation instead of the old silent
+        // dead-end (T-13-05): the passkey fast-path is proven unusable
+        // this session, so surface the neutral banner and flip the button
+        // to disabled (D-12), never hidden.
+        setPrfUnusableThisSession(true);
         return;
       }
 
       const prfBytes = extractPrfBytes(assertion);
       if (prfBytes === undefined) {
-        setPrfNotice({ kind: "failed" });
+        // The ceremony succeeded but this authenticator didn't report a
+        // PRF result -- an honest capability gap (T-13-05), not a hardware
+        // error, so it gets the same neutral D-03/D-13 banner as the
+        // catch-path above, not the alarming text-error styling.
+        setPrfUnusableThisSession(true);
         return;
       }
 
@@ -220,20 +242,25 @@ export default function UnlockView({
       ) : null}
 
       {showPrfButton ? (
-        <button
-          type="button"
-          className="btn btn-accent w-full"
-          disabled={prfBusy}
-          onClick={() => void handlePrfUnlock()}
-        >
-          <span className="relative inline-flex">
-            <Fingerprint size={18} aria-hidden="true" />
-            {prfBusy ? (
-              <Loader2 size={16} className="absolute -right-2 -top-2 animate-spin" aria-hidden="true" />
-            ) : null}
-          </span>
-          {prfBusy ? t(locale, "unlock.passkeyBusy") : t(locale, "unlock.passkeyCta")}
-        </button>
+        <>
+          <button
+            type="button"
+            className="btn btn-accent w-full"
+            disabled={prfBusy || prfUnusableThisSession}
+            onClick={() => void handlePrfUnlock()}
+          >
+            <span className="relative inline-flex">
+              <Fingerprint size={18} aria-hidden="true" />
+              {prfBusy ? (
+                <Loader2 size={16} className="absolute -right-2 -top-2 animate-spin" aria-hidden="true" />
+              ) : null}
+            </span>
+            {prfBusy ? t(locale, "unlock.passkeyBusy") : t(locale, "unlock.passkeyCta")}
+          </button>
+          {prfUnusableThisSession ? (
+            <p className="text-sm text-base-content/70">{t(locale, "unlock.passkeyUnsupported")}</p>
+          ) : null}
+        </>
       ) : showTier1Explainer ? (
         <p className="text-sm text-base-content/70">{t(locale, "unlock.passkeyUnsupported")}</p>
       ) : null}

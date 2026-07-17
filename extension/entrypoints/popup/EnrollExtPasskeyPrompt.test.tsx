@@ -117,6 +117,67 @@ describe("EnrollExtPasskeyPrompt", () => {
     expect(mockSendMessage.mock.calls.some(([m]) => m.kind === "extPasskey.enroll.finish")).toBe(false);
   });
 
+  it("D-12 (new — create() throws NotAllowedError): stays silent/idle, no banner, create button remains enabled", async () => {
+    (navigator.credentials.create as unknown as ReturnType<typeof vi.fn>) = vi
+      .fn()
+      .mockRejectedValue(new DOMException("cancelled", "NotAllowedError"));
+
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "extPasskey.enroll.start") {
+        return {
+          ok: true,
+          accountEmail: "a@example.com",
+          userHandleB64: btoa("userhandle"),
+          challengeB64: btoa("challenge"),
+          prfSaltB64: btoa("0123456789abcdef0123456789abcdef"),
+        };
+      }
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(<EnrollExtPasskeyPrompt locale="en" onDone={vi.fn()} />);
+
+    const createButton = screen.getByRole("button", { name: /create a passkey|utwórz passkey/i });
+    fireEvent.click(createButton);
+
+    await waitFor(() => expect(navigator.credentials.create).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByText(/fast unlock isn't available|szybkie odblokowanie passkeyem nie jest dostępne/i),
+    ).not.toBeInTheDocument();
+    expect(createButton).not.toBeDisabled();
+  });
+
+  it("D-12 (new — create() throws a non-cancel error): renders the neutral D-13 banner and disables the create button", async () => {
+    (navigator.credentials.create as unknown as ReturnType<typeof vi.fn>) = vi
+      .fn()
+      .mockRejectedValue(new DOMException("no support", "NotSupportedError"));
+
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "extPasskey.enroll.start") {
+        return {
+          ok: true,
+          accountEmail: "a@example.com",
+          userHandleB64: btoa("userhandle"),
+          challengeB64: btoa("challenge"),
+          prfSaltB64: btoa("0123456789abcdef0123456789abcdef"),
+        };
+      }
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(<EnrollExtPasskeyPrompt locale="en" onDone={vi.fn()} />);
+
+    const createButton = screen.getByRole("button", { name: /create a passkey|utwórz passkey/i });
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/fast unlock isn't available|szybkie odblokowanie passkeyem nie jest dostępne/i),
+      ).toBeInTheDocument();
+    });
+    expect(createButton).toBeDisabled();
+  });
+
   it("skipping via 'Not now' dismisses without calling suppressPrompt", () => {
     const onDone = vi.fn();
     render(<EnrollExtPasskeyPrompt locale="en" onDone={onDone} />);

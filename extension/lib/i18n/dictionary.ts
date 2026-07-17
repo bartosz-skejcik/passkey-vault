@@ -48,14 +48,26 @@ export const DICTIONARY = {
     pl: "Potwierdź w przeglądarce lub na urządzeniu…",
     en: "Confirm in your browser or on your device…",
   },
+  // 13-02-PLAN.md Task 2: no longer rendered by UnlockView.tsx's PRF-catch
+  // paths (both now render the neutral `unlock.passkeyUnsupported` D-13
+  // banner instead of this alarming `text-error` line) -- kept, unused, in
+  // case a future phase needs a distinct "genuine hardware error" copy.
   "unlock.passkeyFailed": {
     pl: "Nie udało się użyć passkeya. Spróbuj ponownie albo użyj hasła poniżej.",
     en: "Couldn't use your passkey. Try again — or use your password below.",
   },
   "unlock.orDivider": { pl: "lub", en: "or" },
+  // D-13 (13-02-PLAN.md, Bartek override, copy canon): ONE shared string for
+  // every "this popup surface's passkey fast-path can't run here" case --
+  // the Tier-1 "WebAuthn API entirely absent" case, AND the two new D-12
+  // ceremony-catch cases (a genuine get()/create() failure, or a PRF-less
+  // authenticator on the unlock get()-path). Browser-framed deliberately:
+  // this IS a real browser WebAuthn ceremony on this surface (unlike the
+  // passkey-PROVIDER ceremony's D-16 capability-framed copy, a different
+  // surface -- see ProviderCeremonyView.tsx's own header comment).
   "unlock.passkeyUnsupported": {
-    pl: "Ta przeglądarka nie obsługuje logowania passkeyem na tym urządzeniu — użyj hasła głównego poniżej.",
-    en: "This browser doesn't support passkey sign-in on this device — use your master password below.",
+    pl: "Szybkie odblokowanie passkeyem nie jest dostępne w tej przeglądarce — użyj hasła.",
+    en: "Fast unlock isn't available for this passkey on this browser — use your password.",
   },
   "unlock.sessionLockedNotice": {
     pl: "Sesja wygasła po bezczynności — odblokuj ponownie.",
