@@ -193,10 +193,12 @@ export type ServerUnlockCompleteResult =
  * (assertContentSender's own guard.origin), never a payload field; this is
  * the background-side half of T-13-11's "both relay- and background-side"
  * origin pin (content-relay.content.ts's listener registration is the
- * other half). The nonce is consumed FIRST, unconditionally, before any
- * other check -- a second delivery (replay, or a race between two relayed
- * messages) always finds no pending record, regardless of which check would
- * otherwise have failed it.
+ * other half). The nonce is consumed only once it MATCHES the current
+ * pending record (WR-01 fix, phase-13 review) -- a second delivery of that
+ * SAME nonce (replay) always finds no pending record afterwards, but a
+ * delivery carrying a DIFFERENT (stale/mismatched) nonce deliberately does
+ * NOT touch whatever ceremony is currently pending, so it can never destroy
+ * a separate, still-legitimate, in-flight ceremony (T-13-13).
  */
 export async function completeServerUnlock(
   args: { nonce: string; prfB64: string; prfWrappedUk: string },
@@ -212,11 +214,34 @@ export async function completeServerUnlock(
   }
 
   const pending = await readPending();
-  await clearPending(); // single-use: consumed now, regardless of outcome below
 
-  if (pending === null || pending.nonce !== args.nonce) {
+  if (pending === null) {
+    // WR-01 fix (phase-13 review, T-13-13): no ceremony is pending at all --
+    // either a replay of an already-resolved nonce (that earlier delivery
+    // already broadcast) or a bogus/forged nonce that never matched a real
+    // ceremony. Broadcasting here is a harmless no-op in the replay case,
+    // and is the safety net against a popup ever left wedged with nothing
+    // else to resolve it (T-13-13: "every pending path ... must resolve
+    // UnlockView's in-flight UI").
+    await broadcastCeremonyState(false);
     return { ok: false, error: "invalid-nonce" };
   }
+
+  if (pending.nonce !== args.nonce) {
+    // WR-01 fix: a DIFFERENT ceremony is currently pending -- e.g. a rapid
+    // re-trigger race where a stale/abandoned window's ExtUnlockBridge
+    // posts an earlier nonce after startServerUnlock already rotated to a
+    // new one (see that function's own "latest wins" comment). Deliberately
+    // does NOT consume, close, or broadcast anything for the CURRENT
+    // pending record here -- it belongs to a separate, still-legitimate,
+    // in-flight ceremony that must be left alone to resolve on its own path
+    // (success/expiry/its own nonce match); broadcasting false here would
+    // falsely report failure for a ceremony that has not actually failed.
+    return { ok: false, error: "invalid-nonce" };
+  }
+
+  await clearPending(); // single-use: consumed now, regardless of outcome below
+
   if (Date.now() - pending.createdAt > CEREMONY_TIMEOUT_MS) {
     await closeWindowIfAny(pending);
     await broadcastCeremonyState(false);

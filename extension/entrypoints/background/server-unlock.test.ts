@@ -236,6 +236,41 @@ describe("completeServerUnlock", () => {
     expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
   });
 
+  it("WR-01: an invalid-nonce delivery with NO pending record at all still broadcasts ok:false -- never leaves an in-flight popup wedged (T-13-13)", async () => {
+    const result = await completeServerUnlock(
+      { nonce: "never-issued", prfB64: btoa("prf"), prfWrappedUk: "blob" },
+      "https://vault.example.com",
+    );
+    expect(result).toEqual({ ok: false, error: "invalid-nonce" });
+    expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: false });
+  });
+
+  it("WR-01: a stale/mismatched nonce delivery while a DIFFERENT ceremony is currently pending does NOT clear, close, or broadcast for that current ceremony -- it survives to complete on its own", async () => {
+    const currentNonce = await startAndGetNonce();
+    hoisted.mockWindowsRemove.mockClear();
+    hoisted.mockSendMessage.mockClear();
+
+    const staleResult = await completeServerUnlock(
+      { nonce: "some-other-stale-nonce", prfB64: btoa("prf"), prfWrappedUk: "blob" },
+      "https://vault.example.com",
+    );
+    expect(staleResult).toEqual({ ok: false, error: "invalid-nonce" });
+    // The CURRENT pending ceremony must be untouched: not consumed, its
+    // window not closed, and no spurious failure broadcast for it.
+    expect(readPendingNonceFromStorage()).toBe(currentNonce);
+    expect(hoisted.mockWindowsRemove).not.toHaveBeenCalled();
+    expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+
+    // The real, current ceremony can still complete successfully afterwards.
+    hoisted.mockFromPrf.mockReturnValue({ free: vi.fn() });
+    hoisted.mockUnwrapUserKey.mockReturnValue({ tag: "uk" });
+    const realResult = await completeServerUnlock(
+      { nonce: currentNonce, prfB64: btoa("prf"), prfWrappedUk: "blob" },
+      "https://vault.example.com",
+    );
+    expect(realResult).toEqual({ ok: true });
+  });
+
   it("unwrap failure clears the pending state, closes the window, and broadcasts ok:false rather than throwing", async () => {
     const nonce = await startAndGetNonce();
     hoisted.mockFromPrf.mockReturnValue({ free: vi.fn() });
