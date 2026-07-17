@@ -16,10 +16,14 @@
     "compile": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e:chrome": "playwright test --project=chromium",
+    "test:e2e:firefox:core": "node e2e-firefox/run-core.cjs",
+    "test:e2e:firefox:autofill": "node e2e-firefox/run-autofill-capture.cjs",
     "postinstall": "wxt prepare",
     "predev": "bash ../scripts/build-wasm.sh",
     "prebuild": "bash ../scripts/build-wasm.sh",
-    "pretest:e2e:chrome": "wxt build -b chrome"
+    "pretest:e2e:chrome": "wxt build -b chrome",
+    "pretest:e2e:firefox:core": "wxt build -b firefox",
+    "pretest:e2e:firefox:autofill": "wxt build -b firefox"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",
@@ -30,7 +34,9 @@
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "^4.3.4",
+    "geckodriver": "6.1.0",
     "jsdom": "^25.0.1",
+    "selenium-webdriver": "4.46.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7",
     "web-ext": "10.5.0",
@@ -45,5 +51,8 @@
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "tailwindcss": "4.3.2"
+  },
+  "allowScripts": {
+    "geckodriver@6.1.0": true
   }
 }

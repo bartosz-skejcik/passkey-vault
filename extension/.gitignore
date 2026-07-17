@@ -20,6 +20,10 @@ playwright-report
 blob-report
 playwright/.cache
 
+# selenium-webdriver Firefox harness (13-04-PLAN.md) run artifacts
+e2e-firefox/.ff-profile
+e2e-firefox/.ff-screenshots
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
