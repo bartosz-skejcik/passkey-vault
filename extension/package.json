@@ -18,12 +18,14 @@
     "test:e2e:chrome": "playwright test --project=chromium",
     "test:e2e:firefox:core": "node e2e-firefox/run-core.cjs",
     "test:e2e:firefox:autofill": "node e2e-firefox/run-autofill-capture.cjs",
+    "test:e2e:firefox:server-unlock": "node e2e-firefox/run-server-unlock.cjs",
     "postinstall": "wxt prepare",
     "predev": "bash ../scripts/build-wasm.sh",
     "prebuild": "bash ../scripts/build-wasm.sh",
     "pretest:e2e:chrome": "wxt build -b chrome",
     "pretest:e2e:firefox:core": "wxt build -b firefox",
-    "pretest:e2e:firefox:autofill": "wxt build -b firefox"
+    "pretest:e2e:firefox:autofill": "wxt build -b firefox",
+    "pretest:e2e:firefox:server-unlock": "wxt build -b firefox"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",

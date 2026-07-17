@@ -23,6 +23,10 @@ playwright/.cache
 # selenium-webdriver Firefox harness (13-04-PLAN.md) run artifacts
 e2e-firefox/.ff-profile
 e2e-firefox/.ff-screenshots
+# Plan 13-06's dedicated server-unlock scenario profile/screenshots (a
+# SEPARATE, fresh-probe-account profile from the two above)
+e2e-firefox/.ff-profile-server-unlock
+e2e-firefox/.ff-screenshots-server-unlock
 
 # Editor directories and files
 .vscode/*

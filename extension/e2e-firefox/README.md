@@ -39,8 +39,9 @@ every technique used).
 
 ```bash
 cd extension
-npm run test:e2e:firefox:core       # Phase 9 + Phase 12 + D-05/D-08/rpId-on-Firefox
-npm run test:e2e:firefox:autofill   # Phase 10 + Phase 11
+npm run test:e2e:firefox:core           # Phase 9 + Phase 12 + D-05/D-08/rpId-on-Firefox
+npm run test:e2e:firefox:autofill       # Phase 10 + Phase 11
+npm run test:e2e:firefox:server-unlock  # Plan 13-06: server-origin ceremony window+bridge+relay
 ```
 
 Both scripts open a real, visible Firefox window and drive it for several
@@ -50,6 +51,23 @@ profile lives in `.ff-profile/` (also git-ignored) — this pins the
 `moz-extension://<uuid>` origin across relaunches via a pinned
 `extensions.webextensions.uuids` preference, which both storage-persistence
 and CORS-origin-observation rows depend on.
+
+`run-server-unlock.cjs` (Plan 13-06) is a SEPARATE script/profile/account
+from the two above: it registers a fresh, never-enrolled probe account
+(`uat-noext-ff-<run>@example.local` by default) via the real web-app
+RegisterForm UI, then drives the extension's locked-popup ->
+server-ceremony-button -> ceremony-window -> gesture -> honest
+no-passkeys-empty-state flow. It deliberately does NOT exercise the full
+PRF-completion path — Firefox's WebAuthn Virtual Authenticator is genuinely
+`NS_ERROR_NOT_IMPLEMENTED` (see `run-core.cjs`'s P12-SC3 row and
+`13-UAT-CHECKLIST.md`), so there is no automatable stand-in for a real
+authenticator tap. A fresh account with zero enrolled passkeys makes the
+server's own `/api/passkeys/unlock/start` 404 before any WebAuthn ceremony
+is ever invoked, which is exactly how this scenario reaches the honest
+empty-state without needing hardware. **Full-PRF-on-Firefox completion is a
+documented live-UAT item for a human with a real authenticator** (see
+13-06-SUMMARY.md's human-check section) — this harness does not claim to
+cover it.
 
 ## Environment variables (all optional, sensible defaults shown)
 
