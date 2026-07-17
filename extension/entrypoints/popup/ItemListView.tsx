@@ -126,6 +126,16 @@ export default function ItemListView({
   // resolves, matching autoLockMinutes' own "seed a sane default, correct
   // from the real read" pattern a few lines up.
   const [sortOption, setSortOption] = useState<SortOption>(DEFAULT_SORT);
+  // WR-02 fix (phase-13 review): the mount-time `readSortPreference()` read
+  // below is async (browser.storage.local, unlike web/'s synchronous
+  // localStorage read). If the user changes the sort <select> before that
+  // read resolves, `handleSortChange` already set + persisted the NEW
+  // choice, but the still-in-flight mount read would then resolve with the
+  // OLD stored value and clobber it back via `setSortOption`. This ref
+  // tracks "the user has made an explicit choice since mount" so the mount
+  // read's `.then` can no-op once that happens -- storage was always
+  // correct, only the transient UI race is fixed.
+  const userPickedSortRef = useRef(false);
 
   async function refetchItems() {
     const result = await sendMessage({ kind: "vault.list" });
@@ -139,7 +149,11 @@ export default function ItemListView({
         setAutoLockMinutes(status.autoLockMinutes);
       }
     });
-    void readSortPreference().then(setSortOption);
+    void readSortPreference().then((s) => {
+      if (!userPickedSortRef.current) {
+        setSortOption(s);
+      }
+    });
 
     function onBroadcast(message: unknown) {
       if (
@@ -191,6 +205,7 @@ export default function ItemListView({
   }
 
   async function handleSortChange(next: SortOption) {
+    userPickedSortRef.current = true;
     setSortOption(next);
     await writeSortPreference(next);
   }

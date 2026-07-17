@@ -422,6 +422,58 @@ describe("ItemListView", () => {
     });
   });
 
+  it("WR-02 (phase-13 review): a sort choice made BEFORE the mount-time async storage read resolves is not clobbered when that stale read finally resolves", async () => {
+    storageStore.set("pv-popup-sort", "lastUsed");
+
+    let resolveMountRead: ((value: Record<string, unknown>) => void) | undefined;
+    const getSpy = vi
+      .spyOn(browser.storage.local, "get")
+      .mockImplementationOnce(
+        () =>
+          new Promise<Record<string, unknown>>((resolve) => {
+            resolveMountRead = resolve;
+          }),
+      );
+
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "vault.list") {
+        return {
+          items: [loginItem("z-item", "Zebra Corp", "z"), loginItem("a-item", "Apple Inc", "a")],
+          folders: [],
+        };
+      }
+      if (message.kind === "session.status") {
+        return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
+      }
+      if (message.kind === "autofill.match") return autofillMatchRestricted();
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(<ItemListView locale="en" onSelectItem={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText("Zebra Corp")).toBeInTheDocument());
+
+    const sortSelect = screen.getByTestId("popup-sort-select") as HTMLSelectElement;
+    // The mount-time read is still in-flight (deliberately held open above)
+    // -- the select still shows the seeded default.
+    expect(sortSelect.value).toBe("lastUsed");
+
+    // The user picks "name" BEFORE the mount read resolves.
+    fireEvent.change(sortSelect, { target: { value: "name" } });
+    expect(sortSelect.value).toBe("name");
+    await waitFor(() => expect(storageStore.get("pv-popup-sort")).toBe("name"));
+
+    // NOW the stale mount read resolves with the OLD persisted value.
+    resolveMountRead?.({ "pv-popup-sort": "lastUsed" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Without the WR-02 guard, the late resolution would revert this back
+    // to "lastUsed" even though the user already chose (and persisted)
+    // "name" -- storage itself was always correct, only the UI raced.
+    expect(sortSelect.value).toBe("name");
+
+    getSpy.mockRestore();
+  });
+
   it("Test 13 (popup UI round, decision 4): a previously-persisted 'name' sort preference is read back on mount", async () => {
     storageStore.set("pv-popup-sort", "name");
     mockSendMessage.mockImplementation(async (message: { kind: string }) => {
