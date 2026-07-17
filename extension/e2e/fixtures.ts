@@ -69,21 +69,24 @@ export const test: TestType<Record<string, never>, ExtWorkerFixtures> = (
     async ({}: Record<string, never>, use: (r: BrowserContext) => Promise<void>) => {
       const context = await chromium.launchPersistentContext("", {
         channel: "chromium",
-        // Deviation from the plan's original `headless: true` (Rule 3 --
-        // blocking-issue fix, see 13-03-SUMMARY.md for the full
-        // investigation): the Phase 12 passkey-provider ceremony
+        // Quick task 260717-lnx (Bartek, 2026-07-17): headed Chromium windows
+        // were flashing on screen and stealing focus during dev e2e runs, so
+        // this re-enables headless mode per his explicit request. This is a
+        // direct re-enable of the historically-risky path: 13-03-SUMMARY.md
+        // documented that the Phase 12 passkey-provider ceremony
         // (navigator.credentials.create()/get() -> real popup confirm ->
         // background's wasmCreateProviderCredential/wasmGetProviderAssertion)
-        // hangs indefinitely in headless Chromium after the confirm click --
-        // no error, no terminal relay message, ever -- but resolves
-        // correctly within seconds in HEADED Chromium with the exact same
-        // extension build, matching the original manual real-Chrome UAT's
-        // success (12-PROVIDER-UAT.md). This reproduces 100% of the time on
-        // this environment and is specific to headless-mode's WASM/service-
-        // worker execution, not to anything this harness's own code
-        // controls. Headed mode is available and stable in this dev
-        // environment (a real display, not a true headless CI box).
-        headless: false,
+        // hung indefinitely in headless Chromium after the confirm click, on
+        // this same dev environment, with the exact same
+        // channel:"chromium"+headless:true combination this file now
+        // restores. This plan's own gate 4 (and this task's own verify step)
+        // re-run the Phase-12 e2e tests under a bounded timeout specifically
+        // to re-verify this risk rather than assume it away -- if those
+        // tests hang or time out again, that is a REPRODUCTION of the
+        // documented historical finding, not a new bug, and should be
+        // reported back rather than silently patched around or reverted
+        // unilaterally.
+        headless: true,
         viewport: { width: 420, height: 700 },
         args: [
           `--disable-extensions-except=${EXTENSION_PATH}`,

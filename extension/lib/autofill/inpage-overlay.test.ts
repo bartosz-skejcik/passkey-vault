@@ -245,7 +245,7 @@ describe("renderFieldDropdown", () => {
     const shadow = __getShadowRootForTests(controller.host)!;
     const panel = shadow.querySelector('[data-pv-surface="dropdown"]') as HTMLElement;
     const icon = shadow.querySelector("[data-pv-field-icon]") as HTMLElement;
-    expect(panel.style.top).toBe("134px"); // rect.bottom (130) + 4
+    expect(panel.style.top).toBe("138px"); // rect.bottom (130) + 8 (260717-lnx: was +4)
     expect(icon.style.left).toBe("226px"); // rect.right (250) - 24
 
     // The field moved (page scrolled) -- getBoundingClientRect now returns
@@ -265,7 +265,7 @@ describe("renderFieldDropdown", () => {
 
     window.dispatchEvent(new Event("scroll"));
 
-    expect(panel.style.top).toBe("34px"); // new rect.bottom (30) + 4
+    expect(panel.style.top).toBe("38px"); // new rect.bottom (30) + 8
     expect(icon.style.left).toBe("226px"); // rect.right unchanged
   });
 
@@ -293,7 +293,7 @@ describe("renderFieldDropdown", () => {
 
     window.dispatchEvent(new Event("resize"));
 
-    expect(panel.style.top).toBe("234px"); // new rect.bottom (230) + 4
+    expect(panel.style.top).toBe("238px"); // new rect.bottom (230) + 8 (260717-lnx: was +4)
     expect(panel.style.left).toBe("10px");
   });
 
@@ -423,7 +423,7 @@ describe("11-09: scrollable account lists (Bartek live-bug 2026-07-16, >4 accoun
       .map((el) => el.textContent ?? "")
       .find((css) => css.includes(".pv-list"))!;
 
-    expect(overlayCss).toMatch(/\.pv-list\s*\{[^}]*max-height:\s*270px/);
+    expect(overlayCss).toMatch(/\.pv-list\s*\{[^}]*max-height:\s*250px/);
     expect(overlayCss).toMatch(/\.pv-list\s*\{[^}]*overflow-y:\s*auto/);
     expect(overlayCss).toContain("scrollbar-color");
     expect(overlayCss).toMatch(/var\(--color-base-content\)/);
@@ -447,6 +447,50 @@ describe("11-09: scrollable account lists (Bartek live-bug 2026-07-16, >4 accoun
       }) as DOMRect;
     return anchor;
   }
+});
+
+describe("260717-lnx: favicon-first icon tile with glyph fallback", () => {
+  it("Test 16: a row's icon tile renders a favicon <img> sourced from the current page's own origin, with loading=lazy and referrerpolicy=no-referrer", () => {
+    const { controller } = makeController();
+    controller.renderFormPrompt([LOGIN_MATCH]);
+
+    const shadow = __getShadowRootForTests(controller.host)!;
+    const row = shadow.querySelector(`[data-pv-row][data-item-id="${LOGIN_MATCH.itemId}"]`) as HTMLElement;
+    const img = row.querySelector("img.pv-row-favicon") as HTMLImageElement | null;
+    expect(img).not.toBeNull();
+    // Compared dynamically against the live `location` object -- never a
+    // hardcoded domain literal (submit-capture.test.ts's own established
+    // pattern).
+    expect(img!.src).toBe(`${document.location.origin}/favicon.ico`);
+    expect(img!.loading).toBe("lazy");
+    expect(img!.referrerPolicy).toBe("no-referrer");
+  });
+
+  it("Test 17: firing an error on the favicon <img> swaps to the existing per-kind glyph, and caches the hostname so a FRESH controller's row for the same hostname skips the <img> entirely on first render", () => {
+    const { controller: controllerA } = makeController();
+    controllerA.renderFormPrompt([LOGIN_MATCH]);
+
+    const shadowA = __getShadowRootForTests(controllerA.host)!;
+    const rowA = shadowA.querySelector(`[data-pv-row][data-item-id="${LOGIN_MATCH.itemId}"]`) as HTMLElement;
+    const imgA = rowA.querySelector("img.pv-row-favicon") as HTMLImageElement | null;
+    expect(imgA).not.toBeNull();
+
+    imgA!.dispatchEvent(new Event("error"));
+
+    expect(rowA.querySelector("img.pv-row-favicon")).toBeNull();
+    expect(rowA.querySelector(".pv-row-icon")).not.toBeNull();
+
+    // A FRESH controller instance's row for the SAME hostname -- module-
+    // level state (the failed-host cache) persists across
+    // createOverlayController() calls within one test file run, so this is
+    // directly observable without extra mocking.
+    const { controller: controllerB } = makeController();
+    controllerB.renderFormPrompt([LOGIN_MATCH]);
+    const shadowB = __getShadowRootForTests(controllerB.host)!;
+    const rowB = shadowB.querySelector(`[data-pv-row][data-item-id="${LOGIN_MATCH.itemId}"]`) as HTMLElement;
+    expect(rowB.querySelector("img.pv-row-favicon")).toBeNull();
+    expect(rowB.querySelector(".pv-row-icon")).not.toBeNull();
+  });
 });
 
 describe("controller does not hold or leak a live credential value", () => {

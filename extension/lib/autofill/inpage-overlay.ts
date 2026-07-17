@@ -98,6 +98,14 @@ export function __getShadowRootForTests(host: HTMLElement): ShadowRoot | null {
 // itself uses a filled dot (KeyRound's corner pip); the outer `fill="none"`
 // keeps every stroked shape (rects, paths, the outline circles) unfilled,
 // matching lucide's real rendering.
+// Quick task 260717-lnx: this module's OWN module-level failed-favicon
+// cache -- mirrors web/src/components/vault/ItemIconTile.tsx's exact
+// pattern (a previously-failed hostname is never retried), but deliberately
+// NOT shared/imported from that component -- it lives in a different
+// bundle/runtime (this file ships inside the content script, ItemIconTile
+// ships inside the Next.js web app).
+const FAILED_FAVICON_HOSTS = new Set<string>();
+
 const ROW_ICON: Record<FillKind, string> = {
   login: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>`,
   totp: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/></svg>`,
@@ -145,7 +153,11 @@ const OVERLAY_CSS = `
   color: var(--color-base-content);
   border: var(--border, 1px) solid var(--color-base-100);
   border-radius: var(--radius-box);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  /* Bartek's live-CDP-measured NordPass spec (quick task 260717-lnx):
+     --radius-box already resolves to 1rem (16px, packages/pv-ui/tokens.css)
+     -- already matches the measured 16px corner radius, so it stays a
+     token reference here, never a literal. */
+  box-shadow: 0 28px 24px -12px rgba(0, 0, 0, 0.25);
   overflow: hidden;
 }
 .pv-row:focus-visible,
@@ -155,13 +167,14 @@ const OVERLAY_CSS = `
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
-.pv-panel-prompt { top: 16px; right: 16px; width: 320px; }
-.pv-panel-dropdown { min-width: 240px; }
+.pv-panel-prompt { top: 16px; right: 16px; width: 352px; }
+.pv-panel-dropdown { min-width: 352px; }
 .pv-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px;
+  height: 60px;
+  padding: 0 16px;
   background: var(--color-base-200);
   border-bottom: var(--border, 1px) solid var(--color-base-300);
 }
@@ -178,7 +191,16 @@ const OVERLAY_CSS = `
   font-size: 10px;
   flex-shrink: 0;
 }
-.pv-title { flex: 1; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-title {
+  flex: 1;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pv-icon-btn {
   all: unset;
   cursor: pointer;
@@ -194,23 +216,25 @@ const OVERLAY_CSS = `
    hover state is actually visible (a same-as-background base-300 hover
    would be invisible now that the panel itself is base-300). */
 .pv-icon-btn:hover { background: var(--color-base-200); }
-/* 11-09 (Bartek live-bug 2026-07-16): shared by BOTH surfaces (the
-   in-field dropdown AND the prompt-window account list -- buildList() is
-   the one row-list factory both renderFormPrompt/renderFieldDropdown
-   append after their own pinned .pv-header). max-height is tuned to ~4.5
-   rows (each row is ~60px: 20px vertical padding + a ~39px two-line
-   label/sub stack + 1px border-bottom), so a 5th+ row is visibly cut in
-   half -- a deliberate "there's more, scroll" affordance, not just a
-   round number. The previous 320px (~5.3 rows) let exactly 5 accounts
-   render with no visual hint that a 6th would need scrolling, which read
-   as "I can't scroll to see it" even though overflow-y:auto was already
-   technically present. Scrollbar is styled via a token so it doesn't
-   look like an unstyled OS chrome element sitting on top of this
-   otherwise chrome-free panel, and self-adapts per theme via
+/* 11-09 (Bartek live-bug 2026-07-16), max-height math updated for quick
+   task 260717-lnx's NordPass-measured 52px row height: shared by BOTH
+   surfaces (the in-field dropdown AND the prompt-window account list --
+   buildList() is the one row-list factory both renderFormPrompt/
+   renderFieldDropdown append after their own pinned .pv-header).
+   max-height is tuned to ~4.5 rows -- 8px list-top-padding + 4 full rows
+   (52px row + 2px inter-row gap each) + 26px (half of a 5th row) = 250px
+   -- so a 5th+ row is visibly cut in half, a deliberate "there's more,
+   scroll" affordance, not just a round number. Scrollbar is styled via a
+   token so it doesn't look like an unstyled OS chrome element sitting on
+   top of this otherwise chrome-free panel, and self-adapts per theme via
    --color-base-content the same way the row hover states below already
    do (light base-content is dark, dark base-content is light). */
 .pv-list {
-  max-height: 270px;
+  padding: 8px 4px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 250px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklch, var(--color-base-content) 20%, transparent) transparent;
@@ -225,19 +249,41 @@ const OVERLAY_CSS = `
   all: unset;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   width: 100%;
-  padding: 10px 12px;
+  height: 52px;
+  border-radius: 10px;
+  padding: 0 12px 0 8px;
   cursor: pointer;
-  border-bottom: var(--border, 1px) solid var(--color-base-200);
   box-sizing: border-box;
 }
 .pv-row:hover { background: var(--color-base-200); }
+.pv-row-icon-tile {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-base-200);
+}
+.pv-row-favicon { width: 100%; height: 100%; object-fit: contain; }
 .pv-row-icon { width: 16px; height: 16px; flex-shrink: 0; }
-.pv-row-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-.pv-row-label { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-row-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.pv-row-label {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pv-row-sub {
   font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
   color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -378,6 +424,53 @@ function buildConfirmRow(
   return wrap;
 }
 
+/**
+ * 32x32/8px-radius icon tile: favicon-first, falling back to the existing
+ * per-kind glyph on error -- mirrors ItemIconTile.tsx's exact pattern
+ * (module-level failed-host cache checked synchronously before ever
+ * attempting the `<img>`). The CURRENT page's own origin/hostname (via
+ * `doc.location`) IS the row's origin for these autofill matches -- there
+ * is no separate per-item origin field on `AutofillMatch` to plumb
+ * through, and none is needed.
+ */
+function buildIconTile(match: AutofillMatch, doc: Document): HTMLElement {
+  const tile = doc.createElement("span");
+  tile.className = "pv-row-icon-tile";
+  tile.setAttribute("aria-hidden", "true");
+
+  function renderGlyph(): void {
+    tile.innerHTML = "";
+    const glyph = doc.createElement("span");
+    glyph.className = "pv-row-icon";
+    // innerHTML, not textContent -- ROW_ICON entries are lucide SVG
+    // markup, not glyph characters, and need to actually parse as
+    // elements.
+    glyph.innerHTML = ROW_ICON[match.kind];
+    tile.appendChild(glyph);
+  }
+
+  const hostname = doc.location?.hostname ?? "";
+  const origin = doc.location?.origin ?? "";
+
+  if (hostname !== "" && !FAILED_FAVICON_HOSTS.has(hostname)) {
+    const img = doc.createElement("img");
+    img.className = "pv-row-favicon";
+    img.src = `${origin}/favicon.ico`;
+    img.alt = "";
+    img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
+    img.addEventListener("error", () => {
+      FAILED_FAVICON_HOSTS.add(hostname);
+      renderGlyph();
+    });
+    tile.appendChild(img);
+  } else {
+    renderGlyph();
+  }
+
+  return tile;
+}
+
 function buildRow(match: AutofillMatch, doc: Document, onActivate: () => void): HTMLElement {
   const row = doc.createElement("button");
   row.type = "button";
@@ -386,12 +479,7 @@ function buildRow(match: AutofillMatch, doc: Document, onActivate: () => void): 
   row.setAttribute("data-item-id", match.itemId);
   row.setAttribute("data-kind", match.kind);
 
-  const icon = doc.createElement("span");
-  icon.className = "pv-row-icon";
-  icon.setAttribute("aria-hidden", "true");
-  // innerHTML, not textContent -- ROW_ICON entries are lucide SVG markup,
-  // not glyph characters, and need to actually parse as elements.
-  icon.innerHTML = ROW_ICON[match.kind];
+  const icon = buildIconTile(match, doc);
 
   const text = doc.createElement("span");
   text.className = "pv-row-text";
@@ -620,9 +708,10 @@ export function createOverlayController(options: OverlayControllerOptions): Over
     function positionFromRect(anchorRect: DOMRect): void {
       icon.style.top = `${anchorRect.top + anchorRect.height / 2 - 8}px`;
       icon.style.left = `${anchorRect.right - 24}px`;
-      panel.style.top = `${anchorRect.bottom + 4}px`;
+      // Bartek's measured "8px offset below the target field" (was 4px).
+      panel.style.top = `${anchorRect.bottom + 8}px`;
       panel.style.left = `${anchorRect.left}px`;
-      panel.style.width = `${Math.max(anchorRect.width, 240)}px`;
+      panel.style.width = `${Math.max(anchorRect.width, 352)}px`;
     }
 
     positionFromRect(rect);
