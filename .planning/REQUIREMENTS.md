@@ -39,7 +39,7 @@
 
 ### XBR — Cross-browser
 
-- [ ] **XBR-01**: Chrome and Firefox reach feature parity — or Firefox degrades explicitly and legibly where an API/PRF capability differs — verified in a dedicated dual-browser hardening pass
+- [x] **XBR-01**: Chrome and Firefox reach feature parity — or Firefox degrades explicitly and legibly where an API/PRF capability differs — verified in a dedicated dual-browser hardening pass
 
 ## Future Requirements (deferred beyond v0.2)
 
@@ -88,4 +88,4 @@ Filled by the roadmapper.
 | CAP-01 | Phase 11 | Complete |
 | CAP-02 | Phase 11 | Complete |
 | CAP-03 | Phase 11 | Complete |
-| XBR-01 | Phase 13 | Pending |
+| XBR-01 | Phase 13 | Complete |

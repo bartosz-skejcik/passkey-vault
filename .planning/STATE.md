@@ -4,17 +4,17 @@ milestone: v0.2
 milestone_name: Browser Extension
 current_phase: 13
 current_phase_name: Dual-Browser Hardening
-status: planning
-stopped_at: Completed 10-09-PLAN.md
-last_updated: "2026-07-17T06:18:12.584Z"
+status: in_progress
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-07-17T07:51:48.588Z"
 last_activity: 2026-07-17
-last_activity_desc: Phase 12 complete, transitioned to Phase 13
+last_activity_desc: Plan 13-01 (Firefox manifest/CSP/gecko hardening) complete
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 40
-  completed_plans: 34
-  percent: 67
+  total_plans: 41
+  completed_plans: 35
+  percent: 85
 ---
 
 # Project State
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 13 — Dual-Browser Hardening
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-07-17 — Phase 12 complete, transitioned to Phase 13
+Plan: 01 of 05
+Status: In progress
+Last activity: 2026-07-17 — Plan 13-01 (Firefox manifest/CSP/gecko hardening) complete
 
-Progress: [██████░░░░] 55%
+Progress: [█████████░] 85%
 
 ## Performance Metrics
 
@@ -75,6 +75,7 @@ Progress: [██████░░░░] 55%
 | Phase 09 P06 | ~90min | 3 tasks | 24 files |
 | Phase 10 P01 | 30min | 3 tasks | 9 files |
 | Phase 10 P09 | 25min | 3 tasks | 8 files |
+| Phase 13 P01 | 12min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -111,6 +112,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 10-01: requirements-completed left empty for FILL-01..04 -- this plan builds only the contract/gate layer shared by all four fill kinds, matching Phase 9's EXT-04/EXT-05 precedent of not marking a requirement complete until user-facing functionality lands
 - [Phase ?]: [Phase 10]: 10-09: registerAutofillFrameChannel() is a SECOND, independent runtime.onMessage listener from registerMessageRouter() -- content scripts reach ONLY autofill.matchFrame/autofill.fillFrame via assertContentSender()'s guard, never session.*/vault.*; the popup router's WR-01 gate stays textually unchanged
 - [Phase ?]: [Phase 10]: 10-09: autofill-match.ts's EMPTY_DETECTED/asFillKind/maskedHintFor/buildFillValues exported (not duplicated) for autofill-frame.ts to reuse -- one shared decrypt/lookup/derive surface for both the popup-driven and content-frame-driven autofill channels
+- [Phase ?]: 13-01: strict_min_version pinned to '115.0' (browser.storage.session floor); gecko.id left byte-for-byte unchanged (passkey-vault@extension.local)
+- [Phase ?]: 13-01: Firefox host-permission pre-declaration moved to optional_permissions (shared MV2/MV3 key) since WXT strips optional_host_permissions (MV3-only) for Firefox MV2; Chrome's optional_host_permissions branch untouched
 
 ### Pending Todos
 
@@ -140,8 +143,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-15T21:33:03.690Z
-Stopped at: Completed 10-09-PLAN.md
+Last session: 2026-07-17T07:51:29.822Z
+Stopped at: Completed 13-01-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
