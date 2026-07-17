@@ -138,6 +138,29 @@ describe("ItemRow", () => {
     expect(container.querySelector(".lucide-credit-card")).not.toBeNull();
   });
 
+  // Proton Pass-inspired card row (Bartek live-review, scope extension):
+  // the subtitle masks the card number down to its last 4 digits — the full
+  // number must NEVER render in the list.
+  it("renders a masked last-4 subtitle for a card item, stripping spaces/dashes", () => {
+    render(
+      <ItemRow
+        item={cardItem({ number: "4111 1111 1111 1234" })}
+        selected={false}
+        onClick={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("•••• 1234")).toBeInTheDocument();
+    expect(screen.queryByText(/4111/)).not.toBeInTheDocument();
+  });
+
+  it("renders no subtitle for a card item with an empty/absent number", () => {
+    const { container } = render(
+      <ItemRow item={cardItem({ number: "" })} selected={false} onClick={vi.fn()} />,
+    );
+    expect(container.querySelector(".lucide-credit-card")).not.toBeNull();
+    expect(screen.queryByText(/••••/)).not.toBeInTheDocument();
+  });
+
   it("calls onClick when the row's selection button is clicked", () => {
     const onClick = vi.fn();
     render(<ItemRow item={loginItem()} selected={false} onClick={onClick} />);
@@ -190,12 +213,33 @@ describe("ItemRow", () => {
   // TYPE_LABEL_KEY had no "passkey" entry, so `TYPE_ICON[item.fields.type]`
   // was `undefined` and rendering `<Icon />` threw "Cannot read properties
   // of undefined (reading 'en')" at `t(TYPE_LABEL_KEY[item.fields.type])`.
-  it("renders the passkey type-icon and label for a passkey item", () => {
+  it("renders the passkey type-icon for a passkey item", () => {
     const { container } = render(
       <ItemRow item={passkeyItem()} selected={false} onClick={vi.fn()} />,
     );
     expect(container.querySelector(".lucide-key-round")).not.toBeNull();
-    expect(screen.getByText("itemType.passkey")).toBeInTheDocument();
+  });
+
+  // Proton Pass-inspired passkey row (Bartek live-review): PRIMARY = the
+  // site (rpId), SECONDARY = the account (username, falling back to
+  // userDisplayName) — NOT the synthesized `fields.name` or the generic
+  // type label.
+  it("renders rpId as the primary text and username as the subtitle for a passkey item", () => {
+    render(<ItemRow item={passkeyItem()} selected={false} onClick={vi.fn()} />);
+    expect(screen.getByText("example.com")).toBeInTheDocument();
+    expect(screen.getByText("bartek")).toBeInTheDocument();
+  });
+
+  it("falls back to userDisplayName as the subtitle when a passkey item has no username", () => {
+    render(
+      <ItemRow
+        item={passkeyItem({ username: undefined })}
+        selected={false}
+        onClick={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("example.com")).toBeInTheDocument();
+    expect(screen.getByText("Bartek Paczesny")).toBeInTheDocument();
   });
 
   describe("kebab + right-click context menu", () => {

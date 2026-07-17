@@ -35,10 +35,10 @@ import GeneratorDialog from "@/components/generator/GeneratorDialog";
 
 // Category buttons mirror ItemRow.tsx's own TYPE_ICON map so a login's icon
 // matches everywhere (sidebar category, list row, list badge). `passkey`
-// reuses the SAME KeyRound icon already imported for the (now-stale) "soon"
-// placeholder button below — Phase 12 shipped provider-created passkey vault
-// items, so this category filter is a real one, mirroring the extension
-// popup's own type coverage (extension/entrypoints/popup/ItemListView.tsx).
+// uses the same KeyRound icon as the list row/detail panel — Phase 12
+// shipped provider-created passkey vault items, so this category filter is
+// a real one, mirroring the extension popup's own type coverage
+// (extension/entrypoints/popup/ItemListView.tsx).
 const CATEGORY_ICON: Record<ItemType, typeof Globe> = {
   login: Globe,
   card: CreditCard,
@@ -209,17 +209,6 @@ export default function Sidebar({
                   </button>
                 );
               })}
-
-              <button
-                type="button"
-                data-testid="sidebar-nav-passkeys"
-                disabled
-                className="flex w-full cursor-not-allowed items-center gap-2 rounded-field px-3 py-2 text-left text-sm text-base-content/40"
-              >
-                <KeyRound size={18} className="text-accent" aria-hidden="true" />
-                <span className="flex-1">{t("sidebar.passkeys")}</span>
-                <span className="badge badge-sm">{t("sidebar.passkeysSoon")}</span>
-              </button>
             </div>
           ) : null}
         </div>
