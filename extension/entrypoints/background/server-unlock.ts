@@ -31,7 +31,7 @@
 // poll (T-13-13: the pending state always resolves, never wedges).
 import { browser } from "wxt/browser";
 import { initCrypto, WasmWrappingKey, unwrapUserKey } from "../../lib/crypto/wasm-loader";
-import { b64ToBytes } from "../../lib/messaging/bytes-b64";
+import { b64UrlToBytes } from "../../lib/messaging/bytes-b64";
 import { isSessionUnlocked, setUnlockedUserKey } from "./vault-session";
 import { readSessionMeta } from "./session-storage";
 import { readServerConfig } from "./server-config";
@@ -223,7 +223,12 @@ export async function completeServerUnlock(
     return { ok: false, error: "expired" };
   }
 
-  const prfArray = b64ToBytes(args.prfB64);
+  // CR-01 (phase-13 review): args.prfB64 was encoded by content-relay's
+  // bufferSourceToB64Url (base64url, no padding -- the '-'/'_' D-21
+  // convention), NOT standard base64 -- b64UrlToBytes is the matching
+  // decoder (see bytes-b64.ts's own header comment on that function; a
+  // plain b64ToBytes/atob here threw on ~74% of real 32-byte PRF payloads).
+  const prfArray = b64UrlToBytes(args.prfB64);
   let wrappingKey: WasmWrappingKey | undefined;
   try {
     await initCrypto(); // fresh SW has no WASM yet (see unlock.ts, UAT find #5)

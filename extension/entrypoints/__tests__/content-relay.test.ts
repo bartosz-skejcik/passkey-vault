@@ -133,6 +133,12 @@ vi.mock("../../lib/autofill/inpage-overlay", () => ({
 import contentRelay, { isConfiguredServerOrigin } from "../content-relay.content";
 import type { ContentDetectResponse, ContentFillResponse } from "../../lib/autofill/types";
 import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../../lib/messaging/page-protocol";
+// CR-01 regression coverage (phase-13 review): imported for REAL (never
+// mocked -- lib/messaging/bytes-b64.ts is pure, no browser-runtime deps) so
+// the round-trip test below exercises the ACTUAL background-side decoder
+// (server-unlock.ts's own import) against this file's ACTUAL relay-side
+// encoder output, with no mock standing in for either half of the boundary.
+import { b64ToBytes, b64UrlToBytes } from "../../lib/messaging/bytes-b64";
 
 type Listener = (message: unknown, sender: unknown, sendResponse: (response?: unknown) => void) => unknown;
 
@@ -908,6 +914,58 @@ describe("content-relay", () => {
       expect(typeof call.prfB64).toBe("string");
       const decoded = atob(call.prfB64.replace(/-/g, "+").replace(/_/g, "/"));
       expect(Array.from(decoded, (c) => c.charCodeAt(0))).toEqual([1, 2, 3, 4]);
+    });
+
+    it("CR-01 regression: a REAL 32-byte PRF round-trips byte-for-byte through the ACTUAL relay encoder -> ACTUAL background decoder (b64UrlToBytes), across many random iterations and a fixed '-'/'_' vector -- and the OLD standard-base64 decoder (b64ToBytes) demonstrably throws on the same output", async () => {
+      // Fixed 32-byte vector, chosen so its base64url form is KNOWN to
+      // contain both '-' and '_' (computed offline, not left to chance) --
+      // this is the exact class of payload that made ~74% of real PRF
+      // outputs fail before this fix (CR-01).
+      const fixedPrf = new Uint8Array([
+        21, 52, 83, 114, 145, 176, 207, 238, 13, 44, 75, 106, 137, 168, 199, 230, 5, 36, 67, 98, 129, 160, 191, 222,
+        253, 28, 59, 90, 121, 152, 183, 214,
+      ]);
+
+      const vectors = [fixedPrf];
+      for (let i = 0; i < 20; i++) {
+        const random = new Uint8Array(32);
+        crypto.getRandomValues(random);
+        vectors.push(random);
+      }
+
+      let sawDashOrUnderscore = false;
+      for (let i = 0; i < vectors.length; i++) {
+        const prf = vectors[i];
+        const nonce = `round-trip-${i}`;
+        hoisted.mockSendMessage.mockClear();
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            data: { source: "pv-ext-unlock-bridge", nonce, prf: prf.buffer, prfWrappedUk: "blob" },
+            origin: location.origin,
+            source: window,
+          }),
+        );
+        await flushMicrotasks();
+
+        expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+        const { prfB64 } = hoisted.mockSendMessage.mock.calls[0][0] as { prfB64: string };
+
+        // The ACTUAL background-side decoder (server-unlock.ts's own
+        // import) recovers every byte exactly.
+        expect(Array.from(b64UrlToBytes(prfB64))).toEqual(Array.from(prf));
+
+        if (prfB64.includes("-") || prfB64.includes("_")) {
+          sawDashOrUnderscore = true;
+          // This is CR-01 itself, demonstrated directly: the OLD decoder
+          // (a raw atob, standard base64 only) throws on this same
+          // relay-produced string.
+          expect(() => b64ToBytes(prfB64)).toThrow();
+        }
+      }
+      // Guards against a vacuously-true test: at least one vector (the
+      // fixed one, deterministically) must have actually exercised the
+      // '-'/'_' charset difference.
+      expect(sawDashOrUnderscore).toBe(true);
     });
 
     it("posts the ack/result back to the page with the background's ok value", async () => {

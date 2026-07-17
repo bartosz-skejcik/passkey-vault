@@ -37,3 +37,30 @@ export function b64ToBytes(b64: string): Uint8Array {
   }
   return bytes;
 }
+
+/** Decodes a base64URL string (`-`/`_` in place of `+`/`/`, no padding) back
+ * to raw bytes. Phase-13 CR-01 fix: content-relay.content.ts's
+ * `bufferSourceToB64Url` (its own private base64url encoder, matching the
+ * `passkey_types` Rust deserializer's D-21 convention) is the encoder for
+ * EVERY BufferSource field this extension relays over `runtime.sendMessage`
+ * -- including the server-origin ext-unlock ceremony's raw PRF output
+ * (`unlock.serverCeremony.relay`'s `prfB64` field, entrypoints/background/
+ * server-unlock.ts). Any background-side receiver of such a field MUST
+ * decode with THIS function, never plain `b64ToBytes` above (which is
+ * standard-base64 only and throws `InvalidCharacterError` on `-`/`_` --
+ * ~74% of real 32-byte PRF payloads contain at least one, since the source
+ * bytes are uniformly random). Mirrors content-relay.content.ts's own
+ * `b64UrlToArrayBuffer` (private to that file, itself already used for
+ * every credentials.create/get binary field, D-21's OTHER, already-correct
+ * half of this boundary) byte-for-byte, just returning `Uint8Array` to match
+ * this file's own `bytesToB64`/`b64ToBytes` pair's return type. */
+export function b64UrlToBytes(b64url: string): Uint8Array {
+  const padded = b64url.replace(/-/g, "+").replace(/_/g, "/");
+  const paddingNeeded = (4 - (padded.length % 4)) % 4;
+  const binary = atob(padded + "=".repeat(paddingNeeded));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
