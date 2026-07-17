@@ -4,17 +4,17 @@ milestone: v0.2
 milestone_name: Browser Extension
 current_phase: 13
 current_phase_name: Dual-Browser Hardening
-status: in_progress
-stopped_at: Completed 13-01-PLAN.md
-last_updated: "2026-07-17T07:51:48.588Z"
+status: executing
+stopped_at: Completed 13-05-PLAN.md
+last_updated: "2026-07-17T08:04:39.628Z"
 last_activity: 2026-07-17
 last_activity_desc: Plan 13-01 (Firefox manifest/CSP/gecko hardening) complete
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 41
-  completed_plans: 35
-  percent: 85
+  completed_plans: 36
+  percent: 67
 ---
 
 # Project State
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 13 — Dual-Browser Hardening
-Plan: 01 of 05
-Status: In progress
+Plan: 2 of 05
+Status: Ready to execute
 Last activity: 2026-07-17 — Plan 13-01 (Firefox manifest/CSP/gecko hardening) complete
 
-Progress: [█████████░] 85%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
@@ -76,6 +76,7 @@ Progress: [█████████░] 85%
 | Phase 10 P01 | 30min | 3 tasks | 9 files |
 | Phase 10 P09 | 25min | 3 tasks | 8 files |
 | Phase 13 P01 | 12min | 3 tasks | 3 files |
+| Phase 13 P05 | 35min | 3 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -114,6 +115,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 10]: 10-09: autofill-match.ts's EMPTY_DETECTED/asFillKind/maskedHintFor/buildFillValues exported (not duplicated) for autofill-frame.ts to reuse -- one shared decrypt/lookup/derive surface for both the popup-driven and content-frame-driven autofill channels
 - [Phase ?]: 13-01: strict_min_version pinned to '115.0' (browser.storage.session floor); gecko.id left byte-for-byte unchanged (passkey-vault@extension.local)
 - [Phase ?]: 13-01: Firefox host-permission pre-declaration moved to optional_permissions (shared MV2/MV3 key) since WXT strips optional_host_permissions (MV3-only) for Firefox MV2; Chrome's optional_host_permissions branch untouched
+- [Phase ?]: D-10: pv-server accepts moz-extension://* as scheme-scoped wildcard PATTERN via AllowOrigin::predicate (never loosening bare-* WR-07 rejection); logged as active tech-debt
+- [Phase ?]: D-11: ServerConfigView distinguishes cors-blocked from unreachable via a no-cors retry probe, showing the extension's own copyable origin + PV_EXTENSION_ORIGINS pointer
 
 ### Pending Todos
 
@@ -144,8 +147,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-17T07:51:29.822Z
-Stopped at: Completed 13-01-PLAN.md
+Last session: 2026-07-17T08:04:39.621Z
+Stopped at: Completed 13-05-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
