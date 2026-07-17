@@ -31,24 +31,34 @@ const FIELD_ORDER: Record<ItemFields["type"], string[]> = {
   login: ["username", "password", "notes"],
   // Bartek live-review (Proton Pass-inspired reorder): Card Number first,
   // then Expiration Date, then CVV, then cardholder name — was previously
-  // cardholderName-first.
-  card: ["number", "expiry", "cvv", "cardholderName", "notes"],
+  // cardholderName-first. Round 4 (TASK 4) inserts the new optional
+  // pin/zip fields right after CVV, matching the CREATE/EDIT form's own
+  // field grouping; both are skipped entirely (not shown as "—") when
+  // empty — see OPTIONAL_IF_EMPTY_FIELDS below.
+  card: ["number", "expiry", "cvv", "pin", "zip", "cardholderName", "notes"],
   identity: ["firstName", "lastName", "email", "phone", "address", "notes"],
   note: ["body"],
   totp: ["secret"],
   passkey: [],
 };
 
-const MONO_FIELDS = new Set(["password", "number", "cvv", "secret"]);
+// Fields whose row is entirely OMITTED (not rendered with a "—" placeholder)
+// when empty — currently just the two new optional card fields (Bartek
+// live-review round 4, TASK 4: "omit rows when empty"). Every other
+// FIELD_ORDER entry keeps the pre-existing always-show-the-row behavior.
+const OPTIONAL_IF_EMPTY_FIELDS = new Set(["pin", "zip"]);
+
+const MONO_FIELDS = new Set(["password", "number", "cvv", "pin", "secret"]);
 
 // Fields that get a per-field reveal toggle next to the copy button.
-// `cvv` previously had no entry here, matching ItemForm.tsx's own
+// `cvv`/`pin` previously had no entry here, matching ItemForm.tsx's own
 // no-reveal-for-CVV convention for the ADD/EDIT form (where the user just
 // typed the value and doesn't need it echoed back). DetailPanel's VIEW mode
-// is a different context — reading the CVV back out to type into a checkout
-// form is the whole point — so Bartek's live-review spec adds reveal+copy
-// for it here (matches Proton Pass/other vaults' own card detail views).
-const REVEALABLE_FIELDS = new Set(["password", "number", "secret", "cvv"]);
+// is a different context — reading the CVV/PIN back out to type into a
+// checkout form is the whole point — so Bartek's live-review spec adds
+// reveal+copy for both here (matches Proton Pass/other vaults' own card
+// detail views).
+const REVEALABLE_FIELDS = new Set(["password", "number", "secret", "cvv", "pin"]);
 
 // A fixed-length mask so the visible placeholder never leaks the real
 // value's character count.
@@ -358,7 +368,11 @@ export default function DetailPanel({
             </div>
           ) : null}
           <div className="flex flex-col gap-3">
-            {FIELD_ORDER[item.fields.type].map((key) => (
+            {FIELD_ORDER[item.fields.type].map((key) => {
+              if (OPTIONAL_IF_EMPTY_FIELDS.has(key) && !fieldValues[key]) {
+                return null;
+              }
+              return (
               <Fragment key={key}>
                 <div className="flex flex-col gap-1">
                   <span className="text-sm text-base-content/60">
@@ -402,7 +416,8 @@ export default function DetailPanel({
                   </div>
                 ) : null}
               </Fragment>
-            ))}
+              );
+            })}
 
             {/* FIELD_ORDER.passkey is deliberately empty (see its comment
                 above) — these three rows replace the generic loop for this

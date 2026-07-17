@@ -136,6 +136,18 @@ export const DICTIONARY = {
   "field.algorithm": { pl: "Algorytm", en: "Algorithm" },
   "field.digits": { pl: "Liczba cyfr", en: "Digits" },
   "field.period": { pl: "Okres (s)", en: "Period (s)" },
+
+  // Card PIN/ZIP fields (Bartek live-review round 4, TASK 4) —
+  // Claude's-discretion copy, not literally named by any prior UI-SPEC.
+  "field.pin": { pl: "PIN karty", en: "Card PIN" },
+  "field.zip": { pl: "Kod pocztowy", en: "ZIP or Postal Code" },
+
+  // Card CREATE/EDIT form section headers (Bartek live-review round 4,
+  // TASK 4) — "form.otherSection" is also reused by the identity form's own
+  // "Inne"/"Other" section (TASK 6).
+  "form.cardDetailsSection": { pl: "Dane karty", en: "Card Details" },
+  "form.otherSection": { pl: "Inne", en: "Other" },
+
   // Passkey read-only metadata (Phase 12 cross-client fix) — "field.rpId"
   // matches the extension's own key verbatim (extension/lib/i18n/
   // dictionary.ts); "field.userDisplayName" is new here (the extension's

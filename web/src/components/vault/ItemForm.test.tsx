@@ -298,3 +298,82 @@ describe("ItemForm", () => {
     expect(onCreated).not.toHaveBeenCalled();
   });
 });
+
+// Bartek live-review round 4 (TASK 4): card PIN/ZIP + CVV reveal toggle.
+describe("ItemForm card fields (round 4)", () => {
+  it("submits pin and zip as part of a card ItemFields object", async () => {
+    const onCreated = vi.fn();
+    render(<ItemForm type="card" onCreated={onCreated} />);
+
+    fireEvent.change(screen.getByTestId("item-name"), { target: { value: "Visa" } });
+    fireEvent.change(screen.getByTestId("item-number"), {
+      target: { value: "4111111111111111" },
+    });
+    fireEvent.change(screen.getByTestId("item-pin"), { target: { value: "1234" } });
+    fireEvent.change(screen.getByTestId("item-zip"), { target: { value: "00-001" } });
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockCreateVaultItem).toHaveBeenCalledTimes(1));
+    const submitted = mockCreateVaultItem.mock.calls[0][0];
+    expect(submitted.pin).toBe("1234");
+    expect(submitted.zip).toBe("00-001");
+  });
+
+  it("submits an old card item without pin/zip fine (additive-only schema)", async () => {
+    mockUpdateVaultItem.mockResolvedValue({ id: "card-1", revision: 2, fields: {} });
+    const onCreated = vi.fn();
+    render(
+      <ItemForm
+        type="card"
+        mode="edit"
+        itemId="card-1"
+        currentRevision={1}
+        initialFields={{
+          type: "card",
+          name: "Visa",
+          cardholderName: "Bartek",
+          number: "4111111111111111",
+          expiry: "12/30",
+          cvv: "123",
+          notes: "",
+          folderId: null,
+          tags: [],
+        }}
+        onCreated={onCreated}
+      />,
+    );
+
+    expect(screen.getByTestId("item-pin")).toHaveValue("");
+    expect(screen.getByTestId("item-zip")).toHaveValue("");
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockUpdateVaultItem).toHaveBeenCalledTimes(1));
+  });
+
+  it("masks the CVV input by default and reveals it via its own toggle", () => {
+    render(<ItemForm type="card" onCreated={vi.fn()} />);
+
+    const cvvInput = screen.getByTestId("item-cvv");
+    expect(cvvInput).toHaveAttribute("type", "password");
+
+    const toggleButton = cvvInput.closest("div")?.querySelector("button");
+    expect(toggleButton).not.toBeUndefined();
+    fireEvent.click(toggleButton as HTMLButtonElement);
+
+    expect(screen.getByTestId("item-cvv")).toHaveAttribute("type", "text");
+  });
+
+  it("masks the PIN input by default and reveals it via its own toggle", () => {
+    render(<ItemForm type="card" onCreated={vi.fn()} />);
+
+    const pinInput = screen.getByTestId("item-pin");
+    expect(pinInput).toHaveAttribute("type", "password");
+
+    const toggleButton = pinInput.closest("div")?.querySelector("button");
+    fireEvent.click(toggleButton as HTMLButtonElement);
+
+    expect(screen.getByTestId("item-pin")).toHaveAttribute("type", "text");
+  });
+});

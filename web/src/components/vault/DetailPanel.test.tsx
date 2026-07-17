@@ -402,4 +402,44 @@ describe("DetailPanel proactive live-edit-conflict banner (SYNC-03, Plan 05-04)"
       expect(mockUpdateVaultItem).toHaveBeenCalledWith("item-1", expect.any(Object), 1),
     );
   });
+
+  // Bartek live-review round 4 (TASK 4): card PIN/ZIP detail rows —
+  // omitted entirely when empty, shown (PIN masked+revealable, ZIP plain)
+  // when present.
+  describe("card pin/zip detail rows (round 4)", () => {
+    it("omits the PIN and ZIP rows entirely for a card item without them", () => {
+      render(<DetailPanel item={cardItem} onClose={vi.fn()} />);
+      expect(screen.queryByText("field.pin")).not.toBeInTheDocument();
+      expect(screen.queryByText("field.zip")).not.toBeInTheDocument();
+    });
+
+    it("shows a masked, revealable PIN row and a plain ZIP row when present", () => {
+      const cardWithPinZip: VaultItem = {
+        id: "item-card-pin-zip",
+        revision: 1,
+        fields: {
+          type: "card",
+          name: "Visa",
+          cardholderName: "Jane Doe",
+          number: "4111111111111111",
+          expiry: "12/28",
+          cvv: "123",
+          pin: "1234",
+          zip: "00-001",
+          notes: "",
+          folderId: null,
+          tags: [],
+        },
+      };
+      render(<DetailPanel item={cardWithPinZip} onClose={vi.fn()} />);
+      expect(screen.getByText("field.pin")).toBeInTheDocument();
+      expect(screen.queryByText("1234")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("reveal-pin"));
+      expect(screen.getByText("1234")).toBeInTheDocument();
+
+      expect(screen.getByText("field.zip")).toBeInTheDocument();
+      expect(screen.getByText("00-001")).toBeInTheDocument();
+    });
+  });
+
 });

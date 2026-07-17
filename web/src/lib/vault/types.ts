@@ -36,6 +36,16 @@ export interface CardFields extends CommonFields {
   number: string;
   expiry: string;
   cvv: string;
+  // Bartek live-review round 4 (TASK 4, Proton Pass-inspired card layout):
+  // additive-only optional fields — old items without them render/save
+  // fine (ItemForm.tsx's emptyFieldsFor defaults them to "", DetailPanel.tsx
+  // omits their rows entirely when empty). The task's spec also lists a
+  // "note" field for the card form's "Inne"/"Other" section, but this type
+  // already has a required `notes` field serving that exact purpose (shown
+  // identically across every other item type) — reusing it there instead
+  // of adding a same-purpose duplicate field.
+  pin?: string;
+  zip?: string;
   notes: string;
 }
 
