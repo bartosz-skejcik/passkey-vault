@@ -5,16 +5,16 @@ milestone_name: Browser Extension
 current_phase: 13
 current_phase_name: Dual-Browser Hardening
 status: executing
-stopped_at: Completed 13-03-PLAN.md
-last_updated: "2026-07-17T13:33:14.982Z"
+stopped_at: Completed 13-04-PLAN.md — Phase 13 fully complete, all 24 UAT checklist rows PASS on both browsers
+last_updated: "2026-07-17T20:02:07.702Z"
 last_activity: 2026-07-17
-last_activity_desc: Plan 13-01 (Firefox manifest/CSP/gecko hardening) complete
+last_activity_desc: "Completed quick task 260717-lnx: Extension UX: one-click passkey picker, NordPass-style inpage dropdown restyle, headless e2e fixture"
 progress:
   total_phases: 6
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 41
-  completed_plans: 38
-  percent: 67
+  completed_plans: 39
+  percent: 83
 ---
 
 # Project State
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 13 — Dual-Browser Hardening
-Plan: 4 of 05
+Plan: 5 of 05
 Status: Ready to execute
 Last activity: 2026-07-17 - Completed quick task 260717-lnx: Extension UX: one-click passkey picker, NordPass-style inpage dropdown restyle, headless e2e fixture
 
-Progress: [█████████░] 93%
+Progress: [██████████] 95%
 
 ## Performance Metrics
 
@@ -79,6 +79,7 @@ Progress: [█████████░] 93%
 | Phase 13 P05 | 35min | 3 tasks | 12 files |
 | Phase 13-dual-browser-hardening P02 | 25min | 2 tasks | 7 files |
 | Phase 13 P03 | 4h | 2 tasks | 10 files |
+| Phase 13 P04 | ~5.5h | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -123,6 +124,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 13-02: D-12 session-scoped unusable flag named prfUnusableThisSession (UnlockView) and Phase value "unusable" (EnrollExtPasskeyPrompt) -- never hides the passkey button, only disables it after an observed non-cancel ceremony failure
 - [Phase ?]: 13-03: headed Chromium (not headless) required for Phase 12 provider ceremony to resolve reliably in this test environment
 - [Phase ?]: 13-03: crates/pv-provider now enables passkey-client's allows_insecure_localhost for local-RP testing and self-hosted-dev use
+- [Phase ?]: 13-04: wxt.config.ts:56-64 ext-scoped rpId-on-Firefox question closed — Firefox rejects WebAuthn from any moz-extension:// page (SecurityError, rpId-independent); existing D-12/D-13 disabled+explainer handling already covers it, no code change needed
 
 ### Pending Todos
 
@@ -160,8 +162,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-17T13:33:14.975Z
-Stopped at: Completed 13-03-PLAN.md
+Last session: 2026-07-17T20:02:07.696Z
+Stopped at: Completed 13-04-PLAN.md — Phase 13 fully complete, all 24 UAT checklist rows PASS on both browsers
 Resume file: None
 
 ## Operator Next Steps
