@@ -2,7 +2,7 @@
 phase: 13
 slug: dual-browser-hardening
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-07-15
 ---
@@ -85,6 +85,6 @@ created: 2026-07-15
 - [ ] Wave 0 covers all MISSING references
 - [ ] No watch-mode flags
 - [ ] Feedback latency < 180s (Chrome-side automated suite)
-- [ ] `nyquist_compliant: true` set in frontmatter (flip during Plan 13-04, Task 2, once all checklist rows are green — corrected count: 21 SCs + D-05 + D-08 + rpId-on-Firefox row = 24 rows, reconcile against 13-03/13-04's own fixed row count if it differs; still `false` as of this correction)
+- [x] `nyquist_compliant: true` set in frontmatter (flipped in Plan 13-04, Task 2 — all 24 checklist rows are PASS, V-04 DEFERRED as explicitly permitted)
 
-**Approval:** pending
+**Approval:** Plan 13-04 complete — 24/24 checklist rows PASS on both browsers, no divergences found (see 13-UAT-CHECKLIST.md's Firefox Deviations section).
