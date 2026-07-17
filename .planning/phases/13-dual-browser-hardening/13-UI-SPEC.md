@@ -104,12 +104,15 @@ i18n PL+EN, following the exact pattern established in `web/src/lib/i18n/diction
 | Empty state body — no saved item for this site | `Zapisz login przy następnym logowaniu, a pojawi się tutaj.` | `Save a login next time you sign in, and it'll show up here.` |
 | Empty state — search with no matches (neutral, not celebratory) | `Brak wyników dla „{query}”` | `No matches for "{query}"` |
 | Error state — sync/connection failure in popup | `Nie można połączyć z serwerem. Sprawdź połączenie i spróbuj ponownie.` | `Can't reach the server. Check your connection and try again.` |
-| **Firefox PRF-gap (D-03) — popup unlock, Tier 2 extended with browser name** | `Szybkie odblokowanie passkeyem nie jest dostępne w tej przeglądarce — użyj hasła.` | `Fast unlock isn't available for this passkey on this browser — use your password.` |
-| **Firefox PRF-gap (D-03) — passkey-provider ceremony** | `Ta przeglądarka nie wspiera szybkiego odblokowania (PRF) dla tego passkeya — potwierdzisz w zwykły sposób.` | `This browser doesn't support fast unlock (PRF) for this passkey — you'll confirm the normal way.` |
+| **Firefox PRF-gap (D-03) — popup unlock/enroll, Tier 2 extended with browser name — ADOPTED AS CANON (Bartek D-13, 13-CONTEXT.md ADDENDUM)** | `Szybkie odblokowanie passkeyem nie jest dostępne w tej przeglądarce — użyj hasła.` | `Fast unlock isn't available for this passkey on this browser — use your password.` |
+| **Firefox PRF-gap (D-03) — passkey-provider ceremony — ALREADY SHIPPED, VERIFY ONLY (WR-02/D-16, do NOT re-author)** | `Ta strona poprosiła o funkcję PRF, której ten passkey nie obsługuje.` | `This site requested a PRF feature this passkey can't provide.` |
 | ~~Destructive confirmation — delete saved item (popup item detail)~~ REMOVED 2026-07-15 — the v0.2 popup has no delete (EXT-06 delegates management to the web app); this copy belongs to the web app's existing delete dialog, not any extension surface | — | — |
 | Origin-mismatch warning (capture prompt, CAP-02/03) | `Ten formularz pochodzi z innej domeny niż strona, którą widzisz — sprawdź, zanim zapiszesz.` | `This form comes from a different domain than the page you're viewing — check before saving.` |
 
-**The two D-03 lines above are the literal new deliverable of this phase's UI surface.** Both reuse the exact tone (`text-base-content/70`, no icon, no alert box) already established for `04-UI-SPEC.md`'s Tier 2 — this phase's only genuinely new copy is naming the browser explicitly ("w tej przeglądarce" / "on this browser" / "This browser doesn't support"), which the original web-app Tier 2 line didn't need to do (the web app has no cross-browser axis).
+**D-13 correction (Bartek, 13-CONTEXT.md ADDENDUM, supersedes the "two new lines" framing below):** the two D-03 rows above are NOT symmetric, and the freshness audit's original "both are this phase's new deliverable" framing was wrong for the second row.
+
+- **Popup unlock/enroll row** — this IS the new deliverable Bartek adopted as canon (D-13): it **replaces** the shipped `unlock.passkeyUnsupported` string (`extension/lib/i18n/dictionary.ts:56-59`, currently "Ta przeglądarka nie obsługuje logowania passkeyem na tym urządzeniu…") and the new ext-scoped dead-end banners this phase's plans introduce (13-02's `UnlockView`/`EnrollExtPasskeyPrompt` create()/get() catch paths). Browser-framed wording IS correct here — the extension-scoped unlock/enroll passkey genuinely uses the browser's own local WebAuthn/PRF, so a real cross-browser capability gap exists. Reuses the exact `text-base-content/70`, no-icon, no-alert-box tone already established for `04-UI-SPEC.md`'s Tier 2.
+- **Provider-ceremony row** — this is **already shipped**, unchanged, as `provider.prfUnavailableNote` (`dictionary.ts:227-230`, WR-02 fix from 12-REVIEW.md/Plan 12-05). It is deliberately **site/passkey-framed, never browser-framed** — under D-16 the provider computes PRF entirely in WASM regardless of browser, so there is no provider-side Firefox PRF gap to announce, and browser-blaming copy here would be factually wrong. This row exists in this table only so the contract doesn't silently omit it; no plan should re-author, re-decide, or grep-enforce the old browser-blaming wording (`"This browser doesn't support fast unlock (PRF)…"` / `"Ta przeglądarka nie wspiera szybkiego odblokowania (PRF)…"`) that a stale draft of this document and 13-02-PLAN.md previously carried — that wording must NOT reappear anywhere in the tree.
 
 **No new destructive action introduced by Phase 13 itself.** Item-delete in the popup is an existing pattern inherited unchanged from `02`/`03`-UI-SPEC.md's confirm-modal convention (`AlertTriangle` icon, `btn-error` confirm, no separate recovery-warning line needed — that extra line is reserved for passkey-delete specifically, which the extension doesn't manage; passkey enrollment/removal stays a web-app-only Settings surface).
 
@@ -129,27 +132,65 @@ No third-party registries declared. Registry vetting gate not triggered.
 
 ### The capability-degradation contract (D-03 core deliverable)
 
-A single presentational pattern, reused verbatim across every surface where PRF may be absent — **not a new component per surface**, one shared treatment:
+**Corrected per freshness audit B5/B6 and D-13:** the trigger is NOT one signal shared by both surfaces — the popup ext-scoped surface and the passkey-provider ceremony use architecturally different PRF mechanisms, and the visual/copy contract now differs by surface too (D-13). The shared part is the visual composition only; trigger, copy, and (for the popup) button-disabled state are surface-specific.
 
 ```
-Visual: plain text row, `text-sm text-base-content/70`, no icon, no colored box,
-        no `alert` wrapper — identical composition to 04-UI-SPEC.md's Tier 2 line.
-Placement: directly below the passkey-action button/CTA it qualifies (popup unlock:
-        between the PasskeyUnlockButton and the password field, exact same slot
-        04-UI-SPEC.md already defines; provider ceremony: directly below the
-        ceremony's account-picker row, above the confirm button).
-Trigger: read at ceremony-attempt time via `clientExtensionResults.prf.enabled`
-        (13-RESEARCH.md Pattern 2) — never inferred from `navigator.userAgent` or
-        a hardcoded "Firefox = no PRF" branch, since PRF support is per-credential/
-        per-OS, not purely per-browser (Chromium-first is the *expectation*, not
-        a hard rule the UI should bake in as fact).
-Button state: the passkey-action button stays visible and clickable in every case
+Visual (both surfaces): plain text row, `text-sm text-base-content/70`, no icon,
+        no colored box, no `alert` wrapper — identical composition to
+        04-UI-SPEC.md's Tier 2 line.
+Placement: directly below the passkey-action button/CTA it qualifies (popup
+        unlock: between the PasskeyUnlockButton and the password field, exact
+        same slot 04-UI-SPEC.md already defines; provider ceremony: directly
+        below the ceremony's account-picker row, above the confirm button).
+
+Trigger — POPUP ext-scoped surface ONLY (UnlockView, EnrollExtPasskeyPrompt):
+        read at ceremony-attempt time via the browser's own
+        `clientExtensionResults.prf.enabled` (13-RESEARCH.md Pattern 2) — this
+        IS a browser-level read, and browser-framed copy is factually correct
+        here, because the ext-scoped unlock/enroll passkey genuinely runs the
+        browser's local WebAuthn/PRF implementation. Never inferred from
+        `navigator.userAgent` or a hardcoded "Firefox = no PRF" branch — PRF
+        support is per-credential/per-OS, not purely per-browser (Chromium-
+        first is the *expectation*, not a hard rule to bake in as fact).
+
+Trigger — PROVIDER ceremony ONLY (ProviderCeremonyView): read via background's
+        passkey-rs `derivePrfCapability` (WASM-computed, D-16) — NEVER
+        `clientExtensionResults` or any other browser-level read. Under D-16
+        the provider computes PRF entirely in WASM regardless of browser, so
+        this signal is capability-driven, not browser-sniffed, and its copy
+        (`provider.prfUnavailableNote`, already shipped) is deliberately
+        site/passkey-framed rather than browser-framed — see the Copywriting
+        Contract table above. A future plan must not wire the popup's browser
+        read into this surface (that was the freshness audit's B3/B5 finding
+        against a stale draft of 13-02).
+
+Button state — PRF-gap case (both surfaces, D-03's original scope): the
+        passkey-action button stays visible and CLICKABLE in every case
         (mirrors 04-UI-SPEC.md's Tier 2 rule exactly) — the password/native
         fallback path is offered *alongside*, never by hiding/disabling the
-        passkey affordance, since a different enrolled passkey might still work.
+        passkey affordance, since a different enrolled passkey might still
+        work, and (provider side) PRF absence doesn't block the ceremony
+        itself, only the vault-unlock side-effect.
+
+Button state — full ceremony rejection case, POPUP ext-scoped surface ONLY
+        (D-12, Bartek override of the freshness audit's hide-recommendation):
+        if the extension-scoped unlock/enroll passkey ceremony itself is
+        rejected outright by Firefox (rpId = extension id unusable on
+        moz-extension origins — a strictly stronger failure than "PRF
+        unavailable"), the passkey affordance stays VISIBLE but DISABLED,
+        with the same inline `text-base-content/70` explainer text directly
+        beneath it (not a separate component) — never hidden, never a silent
+        dead-end. Password unlock remains fully functional alongside (D-06).
+        This is distinct from the PRF-gap case above: PRF-gap keeps the
+        button enabled (the ceremony still runs, PRF unlock just won't
+        result); full-rejection disables it (the ceremony itself cannot run).
 ```
 
-This is the one piece of genuinely new UI code this phase owns (`PrfUnavailableBanner`-equivalent inline text, per `13-RESEARCH.md`'s Recommended Project Structure) — everything else in this document describes surfaces Phases 9–12 build, reused/confirmed here for hardening-pass consistency.
+This is the one piece of genuinely new UI code this phase owns on the popup side (`PrfUnavailableBanner`-equivalent inline text, per `13-RESEARCH.md`'s Recommended Project Structure) — the provider-ceremony surface's equivalent is already shipped (verify only). Everything else in this document describes surfaces Phases 9–12 build, reused/confirmed here for hardening-pass consistency.
+
+### Server config CORS-blocked state (D-11, Plan 13-05)
+
+Not a new component — a third `error` state on the existing `ServerConfigView` (EXT-05's first-run/reconfigure gate), alongside the existing `invalid-url`/`unreachable` states, same `alert alert-error` visual treatment already used there. When the `/healthz` probe determines the server is reachable but rejected the extension's origin (CORS), the message must be specific and actionable rather than the generic "can't reach that server" — it names the situation, shows the extension's own origin (`chrome-extension://<id>` / `moz-extension://<uuid>`) as copyable text, and points at `PV_EXTENSION_ORIGINS` as the server-side fix. See Plan 13-05 for the exact copy and mechanism (fetch TypeError → `{mode:'no-cors'}` retry → opaque success distinguishes CORS-blocked from genuinely unreachable).
 
 ### Popup shell (Phase 9's surface — 09-UI-SPEC.md is AUTHORITATIVE; superseded sketch note 2026-07-15)
 
@@ -177,7 +218,7 @@ This is the one piece of genuinely new UI code this phase owns (`PrfUnavailableB
 
 ### Passkey-provider ceremony consent card (Phase 12's surface)
 
-- **Placement:** center-anchored overlay on the host page (this is the single most important UX moment per `docs/UI-DESIGN.md` §3: "nasz najważniejszy moment UX"), Shadow-DOM isolated, with a dimmed scrim behind it (`base-300`-tinted, matching the web app's existing unlock-overlay scrim treatment).
+- **Placement — CORRECTED (freshness audit, minor/non-blocking):** this is NOT an injected host-page Shadow-DOM overlay as an earlier draft of this section described. The shipped implementation (`extension/entrypoints/popup/ProviderCeremonyView.tsx`) is a **popup view** — same MV3 browser-action popup surface as the rest of the extension's UI, opened/focused in response to the ceremony rather than rendered inside the requesting page's DOM. There is no host-page Shadow-DOM injection and no in-page scrim for this surface; treat "center-anchored overlay ... Shadow-DOM isolated ... dimmed scrim behind it" below as this document's ORIGINAL (pre-Phase-12) design intent for reference only — Phase 12's executor/UI-checker already reconciled the actual popup-view implementation, and this phase's plans (13-02/13-UI-SPEC) must read/verify against the real file, not this stale description.
 - **Content, top to bottom:** requesting site's favicon + RP name (Heading), account picker (when the vault has multiple matching passkeys — item rows same vocabulary as the popup list), the D-03 capability-gap line (only when PRF is unavailable for the selected credential — see above), teal `btn-accent` confirm button (`Fingerprint` icon, `Potwierdź passkeyem`/`Confirm with passkey`), and the **always-visible** native-fallback secondary action ("Użyj innego menedżera"/"Use another authenticator") — PROV-03's "never dead-ends the ceremony" invariant made visually concrete: this link is never hidden, never disabled, regardless of which tier the PRF state is in.
 
 ### Toolbar icon / lock-state indicator (open review question, not blocking)

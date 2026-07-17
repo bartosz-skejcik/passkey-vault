@@ -204,13 +204,14 @@ Plans:
   3. Wherever Firefox lacks a capability the Chromium build has (most notably PRF), the UI communicates it explicitly instead of silently failing or degrading.
   4. `browser_specific_settings.gecko` (extension ID, `strict_min_version`) is pinned deliberately in `wxt.config.ts`, not left to a WXT/dev-mode default that would break persisted `chrome.storage.session` state across dev sessions.
 
-**Plans**: 4 plans
+**Plans**: 5 plans
 Plans:
 
 - [ ] 13-01-PLAN.md — Firefox install + manifest/CSP/gecko hardening + web-ext lint (D-02/D-04/D-07/D-09)
 - [ ] 13-02-PLAN.md — PRF honest-degradation cross-browser (feature-detect module + banner copy, D-03/D-06)
 - [ ] 13-03-PLAN.md — Playwright Chromium harness + full Chrome UAT pass (19 SCs)
 - [ ] 13-04-PLAN.md — Firefox UAT pass + divergence triage/fixes + final sign-off (D-01/D-05/D-08)
+- [ ] 13-05-PLAN.md — moz-extension CORS: server scheme-wildcard mechanism (D-10 tech-debt flagged) + CORS-vs-unreachable UX (D-11) + self-hosting docs
 
 **UI hint**: yes
 
