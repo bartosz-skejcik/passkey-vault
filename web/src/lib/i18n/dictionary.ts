@@ -83,6 +83,12 @@ export const DICTIONARY = {
     pl: "Dodaj pierwszy item — hasło, kartę albo notatkę 👇",
     en: "Add your first item — a password, a card, or a note 👇",
   },
+  // Dynamic list header (Bartek live-review round 3, TASK 1) — replaces the
+  // previously-static "Vault" heading above the item list with the active
+  // filter's own name; "all"/itemType/folder read straight off existing
+  // sidebar.*/itemType.*/folder.name, so only the tag-filter case needs a
+  // dedicated template key.
+  "vault.tagFilterHeading": { pl: "Tag: {tag}", en: "Tag: {tag}" },
 
   "item.typePicker": { pl: "Wybierz typ itemu", en: "Choose item type" },
   "item.save": { pl: "Zapisz item", en: "Save item" },

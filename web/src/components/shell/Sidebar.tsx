@@ -29,8 +29,8 @@ import { clearSessionToken, clearStoredEmail } from "@/lib/auth/session";
 import { createVaultFolder, useAllTags, useFolders } from "@/lib/vault/store";
 import { useSyncStatus } from "@/lib/vault/syncStatus";
 import { AUTOLOCK_CHANGED_EVENT, AUTOLOCK_MINUTES_KEY, DEFAULT_AUTOLOCK_MINUTES } from "@/lib/idle/autolock";
-import type { DICTIONARY } from "@/lib/i18n/dictionary";
 import type { ItemType, VaultFilter } from "@/lib/vault/types";
+import { ITEM_TYPE_LABEL_KEY } from "@/lib/vault/itemTypeLabels";
 import GeneratorDialog from "@/components/generator/GeneratorDialog";
 
 // Category buttons mirror ItemRow.tsx's own TYPE_ICON map so a login's icon
@@ -46,17 +46,6 @@ const CATEGORY_ICON: Record<ItemType, typeof Globe> = {
   note: StickyNote,
   totp: Timer,
   passkey: KeyRound,
-};
-
-const CATEGORY_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
-  login: "sidebar.catLogins",
-  card: "sidebar.catCards",
-  identity: "sidebar.catIdentities",
-  note: "sidebar.catNotes",
-  totp: "sidebar.catTotp",
-  // Reuses the existing "sidebar.passkeys" key (same "Passkeys"/"Passkeys"
-  // copy) instead of adding a near-duplicate dictionary entry.
-  passkey: "sidebar.passkeys",
 };
 
 const ITEM_TYPES: ItemType[] = ["login", "card", "identity", "note", "totp", "passkey"];
@@ -205,7 +194,7 @@ export default function Sidebar({
                     onClick={() => selectFilter({ kind: "itemType", itemType: type })}
                   >
                     <Icon size={18} aria-hidden="true" />
-                    <span>{t(CATEGORY_LABEL_KEY[type])}</span>
+                    <span>{t(ITEM_TYPE_LABEL_KEY[type])}</span>
                   </button>
                 );
               })}
