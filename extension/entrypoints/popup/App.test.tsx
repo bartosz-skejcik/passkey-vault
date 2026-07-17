@@ -5,7 +5,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const { mockSendMessage, mockStorageSessionGet, listeners, sessionStorageListeners } = vi.hoisted(() => ({
+const { mockSendMessage, mockStorageSessionGet, listeners, sessionStorageListeners, localStorageStore } = vi.hoisted(() => ({
   mockSendMessage: vi.fn(),
   // Phase 12 (Plan 12-04): App.tsx's checkPendingCeremony() reads this on
   // every refreshFromScratch() -- defaults to "nothing pending" so every
@@ -25,6 +25,12 @@ const { mockSendMessage, mockStorageSessionGet, listeners, sessionStorageListene
   sessionStorageListeners: [] as Array<
     (changes: Record<string, { newValue?: unknown; oldValue?: unknown }>) => void
   >,
+  // Popup UI round: App.tsx mounts ItemListView.tsx for its "list" view,
+  // which now reads/writes the popup-local sort preference (lib/vault/
+  // sort.ts) via `browser.storage.local` on mount/change -- a Map-backed
+  // fake (theme-mirror.test.ts's established convention), distinct from
+  // `storage.session` above (a different chrome.storage area).
+  localStorageStore: new Map<string, unknown>(),
 }));
 
 vi.mock("../../lib/messaging/ext-protocol", () => ({
@@ -63,6 +69,16 @@ vi.mock("wxt/browser", () => ({
           },
         },
       },
+      local: {
+        async get(key: string) {
+          return localStorageStore.has(key) ? { [key]: localStorageStore.get(key) } : {};
+        },
+        async set(items: Record<string, unknown>) {
+          for (const [k, v] of Object.entries(items)) {
+            localStorageStore.set(k, v);
+          }
+        },
+      },
     },
   },
 }));
@@ -89,6 +105,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   listeners.length = 0;
   sessionStorageListeners.length = 0;
+  localStorageStore.clear();
 });
 
 describe("App.tsx view-state switch", () => {

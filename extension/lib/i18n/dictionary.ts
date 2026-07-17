@@ -147,6 +147,26 @@ export const DICTIONARY = {
   "vault.openFullVault": { pl: "Pełny widok", en: "Full screen" },
   "nav.newItem": { pl: "Nowy element", en: "New item" },
 
+  // --- Popup UI round (Bartek-decided, FINAL, additive-only per this
+  // round's scope note) --------------------------------------------------
+  // Sheet-look header's title (decision 2) -- a brand name, deliberately
+  // identical in both locales (not a translated phrase).
+  "app.title": { pl: "Passkey Vault", en: "Passkey Vault" },
+  // Footer's right-side pill button (decision 3) -- same open-full-vault
+  // behavior as the pre-existing `vault.openFullVault` key above, but with
+  // Bartek's exact new copy ("Pełny ekran", not "Pełny widok"). Added as a
+  // NEW key rather than editing the old one, since this file's own
+  // additive-only scope note for this round forbids modifying existing
+  // entries; `vault.openFullVault` is left in place, simply unused now.
+  "nav.fullScreen": { pl: "Pełny ekran", en: "Full screen" },
+  // Sort control (decision 4) -- mirrors web/src/lib/i18n/dictionary.ts's
+  // own sort.label/sort.lastUsed/sort.name keys verbatim (same PL/EN copy),
+  // so the popup and web app never present different option wording for
+  // the same underlying SortOption values.
+  "sort.label": { pl: "Sortuj", en: "Sort" },
+  "sort.lastUsed": { pl: "Ostatnio używane", en: "Last used" },
+  "sort.name": { pl: "Nazwa", en: "Name" },
+
   // --- Server config (EXT-05; this screen predates 09-UI-SPEC.md, so
   // this copy is Claude's-discretion, kept strictly within the design
   // contract's existing token/component vocabulary -- flagged for
