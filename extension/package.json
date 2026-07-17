@@ -18,7 +18,8 @@
     "test:e2e:chrome": "playwright test --project=chromium",
     "postinstall": "wxt prepare",
     "predev": "bash ../scripts/build-wasm.sh",
-    "prebuild": "bash ../scripts/build-wasm.sh"
+    "prebuild": "bash ../scripts/build-wasm.sh",
+    "pretest:e2e:chrome": "wxt build -b chrome"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",
