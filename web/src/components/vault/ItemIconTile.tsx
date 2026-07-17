@@ -53,6 +53,13 @@ const SIZE = {
   header: { frame: "h-6 w-6 rounded-[6px]", icon: 14 },
 } as const;
 
+// Bartek live-review: dark favicons (GitHub etc.) and dark glyphs vanish on a
+// dark tile in the vault-dark theme — the tile bg flips to a LIGHT neutral
+// there (and the glyph to a dark neutral), while vault-light keeps the
+// original base-200 tile untouched.
+const TILE_BG = "bg-base-200 [[data-theme=vault-dark]_&]:bg-zinc-100";
+const TILE_FG = "text-base-content/70 [[data-theme=vault-dark]_&]:text-zinc-600";
+
 export default function ItemIconTile({
   item,
   variant = "row",
@@ -86,7 +93,7 @@ export default function ItemIconTile({
   if (hostname !== null && !faviconFailed) {
     return (
       <span
-        className={`flex ${frame} shrink-0 items-center justify-center overflow-hidden bg-base-200`}
+        className={`flex ${frame} shrink-0 items-center justify-center overflow-hidden ${TILE_BG}`}
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- a direct,
             uncached fetch straight to the item's own domain; next/image
@@ -110,7 +117,7 @@ export default function ItemIconTile({
   const Icon = TYPE_ICON[item.fields.type];
   return (
     <span
-      className={`flex ${frame} shrink-0 items-center justify-center bg-base-200 text-base-content/70`}
+      className={`flex ${frame} shrink-0 items-center justify-center ${TILE_BG} ${TILE_FG}`}
     >
       <Icon size={iconSize} aria-hidden="true" />
     </span>
@@ -135,7 +142,9 @@ function CardBrandTile({ brand, frameClass }: { brand: CardBrand; frameClass: st
   }
   if (brand === "mastercard") {
     return (
-      <span className={`flex ${frameClass} shrink-0 items-center justify-center bg-[#16171a]`}>
+      <span
+        className={`flex ${frameClass} shrink-0 items-center justify-center bg-[#16171a] [[data-theme=vault-dark]_&]:bg-zinc-100`}
+      >
         {/* Two overlapping circles, red + orange, the second blended
             multiply-over-red for the classic overlap tone — deliberately
             not a pixel copy of Mastercard's actual mark, just evocative of
@@ -159,7 +168,9 @@ function CardBrandTile({ brand, frameClass }: { brand: CardBrand; frameClass: st
   // shortened "DISC" wordmark stands in (still visually distinct from the
   // other three brands, which is the only requirement here).
   return (
-    <span className={`flex ${frameClass} shrink-0 items-center justify-center bg-[#1b1b1b]`}>
+    <span
+      className={`flex ${frameClass} shrink-0 items-center justify-center bg-[#1b1b1b] [[data-theme=vault-dark]_&]:bg-zinc-100`}
+    >
       <span className="text-[7px] font-black leading-none tracking-tight text-[#FF6600]">
         DISC
       </span>
