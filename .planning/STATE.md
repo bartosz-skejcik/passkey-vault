@@ -5,15 +5,15 @@ milestone_name: Browser Extension
 current_phase: 13
 current_phase_name: Dual-Browser Hardening
 status: executing
-stopped_at: Completed 13-02-PLAN.md
-last_updated: "2026-07-17T08:10:05.759Z"
+stopped_at: Completed 13-03-PLAN.md
+last_updated: "2026-07-17T13:33:14.982Z"
 last_activity: 2026-07-17
 last_activity_desc: Plan 13-01 (Firefox manifest/CSP/gecko hardening) complete
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 41
-  completed_plans: 37
+  completed_plans: 38
   percent: 67
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 13 — Dual-Browser Hardening
-Plan: 3 of 05
+Plan: 4 of 05
 Status: Ready to execute
 Last activity: 2026-07-17 — Plan 13-01 (Firefox manifest/CSP/gecko hardening) complete
 
-Progress: [█████████░] 90%
+Progress: [█████████░] 93%
 
 ## Performance Metrics
 
@@ -78,6 +78,7 @@ Progress: [█████████░] 90%
 | Phase 13 P01 | 12min | 3 tasks | 3 files |
 | Phase 13 P05 | 35min | 3 tasks | 12 files |
 | Phase 13-dual-browser-hardening P02 | 25min | 2 tasks | 7 files |
+| Phase 13 P03 | 4h | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -120,6 +121,8 @@ Recent decisions affecting current work:
 - [Phase ?]: D-11: ServerConfigView distinguishes cors-blocked from unreachable via a no-cors retry probe, showing the extension's own copyable origin + PV_EXTENSION_ORIGINS pointer
 - [Phase ?]: 13-02: unlock.passkeyUnsupported now holds D-13 canon PL+EN copy, single shared string for all popup PRF-unusable cases
 - [Phase ?]: 13-02: D-12 session-scoped unusable flag named prfUnusableThisSession (UnlockView) and Phase value "unusable" (EnrollExtPasskeyPrompt) -- never hides the passkey button, only disables it after an observed non-cancel ceremony failure
+- [Phase ?]: 13-03: headed Chromium (not headless) required for Phase 12 provider ceremony to resolve reliably in this test environment
+- [Phase ?]: 13-03: crates/pv-provider now enables passkey-client's allows_insecure_localhost for local-RP testing and self-hosted-dev use
 
 ### Pending Todos
 
@@ -150,8 +153,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-17T08:10:05.752Z
-Stopped at: Completed 13-02-PLAN.md
+Last session: 2026-07-17T13:33:14.975Z
+Stopped at: Completed 13-03-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
