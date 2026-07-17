@@ -194,6 +194,35 @@ mod tests {
         .is_ok());
     }
 
+    // --- D-10: moz-extension://* scheme-scoped wildcard pattern ---------
+
+    #[test]
+    fn extension_origins_moz_wildcard_validates_ok() {
+        assert!(
+            cfg_with_extension_origins("localhost", "http://localhost:3000", "moz-extension://*")
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn extension_origins_bare_wildcard_still_rejected() {
+        assert!(cfg_with_extension_origins("localhost", "http://localhost:3000", "*")
+            .validate()
+            .is_err());
+    }
+
+    #[test]
+    fn extension_origins_chrome_wildcard_still_rejected() {
+        assert!(cfg_with_extension_origins(
+            "localhost",
+            "http://localhost:3000",
+            "chrome-extension://*",
+        )
+        .validate()
+        .is_err());
+    }
+
     #[test]
     fn rp_id_localhost_alone_skips_validation_even_with_nonsense_origin() {
         assert!(cfg("localhost", "https://anything-even-nonsense").validate().is_ok());
