@@ -279,7 +279,25 @@ export default function ItemListView({
           theme-invariant) read too light against the web app's own darker
           `base-200` sidebar and is superseded by this correction. */}
       <div className="flex shrink-0 flex-col gap-2 bg-base-200 px-4 pb-3 pt-3 text-base-content">
-        <h1 className="text-[20px] font-semibold leading-tight">{t(locale, "app.title")}</h1>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-[20px] font-semibold leading-tight">{t(locale, "app.title")}</h1>
+
+          {/* "Full screen" pill (decision 3, moved here per Bartek's
+              2026-07-18 live-UAT correction round -- was in the footer's
+              right group in the immediately-prior sheet-look round; JSX/
+              classes/handler are UNCHANGED, only its position moved): 36px
+              height, 10px radius -- built from plain Tailwind rather than
+              daisyUI's `btn` sizing scale (whose closest step, `btn-sm`, is
+              32px/8px-radius, not this control's own spec). */}
+          <button
+            type="button"
+            className="inline-flex h-9 items-center gap-1.5 rounded-[10px] bg-primary px-3 text-sm font-medium text-primary-content transition hover:opacity-90"
+            onClick={() => void openInNewTab("")}
+          >
+            <ExternalLink size={16} aria-hidden="true" />
+            {t(locale, "nav.fullScreen")}
+          </button>
+        </div>
         <div className="relative">
           <Search
             size={16}
@@ -399,59 +417,25 @@ export default function ItemListView({
         )}
       </div>
 
-      {/* Footer (decision 3): left = gear (settings redirect) + "+" (new-
-          item redirect, via the SAME in-popup type menu the old floating
-          FAB used -- only its POSITION changed, never its behavior); right
-          = auto-lock select + the "Full screen" pill. Replaces the old
-          floating bottom-right FAB entirely -- there is no more absolutely-
-          positioned element at the popup's own root level. */}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-t border-base-300 px-4 py-2">
+      {/* Footer (Bartek 2026-07-18 live-UAT correction round): left = gear
+          only (settings redirect); right = auto-lock select only. The "+"
+          new-item control and the "Full screen" pill BOTH moved out of the
+          footer this round (FAB restored below as a floating control; pill
+          moved to the top bar beside the title) -- this footer now holds
+          exactly the two controls that belong here. */}
+      <div
+        data-testid="popup-footer"
+        className="flex shrink-0 items-center justify-between gap-2 border-t border-base-300 px-4 py-2"
+      >
         <div className="flex items-center gap-1">
           <button
             type="button"
             aria-label={t(locale, "nav.settings")}
-            className="btn btn-ghost btn-square btn-sm"
+            className="btn btn-ghost btn-square"
             onClick={() => void openInNewTab("/?panel=settings")}
           >
-            <Settings size={18} aria-hidden="true" />
+            <Settings size={20} aria-hidden="true" />
           </button>
-
-          {/* The "+" type-menu -- `relative` wrapper anchors the upward-
-              opening menu to THIS button, still a sibling of the scrolling
-              card region above (never nested inside its overflow-y-auto
-              ancestor), so it is never clipped the way an in-scroll-region
-              placement was (see the git history of this file for that
-              regression). */}
-          <div ref={fabMenuRef} className="relative">
-            {typeMenuOpen ? (
-              <ul
-                role="menu"
-                className="menu absolute bottom-full left-0 z-50 mb-2 max-h-[260px] w-44 flex-nowrap overflow-y-auto rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
-              >
-                {NEW_ITEM_TYPE_ORDER.map((itemType) => {
-                  const Icon = TYPE_ICON[itemType];
-                  return (
-                    <li key={itemType}>
-                      <button type="button" role="menuitem" onClick={() => void handleNewItemType(itemType)}>
-                        <Icon size={16} aria-hidden="true" />
-                        {t(locale, TYPE_LABEL_KEY[itemType])}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : null}
-            <button
-              type="button"
-              aria-label={t(locale, "nav.newItem")}
-              aria-haspopup="menu"
-              aria-expanded={typeMenuOpen}
-              className="btn btn-primary btn-square btn-sm"
-              onClick={() => setTypeMenuOpen((open) => !open)}
-            >
-              <Plus size={18} aria-hidden="true" />
-            </button>
-          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -471,20 +455,47 @@ export default function ItemListView({
               </option>
             ))}
           </select>
-
-          {/* "Full screen" pill (decision 3): 36px height, 10px radius --
-              built from plain Tailwind rather than daisyUI's `btn` sizing
-              scale (whose closest step, `btn-sm`, is 32px/8px-radius, not
-              this control's own spec). */}
-          <button
-            type="button"
-            className="inline-flex h-9 items-center gap-1.5 rounded-[10px] bg-primary px-3 text-sm font-medium text-primary-content transition hover:opacity-90"
-            onClick={() => void openInNewTab("")}
-          >
-            <ExternalLink size={16} aria-hidden="true" />
-            {t(locale, "nav.fullScreen")}
-          </button>
         </div>
+      </div>
+
+      {/* Floating "+" new-item FAB (Bartek 2026-07-18 live-UAT correction
+          round): restored to a floating bottom-right control, a direct
+          sibling of the top-bar/content-card/footer divs above (not nested
+          inside the footer or the scrolling card region) -- adapted from
+          the pre-sheet-look historical precedent (`bottom-16 right-3`,
+          moved to `right-4` for edge consistency with this popup's own
+          `px-4` content padding elsewhere). Behavior (the in-popup type
+          menu, handleNewItemType/openInNewTab) is completely unchanged from
+          the prior round -- only its position and button size changed. */}
+      <div ref={fabMenuRef} data-testid="popup-fab" className="absolute bottom-16 right-4 z-50">
+        {typeMenuOpen ? (
+          <ul
+            role="menu"
+            className="menu absolute bottom-full right-0 z-50 mb-2 max-h-[260px] w-44 flex-nowrap overflow-y-auto rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
+          >
+            {NEW_ITEM_TYPE_ORDER.map((itemType) => {
+              const Icon = TYPE_ICON[itemType];
+              return (
+                <li key={itemType}>
+                  <button type="button" role="menuitem" onClick={() => void handleNewItemType(itemType)}>
+                    <Icon size={16} aria-hidden="true" />
+                    {t(locale, TYPE_LABEL_KEY[itemType])}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+        <button
+          type="button"
+          aria-label={t(locale, "nav.newItem")}
+          aria-haspopup="menu"
+          aria-expanded={typeMenuOpen}
+          className="btn btn-primary btn-square shadow-lg"
+          onClick={() => setTypeMenuOpen((open) => !open)}
+        >
+          <Plus size={20} aria-hidden="true" />
+        </button>
       </div>
     </div>
   );

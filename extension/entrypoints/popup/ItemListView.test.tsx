@@ -1,7 +1,7 @@
 // ItemListView.tsx — browse/search/pick surface + the BINDING (Bartek
 // 2026-07-15, NordPass reference) header/footer redirect affordances.
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { VaultItem } from "../../lib/vault/types";
 
 const { mockSendMessage, mockTabsCreate, mockAddListener, mockRemoveListener, storageStore } = vi.hoisted(() => ({
@@ -362,7 +362,7 @@ describe("ItemListView", () => {
     expect(screen.getByPlaceholderText(/search|szukaj/i)).toBeInTheDocument();
   });
 
-  it("Test 11 (popup UI round, decision 3): the footer's right-side pill still opens the full vault, now labeled 'Full screen'", async () => {
+  it("Test 11 (popup UI round, decision 3; location updated 2026-07-18 -- the pill now lives in the top bar beside the title, not the footer): the pill still opens the full vault, now labeled 'Full screen'", async () => {
     mockSendMessage.mockImplementation(async (message: { kind: string }) => {
       if (message.kind === "vault.list") return { items: [], folders: [] };
       if (message.kind === "session.status") {
@@ -491,5 +491,37 @@ describe("ItemListView", () => {
 
     const sortSelect = await waitFor(() => screen.getByTestId("popup-sort-select") as HTMLSelectElement);
     await waitFor(() => expect(sortSelect.value).toBe("name"));
+  });
+
+  it("Test 14 (popup UI round, Bartek 2026-07-18 live-UAT correction): the '+' FAB floats outside the footer, the footer holds only the gear, and the 'Full screen' pill lives outside the footer too", async () => {
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "vault.list") return { items: [], folders: [] };
+      if (message.kind === "session.status") {
+        return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
+      }
+      if (message.kind === "autofill.match") return autofillMatchRestricted();
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(<ItemListView locale="en" onSelectItem={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText(/empty so far/i)).toBeInTheDocument());
+
+    const footer = screen.getByTestId("popup-footer");
+    const fab = screen.getByTestId("popup-fab");
+
+    // The FAB is not a descendant of the footer -- it floats independently.
+    expect(footer.contains(fab)).toBe(false);
+
+    // The "+" new-item control lives in the FAB, not the footer.
+    expect(within(footer).queryByRole("button", { name: /new item|nowy element/i })).toBeNull();
+    expect(within(fab).getByRole("button", { name: /new item|nowy element/i })).toBeInTheDocument();
+
+    // The gear stays in the footer.
+    expect(within(footer).getByRole("button", { name: /settings|ustawienia/i })).toBeInTheDocument();
+
+    // The "Full screen" pill is no longer in the footer, but still exists
+    // somewhere in the document (moved to the top bar, not removed).
+    expect(within(footer).queryByRole("button", { name: "Full screen" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Full screen" })).toBeInTheDocument();
   });
 });
