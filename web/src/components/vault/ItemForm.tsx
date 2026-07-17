@@ -11,6 +11,7 @@ import {
   useFolders,
 } from "@/lib/vault/store";
 import { useLocale } from "@/lib/i18n/LocaleContext";
+import { addressLines, composeLegacyAddress } from "@/lib/vault/identityAddress";
 import PasskeyPlaceholderSection from "./PasskeyPlaceholderSection";
 import GeneratorPopover from "@/components/generator/GeneratorPopover";
 
@@ -52,6 +53,14 @@ function emptyFieldsFor(type: ItemType): ItemFields {
         email: "",
         phone: "",
         address: "",
+        // Bartek live-review round 4 (TASK 6) additions — see the
+        // CardFields.pin/zip comment above for the "" default rationale.
+        addressLine1: "",
+        addressLine2: "",
+        city: "",
+        state: "",
+        zip: "",
+        country: "",
         notes: "",
         ...common,
       };
@@ -84,6 +93,26 @@ function emptyFieldsFor(type: ItemType): ItemFields {
       // exhaustiveness now that "passkey" is one of its members.
       throw new Error("passkey items cannot be created or edited via the manual item form");
   }
+}
+
+/**
+ * Bartek live-review round 4 (TASK 6): "When EDITING an item that has only
+ * the legacy flat address, prefill Address Line 1 with it." Applied once,
+ * at initial state seeding, to an identity item's initialFields (never to a
+ * brand-new create-mode item, which has no legacy data to begin with). If
+ * ANY structured address field is already populated, the legacy string is
+ * left alone (it was already composed FROM those fields on a prior save —
+ * see cleanFields' identity branch below). This is what makes the
+ * prefill+compose-on-save round-trip lossless: after this prefill, saving
+ * unconditionally recomposes `address` from the structured fields, which
+ * (having been seeded with exactly the old legacy value) reproduces it
+ * byte-for-byte if the user never touches the Address section at all.
+ */
+function withLegacyAddressPrefill(fields: ItemFields): ItemFields {
+  if (fields.type !== "identity") return fields;
+  if (addressLines(fields).length > 0) return fields;
+  if (fields.address.trim() === "") return fields;
+  return { ...fields, addressLine1: fields.address };
 }
 
 // otpauth://totp/{label}?secret=BASE32&issuer=X&algorithm=SHA1|SHA256|SHA512
@@ -225,7 +254,9 @@ export default function ItemForm({
   const { t } = useLocale();
   const folders = useFolders();
   const allTags = useAllTags();
-  const [fields, setFields] = useState<ItemFields>(() => initialFields ?? emptyFieldsFor(type));
+  const [fields, setFields] = useState<ItemFields>(() =>
+    withLegacyAddressPrefill(initialFields ?? emptyFieldsFor(type)),
+  );
   const [nameError, setNameError] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [folderError, setFolderError] = useState<string | null>(null);
@@ -307,8 +338,20 @@ export default function ItemForm({
   }
 
   function cleanFields(f: ItemFields): ItemFields {
-    if (f.type !== "login") return f;
-    return { ...f, urls: f.urls.filter((url) => url.trim() !== "") };
+    if (f.type === "login") {
+      return { ...f, urls: f.urls.filter((url) => url.trim() !== "") };
+    }
+    if (f.type === "identity") {
+      // Bartek live-review round 4 (TASK 6): recompose the legacy flat
+      // `address` string from the structured fields on every save, so the
+      // extension's autofill (which only ever reads that one flat field —
+      // see lib/vault/identityAddress.ts's own doc comment) always sees an
+      // up-to-date value. Combined with withLegacyAddressPrefill() above,
+      // this round-trips losslessly for an item that's never had its
+      // Address section touched under the new structured form.
+      return { ...f, address: composeLegacyAddress(f) };
+    }
+    return f;
   }
 
   // The secret field auto-parses an otpauth:// URI on paste (populating
@@ -707,44 +750,91 @@ export default function ItemForm({
         </FormSection>
       ) : null}
 
+      {/* Bartek live-review round 4 (TASK 6): "Dane kontaktowe"/"Contact
+          Details" keeps firstName/lastName as two separate fields — the
+          spec's "Full Name" list item is DetailPanel's own combined display
+          row (TASK 5), not a schema/form change; splitting the underlying
+          IdentityFields.firstName/lastName into a single input was
+          explicitly out of this task's SCHEMA scope. Then "Adres"/"Address
+          Details": Line 1/Line 2 (each with a muted helper), then City+State
+          and ZIP+Country rows. Notes moves out to the shared "Inne" section
+          below, same as card's above. */}
       {fields.type === "identity" ? (
         <>
-          <TextField
-            id="item-firstName"
-            label={t("field.firstName")}
-            value={fields.firstName}
-            onChange={(v) => update("firstName", v)}
-          />
-          <TextField
-            id="item-lastName"
-            label={t("field.lastName")}
-            value={fields.lastName}
-            onChange={(v) => update("lastName", v)}
-          />
-          <TextField
-            id="item-email"
-            label={t("field.email")}
-            value={fields.email}
-            onChange={(v) => update("email", v)}
-          />
-          <TextField
-            id="item-phone"
-            label={t("field.phone")}
-            value={fields.phone}
-            onChange={(v) => update("phone", v)}
-          />
-          <TextField
-            id="item-address"
-            label={t("field.address")}
-            value={fields.address}
-            onChange={(v) => update("address", v)}
-          />
-          <TextAreaField
-            id="item-notes"
-            label={t("field.notes")}
-            value={fields.notes}
-            onChange={(v) => update("notes", v)}
-          />
+          <FormSection title={t("form.contactDetailsSection")}>
+            <TextField
+              id="item-firstName"
+              label={t("field.firstName")}
+              value={fields.firstName}
+              onChange={(v) => update("firstName", v)}
+            />
+            <TextField
+              id="item-lastName"
+              label={t("field.lastName")}
+              value={fields.lastName}
+              onChange={(v) => update("lastName", v)}
+            />
+            <TextField
+              id="item-email"
+              label={t("field.email")}
+              value={fields.email}
+              onChange={(v) => update("email", v)}
+            />
+            <TextField
+              id="item-phone"
+              label={t("field.phone")}
+              value={fields.phone}
+              onChange={(v) => update("phone", v)}
+            />
+          </FormSection>
+          <FormSection title={t("form.addressDetailsSection")}>
+            <div className="flex flex-col gap-1">
+              <TextField
+                id="item-addressLine1"
+                label={t("field.addressLine1")}
+                value={fields.addressLine1 ?? ""}
+                onChange={(v) => update("addressLine1", v)}
+              />
+              <p className="text-xs text-base-content/60">{t("form.addressLine1Helper")}</p>
+            </div>
+            <div className="flex flex-col gap-1">
+              <TextField
+                id="item-addressLine2"
+                label={t("field.addressLine2")}
+                value={fields.addressLine2 ?? ""}
+                onChange={(v) => update("addressLine2", v)}
+              />
+              <p className="text-xs text-base-content/60">{t("form.addressLine2Helper")}</p>
+            </div>
+            <FormRow>
+              <TextField
+                id="item-city"
+                label={t("field.city")}
+                value={fields.city ?? ""}
+                onChange={(v) => update("city", v)}
+              />
+              <TextField
+                id="item-state"
+                label={t("field.state")}
+                value={fields.state ?? ""}
+                onChange={(v) => update("state", v)}
+              />
+            </FormRow>
+            <FormRow>
+              <TextField
+                id="item-zip"
+                label={t("field.zip")}
+                value={fields.zip ?? ""}
+                onChange={(v) => update("zip", v)}
+              />
+              <TextField
+                id="item-country"
+                label={t("field.country")}
+                value={fields.country ?? ""}
+                onChange={(v) => update("country", v)}
+              />
+            </FormRow>
+          </FormSection>
         </>
       ) : null}
 
@@ -874,13 +964,13 @@ export default function ItemForm({
       ) : null}
 
       {/* Shared folder/tag block — applies to every item type (VAULT-03),
-          not just logins. Bartek live-review round 4 (TASK 4): for card
-          specifically, this whole block (PLUS the Notes field, relocated
-          out of card's own section above) now lives inside a labeled
-          "Inne"/"Other" FormSection instead of floating unlabeled at the
-          bottom — every other type keeps the exact same unlabeled
-          placement as before. */}
-      {fields.type === "card" ? (
+          not just logins. Bartek live-review round 4 (TASKS 4/6): for
+          card/identity specifically, this whole block (PLUS the Notes
+          field, relocated out of those types' own sections above) now
+          lives inside a labeled "Inne"/"Other" FormSection instead of
+          floating unlabeled at the bottom — every other type keeps the
+          exact same unlabeled placement as before. */}
+      {fields.type === "card" || fields.type === "identity" ? (
         <FormSection title={t("form.otherSection")}>
           {renderFolderBlock()}
           <TextAreaField

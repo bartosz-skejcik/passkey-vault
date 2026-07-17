@@ -377,3 +377,120 @@ describe("ItemForm card fields (round 4)", () => {
     expect(screen.getByTestId("item-pin")).toHaveAttribute("type", "text");
   });
 });
+
+// Bartek live-review round 4 (TASK 6): identity structured address —
+// compose-on-save and legacy-prefill-on-edit.
+describe("ItemForm identity address (round 4)", () => {
+  it("submits an identity ItemFields object with structured address fields and a composed legacy address", async () => {
+    const onCreated = vi.fn();
+    render(<ItemForm type="identity" onCreated={onCreated} />);
+
+    fireEvent.change(screen.getByTestId("item-name"), { target: { value: "Bartek" } });
+    fireEvent.change(screen.getByTestId("item-firstName"), { target: { value: "Bartek" } });
+    fireEvent.change(screen.getByTestId("item-lastName"), { target: { value: "Paczesny" } });
+    fireEvent.change(screen.getByTestId("item-addressLine1"), {
+      target: { value: "ul. Prosta 1" },
+    });
+    fireEvent.change(screen.getByTestId("item-city"), { target: { value: "Warszawa" } });
+    fireEvent.change(screen.getByTestId("item-zip"), { target: { value: "00-001" } });
+    fireEvent.change(screen.getByTestId("item-country"), { target: { value: "Polska" } });
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockCreateVaultItem).toHaveBeenCalledTimes(1));
+    const submitted = mockCreateVaultItem.mock.calls[0][0];
+    expect(submitted.addressLine1).toBe("ul. Prosta 1");
+    expect(submitted.city).toBe("Warszawa");
+    // Legacy flat `address` is composed from the structured parts so the
+    // extension's single-input autofill still fills sanely.
+    expect(submitted.address).toBe("ul. Prosta 1, Warszawa, 00-001, Polska");
+  });
+
+  it("prefills Address Line 1 from an old item's legacy flat address when it has no structured fields yet", () => {
+    render(
+      <ItemForm
+        type="identity"
+        mode="edit"
+        itemId="identity-1"
+        currentRevision={1}
+        initialFields={{
+          type: "identity",
+          name: "Bartek",
+          firstName: "Bartek",
+          lastName: "Paczesny",
+          email: "",
+          phone: "",
+          address: "ul. Stara 5, Kraków",
+          notes: "",
+          folderId: null,
+          tags: [],
+        }}
+        onCreated={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("item-addressLine1")).toHaveValue("ul. Stara 5, Kraków");
+    expect(screen.getByTestId("item-addressLine2")).toHaveValue("");
+  });
+
+  it("round-trips an untouched legacy address byte-for-byte on save (prefill + compose-on-save)", async () => {
+    mockUpdateVaultItem.mockResolvedValue({ id: "identity-1", revision: 2, fields: {} });
+    const onCreated = vi.fn();
+    render(
+      <ItemForm
+        type="identity"
+        mode="edit"
+        itemId="identity-1"
+        currentRevision={1}
+        initialFields={{
+          type: "identity",
+          name: "Bartek",
+          firstName: "Bartek",
+          lastName: "Paczesny",
+          email: "",
+          phone: "",
+          address: "ul. Stara 5, Kraków",
+          notes: "",
+          folderId: null,
+          tags: [],
+        }}
+        onCreated={onCreated}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockUpdateVaultItem).toHaveBeenCalledTimes(1));
+    const submitted = mockUpdateVaultItem.mock.calls[0][1];
+    expect(submitted.address).toBe("ul. Stara 5, Kraków");
+  });
+
+  it("does NOT prefill Address Line 1 when structured fields are already present", () => {
+    render(
+      <ItemForm
+        type="identity"
+        mode="edit"
+        itemId="identity-1"
+        currentRevision={1}
+        initialFields={{
+          type: "identity",
+          name: "Bartek",
+          firstName: "Bartek",
+          lastName: "Paczesny",
+          email: "",
+          phone: "",
+          address: "ul. Nowa 2",
+          addressLine1: "ul. Nowa 2",
+          city: "Gdańsk",
+          notes: "",
+          folderId: null,
+          tags: [],
+        }}
+        onCreated={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("item-addressLine1")).toHaveValue("ul. Nowa 2");
+    expect(screen.getByTestId("item-city")).toHaveValue("Gdańsk");
+  });
+});

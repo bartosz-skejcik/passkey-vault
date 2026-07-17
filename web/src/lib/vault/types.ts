@@ -55,7 +55,25 @@ export interface IdentityFields extends CommonFields {
   lastName: string;
   email: string;
   phone: string;
+  // Legacy flat address string — kept as the SOURCE OF TRUTH the
+  // extension's autofill still reads/writes (extension/lib/vault/types.ts's
+  // own IdentityFields.address, filled via a single `street-address`-style
+  // input; see extension/lib/autofill/fill-dom.ts). Bartek live-review
+  // round 4 (TASK 6) adds structured fields below; ItemForm.tsx composes
+  // this flat string from them on every save (lib/vault/identityAddress.ts)
+  // so both the legacy extension autofill and the new structured display
+  // stay in sync — see that module's own doc comment for the full
+  // round-trip rationale.
   address: string;
+  // Additive-only optional structured address fields — old items without
+  // them render/save fine (empty structured fields, legacy `address`
+  // string still authoritative until first edited under the new form).
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  country?: string;
   notes: string;
 }
 

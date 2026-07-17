@@ -8,6 +8,7 @@ import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
 import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
 import { showCopyToast } from "@/lib/vault/copyToast";
+import { addressLines } from "@/lib/vault/identityAddress";
 import PasskeyPlaceholderSection from "./PasskeyPlaceholderSection";
 import TotpCountdownRing from "./TotpCountdownRing";
 import ItemForm from "./ItemForm";
@@ -23,10 +24,10 @@ import ItemIconTile from "./ItemIconTile";
 // `["secret"]` — `algorithm`/`digits`/`period` never render in view mode
 // (06-RESEARCH.md Pattern 2); the live countdown ring is a bespoke block
 // rendered separately, below.
-// Passkey items get a fully composed layout (see the `type === "passkey"`
-// branch in the render below), not this generic loop — its FIELD_ORDER entry
-// is intentionally empty; kept only so this Record stays exhaustive over
-// ItemFields["type"].
+// Passkey AND identity items get a fully composed layout (see their own
+// `type === "passkey"`/`type === "identity"` branches in the render below),
+// not this generic loop — their FIELD_ORDER entries are intentionally
+// empty; kept only so this Record stays exhaustive over ItemFields["type"].
 const FIELD_ORDER: Record<ItemFields["type"], string[]> = {
   login: ["username", "password", "notes"],
   // Bartek live-review (Proton Pass-inspired reorder): Card Number first,
@@ -36,7 +37,7 @@ const FIELD_ORDER: Record<ItemFields["type"], string[]> = {
   // field grouping; both are skipped entirely (not shown as "—") when
   // empty — see OPTIONAL_IF_EMPTY_FIELDS below.
   card: ["number", "expiry", "cvv", "pin", "zip", "cardholderName", "notes"],
-  identity: ["firstName", "lastName", "email", "phone", "address", "notes"],
+  identity: [],
   note: ["body"],
   totp: ["secret"],
   passkey: [],
@@ -469,6 +470,90 @@ export default function DetailPanel({
                     </div>
                   </div>
                 ) : null}
+              </>
+            ) : null}
+
+            {/* Identity composed layout (Bartek live-review round 4, TASK
+                5): FIELD_ORDER.identity is deliberately empty (see its
+                comment above) — these rows replace the generic loop:
+                a single combined "Full Name" row (not separate
+                firstName/lastName rows), Email, Phone, then a stacked-line
+                Address block that prefers the new structured fields but
+                falls back to the legacy flat `address` string for items
+                that predate this round (identityAddress.ts's
+                addressLines()), then Notes. */}
+            {item.fields.type === "identity" ? (
+              <>
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-base-content/60">{t("field.fullName")}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-base">
+                      {[item.fields.firstName, item.fields.lastName]
+                        .map((v) => v.trim())
+                        .filter((v) => v !== "")
+                        .join(" ") || "—"}
+                    </span>
+                    {item.fields.firstName || item.fields.lastName
+                      ? renderCopyButton(
+                          "fullName",
+                          `${item.fields.firstName} ${item.fields.lastName}`.trim(),
+                        )
+                      : null}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-base-content/60">{t("field.email")}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-base">{item.fields.email || "—"}</span>
+                    {item.fields.email ? renderCopyButton("email", item.fields.email) : null}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-base-content/60">{t("field.phone")}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-base">{item.fields.phone || "—"}</span>
+                    {item.fields.phone ? renderCopyButton("phone", item.fields.phone) : null}
+                  </div>
+                </div>
+
+                {(() => {
+                  const structured = addressLines(item.fields);
+                  const legacyLines = item.fields.address
+                    .split("\n")
+                    .map((line) => line.trim())
+                    .filter((line) => line !== "");
+                  const lines = structured.length > 0 ? structured : legacyLines;
+                  const copyValue = structured.length > 0 ? structured.join(", ") : item.fields.address;
+                  return (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-base-content/60">{t("field.address")}</span>
+                      <div className="flex items-start gap-1">
+                        <div className="flex flex-1 flex-col">
+                          {lines.length > 0 ? (
+                            lines.map((line, i) => (
+                              <span key={i} className="text-base">
+                                {line}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-base">—</span>
+                          )}
+                        </div>
+                        {lines.length > 0 ? renderCopyButton("address", copyValue) : null}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-base-content/60">{t("field.notes")}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-base">{item.fields.notes || "—"}</span>
+                    {item.fields.notes ? renderCopyButton("notes", item.fields.notes) : null}
+                  </div>
+                </div>
               </>
             ) : null}
 

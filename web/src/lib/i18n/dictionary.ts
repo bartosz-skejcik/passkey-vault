@@ -137,16 +137,33 @@ export const DICTIONARY = {
   "field.digits": { pl: "Liczba cyfr", en: "Digits" },
   "field.period": { pl: "Okres (s)", en: "Period (s)" },
 
-  // Card PIN/ZIP fields (Bartek live-review round 4, TASK 4) —
-  // Claude's-discretion copy, not literally named by any prior UI-SPEC.
+  // Card PIN/ZIP + identity structured address fields (Bartek live-review
+  // round 4, TASKS 4/5/6) — Claude's-discretion copy, not literally named
+  // by any prior UI-SPEC.
   "field.pin": { pl: "PIN karty", en: "Card PIN" },
   "field.zip": { pl: "Kod pocztowy", en: "ZIP or Postal Code" },
+  "field.fullName": { pl: "Imię i nazwisko", en: "Full Name" },
+  "field.addressLine1": { pl: "Adres (linia 1)", en: "Address Line 1" },
+  "field.addressLine2": { pl: "Adres (linia 2)", en: "Address Line 2" },
+  "field.city": { pl: "Miasto", en: "City" },
+  "field.state": { pl: "Województwo/Stan", en: "State or Province" },
+  "field.country": { pl: "Kraj lub region", en: "Country or Region" },
 
-  // Card CREATE/EDIT form section headers (Bartek live-review round 4,
-  // TASK 4) — "form.otherSection" is also reused by the identity form's own
-  // "Inne"/"Other" section (TASK 6).
+  // Card/identity CREATE/EDIT form section headers + address helper texts
+  // (Bartek live-review round 4, TASKS 4/6) — "form.otherSection" is shared
+  // by both the card and identity forms' "Inne"/"Other" section.
   "form.cardDetailsSection": { pl: "Dane karty", en: "Card Details" },
+  "form.contactDetailsSection": { pl: "Dane kontaktowe", en: "Contact Details" },
+  "form.addressDetailsSection": { pl: "Adres", en: "Address Details" },
   "form.otherSection": { pl: "Inne", en: "Other" },
+  "form.addressLine1Helper": {
+    pl: "Ulica, numer, skrytka pocztowa…",
+    en: "Street address, P.O. box, etc.",
+  },
+  "form.addressLine2Helper": {
+    pl: "Mieszkanie, piętro, budynek…",
+    en: "Apartment, suite, building, floor, etc.",
+  },
 
   // Passkey read-only metadata (Phase 12 cross-client fix) — "field.rpId"
   // matches the extension's own key verbatim (extension/lib/i18n/
