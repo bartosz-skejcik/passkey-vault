@@ -15,6 +15,7 @@ const hoisted = vi.hoisted(() => ({
   mockStartSync: vi.fn(),
   mockStopSync: vi.fn(),
   mockGetSyncSnapshot: vi.fn(),
+  mockTouchItem: vi.fn(),
   mockSendMessage: vi.fn(),
 }));
 
@@ -35,6 +36,7 @@ vi.mock("./sync-client", () => ({
 
 vi.mock("./vault-api", () => ({
   getSyncSnapshot: hoisted.mockGetSyncSnapshot,
+  touchItem: hoisted.mockTouchItem,
 }));
 
 vi.mock("wxt/browser", () => ({
@@ -49,8 +51,25 @@ vi.mock("wxt/browser", () => ({
  * can simulate an unlock/lock transition by invoking it directly. */
 let lockStateListener: () => void = () => {};
 
-function itemRow(id: string, overrides: Partial<{ enc_key: string; enc_data: string; revision: number; updated_at: string }> = {}) {
-  return { id, enc_key: "{}", enc_data: "{}", revision: 1, updated_at: "2026-01-01", ...overrides };
+function itemRow(
+  id: string,
+  overrides: Partial<{
+    enc_key: string;
+    enc_data: string;
+    revision: number;
+    updated_at: string;
+    last_used_at: string | null;
+  }> = {},
+) {
+  return {
+    id,
+    enc_key: "{}",
+    enc_data: "{}",
+    revision: 1,
+    updated_at: "2026-01-01",
+    last_used_at: null,
+    ...overrides,
+  };
 }
 
 function folderRow(id: string, encName = "{}") {
@@ -355,5 +374,58 @@ describe("lock-state subscription", () => {
     await Promise.resolve();
 
     expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "vault.updated" });
+  });
+});
+
+// NordPass-style last-used tracking (quick-260717): the single fire-and-
+// forget choke-point every fill/TOTP-code/passkey-ceremony/popup-copy call
+// site in this extension goes through.
+describe("touchVaultItem", () => {
+  it("calls the touch endpoint and optimistically updates the item's lastUsedAt on success", async () => {
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockDecryptItem.mockReturnValue(
+      JSON.stringify({ type: "note", name: "N1", body: "b", folderId: null, tags: [] }),
+    );
+    hoisted.mockTouchItem.mockResolvedValue({ last_used_at: "2026-07-17 09:00:00" });
+    const vaultStore = await import("./vault-store");
+
+    vaultStore.applySyncSnapshot({ revision: 1, items: [itemRow("i1")] });
+
+    vaultStore.touchVaultItem("i1");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(hoisted.mockTouchItem).toHaveBeenCalledWith("i1");
+    const item = vaultStore.getItems().find((i) => i.id === "i1");
+    expect(item?.lastUsedAt).toBe("2026-07-17 09:00:00");
+  });
+
+  it("never throws and leaves lastUsedAt unset when the touch request fails (fire-and-forget)", async () => {
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockDecryptItem.mockReturnValue(
+      JSON.stringify({ type: "note", name: "N1", body: "b", folderId: null, tags: [] }),
+    );
+    hoisted.mockTouchItem.mockRejectedValue(new Error("offline"));
+    const vaultStore = await import("./vault-store");
+
+    vaultStore.applySyncSnapshot({ revision: 1, items: [itemRow("i1")] });
+
+    expect(() => vaultStore.touchVaultItem("i1")).not.toThrow();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const item = vaultStore.getItems().find((i) => i.id === "i1");
+    expect(item?.lastUsedAt).toBeUndefined();
+  });
+
+  it("is a safe no-op when the touched id is no longer in the in-memory store", async () => {
+    hoisted.mockTouchItem.mockResolvedValue({ last_used_at: "2026-07-17 09:00:00" });
+    const vaultStore = await import("./vault-store");
+
+    vaultStore.touchVaultItem("never-existed");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(vaultStore.getItems()).toEqual([]);
   });
 });

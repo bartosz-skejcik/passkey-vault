@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const hoisted = vi.hoisted(() => ({
   mockEnsureHydrated: vi.fn(),
   mockGetItems: vi.fn(),
+  mockTouchVaultItem: vi.fn(),
   mockTotpNow: vi.fn(),
   mockTabsQuery: vi.fn(),
   mockTabsSendMessage: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock("./vault-session", () => ({
 
 vi.mock("./vault-store", () => ({
   getItems: hoisted.mockGetItems,
+  touchVaultItem: hoisted.mockTouchVaultItem,
 }));
 
 vi.mock("../../lib/crypto/wasm-loader", () => ({
@@ -251,6 +253,30 @@ describe("Test 5: frame-addressed dispatch", () => {
       expect.objectContaining({ frameId: 0 }),
     );
   });
+
+  // NordPass-style last-used tracking (quick-260717): a successful fill
+  // touches the item -- fire-and-forget, never blocks the ok response.
+  it("touches the filled item on a successful fill", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockTabsQuery.mockResolvedValue([{ id: 7, url: "https://bank.example/login" }]);
+    hoisted.mockGetItems.mockReturnValue([loginItem("item-1", ["https://bank.example/x"])]);
+    hoisted.mockTabsSendMessage.mockResolvedValue({ ok: true });
+
+    await handleAutofillFill({ kind: "autofill.fill", itemId: "item-1", kind_: "login" }, POPUP_SENDER);
+
+    expect(hoisted.mockTouchVaultItem).toHaveBeenCalledWith("item-1");
+  });
+
+  it("does not touch the item when the content-relay fill fails", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockTabsQuery.mockResolvedValue([{ id: 7, url: "https://bank.example/login" }]);
+    hoisted.mockGetItems.mockReturnValue([loginItem("item-1", ["https://bank.example/x"])]);
+    hoisted.mockTabsSendMessage.mockResolvedValue({ ok: false });
+
+    await handleAutofillFill({ kind: "autofill.fill", itemId: "item-1", kind_: "login" }, POPUP_SENDER);
+
+    expect(hoisted.mockTouchVaultItem).not.toHaveBeenCalled();
+  });
 });
 
 describe("Test 6: TOTP freshness", () => {
@@ -287,6 +313,10 @@ describe("Test 6: TOTP freshness", () => {
     );
     expect(JSON.stringify(r1)).not.toContain("JBSWY3DPEHPK3PXP");
     expect(JSON.stringify(r2)).not.toContain("JBSWY3DPEHPK3PXP");
+    // NordPass-style last-used tracking (quick-260717): every derived-code
+    // response touches the item, not just the first.
+    expect(hoisted.mockTouchVaultItem).toHaveBeenCalledTimes(2);
+    expect(hoisted.mockTouchVaultItem).toHaveBeenCalledWith("totp-1");
 
     nowSpy.mockRestore();
   });

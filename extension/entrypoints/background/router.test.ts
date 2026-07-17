@@ -24,6 +24,7 @@ const hoisted = vi.hoisted(() => ({
   mockHandleCredentialsCreate: vi.fn(),
   mockHandleCredentialsGet: vi.fn(),
   mockResolveProviderCredentialChoice: vi.fn(),
+  mockTouchVaultItem: vi.fn(),
   listeners: [] as Array<(m: unknown, s: unknown, r: unknown) => unknown>,
 }));
 
@@ -83,6 +84,7 @@ vi.mock("./server-config", () => ({
 vi.mock("./vault-store", () => ({
   getVaultList: vi.fn(),
   ensureVaultSyncStarted: vi.fn(),
+  touchVaultItem: hoisted.mockTouchVaultItem,
 }));
 vi.mock("./autofill-frame", () => ({
   handleMatchFrame: hoisted.mockHandleMatchFrame,
@@ -236,6 +238,34 @@ describe("handle() privilege-tier guard (T-10-01)", () => {
       );
     });
     expect(result).toEqual({ ok: false, error: "forbidden-sender" });
+  });
+
+  // quick-260717: vault.touch shares the same "vault." prefix WR-01 gate as
+  // vault.list -- pinned separately so a future refactor of that startsWith
+  // check can't silently exempt this newer kind.
+  it("refuses vault.touch from the same web-origin sender shape", async () => {
+    const result = await new Promise((resolve) => {
+      hoisted.listeners[0](
+        { kind: "vault.touch", itemId: "item-1" },
+        {
+          id: "test-ext-id",
+          url: "chrome-extension://test-ext-id/popup.html",
+          origin: "https://evil.example",
+          tab: { id: 7 },
+        },
+        resolve,
+      );
+    });
+    expect(result).toEqual({ ok: false, error: "forbidden-sender" });
+    expect(hoisted.mockTouchVaultItem).not.toHaveBeenCalled();
+  });
+
+  it("dispatches vault.touch for a genuine popup sender, calling touchVaultItem with the item id", async () => {
+    const result = await new Promise((resolve) => {
+      hoisted.listeners[0]({ kind: "vault.touch", itemId: "item-42" }, OWN_SENDER, resolve);
+    });
+    expect(result).toEqual({ ok: true });
+    expect(hoisted.mockTouchVaultItem).toHaveBeenCalledWith("item-42");
   });
 
   it("dispatches session.status normally for popup.html opened AS A TAB -- extension-origin document with `tab` defined (real-Chrome UAT regression)", async () => {

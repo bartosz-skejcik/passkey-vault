@@ -33,7 +33,7 @@
 import { browser } from "wxt/browser";
 import { itemMatchesOrigin, resolveFillTarget, type MessageSender } from "./frame-guard";
 import { ensureHydrated } from "./vault-session";
-import { getItems } from "./vault-store";
+import { getItems, touchVaultItem } from "./vault-store";
 import { totpNow } from "../../lib/crypto/wasm-loader";
 import type {
   AutofillMatch,
@@ -280,6 +280,10 @@ export async function handleAutofillFill(
     if (ack?.ok !== true) {
       return { ok: false, reason: "target-unreachable" };
     }
+    // NordPass-style last-used tracking (quick-260717): a successful fill
+    // is a "use" of the item's secret -- fire-and-forget, never blocks/
+    // delays the ok response above.
+    touchVaultItem(item.id);
     return { ok: true };
   } catch {
     return { ok: false, reason: "target-unreachable" };
@@ -319,5 +323,8 @@ export async function handleAutofillTotpCode(
     item.fields.period,
     Math.floor(Date.now() / 1000),
   );
+  // NordPass-style last-used tracking (quick-260717): producing a TOTP
+  // code for fill/copy is a "use" of the item's secret.
+  touchVaultItem(item.id);
   return { ok: true, code, secondsRemaining };
 }

@@ -7,6 +7,7 @@ import { useState } from "react";
 import { ChevronLeft, Copy, Check, Eye, EyeOff } from "lucide-react";
 import type { ItemFields, VaultItem } from "../../lib/vault/types";
 import { t, interpolate, type Locale, type DICTIONARY } from "../../lib/i18n/dictionary";
+import { sendMessage } from "../../lib/messaging/ext-protocol";
 
 const FIELD_ORDER: Record<ItemFields["type"], string[]> = {
   login: ["username", "password", "notes"],
@@ -24,6 +25,22 @@ const FIELD_ORDER: Record<ItemFields["type"], string[]> = {
 const MONO_FIELDS = new Set(["password", "number", "cvv", "secret"]);
 const REVEALABLE_FIELDS = new Set(["password", "number", "secret"]);
 const MASK = "•".repeat(10);
+
+/**
+ * Fire-and-forget "this item's secret was just used" signal (NordPass-style
+ * last-used tracking, quick-260717). This popup document decrypts/copies
+ * CLIENT-SIDE (unlike every autofill/ceremony touch-point, which already
+ * runs in the background) -- the `vault.touch` message kind
+ * (lib/messaging/ext-protocol.ts) is the lightweight hop into
+ * vault-store.ts's own touchVaultItem(), never a duplicated fetch here.
+ * Never awaited by callers: a failed/offline touch must never delay a
+ * reveal/copy in this view (catch + debug-log only).
+ */
+function touchItem(itemId: string): void {
+  void sendMessage({ kind: "vault.touch", itemId }).catch((err: unknown) => {
+    console.debug("[passkey-vault] touchItem failed (non-fatal, fire-and-forget)", itemId, err);
+  });
+}
 
 /**
  * Renders the guaranteed RP ID/last-used rows for a passkey item (BINDING,
@@ -63,6 +80,9 @@ export default function ItemDetailView({
         next.delete(key);
       } else {
         next.add(key);
+        // Revealing a masked secret is a "use" of the item, same as
+        // copying it -- never fired when re-hiding.
+        touchItem(item.id);
       }
       return next;
     });
@@ -83,6 +103,8 @@ export default function ItemDetailView({
       // Clipboard API unavailable in this document context -- nothing
       // else to fall back to; the copy button simply has no effect.
     }
+    // Single choke-point for every copy affordance in this view.
+    touchItem(item.id);
     setCopiedKey(key);
     setTimeout(() => setCopiedKey((current) => (current === key ? null : current)), 1500);
   }

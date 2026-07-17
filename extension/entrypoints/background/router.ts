@@ -82,7 +82,13 @@ import { ensureHydrated, noteActivity } from "./vault-session";
 import { armAutoLock, AUTOLOCK_OPTIONS, DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
 import { readSessionMeta, writeSessionMeta } from "./session-storage";
 import { handleUnlockPassword } from "./unlock";
-import { getItems, getFolders, ensureItemsHydrated, RevisionConflictError } from "./vault-store";
+import {
+  getItems,
+  getFolders,
+  ensureItemsHydrated,
+  RevisionConflictError,
+  touchVaultItem,
+} from "./vault-store";
 import { handleAutofillFill, handleAutofillMatch, handleAutofillTotpCode } from "./autofill-match";
 import { handleFillFrame, handleMatchFrame, assertContentSender } from "./autofill-frame";
 import { handleGenerateRequest } from "./generate-handler";
@@ -428,7 +434,10 @@ function isProtocolMessage(message: unknown): message is Message {
     // Phase 12 (Plan 12-04, deviation -- see SUMMARY): popup-driven, unlike
     // credentials.create/credentials.get (content-frame-only, above this
     // list is irrelevant to those). This IS one of this router's own kinds.
-    kind === "provider.resolveChoice"
+    kind === "provider.resolveChoice" ||
+    // quick-260717: popup-driven, matches "vault." startsWith gate below
+    // (assertPopupSender) exactly like vault.list already does.
+    kind === "vault.touch"
   );
 }
 
@@ -503,6 +512,13 @@ async function handle(message: Message, sender: MessageSender): Promise<unknown>
       // await or fail here beyond an unknown/already-resolved requestId,
       // which resolveProviderCredentialChoice already no-ops on.
       resolveProviderCredentialChoice(message.requestId, message.itemId);
+      return { ok: true as const };
+    case "vault.touch":
+      // quick-260717: touchVaultItem() itself is fire-and-forget and never
+      // throws (catches + debug-logs internally) -- this handler never
+      // awaits it, so a slow/offline touch can never delay the popup's
+      // response beyond this synchronous dispatch.
+      touchVaultItem(message.itemId);
       return { ok: true as const };
     default:
       throw new Error(`unhandled message kind: ${(message as { kind: string }).kind}`);

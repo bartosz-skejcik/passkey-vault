@@ -93,7 +93,7 @@
 // discipline applied to this write path).
 import { browser } from "wxt/browser";
 import { ensureHydrated, subscribeSessionLockState } from "./vault-session";
-import { getItems, splitCombinedEncryptedItem } from "./vault-store";
+import { getItems, splitCombinedEncryptedItem, touchVaultItem } from "./vault-store";
 import { createItem, updateItem } from "./vault-api";
 import { findMatchingPasskeyItems } from "./credential-store";
 import { CEREMONY_ABANDON_TIMEOUT_MS } from "../../lib/messaging/ceremony-timeouts";
@@ -653,6 +653,10 @@ export async function handleCredentialsGet(
       // best-effort, same fire-and-forget discipline as the create path.
       void persistUpdatedProviderItem(chosen.item.id, chosen.item.revision, updatedEncryptedItemJson);
     }
+
+    // NordPass-style last-used tracking (quick-260717): a successful
+    // credentials.get() assertion is a "use" of the passkey item.
+    touchVaultItem(chosen.item.id);
 
     return { fallthrough: false, credentialResponseJson: result.credentialResponseJson() };
   } catch (e) {

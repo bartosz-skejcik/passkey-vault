@@ -15,6 +15,7 @@ const hoisted = vi.hoisted(() => ({
   mockEnsureHydrated: vi.fn(),
   mockSubscribeSessionLockState: vi.fn(),
   mockGetItems: vi.fn(),
+  mockTouchVaultItem: vi.fn(),
   mockCreateItem: vi.fn(),
   mockUpdateItem: vi.fn(),
   mockEncryptItem: vi.fn(),
@@ -60,6 +61,7 @@ vi.mock("./vault-session", () => ({
 // the network/sync transport for real.
 vi.mock("./vault-store", () => ({
   getItems: hoisted.mockGetItems,
+  touchVaultItem: hoisted.mockTouchVaultItem,
   splitCombinedEncryptedItem: (combinedJson: string) => {
     const combined = JSON.parse(combinedJson) as { enc_key: unknown; enc_data: unknown };
     return {
@@ -379,6 +381,9 @@ describe("Decision A (12-05-PLAN.md): credentials.get single-match is consent-ga
       "pk-1",
       1,
     );
+    // NordPass-style last-used tracking (quick-260717): a successful
+    // credentials.get() assertion touches the chosen passkey item.
+    expect(hoisted.mockTouchVaultItem).toHaveBeenCalledWith("pk-1");
   });
 
   it("decline returns { fallthrough: true } and NEVER calls wasmGetProviderAssertion -- no signature produced", async () => {

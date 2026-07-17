@@ -24,6 +24,11 @@ export interface ItemRow {
   enc_data: string;
   revision: number;
   updated_at: string;
+  // NordPass-style last-used tracking (quick-260717, ported from
+  // web/src/lib/vault/api.ts) -- `null` until the item's secret has been
+  // used at least once (server column is nullable), set via
+  // POST /api/vault/items/{id}/touch below.
+  last_used_at: string | null;
 }
 
 /** Wire shape of a single folder row as returned by GET /api/vault/folders. */
@@ -99,4 +104,14 @@ export function updateItem(
       expected_revision: expectedRevision,
     }),
   });
+}
+
+/** `POST /api/vault/items/{id}/touch` -- records "this item's secret was
+ * just used" (NordPass-style last-used tracking, quick-260717). Deliberately
+ * NEVER bumps revision server-side -- see crates/pv-server/src/routes/
+ * vault.rs's `touch()` doc comment. Callers must go through vault-store.ts's
+ * `touchVaultItem()` fire-and-forget wrapper, never call this directly from
+ * a fill handler/ceremony/popup message. */
+export function touchItem(id: string): Promise<{ last_used_at: string }> {
+  return apiJson(`/api/vault/items/${id}/touch`, { method: "POST" });
 }

@@ -47,7 +47,7 @@
 import { browser } from "wxt/browser";
 import { itemMatchesOrigin, originFromContentSender, type MessageSender } from "./frame-guard";
 import { ensureHydrated } from "./vault-session";
-import { getItems } from "./vault-store";
+import { getItems, touchVaultItem } from "./vault-store";
 import { EMPTY_DETECTED, asFillKind, buildFillValues, maskedHintFor } from "./autofill-match";
 import type { AutofillMatch, ContentFillRequest, ContentFillResponse } from "../../lib/autofill/types";
 import type { MessageOf, MessageResponseMap } from "../../lib/messaging/ext-protocol";
@@ -182,6 +182,10 @@ export async function handleFillFrame(
     if (ack?.ok !== true) {
       return { ok: false, reason: "target-unreachable" };
     }
+    // NordPass-style last-used tracking (quick-260717): a successful
+    // in-page overlay fill is a "use" of the item's secret, same as
+    // handleAutofillFill's popup-driven counterpart.
+    touchVaultItem(item.id);
     return { ok: true };
   } catch {
     return { ok: false, reason: "target-unreachable" };

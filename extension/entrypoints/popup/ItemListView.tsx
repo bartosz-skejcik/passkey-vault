@@ -18,6 +18,7 @@ import { browser } from "wxt/browser";
 import { Search, Settings, ExternalLink, Plus, Globe, CreditCard, IdCard, StickyNote, Timer, KeyRound } from "lucide-react";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
 import { searchItems, filterItems } from "../../lib/vault/search";
+import { sortByLastUsed } from "../../lib/vault/sort";
 import type { VaultItem, ItemType } from "../../lib/vault/types";
 import { t, interpolate, type Locale } from "../../lib/i18n/dictionary";
 // Phase 10 (Plan 10-06): the "On this page" autofill section -- the ONE
@@ -170,8 +171,10 @@ export default function ItemListView({
   const suggestedIds = new Set(autofill.matches.map((m) => m.itemId));
   // "Wszystkie" = the searched full list minus anything already surfaced in
   // "Na tej stronie" (dedup by item id, Bartek: "itemy między listami nie są
-  // duplikowane").
-  const restResults = results.filter((item) => !suggestedIds.has(item.id));
+  // duplikowane"). quick-260717: default-sorted by lastUsedAt desc (nulls
+  // last by name, lib/vault/sort.ts) -- no visible sort control in the
+  // popup this round, default only (noted for a future UI round).
+  const restResults = sortByLastUsed(results.filter((item) => !suggestedIds.has(item.id)));
 
   // 11-09 addendum, ROUND 2 (Bartek 2026-07-16, further live-review
   // clarification: "nie powinno być 2 scrolli pod sekcjami -- jeden

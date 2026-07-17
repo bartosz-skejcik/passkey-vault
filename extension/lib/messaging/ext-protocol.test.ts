@@ -117,6 +117,9 @@ const MESSAGE_FIXTURES: MessageFixtureMap = {
     requestId: "req-1",
     itemId: "item-1",
   },
+  // quick-260717: NordPass-style last-used tracking -- popup -> background,
+  // no binary fields.
+  "vault.touch": { kind: "vault.touch", itemId: "item-1" },
 };
 
 type ResponseFixtureMap = { [K in Message["kind"]]: MessageResponseMap[K] };
@@ -202,6 +205,7 @@ const RESPONSE_FIXTURES: ResponseFixtureMap = {
     credentialResponseJson: '{"id":"cred-1","type":"public-key"}',
   },
   "provider.resolveChoice": { ok: true },
+  "vault.touch": { ok: true },
 };
 
 describe("Message JSON-transport safety (Chrome MV3 sendMessage stand-in)", () => {

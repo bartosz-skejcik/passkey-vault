@@ -243,7 +243,19 @@ export type Message =
   // outside that module, since a background service-worker function cannot
   // be called directly from the popup's separate JS execution context.
   // `itemId: null` is an explicit decline.
-  | { kind: "provider.resolveChoice"; requestId: string; itemId: string | null };
+  | { kind: "provider.resolveChoice"; requestId: string; itemId: string | null }
+  // quick-260717: NordPass-style last-used tracking. ItemDetailView.tsx's
+  // copy affordances decrypt/copy CLIENT-SIDE in the popup document (unlike
+  // every autofill/ceremony touch-point above, which already runs in the
+  // background) -- this is the ONE lightweight hop that lets the popup
+  // signal "this item's secret was just used" without duplicating
+  // vault-store.ts's touchVaultItem()/vault-api.ts's touchItem() fetch
+  // logic in the popup bundle. Fire-and-forget from the popup's point of
+  // view, exactly like `provider.resolveChoice` above -- the response is
+  // always `{ ok: true }` regardless of whether the underlying network
+  // touch actually succeeds (vault-store.ts's touchVaultItem() itself never
+  // throws; see its own doc comment).
+  | { kind: "vault.touch"; itemId: string };
 
 /**
  * Phase 11 (Plan 11-01): the character-class selection shape shared by
@@ -340,6 +352,9 @@ export interface MessageResponseMap {
   // point of view -- resolveProviderCredentialChoice() itself returns
   // void, so this is always a simple ack.
   "provider.resolveChoice": { ok: true };
+  // quick-260717: always `{ ok: true }` -- see the Message union's own
+  // doc comment above for why this never surfaces a failure to the popup.
+  "vault.touch": { ok: true };
 }
 
 export type MessageOf<K extends Message["kind"]> = Extract<Message, { kind: K }>;

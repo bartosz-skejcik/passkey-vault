@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const hoisted = vi.hoisted(() => ({
   mockEnsureHydrated: vi.fn(),
   mockGetItems: vi.fn(),
+  mockTouchVaultItem: vi.fn(),
   mockTotpNow: vi.fn(),
   mockTabsSendMessage: vi.fn(),
 }));
@@ -35,6 +36,7 @@ vi.mock("./vault-session", () => ({
 
 vi.mock("./vault-store", () => ({
   getItems: hoisted.mockGetItems,
+  touchVaultItem: hoisted.mockTouchVaultItem,
 }));
 
 vi.mock("../../lib/crypto/wasm-loader", () => ({
@@ -225,6 +227,10 @@ describe("handleFillFrame", () => {
       expect.objectContaining({ kind: "content.fill" }),
       { frameId: 0 },
     );
+    // NordPass-style last-used tracking (quick-260717): a successful
+    // in-page overlay fill touches the item, mirroring handleAutofillFill's
+    // popup-driven counterpart (autofill-match.ts).
+    expect(hoisted.mockTouchVaultItem).toHaveBeenCalledWith("item-1");
   });
 
   it("refuses with reason 'locked' when the vault is locked, never reading items or dispatching a fill", async () => {

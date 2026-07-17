@@ -27,7 +27,7 @@ import { browser } from "wxt/browser";
 import { decryptItem, type WasmUserKey } from "../../lib/crypto/wasm-loader";
 import { getUnlockedUserKey, isSessionUnlocked, subscribeSessionLockState } from "./vault-session";
 import { startSync, stopSync } from "./sync-client";
-import { getSyncSnapshot, type FolderRow, type ItemRow, type SyncSnapshot } from "./vault-api";
+import { getSyncSnapshot, touchItem, type FolderRow, type ItemRow, type SyncSnapshot } from "./vault-api";
 import { normalizeItemFields, type Folder, type ItemFields, type VaultItem } from "../../lib/vault/types";
 import type { Message } from "../../lib/messaging/ext-protocol";
 
@@ -125,13 +125,52 @@ export function subscribeVaultStore(listener: () => void): () => void {
   };
 }
 
+/**
+ * Fire-and-forget "this item's secret was just used" signal (NordPass-style
+ * last-used tracking, quick-260717) -- the SINGLE choke-point every
+ * fill/TOTP-code/passkey-ceremony/popup-copy call site in this extension
+ * must go through; never call `touchItem` from `./vault-api` directly.
+ * Never awaited by callers: a failed/offline touch must NEVER break or
+ * delay the fill/copy/ceremony it accompanies (catch + debug-log only, no
+ * error surfaced to the caller). Never call this for mere viewing/listing
+ * -- only when a fill/copy/ceremony actually surfaces the item's secret
+ * value.
+ *
+ * On success, optimistically updates the in-memory item's `lastUsedAt` and
+ * notifies listeners (same broadcast `notifyListeners()` every other
+ * mutation here uses), so an open popup's "Wszystkie" sort reflects the
+ * touch immediately -- other devices pick up the new value on their next
+ * pull/snapshot (no dedicated WS `SyncEvent` is broadcast for a touch; see
+ * crates/pv-server/src/routes/vault.rs's `touch()` doc comment for why).
+ */
+export function touchVaultItem(id: string): void {
+  void touchItem(id)
+    .then((res) => {
+      const existingIndex = items.findIndex((item) => item.id === id);
+      if (existingIndex === -1) return;
+      items = items.map((item, index) =>
+        index === existingIndex ? { ...item, lastUsedAt: res.last_used_at } : item,
+      );
+      notifyListeners();
+    })
+    .catch((err) => {
+      console.debug("[passkey-vault] touchVaultItem failed (non-fatal, fire-and-forget)", id, err);
+    });
+}
+
 function decryptItemRow(row: ItemRow, uk: WasmUserKey): VaultItem {
   const combined = recombineEncryptedItem(row.enc_key, row.enc_data);
   const plaintext = decryptItem(uk, combined, row.id, row.revision);
   // normalizeItemFields migrates a legacy login item's bare `url: string`
   // into `urls: string[]` -- the only place that legacy shape is ever read.
   const fields = normalizeItemFields(JSON.parse(plaintext) as ItemFields);
-  return { id: row.id, revision: row.revision, fields, updatedAt: row.updated_at };
+  return {
+    id: row.id,
+    revision: row.revision,
+    fields,
+    updatedAt: row.updated_at,
+    lastUsedAt: row.last_used_at ?? undefined,
+  };
 }
 
 function decryptFolderRow(row: FolderRow, uk: WasmUserKey): Folder {
