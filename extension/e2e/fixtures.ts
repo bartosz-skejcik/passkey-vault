@@ -27,7 +27,12 @@
 // one persistent context) is never shared across concurrent workers.
 import { test as base, chromium, type BrowserContext, type TestType } from "@playwright/test";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+// extension/package.json has `"type": "module"` -- this file runs as real
+// ESM (no `__dirname`), so `import.meta.url` + `fileURLToPath` is the
+// correct replacement, not a CommonJS shim.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_PATH = path.resolve(__dirname, "../.output/chrome-mv3");
 
 interface ExtWorkerFixtures {
@@ -56,10 +61,29 @@ export const test: TestType<Record<string, never>, ExtWorkerFixtures> = (
   base.extend as ExtendFn
 )({
   extContext: [
-    async (_fixtures: unknown, use: (r: BrowserContext) => Promise<void>) => {
+    // Playwright inspects this function's own parameter list at runtime to
+    // resolve fixture dependencies -- it MUST be a literal object-
+    // destructuring pattern (even an empty `{}`), never a renamed plain
+    // parameter, or Playwright's own fixture-dependency parser rejects it
+    // ("First argument must use the object destructuring pattern").
+    async ({}: Record<string, never>, use: (r: BrowserContext) => Promise<void>) => {
       const context = await chromium.launchPersistentContext("", {
         channel: "chromium",
-        headless: true,
+        // Deviation from the plan's original `headless: true` (Rule 3 --
+        // blocking-issue fix, see 13-03-SUMMARY.md for the full
+        // investigation): the Phase 12 passkey-provider ceremony
+        // (navigator.credentials.create()/get() -> real popup confirm ->
+        // background's wasmCreateProviderCredential/wasmGetProviderAssertion)
+        // hangs indefinitely in headless Chromium after the confirm click --
+        // no error, no terminal relay message, ever -- but resolves
+        // correctly within seconds in HEADED Chromium with the exact same
+        // extension build, matching the original manual real-Chrome UAT's
+        // success (12-PROVIDER-UAT.md). This reproduces 100% of the time on
+        // this environment and is specific to headless-mode's WASM/service-
+        // worker execution, not to anything this harness's own code
+        // controls. Headed mode is available and stable in this dev
+        // environment (a real display, not a true headless CI box).
+        headless: false,
         viewport: { width: 420, height: 700 },
         args: [
           `--disable-extensions-except=${EXTENSION_PATH}`,

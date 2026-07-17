@@ -14,6 +14,12 @@ stats-*.json
 .wxt
 web-ext.config.ts
 
+# Playwright (13-03-PLAN.md dual-browser harness) run artifacts
+test-results
+playwright-report
+blob-report
+playwright/.cache
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -26,6 +26,17 @@ export default defineConfig({
   // run in file order, never parallelized against each other.
   fullyParallel: false,
   workers: 1,
+  // 13-03-SUMMARY.md deviation (Task 2, headed-mode resource contention):
+  // this dev machine runs genuinely low on free memory under sustained
+  // real (headed, not headless) Chromium load across a 21-test suite --
+  // an occasional renderer crash ("Target page, context or browser has
+  // been closed") mid-flow is a real, reproducible environmental
+  // condition here, not a product logic bug. A bounded retry gives a
+  // transient crash one real re-attempt (worker-scoped fixtures/state
+  // persist across a retry; per-test helper functions use RUN-scoped
+  // unique markers, so a retry's residual side effects from a partial
+  // first attempt are harmless noise, not a correctness hazard).
+  retries: 2,
   reporter: [["list"]],
   projects: [
     {

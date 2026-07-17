@@ -90,7 +90,26 @@ pub fn create_provider_credential(
         // when the RP's create() request includes the prf extension (D-16),
         // never a second, hand-rolled implementation.
         .hmac_secret(HmacSecretConfig::new_without_uv());
-    let mut client = Client::new(authenticator);
+    // 13-03-PLAN.md deviation (Playwright dual-browser harness, Task 2):
+    // `passkey_client::Client`'s `RpIdVerifier` rejects `rp_id == "localhost"`
+    // outright unless `.allows_insecure_localhost(true)` is set (defaults to
+    // `false` in passkey-client@0.5.0's `RpIdVerifier::new`) -- confirmed by
+    // reading `~/.cargo/registry/.../passkey-client-0.5.0/src/rp_id_verifier.rs`
+    // after a real end-to-end Playwright ceremony against a local
+    // `http://localhost:*` RP test page silently fell through to native
+    // WebAuthn with `InsecureLocalhostNotAllowed` logged server-side. Every
+    // OTHER rp_id still requires `origin.scheme() == "https"` (unchanged,
+    // `assert_web_rp_id`'s own check) -- this flag ONLY special-cases the
+    // fixed literal string "localhost", which a hostile remote site cannot
+    // spoof (WebAuthn's own browser-level rpId-vs-origin match already
+    // requires the CALLING PAGE's own origin to genuinely be `localhost`
+    // for this branch to matter at all). This mirrors the same
+    // "http://localhost is a browser-recognized secure context" allowance
+    // Chrome itself already grants WebAuthn, and is genuinely useful for
+    // self-hosters registering passkeys against their OWN locally-served
+    // apps, not just this test harness -- flagged here for Bartek's
+    // awareness/review, not silently assumed permanent.
+    let mut client = Client::new(authenticator).allows_insecure_localhost(true);
 
     let response = pollster::block_on(client.register(&origin_url, request, DefaultClientData))
         .map_err(|e| PvProviderError::Ceremony(format!("{e:?}")))?;
@@ -135,7 +154,10 @@ pub fn get_provider_assertion(
 
     let authenticator = Authenticator::new(Aaguid::new_empty(), store, PvUserValidation)
         .hmac_secret(HmacSecretConfig::new_without_uv());
-    let mut client = Client::new(authenticator);
+    // See create_provider_credential's matching comment above -- same
+    // 13-03-PLAN.md deviation, same rationale, kept consistent across both
+    // ceremony entry points.
+    let mut client = Client::new(authenticator).allows_insecure_localhost(true);
 
     let response =
         pollster::block_on(client.authenticate(&origin_url, request, DefaultClientData))

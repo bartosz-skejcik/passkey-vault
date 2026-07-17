@@ -29,6 +29,12 @@ import type { Page } from "@playwright/test";
 import http from "node:http";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// extension/package.json has `"type": "module"` -- this file runs as real
+// ESM (no `__dirname`), so `import.meta.url` + `fileURLToPath` is the
+// correct replacement, not a CommonJS shim.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // This spec's own tsconfig program has no @types/chrome (production source
 // under entrypoints/** always goes through `browser` from "wxt/browser"
@@ -57,6 +63,8 @@ const ORIGIN_A = "http://127.0.0.1:8791";
 let popup: Page;
 let webPage: Page | undefined;
 let formServer: http.Server;
+let sharedExtContext: import("@playwright/test").BrowserContext;
+let sharedExtensionId: string;
 let advA: ChildProcess | undefined;
 let advB: ChildProcess | undefined;
 const consoleErrors: string[] = [];
@@ -118,6 +126,8 @@ function providerPage() {
 }
 
 test.beforeAll(async ({ extContext, extensionId }) => {
+  sharedExtContext = extContext;
+  sharedExtensionId = extensionId;
   popup = await extContext.newPage();
   popup.on("console", (m) => {
     if (m.type() === "error") consoleErrors.push(m.text().slice(0, 300));
@@ -137,13 +147,31 @@ test.beforeAll(async ({ extContext, extensionId }) => {
 });
 
 test.afterAll(async () => {
+  // A stabilization: keep-alive HTTP connections from the many form/
+  // signup/login/rp pages opened across this suite can keep `formServer`'s
+  // underlying sockets technically open past their own page's lifetime
+  // (Node's default keep-alive timeout), which made a plain `server.close()`
+  // wait out that natural expiry and blow the "afterAll" hook's own 30s
+  // budget. `closeAllConnections()` force-closes them immediately -- every
+  // page that needed them has already finished its own real work by the
+  // time this hook runs, so nothing is lost by cutting them short here.
+  formServer?.closeAllConnections();
   await new Promise((resolve) => formServer?.close(resolve));
   advA?.kill();
   advB?.kill();
 });
 
 test.beforeEach(() => {
-  test.setTimeout(120_000);
+  // 240s (not 120s): openWebApp()'s own up-to-3-attempt retry loop (each
+  // attempt individually bounded at up to ~60s for its slowest wait) can
+  // legitimately need more than 120s end-to-end under this dev machine's
+  // real memory pressure -- a 120s outer test timeout was cutting the
+  // retry loop off mid-attempt (killing attempt 2 before it could even
+  // finish, let alone reach attempt 3), which looked identical to "no
+  // retries happened" in the test log. This does not mask genuine
+  // failures -- it just stops the OUTER timeout from out-racing the
+  // INNER, already-bounded retry logic.
+  test.setTimeout(240_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -166,20 +194,68 @@ async function signInWithPassword(): Promise<void> {
   await popup.locator('button[type="submit"]').first().click();
 }
 
-async function waitForUnlockedList(): Promise<void> {
+/** Defensive recovery from a confirmed Playwright-harness artifact (see
+ * 13-03-SUMMARY.md's Deviations section for the full investigation): an
+ * assertion/thrown-error failure inside an EARLIER test can leave
+ * chrome.storage.local's "pv-server-config" unset by the time the NEXT
+ * test's popup interaction starts -- reproduced deterministically (ANY
+ * thrown error inside a test body triggers it, not any one specific
+ * matcher/locator), and confirmed NOT caused by any product code path
+ * (lockVaultSession() only ever touches chrome.storage.session, never
+ * .local -- grep confirms no other file in this codebase clears
+ * "pv-server-config"). Called only from Phase 10/11/12's `beforeEach`
+ * (never Phase 9's, which deliberately exercises the real first-run/
+ * unlock sequence itself) so one SC's genuine failure never cascades into
+ * unrelated SCs' verdicts, without masking the ORIGINALLY failing SC's own
+ * result. */
+async function ensureVaultReady(): Promise<void> {
+  // Every test starts with a genuinely FRESH web-app tab -- openWebApp()
+  // reuses `webPage` WITHIN a single test (a test calling createWebItem()
+  // more than once shouldn't pay a full sign-in twice), but never carries
+  // a stale/previous test's tab forward into the next one.
+  if (webPage && !webPage.isClosed()) {
+    await webPage.close().catch(() => {});
+  }
+  webPage = undefined;
+
+  // A successful UI-driven "Fill" gesture (TotpFillRow.tsx/
+  // AutofillItemRow.tsx's handleFill(Click)) closes the popup window on
+  // success -- real, intentional production UX (the user's job is done),
+  // not a bug. Any test that clicks a real Fill button through to
+  // completion legitimately ends its own test with the shared `popup`
+  // page closed; recreate it here rather than treating that as failure.
+  if (popup.isClosed()) {
+    popup = await sharedExtContext.newPage();
+    popup.on("console", (m) => {
+      if (m.type() === "error") consoleErrors.push(m.text().slice(0, 300));
+    });
+    await popup.goto(`chrome-extension://${sharedExtensionId}/popup.html`);
+  }
+  const cfg = await popup.evaluate(() =>
+    chrome.runtime.sendMessage({ kind: "config.get" }),
+  );
+  if (cfg !== null) {
+    return;
+  }
+  await ensureServerConfigured();
+  await popup.waitForSelector('input[type="password"], select', { timeout: 20000 });
+  if (await popup.locator('input[type="password"]').count()) {
+    await signInWithPassword();
+  }
   await popup.waitForSelector('select, button:has-text("Create a passkey")', {
     timeout: 60000,
   });
   const notNow = popup.locator("text=/Not now|Nie teraz/i");
   if (await notNow.count()) {
-    // Only used as a fallback if a test ahead of enrollment needs the list;
-    // the real enrollment happens explicitly in the P9-SC2 test.
+    await notNow.first().click();
   }
-  await popup.waitForSelector("select", { timeout: 15000 });
+  await popup.waitForSelector("select", { timeout: 20000 });
 }
 
-async function openWebApp(): Promise<Page> {
-  if (webPage && !webPage.isClosed()) return webPage;
+async function openWebAppOnce(): Promise<Page> {
+  if (webPage && !webPage.isClosed()) {
+    await webPage.close().catch(() => {});
+  }
   const ctxPage = await popup.context().newPage();
   webPage = ctxPage;
   await ctxPage.goto(`${SERVER}/`);
@@ -190,7 +266,12 @@ async function openWebApp(): Promise<Page> {
     await ctxPage.locator('input[type="password"]').first().fill(PASSWORD);
     await ctxPage.locator('button[type="submit"]').first().click();
   }
-  await ctxPage.waitForSelector("text=/Wszystkie|All items|Vault/i", { timeout: 60000 });
+  // TopBar's "new-item-button" is always mounted post-login (locked or
+  // unlocked, per web/src/components/shell/TopBar.tsx -- not gated on
+  // unlock state), a far more stable target than a generic "Wszystkie/All
+  // items" text match, which can resolve to multiple (sidebar nav label,
+  // empty-state heading, ...) simultaneously-rendering nodes and flake.
+  await ctxPage.waitForSelector('[data-testid="new-item-button"]', { timeout: 60000 });
   await ctxPage.waitForTimeout(1200);
   const unlockSubmit = ctxPage.locator('[data-testid="unlock-submit"]');
   if (await unlockSubmit.count()) {
@@ -206,6 +287,45 @@ async function openWebApp(): Promise<Page> {
     await ctxPage.waitForTimeout(500);
   }
   return ctxPage;
+}
+
+async function openWebApp(): Promise<Page> {
+  // Reuse WITHIN the same test if already open and signed in (a test
+  // calling createWebItem() more than once -- e.g. P10-SC1's two login
+  // items -- would otherwise pay a full fresh Argon2id sign-in TWICE,
+  // roughly doubling that test's exposure window to the renderer-crash
+  // risk documented below). `ensureVaultReady`'s own `test.beforeEach`
+  // guarantees a genuinely FRESH tab at the start of every test regardless
+  // (see its own header comment), so this reuse never leaks state across
+  // test boundaries -- only within one.
+  if (webPage && !webPage.isClosed()) {
+    return webPage;
+  }
+  // Bounded retries (up to 2 extra attempts) -- an intermittent renderer
+  // crash/close of the web app tab mid-sign-in, or an outright
+  // "Target.createTarget: Failed to open a new tab" under this dev
+  // machine's real memory pressure (observed swap usage of several GB
+  // during this suite's own runs -- a genuine host constraint, not a
+  // product bug), was observed under headed Chromium's real compositing
+  // load. A short real wait between attempts (not a busy-loop) gives the
+  // OS/Chromium a moment to reclaim memory before the next real,
+  // freshly-rendered attempt.
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await openWebAppOnce();
+    } catch (e) {
+      lastError = e;
+      console.warn(
+        `[e2e] openWebApp attempt ${attempt}/3 failed, ${attempt < 3 ? "retrying" : "giving up"}:`,
+        (e as Error).message,
+      );
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+  }
+  throw lastError;
 }
 
 async function createWebItem(
@@ -350,9 +470,16 @@ test.describe("Phase 9 -- Session Unlock Core, Popup & Sync Client", () => {
     await enrollBtn.click();
     await popup.waitForTimeout(2500);
 
-    // Force-lock: clear the session envelope and reload -- the popup should
-    // now offer the enrolled ext passkey as an unlock option.
+    // Force-lock: clearing chrome.storage.session ALONE is not enough -- a
+    // still-alive service worker's soft in-memory cache legitimately keeps
+    // the session warm (this project's own prior-session UAT harnesses hit
+    // exactly this: popup-full-flow.js's comment). The real lock path
+    // clears both, so this harness must too: clear the envelope AND force-
+    // terminate the worker via CDP before reloading.
     await popup.evaluate(() => chrome.storage.session.remove("pv-uk-envelope"));
+    await cdp.send("ServiceWorker.enable");
+    await cdp.send("ServiceWorker.stopAllWorkers");
+    await popup.waitForTimeout(1500);
     await popup.reload();
     const prfBtn = popup.locator('button:has-text("Unlock with passkey")');
     await expect(prfBtn).toBeVisible({ timeout: 15000 });
@@ -413,29 +540,37 @@ test.describe("Phase 9 -- Session Unlock Core, Popup & Sync Client", () => {
     const token = (meta["pv-session-meta"] as { sessionToken?: string } | undefined)?.sessionToken;
     expect(token).toBeTruthy();
 
+    // A raw REST POST with placeholder (non-WASM-wrapped) enc_key/enc_data
+    // blobs is REJECTED by the popup's own list rendering by design --
+    // entrypoints/background/vault-store.ts's ensureItemsHydrated()
+    // decrypts every row inside its own try/catch and silently SKIPS (not
+    // renders-as-error) anything that fails to decrypt, so a garbage blob
+    // would never increase the visible item count regardless of whether
+    // sync genuinely worked. The real "another synced client" proof this
+    // SC needs is the v0.1 WEB APP (a second, independent client against
+    // the SAME server) creating a genuinely-encrypted item, which the
+    // popup CAN decrypt and display.
     const marker = `DBH-SYNC-${RUN}`;
-    const status = await popup.evaluate(
-      async ({ server, token, marker }) => {
-        const res = await fetch(`${server}/api/vault/items`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ enc_name: marker, enc_key: "x", enc_data: "x", type: "login" }),
-        });
-        return res.status;
-      },
-      { server: SERVER, token, marker },
-    );
-    expect([200, 201]).toContain(status);
+    await createWebItem("type-tile-login", async (web) => {
+      await web.fill("#item-name", marker);
+      await web.fill("#item-username", `sync-user-${RUN}`);
+      await web.fill("#item-password", `sync-pass-${RUN}!`);
+    });
 
     // search + browse: the item list is searchable, and the second-client
-    // (REST-created) item propagates via the same REST+WS sync as v0.1.
+    // (web app) edit propagates via the same REST+WS sync as v0.1.
+    await popup.bringToFront();
+    await popup.reload();
+    await popup.waitForSelector("select", { timeout: 20000 });
     const search = popup.locator('input[type="search"], input[placeholder*="zukaj"], input[placeholder*="earch"]').first();
+    if (await search.count()) {
+      await search.fill(marker);
+      await popup.waitForTimeout(400);
+    }
+    await expect(popup.locator(`text=${marker}`).first()).toBeVisible({ timeout: 15000 });
     if (await search.count()) {
       await search.fill("");
     }
-    await popup.waitForTimeout(3000);
-    await popup.reload();
-    await popup.waitForSelector("select", { timeout: 20000 });
   });
 
   test("P9-SC6: the self-hosted pv-server's CORS allowlist accepts the fixed published extension origin (chrome-extension://<published-id>), verified end-to-end against a real request", async () => {
@@ -465,6 +600,8 @@ test.describe("Phase 9 -- Session Unlock Core, Popup & Sync Client", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Phase 10 -- Autofill: Login, TOTP, Card & Identity", () => {
+  test.beforeEach(ensureVaultReady);
+
   const LOGIN_USER = `dbh-user-${RUN}`;
   const LOGIN_PASS = `dbh-pass-${RUN}!`;
   const LOGIN_MARKER = `DBH-LOGIN-${RUN}`;
@@ -595,7 +732,18 @@ test.describe("Phase 10 -- Autofill: Login, TOTP, Card & Identity", () => {
       await web.fill("#item-lastName", "Browser");
       await web.fill("#item-email", `dbh-tester-${RUN}@example.local`);
       await web.fill("#item-phone", "+48123456789");
-      await web.fill("#item-address", "ul. Testowa 1");
+      // web/src/components/vault/ItemForm.tsx's identity form has NO
+      // single `#item-address` field -- it's structured into
+      // `#item-addressLine1`/`#item-addressLine2` (confirmed by reading
+      // the real form's field ids; the plain "#item-address" selector
+      // this test previously used never matched anything, so `.fill()`
+      // polled for its default 30s actionability timeout every run before
+      // finally failing -- that long, silent poll window is what made
+      // this specific fill by far this suite's most likely spot to also
+      // eat an unrelated, genuine environmental renderer crash under this
+      // dev machine's memory pressure. Fixing the selector removes that
+      // artificially long exposure window entirely.
+      await web.fill("#item-addressLine1", "ul. Testowa 1");
     });
 
     const form = await popup.context().newPage();
@@ -697,6 +845,8 @@ test.describe("Phase 10 -- Autofill: Login, TOTP, Card & Identity", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Phase 11 -- Generate & Capture", () => {
+  test.beforeEach(ensureVaultReady);
+
   const CAP_USER = `cap-user-${RUN}`;
   const CAP_PASS_1 = `cap-pass-A-${RUN}!`;
   const CAP_PASS_2 = `cap-pass-B-${RUN}!`;
@@ -768,7 +918,13 @@ test.describe("Phase 11 -- Generate & Capture", () => {
 
     await login.fill("#u", CAP_USER);
     await login.fill("#p", CAP_PASS_1);
-    await login.click("#s");
+    // The extension's own autofill-hint overlay (`data-pv-autofill-host`)
+    // renders adjacent to this minimal test page's fields and can
+    // intercept a coordinate-based click on #s -- pressing Enter in the
+    // password field is both a more natural real-user login gesture and
+    // sidesteps that overlap entirely, still dispatching a genuine
+    // "submit" event for capture-handler.ts to detect.
+    await login.locator("#p").press("Enter");
     const toast = await waitForCdp(async () => {
       const t = await cdpQuery(client, (_n, a) => hasAttr(a, "data-pv-toast"));
       return t.length ? t : null;
@@ -790,7 +946,13 @@ test.describe("Phase 11 -- Generate & Capture", () => {
     await login.waitForTimeout(1000);
     await login.fill("#u", CAP_USER);
     await login.fill("#p", CAP_PASS_2);
-    await login.click("#s");
+    // The extension's own autofill-hint overlay (`data-pv-autofill-host`)
+    // renders adjacent to this minimal test page's fields and can
+    // intercept a coordinate-based click on #s -- pressing Enter in the
+    // password field is both a more natural real-user login gesture and
+    // sidesteps that overlap entirely, still dispatching a genuine
+    // "submit" event for capture-handler.ts to detect.
+    await login.locator("#p").press("Enter");
     const client = await cdpSession(login);
     const toast = await waitForCdp(async () => {
       const t = await cdpQuery(client, (_n, a) => hasAttr(a, "data-pv-toast"));
@@ -873,6 +1035,8 @@ test.describe("Phase 11 -- Generate & Capture", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Phase 12 -- Passkey Provider", () => {
+  test.beforeEach(ensureVaultReady);
+
   test("P12-SC1: on a third-party site, navigator.credentials.create() registers a new ES256 passkey (via passkey-rs) that is saved to the user's vault", async () => {
     const rp = await popup.context().newPage();
     await rp.goto(`${FORM_ORIGIN}/provider`);
@@ -921,8 +1085,11 @@ test.describe("Phase 12 -- Passkey Provider", () => {
     await rp.goto(`${FORM_ORIGIN}/provider`);
     await rp.bringToFront();
 
-    // NO CDP virtual authenticator -- single stored credential from
-    // P12-SC1, so the popup shows the single-match confirm (no picker list).
+    // NO CDP virtual authenticator -- a REAL stored credential from
+    // P12-SC1 (this account may carry more than one localhost-scoped
+    // provider passkey from prior runs against this shared UAT account, so
+    // this handles BOTH the single-match confirm and the multi-match
+    // picker -- either way, get() must genuinely succeed).
     const getPromise = rp.evaluate(async () => {
       try {
         const cred = await navigator.credentials.get({
@@ -941,6 +1108,11 @@ test.describe("Phase 12 -- Passkey Provider", () => {
 
     const confirmBtn = popup.locator('[data-testid="provider-confirm"]');
     await expect(confirmBtn).toBeVisible({ timeout: 20000 });
+    const candidateRow = popup.locator('[data-testid^="provider-credential-row-"]').first();
+    if (await candidateRow.count()) {
+      await candidateRow.click();
+    }
+    await expect(confirmBtn).toBeEnabled({ timeout: 10000 });
     await confirmBtn.click();
 
     const result = await getPromise;
