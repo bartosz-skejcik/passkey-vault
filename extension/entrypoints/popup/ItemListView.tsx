@@ -268,22 +268,17 @@ export default function ItemListView({
     // rounded top corners that read against the strip's own color, which a
     // shared outer padding would inset away from the popup's actual edges).
     <div className="relative flex min-h-0 w-[380px] flex-1 flex-col overflow-hidden">
-      {/* Sheet-look top bar (decision 2): title + search, visually one dark
-          strip. `bg-neutral` + `text-primary-content` -- both REAL tokens
-          from packages/pv-ui/tokens.css, deliberately not a hand-picked
-          literal color. `--color-neutral` (a pure, chroma-0 mid-gray) and
-          `--color-primary-content` (pure white) are BOTH left unredeclared
-          by `[data-theme="vault-light"]` (that block only overrides the
-          base-100/200/300/content tokens), so this pairing stays the exact
-          same value in both themes -- a legible, consistent "dark bar" regardless of
-          theme, exactly the "use tokens so it stays legible" bar this
-          round's quality gate calls out. (`text-neutral-content` was
-          considered first, but tokens.css never defines
-          `--color-neutral-content` at all -- daisyUI 5's utility CSS has no
-          runtime fallback for a missing content token, so that pairing
-          would have silently depended on CSS's inherited-value fallback
-          instead of an explicit, verified token.) */}
-      <div className="flex shrink-0 flex-col gap-2 bg-neutral px-4 pb-3 pt-3 text-primary-content">
+      {/* Sheet-look top bar (decision 2), theme-parity corrected (Bartek
+          2026-07-18 live-UAT correction): `bg-base-200` + `text-base-content`
+          -- the SAME token pairing web/src/components/shell/Sidebar.tsx's
+          `<aside>` wrapper and web/src/components/shell/TopBar.tsx's
+          `<header>` both already use, giving this strip pixel-parity with
+          the web app's own sidebar/topbar in both themes (a real
+          theme-adaptive token pair, not a hand-picked literal). The prior
+          `bg-neutral`/`text-primary-content` pairing (chosen only for being
+          theme-invariant) read too light against the web app's own darker
+          `base-200` sidebar and is superseded by this correction. */}
+      <div className="flex shrink-0 flex-col gap-2 bg-base-200 px-4 pb-3 pt-3 text-base-content">
         <h1 className="text-[20px] font-semibold leading-tight">{t(locale, "app.title")}</h1>
         <div className="relative">
           <Search
