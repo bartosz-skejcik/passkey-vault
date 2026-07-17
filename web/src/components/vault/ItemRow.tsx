@@ -36,6 +36,17 @@ const TYPE_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
   passkey: "itemType.passkey",
 };
 
+/** Masks a card number down to its last 4 digits for the list row (Proton
+ * Pass-inspired subtitle), e.g. "4111 1111 1111 1111" -> "•••• 1111". The
+ * full number must NEVER render in the list — only DetailPanel's explicit
+ * reveal toggle shows it. `null` (no subtitle rendered) when the number is
+ * empty/absent, per Bartek's live-review spec — never a fake/empty mask. */
+function maskedCardLast4(number: string): string | null {
+  const digits = number.replace(/[\s-]/g, "");
+  if (!digits) return null;
+  return `•••• ${digits.slice(-4)}`;
+}
+
 export default function ItemRow({
   item,
   selected,
@@ -55,12 +66,22 @@ export default function ItemRow({
   const { t, locale } = useLocale();
   const Icon = TYPE_ICON[item.fields.type];
   const typeLabel = t(TYPE_LABEL_KEY[item.fields.type]);
-  const subtitle =
+  // Proton Pass-inspired passkey row (Bartek live-review): the site (rpId)
+  // is the primary text, the account (username, falling back to the
+  // provider-supplied display name) is the subtitle — NOT the synthesized
+  // `fields.name` (that stays the identity/search-stable value normalized
+  // in lib/vault/types.ts; this is display-only).
+  const primaryText = item.fields.type === "passkey" ? item.fields.rpId : item.fields.name;
+  const subtitle: string | null =
     item.fields.type === "login"
       ? item.fields.username
       : item.fields.type === "totp"
         ? item.fields.issuer || typeLabel
-        : typeLabel;
+        : item.fields.type === "passkey"
+          ? (item.fields.username ?? item.fields.userDisplayName ?? null)
+          : item.fields.type === "card"
+            ? maskedCardLast4(item.fields.number)
+            : typeLabel;
   const relativeTime = formatRelativeTime(item.updatedAt, t, locale);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -114,8 +135,10 @@ export default function ItemRow({
         </span>
 
         <span className="flex min-w-0 flex-1 flex-col items-start">
-          <span className="truncate text-base">{item.fields.name}</span>
-          <span className="truncate text-sm text-base-content/60">{subtitle}</span>
+          <span className="truncate text-base">{primaryText}</span>
+          {subtitle !== null ? (
+            <span className="truncate text-sm text-base-content/60">{subtitle}</span>
+          ) : null}
         </span>
       </button>
 
