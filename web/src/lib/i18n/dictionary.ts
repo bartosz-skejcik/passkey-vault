@@ -136,6 +136,19 @@ export const DICTIONARY = {
   // detail view doesn't surface it, but this fix's scope explicitly does).
   "field.rpId": { pl: "RP ID", en: "RP ID" },
   "field.userDisplayName": { pl: "Nazwa wyświetlana", en: "Display name" },
+  // Passkey DETAIL panel composed layout (Bartek live-review, Proton
+  // Pass-inspired): distinct from the generic "field.username"/"field.rpId"
+  // labels above (those stay "Użytkownik"/"RP ID" for login/technical
+  // contexts) — these are the non-technical labels for the same underlying
+  // values (PasskeyFields.username/rpId) as shown in this specific section.
+  "field.passkeyUsername": { pl: "Email lub nazwa użytkownika", en: "Email or Username" },
+  "field.passkeyWebsite": { pl: "Adres strony", en: "Website Address" },
+  "detail.passkeySectionTitle": { pl: "Passkey", en: "Passkey" },
+  "detail.passkeyLastUpdated": { pl: "Ostatnia zmiana", en: "Last updated" },
+  "detail.passkeyExplainer": {
+    pl: "Passkey to unikalny klucz logowania przypisany do konkretnej strony. Jest bezpieczniejszy i wygodniejszy niż hasło, w pełni szyfrowany end-to-end.",
+    en: "A passkey is a unique sign-in credential tied to a specific website. It's more secure and easier to use than a password, and end-to-end encrypted.",
+  },
 
   // TOTP manual-add form (VAULT-07, Plan 06-01) — copy verbatim from
   // 06-UI-SPEC.md's Copywriting Contract.

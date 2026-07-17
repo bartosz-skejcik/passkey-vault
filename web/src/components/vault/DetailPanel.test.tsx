@@ -98,6 +98,7 @@ const cardItem: VaultItem = {
 const passkeyItem: VaultItem = {
   id: "item-passkey",
   revision: 1,
+  updatedAt: "2026-01-15 10:30:00",
   fields: {
     type: "passkey",
     name: "bartek",
@@ -205,11 +206,24 @@ describe("DetailPanel", () => {
     expect(screen.getByText("4111111111111111")).toBeInTheDocument();
   });
 
-  it("always renders the cvv field masked with no reveal toggle", () => {
+  // Scope-extension (Bartek live-review, Proton Pass-inspired card detail):
+  // CVV now gets the same reveal+copy affordance as password/card
+  // number/TOTP secret in VIEW mode — masked by default, but revealable
+  // (unlike ItemForm's add/edit form, which still never echoes it back).
+  it("masks the cvv field by default and reveals it independently via its own reveal toggle", () => {
     render(<DetailPanel item={cardItem} onClose={vi.fn()} />);
 
     expect(screen.queryByText("123")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("reveal-cvv")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("reveal-cvv"));
+    expect(screen.getByText("123")).toBeInTheDocument();
+    expect(screen.getByTestId("copy-cvv")).toBeInTheDocument();
+  });
+
+  it("renders card fields in Card Number, Expiration Date, CVV, Cardholder order", () => {
+    render(<DetailPanel item={cardItem} onClose={vi.fn()} />);
+
+    const labels = screen.getAllByText(/^field\./).map((el) => el.textContent);
+    expect(labels).toEqual(["field.number", "field.expiry", "field.cvv", "field.cardholderName", "field.notes"]);
   });
 
   it("opens directly in the pre-filled edit form when initialMode='edit' is passed", () => {
@@ -275,6 +289,62 @@ describe("DetailPanel", () => {
 
     expect(screen.queryByTestId(/^item-form-/)).not.toBeInTheDocument();
     expect(screen.getByText("example.com")).toBeInTheDocument();
+  });
+
+  // Bartek live-review, Proton Pass-inspired composed passkey layout: a
+  // "Passkey" section (glyph + honestly-labeled "last updated" date — the
+  // server never returns a created_at, so this must never say "Created"),
+  // a muted explainer paragraph, then the non-technical field labels.
+  describe("passkey composed detail layout (Bartek live-review)", () => {
+    it("shows the honestly-labeled last-updated date (never a fabricated 'created' date)", () => {
+      render(<DetailPanel item={passkeyItem} onClose={vi.fn()} />);
+
+      expect(screen.getByText("detail.passkeySectionTitle")).toBeInTheDocument();
+      const dateRow = screen.getByTestId("passkey-last-updated");
+      expect(dateRow).toHaveTextContent("detail.passkeyLastUpdated");
+      // 2026-01-15 -> some locale-formatted date string is present (not "—").
+      expect(dateRow.textContent).not.toMatch(/—$/);
+      expect(screen.getByText("detail.passkeyExplainer")).toBeInTheDocument();
+    });
+
+    it("shows an em-dash placeholder for last-updated when the item has no updatedAt", () => {
+      const noDateItem: VaultItem = { ...passkeyItem, updatedAt: undefined };
+      render(<DetailPanel item={noDateItem} onClose={vi.fn()} />);
+
+      expect(screen.getByTestId("passkey-last-updated")).toHaveTextContent(
+        "detail.passkeyLastUpdated: —",
+      );
+    });
+
+    it("renders the non-technical Email/Username and Website Address labels with copy affordances", () => {
+      render(<DetailPanel item={passkeyItem} onClose={vi.fn()} />);
+
+      expect(screen.getByText("field.passkeyUsername")).toBeInTheDocument();
+      expect(screen.getByText("field.passkeyWebsite")).toBeInTheDocument();
+      expect(screen.getByTestId("copy-username")).toBeInTheDocument();
+      expect(screen.getByTestId("copy-rpId")).toBeInTheDocument();
+      expect(screen.getByText("field.userDisplayName")).toBeInTheDocument();
+      expect(screen.getByTestId("copy-userDisplayName")).toBeInTheDocument();
+    });
+
+    it("omits the userDisplayName row entirely when the passkey has none", () => {
+      const noDisplayName: VaultItem = {
+        ...passkeyItem,
+        fields: { ...passkeyItem.fields, userDisplayName: undefined } as typeof passkeyItem.fields,
+      };
+      render(<DetailPanel item={noDisplayName} onClose={vi.fn()} />);
+
+      expect(screen.queryByText("field.userDisplayName")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("copy-userDisplayName")).not.toBeInTheDocument();
+    });
+
+    it("never renders Share/Attach/More affordances or an Edit button for a passkey item", () => {
+      render(<DetailPanel item={passkeyItem} onClose={vi.fn()} />);
+
+      expect(screen.queryByText(/share/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/attach/i)).not.toBeInTheDocument();
+      expect(screen.queryByTestId("detail-panel-edit")).not.toBeInTheDocument();
+    });
   });
 });
 

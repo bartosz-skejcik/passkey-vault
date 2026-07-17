@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { Check, Copy, Eye, EyeOff, Pencil, RefreshCw, Trash2, X } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, KeyRound, Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import type { ItemFields, VaultItem } from "@/lib/vault/types";
 import { RevisionConflictError, useFolders } from "@/lib/vault/store";
 import { useLocale } from "@/lib/i18n/LocaleContext";
@@ -22,32 +22,51 @@ import DeleteConfirmDialog from "./DeleteConfirmDialog";
 // `["secret"]` — `algorithm`/`digits`/`period` never render in view mode
 // (06-RESEARCH.md Pattern 2); the live countdown ring is a bespoke block
 // rendered separately, below.
+// Passkey items get a fully composed layout (see the `type === "passkey"`
+// branch in the render below), not this generic loop — its FIELD_ORDER entry
+// is intentionally empty; kept only so this Record stays exhaustive over
+// ItemFields["type"].
 const FIELD_ORDER: Record<ItemFields["type"], string[]> = {
   login: ["username", "password", "notes"],
-  card: ["cardholderName", "number", "expiry", "cvv", "notes"],
+  // Bartek live-review (Proton Pass-inspired reorder): Card Number first,
+  // then Expiration Date, then CVV, then cardholder name — was previously
+  // cardholderName-first.
+  card: ["number", "expiry", "cvv", "cardholderName", "notes"],
   identity: ["firstName", "lastName", "email", "phone", "address", "notes"],
   note: ["body"],
   totp: ["secret"],
-  // Phase 12 cross-client fix: read-only metadata only (rpId/username/
-  // userDisplayName) — NEVER rawPasskeyJson (key_cbor/counter/hmac_secret
-  // live inside it) or any other key material. These three fields are all
-  // plain strings directly on PasskeyFields, so the generic loop below
-  // (which special-cases only login's `urls`/totp's countdown block) reads
-  // them the same way it reads every other type's fields — no mono/reveal
-  // treatment (none are secrets), copy button still available.
-  passkey: ["rpId", "username", "userDisplayName"],
+  passkey: [],
 };
 
 const MONO_FIELDS = new Set(["password", "number", "cvv", "secret"]);
 
-// Fields that get a per-field reveal toggle next to the copy button — `cvv`
-// deliberately has no entry here, matching ItemForm.tsx's explicit
-// no-reveal-for-CVV convention (masked via MONO_FIELDS, never revealable).
-const REVEALABLE_FIELDS = new Set(["password", "number", "secret"]);
+// Fields that get a per-field reveal toggle next to the copy button.
+// `cvv` previously had no entry here, matching ItemForm.tsx's own
+// no-reveal-for-CVV convention for the ADD/EDIT form (where the user just
+// typed the value and doesn't need it echoed back). DetailPanel's VIEW mode
+// is a different context — reading the CVV back out to type into a checkout
+// form is the whole point — so Bartek's live-review spec adds reveal+copy
+// for it here (matches Proton Pass/other vaults' own card detail views).
+const REVEALABLE_FIELDS = new Set(["password", "number", "secret", "cvv"]);
 
 // A fixed-length mask so the visible placeholder never leaks the real
 // value's character count.
 const MASK = "•".repeat(10);
+
+/** Formats `item.updatedAt` (SQLite's `datetime('now')` shape, no `T`/
+ * timezone designator, always UTC) as a locale-aware absolute date for the
+ * passkey detail section — mirrors `formatRelativeTime`'s own ISO
+ * normalization (`lib/format/relativeTime.ts`) since that helper only
+ * returns relative/near-term strings, not a plain date. Deliberately
+ * NOT reused directly: this always wants an absolute date, never "2h ago". */
+function formatAbsoluteDate(updatedAt: string, locale: string): string | null {
+  const iso = updatedAt.includes("T") ? updatedAt : `${updatedAt.replace(" ", "T")}Z`;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat(locale === "pl" ? "pl-PL" : "en-US", {
+    dateStyle: "medium",
+  }).format(date);
+}
 
 export default function DetailPanel({
   item,
@@ -58,7 +77,7 @@ export default function DetailPanel({
   initialMode?: "view" | "edit";
   onClose: () => void;
 }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const folders = useFolders();
   const [mode, setMode] = useState<"view" | "edit">(initialMode);
   const [conflict, setConflict] = useState(false);
@@ -182,7 +201,12 @@ export default function DetailPanel({
     >
       <div className="flex items-start justify-between gap-2">
         {mode === "view" ? (
-          <h2 className="text-[20px] font-bold leading-[1.2]">{item.fields.name}</h2>
+          <h2 className="flex items-center gap-2 text-[20px] font-bold leading-[1.2]">
+            {item.fields.type === "passkey" ? (
+              <KeyRound size={18} className="shrink-0 text-accent" aria-hidden="true" />
+            ) : null}
+            {item.fields.name}
+          </h2>
         ) : (
           <h2 className="text-[20px] font-bold leading-[1.2]">{t("item.edit")}</h2>
         )}
@@ -304,6 +328,29 @@ export default function DetailPanel({
               )}
             </div>
           ) : null}
+          {/* Passkey composed layout (Bartek live-review, Proton
+              Pass-inspired, adapted to our own tokens/DaisyUI classes —
+              never copied verbatim): a "Passkey" section (glyph + honest
+              "last updated" date, since the server only ever returns
+              `updated_at` — crates/pv-server/src/routes/vault.rs never
+              selects `created_at` — never fake a "created" date) plus a
+              muted plain-language explainer, ahead of the actual fields
+              below. */}
+          {item.fields.type === "passkey" ? (
+            <div className="flex flex-col gap-3 rounded-box border border-base-300 p-4">
+              <span className="text-sm font-semibold text-base-content/70">
+                {t("detail.passkeySectionTitle")}
+              </span>
+              <div className="flex items-center gap-2 text-sm text-base-content/70">
+                <KeyRound size={16} className="shrink-0 text-accent" aria-hidden="true" />
+                <span data-testid="passkey-last-updated">
+                  {t("detail.passkeyLastUpdated")}:{" "}
+                  {item.updatedAt ? (formatAbsoluteDate(item.updatedAt, locale) ?? "—") : "—"}
+                </span>
+              </div>
+              <p className="text-sm text-base-content/70">{t("detail.passkeyExplainer")}</p>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-3">
             {FIELD_ORDER[item.fields.type].map((key) => (
               <Fragment key={key}>
@@ -350,6 +397,59 @@ export default function DetailPanel({
                 ) : null}
               </Fragment>
             ))}
+
+            {/* FIELD_ORDER.passkey is deliberately empty (see its comment
+                above) — these three rows replace the generic loop for this
+                type, using the non-technical labels from Bartek's
+                live-review spec rather than the generic field.username/
+                field.rpId labels the login-item loop above uses. */}
+            {item.fields.type === "passkey" ? (
+              <>
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-base-content/60">
+                    {t("field.passkeyUsername")}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-base">{item.fields.username || "—"}</span>
+                    {item.fields.username ? (
+                      renderCopyButton(
+                        "username",
+                        item.fields.username,
+                        "username",
+                        interpolate(t("aria.copyField"), { field: t("field.passkeyUsername") }),
+                      )
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-base-content/60">
+                    {t("field.passkeyWebsite")}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-base">{item.fields.rpId}</span>
+                    {renderCopyButton(
+                      "rpId",
+                      item.fields.rpId,
+                      "rpId",
+                      interpolate(t("aria.copyField"), { field: t("field.passkeyWebsite") }),
+                    )}
+                  </div>
+                </div>
+
+                {item.fields.userDisplayName ? (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-sm text-base-content/60">
+                      {t("field.userDisplayName")}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-base">{item.fields.userDisplayName}</span>
+                      {renderCopyButton("userDisplayName", item.fields.userDisplayName)}
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
 
             <div className="flex flex-col gap-1">
               <span className="text-sm text-base-content/60">{t("item.folderLabel")}</span>
