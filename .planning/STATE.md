@@ -5,15 +5,15 @@ milestone_name: Browser Extension
 current_phase: 13
 current_phase_name: Dual-Browser Hardening
 status: executing
-stopped_at: Completed 13-05-PLAN.md
-last_updated: "2026-07-17T08:04:39.628Z"
+stopped_at: Completed 13-02-PLAN.md
+last_updated: "2026-07-17T08:10:05.759Z"
 last_activity: 2026-07-17
 last_activity_desc: Plan 13-01 (Firefox manifest/CSP/gecko hardening) complete
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 41
-  completed_plans: 36
+  completed_plans: 37
   percent: 67
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 13 — Dual-Browser Hardening
-Plan: 2 of 05
+Plan: 3 of 05
 Status: Ready to execute
 Last activity: 2026-07-17 — Plan 13-01 (Firefox manifest/CSP/gecko hardening) complete
 
-Progress: [█████████░] 88%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
@@ -77,6 +77,7 @@ Progress: [█████████░] 88%
 | Phase 10 P09 | 25min | 3 tasks | 8 files |
 | Phase 13 P01 | 12min | 3 tasks | 3 files |
 | Phase 13 P05 | 35min | 3 tasks | 12 files |
+| Phase 13-dual-browser-hardening P02 | 25min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -117,6 +118,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 13-01: Firefox host-permission pre-declaration moved to optional_permissions (shared MV2/MV3 key) since WXT strips optional_host_permissions (MV3-only) for Firefox MV2; Chrome's optional_host_permissions branch untouched
 - [Phase ?]: D-10: pv-server accepts moz-extension://* as scheme-scoped wildcard PATTERN via AllowOrigin::predicate (never loosening bare-* WR-07 rejection); logged as active tech-debt
 - [Phase ?]: D-11: ServerConfigView distinguishes cors-blocked from unreachable via a no-cors retry probe, showing the extension's own copyable origin + PV_EXTENSION_ORIGINS pointer
+- [Phase ?]: 13-02: unlock.passkeyUnsupported now holds D-13 canon PL+EN copy, single shared string for all popup PRF-unusable cases
+- [Phase ?]: 13-02: D-12 session-scoped unusable flag named prfUnusableThisSession (UnlockView) and Phase value "unusable" (EnrollExtPasskeyPrompt) -- never hides the passkey button, only disables it after an observed non-cancel ceremony failure
 
 ### Pending Todos
 
@@ -147,8 +150,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-17T08:04:39.621Z
-Stopped at: Completed 13-05-PLAN.md
+Last session: 2026-07-17T08:10:05.752Z
+Stopped at: Completed 13-02-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
