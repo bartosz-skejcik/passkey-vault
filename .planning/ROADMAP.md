@@ -204,7 +204,7 @@ Plans:
   3. Wherever Firefox lacks a capability the Chromium build has (most notably PRF), the UI communicates it explicitly instead of silently failing or degrading.
   4. `browser_specific_settings.gecko` (extension ID, `strict_min_version`) is pinned deliberately in `wxt.config.ts`, not left to a WXT/dev-mode default that would break persisted `chrome.storage.session` state across dev sessions.
 
-**Plans**: 5/6 plans executed
+**Plans**: 6/6 plans executed
 Plans:
 
 - [x] 13-01-PLAN.md — Firefox install + manifest/CSP/gecko hardening + web-ext lint (D-02/D-04/D-07/D-09)
@@ -212,7 +212,7 @@ Plans:
 - [x] 13-03-PLAN.md — Playwright Chromium harness + full Chrome UAT pass (21 SCs, 24-row checklist)
 - [x] 13-04-PLAN.md — Firefox UAT pass + divergence triage/fixes + final sign-off (D-01/D-05/D-08)
 - [x] 13-05-PLAN.md — moz-extension CORS: server scheme-wildcard mechanism (D-10 tech-debt flagged) + CORS-vs-unreachable UX (D-11) + self-hosting docs
-- [ ] 13-06-PLAN.md — Firefox passkey unlock via server-origin PRF ceremony (Bartek-mandated post-research; reuses v0.1 passkeyUnlock + content-relay channel)
+- [x] 13-06-PLAN.md — Firefox passkey unlock via server-origin PRF ceremony (Bartek-mandated post-research; reuses v0.1 passkeyUnlock + content-relay channel)
 
 **UI hint**: yes
 
@@ -235,4 +235,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 7/9 | Complete    | 2026-07-16 |
 | 11. Generate & Capture | v0.2 | 9/9 | Complete    | 2026-07-16 |
 | 12. Passkey Provider | v0.2 | 7/7 | Complete    | 2026-07-17 |
-| 13. Dual-Browser Hardening | v0.2 | 5/5 | In Progress|  |
+| 13. Dual-Browser Hardening | v0.2 | 6/6 | In Progress|  |

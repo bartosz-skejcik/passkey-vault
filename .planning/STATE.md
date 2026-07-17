@@ -4,17 +4,17 @@ milestone: v0.2
 milestone_name: Browser Extension
 current_phase: 13
 current_phase_name: Dual-Browser Hardening
-status: executing
-stopped_at: Completed 13-04-PLAN.md — Phase 13 fully complete, all 24 UAT checklist rows PASS on both browsers
-last_updated: "2026-07-17T20:02:07.702Z"
+status: verifying
+stopped_at: Completed 13-06-PLAN.md — Phase 13 all 6 plans executed (checklist row 25 added, Firefox server-origin PRF unlock ceremony shipped); full-PRF-on-Firefox completion is a documented human live-UAT item for Bartek
+last_updated: "2026-07-17T21:47:25.034Z"
 last_activity: 2026-07-17
 last_activity_desc: "Completed quick task 260717-lnx: Extension UX: one-click passkey picker, NordPass-style inpage dropdown restyle, headless e2e fixture"
 progress:
   total_phases: 6
   completed_phases: 5
-  total_plans: 41
-  completed_plans: 39
-  percent: 83
+  total_plans: 43
+  completed_plans: 41
+  percent: 95
 ---
 
 # Project State
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 13 — Dual-Browser Hardening
-Plan: 5 of 05
-Status: Ready to execute
-Last activity: 2026-07-17 - Completed quick task 260717-lnx: Extension UX: one-click passkey picker, NordPass-style inpage dropdown restyle, headless e2e fixture
+Plan: 6 of 06
+Status: Phase complete — ready for verification
+Last activity: 2026-07-18 - Completed 13-06-PLAN.md: Firefox passkey unlock via server-origin PRF ceremony
 
 Progress: [██████████] 95%
 
@@ -80,6 +80,7 @@ Progress: [██████████] 95%
 | Phase 13-dual-browser-hardening P02 | 25min | 2 tasks | 7 files |
 | Phase 13 P03 | 4h | 2 tasks | 10 files |
 | Phase 13 P04 | ~5.5h | 2 tasks | 9 files |
+| Phase 13 P06 | ~4h | 3 tasks | 20 files |
 
 ## Accumulated Context
 
@@ -125,6 +126,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 13-03: headed Chromium (not headless) required for Phase 12 provider ceremony to resolve reliably in this test environment
 - [Phase ?]: 13-03: crates/pv-provider now enables passkey-client's allows_insecure_localhost for local-RP testing and self-hosted-dev use
 - [Phase ?]: 13-04: wxt.config.ts:56-64 ext-scoped rpId-on-Firefox question closed — Firefox rejects WebAuthn from any moz-extension:// page (SecurityError, rpId-independent); existing D-12/D-13 disabled+explainer handling already covers it, no code change needed
+- [Phase ?]: 13-06: server-ceremony button visibility widened beyond the plan's literal D-12 wording to also include import.meta.env.FIREFOX (a static known-impossible signal) -- an ext-scoped enrollment attempt requires the same create() ceremony that also fails on Firefox, so gating purely on the dynamic prfUnusableThisSession signal would make the button permanently unreachable for the browser it exists for
+- [Phase ?]: 13-06: found and routed around (not fixed -- out of scope) a pre-existing web/.env.local NEXT_PUBLIC_API_BASE_URL=127.0.0.1 misconfiguration that broke same-origin fetch() on localhost:8620 in every web/out build; flagged for Bartek's own .env.local review
 
 ### Pending Todos
 
@@ -140,6 +143,7 @@ None yet.
 - ARCHITECTURE.md flags `chrome.storage.session` TTL/eviction semantics (survives extension update? idle-time-only eviction?) as needing hands-on verification during Phase 8/9 planning, not assumed from docs.
 - WASM loading inside content-script bundling context specifically (vs. background/popup) is unverified per research STACK.md — validate during Phase 8's bootstrap spike if autofill (Phase 10) ends up needing `pv-core` decrypt calls close to the DOM.
 - **RESOLVED 2026-07-17**: Quick task 260717-lnx's `headless: true` re-enable reproduced the historical `P12-SC1` headless hang (13-03-SUMMARY.md). Fix landed: `extension/playwright.config.ts` now splits into two projects — `chromium` (everything except Phase 12, headless) and `chromium-ceremony` (Phase 12 only, headed); `extension/e2e/fixtures.ts` picks the real `headless` flag from `workerInfo.project.name` (commit `b393f90`). A follow-up verification run then hit a SEPARATE issue — `P12-SC2` failed after 2 retries against a STALE `extension/.output/chrome-mv3` build (predating Task A's one-click-picker source change) — root-caused and fixed via a `pretest:e2e:chrome` npm script that rebuilds chrome before every e2e run (commit `ddc770f`). Whole `chromium-ceremony` project (5 SCs) now passes cleanly and repeatably (5 consecutive full-project runs, headed, zero flake); `npm test` stays 533/533 green. See `.planning/quick/260717-lnx-extension-ux-one-click-passkey-picker-no/260717-lnx-SUMMARY.md` and `.planning/phases/13-dual-browser-hardening/13-03-SUMMARY.md` for the original investigation.
+- web/.env.local's NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8620 breaks same-origin fetch() for any web/out build served/visited via http://localhost:8620 (this project's own documented convention) -- routed around this session via NEXT_PUBLIC_API_BASE_URL="" npm run build, not fixed in .env.local (out of scope, outside file-write permissions). Bartek should review/clean up this env var.
 
 ### Quick Tasks Completed
 
@@ -162,8 +166,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-17T20:02:07.696Z
-Stopped at: Completed 13-04-PLAN.md — Phase 13 fully complete, all 24 UAT checklist rows PASS on both browsers
+Last session: 2026-07-17T21:47:25.027Z
+Stopped at: Completed 13-06-PLAN.md — Phase 13 all 6 plans executed (checklist row 25 added, Firefox server-origin PRF unlock ceremony shipped); full-PRF-on-Firefox completion is a documented human live-UAT item for Bartek
 Resume file: None
 
 ## Operator Next Steps
