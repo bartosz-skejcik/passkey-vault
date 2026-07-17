@@ -34,13 +34,18 @@ import type { ItemType, VaultFilter } from "@/lib/vault/types";
 import GeneratorDialog from "@/components/generator/GeneratorDialog";
 
 // Category buttons mirror ItemRow.tsx's own TYPE_ICON map so a login's icon
-// matches everywhere (sidebar category, list row, list badge).
+// matches everywhere (sidebar category, list row, list badge). `passkey`
+// reuses the SAME KeyRound icon already imported for the (now-stale) "soon"
+// placeholder button below — Phase 12 shipped provider-created passkey vault
+// items, so this category filter is a real one, mirroring the extension
+// popup's own type coverage (extension/entrypoints/popup/ItemListView.tsx).
 const CATEGORY_ICON: Record<ItemType, typeof Globe> = {
   login: Globe,
   card: CreditCard,
   identity: IdCard,
   note: StickyNote,
   totp: Timer,
+  passkey: KeyRound,
 };
 
 const CATEGORY_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
@@ -49,9 +54,12 @@ const CATEGORY_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
   identity: "sidebar.catIdentities",
   note: "sidebar.catNotes",
   totp: "sidebar.catTotp",
+  // Reuses the existing "sidebar.passkeys" key (same "Passkeys"/"Passkeys"
+  // copy) instead of adding a near-duplicate dictionary entry.
+  passkey: "sidebar.passkeys",
 };
 
-const ITEM_TYPES: ItemType[] = ["login", "card", "identity", "note", "totp"];
+const ITEM_TYPES: ItemType[] = ["login", "card", "identity", "note", "totp", "passkey"];
 
 // Every clickable nav element gets a real button + these classes (not a
 // plain inert <div>): cursor-pointer, a visible hover state, and a

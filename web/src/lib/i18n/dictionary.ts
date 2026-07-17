@@ -102,6 +102,10 @@ export const DICTIONARY = {
   "itemType.identity": { pl: "Tożsamość", en: "Identity" },
   "itemType.note": { pl: "Notatka", en: "Note" },
   "itemType.totp": { pl: "TOTP", en: "TOTP" },
+  // Phase 12: provider-created passkey vault item — copy matches the
+  // extension popup's own "itemType.passkey" dictionary entry
+  // (extension/lib/i18n/dictionary.ts) verbatim.
+  "itemType.passkey": { pl: "Passkey", en: "Passkey" },
 
   // Detail-panel/form field labels — Claude's-discretion copy, shared by
   // DetailPanel's view mode and ItemForm's create/edit fields.
@@ -126,6 +130,12 @@ export const DICTIONARY = {
   "field.algorithm": { pl: "Algorytm", en: "Algorithm" },
   "field.digits": { pl: "Liczba cyfr", en: "Digits" },
   "field.period": { pl: "Okres (s)", en: "Period (s)" },
+  // Passkey read-only metadata (Phase 12 cross-client fix) — "field.rpId"
+  // matches the extension's own key verbatim (extension/lib/i18n/
+  // dictionary.ts); "field.userDisplayName" is new here (the extension's
+  // detail view doesn't surface it, but this fix's scope explicitly does).
+  "field.rpId": { pl: "RP ID", en: "RP ID" },
+  "field.userDisplayName": { pl: "Nazwa wyświetlana", en: "Display name" },
 
   // TOTP manual-add form (VAULT-07, Plan 06-01) — copy verbatim from
   // 06-UI-SPEC.md's Copywriting Contract.
@@ -201,9 +211,15 @@ export const DICTIONARY = {
     pl: "Eksportować vault w postaci jawnego tekstu?",
     en: "Export your vault as plain text?",
   },
+  // Phase 12 cross-client fix: corrected — provider-created passkey vault
+  // items now exist (PasskeyFields) and DO flow through export. The old
+  // copy ("Passkeys aren't exported — they can't be transferred") was
+  // accurate before Phase 12 but is a false, security-relevant claim now
+  // that a JSON export includes a passkey's full credential material
+  // (rawPasskeyJson, including key_cbor) — see toJson.ts/toCsv.ts.
   "export.warningBody": {
-    pl: "Plik będzie zawierał każde hasło i sekret w czytelnej postaci — bez szyfrowania. Passkeye nie są eksportowane — nie da się ich przenieść. Po pobraniu to Ty odpowiadasz za bezpieczne usunięcie pliku.",
-    en: "The file will contain every password and secret in plain, readable text — no encryption. Passkeys aren't exported — they can't be transferred. Once downloaded, you're responsible for deleting the file securely.",
+    pl: "Plik będzie zawierał każde hasło i sekret w czytelnej postaci — bez szyfrowania. W formacie JSON passkeye zawierają pełne dane poświadczenia (traktuj jak klucz prywatny) — w CSV widoczne są tylko metadane, bez materiału klucza. Po pobraniu to Ty odpowiadasz za bezpieczne usunięcie pliku.",
+    en: "The file will contain every password and secret in plain, readable text — no encryption. In JSON, passkey items include their full credential material (treat it like a private key) — CSV only shows read-only metadata, never key material. Once downloaded, you're responsible for deleting the file securely.",
   },
   "export.confirm": { pl: "Pobierz mimo to", en: "Download anyway" },
   "export.cancel": { pl: "Anuluj", en: "Cancel" },

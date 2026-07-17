@@ -176,6 +176,17 @@ describe("Sidebar Categories/Tools restructure", () => {
     expect(onFilterChange).toHaveBeenCalledWith({ kind: "itemType", itemType: "login" });
   });
 
+  // Phase 12 cross-client fix: provider-created passkey vault items are now
+  // a real category, mirroring the extension popup's own type coverage —
+  // NOT the same element as the pre-existing disabled "sidebar-nav-passkeys"
+  // ("wkrótce"/"soon") placeholder tested below, which is untouched.
+  it("clicking the passkey category type button calls onFilterChange with an itemType filter", () => {
+    const onFilterChange = vi.fn();
+    render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={onFilterChange} />);
+    fireEvent.click(screen.getByTestId("sidebar-nav-type-passkey"));
+    expect(onFilterChange).toHaveBeenCalledWith({ kind: "itemType", itemType: "passkey" });
+  });
+
   it("renders the Passkeys category entry as a disabled button that never calls onFilterChange", () => {
     const onFilterChange = vi.fn();
     render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={onFilterChange} />);

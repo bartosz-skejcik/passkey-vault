@@ -28,6 +28,14 @@ const FIELD_ORDER: Record<ItemFields["type"], string[]> = {
   identity: ["firstName", "lastName", "email", "phone", "address", "notes"],
   note: ["body"],
   totp: ["secret"],
+  // Phase 12 cross-client fix: read-only metadata only (rpId/username/
+  // userDisplayName) — NEVER rawPasskeyJson (key_cbor/counter/hmac_secret
+  // live inside it) or any other key material. These three fields are all
+  // plain strings directly on PasskeyFields, so the generic loop below
+  // (which special-cases only login's `urls`/totp's countdown block) reads
+  // them the same way it reads every other type's fields — no mono/reveal
+  // treatment (none are secrets), copy button still available.
+  passkey: ["rpId", "username", "userDisplayName"],
 };
 
 const MONO_FIELDS = new Set(["password", "number", "cvv", "secret"]);
@@ -181,15 +189,24 @@ export default function DetailPanel({
         <div className="flex shrink-0 items-center gap-1">
           {mode === "view" ? (
             <>
-              <button
-                type="button"
-                data-testid="detail-panel-edit"
-                aria-label={t("item.edit")}
-                className="btn btn-ghost btn-square btn-sm"
-                onClick={startEditing}
-              >
-                <Pencil size={16} aria-hidden="true" />
-              </button>
+              {/* Phase 12 cross-client fix: no Edit affordance for passkey
+                  items — ItemForm has no passkey branch, and re-encrypting
+                  through it would risk corrupting `rawPasskeyJson` (the
+                  provider ceremony's only source of truth for
+                  key_cbor/counter/hmac_secret). Deletion stays available
+                  below (a passkey item can always be removed, just never
+                  hand-edited). */}
+              {item.fields.type !== "passkey" ? (
+                <button
+                  type="button"
+                  data-testid="detail-panel-edit"
+                  aria-label={t("item.edit")}
+                  className="btn btn-ghost btn-square btn-sm"
+                  onClick={startEditing}
+                >
+                  <Pencil size={16} aria-hidden="true" />
+                </button>
+              ) : null}
               <button
                 type="button"
                 data-testid="detail-panel-delete"
@@ -213,7 +230,12 @@ export default function DetailPanel({
         </div>
       </div>
 
-      {mode === "edit" ? (
+      {/* Defense-in-depth alongside the hidden Edit button above and
+          ItemContextMenu.tsx's own guard: even if `initialMode="edit"` were
+          ever passed for a passkey item, fall through to the view-mode
+          branch below instead of mounting ItemForm (which has no passkey
+          branch). */}
+      {mode === "edit" && item.fields.type !== "passkey" ? (
         <>
           {conflict ? (
             <div

@@ -154,11 +154,16 @@ export default function ItemContextMenu({
         </details>
       </li>
 
-      <li>
-        <button type="button" data-testid="context-menu-edit" onClick={handleEdit}>
-          {t("item.edit")}
-        </button>
-      </li>
+      {/* Phase 12 cross-client fix: no Edit affordance for passkey items —
+          mirrors DetailPanel.tsx's own hidden pencil button (ItemForm has no
+          passkey branch; editing would risk corrupting rawPasskeyJson). */}
+      {item.fields.type !== "passkey" ? (
+        <li>
+          <button type="button" data-testid="context-menu-edit" onClick={handleEdit}>
+            {t("item.edit")}
+          </button>
+        </li>
+      ) : null}
       <li>
         <button
           type="button"

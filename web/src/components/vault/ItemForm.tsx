@@ -69,6 +69,15 @@ function emptyFieldsFor(type: ItemType): ItemFields {
         notes: "",
         ...common,
       };
+    case "passkey":
+      // Passkey vault items are created only by the provider ceremony
+      // (crates/pv-provider's wasmCreateProviderCredential), never via this
+      // manual-add form — TypePicker.tsx deliberately never offers
+      // "passkey" as a tile, and DetailPanel.tsx/ItemContextMenu.tsx hide
+      // every Edit affordance for an existing passkey item, so this branch
+      // is unreachable at runtime. It exists purely to satisfy ItemType's
+      // exhaustiveness now that "passkey" is one of its members.
+      throw new Error("passkey items cannot be created or edited via the manual item form");
   }
 }
 

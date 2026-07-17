@@ -50,7 +50,7 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
 }));
 
 import ItemRow from "./ItemRow";
-import type { CardFields, LoginFields, TotpFields, VaultItem } from "@/lib/vault/types";
+import type { CardFields, LoginFields, PasskeyFields, TotpFields, VaultItem } from "@/lib/vault/types";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -87,6 +87,22 @@ function cardItem(overrides: Partial<CardFields> = {}): VaultItem {
     ...overrides,
   };
   return { id: "item-2", revision: 1, fields };
+}
+
+function passkeyItem(overrides: Partial<PasskeyFields> = {}): VaultItem {
+  const fields: PasskeyFields = {
+    type: "passkey",
+    name: "bartek",
+    folderId: null,
+    tags: [],
+    rpId: "example.com",
+    credentialId: "AQIDBAX6-_w",
+    username: "bartek",
+    userDisplayName: "Bartek Paczesny",
+    rawPasskeyJson: "{}",
+    ...overrides,
+  };
+  return { id: "item-4", revision: 1, fields };
 }
 
 function totpItem(overrides: Partial<TotpFields> = {}): VaultItem {
@@ -168,6 +184,18 @@ describe("ItemRow", () => {
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
     expect(screen.getByText("123456")).toBeInTheDocument();
     expect(screen.queryByText("time.justNow")).not.toBeInTheDocument();
+  });
+
+  // Phase 12 cross-client fix (live bug): before this fix, TYPE_ICON/
+  // TYPE_LABEL_KEY had no "passkey" entry, so `TYPE_ICON[item.fields.type]`
+  // was `undefined` and rendering `<Icon />` threw "Cannot read properties
+  // of undefined (reading 'en')" at `t(TYPE_LABEL_KEY[item.fields.type])`.
+  it("renders the passkey type-icon and label for a passkey item", () => {
+    const { container } = render(
+      <ItemRow item={passkeyItem()} selected={false} onClick={vi.fn()} />,
+    );
+    expect(container.querySelector(".lucide-key-round")).not.toBeNull();
+    expect(screen.getByText("itemType.passkey")).toBeInTheDocument();
   });
 
   describe("kebab + right-click context menu", () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CreditCard, Globe, IdCard, MoreVertical, StickyNote, Timer } from "lucide-react";
+import { CreditCard, Globe, IdCard, KeyRound, MoreVertical, StickyNote, Timer } from "lucide-react";
 import type { ItemType, VaultItem } from "@/lib/vault/types";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
@@ -15,12 +15,16 @@ import TotpCountdownRing from "./TotpCountdownRing";
 // UI-03's baseline visual-differentiator requirement, per RESEARCH.md's
 // finding that third-party favicon services leak visited-site metadata.
 // Favicon fetching is scoped out of Phase 2, not an oversight.
+// Phase 12: "passkey" now exists in the data model (PasskeyFields) — KeyRound
+// matches the extension popup's own icon for the same type
+// (extension/entrypoints/popup/ItemListView.tsx).
 const TYPE_ICON: Record<ItemType, typeof Globe> = {
   login: Globe,
   card: CreditCard,
   identity: IdCard,
   note: StickyNote,
   totp: Timer,
+  passkey: KeyRound,
 };
 
 const TYPE_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
@@ -29,6 +33,7 @@ const TYPE_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
   identity: "itemType.identity",
   note: "itemType.note",
   totp: "itemType.totp",
+  passkey: "itemType.passkey",
 };
 
 export default function ItemRow({

@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import type { CardFields, IdentityFields, LoginFields, NoteFields, VaultItem } from "@/lib/vault/types";
+import type {
+  CardFields,
+  IdentityFields,
+  LoginFields,
+  NoteFields,
+  PasskeyFields,
+  VaultItem,
+} from "@/lib/vault/types";
 
 const {
   mockUseFolders,
@@ -104,6 +111,22 @@ function noteItem(overrides: Partial<NoteFields> = {}): VaultItem {
     ...overrides,
   };
   return { id: "item-4", revision: 1, fields };
+}
+
+function passkeyItem(overrides: Partial<PasskeyFields> = {}): VaultItem {
+  const fields: PasskeyFields = {
+    type: "passkey",
+    name: "bartek",
+    folderId: null,
+    tags: [],
+    rpId: "example.com",
+    credentialId: "AQIDBAX6-_w",
+    username: "bartek",
+    userDisplayName: "Bartek Paczesny",
+    rawPasskeyJson: "{}",
+    ...overrides,
+  };
+  return { id: "item-5", revision: 1, fields };
 }
 
 beforeEach(() => {
@@ -214,6 +237,18 @@ describe("ItemContextMenu", () => {
     fireEvent.click(screen.getByTestId("context-menu-edit"));
     expect(onEdit).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no copy actions and no Edit entry for a passkey item (deletion stays available)", () => {
+    render(
+      <ItemContextMenu item={passkeyItem()} onClose={vi.fn()} onEdit={vi.fn()} onDeleteRequest={vi.fn()} />,
+    );
+    expect(screen.queryByTestId("context-menu-copy-username")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("context-menu-copy-password")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("context-menu-copy-number")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("context-menu-copy-email")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("context-menu-edit")).not.toBeInTheDocument();
+    expect(screen.getByTestId("context-menu-delete")).toBeInTheDocument();
   });
 
   it("clicking Delete calls onDeleteRequest without performing a direct delete", () => {

@@ -82,6 +82,15 @@ export function buildCsvExport(items: VaultItem[], folders: Folder[]): string {
         row.secret = fields.secret;
         row.notes = fields.notes;
         break;
+      case "passkey":
+        // Phase 12 cross-client fix: name/type/folder/tags (set
+        // unconditionally above) are the only columns that apply — every
+        // login-specific column (username/password/urls/etc.) stays blank,
+        // same as every other type's inapplicable columns. Deliberately
+        // does NOT surface rpId/credentialId/rawPasskeyJson here (no CSV
+        // column exists for them) — toJson.ts is this vault's lossless
+        // export path for passkey items.
+        break;
     }
 
     for (const column of EXPORT_COLUMNS) {

@@ -95,6 +95,22 @@ const cardItem: VaultItem = {
   },
 };
 
+const passkeyItem: VaultItem = {
+  id: "item-passkey",
+  revision: 1,
+  fields: {
+    type: "passkey",
+    name: "bartek",
+    folderId: null,
+    tags: [],
+    rpId: "example.com",
+    credentialId: "AQIDBAX6-_w",
+    username: "bartek",
+    userDisplayName: "Bartek Paczesny",
+    rawPasskeyJson: JSON.stringify({ key_cbor: [1, 2, 3], rp_id: "example.com" }),
+  },
+};
+
 const totpItem: VaultItem = {
   id: "item-totp",
   revision: 1,
@@ -236,6 +252,29 @@ describe("DetailPanel", () => {
     rerender(<DetailPanel item={loginItem} onClose={vi.fn()} />);
 
     expect(screen.queryByText("hunter2")).not.toBeInTheDocument();
+  });
+
+  // Phase 12 cross-client fix (live bug): before this fix, a passkey item's
+  // raw wire fields flowed unnormalized into `FIELD_ORDER[item.fields.type]`
+  // (undefined for a missing key) and `TYPE_LABEL_KEY[item.fields.type]`,
+  // throwing "Cannot read properties of undefined (reading 'en')".
+  it("renders read-only passkey metadata (rpId/username/userDisplayName) without an edit button, and never surfaces rawPasskeyJson", () => {
+    render(<DetailPanel item={passkeyItem} onClose={vi.fn()} />);
+
+    expect(screen.getByText("example.com")).toBeInTheDocument();
+    expect(screen.getAllByText("bartek").length).toBeGreaterThan(0);
+    expect(screen.getByText("Bartek Paczesny")).toBeInTheDocument();
+    expect(screen.queryByTestId("detail-panel-edit")).not.toBeInTheDocument();
+    // Deletion stays available for a passkey item.
+    expect(screen.getByTestId("detail-panel-delete")).toBeInTheDocument();
+    expect(screen.queryByText(/key_cbor/)).not.toBeInTheDocument();
+  });
+
+  it("never mounts ItemForm for a passkey item even if initialMode='edit' is forced (defense-in-depth)", () => {
+    render(<DetailPanel item={passkeyItem} initialMode="edit" onClose={vi.fn()} />);
+
+    expect(screen.queryByTestId(/^item-form-/)).not.toBeInTheDocument();
+    expect(screen.getByText("example.com")).toBeInTheDocument();
   });
 });
 
