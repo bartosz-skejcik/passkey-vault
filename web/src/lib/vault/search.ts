@@ -3,7 +3,12 @@
 // the store's in-memory `useVaultItems()` snapshot.
 import type { ItemFields, VaultFilter, VaultItem } from "./types";
 
-function domainFromUrl(url: string): string {
+// Exported so ItemIconTile.tsx (favicon rendering, Bartek live-review round
+// 3 TASK 2) reuses this exact same missing-scheme tolerance instead of
+// duplicating it — a bare "example.com" (no scheme) falls through to the
+// raw-string fallback below, which happens to already BE the hostname for
+// that common case.
+export function domainFromUrl(url: string): string {
   try {
     return new URL(url).hostname;
   } catch {

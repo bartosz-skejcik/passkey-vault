@@ -12,6 +12,7 @@ import PasskeyPlaceholderSection from "./PasskeyPlaceholderSection";
 import TotpCountdownRing from "./TotpCountdownRing";
 import ItemForm from "./ItemForm";
 import DeleteConfirmDialog from "./DeleteConfirmDialog";
+import ItemIconTile from "./ItemIconTile";
 
 // Fields shaped as generic string values, rendered through a Label+value
 // loop — `folderId` and `tags` are special-cased below instead (they need
@@ -202,8 +203,13 @@ export default function DetailPanel({
       <div className="flex items-start justify-between gap-2">
         {mode === "view" ? (
           <h2 className="flex items-center gap-2 text-[20px] font-bold leading-[1.2]">
-            {item.fields.type === "passkey" ? (
-              <KeyRound size={18} className="shrink-0 text-accent" aria-hidden="true" />
+            {/* Bartek live-review round 3: favicon/card-brand tile also
+                surfaces here "for consistency" with the list row — scoped to
+                the same three types ItemRow's own tile treats specially. */}
+            {item.fields.type === "login" ||
+            item.fields.type === "passkey" ||
+            item.fields.type === "card" ? (
+              <ItemIconTile item={item} variant="header" />
             ) : null}
             {item.fields.name}
           </h2>
