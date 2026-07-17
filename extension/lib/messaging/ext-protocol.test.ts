@@ -120,6 +120,18 @@ const MESSAGE_FIXTURES: MessageFixtureMap = {
   // quick-260717: NordPass-style last-used tracking -- popup -> background,
   // no binary fields.
   "vault.touch": { kind: "vault.touch", itemId: "item-1" },
+  // Plan 13-06: PRF output is ALREADY a base64url string here (D-21) --
+  // content-relay.content.ts encodes the real ArrayBuffer before this
+  // sendMessage hop, so this fixture round-trips cleanly like every other
+  // kind on this union.
+  "unlock.serverCeremony.start": { kind: "unlock.serverCeremony.start" },
+  "unlock.serverCeremony.relay": {
+    kind: "unlock.serverCeremony.relay",
+    nonce: "nonce-1",
+    prfB64: "cHJmLW91dHB1dC1ieXRlcw",
+    prfWrappedUk: '{"nonce":"...","ciphertext":"..."}',
+  },
+  "unlock.serverCeremony.state": { kind: "unlock.serverCeremony.state", ok: true },
 };
 
 type ResponseFixtureMap = { [K in Message["kind"]]: MessageResponseMap[K] };
@@ -206,6 +218,9 @@ const RESPONSE_FIXTURES: ResponseFixtureMap = {
   },
   "provider.resolveChoice": { ok: true },
   "vault.touch": { ok: true },
+  "unlock.serverCeremony.start": { ok: true },
+  "unlock.serverCeremony.relay": { ok: true },
+  "unlock.serverCeremony.state": undefined,
 };
 
 describe("Message JSON-transport safety (Chrome MV3 sendMessage stand-in)", () => {

@@ -24,6 +24,7 @@ import { ensureHydrated } from './background/vault-session';
 import { readSessionMeta } from './background/session-storage';
 import { ensureVaultSyncStarted } from './background/vault-store';
 import { registerSyncPollAlarmListener } from './background/sync-client';
+import { registerServerUnlockAlarmListener } from './background/server-unlock';
 
 export default defineBackground({
   type: 'module',
@@ -63,6 +64,11 @@ export default defineBackground({
     // scenario the fallback exists for). Registered synchronously here for
     // the same reason as the two above.
     registerSyncPollAlarmListener();
+    // Plan 13-06: the server-origin ceremony's bounded (120s) timeout is
+    // alarm-backed for the exact same "survives an MV3 idle-kill" reason as
+    // every other alarm listener here -- registered synchronously so a wake
+    // during an in-flight ceremony's timeout window never misses it.
+    registerServerUnlockAlarmListener();
 
     // T-09-07: defensively re-arm the auto-lock alarm whenever a mid-
     // session SW restart finds the vault still logically unlocked — the

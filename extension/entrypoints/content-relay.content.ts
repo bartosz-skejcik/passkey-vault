@@ -803,6 +803,118 @@ function registerProviderPageMessageListener(): void {
   window.addEventListener("message", registeredProviderListener);
 }
 
+// -----------------------------------------------------------------------
+// Server-origin ext-unlock relay (Plan 13-06, 13-FF-WEBAUTHN-RESEARCH.md
+// option 1). This is content-relay's half of the ceremony bridge:
+// web/src/components/auth/ExtUnlockBridge.tsx (a REAL page, not a
+// MAIN-world shim -- it already owns the whole ceremony, no separate
+// MAIN-world file needed here) postMessages {nonce, prf, prfWrappedUk} to
+// this ISOLATED-world listener; this file validates it (T-13-11: origin
+// pinned to the CONFIGURED server, event.source/shape/single-use-nonce --
+// mirrors handleProviderPageMessage's own D-03/ASVS V5 discipline), forwards
+// it to the background over the SAME content-frame channel
+// credentials.create/get use (router.ts's registerAutofillFrameChannel(),
+// T-13-14), and relays the ack back. This is the ONLY place base64url
+// encoding happens for this flow (D-21) -- ExtUnlockBridge posts the REAL
+// PRF ArrayBuffer (postMessage structured-clones it fine), and this file
+// converts it to a base64url STRING before the sendMessage hop (which JSON-
+// serializes and would otherwise mangle it, same root cause as the provider
+// bridge's own D-21 boundary). The raw User Key never crosses this hop
+// either direction (T-13-12) -- only PRF output + the already-encrypted
+// prf_wrapped_uk blob; the unwrap happens exclusively in
+// entrypoints/background/server-unlock.ts.
+const EXT_UNLOCK_REQUEST_SOURCE = "pv-ext-unlock-bridge";
+const EXT_UNLOCK_RESPONSE_SOURCE = "pv-content-relay";
+
+// T-13-11: a SEPARATE single-use nonce ledger from the provider bridge's
+// own `seenNonces` above -- deliberately not shared, since these are two
+// independently-scoped channels with independently-issued nonces (this
+// channel's nonce is BACKGROUND-issued, embedded in the ceremony window's
+// URL, unlike the provider bridge's page-generated one). Every entry here
+// is consumed on first delivery and never expires on its own (a fresh
+// content-script injection per navigation naturally resets this Set; the
+// background's own pending record is ALSO single-use and time-bounded,
+// T-13-13's "both relay- and background-side" mitigation).
+const seenExtUnlockNonces = new Set<string>();
+
+interface ExtUnlockBridgeMessage {
+  source: typeof EXT_UNLOCK_REQUEST_SOURCE;
+  nonce: string;
+  prf: ArrayBuffer;
+  prfWrappedUk: string;
+}
+
+function isExtUnlockBridgeMessage(data: unknown): data is ExtUnlockBridgeMessage {
+  if (typeof data !== "object" || data === null) {
+    return false;
+  }
+  const c = data as Partial<ExtUnlockBridgeMessage>;
+  return (
+    c.source === EXT_UNLOCK_REQUEST_SOURCE &&
+    typeof c.nonce === "string" &&
+    c.nonce.length > 0 &&
+    isBufferSource(c.prf) &&
+    typeof c.prfWrappedUk === "string"
+  );
+}
+
+function postExtUnlockResult(nonce: string, ok: boolean): void {
+  // D-03: target origin is ALWAYS location.origin, never '*'.
+  window.postMessage(
+    { source: EXT_UNLOCK_RESPONSE_SOURCE, kind: "pv-ext-unlock-result", nonce, ok },
+    location.origin,
+  );
+}
+
+async function handleExtUnlockBridgeMessage(event: MessageEvent): Promise<void> {
+  if (event.source !== window || event.origin !== location.origin) {
+    return;
+  }
+  if (!isExtUnlockBridgeMessage(event.data)) {
+    return;
+  }
+  // T-13-11 (relay-side half of the "both relay- and background-side"
+  // origin pin -- server-unlock.ts's completeServerUnlock is the other
+  // half): event.origin === location.origin above only proves the message
+  // came from THIS document; it does NOT prove this document IS the user's
+  // CONFIGURED server. A hostile page on some OTHER origin this content
+  // script also runs on (matches: ["<all_urls>"]) must never reach this far.
+  if (!(await isConfiguredServerOrigin())) {
+    return;
+  }
+
+  const { nonce, prf, prfWrappedUk } = event.data;
+  if (seenExtUnlockNonces.has(nonce)) {
+    return; // replay -- silently ignored, never re-forwarded (T-13-11)
+  }
+  seenExtUnlockNonces.add(nonce);
+
+  const prfB64 = bufferSourceToB64Url(prf);
+  try {
+    const response = await sendMessage({
+      kind: "unlock.serverCeremony.relay",
+      nonce,
+      prfB64,
+      prfWrappedUk,
+    });
+    postExtUnlockResult(nonce, response.ok);
+  } catch {
+    postExtUnlockResult(nonce, false);
+  }
+}
+
+let registeredExtUnlockListener: ((event: MessageEvent) => void) | null = null;
+
+function registerExtUnlockBridgeListener(): void {
+  if (registeredExtUnlockListener !== null) {
+    window.removeEventListener("message", registeredExtUnlockListener);
+  }
+  registeredExtUnlockListener = (event) => {
+    void handleExtUnlockBridgeMessage(event);
+  };
+  window.addEventListener("message", registeredExtUnlockListener);
+}
+
 export default defineContentScript({
   matches: ["<all_urls>"],
   allFrames: true,
@@ -825,6 +937,13 @@ export default defineContentScript({
     // function -- see handleProviderPageMessage's own header comment.
     registerProviderPageMessageListener();
     injectFirefoxPageBridge();
+    // Plan 13-06: registered early alongside the provider listener above --
+    // ExtUnlockBridge.tsx's ceremony is gesture-gated (a user click, well
+    // after page load), so early timing isn't load-bearing here the way it
+    // is for the provider bridge's conditional-mediation case, but
+    // registering it here keeps every window "message" listener this file
+    // owns in one place, at the top of main().
+    registerExtUnlockBridgeListener();
 
     // Plan 12-07: fresh per `main()` invocation, same idempotency-hygiene
     // rationale as `registeredProviderListener` above -- a real content

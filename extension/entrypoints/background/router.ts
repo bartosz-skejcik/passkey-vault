@@ -120,6 +120,7 @@ import {
   ServerUnreachableError,
   ServerCorsBlockedError,
 } from "./server-config";
+import { startServerUnlock, completeServerUnlock } from "./server-unlock";
 
 export function registerMessageRouter(): void {
   browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
@@ -203,7 +204,8 @@ function isContentFrameMessage(
   | MessageOf<"capture.propose">
   | MessageOf<"capture.confirm">
   | MessageOf<"credentials.create">
-  | MessageOf<"credentials.get"> {
+  | MessageOf<"credentials.get">
+  | MessageOf<"unlock.serverCeremony.relay"> {
   if (
     typeof message !== "object" ||
     message === null ||
@@ -219,7 +221,11 @@ function isContentFrameMessage(
     kind === "capture.propose" ||
     kind === "capture.confirm" ||
     kind === "credentials.create" ||
-    kind === "credentials.get"
+    kind === "credentials.get" ||
+    // Plan 13-06 (T-13-14): rides this content-frame guarded channel, NEVER
+    // the popup-gated one -- see this file's own header comment on
+    // credentials.create/credentials.get for the identical rationale.
+    kind === "unlock.serverCeremony.relay"
   );
 }
 
@@ -231,7 +237,8 @@ async function handleContentFrameMessage(
     | MessageOf<"capture.propose">
     | MessageOf<"capture.confirm">
     | MessageOf<"credentials.create">
-    | MessageOf<"credentials.get">,
+    | MessageOf<"credentials.get">
+    | MessageOf<"unlock.serverCeremony.relay">,
   sender: MessageSender,
 ): Promise<unknown> {
   switch (message.kind) {
@@ -253,9 +260,36 @@ async function handleContentFrameMessage(
       return handleCredentialsCreateMessage(message, sender);
     case "credentials.get":
       return handleCredentialsGetMessage(message, sender);
+    case "unlock.serverCeremony.relay":
+      return handleServerUnlockRelayMessage(message, sender);
     default:
       throw new Error(`unhandled content-frame message kind: ${(message as { kind: string }).kind}`);
   }
+}
+
+// Plan 13-06 (T-13-11/T-13-14): mirrors handleCredentialsCreateMessage/
+// handleCredentialsGetMessage's own shape -- assertContentSender(sender)
+// FIRST, and `guard.origin` (the platform-provided, tamper-proof sender
+// origin) is the ONLY origin ever passed to completeServerUnlock(), which
+// independently re-checks it against the configured server's origin
+// (background-side half of the "both relay- and background-side" origin
+// pin; content-relay.content.ts's listener registration gate is the other
+// half). Unlike credentials.create/get's "fail open to fallthrough"
+// discipline, there is no native-authenticator fallback for this flow -- a
+// rejected sender fails to a typed error the ceremony window's ack listener
+// can render.
+async function handleServerUnlockRelayMessage(
+  message: MessageOf<"unlock.serverCeremony.relay">,
+  sender: MessageSender,
+): Promise<MessageResponseMap["unlock.serverCeremony.relay"]> {
+  const guard = assertContentSender(sender);
+  if (!guard.ok) {
+    return { ok: false, error: "forbidden-sender" };
+  }
+  return completeServerUnlock(
+    { nonce: message.nonce, prfB64: message.prfB64, prfWrappedUk: message.prfWrappedUk },
+    guard.origin,
+  );
 }
 
 // Phase 12 (Plan 12-02): mirrors handleCaptureProposeMessage/
@@ -437,7 +471,13 @@ function isProtocolMessage(message: unknown): message is Message {
     kind === "provider.resolveChoice" ||
     // quick-260717: popup-driven, matches "vault." startsWith gate below
     // (assertPopupSender) exactly like vault.list already does.
-    kind === "vault.touch"
+    kind === "vault.touch" ||
+    // Plan 13-06: popup-driven, mirrors unlock.extPrf.start's own shape --
+    // unlike unlock.serverCeremony.relay (content-frame-only, above this
+    // list is irrelevant to it) and unlock.serverCeremony.state (a
+    // fire-and-forget broadcast FROM the background, never dispatched TO
+    // this router at all -- see ext-protocol.ts's own header comment).
+    kind === "unlock.serverCeremony.start"
   );
 }
 
@@ -520,6 +560,8 @@ async function handle(message: Message, sender: MessageSender): Promise<unknown>
       // response beyond this synchronous dispatch.
       touchVaultItem(message.itemId);
       return { ok: true as const };
+    case "unlock.serverCeremony.start":
+      return startServerUnlock();
     default:
       throw new Error(`unhandled message kind: ${(message as { kind: string }).kind}`);
   }

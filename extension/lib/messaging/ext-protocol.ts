@@ -244,6 +244,32 @@ export type Message =
   // be called directly from the popup's separate JS execution context.
   // `itemId: null` is an explicit decline.
   | { kind: "provider.resolveChoice"; requestId: string; itemId: string | null }
+  // Plan 13-06: Firefox (or Chrome) passkey unlock via a server-origin PRF
+  // ceremony relayed through content-relay.content.ts (13-FF-WEBAUTHN-
+  // RESEARCH.md option 1). `unlock.serverCeremony.start` is popup-driven
+  // (this router's ordinary WR-01-gated channel, mirrors
+  // `unlock.extPrf.start`'s shape) -- background/server-unlock.ts mints a
+  // single-use nonce and opens the ceremony window; it carries no fields,
+  // the guard (server configured + session locked) runs entirely
+  // background-side. `unlock.serverCeremony.relay` is content-script ->
+  // background, dispatched by the SAME SEPARATE
+  // registerAutofillFrameChannel() listener as credentials.create/get
+  // above (T-13-14: the result must ride the content-frame guarded channel,
+  // never the popup-gated one) -- `nonce`/`prfB64`/`prfWrappedUk` are the
+  // ONLY things that ever cross this hop; the raw User Key never does
+  // (T-13-12, unwrapped exclusively in server-unlock.ts). PRF output is a
+  // base64url STRING here (D-21) -- content-relay.content.ts encodes the
+  // real ArrayBuffer it received via postMessage before this sendMessage
+  // hop, mirroring the provider bridge's own base64url boundary.
+  // `unlock.serverCeremony.state` is a FIRE-AND-FORGET broadcast FROM the
+  // background (mirrors `session.locked`'s shape/discipline) -- deliberately
+  // NOT one of `isProtocolMessage()`'s accepted kinds in router.ts, for the
+  // exact same reason `session.locked`/`vault.updated` aren't: it is never
+  // dispatched TO `handle()`, only listened for by the popup's own
+  // `browser.runtime.onMessage` listener.
+  | { kind: "unlock.serverCeremony.start" }
+  | { kind: "unlock.serverCeremony.relay"; nonce: string; prfB64: string; prfWrappedUk: string }
+  | { kind: "unlock.serverCeremony.state"; ok: boolean }
   // quick-260717: NordPass-style last-used tracking. ItemDetailView.tsx's
   // copy affordances decrypt/copy CLIENT-SIDE in the popup document (unlike
   // every autofill/ceremony touch-point above, which already runs in the
@@ -355,6 +381,15 @@ export interface MessageResponseMap {
   // quick-260717: always `{ ok: true }` -- see the Message union's own
   // doc comment above for why this never surfaces a failure to the popup.
   "vault.touch": { ok: true };
+  // Plan 13-06: see the Message union's own doc comment above for the full
+  // rationale on all three of these.
+  "unlock.serverCeremony.start":
+    | { ok: true }
+    | { ok: false; error: "no-server-configured" | "not-locked" | "unknown" };
+  "unlock.serverCeremony.relay":
+    | { ok: true }
+    | { ok: false; error: "forbidden-sender" | "forbidden-origin" | "invalid-nonce" | "expired" | "unwrap-failed" | "unknown" };
+  "unlock.serverCeremony.state": void;
 }
 
 export type MessageOf<K extends Message["kind"]> = Extract<Message, { kind: K }>;

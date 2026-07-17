@@ -1,0 +1,306 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// Same "mock every dependency, run this file's own logic for real"
+// discipline as ext-passkey.test.ts/unlock.test.ts. wxt/browser is a real
+// Map-backed fake for storage.session (this module's pending-record home,
+// NEVER storage.local) plus spy-able alarms/windows/runtime.sendMessage.
+const hoisted = vi.hoisted(() => {
+  return {
+    sessionStore: { store: new Map<string, unknown>() },
+    alarmListeners: [] as Array<(alarm: { name: string }) => void>,
+    mockAlarmsCreate: vi.fn(),
+    mockAlarmsClear: vi.fn(),
+    mockWindowsCreate: vi.fn(),
+    mockWindowsRemove: vi.fn(),
+    mockSendMessage: vi.fn(),
+    mockFromPrf: vi.fn(),
+    mockUnwrapUserKey: vi.fn(),
+    mockIsSessionUnlocked: vi.fn(),
+    mockSetUnlockedUserKey: vi.fn(),
+    mockReadSessionMeta: vi.fn(),
+    mockReadServerConfig: vi.fn(),
+  };
+});
+
+vi.mock("wxt/browser", () => ({
+  browser: {
+    storage: {
+      session: {
+        async get(key: string) {
+          const store = hoisted.sessionStore.store;
+          return store.has(key) ? { [key]: store.get(key) } : {};
+        },
+        async set(items: Record<string, unknown>) {
+          for (const [k, v] of Object.entries(items)) {
+            hoisted.sessionStore.store.set(k, v);
+          }
+        },
+        async remove(key: string) {
+          hoisted.sessionStore.store.delete(key);
+        },
+      },
+    },
+    alarms: {
+      create: hoisted.mockAlarmsCreate,
+      clear: hoisted.mockAlarmsClear,
+      onAlarm: {
+        addListener(fn: (alarm: { name: string }) => void) {
+          hoisted.alarmListeners.push(fn);
+        },
+      },
+    },
+    windows: {
+      create: hoisted.mockWindowsCreate,
+      remove: hoisted.mockWindowsRemove,
+    },
+    runtime: {
+      sendMessage: hoisted.mockSendMessage,
+    },
+  },
+}));
+
+vi.mock("../../lib/crypto/wasm-loader", () => ({
+  initCrypto: vi.fn().mockResolvedValue(undefined),
+  unwrapUserKey: hoisted.mockUnwrapUserKey,
+  WasmWrappingKey: { fromPrf: hoisted.mockFromPrf },
+}));
+
+vi.mock("./vault-session", () => ({
+  isSessionUnlocked: hoisted.mockIsSessionUnlocked,
+  setUnlockedUserKey: hoisted.mockSetUnlockedUserKey,
+}));
+
+vi.mock("./session-storage", () => ({
+  readSessionMeta: hoisted.mockReadSessionMeta,
+}));
+
+vi.mock("./server-config", () => ({
+  readServerConfig: hoisted.mockReadServerConfig,
+}));
+
+import { startServerUnlock, completeServerUnlock, registerServerUnlockAlarmListener } from "./server-unlock";
+
+const FAKE_SESSION_META = {
+  sessionToken: "tok123",
+  accountEmail: "a@example.com",
+  idleTimeoutMinutes: 15,
+  unlockedAtMs: 0,
+  wasAutoLocked: false,
+};
+
+function readPendingNonceFromStorage(): string | undefined {
+  const pending = hoisted.sessionStore.store.get("pv-server-unlock-pending") as
+    | { nonce: string }
+    | undefined;
+  return pending?.nonce;
+}
+
+beforeEach(() => {
+  hoisted.sessionStore.store = new Map();
+  hoisted.alarmListeners.length = 0;
+  vi.resetAllMocks();
+  hoisted.mockReadServerConfig.mockResolvedValue({ baseUrl: "https://vault.example.com" });
+  hoisted.mockIsSessionUnlocked.mockReturnValue(false);
+  hoisted.mockReadSessionMeta.mockResolvedValue(FAKE_SESSION_META);
+  hoisted.mockWindowsCreate.mockResolvedValue({ id: 42 });
+  hoisted.mockSendMessage.mockResolvedValue(undefined);
+});
+
+describe("startServerUnlock", () => {
+  it("opens a popup window at <baseUrl>/?pv-ext-unlock=<nonce> and persists a pending record in storage.session ONLY", async () => {
+    const result = await startServerUnlock();
+    expect(result).toEqual({ ok: true });
+
+    expect(hoisted.mockWindowsCreate).toHaveBeenCalledTimes(1);
+    const call = hoisted.mockWindowsCreate.mock.calls[0][0] as { url: string; type: string };
+    expect(call.type).toBe("popup");
+    expect(call.url).toMatch(/^https:\/\/vault\.example\.com\/\?pv-ext-unlock=[\w-]+$/);
+
+    const nonce = readPendingNonceFromStorage();
+    expect(typeof nonce).toBe("string");
+    expect(nonce?.length).toBeGreaterThan(0);
+    expect(hoisted.mockAlarmsCreate).toHaveBeenCalledWith("pv-server-unlock-timeout", {
+      delayInMinutes: 2,
+    });
+  });
+
+  it("returns no-server-configured and opens no window when no baseUrl is configured", async () => {
+    hoisted.mockReadServerConfig.mockResolvedValue(null);
+    const result = await startServerUnlock();
+    expect(result).toEqual({ ok: false, error: "no-server-configured" });
+    expect(hoisted.mockWindowsCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns not-locked when the session is already unlocked", async () => {
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+    const result = await startServerUnlock();
+    expect(result).toEqual({ ok: false, error: "not-locked" });
+    expect(hoisted.mockWindowsCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns not-locked (no existing session token) when there is no session-meta record at all", async () => {
+    hoisted.mockReadSessionMeta.mockResolvedValue(null);
+    const result = await startServerUnlock();
+    expect(result).toEqual({ ok: false, error: "not-locked" });
+    expect(hoisted.mockWindowsCreate).not.toHaveBeenCalled();
+  });
+
+  it("a second concurrent start closes the prior ceremony window and invalidates its nonce", async () => {
+    hoisted.mockWindowsCreate.mockResolvedValueOnce({ id: 1 }).mockResolvedValueOnce({ id: 2 });
+    await startServerUnlock();
+    const firstNonce = readPendingNonceFromStorage();
+
+    await startServerUnlock();
+    const secondNonce = readPendingNonceFromStorage();
+
+    expect(secondNonce).not.toBe(firstNonce);
+    expect(hoisted.mockWindowsRemove).toHaveBeenCalledWith(1);
+
+    // The FIRST (now-invalidated) nonce must be rejected if it somehow
+    // still arrives.
+    const result = await completeServerUnlock(
+      { nonce: firstNonce as string, prfB64: btoa("prf"), prfWrappedUk: "blob" },
+      "https://vault.example.com",
+    );
+    expect(result).toEqual({ ok: false, error: "invalid-nonce" });
+  });
+});
+
+describe("completeServerUnlock", () => {
+  async function startAndGetNonce(): Promise<string> {
+    await startServerUnlock();
+    return readPendingNonceFromStorage() as string;
+  }
+
+  it("happy path: unwraps via WasmWrappingKey.fromPrf, calls setUnlockedUserKey with the EXISTING session meta, closes the window, broadcasts ok:true", async () => {
+    const nonce = await startAndGetNonce();
+    hoisted.mockFromPrf.mockReturnValue({ free: vi.fn() });
+    const fakeUk = { tag: "uk" };
+    hoisted.mockUnwrapUserKey.mockReturnValue(fakeUk);
+
+    const result = await completeServerUnlock(
+      { nonce, prfB64: btoa("prf-output-bytes"), prfWrappedUk: "prf-wrapped-uk-blob" },
+      "https://vault.example.com",
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(hoisted.mockUnwrapUserKey).toHaveBeenCalledWith(expect.anything(), "prf-wrapped-uk-blob");
+    expect(hoisted.mockSetUnlockedUserKey).toHaveBeenCalledWith(fakeUk, "a@example.com", "tok123", 15);
+    expect(hoisted.mockWindowsRemove).toHaveBeenCalledWith(42);
+    expect(hoisted.mockAlarmsClear).toHaveBeenCalledWith("pv-server-unlock-timeout");
+    expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: true });
+    // Pending record consumed -- single-use.
+    expect(readPendingNonceFromStorage()).toBeUndefined();
+  });
+
+  it("single-use: a SECOND delivery of the same nonce is rejected (invalid-nonce), even immediately after a successful first delivery", async () => {
+    const nonce = await startAndGetNonce();
+    hoisted.mockFromPrf.mockReturnValue({ free: vi.fn() });
+    hoisted.mockUnwrapUserKey.mockReturnValue({ tag: "uk" });
+
+    const first = await completeServerUnlock(
+      { nonce, prfB64: btoa("prf"), prfWrappedUk: "blob" },
+      "https://vault.example.com",
+    );
+    expect(first).toEqual({ ok: true });
+
+    const second = await completeServerUnlock(
+      { nonce, prfB64: btoa("prf"), prfWrappedUk: "blob" },
+      "https://vault.example.com",
+    );
+    expect(second).toEqual({ ok: false, error: "invalid-nonce" });
+    expect(hoisted.mockSetUnlockedUserKey).toHaveBeenCalledTimes(1); // not called again
+  });
+
+  it("rejects (forbidden-origin) a caller origin that doesn't match the configured server -- does NOT consume the pending nonce", async () => {
+    const nonce = await startAndGetNonce();
+
+    const result = await completeServerUnlock(
+      { nonce, prfB64: btoa("prf"), prfWrappedUk: "blob" },
+      "https://evil.example.com",
+    );
+    expect(result).toEqual({ ok: false, error: "forbidden-origin" });
+    expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+    // The legitimate nonce is still consumable by a later, correctly
+    // origin-scoped delivery -- an attacker probing from a foreign origin
+    // must not be able to burn the real ceremony's nonce.
+    expect(readPendingNonceFromStorage()).toBe(nonce);
+  });
+
+  it("rejects an unknown/mismatched nonce (no pending record at all)", async () => {
+    const result = await completeServerUnlock(
+      { nonce: "never-issued", prfB64: btoa("prf"), prfWrappedUk: "blob" },
+      "https://vault.example.com",
+    );
+    expect(result).toEqual({ ok: false, error: "invalid-nonce" });
+    expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+  });
+
+  it("unwrap failure clears the pending state, closes the window, and broadcasts ok:false rather than throwing", async () => {
+    const nonce = await startAndGetNonce();
+    hoisted.mockFromPrf.mockReturnValue({ free: vi.fn() });
+    hoisted.mockUnwrapUserKey.mockImplementation(() => {
+      throw new Error("blob/key mismatch");
+    });
+
+    const result = await completeServerUnlock(
+      { nonce, prfB64: btoa("prf"), prfWrappedUk: "wrong-blob" },
+      "https://vault.example.com",
+    );
+
+    expect(result).toEqual({ ok: false, error: "unwrap-failed" });
+    expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+    expect(hoisted.mockWindowsRemove).toHaveBeenCalledWith(42);
+    expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: false });
+    expect(readPendingNonceFromStorage()).toBeUndefined();
+  });
+
+  it("an expired pending record (past the 120s bound) is rejected even with a matching nonce", async () => {
+    const nonce = await startAndGetNonce();
+    const pending = hoisted.sessionStore.store.get("pv-server-unlock-pending") as {
+      nonce: string;
+      createdAt: number;
+      windowId?: number;
+    };
+    hoisted.sessionStore.store.set("pv-server-unlock-pending", {
+      ...pending,
+      createdAt: Date.now() - 121_000,
+    });
+
+    const result = await completeServerUnlock(
+      { nonce, prfB64: btoa("prf"), prfWrappedUk: "blob" },
+      "https://vault.example.com",
+    );
+    expect(result).toEqual({ ok: false, error: "expired" });
+    expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+  });
+});
+
+describe("registerServerUnlockAlarmListener", () => {
+  it("on the timeout alarm firing: clears pending, closes the window, and broadcasts ok:false -- the pending state always resolves", async () => {
+    registerServerUnlockAlarmListener();
+    await startServerUnlock();
+    expect(readPendingNonceFromStorage()).toBeDefined();
+
+    const listener = hoisted.alarmListeners[0];
+    listener({ name: "pv-server-unlock-timeout" });
+    // The listener body is async (fire-and-forget IIFE) -- flush microtasks.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(readPendingNonceFromStorage()).toBeUndefined();
+    expect(hoisted.mockWindowsRemove).toHaveBeenCalledWith(42);
+    expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: false });
+  });
+
+  it("ignores an unrelated alarm name", async () => {
+    registerServerUnlockAlarmListener();
+    await startServerUnlock();
+
+    const listener = hoisted.alarmListeners[0];
+    listener({ name: "pv-auto-lock" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(readPendingNonceFromStorage()).toBeDefined();
+    expect(hoisted.mockWindowsRemove).not.toHaveBeenCalled();
+  });
+});

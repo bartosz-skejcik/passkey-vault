@@ -855,4 +855,199 @@ describe("content-relay", () => {
       expect(received).toContainEqual({ source: "pv-content-relay", nonce: "nonce-still-valid", kind: "fallthrough" });
     });
   });
+
+  // Plan 13-06: the server-origin ext-unlock relay -- a SEPARATE `window`
+  // "message" listener from the passkey-provider bridge above (different
+  // source string, different nonce ledger, different forwarded message
+  // kind). Mirrors that describe block's dispatchEvent-based simulation
+  // convention (jsdom's real `window.postMessage` does not populate
+  // `event.source`/`event.origin` for same-window delivery -- see that
+  // block's own header comment).
+  describe("server-origin ext-unlock relay (Plan 13-06, T-13-11/T-13-12/T-13-14)", () => {
+    async function flushMicrotasks(): Promise<void> {
+      await Promise.resolve();
+      await new Promise((resolve) => queueMicrotask(() => resolve(undefined)));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    function validRequest(nonce: string) {
+      return {
+        source: "pv-ext-unlock-bridge",
+        nonce,
+        prf: new Uint8Array([1, 2, 3, 4]).buffer,
+        prfWrappedUk: "prf-wrapped-uk-blob",
+      };
+    }
+
+    beforeEach(() => {
+      hoisted.mockSendMessage.mockReset();
+      hoisted.mockSendMessage.mockResolvedValue({ ok: true });
+      // Configured server = THIS document's own origin -- the gate every
+      // test below either satisfies or deliberately violates.
+      hoisted.storageStore.set("pv-server-config", { baseUrl: location.origin });
+    });
+
+    it("a well-formed message on the CONFIGURED server origin is forwarded via sendMessage with a base64url-encoded PRF field", async () => {
+      const nonce = "nonce-ext-unlock-valid";
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+      const call = hoisted.mockSendMessage.mock.calls[0][0] as {
+        kind: string;
+        nonce: string;
+        prfB64: string;
+        prfWrappedUk: string;
+      };
+      expect(call.kind).toBe("unlock.serverCeremony.relay");
+      expect(call.nonce).toBe(nonce);
+      expect(call.prfWrappedUk).toBe("prf-wrapped-uk-blob");
+      // base64url, never a raw ArrayBuffer/Uint8Array on the wire (D-21).
+      expect(typeof call.prfB64).toBe("string");
+      const decoded = atob(call.prfB64.replace(/-/g, "+").replace(/_/g, "/"));
+      expect(Array.from(decoded, (c) => c.charCodeAt(0))).toEqual([1, 2, 3, 4]);
+    });
+
+    it("posts the ack/result back to the page with the background's ok value", async () => {
+      const nonce = "nonce-ext-unlock-result";
+      hoisted.mockSendMessage.mockResolvedValueOnce({ ok: true });
+
+      const received: unknown[] = [];
+      window.addEventListener("message", (e) => {
+        const data = (e as MessageEvent).data as { source?: unknown; kind?: unknown };
+        if (data?.source === "pv-content-relay" && data?.kind === "pv-ext-unlock-result") {
+          received.push(data);
+        }
+      });
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+
+      expect(received).toEqual([{ source: "pv-content-relay", kind: "pv-ext-unlock-result", nonce, ok: true }]);
+    });
+
+    it("a sendMessage rejection still posts back ok:false rather than leaving the page waiting forever", async () => {
+      const nonce = "nonce-ext-unlock-throws";
+      hoisted.mockSendMessage.mockRejectedValueOnce(new Error("no receiver"));
+
+      const received: unknown[] = [];
+      window.addEventListener("message", (e) => {
+        const data = (e as MessageEvent).data as { source?: unknown; kind?: unknown };
+        if (data?.source === "pv-content-relay" && data?.kind === "pv-ext-unlock-result") {
+          received.push(data);
+        }
+      });
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+
+      expect(received).toEqual([{ source: "pv-content-relay", kind: "pv-ext-unlock-result", nonce, ok: false }]);
+    });
+
+    it("T-13-11: single-use -- a replayed (already-forwarded) nonce is silently ignored on the second delivery", async () => {
+      const nonce = "nonce-ext-unlock-replay";
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1); // not forwarded again
+    });
+
+    it("T-13-11: rejects a message whose event.source is not window -- never forwarded", async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: validRequest("nonce-ext-unlock-wrong-source"),
+          origin: location.origin,
+          source: {} as unknown as MessageEventSource,
+        }),
+      );
+      await flushMicrotasks();
+      expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("T-13-11: rejects a message whose event.origin does not match location.origin -- never forwarded", async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: validRequest("nonce-ext-unlock-wrong-origin"),
+          origin: "https://attacker.example.com",
+          source: window,
+        }),
+      );
+      await flushMicrotasks();
+      expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("T-13-11: rejects a well-formed, same-origin-delivered message when THIS document is NOT the configured server -- never forwarded", async () => {
+      hoisted.storageStore.set("pv-server-config", { baseUrl: "https://a-different-vault.example.com" });
+
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: validRequest("nonce-ext-unlock-not-configured-server"),
+          origin: location.origin,
+          source: window,
+        }),
+      );
+      await flushMicrotasks();
+      expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("rejects a shape-invalid message (missing prfWrappedUk) -- never forwarded", async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { source: "pv-ext-unlock-bridge", nonce: "nonce-ext-unlock-bad-shape", prf: new ArrayBuffer(4) },
+          origin: location.origin,
+          source: window,
+        }),
+      );
+      await flushMicrotasks();
+      expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not interfere with the passkey-provider bridge's own nonce ledger -- the same nonce string on both channels forwards independently", async () => {
+      const sharedNonce = "shared-nonce-across-channels";
+      hoisted.mockSendMessage.mockResolvedValue({ fallthrough: true });
+
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            source: "pv-page-bridge",
+            nonce: sharedNonce,
+            kind: "credentials.get",
+            origin: location.origin,
+            publicKey: { rpId: "example.com" },
+          },
+          origin: location.origin,
+          source: window,
+        }),
+      );
+      await flushMicrotasks();
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest(sharedNonce), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(2);
+      expect(hoisted.mockSendMessage).toHaveBeenNthCalledWith(1, {
+        kind: "credentials.get",
+        publicKey: { rpId: "example.com" },
+      });
+      expect(hoisted.mockSendMessage).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ kind: "unlock.serverCeremony.relay", nonce: sharedNonce }),
+      );
+    });
+  });
 });
