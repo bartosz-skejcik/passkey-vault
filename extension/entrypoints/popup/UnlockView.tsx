@@ -27,7 +27,7 @@
 // `extension/lib/passkeys/prf.ts`'s pure `extractPrfBytes` before ever
 // calling `sendMessage`; the wrapping-key derivation/unwrap only ever
 // happens in the background (ext-passkey.ts).
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { browser } from "wxt/browser";
 import { Fingerprint, Loader2 } from "lucide-react";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
@@ -96,6 +96,60 @@ export default function UnlockView({
   // attempt must always be possible.
   const [prfUnusableThisSession, setPrfUnusableThisSession] = useState(false);
 
+  // Plan 13-06: the server-origin ceremony's own busy/notice state --
+  // independent of prfBusy/prfNotice above (the ext-scoped and
+  // server-origin paths run concurrently-possible, distinct ceremonies).
+  const [serverCeremonyBusy, setServerCeremonyBusy] = useState(false);
+  const [serverCeremonyFailed, setServerCeremonyFailed] = useState(false);
+  // Read once at mount, mirrors App.tsx's own config.get calls -- by the
+  // time this view can even render, App.tsx's refreshFromScratch() has
+  // already confirmed a server IS configured (the first-run gate would have
+  // intercepted otherwise), but this view re-derives it directly rather
+  // than trusting that invariant silently, per this plan's own acceptance
+  // criteria ("appears ONLY when... AND a server base URL is configured").
+  const [hasServerConfig, setHasServerConfig] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const config = await sendMessage({ kind: "config.get" });
+      if (!cancelled) {
+        setHasServerConfig(config !== null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Resolves the in-flight server ceremony from EITHER outcome: the
+  // background's own fire-and-forget broadcast (mirrors session.locked's
+  // shape/discipline, entrypoints/background/server-unlock.ts). The popup
+  // may have been closed mid-ceremony -- in that case this listener simply
+  // never fires here, and the unlocked state is still correct on reopen via
+  // the ordinary session.status read (T-13-13: correctness never depends on
+  // this broadcast being received).
+  useEffect(() => {
+    function onServerCeremonyState(message: unknown) {
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        (message as { kind?: unknown }).kind === "unlock.serverCeremony.state"
+      ) {
+        setServerCeremonyBusy(false);
+        const ok = (message as { ok?: unknown }).ok === true;
+        if (ok) {
+          onUnlocked(false);
+        } else {
+          setServerCeremonyFailed(true);
+        }
+      }
+    }
+    browser.runtime.onMessage.addListener(onServerCeremonyState);
+    return () => browser.runtime.onMessage.removeListener(onServerCeremonyState);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const webauthnSupported = typeof window !== "undefined" && window.PublicKeyCredential !== undefined;
   // Sign-in variant: NO PRF button this phase (AMENDMENT) -- the extension
   // passkey is unlock-only.
@@ -105,7 +159,43 @@ export default function UnlockView({
   // Tier-1 line when a passkey IS enrolled but this browser can't run it.
   const showTier1Explainer = extPasskeyEnrolled && !webauthnSupported;
 
+  // Plan 13-06: the "D-12 unusable state" this must_haves.truths language
+  // refers to -- either the DYNAMIC signal (`prfUnusableThisSession`, a
+  // genuine observed ceremony failure this popup session, requires prior
+  // enrollment) OR the STATIC "known-impossible" one
+  // (`import.meta.env.FIREFOX`: 13-FF-WEBAUTHN-RESEARCH.md establishes
+  // rpId=extension-id is PERMANENTLY unsupported on Firefox regardless of
+  // enrollment state -- since enrollment itself requires the identical
+  // create()-ceremony, which fails the SAME way, a genuine Firefox user can
+  // never reach `extPasskeyEnrolled: true` in the first place, so gating
+  // this secondary path on that dynamic signal alone would make it
+  // unreachable for exactly the browser it exists for). Never shown in the
+  // Sign-in variant (no existing session token to unlock) or without a
+  // configured server (nowhere to open the ceremony window).
+  const extScopedUnusable = (extPasskeyEnrolled && prfUnusableThisSession) || import.meta.env.FIREFOX;
+  const showServerCeremonyButton = !isSignIn && hasServerConfig && extScopedUnusable;
+
   const passwordInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleServerCeremonyUnlock() {
+    setServerCeremonyBusy(true);
+    setServerCeremonyFailed(false);
+    try {
+      const result = await sendMessage({ kind: "unlock.serverCeremony.start" });
+      if (!result.ok) {
+        setServerCeremonyBusy(false);
+        setServerCeremonyFailed(true);
+      }
+      // On ok:true, stay busy ("in-flight") -- the onServerCeremonyState
+      // listener above resolves it (unlocked, or a calm failure line),
+      // never a wedge (T-13-13): the background's own bounded timeout
+      // alarm eventually broadcasts ok:false even if the ceremony window is
+      // simply abandoned.
+    } catch {
+      setServerCeremonyBusy(false);
+      setServerCeremonyFailed(true);
+    }
+  }
 
   async function handlePasswordSubmit(e: FormEvent) {
     e.preventDefault();
@@ -263,6 +353,25 @@ export default function UnlockView({
         </>
       ) : showTier1Explainer ? (
         <p className="text-sm text-base-content/70">{t(locale, "unlock.passkeyUnsupported")}</p>
+      ) : null}
+
+      {showServerCeremonyButton ? (
+        <>
+          <button
+            type="button"
+            data-testid="server-ceremony-unlock-button"
+            className="btn btn-outline w-full"
+            disabled={serverCeremonyBusy}
+            onClick={() => void handleServerCeremonyUnlock()}
+          >
+            {serverCeremonyBusy
+              ? t(locale, "unlock.serverCeremonyInFlight")
+              : t(locale, "unlock.serverCeremonyCta")}
+          </button>
+          {serverCeremonyFailed ? (
+            <p className="text-sm text-base-content/70">{t(locale, "unlock.serverCeremonyFailed")}</p>
+          ) : null}
+        </>
       ) : null}
 
       {prfNotice?.kind === "orphaned" ? (

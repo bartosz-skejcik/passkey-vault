@@ -74,6 +74,24 @@ export const DICTIONARY = {
     en: "Your session locked after being idle — unlock again.",
   },
 
+  // Plan 13-06: the server-origin PRF-unlock secondary path, offered ONLY
+  // in the D-12 "unusable" state (ext-scoped passkey enrolled but this
+  // ceremony failed/known-impossible on this browser). Runs on the user's
+  // OWN configured pv-server origin, relayed through content-relay.content.ts
+  // -- see web/src/components/auth/ExtUnlockBridge.tsx for the other side.
+  "unlock.serverCeremonyCta": {
+    pl: "Odblokuj passkeyem przez stronę serwera",
+    en: "Unlock with a passkey via your server",
+  },
+  "unlock.serverCeremonyInFlight": {
+    pl: "Dokończ w otwartym oknie…",
+    en: "Finish in the opened window…",
+  },
+  "unlock.serverCeremonyFailed": {
+    pl: "Nie udało się odblokować przez stronę serwera. Spróbuj ponownie albo użyj hasła.",
+    en: "Couldn't unlock via your server. Try again — or use your password.",
+  },
+
   // --- Extension-scoped PRF passkey (AMENDMENT 2026-07-15, verbatim) ---
   "extPasskey.promptTitle": {
     pl: "Odblokowuj szybciej passkeyem",
