@@ -326,7 +326,7 @@ export default function DetailPanel({
       ) : (
         <>
           {item.fields.type === "totp" ? (
-            <div className="flex flex-col items-center gap-2 rounded-box border border-base-300 p-4">
+            <div className="flex flex-col items-center gap-2 pt-1">
               <span className="text-sm text-base-content/60">
                 {item.fields.issuer || t("itemType.totp")}
               </span>
