@@ -66,7 +66,17 @@ export const test: TestType<Record<string, never>, ExtWorkerFixtures> = (
     // destructuring pattern (even an empty `{}`), never a renamed plain
     // parameter, or Playwright's own fixture-dependency parser rejects it
     // ("First argument must use the object destructuring pattern").
-    async ({}: Record<string, never>, use: (r: BrowserContext) => Promise<void>) => {
+    async (
+      {}: Record<string, never>,
+      use: (r: BrowserContext) => Promise<void>,
+      workerInfo: { project: { name: string } },
+    ) => {
+      // Headless carve-out (see playwright.config.ts projects comment): the
+      // "chromium-ceremony" project (Phase-12 provider ceremonies) MUST run
+      // headed — headless Chromium reproducibly hangs those ceremonies on
+      // this machine (13-03-SUMMARY.md, re-reproduced 2026-07-17). Everything
+      // else runs headless per Bartek's no-window-flashing request.
+      const headed = workerInfo.project.name.includes("ceremony");
       const context = await chromium.launchPersistentContext("", {
         channel: "chromium",
         // Quick task 260717-lnx (Bartek, 2026-07-17): headed Chromium windows
@@ -83,10 +93,10 @@ export const test: TestType<Record<string, never>, ExtWorkerFixtures> = (
         // re-run the Phase-12 e2e tests under a bounded timeout specifically
         // to re-verify this risk rather than assume it away -- if those
         // tests hang or time out again, that is a REPRODUCTION of the
-        // documented historical finding, not a new bug, and should be
-        // reported back rather than silently patched around or reverted
-        // unilaterally.
-        headless: true,
+        // documented historical finding, not a new bug. RESOLUTION
+        // (2026-07-17): the hang DID reproduce, so the ceremony project runs
+        // headed (see `headed` above) and everything else stays headless.
+        headless: !headed,
         viewport: { width: 420, height: 700 },
         args: [
           `--disable-extensions-except=${EXTENSION_PATH}`,

@@ -38,9 +38,23 @@ export default defineConfig({
   // first attempt are harmless noise, not a correctness hazard).
   retries: 2,
   reporter: [["list"]],
+  // Headless carve-out (Bartek, 2026-07-17): headless Chromium reproducibly
+  // hangs the Phase-12 passkey-provider ceremonies on this dev machine
+  // (13-03-SUMMARY.md finding, re-reproduced by quick task 260717-lnx), while
+  // every other SC runs headless fine. Split: everything except Phase 12 runs
+  // headless (no window flashing); the ceremony tests alone run headed.
+  // e2e/fixtures.ts reads the project name to pick the real headless flag for
+  // its launchPersistentContext call. Each project gets its own worker (and
+  // thus its own persistent context) — the spec's ensure*/idempotent bring-up
+  // helpers rebuild vault state per worker, same as any fresh run.
   projects: [
     {
       name: "chromium",
+      grepInvert: /Phase 12/,
+    },
+    {
+      name: "chromium-ceremony",
+      grep: /Phase 12/,
     },
   ],
 });
