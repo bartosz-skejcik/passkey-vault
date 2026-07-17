@@ -89,7 +89,12 @@ let ready: Promise<void> | null = null;
 
 export function initCrypto(): Promise<void> {
   if (ready === null) {
-    ready = init("/wasm/pv_wasm_bg.wasm")
+    // `{ module_or_path }` options-object form, never a bare positional
+    // arg — wasm-bindgen's generated init() deprecated the positional-arg
+    // shape (console warning: "using deprecated parameters for the
+    // initialization function; pass a single object instead"). Mirrors the
+    // extension's own fix (extension/lib/crypto/wasm-loader.ts, Phase 10).
+    ready = init({ module_or_path: "/wasm/pv_wasm_bg.wasm" })
       .then(() => undefined)
       .catch((e) => {
         ready = null; // allow a future call to retry instead of replaying this rejection forever

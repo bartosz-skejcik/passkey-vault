@@ -81,6 +81,19 @@ describe("initCrypto", () => {
 
     await expect(initCrypto()).rejects.toThrow("wasm binary failed to load");
   });
+
+  // Live bug fix: wasm-bindgen's generated init() logs a deprecation warning
+  // for the bare positional-arg call shape ("using deprecated parameters for
+  // the initialization function; pass a single object instead") — mirrors
+  // the extension's own fix (extension/lib/crypto/wasm-loader.ts, Phase 10).
+  it("calls the wasm init() with the options-object shape, not a bare positional string", async () => {
+    mockInit.mockResolvedValue(undefined);
+    const { initCrypto } = await import("./index");
+
+    await initCrypto();
+
+    expect(mockInit).toHaveBeenCalledWith({ module_or_path: "/wasm/pv_wasm_bg.wasm" });
+  });
 });
 
 describe("runSelfTest", () => {
