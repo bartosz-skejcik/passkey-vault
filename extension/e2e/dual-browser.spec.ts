@@ -445,7 +445,7 @@ test.describe("Phase 9 -- Session Unlock Core, Popup & Sync Client", () => {
   test("P9-SC2: user unlocks the vault from the popup with the master password, and with a PRF passkey where the browser supports it", async () => {
     await signInWithPassword();
     await popup.waitForSelector('select, button:has-text("Create a passkey")', { timeout: 60000 });
-    await expect(popup.locator("select")).toBeVisible({ timeout: 15000 });
+    await expect(popup.locator("#pv-autolock")).toBeVisible({ timeout: 15000 });
 
     // PRF-unlock half: arm a CDP virtual authenticator (hasPrf:true) on the
     // POPUP's OWN CDP session -- this is a genuine browser WebAuthn call
@@ -485,7 +485,7 @@ test.describe("Phase 9 -- Session Unlock Core, Popup & Sync Client", () => {
     await expect(prfBtn).toBeVisible({ timeout: 15000 });
     await prfBtn.click();
     await popup.waitForTimeout(3000);
-    await expect(popup.locator("select")).toBeVisible({ timeout: 15000 });
+    await expect(popup.locator("#pv-autolock")).toBeVisible({ timeout: 15000 });
   });
 
   test("P9-SC3: the unlocked User Key lives only in chrome.storage.session (never storage.local) and the vault stays usable across a service-worker idle-kill/wake cycle within the session", async ({ extContext, extensionId }) => {
@@ -506,7 +506,7 @@ test.describe("Phase 9 -- Session Unlock Core, Popup & Sync Client", () => {
 
     await popup.reload();
     await popup.waitForTimeout(1200);
-    await expect(popup.locator("select")).toBeVisible({ timeout: 15000 });
+    await expect(popup.locator("#pv-autolock")).toBeVisible({ timeout: 15000 });
     await expect(popup.locator('input[type="password"]')).toHaveCount(0);
   });
 
@@ -520,7 +520,7 @@ test.describe("Phase 9 -- Session Unlock Core, Popup & Sync Client", () => {
     // mechanism -- an alarm survives SW idle-kill, a JS timer would not.
     expect(alarmsBefore.some((n: string) => n === "pv-auto-lock")).toBe(true);
 
-    await popup.selectOption("select", "5");
+    await popup.selectOption("#pv-autolock", "5");
     await popup.waitForTimeout(600);
     const alarmsAfter: Array<{ name: string; in: number }> = await worker!.evaluate(async () =>
       (await chrome.alarms.getAll()).map((a: { name: string; scheduledTime: number }) => ({
