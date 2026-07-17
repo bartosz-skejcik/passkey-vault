@@ -58,10 +58,16 @@ export default defineConfig({
     //     Firefox manifest-warning regression): `browser_specific_settings
     //     .gecko.id` below already pins the Firefox add-on id -- but
     //     `moz-extension://` origins use a per-INSTALL internal UUID at
-    //     runtime, so whether rpId validity even works there at all is an
-    //     OPEN QUESTION the AMENDMENT explicitly defers to Phase 13
-    //     (expected outcome: honest degradation to password unlock on
-    //     Firefox until proven otherwise).
+    //     runtime. QUESTION CLOSED (Phase 13, 2026-07-17, verified by
+    //     research — 13-FF-WEBAUTHN-RESEARCH.md): `rpId = extension-id` is
+    //     PERMANENTLY impossible on Firefox (moz-extension is not a
+    //     registrable domain; spec origin validation — SecurityError,
+    //     confirmed empirically on FF152). Since FF150 an extension MAY run
+    //     WebAuthn for host-permitted WEB-domain rpIds, but bug 2026687
+    //     closes the action popup on the OS prompt (tab/window required).
+    //     v0.2 ships honest degradation to password unlock on Firefox
+    //     (D-12 disabled+explainer); the v0.2.x backlog path is a
+    //     server-origin PRF ceremony (rpId = server domain, FF135+ PRF).
     //
     // Resulting stable dev Chrome extension id (visible in
     // chrome://extensions after one load of the rebuilt output, needed for

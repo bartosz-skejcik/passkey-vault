@@ -168,3 +168,10 @@ None — no external service configuration required. (The harness itself needs F
 - FOUND: .planning/phases/13-dual-browser-hardening/13-VALIDATION.md
 - Commit e9c5de7 (Task 1) — FOUND in git log
 - Commit 0d1be3a (Task 2) — FOUND in git log
+
+
+---
+
+## CORRECTION ADDENDUM (2026-07-17, post-research — see 13-FF-WEBAUTHN-RESEARCH.md)
+
+The headline claim above ("Firefox rejects WebAuthn from ANY moz-extension:// page outright, independent of rpId") is TOO STRONG. Verified against Bugzilla/MDN: since **Firefox 150** (bug 1956484, RESOLVED FIXED) an extension MAY call navigator.credentials for a **web-domain rpId covered by its host_permissions**; what is permanently impossible is `rpId = extension-id` (moz-extension is not a registrable domain — spec origin validation, not a Mozilla choice). Both empirical probes were expected to fail under the new model too (extension-id rpId = invalid domain; "localhost" = no host permission held at probe time), so the observation stands but the generalization does not. Separately, bug 2026687 (open, design-decision-approved) closes the action popup when the OS WebAuthn prompt appears — any extension-run ceremony must live in a tab/window, not the popup. The shipped D-12/D-13 disabled+explainer degradation remains CORRECT for what v0.2 ships. A viable Firefox passkey-unlock path exists (server-origin PRF ceremony, rpId = server domain, PRF since FF135) — registered as v0.2.x backlog, not a phase-13 gap.
