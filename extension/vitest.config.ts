@@ -64,7 +64,14 @@ export default defineConfig({
         test: {
           name: "background",
           environment: "node",
-          exclude: ["**/node_modules/**", "entrypoints/popup/**"],
+          // 13-03-PLAN.md: "e2e/**" holds @playwright/test specs
+          // (extension/e2e/dual-browser.spec.ts), which vitest must never
+          // collect -- Playwright's `test()`/`expect()` are a different
+          // framework than vitest's, and without this exclusion the
+          // "background" project's default include glob
+          // (`**/*.{test,spec}.?(c|m)[jt]s?(x)`) would pick the Playwright
+          // spec up and crash `npm test`.
+          exclude: ["**/node_modules/**", "entrypoints/popup/**", "e2e/**"],
         },
       },
       {
@@ -73,6 +80,7 @@ export default defineConfig({
           name: "popup",
           environment: "jsdom",
           include: ["entrypoints/popup/**/*.test.{ts,tsx}"],
+          exclude: ["e2e/**"],
           setupFiles: ["./vitest.setup.ts"],
         },
       },

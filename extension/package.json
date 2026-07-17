@@ -15,11 +15,13 @@
     "lint:firefox": "web-ext lint --source-dir ./.output/firefox-mv2",
     "compile": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e:chrome": "playwright test --project=chromium",
     "postinstall": "wxt prepare",
     "predev": "bash ../scripts/build-wasm.sh",
     "prebuild": "bash ../scripts/build-wasm.sh"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@tailwindcss/postcss": "4.3.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

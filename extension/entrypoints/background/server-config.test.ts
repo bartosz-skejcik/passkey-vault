@@ -252,7 +252,19 @@ describe("wsUrlFromBase", () => {
 describe("no_other_extension_file_hard_codes_a_server_url", () => {
   it("finds no http(s) URL literal anywhere in extension/ outside this module", () => {
     const extensionRoot = join(__dirname, "..", "..");
-    const skipDirs = new Set(["node_modules", ".output", ".wxt", "dist"]);
+    // 13-03-PLAN.md: `e2e/` holds the Playwright dual-browser-hardening
+    // harness (dual-browser.spec.ts, fixtures.ts) -- a `*.spec.ts` naming
+    // convention (Playwright's, not vitest's `*.test.ts`), so it isn't
+    // caught by this walker's own `.test.ts`/`.test.tsx` file-suffix
+    // exclusion below. Same rationale as that exclusion applies here: e2e/
+    // contains real per-run URL literals for its own throwaway local
+    // fixture HTTP servers (`http://localhost:8895`,
+    // `http://127.0.0.1:8791`, ...) and the real pv-server dev URL used to
+    // drive the harness -- never bundled into `.output/` (WXT only bundles
+    // entrypoints/lib source, not e2e/), so it carries none of this
+    // invariant's actual threat (a hard-coded origin reachable from a real
+    // fetch/tabs.create call in SHIPPED production code).
+    const skipDirs = new Set(["node_modules", ".output", ".wxt", "dist", "e2e"]);
     const allowedFiles = new Set([
       join(__dirname, "server-config.ts"),
       join(__dirname, "server-config.test.ts"),
