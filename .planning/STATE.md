@@ -5,10 +5,10 @@ milestone_name: Browser Extension
 current_phase: 13
 current_phase_name: Dual-Browser Hardening
 status: verifying
-stopped_at: Completed 13-06-PLAN.md — Phase 13 all 6 plans executed (checklist row 25 added, Firefox server-origin PRF unlock ceremony shipped); full-PRF-on-Firefox completion is a documented human live-UAT item for Bartek
-last_updated: "2026-07-17T21:47:25.034Z"
-last_activity: 2026-07-17
-last_activity_desc: "Completed quick task 260717-lnx: Extension UX: one-click passkey picker, NordPass-style inpage dropdown restyle, headless e2e fixture"
+stopped_at: "Completed quick task 260718-0qi: Popup UI fix round (theme parity, FAB/footer/top-bar restructure, hover shadow removal, label/sort sizing, Phase 9 e2e repair) -- all 6 tasks green, full gate passed"
+last_updated: "2026-07-17T23:25:21.426Z"
+last_activity: 2026-07-18
+last_activity_desc: "Completed quick task 260718-0qi: Popup UI fix round (theme parity, FAB/footer/top-bar restructure, hover shadow removal, label/sort sizing, Phase 9 e2e repair)"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -128,6 +128,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 13-04: wxt.config.ts:56-64 ext-scoped rpId-on-Firefox question closed — Firefox rejects WebAuthn from any moz-extension:// page (SecurityError, rpId-independent); existing D-12/D-13 disabled+explainer handling already covers it, no code change needed
 - [Phase ?]: 13-06: server-ceremony button visibility widened beyond the plan's literal D-12 wording to also include import.meta.env.FIREFOX (a static known-impossible signal) -- an ext-scoped enrollment attempt requires the same create() ceremony that also fails on Firefox, so gating purely on the dynamic prfUnusableThisSession signal would make the button permanently unreachable for the browser it exists for
 - [Phase ?]: 13-06: found and routed around (not fixed -- out of scope) a pre-existing web/.env.local NEXT_PUBLIC_API_BASE_URL=127.0.0.1 misconfiguration that broke same-origin fetch() on localhost:8620 in every web/out build; flagged for Bartek's own .env.local review
+- [Phase ?]: [quick-260718-0qi] Task 2's FAB relocation to bottom-right required flipping the type-menu anchor from left-0 to right-0 (Rule 1 bug fix) -- a left-0-anchored w-44 menu would overflow past the 380px popup width once the FAB moved to the right edge
+- [Phase ?]: [quick-260718-0qi] P9-SC5/SC7 e2e failures were downstream cascades of P9-SC2's ambiguous-select strict-mode violation (shared worker-scoped popup left on the wrong screen), not independent bugs -- fixing the Step 2 selector disambiguation alone restored all 7 Phase 9 SCs, confirmed via 3 zero-flake re-runs
 
 ### Pending Todos
 
@@ -150,6 +152,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260717-lnx | Extension UX: one-click passkey picker, NordPass-style inpage dropdown restyle, headless e2e fixture | 2026-07-17 | 115e68d | [260717-lnx-extension-ux-one-click-passkey-picker-no](./quick/260717-lnx-extension-ux-one-click-passkey-picker-no/) |
+| 260718-0qi | Popup UI fix round: theme parity, FAB/footer/top-bar restructure, hover shadow removal, label/sort sizing, Phase 9 e2e repair | 2026-07-18 | 39754b3 | [260718-0qi-popup-ui-fix-round-theme-match-web-sideb](./quick/260718-0qi-popup-ui-fix-round-theme-match-web-sideb/) |
 
 ## Deferred Items
 
@@ -166,8 +169,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-17T21:47:25.027Z
-Stopped at: Completed 13-06-PLAN.md — Phase 13 all 6 plans executed (checklist row 25 added, Firefox server-origin PRF unlock ceremony shipped); full-PRF-on-Firefox completion is a documented human live-UAT item for Bartek
+Last session: 2026-07-17T23:25:21.420Z
+Stopped at: Completed quick task 260718-0qi: Popup UI fix round (theme parity, FAB/footer/top-bar restructure, hover shadow removal, label/sort sizing, Phase 9 e2e repair) -- all 6 tasks green, full gate passed
 Resume file: None
 
 ## Operator Next Steps
