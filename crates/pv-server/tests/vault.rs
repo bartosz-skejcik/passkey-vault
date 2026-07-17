@@ -252,6 +252,84 @@ async fn update_response_includes_a_non_empty_updated_at() {
     assert!(body["updated_at"].as_str().is_some_and(|s| !s.is_empty()));
 }
 
+// --- Last-used tracking (quick-260717) ---
+
+#[tokio::test]
+async fn create_and_list_include_a_null_last_used_at_before_any_touch() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+    let token = register_and_login(&app, "lastused-null@example.com").await;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let res = req(&app, "POST", "/api/vault/items", &token, Some(item_body(&id))).await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    let list_res = req(&app, "GET", "/api/vault/items", &token, None).await;
+    let items = body_json(list_res).await;
+    let items = items.as_array().unwrap();
+    let item = items.iter().find(|i| i["id"] == id).unwrap();
+    assert!(item["last_used_at"].is_null());
+}
+
+#[tokio::test]
+async fn touch_sets_last_used_at_without_bumping_revision() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+    let token = register_and_login(&app, "touch@example.com").await;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    req(&app, "POST", "/api/vault/items", &token, Some(item_body(&id))).await;
+
+    let touch_res = req(&app, "POST", &format!("/api/vault/items/{id}/touch"), &token, None).await;
+    assert_eq!(touch_res.status(), StatusCode::OK);
+    let touch_body = body_json(touch_res).await;
+    assert!(touch_body["last_used_at"].as_str().is_some_and(|s| !s.is_empty()));
+
+    let list_res = req(&app, "GET", "/api/vault/items", &token, None).await;
+    let items = body_json(list_res).await;
+    let items = items.as_array().unwrap();
+    let item = items.iter().find(|i| i["id"] == id).unwrap();
+    assert!(item["last_used_at"].as_str().is_some_and(|s| !s.is_empty()));
+    // Revision is untouched — a touch is metadata-only, never a content
+    // mutation, so it must never fabricate a stale-revision 409 elsewhere.
+    assert_eq!(item["revision"], 1);
+}
+
+#[tokio::test]
+async fn touch_on_missing_item_is_404() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+    let token = register_and_login(&app, "touchmissing@example.com").await;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let touch_res = req(&app, "POST", &format!("/api/vault/items/{id}/touch"), &token, None).await;
+    assert_eq!(touch_res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn touch_on_other_users_item_is_404() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+    let token_a = register_and_login(&app, "touchownera@example.com").await;
+    let token_b = register_and_login(&app, "touchownerb@example.com").await;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    req(&app, "POST", "/api/vault/items", &token_a, Some(item_body(&id))).await;
+
+    let touch_res = req(&app, "POST", &format!("/api/vault/items/{id}/touch"), &token_b, None).await;
+    assert_eq!(touch_res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn touch_requires_auth() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let touch_res = req(&app, "POST", &format!("/api/vault/items/{id}/touch"), "not-a-real-token", None).await;
+    assert_eq!(touch_res.status(), StatusCode::UNAUTHORIZED);
+}
+
 // --- Folders (Task 2) ---
 
 fn folder_body(name_ciphertext: &str) -> Value {

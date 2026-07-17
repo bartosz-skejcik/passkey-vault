@@ -128,6 +128,11 @@ pub struct VaultItem {
     pub enc_data: String,
     pub revision: i64,
     pub updated_at: String,
+    /// NordPass-style last-used tracking (quick-260717 addendum). `None`
+    /// means "never touched" — set only by `POST .../touch`, never by
+    /// create/update/list, and never bumps `revision` (see `touch()`'s doc
+    /// comment for why).
+    pub last_used_at: Option<String>,
 }
 
 /// Shared row-fetch body reused by `list()` and `sync::pull`'s snapshot arm
@@ -135,7 +140,7 @@ pub struct VaultItem {
 /// never duplicated across response shapes).
 pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> Result<Vec<VaultItem>, ApiError> {
     let rows = sqlx::query(
-        "SELECT id, enc_key, enc_data, revision, updated_at FROM vault_items WHERE user_id = ?",
+        "SELECT id, enc_key, enc_data, revision, updated_at, last_used_at FROM vault_items WHERE user_id = ?",
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -149,9 +154,49 @@ pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> R
                 enc_data: row.try_get("enc_data").map_err(|_| ApiError::Internal)?,
                 revision: row.try_get("revision").map_err(|_| ApiError::Internal)?,
                 updated_at: row.try_get("updated_at").map_err(|_| ApiError::Internal)?,
+                last_used_at: row.try_get("last_used_at").map_err(|_| ApiError::Internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()
+}
+
+#[derive(Serialize)]
+pub struct TouchItemResponse {
+    pub last_used_at: String,
+}
+
+/// `POST /api/vault/items/{id}/touch` — records "this item's secret was just
+/// used" (reveal/copy/autofill/TOTP/passkey ceremony), NordPass-style.
+/// Deliberately a single-column `UPDATE` that does NOT touch `revision`:
+/// revision is the optimistic-concurrency token content mutations use
+/// (`update()` above) — bumping it here would fabricate a spurious 409 for
+/// every OTHER device/tab the next time it tries to save an edit, even
+/// though nothing about the item's content changed. Trade-off (documented
+/// per this task's brief): no dedicated WS `SyncEvent` is broadcast for a
+/// touch either — broadcasting one for every reveal/copy/autofill would make
+/// the metadata-only sync channel unnecessarily chatty; other devices simply
+/// pick up the new `last_used_at` on their next pull/snapshot.
+pub async fn touch(
+    State(state): State<AppState>,
+    session: SessionUser,
+    Path(id): Path<String>,
+) -> Result<Json<TouchItemResponse>, ApiError> {
+    let result = sqlx::query(
+        "UPDATE vault_items SET last_used_at = datetime('now') WHERE id = ? AND user_id = ? \
+         RETURNING last_used_at",
+    )
+    .bind(&id)
+    .bind(&session.user_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let row = match result {
+        Some(row) => row,
+        None => return Err(ApiError::NotFound),
+    };
+    let last_used_at: String = row.try_get("last_used_at").map_err(|_| ApiError::Internal)?;
+
+    Ok(Json(TouchItemResponse { last_used_at }))
 }
 
 /// `GET /api/vault/items` — only the authenticated user's items, never a

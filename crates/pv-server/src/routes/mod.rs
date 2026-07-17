@@ -42,6 +42,7 @@ pub fn router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/api/auth/passkey-login/finish", post(auth::passkey_login_finish))
         .route("/api/vault/items", get(vault::list).post(vault::create))
         .route("/api/vault/items/{id}", put(vault::update).delete(vault::delete))
+        .route("/api/vault/items/{id}/touch", post(vault::touch))
         .route("/api/vault/folders", get(folders::list).post(folders::create))
         .route("/api/vault/folders/{id}", delete(folders::delete))
         .route("/api/sync", get(sync::pull))
