@@ -114,6 +114,21 @@ export default defineConfig({
     // blanket grant. Verified against the generated Chrome manifest.json in
     // plan 09-03's Task 2 acceptance criteria.
     optional_host_permissions: ['http://*/*', 'https://*/*'],
+    // Phase 13 (Plan 13-01) -- carried-over blocker flagged by
+    // 09-03-SUMMARY.md for Phase 13: Firefox MV2 strips
+    // `optional_host_permissions` from the manifest entirely (WXT's
+    // manifest.mjs `mv3OnlyKeys` list treats it as an MV3-only key), so
+    // EXT-05's runtime `browser.permissions.request()` grant for the
+    // user's self-hosted server origin has NO manifest pre-declaration on
+    // Firefox and the request fails. Firefox MV2 instead reads host
+    // match-patterns from the shared `optional_permissions` array. Scoped
+    // to `browser === 'firefox'` only -- Chrome keeps using
+    // `optional_host_permissions` above, unchanged.
+    ...(browser === 'firefox'
+      ? {
+          optional_permissions: ['http://*/*', 'https://*/*'],
+        }
+      : {}),
     // D-07: explicit MV3 CSP permitting WASM compilation in the extension
     // background/pages context. Declared literally so it is never left to
     // an implicit/permissive default -- plan 08-03 grep-verifies the
@@ -123,11 +138,19 @@ export default defineConfig({
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
     },
     // D-09: fixed literal Firefox add-on id, not left to an ephemeral
-    // dev-mode default that changes across sessions. `strict_min_version`
-    // is deliberately NOT set here -- deferred to Phase 13.
+    // dev-mode default that changes across sessions.
     browser_specific_settings: {
       gecko: {
         id: 'passkey-vault@extension.local',
+        // Phase 13 (Plan 13-01), D-04: version floor pinned at 115.0 --
+        // the extension reads/writes `browser.storage.session` (the D-05
+        // sole sanctioned home for the unlocked User Key) in 9 non-test
+        // files, and `storage.session` did not ship in Firefox until
+        // version 115. A lower floor (e.g. 91 ESR, previously considered)
+        // would assert compatibility with versions where the extension
+        // cannot function at all. 115 happens to also be an ESR release.
+        // NEVER set this below 115.
+        strict_min_version: '115.0',
       },
     },
     // Phase 12 (Plan 12-03), D-17: Firefox-only. `page-bridge-firefox.ts`
