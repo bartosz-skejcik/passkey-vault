@@ -140,6 +140,7 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 | uat | Phase 06 UAT | passed (0 pending scenarios) | 2026-07-14 |
 | todo | 2026-07-12-ui-review-phase1-fixes — 3 WARNING UI findings (light-theme base-300 surface borders, SelfTestCard fatal-branch retry, "patrz błąd poniżej" copy order) — cosmetic, v0.2 polish candidates | open | 2026-07-14 |
 | tech-debt | IMPEX-04 CSV export lossy for non-default TOTP (algorithm/digits/period dropped; JSON lossless) — see v0.1-MILESTONE-AUDIT.md W-1 | open | 2026-07-14 |
+| tech-debt | `PV_EXTENSION_ORIGINS=moz-extension://*` scheme-scoped CORS wildcard stopgap (D-10, 13-05-PLAN.md) — accepted knowingly because CORS is not this API's auth boundary and Firefox's per-profile UUID churn makes concrete-origin-only config hostile UX; planned to be replaced with per-install concrete-origin configuration in a later version | open | 2026-07-17 |
 
 ## Session Continuity
 

@@ -43,6 +43,7 @@ Wszystkie zmienne środowiskowe, które `pv-server` faktycznie czyta
 | `PV_DB_URL` | Ścieżka do bazy SQLite (`sqlite://...`). W obrazie Docker wskazuje na wolumen `/data`. | `sqlite:///data/pv.db` (w obrazie); `sqlite://data/pv.db` poza kontenerem |
 | `PV_ADDR` | Adres i port, na którym serwer nasłuchuje. | `0.0.0.0:8620` (w obrazie, żeby był osiągalny z hosta); `127.0.0.1:8620` poza kontenerem |
 | `PV_STATIC_DIR` | Katalog ze statycznym exportem Next.js (serwowany na tym samym porcie co API). | `/app/static` (w obrazie); brak (tylko API) poza kontenerem |
+| `PV_EXTENSION_ORIGINS` | Lista originów rozszerzenia przeglądarki dopuszczonych do CORS — patrz sekcja "PV_EXTENSION_ORIGINS — CORS dla rozszerzenia przeglądarki" niżej. | (puste — brak dostępu CORS dla rozszerzeń) |
 
 `docker-compose.yml` ustawia `PV_DB_URL`, `PV_ADDR` i `PV_STATIC_DIR` na
 sztywno — nie są przeznaczone do nadpisywania przez `.env` (patrz komentarz
@@ -80,6 +81,50 @@ Jeśli któryś z tych warunków nie jest spełniony, `pv-server` **odmawia
 startu** i wypisuje w logach dokładnie, która wartość jest problemem i
 dlaczego (nazwana, nie generyczny błąd) — sprawdź `docker compose logs
 pv-server` po nieudanym starcie.
+
+### PV_EXTENSION_ORIGINS — CORS dla rozszerzenia przeglądarki
+
+Rozszerzenie (Chrome/Firefox) łączy się z Twoim self-hostowanym `pv-server`
+z własnego originu (`chrome-extension://<id>` albo `moz-extension://<uuid>`),
+który przeglądarka traktuje jako inny origin niż sam `pv-server` — bez
+jawnego dopuszczenia w CORS przeglądarka odrzuci nawet `/healthz`, zanim
+rozszerzenie zdąży cokolwiek zrobić. Domyślnie (zmienna nieustawiona/pusta)
+`pv-server` nie dopuszcza żadnego originu rozszerzenia — musisz to jawnie
+skonfigurować, żeby rozszerzenie mogło połączyć się z Twoim serwerem.
+
+**Chrome:** opublikowany identyfikator rozszerzenia jest stabilny — jeden
+konkretny wpis wystarcza na zawsze:
+
+```
+PV_EXTENSION_ORIGINS=chrome-extension://<published-id>
+```
+
+**Firefox:** `moz-extension://<uuid>` jest przypisywany PER-PROFIL/PER-
+INSTALACJĘ i zmienia się przy każdej reinstalacji lub nowym profilu — jeden
+konkretny wpis jest niepraktyczny dla większości self-hosterów (musieliby go
+aktualizować za każdym razem). Dlatego `pv-server` akceptuje specjalny,
+dosłowny literał `moz-extension://*` jako **schematowo ograniczony wildcard**
+— dopasowuje TYLKO poprawnie zbudowany origin `moz-extension://<uuid>` (36
+znaków w kształcie UUID), nigdy dowolny inny origin. To jest **świadomy dług
+techniczny** (decyzja Bartka, 13-CONTEXT.md ADDENDUM D-10), zaakceptowany bo:
+
+- CORS nie jest tu granicą uwierzytelniania tego API — każda operacja
+  zmieniająca stan nadal wymaga ważnego tokenu sesji/bearer niezależnie od
+  wyniku CORS; wrogie rozszerzenie bez tokenu nic tym nie zyskuje.
+- Rotacja UUID Firefoksa per-profil czyni konfigurację wyłącznie-konkretnymi-
+  originami wrogą UX dzisiaj.
+- Docelowo zostanie zastąpiony konfiguracją per-instalację z konkretnym
+  originem w późniejszej wersji (patrz `.planning/STATE.md`, sekcja
+  Deferred Items).
+
+Dokładna linia `.env` dla obu przeglądarek naraz:
+
+```
+PV_EXTENSION_ORIGINS=chrome-extension://<published-id>,moz-extension://*
+```
+
+Bare `*` (sam wildcard, bez schematu) jest ZAWSZE odrzucany — `pv-server`
+odmawia startu zamiast po cichu wyłączyć CORS albo spanikować.
 
 ## Wdrożenie za reverse proxy
 
@@ -135,6 +180,7 @@ docker compose up -d
 | Kontener działa, ale `curl http://<host>:8620/healthz` nic nie zwraca z zewnątrz maszyny | `PV_ADDR` przypadkowo nadpisany na `127.0.0.1:8620` (np. przez ręczną edycję `docker-compose.yml`) | Usuń nadpisanie — obraz domyślnie wiąże się na `0.0.0.0:8620`, co jest wymagane do osiągalności z hosta |
 | Po `docker compose down && docker compose up` dane zniknęły | Wolumen `pv_data` nie został użyty (np. uruchomiono `docker run` bez `-v`) | Zawsze uruchamiaj przez `docker compose up` albo jawnie `-v pv_data:/data` — obraz deklaruje `VOLUME /data`, ale nazwany wolumen trzeba utworzyć raz i konsekwentnie podłączać |
 | Passkey/PRF ceremonie failują tylko za reverse proxy, działają lokalnie | Brakujące nagłówki upgrade WebSocket albo zły `PV_ORIGIN` względem faktycznego adresu widzianego przez przeglądarkę | Sprawdź konfigurację w `deploy/` (nginx/Caddy) i upewnij się, że `PV_ORIGIN` odpowiada dokładnie temu, co widzi przeglądarka (łącznie ze schematem) |
+| Rozszerzenie we Firefoksie pokazuje błąd "CORS Missing Allow Origin" / nie może połączyć się z serwerem mimo że serwer działa | `PV_EXTENSION_ORIGINS` nie zawiera originu tego rozszerzenia (`moz-extension://<uuid>`) | Zobacz sekcję "`PV_EXTENSION_ORIGINS` — CORS dla rozszerzenia przeglądarki" wyżej — dodaj `moz-extension://*` (lub konkretny UUID) do `PV_EXTENSION_ORIGINS` |
 
 ## Weryfikacja end-to-end za reverse proxy
 
