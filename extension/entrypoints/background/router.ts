@@ -112,6 +112,7 @@ import {
   configureServer,
   InvalidServerUrlError,
   ServerUnreachableError,
+  ServerCorsBlockedError,
 } from "./server-config";
 
 export function registerMessageRouter(): void {
@@ -583,6 +584,12 @@ async function handleConfigSet(rawUrl: string): Promise<MessageResponseMap["conf
   } catch (e) {
     if (e instanceof InvalidServerUrlError) {
       return { ok: false, error: "invalid-url" };
+    }
+    // D-11: checked BEFORE the generic ServerUnreachableError arm below --
+    // ServerCorsBlockedError is a MORE SPECIFIC subtype of failure (server
+    // is up, origin just isn't allowlisted yet), not an alternative to it.
+    if (e instanceof ServerCorsBlockedError) {
+      return { ok: false, error: "cors-blocked" };
     }
     if (e instanceof ServerUnreachableError) {
       return { ok: false, error: "unreachable" };

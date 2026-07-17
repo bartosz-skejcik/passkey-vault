@@ -21,6 +21,12 @@ vi.mock("../../lib/messaging/ext-protocol", () => ({
 vi.mock("wxt/browser", () => ({
   browser: {
     permissions: { request: mockPermissionsRequest },
+    // D-11: ServerConfigView's cors-blocked branch computes the
+    // extension's own origin via `browser.runtime.getURL("")` -- mirrors
+    // the real Chrome/Firefox shape (a full extension-scheme URL) so
+    // `new URL(...).origin` round-trips exactly like it would in a real
+    // browser.
+    runtime: { getURL: () => "chrome-extension://test-extension-id/" },
   },
 }));
 
@@ -94,6 +100,22 @@ describe("ServerConfigView — persist-before-permission-prompt order", () => {
     await waitFor(() =>
       expect(screen.getByText(/can't reach that server/i)).toBeInTheDocument(),
     );
+    expect(onConfigured).not.toHaveBeenCalled();
+    expect(mockPermissionsRequest).not.toHaveBeenCalled();
+  });
+
+  it("config.set failure (cors-blocked) → distinct CORS-blocked copy with the extension's own origin, never the generic unreachable message", async () => {
+    mockSendMessage.mockResolvedValue({ ok: false, error: "cors-blocked" });
+    const onConfigured = vi.fn();
+
+    render(<ServerConfigView locale="en" onConfigured={onConfigured} />);
+    await fillAndSubmit("http://localhost:8620");
+
+    await waitFor(() =>
+      expect(screen.getByText(/PV_EXTENSION_ORIGINS/i)).toBeInTheDocument(),
+    );
+    expect(screen.getByText("chrome-extension://test-extension-id")).toBeInTheDocument();
+    expect(screen.queryByText(/can't reach that server/i)).not.toBeInTheDocument();
     expect(onConfigured).not.toHaveBeenCalled();
     expect(mockPermissionsRequest).not.toHaveBeenCalled();
   });

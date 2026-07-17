@@ -45,10 +45,12 @@ vi.mock("wxt/browser", () => ({
 
 import {
   InvalidServerUrlError,
+  ServerCorsBlockedError,
   ServerUnreachableError,
   configureServer,
   normalizeServerUrl,
   probeServerHealth,
+  probeServerHealthDetailed,
   readServerConfig,
   wsUrlFromBase,
 } from "./server-config";
@@ -122,6 +124,47 @@ describe("probeServerHealth", () => {
   });
 });
 
+describe("probeServerHealthDetailed", () => {
+  it("resolves 'ok' for an exact {status:\"ok\"} JSON body on an ok response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "ok" }) }),
+    );
+    await expect(probeServerHealthDetailed("http://localhost:8620")).resolves.toBe("ok");
+  });
+
+  it("resolves 'cors-blocked' when the plain fetch throws but the no-cors retry resolves opaque", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({ type: "opaque" });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await expect(probeServerHealthDetailed("http://localhost:8620")).resolves.toBe("cors-blocked");
+    expect(mockFetch).toHaveBeenNthCalledWith(1, "http://localhost:8620/healthz");
+    expect(mockFetch).toHaveBeenNthCalledWith(2, "http://localhost:8620/healthz", { mode: "no-cors" });
+  });
+
+  it("resolves 'unreachable' when both the plain fetch and the no-cors retry throw", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    await expect(probeServerHealthDetailed("http://localhost:8620")).resolves.toBe("unreachable");
+  });
+
+  it("resolves 'unreachable' when the plain fetch throws and the no-cors retry resolves non-opaque", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({ type: "basic" });
+    vi.stubGlobal("fetch", mockFetch);
+    await expect(probeServerHealthDetailed("http://localhost:8620")).resolves.toBe("unreachable");
+  });
+
+  it("resolves 'unreachable' for an ok response with an unrelated body (not a CORS story)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    await expect(probeServerHealthDetailed("http://localhost:8620")).resolves.toBe("unreachable");
+  });
+});
+
 describe("configureServer", () => {
   it("rejects an invalid URL before any fetch call is made", async () => {
     const mockFetch = vi.fn();
@@ -138,6 +181,18 @@ describe("configureServer", () => {
     await expect(configureServer("http://localhost:8620")).rejects.toThrow(
       ServerUnreachableError,
     );
+    expect(hoisted.storageState.store.size).toBe(0);
+    expect(hoisted.mockPermissionsRequest).not.toHaveBeenCalled();
+  });
+
+  it("rejects with ServerCorsBlockedError and does not persist when the probe is cors-blocked", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({ type: "opaque" });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await expect(configureServer("http://localhost:8620")).rejects.toThrow(ServerCorsBlockedError);
     expect(hoisted.storageState.store.size).toBe(0);
     expect(hoisted.mockPermissionsRequest).not.toHaveBeenCalled();
   });

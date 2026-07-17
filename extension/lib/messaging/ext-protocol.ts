@@ -293,7 +293,7 @@ export interface MessageResponseMap {
   "unlock.extPrf.start": { credentialIdB64url: string; prfSaltB64: string } | { notEnrolled: true };
   "unlock.extPrf.finish": ExtUnlockResult;
   "config.get": { baseUrl: string } | null;
-  "config.set": { ok: true } | { ok: false; error: "invalid-url" | "unreachable" };
+  "config.set": { ok: true } | { ok: false; error: "invalid-url" | "unreachable" | "cors-blocked" };
   "autofill.match": AutofillMatchResult;
   "autofill.fill":
     | { ok: true }

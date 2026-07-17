@@ -132,6 +132,18 @@ export const DICTIONARY = {
     pl: "Nie można połączyć z tym serwerem. Sprawdź adres i upewnij się, że działa.",
     en: "Can't reach that server. Check the address and make sure it's running.",
   },
+  // D-11 (13-05-PLAN.md): distinct from config.unreachable above -- the
+  // server DID answer, it just hasn't allowlisted this extension's origin
+  // for CORS yet. Must literally name PV_EXTENSION_ORIGINS (grep-verified)
+  // and must NOT claim the server is unreachable.
+  "config.corsBlocked": {
+    pl: "Serwer odpowiedział, ale odrzucił origin tego rozszerzenia (CORS). Dodaj poniższy adres do PV_EXTENSION_ORIGINS na serwerze.",
+    en: "The server answered, but rejected this extension's origin (CORS). Add the address below to PV_EXTENSION_ORIGINS on your server.",
+  },
+  "config.corsBlockedOriginLabel": {
+    pl: "Origin tego rozszerzenia:",
+    en: "This extension's origin:",
+  },
   // EXT-05's "editable later" clause (09-VERIFICATION.md gap 1): the
   // discreet re-entry affordance on the UNLOCK view -- where a user with a
   // wrong/moved server is actually stuck. Deliberately NOT in the list-view

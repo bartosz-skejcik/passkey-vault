@@ -16,6 +16,14 @@ import { InvalidServerUrlError, normalizeServerUrl } from "../../lib/server-url"
 // see that file's header for the user-gesture rationale).
 export { InvalidServerUrlError, normalizeServerUrl };
 export class ServerUnreachableError extends Error {}
+// D-11 (13-05-PLAN.md): thrown instead of ServerUnreachableError when the
+// server answered (TCP/TLS connection succeeds) but rejected this
+// extension's origin at the CORS layer -- distinct from a genuinely
+// unreachable server so ServerConfigView can render an actionable message
+// naming PV_EXTENSION_ORIGINS instead of a dead-end "can't reach that
+// server" for a Firefox self-hoster who hasn't allowlisted their
+// moz-extension://<uuid> origin yet.
+export class ServerCorsBlockedError extends Error {}
 
 export interface ServerConfig {
   /** Normalized: lowercased scheme+host, no trailing slash, http(s) only. */
@@ -54,6 +62,49 @@ export async function probeServerHealth(baseUrl: string): Promise<boolean> {
   }
 }
 
+export type HealthProbeResult = "ok" | "cors-blocked" | "unreachable";
+
+/**
+ * D-11 (13-05-PLAN.md): a detailed sibling of `probeServerHealth` that
+ * distinguishes a CORS-blocked-but-reachable server from a genuinely
+ * unreachable one. The plain `fetch(`${baseUrl}/healthz`)` above cannot
+ * make this distinction on its own -- a CORS rejection surfaces as the
+ * exact same opaque `TypeError` a DNS failure or connection-refused error
+ * would, with no inspectable status/headers.
+ *
+ * The disambiguation trick: retry with `{ mode: "no-cors" }`. A no-cors
+ * request still requires the browser to actually open the TCP/TLS
+ * connection and get a response -- it just refuses to expose the response
+ * body/headers to script, resolving with an opaque `Response` whose
+ * `type === "opaque"`. So:
+ *   - First fetch throws, no-cors retry resolves opaque -> the server IS
+ *     up, it just didn't CORS-allowlist this origin -> "cors-blocked".
+ *   - First fetch throws, no-cors retry ALSO throws -> the server truly
+ *     isn't reachable (DNS/connection-refused) -> "unreachable".
+ *   - First fetch resolves (whether or not it's the exact {status:"ok"}
+ *     body `probeServerHealth` requires) -> not a CORS story at all;
+ *     treated as "ok"/"unreachable" the same way `probeServerHealth` does.
+ */
+export async function probeServerHealthDetailed(baseUrl: string): Promise<HealthProbeResult> {
+  try {
+    const response = await fetch(`${baseUrl}/healthz`);
+    if (!response.ok) {
+      return "unreachable";
+    }
+    const body: unknown = await response.json();
+    const ok =
+      typeof body === "object" && body !== null && (body as { status?: unknown }).status === "ok";
+    return ok ? "ok" : "unreachable";
+  } catch {
+    try {
+      const opaque = await fetch(`${baseUrl}/healthz`, { mode: "no-cors" });
+      return opaque.type === "opaque" ? "cors-blocked" : "unreachable";
+    } catch {
+      return "unreachable";
+    }
+  }
+}
+
 /**
  * Validates, probes, and persists a new pv-server base URL. Rejects with
  * `InvalidServerUrlError` (no I/O performed at all) or
@@ -76,8 +127,13 @@ export async function probeServerHealth(baseUrl: string): Promise<boolean> {
 export async function configureServer(rawUrl: string): Promise<ServerConfig> {
   const normalizedBaseUrl = normalizeServerUrl(rawUrl);
 
-  const healthy = await probeServerHealth(normalizedBaseUrl);
-  if (!healthy) {
+  const probeResult = await probeServerHealthDetailed(normalizedBaseUrl);
+  if (probeResult === "cors-blocked") {
+    throw new ServerCorsBlockedError(
+      `pv-server at ${normalizedBaseUrl} answered but rejected this extension's origin (CORS)`,
+    );
+  }
+  if (probeResult !== "ok") {
     throw new ServerUnreachableError(
       `No pv-server responded at ${normalizedBaseUrl}/healthz`,
     );

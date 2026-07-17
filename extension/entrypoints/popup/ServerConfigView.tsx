@@ -47,6 +47,22 @@ import { t, type Locale } from "../../lib/i18n/dictionary";
  * config.set (which probes /healthz) -> persist. A reconfigure can no more
  * save an unreachable server than a first run can.
  */
+/**
+ * D-11: the extension's own origin for the CORS-blocked message's copyable
+ * text (`chrome-extension://<id>` on Chrome, `moz-extension://<uuid>` on
+ * Firefox) -- exactly the value an operator needs to add to
+ * PV_EXTENSION_ORIGINS. Deliberately NOT `new URL(...).origin`: mirrors
+ * frame-guard.ts's `assertPopupSender()` precedent -- chrome-extension://
+ * and moz-extension:// are non-special schemes for WHATWG URL, so `.origin`
+ * degrades to the literal string "null" outside a real browser's own
+ * parser (Node/vitest), a runtime-vs-test divergence trap this string-slice
+ * approach avoids entirely.
+ */
+function ownExtensionOrigin(): string {
+  const ownBase = browser.runtime.getURL(""); // "chrome-extension://<id>/" or "moz-extension://<uuid>/"
+  return ownBase.endsWith("/") ? ownBase.slice(0, -1) : ownBase;
+}
+
 export default function ServerConfigView({
   locale,
   onConfigured,
@@ -60,7 +76,7 @@ export default function ServerConfigView({
 }) {
   const [rawUrl, setRawUrl] = useState(initialUrl);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<"invalid-url" | "unreachable" | null>(null);
+  const [error, setError] = useState<"invalid-url" | "unreachable" | "cors-blocked" | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -124,7 +140,15 @@ export default function ServerConfigView({
           />
         </div>
 
-        {error !== null ? (
+        {error === "cors-blocked" ? (
+          <div className="alert alert-error flex flex-col items-start gap-1 text-sm">
+            <span>{t(locale, "config.corsBlocked")}</span>
+            <span className="text-xs">{t(locale, "config.corsBlockedOriginLabel")}</span>
+            <code className="select-all break-all rounded bg-base-200 px-1 py-0.5 text-xs">
+              {ownExtensionOrigin()}
+            </code>
+          </div>
+        ) : error !== null ? (
           <div className="alert alert-error text-sm">
             {t(locale, error === "invalid-url" ? "config.invalidUrl" : "config.unreachable")}
           </div>
