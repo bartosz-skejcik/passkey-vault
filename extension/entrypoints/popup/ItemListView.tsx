@@ -359,13 +359,13 @@ export default function ItemListView({
               {restResults.length > 0 || trimmedQuery !== "" ? (
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center justify-between gap-2">
-                    <h2 className="text-xs font-medium text-base-content/60">
+                    <h2 className="text-sm font-medium text-base-content/60 whitespace-nowrap">
                       {t(locale, "vault.allItemsHeading")}
                     </h2>
                     <select
                       aria-label={t(locale, "sort.label")}
                       data-testid="popup-sort-select"
-                      className="select select-bordered select-xs"
+                      className="select select-bordered select-sm shrink-0"
                       value={sortOption}
                       onChange={(e) => void handleSortChange(e.target.value as SortOption)}
                     >
