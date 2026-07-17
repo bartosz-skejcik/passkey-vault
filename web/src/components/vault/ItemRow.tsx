@@ -101,9 +101,20 @@ export default function ItemRow({
         e.stopPropagation();
         setMenuOpen(true);
       }}
+      // Bottom edge (bug: Bartek live-review, screenshot-verified): the
+      // gray line under a selected row previously came ENTIRELY from the
+      // *next* row's divide-y top border (ItemList's `divide-y`), so a
+      // selected row with no following sibling — the sole item in a
+      // 1-item list, or the last row of any longer list — rendered with
+      // no bottom edge at all. `last:border-b last:border-base-300` makes
+      // the row own its bottom edge whenever it IS the last child, using
+      // the exact color/width divide-y already uses for every other
+      // boundary. It only ever applies on `:last-child`, so a selected
+      // row with a following sibling still gets its sole bottom line from
+      // that sibling's divide-y top border — no double-border artifact.
       className={`group flex h-16 w-full items-center gap-2 px-4 transition-colors ${
         selected
-          ? "border-l-2 border-primary bg-primary/[0.08]"
+          ? "border-l-2 border-primary bg-primary/[0.08] last:border-b last:border-base-300"
           : "border-l-2 border-transparent hover:bg-base-content/[0.06]"
       }`}
     >

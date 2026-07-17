@@ -109,4 +109,41 @@ describe("ItemList", () => {
     fireEvent.click(screen.getByTestId("context-menu-edit"));
     expect(onEditRequest).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }));
   });
+
+  // Bug fix (Bartek live-review, screenshot-verified): the selected row's
+  // outline lost its bottom edge whenever it had no following sibling —
+  // reproduced most simply with a 1-item list, but equally true for the
+  // last row of any longer list, since the edge previously came from the
+  // *next* row's divide-y top border. Each of these covers a distinct
+  // position (solo/last-of-one, first-of-many, last-of-many) to lock in
+  // that the fix is position-independent.
+  it("gives the selected row its own last-child bottom border when it's the only item in the list", () => {
+    mockUseVaultItems.mockReturnValue([loginItem("1")]);
+    render(<ItemList searchQuery="" selectedItemId="1" onSelect={vi.fn()} />);
+    const className = screen.getByTestId("item-row-1").className;
+    expect(className).toContain("last:border-b");
+    expect(className).toContain("last:border-base-300");
+  });
+
+  it("gives the selected row its own last-child bottom border when it's the last of several items", () => {
+    mockUseVaultItems.mockReturnValue([loginItem("1"), noteItem("2")]);
+    render(<ItemList searchQuery="" selectedItemId="2" onSelect={vi.fn()} />);
+    const className = screen.getByTestId("item-row-2").className;
+    expect(className).toContain("last:border-b");
+    expect(className).toContain("last:border-base-300");
+  });
+
+  it("does not duplicate the bottom border on a selected row that has a following sibling (avoids a double-border artifact)", () => {
+    mockUseVaultItems.mockReturnValue([loginItem("1"), noteItem("2")]);
+    render(<ItemList searchQuery="" selectedItemId="1" onSelect={vi.fn()} />);
+    // Row 1 is selected but not last-child: it must rely on row 2's
+    // divide-y top border for its bottom edge, not add its own — the
+    // `last:` variant is present in markup (CSS decides applicability)
+    // but the underlying list container must still own the shared
+    // divide-y separator so exactly one line renders at that boundary.
+    expect(screen.getByTestId("item-row-1").className).toContain("last:border-b");
+    const list = screen.getByTestId("item-row-1").parentElement;
+    expect(list?.className).toContain("divide-y");
+    expect(list?.className).toContain("divide-base-300");
+  });
 });

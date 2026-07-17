@@ -187,6 +187,27 @@ describe("ItemRow", () => {
     expect(screen.getByTestId("item-row-item-1").className).toContain("border-primary");
   });
 
+  // Bug fix (Bartek live-review, screenshot-verified): a selected row's
+  // bottom edge previously came entirely from the *next* row's divide-y
+  // top border in ItemList, so a selected row with no following sibling
+  // (the sole item in a 1-item list, or the last row of any list) had no
+  // bottom edge at all. The row must now own its bottom edge via
+  // `last:border-b` whenever selected, so it renders identically
+  // regardless of position/list length — see ItemList.test.tsx for the
+  // integration-level assertion across 1-item and multi-item lists.
+  it("carries a self-contained last-child bottom-border class when selected, independent of siblings", () => {
+    render(<ItemRow item={loginItem()} selected onClick={vi.fn()} />);
+    const className = screen.getByTestId("item-row-item-1").className;
+    expect(className).toContain("last:border-b");
+    expect(className).toContain("last:border-base-300");
+  });
+
+  it("does not carry the self-contained bottom-border class when unselected", () => {
+    render(<ItemRow item={loginItem()} selected={false} onClick={vi.fn()} />);
+    const className = screen.getByTestId("item-row-item-1").className;
+    expect(className).not.toContain("last:border-b");
+  });
+
   it("renders the formatted relative time in the trailing column when item.updatedAt is set", () => {
     const recentIso = new Date(Date.now() - 5000).toISOString();
     const item = { ...loginItem(), updatedAt: recentIso };
