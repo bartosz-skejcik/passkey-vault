@@ -9,6 +9,7 @@ import AuthCard from "@/components/auth/AuthCard";
 import RegisterForm from "@/components/auth/RegisterForm";
 import LoginForm from "@/components/auth/LoginForm";
 import UnlockOverlay from "@/components/auth/UnlockOverlay";
+import ExtUnlockBridge from "@/components/auth/ExtUnlockBridge";
 import ItemList from "@/components/vault/ItemList";
 import DetailPanel from "@/components/vault/DetailPanel";
 import TypePicker from "@/components/vault/TypePicker";
@@ -103,6 +104,18 @@ export default function Home() {
       return { kind: "new-item", type };
     }
     return null;
+  });
+  // Plan 13-06: the extension opens a small popup window at
+  // `?pv-ext-unlock=<nonce>` (a DIFFERENT flow from the popup's `?panel=`/
+  // `?action=` deep links above -- read once at mount, same idiom). When
+  // present, ExtUnlockBridge takes over the ENTIRE page below, bypassing the
+  // normal authed/register/vault flow -- it does not require the web app's
+  // own vault to be unlocked (or even the popup register/login flow to have
+  // been reached yet beyond having a session token), and it must never
+  // mount the vault-data component tree.
+  const [extUnlockNonce] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("pv-ext-unlock");
   });
   const items = useVaultItems();
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
@@ -216,6 +229,10 @@ export default function Home() {
   // so this is safe to keep running unconditionally rather than gating it
   // on `unlocked` — no extra branch, no risk of double-locking.
   useIdleTimer(autolockMinutes * 60_000, lockVault);
+
+  if (extUnlockNonce !== null) {
+    return <ExtUnlockBridge nonce={extUnlockNonce} />;
+  }
 
   if (authed === null) {
     return null;

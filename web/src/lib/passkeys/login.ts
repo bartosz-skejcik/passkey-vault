@@ -148,15 +148,37 @@ export async function passkeyLogin(
 }
 
 /**
- * SessionUser-gated vault unlock via a PRF-capable passkey (AUTH-04/09). No
- * `email` argument — the ceremony is scoped server-side to the
- * already-authenticated user's `prf_capable` credentials only. Unlike
- * `passkeyLogin`, a PRF success here unwraps the User Key directly — there
- * is no session-gate to cross, so no `pendingUnlock` indirection is needed.
+ * Result of the CEREMONY HALF only (start -> get() -> finish) of the
+ * SessionUser-gated PRF unlock -- deliberately stops short of unwrapping the
+ * User Key. Plan 13-06's `web/src/components/auth/ExtUnlockBridge.tsx` needs
+ * exactly this half (it must NEVER call `unwrapUserKey`/`setUnlockedUserKey`
+ * itself -- the extension background is the sole unwrap anchor for that
+ * flow); `passkeyUnlock` below is `passkeyUnlockCeremony` plus the local
+ * unwrap-and-set finish, unchanged in observable behavior from before this
+ * refactor.
+ *
+ * `prfBytes`/`prfWrappedUk` are BOTH present only on a genuine PRF success;
+ * every other outcome (no PRF-capable passkeys, cancelled, PRF result
+ * absent) leaves them `undefined` and the two boolean flags say why.
  */
-export async function passkeyUnlock(
+export interface PasskeyUnlockCeremonyResult {
+  prfUnavailable: boolean;
+  cancelled: boolean;
+  prfBytes?: ArrayBuffer;
+  prfWrappedUk?: string;
+}
+
+/**
+ * SessionUser-gated vault-unlock CEREMONY (AUTH-04/09) — no `email`
+ * argument, the ceremony is scoped server-side to the already-authenticated
+ * user's `prf_capable` credentials only. Runs `unlockStart -> get() ->
+ * unlockFinish` and returns the raw PRF bytes + `prf_wrapped_uk` blob on
+ * success WITHOUT unwrapping or unlocking anything — callers that need the
+ * full local unlock use `passkeyUnlock` below, which wraps this.
+ */
+export async function passkeyUnlockCeremony(
   onStep?: (step: LoginStep) => void,
-): Promise<{ prfUnavailable: boolean; cancelled: boolean }> {
+): Promise<PasskeyUnlockCeremonyResult> {
   onStep?.("start");
   let start: Awaited<ReturnType<typeof unlockStart>>;
   try {
@@ -200,16 +222,13 @@ export async function passkeyUnlock(
   if (finish.prf_wrapped_uk !== null) {
     const prfBytes = extractPrfBytes(assertion);
     if (prfBytes !== undefined) {
-      const prfArray = new Uint8Array(prfBytes);
-      const wrappingKey = WasmWrappingKey.fromPrf(prfArray); // zeroizes prfArray as a side effect
-      try {
-        const uk = unwrapUserKey(wrappingKey, finish.prf_wrapped_uk);
-        setUnlockedUserKey(uk);
-      } finally {
-        wrappingKey.free?.();
-      }
       onStep?.("success");
-      return { prfUnavailable: false, cancelled: false };
+      return {
+        prfUnavailable: false,
+        cancelled: false,
+        prfBytes,
+        prfWrappedUk: finish.prf_wrapped_uk,
+      };
     }
   }
 
@@ -218,4 +237,29 @@ export async function passkeyUnlock(
   // as passkeyLogin applies if the extension silently didn't report.
   onStep?.("success");
   return { prfUnavailable: true, cancelled: false };
+}
+
+/**
+ * SessionUser-gated vault unlock via a PRF-capable passkey (AUTH-04/09). A
+ * thin wrapper over `passkeyUnlockCeremony` above: unlike `passkeyLogin`, a
+ * PRF success here unwraps the User Key directly — there is no session-gate
+ * to cross, so no `pendingUnlock` indirection is needed.
+ */
+export async function passkeyUnlock(
+  onStep?: (step: LoginStep) => void,
+): Promise<{ prfUnavailable: boolean; cancelled: boolean }> {
+  const result = await passkeyUnlockCeremony(onStep);
+
+  if (result.prfBytes !== undefined && result.prfWrappedUk !== undefined) {
+    const prfArray = new Uint8Array(result.prfBytes);
+    const wrappingKey = WasmWrappingKey.fromPrf(prfArray); // zeroizes prfArray as a side effect
+    try {
+      const uk = unwrapUserKey(wrappingKey, result.prfWrappedUk);
+      setUnlockedUserKey(uk);
+    } finally {
+      wrappingKey.free?.();
+    }
+  }
+
+  return { prfUnavailable: result.prfUnavailable, cancelled: result.cancelled };
 }

@@ -78,6 +78,44 @@ export const DICTIONARY = {
     en: "Couldn't use your passkey. Try again — or use your password below.",
   },
 
+  // Plan 13-06: ExtUnlockBridge.tsx — a small server-origin surface the
+  // extension opens (`?pv-ext-unlock=<nonce>`) so a Firefox (or Chrome)
+  // extension user can run the SAME server-rpId PRF ceremony as the web
+  // app's own unlock, without unlocking the web app itself (D-03 tone).
+  "extUnlock.heading": {
+    pl: "Odblokuj rozszerzenie",
+    en: "Unlock the extension",
+  },
+  "extUnlock.explainer": {
+    pl: "Twoje rozszerzenie Passkey Vault potrzebuje jednego dotknięcia passkeyem, żeby się odblokować.",
+    en: "Your Passkey Vault extension needs one passkey tap to unlock.",
+  },
+  "extUnlock.cta": { pl: "Odblokuj rozszerzenie", en: "Unlock the extension" },
+  "extUnlock.busy": {
+    pl: "Potwierdź w przeglądarce lub na urządzeniu…",
+    en: "Confirm in your browser or on your device…",
+  },
+  "extUnlock.success": {
+    pl: "Gotowe — to okno zaraz się zamknie.",
+    en: "Done — this window will close shortly.",
+  },
+  "extUnlock.noPasskeys": {
+    pl: "To konto nie ma jeszcze passkeya po stronie serwera — dodaj go w Ustawieniach sejfu.",
+    en: "This account has no server-side passkey yet — add one in your vault's Settings.",
+  },
+  "extUnlock.noPasskeysSettingsLink": {
+    pl: "Otwórz Ustawienia",
+    en: "Open Settings",
+  },
+  "extUnlock.failed": {
+    pl: "Nie udało się odblokować rozszerzenia. Możesz zamknąć to okno i spróbować ponownie.",
+    en: "Couldn't unlock the extension. You can close this window and try again.",
+  },
+  "extUnlock.notSignedIn": {
+    pl: "Zaloguj się najpierw do swojego sejfu w tej przeglądarce, a potem spróbuj ponownie z rozszerzenia.",
+    en: "Sign in to your vault in this browser first, then try again from the extension.",
+  },
+
   "vault.emptyHeading": { pl: "Vault jeszcze pusty", en: "Your vault is empty" },
   "vault.emptyBody": {
     pl: "Dodaj pierwszy item — hasło, kartę albo notatkę 👇",
