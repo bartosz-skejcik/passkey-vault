@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Check, Copy, Eye, EyeOff, KeyRound, Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import type { ItemFields, VaultItem } from "@/lib/vault/types";
-import { RevisionConflictError, useFolders } from "@/lib/vault/store";
+import { RevisionConflictError, touchVaultItem, useFolders } from "@/lib/vault/store";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
 import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
@@ -143,6 +143,11 @@ export default function DetailPanel({
         next.delete(key);
       } else {
         next.add(key);
+        // Revealing a masked secret (password/card number/CVV/TOTP secret)
+        // is a "use" of the item, same as copying it — never fired when
+        // re-hiding, and never on mere viewing (T&C: single choke-point
+        // through touchVaultItem, fire-and-forget).
+        touchVaultItem(item.id);
       }
       return next;
     });
@@ -173,6 +178,11 @@ export default function DetailPanel({
     const seconds = readClipboardSeconds();
     copyWithAutoClear(value, seconds * 1000);
     showCopyToast(fieldLabelFor(fieldKey), seconds * 1000);
+    // Single choke-point for every copy affordance in this panel (login
+    // password, TOTP code, card number/CVV, identity fields, passkey
+    // fields, ...) — see touchVaultItem's own doc comment for the
+    // fire-and-forget/never-blocks contract.
+    touchVaultItem(item.id);
     setCopiedKey(testidSuffix);
     setTimeout(
       () => setCopiedKey((current) => (current === testidSuffix ? null : current)),

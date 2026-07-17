@@ -131,6 +131,13 @@ export interface VaultItem {
   // several existing hand-built VaultItem test fixtures across the codebase
   // construct this type without it; ItemRow.tsx renders nothing when unset.
   updatedAt?: string;
+  // NordPass-style per-item last-used tracking (quick-260717): set only by
+  // a successful POST .../touch (never by create/update/list themselves),
+  // `undefined` meaning "never used" — sinks to the bottom of a
+  // last-used-desc sort (lib/vault/sort.ts). Optional for the same reason
+  // `updatedAt` is: existing hand-built test fixtures construct this type
+  // without it.
+  lastUsedAt?: string;
 }
 
 export interface Folder {

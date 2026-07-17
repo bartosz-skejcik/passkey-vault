@@ -30,6 +30,7 @@ import {
 import { useVaultItems } from "@/lib/vault/store";
 import { wasRemotelyDeleted } from "@/lib/vault/remoteDelete";
 import { showErrorToast } from "@/lib/vault/errorToast";
+import { readSortPreference, writeSortPreference, type SortOption } from "@/lib/vault/sort";
 import type { ItemType, VaultFilter, VaultItem } from "@/lib/vault/types";
 
 // Post-UAT (Bartek 2026-07-15): the popup's in-popup type menu passes its
@@ -73,6 +74,14 @@ export default function Home() {
   const [creating, setCreating] = useState(false);
   const [creatingType, setCreatingType] = useState<ItemType | null>(null);
   const [filter, setFilter] = useState<VaultFilter>({ kind: "all" });
+  // NordPass-style last-used sort control (quick-260717) — persisted in
+  // localStorage (lib/vault/sort.ts), read once at mount; `readSortPreference`
+  // itself tolerates a window-less environment and defaults to "lastUsed".
+  const [sortBy, setSortBy] = useState<SortOption>(() => readSortPreference());
+  function handleSortChange(next: SortOption) {
+    setSortBy(next);
+    writeSortPreference(next);
+  }
   // Settings (UI-05) shares the same z-40 drawer + z-30 scrim slot as the
   // vault item panels below — they're mutually exclusive, not stacked.
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -251,10 +260,16 @@ export default function Home() {
                 fix) rather than rendering as a flex sibling that narrowed
                 the list. */}
             <div className="relative flex flex-1 overflow-hidden">
-              <MainColumn showEmptyState={items.length === 0 && !creating} filter={filter}>
+              <MainColumn
+                showEmptyState={items.length === 0 && !creating}
+                filter={filter}
+                sortBy={sortBy}
+                onSortChange={handleSortChange}
+              >
                 <ItemList
                   searchQuery={searchQuery}
                   filter={filter}
+                  sortBy={sortBy}
                   selectedItemId={selectedItem?.id ?? null}
                   onSelect={handleSelectItem}
                   onEditRequest={handleEditRequest}

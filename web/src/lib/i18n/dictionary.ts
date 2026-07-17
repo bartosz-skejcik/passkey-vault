@@ -90,6 +90,12 @@ export const DICTIONARY = {
   // dedicated template key.
   "vault.tagFilterHeading": { pl: "Tag: {tag}", en: "Tag: {tag}" },
 
+  // Per-item last-used tracking sort control (quick-260717, NordPass-style)
+  // — sits in the header area next to the dynamic heading above.
+  "sort.label": { pl: "Sortuj", en: "Sort" },
+  "sort.lastUsed": { pl: "Ostatnio używane", en: "Last used" },
+  "sort.name": { pl: "Nazwa", en: "Name" },
+
   "item.typePicker": { pl: "Wybierz typ itemu", en: "Choose item type" },
   "item.save": { pl: "Zapisz item", en: "Save item" },
   "item.edit": { pl: "Edytuj item", en: "Edit item" },

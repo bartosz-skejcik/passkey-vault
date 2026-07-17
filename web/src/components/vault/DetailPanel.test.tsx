@@ -9,6 +9,7 @@ const {
   mockUpdateVaultItem,
   mockDeleteVaultItem,
   mockTotpNow,
+  mockTouchVaultItem,
   MockRevisionConflictError,
 } = vi.hoisted(() => ({
   mockUseFolders: vi.fn(),
@@ -18,6 +19,7 @@ const {
   mockUpdateVaultItem: vi.fn(),
   mockDeleteVaultItem: vi.fn(),
   mockTotpNow: vi.fn(),
+  mockTouchVaultItem: vi.fn(),
   // vi.mock factories are hoisted above the rest of the file — any value
   // they reference (like this error class) must be created inside
   // vi.hoisted() too, or it's a "Cannot access before initialization" ReferenceError.
@@ -31,6 +33,7 @@ vi.mock("@/lib/vault/store", () => ({
   createVaultFolder: mockCreateVaultFolder,
   updateVaultItem: mockUpdateVaultItem,
   deleteVaultItem: mockDeleteVaultItem,
+  touchVaultItem: mockTouchVaultItem,
   RevisionConflictError: MockRevisionConflictError,
 }));
 
@@ -134,6 +137,15 @@ beforeEach(() => {
   mockUseFolders.mockReturnValue([]);
   mockUseAllTags.mockReturnValue([]);
   mockTotpNow.mockReturnValue({ code: "654321", secondsRemaining: 15 });
+  // jsdom has no real Clipboard API — copyWithAutoClear (lib/clipboard.ts)
+  // calls navigator.clipboard.writeText unconditionally, which is
+  // `undefined` here without this stub. Needed for the copy-button touch
+  // tests below, which are the first tests in this file to actually click
+  // a copy button (prior tests only exercised reveal toggles).
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: vi.fn() },
+    configurable: true,
+  });
 });
 
 describe("DetailPanel", () => {
@@ -194,6 +206,31 @@ describe("DetailPanel", () => {
     fireEvent.click(screen.getByTestId("reveal-password"));
 
     expect(screen.queryByText("hunter2")).not.toBeInTheDocument();
+  });
+
+  // NordPass-style last-used tracking (quick-260717): revealing fires a
+  // touch, re-hiding does not (never re-touch on a "hide" click) — single
+  // choke-point through touchVaultItem, fire-and-forget.
+  it("touches the item when a masked field is revealed, but not when it is re-hidden", () => {
+    render(<DetailPanel item={loginItem} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("reveal-password"));
+    expect(mockTouchVaultItem).toHaveBeenCalledTimes(1);
+    expect(mockTouchVaultItem).toHaveBeenCalledWith(loginItem.id);
+
+    fireEvent.click(screen.getByTestId("reveal-password"));
+    expect(mockTouchVaultItem).toHaveBeenCalledTimes(1);
+  });
+
+  // Copy is the other touch-point — every copy affordance in this panel
+  // routes through the same handleCopy choke-point.
+  it("touches the item when a field's copy button is clicked", () => {
+    render(<DetailPanel item={loginItem} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("copy-username"));
+
+    expect(mockTouchVaultItem).toHaveBeenCalledTimes(1);
+    expect(mockTouchVaultItem).toHaveBeenCalledWith(loginItem.id);
   });
 
   it("masks a card item's number by default and reveals it independently from other fields", () => {

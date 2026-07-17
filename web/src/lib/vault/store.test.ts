@@ -16,6 +16,7 @@ const {
   mockUpdateItem,
   mockDeleteItem,
   mockDeleteFolder,
+  mockTouchItem,
   mockStartSync,
   mockStopSync,
 } = vi.hoisted(() => ({
@@ -30,6 +31,7 @@ const {
   mockUpdateItem: vi.fn(),
   mockDeleteItem: vi.fn(),
   mockDeleteFolder: vi.fn(),
+  mockTouchItem: vi.fn(),
   mockStartSync: vi.fn(),
   mockStopSync: vi.fn(),
 }));
@@ -49,6 +51,7 @@ vi.mock("./api", () => ({
   updateItem: mockUpdateItem,
   deleteItem: mockDeleteItem,
   deleteFolder: mockDeleteFolder,
+  touchItem: mockTouchItem,
 }));
 
 vi.mock("./sync", () => ({
@@ -244,32 +247,48 @@ describe("lock/unlock subscription behavior", () => {
   });
 });
 
+/** Unlocks the vault with an initial two-item snapshot and returns the
+ * sync callbacks startSync received, ready for onSnapshot-driven merges.
+ * Module-scoped (not just applySyncSnapshot's own describe block) — the
+ * touchVaultItem tests below also need a populated in-memory store. */
+async function unlockWithTwoItems() {
+  mockGetUnlockedUserKey.mockReturnValue({});
+  mockGetSyncSnapshot.mockResolvedValue({
+    revision: 2,
+    items: [
+      {
+        id: "item-1",
+        enc_key: "{}",
+        enc_data: "{}",
+        revision: 1,
+        updated_at: "2026-07-14 12:00:00",
+        last_used_at: null,
+      },
+      {
+        id: "item-2",
+        enc_key: "{}",
+        enc_data: "{}",
+        revision: 1,
+        updated_at: "2026-07-14 12:00:00",
+        last_used_at: null,
+      },
+    ],
+    folders: [],
+  });
+  mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
+
+  const { store, lockListener } = await importStoreAndGetLockListener();
+  mockIsUnlocked.mockReturnValue(true);
+  await act(async () => {
+    lockListener();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(store.getItems()).toHaveLength(2);
+  return { store, callbacks: getSyncCallbacks() };
+}
+
 describe("applySyncSnapshot (background sync merge)", () => {
-  /** Unlocks the vault with an initial two-item snapshot and returns the
-   * sync callbacks startSync received, ready for onSnapshot-driven merges. */
-  async function unlockWithTwoItems() {
-    mockGetUnlockedUserKey.mockReturnValue({});
-    mockGetSyncSnapshot.mockResolvedValue({
-      revision: 2,
-      items: [
-        { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, updated_at: "2026-07-14 12:00:00" },
-        { id: "item-2", enc_key: "{}", enc_data: "{}", revision: 1, updated_at: "2026-07-14 12:00:00" },
-      ],
-      folders: [],
-    });
-    mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
-
-    const { store, lockListener } = await importStoreAndGetLockListener();
-    mockIsUnlocked.mockReturnValue(true);
-    await act(async () => {
-      lockListener();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(store.getItems()).toHaveLength(2);
-    return { store, callbacks: getSyncCallbacks() };
-  }
-
   it("merges a stale snapshot by replacing items wholesale, dropping any id absent from the new array", async () => {
     const { store, callbacks } = await unlockWithTwoItems();
 
@@ -278,7 +297,14 @@ describe("applySyncSnapshot (background sync merge)", () => {
     const staleSnapshot: SyncSnapshot = {
       revision: 3,
       items: [
-        { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, updated_at: "2026-07-14 12:00:00" },
+        {
+          id: "item-1",
+          enc_key: "{}",
+          enc_data: "{}",
+          revision: 1,
+          updated_at: "2026-07-14 12:00:00",
+          last_used_at: null,
+        },
       ],
       folders: [],
     };
@@ -321,8 +347,22 @@ describe("applySyncSnapshot (background sync merge)", () => {
       callbacks.onSnapshot({
         revision: 4,
         items: [
-          { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, updated_at: "2026-07-14 12:00:00" },
-          { id: "item-2", enc_key: "{}", enc_data: "{}", revision: 2, updated_at: "2026-07-14 12:00:00" },
+          {
+            id: "item-1",
+            enc_key: "{}",
+            enc_data: "{}",
+            revision: 1,
+            updated_at: "2026-07-14 12:00:00",
+            last_used_at: null,
+          },
+          {
+            id: "item-2",
+            enc_key: "{}",
+            enc_data: "{}",
+            revision: 2,
+            updated_at: "2026-07-14 12:00:00",
+            last_used_at: null,
+          },
         ],
         folders: [],
       });
@@ -346,7 +386,14 @@ describe("applySyncSnapshot (background sync merge)", () => {
       callbacks.onSnapshot({
         revision: 9,
         items: [
-          { id: "item-3", enc_key: "{}", enc_data: "{}", revision: 1, updated_at: "2026-07-14 12:00:00" },
+          {
+            id: "item-3",
+            enc_key: "{}",
+            enc_data: "{}",
+            revision: 1,
+            updated_at: "2026-07-14 12:00:00",
+            last_used_at: null,
+          },
         ],
         folders: [],
       });
@@ -354,6 +401,55 @@ describe("applySyncSnapshot (background sync merge)", () => {
 
     expect(mockDecryptItem).not.toHaveBeenCalled();
     expect(store.getItems().map((item) => item.id)).toEqual(["item-1", "item-2"]);
+  });
+});
+
+// NordPass-style last-used tracking (quick-260717): the single fire-and-
+// forget choke-point every copy/reveal/fill/ceremony call site goes through.
+describe("touchVaultItem", () => {
+  it("calls the touch endpoint and optimistically updates the item's lastUsedAt on success", async () => {
+    const { store } = await unlockWithTwoItems();
+    mockTouchItem.mockResolvedValue({ last_used_at: "2026-07-17 09:00:00" });
+
+    await act(async () => {
+      store.touchVaultItem("item-1");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockTouchItem).toHaveBeenCalledWith("item-1");
+    const item = store.getItems().find((i) => i.id === "item-1");
+    expect(item?.lastUsedAt).toBe("2026-07-17 09:00:00");
+    // The untouched sibling item is unaffected.
+    const other = store.getItems().find((i) => i.id === "item-2");
+    expect(other?.lastUsedAt).toBeUndefined();
+  });
+
+  it("never throws and leaves lastUsedAt unset when the touch request fails (fire-and-forget)", async () => {
+    const { store } = await unlockWithTwoItems();
+    mockTouchItem.mockRejectedValue(new Error("offline"));
+
+    expect(() => store.touchVaultItem("item-1")).not.toThrow();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const item = store.getItems().find((i) => i.id === "item-1");
+    expect(item?.lastUsedAt).toBeUndefined();
+  });
+
+  it("is a safe no-op when the touched id is no longer in the in-memory store", async () => {
+    const { store } = await unlockWithTwoItems();
+    mockTouchItem.mockResolvedValue({ last_used_at: "2026-07-17 09:00:00" });
+
+    await act(async () => {
+      store.touchVaultItem("some-other-id-never-in-store");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(store.getItems().map((i) => i.id)).toEqual(["item-1", "item-2"]);
   });
 });
 

@@ -5,6 +5,7 @@ import { useLocale } from "@/lib/i18n/LocaleContext";
 import { useFolders } from "@/lib/vault/store";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { ITEM_TYPE_LABEL_KEY } from "@/lib/vault/itemTypeLabels";
+import { DEFAULT_SORT, type SortOption } from "@/lib/vault/sort";
 import type { VaultFilter } from "@/lib/vault/types";
 
 /** Bartek live-review round 3 (TASK 1): the heading above the item list
@@ -37,6 +38,8 @@ export default function MainColumn({
   children,
   showEmptyState = true,
   filter = { kind: "all" },
+  sortBy = DEFAULT_SORT,
+  onSortChange,
 }: {
   children: ReactNode;
   // Zero-items-ever-created Fuzzy-Bubbles empty state — distinct from
@@ -48,6 +51,13 @@ export default function MainColumn({
   // above. Defaults to "all" so any caller that hasn't wired filter state
   // through yet still renders the correct "Wszystkie"/"All" heading.
   filter?: VaultFilter;
+  // NordPass-style last-used sort control (quick-260717), rendered next to
+  // the dynamic heading — page.tsx owns/persists the actual selection
+  // (lib/vault/sort.ts). Omitted entirely (no control rendered) when
+  // `onSortChange` isn't provided, so any caller that hasn't wired sort
+  // state through yet keeps its prior heading-only layout.
+  sortBy?: SortOption;
+  onSortChange?: (next: SortOption) => void;
 }) {
   const { t } = useLocale();
   const folders = useFolders();
@@ -55,9 +65,26 @@ export default function MainColumn({
   return (
     <main className="flex-1 overflow-y-auto bg-base-300 p-4 md:p-8">
       <div className="mx-auto flex max-w-[720px] flex-col">
-        <h1 data-testid="main-column-heading" className="text-[28px] font-bold leading-[1.15]">
-          {heading}
-        </h1>
+        <div className="flex items-center justify-between gap-2">
+          <h1 data-testid="main-column-heading" className="text-[28px] font-bold leading-[1.15]">
+            {heading}
+          </h1>
+          {onSortChange ? (
+            <label className="flex shrink-0 items-center gap-2 text-sm text-base-content/70">
+              <span className="hidden sm:inline">{t("sort.label")}</span>
+              <select
+                data-testid="sort-select"
+                aria-label={t("sort.label")}
+                className="select select-bordered select-sm"
+                value={sortBy}
+                onChange={(e) => onSortChange(e.target.value as SortOption)}
+              >
+                <option value="lastUsed">{t("sort.lastUsed")}</option>
+                <option value="name">{t("sort.name")}</option>
+              </select>
+            </label>
+          ) : null}
+        </div>
 
         {showEmptyState ? (
           <div className="mt-4 flex flex-col gap-1">

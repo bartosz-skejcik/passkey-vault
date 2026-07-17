@@ -35,6 +35,7 @@ import {
   deleteFolder,
   deleteItem,
   getSyncSnapshot,
+  touchItem,
   updateItem,
   type FolderRow,
   type ItemRow,
@@ -149,7 +150,13 @@ function decryptItemRow(row: ItemRow, uk: WasmUserKey): VaultItem {
   // normalizeItemFields migrates a legacy login item's bare `url: string`
   // into `urls: string[]` — the only place that legacy shape is ever read.
   const fields = normalizeItemFields(JSON.parse(plaintext) as ItemFields);
-  return { id: row.id, revision: row.revision, fields, updatedAt: row.updated_at };
+  return {
+    id: row.id,
+    revision: row.revision,
+    fields,
+    updatedAt: row.updated_at,
+    lastUsedAt: row.last_used_at ?? undefined,
+  };
 }
 
 function decryptFolderRow(row: FolderRow, uk: WasmUserKey): Folder {
@@ -274,8 +281,19 @@ export async function updateVaultItem(
     }
     throw err;
   }
-  const updated: VaultItem = { id, revision: newRevision, fields, updatedAt: response.updated_at };
   const existingIndex = items.findIndex((item) => item.id === id);
+  // `update()`'s server route (crates/pv-server/src/routes/vault.rs) never
+  // touches `last_used_at` — carry the existing item's value forward
+  // explicitly, otherwise an edit-save would silently wipe out this item's
+  // last-used timestamp (Rule 1: this would be a real regression, since
+  // nothing about "last used" changed just because content was edited).
+  const updated: VaultItem = {
+    id,
+    revision: newRevision,
+    fields,
+    updatedAt: response.updated_at,
+    lastUsedAt: existingIndex === -1 ? undefined : items[existingIndex].lastUsedAt,
+  };
   items =
     existingIndex === -1
       ? [...items, updated]
@@ -292,6 +310,38 @@ export async function deleteVaultItem(id: string): Promise<void> {
   items = items.filter((item) => item.id !== id);
   recomputeAllTags();
   notifyListeners();
+}
+
+/**
+ * Fire-and-forget "this item's secret was just used" signal (NordPass-style
+ * last-used tracking, quick-260717). This is the SINGLE choke-point every
+ * copy/reveal/autofill/ceremony call site must go through — never call
+ * `touchItem` from `./api` directly from a component. Never awaited by
+ * callers: a failed/offline touch must NEVER break or delay the
+ * reveal/copy/fill it accompanies (catch + debug-log only, no error
+ * surfaced to the UI). Never call this for mere viewing/listing — only when
+ * a copy/reveal/fill/ceremony actually surfaces the item's secret value.
+ *
+ * On success, optimistically updates the in-memory item's `lastUsedAt` so
+ * a "last used" sort reflects the action immediately in THIS tab/session —
+ * other tabs/devices pick up the new value on their next pull/snapshot (no
+ * dedicated WS `SyncEvent` is broadcast for a touch; see
+ * crates/pv-server/src/routes/vault.rs's `touch()` doc comment for why).
+ */
+export function touchVaultItem(id: string): void {
+  void touchItem(id)
+    .then((res) => {
+      const existingIndex = items.findIndex((item) => item.id === id);
+      if (existingIndex === -1) return;
+      items = items.map((item, index) =>
+        index === existingIndex ? { ...item, lastUsedAt: res.last_used_at } : item,
+      );
+      notifyListeners();
+    })
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.debug("touchVaultItem failed (non-fatal, fire-and-forget)", id, err);
+    });
 }
 
 // useSyncExternalStore wymaga, by getServerSnapshot zwracał tę samą
