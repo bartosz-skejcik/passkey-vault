@@ -44,7 +44,7 @@ Delivered: 30/30 requirements, all phases verified passed, cross-phase integrati
 - [x] **Phase 9: Session Unlock Core, Popup & Sync Client** - Unlock the vault from the popup (password + PRF where supported), browse/search items, real REST+WS sync as a third synced client (completed 2026-07-15)
 - [x] **Phase 10: Autofill — Login, TOTP, Card & Identity** - Detect forms and fill saved logins, live TOTP codes, cards, and identities into the current page (completed 2026-07-16)
 - [x] **Phase 11: Generate & Capture** - Suggest a generated password on signup, prompt to save new logins after submit, detect password changes (completed 2026-07-16)
-- [ ] **Phase 12: Passkey Provider** - `navigator.credentials.create()`/`.get()` on third-party sites via a MAIN-world key-free RPC shim, `passkey-rs` + PRF, native fallback — security-review gated
+- [x] **Phase 12: Passkey Provider** - `navigator.credentials.create()`/`.get()` on third-party sites via a MAIN-world key-free RPC shim, `passkey-rs` + PRF, native fallback — security-review gated (completed 2026-07-17)
 - [ ] **Phase 13: Dual-Browser Hardening** - Verified Chrome/Firefox parity (or explicit, legible Firefox degradation) across every feature built above
 
 ## Phase Details
@@ -232,5 +232,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 9. Session Unlock Core, Popup & Sync Client | v0.2 | 8/8 | Complete    | 2026-07-15 |
 | 10. Autofill — Login, TOTP, Card & Identity | v0.2 | 7/9 | Complete    | 2026-07-16 |
 | 11. Generate & Capture | v0.2 | 9/9 | Complete    | 2026-07-16 |
-| 12. Passkey Provider | v0.2 | 4/4 | In Progress|  |
+| 12. Passkey Provider | v0.2 | 7/7 | Complete    | 2026-07-17 |
 | 13. Dual-Browser Hardening | v0.2 | 0/4 | Not started | - |

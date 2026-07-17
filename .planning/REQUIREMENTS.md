@@ -18,11 +18,11 @@
 
 ### PROV — Passkey provider
 
-- [ ] **PROV-01**: On a third-party site, `navigator.credentials.create()` registers a new passkey that is stored in the user's vault (ES256 soft authenticator via `passkey-rs`)
-- [ ] **PROV-02**: On a third-party site, `navigator.credentials.get()` logs the user in with a passkey saved in their vault
-- [ ] **PROV-03**: When the user declines, or the vault holds no matching credential, the extension falls through cleanly to the native OS authenticator (never dead-ends the ceremony)
-- [ ] **PROV-04**: PRF is used where the browser allows it (Chromium-first); on Firefox / where PRF is unavailable the flow degrades honestly with a clear fallback
-- [ ] **PROV-05**: The page-injected `navigator.credentials` patch is a key-free RPC shim — no User Key, PRF output, or plaintext ever crosses into the MAIN world; all crypto runs in the background (zero-knowledge; gated by a security review)
+- [x] **PROV-01**: On a third-party site, `navigator.credentials.create()` registers a new passkey that is stored in the user's vault (ES256 soft authenticator via `passkey-rs`)
+- [x] **PROV-02**: On a third-party site, `navigator.credentials.get()` logs the user in with a passkey saved in their vault
+- [x] **PROV-03**: When the user declines, or the vault holds no matching credential, the extension falls through cleanly to the native OS authenticator (never dead-ends the ceremony)
+- [x] **PROV-04**: PRF is used where the browser allows it (Chromium-first); on Firefox / where PRF is unavailable the flow degrades honestly with a clear fallback
+- [x] **PROV-05**: The page-injected `navigator.credentials` patch is a key-free RPC shim — no User Key, PRF output, or plaintext ever crosses into the MAIN world; all crypto runs in the background (zero-knowledge; gated by a security review)
 
 ### FILL — Autofill (full vault)
 
@@ -76,11 +76,11 @@ Filled by the roadmapper.
 | EXT-04 | Phase 9 | Complete |
 | EXT-05 | Phase 9 | Complete |
 | EXT-06 | Phase 9 | Complete |
-| PROV-01 | Phase 12 | Pending |
-| PROV-02 | Phase 12 | Pending |
-| PROV-03 | Phase 12 | Pending |
-| PROV-04 | Phase 12 | Pending |
-| PROV-05 | Phase 12 | Pending |
+| PROV-01 | Phase 12 | Complete |
+| PROV-02 | Phase 12 | Complete |
+| PROV-03 | Phase 12 | Complete |
+| PROV-04 | Phase 12 | Complete |
+| PROV-05 | Phase 12 | Complete |
 | FILL-01 | Phase 10 | Complete |
 | FILL-02 | Phase 10 | Complete |
 | FILL-03 | Phase 10 | Complete |
