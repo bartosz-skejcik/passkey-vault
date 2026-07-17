@@ -591,6 +591,49 @@ describe("legacy field normalization", () => {
       ]);
     }
   });
+
+  // Phase 12 cross-client fix (live bug): before this fix, a passkey vault
+  // item's raw `SerializablePasskey` wire JSON (no `tags` array at all) flowed
+  // straight into recomputeAllTags()'s `for (const tag of item.fields.tags)`
+  // loop and threw "a.fields.tags is not iterable" the moment the sidebar
+  // switched away from a type-filtered view.
+  it("normalizes a raw passkey wire item on decrypt and recomputeAllTags tolerates it without throwing", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      folders: [],
+    });
+    mockDecryptItem.mockReturnValue(
+      JSON.stringify({
+        key_cbor: [1, 2, 3],
+        credential_id: [4, 5, 6],
+        rp_id: "example.com",
+        username: "bartek",
+      }),
+    );
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const item = store.getItems()[0];
+    expect(item.fields.type).toBe("passkey");
+    if (item.fields.type === "passkey") {
+      expect(item.fields.rpId).toBe("example.com");
+      expect(item.fields.tags).toEqual([]);
+    }
+    // The crash this test guards against: recomputeAllTags() ran as part of
+    // the unlock merge above (applySyncSnapshot -> decryptItemRow ->
+    // normalizeItemFields), so simply reaching this line without a thrown
+    // TypeError already proves the fix — this assertion documents the
+    // expected (empty) result.
+    expect(store.getAllTags()).toEqual([]);
+  });
 });
 
 describe("deleteVaultFolder", () => {
