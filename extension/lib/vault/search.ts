@@ -3,7 +3,11 @@
 // the store's in-memory `useVaultItems()` snapshot.
 import type { ItemFields, VaultFilter, VaultItem } from "./types";
 
-function domainFromUrl(url: string): string {
+// Exported (popup UI round, Bartek-decided) so ItemIconTile.tsx can reuse
+// the same hostname-extraction logic for its favicon fetch, rather than
+// duplicating this try/catch — mirrors web/src/lib/vault/search.ts's own
+// exported `domainFromUrl`.
+export function domainFromUrl(url: string): string {
   try {
     return new URL(url).hostname;
   } catch {
