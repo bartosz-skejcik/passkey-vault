@@ -53,7 +53,6 @@ describe("ProviderCeremonyView", () => {
           site={SITE}
           account="alice"
           matches={[{ itemId: "item-1", label: "alice" }]}
-          selectedItemId="item-1"
           prfRequested={false}
           status="idle"
           onConfirm={vi.fn()}
@@ -66,55 +65,40 @@ describe("ProviderCeremonyView", () => {
       expect(screen.getByTestId("provider-confirm")).toBeEnabled();
     });
 
-    it("get, 3 matches: renders exactly 3 credential rows, CTA disabled until one is selected then enabled", () => {
+    it("get, 3 matches: renders exactly 3 credential rows as plain buttons (no radio chooser), no provider-confirm button, clicking a row calls onConfirm with that row's itemId", () => {
+      const onConfirm = vi.fn();
       const matches: ProviderCredentialCandidate[] = [
         { itemId: "item-1", label: "alice" },
         { itemId: "item-2", label: "bob" },
         { itemId: "item-3", label: "carol" },
       ];
-      const { rerender } = render(
+      render(
         <ProviderCeremonyView
           locale="en"
           kind="get"
           site={SITE}
           matches={matches}
-          selectedItemId={null}
-          onSelect={vi.fn()}
           prfRequested={false}
           status="idle"
-          onConfirm={vi.fn()}
+          onConfirm={onConfirm}
           onDecline={vi.fn()}
         />,
       );
 
-      const rows = screen.getAllByRole("radio");
-      expect(rows).toHaveLength(3);
+      expect(screen.queryAllByRole("radio")).toHaveLength(0);
       for (const candidate of matches) {
         const row = screen.getByTestId(`provider-credential-row-${candidate.itemId}`);
         expect(row).toHaveTextContent(candidate.label);
         expect(row.className).toContain("h-14");
       }
-      expect(screen.getByTestId("provider-confirm")).toBeDisabled();
+      expect(screen.queryByTestId("provider-confirm")).not.toBeInTheDocument();
 
-      rerender(
-        <ProviderCeremonyView
-          locale="en"
-          kind="get"
-          site={SITE}
-          matches={matches}
-          selectedItemId="item-2"
-          onSelect={vi.fn()}
-          prfRequested={false}
-          status="idle"
-          onConfirm={vi.fn()}
-          onDecline={vi.fn()}
-        />,
-      );
-      expect(screen.getByTestId("provider-confirm")).toBeEnabled();
+      fireEvent.click(screen.getByTestId("provider-credential-row-item-2"));
+      expect(onConfirm).toHaveBeenCalledWith("item-2");
     });
 
-    it("clicking a credential row calls onSelect with that row's itemId", () => {
-      const onSelect = vi.fn();
+    it("clicking a credential row calls onConfirm with that row's itemId", () => {
+      const onConfirm = vi.fn();
       const matches: ProviderCredentialCandidate[] = [
         { itemId: "item-1", label: "alice" },
         { itemId: "item-2", label: "bob" },
@@ -125,17 +109,38 @@ describe("ProviderCeremonyView", () => {
           kind="get"
           site={SITE}
           matches={matches}
-          selectedItemId={null}
-          onSelect={onSelect}
           prfRequested={false}
           status="idle"
-          onConfirm={vi.fn()}
+          onConfirm={onConfirm}
           onDecline={vi.fn()}
         />,
       );
 
       fireEvent.click(screen.getByTestId("provider-credential-row-item-2"));
-      expect(onSelect).toHaveBeenCalledWith("item-2");
+      expect(onConfirm).toHaveBeenCalledWith("item-2");
+    });
+
+    it("multi-match rows carry disabled when status is busy", () => {
+      const matches: ProviderCredentialCandidate[] = [
+        { itemId: "item-1", label: "alice" },
+        { itemId: "item-2", label: "bob" },
+      ];
+      render(
+        <ProviderCeremonyView
+          locale="en"
+          kind="get"
+          site={SITE}
+          matches={matches}
+          prfRequested={false}
+          status="busy"
+          onConfirm={vi.fn()}
+          onDecline={vi.fn()}
+        />,
+      );
+
+      for (const candidate of matches) {
+        expect(screen.getByTestId(`provider-credential-row-${candidate.itemId}`)).toBeDisabled();
+      }
     });
 
     it("busy state: CTA disabled, label swaps to the busy copy, leading icon becomes Fingerprint+Loader2(animate-spin)", () => {
@@ -166,7 +171,6 @@ describe("ProviderCeremonyView", () => {
           site={SITE}
           account="alice"
           matches={[{ itemId: "item-1", label: "alice" }]}
-          selectedItemId="item-1"
           prfRequested={false}
           status="busy"
           onConfirm={vi.fn()}
@@ -216,7 +220,6 @@ describe("ProviderCeremonyView", () => {
           kind="get"
           site={SITE}
           matches={matches}
-          selectedItemId="item-1"
           prfRequested={false}
           status="failed"
           onConfirm={vi.fn()}
@@ -269,7 +272,6 @@ describe("ProviderCeremonyView", () => {
             site={SITE}
             account="alice"
             matches={c.kind === "get" ? [{ itemId: "item-1", label: "alice" }] : undefined}
-            selectedItemId={c.kind === "get" ? "item-1" : undefined}
             prfRequested={c.prfRequested}
             prfCapable={c.prfCapable}
             status="idle"

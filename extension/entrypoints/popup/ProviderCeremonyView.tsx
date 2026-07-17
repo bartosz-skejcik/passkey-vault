@@ -60,8 +60,6 @@ export interface ProviderCeremonyViewProps {
    * `create` and for a single-match get (12-UI-SPEC.md: "no list is
    * rendered at all for the single-match case"). */
   matches?: ProviderCredentialCandidate[];
-  selectedItemId?: string | null;
-  onSelect?: (itemId: string) => void;
   /** Whether the RP's OWN create()/get() request included the WebAuthn
    * `prf` extension. */
   prfRequested: boolean;
@@ -71,7 +69,11 @@ export interface ProviderCeremonyViewProps {
    * in this file. */
   prfCapable?: boolean;
   status: ProviderCeremonyStatus;
-  onConfirm: () => void;
+  /** Quick task 260717-lnx: a multi-match row click now confirms the
+   * ceremony directly, passing its own itemId -- no separate
+   * select-then-confirm step. `create`/single-match still call this with
+   * no argument via the explicit CTA button. */
+  onConfirm: (itemId?: string) => void;
   onDecline: () => void;
 }
 
@@ -107,8 +109,6 @@ export default function ProviderCeremonyView({
   site,
   account,
   matches,
-  selectedItemId,
-  onSelect,
   prfRequested,
   prfCapable,
   status,
@@ -165,13 +165,18 @@ export default function ProviderCeremonyView({
         ? "provider.createCta"
         : "provider.signinCta",
   );
-  const ctaDisabled = busy || (multiMatch && !selectedItemId);
+  const ctaDisabled = busy;
 
   const prfNoteKey = resolvePrfNoteKey(kind, prfRequested, prfCapable);
 
   function handleConfirmClick() {
     resolvedRef.current = true;
     onConfirm();
+  }
+
+  function handleRowClick(itemId: string) {
+    resolvedRef.current = true;
+    onConfirm(itemId);
   }
 
   function handleDeclineClick() {
@@ -197,63 +202,55 @@ export default function ProviderCeremonyView({
       </div>
 
       {multiMatch ? (
-        <div className="flex flex-col gap-2" role="radiogroup">
-          {(matches ?? []).map((candidate) => {
-            const selected = candidate.itemId === selectedItemId;
-            return (
-              <button
-                key={candidate.itemId}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                data-testid={`provider-credential-row-${candidate.itemId}`}
-                onClick={() => onSelect?.(candidate.itemId)}
-                className={`flex h-14 w-full items-center gap-2 rounded-box border px-3 text-left ${
-                  selected ? "border-accent bg-base-100" : "border-base-300 bg-base-200"
-                }`}
-              >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center">
-                  <KeyRound size={20} className="text-accent" aria-hidden="true" />
-                </span>
-                <span className="flex-1 truncate text-sm">{candidate.label}</span>
-                <span
-                  className={`h-4 w-4 shrink-0 rounded-full border ${
-                    selected ? "border-accent bg-accent" : "border-base-content/40"
-                  }`}
-                  aria-hidden="true"
-                />
-              </button>
-            );
-          })}
+        <div className="flex flex-col gap-2">
+          {(matches ?? []).map((candidate) => (
+            <button
+              key={candidate.itemId}
+              type="button"
+              data-testid={`provider-credential-row-${candidate.itemId}`}
+              onClick={() => handleRowClick(candidate.itemId)}
+              disabled={busy}
+              className={`flex h-14 w-full items-center gap-2 rounded-field px-3 text-left pv-row-hover${
+                busy ? " cursor-not-allowed opacity-50" : ""
+              }`}
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center">
+                <KeyRound size={20} className="text-accent" aria-hidden="true" />
+              </span>
+              <span className="flex-1 truncate text-sm">{candidate.label}</span>
+            </button>
+          ))}
         </div>
       ) : null}
 
       {prfNoteKey ? <p className="text-sm text-base-content/70">{t(locale, prfNoteKey)}</p> : null}
 
       <div className="flex flex-col gap-2">
-        <button
-          type="button"
-          className="btn btn-accent w-full"
-          disabled={ctaDisabled}
-          data-testid="provider-confirm"
-          onClick={handleConfirmClick}
-        >
-          <span className="relative inline-flex">
-            {busy ? (
-              <>
-                <Fingerprint size={18} aria-hidden="true" />
-                <Loader2
-                  size={16}
-                  className="absolute -right-2 -top-2 animate-spin"
-                  aria-hidden="true"
-                />
-              </>
-            ) : (
-              <KeyRound size={18} aria-hidden="true" />
-            )}
-          </span>
-          {ctaLabel}
-        </button>
+        {!multiMatch ? (
+          <button
+            type="button"
+            className="btn btn-accent w-full"
+            disabled={ctaDisabled}
+            data-testid="provider-confirm"
+            onClick={handleConfirmClick}
+          >
+            <span className="relative inline-flex">
+              {busy ? (
+                <>
+                  <Fingerprint size={18} aria-hidden="true" />
+                  <Loader2
+                    size={16}
+                    className="absolute -right-2 -top-2 animate-spin"
+                    aria-hidden="true"
+                  />
+                </>
+              ) : (
+                <KeyRound size={18} aria-hidden="true" />
+              )}
+            </span>
+            {ctaLabel}
+          </button>
+        ) : null}
 
         {status === "failed" ? (
           <p className="text-sm text-error">{t(locale, "provider.failed")}</p>

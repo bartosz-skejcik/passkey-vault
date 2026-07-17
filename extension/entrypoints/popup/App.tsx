@@ -114,7 +114,6 @@ export default function App() {
   const locale = resolveLocale();
   const [view, setView] = useState<ViewState>({ kind: "loading" });
   const [showEnrollPrompt, setShowEnrollPrompt] = useState(false);
-  const [ceremonySelected, setCeremonySelected] = useState<string | null>(null);
   const [ceremonyStatus, setCeremonyStatus] = useState<ProviderCeremonyStatus>("idle");
   // Phase 12 (Plan 12-06, NEW BLOCKER fix): mirrors `view` on every render so
   // the storage.session.onChanged listener below (a stable [] -- effect,
@@ -139,7 +138,6 @@ export default function App() {
     if (!isPendingCeremonyPayload(value)) {
       return false;
     }
-    setCeremonySelected(null);
     setCeremonyStatus("idle");
     setView({
       kind: "provider-ceremony",
@@ -363,17 +361,13 @@ export default function App() {
     // non-null (confirmed) on that path.
     const isCreate = view.ceremonyKind === "create";
     const singleMatch = !isCreate && view.candidates.length === 1 ? view.candidates[0] : undefined;
-    const selectedItemId = singleMatch ? singleMatch.itemId : ceremonySelected;
-    const selectedCandidate = view.candidates.find((c) => c.itemId === selectedItemId);
     return (
       <ProviderCeremonyView
         locale={locale}
         kind={view.ceremonyKind}
         site={view.site}
-        account={isCreate ? view.account : selectedCandidate?.label}
+        account={isCreate ? view.account : singleMatch?.label}
         matches={!isCreate && view.candidates.length > 1 ? view.candidates : undefined}
-        selectedItemId={isCreate ? null : (selectedItemId ?? null)}
-        onSelect={(itemId) => setCeremonySelected(itemId)}
         // D-16: the REAL capability signal (provider-ceremony.ts's
         // derivePrfCapability) is only known AFTER a create() ceremony
         // actually runs (post-confirm) -- this payload's `prfRequested`
@@ -382,11 +376,18 @@ export default function App() {
         // renders no note until it is known).
         prfRequested={view.prfRequested}
         status={ceremonyStatus}
-        onConfirm={() => {
+        onConfirm={(itemId) => {
           if (isCreate) {
             void resolveCeremony(view.requestId, CREATE_CONFIRM_SENTINEL);
-          } else if (selectedItemId) {
-            void resolveCeremony(view.requestId, selectedItemId);
+            return;
+          }
+          // Quick task 260717-lnx: a multi-match row click passes its own
+          // itemId directly (one-click select+confirm); the single-match
+          // explicit CTA calls onConfirm() with no argument, so fall back
+          // to the pre-selected single match's itemId.
+          const resolvedId = itemId ?? singleMatch?.itemId ?? null;
+          if (resolvedId) {
+            void resolveCeremony(view.requestId, resolvedId);
           }
         }}
         onDecline={() => void resolveCeremony(view.requestId, null)}

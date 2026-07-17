@@ -392,7 +392,7 @@ describe("App.tsx view-state switch", () => {
       expect(screen.queryByTestId("provider-confirm")).not.toBeInTheDocument();
     });
 
-    it("selecting a candidate then confirming sends provider.resolveChoice with that itemId, then returns to the list view", async () => {
+    it("clicking a candidate row sends provider.resolveChoice with that itemId (one-click select+confirm), then returns to the list view", async () => {
       mockStorageSessionGet.mockResolvedValue({
         "pv-pending-provider-ceremony": {
           requestId: "req-1",
@@ -428,17 +428,10 @@ describe("App.tsx view-state switch", () => {
       render(<App />);
       await waitFor(() => screen.getByTestId("provider-credential-row-cred-2"));
 
+      // Quick task 260717-lnx: a single row click both selects AND confirms
+      // the ceremony -- no separate provider-confirm click needed for the
+      // multi-match path.
       screen.getByTestId("provider-credential-row-cred-2").click();
-      // Selection is async React state -- wait for the re-render to reflect
-      // it before clicking confirm, otherwise confirm's click handler still
-      // closes over the PRE-selection render.
-      await waitFor(() => {
-        expect(screen.getByTestId("provider-credential-row-cred-2")).toHaveAttribute(
-          "aria-checked",
-          "true",
-        );
-      });
-      screen.getByTestId("provider-confirm").click();
 
       await waitFor(() => {
         expect(mockSendMessage).toHaveBeenCalledWith({

@@ -1106,14 +1106,20 @@ test.describe("Phase 12 -- Passkey Provider", () => {
       }
     });
 
+    // Quick task 260717-lnx: multi-match rows are now one-click
+    // select+confirm (no separate provider-confirm click for that path) --
+    // wait for EITHER the single-match confirm button OR a multi-match
+    // candidate row, since this shared UAT account may carry more than one
+    // localhost-scoped passkey from prior runs.
     const confirmBtn = popup.locator('[data-testid="provider-confirm"]');
-    await expect(confirmBtn).toBeVisible({ timeout: 20000 });
     const candidateRow = popup.locator('[data-testid^="provider-credential-row-"]').first();
+    await expect(confirmBtn.or(candidateRow)).toBeVisible({ timeout: 20000 });
     if (await candidateRow.count()) {
       await candidateRow.click();
+    } else {
+      await expect(confirmBtn).toBeEnabled({ timeout: 10000 });
+      await confirmBtn.click();
     }
-    await expect(confirmBtn).toBeEnabled({ timeout: 10000 });
-    await confirmBtn.click();
 
     const result = await getPromise;
     expect(result.ok).toBe(true);
