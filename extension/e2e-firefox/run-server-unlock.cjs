@@ -353,7 +353,144 @@ async function main() {
     // realm as the listener under test. This harness intentionally does
     // NOT attempt to re-prove that here with a binary payload.
 
-    console.log('\n=== Firefox server-unlock scenario complete ===');
+    // Close the unlock-mode ceremony window before starting the signin-mode
+    // scenario below (it may still be open/idle after step 5's empty-state).
+    try {
+      await driver.close();
+    } catch { /* already closed */ }
+    await driver.switchTo().window(popupHandle);
+
+    // ================= Step 6: SIGN-IN mode (Plan 13-07, Bartek mandate) =================
+    // Drives the popup back to the genuine no-session state (mode:'signin'
+    // is only reachable from THAT status, mirroring auth.signIn.password's
+    // own precondition, server-unlock.ts's startServerUnlock guard) by
+    // clearing the extension's OWN session-meta record directly from
+    // storage.session -- unlike step 2's key-envelope removal (which does
+    // NOT flip the live popup view because vault-session.ts's in-memory
+    // currentUserKey cache is checked first), getSessionStatus() always
+    // re-reads session-meta FRESH on every call (no in-memory cache for
+    // THAT record), so this technique is sound for the no-session <->
+    // locked distinction specifically (confirmed against server-unlock.ts's
+    // own module comment on session-storage.ts's two independently-
+    // lifetimed records).
+    await driver.executeScript(`
+      return new Promise((resolve) => {
+        (window.browser||window.chrome).storage.session.remove(['pv-session-meta', 'pv-uk-envelope']).then(resolve).catch(resolve);
+      });
+    `);
+    await sleep(500);
+    await driver.get(`${EXT_ORIGIN}/popup.html`);
+    popupHandle = await driver.getWindowHandle();
+    await sleep(1200);
+    const signinEmailField = await tryFind(driver, 'input[type="email"]', 15000);
+    await shot(driver, 'step6-signin-view');
+    record(
+      'STEP6-signin-view',
+      signinEmailField ? 'PASS' : 'FAIL',
+      'popup shows the Sign-in (no-session) view after clearing the session-meta record',
+    );
+    if (!signinEmailField) throw new Error('could not reach the sign-in (no-session) view');
+
+    // ================= Step 7: the sign-in server-ceremony button is present =================
+    // Unconditional whenever a server is configured (unlike step 3's own
+    // extScopedUnusable-gated unlock-mode button) -- both browsers, per the
+    // plan's own must_haves.truths wording.
+    const signinBtn = await tryFind(driver, '[data-testid="server-ceremony-signin-button"]', 8000);
+    await shot(driver, 'step7-signin-view-with-button');
+    record(
+      'P13-07-SIGNIN-BUTTON-VISIBLE',
+      signinBtn ? 'PASS' : 'FAIL',
+      `sign-in server-ceremony button ${signinBtn ? 'IS' : 'is NOT'} present on the Sign-in view`,
+    );
+    if (!signinBtn) throw new Error('sign-in server-ceremony button not found -- cannot continue this scenario');
+
+    const signinHandlesBefore = await driver.getAllWindowHandles();
+    await signinBtn.click();
+    await sleep(2000);
+    const signinHandlesAfter = await driver.getAllWindowHandles();
+    const newSigninHandles = signinHandlesAfter.filter((h) => !signinHandlesBefore.includes(h));
+    record(
+      'P13-07-SIGNIN-CEREMONY-WINDOW-OPENED',
+      newSigninHandles.length === 1 ? 'PASS' : 'FAIL',
+      `handles before=${signinHandlesBefore.length} after=${signinHandlesAfter.length} new=${newSigninHandles.length}`,
+    );
+    if (newSigninHandles.length !== 1) throw new Error('signin ceremony window did not open (or opened more than one)');
+
+    // ================= Step 8: the ceremony window carries pv-mode=signin =================
+    // and renders ExtUnlockBridge's SIGNIN surface (distinct heading + the
+    // email field this mode requires -- passkeyLogin identifies the user
+    // by EMAIL, not a discoverable credential, web/src/lib/passkeys/login.ts).
+    // The URL is captured IMMEDIATELY -- ExtUnlockBridge strips pv-mode/
+    // pv-ext-unlock via replaceState on its own mount effect, so this must
+    // race that strip -- confirmed empirically to be LOST every real run
+    // (ExtUnlockBridge's mount effect strips both params via replaceState
+    // before this WebDriver round trip's getCurrentUrl() ever lands, unlike
+    // step 4's onServerOrigin check which only needs the URL to still
+    // START WITH the server origin, a property the strip never removes).
+    // This is therefore recorded as INFO, never a hard requirement -- the
+    // STRONGER, non-racy proof that `pv-mode=signin` was correctly threaded
+    // through startServerUnlock -> the ceremony URL -> page.tsx's own
+    // read-once-at-mount state is the SIGNIN-specific heading/email-field
+    // assertion immediately below, which is NOT subject to this race (it
+    // reflects React state already committed, not a URL that gets stripped
+    // out from under the check).
+    const signinCeremonyHandle = newSigninHandles[0];
+    await driver.switchTo().window(signinCeremonyHandle);
+    const signinCeremonyUrl = await driver.getCurrentUrl();
+    await sleep(1000);
+    await shot(driver, 'step8-signin-ceremony-window');
+    record(
+      'P13-07-CEREMONY-URL-CAPTURED',
+      'INFO',
+      `signin ceremony window URL (likely already pv-mode-stripped by ExtUnlockBridge's own mount effect, see comment above)=${signinCeremonyUrl}`,
+    );
+
+    const signinHeadingEls = await driver.findElements(
+      By.xpath("//h1[contains(.,'Sign in to the extension') or contains(.,'Zaloguj się do rozszerzenia')]"),
+    );
+    const signinEmailInBridge = await tryFind(driver, 'input#pv-ext-unlock-email', 5000);
+    await shot(driver, 'step8-extunlockbridge-signin-surface');
+    record(
+      'P13-07-BRIDGE-SIGNIN-SURFACE-RENDERED',
+      signinHeadingEls.length > 0 && signinEmailInBridge ? 'PASS' : 'FAIL',
+      `signin heading present=${signinHeadingEls.length > 0}, email field present=${!!signinEmailInBridge}`,
+    );
+    if (signinHeadingEls.length === 0 || !signinEmailInBridge) {
+      throw new Error('ExtUnlockBridge did not render the signin surface in the ceremony window');
+    }
+
+    // ================= Step 9: gesture -- honest authenticator-less limit =================
+    // Unlike unlockStart() (a clean 404 on zero enrolled passkeys, no
+    // WebAuthn call at all -- step 5 above), passkeyLoginStart() returns an
+    // enumeration-resistant DUMMY response even for a zero-passkey account
+    // (crates/pv-server/src/routes/auth.rs's passkey_login_start,
+    // threat_model T-04-01 -- the shape must be indistinguishable from a
+    // real account with passkeys) -- so `navigator.credentials.get()` IS
+    // genuinely invoked here, with no matching real/virtual authenticator
+    // available under geckodriver. This scenario therefore records
+    // WHATEVER honest outcome that produces (busy -> some terminal state)
+    // rather than asserting a specific one -- the authenticator-less limit
+    // for signin mode is reaching this GESTURE, not a guaranteed
+    // no-passkeys empty-state (that asymmetry vs. unlock mode is expected
+    // and documented, not a bug).
+    await signinEmailInBridge.sendKeys(PROBE_EMAIL);
+    const signinGestureBtn = await tryFind(driver, '[data-testid="passkey-unlock-button"]', 5000);
+    if (!signinGestureBtn) throw new Error('signin gesture button not found in the ceremony window');
+    await shot(driver, 'step9-signin-gesture-ready');
+    await signinGestureBtn.click();
+    await sleep(4000);
+    await shot(driver, 'step9-signin-post-gesture');
+    const signinTerminalState = await driver.executeScript(`
+      const body = document.body.innerText || '';
+      return body;
+    `);
+    record(
+      'P13-07-SIGNIN-GESTURE-REACHED',
+      'INFO',
+      `gesture clicked with email=${PROBE_EMAIL} (zero enrolled passkeys); post-gesture body text captured for human review (authenticator-less limit -- see this file's own Step 9 comment): ${JSON.stringify(signinTerminalState).slice(0, 400)}`,
+    );
+
+    console.log('\n=== Firefox server-unlock scenario complete (unlock + signin) ===');
     console.log(JSON.stringify(results, null, 2));
   } catch (e) {
     console.error('FATAL:', e);

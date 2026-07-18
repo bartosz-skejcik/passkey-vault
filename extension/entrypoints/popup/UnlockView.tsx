@@ -175,22 +175,32 @@ export default function UnlockView({
   const extScopedUnusable = (extPasskeyEnrolled && prfUnusableThisSession) || import.meta.env.FIREFOX;
   const showServerCeremonyButton = !isSignIn && hasServerConfig && extScopedUnusable;
 
+  // Plan 13-07 (Bartek mandate, 2026-07-18: "Zrób teraz" + "the button must
+  // exist on the login screen"): the SIGN-IN variant's own server-origin
+  // ceremony button -- unlike showServerCeremonyButton above, this is NOT
+  // gated on any "unusable" signal (D-12 doesn't apply to a screen with no
+  // existing local ext-scoped passkey to even be unusable) -- it appears on
+  // BOTH browsers whenever a server is configured, exactly per the plan's
+  // own must_haves.truths wording. Password fields stay rendered and
+  // functional alongside (D-06).
+  const showServerCeremonySigninButton = isSignIn && hasServerConfig;
+
   const passwordInputRef = useRef<HTMLInputElement>(null);
 
-  async function handleServerCeremonyUnlock() {
+  async function handleServerCeremonyUnlock(mode: "signin" | "unlock") {
     setServerCeremonyBusy(true);
     setServerCeremonyFailed(false);
     try {
-      const result = await sendMessage({ kind: "unlock.serverCeremony.start", mode: "unlock" });
+      const result = await sendMessage({ kind: "unlock.serverCeremony.start", mode });
       if (!result.ok) {
         setServerCeremonyBusy(false);
         setServerCeremonyFailed(true);
       }
       // On ok:true, stay busy ("in-flight") -- the onServerCeremonyState
-      // listener above resolves it (unlocked, or a calm failure line),
-      // never a wedge (T-13-13): the background's own bounded timeout
-      // alarm eventually broadcasts ok:false even if the ceremony window is
-      // simply abandoned.
+      // listener above resolves it (signed-in/unlocked, or a calm failure
+      // line), never a wedge (T-13-13): the background's own bounded
+      // timeout alarm eventually broadcasts ok:false even if the ceremony
+      // window is simply abandoned.
     } catch {
       setServerCeremonyBusy(false);
       setServerCeremonyFailed(true);
@@ -331,6 +341,26 @@ export default function UnlockView({
         </div>
       ) : null}
 
+      {showServerCeremonySigninButton ? (
+        <>
+          <button
+            type="button"
+            data-testid="server-ceremony-signin-button"
+            className="btn btn-outline w-full"
+            disabled={serverCeremonyBusy}
+            onClick={() => void handleServerCeremonyUnlock("signin")}
+          >
+            {serverCeremonyBusy
+              ? t(locale, "unlock.serverCeremonyInFlight")
+              : t(locale, "unlock.serverCeremonySigninCta")}
+          </button>
+          {serverCeremonyFailed ? (
+            <p className="text-sm text-base-content/70">{t(locale, "unlock.serverCeremonySigninFailed")}</p>
+          ) : null}
+          <div className="divider">{t(locale, "unlock.orDivider")}</div>
+        </>
+      ) : null}
+
       {showPrfButton ? (
         <>
           <button
@@ -362,7 +392,7 @@ export default function UnlockView({
             data-testid="server-ceremony-unlock-button"
             className="btn btn-outline w-full"
             disabled={serverCeremonyBusy}
-            onClick={() => void handleServerCeremonyUnlock()}
+            onClick={() => void handleServerCeremonyUnlock("unlock")}
           >
             {serverCeremonyBusy
               ? t(locale, "unlock.serverCeremonyInFlight")

@@ -498,3 +498,110 @@ describe("UnlockView — server-origin ceremony secondary path (Plan 13-06)", ()
     expect(serverButton).not.toBeDisabled();
   });
 });
+
+// Plan 13-07 (Bartek mandate, "Zrób teraz" + "the button must exist on the
+// login screen"): the SIGN-IN variant's own server-origin ceremony button --
+// unlike the locked-variant secondary path above, this is NOT gated on any
+// "unusable" signal; it appears on BOTH browsers whenever a server is
+// configured.
+describe("UnlockView — sign-in variant server-origin ceremony button (Plan 13-07)", () => {
+  function latestServerCeremonyStateListener(): (message: unknown) => void {
+    const call = mockOnMessageAddListener.mock.calls.at(-1);
+    if (!call) {
+      throw new Error("onServerCeremonyState listener was never registered");
+    }
+    return call[0] as (message: unknown) => void;
+  }
+
+  it("does NOT render when no server is configured", async () => {
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "config.get") return null;
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(
+      <UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
+    );
+
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledWith({ kind: "config.get" }));
+    expect(screen.queryByTestId("server-ceremony-signin-button")).not.toBeInTheDocument();
+  });
+
+  it("renders whenever a server IS configured -- unconditionally, unlike the locked-variant's own D-12 gate -- with the email field and password form both still present (D-06)", async () => {
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(
+      <UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
+    );
+
+    expect(await screen.findByTestId("server-ceremony-signin-button")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^email$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/master password|hasło/i)).toBeInTheDocument();
+  });
+
+  it("clicking dispatches unlock.serverCeremony.start with mode:'signin' and shows the in-flight state until the state broadcast resolves it", async () => {
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
+      if (message.kind === "unlock.serverCeremony.start") return { ok: true };
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    const onUnlocked = vi.fn();
+    render(
+      <UnlockView locale="en" status={noSessionStatus} onUnlocked={onUnlocked} onChangeServer={vi.fn()} />,
+    );
+    const signinButton = await screen.findByTestId("server-ceremony-signin-button");
+    fireEvent.click(signinButton);
+
+    await waitFor(() => {
+      expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.start", mode: "signin" });
+    });
+    expect(await screen.findByText(/finish in the opened window|dokończ w otwartym oknie/i)).toBeInTheDocument();
+    expect(signinButton).toBeDisabled();
+    expect(onUnlocked).not.toHaveBeenCalled();
+
+    latestServerCeremonyStateListener()({ kind: "unlock.serverCeremony.state", ok: true });
+    await waitFor(() => expect(onUnlocked).toHaveBeenCalledWith(false));
+  });
+
+  it("an ok:false state broadcast renders the sign-in-specific calm failure line -- never a wedge -- and re-enables the button", async () => {
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
+      if (message.kind === "unlock.serverCeremony.start") return { ok: true };
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(
+      <UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
+    );
+    const signinButton = await screen.findByTestId("server-ceremony-signin-button");
+    fireEvent.click(signinButton);
+    await waitFor(() =>
+      expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.start", mode: "signin" }),
+    );
+
+    latestServerCeremonyStateListener()({ kind: "unlock.serverCeremony.state", ok: false });
+
+    expect(
+      await screen.findByText(/couldn't sign in via your server|nie udało się zalogować przez stronę serwera/i),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("server-ceremony-signin-button")).not.toBeDisabled();
+  });
+
+  it("the locked-variant's own server-ceremony-unlock-button never appears on the sign-in variant", async () => {
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
+      throw new Error(`unexpected: ${message.kind}`);
+    });
+
+    render(
+      <UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
+    );
+
+    await screen.findByTestId("server-ceremony-signin-button");
+    expect(screen.queryByTestId("server-ceremony-unlock-button")).not.toBeInTheDocument();
+  });
+});

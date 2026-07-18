@@ -69,6 +69,29 @@ documented live-UAT item for a human with a real authenticator** (see
 13-06-SUMMARY.md's human-check section) — this harness does not claim to
 cover it.
 
+Plan 13-07 (Bartek mandate, full SIGN-IN) extends the SAME script with a
+second scenario, run immediately after the unlock-mode one above in the
+same profile/session: clears the extension's own session-meta record
+(reaching the genuine no-session/Sign-in view), confirms the sign-in
+variant's own server-ceremony button (unconditional whenever a server is
+configured — unlike the unlock-mode button's own "unusable" gate), opens
+the ceremony window with `pv-mode=signin`, and confirms `ExtUnlockBridge`
+renders the SIGNIN surface (distinct heading + the email field this mode
+requires — passkeyLogin identifies the user by EMAIL, not a discoverable
+credential). **Asymmetry vs. unlock mode, found and documented, not a
+bug:** `passkeyLoginStart()` (the login ceremony's own server route)
+returns an enumeration-resistant DUMMY WebAuthn challenge even for a
+zero-passkey account (`crates/pv-server/src/routes/auth.rs`'s
+`passkey_login_start`, threat_model T-04-01) — unlike `unlockStart()`'s
+clean 404, this means `navigator.credentials.get()` IS genuinely invoked
+for the signin-mode gesture, with no real/virtual authenticator available
+under geckodriver. This scenario therefore stops at the GESTURE (recorded
+as `INFO`, not asserted to a specific terminal state) rather than reaching
+a no-passkeys empty-state the way the unlock-mode scenario does — this is
+the signin-mode ceremony's own honest authenticator-less limit, confirmed
+via screenshot (the ceremony's own busy/"Confirm in your browser..." state,
+Firefox's native picker pending outside the DOM).
+
 ## Environment variables (all optional, sensible defaults shown)
 
 | Variable | Default | Purpose |

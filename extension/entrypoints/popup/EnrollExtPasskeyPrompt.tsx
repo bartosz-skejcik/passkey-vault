@@ -155,6 +155,39 @@ export default function EnrollExtPasskeyPrompt({
     void sendMessage({ kind: "extPasskey.suppressPrompt", suppress: checked });
   }
 
+  // Plan 13-07 (13-REVIEW.md's own D-03 seam Bartek hit live): the
+  // ext-scoped passkey's `create()` ceremony (rpId=extension-id) is
+  // PERMANENTLY unsupported on Firefox (13-FF-WEBAUTHN-RESEARCH.md) --
+  // advertising it here (the ONLY prompt that offers it) is a dead end on
+  // this browser. Replaces the "Create a passkey" CTA with a short pointer
+  // at the server-passkey path instead, keeping the dismiss/suppress
+  // mechanics (Not now / Don't ask again) intact -- there is nothing else
+  // actionable to offer on this surface for this browser. Chrome's branch
+  // (below) is byte-identical to before this plan.
+  if (import.meta.env.FIREFOX) {
+    return (
+      <div className="flex w-[380px] flex-col gap-3 rounded-box border border-base-300 bg-base-100 p-4">
+        <h3 className="text-base font-bold">{t(locale, "extPasskey.promptTitle")}</h3>
+        <p className="text-sm text-base-content/70">{t(locale, "extPasskey.serverPathPointer")}</p>
+
+        <div className="flex items-center justify-between gap-2">
+          <label className="flex items-center gap-2 text-sm text-base-content/70">
+            <input
+              type="checkbox"
+              className="checkbox checkbox-sm"
+              checked={dontAskAgain}
+              onChange={(e) => handleDontAskAgainChange(e.target.checked)}
+            />
+            {t(locale, "extPasskey.promptDontAskAgain")}
+          </label>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={handleSkip}>
+            {t(locale, "extPasskey.promptSkip")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex w-[380px] flex-col gap-3 rounded-box border border-base-300 bg-base-100 p-4">
       <h3 className="text-base font-bold">{t(locale, "extPasskey.promptTitle")}</h3>

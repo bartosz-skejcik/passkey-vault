@@ -21,6 +21,7 @@ vi.mock("wxt/browser", () => ({
 }));
 
 import EnrollExtPasskeyPrompt from "./EnrollExtPasskeyPrompt";
+import { t } from "../../lib/i18n/dictionary";
 
 function mockCreatedCredential(prfEnabled: boolean): PublicKeyCredential {
   return {
@@ -235,6 +236,67 @@ describe("EnrollExtPasskeyPrompt", () => {
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
     expect(mockSendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "extPasskey.enroll.finish" }),
+    );
+  });
+});
+
+// Plan 13-07 (13-REVIEW.md's own D-03 seam): on Firefox, rpId=extension-id
+// create() is PERMANENTLY unsupported (13-FF-WEBAUTHN-RESEARCH.md) -- this
+// prompt must not advertise it. `import.meta.env.FIREFOX` is a per-MODULE
+// property (ECMAScript's `import.meta` is a fresh object per module
+// namespace -- confirmed empirically: mutating it from a TEST file's own
+// `import.meta.env` does NOT affect the already-imported component
+// module's separate `import.meta.env` object, unlike a `vi.mock`-backed
+// dependency), so the actual branch switch cannot be exercised via jsdom
+// env-mutation the way e.g. `navigator.credentials` mocks can be swapped
+// per test. This is the SAME limitation UnlockView.test.tsx's own D-12
+// suite already lives with for its `import.meta.env.FIREFOX` fallback
+// (13-06-SUMMARY.md documents that branch as verified only by the real
+// Firefox e2e harness, never jsdom) -- mirrored here rather than
+// reinvented. This describe block therefore does two honest things
+// instead: (1) a structural source-grep proving the Firefox branch exists,
+// points at the NEW server-path copy key, and never references the dead
+// `extPasskey.enroll.start` kind within its own conditional body (mirrors
+// manifest-permissions.test.ts's own grep-based precedent for this exact
+// `import.meta.env.FIREFOX` conditional-compilation pattern); (2) the
+// Chrome branch's own pre-existing 7 tests above already prove
+// byte-identical Chrome behavior (no FIREFOX stub applied, exactly as
+// before this plan). The ACTUAL rendered Firefox behavior is verified by
+// `extension/e2e-firefox/run-server-unlock.cjs` (Task 3) against a real
+// Firefox build, where `import.meta.env.FIREFOX` is genuinely `true`.
+describe("EnrollExtPasskeyPrompt — Firefox branch (Plan 13-07, structural)", () => {
+  it("gates a server-path pointer on import.meta.env.FIREFOX, and that gated block never references the dead ext-scoped enroll CTA", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const source = await fs.readFile(
+      path.join(import.meta.dirname, "EnrollExtPasskeyPrompt.tsx"),
+      "utf-8",
+    );
+
+    const gateIndex = source.indexOf("import.meta.env.FIREFOX");
+    expect(gateIndex).toBeGreaterThan(-1);
+
+    // The FIREFOX-gated `if` block's own body -- everything between its
+    // opening brace and the Chrome-branch `return` that follows it.
+    const blockStart = source.indexOf("{", gateIndex);
+    const blockEnd = source.indexOf('return (\n    <div className="flex w-[380px] flex-col gap-3', gateIndex + 1);
+    expect(blockEnd).toBeGreaterThan(blockStart);
+    const gatedBlock = source.slice(blockStart, blockEnd);
+
+    expect(gatedBlock).toContain("extPasskey.serverPathPointer");
+    expect(gatedBlock).not.toContain("extPasskey.enroll.start");
+    expect(gatedBlock).not.toContain("extPasskey.promptCta");
+    // Dismiss/suppress mechanics stay present in the Firefox branch.
+    expect(gatedBlock).toContain("extPasskey.promptDontAskAgain");
+    expect(gatedBlock).toContain("extPasskey.promptSkip");
+  });
+
+  it("the PL/EN copy for the new server-path pointer key exists in the dictionary", () => {
+    expect(t("en", "extPasskey.serverPathPointer")).toMatch(
+      /sign-in and unlock screens/i,
+    );
+    expect(t("pl", "extPasskey.serverPathPointer")).toMatch(
+      /ekranie logowania i odblokowania/i,
     );
   });
 });

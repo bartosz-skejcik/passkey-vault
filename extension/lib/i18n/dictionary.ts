@@ -92,6 +92,21 @@ export const DICTIONARY = {
     en: "Couldn't unlock via your server. Try again — or use your password.",
   },
 
+  // Plan 13-07 (Bartek mandate, "Zrób teraz" + "the button must exist on
+  // the login screen"): the SIGN-IN variant's own server-origin ceremony
+  // button -- shown on BOTH browsers whenever a server is configured
+  // (unlike unlock.serverCeremonyCta above, which is gated on the
+  // ext-scoped path being unusable). Runs the SAME ceremony window, mode
+  // pinned server-side (T-13-16).
+  "unlock.serverCeremonySigninCta": {
+    pl: "Zaloguj passkeyem przez stronę serwera",
+    en: "Sign in with a passkey via your server",
+  },
+  "unlock.serverCeremonySigninFailed": {
+    pl: "Nie udało się zalogować przez stronę serwera. Spróbuj ponownie albo użyj hasła.",
+    en: "Couldn't sign in via your server. Try again — or use your password.",
+  },
+
   // --- Extension-scoped PRF passkey (AMENDMENT 2026-07-15, verbatim) ---
   "extPasskey.promptTitle": {
     pl: "Odblokowuj szybciej passkeyem",
@@ -119,6 +134,16 @@ export const DICTIONARY = {
   "extPasskey.unlockOrphaned": {
     pl: "Ten passkey nie pasuje do tego sejfu — odblokuj hasłem i utwórz passkey ponownie.",
     en: "This passkey doesn't match this vault — unlock with your password and create the passkey again.",
+  },
+  // Plan 13-07: Firefox-only replacement for the "Create a passkey tied to
+  // this extension" CTA above (D-03 tone) -- rpId=extension-id is
+  // PERMANENTLY unsupported on Firefox (13-FF-WEBAUTHN-RESEARCH.md), so
+  // advertising that create() ceremony here is a dead end on this browser.
+  // Points at the server-passkey path instead (UnlockView's own sign-in/
+  // unlock ceremony buttons), never the impossible ext-scoped one.
+  "extPasskey.serverPathPointer": {
+    pl: "Na tym koncie odblokujesz i zalogujesz się passkeyem przez stronę serwera — przycisk znajdziesz na ekranie logowania i odblokowania.",
+    en: "On this account you'll unlock and sign in with a passkey via your server — you'll find the button on the sign-in and unlock screens.",
   },
 
   // --- Item list / search (reused verbatim) ----------------------------
