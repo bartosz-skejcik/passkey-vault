@@ -5,15 +5,15 @@ milestone_name: Browser Extension
 current_phase: 13
 current_phase_name: Dual-Browser Hardening
 status: verifying
-stopped_at: "Completed quick task 260718-0qi: Popup UI fix round (theme parity, FAB/footer/top-bar restructure, hover shadow removal, label/sort sizing, Phase 9 e2e repair) -- all 6 tasks green, full gate passed"
-last_updated: "2026-07-17T23:25:21.426Z"
+stopped_at: "Completed 13-07-PLAN.md: full passkey SIGN-IN via server-origin ceremony (mode-pinning T-13-16) + FF EnrollExtPasskeyPrompt fix"
+last_updated: "2026-07-18T07:58:06.186Z"
 last_activity: 2026-07-18
-last_activity_desc: "Completed quick task 260718-0qi: Popup UI fix round (theme parity, FAB/footer/top-bar restructure, hover shadow removal, label/sort sizing, Phase 9 e2e repair)"
+last_activity_desc: "Completed 13-07-PLAN.md: full passkey SIGN-IN via server-origin ceremony + FF EnrollExtPasskeyPrompt fix"
 progress:
   total_phases: 6
   completed_phases: 5
-  total_plans: 43
-  completed_plans: 41
+  total_plans: 44
+  completed_plans: 42
   percent: 95
 ---
 
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 13 — Dual-Browser Hardening
-Plan: 6 of 06
+Plan: 7 of 07
 Status: Phase complete — ready for verification
-Last activity: 2026-07-18 - Completed 13-06-PLAN.md: Firefox passkey unlock via server-origin PRF ceremony
+Last activity: 2026-07-18 - Completed 13-07-PLAN.md: full passkey SIGN-IN via server-origin ceremony + FF EnrollExtPasskeyPrompt fix
 
 Progress: [██████████] 95%
 
@@ -130,6 +130,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 13-06: found and routed around (not fixed -- out of scope) a pre-existing web/.env.local NEXT_PUBLIC_API_BASE_URL=127.0.0.1 misconfiguration that broke same-origin fetch() on localhost:8620 in every web/out build; flagged for Bartek's own .env.local review
 - [Phase ?]: [quick-260718-0qi] Task 2's FAB relocation to bottom-right required flipping the type-menu anchor from left-0 to right-0 (Rule 1 bug fix) -- a left-0-anchored w-44 menu would overflow past the 380px popup width once the FAB moved to the right edge
 - [Phase ?]: [quick-260718-0qi] P9-SC5/SC7 e2e failures were downstream cascades of P9-SC2's ambiguous-select strict-mode violation (shared worker-scoped popup left on the wrong screen), not independent bugs -- fixing the Step 2 selector disambiguation alone restored all 7 Phase 9 SCs, confirmed via 3 zero-flake re-runs
+- [Phase ?]: 13-07: session token needs no base64url boundary (opaque bearer string); signin mode reuses setUnlockedUserKey's own writeSessionMeta call, no separate persist path
 
 ### Pending Todos
 
@@ -169,8 +170,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-17T23:25:21.420Z
-Stopped at: Completed quick task 260718-0qi: Popup UI fix round (theme parity, FAB/footer/top-bar restructure, hover shadow removal, label/sort sizing, Phase 9 e2e repair) -- all 6 tasks green, full gate passed
+Last session: 2026-07-18T07:58:06.111Z
+Stopped at: Completed 13-07-PLAN.md: full passkey SIGN-IN via server-origin ceremony (mode-pinning T-13-16) + FF EnrollExtPasskeyPrompt fix
 Resume file: None
 
 ## Operator Next Steps
