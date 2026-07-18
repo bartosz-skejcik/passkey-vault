@@ -412,7 +412,13 @@ export interface MessageResponseMap {
   // `mode:'signin'`'s own precondition failure -- mirrors `not-locked`
   // being `mode:'unlock'`'s. `invalid-mode-payload` (13-07, T-13-16) is the
   // mode-pinning rejection: an `unlock`-mode nonce carrying a `token` field,
-  // or a `signin`-mode nonce missing one.
+  // or a `signin`-mode nonce missing one. `unlock.serverCeremony.relay`'s
+  // OWN `already-signed-in` (WR-01(rev2), 13-REVIEW-2.md) is the COMPLETE-time
+  // twin of `unlock.serverCeremony.start`'s START-time precondition above --
+  // a session established between start and completion (e.g. a concurrent
+  // password sign-in) makes completeServerUnlock's signin branch re-check
+  // readSessionMeta() and refuse to clobber it, rather than trusting the
+  // start-time guard alone.
   "unlock.serverCeremony.start":
     | { ok: true }
     | { ok: false; error: "no-server-configured" | "not-locked" | "already-signed-in" | "unknown" };
@@ -426,6 +432,7 @@ export interface MessageResponseMap {
           | "invalid-nonce"
           | "expired"
           | "invalid-mode-payload"
+          | "already-signed-in"
           | "unwrap-failed"
           | "unknown";
       };

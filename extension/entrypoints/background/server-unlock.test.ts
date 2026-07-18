@@ -362,7 +362,7 @@ describe("completeServerUnlock", () => {
   // pending record (minted by startServerUnlock, never trusted from a
   // later payload) -- T-13-16.
   describe("signin mode + T-13-16 mode pinning (Plan 13-07)", () => {
-    it("happy path: persists the RELAYED token/accountEmail via setUnlockedUserKey (DEFAULT_AUTOLOCK_MINUTES, no pre-existing session-meta read)", async () => {
+    it("happy path: persists the RELAYED token/accountEmail via setUnlockedUserKey (DEFAULT_AUTOLOCK_MINUTES) after re-confirming no session-meta exists at completion time (WR-01(rev2))", async () => {
       const nonce = await startAndGetNonce("signin");
       hoisted.mockFromPrf.mockReturnValue({ free: vi.fn() });
       const fakeUk = { tag: "uk" };
@@ -387,10 +387,45 @@ describe("completeServerUnlock", () => {
         "fresh-session-token-b64+/=",
         15, // DEFAULT_AUTOLOCK_MINUTES
       );
-      // Signin mode never needs to read existing session-meta -- there is
-      // none by construction (startServerUnlock's own signin-mode guard).
-      expect(hoisted.mockReadSessionMeta).not.toHaveBeenCalled();
+      // WR-01(rev2): signin mode now re-reads session-meta AT COMPLETION
+      // time (symmetric with the unlock branch) to re-confirm the "no
+      // session" precondition still holds -- here it does (resolves null,
+      // the default fixture set by startAndGetNonce("signin")), so the
+      // ceremony proceeds normally.
+      expect(hoisted.mockReadSessionMeta).toHaveBeenCalledTimes(1);
       expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: true });
+    });
+
+    it("WR-01(rev2): a session established mid-ceremony (between start and completion) makes completion reject as already-signed-in, leaving that session + its meta untouched", async () => {
+      const nonce = await startAndGetNonce("signin"); // starts with no session-meta at all
+      hoisted.mockFromPrf.mockReturnValue({ free: vi.fn() });
+      hoisted.mockUnwrapUserKey.mockReturnValue({ tag: "uk" });
+
+      // A session is established in the interim (e.g. a concurrent password
+      // sign-in, or a second ceremony resolving first) while THIS ceremony
+      // window is still open.
+      hoisted.mockReadSessionMeta.mockResolvedValue(FAKE_SESSION_META);
+
+      const result = await completeServerUnlock(
+        {
+          nonce,
+          prfB64: btoa("prf-output-bytes"),
+          prfWrappedUk: "prf-wrapped-uk-blob",
+          token: "fresh-session-token",
+          accountEmail: "signin-user@example.com",
+        },
+        "https://vault.example.com",
+      );
+
+      expect(result).toEqual({ ok: false, error: "already-signed-in" });
+      // The existing session must not be clobbered -- setUnlockedUserKey
+      // (which would overwrite its token/email and reset autolock to
+      // DEFAULT_AUTOLOCK_MINUTES) is never called.
+      expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+      // Popup state resolves rather than wedging (T-13-13).
+      expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: false });
+      // Single-use: the pending record is still consumed on this rejection.
+      expect(readPendingNonceFromStorage()).toBeUndefined();
     });
 
     it("T-13-16: an unlock-mode nonce carrying a token field is rejected as invalid-mode-payload -- never escalated to a sign-in", async () => {

@@ -241,6 +241,7 @@ export type ServerUnlockCompleteResult =
         | "invalid-nonce"
         | "expired"
         | "invalid-mode-payload"
+        | "already-signed-in"
         | "unwrap-failed"
         | "unknown";
     };
@@ -343,12 +344,24 @@ export async function completeServerUnlock(
     const uk = unwrapUserKey(wrappingKey, args.prfWrappedUk);
 
     if (pending.mode === "signin") {
-      // Plan 13-07: no existing session-meta record by construction (the
-      // startServerUnlock signin-mode guard already refused to open this
-      // ceremony otherwise) -- persists the RELAYED token/email through the
-      // EXACT SAME setUnlockedUserKey() write path handleUnlockPassword's
-      // own sign-in branch uses (unlock.ts), including
-      // DEFAULT_AUTOLOCK_MINUTES for a fresh session.
+      // WR-01(rev2) fix (13-REVIEW-2.md): startServerUnlock's own
+      // "no existing session-meta" guard only holds AT START time -- a
+      // session can be established in the interim (e.g. a concurrent
+      // password sign-in, or a second ceremony resolving first) while this
+      // ceremony window is still open. Re-assert the precondition HERE,
+      // symmetric with the unlock branch's own readSessionMeta() read
+      // below, so completion never clobbers a live session's token/email
+      // and silently resets its autolock to DEFAULT_AUTOLOCK_MINUTES.
+      const existing = await readSessionMeta();
+      if (existing !== null) {
+        await closeWindowIfAny(pending);
+        await broadcastCeremonyState(false); // T-13-13: never wedge
+        return { ok: false, error: "already-signed-in" };
+      }
+      // No existing session-meta record -- persists the RELAYED
+      // token/email through the EXACT SAME setUnlockedUserKey() write path
+      // handleUnlockPassword's own sign-in branch uses (unlock.ts),
+      // including DEFAULT_AUTOLOCK_MINUTES for a fresh session.
       await setUnlockedUserKey(uk, args.accountEmail as string, args.token as string, DEFAULT_AUTOLOCK_MINUTES);
     } else {
       // Existing token/email/idle-minutes are unchanged by this unlock --
