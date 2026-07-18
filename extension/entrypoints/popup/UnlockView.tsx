@@ -181,7 +181,7 @@ export default function UnlockView({
     setServerCeremonyBusy(true);
     setServerCeremonyFailed(false);
     try {
-      const result = await sendMessage({ kind: "unlock.serverCeremony.start" });
+      const result = await sendMessage({ kind: "unlock.serverCeremony.start", mode: "unlock" });
       if (!result.ok) {
         setServerCeremonyBusy(false);
         setServerCeremonyFailed(true);

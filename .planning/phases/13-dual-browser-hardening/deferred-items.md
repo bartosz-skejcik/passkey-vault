@@ -38,3 +38,10 @@ the current task's changes).
   `browser` mock, mirroring `ServerConfigView.test.tsx`'s existing pattern.
 - **Status:** Deferred — flag for the next plan/phase that touches
   `App.test.tsx` or `entrypoints/popup/` test mocks.
+
+## 13-07 (execution session)
+
+- **Out-of-scope, pre-existing:** `extension/entrypoints/popup/App.test.tsx` triggers an unhandled promise
+  rejection from `entrypoints/popup/ServerConfigView.tsx:111:32` ("Cannot read properties of undefined
+  (reading 'request')") during a full `npm test` run. Neither file is touched by 13-07's plan or diff.
+  Does not fail any test (all 616 pass); flagged per scope-boundary rule, not fixed.

@@ -837,11 +837,27 @@ const EXT_UNLOCK_RESPONSE_SOURCE = "pv-content-relay";
 // T-13-13's "both relay- and background-side" mitigation).
 const seenExtUnlockNonces = new Set<string>();
 
+// Plan 13-07 (Bartek mandate, full SIGN-IN): `token`/`accountEmail` are
+// OPTIONAL -- present only when ExtUnlockBridge is running a `signin`-mode
+// ceremony (web/src/lib/passkeys/login.ts's `passkeyLoginCeremony`, which
+// identifies the user by EMAIL, not a discoverable credential -- see that
+// file's own header comment). Both are forwarded VERBATIM to the
+// background, exactly as received -- `token` is the server's opaque
+// bearer-string session token (base64-shaped but never decoded/re-encoded
+// here or in the background, unlike the PRF ArrayBuffer field: there is no
+// encode/decode boundary for a value that is only ever compared/stored as
+// an opaque string, mirroring unlock.ts's own `auth.signIn.password`
+// handling). This file never interprets `mode` itself -- the pending
+// record's own mode (server-unlock.ts) is what decides whether a given
+// combination of fields is legal (T-13-16); this relay's only job is
+// faithful forwarding.
 interface ExtUnlockBridgeMessage {
   source: typeof EXT_UNLOCK_REQUEST_SOURCE;
   nonce: string;
   prf: ArrayBuffer;
   prfWrappedUk: string;
+  token?: string;
+  accountEmail?: string;
 }
 
 function isExtUnlockBridgeMessage(data: unknown): data is ExtUnlockBridgeMessage {
@@ -854,7 +870,9 @@ function isExtUnlockBridgeMessage(data: unknown): data is ExtUnlockBridgeMessage
     typeof c.nonce === "string" &&
     c.nonce.length > 0 &&
     isBufferSource(c.prf) &&
-    typeof c.prfWrappedUk === "string"
+    typeof c.prfWrappedUk === "string" &&
+    (c.token === undefined || typeof c.token === "string") &&
+    (c.accountEmail === undefined || typeof c.accountEmail === "string")
   );
 }
 
@@ -883,7 +901,7 @@ async function handleExtUnlockBridgeMessage(event: MessageEvent): Promise<void> 
     return;
   }
 
-  const { nonce, prf, prfWrappedUk } = event.data;
+  const { nonce, prf, prfWrappedUk, token, accountEmail } = event.data;
   if (seenExtUnlockNonces.has(nonce)) {
     return; // replay -- silently ignored, never re-forwarded (T-13-11)
   }
@@ -896,6 +914,8 @@ async function handleExtUnlockBridgeMessage(event: MessageEvent): Promise<void> 
       nonce,
       prfB64,
       prfWrappedUk,
+      token,
+      accountEmail,
     });
     postExtUnlockResult(nonce, response.ok);
   } catch {

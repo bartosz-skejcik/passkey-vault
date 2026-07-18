@@ -107,14 +107,14 @@ beforeEach(() => {
 });
 
 describe("startServerUnlock", () => {
-  it("opens a popup window at <baseUrl>/?pv-ext-unlock=<nonce> and persists a pending record in storage.session ONLY", async () => {
-    const result = await startServerUnlock();
+  it("opens a popup window at <baseUrl>/?pv-ext-unlock=<nonce>&pv-mode=unlock and persists a pending record (mode included) in storage.session ONLY", async () => {
+    const result = await startServerUnlock("unlock");
     expect(result).toEqual({ ok: true });
 
     expect(hoisted.mockWindowsCreate).toHaveBeenCalledTimes(1);
     const call = hoisted.mockWindowsCreate.mock.calls[0][0] as { url: string; type: string };
     expect(call.type).toBe("popup");
-    expect(call.url).toMatch(/^https:\/\/vault\.example\.com\/\?pv-ext-unlock=[\w-]+$/);
+    expect(call.url).toMatch(/^https:\/\/vault\.example\.com\/\?pv-ext-unlock=[\w-]+&pv-mode=unlock$/);
 
     const nonce = readPendingNonceFromStorage();
     expect(typeof nonce).toBe("string");
@@ -126,31 +126,31 @@ describe("startServerUnlock", () => {
 
   it("returns no-server-configured and opens no window when no baseUrl is configured", async () => {
     hoisted.mockReadServerConfig.mockResolvedValue(null);
-    const result = await startServerUnlock();
+    const result = await startServerUnlock("unlock");
     expect(result).toEqual({ ok: false, error: "no-server-configured" });
     expect(hoisted.mockWindowsCreate).not.toHaveBeenCalled();
   });
 
   it("returns not-locked when the session is already unlocked", async () => {
     hoisted.mockIsSessionUnlocked.mockReturnValue(true);
-    const result = await startServerUnlock();
+    const result = await startServerUnlock("unlock");
     expect(result).toEqual({ ok: false, error: "not-locked" });
     expect(hoisted.mockWindowsCreate).not.toHaveBeenCalled();
   });
 
   it("returns not-locked (no existing session token) when there is no session-meta record at all", async () => {
     hoisted.mockReadSessionMeta.mockResolvedValue(null);
-    const result = await startServerUnlock();
+    const result = await startServerUnlock("unlock");
     expect(result).toEqual({ ok: false, error: "not-locked" });
     expect(hoisted.mockWindowsCreate).not.toHaveBeenCalled();
   });
 
   it("a second concurrent start closes the prior ceremony window and invalidates its nonce", async () => {
     hoisted.mockWindowsCreate.mockResolvedValueOnce({ id: 1 }).mockResolvedValueOnce({ id: 2 });
-    await startServerUnlock();
+    await startServerUnlock("unlock");
     const firstNonce = readPendingNonceFromStorage();
 
-    await startServerUnlock();
+    await startServerUnlock("unlock");
     const secondNonce = readPendingNonceFromStorage();
 
     expect(secondNonce).not.toBe(firstNonce);
@@ -166,9 +166,57 @@ describe("startServerUnlock", () => {
   });
 });
 
+// Plan 13-07 (Bartek mandate, full SIGN-IN): mirrors "startServerUnlock"
+// above, but for the OPPOSITE precondition -- signin mode requires NO
+// existing session-meta record at all (mirrors auth.signIn.password's own
+// fresh-install/no-session-only contract), not an existing locked one.
+describe("startServerUnlock — signin mode (Plan 13-07)", () => {
+  beforeEach(() => {
+    // The "unlock" describe block's default fixture assumes an existing
+    // locked session (FAKE_SESSION_META) -- signin mode's own default
+    // precondition is the opposite, so every test in THIS block starts
+    // from "no session at all" unless it deliberately overrides.
+    hoisted.mockReadSessionMeta.mockResolvedValue(null);
+  });
+
+  it("opens a popup window at <baseUrl>/?pv-ext-unlock=<nonce>&pv-mode=signin and persists a pending record with mode:'signin'", async () => {
+    const result = await startServerUnlock("signin");
+    expect(result).toEqual({ ok: true });
+
+    const call = hoisted.mockWindowsCreate.mock.calls[0][0] as { url: string };
+    expect(call.url).toMatch(/^https:\/\/vault\.example\.com\/\?pv-ext-unlock=[\w-]+&pv-mode=signin$/);
+
+    const pending = hoisted.sessionStore.store.get("pv-server-unlock-pending") as { mode: string };
+    expect(pending.mode).toBe("signin");
+  });
+
+  it("returns already-signed-in and opens no window when a session-meta record already exists (even if locked)", async () => {
+    hoisted.mockReadSessionMeta.mockResolvedValue(FAKE_SESSION_META);
+    const result = await startServerUnlock("signin");
+    expect(result).toEqual({ ok: false, error: "already-signed-in" });
+    expect(hoisted.mockWindowsCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns no-server-configured and opens no window when no baseUrl is configured", async () => {
+    hoisted.mockReadServerConfig.mockResolvedValue(null);
+    const result = await startServerUnlock("signin");
+    expect(result).toEqual({ ok: false, error: "no-server-configured" });
+    expect(hoisted.mockWindowsCreate).not.toHaveBeenCalled();
+  });
+
+  it("does NOT consult isSessionUnlocked() -- an in-memory-unlocked-but-no-meta state (impossible in practice) still starts", async () => {
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+    const result = await startServerUnlock("signin");
+    expect(result).toEqual({ ok: true });
+  });
+});
+
 describe("completeServerUnlock", () => {
-  async function startAndGetNonce(): Promise<string> {
-    await startServerUnlock();
+  async function startAndGetNonce(mode: "signin" | "unlock" = "unlock"): Promise<string> {
+    if (mode === "signin") {
+      hoisted.mockReadSessionMeta.mockResolvedValue(null);
+    }
+    await startServerUnlock(mode);
     return readPendingNonceFromStorage() as string;
   }
 
@@ -309,12 +357,94 @@ describe("completeServerUnlock", () => {
     expect(result).toEqual({ ok: false, error: "expired" });
     expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
   });
+
+  // Plan 13-07 (Bartek mandate, full SIGN-IN): the mode is PINNED in the
+  // pending record (minted by startServerUnlock, never trusted from a
+  // later payload) -- T-13-16.
+  describe("signin mode + T-13-16 mode pinning (Plan 13-07)", () => {
+    it("happy path: persists the RELAYED token/accountEmail via setUnlockedUserKey (DEFAULT_AUTOLOCK_MINUTES, no pre-existing session-meta read)", async () => {
+      const nonce = await startAndGetNonce("signin");
+      hoisted.mockFromPrf.mockReturnValue({ free: vi.fn() });
+      const fakeUk = { tag: "uk" };
+      hoisted.mockUnwrapUserKey.mockReturnValue(fakeUk);
+      hoisted.mockReadSessionMeta.mockClear();
+
+      const result = await completeServerUnlock(
+        {
+          nonce,
+          prfB64: btoa("prf-output-bytes"),
+          prfWrappedUk: "prf-wrapped-uk-blob",
+          token: "fresh-session-token-b64+/=",
+          accountEmail: "signin-user@example.com",
+        },
+        "https://vault.example.com",
+      );
+
+      expect(result).toEqual({ ok: true });
+      expect(hoisted.mockSetUnlockedUserKey).toHaveBeenCalledWith(
+        fakeUk,
+        "signin-user@example.com",
+        "fresh-session-token-b64+/=",
+        15, // DEFAULT_AUTOLOCK_MINUTES
+      );
+      // Signin mode never needs to read existing session-meta -- there is
+      // none by construction (startServerUnlock's own signin-mode guard).
+      expect(hoisted.mockReadSessionMeta).not.toHaveBeenCalled();
+      expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: true });
+    });
+
+    it("T-13-16: an unlock-mode nonce carrying a token field is rejected as invalid-mode-payload -- never escalated to a sign-in", async () => {
+      const nonce = await startAndGetNonce("unlock"); // FAKE_SESSION_META is the default fixture
+
+      const result = await completeServerUnlock(
+        {
+          nonce,
+          prfB64: btoa("prf"),
+          prfWrappedUk: "blob",
+          token: "attacker-supplied-token",
+          accountEmail: "attacker@example.com",
+        },
+        "https://vault.example.com",
+      );
+
+      expect(result).toEqual({ ok: false, error: "invalid-mode-payload" });
+      expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+      expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: false });
+      // Single-use: the pending record is still consumed even on this
+      // rejection (T-13-11's discipline applies uniformly).
+      expect(readPendingNonceFromStorage()).toBeUndefined();
+    });
+
+    it("T-13-16: a signin-mode nonce with NO token field is rejected as invalid-mode-payload", async () => {
+      const nonce = await startAndGetNonce("signin");
+
+      const result = await completeServerUnlock(
+        { nonce, prfB64: btoa("prf"), prfWrappedUk: "blob", accountEmail: "user@example.com" },
+        "https://vault.example.com",
+      );
+
+      expect(result).toEqual({ ok: false, error: "invalid-mode-payload" });
+      expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+    });
+
+    it("T-13-16: a signin-mode nonce with a token but NO accountEmail is rejected as invalid-mode-payload", async () => {
+      const nonce = await startAndGetNonce("signin");
+
+      const result = await completeServerUnlock(
+        { nonce, prfB64: btoa("prf"), prfWrappedUk: "blob", token: "tok" },
+        "https://vault.example.com",
+      );
+
+      expect(result).toEqual({ ok: false, error: "invalid-mode-payload" });
+      expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("registerServerUnlockAlarmListener", () => {
   it("on the timeout alarm firing: clears pending, closes the window, and broadcasts ok:false -- the pending state always resolves", async () => {
     registerServerUnlockAlarmListener();
-    await startServerUnlock();
+    await startServerUnlock("unlock");
     expect(readPendingNonceFromStorage()).toBeDefined();
 
     const listener = hoisted.alarmListeners[0];
@@ -329,7 +459,7 @@ describe("registerServerUnlockAlarmListener", () => {
 
   it("ignores an unrelated alarm name", async () => {
     registerServerUnlockAlarmListener();
-    await startServerUnlock();
+    await startServerUnlock("unlock");
 
     const listener = hoisted.alarmListeners[0];
     listener({ name: "pv-auto-lock" });

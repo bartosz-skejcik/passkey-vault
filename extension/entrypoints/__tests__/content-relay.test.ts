@@ -1107,5 +1107,60 @@ describe("content-relay", () => {
         expect.objectContaining({ kind: "unlock.serverCeremony.relay", nonce: sharedNonce }),
       );
     });
+
+    // Plan 13-07 (Bartek mandate, full SIGN-IN) -- CR-01 lesson applied: a
+    // REAL round-trip for the new opaque `token`/`accountEmail` fields,
+    // through the ACTUAL relay forwarding path (no mocks of this file's own
+    // logic) -- unlike the PRF field, the token is never encoded/decoded
+    // (it is an opaque bearer STRING, mirrors unlock.ts's own
+    // `auth.signIn.password` handling), so the "round trip" here is
+    // byte-for-byte identity through the relay's own message construction,
+    // exercised with a REALISTIC standard-base64-shaped token (containing
+    // `+`/`/`/`=`, the exact charset CR-01 showed a naive implementation
+    // can mishandle at a boundary) to guard against any future encode step
+    // silently mangling it.
+    it("signin mode: forwards token/accountEmail fields VERBATIM (real base64-shaped token containing +/=, unmodified end to end)", async () => {
+      const nonce = "nonce-ext-unlock-signin";
+      const realisticToken = "aB3+xyz/QDzP9k7f2Lp8mN0vR6tW1hU4jK5cE7sG2iZ==";
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            source: "pv-ext-unlock-bridge",
+            nonce,
+            prf: new Uint8Array([9, 8, 7, 6]).buffer,
+            prfWrappedUk: "signin-blob",
+            token: realisticToken,
+            accountEmail: "signin-user@example.com",
+          },
+          origin: location.origin,
+          source: window,
+        }),
+      );
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+      const call = hoisted.mockSendMessage.mock.calls[0][0] as {
+        kind: string;
+        token?: string;
+        accountEmail?: string;
+      };
+      expect(call.kind).toBe("unlock.serverCeremony.relay");
+      // Byte-for-byte identical to what the page sent -- no encode/decode
+      // boundary touches this field anywhere in the relay.
+      expect(call.token).toBe(realisticToken);
+      expect(call.accountEmail).toBe("signin-user@example.com");
+    });
+
+    it("unlock mode: token/accountEmail are simply ABSENT from the forwarded payload when the page never sent them", async () => {
+      const nonce = "nonce-ext-unlock-no-signin-fields";
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+
+      const call = hoisted.mockSendMessage.mock.calls[0][0] as { token?: string; accountEmail?: string };
+      expect(call.token).toBeUndefined();
+      expect(call.accountEmail).toBeUndefined();
+    });
   });
 });

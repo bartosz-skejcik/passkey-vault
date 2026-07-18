@@ -5,26 +5,54 @@
 // relayed back through content-relay.content.ts's phase-12-hardened
 // channel (D-03/ASVS V5 origin+nonce+source validation precedent).
 //
+// Plan 13-07 (Bartek mandate, 2026-07-18: "Zrób teraz") EXTENDS this from
+// unlock-only to FULL SIGN-IN: the same ceremony window, gated by a
+// `mode: 'signin' | 'unlock'` pinned in the background-minted pending
+// record (NEVER trusted from a later payload -- T-13-16). `unlock` mode is
+// 13-06's original behavior, byte-for-byte. `signin` mode reuses the v0.1
+// web `passkeyLogin` ceremony (web/src/lib/passkeys/login.ts's
+// `passkeyLoginCeremony`, a 13-07 extraction mirroring 13-06's own
+// `passkeyUnlockCeremony` precedent) -- the ceremony additionally yields a
+// fresh server session TOKEN (an opaque bearer string, not a binary/base64
+// field -- no additional encode/decode boundary applies to it, unlike the
+// PRF ArrayBuffer), which this module persists through the EXACT SAME
+// `setUnlockedUserKey()` write path `unlock.ts`'s `handleUnlockPassword`
+// sign-in branch uses (session-storage.ts's `writeSessionMeta`).
+//
 // THE PENDING-UNLOCK LIFECYCLE:
-//   1. startServerUnlock() (popup-driven, unlock.serverCeremony.start):
+//   1. startServerUnlock(mode) (popup-driven, unlock.serverCeremony.start):
 //      mints a single-use nonce, opens a small popup window at
-//      `<baseUrl>/?pv-ext-unlock=<nonce>`, and persists a pending record
-//      -- chrome.storage.session ONLY (D-05's invariant: never
-//      storage.local for anything session-scoped), never the User Key or
-//      any secret. Bounded by a chrome.alarms timeout (T-09-08's own
-//      "alarms survive an MV3 idle-kill" rationale applies here exactly
-//      as it does to autolock.ts's alarm).
+//      `<baseUrl>/?pv-ext-unlock=<nonce>&pv-mode=<mode>` (the URL's own
+//      `pv-mode` is only a HINT for the bridge to render the right ceremony
+//      surface -- the pending record's `mode` field, set from THIS
+//      function's own argument, is the sole authority server-unlock.ts
+//      itself ever trusts), and persists a pending record --
+//      chrome.storage.session ONLY (D-05's invariant: never storage.local
+//      for anything session-scoped), never the User Key or any secret.
+//      Bounded by a chrome.alarms timeout (T-09-08's own "alarms survive an
+//      MV3 idle-kill" rationale applies here exactly as it does to
+//      autolock.ts's alarm). The PRECONDITION differs per mode: `unlock`
+//      requires an existing (locked) session, exactly like 13-06; `signin`
+//      requires the OPPOSITE -- no session-meta record at all (mirrors
+//      `auth.signIn.password`'s own no-existing-token precondition).
 //   2. The opened window runs web/src/components/auth/ExtUnlockBridge.tsx,
-//      which reuses the v0.1 passkeyUnlockCeremony() (server-rpId PRF
-//      get()) and posts {nonce, prf, prfWrappedUk} to content-relay's
-//      pv-ext-unlock listener -- NEVER the raw User Key (T-13-12).
+//      which reuses the v0.1 `passkeyUnlockCeremony()`/`passkeyLoginCeremony()`
+//      (server-rpId PRF get()) and posts {nonce, prf, prfWrappedUk,
+//      token?, accountEmail?} to content-relay's pv-ext-unlock listener --
+//      NEVER the raw User Key (T-13-12).
 //   3. completeServerUnlock() (content-script-driven via the SEPARATE
 //      registerAutofillFrameChannel() listener, unlock.serverCeremony.relay):
 //      validates the nonce against the pending record (single-use,
-//      consumed immediately regardless of outcome -- T-13-11), unwraps the
+//      consumed immediately regardless of outcome -- T-13-11), REJECTS a
+//      payload/mode mismatch (T-13-16: an `unlock`-mode nonce carrying a
+//      `token` field, or a `signin`-mode nonce missing one), unwraps the
 //      User Key HERE (the sole unwrap anchor for this flow), and calls the
-//      SAME setUnlockedUserKey() every other unlock path uses (alarms
-//      re-armed there, WR-05's lesson already covers this call site).
+//      SAME setUnlockedUserKey() every other unlock/sign-in path uses --
+//      `unlock` mode reads the EXISTING session-meta (token/email/idle-
+//      minutes unchanged, exactly like 13-06); `signin` mode has no
+//      existing meta by construction, so it uses the relayed `token` +
+//      `accountEmail` and DEFAULT_AUTOLOCK_MINUTES, mirroring
+//      `handleUnlockPassword`'s own sign-in branch byte-for-byte.
 // Every resolution path (success, failure, expiry) clears the pending
 // record, closes the ceremony window, and broadcasts
 // unlock.serverCeremony.state so an already-open popup updates without a
@@ -35,6 +63,7 @@ import { b64UrlToBytes } from "../../lib/messaging/bytes-b64";
 import { isSessionUnlocked, setUnlockedUserKey } from "./vault-session";
 import { readSessionMeta } from "./session-storage";
 import { readServerConfig } from "./server-config";
+import { DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
 
 const PENDING_STORAGE_KEY = "pv-server-unlock-pending";
 const ALARM_NAME = "pv-server-unlock-timeout";
@@ -42,10 +71,17 @@ const CEREMONY_TIMEOUT_MS = 120_000;
 const CEREMONY_WINDOW_WIDTH = 480;
 const CEREMONY_WINDOW_HEIGHT = 640;
 
+export type ServerCeremonyMode = "signin" | "unlock";
+
 interface PendingServerUnlock {
   nonce: string;
   createdAt: number;
+  mode: ServerCeremonyMode;
   windowId?: number;
+}
+
+function isServerCeremonyMode(value: unknown): value is ServerCeremonyMode {
+  return value === "signin" || value === "unlock";
 }
 
 function isPendingServerUnlock(value: unknown): value is PendingServerUnlock {
@@ -53,7 +89,8 @@ function isPendingServerUnlock(value: unknown): value is PendingServerUnlock {
     typeof value === "object" &&
     value !== null &&
     typeof (value as PendingServerUnlock).nonce === "string" &&
-    typeof (value as PendingServerUnlock).createdAt === "number"
+    typeof (value as PendingServerUnlock).createdAt === "number" &&
+    isServerCeremonyMode((value as PendingServerUnlock).mode)
   );
 }
 
@@ -114,28 +151,43 @@ async function broadcastCeremonyState(ok: boolean): Promise<void> {
 
 export type ServerUnlockStartResult =
   | { ok: true }
-  | { ok: false; error: "no-server-configured" | "not-locked" | "unknown" };
+  | { ok: false; error: "no-server-configured" | "not-locked" | "already-signed-in" | "unknown" };
 
 /**
  * Guards BOTH preconditions before doing any I/O: a configured server base
- * URL (nowhere to open the ceremony window otherwise) and an actually-locked
- * session with an EXISTING token (this is an unlock-only recipient, exactly
- * like ext-passkey.ts's handleExtPrfUnlockFinish -- there is no sign-in
- * variant of this flow). Multiple concurrent starts: the newest call wins,
- * closing any prior ceremony window and overwriting its (now orphaned, no
- * longer matchable) nonce.
+ * URL (nowhere to open the ceremony window otherwise) and a mode-dependent
+ * session precondition. `unlock` mode is 13-06's original guard, unchanged:
+ * an actually-locked session with an EXISTING token (this recipient is
+ * unlock-only, exactly like ext-passkey.ts's handleExtPrfUnlockFinish).
+ * `signin` mode (13-07) is the OPPOSITE precondition -- NO existing
+ * session-meta record at all, mirroring `auth.signIn.password`'s own
+ * fresh-install/no-session-only contract (unlock.ts's `handleUnlockPassword`,
+ * `email !== undefined` branch): a signed-in-but-locked session must use
+ * the `unlock`-mode ceremony instead, exactly like UnlockView's own
+ * `isSignIn`-gated button split (Task 3). Multiple concurrent starts: the
+ * newest call wins, closing any prior ceremony window and overwriting its
+ * (now orphaned, no longer matchable) nonce -- regardless of whether the
+ * two calls share the same mode.
  */
-export async function startServerUnlock(): Promise<ServerUnlockStartResult> {
+export async function startServerUnlock(mode: ServerCeremonyMode): Promise<ServerUnlockStartResult> {
   const config = await readServerConfig();
   if (config === null) {
     return { ok: false, error: "no-server-configured" };
   }
-  if (isSessionUnlocked()) {
-    return { ok: false, error: "not-locked" };
-  }
-  const meta = await readSessionMeta();
-  if (meta === null) {
-    return { ok: false, error: "not-locked" };
+
+  if (mode === "unlock") {
+    if (isSessionUnlocked()) {
+      return { ok: false, error: "not-locked" };
+    }
+    const meta = await readSessionMeta();
+    if (meta === null) {
+      return { ok: false, error: "not-locked" };
+    }
+  } else {
+    const meta = await readSessionMeta();
+    if (meta !== null) {
+      return { ok: false, error: "already-signed-in" };
+    }
   }
 
   await closeWindowIfAny(await readPending());
@@ -144,7 +196,7 @@ export async function startServerUnlock(): Promise<ServerUnlockStartResult> {
   let windowId: number | undefined;
   try {
     const created = await browser.windows.create({
-      url: `${config.baseUrl}/?pv-ext-unlock=${encodeURIComponent(nonce)}`,
+      url: `${config.baseUrl}/?pv-ext-unlock=${encodeURIComponent(nonce)}&pv-mode=${mode}`,
       type: "popup",
       width: CEREMONY_WINDOW_WIDTH,
       height: CEREMONY_WINDOW_HEIGHT,
@@ -154,7 +206,7 @@ export async function startServerUnlock(): Promise<ServerUnlockStartResult> {
     return { ok: false, error: "unknown" };
   }
 
-  await writePending({ nonce, createdAt: Date.now(), windowId });
+  await writePending({ nonce, createdAt: Date.now(), mode, windowId });
   await browser.alarms.create(ALARM_NAME, { delayInMinutes: CEREMONY_TIMEOUT_MS / 60_000 });
   return { ok: true };
 }
@@ -184,7 +236,13 @@ export type ServerUnlockCompleteResult =
   | { ok: true }
   | {
       ok: false;
-      error: "forbidden-origin" | "invalid-nonce" | "expired" | "unwrap-failed" | "unknown";
+      error:
+        | "forbidden-origin"
+        | "invalid-nonce"
+        | "expired"
+        | "invalid-mode-payload"
+        | "unwrap-failed"
+        | "unknown";
     };
 
 /**
@@ -199,9 +257,16 @@ export type ServerUnlockCompleteResult =
  * delivery carrying a DIFFERENT (stale/mismatched) nonce deliberately does
  * NOT touch whatever ceremony is currently pending, so it can never destroy
  * a separate, still-legitimate, in-flight ceremony (T-13-13).
+ *
+ * Plan 13-07 (T-13-16): once the nonce is validated, the PENDING RECORD'S
+ * OWN `mode` (never `args`, which the page/relay could in principle shape
+ * however it likes) decides which fields are required/forbidden and which
+ * `setUnlockedUserKey` call is made -- a page cannot escalate an
+ * `unlock`-mode nonce into a sign-in by simply adding a `token` field to
+ * its postMessage payload, nor complete a `signin`-mode nonce without one.
  */
 export async function completeServerUnlock(
-  args: { nonce: string; prfB64: string; prfWrappedUk: string },
+  args: { nonce: string; prfB64: string; prfWrappedUk: string; token?: string; accountEmail?: string },
   callerOrigin: string,
 ): Promise<ServerUnlockCompleteResult> {
   const config = await readServerConfig();
@@ -248,6 +313,22 @@ export async function completeServerUnlock(
     return { ok: false, error: "expired" };
   }
 
+  // T-13-16 (Plan 13-07): the PENDING RECORD's mode is authoritative --
+  // never `args`. `unlock` mode must NEVER carry a token (that would be an
+  // attempted escalation to sign-in); `signin` mode REQUIRES both a token
+  // and the account email the bridge's prelogin used (passkeyLogin
+  // identifies the user by email, not a discoverable credential).
+  if (pending.mode === "unlock" && args.token !== undefined) {
+    await closeWindowIfAny(pending);
+    await broadcastCeremonyState(false);
+    return { ok: false, error: "invalid-mode-payload" };
+  }
+  if (pending.mode === "signin" && (args.token === undefined || args.accountEmail === undefined)) {
+    await closeWindowIfAny(pending);
+    await broadcastCeremonyState(false);
+    return { ok: false, error: "invalid-mode-payload" };
+  }
+
   // CR-01 (phase-13 review): args.prfB64 was encoded by content-relay's
   // bufferSourceToB64Url (base64url, no padding -- the '-'/'_' D-21
   // convention), NOT standard base64 -- b64UrlToBytes is the matching
@@ -261,16 +342,26 @@ export async function completeServerUnlock(
 
     const uk = unwrapUserKey(wrappingKey, args.prfWrappedUk);
 
-    // Existing token/email/idle-minutes are unchanged by this unlock --
-    // read them rather than re-deriving, mirrors ext-passkey.ts's
-    // handleExtPrfUnlockFinish exactly.
-    const meta = await readSessionMeta();
-    if (meta === null) {
-      await closeWindowIfAny(pending);
-      await broadcastCeremonyState(false);
-      return { ok: false, error: "unknown" };
+    if (pending.mode === "signin") {
+      // Plan 13-07: no existing session-meta record by construction (the
+      // startServerUnlock signin-mode guard already refused to open this
+      // ceremony otherwise) -- persists the RELAYED token/email through the
+      // EXACT SAME setUnlockedUserKey() write path handleUnlockPassword's
+      // own sign-in branch uses (unlock.ts), including
+      // DEFAULT_AUTOLOCK_MINUTES for a fresh session.
+      await setUnlockedUserKey(uk, args.accountEmail as string, args.token as string, DEFAULT_AUTOLOCK_MINUTES);
+    } else {
+      // Existing token/email/idle-minutes are unchanged by this unlock --
+      // read them rather than re-deriving, mirrors ext-passkey.ts's
+      // handleExtPrfUnlockFinish exactly.
+      const meta = await readSessionMeta();
+      if (meta === null) {
+        await closeWindowIfAny(pending);
+        await broadcastCeremonyState(false);
+        return { ok: false, error: "unknown" };
+      }
+      await setUnlockedUserKey(uk, meta.accountEmail, meta.sessionToken, meta.idleTimeoutMinutes);
     }
-    await setUnlockedUserKey(uk, meta.accountEmail, meta.sessionToken, meta.idleTimeoutMinutes);
 
     await closeWindowIfAny(pending);
     await broadcastCeremonyState(true);

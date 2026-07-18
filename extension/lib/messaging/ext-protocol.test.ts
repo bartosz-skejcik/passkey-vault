@@ -123,13 +123,18 @@ const MESSAGE_FIXTURES: MessageFixtureMap = {
   // Plan 13-06: PRF output is ALREADY a base64url string here (D-21) --
   // content-relay.content.ts encodes the real ArrayBuffer before this
   // sendMessage hop, so this fixture round-trips cleanly like every other
-  // kind on this union.
-  "unlock.serverCeremony.start": { kind: "unlock.serverCeremony.start" },
+  // kind on this union. Plan 13-07: this fixture uses the `signin`-mode
+  // shape (token/accountEmail present) -- the more interesting case for a
+  // JSON round-trip test, since the `unlock`-mode shape (both fields
+  // absent) is a strict subset with nothing extra to verify.
+  "unlock.serverCeremony.start": { kind: "unlock.serverCeremony.start", mode: "signin" },
   "unlock.serverCeremony.relay": {
     kind: "unlock.serverCeremony.relay",
     nonce: "nonce-1",
     prfB64: "cHJmLW91dHB1dC1ieXRlcw",
     prfWrappedUk: '{"nonce":"...","ciphertext":"..."}',
+    token: "b64-opaque-session-token+/=",
+    accountEmail: "a@example.com",
   },
   "unlock.serverCeremony.state": { kind: "unlock.serverCeremony.state", ok: true },
 };

@@ -249,26 +249,52 @@ export type Message =
   // RESEARCH.md option 1). `unlock.serverCeremony.start` is popup-driven
   // (this router's ordinary WR-01-gated channel, mirrors
   // `unlock.extPrf.start`'s shape) -- background/server-unlock.ts mints a
-  // single-use nonce and opens the ceremony window; it carries no fields,
-  // the guard (server configured + session locked) runs entirely
-  // background-side. `unlock.serverCeremony.relay` is content-script ->
-  // background, dispatched by the SAME SEPARATE
+  // single-use nonce and opens the ceremony window; the guard (server
+  // configured + session precondition, which DIFFERS per mode -- see
+  // server-unlock.ts) runs entirely background-side. `unlock.serverCeremony.relay`
+  // is content-script -> background, dispatched by the SAME SEPARATE
   // registerAutofillFrameChannel() listener as credentials.create/get
   // above (T-13-14: the result must ride the content-frame guarded channel,
   // never the popup-gated one) -- `nonce`/`prfB64`/`prfWrappedUk` are the
-  // ONLY things that ever cross this hop; the raw User Key never does
-  // (T-13-12, unwrapped exclusively in server-unlock.ts). PRF output is a
-  // base64url STRING here (D-21) -- content-relay.content.ts encodes the
-  // real ArrayBuffer it received via postMessage before this sendMessage
-  // hop, mirroring the provider bridge's own base64url boundary.
+  // ONLY things that ever cross this hop for the UNLOCK mode; the raw User
+  // Key never does (T-13-12, unwrapped exclusively in server-unlock.ts).
+  // PRF output is a base64url STRING here (D-21) -- content-relay.content.ts
+  // encodes the real ArrayBuffer it received via postMessage before this
+  // sendMessage hop, mirroring the provider bridge's own base64url boundary.
   // `unlock.serverCeremony.state` is a FIRE-AND-FORGET broadcast FROM the
   // background (mirrors `session.locked`'s shape/discipline) -- deliberately
   // NOT one of `isProtocolMessage()`'s accepted kinds in router.ts, for the
   // exact same reason `session.locked`/`vault.updated` aren't: it is never
   // dispatched TO `handle()`, only listened for by the popup's own
   // `browser.runtime.onMessage` listener.
-  | { kind: "unlock.serverCeremony.start" }
-  | { kind: "unlock.serverCeremony.relay"; nonce: string; prfB64: string; prfWrappedUk: string }
+  //
+  // Plan 13-07 (Bartek mandate, full SIGN-IN, not just unlock): `mode` is
+  // now REQUIRED on `unlock.serverCeremony.start` -- minted by the popup
+  // (which already knows whether it's rendering the sign-in or the
+  // locked-unlock variant, `session.status`'s own `kind` discriminant), but
+  // the AUTHORITATIVE mode lives in the background's pending record
+  // (server-unlock.ts's `startServerUnlock`), never trusted from a later
+  // payload. `token`/`accountEmail` on `unlock.serverCeremony.relay` are
+  // OPTIONAL and ONLY meaningful for `mode: 'signin'` -- `token` is the
+  // server's opaque session-token STRING (already base64, but treated as an
+  // OPAQUE bearer value never decoded client-side, exactly like
+  // `auth.signIn.password`'s own `session_token` handling in unlock.ts --
+  // no additional encoding boundary applies to it, unlike the PRF
+  // ArrayBuffer field). `accountEmail` is the email the bridge's own
+  // prelogin used (passkeyLogin's prelogin identifies the user by email,
+  // NOT a discoverable credential -- see web/src/lib/passkeys/login.ts).
+  // `completeServerUnlock` REJECTS a `token`/`accountEmail` payload on an
+  // `unlock`-mode nonce and REJECTS their absence on a `signin`-mode nonce
+  // (T-13-16) -- `invalid-mode-payload` is that typed failure.
+  | { kind: "unlock.serverCeremony.start"; mode: "signin" | "unlock" }
+  | {
+      kind: "unlock.serverCeremony.relay";
+      nonce: string;
+      prfB64: string;
+      prfWrappedUk: string;
+      token?: string;
+      accountEmail?: string;
+    }
   | { kind: "unlock.serverCeremony.state"; ok: boolean }
   // quick-260717: NordPass-style last-used tracking. ItemDetailView.tsx's
   // copy affordances decrypt/copy CLIENT-SIDE in the popup document (unlike
@@ -381,14 +407,28 @@ export interface MessageResponseMap {
   // quick-260717: always `{ ok: true }` -- see the Message union's own
   // doc comment above for why this never surfaces a failure to the popup.
   "vault.touch": { ok: true };
-  // Plan 13-06: see the Message union's own doc comment above for the full
-  // rationale on all three of these.
+  // Plan 13-06/13-07: see the Message union's own doc comment above for the
+  // full rationale on all three of these. `already-signed-in` (13-07) is
+  // `mode:'signin'`'s own precondition failure -- mirrors `not-locked`
+  // being `mode:'unlock'`'s. `invalid-mode-payload` (13-07, T-13-16) is the
+  // mode-pinning rejection: an `unlock`-mode nonce carrying a `token` field,
+  // or a `signin`-mode nonce missing one.
   "unlock.serverCeremony.start":
     | { ok: true }
-    | { ok: false; error: "no-server-configured" | "not-locked" | "unknown" };
+    | { ok: false; error: "no-server-configured" | "not-locked" | "already-signed-in" | "unknown" };
   "unlock.serverCeremony.relay":
     | { ok: true }
-    | { ok: false; error: "forbidden-sender" | "forbidden-origin" | "invalid-nonce" | "expired" | "unwrap-failed" | "unknown" };
+    | {
+        ok: false;
+        error:
+          | "forbidden-sender"
+          | "forbidden-origin"
+          | "invalid-nonce"
+          | "expired"
+          | "invalid-mode-payload"
+          | "unwrap-failed"
+          | "unknown";
+      };
   "unlock.serverCeremony.state": void;
 }
 

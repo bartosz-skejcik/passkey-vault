@@ -418,7 +418,7 @@ describe("UnlockView — server-origin ceremony secondary path (Plan 13-06)", ()
     fireEvent.click(serverButton);
 
     await waitFor(() => {
-      expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.start" });
+      expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.start", mode: "unlock" });
     });
     expect(await screen.findByText(/finish in the opened window|dokończ w otwartym oknie/i)).toBeInTheDocument();
     expect(serverButton).toBeDisabled();
@@ -453,7 +453,9 @@ describe("UnlockView — server-origin ceremony secondary path (Plan 13-06)", ()
     fireEvent.click(screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i }));
     const serverButton = await screen.findByTestId("server-ceremony-unlock-button");
     fireEvent.click(serverButton);
-    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.start" }));
+    await waitFor(() =>
+      expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.start", mode: "unlock" }),
+    );
 
     latestServerCeremonyStateListener()({ kind: "unlock.serverCeremony.state", ok: false });
 

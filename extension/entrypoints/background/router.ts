@@ -277,7 +277,12 @@ async function handleContentFrameMessage(
 // half). Unlike credentials.create/get's "fail open to fallthrough"
 // discipline, there is no native-authenticator fallback for this flow -- a
 // rejected sender fails to a typed error the ceremony window's ack listener
-// can render.
+// can render. Plan 13-07: `token`/`accountEmail` pass straight through
+// (both `undefined` for an `unlock`-mode ceremony, both present for
+// `signin`) -- this handler never interprets or validates them itself,
+// completeServerUnlock's own T-13-16 mode-pinning check is the sole
+// authority on whether a given payload shape is legal for the pending
+// ceremony's mode.
 async function handleServerUnlockRelayMessage(
   message: MessageOf<"unlock.serverCeremony.relay">,
   sender: MessageSender,
@@ -287,7 +292,13 @@ async function handleServerUnlockRelayMessage(
     return { ok: false, error: "forbidden-sender" };
   }
   return completeServerUnlock(
-    { nonce: message.nonce, prfB64: message.prfB64, prfWrappedUk: message.prfWrappedUk },
+    {
+      nonce: message.nonce,
+      prfB64: message.prfB64,
+      prfWrappedUk: message.prfWrappedUk,
+      token: message.token,
+      accountEmail: message.accountEmail,
+    },
     guard.origin,
   );
 }
@@ -561,7 +572,7 @@ async function handle(message: Message, sender: MessageSender): Promise<unknown>
       touchVaultItem(message.itemId);
       return { ok: true as const };
     case "unlock.serverCeremony.start":
-      return startServerUnlock();
+      return startServerUnlock(message.mode);
     default:
       throw new Error(`unhandled message kind: ${(message as { kind: string }).kind}`);
   }
