@@ -213,6 +213,7 @@ Plans:
 - [x] 13-04-PLAN.md — Firefox UAT pass + divergence triage/fixes + final sign-off (D-01/D-05/D-08)
 - [x] 13-05-PLAN.md — moz-extension CORS: server scheme-wildcard mechanism (D-10 tech-debt flagged) + CORS-vs-unreachable UX (D-11) + self-hosting docs
 - [x] 13-06-PLAN.md — Firefox passkey unlock via server-origin PRF ceremony (Bartek-mandated post-research; reuses v0.1 passkeyUnlock + content-relay channel)
+- [ ] 13-07-PLAN.md — Full passkey SIGN-IN via server-origin ceremony (Bartek-mandated 2026-07-18 "Zrób teraz"; reuses v0.1 passkeyLogin; + FF enroll-prompt seam fix)
 
 **UI hint**: yes
 
