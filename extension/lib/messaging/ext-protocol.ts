@@ -287,9 +287,22 @@ export type Message =
   // `unlock`-mode nonce and REJECTS their absence on a `signin`-mode nonce
   // (T-13-16) -- `invalid-mode-payload` is that typed failure.
   | { kind: "unlock.serverCeremony.start"; mode: "signin" | "unlock" }
+  // `failed: true` (Bartek live-UAT bug fix, .planning/debug/resolved/
+  // signin-passkeyless-spin.md): ExtUnlockBridge's own explicit "this
+  // ceremony reached a terminal, calmly-explained failure state" notice --
+  // `prfB64`/`prfWrappedUk` are absent on this shape (nothing to relay);
+  // completeServerUnlock's own `failed` branch resolves the pending record
+  // + broadcasts ok:false immediately, instead of only ever being reached
+  // via the 120s CEREMONY_TIMEOUT_MS alarm (T-13-13).
   | {
       kind: "unlock.serverCeremony.relay";
       nonce: string;
+      failed: true;
+    }
+  | {
+      kind: "unlock.serverCeremony.relay";
+      nonce: string;
+      failed?: false;
       prfB64: string;
       prfWrappedUk: string;
       token?: string;
@@ -433,6 +446,7 @@ export interface MessageResponseMap {
           | "expired"
           | "invalid-mode-payload"
           | "already-signed-in"
+          | "ceremony-failed"
           | "unwrap-failed"
           | "unknown";
       };

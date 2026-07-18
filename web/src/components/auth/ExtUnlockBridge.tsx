@@ -159,6 +159,28 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
     }, RESULT_TIMEOUT_MS);
   }
 
+  /**
+   * Bartek live-UAT bug (13-07 signin flow, .planning/debug/resolved/
+   * signin-passkeyless-spin.md): every OTHER terminal state this component
+   * can reach (no-passkeys, not-signed-in, failed) used to never post
+   * ANYTHING to content-relay -- only postAndWaitForAck's full-PRF-success
+   * envelope did. That left completeServerUnlock() (background) unreached,
+   * so the popup's in-flight spinner and the background's pending record
+   * were only ever resolved by server-unlock.ts's own 120s
+   * CEREMONY_TIMEOUT_MS alarm, not immediately (T-13-13 violation).
+   *
+   * This is deliberately NOT called from the `cancelled` -> idle path: that
+   * state keeps the SAME nonce retryable in THIS window (the whole point of
+   * the silent-reset UX), and completeServerUnlock's nonce is single-use --
+   * notifying failure here would consume the pending record and make a
+   * LATER successful retry with the same nonce fail as `invalid-nonce`.
+   * Every state that actually calls this one renders no retry affordance
+   * (see the render logic below), so the nonce is genuinely done.
+   */
+  function postFailureNotice() {
+    window.postMessage({ source: REQUEST_SOURCE, nonce, failed: true }, window.location.origin);
+  }
+
   async function handleUnlock() {
     setState("busy");
     settledRef.current = false;
@@ -181,6 +203,7 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
           // login.ts): zero PRF-capable server passkeys enrolled AND
           // "ceremony succeeded but no PRF result" both land here.
           setState("no-passkeys");
+          postFailureNotice();
           return;
         }
         postAndWaitForAck(result.prfBytes, result.prfWrappedUk, {
@@ -206,6 +229,7 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
         // component's point of view both mean "nothing to relay", and the
         // honest empty-state names the real fix (enroll one in Settings).
         setState("no-passkeys");
+        postFailureNotice();
         return;
       }
 
@@ -217,9 +241,11 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
         // Signin mode has no existing web session to be unauthorized
         // about by construction, so this branch is unlock-mode-only.
         setState("not-signed-in");
+        postFailureNotice();
         return;
       }
       setState("failed");
+      postFailureNotice();
     }
   }
 
@@ -295,7 +321,9 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
         ) : null}
 
         {state === "failed" ? (
-          <p className="mt-6 text-sm text-error">{t("extUnlock.failed")}</p>
+          <p className="mt-6 text-sm text-error">
+            {t(mode === "signin" ? "extUnlock.signinFailed" : "extUnlock.failed")}
+          </p>
         ) : null}
       </div>
     </div>

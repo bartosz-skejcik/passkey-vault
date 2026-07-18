@@ -222,6 +222,63 @@ describe("passkeyLogin", () => {
     expect(mockPasskeyLoginFinish).not.toHaveBeenCalled();
     expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "failed"]);
   });
+
+  // Bartek live-UAT bug (13-07 signin flow): a zero-passkey account's
+  // anti-enumeration DUMMY challenge (T-04-01) still invokes a REAL
+  // navigator.credentials.get() -- whose native, out-of-DOM picker can hang
+  // indefinitely with no code-level bound. Simulates a spec-compliant
+  // browser that honors the AbortSignal passed via the `signal` option
+  // (rejects with AbortError once aborted) -- exactly what
+  // getAssertionWithTimeout (login.ts) relies on.
+  it("a gesture that never resolves is aborted after the bounded timeout, reported as a genuine failure (not cancelled)", async () => {
+    vi.useFakeTimers();
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockImplementation(
+      (options: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          options.signal?.addEventListener("abort", () => {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        }),
+    );
+
+    const onStep = vi.fn();
+    const resultPromise = passkeyLogin("existing@example.com", onStep);
+    // Attach a handler immediately -- prevents a spurious "unhandled
+    // rejection" report between now and the real assertion below, since the
+    // actual rejection only fires once fake timers are advanced past the
+    // internal setTimeout.
+    const settled = resultPromise.catch((e: unknown) => e);
+    // Flush the microtask queue so passkeyLoginStart's awaited mock resolves
+    // and navigator.credentials.get() is actually invoked before advancing
+    // fake timers past the internal setTimeout.
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const caught = await settled;
+    expect(caught).toMatchObject({ name: "AbortError" });
+    expect(mockPasskeyLoginFinish).not.toHaveBeenCalled();
+    expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "failed"]);
+    vi.useRealTimers();
+  });
+
+  it("a gesture that resolves BEFORE the bounded timeout is unaffected (positive path stays intact)", async () => {
+    vi.useFakeTimers();
+    const assertion = mockAssertion(new ArrayBuffer(32));
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(assertion);
+    mockPasskeyLoginFinish.mockResolvedValue({
+      session_token: "session-token",
+      pw_wrapped_uk: "pw-wrapped-uk",
+      prf_wrapped_uk: "prf-wrapped-uk",
+    });
+
+    const result = await passkeyLogin("existing@example.com");
+    // Advancing well past the timeout afterwards must not retroactively
+    // fail an already-settled ceremony (the internal setTimeout is cleared).
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(result).toEqual({ prfUnavailable: false, cancelled: false });
+    vi.useRealTimers();
+  });
 });
 
 describe("passkeyUnlock", () => {
@@ -330,5 +387,36 @@ describe("passkeyUnlock", () => {
     expect(mockUnlockFinish).not.toHaveBeenCalled();
     expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "cancelled"]);
     expect(result).toEqual({ prfUnavailable: false, cancelled: true });
+  });
+
+  // Same bounded-timeout guard as passkeyLogin's own (see that describe
+  // block's own comment) -- unlock mode shares getAssertionWithTimeout.
+  it("a gesture that never resolves is aborted after the bounded timeout, reported as a genuine failure (not cancelled)", async () => {
+    vi.useFakeTimers();
+    mockUnlockStart.mockResolvedValue({
+      state_id: "state-2",
+      challenge: { publicKey: { challenge: "chal2" } },
+      prf_salts: {},
+    });
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockImplementation(
+      (options: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          options.signal?.addEventListener("abort", () => {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        }),
+    );
+
+    const onStep = vi.fn();
+    const resultPromise = passkeyUnlock(onStep);
+    const settled = resultPromise.catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const caught = await settled;
+    expect(caught).toMatchObject({ name: "AbortError" });
+    expect(mockUnlockFinish).not.toHaveBeenCalled();
+    expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "failed"]);
+    vi.useRealTimers();
   });
 });

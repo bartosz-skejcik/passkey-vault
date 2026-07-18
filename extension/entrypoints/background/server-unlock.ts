@@ -242,6 +242,7 @@ export type ServerUnlockCompleteResult =
         | "expired"
         | "invalid-mode-payload"
         | "already-signed-in"
+        | "ceremony-failed"
         | "unwrap-failed"
         | "unknown";
     };
@@ -267,7 +268,9 @@ export type ServerUnlockCompleteResult =
  * its postMessage payload, nor complete a `signin`-mode nonce without one.
  */
 export async function completeServerUnlock(
-  args: { nonce: string; prfB64: string; prfWrappedUk: string; token?: string; accountEmail?: string },
+  args:
+    | { nonce: string; failed: true }
+    | { nonce: string; failed?: false; prfB64: string; prfWrappedUk: string; token?: string; accountEmail?: string },
   callerOrigin: string,
 ): Promise<ServerUnlockCompleteResult> {
   const config = await readServerConfig();
@@ -307,6 +310,24 @@ export async function completeServerUnlock(
   }
 
   await clearPending(); // single-use: consumed now, regardless of outcome below
+
+  if (args.failed === true) {
+    // Bartek live-UAT bug fix (.planning/debug/resolved/
+    // signin-passkeyless-spin.md): ExtUnlockBridge itself already reached a
+    // terminal, calmly-explained failure state (no-passkeys/not-signed-in/
+    // genuine ceremony failure, e.g. web/src/lib/passkeys/login.ts's own
+    // bounded gesture timeout on a hung native picker) -- resolve the
+    // pending record + the popup's in-flight state IMMEDIATELY (T-13-13)
+    // rather than waiting for CEREMONY_TIMEOUT_MS's 120s alarm. Deliberately
+    // does NOT close the window here -- unlike every other failure branch
+    // below (which fire for outcomes the ceremony window's own UI never got
+    // a chance to render, e.g. an origin/mode mismatch), the bridge is
+    // ACTIVELY showing the user an explicit message right now; a window
+    // that just said something explicit is not a "ghost window" to be
+    // yanked shut out from under the person reading it.
+    await broadcastCeremonyState(false);
+    return { ok: false, error: "ceremony-failed" };
+  }
 
   if (Date.now() - pending.createdAt > CEREMONY_TIMEOUT_MS) {
     await closeWindowIfAny(pending);

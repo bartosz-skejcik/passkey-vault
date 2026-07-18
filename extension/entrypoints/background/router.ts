@@ -291,6 +291,15 @@ async function handleServerUnlockRelayMessage(
   if (!guard.ok) {
     return { ok: false, error: "forbidden-sender" };
   }
+  // Bartek live-UAT bug fix (.planning/debug/resolved/
+  // signin-passkeyless-spin.md): `failed: true` is a SEPARATE union member
+  // (ext-protocol.ts) carrying no prfB64/prfWrappedUk at all -- forward it
+  // as-is; completeServerUnlock's own `failed` branch resolves the pending
+  // record + broadcasts ok:false immediately (T-13-13) rather than only
+  // ever being reached via the 120s CEREMONY_TIMEOUT_MS alarm.
+  if (message.failed === true) {
+    return completeServerUnlock({ nonce: message.nonce, failed: true }, guard.origin);
+  }
   return completeServerUnlock(
     {
       nonce: message.nonce,

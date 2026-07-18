@@ -338,6 +338,56 @@ describe("completeServerUnlock", () => {
     expect(readPendingNonceFromStorage()).toBeUndefined();
   });
 
+  // Bartek live-UAT bug fix (.planning/debug/resolved/
+  // signin-passkeyless-spin.md): ExtUnlockBridge notifies this explicit
+  // failure branch on every terminal, non-success ceremony outcome so the
+  // popup's in-flight state resolves IMMEDIATELY (T-13-13), instead of only
+  // ever being reached via the 120s CEREMONY_TIMEOUT_MS alarm.
+  describe("explicit ceremony failure (failed: true)", () => {
+    it("clears the pending record and broadcasts ok:false immediately -- does NOT close the ceremony window (it's actively showing the user a message)", async () => {
+      const nonce = await startAndGetNonce();
+
+      const result = await completeServerUnlock({ nonce, failed: true }, "https://vault.example.com");
+
+      expect(result).toEqual({ ok: false, error: "ceremony-failed" });
+      expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: false });
+      expect(readPendingNonceFromStorage()).toBeUndefined();
+      expect(hoisted.mockWindowsRemove).not.toHaveBeenCalled();
+      expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+    });
+
+    it("single-use: a SECOND delivery (of either shape) for the same nonce is rejected as invalid-nonce", async () => {
+      const nonce = await startAndGetNonce();
+
+      const first = await completeServerUnlock({ nonce, failed: true }, "https://vault.example.com");
+      expect(first).toEqual({ ok: false, error: "ceremony-failed" });
+
+      const second = await completeServerUnlock(
+        { nonce, prfB64: btoa("prf"), prfWrappedUk: "blob" },
+        "https://vault.example.com",
+      );
+      expect(second).toEqual({ ok: false, error: "invalid-nonce" });
+    });
+
+    it("rejects (forbidden-origin) a caller origin that doesn't match the configured server -- does NOT consume the pending nonce", async () => {
+      const nonce = await startAndGetNonce();
+
+      const result = await completeServerUnlock({ nonce, failed: true }, "https://evil.example.com");
+      expect(result).toEqual({ ok: false, error: "forbidden-origin" });
+      expect(readPendingNonceFromStorage()).toBe(nonce);
+    });
+
+    it("works identically for a signin-mode pending record (mode-agnostic)", async () => {
+      const nonce = await startAndGetNonce("signin");
+
+      const result = await completeServerUnlock({ nonce, failed: true }, "https://vault.example.com");
+
+      expect(result).toEqual({ ok: false, error: "ceremony-failed" });
+      expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: false });
+      expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+    });
+  });
+
   it("an expired pending record (past the 120s bound) is rejected even with a matching nonce", async () => {
     const nonce = await startAndGetNonce();
     const pending = hoisted.sessionStore.store.get("pv-server-unlock-pending") as {

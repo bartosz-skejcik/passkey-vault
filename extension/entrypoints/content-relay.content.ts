@@ -851,11 +851,25 @@ const seenExtUnlockNonces = new Set<string>();
 // record's own mode (server-unlock.ts) is what decides whether a given
 // combination of fields is legal (T-13-16); this relay's only job is
 // faithful forwarding.
+//
+// `failed: true` (Bartek live-UAT bug fix, .planning/debug/resolved/
+// signin-passkeyless-spin.md): ExtUnlockBridge's own EXPLICIT "this
+// ceremony reached a terminal, calmly-explained failure state" notice --
+// distinct from the PRF-bearing shape above (`prf`/`prfWrappedUk` absent).
+// Previously the bridge only ever posted on full PRF success, so any other
+// terminal outcome (no-passkeys/not-signed-in/genuine ceremony failure)
+// left completeServerUnlock() unreached -- the popup's in-flight spinner
+// and the background's pending record were only ever resolved by
+// server-unlock.ts's own 120s CEREMONY_TIMEOUT_MS alarm, not immediately
+// (T-13-13 violation, confirmed via live Firefox reproduction). This relay
+// forwards `failed: true` through untouched, same faithful-forwarding
+// discipline as every other field here.
 interface ExtUnlockBridgeMessage {
   source: typeof EXT_UNLOCK_REQUEST_SOURCE;
   nonce: string;
-  prf: ArrayBuffer;
-  prfWrappedUk: string;
+  failed?: true;
+  prf?: ArrayBuffer;
+  prfWrappedUk?: string;
   token?: string;
   accountEmail?: string;
 }
@@ -865,10 +879,16 @@ function isExtUnlockBridgeMessage(data: unknown): data is ExtUnlockBridgeMessage
     return false;
   }
   const c = data as Partial<ExtUnlockBridgeMessage>;
+  if (c.source !== EXT_UNLOCK_REQUEST_SOURCE || typeof c.nonce !== "string" || c.nonce.length === 0) {
+    return false;
+  }
+  if (c.failed === true) {
+    // No PRF material is expected (or required) on an explicit failure
+    // notice -- token/accountEmail are irrelevant too, this shape carries
+    // nothing but the nonce.
+    return true;
+  }
   return (
-    c.source === EXT_UNLOCK_REQUEST_SOURCE &&
-    typeof c.nonce === "string" &&
-    c.nonce.length > 0 &&
     isBufferSource(c.prf) &&
     typeof c.prfWrappedUk === "string" &&
     (c.token === undefined || typeof c.token === "string") &&
@@ -901,22 +921,26 @@ async function handleExtUnlockBridgeMessage(event: MessageEvent): Promise<void> 
     return;
   }
 
-  const { nonce, prf, prfWrappedUk, token, accountEmail } = event.data;
+  const { nonce, failed, prf, prfWrappedUk, token, accountEmail } = event.data;
   if (seenExtUnlockNonces.has(nonce)) {
     return; // replay -- silently ignored, never re-forwarded (T-13-11)
   }
   seenExtUnlockNonces.add(nonce);
 
-  const prfB64 = bufferSourceToB64Url(prf);
   try {
-    const response = await sendMessage({
-      kind: "unlock.serverCeremony.relay",
-      nonce,
-      prfB64,
-      prfWrappedUk,
-      token,
-      accountEmail,
-    });
+    const response =
+      failed === true
+        ? await sendMessage({ kind: "unlock.serverCeremony.relay", nonce, failed: true })
+        : await sendMessage({
+            kind: "unlock.serverCeremony.relay",
+            nonce,
+            // isExtUnlockBridgeMessage already proved prf/prfWrappedUk are
+            // present whenever failed !== true.
+            prfB64: bufferSourceToB64Url(prf as ArrayBuffer),
+            prfWrappedUk: prfWrappedUk as string,
+            token,
+            accountEmail,
+          });
     postExtUnlockResult(nonce, response.ok);
   } catch {
     postExtUnlockResult(nonce, false);

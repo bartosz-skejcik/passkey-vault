@@ -90,8 +90,9 @@ describe("ExtUnlockBridge", () => {
     expect(new Uint8Array(prfBytes)).toEqual(new Uint8Array([0, 0, 0, 0]));
   });
 
-  it("shows the honest empty-state (with a Settings link) when there are no server-side PRF passkeys", async () => {
+  it("shows the honest empty-state (with a Settings link) when there are no server-side PRF passkeys, and notifies content-relay so the popup's in-flight state resolves immediately (T-13-13)", async () => {
     mockPasskeyUnlockCeremony.mockResolvedValue({ prfUnavailable: true, cancelled: false });
+    const postSpy = vi.spyOn(window, "postMessage");
 
     render(<ExtUnlockBridge nonce="abc123" mode="unlock" />);
     fireEvent.click(screen.getByTestId("passkey-unlock-button"));
@@ -100,6 +101,10 @@ describe("ExtUnlockBridge", () => {
     expect(screen.getByText("extUnlock.noPasskeysSettingsLink").closest("a")).toHaveAttribute(
       "href",
       "/?panel=settings",
+    );
+    expect(postSpy).toHaveBeenCalledWith(
+      { source: "pv-ext-unlock-bridge", nonce: "abc123", failed: true },
+      window.location.origin,
     );
   });
 
@@ -116,8 +121,9 @@ describe("ExtUnlockBridge", () => {
     expect(await screen.findByText("extUnlock.noPasskeys")).toBeInTheDocument();
   });
 
-  it("a cancelled ceremony resets silently to idle -- no error, button stays clickable", async () => {
+  it("a cancelled ceremony resets silently to idle -- no error, button stays clickable, and does NOT notify content-relay (the nonce stays retryable)", async () => {
     mockPasskeyUnlockCeremony.mockResolvedValue({ prfUnavailable: false, cancelled: true });
+    const postSpy = vi.spyOn(window, "postMessage");
 
     render(<ExtUnlockBridge nonce="abc123" mode="unlock" />);
     fireEvent.click(screen.getByTestId("passkey-unlock-button"));
@@ -125,24 +131,37 @@ describe("ExtUnlockBridge", () => {
     await waitFor(() => expect(mockPasskeyUnlockCeremony).toHaveBeenCalledTimes(1));
     expect(screen.queryByText("extUnlock.failed")).not.toBeInTheDocument();
     expect(screen.getByTestId("passkey-unlock-button")).not.toBeDisabled();
+    // Cancelling must not consume the single-use nonce on the background
+    // side -- a retry from THIS window with the same nonce must still work.
+    expect(postSpy).not.toHaveBeenCalled();
   });
 
-  it("a 401 from the ceremony (no web session in this browser) shows the distinct not-signed-in copy", async () => {
+  it("a 401 from the ceremony (no web session in this browser) shows the distinct not-signed-in copy and notifies content-relay of failure", async () => {
     mockPasskeyUnlockCeremony.mockRejectedValue(new ApiClientError(401, "unauthorized"));
+    const postSpy = vi.spyOn(window, "postMessage");
 
     render(<ExtUnlockBridge nonce="abc123" mode="unlock" />);
     fireEvent.click(screen.getByTestId("passkey-unlock-button"));
 
     expect(await screen.findByText("extUnlock.notSignedIn")).toBeInTheDocument();
+    expect(postSpy).toHaveBeenCalledWith(
+      { source: "pv-ext-unlock-bridge", nonce: "abc123", failed: true },
+      window.location.origin,
+    );
   });
 
-  it("a genuine ceremony failure shows the generic closable failure copy", async () => {
+  it("a genuine ceremony failure shows the generic closable failure copy and notifies content-relay of failure (Bartek live-UAT bug fix -- popup must never wait for the 120s background alarm)", async () => {
     mockPasskeyUnlockCeremony.mockRejectedValue(new Error("network error"));
+    const postSpy = vi.spyOn(window, "postMessage");
 
     render(<ExtUnlockBridge nonce="abc123" mode="unlock" />);
     fireEvent.click(screen.getByTestId("passkey-unlock-button"));
 
     expect(await screen.findByText("extUnlock.failed")).toBeInTheDocument();
+    expect(postSpy).toHaveBeenCalledWith(
+      { source: "pv-ext-unlock-bridge", nonce: "abc123", failed: true },
+      window.location.origin,
+    );
   });
 
   it("a matching ok:true ack from content-relay shows success and attempts window.close()", async () => {
@@ -333,8 +352,9 @@ describe("ExtUnlockBridge — signin mode (Plan 13-07)", () => {
     expect(setItemSpy).not.toHaveBeenCalled();
   });
 
-  it("shows the honest empty-state (no Settings link -- no session exists yet to deep-link into) when there are no server-side PRF passkeys", async () => {
+  it("shows the honest empty-state (no Settings link -- no session exists yet to deep-link into) when there are no server-side PRF passkeys, and notifies content-relay so the popup's in-flight state resolves immediately (T-13-13)", async () => {
     mockPasskeyLoginCeremony.mockResolvedValue({ prfUnavailable: true, cancelled: false, sessionToken: "tok" });
+    const postSpy = vi.spyOn(window, "postMessage");
 
     render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
     fireEvent.change(screen.getByLabelText("extUnlock.emailLabel"), {
@@ -344,10 +364,15 @@ describe("ExtUnlockBridge — signin mode (Plan 13-07)", () => {
 
     expect(await screen.findByText("extUnlock.noPasskeys")).toBeInTheDocument();
     expect(screen.queryByText("extUnlock.noPasskeysSettingsLink")).not.toBeInTheDocument();
+    expect(postSpy).toHaveBeenCalledWith(
+      { source: "pv-ext-unlock-bridge", nonce: "abc123", failed: true },
+      window.location.origin,
+    );
   });
 
-  it("a cancelled ceremony resets silently to idle", async () => {
+  it("a cancelled ceremony resets silently to idle and does NOT notify content-relay (the nonce stays retryable)", async () => {
     mockPasskeyLoginCeremony.mockResolvedValue({ prfUnavailable: false, cancelled: true });
+    const postSpy = vi.spyOn(window, "postMessage");
 
     render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
     fireEvent.change(screen.getByLabelText("extUnlock.emailLabel"), {
@@ -357,10 +382,21 @@ describe("ExtUnlockBridge — signin mode (Plan 13-07)", () => {
 
     await waitFor(() => expect(mockPasskeyLoginCeremony).toHaveBeenCalledTimes(1));
     expect(screen.queryByText("extUnlock.failed")).not.toBeInTheDocument();
+    expect(postSpy).not.toHaveBeenCalled();
   });
 
-  it("a genuine ceremony failure (non-401) shows the generic closable failure copy -- 401 is NOT special-cased in signin mode", async () => {
+  // Bartek live-UAT bug (13-07 signin flow): a zero-passkey account's
+  // anti-enumeration DUMMY challenge (T-04-01) means THIS is the state a
+  // real passkey-less signin attempt actually reaches (via login.ts's own
+  // bounded gesture timeout on a hung native picker, or any other genuine
+  // ceremony failure) -- not "no-passkeys" (that requires the ceremony to
+  // succeed server-side first). The copy is therefore signin-specific
+  // (extUnlock.signinFailed, distinct from the unlock-flavored
+  // extUnlock.failed) and content-relay MUST be notified so the popup's
+  // spinner resolves immediately instead of waiting on the 120s alarm.
+  it("a genuine ceremony failure (non-401) shows the signin-specific closable failure copy -- 401 is NOT special-cased in signin mode -- and notifies content-relay of failure", async () => {
     mockPasskeyLoginCeremony.mockRejectedValue(new ApiClientError(401, "unauthorized"));
+    const postSpy = vi.spyOn(window, "postMessage");
 
     render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
     fireEvent.change(screen.getByLabelText("extUnlock.emailLabel"), {
@@ -371,8 +407,13 @@ describe("ExtUnlockBridge — signin mode (Plan 13-07)", () => {
     // Signin mode has no existing web session to be "unauthorized" about --
     // a 401 here is a genuine ceremony failure, not the unlock-mode
     // not-signed-in case.
-    expect(await screen.findByText("extUnlock.failed")).toBeInTheDocument();
+    expect(await screen.findByText("extUnlock.signinFailed")).toBeInTheDocument();
     expect(screen.queryByText("extUnlock.notSignedIn")).not.toBeInTheDocument();
+    expect(screen.queryByText("extUnlock.failed")).not.toBeInTheDocument();
+    expect(postSpy).toHaveBeenCalledWith(
+      { source: "pv-ext-unlock-bridge", nonce: "abc123", failed: true },
+      window.location.origin,
+    );
   });
 
   it("strips both pv-ext-unlock and pv-mode params from the URL on mount", () => {

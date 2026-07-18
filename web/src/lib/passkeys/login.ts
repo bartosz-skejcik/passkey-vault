@@ -30,6 +30,49 @@ import {
 export type LoginStep = "start" | "ceremony" | "cancelled" | "failed" | "success";
 
 /**
+ * Bounded wait for the gesture itself (Bartek live-UAT bug, 13-07 signin
+ * flow): `navigator.credentials.get()` had NO client-side timeout anywhere
+ * in this file -- for a zero-passkey account, `passkey_login_start`'s own
+ * anti-enumeration DUMMY challenge (T-04-01, crates/pv-server/src/routes/
+ * auth.rs) still makes this a REAL WebAuthn ceremony (unlike
+ * `unlockStart()`'s clean 404), so the browser's native, out-of-DOM picker
+ * can hang indefinitely with nothing in this codebase ever resolving it --
+ * confirmed via live reproduction against real Firefox (see
+ * .planning/debug/resolved/signin-passkeyless-spin.md). Deliberately
+ * SHORTER than server-unlock.ts's own CEREMONY_TIMEOUT_MS (120_000) so the
+ * ceremony window's own UI resolves on its own well before that background
+ * alarm would anyway -- generous enough for a real, slower biometric/
+ * security-key interaction to still complete normally.
+ */
+const GESTURE_TIMEOUT_MS = 60_000;
+
+/**
+ * Wraps `navigator.credentials.get()` with an `AbortController`-backed
+ * bound (Credential Management API's own `signal` option) -- unlike a bare
+ * `Promise.race`, this actually asks the browser to cancel the underlying
+ * ceremony (dismissing a still-open native picker) rather than merely
+ * abandoning our own Promise while that picker lingers. On timeout, the
+ * browser rejects with an `AbortError` `DOMException` -- distinct from
+ * `NotAllowedError` (`isNotAllowedError` below), so a caller's existing
+ * cancel-vs-genuine-failure branching classifies a timeout as a genuine
+ * failure, not a silent user-cancel.
+ */
+async function getAssertionWithTimeout(
+  options: CredentialRequestOptions,
+): Promise<PublicKeyCredential> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GESTURE_TIMEOUT_MS);
+  try {
+    return (await navigator.credentials.get({
+      ...options,
+      signal: controller.signal,
+    })) as PublicKeyCredential;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
  * Builds the `prf.evalByCredential` WebAuthn extension input from a
  * server-supplied `{ credIdB64Url: saltB64 }` map. The map's KEYS
  * (credential ids) are used AS-IS — they already arrived base64url-encoded
@@ -125,9 +168,9 @@ export async function passkeyLoginCeremony(
   onStep?.("ceremony");
   let assertion: PublicKeyCredential;
   try {
-    assertion = (await navigator.credentials.get({
+    assertion = await getAssertionWithTimeout({
       publicKey: { ...requestOptions, extensions: buildPrfExtensions(start.prf_salts) },
-    })) as PublicKeyCredential;
+    });
   } catch (e) {
     if (isNotAllowedError(e)) {
       // cancelled: true jest jedynym sygnałem dla LoginForm, że sesja NIE
@@ -268,9 +311,9 @@ export async function passkeyUnlockCeremony(
   onStep?.("ceremony");
   let assertion: PublicKeyCredential;
   try {
-    assertion = (await navigator.credentials.get({
+    assertion = await getAssertionWithTimeout({
       publicKey: { ...requestOptions, extensions: buildPrfExtensions(start.prf_salts) },
-    })) as PublicKeyCredential;
+    });
   } catch (e) {
     if (isNotAllowedError(e)) {
       onStep?.("cancelled");

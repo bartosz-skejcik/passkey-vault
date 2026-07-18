@@ -1162,5 +1162,79 @@ describe("content-relay", () => {
       expect(call.token).toBeUndefined();
       expect(call.accountEmail).toBeUndefined();
     });
+
+    // Bartek live-UAT bug fix (.planning/debug/resolved/
+    // signin-passkeyless-spin.md): ExtUnlockBridge's own explicit "this
+    // ceremony reached a terminal, calmly-explained failure state" notice --
+    // no prf/prfWrappedUk at all, unlike every other case above.
+    describe("explicit failure notice (failed: true)", () => {
+      function failureRequest(nonce: string) {
+        return { source: "pv-ext-unlock-bridge", nonce, failed: true };
+      }
+
+      it("forwards a well-formed failure notice via sendMessage with failed:true, no prfB64/prfWrappedUk fields", async () => {
+        const nonce = "nonce-ext-unlock-failed";
+        window.dispatchEvent(
+          new MessageEvent("message", { data: failureRequest(nonce), origin: location.origin, source: window }),
+        );
+        await flushMicrotasks();
+
+        expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+        expect(hoisted.mockSendMessage).toHaveBeenCalledWith({
+          kind: "unlock.serverCeremony.relay",
+          nonce,
+          failed: true,
+        });
+      });
+
+      it("posts the ack/result back to the page with the background's ok value, same as the success path", async () => {
+        const nonce = "nonce-ext-unlock-failed-ack";
+        hoisted.mockSendMessage.mockResolvedValueOnce({ ok: false, error: "ceremony-failed" });
+
+        const received: unknown[] = [];
+        window.addEventListener("message", (e) => {
+          const data = (e as MessageEvent).data as { source?: unknown; kind?: unknown };
+          if (data?.source === "pv-content-relay" && data?.kind === "pv-ext-unlock-result") {
+            received.push(data);
+          }
+        });
+
+        window.dispatchEvent(
+          new MessageEvent("message", { data: failureRequest(nonce), origin: location.origin, source: window }),
+        );
+        await flushMicrotasks();
+
+        expect(received).toEqual([{ source: "pv-content-relay", kind: "pv-ext-unlock-result", nonce, ok: false }]);
+      });
+
+      it("T-13-11: single-use -- a replayed failure notice is silently ignored on the second delivery", async () => {
+        const nonce = "nonce-ext-unlock-failed-replay";
+        window.dispatchEvent(
+          new MessageEvent("message", { data: failureRequest(nonce), origin: location.origin, source: window }),
+        );
+        await flushMicrotasks();
+        expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+
+        window.dispatchEvent(
+          new MessageEvent("message", { data: failureRequest(nonce), origin: location.origin, source: window }),
+        );
+        await flushMicrotasks();
+        expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1); // not forwarded again
+      });
+
+      it("rejects a well-formed failure-notice message when THIS document is NOT the configured server -- never forwarded", async () => {
+        hoisted.storageStore.set("pv-server-config", { baseUrl: "https://a-different-vault.example.com" });
+
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            data: failureRequest("nonce-ext-unlock-failed-not-configured-server"),
+            origin: location.origin,
+            source: window,
+          }),
+        );
+        await flushMicrotasks();
+        expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+      });
+    });
   });
 });

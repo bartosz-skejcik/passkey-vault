@@ -133,6 +133,18 @@ export const DICTIONARY = {
     en: "Sign in with a passkey",
   },
   "extUnlock.emailLabel": { pl: "Email", en: "Email" },
+  // Bartek live-UAT bug (13-07 signin flow, .planning/debug/resolved/
+  // signin-passkeyless-spin.md): the signin-mode "failed" terminal state's
+  // OWN copy -- distinct from extUnlock.failed's unlock-flavored wording,
+  // and unable to name a specific cause (T-04-01 anti-enumeration means the
+  // ceremony's own failure is indistinguishable from "no passkeys" from
+  // this component's point of view) -- so the hint stays generic/neutral,
+  // shown identically whether the typed email has zero, some, or no
+  // passkeys at all.
+  "extUnlock.signinFailed": {
+    pl: "Logowanie passkeyem się nie powiodło. Sprawdź Ustawienia → Passkeys na tym koncie albo zaloguj się hasłem poniżej.",
+    en: "Couldn't sign in with a passkey. Check Settings → Passkeys on this account, or sign in with your password below.",
+  },
 
   "vault.emptyHeading": { pl: "Vault jeszcze pusty", en: "Your vault is empty" },
   "vault.emptyBody": {
