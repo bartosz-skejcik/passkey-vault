@@ -117,6 +117,17 @@ export default function Home() {
     if (typeof window === "undefined") return null;
     return new URLSearchParams(window.location.search).get("pv-ext-unlock");
   });
+  // Plan 13-07 (Bartek mandate, full SIGN-IN): the extension's
+  // startServerUnlock() (server-unlock.ts) appends `&pv-mode=<mode>` to the
+  // ceremony URL as a HINT for which ExtUnlockBridge surface to render --
+  // this is NOT the security-authoritative mode (that lives in the
+  // background's own pending record, re-validated at completeServerUnlock
+  // time, T-13-16); an unrecognized/missing value defaults to 'unlock'
+  // (13-06's original, narrower surface), never 'signin'.
+  const [extUnlockMode] = useState<"signin" | "unlock">(() => {
+    if (typeof window === "undefined") return "unlock";
+    return new URLSearchParams(window.location.search).get("pv-mode") === "signin" ? "signin" : "unlock";
+  });
   const items = useVaultItems();
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
   // Any side panel being open means the overlay drawer + scrim render.
@@ -231,7 +242,7 @@ export default function Home() {
   useIdleTimer(autolockMinutes * 60_000, lockVault);
 
   if (extUnlockNonce !== null) {
-    return <ExtUnlockBridge nonce={extUnlockNonce} />;
+    return <ExtUnlockBridge nonce={extUnlockNonce} mode={extUnlockMode} />;
   }
 
   if (authed === null) {

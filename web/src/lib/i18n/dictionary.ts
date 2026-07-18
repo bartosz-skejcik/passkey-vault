@@ -116,6 +116,24 @@ export const DICTIONARY = {
     en: "Sign in to your vault in this browser first, then try again from the extension.",
   },
 
+  // Plan 13-07 (Bartek mandate, full SIGN-IN): the SAME ceremony window's
+  // `mode: 'signin'` surface -- passkeyLogin identifies the user by EMAIL
+  // (v0.1's own prelogin), so this mode adds a one-field email input before
+  // the gesture (D-03 tone).
+  "extUnlock.signinHeading": {
+    pl: "Zaloguj się do rozszerzenia",
+    en: "Sign in to the extension",
+  },
+  "extUnlock.signinExplainer": {
+    pl: "Zaloguj się i odblokuj rozszerzenie Passkey Vault jednym dotknięciem passkeyem.",
+    en: "Sign in and unlock your Passkey Vault extension with one passkey tap.",
+  },
+  "extUnlock.signinCta": {
+    pl: "Zaloguj się passkeyem",
+    en: "Sign in with a passkey",
+  },
+  "extUnlock.emailLabel": { pl: "Email", en: "Email" },
+
   "vault.emptyHeading": { pl: "Vault jeszcze pusty", en: "Your vault is empty" },
   "vault.emptyBody": {
     pl: "Dodaj pierwszy item — hasło, kartę albo notatkę 👇",

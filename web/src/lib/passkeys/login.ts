@@ -75,18 +75,44 @@ function stripPrfFromCredentialJson(assertion: PublicKeyCredential): unknown {
 }
 
 /**
- * Unauthenticated passkey login (AUTH-04): a single `navigator.credentials.get()`
- * gesture both creates a session (any enrolled passkey, PRF-capable or not)
- * and — when the matched credential is PRF-capable — stashes the derived
- * wrapping key + `prf_wrapped_uk` in `pendingUnlock` for UnlockOverlay's
- * existing one-click fast path. Login success is independent of PRF
- * availability: `setSessionToken`/`setStoredEmail` always run once the
- * ceremony verifies, regardless of which branch below is taken.
+ * Result of the CEREMONY HALF only (start -> get() -> finish) of the
+ * unauthenticated passkey LOGIN (AUTH-04) — mirrors
+ * `PasskeyUnlockCeremonyResult`/`passkeyUnlockCeremony` below byte-for-byte
+ * in shape, deliberately stopping short of ever touching `pendingUnlock`/
+ * `setSessionToken`/`setStoredEmail` (this web app's OWN session state).
+ * Plan 13-07's `web/src/components/auth/ExtUnlockBridge.tsx` needs exactly
+ * this half for its `signin` mode: identify the user by EMAIL (this
+ * ceremony's prelogin, `passkeyLoginStart({email})`, is how v0.1 login
+ * actually identifies a user — NOT a discoverable credential; there is no
+ * server-side "look up by credential id alone" path this codebase
+ * implements) and return the server session token + PRF material WITHOUT
+ * ever persisting anything web-side — the extension background is the
+ * sole place that persists that token/unwraps the User Key for THAT flow
+ * (T-13-12/T-13-15). `passkeyLogin` below is `passkeyLoginCeremony` plus
+ * the local session-persist-and-pend finish, unchanged in observable
+ * behavior from before this refactor.
  */
-export async function passkeyLogin(
+export interface PasskeyLoginCeremonyResult {
+  prfUnavailable: boolean;
+  cancelled: boolean;
+  /** Present whenever the ceremony reaches `passkeyLoginFinish` without
+   * throwing/cancelling — i.e. on every outcome except `cancelled: true`
+   * or a rethrown ceremony failure. */
+  sessionToken?: string;
+  prfBytes?: ArrayBuffer;
+  prfWrappedUk?: string;
+}
+
+/**
+ * Unauthenticated passkey login CEREMONY (AUTH-04) — a single
+ * `navigator.credentials.get()` gesture that verifies against the server
+ * (any enrolled passkey, PRF-capable or not) and returns the fresh session
+ * token, WITHOUT touching this web app's own session/pendingUnlock state.
+ */
+export async function passkeyLoginCeremony(
   email: string,
   onStep?: (step: LoginStep) => void,
-): Promise<{ prfUnavailable: boolean; cancelled: boolean }> {
+): Promise<PasskeyLoginCeremonyResult> {
   onStep?.("start");
   const start = await passkeyLoginStart({ email });
 
@@ -119,22 +145,17 @@ export async function passkeyLogin(
     credential: stripPrfFromCredentialJson(assertion),
   });
 
-  // Login succeeded either way — session material is stored regardless of
-  // whether PRF unlock is also available.
-  setSessionToken(finish.session_token);
-  setStoredEmail(email);
-
   if (finish.prf_wrapped_uk !== null) {
     const prfBytes = extractPrfBytes(assertion);
     if (prfBytes !== undefined) {
-      const prfArray = new Uint8Array(prfBytes);
-      const wrappingKey = WasmWrappingKey.fromPrf(prfArray); // zeroizes prfArray as a side effect
-      // Ownership transfers to pendingUnlock — the SAME function the
-      // password-login path already uses. UnlockOverlay's existing
-      // pending-material fast path frees this handle after consuming it.
-      setPendingUnlock(wrappingKey, finish.prf_wrapped_uk);
       onStep?.("success");
-      return { prfUnavailable: false, cancelled: false };
+      return {
+        prfUnavailable: false,
+        cancelled: false,
+        sessionToken: finish.session_token,
+        prfBytes,
+        prfWrappedUk: finish.prf_wrapped_uk,
+      };
     }
   }
 
@@ -142,8 +163,53 @@ export async function passkeyLogin(
   // results were unexpectedly absent — both routed identically (Area 3's
   // deliberate two-case collapse): the login still succeeded, only PRF
   // unlock didn't.
-  setPrfUnavailableHint();
   onStep?.("success");
+  return { prfUnavailable: true, cancelled: false, sessionToken: finish.session_token };
+}
+
+/**
+ * Unauthenticated passkey login (AUTH-04): a single `navigator.credentials.get()`
+ * gesture both creates a session (any enrolled passkey, PRF-capable or not)
+ * and — when the matched credential is PRF-capable — stashes the derived
+ * wrapping key + `prf_wrapped_uk` in `pendingUnlock` for UnlockOverlay's
+ * existing one-click fast path. Login success is independent of PRF
+ * availability: `setSessionToken`/`setStoredEmail` always run once the
+ * ceremony verifies, regardless of which branch below is taken. Thin
+ * wrapper over `passkeyLoginCeremony` above (13-07 extraction, mirrors
+ * `passkeyUnlock`/`passkeyUnlockCeremony`'s own precedent) — this
+ * function's own observable behavior is unchanged.
+ */
+export async function passkeyLogin(
+  email: string,
+  onStep?: (step: LoginStep) => void,
+): Promise<{ prfUnavailable: boolean; cancelled: boolean }> {
+  const result = await passkeyLoginCeremony(email, onStep);
+
+  if (result.cancelled || result.sessionToken === undefined) {
+    // `sessionToken === undefined` is defensive-only: passkeyLoginCeremony
+    // sets it on every non-cancelled, non-thrown path (both the PRF-success
+    // and the two-case-collapse branches) — see that function's own return
+    // sites. A cancelled ceremony never created a session, so nothing to
+    // persist either way.
+    return { prfUnavailable: result.prfUnavailable, cancelled: result.cancelled };
+  }
+
+  // Login succeeded either way — session material is stored regardless of
+  // whether PRF unlock is also available.
+  setSessionToken(result.sessionToken);
+  setStoredEmail(email);
+
+  if (result.prfBytes !== undefined && result.prfWrappedUk !== undefined) {
+    const prfArray = new Uint8Array(result.prfBytes);
+    const wrappingKey = WasmWrappingKey.fromPrf(prfArray); // zeroizes prfArray as a side effect
+    // Ownership transfers to pendingUnlock — the SAME function the
+    // password-login path already uses. UnlockOverlay's existing
+    // pending-material fast path frees this handle after consuming it.
+    setPendingUnlock(wrappingKey, result.prfWrappedUk);
+    return { prfUnavailable: false, cancelled: false };
+  }
+
+  setPrfUnavailableHint();
   return { prfUnavailable: true, cancelled: false };
 }
 
