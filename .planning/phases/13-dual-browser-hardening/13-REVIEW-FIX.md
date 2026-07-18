@@ -13,4 +13,15 @@
 
 **Gates po fixach:** extension vitest **605/605** (601 + 4 nowe), `tsc --noEmit` clean, oba buildy wxt przebudowane. Web nietknięty.
 
+## Runda 2 — delta review 13-07 (13-REVIEW-2.md, 2026-07-18)
+
+| Finding | Status | Commit | Fix |
+|---------|--------|--------|-----|
+| WR-01(rev2) — signin persist bez completion-time guardu sesji (sesja założona między start a completion byłaby nadpisana) | FIXED | `bf9f637` | `completeServerUnlock` signin re-czyta `readSessionMeta()` tuż przed `setUnlockedUserKey`; nowy typed error `already-signed-in` (broadcast false, okno zamknięte, istniejąca sesja+alarmy nietknięte). Test: sesja mid-ceremony → rejection, `setUnlockedUserKey` nigdy nie wywołany. |
+| IN-03 — untrimmed signin email | FIXED | `7a61ca9` | Trim raz, użyty w prelogin i `accountEmail`; test whitespace. |
+| IN-01 — accountEmail persisted verbatim (equal-trust z password path) | DOCUMENTED | — | Model zaufania: strona = własny serwer usera (jak v0.1 login). |
+| IN-02 — no-web-persistence test mockuje ceremonię | DOCUMENTED | — | Claim potwierdzony inspekcją kodu w review. |
+
+**Gates po rundzie 2:** extension **624/624**, web **449/449**, tsc ×2 clean.
+
 **Incydent operacyjny (samo-naprawiony):** fixer przy izolowaniu testu odpalił `git stash && … ; git stash pop` — pop zaciągnął NIEZWIĄZANY, przedwieczny stash `dead-04-01-executor-partial-work` (2026-07-14) i zrobił konflikty; natychmiast `git reset --hard HEAD`, stash nietknięty w liście. Stan repo zweryfikowany przez orkiestratora: czysto, HEAD=8313ea4. (Ten stash od dawna jest do wyrzucenia — decyzja Bartka.)
