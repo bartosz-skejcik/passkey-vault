@@ -291,6 +291,28 @@ describe("ExtUnlockBridge — signin mode (Plan 13-07)", () => {
     expect(new Uint8Array(prfBytes)).toEqual(new Uint8Array([0, 0, 0, 0]));
   });
 
+  it("IN-03 fix: trims leading/trailing whitespace from the email before both the prelogin ceremony call and the posted accountEmail", async () => {
+    mockPasskeyLoginCeremony.mockResolvedValue({
+      prfUnavailable: false,
+      cancelled: false,
+      sessionToken: "fresh-session-token",
+      prfBytes: new Uint8Array([1, 2, 3, 4]).buffer,
+      prfWrappedUk: "signin-prf-wrapped-uk-blob",
+    });
+    const postSpy = vi.spyOn(window, "postMessage");
+
+    render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
+    fireEvent.change(screen.getByLabelText("extUnlock.emailLabel"), {
+      target: { value: "  signin-user@example.com  " },
+    });
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalled());
+    expect(mockPasskeyLoginCeremony).toHaveBeenCalledWith("signin-user@example.com", expect.any(Function));
+    const [envelope] = postSpy.mock.calls[0];
+    expect(envelope).toMatchObject({ accountEmail: "signin-user@example.com" });
+  });
+
   it("the web app's OWN session is untouched -- no localStorage writes from the signin ceremony", async () => {
     mockPasskeyLoginCeremony.mockResolvedValue({
       prfUnavailable: false,

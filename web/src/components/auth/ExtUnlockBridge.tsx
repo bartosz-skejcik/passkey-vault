@@ -164,7 +164,13 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
     settledRef.current = false;
     try {
       if (mode === "signin") {
-        const result = await passkeyLoginCeremony(email, () => {});
+        // IN-03 fix (13-REVIEW-2.md): trim before it flows into either the
+        // prelogin lookup or the persisted account label -- the `required`
+        // input never trims on its own (no native form/submit validation
+        // wraps it, see `signinReady` below), so a leading/trailing-space
+        // paste would otherwise reach both untouched.
+        const trimmedEmail = email.trim();
+        const result = await passkeyLoginCeremony(trimmedEmail, () => {});
 
         if (result.cancelled) {
           setState("idle");
@@ -179,7 +185,7 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
         }
         postAndWaitForAck(result.prfBytes, result.prfWrappedUk, {
           token: result.sessionToken,
-          accountEmail: email,
+          accountEmail: trimmedEmail,
         });
         return;
       }
