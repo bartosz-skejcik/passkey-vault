@@ -232,6 +232,73 @@ describe("ExtUnlockBridge", () => {
     expect(screen.queryByText("extUnlock.success")).not.toBeInTheDocument();
   });
 
+  // Regression (coordinator-caught via the official Firefox e2e harness,
+  // P13-06-NO-PASSKEYS-EMPTY-STATE/P13-06-SETTINGS-LINK): postFailureNotice
+  // triggers content-relay's OWN round-trip ack (it acks back {ok:false}
+  // for ANY forwarded message, success or explicit-failure alike) -- this
+  // must NOT be mistaken for postAndWaitForAck's success-path ack and must
+  // NEVER override an already-correct terminal state chosen locally.
+  describe("a content-relay ack arriving AFTER a self-explained terminal state must not override it", () => {
+    it("no-passkeys: the empty-state + Settings link survive a subsequent ok:false ack for the same nonce", async () => {
+      mockPasskeyUnlockCeremony.mockResolvedValue({ prfUnavailable: true, cancelled: false });
+
+      render(<ExtUnlockBridge nonce="abc123" mode="unlock" />);
+      fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+      expect(await screen.findByText("extUnlock.noPasskeys")).toBeInTheDocument();
+
+      // Simulates content-relay's own postExtUnlockResult ack for the
+      // postFailureNotice message just sent -- arrives on a later tick.
+      dispatchAckMessage({
+        source: "pv-content-relay",
+        kind: "pv-ext-unlock-result",
+        nonce: "abc123",
+        ok: false,
+      });
+
+      expect(screen.getByText("extUnlock.noPasskeys")).toBeInTheDocument();
+      expect(screen.getByText("extUnlock.noPasskeysSettingsLink").closest("a")).toHaveAttribute(
+        "href",
+        "/?panel=settings",
+      );
+      expect(screen.queryByText("extUnlock.failed")).not.toBeInTheDocument();
+    });
+
+    it("not-signed-in: the distinct copy survives a subsequent ok:false ack for the same nonce", async () => {
+      mockPasskeyUnlockCeremony.mockRejectedValue(new ApiClientError(401, "unauthorized"));
+
+      render(<ExtUnlockBridge nonce="abc123" mode="unlock" />);
+      fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+      expect(await screen.findByText("extUnlock.notSignedIn")).toBeInTheDocument();
+
+      dispatchAckMessage({
+        source: "pv-content-relay",
+        kind: "pv-ext-unlock-result",
+        nonce: "abc123",
+        ok: false,
+      });
+
+      expect(screen.getByText("extUnlock.notSignedIn")).toBeInTheDocument();
+    });
+
+    it("even an ok:true ack (never actually sent for a failure notice, but defensively) must not flip a self-explained state to success", async () => {
+      mockPasskeyUnlockCeremony.mockResolvedValue({ prfUnavailable: true, cancelled: false });
+
+      render(<ExtUnlockBridge nonce="abc123" mode="unlock" />);
+      fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+      expect(await screen.findByText("extUnlock.noPasskeys")).toBeInTheDocument();
+
+      dispatchAckMessage({
+        source: "pv-content-relay",
+        kind: "pv-ext-unlock-result",
+        nonce: "abc123",
+        ok: true,
+      });
+
+      expect(screen.getByText("extUnlock.noPasskeys")).toBeInTheDocument();
+      expect(screen.queryByText("extUnlock.success")).not.toBeInTheDocument();
+    });
+  });
+
   it("times out to the failed state if no ack ever arrives", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     mockPasskeyUnlockCeremony.mockResolvedValue({
@@ -383,6 +450,31 @@ describe("ExtUnlockBridge — signin mode (Plan 13-07)", () => {
     await waitFor(() => expect(mockPasskeyLoginCeremony).toHaveBeenCalledTimes(1));
     expect(screen.queryByText("extUnlock.failed")).not.toBeInTheDocument();
     expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  // Regression (coordinator-caught via the official Firefox e2e harness) --
+  // signin-mode mirror of the same "a later content-relay ack must not
+  // override a self-explained terminal state" guard, see the unlock-mode
+  // describe block of the same name above.
+  it("no-passkeys: the honest empty-state survives a subsequent ok:false ack for the same nonce", async () => {
+    mockPasskeyLoginCeremony.mockResolvedValue({ prfUnavailable: true, cancelled: false, sessionToken: "tok" });
+
+    render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
+    fireEvent.change(screen.getByLabelText("extUnlock.emailLabel"), {
+      target: { value: "signin-user@example.com" },
+    });
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+    expect(await screen.findByText("extUnlock.noPasskeys")).toBeInTheDocument();
+
+    dispatchAckMessage({
+      source: "pv-content-relay",
+      kind: "pv-ext-unlock-result",
+      nonce: "abc123",
+      ok: false,
+    });
+
+    expect(screen.getByText("extUnlock.noPasskeys")).toBeInTheDocument();
+    expect(screen.queryByText("extUnlock.signinFailed")).not.toBeInTheDocument();
   });
 
   // Bartek live-UAT bug (13-07 signin flow): a zero-passkey account's

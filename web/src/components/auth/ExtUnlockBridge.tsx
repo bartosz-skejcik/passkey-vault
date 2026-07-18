@@ -83,6 +83,20 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
   const [email, setEmail] = useState("");
   const strippedRef = useRef(false);
   const settledRef = useRef(false);
+  // Regression fix (coordinator-caught, post-signin-passkeyless-spin):
+  // postFailureNotice() below ALSO triggers content-relay's round-trip ack
+  // (postExtUnlockResult posts back {ok:false} for ANY forwarded message,
+  // success or explicit-failure alike -- content-relay.content.ts doesn't
+  // distinguish). Without this gate, the SAME onMessage listener that
+  // exists for postAndWaitForAck's success path would ALSO catch that ack
+  // and unconditionally setState("failed") -- silently overwriting an
+  // already-correct, deliberately-chosen terminal state (no-passkeys'
+  // empty-state + Settings link, not-signed-in) with the generic failure
+  // copy once the round trip completed a tick later. Only
+  // postAndWaitForAck's own ack (the success path) should ever drive a
+  // state transition here; postFailureNotice's ack is a fire-and-forget
+  // background/popup signal only, never a page-visible one.
+  const awaitingAckRef = useRef(false);
 
   // Strips the nonce from the URL immediately on mount -- same
   // history.replaceState idiom page.tsx's own ?panel=/?action= handling
@@ -109,6 +123,7 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
       if (event.source !== window || event.origin !== window.location.origin) return;
       if (!isExtUnlockResultMessage(event.data)) return;
       if (event.data.nonce !== nonce) return;
+      if (!awaitingAckRef.current) return; // see awaitingAckRef's own header comment
       settledRef.current = true;
       if (event.data.ok) {
         setState("success");
@@ -151,6 +166,7 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
     // function-scope-only discipline can do for a string.
     prfArray.fill(0);
 
+    awaitingAckRef.current = true;
     setState("waiting");
     window.setTimeout(() => {
       if (!settledRef.current) {
@@ -184,6 +200,7 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
   async function handleUnlock() {
     setState("busy");
     settledRef.current = false;
+    awaitingAckRef.current = false; // fresh attempt -- any prior ack-wait no longer applies
     try {
       if (mode === "signin") {
         // IN-03 fix (13-REVIEW-2.md): trim before it flows into either the
