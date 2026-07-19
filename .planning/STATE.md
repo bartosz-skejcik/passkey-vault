@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 Phase: 13 — Dual-Browser Hardening
 Plan: 7 of 07
 Status: Phase complete — ready for verification
-Last activity: 2026-07-19 - Completed quick task 260719-sxa: prf-unavailable terminal state (server-origin ceremony)
+Last activity: 2026-07-20 - Completed quick task 260720-16k: Firefox aux window popup-feel (centering, self-close, scroll cap, autofill-flash race fix)
 
 Progress: [██████████] 95%
 
@@ -155,6 +155,7 @@ None yet.
 | 260717-lnx | Extension UX: one-click passkey picker, NordPass-style inpage dropdown restyle, headless e2e fixture | 2026-07-17 | 115e68d | [260717-lnx-extension-ux-one-click-passkey-picker-no](./quick/260717-lnx-extension-ux-one-click-passkey-picker-no/) |
 | 260718-0qi | Popup UI fix round: theme parity, FAB/footer/top-bar restructure, hover shadow removal, label/sort sizing, Phase 9 e2e repair | 2026-07-18 | 39754b3 | [260718-0qi-popup-ui-fix-round-theme-match-web-sideb](./quick/260718-0qi-popup-ui-fix-round-theme-match-web-sideb/) |
 | 260719-sxa | Distinguish prf-unavailable terminal state from generic failed in server-origin passkey ceremony (ExtUnlockBridge + login.ts), both signin and unlock modes, with PL/EN copy and tests | 2026-07-19 | 20eaaf1 | [260719-sxa-distinguish-prf-unavailable-terminal-sta](./quick/260719-sxa-distinguish-prf-unavailable-terminal-sta/) |
+| 260720-16k | Firefox aux windows feel like popups: centering, consent-window resize/self-close, candidate-list scroll cap, autofill-flash race fix | 2026-07-20 | 40d1965 | [260720-16k-firefox-aux-windows-feel-like-popups-cen](./quick/260720-16k-firefox-aux-windows-feel-like-popups-cen/) |
 
 ## Deferred Items
 
