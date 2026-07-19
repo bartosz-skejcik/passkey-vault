@@ -23,6 +23,7 @@ const hoisted = vi.hoisted(() => ({
   mockWasmGetProviderAssertion: vi.fn(),
   mockOpenPopup: vi.fn(),
   mockWindowsCreate: vi.fn(),
+  mockWindowsGetLastFocused: vi.fn(),
   mockStorageSet: vi.fn(),
   mockStorageGet: vi.fn(),
   mockStorageRemove: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock("wxt/browser", () => ({
     },
     windows: {
       create: hoisted.mockWindowsCreate,
+      getLastFocused: hoisted.mockWindowsGetLastFocused,
     },
     storage: {
       session: {
@@ -163,6 +165,7 @@ beforeEach(() => {
   hoisted.mockEncryptItem.mockReturnValue(combinedEncryptedItemJson());
   hoisted.mockSubscribeSessionLockState.mockReturnValue(() => {});
   hoisted.mockReadServerConfig.mockResolvedValue(null);
+  hoisted.mockWindowsGetLastFocused.mockResolvedValue({ left: 100, top: 50, width: 1200, height: 800 });
 });
 
 // Bartek live-UAT bug follow-up (.planning/debug/resolved/
@@ -276,9 +279,57 @@ describe("D-09: locked vault", () => {
 
     expect(hoisted.mockOpenPopup).toHaveBeenCalledTimes(1);
     expect(hoisted.mockWindowsCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "popup", width: 380, url: "popup.html" }),
+      expect.objectContaining({
+        type: "popup",
+        url: "popup.html",
+        width: 380,
+        height: 460,
+        focused: true,
+        left: 510,
+        top: 220,
+      }),
     );
     expect(hoisted.mockWasmCreateProviderCredential).not.toHaveBeenCalled();
+  });
+
+  it("falls back to default placement (no left/top) when getLastFocused() resolves empty geometry", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(null);
+    hoisted.mockOpenPopup.mockRejectedValue(new Error("no active tab / user gesture required"));
+    hoisted.mockWindowsCreate.mockResolvedValue(undefined);
+    hoisted.mockWindowsGetLastFocused.mockResolvedValue({});
+
+    void handleCredentialsCreate({ publicKey: { rp: { id: "example.com" } } }, "https://example.com");
+
+    await vi.waitFor(() => {
+      expect(hoisted.mockWindowsCreate).toHaveBeenCalled();
+    });
+
+    const call = hoisted.mockWindowsCreate.mock.calls[0][0];
+    expect(call).not.toHaveProperty("left");
+    expect(call).not.toHaveProperty("top");
+    expect(call).toEqual(
+      expect.objectContaining({ type: "popup", url: "popup.html", width: 380, height: 460, focused: true }),
+    );
+  });
+
+  it("falls back to default placement (no left/top) when getLastFocused() resolves partial geometry (height missing)", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(null);
+    hoisted.mockOpenPopup.mockRejectedValue(new Error("no active tab / user gesture required"));
+    hoisted.mockWindowsCreate.mockResolvedValue(undefined);
+    hoisted.mockWindowsGetLastFocused.mockResolvedValue({ left: 100, top: 50, width: 1200 });
+
+    void handleCredentialsCreate({ publicKey: { rp: { id: "example.com" } } }, "https://example.com");
+
+    await vi.waitFor(() => {
+      expect(hoisted.mockWindowsCreate).toHaveBeenCalled();
+    });
+
+    const call = hoisted.mockWindowsCreate.mock.calls[0][0];
+    expect(call).not.toHaveProperty("left");
+    expect(call).not.toHaveProperty("top");
+    expect(call).toEqual(
+      expect.objectContaining({ type: "popup", url: "popup.html", width: 380, height: 460, focused: true }),
+    );
   });
 });
 
