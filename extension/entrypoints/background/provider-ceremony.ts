@@ -104,6 +104,7 @@ import {
   wasmGetProviderAssertion,
   type WasmUserKey,
 } from "../../lib/crypto/wasm-loader";
+import { centeredWindowPosition, type WindowGeometry } from "../../lib/window-geometry";
 
 /**
  * Defense-in-depth (Bartek live-UAT bug follow-up, .planning/debug/resolved/
@@ -259,9 +260,43 @@ async function tryOpenPopup(): Promise<boolean> {
   }
 }
 
+// quick-260720-16k: consent fallback window size. Width (380) matches
+// popup/index.html's fixed `width: 380px; overflow: hidden` body -- that is
+// the exact content width, no more/no less. Height (460) is the RECOMPUTED
+// value for this plan's revision, superseding an earlier 420px pick that
+// predates the multi-match list's own scroll cap (Task 5,
+// ProviderCeremonyView.tsx's `max-h-52`): worst case is the multi-match
+// picker -- site row (20px) + title/body (60px) + capped list (208px) +
+// decline-only buttons (40px) + 3 gaps (48px) + p-6 padding (48px) = ~424px
+// -- 460 leaves ~36px of headroom above that, and far more above the
+// common single-match/create case (~250-280px, no candidate list at all).
+const CONSENT_WINDOW_WIDTH = 380;
+const CONSENT_WINDOW_HEIGHT = 460;
+
+/** Reads the current (triggering) window's geometry so the consent window
+ * can be centered over it -- never throws, mirrors this file's own
+ * tryOpenPopup try/catch-to-safe-fallback discipline. `null` on any
+ * rejection (e.g. no windows API access in this context). */
+async function getCurrentWindowGeometry(): Promise<WindowGeometry | null> {
+  try {
+    return await browser.windows.getLastFocused();
+  } catch {
+    return null;
+  }
+}
+
 async function tryOpenFallbackWindow(): Promise<void> {
   try {
-    await browser.windows.create({ type: "popup", width: 380, url: "popup.html" });
+    const current = await getCurrentWindowGeometry();
+    const position = centeredWindowPosition(current, CONSENT_WINDOW_WIDTH, CONSENT_WINDOW_HEIGHT);
+    await browser.windows.create({
+      type: "popup",
+      url: "popup.html",
+      width: CONSENT_WINDOW_WIDTH,
+      height: CONSENT_WINDOW_HEIGHT,
+      focused: true,
+      ...position,
+    });
   } catch (e) {
     console.error("[passkey-vault] failed to open fallback ceremony window", e);
   }

@@ -161,6 +161,19 @@ export default function App() {
    * AFTER this call resolves in the background's own
    * handleCredentialsCreate()/handleCredentialsGet() (Decision A) -- this
    * popup's job ends at reporting the choice.
+   *
+   * quick-260720-16k: on a successful send, this popup's job is now fully
+   * done -- `window.close()` closes the Firefox `windows.create()` consent
+   * window (and is a harmless no-op-ish call on Chrome's native action
+   * popup, which the user is about to dismiss anyway) instead of
+   * transitioning to a fallback view via `refreshSessionStatus()`. Covers
+   * confirm (create/single-match AND multi-match row-click) and decline
+   * alike, since both `onConfirm` and `onDecline` funnel into this one
+   * function. Called UNCONDITIONALLY (no Chrome/Firefox host-context
+   * branch), mirroring the already-shipped `AutofillItemRow.tsx`/
+   * `TotpFillRow.tsx` precedent in this exact popup app. Only reached on
+   * the SUCCESS path -- a failed send leaves `ceremonyStatus` at "failed"
+   * and the window open, showing that failed state.
    */
   async function resolveCeremony(requestId: string, itemId: string | null) {
     setCeremonyStatus(itemId === null ? "idle" : "busy");
@@ -170,7 +183,7 @@ export default function App() {
       setCeremonyStatus("failed");
       return;
     }
-    await refreshSessionStatus();
+    window.close();
   }
 
   async function refreshFromScratch() {
@@ -275,8 +288,13 @@ export default function App() {
       // or a second popup/window instance racing this one) -- only unwind
       // if THIS instance was actually showing the ceremony view for it;
       // any other current view (list/detail/unlock) is left untouched.
+      // quick-260720-16k: closes the window instead of falling back to
+      // session.status -- the same self-closing guarantee resolveCeremony()
+      // applies on the direct-click paths applies uniformly here too, so
+      // the user never sees a stale item-list/unlock-view flash in what is
+      // now a self-closing ceremony window.
       if (viewRef.current.kind === "provider-ceremony") {
-        void refreshSessionStatus();
+        window.close();
       }
     }
     browser.storage.session.onChanged.addListener(onSessionStorageChanged);

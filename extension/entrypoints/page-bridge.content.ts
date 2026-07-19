@@ -187,6 +187,18 @@ function relay(
   publicKey: unknown,
 ): Promise<PageBridgeResponseEnvelope | null> {
   return new Promise((resolve) => {
+    // quick-260720-16k: set SYNCHRONOUSLY, before the async postMessage hop
+    // below even starts -- content-relay.content.ts's Surface A/B guards
+    // read this DOM marker (in addition to their existing
+    // passkeyCeremonyInFlight JS flag, which is only set AFTER a postMessage
+    // round-trip lands) so a page's login-autofill overlay is suppressed
+    // from the SAME synchronous tick this ceremony was intercepted in,
+    // closing the real async gap a focusin/DOMContentLoaded-timed mount
+    // could otherwise race ahead of. A plain DOM attribute, not a JS
+    // variable, because MAIN-world (this file) and ISOLATED-world
+    // (content-relay.content.ts) content scripts share the same DOM but not
+    // the same JS heap.
+    document.documentElement.dataset.pvCeremonyInFlight = "1";
     const nonce = crypto.randomUUID();
     let settled = false;
     let acked = false;

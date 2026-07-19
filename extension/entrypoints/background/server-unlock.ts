@@ -64,6 +64,7 @@ import { isSessionUnlocked, setUnlockedUserKey } from "./vault-session";
 import { readSessionMeta } from "./session-storage";
 import { readServerConfig } from "./server-config";
 import { DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
+import { centeredWindowPosition, type WindowGeometry } from "../../lib/window-geometry";
 
 const PENDING_STORAGE_KEY = "pv-server-unlock-pending";
 const ALARM_NAME = "pv-server-unlock-timeout";
@@ -78,6 +79,19 @@ interface PendingServerUnlock {
   createdAt: number;
   mode: ServerCeremonyMode;
   windowId?: number;
+}
+
+/** quick-260720-16k: mirrors provider-ceremony.ts's own per-file
+ * getCurrentWindowGeometry() helper (own copy in this file, not a shared
+ * cross-background-module import, matching this file's existing per-file
+ * helper convention e.g. closeWindowIfAny/broadcastCeremonyState) -- never
+ * throws, `null` on any rejection. */
+async function getCurrentWindowGeometry(): Promise<WindowGeometry | null> {
+  try {
+    return await browser.windows.getLastFocused();
+  } catch {
+    return null;
+  }
 }
 
 function isServerCeremonyMode(value: unknown): value is ServerCeremonyMode {
@@ -195,11 +209,15 @@ export async function startServerUnlock(mode: ServerCeremonyMode): Promise<Serve
   const nonce = randomNonce();
   let windowId: number | undefined;
   try {
+    const current = await getCurrentWindowGeometry();
+    const position = centeredWindowPosition(current, CEREMONY_WINDOW_WIDTH, CEREMONY_WINDOW_HEIGHT);
     const created = await browser.windows.create({
       url: `${config.baseUrl}/?pv-ext-unlock=${encodeURIComponent(nonce)}&pv-mode=${mode}`,
       type: "popup",
       width: CEREMONY_WINDOW_WIDTH,
       height: CEREMONY_WINDOW_HEIGHT,
+      focused: true,
+      ...position,
     });
     windowId = created?.id;
   } catch {
