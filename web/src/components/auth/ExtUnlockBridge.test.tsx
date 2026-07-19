@@ -121,6 +121,25 @@ describe("ExtUnlockBridge", () => {
     expect(await screen.findByText("extUnlock.noPasskeys")).toBeInTheDocument();
   });
 
+  it("shows the distinct prf-unavailable copy (not no-passkeys) when the server verified the assertion but this browser returned no PRF bytes (Firefox browser gap), and notifies content-relay", async () => {
+    mockPasskeyUnlockCeremony.mockResolvedValue({
+      prfUnavailable: true,
+      prfBrowserGap: true,
+      cancelled: false,
+    });
+    const postSpy = vi.spyOn(window, "postMessage");
+
+    render(<ExtUnlockBridge nonce="abc123" mode="unlock" />);
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+
+    expect(await screen.findByText("extUnlock.prfUnavailable")).toBeInTheDocument();
+    expect(screen.queryByText("extUnlock.noPasskeys")).not.toBeInTheDocument();
+    expect(postSpy).toHaveBeenCalledWith(
+      { source: "pv-ext-unlock-bridge", nonce: "abc123", failed: true },
+      window.location.origin,
+    );
+  });
+
   it("a cancelled ceremony resets silently to idle -- no error, button stays clickable, and does NOT notify content-relay (the nonce stays retryable)", async () => {
     mockPasskeyUnlockCeremony.mockResolvedValue({ prfUnavailable: false, cancelled: true });
     const postSpy = vi.spyOn(window, "postMessage");
@@ -280,6 +299,28 @@ describe("ExtUnlockBridge", () => {
       expect(screen.getByText("extUnlock.notSignedIn")).toBeInTheDocument();
     });
 
+    it("prf-unavailable: the distinct browser-gap copy survives a subsequent ok:false ack for the same nonce", async () => {
+      mockPasskeyUnlockCeremony.mockResolvedValue({
+        prfUnavailable: true,
+        prfBrowserGap: true,
+        cancelled: false,
+      });
+
+      render(<ExtUnlockBridge nonce="abc123" mode="unlock" />);
+      fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+      expect(await screen.findByText("extUnlock.prfUnavailable")).toBeInTheDocument();
+
+      dispatchAckMessage({
+        source: "pv-content-relay",
+        kind: "pv-ext-unlock-result",
+        nonce: "abc123",
+        ok: false,
+      });
+
+      expect(screen.getByText("extUnlock.prfUnavailable")).toBeInTheDocument();
+      expect(screen.queryByText("extUnlock.failed")).not.toBeInTheDocument();
+    });
+
     it("even an ok:true ack (never actually sent for a failure notice, but defensively) must not flip a self-explained state to success", async () => {
       mockPasskeyUnlockCeremony.mockResolvedValue({ prfUnavailable: true, cancelled: false });
 
@@ -431,6 +472,29 @@ describe("ExtUnlockBridge — signin mode (Plan 13-07)", () => {
 
     expect(await screen.findByText("extUnlock.noPasskeys")).toBeInTheDocument();
     expect(screen.queryByText("extUnlock.noPasskeysSettingsLink")).not.toBeInTheDocument();
+    expect(postSpy).toHaveBeenCalledWith(
+      { source: "pv-ext-unlock-bridge", nonce: "abc123", failed: true },
+      window.location.origin,
+    );
+  });
+
+  it("shows the distinct signin-mode prf-unavailable copy (not no-passkeys) when the server verified the assertion but this browser returned no PRF bytes (Firefox browser gap), and notifies content-relay", async () => {
+    mockPasskeyLoginCeremony.mockResolvedValue({
+      prfUnavailable: true,
+      prfBrowserGap: true,
+      cancelled: false,
+      sessionToken: "tok",
+    });
+    const postSpy = vi.spyOn(window, "postMessage");
+
+    render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
+    fireEvent.change(screen.getByLabelText("extUnlock.emailLabel"), {
+      target: { value: "signin-user@example.com" },
+    });
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+
+    expect(await screen.findByText("extUnlock.signinPrfUnavailable")).toBeInTheDocument();
+    expect(screen.queryByText("extUnlock.noPasskeys")).not.toBeInTheDocument();
     expect(postSpy).toHaveBeenCalledWith(
       { source: "pv-ext-unlock-bridge", nonce: "abc123", failed: true },
       window.location.origin,

@@ -137,6 +137,17 @@ function stripPrfFromCredentialJson(assertion: PublicKeyCredential): unknown {
  */
 export interface PasskeyLoginCeremonyResult {
   prfUnavailable: boolean;
+  /**
+   * True ONLY when the server verified the assertion and returned a
+   * PRF-capable `prf_wrapped_uk`, but THIS browser's own WebAuthn extension
+   * results came back without PRF bytes — the Firefox/macOS-platform-
+   * authenticator `{}` gap documented in 13-FF-WEBAUTHN-RESEARCH.md.
+   * Distinct from `prfUnavailable` alone, which stays `true` for every
+   * PRF-unusable outcome (including the server-side "no PRF-capable
+   * credential matched" case). Always `false` whenever `prfUnavailable` is
+   * `false`.
+   */
+  prfBrowserGap: boolean;
   cancelled: boolean;
   /** Present whenever the ceremony reaches `passkeyLoginFinish` without
    * throwing/cancelling — i.e. on every outcome except `cancelled: true`
@@ -177,7 +188,7 @@ export async function passkeyLoginCeremony(
       // powstała — bez niego caller brał ciche anulowanie za udany login
       // (bug znaleziony w UAT 04-03 krok 8).
       onStep?.("cancelled");
-      return { prfUnavailable: false, cancelled: true };
+      return { prfUnavailable: false, prfBrowserGap: false, cancelled: true };
     }
     onStep?.("failed");
     throw e;
@@ -194,20 +205,40 @@ export async function passkeyLoginCeremony(
       onStep?.("success");
       return {
         prfUnavailable: false,
+        prfBrowserGap: false,
         cancelled: false,
         sessionToken: finish.session_token,
         prfBytes,
         prfWrappedUk: finish.prf_wrapped_uk,
       };
     }
+
+    // Server verified the assertion and this credential IS PRF-capable
+    // (prf_wrapped_uk non-null), but THIS browser's own WebAuthn extension
+    // results came back without PRF bytes — Firefox's documented `{}` gap
+    // (13-FF-WEBAUTHN-RESEARCH.md), not "no PRF-capable credential". The
+    // login still succeeded; only PRF unlock didn't, and for a browser
+    // reason rather than an account reason.
+    onStep?.("success");
+    return {
+      prfUnavailable: true,
+      prfBrowserGap: true,
+      cancelled: false,
+      sessionToken: finish.session_token,
+    };
   }
 
-  // Either prf_wrapped_uk === null, or it was present but the extension
-  // results were unexpectedly absent — both routed identically (Area 3's
-  // deliberate two-case collapse): the login still succeeded, only PRF
-  // unlock didn't.
+  // prf_wrapped_uk === null — no PRF-capable credential matched at all
+  // (Area 3's original two-case collapse is now split: the browser-gap case
+  // above is handled separately). The login still succeeded, only PRF
+  // unlock isn't available for this account/credential.
   onStep?.("success");
-  return { prfUnavailable: true, cancelled: false, sessionToken: finish.session_token };
+  return {
+    prfUnavailable: true,
+    prfBrowserGap: false,
+    cancelled: false,
+    sessionToken: finish.session_token,
+  };
 }
 
 /**
@@ -272,6 +303,16 @@ export async function passkeyLogin(
  */
 export interface PasskeyUnlockCeremonyResult {
   prfUnavailable: boolean;
+  /**
+   * True ONLY when the server verified the assertion and returned a
+   * PRF-capable `prf_wrapped_uk`, but THIS browser's own WebAuthn extension
+   * results came back without PRF bytes — the Firefox/macOS-platform-
+   * authenticator `{}` gap documented in 13-FF-WEBAUTHN-RESEARCH.md.
+   * Distinct from `prfUnavailable` alone, which stays `true` for every
+   * PRF-unusable outcome (including "zero PRF-capable passkeys registered").
+   * Always `false` whenever `prfUnavailable` is `false`.
+   */
+  prfBrowserGap: boolean;
   cancelled: boolean;
   prfBytes?: ArrayBuffer;
   prfWrappedUk?: string;
@@ -296,7 +337,7 @@ export async function passkeyUnlockCeremony(
     if (e instanceof ApiClientError && e.status === 404) {
       // Zero PRF-capable passkeys — UI-SPEC's explicit "no browser prompt
       // ever shown" requirement for this case.
-      return { prfUnavailable: true, cancelled: false };
+      return { prfUnavailable: true, prfBrowserGap: false, cancelled: false };
     }
     onStep?.("failed");
     throw e;
@@ -317,7 +358,7 @@ export async function passkeyUnlockCeremony(
   } catch (e) {
     if (isNotAllowedError(e)) {
       onStep?.("cancelled");
-      return { prfUnavailable: false, cancelled: true };
+      return { prfUnavailable: false, prfBrowserGap: false, cancelled: true };
     }
     onStep?.("failed");
     throw e;
@@ -334,18 +375,27 @@ export async function passkeyUnlockCeremony(
       onStep?.("success");
       return {
         prfUnavailable: false,
+        prfBrowserGap: false,
         cancelled: false,
         prfBytes,
         prfWrappedUk: finish.prf_wrapped_uk,
       };
     }
+
+    // Server verified the assertion and this credential IS PRF-capable
+    // (prf_wrapped_uk non-null), but THIS browser's own WebAuthn extension
+    // results came back without PRF bytes — Firefox's documented `{}` gap
+    // (13-FF-WEBAUTHN-RESEARCH.md), not "no PRF-capable credential".
+    onStep?.("success");
+    return { prfUnavailable: true, prfBrowserGap: true, cancelled: false };
   }
 
   // Defensive branch: unlock_start only ever offers prf_capable credentials,
-  // so a null prf_wrapped_uk here should be rare — same two-case collapse
-  // as passkeyLogin applies if the extension silently didn't report.
+  // so a null prf_wrapped_uk here should be rare — the browser-gap case is
+  // now split out above, so this remaining branch means only "no
+  // PRF-capable credential" (should not normally happen for unlock).
   onStep?.("success");
-  return { prfUnavailable: true, cancelled: false };
+  return { prfUnavailable: true, prfBrowserGap: false, cancelled: false };
 }
 
 /**
