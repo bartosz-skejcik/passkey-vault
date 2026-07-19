@@ -26,10 +26,40 @@
 // BEFORE calling `main()`, and assert against those, never against
 // `navigator.credentials.create/get` post-patch (which is the wrapper, not
 // the native mock).
+import { readFileSync } from "node:fs";
+import { fileURLToPath, URL as NodeURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import pageBridgeDefinition, { isPermissionsPolicyBlocked } from "../page-bridge.content";
 import type { PageBridgeRequestEnvelope, PageBridgeResponseEnvelope } from "../../lib/messaging/page-protocol";
+
+/** Extracts the source text of a top-level `function relay(...) { ... }`
+ * declaration by brace-matching from the `{` immediately following the
+ * `function relay(` needle to its balanced closing `}`. Used ONLY by the
+ * WR-01 mirror-invariant structural test below, scoping the marker-position
+ * assertion to the actual `relay()` body in each file rather than the whole
+ * module (avoiding false positives from unrelated text elsewhere in either
+ * file). */
+function extractRelayFunctionSource(fileSource: string): string {
+  const start = fileSource.indexOf("function relay(");
+  if (start === -1) {
+    throw new Error("extractRelayFunctionSource: 'function relay(' not found");
+  }
+  const braceStart = fileSource.indexOf("{", start);
+  let depth = 0;
+  let i = braceStart;
+  for (; i < fileSource.length; i += 1) {
+    if (fileSource[i] === "{") {
+      depth += 1;
+    } else if (fileSource[i] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        break;
+      }
+    }
+  }
+  return fileSource.slice(start, i + 1);
+}
 
 // `defineContentScript`'s return type is the full ContentScriptDefinition
 // union (isolated-world `main(ctx)` OR main-world `main()`), so a plain
@@ -271,6 +301,51 @@ describe("DOM marker for cross-world race-closing (autofill-flash fix, quick-260
     // Let the no-ack fallthrough settle so this test does not hang.
     await vi.advanceTimersByTimeAsync(3_000);
     await promise;
+  });
+
+  // WR-01 (13-REVIEW-3.md): the marker set above was added ONLY to this
+  // Chrome file's relay() and never mirrored into page-bridge-firefox.ts's
+  // relay(), despite both files' header comments declaring the patch logic
+  // "duplicated verbatim". A per-file runtime test (like the one above)
+  // cannot catch that kind of drift by itself -- it would keep passing for
+  // Chrome forever while Firefox silently regressed. This is a STRUCTURAL
+  // assertion over BOTH files' raw source instead, so the mirror-invariant
+  // is enforced by the suite, not just documented in a comment.
+  it("mirrors the synchronous pvCeremonyInFlight marker set into page-bridge-firefox.ts's relay(), at the same position ahead of the nonce/postMessage hop (WR-01, 13-REVIEW-3)", () => {
+    const MARKER_LINE = 'document.documentElement.dataset.pvCeremonyInFlight = "1";';
+
+    // Explicit `node:url` URL constructor -- the jsdom test environment
+    // this file otherwise runs under (`@vitest-environment jsdom`, top of
+    // file) replaces the global `URL` with jsdom's own implementation,
+    // which rejects a `file:` base URL ("The URL must be of scheme file").
+    // node:url's own export is unaffected by that global override.
+    const chromeSource = readFileSync(
+      fileURLToPath(new NodeURL("../page-bridge.content.ts", import.meta.url)),
+      "utf-8",
+    );
+    const firefoxSource = readFileSync(
+      fileURLToPath(new NodeURL("../page-bridge-firefox.ts", import.meta.url)),
+      "utf-8",
+    );
+
+    const chromeRelay = extractRelayFunctionSource(chromeSource);
+    const firefoxRelay = extractRelayFunctionSource(firefoxSource);
+
+    // Present in BOTH files' relay() bodies -- not just the Chrome one.
+    expect(chromeRelay).toContain(MARKER_LINE);
+    expect(firefoxRelay).toContain(MARKER_LINE);
+
+    // Positioned BEFORE the nonce is generated (i.e. before the async
+    // postMessage hop starts) in BOTH files -- matches the runtime
+    // assertion above for Chrome, and closes the exact gap WR-01 found on
+    // Firefox: a marker set AFTER the nonce would no longer close the
+    // synchronous race this fix exists for.
+    const chromeNonceIndex = chromeRelay.indexOf("crypto.randomUUID()");
+    const firefoxNonceIndex = firefoxRelay.indexOf("crypto.randomUUID()");
+    expect(chromeNonceIndex).toBeGreaterThan(-1);
+    expect(firefoxNonceIndex).toBeGreaterThan(-1);
+    expect(chromeRelay.indexOf(MARKER_LINE)).toBeLessThan(chromeNonceIndex);
+    expect(firefoxRelay.indexOf(MARKER_LINE)).toBeLessThan(firefoxNonceIndex);
   });
 });
 
