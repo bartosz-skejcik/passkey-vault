@@ -63,7 +63,7 @@ describe("ExtUnlockBridge", () => {
     expect(mockPasskeyUnlockCeremony).not.toHaveBeenCalled();
   });
 
-  it("posts exactly the {nonce, prf, prfWrappedUk} envelope on PRF success, zeroing the local view", async () => {
+  it("posts exactly the {nonce, prfB64, prfWrappedUk} envelope on PRF success (base64url string, never a raw buffer -- Firefox Xray-wrapper fix), zeroing the local view", async () => {
     const prfBytes = new Uint8Array([1, 2, 3, 4]).buffer;
     mockPasskeyUnlockCeremony.mockResolvedValue({
       prfUnavailable: false,
@@ -84,9 +84,16 @@ describe("ExtUnlockBridge", () => {
       nonce: "abc123",
       prfWrappedUk: "prf-wrapped-uk-blob",
     });
-    expect((envelope as { prf: ArrayBuffer }).prf).toBeInstanceOf(ArrayBuffer);
-    // The original view was zeroed after posting -- structured clone had
-    // already copied the bytes synchronously, so this is safe.
+    // A JSON-safe (and Xray-safe) base64url STRING crosses the postMessage
+    // boundary now -- never a raw ArrayBuffer/TypedArray (D-21, Firefox
+    // Xray-wrapper fix).
+    const prfB64 = (envelope as { prfB64: unknown }).prfB64;
+    expect(typeof prfB64).toBe("string");
+    expect(envelope).not.toHaveProperty("prf");
+    const decoded = atob((prfB64 as string).replace(/-/g, "+").replace(/_/g, "/"));
+    expect(Array.from(decoded, (c) => c.charCodeAt(0))).toEqual([1, 2, 3, 4]);
+    // The original view was zeroed right after encoding -- the encode
+    // above already extracted every byte it needs, so this is safe.
     expect(new Uint8Array(prfBytes)).toEqual(new Uint8Array([0, 0, 0, 0]));
   });
 
@@ -395,7 +402,7 @@ describe("ExtUnlockBridge — signin mode (Plan 13-07)", () => {
     expect(screen.getByTestId("passkey-unlock-button")).not.toBeDisabled();
   });
 
-  it("posts the FULL {nonce, prf, prfWrappedUk, token, accountEmail} envelope on PRF success, zeroing the local PRF view", async () => {
+  it("posts the FULL {nonce, prfB64, prfWrappedUk, token, accountEmail} envelope on PRF success (base64url string, never a raw buffer), zeroing the local PRF view", async () => {
     const prfBytes = new Uint8Array([5, 6, 7, 8]).buffer;
     mockPasskeyLoginCeremony.mockResolvedValue({
       prfUnavailable: false,
@@ -423,7 +430,11 @@ describe("ExtUnlockBridge — signin mode (Plan 13-07)", () => {
       token: "fresh-session-token-b64+/=",
       accountEmail: "signin-user@example.com",
     });
-    expect((envelope as { prf: ArrayBuffer }).prf).toBeInstanceOf(ArrayBuffer);
+    const prfB64 = (envelope as { prfB64: unknown }).prfB64;
+    expect(typeof prfB64).toBe("string");
+    expect(envelope).not.toHaveProperty("prf");
+    const decoded = atob((prfB64 as string).replace(/-/g, "+").replace(/_/g, "/"));
+    expect(Array.from(decoded, (c) => c.charCodeAt(0))).toEqual([5, 6, 7, 8]);
     expect(new Uint8Array(prfBytes)).toEqual(new Uint8Array([0, 0, 0, 0]));
   });
 

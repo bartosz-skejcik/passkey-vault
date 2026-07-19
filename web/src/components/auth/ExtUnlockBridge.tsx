@@ -12,6 +12,38 @@ const REQUEST_SOURCE = "pv-ext-unlock-bridge";
 const RESPONSE_SOURCE = "pv-content-relay";
 const RESPONSE_KIND = "pv-ext-unlock-result";
 
+/**
+ * Bartek live finding (Zen Browser/Firefox, .planning/debug/): the PRF
+ * output used to cross THIS component's own `window.postMessage` to
+ * content-relay.content.ts's pv-ext-unlock listener as a raw
+ * `Uint8Array`/`ArrayBuffer`. On Chrome that's a clean structured-clone
+ * copy into the isolated world; on Firefox the content script instead
+ * reads the page's typed array through an opaque Xray wrapper and silently
+ * encodes garbage of the right length -- the background's `b64UrlToBytes`
+ * then unwraps 32 wrong bytes and the ceremony fails as `delivery-failed`,
+ * even though the assertion itself verified server-side. Every OTHER
+ * binary field this codebase relays across a page/extension boundary is
+ * already JSON-safe at the SOURCE (D-21's base64url convention,
+ * content-relay.content.ts's own `encodePublicKeyOptions`) -- this is the
+ * one boundary that wasn't, because the raw ArrayBuffer previously
+ * survived the MAIN<->ISOLATED hop fine on Chrome and the gap only shows
+ * up cross-browser. Fix: encode to base64url HERE, in page scope, before
+ * ever calling postMessage -- a string is JSON-safe (and Xray-safe) at
+ * every hop, so there is no longer a typed-array read for Firefox's Xray
+ * wrappers to corrupt. Matches content-relay.content.ts's own private
+ * `bufferSourceToB64Url` encoder byte-for-byte (and therefore
+ * `passkey_types`' Rust-side / the background's `b64UrlToBytes` decoder
+ * convention) -- deliberately NOT `@/lib/auth/api`'s `base64Encode`, which
+ * produces STANDARD base64 (`+`/`/`/`=`), not base64url.
+ */
+function bytesToB64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 /** Bounded wait for content-relay's ack/result postMessage after posting the
  * ceremony payload -- the background ALSO closes this window itself on every
  * resolution path (Task 1's completeServerUnlock), so this is a UX nicety
@@ -167,27 +199,33 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
 
   function postAndWaitForAck(prfBytes: ArrayBuffer, prfWrappedUk: string, extra?: { token: string; accountEmail: string }) {
     const prfArray = new Uint8Array(prfBytes);
-    window.postMessage(
-      {
-        source: REQUEST_SOURCE,
-        nonce,
-        prf: prfArray.buffer,
-        prfWrappedUk,
-        ...(extra ? { token: extra.token, accountEmail: extra.accountEmail } : {}),
-      },
-      window.location.origin,
-    );
-    // Structured-clone already copied the bytes synchronously inside
-    // postMessage() above -- safe to zero the local view now (T-13-12:
-    // PRF output never lingers in page scope beyond this point). The
-    // session `token` (signin mode only) is a plain JS string -- strings
-    // are immutable and cannot be zeroized (mirrors
+    // Encoded to a JSON-safe (and Xray-safe) base64url STRING here, in page
+    // scope, BEFORE postMessage is ever called -- see bytesToB64Url's own
+    // header comment for the Firefox Xray-wrapper hazard this closes. The
+    // encode above already extracted every byte it needs, so the local
+    // view is zeroed immediately (T-13-12: PRF output never lingers in
+    // page scope beyond this point) rather than after postMessage, which
+    // is now moot -- only the encoded string crosses the boundary, never
+    // the raw buffer. The session `token` (signin mode only) is a plain JS
+    // string -- strings are immutable and cannot be zeroized (mirrors
     // entrypoints/background/vault-session.ts's own WR-04-documented
     // bound for the identical class of exposure); dropping every
     // reference to it here (the `extra` object goes out of scope
     // immediately after this call) is the honest, bounded best this
     // function-scope-only discipline can do for a string.
+    const prfB64 = bytesToB64Url(prfArray);
     prfArray.fill(0);
+
+    window.postMessage(
+      {
+        source: REQUEST_SOURCE,
+        nonce,
+        prfB64,
+        prfWrappedUk,
+        ...(extra ? { token: extra.token, accountEmail: extra.accountEmail } : {}),
+      },
+      window.location.origin,
+    );
 
     awaitingAckRef.current = true;
     setState("waiting");
