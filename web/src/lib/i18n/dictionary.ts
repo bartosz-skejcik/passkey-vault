@@ -164,6 +164,26 @@ export const DICTIONARY = {
     en: "You signed in with your passkey, but this browser didn't return the PRF secret needed to unlock your vault (a browser or device limitation). Sign in with your password instead — or try Chrome, where PRF works.",
   },
 
+  // Two-part fix (Bartek live finding, Zen Browser/Firefox on macOS): once
+  // extractPrfBytes' strict shape validation (login.ts) routes a malformed
+  // PRF result into prfBrowserGap instead of a false success, the remaining
+  // failure class is different -- the ceremony + server verification
+  // SUCCEEDED and a genuine PRF envelope was POSTed to content-relay
+  // (postAndWaitForAck), but the extension background's own unwrap/nonce
+  // step failed (ack ok:false). Distinct from extUnlock.failed/
+  // signinFailed (whose copy names Settings -> Passkeys, misleading here --
+  // the passkey itself worked) and from extUnlock.prfUnavailable/
+  // signinPrfUnavailable (this browser DID return usable PRF bytes; the
+  // failure is background-side, not a browser/device PRF gap).
+  "extUnlock.deliveryFailed": {
+    pl: "Ceremonia passkeya przebiegła poprawnie, ale rozszerzenie nie zdołało odszyfrować sejfu w tej przeglądarce. Odblokuj hasłem — albo spróbuj w Chrome.",
+    en: "Your passkey ceremony completed successfully, but the extension couldn't decrypt your vault in this browser. Unlock with your password instead — or try Chrome.",
+  },
+  "extUnlock.signinDeliveryFailed": {
+    pl: "Ceremonia passkeya przebiegła poprawnie, ale rozszerzenie nie zdołało odszyfrować sejfu w tej przeglądarce. Zaloguj się hasłem — albo spróbuj w Chrome.",
+    en: "Your passkey ceremony completed successfully, but the extension couldn't decrypt your vault in this browser. Sign in with your password instead — or try Chrome.",
+  },
+
   "vault.emptyHeading": { pl: "Vault jeszcze pusty", en: "Your vault is empty" },
   "vault.emptyBody": {
     pl: "Dodaj pierwszy item — hasło, kartę albo notatkę 👇",

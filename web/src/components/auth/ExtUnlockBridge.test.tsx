@@ -207,7 +207,15 @@ describe("ExtUnlockBridge", () => {
     expect(closeSpy).toHaveBeenCalled();
   });
 
-  it("a matching ok:false ack from content-relay shows the failed state", async () => {
+  // Two-part fix (Bartek live finding, Zen Browser/Firefox on macOS): once
+  // login.ts's extractPrfBytes strict shape validation routes malformed PRF
+  // results into prfBrowserGap instead of a false success, an ok:false ack
+  // FOR postAndWaitForAck's OWN post means the ceremony + server
+  // verification genuinely succeeded and a real PRF envelope was delivered
+  // -- the failure is background-side (unwrap/nonce), not the passkey. The
+  // generic extUnlock.failed copy ("Sprawdź Ustawienia -> Passkeys") would
+  // be misleading here; this is now the distinct delivery-failed state.
+  it("a matching ok:false ack from content-relay (background unwrap failure AFTER a genuine PRF success) shows the distinct delivery-failed state, not the generic failed state", async () => {
     mockPasskeyUnlockCeremony.mockResolvedValue({
       prfUnavailable: false,
       cancelled: false,
@@ -226,7 +234,8 @@ describe("ExtUnlockBridge", () => {
       ok: false,
     });
 
-    expect(await screen.findByText("extUnlock.failed")).toBeInTheDocument();
+    expect(await screen.findByText("extUnlock.deliveryFailed")).toBeInTheDocument();
+    expect(screen.queryByText("extUnlock.failed")).not.toBeInTheDocument();
   });
 
   it("an ack for a DIFFERENT nonce is ignored", async () => {
@@ -538,6 +547,39 @@ describe("ExtUnlockBridge — signin mode (Plan 13-07)", () => {
     });
 
     expect(screen.getByText("extUnlock.noPasskeys")).toBeInTheDocument();
+    expect(screen.queryByText("extUnlock.signinFailed")).not.toBeInTheDocument();
+  });
+
+  // Signin-mode mirror of the unlock-mode delivery-failed test above: the
+  // sign-in ceremony + server verification succeeded (postAndWaitForAck
+  // posted the full {prf, prfWrappedUk, token, accountEmail} envelope), but
+  // the background's own unwrap step failed for THIS browser -- distinct
+  // from extUnlock.signinFailed (which covers ceremony-side failures and
+  // names Settings -> Passkeys, misleading once the passkey itself worked).
+  it("a matching ok:false ack from content-relay (background unwrap failure AFTER a genuine signin PRF success) shows the distinct signin delivery-failed state, not the generic signinFailed state", async () => {
+    mockPasskeyLoginCeremony.mockResolvedValue({
+      prfUnavailable: false,
+      cancelled: false,
+      sessionToken: "fresh-session-token",
+      prfBytes: new Uint8Array([1, 2, 3, 4]).buffer,
+      prfWrappedUk: "signin-prf-wrapped-uk-blob",
+    });
+
+    render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
+    fireEvent.change(screen.getByLabelText("extUnlock.emailLabel"), {
+      target: { value: "signin-user@example.com" },
+    });
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+    await waitFor(() => expect(mockPasskeyLoginCeremony).toHaveBeenCalled());
+
+    dispatchAckMessage({
+      source: "pv-content-relay",
+      kind: "pv-ext-unlock-result",
+      nonce: "abc123",
+      ok: false,
+    });
+
+    expect(await screen.findByText("extUnlock.signinDeliveryFailed")).toBeInTheDocument();
     expect(screen.queryByText("extUnlock.signinFailed")).not.toBeInTheDocument();
   });
 

@@ -27,6 +27,7 @@ type BridgeState =
   | "no-passkeys"
   | "not-signed-in"
   | "prf-unavailable"
+  | "delivery-failed"
   | "failed";
 
 interface ExtUnlockResultMessage {
@@ -101,6 +102,17 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
   // postAndWaitForAck's own ack (the success path) should ever drive a
   // state transition here; postFailureNotice's ack is a fire-and-forget
   // background/popup signal only, never a page-visible one.
+  //
+  // delivery-failed (two-part fix, Bartek live finding on Zen Browser/
+  // Firefox) is the ONE terminal state set FROM INSIDE this same ack
+  // listener rather than guarded against it: reaching the `ok: false`
+  // branch below means awaitingAckRef.current was true, i.e.
+  // postAndWaitForAck() ran -- the ceremony + server verification
+  // genuinely SUCCEEDED and a real PRF envelope was posted. An `ok: false`
+  // ack for THAT post means the background's own unwrap/nonce step failed,
+  // not the passkey ceremony -- a different failure class from the
+  // catch-all `failed` state below, which covers earlier (ceremony-side)
+  // failures and never has an ack to react to.
   const awaitingAckRef = useRef(false);
 
   // Strips the nonce from the URL immediately on mount -- same
@@ -140,7 +152,13 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
           // closes this window itself, so this is best-effort only.
         }
       } else {
-        setState("failed");
+        // Ceremony + server verification succeeded (we only ever reach
+        // this listener's gated branch after postAndWaitForAck posted a
+        // genuine PRF envelope) -- an ok:false ack here means the
+        // extension background failed to unwrap/deliver, not that the
+        // passkey itself failed. See delivery-failed's dictionary entry
+        // and awaitingAckRef's own header comment above.
+        setState("delivery-failed");
       }
     }
     window.addEventListener("message", onMessage);
@@ -369,6 +387,12 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
         {state === "prf-unavailable" ? (
           <p className="mt-6 text-sm text-base-content/70">
             {t(mode === "signin" ? "extUnlock.signinPrfUnavailable" : "extUnlock.prfUnavailable")}
+          </p>
+        ) : null}
+
+        {state === "delivery-failed" ? (
+          <p className="mt-6 text-sm text-base-content/70">
+            {t(mode === "signin" ? "extUnlock.signinDeliveryFailed" : "extUnlock.deliveryFailed")}
           </p>
         ) : null}
 
