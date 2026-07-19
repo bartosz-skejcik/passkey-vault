@@ -97,12 +97,41 @@ import { getItems, splitCombinedEncryptedItem, touchVaultItem } from "./vault-st
 import { createItem, updateItem } from "./vault-api";
 import { findMatchingPasskeyItems } from "./credential-store";
 import { CEREMONY_ABANDON_TIMEOUT_MS } from "../../lib/messaging/ceremony-timeouts";
+import { readServerConfig } from "./server-config";
 import {
   encryptItem,
   wasmCreateProviderCredential,
   wasmGetProviderAssertion,
   type WasmUserKey,
 } from "../../lib/crypto/wasm-loader";
+
+/**
+ * Defense-in-depth (Bartek live-UAT bug follow-up, .planning/debug/resolved/
+ * signin-passkeyless-spin.md): content-relay.content.ts's own
+ * isConfiguredServerOrigin() check is the PRIMARY refusal -- it never even
+ * forwards a configured-server-origin ceremony to the background at all.
+ * This is the SECOND, independent layer: if a request somehow still
+ * reaches here with `senderOrigin` equal to the user's own configured
+ * pv-server origin (a future content-relay regression, a different/older
+ * content-relay build, or any other path this file cannot anticipate),
+ * both provider handlers refuse it too, mirroring
+ * server-unlock.ts's completeServerUnlock's identical
+ * `new URL(config.baseUrl).origin !== callerOrigin` comparison style.
+ * Fails CLOSED to "not the configured origin" (never suppress based on a
+ * guess) on no config / an unparseable baseUrl, exactly like
+ * content-relay's own isConfiguredServerOrigin().
+ */
+async function isConfiguredServerOrigin(senderOrigin: string): Promise<boolean> {
+  const config = await readServerConfig();
+  if (config === null) {
+    return false;
+  }
+  try {
+    return new URL(config.baseUrl).origin === senderOrigin;
+  } catch {
+    return false;
+  }
+}
 
 /** Thin typed-`unknown` boundary (12-PATTERNS.md) -- `publicKey` is the RP's
  * spec `PublicKeyCredentialCreationOptionsJSON`/`PublicKeyCredentialRequestOptionsJSON`
@@ -532,6 +561,12 @@ export async function handleCredentialsCreate(
   senderOrigin: string,
 ): Promise<CreateRpcResponse> {
   try {
+    if (await isConfiguredServerOrigin(senderOrigin)) {
+      // Defense-in-depth -- see isConfiguredServerOrigin's own header
+      // comment. The user's own vault web app needs REAL WebAuthn, never a
+      // provider-brokered ceremony.
+      return { fallthrough: true };
+    }
     let uk = await ensureHydrated();
     if (uk === null) {
       uk = await openPopupAndAwaitUnlock();
@@ -593,6 +628,12 @@ export async function handleCredentialsGet(
   senderOrigin: string,
 ): Promise<GetRpcResponse> {
   try {
+    if (await isConfiguredServerOrigin(senderOrigin)) {
+      // Defense-in-depth -- see isConfiguredServerOrigin's own header
+      // comment. The user's own vault web app needs REAL WebAuthn, never a
+      // provider-brokered ceremony.
+      return { fallthrough: true };
+    }
     let uk = await ensureHydrated();
     if (uk === null) {
       uk = await openPopupAndAwaitUnlock();

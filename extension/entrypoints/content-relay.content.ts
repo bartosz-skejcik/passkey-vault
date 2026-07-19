@@ -711,6 +711,15 @@ function respondToPage(nonce: string, response: ProviderCeremonyResponseLike): P
  * `document_start`) never posts into a void. D-03/ASVS V5: rejects/ignores
  * silently (no forwarding, no response) on ANY validation failure -- wrong
  * `event.source`, wrong origin, malformed envelope, or a replayed nonce.
+ *
+ * Every gate below (replay check, ack, `passkeyCeremonyInFlight`/overlay
+ * suppression) stays STRICTLY SYNCHRONOUS -- 12-07's own conditional-
+ * mediation race guard depends on `passkeyCeremonyInFlight` being claimed
+ * in the SAME tick this handler runs, before a racing `DOMContentLoaded`
+ * (and its `initialMatchAndPrompt()`) ever gets a chance to check it. Only
+ * the configured-server-origin refusal check (`dispatchProviderCeremony`,
+ * below) is async -- and it runs AFTER these synchronous gates, never
+ * before them, so it can never delay this handler's own critical section.
  */
 function handleProviderPageMessage(event: MessageEvent): void {
   if (event.source !== window || event.origin !== location.origin) {
@@ -742,30 +751,83 @@ function handleProviderPageMessage(event: MessageEvent): void {
   passkeyCeremonyInFlight = true;
   overlayCoordinator?.hide();
 
+  void dispatchProviderCeremony(nonce, kind, encodedPublicKey);
+}
+
+/**
+ * Bartek live-UAT bug follow-up (.planning/debug/resolved/
+ * signin-passkeyless-spin.md, provider-hijack diagnosis): the MAIN-world
+ * page-bridge patch (page-bridge.content.ts / page-bridge-firefox.ts)
+ * installs on `<all_urls>` unconditionally -- including the user's OWN
+ * configured pv-server origin -- so EVERY `navigator.credentials.get/create()`
+ * call there (v0.1's own login/unlock/enroll on the web app itself, AND
+ * ExtUnlockBridge's server-origin ceremony window, which is the SAME
+ * origin) was being captured as a provider ceremony instead of running as
+ * real WebAuthn. Confirmed empirically: `navigator.credentials.get.toString()`
+ * in the ceremony window returned the RPC shim (`n=>d("get",n,t)`), not
+ * `[native code]`. For a locked/no-session vault this deadlocks --
+ * `provider-ceremony.ts`'s `ensureHydrated()` -> `openPopupAndAwaitUnlock()`
+ * opens ANOTHER extension window asking the user to sign in, while the
+ * ORIGINAL ceremony (which the user was trying to sign in FROM) sits
+ * blocked awaiting that popup's own unlock -- Bartek's reported "third
+ * window with an email input."
+ *
+ * Refused HERE, at the ISOLATED-world/extension-controlled content-relay
+ * layer -- never by trying to conditionally un-inject or exclude the
+ * MAIN-world patch itself (Chrome's declarative `world:'MAIN'` content-script
+ * registration is static per extension install, cannot be scoped per-tab
+ * or re-evaluated when the user reconfigures their server at runtime).
+ * `isConfiguredServerOrigin()` has no cache -- reads storage.local fresh on
+ * EVERY message -- so this check runs PER MESSAGE, not per injection: a
+ * server reconfiguration takes effect on the very next ceremony, not just
+ * ones after a fresh page load.
+ *
+ * The ack/nonce-consumption/overlay-hide above already happened
+ * synchronously (see handleProviderPageMessage's own header comment on why
+ * that MUST stay synchronous) -- refusing here simply responds with an
+ * explicit `fallthrough` immediately (real native WebAuthn proceeds
+ * normally, D-11) instead of ever reaching the background, and un-hides
+ * the overlay exactly like every other non-credential outcome already
+ * does below. The D-03/nonce/relay machinery for the provider stays fully
+ * intact for every OTHER (non-configured-server) origin -- this is a
+ * narrow, origin-scoped refusal, not a weakening of the provider boundary
+ * itself.
+ */
+async function dispatchProviderCeremony(
+  nonce: string,
+  kind: "credentials.create" | "credentials.get",
+  encodedPublicKey: unknown,
+): Promise<void> {
+  if (await isConfiguredServerOrigin()) {
+    postToPage(nonce, { kind: "fallthrough" });
+    passkeyCeremonyInFlight = false;
+    overlayCoordinator?.allow();
+    return;
+  }
+
   const dispatched =
     kind === "credentials.create"
       ? sendMessage({ kind: "credentials.create", publicKey: encodedPublicKey })
       : sendMessage({ kind: "credentials.get", publicKey: encodedPublicKey });
 
-  dispatched
-    .then((response) => {
-      const respondedKind = respondToPage(nonce, response);
-      // A "credential" response means the passkey WAS used -- keep the
-      // login overlay suppressed (there is nothing left to log into with a
-      // fallback credential once a passkey ceremony has completed). Any
-      // other outcome (fallthrough -- no matching vault passkey / user
-      // declined; or a genuine ceremony error) means the passkey path did
-      // NOT complete, so the login overlay is re-offered.
-      if (respondedKind !== "credential") {
-        passkeyCeremonyInFlight = false;
-        overlayCoordinator?.allow();
-      }
-    })
-    .catch(() => {
-      postToPage(nonce, { kind: "error" });
+  try {
+    const response = await dispatched;
+    const respondedKind = respondToPage(nonce, response);
+    // A "credential" response means the passkey WAS used -- keep the
+    // login overlay suppressed (there is nothing left to log into with a
+    // fallback credential once a passkey ceremony has completed). Any
+    // other outcome (fallthrough -- no matching vault passkey / user
+    // declined; or a genuine ceremony error) means the passkey path did
+    // NOT complete, so the login overlay is re-offered.
+    if (respondedKind !== "credential") {
       passkeyCeremonyInFlight = false;
       overlayCoordinator?.allow();
-    });
+    }
+  } catch {
+    postToPage(nonce, { kind: "error" });
+    passkeyCeremonyInFlight = false;
+    overlayCoordinator?.allow();
+  }
 }
 
 /** D-17: Firefox has no declarative `world:'MAIN'` content-script field
@@ -778,9 +840,29 @@ function handleProviderPageMessage(event: MessageEvent): void {
  * fire-and-forget at the very top of `main()`, alongside the postMessage
  * listener above -- not gated on document-ready -- to get Firefox as close
  * to Chrome's document_start timing as this mechanism allows.
+ *
+ * Bartek live-UAT bug follow-up (.planning/debug/resolved/
+ * signin-passkeyless-spin.md, provider-hijack diagnosis): on the user's OWN
+ * configured pv-server origin, this now skips the injection ENTIRELY --
+ * `navigator.credentials.get/create` stay genuinely native there (verified
+ * via `[native code]` toString(), not just "refused after the fact" by
+ * dispatchProviderCeremony's own origin check below, which is the
+ * FUNCTIONAL backstop for the one case this injection-time check cannot
+ * cover: Chrome's declarative `world:'MAIN'` registration has no per-tab
+ * runtime exclusion mechanism at all, so page-bridge.content.ts's patch
+ * unavoidably installs there regardless -- dispatchProviderCeremony's
+ * refusal is what keeps THAT patch transparently inert on Chrome). Checked
+ * fresh on every call -- `main()` (and therefore this function) reruns on
+ * every fresh navigation/content-script (re)injection of this ceremony-
+ * window-or-vault-app page, so a server reconfiguration is honored on the
+ * very next page load of that origin, not just the one the extension was
+ * installed under.
  */
-function injectFirefoxPageBridge(): void {
+async function injectFirefoxPageBridge(): Promise<void> {
   if (!import.meta.env.FIREFOX) {
+    return;
+  }
+  if (await isConfiguredServerOrigin()) {
     return;
   }
   void injectScript("/page-bridge-firefox.js", { keepInDom: true }).catch((e: unknown) => {
@@ -980,7 +1062,7 @@ export default defineContentScript({
     // D-22: registered FIRST, synchronously, before anything else in this
     // function -- see handleProviderPageMessage's own header comment.
     registerProviderPageMessageListener();
-    injectFirefoxPageBridge();
+    void injectFirefoxPageBridge();
     // Plan 13-06: registered early alongside the provider listener above --
     // ExtUnlockBridge.tsx's ceremony is gesture-gated (a user click, well
     // after page load), so early timing isn't load-bearing here the way it

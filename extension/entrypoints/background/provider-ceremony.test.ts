@@ -26,6 +26,7 @@ const hoisted = vi.hoisted(() => ({
   mockStorageSet: vi.fn(),
   mockStorageGet: vi.fn(),
   mockStorageRemove: vi.fn(),
+  mockReadServerConfig: vi.fn(),
 }));
 
 vi.mock("wxt/browser", () => ({
@@ -80,6 +81,16 @@ vi.mock("../../lib/crypto/wasm-loader", () => ({
   encryptItem: hoisted.mockEncryptItem,
   wasmCreateProviderCredential: hoisted.mockWasmCreateProviderCredential,
   wasmGetProviderAssertion: hoisted.mockWasmGetProviderAssertion,
+}));
+
+// Bartek live-UAT bug follow-up (.planning/debug/resolved/
+// signin-passkeyless-spin.md, provider-hijack diagnosis): the background's
+// OWN defense-in-depth refusal (isConfiguredServerOrigin, this file) reads
+// the same server-config module server-unlock.ts already uses -- defaults
+// to `null` (no server configured), so every EXISTING test below is
+// unaffected unless it explicitly opts in via mockReadServerConfig.
+vi.mock("./server-config", () => ({
+  readServerConfig: hoisted.mockReadServerConfig,
 }));
 
 import {
@@ -151,6 +162,84 @@ beforeEach(() => {
   hoisted.mockUpdateItem.mockResolvedValue({ revision: 2, updated_at: "now" });
   hoisted.mockEncryptItem.mockReturnValue(combinedEncryptedItemJson());
   hoisted.mockSubscribeSessionLockState.mockReturnValue(() => {});
+  hoisted.mockReadServerConfig.mockResolvedValue(null);
+});
+
+// Bartek live-UAT bug follow-up (.planning/debug/resolved/
+// signin-passkeyless-spin.md, provider-hijack diagnosis): defense-in-depth
+// -- content-relay.content.ts's own isConfiguredServerOrigin() check is
+// the PRIMARY refusal (never even forwards to the background); this SECOND
+// layer covers a request that reaches the background anyway (a future
+// content-relay regression, a different/older build, or any other path).
+describe("provider-hijack defense-in-depth: refuses ceremonies on the configured server origin", () => {
+  it("handleCredentialsGet: falls through immediately, never touches ensureHydrated/the popup/the WASM binding", async () => {
+    hoisted.mockReadServerConfig.mockResolvedValue({ baseUrl: "https://vault.example.com" });
+
+    const result = await handleCredentialsGet(
+      { publicKey: { rpId: "vault.example.com" } },
+      "https://vault.example.com",
+    );
+
+    expect(result).toEqual({ fallthrough: true });
+    expect(hoisted.mockEnsureHydrated).not.toHaveBeenCalled();
+    expect(hoisted.mockOpenPopup).not.toHaveBeenCalled();
+    expect(hoisted.mockWindowsCreate).not.toHaveBeenCalled();
+    expect(hoisted.mockWasmGetProviderAssertion).not.toHaveBeenCalled();
+  });
+
+  it("handleCredentialsCreate: falls through immediately, never touches ensureHydrated/the popup/the WASM binding", async () => {
+    hoisted.mockReadServerConfig.mockResolvedValue({ baseUrl: "https://vault.example.com" });
+
+    const result = await handleCredentialsCreate(
+      { publicKey: { rp: { id: "vault.example.com" } } },
+      "https://vault.example.com",
+    );
+
+    expect(result).toEqual({ fallthrough: true });
+    expect(hoisted.mockEnsureHydrated).not.toHaveBeenCalled();
+    expect(hoisted.mockOpenPopup).not.toHaveBeenCalled();
+    expect(hoisted.mockWindowsCreate).not.toHaveBeenCalled();
+    expect(hoisted.mockWasmCreateProviderCredential).not.toHaveBeenCalled();
+  });
+
+  it("a DIFFERENT (non-matching) sender origin proceeds normally even with a server configured", async () => {
+    hoisted.mockReadServerConfig.mockResolvedValue({ baseUrl: "https://vault.example.com" });
+    hoisted.mockEnsureHydrated.mockResolvedValue(null);
+    hoisted.mockOpenPopup.mockResolvedValue(undefined);
+
+    void handleCredentialsGet({ publicKey: { rpId: "some-other-site.com" } }, "https://some-other-site.com");
+
+    await vi.waitFor(() => {
+      expect(hoisted.mockOpenPopup).toHaveBeenCalled();
+    });
+    expect(hoisted.mockOpenPopup).toHaveBeenCalledTimes(1);
+  });
+
+  it("no server configured at all: proceeds normally (fails closed to 'not the configured origin', never suppresses based on a guess)", async () => {
+    hoisted.mockReadServerConfig.mockResolvedValue(null);
+    hoisted.mockEnsureHydrated.mockResolvedValue(null);
+    hoisted.mockOpenPopup.mockResolvedValue(undefined);
+
+    void handleCredentialsGet({ publicKey: { rpId: "example.com" } }, "https://example.com");
+
+    await vi.waitFor(() => {
+      expect(hoisted.mockOpenPopup).toHaveBeenCalled();
+    });
+    expect(hoisted.mockOpenPopup).toHaveBeenCalledTimes(1);
+  });
+
+  it("a corrupt/non-URL configured baseUrl fails closed to 'not the configured origin' -- proceeds normally rather than refusing everything", async () => {
+    hoisted.mockReadServerConfig.mockResolvedValue({ baseUrl: "not a url" });
+    hoisted.mockEnsureHydrated.mockResolvedValue(null);
+    hoisted.mockOpenPopup.mockResolvedValue(undefined);
+
+    void handleCredentialsGet({ publicKey: { rpId: "example.com" } }, "https://example.com");
+
+    await vi.waitFor(() => {
+      expect(hoisted.mockOpenPopup).toHaveBeenCalled();
+    });
+    expect(hoisted.mockOpenPopup).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("D-09: locked vault", () => {

@@ -584,6 +584,120 @@ describe("content-relay", () => {
     });
   });
 
+  // Bartek live-UAT bug follow-up (.planning/debug/resolved/
+  // signin-passkeyless-spin.md, provider-hijack diagnosis): the MAIN-world
+  // page-bridge patch installs on <all_urls> unconditionally -- including
+  // the user's OWN configured pv-server origin -- so a WebAuthn ceremony
+  // running ON that origin (v0.1's own login/unlock/enroll, AND
+  // ExtUnlockBridge's server-origin ceremony window) must be refused here,
+  // at the ISOLATED-world layer, rather than captured as a provider
+  // ceremony. Confirmed via live Firefox reproduction:
+  // navigator.credentials.get.toString() in the ceremony window returned
+  // the RPC shim, not [native code], before this fix.
+  describe("provider bridge refuses ceremonies on the configured server origin (provider-hijack fix)", () => {
+    async function flushMicrotasks(): Promise<void> {
+      await Promise.resolve();
+      await new Promise((resolve) => queueMicrotask(() => resolve(undefined)));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    function validRequest(nonce: string): PageBridgeRequestEnvelope {
+      return {
+        source: "pv-page-bridge",
+        nonce,
+        kind: "credentials.get",
+        origin: location.origin,
+        publicKey: { rpId: "example.com" },
+      };
+    }
+
+    beforeEach(() => {
+      hoisted.mockSendMessage.mockReset();
+      hoisted.mockSendMessage.mockResolvedValue({ fallthrough: true });
+    });
+
+    it("on the configured server origin: never forwards to the background, and posts back an ack immediately followed by an explicit fallthrough (never waits out ACK_TIMEOUT_MS/EXTENSION_AUTHORITY_TIMEOUT_MS)", async () => {
+      hoisted.storageStore.set("pv-server-config", { baseUrl: location.origin });
+      const nonce = "nonce-configured-origin-get";
+
+      const received: PageBridgeResponseEnvelope[] = [];
+      window.addEventListener("message", (e) => {
+        const data = (e as MessageEvent).data as { source?: unknown };
+        if (data?.source === "pv-content-relay") {
+          received.push((e as MessageEvent).data as PageBridgeResponseEnvelope);
+        }
+      });
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+      // The ack is still posted synchronously (12-07's conditional-mediation
+      // race guard requires the nonce/ack/overlay-hide sequence to stay
+      // synchronous for EVERY message, refused or not) -- immediately
+      // followed by the terminal fallthrough once the async origin check
+      // resolves, well within the page bridge's own ack->terminal-message
+      // budget.
+      expect(received).toEqual([
+        { source: "pv-content-relay", nonce, kind: "ack" },
+        { source: "pv-content-relay", nonce, kind: "fallthrough" },
+      ]);
+    });
+
+    it("on the configured server origin: refuses credentials.create too", async () => {
+      hoisted.storageStore.set("pv-server-config", { baseUrl: location.origin });
+      const nonce = "nonce-configured-origin-create";
+      const request: PageBridgeRequestEnvelope = {
+        source: "pv-page-bridge",
+        nonce,
+        kind: "credentials.create",
+        origin: location.origin,
+        publicKey: { rp: { id: "example.com", name: "Example" } },
+      };
+
+      window.dispatchEvent(new MessageEvent("message", { data: request, origin: location.origin, source: window }));
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("re-checks FRESH on every message, not cached at injection time -- a runtime server reconfiguration takes effect on the very next ceremony", async () => {
+      // No server configured yet -- forwards normally.
+      const firstNonce = "nonce-before-config";
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest(firstNonce), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+
+      // Server reconfigured to THIS origin mid-session (no new injection,
+      // same content-relay instance/module state).
+      hoisted.storageStore.set("pv-server-config", { baseUrl: location.origin });
+      hoisted.mockSendMessage.mockClear();
+
+      const secondNonce = "nonce-after-config";
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest(secondNonce), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+      expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("a DIFFERENT (non-matching) configured server origin still forwards normally -- only the exact configured origin is refused", async () => {
+      hoisted.storageStore.set("pv-server-config", { baseUrl: "https://a-different-vault.example.com" });
+      const nonce = "nonce-different-configured-origin";
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // Plan 12-07 (Bartek live-review 2026-07-17, github.com): PASSKEY ALWAYS
   // PRIORITY. When a site has both a vault passkey AND a login form, the
   // provider bridge above and the Phase-10 login overlay (Surface A field
@@ -1077,6 +1191,18 @@ describe("content-relay", () => {
       const sharedNonce = "shared-nonce-across-channels";
       hoisted.mockSendMessage.mockResolvedValue({ fallthrough: true });
 
+      // The passkey-provider bridge message is deliberately sent while
+      // pv-server-config is UNSET (a plain, non-configured-server page) --
+      // this describe block's own beforeEach pins pv-server-config to
+      // location.origin for the ext-unlock relay half below, but a REAL
+      // provider-bridge credentials.get() on the configured server origin
+      // is now refused by design (provider-hijack fix, see the dedicated
+      // "provider bridge refuses ceremonies on the configured server
+      // origin" describe block above) -- this test's own point (two
+      // independent nonce ledgers, proven via a shared nonce VALUE) is
+      // orthogonal to that origin-scoping, so the provider-bridge message
+      // is sent as an ordinary third-party-page ceremony here.
+      hoisted.storageStore.delete("pv-server-config");
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
@@ -1092,6 +1218,9 @@ describe("content-relay", () => {
       );
       await flushMicrotasks();
 
+      // Restored for the ext-unlock relay half below, which DOES require
+      // being on the configured server origin (T-13-11).
+      hoisted.storageStore.set("pv-server-config", { baseUrl: location.origin });
       window.dispatchEvent(
         new MessageEvent("message", { data: validRequest(sharedNonce), origin: location.origin, source: window }),
       );
@@ -1235,6 +1364,47 @@ describe("content-relay", () => {
         await flushMicrotasks();
         expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  // Bartek live-UAT bug follow-up (.planning/debug/resolved/
+  // signin-passkeyless-spin.md, provider-hijack diagnosis): Firefox has no
+  // declarative `world:'MAIN'` content-script exclusion, so THIS file's own
+  // manual injectScript() call is the only place that can prevent
+  // page-bridge-firefox.js from installing on the configured server origin
+  // at all -- letting navigator.credentials.get/create stay genuinely
+  // native there. `import.meta.env.FIREFOX` is fixed `false` in this
+  // (Chrome-oriented) jsdom test build and cannot be toggled per-test
+  // (EnrollExtPasskeyPrompt.test.tsx's own documented limitation, same
+  // per-module `import.meta` constraint) -- this is therefore a structural
+  // source check, mirroring that file's own precedent; the actual runtime
+  // behavior (a real Firefox build, `import.meta.env.FIREFOX === true`) is
+  // verified by extension/e2e-firefox/run-server-unlock.cjs's
+  // assertNativeWebAuthn() (P13-06-NATIVE-WEBAUTHN / P13-07-NATIVE-WEBAUTHN).
+  describe("injectFirefoxPageBridge — skips injection on the configured server origin (structural, Firefox-only branch)", () => {
+    it("checks isConfiguredServerOrigin() and returns BEFORE calling injectScript(), inside the FIREFOX-gated body", async () => {
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+      const source = await fs.readFile(path.join(import.meta.dirname, "../content-relay.content.ts"), "utf-8");
+
+      const fnStart = source.indexOf("async function injectFirefoxPageBridge()");
+      expect(fnStart).toBeGreaterThan(-1);
+      const fnBodyStart = source.indexOf("{", fnStart);
+      const fnBodyEnd = source.indexOf("\n}\n", fnBodyStart);
+      const fnBody = source.slice(fnBodyStart, fnBodyEnd);
+
+      const firefoxGateIndex = fnBody.indexOf("import.meta.env.FIREFOX");
+      const originCheckIndex = fnBody.indexOf("isConfiguredServerOrigin()");
+      const injectCallIndex = fnBody.indexOf("injectScript(");
+
+      expect(firefoxGateIndex).toBeGreaterThan(-1);
+      expect(originCheckIndex).toBeGreaterThan(-1);
+      expect(injectCallIndex).toBeGreaterThan(-1);
+      // Order matters: the FIREFOX gate first (this whole function is a
+      // Firefox-only concern), THEN the origin check, THEN (only for a
+      // NON-configured origin) the actual injection call.
+      expect(firefoxGateIndex).toBeLessThan(originCheckIndex);
+      expect(originCheckIndex).toBeLessThan(injectCallIndex);
     });
   });
 });

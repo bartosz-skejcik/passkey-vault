@@ -104,6 +104,35 @@ async function tryFindXpathText(driver, textRegexSrc, timeout = 8000) {
   return null;
 }
 
+// Bartek live-UAT bug follow-up (provider-hijack diagnosis, .planning/debug/
+// resolved/signin-passkeyless-spin.md): confirms navigator.credentials.get
+// (and .create) is REAL native WebAuthn in the ceremony window -- NOT the
+// MAIN-world page-bridge's RPC shim -- via the cheap, decisive
+// [native code] toString() check. Before the provider-hijack fix, this
+// returned the RPC shim (observed empirically: `n=>d("get",n,t)`) on the
+// user's OWN configured pv-server origin, which silently rerouted
+// ExtUnlockBridge's own ceremony into a provider-ceremony deadlock (a THIRD
+// extension window asking the user to sign in, while the ORIGINAL ceremony
+// sat blocked awaiting THAT window's own unlock).
+async function assertNativeWebAuthn(driver, recordId, contextLabel) {
+  const info = await driver.executeScript(`
+    return {
+      getStr: (navigator.credentials && navigator.credentials.get) ? navigator.credentials.get.toString() : null,
+      createStr: (navigator.credentials && navigator.credentials.create) ? navigator.credentials.create.toString() : null,
+    };
+  `);
+  const getIsNative = typeof info.getStr === 'string' && /\[native code\]/.test(info.getStr);
+  const createIsNative = typeof info.createStr === 'string' && /\[native code\]/.test(info.createStr);
+  const ok = getIsNative && createIsNative;
+  record(
+    recordId,
+    ok ? 'PASS' : 'FAIL',
+    `${contextLabel}: navigator.credentials.get is ${getIsNative ? 'NATIVE' : 'PATCHED'}, .create is ${createIsNative ? 'NATIVE' : 'PATCHED'}` +
+      (ok ? '' : ` -- get.toString()="${String(info.getStr).slice(0, 200)}"`),
+  );
+  return ok;
+}
+
 async function main() {
   const opts = new firefox.Options();
   opts.setBinary(FIREFOX_BINARY);
@@ -301,6 +330,10 @@ async function main() {
     );
     if (headingEls.length === 0) throw new Error('ExtUnlockBridge did not render in the ceremony window');
 
+    // ================= Step 4b: navigator.credentials.get/create are REAL native WebAuthn =================
+    // (provider-hijack fix -- see assertNativeWebAuthn's own header comment).
+    await assertNativeWebAuthn(driver, 'P13-06-NATIVE-WEBAUTHN', 'unlock-mode ceremony window');
+
     // ================= Step 5: gesture -> ceremony -> honest empty-state =================
     // Zero WebAuthn/authenticator involvement -- the server's own 404 on
     // zero enrolled passkeys short-circuits passkeyUnlockCeremony() before
@@ -458,6 +491,13 @@ async function main() {
     if (signinHeadingEls.length === 0 || !signinEmailInBridge) {
       throw new Error('ExtUnlockBridge did not render the signin surface in the ceremony window');
     }
+
+    // ================= Step 8b: navigator.credentials.get/create are REAL native WebAuthn =================
+    // (provider-hijack fix -- see assertNativeWebAuthn's own header comment).
+    // This is the row that actually matters most for Bartek's own reported
+    // scenario -- the signin-mode ceremony is exactly the one whose
+    // navigator.credentials.get() the provider patch was hijacking.
+    await assertNativeWebAuthn(driver, 'P13-07-NATIVE-WEBAUTHN', 'signin-mode ceremony window');
 
     // ================= Step 9: gesture -- honest authenticator-less limit =================
     // Unlike unlockStart() (a clean 404 on zero enrolled passkeys, no
