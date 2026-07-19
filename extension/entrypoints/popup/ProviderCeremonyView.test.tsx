@@ -97,6 +97,35 @@ describe("ProviderCeremonyView", () => {
       expect(onConfirm).toHaveBeenCalledWith("item-2");
     });
 
+    // quick-260720-16k: the multi-match list wrapper caps its height and
+    // scrolls instead of silently clipping when there are more candidates
+    // than fit in the fixed-size consent window.
+    it("the multi-match candidate list wrapper carries max-h-52 and overflow-y-auto (scroll cap, quick-260720-16k)", () => {
+      const matches: ProviderCredentialCandidate[] = [
+        { itemId: "item-1", label: "alice" },
+        { itemId: "item-2", label: "bob" },
+        { itemId: "item-3", label: "carol" },
+        { itemId: "item-4", label: "dave" },
+        { itemId: "item-5", label: "erin" },
+      ];
+      render(
+        <ProviderCeremonyView
+          locale="en"
+          kind="get"
+          site={SITE}
+          matches={matches}
+          prfRequested={false}
+          status="idle"
+          onConfirm={vi.fn()}
+          onDecline={vi.fn()}
+        />,
+      );
+
+      const list = screen.getByTestId("provider-candidate-list");
+      expect(list.className).toContain("max-h-52");
+      expect(list.className).toContain("overflow-y-auto");
+    });
+
     it("clicking a credential row calls onConfirm with that row's itemId", () => {
       const onConfirm = vi.fn();
       const matches: ProviderCredentialCandidate[] = [
