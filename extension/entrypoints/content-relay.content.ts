@@ -890,21 +890,28 @@ function registerProviderPageMessageListener(): void {
 // option 1). This is content-relay's half of the ceremony bridge:
 // web/src/components/auth/ExtUnlockBridge.tsx (a REAL page, not a
 // MAIN-world shim -- it already owns the whole ceremony, no separate
-// MAIN-world file needed here) postMessages {nonce, prf, prfWrappedUk} to
-// this ISOLATED-world listener; this file validates it (T-13-11: origin
+// MAIN-world file needed here) postMessages {nonce, prfB64, prfWrappedUk}
+// to this ISOLATED-world listener; this file validates it (T-13-11: origin
 // pinned to the CONFIGURED server, event.source/shape/single-use-nonce --
 // mirrors handleProviderPageMessage's own D-03/ASVS V5 discipline), forwards
 // it to the background over the SAME content-frame channel
 // credentials.create/get use (router.ts's registerAutofillFrameChannel(),
-// T-13-14), and relays the ack back. This is the ONLY place base64url
-// encoding happens for this flow (D-21) -- ExtUnlockBridge posts the REAL
-// PRF ArrayBuffer (postMessage structured-clones it fine), and this file
-// converts it to a base64url STRING before the sendMessage hop (which JSON-
-// serializes and would otherwise mangle it, same root cause as the provider
-// bridge's own D-21 boundary). The raw User Key never crosses this hop
-// either direction (T-13-12) -- only PRF output + the already-encrypted
-// prf_wrapped_uk blob; the unwrap happens exclusively in
-// entrypoints/background/server-unlock.ts.
+// T-13-14), and relays the ack back. D-21's base64url boundary is enforced
+// TWICE for this flow, at both hops: ExtUnlockBridge.tsx encodes the PRF
+// output to base64url in PAGE scope before ever posting it (Bartek live
+// finding, Zen Browser/Firefox -- a raw typed array crossing the MAIN-page
+// -> ISOLATED-world postMessage hop reads as silently corrupted garbage
+// through Firefox's Xray wrappers, where a JSON-safe string does not), and
+// this file forwards that string verbatim to the background over the
+// ISOLATED-world -> background sendMessage hop (which JSON-serializes and
+// would mangle a raw ArrayBuffer, same root cause as the provider bridge's
+// own D-21 boundary) -- this file no longer does the encoding itself for a
+// current build, only relays an already-encoded string; a legacy raw
+// BufferSource `prf` field is still accepted and encoded HERE as a
+// deploy-skew fallback (see `ExtUnlockBridgeMessage`'s own header comment).
+// The raw User Key never crosses this hop either direction (T-13-12) --
+// only PRF output + the already-encrypted prf_wrapped_uk blob; the unwrap
+// happens exclusively in entrypoints/background/server-unlock.ts.
 const EXT_UNLOCK_REQUEST_SOURCE = "pv-ext-unlock-bridge";
 const EXT_UNLOCK_RESPONSE_SOURCE = "pv-content-relay";
 
@@ -946,14 +953,40 @@ const seenExtUnlockNonces = new Set<string>();
 // (T-13-13 violation, confirmed via live Firefox reproduction). This relay
 // forwards `failed: true` through untouched, same faithful-forwarding
 // discipline as every other field here.
+// `prfB64` (Bartek live finding, Zen Browser/Firefox): ExtUnlockBridge.tsx
+// now encodes the PRF output to a base64url STRING in PAGE SCOPE before
+// ever calling postMessage -- see that file's own `bytesToB64Url` header
+// comment for the full root-cause diagnosis (a raw typed array crossing
+// this MAIN-page -> ISOLATED-world postMessage hop reads as silently
+// corrupted garbage through Firefox's Xray wrappers; a JSON-safe string
+// does not). `prf` (the old raw-BufferSource shape) is kept as a fallback
+// ONLY for deploy skew -- an old web/out build paired with a newer
+// extension build -- and is validated/accepted exactly as before; it never
+// exhibited the Firefox bug (Chrome's isolated world gets a clean
+// structured-clone, which is why this file's original implementation
+// looked correct there). `prfB64` takes precedence whenever both happen to
+// be present.
 interface ExtUnlockBridgeMessage {
   source: typeof EXT_UNLOCK_REQUEST_SOURCE;
   nonce: string;
   failed?: true;
+  prfB64?: string;
   prf?: ArrayBuffer;
   prfWrappedUk?: string;
   token?: string;
   accountEmail?: string;
+}
+
+/** Base64url-shaped, non-empty -- `-`/`_` in place of standard base64's
+ * `+`/`/`, no padding (matches ExtUnlockBridge.tsx's own `bytesToB64Url`
+ * page-side encoder, and this file's own `bufferSourceToB64Url` below).
+ * Shape-only: a transport-format check, not a length/content validator --
+ * the background's `b64UrlToBytes` decode + PRF-length check
+ * (crates/pv-core/src/prf.rs) are what actually reject a malformed or
+ * too-short PRF value; this just keeps a non-base64url string (or empty
+ * string) from ever being forwarded as if it were one. */
+function isBase64UrlShaped(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && /^[A-Za-z0-9_-]+$/.test(value);
 }
 
 function isExtUnlockBridgeMessage(data: unknown): data is ExtUnlockBridgeMessage {
@@ -970,6 +1003,17 @@ function isExtUnlockBridgeMessage(data: unknown): data is ExtUnlockBridgeMessage
     // nothing but the nonce.
     return true;
   }
+  if (isBase64UrlShaped(c.prfB64)) {
+    // Preferred, page-encoded string form -- see this interface's own
+    // header comment. Takes precedence over the legacy `prf` field below
+    // regardless of whether that field is also present.
+    return (
+      typeof c.prfWrappedUk === "string" &&
+      (c.token === undefined || typeof c.token === "string") &&
+      (c.accountEmail === undefined || typeof c.accountEmail === "string")
+    );
+  }
+  // Legacy BufferSource fallback (deploy skew only -- see header comment).
   return (
     isBufferSource(c.prf) &&
     typeof c.prfWrappedUk === "string" &&
@@ -1003,7 +1047,7 @@ async function handleExtUnlockBridgeMessage(event: MessageEvent): Promise<void> 
     return;
   }
 
-  const { nonce, failed, prf, prfWrappedUk, token, accountEmail } = event.data;
+  const { nonce, failed, prf, prfB64, prfWrappedUk, token, accountEmail } = event.data;
   if (seenExtUnlockNonces.has(nonce)) {
     return; // replay -- silently ignored, never re-forwarded (T-13-11)
   }
@@ -1016,9 +1060,12 @@ async function handleExtUnlockBridgeMessage(event: MessageEvent): Promise<void> 
         : await sendMessage({
             kind: "unlock.serverCeremony.relay",
             nonce,
-            // isExtUnlockBridgeMessage already proved prf/prfWrappedUk are
-            // present whenever failed !== true.
-            prfB64: bufferSourceToB64Url(prf as ArrayBuffer),
+            // isExtUnlockBridgeMessage already proved EITHER prfB64
+            // (preferred, page-encoded string -- forwarded verbatim,
+            // untouched by this file) OR prf (legacy BufferSource
+            // fallback, encoded here exactly as before) is present
+            // whenever failed !== true.
+            prfB64: prfB64 ?? bufferSourceToB64Url(prf as ArrayBuffer),
             prfWrappedUk: prfWrappedUk as string,
             token,
             accountEmail,

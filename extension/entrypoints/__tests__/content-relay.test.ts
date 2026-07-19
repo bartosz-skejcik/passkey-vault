@@ -990,11 +990,25 @@ describe("content-relay", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
+    /** Mirrors ExtUnlockBridge.tsx's own `bytesToB64Url` PAGE-SIDE encoder
+     * algorithm byte-for-byte (web/ and extension/ are separate packages
+     * with no shared module to import here) -- used to build test messages
+     * the way a REAL browser (post Firefox-Xray-wrapper fix) actually sends
+     * them: already encoded to a base64url STRING before content-relay ever
+     * sees them, never a raw BufferSource. */
+    function pageEncodeB64Url(bytes: Uint8Array): string {
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
     function validRequest(nonce: string) {
       return {
         source: "pv-ext-unlock-bridge",
         nonce,
-        prf: new Uint8Array([1, 2, 3, 4]).buffer,
+        prfB64: pageEncodeB64Url(new Uint8Array([1, 2, 3, 4])),
         prfWrappedUk: "prf-wrapped-uk-blob",
       };
     }
@@ -1007,7 +1021,7 @@ describe("content-relay", () => {
       hoisted.storageStore.set("pv-server-config", { baseUrl: location.origin });
     });
 
-    it("a well-formed message on the CONFIGURED server origin is forwarded via sendMessage with a base64url-encoded PRF field", async () => {
+    it("a well-formed, PAGE-ENCODED message on the CONFIGURED server origin is forwarded via sendMessage with the base64url PRF string preserved verbatim", async () => {
       const nonce = "nonce-ext-unlock-valid";
       window.dispatchEvent(
         new MessageEvent("message", { data: validRequest(nonce), origin: location.origin, source: window }),
@@ -1024,17 +1038,23 @@ describe("content-relay", () => {
       expect(call.kind).toBe("unlock.serverCeremony.relay");
       expect(call.nonce).toBe(nonce);
       expect(call.prfWrappedUk).toBe("prf-wrapped-uk-blob");
-      // base64url, never a raw ArrayBuffer/Uint8Array on the wire (D-21).
-      expect(typeof call.prfB64).toBe("string");
+      // Forwarded byte-for-byte identical to what the page sent -- this
+      // relay no longer does any encoding of its own for the page-encoded
+      // path, it only validates and relays (D-21, Firefox Xray-wrapper
+      // fix).
+      expect(call.prfB64).toBe(validRequest(nonce).prfB64);
       const decoded = atob(call.prfB64.replace(/-/g, "+").replace(/_/g, "/"));
       expect(Array.from(decoded, (c) => c.charCodeAt(0))).toEqual([1, 2, 3, 4]);
     });
 
-    it("CR-01 regression: a REAL 32-byte PRF round-trips byte-for-byte through the ACTUAL relay encoder -> ACTUAL background decoder (b64UrlToBytes), across many random iterations and a fixed '-'/'_' vector -- and the OLD standard-base64 decoder (b64ToBytes) demonstrably throws on the same output", async () => {
+    it("CR-01/Firefox-Xray-fix regression: a REAL 32-byte PRF, encoded PAGE-SIDE via the exact ExtUnlockBridge.tsx algorithm, round-trips byte-for-byte through the relay's verbatim forward -> ACTUAL background decoder (b64UrlToBytes), across many random iterations and a fixed '-'/'_' vector -- and the OLD standard-base64 decoder (b64ToBytes) demonstrably throws on the same output", async () => {
       // Fixed 32-byte vector, chosen so its base64url form is KNOWN to
       // contain both '-' and '_' (computed offline, not left to chance) --
       // this is the exact class of payload that made ~74% of real PRF
-      // outputs fail before this fix (CR-01).
+      // outputs fail before the original CR-01 fix, and the same class the
+      // Firefox Xray-wrapper hazard corrupted regardless of charset (any
+      // byte value, not just '-'/'_'-producing ones) before THIS fix moved
+      // the encode into page scope.
       const fixedPrf = new Uint8Array([
         21, 52, 83, 114, 145, 176, 207, 238, 13, 44, 75, 106, 137, 168, 199, 230, 5, 36, 67, 98, 129, 160, 191, 222,
         253, 28, 59, 90, 121, 152, 183, 214,
@@ -1051,10 +1071,14 @@ describe("content-relay", () => {
       for (let i = 0; i < vectors.length; i++) {
         const prf = vectors[i];
         const nonce = `round-trip-${i}`;
+        // PAGE-SIDE encode -- exercises the new path directly: the relay
+        // receives an already-encoded string, exactly as a real browser
+        // (post-fix, every browser including Firefox) sends it.
+        const prfB64Sent = pageEncodeB64Url(prf);
         hoisted.mockSendMessage.mockClear();
         window.dispatchEvent(
           new MessageEvent("message", {
-            data: { source: "pv-ext-unlock-bridge", nonce, prf: prf.buffer, prfWrappedUk: "blob" },
+            data: { source: "pv-ext-unlock-bridge", nonce, prfB64: prfB64Sent, prfWrappedUk: "blob" },
             origin: location.origin,
             source: window,
           }),
@@ -1064,6 +1088,9 @@ describe("content-relay", () => {
         expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
         const { prfB64 } = hoisted.mockSendMessage.mock.calls[0][0] as { prfB64: string };
 
+        // Forwarded verbatim -- the relay does not re-encode a page-encoded
+        // string.
+        expect(prfB64).toBe(prfB64Sent);
         // The ACTUAL background-side decoder (server-unlock.ts's own
         // import) recovers every byte exactly.
         expect(Array.from(b64UrlToBytes(prfB64))).toEqual(Array.from(prf));
@@ -1080,6 +1107,61 @@ describe("content-relay", () => {
       // fixed one, deterministically) must have actually exercised the
       // '-'/'_' charset difference.
       expect(sawDashOrUnderscore).toBe(true);
+    });
+
+    it("legacy BufferSource fallback (deploy skew: old web/out build, newer extension build) -- a raw ArrayBuffer `prf` field with no prfB64 is still encoded here and forwarded correctly", async () => {
+      const prf = new Uint8Array([
+        21, 52, 83, 114, 145, 176, 207, 238, 13, 44, 75, 106, 137, 168, 199, 230, 5, 36, 67, 98, 129, 160, 191, 222,
+        253, 28, 59, 90, 121, 152, 183, 214,
+      ]);
+      const nonce = "nonce-ext-unlock-legacy-fallback";
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { source: "pv-ext-unlock-bridge", nonce, prf: prf.buffer, prfWrappedUk: "legacy-blob" },
+          origin: location.origin,
+          source: window,
+        }),
+      );
+      await flushMicrotasks();
+
+      expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+      const call = hoisted.mockSendMessage.mock.calls[0][0] as { prfB64: string; prfWrappedUk: string };
+      expect(call.prfWrappedUk).toBe("legacy-blob");
+      expect(Array.from(b64UrlToBytes(call.prfB64))).toEqual(Array.from(prf));
+    });
+
+    it("rejects a message with a non-base64url-shaped prfB64 (e.g. containing '+'/'=') -- falls through to the legacy-shape check, and with no valid BufferSource `prf` either, is never forwarded", async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            source: "pv-ext-unlock-bridge",
+            nonce: "nonce-ext-unlock-bad-b64",
+            prfB64: "not+valid/base64=",
+            prfWrappedUk: "blob",
+          },
+          origin: location.origin,
+          source: window,
+        }),
+      );
+      await flushMicrotasks();
+      expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("rejects a message with an empty-string prfB64 -- never forwarded", async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            source: "pv-ext-unlock-bridge",
+            nonce: "nonce-ext-unlock-empty-b64",
+            prfB64: "",
+            prfWrappedUk: "blob",
+          },
+          origin: location.origin,
+          source: window,
+        }),
+      );
+      await flushMicrotasks();
+      expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
     });
 
     it("posts the ack/result back to the page with the background's ok value", async () => {
