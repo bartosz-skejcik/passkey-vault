@@ -27,6 +27,11 @@ e2e-firefox/.ff-screenshots
 # SEPARATE, fresh-probe-account profile from the two above)
 e2e-firefox/.ff-profile-server-unlock
 e2e-firefox/.ff-screenshots-server-unlock
+# firefox-provider-corruption debug session's permanent regression probe
+# (extension/e2e-firefox/probe-provider-corruption.cjs) -- a SEPARATE
+# profile/screenshots pair from the three above
+e2e-firefox/.ff-profile-probe-corruption
+e2e-firefox/.ff-screenshots-probe-corruption
 
 # Editor directories and files
 .vscode/*

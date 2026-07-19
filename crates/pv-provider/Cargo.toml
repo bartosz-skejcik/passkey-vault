@@ -10,7 +10,25 @@ async-trait = "0.1"
 coset = "0.4"
 passkey-authenticator = "0.5.0"
 passkey-client = "0.5.0"
-passkey-types = "0.5.0"
+# D-21 fix (.planning/debug/resolved/firefox-provider-corruption.md):
+# `passkey_types::Bytes::serialize` defaults to `serializer.serialize_bytes`
+# (a raw JSON array of byte numbers, e.g. `[1,2,3,...]` -- serde_json has no
+# native "bytes" JSON type) UNLESS this feature is enabled, in which case it
+# serializes as a base64url STRING instead. This project's own
+# `credential_response_json` (ceremony.rs) has documented its wire
+# convention as base64url strings (content-relay.content.ts's D-21 boundary
+# comment, `passkey_types`' Vec<u8><->base64url convention") since Phase
+# 12 -- but the feature was never actually enabled, so every `Bytes` field
+# (`raw_id`, `client_data_json`, `attestation_object`, `authenticator_data`,
+# `signature`, `user_handle`, PRF extension results) was ALWAYS a raw JSON
+# array of numbers on the wire, not the documented base64url string --
+# browser-independent (affects Chrome and Firefox identically), confirmed
+# empirically (extension/e2e-firefox/probe-provider-corruption.cjs).
+# `Bytes::deserialize` already accepts EITHER shape unconditionally (its own
+# `visit_seq`/`visit_str` both present, deserialize_any-driven) -- enabling
+# this feature changes ONLY the outbound serialize shape, and cannot break
+# any existing deserialization anywhere in this dependency graph.
+passkey-types = { version = "0.5.0", features = ["serialize_bytes_as_base64_string"] }
 pollster = "1"
 serde.workspace = true
 serde_json.workspace = true
