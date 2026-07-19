@@ -162,10 +162,14 @@ export default defineConfig({
     // Phase 12 (Plan 12-03), D-17: Firefox-only. `page-bridge-firefox.ts`
     // is an unlisted-script asset (Chrome instead uses the declarative
     // `world:'MAIN'` content-script field on page-bridge.content.ts, which
-    // needs no web_accessible_resources entry) -- WXT's `injectScript()`
-    // helper (called from content-relay.content.ts's Firefox-only branch)
-    // REQUIRES the injected script to be listed here or the page-context
-    // `<script src>` load is blocked by the extension's own CSP. Always
+    // needs no web_accessible_resources entry) --
+    // `injectPageBridgeFirefoxScript()` (content-relay.content.ts's
+    // Firefox-only branch; debug session .planning/debug/resolved/
+    // firefox-injection-csp-blocked.md replaced WXT's own `injectScript()`
+    // helper with this local, always-`.src` equivalent -- see that
+    // function's own header comment) REQUIRES the injected script to be
+    // listed here or the page-context `<script src>` load is blocked by
+    // the extension's own CSP. Always
     // defined using the MV3 object-array shape (`{resources, matches}`),
     // never a bare string array -- WXT's own manifest post-processing
     // (core/utils/manifest.mjs) throws "Non-MV3 web_accessible_resources

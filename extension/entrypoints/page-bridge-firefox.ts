@@ -3,10 +3,17 @@
 // content-script schema has no declarative `world: 'MAIN'` field (D-17,
 // Research Architecture Pattern 3) -- WXT's own recommended workaround is
 // an "unlisted script" asset (`defineUnlistedScript`, no `matches`/`world`
-// of its own) injected manually into the page's real MAIN world via
-// `injectScript()`, called from content-relay.content.ts's Firefox-only
-// branch (Task 2's wiring) and served from
-// `web_accessible_resources` (`extension/wxt.config.ts`, Task 2).
+// of its own) injected manually into the page's real MAIN world, called
+// from content-relay.content.ts's Firefox-only branch (Task 2's wiring) and
+// served from `web_accessible_resources` (`extension/wxt.config.ts`, Task
+// 2). Injection mechanism: `injectPageBridgeFirefoxScript()` (a small local
+// function in content-relay.content.ts, NOT WXT's own `injectScript()`
+// helper) sets `script.src = browser.runtime.getURL(...)` -- fixed by debug
+// session .planning/debug/resolved/firefox-injection-csp-blocked.md after
+// discovering WXT's `injectScript()` picks an INLINE `script.text` strategy
+// for MV2 builds, which a strict page CSP (`script-src-elem`) blocks; a
+// `.src`-based moz-extension:// load of the same resource is not blocked
+// (confirmed live, real Firefox + a CSP-strict fixture page).
 //
 // NAMING DEVIATION (Rule 1, blocking-issue fix): the plan's own file list
 // names this file `page-bridge.ts`. WXT's entrypoint auto-discovery derives
@@ -18,7 +25,7 @@
 // `page-bridge-firefox.ts` (name-derivation boundary is the FIRST dot, so a
 // hyphen keeps this a single, non-colliding entrypoint name). Referenced
 // consistently as `/page-bridge-firefox.js` in content-relay.content.ts's
-// `injectScript()` call and `wxt.config.ts`'s `web_accessible_resources`.
+// injection call and `wxt.config.ts`'s `web_accessible_resources`.
 //
 // Twin file: `entrypoints/page-bridge.content.ts` (Task 1) is the Chrome
 // declarative `world:'MAIN'` variant with IDENTICAL patch logic. Both

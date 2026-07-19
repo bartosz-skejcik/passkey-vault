@@ -17,11 +17,14 @@
 // `world: 'MAIN'` content-script field is Chrome-only. `exclude: ['firefox']`
 // below means WXT never even generates a Firefox manifest entry for this
 // file -- the Firefox variant is `page-bridge-firefox.ts` (Task 2), an
-// unlisted script asset injected manually via `injectScript()` from
-// content-relay.content.ts, since Firefox's MV2 content-script schema has
-// no `world` field at all. (Named `page-bridge-firefox.ts`, not the plan's
-// literal `page-bridge.ts`, to avoid an entrypoint-name collision with THIS
-// file -- see that file's own header comment for the full rationale.)
+// unlisted script asset injected manually (via
+// `injectPageBridgeFirefoxScript()`, a local `.src`-based injector in
+// content-relay.content.ts -- see that function's own header comment for
+// why it is not WXT's `injectScript()` helper) from content-relay.content.ts,
+// since Firefox's MV2 content-script schema has no `world` field at all.
+// (Named `page-bridge-firefox.ts`, not the plan's literal `page-bridge.ts`,
+// to avoid an entrypoint-name collision with THIS file -- see that file's
+// own header comment for the full rationale.)
 //
 // Twin file: `entrypoints/page-bridge-firefox.ts` (Task 2) contains the IDENTICAL
 // patch logic for Firefox. Both files must independently satisfy the
@@ -386,8 +389,9 @@ export default defineContentScript({
   world: "MAIN",
   runAt: "document_start",
   // D-17: Firefox has no declarative world:'MAIN' -- page-bridge.ts (Task
-  // 2) is the Firefox variant, injected manually via injectScript() from
-  // content-relay.content.ts. Excluding this entrypoint from the Firefox
+  // 2) is the Firefox variant, injected manually via
+  // injectPageBridgeFirefoxScript() from content-relay.content.ts.
+  // Excluding this entrypoint from the Firefox
   // build entirely (rather than letting it silently degrade to an
   // ineffective ISOLATED-world no-op there) keeps exactly one MAIN-world
   // patch attempt per browser.

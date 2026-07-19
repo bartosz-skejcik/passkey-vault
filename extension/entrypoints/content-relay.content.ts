@@ -37,7 +37,6 @@
 // MutationObserver: Surface A's `focusin` listener is the one guarded,
 // lazy re-detect path the architecture note allows.
 import { defineContentScript } from "wxt/utils/define-content-script";
-import { injectScript } from "wxt/utils/inject-script";
 import { browser } from "wxt/browser";
 import { detectLogin } from "../lib/autofill/detect-login";
 import { detectTotp } from "../lib/autofill/detect-totp";
@@ -830,10 +829,63 @@ async function dispatchProviderCeremony(
   }
 }
 
+/**
+ * Firefox MAIN-world injection primitive (CSP-blocked-inline fix, debug
+ * session .planning/debug/resolved/firefox-injection-csp-blocked.md).
+ *
+ * WXT's own `injectScript()` helper (`wxt/utils/inject-script`, pinned
+ * wxt@0.20.27) picks a DIFFERENT DOM-construction strategy per manifest
+ * version: `script.src = url` (a real `moz-extension://`
+ * web_accessible_resources load) for MV3, but for MV2 -- which is this
+ * project's own deliberate Firefox build target (wxt.config.ts) -- it
+ * instead does `script.text = await fetch(url).then(r => r.text())`,
+ * producing a plain INLINE `<script>` element with no `src` attribute at
+ * all. An inline script element is governed by the PAGE's own
+ * `Content-Security-Policy: script-src-elem` directive; any site with a
+ * non-permissive CSP (confirmed live on github.com, and reproduced via a
+ * throwaway extension against a local CSP-strict fixture during this debug
+ * session) silently blocks it, so the Firefox provider shim never installs
+ * there and every ceremony falls through to native.
+ *
+ * A `.src`-based load of the SAME extension resource, inserted by the SAME
+ * privileged content script, is NOT blocked by the page's CSP -- confirmed
+ * empirically (real Firefox 152 + geckodriver) and corroborated by MDN/
+ * community docs as a long-standing, version-independent Firefox
+ * WebExtension property ("web-accessible extension resources are not
+ * blocked by CORS or CSP"), NOT tied to any specific Firefox version (unlike
+ * declarative `content_scripts[].world:'MAIN'`, which MDN browser-compat-data
+ * confirms only landed in Firefox 128). This function therefore bypasses
+ * `injectScript()` entirely for this one call site (its only call site in
+ * the whole extension/ tree) rather than fighting its MV2-specific branch
+ * via the `modifyScript` hook -- that would still pay for a discarded
+ * `fetch()` call and lose the real `load`/`error` event signal WXT's own
+ * MV3 path gets from `makeLoadedPromise`. This is exactly what WXT's MV3
+ * branch already does; Firefox's MV2 build needs the identical `.src`
+ * strategy here, never the `.text` one. Still requires
+ * `web_accessible_resources` to declare `page-bridge-firefox.js`
+ * (wxt.config.ts, unchanged by this fix) -- CSP-exemption is unrelated to
+ * that separate, still-required resource-visibility permission.
+ */
+function injectPageBridgeFirefoxScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = browser.runtime.getURL("/page-bridge-firefox.js");
+    script.addEventListener("load", () => resolve(), { once: true });
+    script.addEventListener(
+      "error",
+      () => reject(new Error("failed to load page-bridge-firefox.js")),
+      { once: true },
+    );
+    // keepInDom-equivalent: never removed after load, matching the prior
+    // injectScript(..., { keepInDom: true }) call this replaces.
+    (document.head ?? document.documentElement).append(script);
+  });
+}
+
 /** D-17: Firefox has no declarative `world:'MAIN'` content-script field
  * (Research Architecture Pattern 3) -- page-bridge-firefox.ts (Plan 12-03, Task 2)
- * is injected manually via WXT's `injectScript()` helper, served from
- * `web_accessible_resources` (extension/wxt.config.ts). Chrome keeps
+ * is injected manually via `injectPageBridgeFirefoxScript()` above, served
+ * from `web_accessible_resources` (extension/wxt.config.ts). Chrome keeps
  * page-bridge.content.ts's declarative `world:'MAIN'` field and does NOT
  * also run this -- `import.meta.env.FIREFOX` gates it so the two injection
  * tracks never both fire for the same browser (would double-patch). Fired
@@ -856,7 +908,11 @@ async function dispatchProviderCeremony(
  * every fresh navigation/content-script (re)injection of this ceremony-
  * window-or-vault-app page, so a server reconfiguration is honored on the
  * very next page load of that origin, not just the one the extension was
- * installed under.
+ * installed under. This injection-time skip is EXACTLY why the CSP-inline
+ * fix above did not need to become a declarative content_scripts
+ * `world:'MAIN'` rewrite (the alternative fix this debug session
+ * considered and rejected) -- that route has no per-tab exclusion at all,
+ * which would have silently regressed this genuinely-native guarantee.
  */
 async function injectFirefoxPageBridge(): Promise<void> {
   if (!import.meta.env.FIREFOX) {
@@ -865,7 +921,7 @@ async function injectFirefoxPageBridge(): Promise<void> {
   if (await isConfiguredServerOrigin()) {
     return;
   }
-  void injectScript("/page-bridge-firefox.js", { keepInDom: true }).catch((e: unknown) => {
+  void injectPageBridgeFirefoxScript().catch((e: unknown) => {
     console.error("[passkey-vault] failed to inject page-bridge-firefox.js", e);
   });
 }
