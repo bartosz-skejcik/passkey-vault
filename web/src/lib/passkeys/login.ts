@@ -89,11 +89,47 @@ export function buildPrfExtensions(
   return { prf: { evalByCredential } };
 }
 
+/**
+ * Minimum accepted PRF output length. Must match crates/pv-core/src/prf.rs's
+ * `PRF_OUTPUT_LEN` (32 -- `wrapping_key_from_prf`/`wrapping_key_from_ext_prf`
+ * reject anything shorter as `CryptoError::InvalidInput("PRF output too
+ * short")`). Enforcing the same floor client-side lets a malformed browser
+ * result get classified as "PRF unavailable" BEFORE it ever reaches
+ * `WasmWrappingKey.fromPrf` — see `extractPrfBytes` below.
+ */
+const PRF_OUTPUT_MIN_LEN = 32;
+
+/**
+ * Strict PRF-result shape validation (Bartek live finding, Zen Browser —
+ * a Firefox fork — on macOS): `getClientExtensionResults()` was observed
+ * returning `{ prf: { results: { first: {} } } }` — `first` a plain,
+ * non-BufferSource empty object, NOT `undefined` and not a documented
+ * WebAuthn outcome. The previous check (`!== undefined`) treated any
+ * non-undefined `first` as a genuine PRF result, taking the full-success
+ * path with a degenerate value — which then either threw inside
+ * `new Uint8Array(prfBytes)` or, for a valid-but-short buffer, would have
+ * silently derived a wrong wrapping key from too little entropy. `first`
+ * must be a real `ArrayBuffer` or an `ArrayBuffer` view with
+ * `byteLength >= PRF_OUTPUT_MIN_LEN` to count as present; anything else
+ * (missing, a plain object, a zero/short-length buffer, or the wrong type)
+ * is treated identically to "browser returned no PRF bytes" (`undefined`)
+ * — routing every caller into the existing `prfBrowserGap` branch (the
+ * honest `prf-unavailable` copy) instead of a false success.
+ */
 function extractPrfBytes(assertion: PublicKeyCredential): ArrayBuffer | undefined {
   const results = assertion.getClientExtensionResults() as {
-    prf?: { results?: { first?: ArrayBuffer } };
+    prf?: { results?: { first?: unknown } };
   };
-  return results.prf?.results?.first;
+  const first = results.prf?.results?.first;
+  if (first instanceof ArrayBuffer) {
+    return first.byteLength >= PRF_OUTPUT_MIN_LEN ? first : undefined;
+  }
+  if (ArrayBuffer.isView(first)) {
+    return first.byteLength >= PRF_OUTPUT_MIN_LEN
+      ? (first.buffer.slice(first.byteOffset, first.byteOffset + first.byteLength) as ArrayBuffer)
+      : undefined;
+  }
+  return undefined;
 }
 
 /**

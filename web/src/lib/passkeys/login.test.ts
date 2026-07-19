@@ -325,6 +325,112 @@ describe("passkeyLogin", () => {
   });
 });
 
+// Bartek live finding, Zen Browser (a Firefox fork) on macOS:
+// getClientExtensionResults() returned `{ prf: { results: { first: {} } } }`
+// -- `first` a plain, non-BufferSource empty object, not `undefined`. The
+// previous `!== undefined` check in extractPrfBytes (login.ts) treated this
+// as a genuine PRF result, taking the full-success path with a degenerate
+// value. These tests exercise extractPrfBytes' strict shape validation
+// (real ArrayBuffer/view, byteLength >= 32, matching pv-core's
+// PRF_OUTPUT_LEN) directly through passkeyLoginCeremony's observable
+// outcome, since extractPrfBytes itself is module-private.
+describe("extractPrfBytes strict shape validation (Zen Browser/Firefox live finding)", () => {
+  function mockAssertionWithFirst(first: unknown) {
+    return {
+      toJSON: vi.fn().mockReturnValue({ id: "assertion-shape" }),
+      getClientExtensionResults: vi
+        .fn()
+        .mockReturnValue(first === undefined ? {} : { prf: { results: { first } } }),
+    };
+  }
+
+  beforeEach(() => {
+    mockPasskeyLoginStart.mockResolvedValue({
+      state_id: "state-shape",
+      challenge: { publicKey: { challenge: "chal-shape" } },
+      prf_salts: { "cred-shape": "c2FsdA==" },
+    });
+    mockPasskeyLoginFinish.mockResolvedValue({
+      session_token: "session-token-shape",
+      pw_wrapped_uk: "pw-wrapped-uk",
+      prf_wrapped_uk: "prf-wrapped-uk",
+    });
+  });
+
+  it("first as a plain non-BufferSource object ({}) is treated as absent -- prfBrowserGap: true, not a false success", async () => {
+    const assertion = mockAssertionWithFirst({});
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(assertion);
+
+    const result = await passkeyLoginCeremony("existing@example.com");
+
+    expect(result).toEqual({
+      prfUnavailable: true,
+      prfBrowserGap: true,
+      cancelled: false,
+      sessionToken: "session-token-shape",
+    });
+  });
+
+  it("first as a zero-length ArrayBuffer is treated as absent -- prfBrowserGap: true", async () => {
+    const assertion = mockAssertionWithFirst(new ArrayBuffer(0));
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(assertion);
+
+    const result = await passkeyLoginCeremony("existing@example.com");
+
+    expect(result).toEqual({
+      prfUnavailable: true,
+      prfBrowserGap: true,
+      cancelled: false,
+      sessionToken: "session-token-shape",
+    });
+  });
+
+  it("first as a too-short Uint8Array (31 bytes, below the 32-byte PRF_OUTPUT_LEN floor) is treated as absent -- prfBrowserGap: true", async () => {
+    const assertion = mockAssertionWithFirst(new Uint8Array(31));
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(assertion);
+
+    const result = await passkeyLoginCeremony("existing@example.com");
+
+    expect(result).toEqual({
+      prfUnavailable: true,
+      prfBrowserGap: true,
+      cancelled: false,
+      sessionToken: "session-token-shape",
+    });
+  });
+
+  it("first as a genuine 32-byte ArrayBuffer is accepted -- full PRF success, bytes returned", async () => {
+    const validBytes = new ArrayBuffer(32);
+    const assertion = mockAssertionWithFirst(validBytes);
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(assertion);
+
+    const result = await passkeyLoginCeremony("existing@example.com");
+
+    expect(result).toEqual({
+      prfUnavailable: false,
+      prfBrowserGap: false,
+      cancelled: false,
+      sessionToken: "session-token-shape",
+      prfBytes: validBytes,
+      prfWrappedUk: "prf-wrapped-uk",
+    });
+  });
+
+  it("prf absent entirely from getClientExtensionResults() is treated as absent -- prfBrowserGap: true", async () => {
+    const assertion = mockAssertionWithFirst(undefined);
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(assertion);
+
+    const result = await passkeyLoginCeremony("existing@example.com");
+
+    expect(result).toEqual({
+      prfUnavailable: true,
+      prfBrowserGap: true,
+      cancelled: false,
+      sessionToken: "session-token-shape",
+    });
+  });
+});
+
 describe("passkeyUnlock", () => {
   function mockAssertion(prfResultBytes: ArrayBuffer | undefined) {
     return {
