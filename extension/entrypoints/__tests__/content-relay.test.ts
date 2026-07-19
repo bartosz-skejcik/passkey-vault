@@ -1452,19 +1452,29 @@ describe("content-relay", () => {
   // Bartek live-UAT bug follow-up (.planning/debug/resolved/
   // signin-passkeyless-spin.md, provider-hijack diagnosis): Firefox has no
   // declarative `world:'MAIN'` content-script exclusion, so THIS file's own
-  // manual injectScript() call is the only place that can prevent
-  // page-bridge-firefox.js from installing on the configured server origin
-  // at all -- letting navigator.credentials.get/create stay genuinely
-  // native there. `import.meta.env.FIREFOX` is fixed `false` in this
-  // (Chrome-oriented) jsdom test build and cannot be toggled per-test
+  // manual injectPageBridgeFirefoxScript() call is the only place that can
+  // prevent page-bridge-firefox.js from installing on the configured server
+  // origin at all -- letting navigator.credentials.get/create stay
+  // genuinely native there. `import.meta.env.FIREFOX` is fixed `false` in
+  // this (Chrome-oriented) jsdom test build and cannot be toggled per-test
   // (EnrollExtPasskeyPrompt.test.tsx's own documented limitation, same
   // per-module `import.meta` constraint) -- this is therefore a structural
   // source check, mirroring that file's own precedent; the actual runtime
   // behavior (a real Firefox build, `import.meta.env.FIREFOX === true`) is
   // verified by extension/e2e-firefox/run-server-unlock.cjs's
   // assertNativeWebAuthn() (P13-06-NATIVE-WEBAUTHN / P13-07-NATIVE-WEBAUTHN).
+  //
+  // CSP-blocked-inline fix (debug session .planning/debug/resolved/
+  // firefox-injection-csp-blocked.md): the injection call itself moved from
+  // WXT's injectScript() helper (which picks a page-CSP-vulnerable inline
+  // `script.text` strategy for this project's MV2 Firefox build) to a local
+  // injectPageBridgeFirefoxScript() using `script.src` (CSP-exempt, per that
+  // session's live-Firefox verification) -- this test's own structural
+  // assertions were updated to match the new call name, but the FUNCTIONAL
+  // guarantee under test (FIREFOX gate, then origin check, then -- only for
+  // a non-configured origin -- the actual injection call) is unchanged.
   describe("injectFirefoxPageBridge — skips injection on the configured server origin (structural, Firefox-only branch)", () => {
-    it("checks isConfiguredServerOrigin() and returns BEFORE calling injectScript(), inside the FIREFOX-gated body", async () => {
+    it("checks isConfiguredServerOrigin() and returns BEFORE calling injectPageBridgeFirefoxScript(), inside the FIREFOX-gated body", async () => {
       const fs = await import("node:fs/promises");
       const path = await import("node:path");
       const source = await fs.readFile(path.join(import.meta.dirname, "../content-relay.content.ts"), "utf-8");
@@ -1477,7 +1487,7 @@ describe("content-relay", () => {
 
       const firefoxGateIndex = fnBody.indexOf("import.meta.env.FIREFOX");
       const originCheckIndex = fnBody.indexOf("isConfiguredServerOrigin()");
-      const injectCallIndex = fnBody.indexOf("injectScript(");
+      const injectCallIndex = fnBody.indexOf("injectPageBridgeFirefoxScript(");
 
       expect(firefoxGateIndex).toBeGreaterThan(-1);
       expect(originCheckIndex).toBeGreaterThan(-1);
@@ -1487,6 +1497,34 @@ describe("content-relay", () => {
       // NON-configured origin) the actual injection call.
       expect(firefoxGateIndex).toBeLessThan(originCheckIndex);
       expect(originCheckIndex).toBeLessThan(injectCallIndex);
+    });
+  });
+
+  // CSP-blocked-inline fix (debug session .planning/debug/resolved/
+  // firefox-injection-csp-blocked.md): pins the ACTUAL DOM-construction
+  // strategy inside injectPageBridgeFirefoxScript() itself -- a regression
+  // to WXT's original inline `script.text = <fetched source>` approach
+  // would silently reintroduce the CSP-blocked bug (confirmed live via a
+  // throwaway extension + a real Firefox + a CSP-strict fixture page during
+  // that debug session: the inline form is blocked by a page's
+  // `script-src-elem` CSP directive, a `.src`-based moz-extension:// load is
+  // not) without ever failing a JS exception this jsdom suite could catch.
+  describe("injectPageBridgeFirefoxScript — always src-based, never inline (CSP-blocked-inline regression guard)", () => {
+    it("sets script.src via browser.runtime.getURL and never assigns script.text/.textContent", async () => {
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+      const source = await fs.readFile(path.join(import.meta.dirname, "../content-relay.content.ts"), "utf-8");
+
+      const fnStart = source.indexOf("function injectPageBridgeFirefoxScript()");
+      expect(fnStart).toBeGreaterThan(-1);
+      const fnBodyStart = source.indexOf("{", fnStart);
+      const fnBodyEnd = source.indexOf("\n}\n", fnBodyStart);
+      const fnBody = source.slice(fnBodyStart, fnBodyEnd);
+
+      expect(fnBody).toMatch(/script\.src\s*=\s*browser\.runtime\.getURL\(\s*["']\/page-bridge-firefox\.js["']\s*\)/);
+      expect(fnBody).not.toMatch(/\.text\s*=/);
+      expect(fnBody).not.toMatch(/\.textContent\s*=/);
+      expect(fnBody).not.toMatch(/\bfetch\(/);
     });
   });
 });

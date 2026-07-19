@@ -96,8 +96,21 @@ describe("passkey-provider MAIN-world manifest surface (D-17, PROV-05)", () => {
     expect(pageBridgeContentSource).toMatch(/exclude:\s*\[\s*["']firefox["']\s*\]/);
   });
 
-  it("content-relay.content.ts injects page-bridge-firefox.js via injectScript() on Firefox", () => {
-    expect(contentRelaySource).toMatch(/injectScript\(\s*["']\/page-bridge-firefox\.js["']/);
+  it("content-relay.content.ts injects page-bridge-firefox.js via a src-based (never inline) MAIN-world load on Firefox", () => {
+    // CSP-blocked-inline fix (debug session .planning/debug/resolved/
+    // firefox-injection-csp-blocked.md): WXT's own injectScript() helper
+    // picks an INLINE `script.text` strategy for MV2 (this project's
+    // Firefox target), which a strict page CSP (script-src-elem) blocks.
+    // The replacement, injectPageBridgeFirefoxScript(), must always use
+    // `script.src = browser.runtime.getURL(...)` -- a moz-extension://
+    // resource load, exempt from the page's CSP. (The stronger,
+    // function-body-scoped "never falls back to .text/.textContent"
+    // regression guard lives in content-relay.test.ts's own
+    // injectPageBridgeFirefoxScript describe block -- this file's own
+    // whole-source-text scan would false-positive on this very comment.)
+    expect(contentRelaySource).toMatch(
+      /script\.src\s*=\s*browser\.runtime\.getURL\(\s*["']\/page-bridge-firefox\.js["']\s*\)/,
+    );
     expect(contentRelaySource).toMatch(/import\.meta\.env\.FIREFOX/);
   });
 

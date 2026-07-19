@@ -124,6 +124,17 @@ document.getElementById('f').addEventListener('submit', (e) => {
   return http.createServer((req, res) => {
     res.setHeader('content-type', 'text/html; charset=utf-8');
     const url = req.url || '/';
+    // CSP-STRICT fixture variant (firefox-injection-csp-blocked fix, debug
+    // session .planning/debug/resolved/firefox-injection-csp-blocked.md):
+    // identical markup to /provider, but served with a real, restrictive
+    // Content-Security-Policy header -- the exact fixture-coverage gap
+    // that let the CSP-blocked-inline injection bug ship undetected
+    // through this harness (every other route here serves NO CSP header
+    // at all, so it could never have caught a page-CSP-only failure mode).
+    if (url.startsWith('/provider-csp')) {
+      res.setHeader('content-security-policy', "script-src 'self'");
+      return res.end(provider());
+    }
     if (url.startsWith('/provider')) return res.end(provider());
     return res.end(login(true));
   });
@@ -366,7 +377,67 @@ async function main() {
     `);
     await shot(driver, 'd08-fresh-nav-patch-check');
     record('D-08', patchCheck.wrapped ? 'PASS' : 'FAIL',
-      `Fresh navigation, navigator.credentials.create.toString() wrapped=${patchCheck.wrapped} (Firefox: injectScript() of page-bridge-firefox.js, per D-08/12-03). src head: ${patchCheck.src}`);
+      `Fresh navigation, navigator.credentials.create.toString() wrapped=${patchCheck.wrapped} (Firefox: injectPageBridgeFirefoxScript() src-based load of page-bridge-firefox.js, per D-08/12-03, mechanism fixed by debug session firefox-injection-csp-blocked.md). src head: ${patchCheck.src}`);
+
+    // ================= CSP-STRICT: D-08 mechanism survives a REAL page CSP =================
+    // (firefox-injection-csp-blocked fix, debug session
+    // .planning/debug/resolved/firefox-injection-csp-blocked.md) -- closes
+    // the exact fixture blind spot that let the CSP-blocked-inline bug
+    // ship undetected through 13-04's own walk: every fixture RP page
+    // above (/provider) serves NO CSP header at all, so WXT's original
+    // injectScript() inline-`.text` strategy (blocked only by a PAGE's own
+    // CSP -- never present on any of THIS harness's own fixtures) never
+    // had a chance to fail here. /provider-csp serves the IDENTICAL
+    // fixture markup with a real, restrictive
+    // `Content-Security-Policy: script-src 'self'` header attached (the
+    // same class of header Bartek's live github.com report hit).
+    const rpCspTabHandle = await newTabTo(`${FORM_ORIGIN}/provider-csp`);
+    await sleep(600);
+    const cspPatchCheck = await driver.executeScript(`
+      try {
+        const src = navigator.credentials.create.toString();
+        return { wrapped: !src.includes('[native code]'), src: src.slice(0, 120) };
+      } catch (e) { return { error: String(e) }; }
+    `);
+    await shot(driver, 'csp-strict-shim-presence-check');
+    record('CSP-STRICT-SHIM-PRESENT', cspPatchCheck.wrapped ? 'PASS' : 'FAIL',
+      `On a page serving Content-Security-Policy: script-src 'self', navigator.credentials.create.toString() wrapped=${cspPatchCheck.wrapped} (must be true -- the shim must install even under a real page CSP, unlike before this fix). src head: ${cspPatchCheck.src}`);
+
+    // Byte-level: the SAME real create() ceremony pattern as P12-SC1 below,
+    // but against the CSP-strict page -- proves the shim doesn't just
+    // LOOK installed (toString() check above) but actually brokers a
+    // full, real, vault-issued credential end to end there too.
+    const cspCreate = driver.executeScript(`
+      window.__pv_csp_result = null;
+      navigator.credentials.create({
+        publicKey: {
+          rp: { id: 'localhost', name: 'DBH-FF CSP-strict Provider Test RP' },
+          user: { id: new Uint8Array([9,9,9,9]), name: 'e2e-ff-csp-${RUN}@localhost', displayName: 'FF CSP Tester' },
+          challenge: new Uint8Array(32),
+          pubKeyCredParams: [{type:'public-key', alg:-7}],
+          timeout: 30000,
+        },
+      }).then((cred) => { window.__pv_csp_result = {ok:true, id: cred && cred.id}; })
+        .catch((e) => { window.__pv_csp_result = {ok:false, error: String(e && e.message || e)}; });
+      return true;
+    `);
+    await cspCreate;
+    await ensurePopup();
+    const cspConfirmBtn = await tryFind(driver, '[data-testid="provider-confirm"]', 20000);
+    if (cspConfirmBtn) {
+      await shot(driver, 'csp-strict-consent-ui');
+      await cspConfirmBtn.click();
+      await sleep(2000);
+      await driver.switchTo().window(rpCspTabHandle);
+      const cspResult = await driver.executeScript('return window.__pv_csp_result');
+      record('CSP-STRICT-CREATE', cspResult && cspResult.ok && cspResult.id ? 'PASS' : 'FAIL',
+        `CSP-strict page create() result: ${JSON.stringify(cspResult)}`);
+    } else {
+      record('CSP-STRICT-CREATE', 'FAIL', 'provider-confirm consent UI never appeared in popup (CSP-strict page)');
+    }
+    await shot(driver, 'csp-strict-rp-result');
+    try { await driver.switchTo().window(rpCspTabHandle); await driver.close(); } catch {}
+    await driver.switchTo().window(rpTabHandle);
 
     // ================= P12-SC1: provider create() =================
     const create1 = driver.executeScript(`
