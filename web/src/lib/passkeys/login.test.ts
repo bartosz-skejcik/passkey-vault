@@ -56,7 +56,13 @@ vi.mock("@/lib/auth/api", async () => {
   };
 });
 
-import { passkeyLogin, passkeyUnlock, buildPrfExtensions } from "./login";
+import {
+  passkeyLogin,
+  passkeyUnlock,
+  buildPrfExtensions,
+  passkeyLoginCeremony,
+  passkeyUnlockCeremony,
+} from "./login";
 import { ApiClientError } from "@/lib/auth/api";
 import { setPrfUnavailableHint, takePrfUnavailableHint } from "@/lib/auth/prfUnavailable";
 
@@ -163,6 +169,44 @@ describe("passkeyLogin", () => {
     expect(mockSetPendingUnlock).not.toHaveBeenCalled();
     expect(takePrfUnavailableHint()).toBe(true);
     expect(result).toEqual({ prfUnavailable: true, cancelled: false });
+  });
+
+  it("browser PRF gap (Firefox): passkeyLoginCeremony reports prfBrowserGap: true when the server returns a PRF-capable prf_wrapped_uk but this browser's extension results have no PRF bytes", async () => {
+    const assertion = mockAssertion(undefined);
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(assertion);
+    mockPasskeyLoginFinish.mockResolvedValue({
+      session_token: "session-token",
+      pw_wrapped_uk: "pw-wrapped-uk",
+      prf_wrapped_uk: "prf-wrapped-uk",
+    });
+
+    const result = await passkeyLoginCeremony("existing@example.com");
+
+    expect(result).toEqual({
+      prfUnavailable: true,
+      prfBrowserGap: true,
+      cancelled: false,
+      sessionToken: "session-token",
+    });
+  });
+
+  it("no PRF-capable credential matched (prf_wrapped_uk: null): passkeyLoginCeremony reports prfBrowserGap: false", async () => {
+    const assertion = mockAssertion(new ArrayBuffer(32));
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(assertion);
+    mockPasskeyLoginFinish.mockResolvedValue({
+      session_token: "session-token",
+      pw_wrapped_uk: "pw-wrapped-uk",
+      prf_wrapped_uk: null,
+    });
+
+    const result = await passkeyLoginCeremony("existing@example.com");
+
+    expect(result).toEqual({
+      prfUnavailable: true,
+      prfBrowserGap: false,
+      cancelled: false,
+      sessionToken: "session-token",
+    });
   });
 
   it("CR-01: strips clientExtensionResults.prf from the credential JSON before POSTing passkeyLoginFinish, even when the browser's toJSON() includes it", async () => {
@@ -312,6 +356,29 @@ describe("passkeyUnlock", () => {
     const onStep = vi.fn();
     await expect(passkeyUnlock(onStep)).rejects.toThrow("internal error");
     expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "failed"]);
+  });
+
+  it("browser PRF gap (Firefox): passkeyUnlockCeremony reports prfBrowserGap: true when the server returns a PRF-capable prf_wrapped_uk but this browser's extension results have no PRF bytes", async () => {
+    mockUnlockStart.mockResolvedValue({
+      state_id: "state-2",
+      challenge: { publicKey: { challenge: "chal2" } },
+      prf_salts: { "cred-2": "c2FsdA==" },
+    });
+    const assertion = mockAssertion(undefined);
+    (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockResolvedValue(assertion);
+    mockUnlockFinish.mockResolvedValue({ prf_wrapped_uk: "prf-wrapped-uk-2" });
+
+    const result = await passkeyUnlockCeremony();
+
+    expect(result).toEqual({ prfUnavailable: true, prfBrowserGap: true, cancelled: false });
+  });
+
+  it("zero PRF-capable passkeys registered (unlockStart 404s): passkeyUnlockCeremony reports prfBrowserGap: false", async () => {
+    mockUnlockStart.mockRejectedValue(new ApiClientError(404, "no prf-capable passkeys"));
+
+    const result = await passkeyUnlockCeremony();
+
+    expect(result).toEqual({ prfUnavailable: true, prfBrowserGap: false, cancelled: false });
   });
 
   it("PRF-success path calls unwrapUserKey then setUnlockedUserKey directly, and does not call setPendingUnlock", async () => {
