@@ -781,7 +781,28 @@ function handleProviderPageMessage(event: MessageEvent): void {
   // BEFORE forwarding to the background (see postAck's own header comment).
   postAck(nonce);
 
-  const encodedPublicKey = encodePublicKeyOptions(publicKey);
+  // IN-01 (13-REVIEW-3.md): a page can spoof `Symbol.toStringTag` so an
+  // ordinary object reports `Object.prototype.toString.call(...) ===
+  // "[object ArrayBuffer]"` (isCrossRealmArrayBuffer's own header comment),
+  // which `encodePublicKeyOptions`'s buffer-source detection honors. A
+  // crafted huge `length` then makes `bufferSourceToB64Url`'s
+  // `new Uint8Array(fake)` throw a RangeError. The ack above has already
+  // fired, so the page's relay() is waiting on a terminal message -- an
+  // unguarded throw here would abort BEFORE `passkeyCeremonyInFlight`/
+  // `overlayCoordinator?.hide()` ever run and leave the DOM marker (set by
+  // page-bridge's relay(), see WR-01) stuck, wedging that page's overlay
+  // for the whole session. Every provider-side error elsewhere in this
+  // file responds with an explicit terminal message and cleans up (see
+  // `dispatchProviderCeremony`'s catch below) -- this closes the one path
+  // that instead silently wedged until EXTENSION_AUTHORITY_TIMEOUT_MS.
+  let encodedPublicKey: unknown;
+  try {
+    encodedPublicKey = encodePublicKeyOptions(publicKey);
+  } catch {
+    postToPage(nonce, { kind: "fallthrough" });
+    delete document.documentElement.dataset.pvCeremonyInFlight;
+    return;
+  }
 
   // Plan 12-07: the page is running a WebAuthn ceremony through this bridge
   // -- passkey always takes priority over the Phase-10 login overlay, so

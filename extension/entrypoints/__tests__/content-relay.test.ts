@@ -763,6 +763,77 @@ describe("content-relay", () => {
         expect(sentMessage.publicKey.challenge).toEqual({ notAnArrayBuffer: true });
       });
     });
+
+    // IN-01 (13-REVIEW-3.md): isCrossRealmArrayBuffer (above) trusts
+    // `Object.prototype.toString.call(...)`, which honors an ordinary
+    // object's own `Symbol.toStringTag` -- a page can therefore make a
+    // plain `{}` masquerade as an ArrayBuffer. Unlike the legitimate
+    // cross-realm case above (a REAL ArrayBuffer from another realm,
+    // correctly detected and correctly encoded), a spoofed fake with a
+    // huge `length` makes bufferSourceToB64Url's `new Uint8Array(fake)`
+    // throw a RangeError. This describe asserts handleProviderPageMessage's
+    // encode-time try/catch turns that throw into the same clean-fallthrough
+    // contract every other provider-side error path uses, instead of
+    // wedging the ceremony for the EXTENSION_AUTHORITY_TIMEOUT_MS backstop.
+    describe("IN-01: Symbol.toStringTag spoof does not wedge the ceremony (13-REVIEW-3.md)", () => {
+      function spoofedHugeLengthArrayBuffer(): unknown {
+        // 2**50 (~1.1 petabytes), not 2**40 (~1.1 terabytes): verified
+        // empirically against this project's pinned Node/V8 at execution
+        // time -- `new Uint8Array({length: 2**40, ...})` does NOT throw
+        // synchronously (V8 lazily backs a >1TB-but-<2**50 typed array via
+        // virtual memory, then the array-like element-copy loop runs ~2**40
+        // iterations, which never realistically completes -- it hangs the
+        // test rather than reproducing the fast RangeError this fix
+        // guards). 2**50 reliably throws immediately (RangeError, "Array
+        // buffer allocation failed") on this same engine -- confirmed with
+        // a throwaway timed probe before writing this assertion, not
+        // assumed from IN-01's illustrative snippet.
+        const fake: Record<PropertyKey, unknown> = { length: 2 ** 50 };
+        Object.defineProperty(fake, Symbol.toStringTag, { value: "ArrayBuffer" });
+        return fake;
+      }
+
+      it("a toStringTag-spoofed huge-length object throws inside encodePublicKeyOptions -- clean fallthrough, never forwarded, DOM marker cleaned up", async () => {
+        const nonce = "nonce-spoofed-huge-length";
+
+        // Simulates page-bridge's own synchronous marker set (WR-01, this
+        // same review) -- proves the catch path actually CLEANS UP the
+        // marker, not merely that it was never set in this test.
+        document.documentElement.dataset.pvCeremonyInFlight = "1";
+
+        const received: PageBridgeResponseEnvelope[] = [];
+        window.addEventListener("message", (e) => {
+          const data = (e as MessageEvent).data as { source?: unknown };
+          if (data?.source === "pv-content-relay") {
+            received.push((e as MessageEvent).data as PageBridgeResponseEnvelope);
+          }
+        });
+
+        const request: PageBridgeRequestEnvelope = {
+          source: "pv-page-bridge",
+          nonce,
+          kind: "credentials.get",
+          origin: location.origin,
+          publicKey: { rpId: "example.com", challenge: spoofedHugeLengthArrayBuffer() },
+        };
+        window.dispatchEvent(new MessageEvent("message", { data: request, origin: location.origin, source: window }));
+        await flushMicrotasks();
+
+        // The throw is caught BEFORE the background is ever called -- an
+        // aborted-but-acked ceremony (the exact bug) would instead have
+        // acked and then gone silent, never reaching this assertion's
+        // "not called" branch believably (it would also never have been
+        // called, but for the WRONG reason -- see the terminal-response
+        // assertion below for the real proof).
+        expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+        // Terminal response IS an explicit ack + fallthrough -- same
+        // contract as every other provider-side error path (D-11), not a
+        // silently abandoned promise.
+        expect(received.map((r) => r.kind)).toEqual(["ack", "fallthrough"]);
+        // The DOM marker is cleaned up, not left wedged for the session.
+        expect(document.documentElement.dataset.pvCeremonyInFlight).toBeUndefined();
+      });
+    });
   });
 
   // Bartek live-UAT bug follow-up (.planning/debug/resolved/
