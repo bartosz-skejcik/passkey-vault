@@ -2,7 +2,7 @@
 // discipline): Test 1/2 below are this plan's Task 2 behaviors,
 // unaffected by the AMENDMENT 2026-07-15 (which only supersedes
 // UnlockView's PRF wiring, not App.tsx's gating order).
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const { mockSendMessage, mockStorageSessionGet, listeners, sessionStorageListeners, localStorageStore } = vi.hoisted(() => ({
@@ -101,11 +101,30 @@ function broadcastSessionStorageChange(
 
 import App from "./App";
 
+// quick-260720-16k: App.tsx's resolveCeremony() and the storage.session
+// .onChanged removal branch both now call window.close() unconditionally on
+// success -- spy on it (mocked, never actually closes jsdom's window) so
+// tests can assert it was/wasn't called, restored between tests via
+// afterEach (this file previously had none -- mirrors
+// entrypoints/__tests__/page-bridge.test.ts's own restoreAllMocks convention).
+let closeSpy: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
   vi.clearAllMocks();
   listeners.length = 0;
   sessionStorageListeners.length = 0;
   localStorageStore.clear();
+  closeSpy = vi.spyOn(window, "close").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  // NOTE: `vi.restoreAllMocks()` would also restore this file's OTHER
+  // hoisted `vi.fn()` mocks (mockSendMessage/mockStorageSessionGet) to
+  // their bare, implementation-less state -- those only ever get their
+  // default `.mockResolvedValue(...)` set ONCE at `vi.hoisted()` time, not
+  // re-armed in `beforeEach`, so a blanket restore would break every test
+  // after the first. Only tear down THIS spy.
+  closeSpy.mockRestore();
 });
 
 describe("App.tsx view-state switch", () => {
@@ -463,6 +482,14 @@ describe("App.tsx view-state switch", () => {
       await waitFor(() => {
         expect(screen.queryByTestId("provider-confirm")).not.toBeInTheDocument();
       });
+      // quick-260720-16k: multi-match row-click confirm is one of the three
+      // paths funneled through resolveCeremony() -- window.close() proves
+      // this popup's job is done here (the queryByTestId assertion above
+      // was already trivially true since multi-match never renders
+      // provider-confirm at all).
+      await waitFor(() => {
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+      });
     });
 
     it("declining (Use something else) sends provider.resolveChoice with itemId: null", async () => {
@@ -509,6 +536,10 @@ describe("App.tsx view-state switch", () => {
           requestId: "req-2",
           itemId: null,
         });
+      });
+      // quick-260720-16k: decline also funnels through resolveCeremony().
+      await waitFor(() => {
+        expect(closeSpy).toHaveBeenCalledTimes(1);
       });
     });
 
@@ -594,6 +625,58 @@ describe("App.tsx view-state switch", () => {
           itemId: "confirmed",
         });
       });
+      // quick-260720-16k: create/single-match confirm path.
+      await waitFor(() => {
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    // quick-260720-16k: window.close() is only reached on the SUCCESS path
+    // -- a failed provider.resolveChoice send must leave the window open,
+    // showing the failed state, mirroring AutofillItemRow.tsx's own
+    // only-on-result.ok precedent.
+    it("when provider.resolveChoice's sendMessage rejects, window.close() is NOT called and the ceremony view stays open showing the failed state", async () => {
+      mockStorageSessionGet.mockResolvedValue({
+        "pv-pending-provider-ceremony": {
+          requestId: "req-create-fail",
+          kind: "create",
+          rpId: "example.com",
+          account: "alice@example.com",
+          prfRequested: false,
+          candidates: [],
+        },
+      });
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "provider.resolveChoice") throw new Error("network error");
+        if (message.kind === "session.status") {
+          return {
+            kind: "unlocked",
+            autoLockMinutes: 15,
+            accountEmail: "a@example.com",
+            extPasskeyEnrolled: false,
+            extPasskeyPromptSuppressed: false,
+          };
+        }
+        throw new Error(`unexpected message in this test: ${message.kind}`);
+      });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("provider-confirm")).toBeInTheDocument();
+      });
+
+      screen.getByTestId("provider-confirm").click();
+
+      await waitFor(() => {
+        expect(mockSendMessage).toHaveBeenCalledWith({
+          kind: "provider.resolveChoice",
+          requestId: "req-create-fail",
+          itemId: "confirmed",
+        });
+      });
+      expect(closeSpy).not.toHaveBeenCalled();
+      expect(screen.getByTestId("provider-confirm")).toBeInTheDocument();
     });
 
     it("Decision A: declining a pending 'create' consent payload sends provider.resolveChoice with itemId: null", async () => {
@@ -640,6 +723,10 @@ describe("App.tsx view-state switch", () => {
           requestId: "req-create-2",
           itemId: null,
         });
+      });
+      // quick-260720-16k: create decline path.
+      await waitFor(() => {
+        expect(closeSpy).toHaveBeenCalledTimes(1);
       });
     });
 
@@ -690,6 +777,10 @@ describe("App.tsx view-state switch", () => {
           requestId: "req-get-single-1",
           itemId: "cred-solo",
         });
+      });
+      // quick-260720-16k: single-match get confirm path.
+      await waitFor(() => {
+        expect(closeSpy).toHaveBeenCalledTimes(1);
       });
     });
 
@@ -811,9 +902,13 @@ describe("App.tsx view-state switch", () => {
 
         expect(mockStorageSessionGet.mock.calls.length).toBe(callsBefore);
         expect(screen.queryByTestId("provider-confirm")).not.toBeInTheDocument();
+        // quick-260720-16k: an unrelated key change never closes the window
+        // either -- the new close-on-removal behavior is scoped strictly to
+        // PENDING_CEREMONY_KEY being removed, never a different key's change.
+        expect(closeSpy).not.toHaveBeenCalled();
       });
 
-      it("removing PENDING_CEREMONY_KEY while ProviderCeremonyView is shown returns to the prior/list view", async () => {
+      it("removing PENDING_CEREMONY_KEY while ProviderCeremonyView is shown closes the window", async () => {
         const pendingPayload = {
           requestId: "req-abandon-1",
           kind: "get",
@@ -859,10 +954,11 @@ describe("App.tsx view-state switch", () => {
         await waitFor(() => {
           expect(screen.queryByTestId("provider-confirm")).not.toBeInTheDocument();
         });
-        // Returned to the popup's ordinary flow (list, since the payload
-        // only ever exists once the vault is unlocked, D-09).
+        // quick-260720-16k: the window closes itself instead of falling
+        // back to session.status -- the same self-closing guarantee applies
+        // uniformly, not just on the direct-click confirm/decline paths.
         await waitFor(() => {
-          expect(mockSendMessage).toHaveBeenCalledWith({ kind: "session.status" });
+          expect(closeSpy).toHaveBeenCalledTimes(1);
         });
       });
     });
