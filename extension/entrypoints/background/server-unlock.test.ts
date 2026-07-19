@@ -12,6 +12,7 @@ const hoisted = vi.hoisted(() => {
     mockAlarmsClear: vi.fn(),
     mockWindowsCreate: vi.fn(),
     mockWindowsRemove: vi.fn(),
+    mockWindowsGetLastFocused: vi.fn(),
     mockSendMessage: vi.fn(),
     mockFromPrf: vi.fn(),
     mockUnwrapUserKey: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock("wxt/browser", () => ({
     windows: {
       create: hoisted.mockWindowsCreate,
       remove: hoisted.mockWindowsRemove,
+      getLastFocused: hoisted.mockWindowsGetLastFocused,
     },
     runtime: {
       sendMessage: hoisted.mockSendMessage,
@@ -104,6 +106,7 @@ beforeEach(() => {
   hoisted.mockReadSessionMeta.mockResolvedValue(FAKE_SESSION_META);
   hoisted.mockWindowsCreate.mockResolvedValue({ id: 42 });
   hoisted.mockSendMessage.mockResolvedValue(undefined);
+  hoisted.mockWindowsGetLastFocused.mockResolvedValue({ left: 100, top: 50, width: 1200, height: 800 });
 });
 
 describe("startServerUnlock", () => {
@@ -112,9 +115,18 @@ describe("startServerUnlock", () => {
     expect(result).toEqual({ ok: true });
 
     expect(hoisted.mockWindowsCreate).toHaveBeenCalledTimes(1);
-    const call = hoisted.mockWindowsCreate.mock.calls[0][0] as { url: string; type: string };
+    const call = hoisted.mockWindowsCreate.mock.calls[0][0] as {
+      url: string;
+      type: string;
+      left?: number;
+      top?: number;
+      focused?: boolean;
+    };
     expect(call.type).toBe("popup");
     expect(call.url).toMatch(/^https:\/\/vault\.example\.com\/\?pv-ext-unlock=[\w-]+&pv-mode=unlock$/);
+    expect(call.left).toBe(460);
+    expect(call.top).toBe(130);
+    expect(call.focused).toBe(true);
 
     const nonce = readPendingNonceFromStorage();
     expect(typeof nonce).toBe("string");
@@ -163,6 +175,32 @@ describe("startServerUnlock", () => {
       "https://vault.example.com",
     );
     expect(result).toEqual({ ok: false, error: "invalid-nonce" });
+  });
+});
+
+describe("startServerUnlock — window centering (quick-260720-16k)", () => {
+  it("falls back to default placement (no left/top) when getLastFocused() resolves empty geometry", async () => {
+    hoisted.mockWindowsGetLastFocused.mockResolvedValue({});
+    const result = await startServerUnlock("unlock");
+    expect(result).toEqual({ ok: true });
+
+    const call = hoisted.mockWindowsCreate.mock.calls[0][0] as Record<string, unknown>;
+    expect(call).not.toHaveProperty("left");
+    expect(call).not.toHaveProperty("top");
+    expect(call.width).toBe(480);
+    expect(call.height).toBe(640);
+    expect(call.focused).toBe(true);
+  });
+
+  it("falls back to default placement (no left/top) when getLastFocused() resolves partial geometry (height missing)", async () => {
+    hoisted.mockWindowsGetLastFocused.mockResolvedValue({ left: 100, top: 50, width: 1200 });
+    const result = await startServerUnlock("unlock");
+    expect(result).toEqual({ ok: true });
+
+    const call = hoisted.mockWindowsCreate.mock.calls[0][0] as Record<string, unknown>;
+    expect(call).not.toHaveProperty("left");
+    expect(call).not.toHaveProperty("top");
+    expect(call.focused).toBe(true);
   });
 });
 
