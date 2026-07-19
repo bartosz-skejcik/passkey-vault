@@ -32,6 +32,11 @@ e2e-firefox/.ff-screenshots-server-unlock
 # profile/screenshots pair from the three above
 e2e-firefox/.ff-profile-probe-corruption
 e2e-firefox/.ff-screenshots-probe-corruption
+# firefox-request-xray-hole debug session's permanent regression probe
+# (extension/e2e-firefox/probe-request-xray.cjs) -- a SEPARATE
+# profile/screenshots pair from the four above
+e2e-firefox/.ff-profile-probe-request-xray
+e2e-firefox/.ff-screenshots-probe-request-xray
 
 # Editor directories and files
 .vscode/*

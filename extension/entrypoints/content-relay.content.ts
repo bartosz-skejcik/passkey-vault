@@ -431,16 +431,57 @@ function isPageBridgeRequest(data: unknown): data is PageBridgeRequestEnvelope {
   );
 }
 
+/** Firefox-only Xray/cross-realm hazard (debug session
+ * .planning/debug/resolved/firefox-request-xray-hole.md): a page-realm raw
+ * `ArrayBuffer` (NOT a `TypedArray` view -- e.g. GitHub's webauthn-json
+ * library, which sends `challenge`/credential ids as ArrayBuffer) that
+ * crosses the MAIN(page-bridge-firefox.ts, same realm as the page)->
+ * ISOLATED(this file) `window.postMessage` hop on real Firefox arrives
+ * with a broken prototype chain relative to THIS realm's own `ArrayBuffer`
+ * global -- `value instanceof ArrayBuffer` is FALSE even though the value
+ * is a completely intact, genuine ArrayBuffer (confirmed empirically, real
+ * Firefox 152.0.6: `Object.prototype.toString.call(value)` still
+ * correctly reports `"[object ArrayBuffer]"`, and `new Uint8Array(value)`
+ * in THIS realm still reads the exact original bytes byte-for-byte -- only
+ * the `instanceof`/prototype-chain check is broken, never the underlying
+ * data). `ArrayBuffer.isView()` is unaffected by this same hazard (an
+ * internal-slot check, not a prototype-chain check -- also confirmed
+ * cross-realm-safe by the same probe), which is exactly why a
+ * TypedArray-shaped challenge (e.g. `new Uint8Array(32)`, every existing
+ * fixture in this project's own e2e suites) never triggered this bug.
+ * Chrome has no equivalent hazard on this hop (never implicated by this or
+ * the earlier firefox-provider-corruption.md session) -- this check is a
+ * pure widening of detection, never a narrowing, so there is no
+ * browser-specific branch to maintain here. */
+function isCrossRealmArrayBuffer(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Object.prototype.toString.call(value) === "[object ArrayBuffer]"
+  );
+}
+
 function isBufferSource(value: unknown): value is BufferSource {
-  return value instanceof ArrayBuffer || ArrayBuffer.isView(value);
+  return value instanceof ArrayBuffer || ArrayBuffer.isView(value) || isCrossRealmArrayBuffer(value);
 }
 
 /** Base64url (no padding), matching `passkey_types`' own WebAuthn JSON
  * encoding on the Rust side (crates/pv-provider) -- deliberately NOT
  * lib/messaging/bytes-b64.ts's `bytesToB64`, which produces STANDARD
- * base64 (`+`/`/`/`=`) and would fail `passkey_types`' deserializer. */
+ * base64 (`+`/`/`/`=`) and would fail `passkey_types`' deserializer.
+ *
+ * Branches on `ArrayBuffer.isView()`, NOT `instanceof ArrayBuffer` -- see
+ * isCrossRealmArrayBuffer's header comment above: `isView()` is the
+ * cross-realm-safe discriminator; a cross-realm ArrayBuffer's `instanceof
+ * ArrayBuffer` is unreliable (false on Firefox) but `new Uint8Array(input)`
+ * still correctly reads its real bytes regardless of realm, so treating
+ * "not a view" as "must be ArrayBuffer-like" (the only other shape
+ * isBufferSource() ever admits) stays correct for both same-realm and
+ * cross-realm inputs. */
 function bufferSourceToB64Url(input: BufferSource): string {
-  const bytes = input instanceof ArrayBuffer ? new Uint8Array(input) : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+  const bytes = ArrayBuffer.isView(input)
+    ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+    : new Uint8Array(input as ArrayBuffer);
   let binary = "";
   for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i]);

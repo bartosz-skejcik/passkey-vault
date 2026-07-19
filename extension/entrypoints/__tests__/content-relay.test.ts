@@ -582,6 +582,186 @@ describe("content-relay", () => {
       };
       expect(typeof roundTripped.publicKey.extensions.prf.eval.first).toBe("string");
     });
+
+    // Firefox Xray/cross-realm hole fix (debug session .planning/debug/
+    // resolved/firefox-request-xray-hole.md): on real Firefox, a raw
+    // (non-TypedArray) `ArrayBuffer` a page constructs (e.g. GitHub's
+    // webauthn-json library, which sends `challenge`/credential ids as
+    // ArrayBuffer, not TypedArray) crosses the MAIN(page-bridge-firefox.ts)
+    // -> ISOLATED(this file) `window.postMessage` hop with a broken
+    // prototype chain -- `value instanceof ArrayBuffer` is FALSE relative to
+    // THIS file's own `ArrayBuffer` global, even though the value is a
+    // completely intact ArrayBuffer. These tests reproduce that exact
+    // cross-realm identity break WITHOUT needing real Firefox: a hidden
+    // `<iframe>` gives jsdom a genuinely separate JS realm with its own
+    // `ArrayBuffer`/`Uint8Array` globals, so an ArrayBuffer constructed via
+    // `iframe.contentWindow.ArrayBuffer` fails `instanceof ArrayBuffer` in
+    // THIS file's realm exactly the way a real page-realm ArrayBuffer fails
+    // it in content-relay.content.ts's ISOLATED-world realm on real Firefox
+    // (confirmed empirically identical during the debug session's own
+    // real-Firefox probe: instanceof false, `Object.prototype.toString.call`
+    // still "[object ArrayBuffer]", `new Uint8Array(value)` still reads the
+    // real bytes). Every OTHER test in this file uses same-realm
+    // `new Uint8Array([...]).buffer`, which would NOT have caught this bug
+    // (same-realm instanceof always succeeds) -- these tests exist
+    // specifically to close that fixture-coverage gap. Nested inside THIS
+    // describe (rather than a sibling) so `flushMicrotasks()` above stays
+    // in scope -- it's testing the same bridge's same forwarding behavior.
+    describe("cross-realm ArrayBuffer detection (Firefox Xray hole fix)", () => {
+      /** Constructs a real ArrayBuffer filled with `bytes` using a
+       * DIFFERENT jsdom realm's own `ArrayBuffer`/`Uint8Array`
+       * constructors (a hidden iframe's `contentWindow`) --
+       * `result instanceof ArrayBuffer` is `false` against THIS file's
+       * `ArrayBuffer` global, exactly mirroring the real Firefox
+       * MAIN<->ISOLATED postMessage hazard this fix addresses. */
+      function crossRealmArrayBuffer(bytes: number[]): ArrayBuffer {
+        const iframe = document.createElement("iframe");
+        document.body.appendChild(iframe);
+        const otherWin = iframe.contentWindow as unknown as {
+          ArrayBuffer: typeof ArrayBuffer;
+          Uint8Array: typeof Uint8Array;
+        };
+        const buffer = new otherWin.ArrayBuffer(bytes.length);
+        const view = new otherWin.Uint8Array(buffer);
+        bytes.forEach((b, i) => {
+          view[i] = b;
+        });
+        // Sanity: this really is a cross-realm value from THIS file's own
+        // perspective -- if this ever starts passing, jsdom's iframe realm
+        // isolation changed and this whole test technique needs revisiting.
+        if (buffer instanceof ArrayBuffer) {
+          throw new Error("test setup bug: crossRealmArrayBuffer is same-realm, not cross-realm");
+        }
+        return buffer as unknown as ArrayBuffer;
+      }
+
+      it("a cross-realm (non-TypedArray) ArrayBuffer challenge IS base64url-encoded before sendMessage, and survives a JSON round-trip", async () => {
+        const nonce = "nonce-xray-challenge";
+        const challengeBytes = [200, 199, 198, 197, 196];
+        const request: PageBridgeRequestEnvelope = {
+          source: "pv-page-bridge",
+          nonce,
+          kind: "credentials.get",
+          origin: location.origin,
+          publicKey: {
+            rpId: "example.com",
+            challenge: crossRealmArrayBuffer(challengeBytes),
+          },
+        };
+
+        window.dispatchEvent(new MessageEvent("message", { data: request, origin: location.origin, source: window }));
+        await flushMicrotasks();
+
+        expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+        const sentMessage = hoisted.mockSendMessage.mock.calls[0][0];
+        // The exact hop that used to mangle a raw ArrayBuffer into `{}` --
+        // this is the literal mechanism of the bug: pre-fix,
+        // `isBufferSource()` never detected the cross-realm ArrayBuffer, so
+        // `challenge` was forwarded UNTOUCHED and JSON.stringify'd it to `{}`.
+        const roundTripped = JSON.parse(JSON.stringify(sentMessage)) as {
+          publicKey: { challenge: unknown };
+        };
+        expect(typeof roundTripped.publicKey.challenge).toBe("string");
+        expect(roundTripped.publicKey.challenge).not.toEqual({});
+        // Byte-exact: decodes back to the ORIGINAL bytes, proving no
+        // corruption -- only the detection was broken, never the data.
+        const decoded = Buffer.from(roundTripped.publicKey.challenge as string, "base64url");
+        expect(Array.from(decoded)).toEqual(challengeBytes);
+      });
+
+      it("a cross-realm ArrayBuffer user.id IS base64url-encoded (create() flow)", async () => {
+        const nonce = "nonce-xray-userid";
+        const userIdBytes = [1, 2, 3, 4];
+        const request: PageBridgeRequestEnvelope = {
+          source: "pv-page-bridge",
+          nonce,
+          kind: "credentials.create",
+          origin: location.origin,
+          publicKey: {
+            rp: { id: "example.com", name: "Example" },
+            user: { id: crossRealmArrayBuffer(userIdBytes), name: "xray@example.com", displayName: "Xray" },
+          },
+        };
+
+        window.dispatchEvent(new MessageEvent("message", { data: request, origin: location.origin, source: window }));
+        await flushMicrotasks();
+
+        expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+        const sentMessage = hoisted.mockSendMessage.mock.calls[0][0];
+        const roundTripped = JSON.parse(JSON.stringify(sentMessage)) as {
+          publicKey: { user: { id: unknown } };
+        };
+        expect(typeof roundTripped.publicKey.user.id).toBe("string");
+        const decoded = Buffer.from(roundTripped.publicKey.user.id as string, "base64url");
+        expect(Array.from(decoded)).toEqual(userIdBytes);
+      });
+
+      it("a cross-realm ArrayBuffer allowCredentials[].id IS base64url-encoded (get() flow)", async () => {
+        const nonce = "nonce-xray-allowcred";
+        const credIdBytes = [10, 20, 30];
+        const request: PageBridgeRequestEnvelope = {
+          source: "pv-page-bridge",
+          nonce,
+          kind: "credentials.get",
+          origin: location.origin,
+          publicKey: {
+            rpId: "example.com",
+            allowCredentials: [{ type: "public-key", id: crossRealmArrayBuffer(credIdBytes) }],
+          },
+        };
+
+        window.dispatchEvent(new MessageEvent("message", { data: request, origin: location.origin, source: window }));
+        await flushMicrotasks();
+
+        expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+        const sentMessage = hoisted.mockSendMessage.mock.calls[0][0];
+        const roundTripped = JSON.parse(JSON.stringify(sentMessage)) as {
+          publicKey: { allowCredentials: Array<{ id: unknown }> };
+        };
+        expect(typeof roundTripped.publicKey.allowCredentials[0].id).toBe("string");
+        const decoded = Buffer.from(roundTripped.publicKey.allowCredentials[0].id as string, "base64url");
+        expect(Array.from(decoded)).toEqual(credIdBytes);
+      });
+
+      it("a same-realm TypedArray challenge (existing behavior) is UNCHANGED by this fix", async () => {
+        const nonce = "nonce-xray-control-typedarray";
+        const request: PageBridgeRequestEnvelope = {
+          source: "pv-page-bridge",
+          nonce,
+          kind: "credentials.get",
+          origin: location.origin,
+          publicKey: { rpId: "example.com", challenge: new Uint8Array([5, 5, 5]) },
+        };
+
+        window.dispatchEvent(new MessageEvent("message", { data: request, origin: location.origin, source: window }));
+        await flushMicrotasks();
+
+        const sentMessage = hoisted.mockSendMessage.mock.calls[0][0];
+        const roundTripped = JSON.parse(JSON.stringify(sentMessage)) as { publicKey: { challenge: unknown } };
+        expect(typeof roundTripped.publicKey.challenge).toBe("string");
+        const decoded = Buffer.from(roundTripped.publicKey.challenge as string, "base64url");
+        expect(Array.from(decoded)).toEqual([5, 5, 5]);
+      });
+
+      it("a plain object is NOT detected as a BufferSource (no false-positive widening)", async () => {
+        const nonce = "nonce-xray-control-plain-object";
+        const request: PageBridgeRequestEnvelope = {
+          source: "pv-page-bridge",
+          nonce,
+          kind: "credentials.get",
+          origin: location.origin,
+          publicKey: { rpId: "example.com", challenge: { notAnArrayBuffer: true } as unknown },
+        };
+
+        window.dispatchEvent(new MessageEvent("message", { data: request, origin: location.origin, source: window }));
+        await flushMicrotasks();
+
+        const sentMessage = hoisted.mockSendMessage.mock.calls[0][0] as { publicKey: { challenge: unknown } };
+        // Left untouched -- a plain object is not, and must never become, a
+        // BufferSource match.
+        expect(sentMessage.publicKey.challenge).toEqual({ notAnArrayBuffer: true });
+      });
+    });
   });
 
   // Bartek live-UAT bug follow-up (.planning/debug/resolved/
