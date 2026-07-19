@@ -26,6 +26,7 @@ type BridgeState =
   | "success"
   | "no-passkeys"
   | "not-signed-in"
+  | "prf-unavailable"
   | "failed";
 
 interface ExtUnlockResultMessage {
@@ -91,8 +92,12 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
   // exists for postAndWaitForAck's success path would ALSO catch that ack
   // and unconditionally setState("failed") -- silently overwriting an
   // already-correct, deliberately-chosen terminal state (no-passkeys'
-  // empty-state + Settings link, not-signed-in) with the generic failure
-  // copy once the round trip completed a tick later. Only
+  // empty-state + Settings link, not-signed-in, prf-unavailable) with the
+  // generic failure copy once the round trip completed a tick later.
+  // prf-unavailable reaches this same protection the identical structural
+  // way as no-passkeys/not-signed-in: it only ever calls postFailureNotice()
+  // below, never postAndWaitForAck(), so awaitingAckRef.current stays false
+  // for it and this guard's own code needs no change. Only
   // postAndWaitForAck's own ack (the success path) should ever drive a
   // state transition here; postFailureNotice's ack is a fire-and-forget
   // background/popup signal only, never a page-visible one.
@@ -215,10 +220,23 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
           setState("idle");
           return;
         }
+        if (result.prfBrowserGap) {
+          // Server verified the assertion and returned a PRF-capable
+          // prf_wrapped_uk -- the sign-in itself worked -- but THIS
+          // browser's own WebAuthn extension results came back without
+          // PRF bytes (Firefox's documented `{}` gap). Distinct from the
+          // no-passkeys branch below (which now means only "no PRF-capable
+          // credential for this account"); must be checked FIRST since a
+          // browser-gap result also leaves prfBytes/prfWrappedUk undefined.
+          setState("prf-unavailable");
+          postFailureNotice();
+          return;
+        }
         if (result.prfBytes === undefined || result.prfWrappedUk === undefined || result.sessionToken === undefined) {
-          // Two-case collapse (mirrors passkeyLogin's own convention, see
-          // login.ts): zero PRF-capable server passkeys enrolled AND
-          // "ceremony succeeded but no PRF result" both land here.
+          // The browser-gap case is split out above -- this remaining
+          // branch means only "no PRF-capable credential for this account"
+          // (zero PRF-capable server passkeys enrolled, or an otherwise
+          // absent PRF result not attributable to the browser-gap check).
           setState("no-passkeys");
           postFailureNotice();
           return;
@@ -239,12 +257,23 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
         return;
       }
 
+      if (result.prfBrowserGap) {
+        // Server verified the assertion and returned a PRF-capable
+        // prf_wrapped_uk, but THIS browser's own WebAuthn extension results
+        // came back without PRF bytes (Firefox's documented `{}` gap).
+        // Distinct from the no-passkeys branch below (which now means only
+        // "no PRF-capable credential"); must be checked FIRST since a
+        // browser-gap result also leaves prfBytes/prfWrappedUk undefined.
+        setState("prf-unavailable");
+        postFailureNotice();
+        return;
+      }
+
       if (result.prfBytes === undefined || result.prfWrappedUk === undefined) {
-        // Two-case collapse (mirrors passkeyUnlock's own convention, see
-        // login.ts): zero PRF-capable server passkeys enrolled AND "ceremony
-        // succeeded but no PRF result" both land here -- from this
-        // component's point of view both mean "nothing to relay", and the
-        // honest empty-state names the real fix (enroll one in Settings).
+        // The browser-gap case is split out above -- this remaining branch
+        // means only "no PRF-capable credential" (zero PRF-capable server
+        // passkeys enrolled), and the honest empty-state names the real fix
+        // (enroll one in Settings).
         setState("no-passkeys");
         postFailureNotice();
         return;
@@ -335,6 +364,12 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
 
         {state === "not-signed-in" ? (
           <p className="mt-6 text-sm text-base-content/70">{t("extUnlock.notSignedIn")}</p>
+        ) : null}
+
+        {state === "prf-unavailable" ? (
+          <p className="mt-6 text-sm text-base-content/70">
+            {t(mode === "signin" ? "extUnlock.signinPrfUnavailable" : "extUnlock.prfUnavailable")}
+          </p>
         ) : null}
 
         {state === "failed" ? (

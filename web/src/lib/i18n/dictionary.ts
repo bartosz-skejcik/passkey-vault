@@ -146,6 +146,24 @@ export const DICTIONARY = {
     en: "Couldn't sign in with a passkey. Check Settings → Passkeys on this account, or sign in with your password below.",
   },
 
+  // Quick task 260719-sxa (Bartek live finding, Zen Browser/Firefox on
+  // macOS): the ceremony-verified-but-browser-cannot-return-PRF case
+  // (D-03 tone) -- distinct from extUnlock.noPasskeys/extUnlock.signinFailed,
+  // which both mean "no PRF-capable credential exists at all". Here the
+  // passkey DID work (server verified it and returned a PRF-capable
+  // prf_wrapped_uk); THIS browser's own WebAuthn extension results just came
+  // back empty (Firefox's documented `{}` gap -- see
+  // 13-FF-WEBAUTHN-RESEARCH.md), so the message must not imply the passkey
+  // is broken or missing.
+  "extUnlock.prfUnavailable": {
+    pl: "Passkey zadziałał, ale ta przeglądarka nie zwróciła sekretu PRF potrzebnego do odblokowania sejfu (ograniczenie przeglądarki lub urządzenia). Odblokuj hasłem — albo spróbuj w Chrome, gdzie PRF działa.",
+    en: "Your passkey worked, but this browser didn't return the PRF secret needed to unlock your vault (a browser or device limitation). Unlock with your password instead — or try Chrome, where PRF works.",
+  },
+  "extUnlock.signinPrfUnavailable": {
+    pl: "Zalogowano passkeyem, ale ta przeglądarka nie zwróciła sekretu PRF potrzebnego do odblokowania sejfu (ograniczenie przeglądarki lub urządzenia). Zaloguj się hasłem — albo spróbuj w Chrome, gdzie PRF działa.",
+    en: "You signed in with your passkey, but this browser didn't return the PRF secret needed to unlock your vault (a browser or device limitation). Sign in with your password instead — or try Chrome, where PRF works.",
+  },
+
   "vault.emptyHeading": { pl: "Vault jeszcze pusty", en: "Your vault is empty" },
   "vault.emptyBody": {
     pl: "Dodaj pierwszy item — hasło, kartę albo notatkę 👇",
