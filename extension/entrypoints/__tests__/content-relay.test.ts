@@ -152,6 +152,7 @@ function registeredListener(): Listener {
 
 beforeEach(() => {
   document.body.innerHTML = "";
+  delete document.documentElement.dataset.pvCeremonyInFlight;
   hoisted.mockAddListener.mockClear();
   hoisted.storageStore.clear();
   hoisted.mockCaptureThemeFromWebApp.mockClear();
@@ -1153,6 +1154,78 @@ describe("content-relay", () => {
       resolveCeremony({ fallthrough: true });
       await flushMicrotasks();
       expect(received).toContainEqual({ source: "pv-content-relay", nonce: "nonce-still-valid", kind: "fallthrough" });
+    });
+
+    // quick-260720-16k: the DOM-marker race fix -- these three tests prove
+    // `document.documentElement.dataset.pvCeremonyInFlight` alone (set
+    // directly, bypassing postMessage AND passkeyCeremonyInFlight entirely)
+    // is sufficient to block/clear both surfaces, mirroring how
+    // page-bridge.content.ts's relay() writes it in production (a separate
+    // MAIN-world file this test suite does not load).
+    it("Surface A: setting the DOM marker directly (no postMessage/passkeyCeremonyInFlight involved) blocks handleFocusIn's field-dropdown mount", async () => {
+      const { username } = mountLoginForm();
+      wireSendMessage();
+      contentRelay.main({} as never);
+      await flushMicrotasks();
+
+      document.documentElement.dataset.pvCeremonyInFlight = "1";
+
+      username.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      await flushMicrotasks();
+
+      expect(hoisted.mockRenderFieldDropdown).not.toHaveBeenCalled();
+    });
+
+    it("Surface B: setting the DOM marker directly before document-ready blocks the initial form-prompt render", async () => {
+      // Drain the outer beforeEach()'s own `main()` call first -- same
+      // rationale as the "conditional-mediation race" test above.
+      await flushMicrotasks();
+
+      mountLoginForm();
+      wireSendMessage();
+
+      Object.defineProperty(document, "readyState", { value: "loading", configurable: true });
+      try {
+        contentRelay.main({} as never);
+
+        // Set the marker directly (mirroring page-bridge.content.ts's own
+        // synchronous write) instead of dispatching a MessageEvent to flip
+        // passkeyCeremonyInFlight.
+        document.documentElement.dataset.pvCeremonyInFlight = "1";
+
+        document.dispatchEvent(new Event("DOMContentLoaded"));
+        await flushMicrotasks();
+
+        expect(hoisted.mockRenderFormPrompt).not.toHaveBeenCalled();
+      } finally {
+        Object.defineProperty(document, "readyState", { value: "complete", configurable: true });
+      }
+    });
+
+    it("the DOM marker (set externally, mirroring page-bridge's synchronous write) is cleared alongside passkeyCeremonyInFlight on a fallthrough response, and Surface A/B become available again", async () => {
+      const { username } = mountLoginForm();
+      const resolveCeremony = wireSendMessage();
+      contentRelay.main({} as never);
+      await flushMicrotasks();
+
+      // Simulates page-bridge's write -- page-bridge.content.ts is a
+      // separate MAIN-world file this test suite does not load.
+      document.documentElement.dataset.pvCeremonyInFlight = "1";
+
+      window.dispatchEvent(
+        new MessageEvent("message", { data: validRequest("nonce-dom-marker-clear"), origin: location.origin, source: window }),
+      );
+      await flushMicrotasks();
+      hoisted.mockRenderFormPrompt.mockClear();
+
+      resolveCeremony({ fallthrough: true });
+      await flushMicrotasks();
+
+      expect(document.documentElement.dataset.pvCeremonyInFlight).toBeUndefined();
+
+      username.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      await flushMicrotasks();
+      expect(hoisted.mockRenderFieldDropdown).toHaveBeenCalled();
     });
   });
 

@@ -97,6 +97,9 @@ afterEach(() => {
   // or threw, so it never leaks into a later, unrelated test.
   delete (document as unknown as { featurePolicy?: unknown }).featurePolicy;
   delete (document as unknown as { permissionsPolicy?: unknown }).permissionsPolicy;
+  // quick-260720-16k: relay() now sets this DOM marker synchronously -- same
+  // never-leak-into-a-later-test discipline as the two deletes above.
+  delete (document.documentElement as HTMLElement).dataset.pvCeremonyInFlight;
 });
 
 describe("D-20(a): non-configurable accessor", () => {
@@ -252,6 +255,22 @@ describe("D-11 fallthrough: three required cases", () => {
     const result = await promise;
     expect(result).toEqual({ id: "native-create-result" });
     expect(nativeCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("DOM marker for cross-world race-closing (autofill-flash fix, quick-260720-16k)", () => {
+  it("sets document.documentElement.dataset.pvCeremonyInFlight = '1' SYNCHRONOUSLY, before any async postMessage hop settles", async () => {
+    vi.useFakeTimers();
+    const promise = navigator.credentials.get({ publicKey: { rpId: "example.com" } } as CredentialRequestOptions);
+
+    // Asserted BEFORE awaiting the promise or advancing any timers -- proves
+    // the marker is visible in the SAME synchronous tick relay() started,
+    // not after any async delivery.
+    expect(document.documentElement.dataset.pvCeremonyInFlight).toBe("1");
+
+    // Let the no-ack fallthrough settle so this test does not hang.
+    await vi.advanceTimersByTimeAsync(3_000);
+    await promise;
   });
 });
 

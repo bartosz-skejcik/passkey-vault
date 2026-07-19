@@ -841,6 +841,7 @@ async function dispatchProviderCeremony(
   if (await isConfiguredServerOrigin()) {
     postToPage(nonce, { kind: "fallthrough" });
     passkeyCeremonyInFlight = false;
+    delete document.documentElement.dataset.pvCeremonyInFlight;
     overlayCoordinator?.allow();
     return;
   }
@@ -861,11 +862,13 @@ async function dispatchProviderCeremony(
     // NOT complete, so the login overlay is re-offered.
     if (respondedKind !== "credential") {
       passkeyCeremonyInFlight = false;
+      delete document.documentElement.dataset.pvCeremonyInFlight;
       overlayCoordinator?.allow();
     }
   } catch {
     postToPage(nonce, { kind: "error" });
     passkeyCeremonyInFlight = false;
+    delete document.documentElement.dataset.pvCeremonyInFlight;
     overlayCoordinator?.allow();
   }
 }
@@ -1329,13 +1332,19 @@ export default defineContentScript({
     }
 
     async function initialMatchAndPrompt(): Promise<void> {
-      if (passkeyCeremonyInFlight) {
+      if (passkeyCeremonyInFlight || document.documentElement.dataset.pvCeremonyInFlight === "1") {
         // Plan 12-07: a passkey ceremony is already in flight (e.g. a
         // page's conditional-mediation `credentials.get()` fired at
         // document_start, before this document-ready-deferred pass even
         // runs) -- passkey always takes priority, so the login overlay
         // does not mount at all here. `overlayCoordinator.allow()` is what
         // re-offers it if/when the ceremony falls through.
+        // quick-260720-16k: also checks the DOM marker page-bridge.content.ts
+        // sets SYNCHRONOUSLY (before its async postMessage hop) -- closes
+        // the real gap where `passkeyCeremonyInFlight` (only set once
+        // `handleProviderPageMessage` receives that postMessage) could
+        // still be `false` for a brief window a `DOMContentLoaded`-timed
+        // initial mount could race ahead of.
         return;
       }
 
@@ -1398,12 +1407,14 @@ export default defineContentScript({
         return; // not a field this content-relay would ever offer to fill
       }
 
-      if (passkeyCeremonyInFlight) {
+      if (passkeyCeremonyInFlight || document.documentElement.dataset.pvCeremonyInFlight === "1") {
         // Plan 12-07: a passkey ceremony is in flight -- Surface A does not
         // mount for the duration (same passkey-priority rule as Surface B
         // above). The generate-password trigger branch above this point is
         // a SEPARATE affordance (not part of the login overlay) and is
         // deliberately unguarded.
+        // quick-260720-16k: also checks the DOM marker (see
+        // initialMatchAndPrompt's identical comment above).
         return;
       }
 
