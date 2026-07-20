@@ -17,6 +17,34 @@
     "./generator/wordlist": {
       "types": "./generator/wordlist.ts",
       "default": "./generator/wordlist.ts"
+    },
+    "./vault/cardBrand": {
+      "types": "./vault/cardBrand.ts",
+      "default": "./vault/cardBrand.ts"
+    },
+    "./vault/search": {
+      "types": "./vault/search.ts",
+      "default": "./vault/search.ts"
+    },
+    "./vault/sort": {
+      "types": "./vault/sort.ts",
+      "default": "./vault/sort.ts"
+    },
+    "./vault/types": {
+      "types": "./vault/types.ts",
+      "default": "./vault/types.ts"
+    },
+    "./clipboard": {
+      "types": "./clipboard.ts",
+      "default": "./clipboard.ts"
+    },
+    "./i18n/engine": {
+      "types": "./i18n/engine.ts",
+      "default": "./i18n/engine.ts"
+    },
+    "./i18n/common": {
+      "types": "./i18n/common.ts",
+      "default": "./i18n/common.ts"
     }
   }
 }
