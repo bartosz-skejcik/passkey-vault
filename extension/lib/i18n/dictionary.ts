@@ -102,9 +102,12 @@ export const DICTIONARY = {
     pl: "Zaloguj passkeyem przez stronę serwera",
     en: "Sign in with a passkey via your server",
   },
+  // Phase 15 (Plan 15-03): the trailing "or use your password" clause is
+  // stale under the window-based sign-in model -- the popup's own
+  // SignInView.tsx has no password field to fall back to (AUTH-01).
   "unlock.serverCeremonySigninFailed": {
-    pl: "Nie udało się zalogować przez stronę serwera. Spróbuj ponownie albo użyj hasła.",
-    en: "Couldn't sign in via your server. Try again — or use your password.",
+    pl: "Nie udało się zalogować przez stronę serwera. Spróbuj ponownie.",
+    en: "Couldn't sign in via your server. Try again.",
   },
 
   // --- Extension-scoped PRF passkey (AMENDMENT 2026-07-15, verbatim) ---
