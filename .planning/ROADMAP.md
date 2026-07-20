@@ -309,7 +309,7 @@ Plans:
   2. A single i18n resolver (`t`/`interpolate`/`Locale`/`resolveLocale`) lives in `pv-ui`; the web app and extension both call the same engine, with dictionary keys split per surface where needed.
   3. No parallel duplicate implementation of any migrated module remains in `web/` or `extension/` — verified by search, not assumed.
 
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans executed
 Plans:
 **Wave 1**
 
@@ -327,7 +327,7 @@ Plans:
 
 **Wave 4** *(blocked on Waves 2-3 completion)*
 
-- [ ] 16-06-PLAN.md — phase-gate: repo-wide zero-duplication grep + full build/test suite both consumers
+- [x] 16-06-PLAN.md — phase-gate: repo-wide zero-duplication grep + full build/test suite both consumers
 
 **UI hint**: no
 
@@ -408,7 +408,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 13. Dual-Browser Hardening | v0.2 | 7/7 | Complete    | 2026-07-20 |
 | 14. Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification | v0.3 | 3/3 | Complete    | 2026-07-20 |
 | 15. Login & Unlock Unification (Vaultwarden Model) | v0.3 | 7/7 | Complete    | 2026-07-20 |
-| 16. Design System Extraction — Logic, Types & i18n | v0.3 | 5/6 | In Progress|  |
+| 16. Design System Extraction — Logic, Types & i18n | v0.3 | 6/6 | In Progress|  |
 | 17. Shared Component & Visual Alignment | v0.3 | 0/TBD | Not started | - |
 | 18. Firefox Window & Consent Hardening | v0.3 | 0/TBD | Not started | - |
 | 19. Server & Supply-Chain Hardening | v0.3 | 0/TBD | Not started | - |
