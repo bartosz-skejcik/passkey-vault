@@ -249,12 +249,12 @@ Plans:
   3. A Rust integration test feeds a provider-produced registration and authentication ceremony through an independent `webauthn-rs` verifier, and the assertion signature verifies over the real challenge — not a shape/`.ok`/`id`-only check.
   4. `.planning/debug/firefox-request-xray-hole.md` is git-tracked, resolved, and mirrored into STATE.md's Deferred/Resolved history so the record cannot be silently lost again.
 
-**Plans:** 3 plans
+**Plans:** 2/3 plans executed
 Plans:
 **Wave 1**
 
-- [ ] 14-01-PLAN.md — QA-03: independent webauthn-rs round-trip verification test for pv-provider's ceremony
-- [ ] 14-02-PLAN.md — XBR-02: live-Firefox differential root-cause probe + MAIN-world response-direction re-materialization fix
+- [x] 14-01-PLAN.md — QA-03: independent webauthn-rs round-trip verification test for pv-provider's ceremony
+- [x] 14-02-PLAN.md — XBR-02: live-Firefox differential root-cause probe + MAIN-world response-direction re-materialization fix
 
 **Wave 2** *(blocked on 14-01 and 14-02 completion)*
 
@@ -366,7 +366,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 11. Generate & Capture | v0.2 | 9/9 | Complete    | 2026-07-16 |
 | 12. Passkey Provider | v0.2 | 7/7 | Complete    | 2026-07-17 |
 | 13. Dual-Browser Hardening | v0.2 | 7/7 | Complete    | 2026-07-20 |
-| 14. Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification | v0.3 | 0/TBD | Not started | - |
+| 14. Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification | v0.3 | 2/3 | In Progress|  |
 | 15. Login & Unlock Unification (Vaultwarden Model) | v0.3 | 0/TBD | Not started | - |
 | 16. Design System Extraction — Logic, Types & i18n | v0.3 | 0/TBD | Not started | - |
 | 17. Shared Component & Visual Alignment | v0.3 | 0/TBD | Not started | - |
