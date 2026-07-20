@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Same "mock every dependency, run this file's own logic for real"
-// discipline as ext-passkey.test.ts/unlock.test.ts. wxt/browser is a real
+// discipline as unlock.test.ts. wxt/browser is a real
 // Map-backed fake for storage.session (this module's pending-record home,
 // NEVER storage.local) plus spy-able alarms/windows/runtime.sendMessage.
 const hoisted = vi.hoisted(() => {

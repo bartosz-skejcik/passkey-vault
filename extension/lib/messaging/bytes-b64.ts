@@ -12,9 +12,8 @@
 // boundary.
 //
 // btoa/atob-based (no Buffer dependency) -- same pattern already used in
-// entrypoints/background/auth-api.ts, entrypoints/background/ext-passkey.ts,
-// lib/passkeys/prf.ts, and lib/passkeys/ext-prf.ts. Deliberately NOT a
-// re-export of any of those: this module must be importable from BOTH the
+// entrypoints/background/auth-api.ts. Deliberately NOT a
+// re-export of that module: this module must be importable from BOTH the
 // popup and the background without pulling in background-only modules
 // (server-config.ts/session-storage.ts) into a popup bundle (D-05) -- pure,
 // no browser-runtime APIs beyond the universally-available btoa/atob.

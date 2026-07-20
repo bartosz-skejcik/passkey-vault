@@ -165,8 +165,8 @@ export function login(body: {
 // existing valid token, consistent with UNLOCK-ONLY: no unauthenticated
 // variant exists or is needed. `credential_id`/`prf_salt` are already
 // base64url/base64-encoded strings on the wire; this file never decodes
-// them (that's ext-passkey.ts's/ext-prf.ts's job) -- it is a thin transport
-// layer, same as every other export in this file.
+// them -- it is a thin transport layer, same as every other export in
+// this file.
 
 export interface ExtensionPasskeyRow {
   /** base64url (URL_SAFE_NO_PAD). */

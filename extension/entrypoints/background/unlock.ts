@@ -10,10 +10,12 @@
 // unreachable-by-construction — a `chrome-extension://` popup gets a
 // SecurityError from `navigator.credentials.get()` for any web RP ID, which
 // is exactly why 09-CONTEXT AMENDMENT 2026-07-15 pivoted to an
-// extension-scoped PRF passkey. That path lives in ./ext-passkey.ts; see
-// lib/messaging/ext-protocol.ts's header for the full rationale. This file
-// is now the PASSWORD path only (unlock-only + sign-in), and never touches
-// a WebAuthn DOM API or a live `PublicKeyCredential`.
+// extension-scoped PRF passkey. That path was itself hard-removed in AUTH-03
+// (Plan 15-04) in favor of the server-origin ceremony window
+// (server-unlock.ts); see lib/messaging/ext-protocol.ts's header for the
+// full rationale. This file is now the PASSWORD path only (unlock-only +
+// sign-in), and never touches a WebAuthn DOM API or a live
+// `PublicKeyCredential`.
 import { prelogin, me, login, base64Encode, base64Decode, ApiClientError } from "./auth-api";
 import { deriveAuthMaterial, initCrypto, unwrapUserKey, WasmWrappingKey } from "../../lib/crypto/wasm-loader";
 import { setUnlockedUserKey } from "./vault-session";

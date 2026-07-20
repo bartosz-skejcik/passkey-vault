@@ -99,8 +99,8 @@ vi.mock("./autolock", () => ({
 // WR-08: unlock.ts's four web-RP PRF handlers (and the tests that covered
 // them) are gone -- a chrome-extension:// popup cannot run a web-RP
 // ceremony, so they were unreachable by construction. This file is now the
-// password path's cover only; the extension-scoped PRF path is tested in
-// ./ext-passkey.test.ts.
+// password path's cover only; the extension-scoped PRF path was hard-removed
+// in AUTH-03 (Plan 15-04), superseded by the server-origin ceremony window.
 import { handleUnlockPassword } from "./unlock";
 
 const FAKE_KDF = { m_cost_kib: 1, t_cost: 1, p_cost: 1 };

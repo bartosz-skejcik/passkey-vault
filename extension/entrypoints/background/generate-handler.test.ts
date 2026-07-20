@@ -10,7 +10,7 @@
 //
 // No `WxtVitest`/`@webext-core/fake-browser` here: neither is wired into
 // this project (confirmed by grep across every existing background test --
-// autofill-frame.test.ts, router.test.ts, ext-passkey.test.ts, etc. --
+// autofill-frame.test.ts, router.test.ts, etc. --
 // each mocks `wxt/browser` directly via `vi.mock`). Introducing a second,
 // differently-styled mocking mechanism for this one file would be a new,
 // undocumented pattern with no precedent; the existing direct-mock approach
