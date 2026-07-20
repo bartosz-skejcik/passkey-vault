@@ -249,7 +249,7 @@ Plans:
   3. A Rust integration test feeds a provider-produced registration and authentication ceremony through an independent `webauthn-rs` verifier, and the assertion signature verifies over the real challenge — not a shape/`.ok`/`id`-only check.
   4. `.planning/debug/firefox-request-xray-hole.md` is git-tracked, resolved, and mirrored into STATE.md's Deferred/Resolved history so the record cannot be silently lost again.
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans executed
 Plans:
 **Wave 1**
 
@@ -258,7 +258,7 @@ Plans:
 
 **Wave 2** *(blocked on 14-01 and 14-02 completion)*
 
-- [ ] 14-03-PLAN.md — XBR-02 regression coverage (jsdom test + hard-gated probe-request-xray.cjs) + full gate suite confirmation + debug-doc record hygiene
+- [x] 14-03-PLAN.md — XBR-02 regression coverage (jsdom test + hard-gated probe-request-xray.cjs) + full gate suite confirmation + debug-doc record hygiene
 
 **UI hint**: no
 
@@ -366,7 +366,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 11. Generate & Capture | v0.2 | 9/9 | Complete    | 2026-07-16 |
 | 12. Passkey Provider | v0.2 | 7/7 | Complete    | 2026-07-17 |
 | 13. Dual-Browser Hardening | v0.2 | 7/7 | Complete    | 2026-07-20 |
-| 14. Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification | v0.3 | 2/3 | In Progress|  |
+| 14. Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification | v0.3 | 3/3 | In Progress|  |
 | 15. Login & Unlock Unification (Vaultwarden Model) | v0.3 | 0/TBD | Not started | - |
 | 16. Design System Extraction — Logic, Types & i18n | v0.3 | 0/TBD | Not started | - |
 | 17. Shared Component & Visual Alignment | v0.3 | 0/TBD | Not started | - |
