@@ -1,68 +1,77 @@
-# Requirements: Passkey Vault — v0.2 Browser Extension
+# Requirements: Passkey Vault — v0.3 Polish & Hardening
 
-> Milestone v0.2. Continues from v0.1 (server + web app, shipped 2026-07-14). The extension
-> surfaces the existing v0.1 vault/crypto/sync onto third-party web pages. Zero-knowledge is
-> preserved throughout: no key material or plaintext ever reaches a page's MAIN world.
-> Requirement archive for v0.1: `milestones/v0.1-REQUIREMENTS.md`.
+> Milestone v0.3. Continues from v0.2 (browser extension: provider + autofill + dual-browser,
+> phases 8–13, sealed 2026-07-20). v0.3 consolidates: one login model (Vaultwarden-style —
+> full sign-in through a window, popup = unlock only), one design system / component source of
+> truth (extension pulls from the frontend via `packages/pv-ui` wherever architecture allows),
+> in-page visual consistency, and the technical-debt + hidden-risk backlog surfaced during v0.2's
+> live-debugging run (see `.planning/research/v0.3/CODEBASE-GAPS.md` and
+> `DESIGN-SYSTEM-UNIFICATION.md`). Zero-knowledge is preserved throughout; the Phase-12 SECURED
+> posture must not regress.
+>
+> **v0.2 (complete):** EXT-01..06, PROV-01..05, FILL-01..04, CAP-01/02/03, XBR-01 — all delivered
+> and verified; full history in `.planning/phases/08..13`, requirement archive in
+> `milestones/v0.2-REQUIREMENTS.md`. Not formally milestone-closed (no cleanup/retrospective) by
+> explicit choice — full implementation history kept until v1.0.
 
-## v0.2 Requirements
+## v0.3 Requirements
 
-### EXT — Extension foundation
+### AUTH — Login & Unlock Model (Vaultwarden-style)
 
-- [x] **EXT-01**: Extension loads in Chrome and Firefox (WXT MV3) and runs `pv-core`/`pv-wasm` crypto in the background service worker
-- [x] **EXT-02**: User unlocks the vault from the popup with the master password (and with a PRF passkey where the browser supports it); the unlocked User Key is held in `chrome.storage.session` (never `storage.local`) and survives service-worker idle-termination within the session
-- [x] **EXT-03**: The session key auto-locks — cleared after a configurable idle timeout and on browser close — so an unlocked vault never persists indefinitely
-- [x] **EXT-04**: In the popup the user can browse, search, and pick any vault item, backed by the existing `pv-server` REST API and WebSocket sync (multi-device revisions honored)
-- [x] **EXT-05**: The extension is ONE public build (Chrome Web Store / AMO) that connects to the user's OWN self-hosted `pv-server` — on first run the user configures their server URL (stored in the extension), it is validated (reachable / `healthz`), and all REST + WebSocket traffic targets that URL; the self-hosted server allowlists the single fixed published extension origin via CORS. No server URL is hard-coded.
-- [x] **EXT-06**: The popup (icon click) offers a "fullscreen / open full vault" action that opens the configured server's v0.1 web-app frontend in a new browser tab — so the popup stays a focused surface and the full vault-management UI is NOT re-implemented inside the extension
+- [ ] **AUTH-01**: Full sign-in to the extension ALWAYS runs through the server-origin ceremony window on both browsers; the popup no longer offers password sign-in — the popup is unlock-only. One login path, matching the Vaultwarden model.
+- [ ] **AUTH-02**: The popup's unlock surface offers master-password unlock and passkey unlock (the latter via the ceremony window), with no full-login / no-session affordance inside the popup itself.
+- [ ] **AUTH-03**: Vault unlock is unified onto the server-origin passkey ceremony (research option 2) — the ext-scoped PRF unlock path is retired or explicitly documented as removed — so there is a single unlock mechanism across both browsers.
+- [ ] **AUTH-04**: Reconfiguring the server URL while a session or host-permission already exists is handled cleanly — the old session/host-permission is invalidated or migrated with no stranded state (closes v0.2 deferred row V-04).
 
-### PROV — Passkey provider
+### DS — Unified Design System & Components
 
-- [x] **PROV-01**: On a third-party site, `navigator.credentials.create()` registers a new passkey that is stored in the user's vault (ES256 soft authenticator via `passkey-rs`)
-- [x] **PROV-02**: On a third-party site, `navigator.credentials.get()` logs the user in with a passkey saved in their vault
-- [x] **PROV-03**: When the user declines, or the vault holds no matching credential, the extension falls through cleanly to the native OS authenticator (never dead-ends the ceremony)
-- [x] **PROV-04**: PRF is used where the browser allows it (Chromium-first); on Firefox / where PRF is unavailable the flow degrades honestly with a clear fallback
-- [x] **PROV-05**: The page-injected `navigator.credentials` patch is a key-free RPC shim — no User Key, PRF output, or plaintext ever crosses into the MAIN world; all crypto runs in the background (zero-knowledge; gated by a security review)
+- [ ] **DS-01**: Pure shared logic + types (card-brand detection, domain/search helpers, sort comparator, clipboard, vault item type shapes) live once in `packages/pv-ui`; the extension consumes them via re-export shims — no parallel duplicate copies remain.
+- [ ] **DS-02**: A shared i18n engine lives in `pv-ui`; the web app and the extension consume the same resolver (dictionary keys may be split per surface) rather than duplicating it.
+- [ ] **DS-03**: `ItemIconTile` exists once as a shared React component in `pv-ui`, consumed by both the web app and the extension popup (single source of truth for the favicon / brand tile).
+- [ ] **DS-04**: The in-page overlays consume `pv-ui` design tokens as their single style source (token-aligned); their imperative closed-shadow implementation stays separate by design, but no design values are duplicated.
 
-### FILL — Autofill (full vault)
+### UX — In-Page & Window Polish
 
-- [x] **FILL-01**: The extension detects login forms and offers to fill the saved username + password for the current origin
-- [x] **FILL-02**: The extension fills (or copies) the live TOTP code into a 2FA field for the current origin
-- [x] **FILL-03**: The extension fills credit-card fields (number, expiry, CVV, cardholder) from a saved card item
-- [x] **FILL-04**: The extension fills identity fields (name, address, email, phone — Tożsamości) from a saved identity item
+- [ ] **UX-01**: The in-page autofill surfaces (Surface A in-field dropdown + Surface B prompt) render item logos on a LIGHT tile, matching the web `ItemIconTile` and the popup — no more dark-tile inconsistency.
+- [ ] **UX-02**: The Firefox consent + ceremony windows are centered over the active window, sized to their content, and self-close on resolution — formalized and regression-guarded (carries v0.2's window-polish work into a verified requirement).
 
-### CAP — Generate & capture
+### XBR — Cross-Browser Hardening
 
-- [x] **CAP-01**: On a signup/registration form, the extension offers a generated strong password (reusing the v0.1 generator, character + passphrase modes)
-- [x] **CAP-02**: After a successful submit/login, the extension prompts the user to save the new login to the vault, attributed to the correct origin
-- [x] **CAP-03**: When the user changes a password on a site with an existing saved login, the extension detects it and offers to update the stored item
+- [ ] **XBR-02**: Response-direction cross-realm binary integrity on Firefox — WebAuthn credential fields returned to the page (`rawId`, `clientDataJSON`, `attestationObject`, `signature`, `authenticatorData`) are genuine same-realm `ArrayBuffer`s (or contract-equivalent); root-caused, fixed, byte-asserted in the harness, and the tracking doc git-tracked.
+- [ ] **XBR-03**: (Decision-gated) In-page provider consent on Firefox — evaluate a closed-shadow-DOM consent panel as an alternative to the consent window, with clickjack mitigations, ONLY if a fresh security review confirms it preserves the SECURED posture; otherwise the window model stands and this is documented as rejected-with-reason.
 
-### XBR — Cross-browser
+### SEC — Server & Supply-Chain Hardening
 
-- [x] **XBR-01**: Chrome and Firefox reach feature parity — or Firefox degrades explicitly and legibly where an API/PRF capability differs — verified in a dedicated dual-browser hardening pass
+- [ ] **SEC-01**: The pv-server CORS layer explicitly lists `Authorization` (and every header the extension actually sends) in `Access-Control-Allow-Headers` instead of the wildcard `*`, which Firefox does not let cover `Authorization`.
+- [ ] **SEC-02**: The `moz-extension://*` scheme-wildcard in the CORS allowlist (D-10 tech-debt) is replaced with concrete per-install origins; a bare `*` remains fatal (WR-07 preserved).
+- [ ] **SEC-03**: A supply-chain tripwire (`cargo audit` / `cargo deny`) runs in the toolchain, and the Rust toolchain + key crypto/auth crate versions (passkey-rs, webauthn-rs, openssl-sys, argon2/chacha/hkdf, getrandom) are pinned and reviewed.
+- [ ] **SEC-04**: The WebAuthn sign-count clone-detection signal is acted on (surfaced / logged / flagged) rather than discarded — the counter is already persisted; the anomaly signal must not be dropped.
 
-## Future Requirements (deferred beyond v0.2)
+### QA — Test Rigor & CI
 
-### Extension polish (v0.2.x)
+- [ ] **QA-01**: A CI pipeline (`.github/workflows`) runs the full gate — cargo workspace tests, extension vitest, web vitest, tsc (both), both wxt builds, web-ext lint, and the MAIN-world boundary audit — on push / PR.
+- [ ] **QA-02**: The manual real-Firefox probes (server-unlock, provider-corruption, request-xray, CSP-strict) are each wired to an npm script and documented as a harness lane — no orphan probe files reachable only by hand.
+- [ ] **QA-03**: The passkey provider has a real `webauthn-rs` round-trip test that verifies an actual assertion/attestation (real bytes, real signature verification) — not shape/`.ok`/`id`-only assertions — closing the fixture blind spot that hid the v0.2 serialization bug.
+- [ ] **QA-04**: Rust WebAuthn response serialization has a unit gate asserting base64url byte shape for every binary field, and the cross-realm harness asserts real recovered bytes (not merely presence).
 
-- [ ] Icon-in-field indicator polish and right-click context-menu quick actions
-- [ ] Cross-origin iframe card-field autofill parity (niche complexity)
+## Future Requirements (deferred beyond v0.3)
+
+### v1.0 hardening
+- OPAQUE migration for password login (currently hash-after-KDF)
+- Full security audit of the hand-rolled crypto boundary before v1.0
+- Milestone cleanup + retrospective for v0.2 / v0.3 (phase-dir archival — deliberately deferred to keep full implementation history until v1.0)
 
 ### v1+
+- Sharing (encrypted links + family sharing), Password Health + breach monitor, attachments (disk storage trait), FIDO CXF import/export, email-masking integration — carried from v0.2 Active/Future.
 
-- [ ] Breach monitor / Password-Health surfaced in-extension (belongs to its own PROJECT.md item, web-app-first)
-- [ ] FIDO CXF import/export inside the extension UI (belongs to the vault data layer)
-- [ ] `chrome.webAuthenticationProxy`-based provider path (revisit only if w3c/webextensions#361 standardizes)
-
-## Out of Scope
+## Out of Scope (v0.3)
 
 | Feature | Reason |
 |---------|--------|
-| Mobile providers (Android CredentialProviderService, iOS ASCredentialProvider), Windows plugin | v2 per PROJECT.md platform order (web → extension → mobile) |
-| Sharing / family collections | Separate tracked PROJECT.md item, not part of the extension milestone |
-| Auto-submit login forms after fill | Anti-feature — breaks on many sites, security-surprising; fill only, user submits |
-| Storing/patching for non-WebAuthn 2FA (push, SMS) | Out of the passkey/vault model |
-| A second, divergent crypto implementation in JS | Reuse `pv-core`/`pv-wasm` only — the single grep-auditable crypto boundary is a v0.1 invariant |
+| New end-user features | v0.3 is polish / hardening / consolidation only; feature work resumes v1+ |
+| Big-bang design-system rewrite | DS work is incremental extraction into `pv-ui` (logic → i18n → components), never a from-scratch rebuild |
+| React components inside the in-page overlays | Deliberate phase-10/11 architectural line — imperative closed-shadow stays; token-aligned only |
+| Mobile / Windows providers, Bitwarden API compat, enterprise (SSO/SCIM/orgs), S3 attachments, RSA key layer | Unchanged from prior milestones (v2 / out of scope) |
 
 ## Traceability
 
@@ -70,22 +79,23 @@ Filled by the roadmapper.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EXT-01 | Phase 8 | Complete |
-| EXT-02 | Phase 9 | Complete |
-| EXT-03 | Phase 9 | Complete |
-| EXT-04 | Phase 9 | Complete |
-| EXT-05 | Phase 9 | Complete |
-| EXT-06 | Phase 9 | Complete |
-| PROV-01 | Phase 12 | Complete |
-| PROV-02 | Phase 12 | Complete |
-| PROV-03 | Phase 12 | Complete |
-| PROV-04 | Phase 12 | Complete |
-| PROV-05 | Phase 12 | Complete |
-| FILL-01 | Phase 10 | Complete |
-| FILL-02 | Phase 10 | Complete |
-| FILL-03 | Phase 10 | Complete |
-| FILL-04 | Phase 10 | Complete |
-| CAP-01 | Phase 11 | Complete |
-| CAP-02 | Phase 11 | Complete |
-| CAP-03 | Phase 11 | Complete |
-| XBR-01 | Phase 13 | Complete |
+| AUTH-01 | — | Pending |
+| AUTH-02 | — | Pending |
+| AUTH-03 | — | Pending |
+| AUTH-04 | — | Pending |
+| DS-01 | — | Pending |
+| DS-02 | — | Pending |
+| DS-03 | — | Pending |
+| DS-04 | — | Pending |
+| UX-01 | — | Pending |
+| UX-02 | — | Pending |
+| XBR-02 | — | Pending |
+| XBR-03 | — | Pending |
+| SEC-01 | — | Pending |
+| SEC-02 | — | Pending |
+| SEC-03 | — | Pending |
+| SEC-04 | — | Pending |
+| QA-01 | — | Pending |
+| QA-02 | — | Pending |
+| QA-03 | — | Pending |
+| QA-04 | — | Pending |
