@@ -117,3 +117,17 @@ export async function writeKeyEnvelope(envelope: KeyEnvelope): Promise<void> {
 export async function clearKeyEnvelope(): Promise<void> {
   await browser.storage.session.remove(KEY_STORAGE_KEY);
 }
+
+/**
+ * AUTH-04: removes ONLY the session-meta record (token/email/idle-minutes/
+ * wasAutoLocked). This is the file's first-ever full-meta-delete code path
+ * -- every prior write to this record either created it (writeSessionMeta)
+ * or updated it in place (lockVaultSession's wasAutoLocked flip); nothing
+ * before this plan ever deleted it outright. Called by
+ * signOutVaultSession() (./vault-session.ts) as the LAST step of a full
+ * sign-out, distinct from clearKeyEnvelope() above which an auto-lock also
+ * calls but which deliberately leaves this record intact.
+ */
+export async function clearSessionMeta(): Promise<void> {
+  await browser.storage.session.remove(META_STORAGE_KEY);
+}

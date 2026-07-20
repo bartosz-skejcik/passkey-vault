@@ -127,6 +127,18 @@ export function me(): Promise<{ user_id: string; email: string; pw_wrapped_uk: s
   return apiJson("/api/auth/me", { method: "GET" });
 }
 
+// AUTH-04: the first client code path to ever call this pre-existing,
+// previously-unused server route (crates/pv-server/src/routes/auth.rs's
+// `logout` handler, SessionUser-gated, deletes the session row by
+// token_hash, returns 204). `apiJson`'s existing 204-handling (above)
+// already resolves this to `undefined` with no changes needed here.
+// Called by signOutVaultSession() (./vault-session.ts) as a best-effort
+// step BEFORE local state is cleared -- see that function's own comment
+// for the full ordering rationale.
+export function logout(): Promise<void> {
+  return apiJson("/api/auth/logout", { method: "POST" });
+}
+
 // UNAUTHENTICATED -- the only thing that mints a bearer token; register() is
 // NOT ported (account creation stays web-app-only per CONTEXT.md).
 export function login(body: {
