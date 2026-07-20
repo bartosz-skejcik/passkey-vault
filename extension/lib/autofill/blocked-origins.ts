@@ -8,12 +8,9 @@
 // directly (the same choke-point-free storage access content-relay.
 // content.ts and inpage-overlay.ts already use) rather than routing
 // through a background message. `storage.local` is already declared in
-// the manifest (background/ext-passkey.ts's own PROMPT_SUPPRESSED_KEY use)
-// -- no new permission needed.
+// the manifest -- no new permission needed.
 //
-// Storage shape mirrors ext-passkey.ts's own single-key JSON-value
-// convention (readExtPasskeyPromptSuppressed/setExtPasskeyPromptSuppressed,
-// ~276-283 there): one storage.local key holding a plain string[] (Sets
+// Storage shape: one storage.local key holding a plain string[] (Sets
 // aren't structured-cloneable through chrome.storage), rehydrated into a
 // Set on read for O(1) membership checks.
 //

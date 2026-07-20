@@ -101,15 +101,6 @@ vi.mock("./session-storage", () => ({
 vi.mock("./unlock", () => ({
   handleUnlockPassword: vi.fn(),
 }));
-vi.mock("./ext-passkey", () => ({
-  handleExtEnrollStart: vi.fn(),
-  handleExtEnrollFinish: vi.fn(),
-  handleExtPrfUnlockStart: vi.fn(),
-  handleExtPrfUnlockFinish: vi.fn(),
-  hasEnrolledExtPasskey: vi.fn().mockResolvedValue(false),
-  readExtPasskeyPromptSuppressed: vi.fn().mockResolvedValue(false),
-  setExtPasskeyPromptSuppressed: vi.fn(),
-}));
 vi.mock("./server-config", () => ({
   readServerConfig: vi.fn(),
   configureServer: vi.fn(),

@@ -176,8 +176,7 @@ export type ServerUnlockStartResult =
  * Guards BOTH preconditions before doing any I/O: a configured server base
  * URL (nowhere to open the ceremony window otherwise) and a mode-dependent
  * session precondition. `unlock` mode is 13-06's original guard, unchanged:
- * an actually-locked session with an EXISTING token (this recipient is
- * unlock-only, exactly like ext-passkey.ts's handleExtPrfUnlockFinish).
+ * an actually-locked session with an EXISTING token, unlock-only.
  * `signin` mode (13-07) is the OPPOSITE precondition -- NO existing
  * session-meta record at all, mirroring `auth.signIn.password`'s own
  * fresh-install/no-session-only contract (unlock.ts's `handleUnlockPassword`,
@@ -456,8 +455,7 @@ export async function completeServerUnlock(
       await setUnlockedUserKey(uk, args.accountEmail as string, args.token as string, DEFAULT_AUTOLOCK_MINUTES);
     } else {
       // Existing token/email/idle-minutes are unchanged by this unlock --
-      // read them rather than re-deriving, mirrors ext-passkey.ts's
-      // handleExtPrfUnlockFinish exactly.
+      // read them rather than re-deriving.
       const meta = await readSessionMeta();
       if (meta === null) {
         await closeWindowIfAny(pending);

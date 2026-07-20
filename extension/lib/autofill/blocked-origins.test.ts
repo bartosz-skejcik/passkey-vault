@@ -1,8 +1,7 @@
 // lib/autofill/blocked-origins.test.ts — proves the add -> isBlocked
 // round-trip and that an unknown origin reads as not-blocked. Mocks
-// wxt/browser with a real Map-backed fake for storage.local, same pattern
-// entrypoints/background/ext-passkey.test.ts uses, so this file's own
-// read/write logic runs for real against the fake store.
+// wxt/browser with a real Map-backed fake for storage.local, so this
+// file's own read/write logic runs for real against the fake store.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const hoisted = vi.hoisted(() => ({

@@ -1889,9 +1889,8 @@ describe("content-relay", () => {
   // origin at all -- letting navigator.credentials.get/create stay
   // genuinely native there. `import.meta.env.FIREFOX` is fixed `false` in
   // this (Chrome-oriented) jsdom test build and cannot be toggled per-test
-  // (EnrollExtPasskeyPrompt.test.tsx's own documented limitation, same
-  // per-module `import.meta` constraint) -- this is therefore a structural
-  // source check, mirroring that file's own precedent; the actual runtime
+  // (a `import.meta` constraint shared by any jsdom-built test file in this
+  // project) -- this is therefore a structural source check; the actual runtime
   // behavior (a real Firefox build, `import.meta.env.FIREFOX === true`) is
   // verified by extension/e2e-firefox/run-server-unlock.cjs's
   // assertNativeWebAuthn() (P13-06-NATIVE-WEBAUTHN / P13-07-NATIVE-WEBAUTHN).

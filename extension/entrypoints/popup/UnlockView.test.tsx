@@ -44,8 +44,6 @@ function lockedStatus(overrides: Partial<LockedStatus> = {}): LockedStatus {
     kind: "locked",
     wasAutoLocked: false,
     autoLockMinutes: 15,
-    extPasskeyEnrolled: false,
-    extPasskeyPromptSuppressed: false,
     ...overrides,
   };
 }

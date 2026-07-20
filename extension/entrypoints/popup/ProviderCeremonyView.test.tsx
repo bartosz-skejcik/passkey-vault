@@ -2,8 +2,8 @@
 // behaviors: layout/state rendering per 12-UI-SPEC.md, the PRF-note
 // visibility matrix (D-16), and dismissal-as-decline (D-11). This
 // component is pure/fully-controlled -- every test drives it directly via
-// props, exactly like UnlockView.test.tsx/EnrollExtPasskeyPrompt.test.tsx's
-// own precedent for a presentational popup view.
+// props, exactly like UnlockView.test.tsx's own precedent for a
+// presentational popup view.
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import ProviderCeremonyView, {
