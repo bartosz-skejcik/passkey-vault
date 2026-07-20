@@ -55,6 +55,7 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 - ✓ Critical risk closure (pierwsza faza v0.3, risk-first): XBR-02 root-caused — response-direction `instanceof:false` to artefakt pomiaru WebDriver/executeScript (inline-script fixture: `instanceof:true` nawet pre-fix); MAIN-world re-materializacja jako defense-in-depth, probe hard-gate (exit 1 na FAIL) + jsdom cross-realm regression suite; QA-03 zamknięte prawdziwym cross-vendor testem `webauthn-rs` (kanidm weryfikuje realne ceremonie pv-provider/passkey-rs, prawdziwe podpisy nad prawdziwymi challenge'ami); debug doc git-tracked → resolved; pełna 9-komendowa bramka zielona (vitest 674, cargo 151, run-core 17+1, server-unlock 15/2/0, chromium 5/5) — Phase 14 (XBR-02, QA-03), code review 0C/0W po fixach, zweryfikowana 2026-07-20
 
 - ✓ Unifikacja logowania (model Vaultwarden): sign-in ZAWSZE przez okno server-ceremony (hasło+passkey, oba browsery), popup = tylko unlock (hasło-first + passkey przez okno) i URL serwera; ext-scoped PRF twardo usunięty (9 plików + trwały guard-test); zmiana serwera z dialogiem potwierdzenia i czystą migracją sesji/uprawnień (udowodnione żywo na dwóch serwerach, 2 realne bugi znalezione i naprawione przy dowodzie); vitest po raz pierwszy exit 0 (678/678 ext + 474/474 web) — Phase 15 (AUTH-01..04), review 0C/1W(fixed)/3I, zweryfikowana 2026-07-20
+- ✓ Design system extraction (logika/typy/i18n): 7 kanonicznych modułów w `packages/pv-ui` (types superset, cardBrand, search, sort-comparator split-shim, clipboard, i18n engine `t<D>`/`interpolate`/`resolveLocale` + `common.ts` 34 klucze wspólne / 4 rozbieżne celowo lokalne), web+extension konsumują przez 1-liniowe `export *` shimy (zero churnu importów), zero duplikatów zweryfikowane grepem, oba suity bez zmian zachowania (481 web + 685 ext po fixach review WR-01/WR-02), exports map jako jedyne źródło resolucji (tsconfig paths usunięte) — Phase 16 (DS-01/DS-02), review 0C/2W(fixed)/4I, zweryfikowana 2026-07-21 (UAT: web unlock screenshot + 7/7 P9 e2e)
 
 ### Active
 
@@ -131,4 +132,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-20 — Phase 15 (Login & Unlock Unification, Vaultwarden model) complete; next: Phase 16 (Design System Extraction)*
+*Last updated: 2026-07-21 — Phase 16 (Design System Extraction — Logic, Types & i18n) complete; next: Phase 17 (Shared Component & Visual Alignment)*

@@ -21,7 +21,7 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-14)
+See: .planning/PROJECT.md (updated 2026-07-21)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
 **Current focus:** Phase 16 — Design System Extraction — Logic, Types & i18n
@@ -149,6 +149,10 @@ Recent decisions affecting current work:
 - [Phase ?]: 14-03: response-direction Firefox instanceof/toString.call battery must be measured via a genuinely inline <script> RP fixture (never driver.executeScript()) -- geckodriver runs executeScript-injected code in a fresh per-call sandbox realm with its own ArrayBuffer global, producing false-negative instanceof readings against page-realm-constructed values
 - [Phase ?]: 14-03: run-core.cjs's three unguarded switchTo(popupHandle) calls fixed for quick-260720-16k's same-day consent-window self-close behavior (Rule 3 blocking-issue fix, out-of-scope file but required for Task 3's mandatory green gate suite)
 - [Phase ?]: Plan 15-07 found + fixed two live product bugs (migration-dialog unmount race, unbounded permission-prompt hang) that only a real live-browser AUTH-04 proof could catch
+- [Phase 16]: exports map w packages/pv-ui/package.json jest JEDYNYM źródłem resolucji subpathów (WR-02: pv-ui paths usunięte z web/tsconfig.json — TS 5.9 moduleResolution:bundler czyta exports bezpośrednio); nowy subpath = tylko wpis w exports map
+- [Phase 16]: i18n engine jest generyczny (`t<D>(dict, locale, key)` w pv-ui/i18n/engine.ts); konsumenci trzymają cienkie 2-arg wrappery zachowujące keyof narrowing; 4 klucze o rozbieżnej kopii (vault.emptyHeading, vault.emptyBody, search.emptyResults, autolock.label) celowo lokalne — NIE przenosić do common.ts
+- [Phase 16]: interpolate() sprawdza hasAnyToken na oryginalnym szablonie (WR-01) — nie mylić częściowej substytucji z pełnym fallbackiem; regression test w 3 kopiach engine.test.ts
+- [Phase 16]: świeży worktree executora wymaga bootstrapu: node_modules (rsync/npm ci), scripts/build-wasm.sh, npx wxt prepare — standardowy wzorzec dla przyszłych faz
 
 ### Pending Todos
 
@@ -192,8 +196,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-20T19:29:52.685Z
-Stopped at: Completed 15-07-PLAN.md
+Last session: 2026-07-21
+Stopped at: Phase 16 complete, ready to plan Phase 17
 Resume file: None
 
 ## Operator Next Steps
