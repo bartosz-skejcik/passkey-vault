@@ -4,9 +4,13 @@
 // scoping this phase's ~15 keys separately keeps that file's existing
 // keyof-based type inference untouched, and makes this phase's copy
 // reviewable as one self-contained unit (per 10-06-PLAN.md's own
-// instruction). Reuses dictionary.ts's `Locale` type and `interpolate()`
-// helper verbatim -- no second implementation of either, same `{pl, en}`
-// entry shape and `t(locale, key)` accessor convention.
+// instruction). Reuses the shared pv-ui/i18n engine's `Locale` type and
+// `interpolate()` helper verbatim -- no second implementation of either,
+// same `{pl, en}` entry shape and `t(locale, key)` accessor convention.
+// DS-02 (plan 16-04): these two imports moved from `./dictionary` (which
+// itself now re-exports them from pv-ui/i18n/engine) directly to
+// `pv-ui/i18n/engine` -- one hop closer to the shared source, zero change
+// to AUTOFILL_DICTIONARY's own content or this file's local `t()`.
 //
 // "Skopiowano {field}. Wyczyści się za {n}s." (toast.copied below) is the
 // EXACT template from web/src/lib/i18n/dictionary.ts's own `toast.copied`
@@ -18,7 +22,7 @@
 // template with `field` = "kod"/"code" (totp.copiedField below) to produce
 // exactly the plan's literal "Skopiowano kod. Wyczyści się za {n}s."
 // string, never a second hand-typed copy of it.
-import type { Locale } from "./dictionary";
+import type { Locale } from "pv-ui/i18n/engine";
 
 export const AUTOFILL_DICTIONARY = {
   "onThisPage.heading": { pl: "Na tej stronie", en: "On this page" },
@@ -157,5 +161,5 @@ export function t(locale: Locale, key: keyof typeof AUTOFILL_DICTIONARY): string
   return AUTOFILL_DICTIONARY[key][locale];
 }
 
-export { interpolate } from "./dictionary";
-export type { Locale } from "./dictionary";
+export { interpolate } from "pv-ui/i18n/engine";
+export type { Locale } from "pv-ui/i18n/engine";

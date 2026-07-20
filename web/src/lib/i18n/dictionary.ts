@@ -3,18 +3,31 @@
 // string this phase introduces (and every icon-only aria-label) lives here,
 // keyed by a short dot-path. Copy is PL/EN verbatim from the design
 // contract; do not paraphrase.
-export type Locale = "pl" | "en";
+//
+// DS-02 (plan 16-04): this file is now a thin wrapper over the shared
+// pv-ui/i18n engine -- DICTIONARY spreads COMMON_DICTIONARY (34 keys
+// shared byte-for-byte with the extension's own dictionary.ts) plus every
+// web-only entry below (content and key SET unchanged from before this
+// refactor; only where each of the 34 shared keys' content LIVES changed,
+// never its value). `t()`/`interpolate()`/`Locale`'s public signature stay
+// byte-identical to the pre-refactor shape -- zero call-site churn at this
+// file's ~16 `t(locale, key)` call sites.
+import { COMMON_DICTIONARY } from "pv-ui/i18n/common";
+import { t as tEngine, interpolate, type Locale } from "pv-ui/i18n/engine";
+
+export { interpolate };
+export type { Locale };
 
 export const DICTIONARY = {
+  ...COMMON_DICTIONARY,
+
   "topbar.newItem": { pl: "+ Nowy item", en: "+ New item" },
 
   "auth.emailLabel": { pl: "Email", en: "Email" },
-  "auth.passwordLabel": { pl: "Hasło główne", en: "Master password" },
   "auth.confirmPasswordLabel": {
     pl: "Powtórz hasło główne",
     en: "Confirm master password",
   },
-  "auth.loginSubmit": { pl: "Zaloguj się", en: "Log in" },
   "auth.registerSubmit": { pl: "Załóż konto", en: "Create account" },
   "auth.toggleToRegister": {
     pl: "Nie masz konta? Zarejestruj się",
@@ -40,14 +53,9 @@ export const DICTIONARY = {
     pl: "Nie udało się utworzyć konta. Spróbuj ponownie.",
     en: "Account creation failed. Please try again.",
   },
-  "auth.loginFailed": {
-    pl: "Logowanie nie powiodło się. Spróbuj ponownie.",
-    en: "Login failed. Please try again.",
-  },
   "auth.logout": { pl: "Wyloguj", en: "Log out" },
 
   "unlock.heading": { pl: "Odblokuj vault", en: "Unlock your vault" },
-  "unlock.submit": { pl: "Odblokuj", en: "Unlock" },
   "unlock.sessionExpired": {
     pl: "Sesja wygasła. Zaloguj się ponownie.",
     en: "Your session expired. Please log in again.",
@@ -59,12 +67,10 @@ export const DICTIONARY = {
     pl: "Zaloguj i odblokuj passkeyem",
     en: "Log in and unlock with passkey",
   },
-  "unlock.passkeyCta": { pl: "Odblokuj passkeyem", en: "Unlock with passkey" },
   "unlock.passkeyBusy": {
     pl: "Potwierdź w przeglądarce lub na urządzeniu…",
     en: "Confirm in your browser or on your device…",
   },
-  "unlock.orDivider": { pl: "lub", en: "or" },
   "unlock.passkeyUnsupported": {
     pl: "Ta przeglądarka nie obsługuje logowania passkeyem na tym urządzeniu — użyj hasła głównego poniżej.",
     en: "This browser doesn't support passkey sign-in on this device — use your master password below.",
@@ -203,9 +209,6 @@ export const DICTIONARY = {
 
   // Per-item last-used tracking sort control (quick-260717, NordPass-style)
   // — sits in the header area next to the dynamic heading above.
-  "sort.label": { pl: "Sortuj", en: "Sort" },
-  "sort.lastUsed": { pl: "Ostatnio używane", en: "Last used" },
-  "sort.name": { pl: "Nazwa", en: "Name" },
 
   "item.typePicker": { pl: "Wybierz typ itemu", en: "Choose item type" },
   "item.save": { pl: "Zapisz item", en: "Save item" },
@@ -220,35 +223,15 @@ export const DICTIONARY = {
 
   // Item-type labels (badges, type picker) — Claude's-discretion copy, not
   // explicitly enumerated in UI-SPEC's Copywriting Contract table.
-  "itemType.login": { pl: "Login", en: "Login" },
-  "itemType.card": { pl: "Karta", en: "Card" },
-  "itemType.identity": { pl: "Tożsamość", en: "Identity" },
-  "itemType.note": { pl: "Notatka", en: "Note" },
-  "itemType.totp": { pl: "TOTP", en: "TOTP" },
   // Phase 12: provider-created passkey vault item — copy matches the
   // extension popup's own "itemType.passkey" dictionary entry
   // (extension/lib/i18n/dictionary.ts) verbatim.
-  "itemType.passkey": { pl: "Passkey", en: "Passkey" },
 
   // Detail-panel/form field labels — Claude's-discretion copy, shared by
   // DetailPanel's view mode and ItemForm's create/edit fields.
   "field.name": { pl: "Nazwa", en: "Name" },
-  "field.username": { pl: "Użytkownik", en: "Username" },
-  "field.password": { pl: "Hasło", en: "Password" },
   "field.url": { pl: "URL", en: "URL" },
   "item.addUrl": { pl: "Dodaj URL", en: "Add URL" },
-  "field.notes": { pl: "Notatki", en: "Notes" },
-  "field.cardholderName": { pl: "Właściciel karty", en: "Cardholder name" },
-  "field.number": { pl: "Numer karty", en: "Card number" },
-  "field.expiry": { pl: "Data ważności", en: "Expiry" },
-  "field.cvv": { pl: "CVV", en: "CVV" },
-  "field.firstName": { pl: "Imię", en: "First name" },
-  "field.lastName": { pl: "Nazwisko", en: "Last name" },
-  "field.email": { pl: "Email", en: "Email" },
-  "field.phone": { pl: "Telefon", en: "Phone" },
-  "field.address": { pl: "Adres", en: "Address" },
-  "field.body": { pl: "Treść", en: "Content" },
-  "field.secret": { pl: "Sekret (base32)", en: "Secret (base32)" },
   "field.issuer": { pl: "Wystawca", en: "Issuer" },
   "field.algorithm": { pl: "Algorytm", en: "Algorithm" },
   "field.digits": { pl: "Liczba cyfr", en: "Digits" },
@@ -286,7 +269,6 @@ export const DICTIONARY = {
   // matches the extension's own key verbatim (extension/lib/i18n/
   // dictionary.ts); "field.userDisplayName" is new here (the extension's
   // detail view doesn't surface it, but this fix's scope explicitly does).
-  "field.rpId": { pl: "RP ID", en: "RP ID" },
   "field.userDisplayName": { pl: "Nazwa wyświetlana", en: "Display name" },
   // Passkey DETAIL panel composed layout (Bartek live-review, Proton
   // Pass-inspired): distinct from the generic "field.username"/"field.rpId"
@@ -442,7 +424,6 @@ export const DICTIONARY = {
   },
   "toast.cleared": { pl: "Schowek wyczyszczony.", en: "Clipboard cleared." },
 
-  "search.placeholder": { pl: "Szukaj...", en: "Search..." },
   "search.emptyResults": {
     pl: `Brak wyników dla „{query}"`,
     en: `No results for "{query}"`,
@@ -509,11 +490,8 @@ export const DICTIONARY = {
     en: "Passwords don't match",
   },
 
-  "aria.copyField": { pl: "Kopiuj {field}", en: "Copy {field}" },
   "aria.deleteItem": { pl: `Usuń „{name}"`, en: `Delete "{name}"` },
   "aria.itemMenu": { pl: `Więcej opcji dla „{name}"`, en: `More options for "{name}"` },
-  "aria.showPassword": { pl: "Pokaż hasło", en: "Show password" },
-  "aria.hidePassword": { pl: "Ukryj hasło", en: "Hide password" },
   "aria.dismissToast": { pl: "Zamknij powiadomienie", en: "Dismiss notification" },
   "aria.generatePassword": { pl: "Generuj hasło", en: "Generate password" },
   "aria.changeLanguage": { pl: "Zmień język", en: "Change language" },
@@ -722,30 +700,5 @@ export const DICTIONARY = {
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {
-  return DICTIONARY[key][locale];
-}
-
-/**
- * Substitutes `{token}` placeholders in a translated string with the
- * given values. Falls back to appending the values (space-joined) when no
- * placeholder token is found in the template — this keeps components
- * correct under both the real dictionary (which contains the `{token}`
- * markers) and test doubles that stub `t()` as an identity function
- * returning the bare key (which obviously has no placeholder to replace).
- */
-export function interpolate(template: string, vars: Record<string, string>): string {
-  let result = template;
-  let replacedAny = false;
-  for (const [key, value] of Object.entries(vars)) {
-    const token = `{${key}}`;
-    if (result.includes(token)) {
-      result = result.split(token).join(value);
-      replacedAny = true;
-    }
-  }
-  if (!replacedAny) {
-    const extra = Object.values(vars).join(" ");
-    result = extra ? `${result} ${extra}` : result;
-  }
-  return result;
+  return tEngine(DICTIONARY, locale, key);
 }
