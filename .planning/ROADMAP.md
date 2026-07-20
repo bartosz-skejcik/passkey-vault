@@ -250,6 +250,7 @@ Plans:
   4. `.planning/debug/firefox-request-xray-hole.md` is git-tracked, resolved, and mirrored into STATE.md's Deferred/Resolved history so the record cannot be silently lost again.
 
 **Plans**: TBD
+**UI hint**: no
 
 ### Phase 15: Login & Unlock Unification (Vaultwarden Model)
 
@@ -278,6 +279,7 @@ Plans:
   3. No parallel duplicate implementation of any migrated module remains in `web/` or `extension/` — verified by search, not assumed.
 
 **Plans**: TBD
+**UI hint**: no
 
 ### Phase 17: Shared Component & Visual Alignment
 
