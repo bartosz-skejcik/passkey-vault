@@ -531,6 +531,11 @@ if (require.main === module) {
     await sleep(1000);
     try { await driver.quit(); } catch {}
     formServer.close();
+    const failed = Object.entries(results).filter(([, r]) => r.status === 'FAIL');
+    if (failed.length) {
+      console.error('FAILED gates:', failed.map(([k]) => k).join(', '));
+      process.exit(1);
+    }
     process.exit(0);
   }).catch((e) => {
     console.error(e);
