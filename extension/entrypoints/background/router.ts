@@ -3,10 +3,12 @@
 // across Waves 3-5 (each adds its own `case` + import) -- 09-04 adds
 // `unlock.*` kinds, 09-05 adds `vault.list`, 09-06 adds `config.get`/
 // `config.set` -- by adding a case to the switch below, never by
-// restructuring this shape. (09-08's extension-scoped `extPasskey.*`/
-// `unlock.extPrf.*` kinds and the popup-dispatched `auth.signIn.password`
-// kind were hard-removed in AUTH-03/Plan 15-04, superseded by the
-// server-origin ceremony window -- server-unlock.ts.)
+// restructuring this shape. (09-08's extension-scoped-PRF message kinds
+// and the popup-dispatched `auth.signIn.password` kind were hard-removed
+// in AUTH-03/Plan 15-04, superseded by the server-origin ceremony window
+// -- server-unlock.ts. Their exact former literal names are intentionally
+// not repeated here -- see Plan 15-06's permanent
+// no-ext-scoped-prf-strings.test.ts guard.)
 // `vault.updated` (also added by 09-05) is deliberately NOT one of this
 // router's recognized kinds -- it's a fire-and-forget broadcast FROM the
 // background TO any open popup, not a request this router should dispatch

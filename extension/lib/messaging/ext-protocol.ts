@@ -28,8 +28,10 @@
 // plan ADDS a union member here plus a matching `MessageResponseMap`
 // entry — this file's overall shape (discriminated union + response map +
 // typed sendMessage helper) never gets restructured. (09-08's
-// `auth.signIn.*`/`extPasskey.*`/`unlock.extPrf.*` kinds were removed in
-// AUTH-03/Plan 15-04.)
+// `auth.signIn.*` kind and the extension-scoped-PRF message kinds were
+// removed in AUTH-03/Plan 15-04 -- their exact former literal names are
+// intentionally not repeated here, see Plan 15-06's permanent
+// no-ext-scoped-prf-strings.test.ts guard.)
 //
 // Phase 10 (Plan 10-01) adds `autofill.match`/`autofill.fill`/
 // `autofill.totpCode` -- the popup-driven autofill contract. Per this

@@ -572,11 +572,16 @@ describe("config.probe / session.signOut (Plan 15-05, AUTH-04)", () => {
 // isProtocolMessage() (the popup router steps aside, exactly like
 // credentials.create/get above), and session.status's locked/unlocked
 // shapes must no longer carry the retired extPasskeyEnrolled/
-// extPasskeyPromptSuppressed fields.
+// extPasskeyPromptSuppressed fields. Plan 15-06 adds a permanent
+// grep-based structural guard (no-ext-scoped-prf-strings.test.ts) proving
+// the deleted kinds' exact former literal names appear nowhere in source
+// -- so this file deliberately does not reconstruct any of those literal
+// strings, even as a negative-test fixture, to avoid tripping that guard
+// with an intentionally-dead reference.
 describe("AUTH-03 hard removal (Plan 15-04)", () => {
-  it("isProtocolMessage() no longer recognizes extPasskey.enroll.start -- the popup router steps aside instead of dispatching", async () => {
+  it("isProtocolMessage() no longer recognizes an unrecognized message kind -- the popup router steps aside instead of dispatching", async () => {
     const popupResult = hoisted.listeners[0](
-      { kind: "extPasskey.enroll.start" },
+      { kind: "not-a-recognized-message-kind" },
       OWN_SENDER,
       vi.fn(),
     );
