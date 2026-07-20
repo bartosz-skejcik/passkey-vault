@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v0.3
 milestone_name: Polish & Hardening
 status: planning
-last_updated: "2026-07-20T09:37:43.563Z"
+last_updated: "2026-07-20T10:15:00.000Z"
 last_activity: 2026-07-20
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-14)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 12 — passkey-provider
+**Current focus:** Phase 14 — Critical Risk Closure (first phase of v0.3, risk-first per Bartek's mandate)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 14 — Critical Risk Closure & Real-RP Verification (not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-07-20 — Milestone v0.3 started
+Status: v0.3 ROADMAP.md approved-pending — 7 phases (14–20), 20/20 requirements mapped, ready for `/gsd-plan-phase 14`
+Last activity: 2026-07-20 — v0.3 ROADMAP.md created
 
 ## Performance Metrics
 
@@ -35,24 +35,30 @@ Last activity: 2026-07-20 — Milestone v0.3 started
 
 - Total plans completed: 41 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
 - Average duration: - min
-- Total execution time: 0 hours (v0.2)
+- Total execution time: 0 hours (v0.3)
 
-**By Phase (v0.2):**
+**By Phase (v0.2 — complete):**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 8. Bootstrap & WASM Spike | TBD | - | - |
-| 9. Session/Unlock/Popup/Sync | TBD | - | - |
-| 10. Autofill | TBD | - | - |
-| 11. Generate & Capture | TBD | - | - |
-| 12. Passkey Provider | TBD | - | - |
-| 13. Dual-Browser Hardening | TBD | - | - |
-| 8 | 3 | - | - |
-| 9 | 8 | - | - |
-| 10 | 7 | - | - |
-| 11 | 9 | - | - |
-| 12 | 7 | - | - |
-| 13 | 7 | - | - |
+| 8. Bootstrap & WASM Spike | 3 | - | - |
+| 9. Session/Unlock/Popup/Sync | 8 | - | - |
+| 10. Autofill | 7 | - | - |
+| 11. Generate & Capture | 9 | - | - |
+| 12. Passkey Provider | 7 | - | - |
+| 13. Dual-Browser Hardening | 7 | - | - |
+
+**By Phase (v0.3 — planned, not yet executed):**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| 14. Critical Risk Closure | TBD | - | - |
+| 15. Login & Unlock Unification | TBD | - | - |
+| 16. Design System Extraction (Logic/i18n) | TBD | - | - |
+| 17. Shared Component & Visual Alignment | TBD | - | - |
+| 18. Firefox Window & Consent Hardening | TBD | - | - |
+| 19. Server & Supply-Chain Hardening | TBD | - | - |
+| 20. Test Infrastructure & CI Gate | TBD | - | - |
 
 *Updated after each plan completion*
 **Per-Plan Metrics:**
@@ -84,6 +90,8 @@ Last activity: 2026-07-20 — Milestone v0.3 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- Roadmap (v0.3): 7 phases (14–20) derived from `.planning/research/v0.3/CODEBASE-GAPS.md` + `DESIGN-SYSTEM-UNIFICATION.md`. Phase 14 is risk-first per Bartek's explicit mandate — the two Critical findings (XBR-02 Firefox response-direction cross-realm corruption, QA-03 no real-RP-verified provider ceremony) are closed BEFORE any UX/design-system work, since both are silent-failure classes a green v0.2 CI could not see. Phase 15 unifies login/unlock onto the Vaultwarden model (AUTH-01..04). Phases 16–17 extract the shared design system into `packages/pv-ui` in the research's measured order — pure logic/types + i18n engine first (16), then the flagship shared React component `ItemIconTile` + in-page token alignment + light-tile UX-01 (17), since DS-03 and UX-01 share the tile concept. Phase 18 formalizes Firefox ceremony-window polish (UX-02) and decision-gates the in-page consent alternative (XBR-03 — may resolve as "rejected-with-reason", not a guaranteed build). Phase 19 batches the CORS touch (SEC-01/02) with server/supply-chain hardening (SEC-03/04). Phase 20 closes the CI/test-rigor gap (QA-01/02/04). 20/20 v0.3 requirements mapped, no orphans, no duplicates.
+- Roadmap (v0.3): v0.2's milestone header changed from "in progress" to "complete, not formally closed" in ROADMAP.md to reflect reality (phase 13 sealed 2026-07-20) without running `/gsd-complete-milestone` — cleanup/retrospective for v0.2 stays deliberately deferred to v1.0 per PROJECT.md.
 - Roadmap (v0.2): 6 phases derived directly from research's build order — bootstrap/WASM-in-background spike first (de-risks idle-kill + CSP before any feature), session/unlock core+popup+sync second (real vault access before autofill/provider touch it), autofill third, generate & capture fourth, passkey provider fifth (deliberately LAST — highest-risk MAIN-world patch, gated by a `/gsd-secure-phase` security-review checkpoint), dual-browser hardening closes the milestone.
 - Roadmap (v0.2): FILL-03/FILL-04 (card/identity autofill) kept in-milestone per REQUIREMENTS.md even though research's FEATURES.md flagged them P2 "add after validation" — REQUIREMENTS.md is the authoritative scope source and lists them as v0.2, not deferred.
 - Roadmap (v0.2): Two cross-cutting technical items threaded through phases rather than given their own phase — `pv-server` CORS allowlist for the extension origin (small server change, surfaces in Phase 9's sync client) and unlocked-key-in-`chrome.storage.session`-only (never `storage.local`; established in Phase 9, must hold through Phases 10 and 12).
@@ -142,6 +150,7 @@ None yet.
 - WASM loading inside content-script bundling context specifically (vs. background/popup) is unverified per research STACK.md — validate during Phase 8's bootstrap spike if autofill (Phase 10) ends up needing `pv-core` decrypt calls close to the DOM.
 - **RESOLVED 2026-07-17**: Quick task 260717-lnx's `headless: true` re-enable reproduced the historical `P12-SC1` headless hang (13-03-SUMMARY.md). Fix landed: `extension/playwright.config.ts` now splits into two projects — `chromium` (everything except Phase 12, headless) and `chromium-ceremony` (Phase 12 only, headed); `extension/e2e/fixtures.ts` picks the real `headless` flag from `workerInfo.project.name` (commit `b393f90`). A follow-up verification run then hit a SEPARATE issue — `P12-SC2` failed after 2 retries against a STALE `extension/.output/chrome-mv3` build (predating Task A's one-click-picker source change) — root-caused and fixed via a `pretest:e2e:chrome` npm script that rebuilds chrome before every e2e run (commit `ddc770f`). Whole `chromium-ceremony` project (5 SCs) now passes cleanly and repeatably (5 consecutive full-project runs, headed, zero flake); `npm test` stays 533/533 green. See `.planning/quick/260717-lnx-extension-ux-one-click-passkey-picker-no/260717-lnx-SUMMARY.md` and `.planning/phases/13-dual-browser-hardening/13-03-SUMMARY.md` for the original investigation.
 - web/.env.local's NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8620 breaks same-origin fetch() for any web/out build served/visited via http://localhost:8620 (this project's own documented convention) -- routed around this session via NEXT_PUBLIC_API_BASE_URL="" npm run build, not fixed in .env.local (out of scope, outside file-write permissions). Bartek should review/clean up this env var.
+- **OPEN (v0.3 Phase 14 target)**: `.planning/debug/firefox-request-xray-hole.md` documents the RESPONSE-direction Firefox Xray hole (Critical, XBR-02) — was untracked in git as of the v0.3 codebase sweep (2026-07-20); Phase 14 must both fix the underlying bug and ensure this doc is git-tracked so the record can't be lost again.
 
 ### Quick Tasks Completed
 
@@ -163,14 +172,15 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 | uat | Phase 06 UAT | passed (0 pending scenarios) | 2026-07-14 |
 | todo | 2026-07-12-ui-review-phase1-fixes — 3 WARNING UI findings (light-theme base-300 surface borders, SelfTestCard fatal-branch retry, "patrz błąd poniżej" copy order) — cosmetic, v0.2 polish candidates | open | 2026-07-14 |
 | tech-debt | IMPEX-04 CSV export lossy for non-default TOTP (algorithm/digits/period dropped; JSON lossless) — see v0.1-MILESTONE-AUDIT.md W-1 | open | 2026-07-14 |
-| tech-debt | `PV_EXTENSION_ORIGINS=moz-extension://*` scheme-scoped CORS wildcard stopgap (D-10, 13-05-PLAN.md) — accepted knowingly because CORS is not this API's auth boundary and Firefox's per-profile UUID churn makes concrete-origin-only config hostile UX; planned to be replaced with per-install concrete-origin configuration in a later version | open | 2026-07-17 |
+| tech-debt | `PV_EXTENSION_ORIGINS=moz-extension://*` scheme-scoped CORS wildcard stopgap (D-10, 13-05-PLAN.md) — accepted knowingly because CORS is not this API's auth boundary and Firefox's per-profile UUID churn makes concrete-origin-only config hostile UX; planned to be replaced with per-install concrete-origin configuration in a later version — **now targeted by v0.3 SEC-02 (Phase 19)** | targeted-v0.3 | 2026-07-17 |
+| debug | RESPONSE-direction Firefox Xray hole (`.planning/debug/firefox-request-xray-hole.md`) — data intact but `instanceof ArrayBuffer` contract violated on real Firefox; only tracking doc was untracked in git as of the v0.3 sweep — **targeted by v0.3 XBR-02 (Phase 14, first phase, risk-first)** | targeted-v0.3 | 2026-07-20 |
 
 ## Session Continuity
 
-Last session: 2026-07-18T07:58:06.111Z
-Stopped at: Completed 13-07-PLAN.md: full passkey SIGN-IN via server-origin ceremony (mode-pinning T-13-16) + FF EnrollExtPasskeyPrompt fix
+Last session: 2026-07-20T10:15:00.000Z
+Stopped at: v0.3 ROADMAP.md created — 7 phases (14–20), 20/20 requirements mapped, no orphans. REQUIREMENTS.md traceability filled. Awaiting user review/approval of the roadmap.
 Resume file: None
 
 ## Operator Next Steps
 
-- Execute Wave 3 (09-04, 09-05) with `/gsd-execute-phase 09`
+- Review the v0.3 roadmap (`.planning/ROADMAP.md`, Phases 14–20); once approved, start with `/gsd-plan-phase 14` (Critical Risk Closure — XBR-02 + QA-03).

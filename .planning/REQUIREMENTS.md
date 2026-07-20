@@ -75,27 +75,25 @@
 
 ## Traceability
 
-Filled by the roadmapper.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUTH-01 | — | Pending |
-| AUTH-02 | — | Pending |
-| AUTH-03 | — | Pending |
-| AUTH-04 | — | Pending |
-| DS-01 | — | Pending |
-| DS-02 | — | Pending |
-| DS-03 | — | Pending |
-| DS-04 | — | Pending |
-| UX-01 | — | Pending |
-| UX-02 | — | Pending |
-| XBR-02 | — | Pending |
-| XBR-03 | — | Pending |
-| SEC-01 | — | Pending |
-| SEC-02 | — | Pending |
-| SEC-03 | — | Pending |
-| SEC-04 | — | Pending |
-| QA-01 | — | Pending |
-| QA-02 | — | Pending |
-| QA-03 | — | Pending |
-| QA-04 | — | Pending |
+| AUTH-01 | Phase 15 | Pending |
+| AUTH-02 | Phase 15 | Pending |
+| AUTH-03 | Phase 15 | Pending |
+| AUTH-04 | Phase 15 | Pending |
+| DS-01 | Phase 16 | Pending |
+| DS-02 | Phase 16 | Pending |
+| DS-03 | Phase 17 | Pending |
+| DS-04 | Phase 17 | Pending |
+| UX-01 | Phase 17 | Pending |
+| UX-02 | Phase 18 | Pending |
+| XBR-02 | Phase 14 | Pending |
+| XBR-03 | Phase 18 | Pending |
+| SEC-01 | Phase 19 | Pending |
+| SEC-02 | Phase 19 | Pending |
+| SEC-03 | Phase 19 | Pending |
+| SEC-04 | Phase 19 | Pending |
+| QA-01 | Phase 20 | Pending |
+| QA-02 | Phase 20 | Pending |
+| QA-03 | Phase 14 | Pending |
+| QA-04 | Phase 20 | Pending |
