@@ -5,15 +5,15 @@ milestone_name: Polish & Hardening
 current_phase: 15
 current_phase_name: Login & Unlock Unification (Vaultwarden Model
 status: executing
-stopped_at: Phase 15 UI-SPEC approved
-last_updated: "2026-07-20T15:08:08.404Z"
+stopped_at: Completed 15-07-PLAN.md
+last_updated: "2026-07-20T19:29:52.692Z"
 last_activity: 2026-07-20
 last_activity_desc: Phase 15 execution started
 progress:
   total_phases: 13
   completed_phases: 6
   total_plans: 53
-  completed_plans: 44
+  completed_plans: 49
   percent: 46
 ---
 
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 15 (Login & Unlock Unification (Vaultwarden Model)) — EXECUTING
-Plan: 1 of 7
-Status: Executing Phase 15
+Plan: 2 of 7
+Status: Ready to execute
 Last activity: 2026-07-20 — Phase 15 execution started
 
 ## Performance Metrics
@@ -88,6 +88,7 @@ Last activity: 2026-07-20 — Phase 15 execution started
 | Phase 13 P04 | ~5.5h | 2 tasks | 9 files |
 | Phase 13 P06 | ~4h | 3 tasks | 20 files |
 | Phase 14 P03 | ~50min | 3 tasks | 5 files |
+| Phase 15 P07 | 190 | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -144,6 +145,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 13-07: session token needs no base64url boundary (opaque bearer string); signin mode reuses setUnlockedUserKey's own writeSessionMeta call, no separate persist path
 - [Phase ?]: 14-03: response-direction Firefox instanceof/toString.call battery must be measured via a genuinely inline <script> RP fixture (never driver.executeScript()) -- geckodriver runs executeScript-injected code in a fresh per-call sandbox realm with its own ArrayBuffer global, producing false-negative instanceof readings against page-realm-constructed values
 - [Phase ?]: 14-03: run-core.cjs's three unguarded switchTo(popupHandle) calls fixed for quick-260720-16k's same-day consent-window self-close behavior (Rule 3 blocking-issue fix, out-of-scope file but required for Task 3's mandatory green gate suite)
+- [Phase ?]: Plan 15-07 found + fixed two live product bugs (migration-dialog unmount race, unbounded permission-prompt hang) that only a real live-browser AUTH-04 proof could catch
 
 ### Pending Todos
 
@@ -187,9 +189,9 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-20T14:00:38.297Z
-Stopped at: Phase 15 UI-SPEC approved
-Resume file: .planning/phases/15-login-unlock-unification-vaultwarden-model/15-UI-SPEC.md
+Last session: 2026-07-20T19:29:52.685Z
+Stopped at: Completed 15-07-PLAN.md
+Resume file: None
 
 ## Operator Next Steps
 

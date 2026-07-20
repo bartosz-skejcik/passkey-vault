@@ -18,10 +18,10 @@
 
 ### AUTH — Login & Unlock Model (Vaultwarden-style)
 
-- [ ] **AUTH-01**: Full sign-in to the extension ALWAYS runs through the server-origin ceremony window on both browsers; the popup no longer offers password sign-in — the popup is unlock-only. One login path, matching the Vaultwarden model.
-- [ ] **AUTH-02**: The popup's unlock surface offers master-password unlock and passkey unlock (the latter via the ceremony window), with no full-login / no-session affordance inside the popup itself.
-- [ ] **AUTH-03**: Vault unlock is unified onto the server-origin passkey ceremony (research option 2) — the ext-scoped PRF unlock path is retired or explicitly documented as removed — so there is a single unlock mechanism across both browsers.
-- [ ] **AUTH-04**: Reconfiguring the server URL while a session or host-permission already exists is handled cleanly — the old session/host-permission is invalidated or migrated with no stranded state (closes v0.2 deferred row V-04).
+- [x] **AUTH-01**: Full sign-in to the extension ALWAYS runs through the server-origin ceremony window on both browsers; the popup no longer offers password sign-in — the popup is unlock-only. One login path, matching the Vaultwarden model.
+- [x] **AUTH-02**: The popup's unlock surface offers master-password unlock and passkey unlock (the latter via the ceremony window), with no full-login / no-session affordance inside the popup itself.
+- [x] **AUTH-03**: Vault unlock is unified onto the server-origin passkey ceremony (research option 2) — the ext-scoped PRF unlock path is retired or explicitly documented as removed — so there is a single unlock mechanism across both browsers.
+- [x] **AUTH-04**: Reconfiguring the server URL while a session or host-permission already exists is handled cleanly — the old session/host-permission is invalidated or migrated with no stranded state (closes v0.2 deferred row V-04).
 
 ### DS — Unified Design System & Components
 
@@ -79,10 +79,10 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUTH-01 | Phase 15 | Pending |
-| AUTH-02 | Phase 15 | Pending |
-| AUTH-03 | Phase 15 | Pending |
-| AUTH-04 | Phase 15 | Pending |
+| AUTH-01 | Phase 15 | Complete |
+| AUTH-02 | Phase 15 | Complete |
+| AUTH-03 | Phase 15 | Complete |
+| AUTH-04 | Phase 15 | Complete |
 | DS-01 | Phase 16 | Pending |
 | DS-02 | Phase 16 | Pending |
 | DS-03 | Phase 17 | Pending |
