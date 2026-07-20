@@ -4,16 +4,16 @@ milestone: v0.3
 milestone_name: Polish & Hardening
 current_phase: 14
 current_phase_name: Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification
-status: executing
-stopped_at: v0.3 ROADMAP.md created — 7 phases (14–20), 20/20 requirements mapped, no orphans. REQUIREMENTS.md traceability filled. Awaiting user review/approval of the roadmap.
-last_updated: "2026-07-20T10:49:13.019Z"
+status: verifying
+stopped_at: Completed 14-03-PLAN.md -- Phase 14 (XBR-02 + QA-03) fully closed, all 3 plans done, ready_for_verification
+last_updated: "2026-07-20T12:09:04.443Z"
 last_activity: 2026-07-20
 last_activity_desc: Phase 14 execution started
 progress:
   total_phases: 13
   completed_phases: 5
   total_plans: 46
-  completed_plans: 41
+  completed_plans: 43
   percent: 38
 ---
 
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 ## Current Position
 
 Phase: 14 (Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 14
+Plan: 3 of 3
+Status: Phase complete — ready for verification
 Last activity: 2026-07-20 — Phase 14 execution started
 
 ## Performance Metrics
@@ -86,6 +86,7 @@ Last activity: 2026-07-20 — Phase 14 execution started
 | Phase 13 P03 | 4h | 2 tasks | 10 files |
 | Phase 13 P04 | ~5.5h | 2 tasks | 9 files |
 | Phase 13 P06 | ~4h | 3 tasks | 20 files |
+| Phase 14 P03 | ~50min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -138,6 +139,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [quick-260718-0qi] Task 2's FAB relocation to bottom-right required flipping the type-menu anchor from left-0 to right-0 (Rule 1 bug fix) -- a left-0-anchored w-44 menu would overflow past the 380px popup width once the FAB moved to the right edge
 - [Phase ?]: [quick-260718-0qi] P9-SC5/SC7 e2e failures were downstream cascades of P9-SC2's ambiguous-select strict-mode violation (shared worker-scoped popup left on the wrong screen), not independent bugs -- fixing the Step 2 selector disambiguation alone restored all 7 Phase 9 SCs, confirmed via 3 zero-flake re-runs
 - [Phase ?]: 13-07: session token needs no base64url boundary (opaque bearer string); signin mode reuses setUnlockedUserKey's own writeSessionMeta call, no separate persist path
+- [Phase ?]: 14-03: response-direction Firefox instanceof/toString.call battery must be measured via a genuinely inline <script> RP fixture (never driver.executeScript()) -- geckodriver runs executeScript-injected code in a fresh per-call sandbox realm with its own ArrayBuffer global, producing false-negative instanceof readings against page-realm-constructed values
+- [Phase ?]: 14-03: run-core.cjs's three unguarded switchTo(popupHandle) calls fixed for quick-260720-16k's same-day consent-window self-close behavior (Rule 3 blocking-issue fix, out-of-scope file but required for Task 3's mandatory green gate suite)
 
 ### Pending Todos
 
@@ -181,8 +184,8 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-20T10:15:00.000Z
-Stopped at: v0.3 ROADMAP.md created — 7 phases (14–20), 20/20 requirements mapped, no orphans. REQUIREMENTS.md traceability filled. Awaiting user review/approval of the roadmap.
+Last session: 2026-07-20T12:09:04.436Z
+Stopped at: Completed 14-03-PLAN.md -- Phase 14 (XBR-02 + QA-03) fully closed, all 3 plans done, ready_for_verification
 Resume file: None
 
 ## Operator Next Steps

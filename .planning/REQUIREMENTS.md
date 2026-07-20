@@ -37,7 +37,7 @@
 
 ### XBR — Cross-Browser Hardening
 
-- [ ] **XBR-02**: Response-direction cross-realm binary integrity on Firefox — WebAuthn credential fields returned to the page (`rawId`, `clientDataJSON`, `attestationObject`, `signature`, `authenticatorData`) are genuine same-realm `ArrayBuffer`s (or contract-equivalent); root-caused, fixed, byte-asserted in the harness, and the tracking doc git-tracked.
+- [x] **XBR-02**: Response-direction cross-realm binary integrity on Firefox — WebAuthn credential fields returned to the page (`rawId`, `clientDataJSON`, `attestationObject`, `signature`, `authenticatorData`) are genuine same-realm `ArrayBuffer`s (or contract-equivalent); root-caused, fixed, byte-asserted in the harness, and the tracking doc git-tracked.
 - [ ] **XBR-03**: (Decision-gated) In-page provider consent on Firefox — evaluate a closed-shadow-DOM consent panel as an alternative to the consent window, with clickjack mitigations, ONLY if a fresh security review confirms it preserves the SECURED posture; otherwise the window model stands and this is documented as rejected-with-reason.
 
 ### SEC — Server & Supply-Chain Hardening
@@ -57,11 +57,13 @@
 ## Future Requirements (deferred beyond v0.3)
 
 ### v1.0 hardening
+
 - OPAQUE migration for password login (currently hash-after-KDF)
 - Full security audit of the hand-rolled crypto boundary before v1.0
 - Milestone cleanup + retrospective for v0.2 / v0.3 (phase-dir archival — deliberately deferred to keep full implementation history until v1.0)
 
 ### v1+
+
 - Sharing (encrypted links + family sharing), Password Health + breach monitor, attachments (disk storage trait), FIDO CXF import/export, email-masking integration — carried from v0.2 Active/Future.
 
 ## Out of Scope (v0.3)
@@ -87,7 +89,7 @@
 | DS-04 | Phase 17 | Pending |
 | UX-01 | Phase 17 | Pending |
 | UX-02 | Phase 18 | Pending |
-| XBR-02 | Phase 14 | Pending |
+| XBR-02 | Phase 14 | Complete |
 | XBR-03 | Phase 18 | Pending |
 | SEC-01 | Phase 19 | Pending |
 | SEC-02 | Phase 19 | Pending |
