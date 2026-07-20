@@ -38,6 +38,15 @@ describe("interpolate", () => {
   it("appends values (space-joined) when no {token} placeholder is found", () => {
     expect(interpolate("no tokens here", { extra: "x" })).toBe("no tokens here x");
   });
+
+  it("substitutes only the tokens present in the template when vars is a mixed set (WR-01)", () => {
+    // Locks the fallback decision to "does the template contain ANY of
+    // vars' tokens", computed once against the original template --- not
+    // an accumulating per-substitution flag. A var with no matching
+    // `{token}` in the template is left un-appended (distinct from the
+    // fully token-less path above, which appends every value).
+    expect(interpolate("Hello {name}", { name: "Bob", count: "5" })).toBe("Hello Bob");
+  });
 });
 
 describe("resolveLocale", () => {

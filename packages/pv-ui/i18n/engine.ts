@@ -26,27 +26,30 @@ export function t<D extends Record<string, Record<Locale, string>>>(
 
 /**
  * Substitutes `{token}` placeholders in a translated string with the
- * given values. Falls back to appending the values (space-joined) when no
- * placeholder token is found in the template — this keeps components
- * correct under both the real dictionary (which contains the `{token}`
- * markers) and test doubles that stub `t()` as an identity function
- * returning the bare key (which obviously has no placeholder to replace).
+ * given values. Falls back to appending *all* values (space-joined) only
+ * when the template contains none of the `{token}` markers at all — this
+ * keeps components correct under both the real dictionary (which contains
+ * the `{token}` markers) and test doubles that stub `t()` as an identity
+ * function returning the bare key (which obviously has no placeholder to
+ * replace).
  *
- * Moved byte-for-byte from web/src/lib/i18n/dictionary.ts:736-751.
+ * WR-01 fix: the fallback decision is made once, up front, based on
+ * whether *any* var's token appears in the template — not per-substitution
+ * — so a template that matches some-but-not-all `vars` keys no longer
+ * silently drops the unmatched ones (e.g. a template with only `{name}`
+ * plus `vars = { name, count }` used to drop `count` entirely).
+ *
+ * Moved (then corrected as above) from web/src/lib/i18n/dictionary.ts:736-751.
  */
 export function interpolate(template: string, vars: Record<string, string>): string {
-  let result = template;
-  let replacedAny = false;
-  for (const [key, value] of Object.entries(vars)) {
-    const token = `{${key}}`;
-    if (result.includes(token)) {
-      result = result.split(token).join(value);
-      replacedAny = true;
-    }
-  }
-  if (!replacedAny) {
+  const hasAnyToken = Object.keys(vars).some((key) => template.includes(`{${key}}`));
+  if (!hasAnyToken) {
     const extra = Object.values(vars).join(" ");
-    result = extra ? `${result} ${extra}` : result;
+    return extra ? `${template} ${extra}` : template;
+  }
+  let result = template;
+  for (const [key, value] of Object.entries(vars)) {
+    result = result.split(`{${key}}`).join(value);
   }
   return result;
 }
