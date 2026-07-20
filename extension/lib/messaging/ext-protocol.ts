@@ -11,25 +11,25 @@
 // `navigator.credentials.get()` for ANY web RP ID — empirically probed, and
 // the reason for the 09-CONTEXT AMENDMENT 2026-07-15 pivot to an
 // extension-scoped PRF passkey (`rpId === browser.runtime.id`, the ONLY
-// rpId Chrome accepts from this origin). The extension's PRF path is
-// `unlock.extPrf.*` below; it is not an alternative to the web-RP pair, it
-// is the only thing that can work. Keeping the dead pair only widened
-// isProtocolMessage's accepted surface and invited a future caller to
-// reintroduce a bug no UAT could see.
+// rpId Chrome accepts from this origin). That extension-scoped path was
+// ITSELF hard-removed in AUTH-03 (Plan 15-04): the server-origin ceremony
+// window (`unlock.serverCeremony.*` below, background/server-unlock.ts) is
+// now the sole passkey unlock/sign-in mechanism on both browsers. Keeping
+// either dead pair only widens isProtocolMessage's accepted surface and
+// invites a future caller to reintroduce a bug no UAT could see.
 //
-// This union grows across Waves 3-5: 09-04 adds `unlock.*` AND
-// `auth.signIn.*` kinds (the unlock-only pair requires an existing token;
-// the sign-in pair mints one), 09-05 adds `vault.list` (request/response,
-// dispatched by router.ts) and `vault.updated` (fire-and-forget broadcast
-// from vault-store.ts's lock-state subscription -- NOT dispatched by
-// router.ts's switch; it exists here purely so a future popup listener can
-// type-check against the same union). 09-08 adds `extPasskey.*`/
-// `unlock.extPrf.*` kinds (the extension-scoped PRF passkey, 09-CONTEXT
-// AMENDMENT 2026-07-15). 09-06 adds `config.get`/`config.set`, delegating to
-// server-config.ts (Plan 09-03). Each later plan ADDS a union member here plus a
-// matching `MessageResponseMap` entry — this file's overall shape
-// (discriminated union + response map + typed sendMessage helper) never
-// gets restructured.
+// This union grows across Waves 3-5: 09-04 adds `unlock.*` (the unlock-only
+// pair requires an existing token), 09-05 adds `vault.list` (request/
+// response, dispatched by router.ts) and `vault.updated` (fire-and-forget
+// broadcast from vault-store.ts's lock-state subscription -- NOT dispatched
+// by router.ts's switch; it exists here purely so a future popup listener
+// can type-check against the same union). 09-06 adds `config.get`/
+// `config.set`, delegating to server-config.ts (Plan 09-03). Each later
+// plan ADDS a union member here plus a matching `MessageResponseMap`
+// entry — this file's overall shape (discriminated union + response map +
+// typed sendMessage helper) never gets restructured. (09-08's
+// `auth.signIn.*`/`extPasskey.*`/`unlock.extPrf.*` kinds were removed in
+// AUTH-03/Plan 15-04.)
 //
 // Phase 10 (Plan 10-01) adds `autofill.match`/`autofill.fill`/
 // `autofill.totpCode` -- the popup-driven autofill contract. Per this
@@ -78,12 +78,10 @@
 // response) -- the field is compared against, never trusted blindly, by
 // the handlers Plan 11-03 adds.
 //
-// `UnlockResult`/`PrfStartResult`/`ExtEnrollStartResult`/`ExtUnlockResult`
-// are `import type`-only from entrypoints/background/unlock.ts and
-// entrypoints/background/ext-passkey.ts (their canonical definitions, per
-// each plan's own export surface) — erased at compile time, so this file
-// (and any popup that imports it) never bundles background-only runtime
-// code, only the type shape.
+// `UnlockResult` is `import type`-only from entrypoints/background/unlock.ts
+// (its canonical definition, per that plan's own export surface) — erased
+// at compile time, so this file (and any popup that imports it) never
+// bundles background-only runtime code, only the type shape.
 //
 // Post-UAT protocol fix (JSON-transport safety): every binary field on this
 // union is a base64 STRING (`*B64` suffix), never a raw `Uint8Array`/
@@ -98,7 +96,6 @@
 // switch, fail `tsc` if a new `kind` is added without a fixture at all).
 import { browser } from "wxt/browser";
 import type { UnlockResult } from "../../entrypoints/background/unlock";
-import type { ExtEnrollStartResult, ExtUnlockResult } from "../../entrypoints/background/ext-passkey";
 import type { CreateRpcResponse, GetRpcResponse } from "../../entrypoints/background/provider-ceremony";
 import type { Folder, VaultItem } from "../vault/types";
 import type { AutofillMatch, DetectedFields, FillKind } from "../autofill/types";
@@ -109,27 +106,23 @@ export type SessionStatus =
       kind: "locked";
       wasAutoLocked: boolean;
       autoLockMinutes: number;
-      // 09-08: gates the popup's PRF-button visibility / enrollment prompt
-      // (09-CONTEXT AMENDMENT 2026-07-15) purely off this ONE status call —
-      // no parallel status kind is added.
-      extPasskeyEnrolled: boolean;
-      extPasskeyPromptSuppressed: boolean;
     }
   | {
       kind: "unlocked";
       autoLockMinutes: number;
       accountEmail: string;
-      extPasskeyEnrolled: boolean;
-      extPasskeyPromptSuppressed: boolean;
     };
 
 export type Message =
   | { kind: "session.status" }
   | { kind: "session.setAutoLockMinutes"; minutes: number }
-  // Unlock-only — existing token, SessionUser-gated server routes.
+  // Unlock-only — existing token, SessionUser-gated server routes. (The
+  // popup-dispatched sign-in counterpart, `auth.signIn.password`, was
+  // hard-removed in AUTH-03/Plan 15-04 -- sign-in now goes exclusively
+  // through `unlock.serverCeremony.start` mode:"signin" below; the
+  // underlying `handleUnlockPassword` sign-in branch survives only as an
+  // internal target server-unlock.ts's `completeServerUnlock` calls.)
   | { kind: "unlock.password"; passwordB64: string }
-  // Sign-in — fresh install/no-session, mints a new session token.
-  | { kind: "auth.signIn.password"; passwordB64: string; email: string }
   // Read path only (CONTEXT.md's locked out-of-scope boundary — no
   // create/edit/delete this phase): the popup's current decrypted item/
   // folder list, backed by vault-store.ts's real sync.
@@ -147,20 +140,6 @@ export type Message =
   // listener can react to a LOCK specifically, from ANY view including
   // `detail`, without paying a `session.status` round trip on every sync.
   | { kind: "session.locked" }
-  // 09-08: extension-scoped PRF passkey (09-CONTEXT AMENDMENT 2026-07-15).
-  // Enroll pair — requires an unlocked session (wraps the CURRENT UK).
-  | { kind: "extPasskey.enroll.start" }
-  | {
-      kind: "extPasskey.enroll.finish";
-      credentialIdB64url: string;
-      prfSaltB64: string;
-      prfB64: string;
-    }
-  | { kind: "extPasskey.suppressPrompt"; suppress: boolean }
-  // Unlock pair — existing token, no ceremony verification server-side (the
-  // PRF output IS the secret).
-  | { kind: "unlock.extPrf.start" }
-  | { kind: "unlock.extPrf.finish"; credentialIdB64url: string; prfB64: string }
   // 09-06: the popup's server-URL configuration screen (EXT-05) and the
   // "open full vault" / header redirect controls' sole source of the
   // configured pv-server origin -- delegates directly to server-config.ts
@@ -265,8 +244,7 @@ export type Message =
   // Plan 13-06: Firefox (or Chrome) passkey unlock via a server-origin PRF
   // ceremony relayed through content-relay.content.ts (13-FF-WEBAUTHN-
   // RESEARCH.md option 1). `unlock.serverCeremony.start` is popup-driven
-  // (this router's ordinary WR-01-gated channel, mirrors
-  // `unlock.extPrf.start`'s shape) -- background/server-unlock.ts mints a
+  // (this router's ordinary WR-01-gated channel) -- background/server-unlock.ts mints a
   // single-use nonce and opens the ceremony window; the guard (server
   // configured + session precondition, which DIFFERS per mode -- see
   // server-unlock.ts) runs entirely background-side. `unlock.serverCeremony.relay`
@@ -391,18 +369,9 @@ export interface MessageResponseMap {
   "session.status": SessionStatus;
   "session.setAutoLockMinutes": { ok: true };
   "unlock.password": UnlockResult;
-  "auth.signIn.password": UnlockResult;
   "vault.list": { items: VaultItem[]; folders: Folder[] };
   "vault.updated": void;
   "session.locked": void;
-  "extPasskey.enroll.start": ExtEnrollStartResult;
-  "extPasskey.enroll.finish": {
-    ok: boolean;
-    error?: "not-unlocked" | "unreachable" | "unknown" | "invalid-credentials";
-  };
-  "extPasskey.suppressPrompt": { ok: true };
-  "unlock.extPrf.start": { credentialIdB64url: string; prfSaltB64: string } | { notEnrolled: true };
-  "unlock.extPrf.finish": ExtUnlockResult;
   "config.get": { baseUrl: string } | null;
   "config.set": { ok: true } | { ok: false; error: "invalid-url" | "unreachable" | "cors-blocked" };
   // Plan 15-05: identical error union to config.set, minus persistence --

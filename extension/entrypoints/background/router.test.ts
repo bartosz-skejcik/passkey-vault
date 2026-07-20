@@ -72,15 +72,6 @@ vi.mock("./unlock", () => ({
   handleSignInPrfStart: vi.fn(),
   handleSignInPrfFinish: vi.fn(),
 }));
-vi.mock("./ext-passkey", () => ({
-  handleExtEnrollStart: vi.fn(),
-  handleExtEnrollFinish: vi.fn(),
-  handleExtPrfUnlockStart: vi.fn(),
-  handleExtPrfUnlockFinish: vi.fn(),
-  hasEnrolledExtPasskey: vi.fn().mockResolvedValue(false),
-  readExtPasskeyPromptSuppressed: vi.fn().mockResolvedValue(false),
-  setExtPasskeyPromptSuppressed: vi.fn(),
-}));
 vi.mock("./server-config", () => ({
   readServerConfig: vi.fn(),
   configureServer: vi.fn(),
@@ -114,7 +105,7 @@ import { registerAutofillFrameChannel, registerMessageRouter } from "./router";
 // importing it here (rather than redefining a lookalike class) guarantees
 // `instanceof` checks inside handleConfigProbe see the SAME class reference
 // this test throws.
-import { InvalidServerUrlError } from "./server-config";
+import { InvalidServerUrlError, readServerConfig, configureServer } from "./server-config";
 
 const OWN_SENDER = { id: "test-ext-id", url: "chrome-extension://test-ext-id/popup.html" };
 
@@ -573,5 +564,83 @@ describe("config.probe / session.signOut (Plan 15-05, AUTH-04)", () => {
     const result = await send({ kind: "session.signOut" });
     expect(result).toEqual({ ok: true });
     expect(hoisted.mockSignOutVaultSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+// AUTH-03 (Plan 15-04): hard removal of the extension-scoped PRF unlock
+// path. The 6 deleted kinds must no longer be recognized by
+// isProtocolMessage() (the popup router steps aside, exactly like
+// credentials.create/get above), and session.status's locked/unlocked
+// shapes must no longer carry the retired extPasskeyEnrolled/
+// extPasskeyPromptSuppressed fields.
+describe("AUTH-03 hard removal (Plan 15-04)", () => {
+  it("isProtocolMessage() no longer recognizes extPasskey.enroll.start -- the popup router steps aside instead of dispatching", async () => {
+    const popupResult = hoisted.listeners[0](
+      { kind: "extPasskey.enroll.start" },
+      OWN_SENDER,
+      vi.fn(),
+    );
+    expect(popupResult).toBeUndefined();
+  });
+
+  it("isProtocolMessage() no longer recognizes auth.signIn.password -- the popup router steps aside instead of dispatching", async () => {
+    const popupResult = hoisted.listeners[0](
+      { kind: "auth.signIn.password", email: "a@b.c", passwordB64: "x" },
+      OWN_SENDER,
+      vi.fn(),
+    );
+    expect(popupResult).toBeUndefined();
+  });
+
+  it("getSessionStatus()'s locked shape has no extPasskeyEnrolled/extPasskeyPromptSuppressed keys", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(null);
+    const result = await send({ kind: "session.status" });
+    expect(result).toEqual(
+      expect.objectContaining({ kind: "locked", wasAutoLocked: false, autoLockMinutes: 15 }),
+    );
+    expect(result).not.toHaveProperty("extPasskeyEnrolled");
+    expect(result).not.toHaveProperty("extPasskeyPromptSuppressed");
+  });
+
+  it("getSessionStatus()'s unlocked shape has no extPasskeyEnrolled/extPasskeyPromptSuppressed keys", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    const result = await send({ kind: "session.status" });
+    expect(result).toEqual(
+      expect.objectContaining({
+        kind: "unlocked",
+        autoLockMinutes: 15,
+        accountEmail: "a@example.com",
+      }),
+    );
+    expect(result).not.toHaveProperty("extPasskeyEnrolled");
+    expect(result).not.toHaveProperty("extPasskeyPromptSuppressed");
+  });
+
+  it("unlock.password still dispatches correctly (no collateral regression) -- reaches the mocked handleUnlockPassword rather than stepping aside", async () => {
+    const kept = hoisted.listeners[0](
+      { kind: "unlock.password", passwordB64: btoa("hunter2") },
+      OWN_SENDER,
+      vi.fn(),
+    );
+    expect(kept).toBe(true);
+  });
+
+  it("config.get/config.set still dispatch correctly (no collateral regression), unaffected by this plan's deletions", async () => {
+    vi.mocked(readServerConfig).mockResolvedValue({ baseUrl: "https://vault.example.com" });
+    const getResult = await send({ kind: "config.get" });
+    expect(getResult).toEqual({ baseUrl: "https://vault.example.com" });
+
+    vi.mocked(configureServer).mockResolvedValue({ baseUrl: "https://vault.example.com" });
+    const setResult = await send({ kind: "config.set", rawUrl: "https://vault.example.com" });
+    expect(setResult).toEqual({ ok: true });
+  });
+
+  it("unlock.serverCeremony.start still dispatches correctly (no collateral regression)", async () => {
+    const kept = hoisted.listeners[0](
+      { kind: "unlock.serverCeremony.start", mode: "unlock" },
+      OWN_SENDER,
+      vi.fn(),
+    );
+    expect(kept).toBe(true);
   });
 });

@@ -1,10 +1,12 @@
 // entrypoints/background/router.ts — the typed browser.runtime.onMessage
 // dispatch table for the ext-protocol.ts message contract. This grows
 // across Waves 3-5 (each adds its own `case` + import) -- 09-04 adds
-// `unlock.*` AND `auth.signIn.*` kinds, 09-05 adds `vault.list`, 09-08 adds
-// `extPasskey.*`/`unlock.extPrf.*` kinds (09-CONTEXT AMENDMENT 2026-07-15),
-// 09-06 adds `config.get`/`config.set` -- by adding a case to the switch
-// below, never by restructuring this shape.
+// `unlock.*` kinds, 09-05 adds `vault.list`, 09-06 adds `config.get`/
+// `config.set` -- by adding a case to the switch below, never by
+// restructuring this shape. (09-08's extension-scoped `extPasskey.*`/
+// `unlock.extPrf.*` kinds and the popup-dispatched `auth.signIn.password`
+// kind were hard-removed in AUTH-03/Plan 15-04, superseded by the
+// server-origin ceremony window -- server-unlock.ts.)
 // `vault.updated` (also added by 09-05) is deliberately NOT one of this
 // router's recognized kinds -- it's a fire-and-forget broadcast FROM the
 // background TO any open popup, not a request this router should dispatch
@@ -104,15 +106,6 @@ import {
   LockedVaultError,
   OwnershipMismatchError,
 } from "./capture-handler";
-import {
-  handleExtEnrollStart,
-  handleExtEnrollFinish,
-  handleExtPrfUnlockStart,
-  handleExtPrfUnlockFinish,
-  hasEnrolledExtPasskey,
-  readExtPasskeyPromptSuppressed,
-  setExtPasskeyPromptSuppressed,
-} from "./ext-passkey";
 import {
   readServerConfig,
   configureServer,
@@ -484,13 +477,7 @@ function isProtocolMessage(message: unknown): message is Message {
     kind === "session.status" ||
     kind === "session.setAutoLockMinutes" ||
     kind === "unlock.password" ||
-    kind === "auth.signIn.password" ||
     kind === "vault.list" ||
-    kind === "extPasskey.enroll.start" ||
-    kind === "extPasskey.enroll.finish" ||
-    kind === "extPasskey.suppressPrompt" ||
-    kind === "unlock.extPrf.start" ||
-    kind === "unlock.extPrf.finish" ||
     kind === "config.get" ||
     kind === "config.set" ||
     // Plan 15-05 (AUTH-04): config.probe is popup-driven, mirrors
@@ -509,8 +496,7 @@ function isProtocolMessage(message: unknown): message is Message {
     // quick-260717: popup-driven, matches "vault." startsWith gate below
     // (assertPopupSender) exactly like vault.list already does.
     kind === "vault.touch" ||
-    // Plan 13-06: popup-driven, mirrors unlock.extPrf.start's own shape --
-    // unlike unlock.serverCeremony.relay (content-frame-only, above this
+    // Plan 13-06: popup-driven -- unlike unlock.serverCeremony.relay (content-frame-only, above this
     // list is irrelevant to it) and unlock.serverCeremony.state (a
     // fire-and-forget broadcast FROM the background, never dispatched TO
     // this router at all -- see ext-protocol.ts's own header comment).
@@ -551,27 +537,8 @@ async function handle(message: Message, sender: MessageSender): Promise<unknown>
       // own `finally { passwordBytes.fill(0) }`, unl.ts) regardless of
       // outcome. No separate fill(0) needed here.
       return handleUnlockPassword(b64ToBytes(message.passwordB64));
-    case "auth.signIn.password":
-      return handleUnlockPassword(b64ToBytes(message.passwordB64), message.email);
     case "vault.list":
       return { items: getItems(), folders: getFolders() };
-    case "extPasskey.enroll.start":
-      return handleExtEnrollStart();
-    case "extPasskey.enroll.finish":
-      return handleExtEnrollFinish({
-        credentialIdB64url: message.credentialIdB64url,
-        prfSaltB64: message.prfSaltB64,
-        prfBytes: b64ToBytes(message.prfB64).buffer as ArrayBuffer,
-      });
-    case "extPasskey.suppressPrompt":
-      return setExtPasskeyPromptSuppressed(message.suppress).then(() => ({ ok: true as const }));
-    case "unlock.extPrf.start":
-      return handleExtPrfUnlockStart();
-    case "unlock.extPrf.finish":
-      return handleExtPrfUnlockFinish({
-        credentialIdB64url: message.credentialIdB64url,
-        prfBytes: b64ToBytes(message.prfB64).buffer as ArrayBuffer,
-      });
     case "config.get":
       return handleConfigGet();
     case "config.set":
@@ -618,34 +585,26 @@ async function handle(message: Message, sender: MessageSender): Promise<unknown>
 // "locked" (as opposed to "no-session") means now that lockVaultSession()
 // no longer deletes the meta record.
 //
-// 09-08: enriched with extPasskeyEnrolled/extPasskeyPromptSuppressed so
-// 09-06's popup can gate the PRF button + enrollment prompt purely off this
-// ONE status call, no parallel status kind (09-CONTEXT AMENDMENT 2026-07-15).
+// AUTH-03 (Plan 15-04): the 09-08 extPasskeyEnrolled/extPasskeyPromptSuppressed
+// enrichment is removed -- the extension-scoped PRF surface it gated no
+// longer exists, so this call goes back to reporting only lock state.
 async function getSessionStatus(): Promise<MessageResponseMap["session.status"]> {
   const meta = await readSessionMeta();
   if (meta === null) {
     return { kind: "no-session" };
   }
-  const [uk, extPasskeyEnrolled, extPasskeyPromptSuppressed] = await Promise.all([
-    ensureHydrated(),
-    hasEnrolledExtPasskey(),
-    readExtPasskeyPromptSuppressed(),
-  ]);
+  const uk = await ensureHydrated();
   if (uk === null) {
     return {
       kind: "locked",
       wasAutoLocked: meta.wasAutoLocked,
       autoLockMinutes: meta.idleTimeoutMinutes,
-      extPasskeyEnrolled,
-      extPasskeyPromptSuppressed,
     };
   }
   return {
     kind: "unlocked",
     autoLockMinutes: meta.idleTimeoutMinutes,
     accountEmail: meta.accountEmail,
-    extPasskeyEnrolled,
-    extPasskeyPromptSuppressed,
   };
 }
 

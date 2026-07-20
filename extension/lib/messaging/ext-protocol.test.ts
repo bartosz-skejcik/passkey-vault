@@ -34,28 +34,9 @@ const MESSAGE_FIXTURES: MessageFixtureMap = {
   // Binary fields are ALWAYS base64 strings (`*B64` suffix) on this union --
   // see lib/messaging/bytes-b64.ts's header comment for why.
   "unlock.password": { kind: "unlock.password", passwordB64: btoa("hunter2") },
-  "auth.signIn.password": {
-    kind: "auth.signIn.password",
-    passwordB64: btoa("hunter2"),
-    email: "a@example.com",
-  },
   "vault.list": { kind: "vault.list" },
   "vault.updated": { kind: "vault.updated" },
   "session.locked": { kind: "session.locked" },
-  "extPasskey.enroll.start": { kind: "extPasskey.enroll.start" },
-  "extPasskey.enroll.finish": {
-    kind: "extPasskey.enroll.finish",
-    credentialIdB64url: "cred-id-b64url",
-    prfSaltB64: btoa("salt-bytes"),
-    prfB64: btoa("prf-output-bytes-3"),
-  },
-  "extPasskey.suppressPrompt": { kind: "extPasskey.suppressPrompt", suppress: true },
-  "unlock.extPrf.start": { kind: "unlock.extPrf.start" },
-  "unlock.extPrf.finish": {
-    kind: "unlock.extPrf.finish",
-    credentialIdB64url: "cred-id-b64url-2",
-    prfB64: btoa("prf-output-bytes-4"),
-  },
   "config.get": { kind: "config.get" },
   "config.set": { kind: "config.set", rawUrl: "https://vault.example.com" },
   // Plan 15-05 (AUTH-04): identical shape to config.set, minus persistence.
@@ -149,8 +130,6 @@ const UNLOCKED_STATUS: SessionStatus = {
   kind: "unlocked",
   autoLockMinutes: 15,
   accountEmail: "a@example.com",
-  extPasskeyEnrolled: true,
-  extPasskeyPromptSuppressed: false,
 };
 
 /**
@@ -169,24 +148,12 @@ const RESPONSE_FIXTURES: ResponseFixtureMap = {
   "session.status": UNLOCKED_STATUS,
   "session.setAutoLockMinutes": { ok: true },
   "unlock.password": { ok: true },
-  "auth.signIn.password": { ok: true },
   "vault.list": {
     items: [],
     folders: [{ id: "f1", name: "Folder" }],
   },
   "vault.updated": undefined,
   "session.locked": undefined,
-  "extPasskey.enroll.start": {
-    ok: true,
-    accountEmail: "a@example.com",
-    userHandleB64: btoa("user-handle-bytes"),
-    challengeB64: btoa("challenge-bytes"),
-    prfSaltB64: btoa("salt-bytes"),
-  },
-  "extPasskey.enroll.finish": { ok: true },
-  "extPasskey.suppressPrompt": { ok: true },
-  "unlock.extPrf.start": { credentialIdB64url: "cred-id-b64url", prfSaltB64: btoa("salt-bytes") },
-  "unlock.extPrf.finish": { ok: true },
   "config.get": { baseUrl: "https://vault.example.com" },
   "config.set": { ok: true },
   // Plan 15-05 (AUTH-04): identical shape to config.set's response.
