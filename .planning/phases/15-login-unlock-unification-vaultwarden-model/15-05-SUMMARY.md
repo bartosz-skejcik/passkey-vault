@@ -209,3 +209,7 @@ _Both tasks were `tdd="true"`; tests and implementation were authored together p
 ---
 *Phase: 15-login-unlock-unification-vaultwarden-model*
 *Completed: 2026-07-20*
+
+## Self-Check: PASSED
+
+All created/modified files verified present on disk; both task commits (`941eb6e`, `e2a4fc9`) and the plan-metadata commit (`f554c0e`) verified present in git log. No missing items.
