@@ -186,12 +186,30 @@ async function ensureServerConfigured(): Promise<void> {
   }
 }
 
+/** Phase 15 (AUTH-01, Plan 15-07): full sign-in is now ALWAYS driven through
+ * the server-origin ceremony window (ExtUnlockBridge.tsx, mode:"signin") --
+ * the popup itself carries no email/password field anymore (SignInView.tsx).
+ * Mirrors run-server-unlock.cjs's already-proven Selenium
+ * window-handle-driving technique; the Playwright idiom for "a click opens a
+ * new browser page" is `context.waitForEvent("page")`. */
 async function signInWithPassword(): Promise<void> {
-  const passwordField = popup.locator('input[type="password"]').first();
-  await passwordField.waitFor({ timeout: 15000 });
-  await popup.fill('input[type="email"]', EMAIL);
-  await passwordField.fill(PASSWORD);
-  await popup.locator('button[type="submit"]').first().click();
+  const signInBtn = popup.locator('[data-testid="server-ceremony-signin-button"]');
+  await signInBtn.waitFor({ timeout: 15000 });
+  const [ceremonyPage] = await Promise.all([
+    popup.context().waitForEvent("page"),
+    signInBtn.click(),
+  ]);
+  await ceremonyPage.locator("input#pv-ext-unlock-email").fill(EMAIL);
+  await ceremonyPage.locator("input#pv-ext-unlock-password").fill(PASSWORD);
+  await ceremonyPage.locator('[data-testid="ext-unlock-password-submit"]').click();
+  // The background closes the ceremony window itself on every resolution
+  // path (completeServerUnlock) -- wait for either that self-close, or the
+  // popup's own view advancing past the unlock screen (the item-list view's
+  // own established "select" selector), whichever observably happens first.
+  await Promise.race([
+    ceremonyPage.waitForEvent("close", { timeout: 15000 }).catch(() => {}),
+    popup.waitForSelector("select", { timeout: 20000 }).catch(() => {}),
+  ]);
 }
 
 /** Defensive recovery from a confirmed Playwright-harness artifact (see
@@ -238,16 +256,20 @@ async function ensureVaultReady(): Promise<void> {
     return;
   }
   await ensureServerConfigured();
-  await popup.waitForSelector('input[type="password"], select', { timeout: 20000 });
-  if (await popup.locator('input[type="password"]').count()) {
+  // NEW signed-out hero (SignInView.tsx, AUTH-01) has zero input elements --
+  // detect it by its own data-testid rather than the retired
+  // input[type="password"] check. The locked-with-existing-session case
+  // (UnlockView.tsx's own password field) is UNCHANGED: unlock.password
+  // still dispatches exactly as before, AUTH-01 does not touch it.
+  await popup.waitForSelector(
+    '[data-testid="server-ceremony-signin-button"], input[type="password"], select',
+    { timeout: 20000 },
+  );
+  if (await popup.locator('[data-testid="server-ceremony-signin-button"]').count()) {
     await signInWithPassword();
-  }
-  await popup.waitForSelector('select, button:has-text("Create a passkey")', {
-    timeout: 60000,
-  });
-  const notNow = popup.locator("text=/Not now|Nie teraz/i");
-  if (await notNow.count()) {
-    await notNow.first().click();
+  } else if (await popup.locator('input[type="password"]').count()) {
+    await popup.fill('input[type="password"]', PASSWORD);
+    await popup.locator('button[type="submit"]').first().click();
   }
   await popup.waitForSelector("select", { timeout: 20000 });
 }
@@ -434,57 +456,50 @@ test.describe("Phase 9 -- Session Unlock Core, Popup & Sync Client", () => {
     await urlInput.fill(SERVER);
     await popup.locator('button[type="submit"]').first().click();
     // A validated, persisted config advances the popup off the first-run
-    // view -- next view is the sign-in form (no server-url input anymore).
-    await popup.waitForSelector('input[type="password"]', { timeout: 20000 });
+    // view -- next view is the NEW signed-out hero (SignInView.tsx,
+    // AUTH-01): zero input elements, just the ceremony-window CTA.
+    await expect(popup.locator('[data-testid="server-ceremony-signin-button"]')).toBeVisible({
+      timeout: 20000,
+    });
+    await expect(popup.locator('input[type="password"]')).toHaveCount(0);
     await expect(popup.locator("input#pv-server-url")).toHaveCount(0);
     // Editable later: config.get should now report the persisted URL.
     const cfg = await popup.evaluate(() => chrome.runtime.sendMessage({ kind: "config.get" }));
     expect(JSON.stringify(cfg)).toContain("8620");
   });
 
-  test("P9-SC2: user unlocks the vault from the popup with the master password, and with a PRF passkey where the browser supports it", async () => {
+  test("P9-SC2: user signs in via the server-origin ceremony window (password), and unlocks the popup with the master password after a lock", async () => {
+    // (a) Full end-to-end proof of AUTH-01's window-driven sign-in with a
+    // real password ceremony.
     await signInWithPassword();
-    await popup.waitForSelector('select, button:has-text("Create a passkey")', { timeout: 60000 });
+    await popup.waitForSelector("select", { timeout: 60000 });
     await expect(popup.locator("#pv-autolock")).toBeVisible({ timeout: 15000 });
 
-    // PRF-unlock half: arm a CDP virtual authenticator (hasPrf:true) on the
-    // POPUP's OWN CDP session -- this is a genuine browser WebAuthn call
-    // against the extension's own rpId (ext-scoped unlock passkey), never a
-    // brokered provider ceremony.
-    const cdp = await popup.context().newCDPSession(popup);
-    await cdp.send("WebAuthn.enable");
-    await cdp.send("WebAuthn.addVirtualAuthenticator", {
-      options: {
-        protocol: "ctap2",
-        transport: "internal",
-        hasResidentKey: true,
-        hasUserVerification: true,
-        isUserVerified: true,
-        hasPrf: true,
-        automaticPresenceSimulation: true,
-      },
-    });
-
-    const enrollBtn = popup.locator('button:has-text("Create a passkey")');
-    await expect(enrollBtn).toBeVisible({ timeout: 15000 });
-    await enrollBtn.click();
-    await popup.waitForTimeout(2500);
-
-    // Force-lock: clearing chrome.storage.session ALONE is not enough -- a
+    // (b) A genuine lock -> reload -> password-unlock round trip. Force-
+    // lock: clearing chrome.storage.session ALONE is not enough -- a
     // still-alive service worker's soft in-memory cache legitimately keeps
     // the session warm (this project's own prior-session UAT harnesses hit
     // exactly this: popup-full-flow.js's comment). The real lock path
     // clears both, so this harness must too: clear the envelope AND force-
     // terminate the worker via CDP before reloading.
+    const cdp = await popup.context().newCDPSession(popup);
     await popup.evaluate(() => chrome.storage.session.remove("pv-uk-envelope"));
     await cdp.send("ServiceWorker.enable");
     await cdp.send("ServiceWorker.stopAllWorkers");
     await popup.waitForTimeout(1500);
     await popup.reload();
-    const prfBtn = popup.locator('button:has-text("Unlock with passkey")');
-    await expect(prfBtn).toBeVisible({ timeout: 15000 });
-    await prfBtn.click();
-    await popup.waitForTimeout(3000);
+
+    // The NEW password-first locked view (UnlockView.tsx): password field +
+    // the promoted (btn-accent) server-ceremony passkey button.
+    const passwordField = popup.locator('input[type="password"]');
+    await expect(passwordField).toBeVisible({ timeout: 15000 });
+    const serverCeremonyUnlockBtn = popup.locator('[data-testid="server-ceremony-unlock-button"]');
+    await expect(serverCeremonyUnlockBtn).toBeVisible({ timeout: 15000 });
+    await expect(serverCeremonyUnlockBtn).toHaveClass(/btn-accent/);
+
+    await passwordField.fill(PASSWORD);
+    await popup.locator('button[type="submit"]').first().click();
+    await popup.waitForSelector("select", { timeout: 20000 });
     await expect(popup.locator("#pv-autolock")).toBeVisible({ timeout: 15000 });
   });
 
