@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v0.3
 milestone_name: Polish & Hardening
-current_phase: 15
-current_phase_name: Login & Unlock Unification (Vaultwarden Model
-status: executing
+current_phase: 16
+current_phase_name: Design System Extraction — Logic, Types & i18n
+status: planning
 stopped_at: Completed 15-07-PLAN.md
-last_updated: "2026-07-20T19:29:52.692Z"
+last_updated: "2026-07-20T19:53:47.215Z"
 last_activity: 2026-07-20
-last_activity_desc: Phase 15 execution started
+last_activity_desc: Phase 15 complete, transitioned to Phase 16
 progress:
   total_phases: 13
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 53
-  completed_plans: 49
-  percent: 46
+  completed_plans: 51
+  percent: 54
 ---
 
 # Project State
@@ -28,16 +28,16 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 
 ## Current Position
 
-Phase: 15 (Login & Unlock Unification (Vaultwarden Model)) — EXECUTING
-Plan: 2 of 7
-Status: Ready to execute
-Last activity: 2026-07-20 — Phase 15 execution started
+Phase: 16 — Design System Extraction — Logic, Types & i18n
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-20 — Phase 15 complete, transitioned to Phase 16
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 44 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
+- Total plans completed: 51 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
 - Average duration: - min
 - Total execution time: 0 hours (v0.3)
 
@@ -52,6 +52,7 @@ Last activity: 2026-07-20 — Phase 15 execution started
 | 12. Passkey Provider | 7 | - | - |
 | 13. Dual-Browser Hardening | 7 | - | - |
 | 14 | 3 | - | - |
+| 15 | 7 | - | - |
 
 **By Phase (v0.3 — planned, not yet executed):**
 
