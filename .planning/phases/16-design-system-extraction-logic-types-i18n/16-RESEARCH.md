@@ -382,17 +382,19 @@ export * from "pv-ui/generator/password";
 
 **If this table is empty:** N/A — the one assumption above is low-risk and defensively resolved by following the proven precedent rather than the theoretically-minimal path.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should `common.ts` exist as a separate file, or should the ~30 shared keys just live inline in each consumer's `DICTIONARY` initializer via spread, with no intermediate export?**
    - What we know: CONTEXT.md explicitly names `pv-ui/i18n/common.ts` as the target (research Phase B wording, reaffirmed in this phase's locked decisions).
    - What's unclear: Whether `common.ts` should export a single `COMMON_DICTIONARY` object (spread into each consumer's `DICTIONARY`) or export a `common(locale, key)` helper — the spread-object form is simpler and keeps `keyof typeof DICTIONARY` correctly widened per-consumer.
    - Recommendation: Use the spread-object form (`export const COMMON_DICTIONARY = {...} satisfies Record<string, {pl:string;en:string}>`) — matches Pattern 1's example above and requires no new runtime concept beyond what `DICTIONARY` already is.
+   - RESOLVED: spread-object form adopted — Plan 16-04 Task 2 creates `pv-ui/i18n/common.ts` exporting `COMMON_DICTIONARY`, spread into each consumer's `DICTIONARY`.
 
 2. **Should the extension gain new local test files for `cardBrand.ts`/`types.ts`/`clipboard.ts` to close the coverage gap noted in Pitfall 3?**
    - What we know: The extension currently has zero local test coverage for these three modules; only `search.test.ts` and `sort.test.ts` exist locally.
    - What's unclear: Success criterion 1 requires "both test suites pass unchanged" — it does not require NEW coverage. Adding tests is a legitimate opportunity but arguably out of this phase's stated scope (behavior-neutral extraction).
    - Recommendation: Leave as Claude's discretion at plan time; not required for success criteria, but flagged here so it isn't silently lost as "someone else's problem" if the planner chooses to add it.
+   - RESOLVED: extension-side test gap deliberately left as-is — Plan 16-03 explicitly records the decision (behavior-neutral extraction; new coverage out of phase scope). Not silently dropped.
 
 ## Security Domain
 

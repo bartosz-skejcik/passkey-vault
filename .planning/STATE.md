@@ -4,9 +4,9 @@ milestone: v0.3
 milestone_name: Polish & Hardening
 current_phase: 16
 current_phase_name: Design System Extraction — Logic, Types & i18n
-status: planning
+status: executing
 stopped_at: Completed 15-07-PLAN.md
-last_updated: "2026-07-20T19:53:47.215Z"
+last_updated: "2026-07-20T20:42:07.730Z"
 last_activity: 2026-07-20
 last_activity_desc: Phase 15 complete, transitioned to Phase 16
 progress:
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 
 Phase: 16 — Design System Extraction — Logic, Types & i18n
 Plan: Not started
-Status: Ready to plan
+Status: Ready to execute
 Last activity: 2026-07-20 — Phase 15 complete, transitioned to Phase 16
 
 ## Performance Metrics
@@ -99,6 +99,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
 - [Phase 15 planning] decision-coverage-plan gate override: CONTEXT.md decisions are prose-form (no D-NN tokens) so the parser extracted 0; compliance was verified instead by ui-checker (4/4 locked decisions honored) and plan-checker (full context compliance, 3 iterations). Verify-phase may re-surface this — treat as resolved-by-checker-evidence.
+- [Phase 16 planning] decision-coverage-plan gate override (same Phase 15 precedent): CONTEXT.md decisions are prose-form so the parser extracted 0; plan-checker verified full context compliance (0 blockers — all locked architectural decisions explicitly honored across 6 plans). Treat as resolved-by-checker-evidence.
 
 - Roadmap (v0.3): 7 phases (14–20) derived from `.planning/research/v0.3/CODEBASE-GAPS.md` + `DESIGN-SYSTEM-UNIFICATION.md`. Phase 14 is risk-first per Bartek's explicit mandate — the two Critical findings (XBR-02 Firefox response-direction cross-realm corruption, QA-03 no real-RP-verified provider ceremony) are closed BEFORE any UX/design-system work, since both are silent-failure classes a green v0.2 CI could not see. Phase 15 unifies login/unlock onto the Vaultwarden model (AUTH-01..04). Phases 16–17 extract the shared design system into `packages/pv-ui` in the research's measured order — pure logic/types + i18n engine first (16), then the flagship shared React component `ItemIconTile` + in-page token alignment + light-tile UX-01 (17), since DS-03 and UX-01 share the tile concept. Phase 18 formalizes Firefox ceremony-window polish (UX-02) and decision-gates the in-page consent alternative (XBR-03 — may resolve as "rejected-with-reason", not a guaranteed build). Phase 19 batches the CORS touch (SEC-01/02) with server/supply-chain hardening (SEC-03/04). Phase 20 closes the CI/test-rigor gap (QA-01/02/04). 20/20 v0.3 requirements mapped, no orphans, no duplicates.
 - Roadmap (v0.3): v0.2's milestone header changed from "in progress" to "complete, not formally closed" in ROADMAP.md to reflect reality (phase 13 sealed 2026-07-20) without running `/gsd-complete-milestone` — cleanup/retrospective for v0.2 stays deliberately deferred to v1.0 per PROJECT.md.
