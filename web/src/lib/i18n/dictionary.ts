@@ -133,6 +133,11 @@ export const DICTIONARY = {
     en: "Sign in with a passkey",
   },
   "extUnlock.emailLabel": { pl: "Email", en: "Email" },
+  // Plan 15-01 (AMENDMENT, 15-CONTEXT.md): the mode:'signin' surface offers
+  // BOTH master-password sign-in AND passkey sign-in, passkey-first
+  // presentation -- mirrors auth.passwordLabel's copy.
+  "extUnlock.passwordLabel": { pl: "Hasło główne", en: "Master password" },
+  "extUnlock.passwordSubmit": { pl: "Zaloguj hasłem", en: "Log in with password" },
   // Bartek live-UAT bug (13-07 signin flow, .planning/debug/resolved/
   // signin-passkeyless-spin.md): the signin-mode "failed" terminal state's
   // OWN copy -- distinct from extUnlock.failed's unlock-flavored wording,

@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { passkeyUnlockCeremony, passkeyLoginCeremony } from "@/lib/passkeys/login";
-import { ApiClientError } from "@/lib/auth/api";
+import { ApiClientError, base64Encode } from "@/lib/auth/api";
 import PasskeyUnlockButton from "./PasskeyUnlockButton";
 
 // entrypoints/content-relay.content.ts's pv-ext-unlock relay listener (Plan
@@ -115,6 +115,13 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
   const { t } = useLocale();
   const [state, setState] = useState<BridgeState>("idle");
   const [email, setEmail] = useState("");
+  // Plan 15-01 (AMENDMENT, 15-CONTEXT.md): mode:'signin' offers BOTH
+  // master-password and passkey sign-in, passkey-first presentation --
+  // this local state/ref trio is entirely separate from the passkey
+  // ceremony's own state machine above.
+  const [password, setPassword] = useState("");
+  const [passwordSubmitting, setPasswordSubmitting] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const strippedRef = useRef(false);
   const settledRef = useRef(false);
   // Regression fix (coordinator-caught, post-signin-passkeyless-spin):
@@ -146,6 +153,12 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
   // catch-all `failed` state below, which covers earlier (ceremony-side)
   // failures and never has an ack to react to.
   const awaitingAckRef = useRef(false);
+  // Plan 15-01: parallel to awaitingAckRef above -- lets the SAME shared
+  // onMessage ack listener distinguish which submission (passkey vs.
+  // password) an incoming ack belongs to. Mutually exclusive with
+  // awaitingAckRef: handlePasswordSignIn sets this true and that false,
+  // handleUnlock's own reset at its top does the opposite.
+  const awaitingPasswordAckRef = useRef(false);
 
   // Strips the nonce from the URL immediately on mount -- same
   // history.replaceState idiom page.tsx's own ?panel=/?action= handling
@@ -172,6 +185,35 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
       if (event.source !== window || event.origin !== window.location.origin) return;
       if (!isExtUnlockResultMessage(event.data)) return;
       if (event.data.nonce !== nonce) return;
+
+      // Plan 15-01: a password submission's ack is handled entirely
+      // separately from the passkey ceremony's own ack branch below --
+      // reset FIRST (in both outcomes) so this listener never re-enters
+      // this branch for a later, unrelated ack.
+      if (awaitingPasswordAckRef.current) {
+        awaitingPasswordAckRef.current = false;
+        if (event.data.ok) {
+          // Same terminal behavior as the passkey success path below.
+          settledRef.current = true;
+          setState("success");
+          try {
+            window.close();
+          } catch {
+            // Some environments (tests, a window the extension didn't open)
+            // don't allow script-initiated close -- the background also
+            // closes this window itself, so this is best-effort only.
+          }
+        } else {
+          // Wrong password (or a background-side unwrap failure) --
+          // returns to the SAME form for an inline retry, never a
+          // full-screen terminal state (must_haves.truths, 15-01-PLAN.md).
+          setPasswordSubmitting(false);
+          setPasswordError(t("auth.loginFailed"));
+          setState("idle");
+        }
+        return;
+      }
+
       if (!awaitingAckRef.current) return; // see awaitingAckRef's own header comment
       settledRef.current = true;
       if (event.data.ok) {
@@ -256,6 +298,47 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
    */
   function postFailureNotice() {
     window.postMessage({ source: REQUEST_SOURCE, nonce, failed: true }, window.location.origin);
+  }
+
+  /**
+   * Plan 15-01 (AMENDMENT, 15-CONTEXT.md) -- the ceremony window's
+   * mode:'signin' surface's master-password sign-in path, alongside the
+   * existing passkey ceremony above. Relays `{passwordB64, email}` through
+   * the same content-relay -> background hop the PRF material already
+   * crosses (unlock.serverCeremony.relay's new password-shaped variant,
+   * server-unlock.ts's completeServerUnlock) into the already-tested
+   * `handleUnlockPassword(passwordBytes, email)` -- this component never
+   * derives Argon2id material itself (D-05's whole-project invariant: only
+   * `entrypoints/background/*.ts` touches WASM/pv-core).
+   */
+  function handlePasswordSignIn(e: FormEvent) {
+    e.preventDefault();
+    if (email.trim() === "" || password === "") return;
+    setPasswordSubmitting(true);
+    setPasswordError(null);
+
+    // STANDARD base64 (b64ToBytes convention, NOT base64url) -- matches
+    // unlock.password's own passwordB64 field, unlike the PRF field's
+    // base64url D-21 convention. Zeroized immediately after encoding,
+    // mirroring postAndWaitForAck's own PRF-bytes discipline (T-13-12).
+    const passwordBytes = new TextEncoder().encode(password);
+    const passwordB64 = base64Encode(passwordBytes);
+    passwordBytes.fill(0);
+
+    window.postMessage(
+      { source: REQUEST_SOURCE, nonce, passwordB64, email: email.trim() },
+      window.location.origin,
+    );
+
+    awaitingPasswordAckRef.current = true;
+    awaitingAckRef.current = false; // mutually exclusive with a PRF ack-wait
+    settledRef.current = false;
+    setState("waiting");
+    window.setTimeout(() => {
+      if (!settledRef.current) {
+        setState("failed");
+      }
+    }, RESULT_TIMEOUT_MS);
   }
 
   async function handleUnlock() {
@@ -391,6 +474,41 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
               disabled={!signinReady}
               onClick={() => void handleUnlock()}
             />
+            {mode === "signin" ? (
+              // Plan 15-01 (AMENDMENT, 15-CONTEXT.md): password AFTER the
+              // passkey button+divider -- passkey-first presentation,
+              // mirrors LoginForm.tsx's own field-order convention. A
+              // passkey-less account can sign in fully through THIS window
+              // without ever seeing the popup's own password form.
+              <>
+                <div className="divider">{t("unlock.orDivider")}</div>
+                <form onSubmit={handlePasswordSignIn} className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor="pv-ext-unlock-password" className="text-sm">
+                      {t("extUnlock.passwordLabel")}
+                    </label>
+                    <input
+                      id="pv-ext-unlock-password"
+                      type="password"
+                      required
+                      className="input input-bordered w-full font-mono"
+                      value={password}
+                      disabled={state === "busy" || passwordSubmitting}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                  </div>
+                  {passwordError ? <p className="text-sm text-error">{passwordError}</p> : null}
+                  <button
+                    type="submit"
+                    data-testid="ext-unlock-password-submit"
+                    className="btn btn-primary w-full"
+                    disabled={passwordSubmitting || email.trim() === "" || password === ""}
+                  >
+                    {t("extUnlock.passwordSubmit")}
+                  </button>
+                </form>
+              </>
+            ) : null}
           </div>
         ) : null}
 
