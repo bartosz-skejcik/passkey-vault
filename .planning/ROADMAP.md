@@ -59,7 +59,7 @@ Delivered: 30/30 requirements, all phases verified passed, cross-phase integrati
 - **In-page overlays stay imperative/closed-shadow by design:** DS-04/UX-01 token-align the in-page surfaces; they do not gain React. This architectural line from Phases 10–11 is preserved through v0.3.
 - **XBR-03 is decision-gated, not a guaranteed build:** an in-page Firefox consent panel replacing the consent window ships only if a fresh security review confirms it preserves the SECURED posture; otherwise the window model stands and the requirement closes as rejected-with-reason.
 
-- [ ] **Phase 14: Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification** - Root-cause and byte-assert-fix the Firefox response-direction Xray hole and add a real `webauthn-rs` round-trip test for the provider ceremony, before any UX/design work
+- [x] **Phase 14: Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification** - Root-cause and byte-assert-fix the Firefox response-direction Xray hole and add a real `webauthn-rs` round-trip test for the provider ceremony, before any UX/design work (completed 2026-07-20)
 - [ ] **Phase 15: Login & Unlock Unification (Vaultwarden Model)** - One login path (full sign-in always via the server-origin ceremony window) and one unlock mechanism (password or server-origin passkey), replacing v0.2's dual popup/ext-scoped-PRF model
 - [ ] **Phase 16: Design System Extraction — Logic, Types & i18n** - Pure vault logic/types and the i18n engine move into `packages/pv-ui`, consumed once by web and extension
 - [ ] **Phase 17: Shared Component & Visual Alignment** - `ItemIconTile` becomes a single shared React component; in-page autofill surfaces render light tiles and token-aligned styling matching the web app
@@ -249,7 +249,7 @@ Plans:
   3. A Rust integration test feeds a provider-produced registration and authentication ceremony through an independent `webauthn-rs` verifier, and the assertion signature verifies over the real challenge — not a shape/`.ok`/`id`-only check.
   4. `.planning/debug/firefox-request-xray-hole.md` is git-tracked, resolved, and mirrored into STATE.md's Deferred/Resolved history so the record cannot be silently lost again.
 
-**Plans:** 3/3 plans executed
+**Plans:** 3/3 plans complete
 Plans:
 **Wave 1**
 
@@ -366,7 +366,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 11. Generate & Capture | v0.2 | 9/9 | Complete    | 2026-07-16 |
 | 12. Passkey Provider | v0.2 | 7/7 | Complete    | 2026-07-17 |
 | 13. Dual-Browser Hardening | v0.2 | 7/7 | Complete    | 2026-07-20 |
-| 14. Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification | v0.3 | 3/3 | In Progress|  |
+| 14. Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification | v0.3 | 3/3 | Complete    | 2026-07-20 |
 | 15. Login & Unlock Unification (Vaultwarden Model) | v0.3 | 0/TBD | Not started | - |
 | 16. Design System Extraction — Logic, Types & i18n | v0.3 | 0/TBD | Not started | - |
 | 17. Shared Component & Visual Alignment | v0.3 | 0/TBD | Not started | - |
