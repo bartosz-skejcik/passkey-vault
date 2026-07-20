@@ -362,12 +362,27 @@ function runWhenDocumentReady(fn: () => void): void {
 // (MAIN world, key-free) postMessage a WebAuthn ceremony request here;
 // this ISOLATED-world listener validates it (D-03/ASVS V5), forwards it to
 // the background over the content-frame channel (router.ts,
-// registerAutofillFrameChannel()), and relays the response back. This is
-// the ONLY place in this file that ever touches base64url encode/decode --
-// page-bridge itself stays completely free of any encoding logic (D-21),
-// and this file never touches the User Key, PRF output, or any passkey
-// private key material -- only opaque, already-encrypted-or-public
-// ceremony JSON.
+// registerAutofillFrameChannel()), and relays the response back. This file
+// remains the SOLE owner of the REQUEST-direction base64url encode and its
+// own ISOLATED-world response decode (`decodeCredentialResponseJson` below
+// is unchanged -- still needed and correct for its existing purpose: the
+// background/WASM layer, and this file's own consumers, both still receive
+// real ISOLATED-world ArrayBuffers from it); this file never touches the
+// User Key, PRF output, or any passkey private key material -- only
+// opaque, already-encrypted-or-public ceremony JSON.
+//
+// Plan 14-02 exception (`.planning/debug/resolved/firefox-request-xray-hole.md`):
+// page-bridge-firefox.ts's `shapeCredential()` NOW ALSO re-decodes
+// response-direction binary fields from `credentialJson` in MAIN world, on
+// Firefox only -- a live-Firefox differential probe found that
+// ArrayBuffers this file decodes here (ISOLATED world) arrive at the RP
+// page with a broken `instanceof ArrayBuffer` prototype chain across the
+// ISOLATED->MAIN `window.postMessage` hop (bytes intact, only realm
+// identity broken -- see the debug doc's Evidence entry timestamped
+// 2026-07-20T11:10:00Z). page-bridge-firefox.ts's own MAIN-world
+// `b64UrlToArrayBuffer` closes that gap for the page's own realm. No
+// equivalent Chrome-side change -- research found no Xray hazard on
+// Chrome's MAIN<->ISOLATED hop, so page-bridge.content.ts is untouched.
 //
 // D-21 (base64url boundary): MAIN<->ISOLATED postMessage is
 // structured-clone (real ArrayBuffers survive the hop), but the
@@ -379,8 +394,9 @@ function runWhenDocumentReady(fn: () => void): void {
 // `Vec<u8>`<->base64url convention on the Rust side, crates/pv-provider)
 // before `sendMessage`, and every binary field in the background's
 // `credentialResponseJson` response is decoded back into a real
-// `ArrayBuffer` before being handed back to page-bridge -- which never
-// runs a base64 decoder of its own.
+// `ArrayBuffer` before being handed back to page-bridge -- which, on
+// Chrome, never runs a base64 decoder of its own (on Firefox, see the
+// Plan 14-02 exception immediately above).
 
 const RESPONSE_SOURCE = "pv-content-relay";
 const REQUEST_SOURCE = "pv-page-bridge";

@@ -607,6 +607,98 @@ reproduction: |
     PROCEED in Task 2 exactly as specified there. Path (b) (documented
     contract-equivalent) is NOT required.
 
+- timestamp: 2026-07-20T11:30:00Z
+  checked: |
+    Plan 14-02 Task 2 -- while verifying the response-direction
+    re-materialization fix (page-bridge-firefox.ts's `shapeCredential()`,
+    per the 11:10:00Z entry's "fix path (a) is clear to proceed"
+    determination), the fix's own real-Firefox end-to-end verification
+    (real create() ceremony, real consent UI, real credential) STILL showed
+    `cred.rawId instanceof ArrayBuffer: false` when measured via the SAME
+    `driver.executeScript(...).then((cred) => {...})` pattern
+    probe-request-xray.cjs/real-flow-xray-probe.cjs use -- i.e. the fix
+    appeared not to work. Before accepting that at face value, ran a
+    battery of targeted follow-up probes on the SAME real Firefox instance:
+    (1) a plain, NON-extension-related sanity check -- `window.__ab = new
+    ArrayBuffer(4)` set in ONE `driver.executeScript` call,
+    `instanceof ArrayBuffer` re-checked in a SEPARATE, LATER
+    `driver.executeScript` call -- returned `false`, despite involving zero
+    extension code and zero cross-realm postMessage hops of any kind.
+    (2) The SAME check performed entirely WITHIN one `executeScript` call,
+    via a `setTimeout`/`Promise.resolve().then()` deferred continuation
+    (constructing AND checking the ArrayBuffer inside the deferred
+    callback) -- returned `true`.
+    (3) A genuinely INLINE `<script>` tag served as part of the RP
+    fixture's own HTML (zero WebDriver `executeScript` involvement for
+    either triggering `navigator.credentials.create()` or for the
+    `instanceof` check itself -- the check runs entirely inside the
+    fixture page's own bundled JS, exactly like a real website's code)
+    was added and run against BOTH the pre-fix (Task 2's starting,
+    unmodified `shapeCredential()`) and post-fix builds.
+  found: |
+    (1)/(2) confirm a WebDriver/geckodriver `executeScript`-specific
+    measurement artifact: a value constructed in one `executeScript`
+    invocation's own top-level script text shows `instanceof: false` when
+    checked from a LATER, separately-dispatched `executeScript` call --
+    even for a 100% native, page-only, zero-extension-involvement
+    `ArrayBuffer` with no cross-realm hop of any kind. The artifact does
+    NOT reproduce for a deferred continuation (`setTimeout`/`Promise.then`)
+    that stays within the SAME originating `executeScript` invocation.
+    (3) is decisive: using the inline-`<script>` method (no `executeScript`
+    involved anywhere in the measurement), `cred.rawId`/
+    `response.clientDataJSON`/`response.attestationObject`
+    `instanceof ArrayBuffer` are ALL `true` -- on the PRE-FIX build
+    (Task 2's starting, completely unmodified `shapeCredential()`, verified
+    by temporarily reverting to the pre-Task-2 file and rebuilding) AND on
+    the POST-FIX build, byte-for-byte identically. Re-ran twice on each
+    build to rule out a one-off flake; both runs of both builds agree.
+  implication: |
+    CRITICAL CORRECTION to this session's own 01:00:00Z Evidence entry (and
+    to Task 1's own 11:10:00Z variable-(b) finding, which reproduced that
+    same entry's methodology with broader field coverage but the SAME
+    `executeScript`-based measurement technique): the RESPONSE-direction
+    `instanceof ArrayBuffer: false` signal that motivated this entire
+    Task 2 investigation was NOT a genuine product bug. It was an artifact
+    of the WebDriver/geckodriver `driver.executeScript(...).then(...)`
+    measurement technique itself, which this session now shows produces a
+    FALSE `instanceof: false` reading for ANY value crossing an
+    `executeScript`-call boundary, independent of whether an extension,
+    Xray wrapper, or cross-realm postMessage hop is involved at all (see
+    finding (1) above -- a pure page-native value with zero extension
+    involvement shows the identical false-negative signature). A genuine
+    RP page's own bundled/inline JavaScript -- the actual, real-world
+    threat model this investigation exists to protect -- correctly sees
+    `instanceof ArrayBuffer: true` for every response-direction binary
+    field, on REAL Firefox, WITH OR WITHOUT Task 2's fix.
+
+    This does NOT retract the 11:10:00Z entry's variable (a)/(c)
+    conclusions (ack-timing and envelope-shape were still legitimately
+    ruled out, using a measurement technique -- direct `window`
+    `message`-event-listener checks, never crossing an `executeScript`
+    call boundary -- that this entry's own finding (2) shows is NOT
+    subject to the artifact). It specifically corrects the interpretation
+    of variable (b)'s standalone-harness-vs-real-flow comparison: the
+    "real flow" side of that comparison was measured with a technique now
+    shown to be unreliable for this exact purpose. The standalone harness
+    (message-listener-based, artifact-free per finding (2)) was RIGHT all
+    along; the real-flow harness (executeScript-`.then()`-based) was
+    reading a WebDriver artifact, not the product's actual behavior.
+
+    DECISION: keep Task 2's fix in place anyway, as defense-in-depth
+    (harmless, architecture-symmetric with the already-shipped
+    REQUEST-direction fix, adds a genuine guarantee -- MAIN-world-native
+    `ArrayBuffer` construction -- that no longer depends on
+    `window.postMessage`'s cross-realm structured-clone behavior
+    continuing to preserve `ArrayBuffer` identity across future Firefox
+    versions) rather than reverting it, since Task 1's own SECURED/D-21
+    gate already cleared it and it causes zero regressions (full gate
+    suite below still green). Future debug sessions investigating Firefox
+    cross-realm behavior via WebDriver should prefer the artifact-free
+    measurement techniques demonstrated here (same-`executeScript`-call
+    deferred continuations, or a genuinely inline `<script>` fixture) over
+    a `driver.executeScript(...).then(...)` pattern that crosses an
+    `executeScript` call boundary to read the result.
+
 ## Resolution
 
 root_cause: |

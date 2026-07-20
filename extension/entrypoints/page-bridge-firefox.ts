@@ -220,12 +220,73 @@ function relay(
   });
 }
 
+/** Firefox-only MAIN-world response-direction re-materialization (Plan
+ * 14-02, `.planning/debug/resolved/firefox-request-xray-hole.md`'s
+ * response-direction follow-up): content-relay.content.ts's
+ * `decodeCredentialResponseJson()` already builds real `ArrayBuffer`s for
+ * every response-direction binary field (D-21), born in the ISOLATED-world
+ * realm and delivered to this file across the ISOLATED->MAIN
+ * `window.postMessage` hop (a structured-clone transfer, which preserves
+ * genuine `ArrayBuffer`-ness). A live-Firefox differential investigation
+ * (debug doc Evidence entries timestamped 2026-07-20T11:10:00Z and
+ * 2026-07-20T11:30:00Z) found the ORIGINAL `instanceof ArrayBuffer: false`
+ * signal that motivated this fix was itself an artifact of the WebDriver/
+ * geckodriver `executeScript` measurement technique used to observe it --
+ * a genuine RP page's own bundled/inline JS (verified via an actual inline
+ * `<script>` fixture, no WebDriver `executeScript` involved) correctly
+ * sees `instanceof ArrayBuffer: true` for these fields even WITHOUT this
+ * function, both before and after this commit. This re-materialization is
+ * kept anyway as a defense-in-depth, architecture-symmetric measure (it
+ * mirrors the already-shipped REQUEST-direction fix's own MAIN-world
+ * re-materialization pattern, costs nothing at runtime, and removes any
+ * remaining dependency on postMessage's cross-realm structured-clone
+ * behavior continuing to preserve `ArrayBuffer` identity across Firefox
+ * versions) -- see the 11:30:00Z Evidence entry for the full investigation
+ * and its "keep as defense-in-depth" rationale. Copied verbatim from
+ * content-relay.content.ts's own `b64UrlToArrayBuffer` (same algorithm),
+ * but executed against THIS file's own native `atob`/`Uint8Array`/
+ * `ArrayBuffer` globals -- native-globals-only, so this addition cannot
+ * trip `scripts/audit-mainworld-boundary.sh`'s FORBIDDEN-import regex. */
+function b64UrlToArrayBuffer(b64url: string): ArrayBuffer {
+  const padded = b64url.replace(/-/g, "+").replace(/_/g, "/");
+  const paddingNeeded = (4 - (padded.length % 4)) % 4;
+  const binary = atob(padded + "=".repeat(paddingNeeded));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+/** Mirrors content-relay.content.ts's own `RESPONSE_BINARY_FIELDS` list
+ * (`response.*` binary fields `decodeCredentialResponseJson` decodes) --
+ * kept in sync manually, per this file's own header comment on why the
+ * ~70-line patch is duplicated rather than shared. */
+const RESPONSE_BINARY_FIELDS = ["clientDataJSON", "attestationObject", "authenticatorData", "signature", "publicKey"];
+
 /**
  * Shapes content-relay's already-decoded `credential` (real ArrayBuffers,
  * D-21) into a plain object satisfying `PublicKeyCredential`'s enumerable
  * contract. See page-bridge.content.ts's identical function for the full
  * rationale (no public `PublicKeyCredential` constructor exists for page
  * script to use).
+ *
+ * Firefox-only addition (see `b64UrlToArrayBuffer`'s header comment above):
+ * every response-direction binary field is ALSO re-decoded here, straight
+ * from `credentialJson`'s already-available base64url STRING form (never
+ * from `credential`'s ISOLATED-decoded `ArrayBuffer` values, whose realm
+ * identity is what's broken), using the MAIN-world-native
+ * `b64UrlToArrayBuffer` above -- the resulting `ArrayBuffer`s are genuinely
+ * born in THIS realm, so `instanceof ArrayBuffer` resolves correctly for
+ * the page. Purely additive: only decodes a field when `credentialJson`'s
+ * corresponding value is a `string` (mirrors `decodeCredentialResponseJson`'s
+ * own `typeof === "string"` guard), and layers over `{...cred, ...}` so any
+ * field `credentialJson` does not cover still falls back to `credential`'s
+ * existing value. No inner try/catch -- `broker()`'s existing outer
+ * try/catch already wraps this call site and falls through to native
+ * `original(options)` on any thrown error (a malformed/spoofed
+ * `credentialJson` field making `atob`/`new Uint8Array` throw), matching
+ * the already-accepted IN-01/Pitfall-5 fail-safe precedent.
  */
 function shapeCredential(
   credential: unknown,
@@ -233,9 +294,59 @@ function shapeCredential(
 ): Credential {
   const cred = (credential ?? {}) as Record<string, unknown>;
   const extensionResults = (cred.clientExtensionResults as Record<string, unknown>) ?? {};
+
+  const json = (credentialJson ?? {}) as Record<string, unknown>;
+  const rematerialized: Record<string, unknown> = {};
+
+  if (typeof json.rawId === "string") {
+    rematerialized.rawId = b64UrlToArrayBuffer(json.rawId);
+  }
+
+  if (typeof json.response === "object" && json.response !== null) {
+    const jsonResponse = json.response as Record<string, unknown>;
+    const existingResponse = (cred.response as Record<string, unknown>) ?? {};
+    const rematerializedResponse: Record<string, unknown> = { ...existingResponse };
+    for (const field of RESPONSE_BINARY_FIELDS) {
+      if (typeof jsonResponse[field] === "string") {
+        rematerializedResponse[field] = b64UrlToArrayBuffer(jsonResponse[field] as string);
+      }
+    }
+    if (typeof jsonResponse.userHandle === "string") {
+      rematerializedResponse.userHandle = b64UrlToArrayBuffer(jsonResponse.userHandle as string);
+    }
+    rematerialized.response = rematerializedResponse;
+  }
+
+  const jsonExtResults = json.clientExtensionResults;
+  if (typeof jsonExtResults === "object" && jsonExtResults !== null) {
+    const jsonPrf = (jsonExtResults as Record<string, unknown>).prf;
+    if (typeof jsonPrf === "object" && jsonPrf !== null) {
+      const jsonResults = (jsonPrf as Record<string, unknown>).results;
+      if (typeof jsonResults === "object" && jsonResults !== null) {
+        const r = jsonResults as Record<string, unknown>;
+        const existingPrf = (extensionResults.prf as Record<string, unknown>) ?? {};
+        const existingResults = (existingPrf.results as Record<string, unknown>) ?? {};
+        const rematerializedResults: Record<string, unknown> = { ...existingResults };
+        for (const field of ["first", "second"]) {
+          if (typeof r[field] === "string") {
+            rematerializedResults[field] = b64UrlToArrayBuffer(r[field] as string);
+          }
+        }
+        rematerialized.clientExtensionResults = {
+          ...extensionResults,
+          prf: { ...existingPrf, results: rematerializedResults },
+        };
+      }
+    }
+  }
+
+  const mergedExtensionResults =
+    (rematerialized.clientExtensionResults as Record<string, unknown>) ?? extensionResults;
+
   return {
     ...cred,
-    getClientExtensionResults: () => extensionResults,
+    ...rematerialized,
+    getClientExtensionResults: () => mergedExtensionResults,
     toJSON: () => credentialJson,
   } as unknown as Credential;
 }
