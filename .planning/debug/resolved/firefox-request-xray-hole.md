@@ -1,5 +1,5 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: |
   Follow-on bug from the just-fixed firefox-injection-csp-blocked session
   (.planning/debug/resolved/firefox-injection-csp-blocked.md, commits
@@ -810,3 +810,106 @@ files_changed:
   - extension/entrypoints/content-relay.content.ts
   - extension/entrypoints/__tests__/content-relay.test.ts
   - extension/e2e-firefox/probe-request-xray.cjs
+
+## Resolution (RESPONSE direction -- XBR-02, Plan 14-02 + Plan 14-03)
+
+root_cause: |
+  RESOLVED AS: a WebDriver/geckodriver `driver.executeScript(...).then(...)`
+  MEASUREMENT ARTIFACT, NOT a real product bug in `credential.rawId`/
+  `response.clientDataJSON`/`attestationObject`/etc.'s cross-realm identity.
+
+  This corrects the 01:00:00Z Evidence entry's original conclusion (a
+  genuine, separate, pre-existing RESPONSE-direction hole) and Plan 14-02
+  Task 1's own 11:10:00Z variable-(b) finding (which reproduced that
+  conclusion with broader field coverage, using the SAME executeScript-
+  based measurement technique). Plan 14-02 Task 2's own verification work
+  (Evidence entry 2026-07-20T11:30:00Z) discovered that
+  `driver.executeScript(...)` runs injected script text in a FRESH,
+  per-call geckodriver sandbox realm with its OWN `ArrayBuffer` global,
+  distinct from the real page's -- a value constructed in the page's own
+  realm (e.g. by `page-bridge-firefox.ts`'s `shapeCredential()`, itself
+  running in the page's genuine MAIN world) will show `instanceof
+  ArrayBuffer: false` when checked by any code whose OWN top-level text was
+  injected via `executeScript`, REGARDLESS of whether the check runs
+  synchronously or inside a later `.then()`/`setTimeout` continuation of
+  that same call. A genuinely inline `<script>` RP fixture (zero
+  WebDriver `executeScript` involvement, both pre-fix and post-fix build)
+  showed `instanceof ArrayBuffer: true` for every response-direction field,
+  proving the original signal was never a real cross-realm hazard.
+fix: |
+  Two independent, permanent, artifact-free proofs (Plan 14-03):
+  1. `extension/entrypoints/__tests__/page-bridge-firefox.test.ts` (new,
+     deterministic jsdom): reuses `content-relay.test.ts`'s
+     `crossRealmArrayBuffer()` hidden-iframe technique to prove
+     `page-bridge-firefox.ts`'s `shapeCredential()`/`b64UrlToArrayBuffer`
+     MAIN-world re-materialization (Plan 14-02 Task 2's fix, kept as
+     defense-in-depth per that plan's own rationale) for `rawId`,
+     `response.clientDataJSON`, `response.attestationObject`,
+     `response.authenticatorData`, `response.signature` -- 4 test cases,
+     zero `executeScript` involvement by construction (jsdom has none).
+  2. `extension/e2e-firefox/probe-request-xray.cjs` upgraded: `XRAY-CREATE`/
+     `XRAY-GET` now hard-gate every response-direction `*IsArrayBuffer`
+     field, measured via a genuinely inline `<script nonce="...">` RP
+     fixture (`/xray-create`, `/xray-get`) that triggers the ceremony AND
+     performs every `instanceof`/`toString.call` check itself, in its own
+     page realm -- never via `driver.executeScript()`. Results are read
+     back through a native WebDriver DOM text read (a safe primitive read,
+     not a live `instanceof` re-check). A `whenPatched()` poll inside each
+     fixture page also guards against a same-day-discovered, unrelated
+     timing hazard: a brand-new page navigation's inline script can race
+     ahead of `content-relay.content.ts`'s own asynchronous MAIN-world
+     patch injection.
+
+  No production code changed by this correction -- Plan 14-02's
+  `page-bridge-firefox.ts` re-materialization fix stays exactly as shipped
+  (harmless, architecture-symmetric defense-in-depth; see that plan's own
+  "Decisions Made" for the full keep-vs-revert rationale).
+verification: |
+  `cd extension && npx vitest run --reporter=dot
+  entrypoints/__tests__/page-bridge-firefox.test.ts`: 4/4 pass.
+
+  Live Firefox 152.0.6 (`node e2e-firefox/probe-request-xray.cjs`):
+  `XRAY-CREATE`/`XRAY-GET` both PASS -- every response-direction
+  `*IsArrayBuffer` field `true` (`rawId`/`clientDataJSON`/
+  `attestationObject` on create(); `rawId`/`clientDataJSON`/
+  `authenticatorData`/`signature` on get()), plus the pre-existing
+  request-direction byte-exact challenge round-trip still holds.
+
+  Full Plan 14-03 gate suite, all green: extension vitest 674 passed (670
+  baseline + 4 new page-bridge-firefox.test.ts cases), 0 unexpected
+  failures (1 known pre-existing, unrelated `ServerConfigView.tsx`
+  unhandled rejection); `npx tsc --noEmit` clean; `npm run build:chrome`
+  + `npm run build:firefox` both succeed; `bash
+  scripts/audit-mainworld-boundary.sh` PASS exit 0; `node
+  e2e-firefox/run-core.cjs` 17 PASS + 1 OBSERVED (RPID-ON-FIREFOX), 0 FAIL;
+  `node e2e-firefox/run-server-unlock.cjs` 15 PASS / 2 INFO / 0 FAIL;
+  `node e2e-firefox/probe-request-xray.cjs` all rows PASS; `npx playwright
+  test --project=chromium-ceremony` 5/5 PASS (headed); `cargo test
+  --workspace` 151 passed, 0 failed -- including Plan 14-01's independent
+  `real_rp_verification.rs` (QA-03 closure evidence, cited here as this
+  same phase's other "byte-level proof" bar for the provider ceremony
+  wire format).
+files_changed:
+  - extension/entrypoints/__tests__/page-bridge-firefox.test.ts (new)
+  - extension/e2e-firefox/probe-request-xray.cjs
+  - .planning/debug/firefox-request-xray-hole.md (this doc, relocated to
+    .planning/debug/resolved/)
+  - .planning/STATE.md
+
+## Honest open item (preserved, not resolved by this plan)
+
+This doc's original `status: awaiting_human_verify` covered the
+REQUEST-direction fix (Plan 14-02's own predecessor session). Bartek's own
+LIVE retest on real github.com (visiting the real site, triggering a real
+passkey ceremony against GitHub's own webauthn-json-based challenge/ids)
+remains open AT HIS LEISURE -- neither this plan nor Plan 14-02 marks that
+retest as done on his behalf, per CONTEXT.md's explicit instruction. What
+IS closed by Phase 14's automated evidence (Plan 14-01's independent
+`webauthn-rs` round-trip test, this doc's own upgraded live-Firefox probe,
+and the new jsdom regression coverage) is the IN-REPO substitute closure
+evidence for BOTH the request-direction fix (already shipped, Plan 14-02's
+predecessor) and the response-direction fix (this phase) -- not a claim
+that the live github.com retest itself has happened. If Bartek performs
+that retest and it fails, re-open a fresh debug session; this doc's
+`status: resolved` above reflects everything this project's own automated
+harnesses and test suites can currently prove.
