@@ -309,7 +309,7 @@ Plans:
   2. A single i18n resolver (`t`/`interpolate`/`Locale`/`resolveLocale`) lives in `pv-ui`; the web app and extension both call the same engine, with dictionary keys split per surface where needed.
   3. No parallel duplicate implementation of any migrated module remains in `web/` or `extension/` — verified by search, not assumed.
 
-**Plans:** 1/6 plans executed
+**Plans:** 4/6 plans executed
 Plans:
 **Wave 1**
 
@@ -317,9 +317,9 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 16-02-PLAN.md — types.ts reconciliation: web superset moves to pv-ui, both consumers shim
-- [ ] 16-03-PLAN.md — cardBrand + clipboard mechanical pure moves, both consumers shim
-- [ ] 16-04-PLAN.md — i18n engine (t/interpolate/resolveLocale) + common dictionary split + both consumers' dictionary.ts refactor
+- [x] 16-02-PLAN.md — types.ts reconciliation: web superset moves to pv-ui, both consumers shim
+- [x] 16-03-PLAN.md — cardBrand + clipboard mechanical pure moves, both consumers shim
+- [x] 16-04-PLAN.md — i18n engine (t/interpolate/resolveLocale) + common dictionary split + both consumers' dictionary.ts refactor
 
 **Wave 3** *(blocked on 16-02 completion)*
 
@@ -408,7 +408,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 13. Dual-Browser Hardening | v0.2 | 7/7 | Complete    | 2026-07-20 |
 | 14. Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification | v0.3 | 3/3 | Complete    | 2026-07-20 |
 | 15. Login & Unlock Unification (Vaultwarden Model) | v0.3 | 7/7 | Complete    | 2026-07-20 |
-| 16. Design System Extraction — Logic, Types & i18n | v0.3 | 1/6 | In Progress|  |
+| 16. Design System Extraction — Logic, Types & i18n | v0.3 | 4/6 | In Progress|  |
 | 17. Shared Component & Visual Alignment | v0.3 | 0/TBD | Not started | - |
 | 18. Firefox Window & Consent Hardening | v0.3 | 0/TBD | Not started | - |
 | 19. Server & Supply-Chain Hardening | v0.3 | 0/TBD | Not started | - |
