@@ -249,7 +249,17 @@ Plans:
   3. A Rust integration test feeds a provider-produced registration and authentication ceremony through an independent `webauthn-rs` verifier, and the assertion signature verifies over the real challenge — not a shape/`.ok`/`id`-only check.
   4. `.planning/debug/firefox-request-xray-hole.md` is git-tracked, resolved, and mirrored into STATE.md's Deferred/Resolved history so the record cannot be silently lost again.
 
-**Plans**: TBD
+**Plans:** 3 plans
+Plans:
+**Wave 1**
+
+- [ ] 14-01-PLAN.md — QA-03: independent webauthn-rs round-trip verification test for pv-provider's ceremony
+- [ ] 14-02-PLAN.md — XBR-02: live-Firefox differential root-cause probe + MAIN-world response-direction re-materialization fix
+
+**Wave 2** *(blocked on 14-01 and 14-02 completion)*
+
+- [ ] 14-03-PLAN.md — XBR-02 regression coverage (jsdom test + hard-gated probe-request-xray.cjs) + full gate suite confirmation + debug-doc record hygiene
+
 **UI hint**: no
 
 ### Phase 15: Login & Unlock Unification (Vaultwarden Model)
