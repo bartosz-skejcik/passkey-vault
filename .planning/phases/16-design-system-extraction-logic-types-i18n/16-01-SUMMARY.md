@@ -134,3 +134,12 @@ Every exports subpath and path-alias Wave 2 (Plans 16-02 through 16-04) and Wave
 ---
 *Phase: 16-design-system-extraction-logic-types-i18n*
 *Completed: 2026-07-20*
+
+## Self-Check: PASSED
+
+- FOUND: packages/pv-ui/package.json
+- FOUND: web/tsconfig.json
+- FOUND: .planning/phases/16-design-system-extraction-logic-types-i18n/16-01-SUMMARY.md
+- FOUND: 919e076 (Task 1 commit)
+- FOUND: 26c796e (Task 2 commit)
+- FOUND: f69b546 (SUMMARY.md commit)
