@@ -25,6 +25,11 @@ const hoisted = vi.hoisted(() => ({
   mockHandleCredentialsGet: vi.fn(),
   mockResolveProviderCredentialChoice: vi.fn(),
   mockTouchVaultItem: vi.fn(),
+  // Plan 15-05 (AUTH-04): config.probe's underlying primitives + the
+  // teardown primitive session.signOut delegates to.
+  mockProbeServerHealthDetailed: vi.fn(),
+  mockNormalizeServerUrl: vi.fn(),
+  mockSignOutVaultSession: vi.fn(),
   listeners: [] as Array<(m: unknown, s: unknown, r: unknown) => unknown>,
 }));
 
@@ -56,6 +61,7 @@ vi.mock("./session-storage", () => ({
 vi.mock("./vault-session", () => ({
   ensureHydrated: hoisted.mockEnsureHydrated,
   noteActivity: hoisted.mockNoteActivity,
+  signOutVaultSession: hoisted.mockSignOutVaultSession,
 }));
 
 // Handlers the router imports but this file doesn't exercise.
@@ -78,8 +84,11 @@ vi.mock("./ext-passkey", () => ({
 vi.mock("./server-config", () => ({
   readServerConfig: vi.fn(),
   configureServer: vi.fn(),
+  probeServerHealthDetailed: hoisted.mockProbeServerHealthDetailed,
+  normalizeServerUrl: hoisted.mockNormalizeServerUrl,
   InvalidServerUrlError: class extends Error {},
   ServerUnreachableError: class extends Error {},
+  ServerCorsBlockedError: class extends Error {},
 }));
 vi.mock("./vault-store", () => ({
   getVaultList: vi.fn(),
@@ -101,6 +110,11 @@ vi.mock("./provider-ceremony", () => ({
 }));
 
 import { registerAutofillFrameChannel, registerMessageRouter } from "./router";
+// Plan 15-05: the mocked class from the (mocked) "./server-config" module --
+// importing it here (rather than redefining a lookalike class) guarantees
+// `instanceof` checks inside handleConfigProbe see the SAME class reference
+// this test throws.
+import { InvalidServerUrlError } from "./server-config";
 
 const OWN_SENDER = { id: "test-ext-id", url: "chrome-extension://test-ext-id/popup.html" };
 
@@ -122,6 +136,9 @@ beforeEach(() => {
     unlockedAtMs: 1,
     wasAutoLocked: false,
   });
+  // Plan 15-05: identity pass-through default so tests that don't exercise
+  // config.probe's error-mapping paths aren't affected by this new mock.
+  hoisted.mockNormalizeServerUrl.mockImplementation((url: string) => url);
   registerMessageRouter();
 });
 
@@ -478,5 +495,83 @@ describe("credentials.create / credentials.get content-frame dispatch", () => {
     expect(frameResult).toBeUndefined();
     expect(hoisted.mockHandleCredentialsCreate).not.toHaveBeenCalled();
     expect(hoisted.mockHandleCredentialsGet).not.toHaveBeenCalled();
+  });
+});
+
+// Plan 15-05 (AUTH-04): config.probe + session.signOut -- the two new
+// popup-driven message kinds this plan adds. config.probe is a PERSIST-FREE
+// sibling of config.set (Pitfall 1, 15-RESEARCH.md); session.signOut
+// delegates to Plan 15-02's signOutVaultSession() and automatically falls
+// under the EXISTING "session." startsWith WR-01 gate, with zero changes to
+// that gate's own code.
+describe("config.probe / session.signOut (Plan 15-05, AUTH-04)", () => {
+  it("isProtocolMessage() accepts config.probe -- the popup router keeps the message channel open instead of stepping aside", async () => {
+    hoisted.mockNormalizeServerUrl.mockImplementation((url: string) => url);
+    hoisted.mockProbeServerHealthDetailed.mockResolvedValue("ok");
+    const kept = hoisted.listeners[0](
+      { kind: "config.probe", rawUrl: "http://localhost:8620" },
+      OWN_SENDER,
+      vi.fn(),
+    );
+    expect(kept).toBe(true);
+  });
+
+  it("isProtocolMessage() accepts session.signOut -- the popup router keeps the message channel open instead of stepping aside", async () => {
+    hoisted.mockSignOutVaultSession.mockResolvedValue(undefined);
+    const kept = hoisted.listeners[0]({ kind: "session.signOut" }, OWN_SENDER, vi.fn());
+    expect(kept).toBe(true);
+  });
+
+  it("handleConfigProbe: probeServerHealthDetailed resolving 'ok' returns {ok:true} and never persists anything", async () => {
+    hoisted.mockProbeServerHealthDetailed.mockResolvedValue("ok");
+    const result = await send({ kind: "config.probe", rawUrl: "http://localhost:8620" });
+    expect(result).toEqual({ ok: true });
+    expect(hoisted.mockNormalizeServerUrl).toHaveBeenCalledWith("http://localhost:8620");
+    expect(hoisted.mockProbeServerHealthDetailed).toHaveBeenCalledWith("http://localhost:8620");
+  });
+
+  it("handleConfigProbe: probeServerHealthDetailed resolving 'cors-blocked' returns {ok:false, error:'cors-blocked'}", async () => {
+    hoisted.mockProbeServerHealthDetailed.mockResolvedValue("cors-blocked");
+    const result = await send({ kind: "config.probe", rawUrl: "http://localhost:8620" });
+    expect(result).toEqual({ ok: false, error: "cors-blocked" });
+  });
+
+  it("handleConfigProbe: probeServerHealthDetailed resolving 'unreachable' returns {ok:false, error:'unreachable'}", async () => {
+    hoisted.mockProbeServerHealthDetailed.mockResolvedValue("unreachable");
+    const result = await send({ kind: "config.probe", rawUrl: "http://localhost:8620" });
+    expect(result).toEqual({ ok: false, error: "unreachable" });
+  });
+
+  it("handleConfigProbe: an invalid URL (normalizeServerUrl throws InvalidServerUrlError) returns {ok:false, error:'invalid-url'} without ever probing", async () => {
+    hoisted.mockNormalizeServerUrl.mockImplementation(() => {
+      throw new InvalidServerUrlError("not a valid URL");
+    });
+    const result = await send({ kind: "config.probe", rawUrl: "not-a-url" });
+    expect(result).toEqual({ ok: false, error: "invalid-url" });
+    expect(hoisted.mockProbeServerHealthDetailed).not.toHaveBeenCalled();
+  });
+
+  it("session.signOut from a non-popup (content-script-shaped) sender is rejected by the existing assertPopupSender gate, exactly like session.status", async () => {
+    const result = await new Promise((resolve) => {
+      hoisted.listeners[0](
+        { kind: "session.signOut" },
+        {
+          id: "test-ext-id",
+          url: "chrome-extension://test-ext-id/popup.html",
+          origin: "https://evil.example",
+          tab: { id: 7 },
+        },
+        resolve,
+      );
+    });
+    expect(result).toEqual({ ok: false, error: "forbidden-sender" });
+    expect(hoisted.mockSignOutVaultSession).not.toHaveBeenCalled();
+  });
+
+  it("session.signOut from a popup sender calls signOutVaultSession() exactly once and returns {ok:true}", async () => {
+    hoisted.mockSignOutVaultSession.mockResolvedValue(undefined);
+    const result = await send({ kind: "session.signOut" });
+    expect(result).toEqual({ ok: true });
+    expect(hoisted.mockSignOutVaultSession).toHaveBeenCalledTimes(1);
   });
 });
