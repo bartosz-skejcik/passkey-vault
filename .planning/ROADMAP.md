@@ -274,13 +274,13 @@ Plans:
   3. The extension-scoped PRF unlock path (RP ID = extension id) is removed, or explicitly documented as retired; the server-origin passkey ceremony is the sole passkey-unlock mechanism, identical on both browsers.
   4. Changing the configured server URL while a session or host-permission already exists cleanly invalidates or migrates the old state — verified by reconfiguring against a second server and confirming no stranded session/permission remains.
 
-**Plans**: 7 plans (4 waves)
+**Plans**: 2/7 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 15-01-PLAN.md — Ceremony window password sign-in relay (Wave 1)
-- [ ] 15-02-PLAN.md — AUTH-04 teardown module: clearSessionMeta/logout/signOutVaultSession (Wave 1)
+- [x] 15-01-PLAN.md — Ceremony window password sign-in relay (Wave 1)
+- [x] 15-02-PLAN.md — AUTH-04 teardown module: clearSessionMeta/logout/signOutVaultSession (Wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -388,7 +388,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 12. Passkey Provider | v0.2 | 7/7 | Complete    | 2026-07-17 |
 | 13. Dual-Browser Hardening | v0.2 | 7/7 | Complete    | 2026-07-20 |
 | 14. Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification | v0.3 | 3/3 | Complete    | 2026-07-20 |
-| 15. Login & Unlock Unification (Vaultwarden Model) | v0.3 | 0/TBD | Not started | - |
+| 15. Login & Unlock Unification (Vaultwarden Model) | v0.3 | 2/7 | In Progress|  |
 | 16. Design System Extraction — Logic, Types & i18n | v0.3 | 0/TBD | Not started | - |
 | 17. Shared Component & Visual Alignment | v0.3 | 0/TBD | Not started | - |
 | 18. Firefox Window & Consent Hardening | v0.3 | 0/TBD | Not started | - |

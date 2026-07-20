@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v0.3
 milestone_name: Polish & Hardening
 current_phase: 15
-current_phase_name: Vaultwarden Model
+current_phase_name: Login & Unlock Unification (Vaultwarden Model
 status: executing
 stopped_at: Phase 15 UI-SPEC approved
-last_updated: "2026-07-20T15:07:17.583Z"
+last_updated: "2026-07-20T15:08:08.404Z"
 last_activity: 2026-07-20
-last_activity_desc: Phase 14 complete, transitioned to Phase 15
+last_activity_desc: Phase 15 execution started
 progress:
   total_phases: 13
   completed_phases: 6
-  total_plans: 46
+  total_plans: 53
   completed_plans: 44
   percent: 46
 ---
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-14)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 14 — Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification
+**Current focus:** Phase 15 — Login & Unlock Unification (Vaultwarden Model)
 
 ## Current Position
 
-Phase: 15 — Login & Unlock Unification (Vaultwarden Model)
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-20 — Phase 14 complete, transitioned to Phase 15
+Phase: 15 (Login & Unlock Unification (Vaultwarden Model)) — EXECUTING
+Plan: 1 of 7
+Status: Executing Phase 15
+Last activity: 2026-07-20 — Phase 15 execution started
 
 ## Performance Metrics
 
