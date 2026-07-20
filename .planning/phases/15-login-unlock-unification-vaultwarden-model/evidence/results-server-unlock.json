@@ -1,0 +1,70 @@
+{
+  "STEP0-probe-account-registered": {
+    "status": "PASS",
+    "notes": "probe account=uat-noext-ff-96806@example.local, web-app session token present=true"
+  },
+  "STEP1-ext-signin": {
+    "status": "PASS",
+    "notes": "extension sign-in through the server-origin ceremony window with the same probe account advanced past the unlock view (vault unlocked)"
+  },
+  "STEP2-locked": {
+    "status": "PASS",
+    "notes": "popup shows the Unlock-only (locked) view after clearing the key envelope"
+  },
+  "P13-06-BUTTON-VISIBLE": {
+    "status": "PASS",
+    "notes": "server-ceremony secondary button IS present in the locked unlock-only view on real Firefox (known-impossible signal, no prior ext-passkey enrollment attempt needed)"
+  },
+  "P13-06-CEREMONY-WINDOW-OPENED": {
+    "status": "PASS",
+    "notes": "handles before=3 after=4 new=1"
+  },
+  "P13-06-CEREMONY-WINDOW-ORIGIN": {
+    "status": "PASS",
+    "notes": "ceremony window URL=http://localhost:8621/"
+  },
+  "P13-06-BRIDGE-RENDERED": {
+    "status": "PASS",
+    "notes": "ExtUnlockBridge heading rendered in the ceremony window"
+  },
+  "P13-06-NATIVE-WEBAUTHN": {
+    "status": "PASS",
+    "notes": "unlock-mode ceremony window: navigator.credentials.get is NATIVE, .create is NATIVE"
+  },
+  "P13-06-NO-PASSKEYS-EMPTY-STATE": {
+    "status": "PASS",
+    "notes": "honest empty-state rendered for the passkey-less probe account -- reached WITHOUT ever invoking navigator.credentials.get() (server unlock/start 404s on zero enrolled passkeys, crates/pv-server/src/routes/passkeys.rs)"
+  },
+  "P13-06-SETTINGS-LINK": {
+    "status": "PASS",
+    "notes": "Settings link present in the empty-state=true"
+  },
+  "STEP6-signin-view": {
+    "status": "PASS",
+    "notes": "popup shows the Sign-in (no-session) view after clearing the session-meta record"
+  },
+  "P13-07-SIGNIN-BUTTON-VISIBLE": {
+    "status": "PASS",
+    "notes": "sign-in server-ceremony button IS present on the Sign-in view"
+  },
+  "P13-07-SIGNIN-CEREMONY-WINDOW-OPENED": {
+    "status": "PASS",
+    "notes": "handles before=3 after=4 new=1"
+  },
+  "P13-07-CEREMONY-URL-CAPTURED": {
+    "status": "INFO",
+    "notes": "signin ceremony window URL (likely already pv-mode-stripped by ExtUnlockBridge's own mount effect, see comment above)=http://localhost:8621/"
+  },
+  "P13-07-BRIDGE-SIGNIN-SURFACE-RENDERED": {
+    "status": "PASS",
+    "notes": "signin heading present=true, email field present=true"
+  },
+  "P13-07-NATIVE-WEBAUTHN": {
+    "status": "PASS",
+    "notes": "signin-mode ceremony window: navigator.credentials.get is NATIVE, .create is NATIVE"
+  },
+  "P13-07-SIGNIN-GESTURE-REACHED": {
+    "status": "INFO",
+    "notes": "gesture clicked with email=uat-noext-ff-96806@example.local (zero enrolled passkeys); post-gesture body text captured for human review (authenticator-less limit -- see this file's own Step 9 comment): \"Zaloguj się do rozszerzenia\\n\\nZaloguj się i odblokuj rozszerzenie Passkey Vault jednym dotknięciem passkeyem.\\n\\nEmail\\nPotwierdź w przeglądarce lub na urządzeniu…\\nlub\\nHasło główne\\nZaloguj hasłem\""
+  }
+}
