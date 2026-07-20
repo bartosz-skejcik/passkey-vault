@@ -242,6 +242,28 @@ export default function App() {
         message !== null &&
         (message as { kind?: unknown }).kind === "session.locked"
       ) {
+        // Live-proof fix (Plan 15-07 phase-close checkpoint, Rule 1 bug):
+        // AUTH-04's migration sequence (ServerConfigView.tsx's
+        // handleConfirmMigration) calls session.signOut, which -- via
+        // signOutVaultSession()'s reuse of lockVaultSession()'s existing
+        // side effects -- ALSO fires this exact `session.locked` broadcast
+        // as an incidental consequence, not a real "vault got locked while
+        // the user was browsing it" event. Without this guard,
+        // refreshSessionStatus() below unmounts ServerConfigView mid-
+        // migration (replacing it with UnlockView/SignInView) the instant
+        // session.signOut resolves, stranding the dialog BEFORE
+        // config.set(pendingNewUrl) ever runs -- the migration promise
+        // chain keeps executing, but every setState call inside it lands on
+        // an unmounted component and is silently dropped, hanging the
+        // spinner forever with no visible error. ServerConfigView owns its
+        // own lifecycle during a migration and calls onConfigured() (=
+        // refreshSessionStatus()) itself once the migration genuinely
+        // completes -- mirrors the existing `viewRef.current.kind ===
+        // "provider-ceremony"` guard below for the identical class of
+        // "don't let this broadcast stomp an in-flight dialog" hazard.
+        if (viewRef.current.kind === "server-config") {
+          return;
+        }
         void refreshSessionStatus();
       }
     }

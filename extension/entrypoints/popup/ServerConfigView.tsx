@@ -71,6 +71,28 @@ function ownExtensionOrigin(): string {
   return ownBase.endsWith("/") ? ownBase.slice(0, -1) : ownBase;
 }
 
+// Live-proof fix (Plan 15-07 phase-close checkpoint, Rule 2 -- missing
+// timeout is a correctness requirement here, not a nicety): confirmed via a
+// real Chromium extension load that `browser.permissions.request()`'s
+// underlying native prompt can be left unaddressed indefinitely (off-screen,
+// unfocused window, or simply un-automatable in a WebDriver/CDP-driven
+// context, mirroring Firefox's own documented native-permission-doorhanger
+// automation gap, extension/e2e-firefox/run-core.cjs's RPID-ON-FIREFOX
+// comment) -- unlike a network fetch, that promise has no browser-imposed
+// timeout and can hang FOREVER. `handleConfirmMigration()` awaits this call
+// FIRST, with `disabled={migrating}` on BOTH the Cancel and Confirm buttons
+// for its entire duration -- an unresolved native prompt therefore wedges
+// the whole migration dialog with no escape, directly violating this
+// feature's own no-stranding guarantee (T-15-05/T-15-06). A bounded race
+// against a timeout (mirroring ExtUnlockBridge.tsx's own RESULT_TIMEOUT_MS
+// pattern for the identical "don't let an external actor wedge this UI
+// forever" class of risk) makes this function's "best-effort" name actually
+// true: the permission grant is a defense-in-depth nicety (server-side CORS
+// via PV_EXTENSION_ORIGINS is what config.set/config.probe actually depend
+// on -- see configureServer()'s own header comment), so timing out and
+// proceeding without it is always safe.
+const PERMISSION_REQUEST_TIMEOUT_MS = 10_000;
+
 /**
  * Best-effort permission grant, guarded against `browser.permissions` being
  * entirely absent (the vitest/jsdom environment never mocks it unless a
@@ -82,7 +104,12 @@ function bestEffortPermissionsRequest(origin: string): Promise<boolean> {
   if (typeof browser.permissions?.request !== "function") {
     return Promise.resolve(false);
   }
-  return browser.permissions.request({ origins: [`${origin}/*`] }).catch(() => false);
+  return Promise.race([
+    browser.permissions.request({ origins: [`${origin}/*`] }).catch(() => false),
+    new Promise<boolean>((resolve) =>
+      setTimeout(() => resolve(false), PERMISSION_REQUEST_TIMEOUT_MS),
+    ),
+  ]);
 }
 
 /** Best-effort revoke of the OLD origin's host permission, mirroring
