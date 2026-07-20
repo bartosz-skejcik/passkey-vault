@@ -1,68 +1,79 @@
 // extension/e2e-firefox/probe-request-xray.cjs — permanent byte-level
-// regression probe for the REQUEST-direction Firefox Xray/cross-realm hole
-// (debug session .planning/debug/resolved/firefox-request-xray-hole.md).
+// regression probe for the Firefox Xray/cross-realm hole
+// (.planning/debug/resolved/firefox-request-xray-hole.md, Critical, XBR-02).
 //
-// BACKGROUND: every existing e2e fixture in this project (run-core.cjs's
-// CSP-STRICT-CREATE/P12-SC1/P12-SC2, probe-provider-corruption.cjs) drives
-// navigator.credentials.create()/get() with challenge/user.id fields shaped
-// as `new Uint8Array(...)` -- a TypedArray. On real Firefox, a TypedArray's
-// cross-realm identity survives the MAIN(page-bridge-firefox.ts, same realm
-// as the page)->ISOLATED(content-relay.content.ts) window.postMessage hop
-// intact (`ArrayBuffer.isView()` is an internal-slot check, not a
-// prototype-chain check, so it stays reliable cross-realm) -- but a RAW
-// (non-TypedArray) `ArrayBuffer`, which real-world RPs DO send (e.g.
-// GitHub's webauthn-json library passes challenge/ids as ArrayBuffer, not
-// TypedArray), does NOT survive the same hop the same way:
-// `value instanceof ArrayBuffer` (a prototype-chain check) is FALSE on the
-// receiving (ISOLATED-world) side despite the value being a fully intact,
-// byte-correct ArrayBuffer (confirmed via a standalone Xray probe during
-// this debug session -- Object.prototype.toString.call() still correctly
-// reports "[object ArrayBuffer]", and `new Uint8Array(value)` in the
-// receiving realm still reads the exact original bytes). Since a raw
-// ArrayBuffer can ONLY ever satisfy isBufferSource() via the `instanceof`
-// branch, such a field was left un-encoded by encodePublicKeyOptions,
-// JSON.stringify'd to an empty map `{}` at the ISOLATED->background
-// runtime.sendMessage hop, and rejected by pv-provider's WASM-side serde
-// deserializer with "invalid type: map, expected A vector of bytes or a
-// base46(url) encoded string" -- exactly Bartek's live github.com report.
+// REQUEST direction (MAIN(page-bridge-firefox.ts)->ISOLATED
+// (content-relay.content.ts)): every existing e2e fixture elsewhere in this
+// project (run-core.cjs's CSP-STRICT-CREATE/P12-SC1/P12-SC2,
+// probe-provider-corruption.cjs) drives navigator.credentials.create()/get()
+// with challenge/user.id fields shaped as `new Uint8Array(...)` -- a
+// TypedArray. On real Firefox, a TypedArray's cross-realm identity survives
+// the MAIN->ISOLATED window.postMessage hop intact (`ArrayBuffer.isView()`
+// is an internal-slot check, not a prototype-chain check, so it stays
+// reliable cross-realm) -- but a RAW (non-TypedArray) `ArrayBuffer`, which
+// real-world RPs DO send (e.g. GitHub's webauthn-json library passes
+// challenge/ids as ArrayBuffer, not TypedArray), does NOT survive the same
+// hop the same way: `value instanceof ArrayBuffer` (a prototype-chain
+// check) was FALSE on the receiving (ISOLATED-world) side despite the value
+// being a fully intact, byte-correct ArrayBuffer. FIXED: isBufferSource()
+// now also accepts `Object.prototype.toString.call(value) === "[object
+// ArrayBuffer]"`, and bufferSourceToB64Url()'s internal branch
+// discriminator uses the cross-realm-safe `ArrayBuffer.isView()`. Verified
+// below by XRAY-CREATE/XRAY-GET's byte-exact challenge round-trip
+// (`clientDataParsed.challenge`), driven the ORIGINAL way (a
+// `driver.executeScript(...)`-injected `.then()` capture) -- this half of
+// the gate has no `instanceof`/realm-identity check in it (only a JSON
+// string comparison), so it is NOT subject to the WebDriver-artifact
+// correction described below.
 //
-// Fix: content-relay.content.ts's isBufferSource() now also accepts
-// `Object.prototype.toString.call(value) === "[object ArrayBuffer]"`
-// (proven cross-realm-reliable by the same probe), and
-// bufferSourceToB64Url()'s internal branch discriminator was changed from
-// `instanceof ArrayBuffer` to the already-cross-realm-safe
-// `ArrayBuffer.isView()`. This fix is REQUEST-direction only, by design
-// (this debug session's explicit scope).
+// RESPONSE direction (ISOLATED->MAIN, credential.rawId/response.*):
+// page-bridge-firefox.ts's shapeCredential() now re-materializes every
+// response-direction binary field as a genuine MAIN-world-native
+// ArrayBuffer (Plan 14-02 Task 2). FULLY RESOLVED, hard-gated below --
+// see .planning/debug/resolved/firefox-request-xray-hole.md's Resolution
+// section for the complete history, including a critical correction:
 //
-// IMPORTANT FOLLOW-UP FINDING (out of THIS session's scope, not fixed
-// here): a minimal standalone (non-product) Xray probe suggested the
-// REVERSE (ISOLATED->MAIN, response/credential-decode) direction was
-// unaffected -- but this probe's own end-to-end run against the REAL
-// product code found the opposite for `cred.rawId`: `instanceof
-// ArrayBuffer` is ALSO false there (same signature: toString.call still
-// "[object ArrayBuffer]", bytes still intact via `new Uint8Array()`),
-// evaluated from the RP page's own MAIN-world context (the SAME realm
-// page-bridge-firefox.ts's shapeCredential() output is consumed in). The
-// discrepancy between the isolated probe and this real end-to-end result
-// is NOT YET explained (nesting depth was ruled out as the variable) --
-// this needs its own follow-up debug session. Practical impact: a REAL
-// RP's own code that does `credential.rawId instanceof ArrayBuffer` (or
-// the equivalent on `response.clientDataJSON`/`attestationObject`/etc.)
-// may treat a genuinely-valid credential as malformed on Firefox, even
-// after this session's request-direction fix. This probe does not assert
-// on `cred.rawId instanceof ArrayBuffer` as a PASS/FAIL gate (see
-// XRAY-CREATE below) specifically because that assertion is currently
-// KNOWN to fail pending the follow-up session -- only byte-level identity
-// (challenge round-trip) is gated here.
+// ***WEBDRIVER-ARTIFACT WARNING (read before touching the *IsArrayBuffer
+// capture logic below)***: Plan 14-02's own investigation (debug doc
+// Evidence entry timestamped 2026-07-20T11:30:00Z) discovered that
+// `driver.executeScript(...)` runs injected script text in geckodriver's
+// own per-call sandbox realm -- a FRESH, distinct global object set (its
+// OWN `ArrayBuffer` constructor, unrelated to the real page's) is created
+// for EVERY `executeScript` invocation. A value constructed in the REAL
+// page's own realm (e.g. `cred.rawId`, built by page-bridge-firefox.ts's
+// `shapeCredential()`, which itself runs in the page's genuine MAIN world)
+// will therefore show `instanceof ArrayBuffer: false` when checked by code
+// whose OWN top-level text was injected via `executeScript` -- REGARDLESS
+// of whether that check runs synchronously or inside a later `.then()`/
+// `setTimeout` continuation of that same `executeScript` call, because the
+// continuation's closure still resolves `ArrayBuffer` against the
+// SANDBOX's global (its defining realm), not the page's. This is a false
+// negative with ZERO connection to any real Xray/extension/postMessage
+// hazard -- confirmed via a 100%-native, zero-extension-involvement
+// `ArrayBuffer` reproducing the identical signature. The ONLY technique
+// proven decisive (debug doc, same Evidence entry, method (3)): a
+// genuinely INLINE `<script>` tag that is part of the RP fixture's own
+// HTML source (parsed by the browser during normal page load, giving the
+// function its OWN closure over the PAGE's real globals -- JS functions
+// always execute in their defining realm, regardless of what realm calls
+// them) performing BOTH the `navigator.credentials.create()/get()` trigger
+// AND the `instanceof` checks, with the RESULT written to a DOM element
+// (a plain string -- safe to read back via `executeScript` or a native
+// WebDriver DOM read, since strings/primitives have no per-realm identity
+// issue) rather than a live object a later call would need to re-check.
+// This probe's XRAY-CREATE/XRAY-GET response-direction battery below
+// therefore uses inline `<script nonce="...">` fixture pages
+// (`/xray-create`, `/xray-get`) -- NOT `driver.executeScript()` -- for
+// every `*IsArrayBuffer` capture. Do not "simplify" this back to an
+// executeScript-injected `.then()` capture; that is the exact pattern
+// that produced this correction's false negative in the first place.
 //
 // This probe is kept here PERMANENTLY (not just for this investigation),
 // mirroring probe-provider-corruption.cjs's own precedent, as the one row
 // in this project's e2e suites that exercises a RAW ArrayBuffer-shaped
-// (not TypedArray) challenge/user.id on create() AND get() against a REAL,
-// CSP-strict fixture page on real Firefox. (allowCredentials[].id's own
-// raw-ArrayBuffer encoding is covered deterministically instead by
-// content-relay.test.ts's jsdom cross-realm unit test -- see the get()
-// section below for why this live probe intentionally stays discoverable.)
+// (not TypedArray) challenge/user.id AND hard-gates response-direction
+// realm identity for every binary field, against a REAL, CSP-strict-styled
+// fixture page on real Firefox.
 //
 // Prerequisites: identical to run-core.cjs/probe-provider-corruption.cjs
 // (see README.md) -- pv-server already running on localhost:8620,
@@ -72,6 +83,7 @@
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const crypto = require('crypto');
 
 const EXT_ROOT = path.resolve(__dirname, '..');
 const { Builder, By, until } = require(path.join(EXT_ROOT, 'node_modules/selenium-webdriver'));
@@ -98,6 +110,16 @@ const CREATE_CHALLENGE_BYTES = Array.from({ length: 32 }, (_, i) => 200 - i);
 const CREATE_EXPECTED_B64URL = Buffer.from(CREATE_CHALLENGE_BYTES).toString('base64url');
 const GET_CHALLENGE_BYTES = Array.from({ length: 32 }, (_, i) => 50 + i * 2);
 const GET_EXPECTED_B64URL = Buffer.from(GET_CHALLENGE_BYTES).toString('base64url');
+
+// A single nonce, shared by the CSP header and the inline <script nonce="">
+// tag on the /xray-create and /xray-get fixture pages -- real-website
+// technique for allowlisting one specific inline script under a strict
+// `script-src 'self'` policy without a blanket `'unsafe-inline'`. The
+// extension's own MAIN-world injection (page-bridge-firefox.js, loaded via
+// `.src`, not inline text) is unaffected either way -- WebExtension content-
+// script resource injection bypasses page CSP entirely, independent of this
+// nonce (see .planning/debug/resolved/firefox-injection-csp-blocked.md).
+const CSP_NONCE = crypto.randomBytes(16).toString('base64');
 
 fs.mkdirSync(SHOTS, { recursive: true });
 fs.mkdirSync(PROFILE_DIR, { recursive: true });
@@ -134,6 +156,164 @@ async function tryFind(driver, css, timeout = 8000) {
   }
 }
 
+/** Waits for the inline-script fixture's `#pv-xray-out[data-status="done"]`
+ * marker, then reads its (JSON-string) result via a native WebDriver DOM
+ * text read -- NOT `driver.executeScript()` -- and parses it. See this
+ * file's header comment: the *contents* of that string were computed
+ * entirely by the page's own genuinely-inline `<script>` tag (the
+ * `instanceof`/`toString.call` battery below), never by anything
+ * `executeScript`-injected, so this readback step never touches the
+ * WebDriver-sandbox-realm hazard either. */
+async function waitForXrayResult(driver, timeoutMs = 20000) {
+  const el = await driver.wait(until.elementLocated(By.css('#pv-xray-out')), timeoutMs);
+  await driver.wait(async () => (await el.getAttribute('data-status')) === 'done', timeoutMs);
+  const text = await el.getText();
+  return JSON.parse(text);
+}
+
+/** Shared inline-script battery helper text (embedded verbatim into both
+ * fixture pages below) -- computes the four-check signature
+ * (`instanceof`/`toString.call`/`.constructor.name`/`ArrayBuffer.isView`)
+ * for one binary field, using explicit per-field property names (not a
+ * generic prefix-driven loop) so each field's `*IsArrayBuffer`/
+ * `*ToStringTag` names appear as literal, greppable strings in this file --
+ * matching this project's existing rawId-battery style. */
+function fieldBatteryJs(varName, fieldName) {
+  return `
+    result.${fieldName}IsArrayBuffer = ${varName} instanceof ArrayBuffer;
+    result.${fieldName}ToStringTag = Object.prototype.toString.call(${varName});
+    result.${fieldName}CtorName = ${varName} && ${varName}.constructor ? ${varName}.constructor.name : null;
+    result.${fieldName}IsView = ArrayBuffer.isView(${varName});`;
+}
+
+function xrayCreateFixtureHtml() {
+  return `<!doctype html><html><body>
+<h1>PROBE-REQUEST-XRAY provider RP ${RUN} (create)</h1>
+<pre id="pv-xray-out" data-status="pending"></pre>
+<script nonce="${CSP_NONCE}">
+(function () {
+  var out = document.getElementById('pv-xray-out');
+  function writeResult(obj) {
+    out.textContent = JSON.stringify(obj);
+    out.dataset.status = 'done';
+  }
+  // Waits until content-relay.content.ts has actually injected
+  // page-bridge-firefox.js's MAIN-world patch onto navigator.credentials
+  // before triggering the ceremony -- this genuinely-inline <script>
+  // executes synchronously during the initial HTML parse (very early),
+  // which can race ahead of the extension's own (asynchronous) content-
+  // script injection on a BRAND-NEW page navigation. Calling create()/get()
+  // before the patch lands would silently hit Firefox's REAL native
+  // WebAuthn implementation instead (which then hangs indefinitely with no
+  // authenticator attached) -- not a product bug, a fixture-timing hazard
+  // this polling avoids.
+  function whenPatched(run) {
+    var deadline = Date.now() + 10000;
+    (function poll() {
+      var wrapped = !navigator.credentials.create.toString().includes('[native code]');
+      if (wrapped) { run(); return; }
+      if (Date.now() > deadline) { writeResult({ ok: false, error: 'patch never installed within 10s' }); return; }
+      setTimeout(poll, 50);
+    })();
+  }
+  out.dataset.status = 'script-started';
+  var challengeBytes = new Uint8Array(${JSON.stringify(CREATE_CHALLENGE_BYTES)});
+  var userIdBytes = new Uint8Array([9, 9, 9, 9]);
+  whenPatched(function () {
+  navigator.credentials.create({
+    publicKey: {
+      rp: { id: 'localhost', name: 'PROBE-REQUEST-XRAY RP' },
+      user: { id: userIdBytes.buffer, name: 'probe-request-xray-${RUN}@localhost', displayName: 'XrayProbe' },
+      challenge: challengeBytes.buffer,
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      timeout: 30000,
+    },
+  }).then(function (cred) {
+    var cdj = cred.response.clientDataJSON;
+    var ao = cred.response.attestationObject;
+    var clientDataParsed = null, parseError = null;
+    try { clientDataParsed = JSON.parse(new TextDecoder().decode(cdj)); }
+    catch (e) { parseError = String(e); }
+    var result = {
+      ok: true,
+      id: cred.id,
+      clientDataParsed: clientDataParsed,
+      parseError: parseError,
+      rawIdBytes: Array.from(new Uint8Array(cred.rawId)),
+    };
+    ${fieldBatteryJs('cred.rawId', 'rawId')}
+    ${fieldBatteryJs('cdj', 'clientDataJSON')}
+    ${fieldBatteryJs('ao', 'attestationObject')}
+    writeResult(result);
+  }).catch(function (e) {
+    writeResult({ ok: false, error: String(e && e.message || e) });
+  });
+  });
+})();
+</script>
+</body></html>`;
+}
+
+function xrayGetFixtureHtml() {
+  return `<!doctype html><html><body>
+<h1>PROBE-REQUEST-XRAY provider RP ${RUN} (get)</h1>
+<pre id="pv-xray-out" data-status="pending"></pre>
+<script nonce="${CSP_NONCE}">
+(function () {
+  var out = document.getElementById('pv-xray-out');
+  function writeResult(obj) {
+    out.textContent = JSON.stringify(obj);
+    out.dataset.status = 'done';
+  }
+  // See xrayCreateFixtureHtml()'s identical whenPatched() comment -- this
+  // genuinely-inline <script> can race ahead of content-relay.content.ts's
+  // asynchronous MAIN-world patch injection on a brand-new page navigation.
+  function whenPatched(run) {
+    var deadline = Date.now() + 10000;
+    (function poll() {
+      var wrapped = !navigator.credentials.get.toString().includes('[native code]');
+      if (wrapped) { run(); return; }
+      if (Date.now() > deadline) { writeResult({ ok: false, error: 'patch never installed within 10s' }); return; }
+      setTimeout(poll, 50);
+    })();
+  }
+  out.dataset.status = 'script-started';
+  var challengeBytes = new Uint8Array(${JSON.stringify(GET_CHALLENGE_BYTES)});
+  whenPatched(function () {
+  navigator.credentials.get({
+    publicKey: {
+      rpId: 'localhost',
+      challenge: challengeBytes.buffer,
+      timeout: 30000,
+      userVerification: 'preferred',
+    },
+  }).then(function (cred) {
+    var cdj = cred.response.clientDataJSON;
+    var ad = cred.response.authenticatorData;
+    var sig = cred.response.signature;
+    var clientDataParsed = null, parseError = null;
+    try { clientDataParsed = JSON.parse(new TextDecoder().decode(cdj)); }
+    catch (e) { parseError = String(e); }
+    var result = {
+      ok: true,
+      id: cred.id,
+      clientDataParsed: clientDataParsed,
+      parseError: parseError,
+    };
+    ${fieldBatteryJs('cred.rawId', 'rawId')}
+    ${fieldBatteryJs('cdj', 'clientDataJSON')}
+    ${fieldBatteryJs('ad', 'authenticatorData')}
+    ${fieldBatteryJs('sig', 'signature')}
+    writeResult(result);
+  }).catch(function (e) {
+    writeResult({ ok: false, error: String(e && e.message || e) });
+  });
+  });
+})();
+</script>
+</body></html>`;
+}
+
 function formServerHtml() {
   const provider = () => `<!doctype html><html><body><h1>PROBE-REQUEST-XRAY provider RP ${RUN}</h1></body></html>`;
   return http.createServer((req, res) => {
@@ -146,6 +326,14 @@ function formServerHtml() {
     if (url.startsWith('/provider-csp')) {
       res.setHeader('content-security-policy', "script-src 'self'");
       return res.end(provider());
+    }
+    if (url.startsWith('/xray-create')) {
+      res.setHeader('content-security-policy', `script-src 'self' 'nonce-${CSP_NONCE}'`);
+      return res.end(xrayCreateFixtureHtml());
+    }
+    if (url.startsWith('/xray-get')) {
+      res.setHeader('content-security-policy', `script-src 'self' 'nonce-${CSP_NONCE}'`);
+      return res.end(xrayGetFixtureHtml());
     }
     return res.end(provider());
   });
@@ -234,43 +422,18 @@ async function main() {
     if (!patchCheck.wrapped) throw new Error('MAIN-world patch not installed, aborting probe');
 
     // ================= RAW-ArrayBuffer create() =================
-    // The exact real-world shape this bug's hypothesis implicates:
-    // `challenge`/`user.id` as raw ArrayBuffer (`.buffer`), NOT a
-    // TypedArray -- unlike every other fixture in this project.
-    driver.executeScript(`
-      window.__pv_xray_create = null;
-      const challengeBytes = new Uint8Array(${JSON.stringify(CREATE_CHALLENGE_BYTES)});
-      const userIdBytes = new Uint8Array([9,9,9,9]);
-      navigator.credentials.create({
-        publicKey: {
-          rp: { id: 'localhost', name: 'PROBE-REQUEST-XRAY RP' },
-          user: { id: userIdBytes.buffer, name: 'probe-request-xray-${RUN}@localhost', displayName: 'XrayProbe' },
-          challenge: challengeBytes.buffer,
-          pubKeyCredParams: [{type:'public-key', alg:-7}],
-          timeout: 30000,
-        },
-      }).then((cred) => {
-        const cdj = cred.response.clientDataJSON;
-        let clientDataParsed = null, parseError = null;
-        try { clientDataParsed = JSON.parse(new TextDecoder().decode(cdj)); }
-        catch (e) { parseError = String(e); }
-        // rawId MUST be a real ArrayBuffer per spec -- captured here so the
-        // get() probe below can reference it as allowCredentials[0].id,
-        // itself ALSO a raw ArrayBuffer (rawId is never a TypedArray).
-        window.__pv_xray_rawid_bytes = Array.from(new Uint8Array(cred.rawId));
-        window.__pv_xray_create = {
-          ok: true,
-          id: cred.id,
-          rawIdIsArrayBuffer: cred.rawId instanceof ArrayBuffer,
-          rawIdToStringTag: Object.prototype.toString.call(cred.rawId),
-          rawIdCtorName: cred.rawId && cred.rawId.constructor ? cred.rawId.constructor.name : null,
-          rawIdIsView: ArrayBuffer.isView(cred.rawId),
-          clientDataParsed,
-          parseError,
-        };
-      }).catch((e) => { window.__pv_xray_create = {ok:false, error: String(e && e.message || e)}; });
-      return true;
-    `);
+    // Navigates the SAME tab to a genuinely inline-<script> fixture page
+    // (see this file's header comment) which waits for content-relay's
+    // MAIN-world patch to actually land (whenPatched(), inside the fixture
+    // HTML -- a brand-new navigation can otherwise race ahead of the
+    // extension's own asynchronous content-script injection) and then
+    // auto-runs the ceremony -- `challenge`/`user.id` as raw ArrayBuffer
+    // (`.buffer`), NOT a TypedArray -- unlike every other fixture in this
+    // project. NO `driver.executeScript()` triggers the ceremony or
+    // computes any `instanceof` check here; the inline script does both,
+    // in its own page realm.
+    await driver.switchTo().window(rpTabHandle);
+    await driver.get(`${FORM_ORIGIN}/xray-create`);
     await ensurePopup();
     const createConfirm = await tryFind(driver, '[data-testid="provider-confirm"]', 20000);
     if (!createConfirm) {
@@ -279,20 +442,27 @@ async function main() {
     }
     await shot(driver, 'xray-create-consent-ui');
     await createConfirm.click();
-    await sleep(2000);
+    await sleep(1500);
     await driver.switchTo().window(rpTabHandle);
-    const createResult = await driver.executeScript('return window.__pv_xray_create');
-    const rawIdBytes = await driver.executeScript('return window.__pv_xray_rawid_bytes');
+    const createResult = await waitForXrayResult(driver);
     await shot(driver, 'xray-create-rp-result');
     console.log('\n--- RAW create() (ArrayBuffer challenge/user.id) result ---\n', JSON.stringify(createResult, null, 2));
-    console.log('rawIdBytes:', JSON.stringify(rawIdBytes));
 
     if (!createResult || !createResult.ok) {
       record('XRAY-CREATE', 'FAIL', `raw-ArrayBuffer create() failed/rejected: ${JSON.stringify(createResult)}`);
     } else {
       const challengeMatches = createResult.clientDataParsed && createResult.clientDataParsed.challenge === CREATE_EXPECTED_B64URL;
-      record('XRAY-CREATE', challengeMatches ? 'PASS' : 'FAIL',
-        `expected=${CREATE_EXPECTED_B64URL}\n  observed=${createResult.clientDataParsed ? createResult.clientDataParsed.challenge : null}\n  rawIdIsArrayBuffer=${createResult.rawIdIsArrayBuffer} parseError=${createResult.parseError}`);
+      const responseDirectionFields = {
+        rawIdIsArrayBuffer: createResult.rawIdIsArrayBuffer,
+        clientDataJSONIsArrayBuffer: createResult.clientDataJSONIsArrayBuffer,
+        attestationObjectIsArrayBuffer: createResult.attestationObjectIsArrayBuffer,
+      };
+      const failingFields = Object.entries(responseDirectionFields)
+        .filter(([, v]) => v !== true)
+        .map(([k]) => k);
+      const allPass = challengeMatches && failingFields.length === 0;
+      record('XRAY-CREATE', allPass ? 'PASS' : 'FAIL',
+        `challengeMatches=${challengeMatches} (expected=${CREATE_EXPECTED_B64URL}, observed=${createResult.clientDataParsed ? createResult.clientDataParsed.challenge : null})\n  response-direction fields: ${JSON.stringify(responseDirectionFields)}${failingFields.length ? `\n  FAILING FIELDS: ${failingFields.join(', ')}` : ''}`);
     }
 
     // ================= RAW-ArrayBuffer get() (discoverable, no allowCredentials) =================
@@ -304,33 +474,9 @@ async function main() {
     // deterministically pick the ONE matching row out of a long,
     // non-deterministically-ordered candidate list (a test-account-hygiene
     // problem, not a product bug) to avoid the ceremony being correctly
-    // rejected for choosing an unlisted credential. `allowCredentials[].id`
-    // raw-ArrayBuffer encoding itself is covered deterministically instead
-    // by content-relay.test.ts's own jsdom cross-realm unit test, which
-    // doesn't depend on any live account state. This probe's job is only to
-    // confirm the RAW ARRAYBUFFER CHALLENGE encoding fix end-to-end on a
-    // REAL get() ceremony, exactly like it already does for create() above.
-    await driver.navigate().refresh();
-    await sleep(600);
-    driver.executeScript(`
-      window.__pv_xray_get = null;
-      const challengeBytes = new Uint8Array(${JSON.stringify(GET_CHALLENGE_BYTES)});
-      navigator.credentials.get({
-        publicKey: {
-          rpId: 'localhost',
-          challenge: challengeBytes.buffer,
-          timeout: 30000,
-          userVerification: 'preferred',
-        },
-      }).then((cred) => {
-        const cdj = cred.response.clientDataJSON;
-        let clientDataParsed = null, parseError = null;
-        try { clientDataParsed = JSON.parse(new TextDecoder().decode(cdj)); }
-        catch (e) { parseError = String(e); }
-        window.__pv_xray_get = { ok: true, id: cred.id, clientDataParsed, parseError };
-      }).catch((e) => { window.__pv_xray_get = {ok:false, error: String(e && e.message || e)}; });
-      return true;
-    `);
+    // rejected for choosing an unlisted credential.
+    await driver.switchTo().window(rpTabHandle);
+    await driver.get(`${FORM_ORIGIN}/xray-get`);
     await ensurePopup();
     const getConfirm = await tryFind(driver, '[data-testid="provider-confirm"]', 20000);
     const candidateRow = await tryFind(driver, '[data-testid^="provider-credential-row-"]', 3000);
@@ -344,18 +490,28 @@ async function main() {
       record('XRAY-GET', 'FAIL', 'Neither provider-confirm nor multi-match row appeared -- request likely rejected before reaching background/WASM (raw-ArrayBuffer challenge left un-encoded pre-fix).');
       throw new Error('no consent UI for raw-ArrayBuffer get()');
     }
-    await sleep(2000);
+    await sleep(1500);
     await driver.switchTo().window(rpTabHandle);
-    const getResult = await driver.executeScript('return window.__pv_xray_get');
+    const getResult = await waitForXrayResult(driver);
     await shot(driver, 'xray-get-rp-result');
-    console.log('\n--- RAW get() (ArrayBuffer challenge + allowCredentials.id) result ---\n', JSON.stringify(getResult, null, 2));
+    console.log('\n--- RAW get() (ArrayBuffer challenge) result ---\n', JSON.stringify(getResult, null, 2));
 
     if (!getResult || !getResult.ok) {
       record('XRAY-GET', 'FAIL', `raw-ArrayBuffer get() failed/rejected: ${JSON.stringify(getResult)}`);
     } else {
       const challengeMatches = getResult.clientDataParsed && getResult.clientDataParsed.challenge === GET_EXPECTED_B64URL;
-      record('XRAY-GET', challengeMatches ? 'PASS' : 'FAIL',
-        `expected=${GET_EXPECTED_B64URL}\n  observed=${getResult.clientDataParsed ? getResult.clientDataParsed.challenge : null} parseError=${getResult.parseError}`);
+      const responseDirectionFields = {
+        rawIdIsArrayBuffer: getResult.rawIdIsArrayBuffer,
+        clientDataJSONIsArrayBuffer: getResult.clientDataJSONIsArrayBuffer,
+        authenticatorDataIsArrayBuffer: getResult.authenticatorDataIsArrayBuffer,
+        signatureIsArrayBuffer: getResult.signatureIsArrayBuffer,
+      };
+      const failingFields = Object.entries(responseDirectionFields)
+        .filter(([, v]) => v !== true)
+        .map(([k]) => k);
+      const allPass = challengeMatches && failingFields.length === 0;
+      record('XRAY-GET', allPass ? 'PASS' : 'FAIL',
+        `challengeMatches=${challengeMatches} (expected=${GET_EXPECTED_B64URL}, observed=${getResult.clientDataParsed ? getResult.clientDataParsed.challenge : null})\n  response-direction fields: ${JSON.stringify(responseDirectionFields)}${failingFields.length ? `\n  FAILING FIELDS: ${failingFields.join(', ')}` : ''}`);
     }
 
     console.log('\n=== probe-request-xray.cjs complete ===\n');
