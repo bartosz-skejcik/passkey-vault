@@ -58,6 +58,10 @@ const MESSAGE_FIXTURES: MessageFixtureMap = {
   },
   "config.get": { kind: "config.get" },
   "config.set": { kind: "config.set", rawUrl: "https://vault.example.com" },
+  // Plan 15-05 (AUTH-04): identical shape to config.set, minus persistence.
+  "config.probe": { kind: "config.probe", rawUrl: "https://vault.example.com" },
+  // Plan 15-05: no fields beyond the discriminant.
+  "session.signOut": { kind: "session.signOut" },
   // Phase 10 (Plan 10-01): autofill.match carries no fields at all --
   // nothing to round-trip beyond the discriminant.
   "autofill.match": { kind: "autofill.match" },
@@ -185,6 +189,9 @@ const RESPONSE_FIXTURES: ResponseFixtureMap = {
   "unlock.extPrf.finish": { ok: true },
   "config.get": { baseUrl: "https://vault.example.com" },
   "config.set": { ok: true },
+  // Plan 15-05 (AUTH-04): identical shape to config.set's response.
+  "config.probe": { ok: true },
+  "session.signOut": { ok: true },
   "autofill.match": {
     pageState: "ok",
     origin: "https://example.com",

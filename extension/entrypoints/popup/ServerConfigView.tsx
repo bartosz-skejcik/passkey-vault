@@ -6,33 +6,40 @@
 // UI-checker review, per the orchestrator's explicit instruction.
 //
 // Thin message-dispatch layer only (D-05): URL probing and persistence
-// happen in the background via config.set. Normalizing the URL locally
-// via the PURE lib/server-url module (no crypto, no storage, no browser
-// APIs) keeps D-05 intact — this component still never imports WASM
-// bindings, the choke-point loader, or the web app's crypto module, and
-// never constructs a URL literal itself (EXT-06's no-hard-coded-URL
+// happen in the background via config.set/config.probe. Normalizing the
+// URL locally via the PURE lib/server-url module (no crypto, no storage,
+// no browser APIs) keeps D-05 intact — this component still never imports
+// WASM bindings, the choke-point loader, or the web app's crypto module,
+// and never constructs a URL literal itself (EXT-06's no-hard-coded-URL
 // invariant applies here too).
 //
-// POST-UAT FIX (real-browser Phase 9 UAT, second pass): config.set now
-// dispatches BEFORE the T-09-14 permission grant, and the grant's outcome
-// no longer gates onConfigured(). `browser.permissions.request()` opens a
-// native browser prompt that steals focus and CLOSES the MV3 popup. With
-// the OLD order (permission request -> config.set), the popup closing
-// mid-await meant config.set's persistence never ran on the first submit
-// -- the user had to click Allow, get bounced back to this same screen,
-// and submit a SECOND time (config already permitted by then, no prompt,
-// popup stays open). Persisting first means config.set survives even if
-// the permission prompt that follows kills the popup: the URL is already
-// saved, so reopening the popup advances straight past this screen. The
-// grant is now a best-effort nicety, fired-and-forgotten after
-// onConfigured() -- the extension's own pv-server already CORS-allowlists
-// this origin for the healthz probe / config.set, so the host permission
-// is not required for the first-run flow to succeed.
+// POST-UAT FIX (real-browser Phase 9 UAT, second pass): the FIRST-RUN /
+// nothing-to-lose path below still persists BEFORE the T-09-14 permission
+// grant, and the grant's outcome still never gates onConfigured() --
+// `browser.permissions.request()` opens a native browser prompt that steals
+// focus and CLOSES the MV3 popup, so persisting first means the URL is
+// already saved even if that prompt kills the popup mid-await.
+//
+// Plan 15-05 (AUTH-04): a server-URL CHANGE that would abandon a live
+// session or host permission for the OLD server now goes through an
+// explicit confirmation dialog first (15-UI-SPEC.md's warning-tier
+// deviation from the codebase's usual delete-confirm convention -- a server
+// switch is reversible, unlike an item delete). The hard sequencing
+// constraint (Pitfall 1, 15-RESEARCH.md): the NEW server must be probed
+// reachable and its permission granted BEFORE the OLD session is torn down,
+// and the OLD session's server-side logout must fire BEFORE the new URL is
+// persisted -- otherwise auth-api.ts's apiFetch (which reads
+// readServerConfig() fresh on every call) would hit the WRONG server for
+// the old session's own logout. `config.set` still both probes and
+// persists in one step (unchanged, used by the no-confirm-needed path);
+// `config.probe` (persist-free) is what makes reachability checkable BEFORE
+// persisting, so the OLD config can stay live through the sign-out step.
 import { useState, type FormEvent } from "react";
+import { AlertTriangle } from "lucide-react";
 import { browser } from "wxt/browser";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
 import { normalizeServerUrl } from "../../lib/server-url";
-import { t, type Locale } from "../../lib/i18n/dictionary";
+import { t, interpolate, type Locale } from "../../lib/i18n/dictionary";
 
 /**
  * EXT-05 has TWO entry points, differing only in seed + escape hatch:
@@ -44,8 +51,9 @@ import { t, type Locale } from "../../lib/i18n/dictionary";
  *     otherwise stuck forever (wipe storage / reinstall).
  *
  * The VALIDATION PATH IS IDENTICAL for both, deliberately: normalize ->
- * config.set (which probes /healthz) -> persist. A reconfigure can no more
- * save an unreachable server than a first run can.
+ * config.probe (which probes /healthz without persisting) -> either persist
+ * directly (nothing to lose) or confirm-then-migrate (AUTH-04). A
+ * reconfigure can no more save an unreachable server than a first run can.
  */
 /**
  * D-11: the extension's own origin for the CORS-blocked message's copyable
@@ -63,6 +71,29 @@ function ownExtensionOrigin(): string {
   return ownBase.endsWith("/") ? ownBase.slice(0, -1) : ownBase;
 }
 
+/**
+ * Best-effort permission grant, guarded against `browser.permissions` being
+ * entirely absent (the vitest/jsdom environment never mocks it unless a
+ * test opts in) -- fixes a pre-existing unhandled rejection this handler
+ * left behind (RESEARCH.md's AUTH-04 Mechanics section) rather than only
+ * covering the new call site.
+ */
+function bestEffortPermissionsRequest(origin: string): Promise<boolean> {
+  if (typeof browser.permissions?.request !== "function") {
+    return Promise.resolve(false);
+  }
+  return browser.permissions.request({ origins: [`${origin}/*`] }).catch(() => false);
+}
+
+/** Best-effort revoke of the OLD origin's host permission, mirroring
+ * `bestEffortPermissionsRequest`'s own guard/catch shape. */
+function bestEffortPermissionsRemove(origin: string): Promise<boolean> {
+  if (typeof browser.permissions?.remove !== "function") {
+    return Promise.resolve(false);
+  }
+  return browser.permissions.remove({ origins: [`${origin}/*`] }).catch(() => false);
+}
+
 export default function ServerConfigView({
   locale,
   onConfigured,
@@ -77,6 +108,35 @@ export default function ServerConfigView({
   const [rawUrl, setRawUrl] = useState(initialUrl);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<"invalid-url" | "unreachable" | "cors-blocked" | null>(null);
+
+  // AUTH-04 confirm-dialog state -- only ever populated when a switch away
+  // from a server with a live session/permission is detected.
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [migrating, setMigrating] = useState(false);
+  const [migrationError, setMigrationError] = useState(false);
+  const [pendingNewUrl, setPendingNewUrl] = useState("");
+  const [pendingOldUrl, setPendingOldUrl] = useState("");
+
+  /**
+   * CONTEXT.md's explicit disjunction: a switch away from `oldBaseUrl` must
+   * be confirmed when EITHER a session exists OR a host permission is
+   * still granted for it -- either one alone is enough to strand something
+   * if torn down silently.
+   */
+  async function needsConfirm(oldBaseUrl: string): Promise<boolean> {
+    const status = await sendMessage({ kind: "session.status" });
+    if (status.kind !== "no-session") {
+      return true;
+    }
+    if (typeof browser.permissions?.contains !== "function") {
+      return false;
+    }
+    try {
+      return await browser.permissions.contains({ origins: [`${oldBaseUrl}/*`] });
+    } catch {
+      return false;
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -93,25 +153,89 @@ export default function ServerConfigView({
         return;
       }
 
-      // Persist FIRST (see header comment): config.set probes healthz and
-      // saves the URL without needing the host permission below. A bad/
-      // unreachable server must never trigger a permission prompt, so we
-      // bail out here before touching browser.permissions at all.
-      const result = await sendMessage({ kind: "config.set", rawUrl });
-      if (!result.ok) {
-        setError(result.error);
+      // Capture the CURRENT config before any other network call -- this is
+      // what needsConfirm()/the confirm dialog compare the new URL against.
+      const oldConfig = await sendMessage({ kind: "config.get" });
+
+      // Probe the NEW url WITHOUT persisting it (config.probe) -- the same
+      // invalid-url/unreachable/cors-blocked error states render exactly as
+      // today; no behavior change for the "just checking it works" case.
+      const probeResult = await sendMessage({ kind: "config.probe", rawUrl });
+      if (!probeResult.ok) {
+        setError(probeResult.error);
         return;
       }
-      onConfigured();
 
-      // T-09-14: best-effort, NON-blocking permission grant, fired AFTER
-      // onConfigured() so its outcome (including the prompt closing this
-      // popup entirely) can never strand the user on this screen — the
-      // config is already saved by the time this runs.
-      void browser.permissions.request({ origins: [`${normalized}/*`] }).catch(() => false);
+      // Nothing to lose: first run (no old config), resubmitting the SAME
+      // url, or no session/permission exists for the old one -- fall
+      // through to the EXISTING flow, byte-identical to today.
+      if (
+        oldConfig === null ||
+        oldConfig.baseUrl === normalized ||
+        !(await needsConfirm(oldConfig.baseUrl))
+      ) {
+        const result = await sendMessage({ kind: "config.set", rawUrl });
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
+        onConfigured();
+
+        // T-09-14: best-effort, NON-blocking permission grant, fired AFTER
+        // onConfigured() so its outcome (including the prompt closing this
+        // popup entirely) can never strand the user on this screen -- the
+        // config is already saved by the time this runs.
+        void bestEffortPermissionsRequest(normalized);
+        return;
+      }
+
+      // A session or host permission exists for the OLD server -- gate the
+      // switch behind an explicit confirmation (AUTH-04) instead of tearing
+      // anything down silently.
+      setPendingNewUrl(normalized);
+      setPendingOldUrl(oldConfig.baseUrl);
+      setShowConfirm(true);
     } finally {
       setSubmitting(false);
     }
+  }
+
+  /**
+   * The migration sequence: grant the NEW origin -> sign out the OLD
+   * session (server-side logout + local clear, while the OLD config is
+   * STILL persisted, satisfying Pitfall 1) -> persist the NEW config ->
+   * best-effort revoke the OLD origin. A `config.set` failure after
+   * sign-out leaves the dialog open with `migrationError` shown and both
+   * buttons re-enabled for retry (UI-SPEC's backstop requirement) -- the
+   * user must never be told they succeeded when the new config never
+   * persisted.
+   */
+  async function handleConfirmMigration() {
+    setMigrating(true);
+    setMigrationError(false);
+    try {
+      // Awaited (unlike the first-run path's fire-and-forget grant) so the
+      // sign-out/persist steps below only run once this settles.
+      await bestEffortPermissionsRequest(pendingNewUrl);
+      await sendMessage({ kind: "session.signOut" });
+      const result = await sendMessage({ kind: "config.set", rawUrl: pendingNewUrl });
+      if (!result.ok) {
+        setMigrationError(true);
+        return;
+      }
+      onConfigured();
+      void bestEffortPermissionsRemove(pendingOldUrl);
+      setShowConfirm(false);
+    } finally {
+      setMigrating(false);
+    }
+  }
+
+  function handleCancelMigration() {
+    setShowConfirm(false);
+    setMigrationError(false);
+    setPendingNewUrl("");
+    setPendingOldUrl("");
   }
 
   // 11-09 addendum, CORRECTED (regression report): `h-full` forced this
@@ -172,6 +296,56 @@ export default function ServerConfigView({
           </button>
         ) : null}
       </form>
+
+      {/* AUTH-04 server-change confirmation dialog (15-UI-SPEC.md): reuses
+          the codebase's standing scrim+card modal pattern
+          (ExtUnlockBridge.tsx's own overlay for structural precedent).
+          `text-warning`, NOT `text-error` -- a server switch is reversible,
+          unlike the codebase's usual delete-confirm convention. */}
+      {showConfirm ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-base-300/70 p-6">
+          <div className="w-full max-w-[360px] rounded-box border border-base-300 bg-base-100 p-6">
+            <div className="flex items-center gap-3">
+              <AlertTriangle size={20} className="shrink-0 text-warning" aria-hidden="true" />
+              <p className="text-base">
+                {interpolate(t(locale, "config.changeServerConfirmBody"), {
+                  // Hostname only, never the full URL with scheme/path
+                  // (15-UI-SPEC.md's long-text resolution).
+                  host: new URL(pendingOldUrl).hostname,
+                })}
+              </p>
+            </div>
+
+            {migrationError ? (
+              <div className="alert alert-error mt-4 text-sm">
+                {t(locale, "config.changeServerMigrationFailed")}
+              </div>
+            ) : null}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={migrating}
+                onClick={handleCancelMigration}
+              >
+                {t(locale, "config.cancel")}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={migrating}
+                onClick={() => void handleConfirmMigration()}
+              >
+                {migrating ? (
+                  <span className="loading loading-spinner loading-sm" aria-hidden="true" />
+                ) : null}
+                {t(locale, "config.changeServerConfirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

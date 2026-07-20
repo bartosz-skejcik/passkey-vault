@@ -78,7 +78,7 @@ import { browser } from "wxt/browser";
 import type { Message, MessageOf, MessageResponseMap } from "../../lib/messaging/ext-protocol";
 import { b64ToBytes } from "../../lib/messaging/bytes-b64";
 import { assertPopupSender, type MessageSender } from "./frame-guard";
-import { ensureHydrated, noteActivity } from "./vault-session";
+import { ensureHydrated, noteActivity, signOutVaultSession } from "./vault-session";
 import { armAutoLock, AUTOLOCK_OPTIONS, DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
 import { readSessionMeta, writeSessionMeta } from "./session-storage";
 import { handleUnlockPassword } from "./unlock";
@@ -116,6 +116,8 @@ import {
 import {
   readServerConfig,
   configureServer,
+  probeServerHealthDetailed,
+  normalizeServerUrl,
   InvalidServerUrlError,
   ServerUnreachableError,
   ServerCorsBlockedError,
@@ -491,6 +493,12 @@ function isProtocolMessage(message: unknown): message is Message {
     kind === "unlock.extPrf.finish" ||
     kind === "config.get" ||
     kind === "config.set" ||
+    // Plan 15-05 (AUTH-04): config.probe is popup-driven, mirrors
+    // config.get/config.set's own shape. session.signOut is popup-driven
+    // and matches "session." startsWith gate below (assertPopupSender)
+    // exactly like session.status already does.
+    kind === "config.probe" ||
+    kind === "session.signOut" ||
     kind === "autofill.match" ||
     kind === "autofill.fill" ||
     kind === "autofill.totpCode" ||
@@ -568,6 +576,14 @@ async function handle(message: Message, sender: MessageSender): Promise<unknown>
       return handleConfigGet();
     case "config.set":
       return handleConfigSet(message.rawUrl);
+    case "config.probe":
+      return handleConfigProbe(message.rawUrl);
+    case "session.signOut":
+      // Plan 15-05: signOutVaultSession() never throws by design (Plan
+      // 15-02) -- always ok:true, mirroring provider.resolveChoice's
+      // always-ack shape.
+      await signOutVaultSession();
+      return { ok: true as const };
     case "autofill.match":
       return handleAutofillMatch(sender);
     case "autofill.fill":
@@ -686,6 +702,34 @@ async function handleConfigSet(rawUrl: string): Promise<MessageResponseMap["conf
     // "unreachable" rather than letting the message channel reject, since
     // the popup only has these two typed slots to render (Task 1's
     // response-map contract).
+    return { ok: false, error: "unreachable" };
+  }
+}
+
+// Plan 15-05 (AUTH-04): a PERSIST-FREE sibling of handleConfigSet, mirroring
+// its exact error-mapping shape but calling probeServerHealthDetailed()
+// directly instead of configureServer() -- no browser.storage.local.set()
+// call anywhere in this function or its callees. Exists so
+// ServerConfigView's confirm-flow sequencing can validate the NEW server
+// BEFORE persisting it, keeping the OLD config live for the sign-out-old-
+// session step that must run first (Pitfall 1, 15-RESEARCH.md).
+async function handleConfigProbe(rawUrl: string): Promise<MessageResponseMap["config.probe"]> {
+  try {
+    const normalized = normalizeServerUrl(rawUrl);
+    const probeResult = await probeServerHealthDetailed(normalized);
+    if (probeResult === "ok") {
+      return { ok: true };
+    }
+    // D-11 (mirrors handleConfigSet): cors-blocked is a MORE SPECIFIC
+    // subtype of failure than the generic "unreachable" bucket below.
+    if (probeResult === "cors-blocked") {
+      return { ok: false, error: "cors-blocked" };
+    }
+    return { ok: false, error: "unreachable" };
+  } catch (e) {
+    if (e instanceof InvalidServerUrlError) {
+      return { ok: false, error: "invalid-url" };
+    }
     return { ok: false, error: "unreachable" };
   }
 }

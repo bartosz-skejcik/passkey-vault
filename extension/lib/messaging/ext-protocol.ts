@@ -167,6 +167,24 @@ export type Message =
   // (Plan 09-03)'s readServerConfig()/configureServer().
   | { kind: "config.get" }
   | { kind: "config.set"; rawUrl: string }
+  // Plan 15-05 (AUTH-04): a PERSIST-FREE sibling of `config.set` -- thin
+  // wrapper over server-config.ts's already-exported
+  // `probeServerHealthDetailed()`, reusing `config.set`'s exact error union
+  // minus the persist side effect. Exists so ServerConfigView can validate
+  // the NEW server is reachable BEFORE touching storage, keeping the OLD
+  // config live for the sign-out-old-session step that must run first
+  // (Pitfall 1, 15-RESEARCH.md -- persisting the new URL before tearing
+  // down the old session would make logout()'s apiFetch hit the WRONG
+  // server).
+  | { kind: "config.probe"; rawUrl: string }
+  // Plan 15-05 (AUTH-04): fire-and-forget-style full sign-out, delegating
+  // to Plan 15-02's `signOutVaultSession()` (composes lockVaultSession() ->
+  // best-effort server logout() -> unconditional clearSessionMeta()).
+  // Always `{ok:true}` -- signOutVaultSession() never throws by design
+  // (mirrors `provider.resolveChoice`'s always-ok:true shape). Falls under
+  // the EXISTING WR-01 `assertPopupSender()` gate automatically via the
+  // `"session."` prefix check -- no change to that gate's own code.
+  | { kind: "session.signOut" }
   // Phase 10 (Plan 10-01): popup-driven autofill. `autofill.match` carries
   // no origin (see header comment) -- the background derives the active
   // tab's origin itself. `autofill.fill` deliberately carries NO field
@@ -387,6 +405,12 @@ export interface MessageResponseMap {
   "unlock.extPrf.finish": ExtUnlockResult;
   "config.get": { baseUrl: string } | null;
   "config.set": { ok: true } | { ok: false; error: "invalid-url" | "unreachable" | "cors-blocked" };
+  // Plan 15-05: identical error union to config.set, minus persistence --
+  // see the Message union's own doc comment above.
+  "config.probe": { ok: true } | { ok: false; error: "invalid-url" | "unreachable" | "cors-blocked" };
+  // Plan 15-05: see the Message union's own doc comment above for why this
+  // is always ok:true.
+  "session.signOut": { ok: true };
   "autofill.match": AutofillMatchResult;
   "autofill.fill":
     | { ok: true }
