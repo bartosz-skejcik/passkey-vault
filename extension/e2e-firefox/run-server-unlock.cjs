@@ -230,19 +230,39 @@ async function main() {
     }
     await shot(driver, 'step1-server-configured');
 
-    const pwField = await tryFind(driver, 'input[type="password"]', 15000);
-    if (!pwField) throw new Error('sign-in view did not appear after server config');
-    await driver.findElement(By.css('input[type="email"]')).sendKeys(PROBE_EMAIL);
-    await driver.findElement(By.css('input[type="password"]')).sendKeys(PROBE_PASSWORD);
+    // Rule 3 (blocking-issue auto-fix, Plan 15-07 phase-close checkpoint):
+    // this Step 1 block predates Plan 15-01/15-03 -- the popup's OWN
+    // email/password sign-in form it used to drive directly no longer
+    // exists (AUTH-01, SignInView.tsx has zero input elements). Sign-in is
+    // now ALWAYS driven through the server-origin ceremony window, the
+    // same getAllWindowHandles-before/after-click technique run-core.cjs's
+    // own P9-SC1/SC2 rework (and this file's own Step 7 below) already use.
+    const signinCta = await tryFind(driver, '[data-testid="server-ceremony-signin-button"]', 15000);
+    if (!signinCta) throw new Error('sign-in view (server-ceremony-signin-button) did not appear after server config');
+    const step1HandlesBefore = await driver.getAllWindowHandles();
+    await signinCta.click();
+    await sleep(2000);
+    const step1HandlesAfter = await driver.getAllWindowHandles();
+    const step1NewHandles = step1HandlesAfter.filter((h) => !step1HandlesBefore.includes(h));
+    if (step1NewHandles.length !== 1) {
+      throw new Error(`sign-in ceremony window did not open (or opened more than one): new=${step1NewHandles.length}`);
+    }
+    const step1CeremonyHandle = step1NewHandles[0];
+    await driver.switchTo().window(step1CeremonyHandle);
+    await sleep(800);
+    await driver.findElement(By.css('input#pv-ext-unlock-email')).sendKeys(PROBE_EMAIL);
+    await driver.findElement(By.css('input#pv-ext-unlock-password')).sendKeys(PROBE_PASSWORD);
     await shot(driver, 'step1-signin-filled');
-    await driver.findElement(By.css('button[type="submit"]')).click();
+    await driver.findElement(By.css('[data-testid="ext-unlock-password-submit"]')).click();
+    await sleep(1500);
+    await driver.switchTo().window(popupHandle);
     const postSignin = await tryFind(driver, 'select, button', 30000);
     await sleep(1000);
     await shot(driver, 'step1-post-signin-unlocked');
     record(
       'STEP1-ext-signin',
       postSignin ? 'PASS' : 'FAIL',
-      'extension sign-in with the same probe account advanced past the unlock view (vault unlocked)',
+      'extension sign-in through the server-origin ceremony window with the same probe account advanced past the unlock view (vault unlocked)',
     );
 
     // ================= Step 2: force the vault back to LOCKED =================
@@ -415,14 +435,19 @@ async function main() {
     await driver.get(`${EXT_ORIGIN}/popup.html`);
     popupHandle = await driver.getWindowHandle();
     await sleep(1200);
-    const signinEmailField = await tryFind(driver, 'input[type="email"]', 15000);
+    // Rule 3 (blocking-issue auto-fix, Plan 15-07 phase-close checkpoint):
+    // the popup's own no-session view (SignInView.tsx, AUTH-01) has ZERO
+    // input elements -- the retired `input[type="email"]` check predates
+    // Plan 15-03. Detect the same signed-out hero by its own data-testid,
+    // matching Step 7's own detection just below.
+    const signinCtaStep6 = await tryFind(driver, '[data-testid="server-ceremony-signin-button"]', 15000);
     await shot(driver, 'step6-signin-view');
     record(
       'STEP6-signin-view',
-      signinEmailField ? 'PASS' : 'FAIL',
+      signinCtaStep6 ? 'PASS' : 'FAIL',
       'popup shows the Sign-in (no-session) view after clearing the session-meta record',
     );
-    if (!signinEmailField) throw new Error('could not reach the sign-in (no-session) view');
+    if (!signinCtaStep6) throw new Error('could not reach the sign-in (no-session) view');
 
     // ================= Step 7: the sign-in server-ceremony button is present =================
     // Unconditional whenever a server is configured (unlike step 3's own
