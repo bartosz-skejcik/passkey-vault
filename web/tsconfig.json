@@ -25,18 +25,6 @@
     "paths": {
       "@/*": [
         "./src/*"
-      ],
-      "pv-ui/generator/*": [
-        "../packages/pv-ui/generator/*"
-      ],
-      "pv-ui/vault/*": [
-        "../packages/pv-ui/vault/*"
-      ],
-      "pv-ui/i18n/*": [
-        "../packages/pv-ui/i18n/*"
-      ],
-      "pv-ui/clipboard": [
-        "../packages/pv-ui/clipboard.ts"
       ]
     }
   },
