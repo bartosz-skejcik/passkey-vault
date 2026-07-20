@@ -25,8 +25,8 @@
 
 ### DS — Unified Design System & Components
 
-- [ ] **DS-01**: Pure shared logic + types (card-brand detection, domain/search helpers, sort comparator, clipboard, vault item type shapes) live once in `packages/pv-ui`; the extension consumes them via re-export shims — no parallel duplicate copies remain.
-- [ ] **DS-02**: A shared i18n engine lives in `pv-ui`; the web app and the extension consume the same resolver (dictionary keys may be split per surface) rather than duplicating it.
+- [x] **DS-01**: Pure shared logic + types (card-brand detection, domain/search helpers, sort comparator, clipboard, vault item type shapes) live once in `packages/pv-ui`; the extension consumes them via re-export shims — no parallel duplicate copies remain.
+- [x] **DS-02**: A shared i18n engine lives in `pv-ui`; the web app and the extension consume the same resolver (dictionary keys may be split per surface) rather than duplicating it.
 - [ ] **DS-03**: `ItemIconTile` exists once as a shared React component in `pv-ui`, consumed by both the web app and the extension popup (single source of truth for the favicon / brand tile).
 - [ ] **DS-04**: The in-page overlays consume `pv-ui` design tokens as their single style source (token-aligned); their imperative closed-shadow implementation stays separate by design, but no design values are duplicated.
 
@@ -83,8 +83,8 @@
 | AUTH-02 | Phase 15 | Complete |
 | AUTH-03 | Phase 15 | Complete |
 | AUTH-04 | Phase 15 | Complete |
-| DS-01 | Phase 16 | Pending |
-| DS-02 | Phase 16 | Pending |
+| DS-01 | Phase 16 | Complete |
+| DS-02 | Phase 16 | Complete |
 | DS-03 | Phase 17 | Pending |
 | DS-04 | Phase 17 | Pending |
 | UX-01 | Phase 17 | Pending |
