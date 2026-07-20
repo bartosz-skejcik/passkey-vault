@@ -15,22 +15,30 @@
 // No LocaleContext/React-context provider exists here (unlike the web
 // app) -- the popup has no locale switcher this phase, so `resolveLocale()`
 // below is a plain one-shot read, not a stateful provider.
-export type Locale = "pl" | "en";
+//
+// DS-02 (plan 16-04): this file is now a thin wrapper over the shared
+// pv-ui/i18n engine -- DICTIONARY spreads COMMON_DICTIONARY (34 keys
+// shared byte-for-byte with web's own dictionary.ts) plus every
+// extension-only entry below, INCLUDING the 4 key-name-shared-but-
+// value-divergent keys (vault.emptyHeading, vault.emptyBody,
+// search.emptyResults, autolock.label) with their extension-specific
+// PL/EN copy kept exactly as-is (content and key SET unchanged from
+// before this refactor). `t()`/`interpolate()`/`Locale`/`resolveLocale()`'s
+// public signature stay byte-identical to the pre-refactor shape -- zero
+// call-site churn at this file's ~13 `t(locale, key)` call sites.
+import { COMMON_DICTIONARY } from "pv-ui/i18n/common";
+import { t as tEngine, interpolate, type Locale, resolveLocale } from "pv-ui/i18n/engine";
+
+export { interpolate, resolveLocale };
+export type { Locale };
 
 export const DICTIONARY = {
+  ...COMMON_DICTIONARY,
+
   // --- Loading / shell state (reused verbatim) -------------------------
   "loading.vault": { pl: "Ładowanie sejfu…", en: "Loading your vault…" },
 
   // --- Unlock / Sign-in (reused verbatim from 04-UI-SPEC.md unless noted)
-  "auth.passwordLabel": { pl: "Hasło główne", en: "Master password" },
-  "auth.loginSubmit": { pl: "Zaloguj się", en: "Log in" },
-  "auth.loginFailed": {
-    pl: "Logowanie nie powiodło się. Spróbuj ponownie.",
-    en: "Login failed. Please try again.",
-  },
-  "unlock.submit": { pl: "Odblokuj", en: "Unlock" },
-  "unlock.passkeyCta": { pl: "Odblokuj passkeyem", en: "Unlock with passkey" },
-  "unlock.orDivider": { pl: "lub", en: "or" },
   "unlock.sessionLockedNotice": {
     pl: "Sesja wygasła po bezczynności — odblokuj ponownie.",
     en: "Your session locked after being idle — unlock again.",
@@ -54,7 +62,6 @@ export const DICTIONARY = {
   },
 
   // --- Item list / search (reused verbatim) ----------------------------
-  "search.placeholder": { pl: "Szukaj...", en: "Search..." },
   "search.emptyResults": { pl: `Brak wyników dla „{query}"`, en: `No matches for "{query}"` },
   "vault.emptyHeading": { pl: "Twój sejf jest jeszcze pusty", en: "Your vault is empty so far" },
   "vault.emptyBody": {
@@ -95,9 +102,6 @@ export const DICTIONARY = {
   // own sort.label/sort.lastUsed/sort.name keys verbatim (same PL/EN copy),
   // so the popup and web app never present different option wording for
   // the same underlying SortOption values.
-  "sort.label": { pl: "Sortuj", en: "Sort" },
-  "sort.lastUsed": { pl: "Ostatnio używane", en: "Last used" },
-  "sort.name": { pl: "Nazwa", en: "Name" },
 
   // --- Server config (EXT-05; this screen predates 09-UI-SPEC.md, so
   // this copy is Claude's-discretion, kept strictly within the design
@@ -167,40 +171,16 @@ export const DICTIONARY = {
   // web/src/lib/i18n/dictionary.ts's own precedent for these -- not in
   // UI-SPEC's Copywriting Contract table, needed for the item-detail
   // heading badge and per-type field rows) ------------------------------
-  "itemType.login": { pl: "Login", en: "Login" },
-  "itemType.card": { pl: "Karta", en: "Card" },
-  "itemType.identity": { pl: "Tożsamość", en: "Identity" },
-  "itemType.note": { pl: "Notatka", en: "Note" },
-  "itemType.totp": { pl: "TOTP", en: "TOTP" },
   // Phase 12 (Plan 12-02): "passkey" now exists in the data model
   // (PasskeyFields, lib/vault/types.ts) -- ItemListView.tsx's TYPE_LABEL_KEY
   // Record needs this entry to stay exhaustive.
-  "itemType.passkey": { pl: "Passkey", en: "Passkey" },
 
-  "field.username": { pl: "Użytkownik", en: "Username" },
-  "field.password": { pl: "Hasło", en: "Password" },
-  "field.notes": { pl: "Notatki", en: "Notes" },
-  "field.cardholderName": { pl: "Właściciel karty", en: "Cardholder name" },
-  "field.number": { pl: "Numer karty", en: "Card number" },
-  "field.expiry": { pl: "Data ważności", en: "Expiry" },
-  "field.cvv": { pl: "CVV", en: "CVV" },
-  "field.firstName": { pl: "Imię", en: "First name" },
-  "field.lastName": { pl: "Nazwisko", en: "Last name" },
-  "field.email": { pl: "Email", en: "Email" },
-  "field.phone": { pl: "Telefon", en: "Phone" },
-  "field.address": { pl: "Adres", en: "Address" },
-  "field.body": { pl: "Treść", en: "Content" },
-  "field.secret": { pl: "Sekret (base32)", en: "Secret (base32)" },
   // Guaranteed passkey-detail rows (BINDING, Bartek 2026-07-15) -- see
   // ItemDetailView.tsx; no "passkey" item type exists in the data model
   // yet (Phase 12 introduces it), so these keys are unused today but
   // ready the instant that type lands.
-  "field.rpId": { pl: "RP ID", en: "RP ID" },
   "field.lastUsed": { pl: "Ostatnio użyty", en: "Last used" },
 
-  "aria.copyField": { pl: "Kopiuj {field}", en: "Copy {field}" },
-  "aria.showPassword": { pl: "Pokaż hasło", en: "Show password" },
-  "aria.hidePassword": { pl: "Ukryj hasło", en: "Hide password" },
   "aria.backToList": { pl: "Wróć do listy", en: "Back to list" },
 
   // --- Passkey provider ceremony consent screen (Phase 12, Plan 12-04,
@@ -261,41 +241,5 @@ export const DICTIONARY = {
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {
-  return DICTIONARY[key][locale];
-}
-
-/**
- * Substitutes `{token}` placeholders in a translated string with the given
- * values -- same shape as web/src/lib/i18n/dictionary.ts's helper of the
- * same name.
- */
-export function interpolate(template: string, vars: Record<string, string>): string {
-  let result = template;
-  let replacedAny = false;
-  for (const [key, value] of Object.entries(vars)) {
-    const token = `{${key}}`;
-    if (result.includes(token)) {
-      result = result.split(token).join(value);
-      replacedAny = true;
-    }
-  }
-  if (!replacedAny) {
-    const extra = Object.values(vars).join(" ");
-    result = extra ? `${result} ${extra}` : result;
-  }
-  return result;
-}
-
-/**
- * One-shot locale detection (no stateful provider this phase -- the popup
- * has no language switcher yet, unlike the web app's LocaleContext).
- * `navigator` is always defined in a popup's DOM document; the
- * `typeof`-guard only matters for this module being importable from a
- * Node-environment vitest run (background tests) without crashing.
- */
-export function resolveLocale(): Locale {
-  if (typeof navigator === "undefined") {
-    return "en";
-  }
-  return navigator.language.toLowerCase().startsWith("pl") ? "pl" : "en";
+  return tEngine(DICTIONARY, locale, key);
 }
