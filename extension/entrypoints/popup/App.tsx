@@ -1,8 +1,8 @@
 // App.tsx — the popup's top-level view-state switch (09-UI-SPEC.md's
-// Popup shell section): loading -> server-config (first-run gate,
-// highest priority) -> unlock (Sign-in or Unlock-only, per
-// session.status) -> item-list (+ the enrollment prompt, top slot) ->
-// item-detail. Exactly one view renders at a time -- the popup is
+// Popup shell section, re-laid-out per 15-UI-SPEC.md): loading ->
+// server-config (first-run gate, highest priority) -> unlock (SignInView
+// for no-session, UnlockView for locked, per session.status) -> item-list
+// -> item-detail. Exactly one view renders at a time -- the popup is
 // single-view, no tabs.
 //
 import { useEffect, useRef, useState } from "react";
@@ -12,8 +12,8 @@ import type { SessionStatus } from "../../lib/messaging/ext-protocol";
 import type { VaultItem } from "../../lib/vault/types";
 import { resolveLocale, t } from "../../lib/i18n/dictionary";
 import ServerConfigView from "./ServerConfigView";
+import SignInView from "./SignInView";
 import UnlockView from "./UnlockView";
-import EnrollExtPasskeyPrompt from "./EnrollExtPasskeyPrompt";
 import ItemListView from "./ItemListView";
 import ItemDetailView from "./ItemDetailView";
 import ProviderCeremonyView, {
@@ -113,7 +113,6 @@ type ViewState =
 export default function App() {
   const locale = resolveLocale();
   const [view, setView] = useState<ViewState>({ kind: "loading" });
-  const [showEnrollPrompt, setShowEnrollPrompt] = useState(false);
   const [ceremonyStatus, setCeremonyStatus] = useState<ProviderCeremonyStatus>("idle");
   // Phase 12 (Plan 12-06, NEW BLOCKER fix): mirrors `view` on every render so
   // the storage.session.onChanged listener below (a stable [] -- effect,
@@ -243,7 +242,6 @@ export default function App() {
         message !== null &&
         (message as { kind?: unknown }).kind === "session.locked"
       ) {
-        setShowEnrollPrompt(false);
         void refreshSessionStatus();
       }
     }
@@ -302,23 +300,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function handleUnlocked(viaPassword: boolean) {
+  async function handleUnlocked() {
     const status = await sendMessage({ kind: "session.status" });
     if (status.kind !== "unlocked") {
-      // Defensive fallback -- shouldn't happen (we just unlocked), but
-      // never trust a stale view over what the background actually says.
+      // Defensive fallback -- shouldn't happen (we just signed in/unlocked),
+      // but never trust a stale view over what the background actually says.
       if (status.kind === "no-session" || status.kind === "locked") {
         setView({ kind: "unlock", status });
       }
       return;
     }
-    const showPrompt =
-      viaPassword &&
-      !status.extPasskeyEnrolled &&
-      !status.extPasskeyPromptSuppressed &&
-      typeof window !== "undefined" &&
-      window.PublicKeyCredential !== undefined;
-    setShowEnrollPrompt(showPrompt);
     setView({ kind: "list" });
   }
 
@@ -351,11 +342,20 @@ export default function App() {
 
   if (view.kind === "unlock") {
     const status = view.status;
+    if (status.kind === "no-session") {
+      return (
+        <SignInView
+          locale={locale}
+          onSignedIn={() => void handleUnlocked()}
+          onChangeServer={() => void handleChangeServer(status)}
+        />
+      );
+    }
     return (
       <UnlockView
         locale={locale}
         status={status}
-        onUnlocked={(viaPassword) => void handleUnlocked(viaPassword)}
+        onUnlocked={() => void handleUnlocked()}
         onChangeServer={() => void handleChangeServer(status)}
       />
     );
@@ -419,17 +419,12 @@ export default function App() {
   // now pinned LOCALLY, right here, only for the item-list state. This is
   // the ONE view that actually needs a hard-pinned shell (its internal
   // PINNED-header/ONE-scroll-region layout, see ItemListView.tsx); every
-  // other view keeps Chrome's natural popup auto-sizing. The enroll-prompt
-  // banner (when shown) is a normal, naturally-sized flex child above
-  // ItemListView; ItemListView is handed whatever vertical space remains
-  // within these fixed 600px (its own root is `flex-1 min-h-0`).
+  // other view keeps Chrome's natural popup auto-sizing. ItemListView is
+  // handed the full fixed 600px (its own root is `flex-1 min-h-0`) --
+  // Phase 15 (AUTH-03) removed the enroll-prompt banner slot that used to
+  // sit above it (ext-scoped PRF enrollment is retired outright).
   return (
     <div className="flex h-[600px] w-[380px] flex-col gap-2 overflow-hidden">
-      {showEnrollPrompt ? (
-        <div className="p-2">
-          <EnrollExtPasskeyPrompt locale={locale} onDone={() => setShowEnrollPrompt(false)} />
-        </div>
-      ) : null}
       <ItemListView locale={locale} onSelectItem={(item) => setView({ kind: "detail", item })} />
     </div>
   );
