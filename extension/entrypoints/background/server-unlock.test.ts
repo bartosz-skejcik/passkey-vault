@@ -20,6 +20,9 @@ const hoisted = vi.hoisted(() => {
     mockSetUnlockedUserKey: vi.fn(),
     mockReadSessionMeta: vi.fn(),
     mockReadServerConfig: vi.fn(),
+    // Plan 15-01: the password-relay branch delegates to unlock.ts's OWN
+    // handleUnlockPassword rather than re-deriving Argon2id material here.
+    mockHandleUnlockPassword: vi.fn(),
   };
 });
 
@@ -78,6 +81,10 @@ vi.mock("./session-storage", () => ({
 
 vi.mock("./server-config", () => ({
   readServerConfig: hoisted.mockReadServerConfig,
+}));
+
+vi.mock("./unlock", () => ({
+  handleUnlockPassword: hoisted.mockHandleUnlockPassword,
 }));
 
 import { startServerUnlock, completeServerUnlock, registerServerUnlockAlarmListener } from "./server-unlock";
@@ -560,6 +567,87 @@ describe("completeServerUnlock", () => {
 
       expect(result).toEqual({ ok: false, error: "invalid-mode-payload" });
       expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+    });
+  });
+
+  // Plan 15-01: the master-password sign-in path through the SAME ceremony
+  // window (AMENDMENT, 15-CONTEXT.md) -- delegates to unlock.ts's OWN
+  // handleUnlockPassword rather than re-deriving Argon2id material here.
+  describe("password-shaped payload (Plan 15-01)", () => {
+    it("rejects with invalid-mode-payload against a mode:'unlock' pending record -- the unlock-mode ceremony stays PRF-only", async () => {
+      const nonce = await startAndGetNonce("unlock"); // FAKE_SESSION_META is the default fixture
+
+      const result = await completeServerUnlock(
+        { nonce, passwordB64: btoa("hunter2"), email: "user@example.com" },
+        "https://vault.example.com",
+      );
+
+      expect(result).toEqual({ ok: false, error: "invalid-mode-payload" });
+      expect(hoisted.mockHandleUnlockPassword).not.toHaveBeenCalled();
+      expect(hoisted.mockWindowsRemove).toHaveBeenCalledWith(42);
+      expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: false });
+      expect(readPendingNonceFromStorage()).toBeUndefined();
+    });
+
+    it("happy path: mode:'signin' with no existing session-meta and handleUnlockPassword resolving ok:true -> ok:true, broadcasts ok:true, calls handleUnlockPassword with the decoded password bytes + email exactly once", async () => {
+      const nonce = await startAndGetNonce("signin"); // no session-meta by default in this describe block
+      hoisted.mockHandleUnlockPassword.mockResolvedValue({ ok: true });
+
+      const result = await completeServerUnlock(
+        { nonce, passwordB64: btoa("hunter2"), email: "signin-user@example.com" },
+        "https://vault.example.com",
+      );
+
+      expect(result).toEqual({ ok: true });
+      expect(hoisted.mockHandleUnlockPassword).toHaveBeenCalledTimes(1);
+      const [passwordBytesArg, emailArg] = hoisted.mockHandleUnlockPassword.mock.calls[0] as [Uint8Array, string];
+      expect(new TextDecoder().decode(passwordBytesArg)).toBe("hunter2");
+      expect(emailArg).toBe("signin-user@example.com");
+      expect(hoisted.mockWindowsRemove).toHaveBeenCalledWith(42);
+      expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: true });
+      expect(readPendingNonceFromStorage()).toBeUndefined();
+    });
+
+    it("WR-01(rev2)-symmetric: mode:'signin' with an existing session-meta record already present -> already-signed-in, handleUnlockPassword NEVER called", async () => {
+      const nonce = await startAndGetNonce("signin");
+      hoisted.mockReadSessionMeta.mockResolvedValue(FAKE_SESSION_META);
+
+      const result = await completeServerUnlock(
+        { nonce, passwordB64: btoa("hunter2"), email: "signin-user@example.com" },
+        "https://vault.example.com",
+      );
+
+      expect(result).toEqual({ ok: false, error: "already-signed-in" });
+      expect(hoisted.mockHandleUnlockPassword).not.toHaveBeenCalled();
+      expect(hoisted.mockSetUnlockedUserKey).not.toHaveBeenCalled();
+      expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: false });
+      expect(readPendingNonceFromStorage()).toBeUndefined();
+    });
+
+    it("mode:'signin' with handleUnlockPassword resolving ok:false/invalid-credentials -> ok:false/invalid-credentials", async () => {
+      const nonce = await startAndGetNonce("signin");
+      hoisted.mockHandleUnlockPassword.mockResolvedValue({ ok: false, error: "invalid-credentials" });
+
+      const result = await completeServerUnlock(
+        { nonce, passwordB64: btoa("wrong-password"), email: "signin-user@example.com" },
+        "https://vault.example.com",
+      );
+
+      expect(result).toEqual({ ok: false, error: "invalid-credentials" });
+      expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.state", ok: false });
+      expect(readPendingNonceFromStorage()).toBeUndefined();
+    });
+
+    it("mode:'signin' with handleUnlockPassword resolving a non-invalid-credentials error maps to unwrap-failed", async () => {
+      const nonce = await startAndGetNonce("signin");
+      hoisted.mockHandleUnlockPassword.mockResolvedValue({ ok: false, error: "unknown" });
+
+      const result = await completeServerUnlock(
+        { nonce, passwordB64: btoa("hunter2"), email: "signin-user@example.com" },
+        "https://vault.example.com",
+      );
+
+      expect(result).toEqual({ ok: false, error: "unwrap-failed" });
     });
   });
 });

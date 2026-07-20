@@ -300,6 +300,15 @@ async function handleServerUnlockRelayMessage(
   if (message.failed === true) {
     return completeServerUnlock({ nonce: message.nonce, failed: true }, guard.origin);
   }
+  // Plan 15-01: the password-shaped variant is a THIRD, mutually-exclusive
+  // union member (no prfB64/prfWrappedUk/token/accountEmail on it at all) --
+  // forwarded verbatim, exactly as the PRF variant below.
+  if ("passwordB64" in message) {
+    return completeServerUnlock(
+      { nonce: message.nonce, passwordB64: message.passwordB64, email: message.email },
+      guard.origin,
+    );
+  }
   return completeServerUnlock(
     {
       nonce: message.nonce,

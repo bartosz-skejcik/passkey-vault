@@ -308,6 +308,22 @@ export type Message =
       token?: string;
       accountEmail?: string;
     }
+  // Plan 15-01: the master-password sign-in path through the SAME ceremony
+  // window (AMENDMENT, 15-CONTEXT.md -- mode:'signin' offers BOTH passkey
+  // AND password). Mutually exclusive with the PRF-shaped variant above --
+  // this shape carries none of prfB64/prfWrappedUk/token/accountEmail.
+  // `passwordB64` is STANDARD base64 (b64ToBytes convention, NOT base64url
+  // -- matches unlock.password's own passwordB64 field, unlike the PRF
+  // field's base64url D-21 convention), decoded background-side and handed
+  // straight to unlock.ts's handleUnlockPassword -- this relay never
+  // touches WASM/pv-core itself (D-05).
+  | {
+      kind: "unlock.serverCeremony.relay";
+      nonce: string;
+      failed?: false;
+      passwordB64: string;
+      email: string;
+    }
   | { kind: "unlock.serverCeremony.state"; ok: boolean }
   // quick-260717: NordPass-style last-used tracking. ItemDetailView.tsx's
   // copy affordances decrypt/copy CLIENT-SIDE in the popup document (unlike
@@ -448,6 +464,11 @@ export interface MessageResponseMap {
           | "already-signed-in"
           | "ceremony-failed"
           | "unwrap-failed"
+          // Plan 15-01: the password-branch's own wrong-password outcome
+          // (handleUnlockPassword's own "invalid-credentials", distinct
+          // from unwrap-failed which covers the PRF branch's blob/key
+          // mismatch and any other password-branch failure).
+          | "invalid-credentials"
           | "unknown";
       };
   "unlock.serverCeremony.state": void;

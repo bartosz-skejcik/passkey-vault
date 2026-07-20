@@ -1771,6 +1771,114 @@ describe("content-relay", () => {
         expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
       });
     });
+
+    // Plan 15-01: the master-password sign-in path through this SAME
+    // ceremony window (AMENDMENT, 15-CONTEXT.md) -- a THIRD, mutually
+    // exclusive payload shape (no prf/prfB64/prfWrappedUk fields at all).
+    describe("password-shaped payload (Plan 15-01)", () => {
+      function passwordRequest(nonce: string) {
+        return { source: "pv-ext-unlock-bridge", nonce, passwordB64: "abc", email: "a@b.c" };
+      }
+
+      it("a same-window postMessage of {source, nonce, passwordB64, email} (no prf fields) is accepted and forwarded as the password-shaped unlock.serverCeremony.relay message, never the PRF shape", async () => {
+        const nonce = "nonce-ext-unlock-password";
+        window.dispatchEvent(
+          new MessageEvent("message", { data: passwordRequest(nonce), origin: location.origin, source: window }),
+        );
+        await flushMicrotasks();
+
+        expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+        const call = hoisted.mockSendMessage.mock.calls[0][0] as {
+          kind: string;
+          nonce: string;
+          passwordB64: string;
+          email: string;
+        };
+        expect(call).toEqual({
+          kind: "unlock.serverCeremony.relay",
+          nonce,
+          passwordB64: "abc",
+          email: "a@b.c",
+        });
+        expect(call).not.toHaveProperty("prfB64");
+        expect(call).not.toHaveProperty("prfWrappedUk");
+        expect(call).not.toHaveProperty("token");
+        expect(call).not.toHaveProperty("accountEmail");
+      });
+
+      it("rejects a password-shaped message with an empty-string passwordB64 -- never forwarded", async () => {
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            data: { source: "pv-ext-unlock-bridge", nonce: "nonce-ext-unlock-pw-empty-b64", passwordB64: "", email: "a@b.c" },
+            origin: location.origin,
+            source: window,
+          }),
+        );
+        await flushMicrotasks();
+        expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+      });
+
+      it("rejects a password-shaped message with an empty-string email -- never forwarded", async () => {
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            data: { source: "pv-ext-unlock-bridge", nonce: "nonce-ext-unlock-pw-empty-email", passwordB64: "abc", email: "" },
+            origin: location.origin,
+            source: window,
+          }),
+        );
+        await flushMicrotasks();
+        expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+      });
+
+      it("T-13-11: rejects a well-formed password-shaped message when THIS document is NOT the configured server -- never forwarded", async () => {
+        hoisted.storageStore.set("pv-server-config", { baseUrl: "https://a-different-vault.example.com" });
+
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            data: passwordRequest("nonce-ext-unlock-pw-not-configured-server"),
+            origin: location.origin,
+            source: window,
+          }),
+        );
+        await flushMicrotasks();
+        expect(hoisted.mockSendMessage).not.toHaveBeenCalled();
+      });
+
+      it("T-13-11: single-use -- a replayed password-shaped nonce is silently ignored on the second delivery", async () => {
+        const nonce = "nonce-ext-unlock-pw-replay";
+        window.dispatchEvent(
+          new MessageEvent("message", { data: passwordRequest(nonce), origin: location.origin, source: window }),
+        );
+        await flushMicrotasks();
+        expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1);
+
+        window.dispatchEvent(
+          new MessageEvent("message", { data: passwordRequest(nonce), origin: location.origin, source: window }),
+        );
+        await flushMicrotasks();
+        expect(hoisted.mockSendMessage).toHaveBeenCalledTimes(1); // not forwarded again
+      });
+
+      it("posts the ack/result back to the page with the background's ok value, same as the PRF path", async () => {
+        const nonce = "nonce-ext-unlock-pw-result";
+        hoisted.mockSendMessage.mockResolvedValueOnce({ ok: false, error: "invalid-credentials" });
+
+        const received: unknown[] = [];
+        window.addEventListener("message", (e) => {
+          const data = (e as MessageEvent).data as { source?: unknown; kind?: unknown };
+          if (data?.source === "pv-content-relay" && data?.kind === "pv-ext-unlock-result") {
+            received.push(data);
+          }
+        });
+
+        window.dispatchEvent(
+          new MessageEvent("message", { data: passwordRequest(nonce), origin: location.origin, source: window }),
+        );
+        await flushMicrotasks();
+
+        expect(received).toEqual([{ source: "pv-content-relay", kind: "pv-ext-unlock-result", nonce, ok: false }]);
+      });
+    });
   });
 
   // Bartek live-UAT bug follow-up (.planning/debug/resolved/
