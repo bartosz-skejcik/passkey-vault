@@ -632,3 +632,98 @@ describe("ExtUnlockBridge — signin mode (Plan 13-07)", () => {
     expect(window.location.search).not.toContain("pv-mode");
   });
 });
+
+// Plan 15-01 (AMENDMENT, 15-CONTEXT.md): mode:'signin' offers BOTH
+// master-password AND passkey sign-in, passkey-first presentation -- a
+// passkey-less account can sign in fully through this window without ever
+// seeing the popup's own password form.
+describe("ExtUnlockBridge — password sign-in (Plan 15-01)", () => {
+  it("the mode='signin' branch renders the passkey button AND the new password form simultaneously (neither hides the other)", () => {
+    render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
+    expect(screen.getByTestId("passkey-unlock-button")).toBeInTheDocument();
+    expect(screen.getByLabelText("extUnlock.passwordLabel")).toBeInTheDocument();
+    expect(screen.getByTestId("ext-unlock-password-submit")).toBeInTheDocument();
+  });
+
+  it("submitting the password form posts exactly {source, nonce, passwordB64, email} (base64 STANDARD, decoded via atob), never a prfB64/prfWrappedUk field", async () => {
+    const postSpy = vi.spyOn(window, "postMessage");
+
+    render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
+    fireEvent.change(screen.getByLabelText("extUnlock.emailLabel"), {
+      target: { value: "pw-user@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("extUnlock.passwordLabel"), {
+      target: { value: "hunter2" },
+    });
+    fireEvent.click(screen.getByTestId("ext-unlock-password-submit"));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalled());
+    const [envelope, targetOrigin] = postSpy.mock.calls[0];
+    expect(targetOrigin).toBe(window.location.origin);
+    expect(envelope).toMatchObject({
+      source: "pv-ext-unlock-bridge",
+      nonce: "abc123",
+      email: "pw-user@example.com",
+    });
+    expect(envelope).not.toHaveProperty("prfB64");
+    expect(envelope).not.toHaveProperty("prfWrappedUk");
+    const passwordB64 = (envelope as { passwordB64: unknown }).passwordB64;
+    expect(typeof passwordB64).toBe("string");
+    // STANDARD base64 (never base64url) -- plain atob decodes it directly.
+    expect(atob(passwordB64 as string)).toBe("hunter2");
+  });
+
+  it("an ok:true ack for a password submission calls window.close() and settles state to success (same as the existing PRF success path)", async () => {
+    const closeSpy = vi.spyOn(window, "close").mockImplementation(() => {});
+    const postSpy = vi.spyOn(window, "postMessage");
+
+    render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
+    fireEvent.change(screen.getByLabelText("extUnlock.emailLabel"), {
+      target: { value: "pw-user@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("extUnlock.passwordLabel"), {
+      target: { value: "hunter2" },
+    });
+    fireEvent.click(screen.getByTestId("ext-unlock-password-submit"));
+    await waitFor(() => expect(postSpy).toHaveBeenCalled());
+
+    dispatchAckMessage({
+      source: "pv-content-relay",
+      kind: "pv-ext-unlock-result",
+      nonce: "abc123",
+      ok: true,
+    });
+
+    expect(await screen.findByText("extUnlock.success")).toBeInTheDocument();
+    expect(closeSpy).toHaveBeenCalled();
+  });
+
+  it("an ok:false ack for a password submission sets an inline error via t('auth.loginFailed') and returns state to idle (form remains interactive), NOT delivery-failed", async () => {
+    const postSpy = vi.spyOn(window, "postMessage");
+
+    render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
+    fireEvent.change(screen.getByLabelText("extUnlock.emailLabel"), {
+      target: { value: "pw-user@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("extUnlock.passwordLabel"), {
+      target: { value: "wrong-password" },
+    });
+    fireEvent.click(screen.getByTestId("ext-unlock-password-submit"));
+    await waitFor(() => expect(postSpy).toHaveBeenCalled());
+
+    dispatchAckMessage({
+      source: "pv-content-relay",
+      kind: "pv-ext-unlock-result",
+      nonce: "abc123",
+      ok: false,
+    });
+
+    expect(await screen.findByText("auth.loginFailed")).toBeInTheDocument();
+    expect(screen.queryByText("extUnlock.deliveryFailed")).not.toBeInTheDocument();
+    expect(screen.queryByText("extUnlock.signinDeliveryFailed")).not.toBeInTheDocument();
+    // Form remains interactive -- back to idle, not a full-screen terminal
+    // state.
+    expect(screen.getByTestId("ext-unlock-password-submit")).toBeInTheDocument();
+    expect(screen.getByTestId("ext-unlock-password-submit")).not.toBeDisabled();
+  });
+});

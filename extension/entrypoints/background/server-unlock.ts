@@ -59,12 +59,17 @@
 // poll (T-13-13: the pending state always resolves, never wedges).
 import { browser } from "wxt/browser";
 import { initCrypto, WasmWrappingKey, unwrapUserKey } from "../../lib/crypto/wasm-loader";
-import { b64UrlToBytes } from "../../lib/messaging/bytes-b64";
+import { b64UrlToBytes, b64ToBytes } from "../../lib/messaging/bytes-b64";
 import { isSessionUnlocked, setUnlockedUserKey } from "./vault-session";
 import { readSessionMeta } from "./session-storage";
 import { readServerConfig } from "./server-config";
 import { DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
 import { centeredWindowPosition, type WindowGeometry } from "../../lib/window-geometry";
+// Plan 15-01: the password-relay branch delegates to unlock.ts's OWN
+// battle-tested password ceremony rather than re-deriving Argon2id material
+// here -- this file never touches initCrypto/WasmWrappingKey/unwrapUserKey
+// for the password path, handleUnlockPassword owns that internally.
+import { handleUnlockPassword } from "./unlock";
 
 const PENDING_STORAGE_KEY = "pv-server-unlock-pending";
 const ALARM_NAME = "pv-server-unlock-timeout";
@@ -262,6 +267,8 @@ export type ServerUnlockCompleteResult =
         | "already-signed-in"
         | "ceremony-failed"
         | "unwrap-failed"
+        // Plan 15-01: the password branch's own wrong-password outcome.
+        | "invalid-credentials"
         | "unknown";
     };
 
@@ -288,7 +295,11 @@ export type ServerUnlockCompleteResult =
 export async function completeServerUnlock(
   args:
     | { nonce: string; failed: true }
-    | { nonce: string; failed?: false; prfB64: string; prfWrappedUk: string; token?: string; accountEmail?: string },
+    | { nonce: string; failed?: false; prfB64: string; prfWrappedUk: string; token?: string; accountEmail?: string }
+    // Plan 15-01: the master-password sign-in path through the SAME
+    // ceremony window (AMENDMENT, 15-CONTEXT.md) -- mutually exclusive with
+    // the PRF variant above, detected via `"passwordB64" in args`.
+    | { nonce: string; failed?: false; passwordB64: string; email: string },
   callerOrigin: string,
 ): Promise<ServerUnlockCompleteResult> {
   const config = await readServerConfig();
@@ -351,6 +362,47 @@ export async function completeServerUnlock(
     await closeWindowIfAny(pending);
     await broadcastCeremonyState(false);
     return { ok: false, error: "expired" };
+  }
+
+  // Plan 15-01 (AMENDMENT, 15-CONTEXT.md): the password-shaped payload is
+  // detected FIRST, before any of the PRF-shape mode-pinning checks below
+  // (those checks only ever apply to the PRF variant -- this branch handles
+  // its own mode-pinning and returns/never falls through to them).
+  if ("passwordB64" in args) {
+    if (pending.mode === "unlock") {
+      // The unlock-mode ceremony stays PRF-only (UI-SPEC: "no password form
+      // needed here -- popup already offers password") -- a page cannot
+      // escalate an unlock-mode nonce into a password sign-in.
+      await closeWindowIfAny(pending);
+      await broadcastCeremonyState(false);
+      return { ok: false, error: "invalid-mode-payload" };
+    }
+
+    // pending.mode === "signin" -- WR-01(rev2)-symmetric re-guard against a
+    // concurrent sign-in racing this one (mirrors the existing PRF signin
+    // branch's own readSessionMeta() re-check below).
+    const existing = await readSessionMeta();
+    if (existing !== null) {
+      await closeWindowIfAny(pending);
+      await broadcastCeremonyState(false); // T-13-13: never wedge
+      return { ok: false, error: "already-signed-in" };
+    }
+
+    const passwordBytes = b64ToBytes(args.passwordB64);
+    const result = await handleUnlockPassword(passwordBytes, args.email);
+
+    if (result.ok === true) {
+      await closeWindowIfAny(pending);
+      await broadcastCeremonyState(true);
+      return { ok: true };
+    }
+
+    await closeWindowIfAny(pending);
+    await broadcastCeremonyState(false);
+    return {
+      ok: false,
+      error: result.error === "invalid-credentials" ? "invalid-credentials" : "unwrap-failed",
+    };
   }
 
   // T-13-16 (Plan 13-07): the PENDING RECORD's mode is authoritative --

@@ -1112,6 +1112,12 @@ interface ExtUnlockBridgeMessage {
   prfWrappedUk?: string;
   token?: string;
   accountEmail?: string;
+  // Plan 15-01: the master-password sign-in path through this SAME
+  // ceremony window (AMENDMENT, 15-CONTEXT.md). STANDARD base64 (NOT
+  // base64url -- see isExtUnlockBridgeMessage's own header comment on why
+  // this field is shape-checked differently from prfB64).
+  passwordB64?: string;
+  email?: string;
 }
 
 /** Base64url-shaped, non-empty -- `-`/`_` in place of standard base64's
@@ -1138,6 +1144,14 @@ function isExtUnlockBridgeMessage(data: unknown): data is ExtUnlockBridgeMessage
     // No PRF material is expected (or required) on an explicit failure
     // notice -- token/accountEmail are irrelevant too, this shape carries
     // nothing but the nonce.
+    return true;
+  }
+  // Plan 15-01: the password-shaped payload -- STANDARD base64 (NOT
+  // base64url), so isBase64UrlShaped is deliberately NOT reused here; the
+  // actual base64 validity is enforced downstream by b64ToBytes/
+  // handleUnlockPassword (mirrors how prfWrappedUk is only shape-checked as
+  // typeof === "string" above, never fully validated at this layer).
+  if (typeof c.passwordB64 === "string" && c.passwordB64.length > 0 && typeof c.email === "string" && c.email.length > 0) {
     return true;
   }
   if (isBase64UrlShaped(c.prfB64)) {
@@ -1184,7 +1198,7 @@ async function handleExtUnlockBridgeMessage(event: MessageEvent): Promise<void> 
     return;
   }
 
-  const { nonce, failed, prf, prfB64, prfWrappedUk, token, accountEmail } = event.data;
+  const { nonce, failed, prf, prfB64, prfWrappedUk, token, accountEmail, passwordB64, email } = event.data;
   if (seenExtUnlockNonces.has(nonce)) {
     return; // replay -- silently ignored, never re-forwarded (T-13-11)
   }
@@ -1194,19 +1208,29 @@ async function handleExtUnlockBridgeMessage(event: MessageEvent): Promise<void> 
     const response =
       failed === true
         ? await sendMessage({ kind: "unlock.serverCeremony.relay", nonce, failed: true })
-        : await sendMessage({
-            kind: "unlock.serverCeremony.relay",
-            nonce,
-            // isExtUnlockBridgeMessage already proved EITHER prfB64
-            // (preferred, page-encoded string -- forwarded verbatim,
-            // untouched by this file) OR prf (legacy BufferSource
-            // fallback, encoded here exactly as before) is present
-            // whenever failed !== true.
-            prfB64: prfB64 ?? bufferSourceToB64Url(prf as ArrayBuffer),
-            prfWrappedUk: prfWrappedUk as string,
-            token,
-            accountEmail,
-          });
+        : "passwordB64" in event.data
+          ? // Plan 15-01: the password-shaped payload -- forwarded
+            // verbatim, untouched by this file (same faithful-forwarding
+            // discipline as every other field this relay handles).
+            await sendMessage({
+              kind: "unlock.serverCeremony.relay",
+              nonce,
+              passwordB64: passwordB64 as string,
+              email: email as string,
+            })
+          : await sendMessage({
+              kind: "unlock.serverCeremony.relay",
+              nonce,
+              // isExtUnlockBridgeMessage already proved EITHER prfB64
+              // (preferred, page-encoded string -- forwarded verbatim,
+              // untouched by this file) OR prf (legacy BufferSource
+              // fallback, encoded here exactly as before) is present
+              // whenever failed !== true and passwordB64 is absent.
+              prfB64: prfB64 ?? bufferSourceToB64Url(prf as ArrayBuffer),
+              prfWrappedUk: prfWrappedUk as string,
+              token,
+              accountEmail,
+            });
     postExtUnlockResult(nonce, response.ok);
   } catch {
     postExtUnlockResult(nonce, false);
