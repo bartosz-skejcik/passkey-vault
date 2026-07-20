@@ -61,7 +61,7 @@ Delivered: 30/30 requirements, all phases verified passed, cross-phase integrati
 
 - [x] **Phase 14: Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification** - Root-cause and byte-assert-fix the Firefox response-direction Xray hole and add a real `webauthn-rs` round-trip test for the provider ceremony, before any UX/design work (completed 2026-07-20)
 - [x] **Phase 15: Login & Unlock Unification (Vaultwarden Model)** - One login path (full sign-in always via the server-origin ceremony window) and one unlock mechanism (password or server-origin passkey), replacing v0.2's dual popup/ext-scoped-PRF model (completed 2026-07-20)
-- [ ] **Phase 16: Design System Extraction — Logic, Types & i18n** - Pure vault logic/types and the i18n engine move into `packages/pv-ui`, consumed once by web and extension
+- [x] **Phase 16: Design System Extraction — Logic, Types & i18n** - Pure vault logic/types and the i18n engine move into `packages/pv-ui`, consumed once by web and extension (completed 2026-07-21)
 - [ ] **Phase 17: Shared Component & Visual Alignment** - `ItemIconTile` becomes a single shared React component; in-page autofill surfaces render light tiles and token-aligned styling matching the web app
 - [ ] **Phase 18: Firefox Window & Consent Hardening** - Ceremony/consent window centering and self-close are formalized and regression-guarded; a security review makes an explicit decision on an in-page consent alternative
 - [ ] **Phase 19: Server & Supply-Chain Hardening** - CORS explicitly lists `Authorization` and concrete origins, `cargo audit`/`cargo deny` + pinned toolchain, sign-count clone-detection acted on
@@ -309,7 +309,7 @@ Plans:
   2. A single i18n resolver (`t`/`interpolate`/`Locale`/`resolveLocale`) lives in `pv-ui`; the web app and extension both call the same engine, with dictionary keys split per surface where needed.
   3. No parallel duplicate implementation of any migrated module remains in `web/` or `extension/` — verified by search, not assumed.
 
-**Plans:** 6/6 plans executed
+**Plans:** 6/6 plans complete
 Plans:
 **Wave 1**
 
@@ -408,7 +408,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 13. Dual-Browser Hardening | v0.2 | 7/7 | Complete    | 2026-07-20 |
 | 14. Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification | v0.3 | 3/3 | Complete    | 2026-07-20 |
 | 15. Login & Unlock Unification (Vaultwarden Model) | v0.3 | 7/7 | Complete    | 2026-07-20 |
-| 16. Design System Extraction — Logic, Types & i18n | v0.3 | 6/6 | In Progress|  |
+| 16. Design System Extraction — Logic, Types & i18n | v0.3 | 6/6 | Complete    | 2026-07-21 |
 | 17. Shared Component & Visual Alignment | v0.3 | 0/TBD | Not started | - |
 | 18. Firefox Window & Consent Hardening | v0.3 | 0/TBD | Not started | - |
 | 19. Server & Supply-Chain Hardening | v0.3 | 0/TBD | Not started | - |
