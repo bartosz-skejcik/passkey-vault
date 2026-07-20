@@ -27,8 +27,17 @@ const hoisted = vi.hoisted(() => {
     mockExportUserKeyForSession: vi.fn(),
     mockImportUserKeyFromSession: vi.fn(),
     mockSendMessage: vi.fn().mockResolvedValue(undefined),
+    mockLogout: vi.fn().mockResolvedValue(undefined),
   };
 });
+
+// AUTH-04: signOutVaultSession() calls auth-api.ts's logout() -- mocked
+// here (this file's own job is proving vault-session.ts's ORDERING/
+// unconditional-teardown contract, not re-testing logout()'s wire-format,
+// which is auth-api.test.ts's job).
+vi.mock("./auth-api", () => ({
+  logout: hoisted.mockLogout,
+}));
 
 vi.mock("wxt/browser", () => ({
   browser: {
@@ -88,6 +97,7 @@ beforeEach(() => {
   hoisted.storageState.store = new Map();
   hoisted.alarmListeners.length = 0;
   hoisted.mockAlarmsCreate.mockReset();
+  hoisted.mockLogout.mockReset().mockResolvedValue(undefined);
   vi.resetModules();
   vi.clearAllMocks();
 });
@@ -245,6 +255,63 @@ describe("lockVaultSession", () => {
     await lockVaultSession(true);
 
     expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "session.locked" });
+  });
+});
+
+describe("signOutVaultSession", () => {
+  it("calls lockVaultSession()'s own effects first (key envelope cleared, in-memory handle freed, session.locked broadcast sent) before touching session-meta", async () => {
+    primeHappyPathMocks();
+    const { setUnlockedUserKey, signOutVaultSession, getUnlockedUserKey } =
+      await import("./vault-session");
+    const { readKeyEnvelope } = await import("./session-storage");
+    const uk = { tag: "fresh-user-key" } as unknown as import("../../lib/crypto/wasm-loader").WasmUserKey;
+
+    await setUnlockedUserKey(uk, "a@example.com", "tok123", 15);
+    hoisted.mockSendMessage.mockClear();
+
+    await signOutVaultSession();
+
+    expect(getUnlockedUserKey()).toBeNull();
+    expect(await readKeyEnvelope()).toBeNull();
+    expect(hoisted.mockSendMessage).toHaveBeenCalledWith({ kind: "session.locked" });
+  });
+
+  it("calls the mocked logout() export exactly once", async () => {
+    primeHappyPathMocks();
+    const { setUnlockedUserKey, signOutVaultSession } = await import("./vault-session");
+    const uk = { tag: "fresh-user-key" } as unknown as import("../../lib/crypto/wasm-loader").WasmUserKey;
+
+    await setUnlockedUserKey(uk, "a@example.com", "tok123", 15);
+    await signOutVaultSession();
+
+    expect(hoisted.mockLogout).toHaveBeenCalledTimes(1);
+  });
+
+  it("completes without throwing even when the mocked logout() call rejects -- clearSessionMeta still runs (T-15-06: no stranded state)", async () => {
+    primeHappyPathMocks();
+    hoisted.mockLogout.mockRejectedValue(new Error("server unreachable / token already invalid"));
+    const { setUnlockedUserKey, signOutVaultSession } = await import("./vault-session");
+    const { readSessionMeta } = await import("./session-storage");
+    const uk = { tag: "fresh-user-key" } as unknown as import("../../lib/crypto/wasm-loader").WasmUserKey;
+
+    await setUnlockedUserKey(uk, "a@example.com", "tok123", 15);
+
+    await expect(signOutVaultSession()).resolves.toBeUndefined();
+    expect(await readSessionMeta()).toBeNull();
+  });
+
+  it("a subsequent readSessionMeta() after signOutVaultSession() returns null -- full teardown proof, not just clearKeyEnvelope's partial one", async () => {
+    primeHappyPathMocks();
+    const { setUnlockedUserKey, signOutVaultSession } = await import("./vault-session");
+    const { readSessionMeta } = await import("./session-storage");
+    const uk = { tag: "fresh-user-key" } as unknown as import("../../lib/crypto/wasm-loader").WasmUserKey;
+
+    await setUnlockedUserKey(uk, "a@example.com", "tok123", 15);
+    expect(await readSessionMeta()).not.toBeNull();
+
+    await signOutVaultSession();
+
+    expect(await readSessionMeta()).toBeNull();
   });
 });
 

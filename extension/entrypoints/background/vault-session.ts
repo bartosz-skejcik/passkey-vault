@@ -25,8 +25,10 @@ import {
   readKeyEnvelope,
   writeKeyEnvelope,
   clearKeyEnvelope,
+  clearSessionMeta,
 } from "./session-storage";
 import { armAutoLock, DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
+import { logout } from "./auth-api";
 
 // Module-level in-memory fast path -- NOT the source of truth. A fresh SW
 // instance woken after an idle-kill starts with this at `null`;
@@ -237,6 +239,43 @@ export async function lockVaultSession(wasAutoLocked = false): Promise<void> {
   // Swallowed exactly like vault-store.ts's own broadcast: "no receiver"
   // (no popup currently open) is the expected common case, not an error.
   void browser.runtime.sendMessage({ kind: "session.locked" }).catch(() => {});
+}
+
+/**
+ * AUTH-04: a full sign-out, distinct from lockVaultSession() above. In
+ * order: (1) lockVaultSession() FIRST -- reuses its existing free-handle/
+ * clearKeyEnvelope/notifyLockListeners/`session.locked`-broadcast side
+ * effects, which is ALSO what triggers vault-store.ts's
+ * subscribeSessionLockState listener to stop sync and clear the in-memory
+ * item cache the instant `currentUserKey` becomes null (RESEARCH.md
+ * already confirms no new code is needed for that layer -- not duplicated
+ * here). (2) THEN best-effort calls auth-api.ts's logout() -- a rejection
+ * is swallowed (mirrors lockVaultSession's own `.catch(() => {})`
+ * best-effort shape above), since a failed/already-invalid token
+ * revocation must never block the local teardown (T-15-06, this plan's
+ * must_haves.prohibitions). This call MUST run while the OLD server config
+ * is STILL the persisted one (its underlying apiFetch reads
+ * readServerConfig() fresh on every call) -- the CALLER (Plan 15-05) is
+ * responsible for invoking signOutVaultSession() strictly BEFORE any
+ * configureServer(newUrl) call; signOutVaultSession() itself performs no
+ * server-URL mutation. (3) THEN clearSessionMeta() UNCONDITIONALLY,
+ * regardless of whether step (2) succeeded -- the "no stranded state"
+ * requirement (T-15-06): a partial failure can never leave the key
+ * envelope cleared but session-meta intact, or vice versa.
+ */
+export async function signOutVaultSession(): Promise<void> {
+  await lockVaultSession();
+
+  try {
+    await logout();
+  } catch {
+    // Best-effort: an already-invalid/expired token, a network error, or a
+    // server that has since gone away must never strand the user signed
+    // into a vault they believe they left (T-15-05/T-15-06). Local
+    // teardown proceeds unconditionally below.
+  }
+
+  await clearSessionMeta();
 }
 
 /**

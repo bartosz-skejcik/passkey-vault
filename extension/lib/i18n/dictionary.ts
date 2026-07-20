@@ -231,6 +231,30 @@ export const DICTIONARY = {
     pl: "Bez tej zgody rozszerzenie nie może łączyć się z Twoim serwerem. Spróbuj ponownie i zaakceptuj prośbę o uprawnienie.",
     en: "Without this permission the extension can't talk to your server. Try again and accept the permission prompt.",
   },
+  // AUTH-04 (15-02-PLAN.md, 15-UI-SPEC.md): the server-change confirmation
+  // dialog's copy -- landed here (wave 1, this plan produces, does not
+  // consume) so Plan 15-05 (wave 2, ServerConfigView.tsx's confirm dialog)
+  // can rely on wave-sequencing to guarantee these keys exist before its
+  // own tests assert on them. Interpolated `{host}` = hostname only (never
+  // the full URL with scheme/path), per 15-UI-SPEC.md's long-text
+  // resolution.
+  "config.changeServerConfirmBody": {
+    pl: "Zmiana serwera wyloguje Cię z {host}",
+    en: "Changing servers will sign you out of {host}",
+  },
+  // Distinct from config.changeServer above (the icon-button's aria-label)
+  // -- this is the confirm-dialog's own confirm button, whose EN text
+  // differs ("Switch server" vs. "Change server"), per ui-checker
+  // recommendation: a bare "Confirm" is ambiguous on a sign-out-triggering
+  // dialog.
+  "config.changeServerConfirm": { pl: "Zmień serwer", en: "Switch server" },
+  // AUTH-04's "no stranded state" clause made honest in copy -- shown when
+  // the sign-out + old-origin-revoke + new-origin-grant sequence fails
+  // partway (15-05's job); the dialog stays open, both buttons re-enable.
+  "config.changeServerMigrationFailed": {
+    pl: "Nie udało się przełączyć serwera. Zostajesz zalogowany na poprzednim serwerze — spróbuj ponownie.",
+    en: "Couldn't switch servers. You're still signed in on your previous server — try again.",
+  },
 
   // --- Item type / field labels (Claude's-discretion, mirrors
   // web/src/lib/i18n/dictionary.ts's own precedent for these -- not in
