@@ -29,9 +29,18 @@
 // RESPONSE direction (ISOLATED->MAIN, credential.rawId/response.*):
 // page-bridge-firefox.ts's shapeCredential() now re-materializes every
 // response-direction binary field as a genuine MAIN-world-native
-// ArrayBuffer (Plan 14-02 Task 2). FULLY RESOLVED, hard-gated below --
-// see .planning/debug/resolved/firefox-request-xray-hole.md's Resolution
-// section for the complete history, including a critical correction:
+// ArrayBuffer (Plan 14-02 Task 2). This is an end-to-end delivery/round-trip
+// check on real Firefox, not a discriminating regression guard: per
+// .planning/debug/resolved/firefox-request-xray-hole.md's Resolution
+// section, a genuine inline-<script> RP page observes
+// `instanceof ArrayBuffer: true` for these fields even without
+// shapeCredential()'s re-materialization, so reverting the fix would still
+// pass the `*IsArrayBuffer` checks below. The authoritative regression
+// guard for this fix is the deterministic jsdom test
+// (extension/entrypoints/__tests__/page-bridge-firefox.test.ts's
+// `crossRealmArrayBuffer` helper), which reliably makes `instanceof` false
+// pre-fix. See that section for the complete history, including a critical
+// correction:
 //
 // ***WEBDRIVER-ARTIFACT WARNING (read before touching the *IsArrayBuffer
 // capture logic below)***: Plan 14-02's own investigation (debug doc
@@ -71,9 +80,11 @@
 // This probe is kept here PERMANENTLY (not just for this investigation),
 // mirroring probe-provider-corruption.cjs's own precedent, as the one row
 // in this project's e2e suites that exercises a RAW ArrayBuffer-shaped
-// (not TypedArray) challenge/user.id AND hard-gates response-direction
-// realm identity for every binary field, against a REAL, CSP-strict-styled
-// fixture page on real Firefox.
+// (not TypedArray) challenge/user.id AND checks the end-to-end delivery of
+// every response-direction binary field (see the RESPONSE direction note
+// above for why this is an outcome check, not a realm-identity regression
+// discriminator), against a REAL, CSP-strict-styled fixture page on real
+// Firefox.
 //
 // Prerequisites: identical to run-core.cjs/probe-provider-corruption.cjs
 // (see README.md) -- pv-server already running on localhost:8620,
