@@ -153,3 +153,13 @@ None - no external service configuration required.
 ---
 *Phase: 14-critical-risk-closure-cross-realm-integrity-real-rp-verifica*
 *Completed: 2026-07-20*
+
+## Self-Check: PASSED
+
+- FOUND: extension/entrypoints/page-bridge-firefox.ts
+- FOUND: extension/entrypoints/content-relay.content.ts
+- FOUND: .planning/debug/firefox-request-xray-hole.md
+- FOUND: .planning/phases/14-critical-risk-closure-cross-realm-integrity-real-rp-verifica/14-02-SUMMARY.md
+- FOUND commit: 933420d (Task 1)
+- FOUND commit: 7e75fa6 (Task 2)
+- FOUND commit: 1731d06 (Summary/metadata)
