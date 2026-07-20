@@ -107,3 +107,12 @@ None - no external service configuration required.
 ---
 *Phase: 14-critical-risk-closure-cross-realm-integrity-real-rp-verifica*
 *Completed: 2026-07-20*
+
+## Self-Check: PASSED
+
+- FOUND: crates/pv-provider/tests/real_rp_verification.rs
+- FOUND: crates/pv-provider/Cargo.toml
+- FOUND: .planning/phases/14-critical-risk-closure-cross-realm-integrity-real-rp-verifica/14-01-SUMMARY.md
+- FOUND commit: 69b0ffc (chore: dev-dependency edge)
+- FOUND commit: cfed88f (test: real_rp_verification.rs)
+- FOUND commit: 9dd4752 (docs: SUMMARY.md)
