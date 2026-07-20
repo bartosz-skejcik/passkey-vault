@@ -1,9 +1,10 @@
-// UnlockView.tsx — password + extension-scoped PRF unlock, thin
-// message-dispatch layer only. Tests 4/4b are REPLACED per the plan's
-// AMENDMENT 2026-07-15 (extension-scoped PRF passkey, Plan 09-08) — the
-// popup never dispatches the web-RP PRF message pair (dead this phase),
-// only the ext-PRF pair. Tests 4c/4d are NEW per the same amendment (4d
-// lives in its own EnrollExtPasskeyPrompt.test.tsx file).
+// UnlockView.tsx — password-first unlock-only view (AUTH-02, Phase 15
+// Plan 15-03 rewrite). This component no longer renders for a no-session
+// status (App.tsx routes that to SignInView.tsx instead -- see
+// SignInView.test.tsx for that surface's own tests) and no longer offers
+// ext-scoped PRF (AUTH-03, removed outright). The single passkey-unlock
+// path is the server-origin ceremony window, unconditionally rendered
+// whenever this view is shown.
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { SessionStatus } from "../../lib/messaging/ext-protocol";
@@ -37,7 +38,6 @@ vi.mock("wxt/browser", () => ({
 import UnlockView from "./UnlockView";
 
 type LockedStatus = Extract<SessionStatus, { kind: "locked" }>;
-type NoSessionStatus = Extract<SessionStatus, { kind: "no-session" }>;
 
 function lockedStatus(overrides: Partial<LockedStatus> = {}): LockedStatus {
   return {
@@ -50,558 +50,163 @@ function lockedStatus(overrides: Partial<LockedStatus> = {}): LockedStatus {
   };
 }
 
-const noSessionStatus: NoSessionStatus = { kind: "no-session" };
-
-function mockAssertion(prfBytes: ArrayBuffer | undefined): PublicKeyCredential {
-  return {
-    id: "credential-id-b64url",
-    getClientExtensionResults: () => (prfBytes === undefined ? {} : { prf: { results: { first: prfBytes } } }),
-    toJSON: () => ({ id: "credential-id-b64url" }),
-  } as unknown as PublicKeyCredential;
+function latestServerCeremonyStateListener(): (message: unknown) => void {
+  const call = mockOnMessageAddListener.mock.calls.at(-1);
+  if (!call) {
+    throw new Error("onServerCeremonyState listener was never registered");
+  }
+  return call[0] as (message: unknown) => void;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  Object.defineProperty(window, "PublicKeyCredential", {
-    value: function PublicKeyCredential() {},
-    configurable: true,
-    writable: true,
-  });
-  Object.defineProperty(navigator, "credentials", {
-    value: { get: vi.fn(), create: vi.fn() },
-    configurable: true,
-    writable: true,
-  });
 });
 
-describe("UnlockView — Unlock-only variant (session.status 'locked')", () => {
-  it("Test 3: password submit calls unlock.password exactly once (no email field) and clears the password field", async () => {
+describe("UnlockView", () => {
+  it("renders exactly one autofocused password input, one btn-accent passkey button, zero email input, zero sign-in button", () => {
+    render(<UnlockView locale="en" status={lockedStatus()} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />);
+
+    const passwordInputs = document.querySelectorAll("input[type=password]");
+    expect(passwordInputs).toHaveLength(1);
+    expect(passwordInputs[0]).toHaveFocus();
+
+    expect(document.querySelectorAll("input[type=email]")).toHaveLength(0);
+    expect(screen.queryByTestId("server-ceremony-signin-button")).not.toBeInTheDocument();
+
+    const passkeyButton = screen.getByTestId("server-ceremony-unlock-button");
+    expect(passkeyButton).toBeInTheDocument();
+    expect(passkeyButton).toHaveClass("btn-accent");
+    expect(passkeyButton).not.toHaveClass("btn-outline");
+  });
+
+  it("renders the Server icon-button, dispatching onChangeServer when clicked", () => {
+    const onChangeServer = vi.fn();
+    render(<UnlockView locale="en" status={lockedStatus()} onUnlocked={vi.fn()} onChangeServer={onChangeServer} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /change server|zmień serwer/i }));
+
+    expect(onChangeServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("Test 3: password submit calls unlock.password exactly once (no email field), calls onUnlocked() with no arguments, and clears the password field", async () => {
     mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      // Plan 13-06: UnlockView now fetches config.get on mount (to gate the
-      // server-ceremony button's visibility) -- default to "no server
-      // configured" for every pre-existing test in this file, unless a
-      // test below overrides it.
-      if (message.kind === "config.get") return null;
       if (message.kind === "unlock.password") return { ok: true };
       throw new Error(`unexpected: ${message.kind}`);
     });
+    const onUnlocked = vi.fn();
 
-    render(<UnlockView locale="en" status={lockedStatus()} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />);
-
-    expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
+    render(<UnlockView locale="en" status={lockedStatus()} onUnlocked={onUnlocked} onChangeServer={vi.fn()} />);
 
     const passwordInput = screen.getByLabelText(/master password|hasło/i) as HTMLInputElement;
     fireEvent.change(passwordInput, { target: { value: "s3cr3t" } });
-    fireEvent.click(screen.getByRole("button", { name: /unlock|odblokuj/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^unlock$|^odblokuj$/i }));
 
     await waitFor(() => {
       const calls = mockSendMessage.mock.calls.filter(([m]) => m.kind === "unlock.password");
       expect(calls).toHaveLength(1);
     });
-    expect((passwordInput as HTMLInputElement).value).toBe("");
-  });
-
-  it("Test 4 (replaced — ext-PRF ceremony): with extPasskeyEnrolled true, clicking the PRF button drives unlock.extPrf.start -> buildExtGetOptions(rpId=browser.runtime.id) -> navigator.credentials.get() -> extractPrfBytes -> unlock.extPrf.finish", async () => {
-    const prfBytes = new Uint8Array(32).fill(9).buffer;
-    const getMock = vi.fn().mockResolvedValue(mockAssertion(prfBytes));
-    (navigator.credentials.get as unknown as typeof getMock) = getMock;
-
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      // Plan 13-06: UnlockView now fetches config.get on mount (to gate the
-      // server-ceremony button's visibility) -- default to "no server
-      // configured" for every pre-existing test in this file, unless a
-      // test below overrides it.
-      if (message.kind === "config.get") return null;
-      if (message.kind === "unlock.extPrf.start") {
-        return { credentialIdB64url: "cred-123", prfSaltB64: btoa("0123456789abcdef0123456789abcdef") };
-      }
-      if (message.kind === "unlock.extPrf.finish") return { ok: true };
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    const onUnlocked = vi.fn();
-    render(
-      <UnlockView
-        locale="en"
-        status={lockedStatus({ extPasskeyEnrolled: true })}
-        onUnlocked={onUnlocked} onChangeServer={vi.fn()}
-      />,
-    );
-
-    const prfButton = screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i });
-    fireEvent.click(prfButton);
-
-    await waitFor(() => expect(onUnlocked).toHaveBeenCalledWith(false));
-
-    expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ kind: "unlock.extPrf.start" }));
-    expect(getMock).toHaveBeenCalledTimes(1);
-    const getOptions = getMock.mock.calls[0][0] as CredentialRequestOptions;
-    // rpId MUST come from browser.runtime.id at call time -- never a literal.
-    expect(getOptions.publicKey?.rpId).toBe("test-extension-id");
-    expect(mockSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "unlock.extPrf.finish", credentialIdB64url: "cred-123" }),
-    );
-  });
-
-  it("Test 4b (replaced — visibility gate): extPasskeyEnrolled false renders no PRF button and no explainer line", () => {
-    render(
-      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: false })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
-    );
-    expect(screen.queryByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/passkey/i)).not.toBeInTheDocument();
-  });
-
-  it("Test 4b (replaced — Tier-1 explainer): extPasskeyEnrolled true but PublicKeyCredential undefined renders the Tier-1 explainer in the button's slot, no button", () => {
-    // @ts-expect-error -- simulating a browser without WebAuthn support
-    delete window.PublicKeyCredential;
-
-    render(
-      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: true })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
-    );
-
-    expect(screen.queryByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i })).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/fast unlock isn't available|szybkie odblokowanie passkeyem nie jest dostępne/i),
-    ).toBeInTheDocument();
-  });
-
-  it("D-12 (new — get() throws NotAllowedError): stays silent, no banner, button remains enabled, no unlock.extPrf.finish dispatch", async () => {
-    const getMock = vi.fn().mockRejectedValue(new DOMException("cancelled", "NotAllowedError"));
-    (navigator.credentials.get as unknown as typeof getMock) = getMock;
-
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      // Plan 13-06: UnlockView now fetches config.get on mount (to gate the
-      // server-ceremony button's visibility) -- default to "no server
-      // configured" for every pre-existing test in this file, unless a
-      // test below overrides it.
-      if (message.kind === "config.get") return null;
-      if (message.kind === "unlock.extPrf.start") {
-        return { credentialIdB64url: "cred-123", prfSaltB64: btoa("0123456789abcdef0123456789abcdef") };
-      }
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(
-      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: true })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
-    );
-
-    const prfButton = screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i });
-    fireEvent.click(prfButton);
-
-    await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
-    expect(
-      screen.queryByText(/fast unlock isn't available|szybkie odblokowanie passkeyem nie jest dostępne/i),
-    ).not.toBeInTheDocument();
-    expect(prfButton).not.toBeDisabled();
-    expect(mockSendMessage.mock.calls.some(([m]) => m.kind === "unlock.extPrf.finish")).toBe(false);
-  });
-
-  it("D-12 (new — get() throws a non-cancel error): renders the neutral D-13 banner and disables the PRF button", async () => {
-    const getMock = vi.fn().mockRejectedValue(new DOMException("no PRF here", "NotSupportedError"));
-    (navigator.credentials.get as unknown as typeof getMock) = getMock;
-
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      // Plan 13-06: UnlockView now fetches config.get on mount (to gate the
-      // server-ceremony button's visibility) -- default to "no server
-      // configured" for every pre-existing test in this file, unless a
-      // test below overrides it.
-      if (message.kind === "config.get") return null;
-      if (message.kind === "unlock.extPrf.start") {
-        return { credentialIdB64url: "cred-123", prfSaltB64: btoa("0123456789abcdef0123456789abcdef") };
-      }
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(
-      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: true })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
-    );
-
-    const prfButton = screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i });
-    fireEvent.click(prfButton);
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(/fast unlock isn't available|szybkie odblokowanie passkeyem nie jest dostępne/i),
-      ).toBeInTheDocument();
-    });
-    expect(prfButton).toBeDisabled();
-  });
-
-  it("D-12 (new — extractPrfBytes returns undefined): renders the neutral banner (not text-error) and disables the PRF button", async () => {
-    const getMock = vi.fn().mockResolvedValue(mockAssertion(undefined));
-    (navigator.credentials.get as unknown as typeof getMock) = getMock;
-
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      // Plan 13-06: UnlockView now fetches config.get on mount (to gate the
-      // server-ceremony button's visibility) -- default to "no server
-      // configured" for every pre-existing test in this file, unless a
-      // test below overrides it.
-      if (message.kind === "config.get") return null;
-      if (message.kind === "unlock.extPrf.start") {
-        return { credentialIdB64url: "cred-123", prfSaltB64: btoa("0123456789abcdef0123456789abcdef") };
-      }
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(
-      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: true })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
-    );
-
-    const prfButton = screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i });
-    fireEvent.click(prfButton);
-
-    const banner = await screen.findByText(
-      /fast unlock isn't available|szybkie odblokowanie passkeyem nie jest dostępne/i,
-    );
-    expect(banner).toBeInTheDocument();
-    expect(banner).not.toHaveClass("text-error");
-    expect(prfButton).toBeDisabled();
-  });
-
-  it("Test 4c (new — orphaned credential): unlock.extPrf.finish resolving not-enrolled renders the orphaned-passkey copy and focuses the password field", async () => {
-    const getMock = vi.fn().mockResolvedValue(mockAssertion(new Uint8Array(32).fill(1).buffer));
-    (navigator.credentials.get as unknown as typeof getMock) = getMock;
-
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      // Plan 13-06: UnlockView now fetches config.get on mount (to gate the
-      // server-ceremony button's visibility) -- default to "no server
-      // configured" for every pre-existing test in this file, unless a
-      // test below overrides it.
-      if (message.kind === "config.get") return null;
-      if (message.kind === "unlock.extPrf.start") {
-        return { credentialIdB64url: "cred-stale", prfSaltB64: btoa("0123456789abcdef0123456789abcdef") };
-      }
-      if (message.kind === "unlock.extPrf.finish") return { ok: false, error: "not-enrolled" };
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(
-      <UnlockView locale="en" status={lockedStatus({ extPasskeyEnrolled: true })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i }));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(/doesn't match this vault|nie pasuje do tego sejfu/i),
-      ).toBeInTheDocument();
-    });
-    const passwordInput = screen.getByLabelText(/master password|hasło/i);
-    expect(passwordInput).toHaveFocus();
-  });
-});
-
-describe("UnlockView — Sign-in variant (session.status 'no-session')", () => {
-  it("Test 3b: password submit calls auth.signIn.password with email (not unlock.password) and clears the password field", async () => {
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      // Plan 13-06: UnlockView now fetches config.get on mount (to gate the
-      // server-ceremony button's visibility) -- default to "no server
-      // configured" for every pre-existing test in this file, unless a
-      // test below overrides it.
-      if (message.kind === "config.get") return null;
-      if (message.kind === "auth.signIn.password") return { ok: true };
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(<UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />);
-
-    fireEvent.change(screen.getByLabelText(/^email$/i), { target: { value: "a@example.com" } });
-    const passwordInput = screen.getByLabelText(/master password|hasło/i) as HTMLInputElement;
-    fireEvent.change(passwordInput, { target: { value: "s3cr3t" } });
-    fireEvent.click(screen.getByRole("button", { name: /unlock|odblokuj/i }));
-
-    await waitFor(() => {
-      expect(mockSendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: "auth.signIn.password", email: "a@example.com" }),
-      );
-    });
-    expect(mockSendMessage.mock.calls.some(([m]) => m.kind === "unlock.password")).toBe(false);
+    expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.password", passwordB64: expect.any(String) });
     expect(passwordInput.value).toBe("");
+    await waitFor(() => expect(onUnlocked).toHaveBeenCalledWith());
   });
 
-  it("Test 5: the Sign-in variant NEVER renders a PRF button or explainer this phase, regardless of PublicKeyCredential support", () => {
-    render(<UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />);
-    expect(screen.queryByRole("button", { name: /passkey/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/passkey/i)).not.toBeInTheDocument();
-  });
-});
-
-describe("UnlockView — server-origin ceremony secondary path (Plan 13-06)", () => {
-  function latestServerCeremonyStateListener(): (message: unknown) => void {
-    const call = mockOnMessageAddListener.mock.calls.at(-1);
-    if (!call) {
-      throw new Error("onServerCeremonyState listener was never registered");
-    }
-    return call[0] as (message: unknown) => void;
-  }
-
-  it("D-12/known-impossible: NEVER renders when no server is configured, even with the ext-scoped path unusable", async () => {
+  it("a wrong password shows the inline auth.loginFailed error", async () => {
     mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "config.get") return null;
+      if (message.kind === "unlock.password") return { ok: false };
       throw new Error(`unexpected: ${message.kind}`);
     });
 
-    render(
-      <UnlockView
-        locale="en"
-        status={lockedStatus({ extPasskeyEnrolled: true })}
-        onUnlocked={vi.fn()}
-        onChangeServer={vi.fn()}
-      />,
-    );
+    render(<UnlockView locale="en" status={lockedStatus()} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />);
 
-    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledWith({ kind: "config.get" }));
-    expect(
-      screen.queryByTestId("server-ceremony-unlock-button"),
-    ).not.toBeInTheDocument();
+    const passwordInput = screen.getByLabelText(/master password|hasło/i);
+    fireEvent.change(passwordInput, { target: { value: "wrong" } });
+    fireEvent.click(screen.getByRole("button", { name: /^unlock$|^odblokuj$/i }));
+
+    expect(await screen.findByText(/login failed|logowanie nie powiodło się/i)).toBeInTheDocument();
   });
 
-  it("D-12 dynamic signal: appears once a genuine (non-cancel) ext-scoped PRF failure is observed this session, with a configured server", async () => {
-    const getMock = vi.fn().mockRejectedValue(new DOMException("no PRF here", "NotSupportedError"));
-    (navigator.credentials.get as unknown as typeof getMock) = getMock;
-
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
-      if (message.kind === "unlock.extPrf.start") {
-        return { credentialIdB64url: "cred-123", prfSaltB64: btoa("0123456789abcdef0123456789abcdef") };
-      }
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(
-      <UnlockView
-        locale="en"
-        status={lockedStatus({ extPasskeyEnrolled: true })}
-        onUnlocked={vi.fn()}
-        onChangeServer={vi.fn()}
-      />,
+  it("shows the session-locked notice only when wasAutoLocked is true", () => {
+    const { rerender } = render(
+      <UnlockView locale="en" status={lockedStatus({ wasAutoLocked: false })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
     );
+    expect(screen.queryByText(/session locked|sesja wygasła/i)).not.toBeInTheDocument();
 
-    // Not shown before any ceremony attempt.
-    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledWith({ kind: "config.get" }));
-    expect(screen.queryByTestId("server-ceremony-unlock-button")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i }));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("server-ceremony-unlock-button")).toBeInTheDocument();
-    });
-    // Password path stays fully visible alongside (D-06).
-    expect(screen.getByLabelText(/master password|hasło/i)).toBeInTheDocument();
+    rerender(
+      <UnlockView locale="en" status={lockedStatus({ wasAutoLocked: true })} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
+    );
+    expect(screen.getByText(/session locked|sesja wygasła/i)).toBeInTheDocument();
   });
 
-  it("clicking the button dispatches unlock.serverCeremony.start and shows the in-flight state until the state broadcast resolves it", async () => {
-    const getMock = vi.fn().mockRejectedValue(new DOMException("no PRF here", "NotSupportedError"));
-    (navigator.credentials.get as unknown as typeof getMock) = getMock;
+  describe("server-origin ceremony passkey unlock", () => {
+    it("renders unconditionally (no D-12/hasServerConfig gating) and clicking it dispatches unlock.serverCeremony.start with mode:'unlock', showing the in-flight state until the state broadcast resolves it", async () => {
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "unlock.serverCeremony.start") return { ok: true };
+        throw new Error(`unexpected: ${message.kind}`);
+      });
+      const onUnlocked = vi.fn();
 
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
-      if (message.kind === "unlock.extPrf.start") {
-        return { credentialIdB64url: "cred-123", prfSaltB64: btoa("0123456789abcdef0123456789abcdef") };
-      }
-      if (message.kind === "unlock.serverCeremony.start") return { ok: true };
-      throw new Error(`unexpected: ${message.kind}`);
+      render(
+        <UnlockView locale="en" status={lockedStatus()} onUnlocked={onUnlocked} onChangeServer={vi.fn()} />,
+      );
+      const serverButton = screen.getByTestId("server-ceremony-unlock-button");
+      fireEvent.click(serverButton);
+
+      await waitFor(() => {
+        expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.start", mode: "unlock" });
+      });
+      expect(await screen.findByText(/finish in the opened window|dokończ w otwartym oknie/i)).toBeInTheDocument();
+      expect(serverButton).toBeDisabled();
+      expect(onUnlocked).not.toHaveBeenCalled();
+
+      // The background's broadcast resolves it -- ok:true lands the unlocked session.
+      latestServerCeremonyStateListener()({ kind: "unlock.serverCeremony.state", ok: true });
+      await waitFor(() => expect(onUnlocked).toHaveBeenCalledWith());
     });
 
-    const onUnlocked = vi.fn();
-    render(
-      <UnlockView
-        locale="en"
-        status={lockedStatus({ extPasskeyEnrolled: true })}
-        onUnlocked={onUnlocked}
-        onChangeServer={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i }));
-    const serverButton = await screen.findByTestId("server-ceremony-unlock-button");
+    it("an ok:false state broadcast renders the calm failure line -- never a wedge -- and re-enables the button", async () => {
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "unlock.serverCeremony.start") return { ok: true };
+        throw new Error(`unexpected: ${message.kind}`);
+      });
 
-    fireEvent.click(serverButton);
+      render(<UnlockView locale="en" status={lockedStatus()} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />);
+      const serverButton = screen.getByTestId("server-ceremony-unlock-button");
+      fireEvent.click(serverButton);
+      await waitFor(() =>
+        expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.start", mode: "unlock" }),
+      );
 
-    await waitFor(() => {
-      expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.start", mode: "unlock" });
-    });
-    expect(await screen.findByText(/finish in the opened window|dokończ w otwartym oknie/i)).toBeInTheDocument();
-    expect(serverButton).toBeDisabled();
-    expect(onUnlocked).not.toHaveBeenCalled();
+      latestServerCeremonyStateListener()({ kind: "unlock.serverCeremony.state", ok: false });
 
-    // The background's broadcast resolves it -- ok:true lands the unlocked session.
-    latestServerCeremonyStateListener()({ kind: "unlock.serverCeremony.state", ok: true });
-    await waitFor(() => expect(onUnlocked).toHaveBeenCalledWith(false));
-  });
-
-  it("an ok:false state broadcast (timeout/failure) renders the calm failure line -- never a wedge -- and re-enables the button", async () => {
-    const getMock = vi.fn().mockRejectedValue(new DOMException("no PRF here", "NotSupportedError"));
-    (navigator.credentials.get as unknown as typeof getMock) = getMock;
-
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
-      if (message.kind === "unlock.extPrf.start") {
-        return { credentialIdB64url: "cred-123", prfSaltB64: btoa("0123456789abcdef0123456789abcdef") };
-      }
-      if (message.kind === "unlock.serverCeremony.start") return { ok: true };
-      throw new Error(`unexpected: ${message.kind}`);
+      expect(
+        await screen.findByText(/couldn't unlock via your server|nie udało się odblokować przez stronę serwera/i),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("server-ceremony-unlock-button")).not.toBeDisabled();
     });
 
-    render(
-      <UnlockView
-        locale="en"
-        status={lockedStatus({ extPasskeyEnrolled: true })}
-        onUnlocked={vi.fn()}
-        onChangeServer={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i }));
-    const serverButton = await screen.findByTestId("server-ceremony-unlock-button");
-    fireEvent.click(serverButton);
-    await waitFor(() =>
-      expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.start", mode: "unlock" }),
-    );
+    it("a synchronous start failure shows the failure line immediately, without a wedge, and never permanently disables the button", async () => {
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "unlock.serverCeremony.start") {
+          return { ok: false, error: "not-locked" };
+        }
+        throw new Error(`unexpected: ${message.kind}`);
+      });
 
-    latestServerCeremonyStateListener()({ kind: "unlock.serverCeremony.state", ok: false });
+      render(<UnlockView locale="en" status={lockedStatus()} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />);
+      const serverButton = screen.getByTestId("server-ceremony-unlock-button");
+      fireEvent.click(serverButton);
 
-    expect(
-      await screen.findByText(/couldn't unlock via your server|nie udało się odblokować przez stronę serwera/i),
-    ).toBeInTheDocument();
-    expect(screen.getByTestId("server-ceremony-unlock-button")).not.toBeDisabled();
-  });
+      expect(
+        await screen.findByText(/couldn't unlock via your server|nie udało się odblokować przez stronę serwera/i),
+      ).toBeInTheDocument();
+      expect(serverButton).not.toBeDisabled();
 
-  it("a synchronous start failure (e.g. no-server-configured/not-locked) shows the failure line immediately, without a wedge", async () => {
-    const getMock = vi.fn().mockRejectedValue(new DOMException("no PRF here", "NotSupportedError"));
-    (navigator.credentials.get as unknown as typeof getMock) = getMock;
-
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
-      if (message.kind === "unlock.extPrf.start") {
-        return { credentialIdB64url: "cred-123", prfSaltB64: btoa("0123456789abcdef0123456789abcdef") };
-      }
-      if (message.kind === "unlock.serverCeremony.start") {
-        return { ok: false, error: "not-locked" };
-      }
-      throw new Error(`unexpected: ${message.kind}`);
+      // Retry is always offered -- clicking again dispatches a second attempt.
+      fireEvent.click(serverButton);
+      await waitFor(() => {
+        const calls = mockSendMessage.mock.calls.filter(([m]) => m.kind === "unlock.serverCeremony.start");
+        expect(calls).toHaveLength(2);
+      });
     });
-
-    render(
-      <UnlockView
-        locale="en"
-        status={lockedStatus({ extPasskeyEnrolled: true })}
-        onUnlocked={vi.fn()}
-        onChangeServer={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /unlock with passkey|odblokuj passkeyem/i }));
-    const serverButton = await screen.findByTestId("server-ceremony-unlock-button");
-    fireEvent.click(serverButton);
-
-    expect(
-      await screen.findByText(/couldn't unlock via your server|nie udało się odblokować przez stronę serwera/i),
-    ).toBeInTheDocument();
-    expect(serverButton).not.toBeDisabled();
-  });
-});
-
-// Plan 13-07 (Bartek mandate, "Zrób teraz" + "the button must exist on the
-// login screen"): the SIGN-IN variant's own server-origin ceremony button --
-// unlike the locked-variant secondary path above, this is NOT gated on any
-// "unusable" signal; it appears on BOTH browsers whenever a server is
-// configured.
-describe("UnlockView — sign-in variant server-origin ceremony button (Plan 13-07)", () => {
-  function latestServerCeremonyStateListener(): (message: unknown) => void {
-    const call = mockOnMessageAddListener.mock.calls.at(-1);
-    if (!call) {
-      throw new Error("onServerCeremonyState listener was never registered");
-    }
-    return call[0] as (message: unknown) => void;
-  }
-
-  it("does NOT render when no server is configured", async () => {
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "config.get") return null;
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(
-      <UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
-    );
-
-    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledWith({ kind: "config.get" }));
-    expect(screen.queryByTestId("server-ceremony-signin-button")).not.toBeInTheDocument();
-  });
-
-  it("renders whenever a server IS configured -- unconditionally, unlike the locked-variant's own D-12 gate -- with the email field and password form both still present (D-06)", async () => {
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(
-      <UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
-    );
-
-    expect(await screen.findByTestId("server-ceremony-signin-button")).toBeInTheDocument();
-    expect(screen.getByLabelText(/^email$/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/master password|hasło/i)).toBeInTheDocument();
-  });
-
-  it("clicking dispatches unlock.serverCeremony.start with mode:'signin' and shows the in-flight state until the state broadcast resolves it", async () => {
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
-      if (message.kind === "unlock.serverCeremony.start") return { ok: true };
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    const onUnlocked = vi.fn();
-    render(
-      <UnlockView locale="en" status={noSessionStatus} onUnlocked={onUnlocked} onChangeServer={vi.fn()} />,
-    );
-    const signinButton = await screen.findByTestId("server-ceremony-signin-button");
-    fireEvent.click(signinButton);
-
-    await waitFor(() => {
-      expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.start", mode: "signin" });
-    });
-    expect(await screen.findByText(/finish in the opened window|dokończ w otwartym oknie/i)).toBeInTheDocument();
-    expect(signinButton).toBeDisabled();
-    expect(onUnlocked).not.toHaveBeenCalled();
-
-    latestServerCeremonyStateListener()({ kind: "unlock.serverCeremony.state", ok: true });
-    await waitFor(() => expect(onUnlocked).toHaveBeenCalledWith(false));
-  });
-
-  it("an ok:false state broadcast renders the sign-in-specific calm failure line -- never a wedge -- and re-enables the button", async () => {
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
-      if (message.kind === "unlock.serverCeremony.start") return { ok: true };
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(
-      <UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
-    );
-    const signinButton = await screen.findByTestId("server-ceremony-signin-button");
-    fireEvent.click(signinButton);
-    await waitFor(() =>
-      expect(mockSendMessage).toHaveBeenCalledWith({ kind: "unlock.serverCeremony.start", mode: "signin" }),
-    );
-
-    latestServerCeremonyStateListener()({ kind: "unlock.serverCeremony.state", ok: false });
-
-    expect(
-      await screen.findByText(/couldn't sign in via your server|nie udało się zalogować przez stronę serwera/i),
-    ).toBeInTheDocument();
-    expect(screen.getByTestId("server-ceremony-signin-button")).not.toBeDisabled();
-  });
-
-  it("the locked-variant's own server-ceremony-unlock-button never appears on the sign-in variant", async () => {
-    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
-      if (message.kind === "config.get") return { baseUrl: "https://vault.example.com" };
-      throw new Error(`unexpected: ${message.kind}`);
-    });
-
-    render(
-      <UnlockView locale="en" status={noSessionStatus} onUnlocked={vi.fn()} onChangeServer={vi.fn()} />,
-    );
-
-    await screen.findByTestId("server-ceremony-signin-button");
-    expect(screen.queryByTestId("server-ceremony-unlock-button")).not.toBeInTheDocument();
   });
 });
