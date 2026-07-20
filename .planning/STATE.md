@@ -1,20 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.2
-milestone_name: Browser Extension
-current_phase: 13
-status: completed
-stopped_at: "Completed 13-07-PLAN.md: full passkey SIGN-IN via server-origin ceremony (mode-pinning T-13-16) + FF EnrollExtPasskeyPrompt fix"
-last_updated: "2026-07-20T05:52:09.724Z"
+milestone: v0.3
+milestone_name: Polish & Hardening
+status: planning
+last_updated: "2026-07-20T09:37:43.563Z"
 last_activity: 2026-07-20
-last_activity_desc: Phase 13 complete
 progress:
-  total_phases: 6
-  completed_phases: 5
-  total_plans: 43
-  completed_plans: 41
-  percent: 83
-current_phase_name: Dual-Browser Hardening
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -28,12 +24,10 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 
 ## Current Position
 
-Phase: 13
-Plan: Not started
-Status: All phases complete
-Last activity: 2026-07-20 — Phase 13 complete
-
-Progress: [██████████] 95%
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-07-20 — Milestone v0.3 started
 
 ## Performance Metrics
 

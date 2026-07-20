@@ -10,18 +10,19 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 
 **Lekki self-hostable vault (1 kontener + wtyczka Chrome/Firefox), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.** Jeśli wszystko inne zawiedzie, to musi działać.
 
-## Current Milestone: v0.2 Browser Extension
+## Current Milestone: v0.3 Polish & Hardening
 
-**Goal:** Wtyczka WXT MV3 (Chrome + Firefox), która czyni Passkey Vault pełnym passkey providerem na cudzych stronach ORAZ kompletnym autofill-companionem dla całego vaulta — reużywając `pv-core` przez WASM, zero-knowledge zachowane.
+**Goal:** Skonsolidować v0.2: jeden model logowania (Vaultwarden-style — pełny sign-in przez okno, popup = tylko unlock), jeden design system / źródło komponentów (wtyczka zasysa z frontendu przez `packages/pv-ui` na ile architektura pozwala), spójność wizualna in-page, oraz spłata długu technicznego i ukrytych ryzyk wyciągniętych podczas live-debugowania v0.2. Zero-knowledge i SECURED (faza 12) nienaruszone.
 
 **Target features:**
-- **Passkey provider** — patch `navigator.credentials` (MAIN world) dla `create` (rejestracja passkeya na cudzej stronie → zapis do naszego vaulta) i `get` (logowanie zapisanym passkeyem), z fall-through do natywnych authenticatorów.
-- **Vault popup** — odblokowanie, przegląd/wyszukiwanie, wybór itemów.
-- **Autofill całego vaulta** — hasła, kody TOTP, karty kredytowe, tożsamości (login/card/identity/TOTP) do właściwych pól/formularzy.
-- **Generate & capture** — na formularzach rejestracji proponuj wygenerowane silne hasło (generator z v0.1); po udanym submit/login zaproponuj **zapis nowego loginu** do vaulta (oraz wykrycie zmiany hasła → propozycja update).
-- **Dual-browser** — Chrome + Firefox od początku (WXT dual-output).
+- **Model logowania Vaultwarden-style** — full sign-in ZAWSZE przez okno server-ceremony (oba browsery); popup traci password-signin, robi tylko unlock (hasło + passkey przez okno); unifikacja unlock na jeden tor (AUTH-01..04).
+- **Jeden design system** — czysta logika+typy, silnik i18n i `ItemIconTile` żyją raz w `pv-ui`; web i popup współdzielą; in-page overlays token-aligned (DS-01..04).
+- **Spójność wizualna in-page** — jasne kafelki logo w Surface A/B jak na froncie; okna FF wycentrowane + self-close (UX-01/02).
+- **Cross-browser hardening** — cross-realm response-direction fix na FF (byte-asserted); in-page consent FF decyzyjnie po security-review (XBR-02/03).
+- **Serwer + supply-chain** — CORS Authorization jawnie, D-10 konkretne originy, cargo audit/deny + pin toolchain, sign-count clone-detection (SEC-01..04).
+- **Rygor testów + CI** — pipeline CI full-gate, sondy FF w npm-scriptach, real-RP webauthn-rs round-trip, bramka serializacji bajtów (QA-01..04).
 
-**Key context:** Wszystkie typy itemów już istnieją w vaulcie z v0.1 — v0.2 wystawia je na strony WWW. Zero-knowledge trzyma. Trudne części (do zaprojektowania w planowaniu): wyścig patcha `navigator.credentials` (w3c/webextensions#361), PRF Chromium-first (fallback Firefox), cykl życia MV3 service-workera vs. odblokowany klucz, i niezawodne wykrywanie pól dla kart + tożsamości.
+**Key context:** v0.2 (fazy 8–13) zapieczętowane 2026-07-20 po brutalnym live-debugu na realnym Firefox/Zen + github.com — 7 klas bugów niewidocznych dla zielonego CI (fixture za grzeczne: localhost bez CSP, tylko Uint8Array, `.ok` zamiast bajtów, jsdom bez Xrayów). v0.3 zamienia tę nauczkę w rygor. Cleanup/complete-milestone ŚWIADOMIE odłożone do v1.0 — pełna historia implementacji zostaje. Dwa Critical (cross-realm response + brak real-RP testów providera) = pierwsza faza. Research: `.planning/research/v0.3/`.
 
 ## Requirements
 
@@ -125,4 +126,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-16 after Phase 11*
+*Last updated: 2026-07-20 — v0.3 Polish & Hardening milestone started (v0.2 sealed, phases 8–13 complete)*
