@@ -153,3 +153,8 @@ No blockers. No open items carried forward from this plan.
 ---
 *Phase: 16-design-system-extraction-logic-types-i18n*
 *Completed: 2026-07-20*
+
+## Self-Check: PASSED
+
+- FOUND: `.planning/phases/16-design-system-extraction-logic-types-i18n/16-06-SUMMARY.md`
+- FOUND: commit `3b7e2ba` in `git log --oneline --all`
