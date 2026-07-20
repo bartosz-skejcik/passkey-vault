@@ -499,7 +499,16 @@ async function main() {
     } else {
       record('P12-SC2', 'FAIL', 'Neither provider-confirm nor multi-match row appeared');
     }
-    await driver.switchTo().window(popupHandle);
+    // quick-260720-16k (feat/4981218, landed same-day as this fix, after
+    // this harness was last touched): the consent/ceremony popup window now
+    // SELF-CLOSES on confirm -- `popupHandle` is therefore frequently STALE
+    // here (P12-SC2's own `getConfirm.click()` above may have already
+    // closed it). An unguarded `switchTo().window(popupHandle)` throws
+    // NoSuchWindowError in that case. `newTabTo()` below switches focus to
+    // its own brand-new tab unconditionally, so this stale-handle switch
+    // was never actually load-bearing -- removed rather than reintroducing
+    // it via `ensurePopup()` (P12-SC3 already calls `ensurePopup()` itself
+    // once it needs the popup again).
 
     // ================= P12-SC3: decline -> fallthrough (no dead-end) =================
     const rpTab2 = await newTabTo(`${FORM_ORIGIN}/provider`);
@@ -544,7 +553,22 @@ async function main() {
       record('P12-SC3', 'FAIL', 'provider-decline button never appeared');
     }
     try { await driver.switchTo().window(rpTab2); await driver.close(); } catch {}
-    await driver.switchTo().window(popupHandle);
+    // quick-260720-16k: unlike the P12-SC2 exit above (where `rpTabHandle`
+    // -- never closed -- was already the driver's current context), BOTH
+    // `rpTab2` (explicitly closed just above) AND the popup (self-closed by
+    // P12-SC3's own decline click) are gone here, leaving NO valid current
+    // browsing context. `newTabTo()`'s own `switchTo().newWindow('tab')`
+    // call requires one (Marionette's `newWindow` asserts the current
+    // context is still open) -- confirmed empirically: even `ensurePopup()`'s
+    // OWN `openPopupTab()` fallback (which itself calls `newWindow('tab')`)
+    // throws the identical "Browsing context has been discarded" error if
+    // called with no valid current context. `rpTabHandle` (opened once,
+    // ~line 370, and never closed anywhere in this file) is the one window
+    // guaranteed to still be alive -- switch to it FIRST to restore a valid
+    // context, then `ensurePopup()` can safely open a fresh popup tab (its
+    // own stale-handle check will correctly detect `popupHandle` is gone).
+    await driver.switchTo().window(rpTabHandle);
+    await ensurePopup();
 
     // ================= P12-SC4: PRF via the provider ceremony (D-16, browser-independent) =================
     const rpTab3 = await newTabTo(`${FORM_ORIGIN}/provider`);
@@ -580,7 +604,9 @@ async function main() {
       record('P12-SC4', 'FAIL', 'provider-confirm never appeared for PRF create() test');
     }
     try { await driver.switchTo().window(rpTab3); await driver.close(); } catch {}
-    await driver.switchTo().window(popupHandle);
+    // quick-260720-16k: same stale-`popupHandle` hazard as above -- P12-SC5
+    // is a browser-independent static audit (no window interaction at all),
+    // and nothing after it needs the popup focused before `driver.quit()`.
 
     // ================= P12-SC5: static audit (browser-independent) =================
     try {
