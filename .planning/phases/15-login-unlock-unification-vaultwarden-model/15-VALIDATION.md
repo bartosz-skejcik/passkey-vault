@@ -2,10 +2,10 @@
 phase: 15
 slug: login-unlock-unification-vaultwarden-model
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
-# audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: false) (#2117)
-status: draft
+# audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: true) (#2117)
+status: validated
 nyquist_compliant: false
-wave_0_complete: false
+wave_0_complete: true
 created: 2026-07-20
 ---
 
@@ -73,4 +73,14 @@ created: 2026-07-20
 - [ ] Feedback latency < 90s
 - [ ] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-07-20 (validate-phase audit — 0 gaps)
+
+## Validation Audit 2026-07-20
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+
+Coverage at phase close: AUTH-01/02 → SignInView/UnlockView/App vitest + reworked e2e lanes (evidence/ committed); AUTH-03 → no-ext-scoped-prf-strings.test.ts permanent guard + router structural tests; AUTH-04 → ServerConfigView.test.tsx 26/26 incl. migration-failure backstop + live two-server proof (corroborated by cdf742d). Extension 678/678 exit 0, web 474/474, tsc clean both.
