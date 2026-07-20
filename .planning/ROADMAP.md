@@ -277,12 +277,23 @@ Plans:
 **Plans**: 7 plans (4 waves)
 
 Plans:
+**Wave 1**
+
 - [ ] 15-01-PLAN.md — Ceremony window password sign-in relay (Wave 1)
 - [ ] 15-02-PLAN.md — AUTH-04 teardown module: clearSessionMeta/logout/signOutVaultSession (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 15-03-PLAN.md — Popup re-layout: SignInView hero + UnlockView password-first rewrite (Wave 2)
 - [ ] 15-05-PLAN.md — AUTH-04 confirm dialog + migration sequencing (Wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 15-04-PLAN.md — Ext-scoped PRF hard deletion + router/protocol surgery (Wave 3)
 - [ ] 15-07-PLAN.md — e2e rework (Playwright + Firefox harness) + phase-close gate (Wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 15-06-PLAN.md — Dictionary final cleanup + AUTH-03 structural guard test (Wave 4)
 
 **UI hint**: yes

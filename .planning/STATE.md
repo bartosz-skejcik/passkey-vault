@@ -4,9 +4,9 @@ milestone: v0.3
 milestone_name: Polish & Hardening
 current_phase: 15
 current_phase_name: Vaultwarden Model
-status: planning
-stopped_at: Completed 14-03-PLAN.md -- Phase 14 (XBR-02 + QA-03) fully closed, all 3 plans done, ready_for_verification
-last_updated: "2026-07-20T12:59:41.078Z"
+status: executing
+stopped_at: Phase 15 UI-SPEC approved
+last_updated: "2026-07-20T15:07:17.583Z"
 last_activity: 2026-07-20
 last_activity_desc: Phase 14 complete, transitioned to Phase 15
 progress:
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 
 Phase: 15 — Login & Unlock Unification (Vaultwarden Model)
 Plan: Not started
-Status: Ready to plan
+Status: Ready to execute
 Last activity: 2026-07-20 — Phase 14 complete, transitioned to Phase 15
 
 ## Performance Metrics
@@ -185,9 +185,9 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-20T12:09:04.436Z
-Stopped at: Completed 14-03-PLAN.md -- Phase 14 (XBR-02 + QA-03) fully closed, all 3 plans done, ready_for_verification
-Resume file: None
+Last session: 2026-07-20T14:00:38.297Z
+Stopped at: Phase 15 UI-SPEC approved
+Resume file: .planning/phases/15-login-unlock-unification-vaultwarden-model/15-UI-SPEC.md
 
 ## Operator Next Steps
 
