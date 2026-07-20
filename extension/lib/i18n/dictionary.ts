@@ -22,67 +22,20 @@ export const DICTIONARY = {
   "loading.vault": { pl: "Ładowanie sejfu…", en: "Loading your vault…" },
 
   // --- Unlock / Sign-in (reused verbatim from 04-UI-SPEC.md unless noted)
-  "auth.emailLabel": { pl: "Email", en: "Email" },
   "auth.passwordLabel": { pl: "Hasło główne", en: "Master password" },
   "auth.loginSubmit": { pl: "Zaloguj się", en: "Log in" },
-  "auth.wrongCredentials": {
-    pl: "Nieprawidłowy email lub hasło",
-    en: "Invalid email or password",
-  },
   "auth.loginFailed": {
     pl: "Logowanie nie powiodło się. Spróbuj ponownie.",
     en: "Login failed. Please try again.",
   },
   "unlock.submit": { pl: "Odblokuj", en: "Unlock" },
   "unlock.passkeyCta": { pl: "Odblokuj passkeyem", en: "Unlock with passkey" },
-  // AMENDMENT 2026-07-15: reserved for the web app / a future options
-  // page -- the Sign-in variant has NO PRF button in the popup this
-  // phase (the extension passkey is UNLOCK-ONLY), so this key is unused
-  // by any popup component, kept only so the string exists if a later
-  // phase needs it.
-  "unlock.passkeyLoginCta": {
-    pl: "Zaloguj i odblokuj passkeyem",
-    en: "Log in and unlock with passkey",
-  },
-  "unlock.passkeyBusy": {
-    pl: "Potwierdź w przeglądarce lub na urządzeniu…",
-    en: "Confirm in your browser or on your device…",
-  },
-  // 13-02-PLAN.md Task 2: no longer rendered by UnlockView.tsx's PRF-catch
-  // paths (both now render the neutral `unlock.passkeyUnsupported` D-13
-  // banner instead of this alarming `text-error` line) -- kept, unused, in
-  // case a future phase needs a distinct "genuine hardware error" copy.
-  "unlock.passkeyFailed": {
-    pl: "Nie udało się użyć passkeya. Spróbuj ponownie albo użyj hasła poniżej.",
-    en: "Couldn't use your passkey. Try again — or use your password below.",
-  },
   "unlock.orDivider": { pl: "lub", en: "or" },
-  // D-13 (13-02-PLAN.md, Bartek override, copy canon): ONE shared string for
-  // every "this popup surface's passkey fast-path can't run here" case --
-  // the Tier-1 "WebAuthn API entirely absent" case, AND the two new D-12
-  // ceremony-catch cases (a genuine get()/create() failure, or a PRF-less
-  // authenticator on the unlock get()-path). Browser-framed deliberately:
-  // this IS a real browser WebAuthn ceremony on this surface (unlike the
-  // passkey-PROVIDER ceremony's D-16 capability-framed copy, a different
-  // surface -- see ProviderCeremonyView.tsx's own header comment).
-  "unlock.passkeyUnsupported": {
-    pl: "Szybkie odblokowanie passkeyem nie jest dostępne w tej przeglądarce — użyj hasła.",
-    en: "Fast unlock isn't available for this passkey on this browser — use your password.",
-  },
   "unlock.sessionLockedNotice": {
     pl: "Sesja wygasła po bezczynności — odblokuj ponownie.",
     en: "Your session locked after being idle — unlock again.",
   },
 
-  // Plan 13-06: the server-origin PRF-unlock secondary path, offered ONLY
-  // in the D-12 "unusable" state (ext-scoped passkey enrolled but this
-  // ceremony failed/known-impossible on this browser). Runs on the user's
-  // OWN configured pv-server origin, relayed through content-relay.content.ts
-  // -- see web/src/components/auth/ExtUnlockBridge.tsx for the other side.
-  "unlock.serverCeremonyCta": {
-    pl: "Odblokuj passkeyem przez stronę serwera",
-    en: "Unlock with a passkey via your server",
-  },
   "unlock.serverCeremonyInFlight": {
     pl: "Dokończ w otwartym oknie…",
     en: "Finish in the opened window…",
@@ -92,61 +45,12 @@ export const DICTIONARY = {
     en: "Couldn't unlock via your server. Try again — or use your password.",
   },
 
-  // Plan 13-07 (Bartek mandate, "Zrób teraz" + "the button must exist on
-  // the login screen"): the SIGN-IN variant's own server-origin ceremony
-  // button -- shown on BOTH browsers whenever a server is configured
-  // (unlike unlock.serverCeremonyCta above, which is gated on the
-  // ext-scoped path being unusable). Runs the SAME ceremony window, mode
-  // pinned server-side (T-13-16).
-  "unlock.serverCeremonySigninCta": {
-    pl: "Zaloguj passkeyem przez stronę serwera",
-    en: "Sign in with a passkey via your server",
-  },
   // Phase 15 (Plan 15-03): the trailing "or use your password" clause is
   // stale under the window-based sign-in model -- the popup's own
   // SignInView.tsx has no password field to fall back to (AUTH-01).
   "unlock.serverCeremonySigninFailed": {
     pl: "Nie udało się zalogować przez stronę serwera. Spróbuj ponownie.",
     en: "Couldn't sign in via your server. Try again.",
-  },
-
-  // --- Extension-scoped PRF passkey (AMENDMENT 2026-07-15, verbatim) ---
-  "extPasskey.promptTitle": {
-    pl: "Odblokowuj szybciej passkeyem",
-    en: "Unlock faster with a passkey",
-  },
-  "extPasskey.promptBody": {
-    pl: "Utwórz passkey powiązany z tą wtyczką, aby odblokowywać sejf bez wpisywania hasła głównego.",
-    en: "Create a passkey tied to this extension to unlock your vault without typing your master password.",
-  },
-  "extPasskey.promptCta": { pl: "Utwórz passkey", en: "Create a passkey" },
-  "extPasskey.promptSkip": { pl: "Nie teraz", en: "Not now" },
-  "extPasskey.promptDontAskAgain": { pl: "Nie pytaj ponownie", en: "Don't ask again" },
-  "extPasskey.enrollDone": {
-    pl: "Passkey gotowy — użyjesz go przy następnym odblokowaniu.",
-    en: "Passkey ready — use it the next time you unlock.",
-  },
-  "extPasskey.enrollNoPrf": {
-    pl: "Ten authenticator nie wspiera PRF — odblokowywanie passkeyem nie będzie dostępne. Hasło główne nadal działa.",
-    en: "This authenticator doesn't support PRF — passkey unlock won't be available. Your master password still works.",
-  },
-  "extPasskey.enrollFailed": {
-    pl: "Nie udało się utworzyć passkeya. Spróbuj ponownie albo odblokowuj hasłem.",
-    en: "Couldn't create the passkey. Try again — or keep unlocking with your password.",
-  },
-  "extPasskey.unlockOrphaned": {
-    pl: "Ten passkey nie pasuje do tego sejfu — odblokuj hasłem i utwórz passkey ponownie.",
-    en: "This passkey doesn't match this vault — unlock with your password and create the passkey again.",
-  },
-  // Plan 13-07: Firefox-only replacement for the "Create a passkey tied to
-  // this extension" CTA above (D-03 tone) -- rpId=extension-id is
-  // PERMANENTLY unsupported on Firefox (13-FF-WEBAUTHN-RESEARCH.md), so
-  // advertising that create() ceremony here is a dead end on this browser.
-  // Points at the server-passkey path instead (UnlockView's own sign-in/
-  // unlock ceremony buttons), never the impossible ext-scoped one.
-  "extPasskey.serverPathPointer": {
-    pl: "Na tym koncie odblokujesz i zalogujesz się passkeyem przez stronę serwera — przycisk znajdziesz na ekranie logowania i odblokowania.",
-    en: "On this account you'll unlock and sign in with a passkey via your server — you'll find the button on the sign-in and unlock screens.",
   },
 
   // --- Item list / search (reused verbatim) ----------------------------
