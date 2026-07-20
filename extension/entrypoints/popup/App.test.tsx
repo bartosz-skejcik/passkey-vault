@@ -223,6 +223,14 @@ describe("App.tsx view-state switch", () => {
       mockSendMessage.mockImplementation(async (message: { kind: string; rawUrl?: string }) => {
         if (message.kind === "config.get") return { baseUrl: "https://old.example.com" };
         if (message.kind === "session.status") return LOCKED_STATUS;
+        // Plan 15-05 (AUTH-04): config.probe is the persist-free reachability
+        // check that now precedes config.set on every submit.
+        if (message.kind === "config.probe") return { ok: true };
+        // Plan 15-05 (AUTH-04): a LOCKED session exists for the (about to be
+        // replaced) old.example.com, so the confirm dialog's own
+        // session.signOut dispatch is reachable from every test in this
+        // describe block that submits a DIFFERENT url through to confirm.
+        if (message.kind === "session.signOut") return { ok: true };
         if (message.kind === "config.set") return configSet?.(message.rawUrl ?? "") ?? { ok: true };
         throw new Error(`unexpected message in this test: ${message.kind}`);
       });
@@ -268,7 +276,7 @@ describe("App.tsx view-state switch", () => {
       );
     });
 
-    it("a successful change dispatches config.set (same normalize -> probe -> persist path) and leaves the config view", async () => {
+    it("a successful change (same normalize -> probe -> persist path) dispatches config.set once the AUTH-04 confirm dialog is accepted, and leaves the config view", async () => {
       const configSetCalls: string[] = [];
       primeLockedWithConfig((rawUrl) => {
         configSetCalls.push(rawUrl);
@@ -282,8 +290,17 @@ describe("App.tsx view-state switch", () => {
       fireEvent.change(urlInput, { target: { value: "https://new.example.com" } });
       fireEvent.submit(urlInput.closest("form")!);
 
+      // Plan 15-05 (AUTH-04): a LOCKED session exists for old.example.com,
+      // so switching to a DIFFERENT url gates behind the confirm dialog
+      // first -- config.set must not fire before it's accepted.
+      const confirmButton = await screen.findByRole("button", {
+        name: /zmień serwer|switch server/i,
+      });
+      expect(configSetCalls).toEqual([]);
+      confirmButton.click();
+
       // Reconfigure MUST go through the identical validation path as first
-      // run -- config.set is what probes /healthz before persisting, so a
+      // run -- config.probe is what probes /healthz before persisting, so a
       // reconfigure can no more save an unreachable server than a first run.
       await waitFor(() => {
         expect(configSetCalls).toEqual(["https://new.example.com"]);
