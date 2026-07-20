@@ -34,3 +34,13 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 url = "2"
+
+# QA-03 (.planning/phases/14-critical-risk-closure-cross-realm-integrity-real-rp-verifica/):
+# independent cross-vendor verifier for tests/real_rp_verification.rs. This is
+# a dev-dependency-only edge -- never a production runtime dependency -- and
+# introduces no new external package to this repository: `webauthn-rs` is
+# already pinned via `pv-server`'s [dependencies], and `uuid` is already
+# pinned via the workspace's [workspace.dependencies].
+[dev-dependencies]
+webauthn-rs = "0.5"
+uuid.workspace = true
