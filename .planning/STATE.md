@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: Browser Extension
 current_phase: 13
-current_phase_name: Dual-Browser Hardening
-status: verifying
+status: completed
 stopped_at: "Completed 13-07-PLAN.md: full passkey SIGN-IN via server-origin ceremony (mode-pinning T-13-16) + FF EnrollExtPasskeyPrompt fix"
-last_updated: "2026-07-18T07:58:06.186Z"
-last_activity: 2026-07-18
-last_activity_desc: "Completed 13-07-PLAN.md: full passkey SIGN-IN via server-origin ceremony + FF EnrollExtPasskeyPrompt fix"
+last_updated: "2026-07-20T05:52:09.724Z"
+last_activity: 2026-07-20
+last_activity_desc: Phase 13 complete
 progress:
   total_phases: 6
   completed_phases: 5
-  total_plans: 44
-  completed_plans: 42
-  percent: 95
+  total_plans: 43
+  completed_plans: 41
+  percent: 83
+current_phase_name: Dual-Browser Hardening
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-14)
 
 ## Current Position
 
-Phase: 13 — Dual-Browser Hardening
-Plan: 7 of 07
-Status: Phase complete — ready for verification
-Last activity: 2026-07-20 - Completed quick task 260720-16k: Firefox aux window popup-feel (centering, self-close, scroll cap, autofill-flash race fix)
+Phase: 13
+Plan: Not started
+Status: All phases complete
+Last activity: 2026-07-20 — Phase 13 complete
 
 Progress: [██████████] 95%
 
@@ -39,7 +39,7 @@ Progress: [██████████] 95%
 
 **Velocity:**
 
-- Total plans completed: 34 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
+- Total plans completed: 41 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
 - Average duration: - min
 - Total execution time: 0 hours (v0.2)
 
@@ -58,6 +58,7 @@ Progress: [██████████] 95%
 | 10 | 7 | - | - |
 | 11 | 9 | - | - |
 | 12 | 7 | - | - |
+| 13 | 7 | - | - |
 
 *Updated after each plan completion*
 **Per-Plan Metrics:**
