@@ -39,6 +39,10 @@ The extension ends this phase with exactly ONE login path and ONE unlock mechani
 - Explicit confirmation dialog when a session or host-permission for the old server exists: „Zmiana serwera wyloguje Cię z <stary-adres>" + Potwierdź/Anuluj.
 - On confirm: full local sign-out (session token, key envelope, session-meta purged), old-origin host permission revoked/migrated after the new origin's permission flow, sync/WS connections to the old server torn down. Verified by reconfiguring against a second server with zero stranded session/permission state (ROADMAP success criterion 4).
 
+### AMENDMENT (post-research, 2026-07-20) — ceremony window carries FULL sign-in
+RESEARCH.md surfaced that ExtUnlockBridge's signin mode is passkey-only today. Bartek's locked decision ("rób wszystko przez okno" — the window is the ONLY sign-in surface after AUTH-01) directly entails the window must also offer master-password sign-in, or password-only accounts (and the entire e2e test account fleet) could never sign in. This is therefore LOCKED as part of AUTH-01, not an assumption: the server-origin ceremony window offers BOTH passkey and password sign-in (passkey-first presentation, matching the web app's v0.1 Phase-4 unified login). Implementation shape at Claude's discretion — researcher's Assumption A1 (extend ExtUnlockBridge with a password form relaying through unlock.serverCeremony.relay into the already-tested handleUnlockPassword) is the recommended shape.
+Research open questions resolved at Claude's discretion: AUTH-04's dialog gates on session OR host-permission presence (CONTEXT wording); locked-vs-unlocked reconfigure entry treated identically.
+
 ### Claude's Discretion (technical)
 - Exact message-router surgery: which kinds die (auth.signIn.password from popup, unlock.extPrf.*), which stay (unlock.password, unlock.serverCeremony.*), and whether auth.signIn.password survives as an internal-only path for the ceremony window's own flows.
 - WR-01 popup router gate must stay intact through the refactor (SECURED-adjacent surface).
