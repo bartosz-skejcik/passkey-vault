@@ -1,9 +1,10 @@
 ---
 phase: 13-dual-browser-hardening
-verified: 2026-07-18T08:12:06Z
-status: human_needed
-score: 4/4 ROADMAP success criteria verified (all seven plan must-have sets — 13-01..07 — verified in code)
-behavior_unverified: 1
+verified: 2026-07-20
+status: passed
+score: 4/4 ROADMAP success criteria verified (all seven plan must-have sets — 13-01..07 — verified in code + live human UAT)
+human_signoff: "Bartek live-verified on 2026-07-20: full server-origin passkey SIGN-IN works on Firefox-family (Zen Browser) end-to-end, AND the Phase-12 passkey PROVIDER works on real github.com passkey login on both Chrome and Zen — 'działa wszystko, zamykaj'. This closes the sole human_needed item (live-authenticator PRF on Firefox) with more coverage than required (a real verifying RP, not just the server-origin ceremony). Reached after seven live-found-and-fixed bugs surfaced only by real-browser/real-RP UAT: provider self-hijack on server origin (290188c), signin failure-wedge + late-ack clobber (2eb81eb/59a0a15), page→content Xray PRF corruption (0aa8204/0d970a7), passkey-types base64url serialization (47b6f09), CSP-blocked FF injection (0cb16ce), cross-realm isBufferSource request-path hole (f90b21a), and the FF-window UX + overlay-flash mirror/guard finishers (window-polish set, 0a78bd7/6d6138c). Three post-hoc mini-reviews (13-REVIEW, -2, -3) all resolved."
+behavior_unverified: 0
 overrides_applied: 0
 behavior_unverified_items:
   - truth: "On Firefox, a server-passkey user completes a FULL PASSKEY SIGN-IN via the server-origin ceremony from the no-session screen, ending in a real signed-in + unlocked session (13-07 additive feature; supersedes the narrower 13-06 unlock-only item)"
@@ -22,8 +23,8 @@ human_verification:
 # Phase 13: Dual-Browser Hardening Verification Report
 
 **Phase Goal:** Chrome and Firefox reach verified feature parity for the whole v0.2 extension — or Firefox degrades explicitly and legibly wherever an API/PRF capability genuinely differs (XBR-01).
-**Verified:** 2026-07-18T08:12:06Z (re-stamped after plan 13-07 + delta review 13-REVIEW-2)
-**Status:** human_needed
+**Verified:** 2026-07-20 (re-stamped after plan 13-07 + delta review 13-REVIEW-2; sealed after Bartek's live UAT + three debug rounds)
+**Status:** passed
 **Re-verification:** Re-stamp — extends the initial pass to cover plan 13-07 (full passkey sign-in via server-origin ceremony) and the 13-REVIEW-2 delta cycle
 
 ## Goal Achievement
