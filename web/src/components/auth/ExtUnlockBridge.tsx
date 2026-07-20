@@ -192,9 +192,15 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
       // this branch for a later, unrelated ack.
       if (awaitingPasswordAckRef.current) {
         awaitingPasswordAckRef.current = false;
+        // Settle regardless of outcome -- a fresh retry re-arms its own
+        // RESULT_TIMEOUT_MS timer (see handlePasswordSignIn), so this attempt
+        // is done either way. Without this, a wrong-password ack left
+        // settledRef.current false and the pending timer from THIS attempt
+        // would fire ~8s later and clobber the inline-retry idle form with
+        // the terminal "failed" screen (WR-01, 15-REVIEW.md).
+        settledRef.current = true;
         if (event.data.ok) {
           // Same terminal behavior as the passkey success path below.
-          settledRef.current = true;
           setState("success");
           try {
             window.close();

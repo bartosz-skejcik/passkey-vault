@@ -726,4 +726,40 @@ describe("ExtUnlockBridge — password sign-in (Plan 15-01)", () => {
     expect(screen.getByTestId("ext-unlock-password-submit")).toBeInTheDocument();
     expect(screen.getByTestId("ext-unlock-password-submit")).not.toBeDisabled();
   });
+
+  it("WR-01 fix: the inline retry form survives past the original attempt's RESULT_TIMEOUT_MS -- a wrong-password ack must settle the pending timer, not just this attempt's, so it can't later overwrite the idle retry form with the terminal failed screen", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const postSpy = vi.spyOn(window, "postMessage");
+
+    render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
+    fireEvent.change(screen.getByLabelText("extUnlock.emailLabel"), {
+      target: { value: "pw-user@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("extUnlock.passwordLabel"), {
+      target: { value: "wrong-password" },
+    });
+    fireEvent.click(screen.getByTestId("ext-unlock-password-submit"));
+    await vi.waitFor(() => expect(postSpy).toHaveBeenCalled());
+
+    dispatchAckMessage({
+      source: "pv-content-relay",
+      kind: "pv-ext-unlock-result",
+      nonce: "abc123",
+      ok: false,
+    });
+
+    expect(await screen.findByText("auth.loginFailed")).toBeInTheDocument();
+
+    // The original attempt's RESULT_TIMEOUT_MS (8s) timer is still pending.
+    // Without the WR-01 fix it would fire here and clobber the inline retry
+    // form with the terminal "failed" full-screen state.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9_000);
+    });
+
+    expect(screen.queryByText("extUnlock.failed")).not.toBeInTheDocument();
+    expect(screen.getByTestId("ext-unlock-password-submit")).toBeInTheDocument();
+    expect(screen.getByTestId("ext-unlock-password-submit")).not.toBeDisabled();
+    expect(screen.getByText("auth.loginFailed")).toBeInTheDocument();
+  });
 });
