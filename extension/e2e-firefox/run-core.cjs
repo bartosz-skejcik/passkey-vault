@@ -202,47 +202,61 @@ async function main() {
     const submitBtn = await driver.findElement(By.css('button[type="submit"]'));
     await submitBtn.click();
     await sleep(1500);
-    const pwField = await tryFind(driver, 'input[type="password"]', 20000);
+    // NEW signed-out hero (SignInView.tsx, AUTH-01) -- zero input elements,
+    // just the ceremony-window CTA -- replaces the retired popup password
+    // sign-in form.
+    const signinCta = await tryFind(driver, '[data-testid="server-ceremony-signin-button"]', 20000);
     const urlGone = (await driver.findElements(By.css('input#pv-server-url'))).length === 0;
     const cfgCheck = await driver.executeScript(
       "return new Promise((res) => (window.browser||window.chrome).runtime.sendMessage({kind:'config.get'}).then(res).catch(()=>res(null)))",
     );
     await shot(driver, 'p9-sc1-post-config-signin-view');
-    record('P9-SC1', pwField && urlGone && cfgCheck ? 'PASS' : 'FAIL',
-      `pwField=${!!pwField} urlGone=${urlGone} cfg=${JSON.stringify(cfgCheck)}`);
+    record('P9-SC1', signinCta && urlGone && cfgCheck ? 'PASS' : 'FAIL',
+      `signinCta=${!!signinCta} urlGone=${urlGone} cfg=${JSON.stringify(cfgCheck)}`);
+    if (!signinCta) throw new Error('server-ceremony-signin-button not found -- cannot continue P9-SC2');
 
     // ================= P9-SC2 (password half) + sign-in =================
-    await driver.findElement(By.css('input[type="email"]')).sendKeys(EMAIL);
-    await driver.findElement(By.css('input[type="password"]')).sendKeys(PASSWORD);
+    // AUTH-01: full sign-in is now ALWAYS driven through the server-origin
+    // ceremony window (ExtUnlockBridge.tsx, mode:"signin") -- the popup
+    // itself carries no email/password field anymore. Same
+    // getAllWindowHandles-before/after-click -> switchTo(newWindow) -> drive
+    // -> switchTo back technique run-server-unlock.cjs already proves at its
+    // own signin-mode step.
+    const handlesBefore = await driver.getAllWindowHandles();
+    await signinCta.click();
+    await sleep(2000);
+    const handlesAfter = await driver.getAllWindowHandles();
+    const newHandles = handlesAfter.filter((h) => !handlesBefore.includes(h));
+    if (newHandles.length !== 1) {
+      throw new Error(`sign-in ceremony window did not open (or opened more than one): new=${newHandles.length}`);
+    }
+    const signinCeremonyHandle = newHandles[0];
+    await driver.switchTo().window(signinCeremonyHandle);
+    await sleep(800);
+    await driver.findElement(By.css('input#pv-ext-unlock-email')).sendKeys(EMAIL);
+    await driver.findElement(By.css('input#pv-ext-unlock-password')).sendKeys(PASSWORD);
     await shot(driver, 'p9-sc2-signin-filled');
-    await driver.findElement(By.css('button[type="submit"]')).click();
+    await driver.findElement(By.css('[data-testid="ext-unlock-password-submit"]')).click();
+    await sleep(1500);
+    // The background closes the ceremony window itself on every resolution
+    // path (completeServerUnlock) -- detect either that self-close, or
+    // switch back to the popup and wait for it to advance past the unlock
+    // view, whichever observably happens.
+    const handlesAfterSubmit = await driver.getAllWindowHandles();
+    const ceremonyClosed = !handlesAfterSubmit.includes(signinCeremonyHandle);
+    await driver.switchTo().window(popupHandle);
     const postSignin = await tryFind(driver, 'select, button', 60000);
     await sleep(1500);
     await shot(driver, 'p9-sc2-post-signin');
-    const enrollBtn = await tryFindXpathText(driver, 'Create a passkey|Utwórz passkey', 8000);
-    record('P9-SC2-password-half', postSignin ? 'PASS' : 'FAIL', 'password sign-in advanced past unlock view');
+    record('P9-SC2-password-half', postSignin ? 'PASS' : 'FAIL',
+      `password sign-in through the server-origin ceremony window advanced past the unlock view (ceremonyWindowSelfClosed=${ceremonyClosed})`);
 
-    // ================= rpId-on-Firefox / ext-scoped passkey =================
-    // See run-core.cjs's sibling probe technique in 13-UAT-CHECKLIST.md row
-    // 24: a DIRECT navigator.credentials.create() call (rpId =
-    // browser.runtime.id) from the popup's own JS context returns
-    // SecurityError "The operation is insecure." in ~2ms -- identical to a
-    // control probe with rpId="localhost" from the SAME origin -- proving
-    // Firefox rejects WebAuthn from ANY moz-extension:// page outright,
-    // independent of rpId. Driving the REAL UI here confirms the product's
-    // own D-12/D-13 handling: the button flips to disabled with the exact
-    // canonical explainer, never a silent dead-end.
-    if (enrollBtn) {
-      await enrollBtn.click();
-      await sleep(4000);
-      await shot(driver, 'rpid-ff-post-enroll-click');
-      const bodyText = await driver.findElement(By.css('body')).getText();
-      const disabledExplainer = /nie jest dostępne w tej przeglądarce|isn.t available for this passkey/i.test(bodyText);
-      record('RPID-ON-FIREFOX', disabledExplainer ? 'PASS' : 'OBSERVED',
-        `Real navigator.credentials.create() with rpId=extension-id attempted via the real UI. D-12/D-13 disabled+explainer copy observed=${disabledExplainer}.`);
-    } else {
-      record('RPID-ON-FIREFOX', 'OBSERVED', 'No enroll CTA found post-signin (already enrolled/suppressed on this persisted profile) -- re-run on a fresh profile to re-observe.');
-    }
+    // DELETED: "rpId-on-Firefox / ext-scoped passkey" probe block -- the
+    // feature it probed (extPasskey.enroll.start, D-12's disabled-button
+    // explainer for the ext-scoped PRF unlock passkey) no longer exists
+    // post-Plan-15-04. This coverage class is now fully superseded by
+    // run-server-unlock.cjs's own unchanged server-origin-ceremony
+    // assertions (P13-06/P13-07 rows), which this phase does not touch.
 
     // ================= D-05: storage.session vs storage.local =================
     await ensurePopup();
