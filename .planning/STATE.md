@@ -24,7 +24,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-21)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 17 — Shared Component & Visual Alignment
+**Current focus:** Phase 18 — Firefox Window & Consent Hardening
 
 ## Current Position
 
@@ -154,6 +154,9 @@ Recent decisions affecting current work:
 - [Phase 16]: i18n engine jest generyczny (`t<D>(dict, locale, key)` w pv-ui/i18n/engine.ts); konsumenci trzymają cienkie 2-arg wrappery zachowujące keyof narrowing; 4 klucze o rozbieżnej kopii (vault.emptyHeading, vault.emptyBody, search.emptyResults, autolock.label) celowo lokalne — NIE przenosić do common.ts
 - [Phase 16]: interpolate() sprawdza hasAnyToken na oryginalnym szablonie (WR-01) — nie mylić częściowej substytucji z pełnym fallbackiem; regression test w 3 kopiach engine.test.ts
 - [Phase 16]: świeży worktree executora wymaga bootstrapu: node_modules (rsync/npm ci), scripts/build-wasm.sh, npx wxt prepare — standardowy wzorzec dla przyszłych faz
+- [Phase 17]: pv-ui ma WŁASNE node_modules (Option A — react/react-dom/lucide-react/@types/react, package-lock.json commitowany) bo pakiety bez exports map (lucide-react) nie resolvują się przez symlink; konsekwencja: KAŻDY bundler resolvujący realpath musi dedupe'ować React — wxt.config.ts vite.resolve.dedupe (build), oba vitest.config.ts (testy); web działa przez wewnętrzny vendored-React alias Next 16 (nieudokumentowany — kontrakt w packages/pv-ui/README.md)
+- [Phase 17]: --pv-tile-bg/--pv-tile-fg w tokens.css to JEDYNE źródło koloru kafelka ikony; React ItemIconTile czyta je przez bg-[var(--pv-tile-bg)] (WR-04 celowo odwrócił prohibicję planu 17-03); harness parytetu: extension/e2e-visual/capture-tile-parity.mjs (npm run test:e2e:visual)
+- [Phase 17]: overlay literal allowlist = dokładnie 8 (4 cienie rgba, 4 pill-radius 999px) — audyt w 17-04; nowy kafelek w generate-popover/save-toast musi użyć --pv-tile-*
 
 ### Pending Todos
 
@@ -198,7 +201,7 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 ## Session Continuity
 
 Last session: 2026-07-21
-Stopped at: Phase 16 complete, ready to plan Phase 17
+Stopped at: Phase 17 complete, ready to plan Phase 18
 Resume file: None
 
 ## Operator Next Steps
