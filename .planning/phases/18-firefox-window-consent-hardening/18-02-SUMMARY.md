@@ -104,3 +104,12 @@ XBR-03 is fully resolved (rejected-with-reason, evidence-cited). The window-base
 ---
 *Phase: 18-firefox-window-consent-hardening*
 *Completed: 2026-07-21*
+
+## Self-Check: PASSED
+
+- FOUND: `.planning/phases/18-firefox-window-consent-hardening/18-SECURITY.md`
+- FOUND: `.planning/phases/18-firefox-window-consent-hardening/18-02-SUMMARY.md`
+- FOUND: XBR-03 row in `.planning/PROJECT.md`
+- FOUND: commit `c609d94` (Task 1)
+- FOUND: commit `82f11d0` (Task 2)
+- FOUND: commit `44e602d` (SUMMARY.md)
