@@ -327,13 +327,22 @@ pub(crate) async fn handle_finish_auth_error(
             context,
             "counter regression detected — possible cloned/compromised passkey"
         );
-        let _ = sqlx::query(
+        if let Err(err) = sqlx::query(
             "UPDATE passkeys SET counter_anomaly_at = datetime('now') WHERE credential_id = ? AND user_id = ?",
         )
         .bind(credential_id)
         .bind(user_id)
         .execute(db)
-        .await;
+        .await
+        {
+            tracing::warn!(
+                ?err,
+                credential_id = %URL_SAFE_NO_PAD.encode(credential_id),
+                user_id,
+                context,
+                "failed to persist counter_anomaly_at (best-effort, non-fatal — compromise signal may be lost)"
+            );
+        }
     } else {
         tracing::warn!(?e, context, "ceremony failed");
     }
