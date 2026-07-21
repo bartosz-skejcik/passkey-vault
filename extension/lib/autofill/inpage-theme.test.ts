@@ -52,4 +52,25 @@ describe("INPAGE_THEME_CSS", () => {
     // a closing brace) — comment mentions of ":root" are fine.
     expect(INPAGE_THEME_CSS).not.toMatch(/(^|\})\s*:root\s*[,{]/);
   });
+
+  it("carries the --pv-tile-bg dark-block value (DS-04/UX-01 tile tokens)", () => {
+    // A hand-picked value from the [data-theme], [data-theme="vault-dark"]
+    // block -- proves the tokens survive the shadow-DOM :root -> [data-theme]
+    // rewrite along with every other existing token.
+    expect(INPAGE_THEME_CSS).toContain("--pv-tile-bg: oklch(96.7% 0.001 286.375)");
+  });
+
+  it("carries the --pv-tile-bg/--pv-tile-fg vault-light overrides in the vault-light block, not the dark block", () => {
+    // Extract the vault-light block's own text via a regex, mirroring this
+    // file's own fontRuleMatch-extraction style, rather than a bare
+    // whole-string .toContain -- so a future accidental duplicate/
+    // misplacement in the WRONG block is also caught.
+    const vaultLightBlockMatch = INPAGE_THEME_CSS.match(/\[data-theme="vault-light"\]\s*\{([^}]*)\}/);
+    expect(vaultLightBlockMatch).not.toBeNull();
+    const vaultLightBlock = vaultLightBlockMatch![1];
+    expect(vaultLightBlock).toContain("--pv-tile-bg: var(--color-base-200)");
+    expect(vaultLightBlock).toContain(
+      "--pv-tile-fg: color-mix(in oklch, var(--color-base-content) 70%, transparent)",
+    );
+  });
 });
