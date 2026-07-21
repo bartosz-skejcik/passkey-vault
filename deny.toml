@@ -1,0 +1,43 @@
+# deny.toml — SEC-03 supply-chain policy (Phase 19, Plan 03).
+#
+# Wired via scripts/check-supply-chain.sh (`cargo deny check`), alongside
+# `cargo audit` (RustSec advisory DB). CI wiring itself is Phase 20's job
+# (QA-01) — this file only needs to be CI-ready.
+#
+# --- Watch-list pin-review table (CODEBASE-GAPS.md Top-5 #5) ---
+# One row per crate the v0.3 codebase sweep flagged. "Direct decl" = does a
+# workspace Cargo.toml declare this crate directly (yes = exact-pinned this
+# plan's Task 2) or is it transitive-only (Cargo.lock-pin-only, no direct
+# declaration anywhere in this workspace)?
+#
+# | Crate                  | Cargo.lock version | Direct decl (crate's Cargo.toml)      | Pin action this plan                          |
+# |-------------------------|--------------------|-----------------------------------------|------------------------------------------------|
+# | webauthn-rs             | 0.5.5               | yes — pv-server                         | exact-pinned Task 2 ("=0.5.5")                  |
+# | passkey-authenticator    | 0.5.0               | yes — pv-provider                       | exact-pinned Task 2 ("=0.5.0")                  |
+# | passkey-client           | 0.5.0               | yes — pv-provider                       | exact-pinned Task 2 ("=0.5.0")                  |
+# | passkey-types            | 0.5.0               | yes — pv-provider                       | exact-pinned Task 2 ("=0.5.0")                  |
+# | argon2                   | 0.5.3               | yes — pv-core                           | exact-pinned Task 2 ("=0.5.3")                  |
+# | chacha20poly1305         | 0.10.1              | yes — pv-core                           | exact-pinned Task 2 ("=0.10.1")                 |
+# | hkdf                     | 0.12.4              | yes — pv-core                           | exact-pinned Task 2 ("=0.12.4")                 |
+# | getrandom                | 0.2.17 / 0.3.4 / 0.4.3 (3 parallel lines) | no — transitive only | Cargo.lock-pin-only; upstream-blocked by webauthn-rs + passkey-rs per CODEBASE-GAPS.md; tracked via [bans] multiple-versions = "warn" below |
+# | openssl-sys              | 0.9.117             | no — transitive only, via webauthn-rs-core | Cargo.lock-pin-only; native CVE surface tracked via `cargo audit`'s advisory scan |
+#
+# --------------------------------------------------------------------------
+
+[advisories]
+version = 2
+# Non-empty entries here MUST carry an inline justification comment — a
+# silent ignore defeats the tripwire's purpose (this plan's prohibition).
+ignore = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[licenses]
+version = 2
+allow = ["MIT", "Apache-2.0", "MPL-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0"]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
