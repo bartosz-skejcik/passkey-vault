@@ -413,13 +413,13 @@ Plans:
   2. Every manual real-Firefox probe (server-unlock, provider-corruption, request-xray, CSP-strict) is wired to its own npm script and documented as a harness lane — none is reachable only by a hand-typed command anymore.
   3. A Rust unit test asserts base64url byte shape for every binary WebAuthn response field, and fails if the serialization path (e.g. `serialize_bytes_as_base64_string`) regresses to a bare number array.
 
-**Plans:** 4 plans
+**Plans:** 3/4 plans executed
 Plans:
 **Wave 1**
 
-- [ ] 20-01-PLAN.md — QA-04: Rust byte-shape regression test for pv-provider's WebAuthn response serialization (crates/pv-provider/tests/response_shape.rs)
-- [ ] 20-02-PLAN.md — QA-02: wire probe-request-xray.cjs + probe-provider-corruption.cjs to npm scripts, document all 6 Firefox harness lanes in README
-- [ ] 20-03-PLAN.md — QA-02/todo: shared Firefox profile pref-injection helper (suppress macOS passkey sheet) + live-Firefox proof + todo resolution
+- [x] 20-01-PLAN.md — QA-04: Rust byte-shape regression test for pv-provider's WebAuthn response serialization (crates/pv-provider/tests/response_shape.rs)
+- [x] 20-02-PLAN.md — QA-02: wire probe-request-xray.cjs + probe-provider-corruption.cjs to npm scripts, document all 6 Firefox harness lanes in README
+- [x] 20-03-PLAN.md — QA-02/todo: shared Firefox profile pref-injection helper (suppress macOS passkey sheet) + live-Firefox proof + todo resolution
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -451,4 +451,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 17. Shared Component & Visual Alignment | v0.3 | 4/4 | Complete    | 2026-07-21 |
 | 18. Firefox Window & Consent Hardening | v0.3 | 2/2 | Complete    | 2026-07-21 |
 | 19. Server & Supply-Chain Hardening | v0.3 | 3/3 | Complete    | 2026-07-21 |
-| 20. Test Infrastructure & CI Gate | v0.3 | 0/TBD | Not started | - |
+| 20. Test Infrastructure & CI Gate | v0.3 | 3/4 | In Progress|  |
