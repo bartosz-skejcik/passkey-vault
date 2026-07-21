@@ -46,10 +46,24 @@ every technique used).
 
 ```bash
 cd extension
-npm run test:e2e:firefox:core           # Phase 9 + Phase 12 + D-05/D-08/rpId-on-Firefox
-npm run test:e2e:firefox:autofill       # Phase 10 + Phase 11
-npm run test:e2e:firefox:server-unlock  # Plan 13-06: server-origin ceremony window+bridge+relay
+npm run test:e2e:firefox:core                # Phase 9 + Phase 12 + D-05/D-08/rpId-on-Firefox
+npm run test:e2e:firefox:autofill            # Phase 10 + Phase 11
+npm run test:e2e:firefox:server-unlock       # Plan 13-06: server-origin ceremony window+bridge+relay
+npm run test:e2e:firefox:window-geometry     # Plan 18-01, UX-02: window centering/sizing/self-close
+npm run test:e2e:firefox:request-xray        # Plan 14-03: permanent XBR-02 response-direction byte-identity regression gate
+npm run test:e2e:firefox:provider-corruption # Permanent provider-response byte-level regression gate (.planning/debug/resolved/firefox-provider-corruption.md)
 ```
+
+**CSP-strict coverage:** there is no separate `csp-strict` lane. The `core`
+lane (`run-core.cjs:397-454`, records `CSP-STRICT-SHIM-PRESENT` at line ~418
+and `CSP-STRICT-CREATE` at line ~448/451) and the `request-xray` lane
+(`probe-request-xray.cjs:439-450`, records `SHIM-PRESENT` at line ~448 and
+gates the rest of that probe's ceremony on it) both drive a real
+`/provider-csp` fixture route serving `Content-Security-Policy: script-src
+'self'` as part of their own run, proving the MAIN-world provider shim
+(D-08) survives a genuinely restrictive page CSP — the exact class of bug
+`.planning/debug/resolved/firefox-injection-csp-blocked.md` fixed. No
+dedicated CSP-strict script exists or is needed.
 
 Both scripts open a real, visible Firefox window and drive it for several
 minutes. Screenshots and a `results-*.json` summary land in
