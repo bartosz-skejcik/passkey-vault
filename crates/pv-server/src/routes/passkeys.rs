@@ -25,7 +25,7 @@ use sqlx::Row;
 use uuid::Uuid;
 use webauthn_rs::prelude::{
     CreationChallengeResponse, CredentialID, Passkey, PasskeyAuthentication, PasskeyRegistration,
-    PublicKeyCredential, RegisterPublicKeyCredential, RequestChallengeResponse,
+    PublicKeyCredential, RegisterPublicKeyCredential, RequestChallengeResponse, WebauthnError,
 };
 
 use super::session::SessionUser;
@@ -263,13 +263,20 @@ pub async fn prf_wrap(
     // The real ceremony-verification gate — cryptographically proves the
     // request came from a browser that completed a valid assertion with
     // this specific enrolled credential.
-    let auth_result = state
-        .webauthn
-        .finish_passkey_authentication(&req.credential, &auth_state)
-        .map_err(|e| {
-            tracing::warn!(?e, "prf-wrap assertion verification failed");
-            ApiError::BadRequest("passkey ceremony failed".into())
-        })?;
+    let auth_result = match state.webauthn.finish_passkey_authentication(&req.credential, &auth_state) {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(handle_finish_auth_error(
+                &state.db,
+                &session.user_id,
+                req.credential.get_credential_id(),
+                "prf-wrap assertion verification",
+                "passkey ceremony failed",
+                e,
+            )
+            .await)
+        }
+    };
 
     // Updates counter/backup flags per the crate's own recommendation.
     let _ = passkey.update_credential(&auth_result);
@@ -287,6 +294,50 @@ pub async fn prf_wrap(
     .await?;
 
     Ok(Json(PrfWrapResponse { prf_capable: true }))
+}
+
+/// Shared classifier for every `finish_passkey_authentication` `Err` branch
+/// across all 3 call sites (`prf_wrap`, `unlock_finish` here, plus
+/// `auth.rs::passkey_login_finish`, SEC-04). `require_valid_counter_value`
+/// (webauthn-rs default `true`, never overridden in `build_webauthn()`)
+/// already hard-rejects a genuine sign-counter regression — this function
+/// only makes that already-rejected path distinguishable in logs and DB
+/// state; it never changes whether the ceremony succeeds or fails.
+///
+/// Only the base64url-encoded `credential_id`, `user_id`, and a fixed
+/// `context` label are ever logged or persisted — never `passkey_json`,
+/// `prf_salt`, or `prf_wrapped_uk` (threat_model T-19-06). The `UPDATE` is
+/// additionally scoped by `user_id` (threat_model T-19-08): webauthn-rs only
+/// reaches `CredentialPossibleCompromise` for a credential id that already
+/// matched a real candidate in the ceremony's own credential set, but the
+/// extra `AND user_id = ?` matches this codebase's existing
+/// ownership-scoping convention everywhere else.
+pub(crate) async fn handle_finish_auth_error(
+    db: &sqlx::SqlitePool,
+    user_id: &str,
+    credential_id: &[u8],
+    context: &'static str,
+    generic_message: &'static str,
+    e: WebauthnError,
+) -> ApiError {
+    if matches!(e, WebauthnError::CredentialPossibleCompromise) {
+        tracing::warn!(
+            credential_id = %URL_SAFE_NO_PAD.encode(credential_id),
+            user_id,
+            context,
+            "counter regression detected — possible cloned/compromised passkey"
+        );
+        let _ = sqlx::query(
+            "UPDATE passkeys SET counter_anomaly_at = datetime('now') WHERE credential_id = ? AND user_id = ?",
+        )
+        .bind(credential_id)
+        .bind(user_id)
+        .execute(db)
+        .await;
+    } else {
+        tracing::warn!(?e, context, "ceremony failed");
+    }
+    ApiError::BadRequest(generic_message.into())
 }
 
 #[derive(Serialize)]
@@ -486,10 +537,20 @@ pub async fn unlock_finish(
     let auth_state: PasskeyAuthentication =
         serde_json::from_str(&auth_state_json).map_err(|_| ApiError::Internal)?;
 
-    let auth_result = state.webauthn.finish_passkey_authentication(&req.credential, &auth_state).map_err(|e| {
-        tracing::warn!(?e, "unlock finish failed");
-        ApiError::BadRequest("passkey ceremony failed".into())
-    })?;
+    let auth_result = match state.webauthn.finish_passkey_authentication(&req.credential, &auth_state) {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(handle_finish_auth_error(
+                &state.db,
+                &session.user_id,
+                req.credential.get_credential_id(),
+                "unlock finish",
+                "passkey ceremony failed",
+                e,
+            )
+            .await)
+        }
+    };
 
     let row = sqlx::query(
         "SELECT id, passkey_json, prf_wrapped_uk FROM passkeys WHERE credential_id = ? AND user_id = ?",
