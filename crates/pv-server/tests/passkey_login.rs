@@ -324,6 +324,64 @@ async fn passkey_login_start_shape_parity_unknown_vs_zero_passkey_email() {
     }
 }
 
+/// WR-02: before this fix, the dummy branch always returned `prf_salts: {}`
+/// while a real account with a PRF-capable passkey always returned a
+/// non-empty map — letting an attacker diff "prf_salts present" to confirm
+/// account existence without ever holding a credential. Assert the dummy
+/// branch's `prf_salts` shape (populated, one entry per `allowCredentials`
+/// id, byte-length-realistic values) is now indistinguishable from a real
+/// PRF-capable account's.
+#[tokio::test]
+async fn passkey_login_start_prf_salts_shape_parity_dummy_vs_real_prf_capable() {
+    let app = common::test_app(common::test_pool().await);
+
+    // Real account with one PRF-capable passkey enrolled.
+    let real_email = "prfsaltsshapecompare@example.com";
+    let real_token = common::register_and_login(&app, real_email).await;
+    enroll_prf_capable_passkey(&app, &real_token, "PRF Shape Compare Key").await;
+    let (status, real_body) =
+        post_json(&app, "/api/auth/passkey-login/start", json!({ "email": real_email })).await;
+    assert_eq!(status, StatusCode::OK, "real start must return 200: {real_body:?}");
+    let real_prf_salts = real_body["prf_salts"].as_object().unwrap();
+    assert!(!real_prf_salts.is_empty(), "sanity: a real PRF-capable account must have a non-empty prf_salts map");
+
+    for (label, email) in [("unknown", "neverexistsprfsalts@example.com"), ("zero-passkey", "zeropasskeysprfsalts@example.com")]
+    {
+        if label == "zero-passkey" {
+            common::register_and_login(&app, email).await;
+        }
+        let (status, body) = post_json(&app, "/api/auth/passkey-login/start", json!({ "email": email })).await;
+        assert_eq!(status, StatusCode::OK, "{label} start must return 200: {body:?}");
+
+        let allow_credentials = body["challenge"]["publicKey"]["allowCredentials"].as_array().unwrap();
+        let prf_salts = body["prf_salts"].as_object().unwrap_or_else(|| panic!("{label} prf_salts must be an object: {body:?}"));
+
+        assert!(
+            !prf_salts.is_empty(),
+            "{label} dummy prf_salts must NOT be empty — an empty map is the exact oracle WR-02 closes: {body:?}"
+        );
+        assert_eq!(
+            prf_salts.len(),
+            allow_credentials.len(),
+            "{label} dummy prf_salts must have exactly one entry per fabricated allowCredentials id: {body:?}"
+        );
+        for cred in allow_credentials {
+            let cred_id = cred["id"].as_str().unwrap();
+            let salt_b64 = prf_salts
+                .get(cred_id)
+                .unwrap_or_else(|| panic!("{label} prf_salts must be keyed by the matching allowCredentials id: {body:?}"))
+                .as_str()
+                .unwrap();
+            let salt_bytes = base64::engine::general_purpose::STANDARD.decode(salt_b64).unwrap();
+            assert_eq!(
+                salt_bytes.len(),
+                32,
+                "{label} dummy prf_salt value must be a realistic 32 bytes, matching a genuine prf_salt: {body:?}"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn passkey_login_start_dummy_allow_credentials_stable_across_repeat_probes_same_email() {
     let app = common::test_app(common::test_pool().await);

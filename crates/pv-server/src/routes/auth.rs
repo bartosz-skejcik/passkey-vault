@@ -453,6 +453,18 @@ fn dummy_passkey_login_start_response(
     // passkeys; a fixed single entry (the prior implementation) was itself a
     // tell for any account with 2+ real passkeys.
     let dummy_cred_count = 1 + (base_digest[0] % 2) as usize;
+    // WR-02: a real account's response populates `prf_salts` with one entry
+    // per PRF-capable credential (auth.rs:385 above), keyed by the same
+    // URL_SAFE_NO_PAD credential id. Leaving this dummy branch's map empty
+    // made "prf_salts non-empty" an account-existence oracle on its own —
+    // fabricate one stand-in entry per dummy `allowCredentials` id here too,
+    // so populated/empty shape no longer distinguishes a real PRF-capable
+    // account from an unknown one. `dummy_secret`-derived and keyed off the
+    // same per-email/per-index hash as the cred id, so repeat probes of the
+    // same email see byte-identical values (matches the cred-id stability
+    // guarantee above), and the value is the same length (32 bytes,
+    // STANDARD-encoded) as a genuine `prf_salt`.
+    let mut prf_salts = HashMap::with_capacity(dummy_cred_count);
     let allow_credentials: Vec<serde_json::Value> = (0..dummy_cred_count)
         .map(|i| {
             let mut id_hasher = Sha256::new();
@@ -460,9 +472,22 @@ fn dummy_passkey_login_start_response(
             id_hasher.update(normalized_email.as_bytes());
             id_hasher.update([i as u8]);
             let cred_id: [u8; 32] = id_hasher.finalize().into();
+            let cred_id_b64 = URL_SAFE_NO_PAD.encode(cred_id);
+
+            // Distinct domain-separation byte (`b"s"`) from the cred-id
+            // hasher above ensures this isn't just the same digest wearing a
+            // different encoding.
+            let mut salt_hasher = Sha256::new();
+            salt_hasher.update(dummy_secret);
+            salt_hasher.update(normalized_email.as_bytes());
+            salt_hasher.update([i as u8]);
+            salt_hasher.update(b"s");
+            let dummy_salt: [u8; 32] = salt_hasher.finalize().into();
+            prf_salts.insert(cred_id_b64.clone(), STANDARD.encode(dummy_salt));
+
             serde_json::json!({
                 "type": "public-key",
-                "id": URL_SAFE_NO_PAD.encode(cred_id),
+                "id": cred_id_b64,
             })
         })
         .collect();
@@ -490,7 +515,7 @@ fn dummy_passkey_login_start_response(
         // is a schema dead end (no legitimate user_id), not just extra work.
         state_id: Uuid::new_v4().to_string(),
         challenge,
-        prf_salts: HashMap::new(),
+        prf_salts,
     }
 }
 
