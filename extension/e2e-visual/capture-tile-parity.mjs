@@ -50,7 +50,21 @@ const SHOTS_DIR = path.join(
 const RESULTS_FILE = path.join(SHOTS_DIR, "results.json");
 const PV_LOG_FILE = path.join(SHOTS_DIR, "pv-server.log");
 
-const EMAIL = process.env.PV_TILE_PARITY_EMAIL || "uat-tile-parity@example.local";
+// RUN moved ABOVE EMAIL (WR-02 fix, 17-REVIEW.md): EMAIL below now
+// interpolates RUN, so RUN's declaration must execute first -- these are
+// top-level `const`s evaluated in file order, and referencing RUN from
+// EMAIL's initializer before this line runs would throw a
+// ReferenceError (temporal dead zone), not silently read `undefined`.
+const RUN = String(Date.now() % 100000);
+// WR-02 fix (17-REVIEW.md): per-run email, matching the already-per-run
+// `tile-parity-${RUN}.db` naming below. `registerAndCreateItem()` only
+// ever performs a register (no "already registered -> log in instead"
+// fallback) -- a fixed constant email broke every run after the first
+// against a reused (already-healthy) server, since that server's DB
+// already had the account from a prior run. An explicit
+// PV_TILE_PARITY_EMAIL override still wins for callers who deliberately
+// want a fixed/reusable account.
+const EMAIL = process.env.PV_TILE_PARITY_EMAIL || `uat-tile-parity-${RUN}@example.local`;
 const PASSWORD = process.env.PV_TILE_PARITY_PASSWORD || "CorrectHorseBattery-TileParity-2026!";
 const PV_PORT = Number(process.env.PV_TILE_PARITY_SERVER_PORT || 8630);
 const PV_URL = `http://localhost:${PV_PORT}`;
@@ -70,7 +84,6 @@ const PV_URL = `http://localhost:${PV_PORT}`;
 const WEB_URL = PV_URL;
 const FORM_PORT = Number(process.env.PV_TILE_PARITY_FORM_PORT || 8896);
 const FORM_URL = `http://localhost:${FORM_PORT}`;
-const RUN = String(Date.now() % 100000);
 const THEME_MIRROR_KEY = "pv-theme-mirror";
 const THEMES = ["vault-dark", "vault-light"];
 
@@ -211,6 +224,14 @@ async function ensurePvServer(extensionOrigin) {
   const dbPath = path.join(SHOTS_DIR, `tile-parity-${RUN}.db`);
   ownPvDbPath = dbPath;
   const logStream = fs.createWriteStream(PV_LOG_FILE);
+  // WR-01 fix (17-REVIEW.md): `cargo run` does NOT forward SIGTERM to the
+  // actual `pv-server` binary it spawns as its own child -- killing only
+  // the `cargo` PID orphans the real server, which keeps holding PV_PORT
+  // and the SQLite file while cleanup() below deletes that same file out
+  // from under it. `detached: true` makes this child the leader of its
+  // OWN process group (POSIX setsid), so `process.kill(-pid, ...)` in
+  // cleanup() below can signal the whole group -- cargo AND the pv-server
+  // binary it spawned -- not just cargo itself.
   ownPvServerProc = spawn("cargo", ["run", "-p", "pv-server"], {
     cwd: REPO_ROOT,
     env: {
@@ -221,6 +242,7 @@ async function ensurePvServer(extensionOrigin) {
       PV_STATIC_DIR: path.join(WEB_ROOT, "out"),
     },
     stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
   });
   ownPvServerProc.stdout.pipe(logStream);
   ownPvServerProc.stderr.pipe(logStream);
@@ -233,18 +255,61 @@ async function ensurePvServer(extensionOrigin) {
   console.log("[capture-tile-parity] own pv-server healthy (serving both the API and the static web app, same origin).");
 }
 
+// WR-03 fix (17-REVIEW.md): `fs.existsSync(outIndex)` alone reuses ANY
+// pre-existing `web/out`, including a stale export left over from an
+// unrelated prior commit -- this harness's entire point is proving
+// web-vs-in-page tile parity against the CURRENT source, so a stale
+// export can silently produce a false pass or an unrelated false
+// mismatch. Walk `web/src` for its newest mtime and compare against
+// `web/out/index.html`'s own mtime; only reuse the export when it is
+// newer than every source file. `node_modules`/`.next`/`out` are skipped
+// defensively even though none are expected to nest inside `web/src` --
+// cheap insurance against an accidental future symlink or build artifact
+// landing there.
+function newestMtimeUnder(dir) {
+  let newest = 0;
+  const SKIP_DIRS = new Set(["node_modules", ".next", "out"]);
+  function walk(current) {
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name)) continue;
+        walk(path.join(current, entry.name));
+      } else if (entry.isFile()) {
+        const mtimeMs = fs.statSync(path.join(current, entry.name)).mtimeMs;
+        if (mtimeMs > newest) newest = mtimeMs;
+      }
+    }
+  }
+  walk(dir);
+  return newest;
+}
+
 /** Builds web/ as a static export with NEXT_PUBLIC_API_BASE_URL="" (same-
  * origin API calls once pv-server serves this same output via
  * PV_STATIC_DIR -- see the WEB_URL constant's own header comment for why
- * a separate `next dev` server was abandoned). Skipped if a fresh-enough
- * `web/out/index.html` already exists from this run's own earlier build
- * (idempotent re-runs during local iteration should not always pay a full
- * ~5s Turbopack build). */
+ * a separate `next dev` server was abandoned). Skipped only when a
+ * `web/out/index.html` already exists AND is newer than every file under
+ * `web/src` (WR-03 fix, 17-REVIEW.md) -- idempotent re-runs during local
+ * iteration should not always pay a full ~5s Turbopack build, but a stale
+ * export must never be silently reused for a parity check. */
 async function ensureWebStaticExport() {
   const outIndex = path.join(WEB_ROOT, "out", "index.html");
   if (fs.existsSync(outIndex)) {
-    console.log(`[capture-tile-parity] reusing existing web/out static export.`);
-    return;
+    const outMtimeMs = fs.statSync(outIndex).mtimeMs;
+    const srcNewestMs = newestMtimeUnder(path.join(WEB_ROOT, "src"));
+    if (outMtimeMs >= srcNewestMs) {
+      console.log(`[capture-tile-parity] reusing existing web/out static export (newer than web/src).`);
+      return;
+    }
+    console.log(
+      `[capture-tile-parity] existing web/out static export is STALE (older than a file under web/src) -- rebuilding.`,
+    );
   }
   console.log("[capture-tile-parity] building web/ as a static export (NEXT_PUBLIC_API_BASE_URL=\"\")...");
   await new Promise((resolve, reject) => {
@@ -302,10 +367,31 @@ async function cleanup() {
     }
   }
   if (ownPvServerProc) {
+    // WR-01 fix (17-REVIEW.md): signal the whole process group (negative
+    // pid), not just the `cargo` PID -- see the `detached: true` comment
+    // at the spawn() call above for why a plain `.kill()` here orphaned
+    // the real pv-server binary. Then actually WAIT (bounded) for the
+    // group to exit before this function's own DB deletion below runs --
+    // deleting the SQLite file while the server still holds it open is
+    // exactly the "delete the live DB out from under the orphan" failure
+    // mode the finding described; waiting closes that race window.
+    const pid = ownPvServerProc.pid;
+    const exited = new Promise((resolve) => {
+      ownPvServerProc.once("exit", () => resolve());
+    });
     try {
-      ownPvServerProc.kill("SIGTERM");
+      process.kill(-pid, "SIGTERM");
     } catch {
-      /* best-effort */
+      /* best-effort: group may already be gone */
+    }
+    await Promise.race([exited, sleep(5000)]);
+    // Escalate to SIGKILL for whatever's left in the group (bounded
+    // best-effort -- a process that ignores SIGTERM for 5s is not going
+    // to gracefully shut down before this script exits regardless).
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      /* best-effort: group already gone */
     }
   }
   // The temp sqlite db this script's own pv-server instance used is
