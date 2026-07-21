@@ -36,9 +36,9 @@ every technique used).
    ```
 3. `npm run build:firefox` (from `extension/`) — this harness does NOT
    rebuild the extension itself.
-4. A real account on the target `pv-server` (defaults below match this
-   project's own shared UAT account; override via env vars for a different
-   server/account).
+4. A real account on the target `pv-server` (email default below matches this
+   project's own shared UAT account; `PV_UAT_PASSWORD` must be exported —
+   there is no committed default).
 5. `python3` with Pillow installed (`pip install Pillow`) — used by
    `find_color.py` for closed-shadow-root button targeting.
 
@@ -113,13 +113,17 @@ the signin-mode ceremony's own honest authenticator-less limit, confirmed
 via screenshot (the ceremony's own busy/"Confirm in your browser..." state,
 Firefox's native picker pending outside the DOM).
 
-## Environment variables (all optional, sensible defaults shown)
+## Environment variables
+
+Passwords are **required** (the scripts fail fast when unset — no committed
+defaults); everything else is optional with the defaults shown.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PV_SERVER` | `http://localhost:8620` | The `pv-server` base URL |
 | `PV_UAT_EMAIL` | `uat-prf04@example.local` | Test account email |
-| `PV_UAT_PASSWORD` | (this project's own shared UAT password) | Test account password |
+| `PV_UAT_PASSWORD` | **required** | Test account password |
+| `PV_PROBE_PASSWORD` | **required** (server-unlock lane only) | Password for the freshly-registered probe account in `run-server-unlock.cjs` |
 | `PV_FIREFOX_BINARY` | `/Applications/Firefox.app/Contents/MacOS/firefox` | Path to the Firefox binary (adjust for Linux/Windows) |
 | `PV_FF_FIXED_UUID` | a fixed placeholder UUID | The pinned `moz-extension://` origin UUID; keep CONSTANT across a single walk's runs |
 | `PV_FF_PROFILE_DIR` | `./e2e-firefox/.ff-profile` | Persistent Firefox profile directory |
