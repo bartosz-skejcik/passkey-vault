@@ -354,17 +354,15 @@ extension:
 | A3 | GitHub-hosted `ubuntu-latest` runners have no macOS-specific passkey UI that could ever be triggered, making Pitfall 4 fully moot for CI | Common Pitfalls | Extremely low risk — this is a well-established fact about hosted Linux runners, included for completeness rather than genuine uncertainty |
 | A4 | Node version for `actions/setup-node` — no `.nvmrc`/`engines` field was found in this repo during research; the CI workflow skeleton above uses a placeholder `'22'` | Code Examples | Verify against any `.nvmrc`/`engines` constraint (or lack thereof) at plan time; wrong Node major could cause subtle `wxt`/`vitest` behavior differences vs. developer machines |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Does `npm run build:chrome` and `npm run build:firefox` running in the SAME extension CI job (not parallel jobs) re-trigger `scripts/build-wasm.sh` twice via each build's own `prebuild` hook, and is that safe?**
-   - What we know: `prebuild` fires on every `npm run build*`; `build-wasm.sh`'s `wasm-bindgen-cli` install step is idempotent (version-checks before reinstalling), and the WASM compile step itself is a plain `cargo build --release` (safe to rerun).
-   - What's unclear: whether a second consecutive invocation within the same job (not a fresh VM) has any stale-artifact interaction with the `sed`-based glue-code patching step (steps 6b/8b in the script), which is itself idempotent-by-pattern-match but untested for a rapid double-run.
-   - Recommendation: either run `bash scripts/build-wasm.sh` ONCE explicitly before both `build:chrome`/`build:firefox` (making each build's own `prebuild` hook a harmless no-extra-work rerun), or accept the double-run as-is since both are individually idempotent — verify empirically during plan execution, not by further research.
+1. **RESOLVED (plan time, Plan 20-04).** Does `npm run build:chrome` and `npm run build:firefox` running in the SAME extension CI job (not parallel jobs) re-trigger `scripts/build-wasm.sh` twice via each build's own `prebuild` hook, and is that safe?
+   - What we know: `prebuild` fires on every `npm run build*`; `build-wasm.sh`'s `wasm-bindgen-cli` install step is idempotent (version-checks before reinstalling), and the WASM compile step itself is a plain `cargo build --release` (safe to rerun). Note also (confirmed at plan time): npm's pre/post lifecycle hooks match the script name EXACTLY — a script named `prebuild` only auto-fires before `npm run build`, not before `npm run build:chrome`/`npm run build:firefox` (no `prebuild:chrome`/`prebuild:firefox` script exists in `extension/package.json`), so the "double-run via hook" scenario this question worried about does not actually occur via implicit npm hook-chaining at all.
+   - Resolution: Plan 20-04's `extension` CI job runs `bash scripts/build-wasm.sh` and `(cd packages/pv-ui && npm ci)` as explicit, standalone steps ONCE, before calling `npm run build:chrome` and `npm run build:firefox` — it never relies on any `prebuild*` hook to fire the WASM build a second time within the job. The double-run safety question is therefore moot for CI's actual step sequence.
 
-2. **Exact Node.js major version this project targets in CI.**
-   - What we know: no `.nvmrc` or `package.json` `engines` field was found during this research pass.
-   - What's unclear: whether any specific Node version is load-bearing (e.g., a WXT or Next.js 16 minimum).
-   - Recommendation: check `next@16.2.10`'s and `wxt@^0.20.27`'s stated minimum Node versions at plan time, or default to Node 22 LTS as a safe current choice.
+2. **RESOLVED (plan time, Plan 20-04).** Exact Node.js major version this project targets in CI.
+   - What we know: no `.nvmrc` or `package.json` `engines` field was found during this research pass, confirmed still absent at plan time.
+   - Resolution: Node 22 LTS is pinned explicitly in Plan 20-04's `actions/setup-node@v4` step (`node-version: '22'`) across all 3 npm-using jobs (`web`, `extension`) — no repo constraint contradicts this choice; documented as the current-LTS default per this research's own Recommendation.
 
 ## Validation Architecture
 
