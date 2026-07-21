@@ -24,7 +24,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-21)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 19 — Server & Supply-Chain Hardening
+**Current focus:** Phase 20 — Test Infrastructure & CI Gate
 
 ## Current Position
 
@@ -206,7 +206,7 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 ## Session Continuity
 
 Last session: 2026-07-21
-Stopped at: Phase 19 planned; Wave 1 (19-01, 19-02) executing in worktrees — see HANDOFF-v03-autonomous.md
+Stopped at: Phase 19 complete, ready to plan Phase 20 (final v0.3 phase)
 Resume file: .planning/HANDOFF-v03-autonomous.md
 
 ## Operator Next Steps
