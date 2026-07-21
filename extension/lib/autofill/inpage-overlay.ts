@@ -267,10 +267,10 @@ const OVERLAY_CSS = `
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-base-200);
+  background: var(--pv-tile-bg);
 }
 .pv-row-favicon { width: 100%; height: 100%; object-fit: contain; }
-.pv-row-icon { width: 16px; height: 16px; flex-shrink: 0; }
+.pv-row-icon { width: 16px; height: 16px; flex-shrink: 0; color: var(--pv-tile-fg); }
 .pv-row-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .pv-row-label {
   font-size: 14px;
