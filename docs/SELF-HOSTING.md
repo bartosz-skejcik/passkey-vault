@@ -100,27 +100,19 @@ PV_EXTENSION_ORIGINS=chrome-extension://<published-id>
 ```
 
 **Firefox:** `moz-extension://<uuid>` jest przypisywany PER-PROFIL/PER-
-INSTALACJĘ i zmienia się przy każdej reinstalacji lub nowym profilu — jeden
-konkretny wpis jest niepraktyczny dla większości self-hosterów (musieliby go
-aktualizować za każdym razem). Dlatego `pv-server` akceptuje specjalny,
-dosłowny literał `moz-extension://*` jako **schematowo ograniczony wildcard**
-— dopasowuje TYLKO poprawnie zbudowany origin `moz-extension://<uuid>` (36
-znaków w kształcie UUID), nigdy dowolny inny origin. To jest **świadomy dług
-techniczny** (decyzja Bartka, 13-CONTEXT.md ADDENDUM D-10), zaakceptowany bo:
+INSTALACJĘ i zmienia się przy każdej reinstalacji lub nowym profilu — musisz
+wpisać SWÓJ konkretny UUID (widoczny w `about:debugging#/runtime/this-firefox`
+po załadowaniu rozszerzenia) i zaktualizować go przy każdej reinstalacji lub
+nowym profilu. Wcześniej `pv-server` akceptował dosłowny literał
+`moz-extension://*` jako schematowo ograniczony wildcard (decyzja Bartka,
+13-CONTEXT.md ADDENDUM D-10) — **ten wildcard został usunięty w SEC-02
+(Phase 19)**: `PV_EXTENSION_ORIGINS` musi teraz zawierać wyłącznie KONKRETNE
+originy, dla obu przeglądarek.
 
-- CORS nie jest tu granicą uwierzytelniania tego API — każda operacja
-  zmieniająca stan nadal wymaga ważnego tokenu sesji/bearer niezależnie od
-  wyniku CORS; wrogie rozszerzenie bez tokenu nic tym nie zyskuje.
-- Rotacja UUID Firefoksa per-profil czyni konfigurację wyłącznie-konkretnymi-
-  originami wrogą UX dzisiaj.
-- Docelowo zostanie zastąpiony konfiguracją per-instalację z konkretnym
-  originem w późniejszej wersji (patrz `.planning/STATE.md`, sekcja
-  Deferred Items).
-
-Dokładna linia `.env` dla obu przeglądarek naraz:
+Przykładowa linia `.env` dla obu przeglądarek naraz:
 
 ```
-PV_EXTENSION_ORIGINS=chrome-extension://<published-id>,moz-extension://*
+PV_EXTENSION_ORIGINS=chrome-extension://<published-id>,moz-extension://<your-firefox-uuid>
 ```
 
 Bare `*` (sam wildcard, bez schematu) jest ZAWSZE odrzucany — `pv-server`
@@ -180,7 +172,7 @@ docker compose up -d
 | Kontener działa, ale `curl http://<host>:8620/healthz` nic nie zwraca z zewnątrz maszyny | `PV_ADDR` przypadkowo nadpisany na `127.0.0.1:8620` (np. przez ręczną edycję `docker-compose.yml`) | Usuń nadpisanie — obraz domyślnie wiąże się na `0.0.0.0:8620`, co jest wymagane do osiągalności z hosta |
 | Po `docker compose down && docker compose up` dane zniknęły | Wolumen `pv_data` nie został użyty (np. uruchomiono `docker run` bez `-v`) | Zawsze uruchamiaj przez `docker compose up` albo jawnie `-v pv_data:/data` — obraz deklaruje `VOLUME /data`, ale nazwany wolumen trzeba utworzyć raz i konsekwentnie podłączać |
 | Passkey/PRF ceremonie failują tylko za reverse proxy, działają lokalnie | Brakujące nagłówki upgrade WebSocket albo zły `PV_ORIGIN` względem faktycznego adresu widzianego przez przeglądarkę | Sprawdź konfigurację w `deploy/` (nginx/Caddy) i upewnij się, że `PV_ORIGIN` odpowiada dokładnie temu, co widzi przeglądarka (łącznie ze schematem) |
-| Rozszerzenie we Firefoksie pokazuje błąd "CORS Missing Allow Origin" / nie może połączyć się z serwerem mimo że serwer działa | `PV_EXTENSION_ORIGINS` nie zawiera originu tego rozszerzenia (`moz-extension://<uuid>`) | Zobacz sekcję "`PV_EXTENSION_ORIGINS` — CORS dla rozszerzenia przeglądarki" wyżej — dodaj `moz-extension://*` (lub konkretny UUID) do `PV_EXTENSION_ORIGINS` |
+| Rozszerzenie we Firefoksie pokazuje błąd "CORS Missing Allow Origin" / nie może połączyć się z serwerem mimo że serwer działa | `PV_EXTENSION_ORIGINS` nie zawiera originu tego rozszerzenia (`moz-extension://<uuid>`) | Zobacz sekcję "`PV_EXTENSION_ORIGINS` — CORS dla rozszerzenia przeglądarki" wyżej — dodaj SWÓJ konkretny `moz-extension://<uuid>` do `PV_EXTENSION_ORIGINS` |
 
 ## Weryfikacja end-to-end za reverse proxy
 

@@ -128,24 +128,24 @@ pub async fn register_and_login(app: &axum::Router, email: &str) -> String {
     body["session_token"].as_str().unwrap().to_string()
 }
 
-/// Binds a real `TcpListener` and serves `app` from it in a background task,
-/// returning the bound port. `oneshot()` cannot perform a real HTTP Upgrade
-/// handshake (05-RESEARCH.md Pitfall 2), so `tests/sync.rs`'s WS tests need
-/// an actual socket to connect `tokio_tungstenite::connect_async` against.
+/// Binds a real `TcpListener` and serves the given `app` `Router` from it in
+/// a background task, returning `(app, port)`. `oneshot()` cannot perform a
+/// real HTTP Upgrade handshake (05-RESEARCH.md Pitfall 2) and cannot prove a
+/// genuinely bound-socket preflight (Task 2, 19-01-PLAN.md), so both
+/// `tests/sync.rs`'s WS tests and `tests/cors_preflight.rs` need an actual
+/// socket to connect against.
 ///
 /// CRITICAL: the caller must keep using the SAME `app` `Router` clone this
-/// function was given for driving mutations via `.oneshot(...)` — `Router`
-/// is cheaply `Clone` (internally `Arc`-based), so both clones share the
-/// exact same `AppState`/`SyncHub`. Calling `test_app(pool)` a SECOND time
-/// instead would construct a DIFFERENT `AppState`/`SyncHub` and silently
-/// break every WS test (a mutation would publish to a hub the WS connection
-/// never subscribed to).
+/// function was given for driving further requests — `Router` is cheaply
+/// `Clone` (internally `Arc`-based), so both clones share the exact same
+/// `AppState`. Building a fresh router instead would construct a DIFFERENT
+/// `AppState` and silently diverge from what's actually being served.
 ///
-/// `#[allow(dead_code)]`: only `tests/sync.rs` calls this helper (mirrors
-/// `register_and_login`'s own treatment above).
+/// `#[allow(dead_code)]`: not every integration test binary that compiles
+/// this `common` module calls this helper (mirrors `register_and_login`'s
+/// own treatment above).
 #[allow(dead_code)]
-pub async fn test_server(pool: sqlx::SqlitePool) -> (axum::Router, u16) {
-    let app = test_app(pool);
+pub async fn serve_router(app: axum::Router) -> (axum::Router, u16) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind ephemeral port");
     let port = listener.local_addr().unwrap().port();
     let serve_app = app.clone();
@@ -153,4 +153,45 @@ pub async fn test_server(pool: sqlx::SqlitePool) -> (axum::Router, u16) {
         axum::serve(listener, serve_app).await.expect("test server crashed");
     });
     (app, port)
+}
+
+/// `test_server(pool)` is `serve_router(test_app(pool))` — kept as a named
+/// wrapper since `tests/sync.rs` calls it this way throughout.
+///
+/// `#[allow(dead_code)]`: only `tests/sync.rs` calls this helper (mirrors
+/// `register_and_login`'s own treatment above).
+#[allow(dead_code)]
+pub async fn test_server(pool: sqlx::SqlitePool) -> (axum::Router, u16) {
+    serve_router(test_app(pool)).await
+}
+
+/// Same `AppState` construction as `test_app`, but calls
+/// `pv_server::routes::build_cors_layer` directly and threads the result
+/// through `router_with_cors` instead of going through the env-reading
+/// `cors_layer()` wrapper — mirrors `test_app_with_static_dir`'s established
+/// `test_app_with_X()` precedent and avoids mutating process env vars under
+/// parallel `cargo test` (19-01-PLAN.md Open Question 2's resolution). Used
+/// by `tests/cors_preflight.rs` (SEC-01's real-server preflight proof).
+///
+/// `#[allow(dead_code)]`: only `tests/cors_preflight.rs` calls this helper
+/// (mirrors `test_app_with_static_dir`'s own treatment above).
+#[allow(dead_code)]
+pub fn test_app_with_cors(pool: sqlx::SqlitePool, extension_origins_csv: &str) -> axum::Router {
+    let webauthn = pv_server::build_webauthn("localhost", "http://localhost:3000")
+        .expect("test webauthn instance");
+    let dummy_secret: [u8; 32] =
+        pv_core::keys::random_bytes(32).try_into().expect("random_bytes(32) must return 32 bytes");
+    let cors = pv_server::routes::build_cors_layer(false, extension_origins_csv);
+    pv_server::routes::router_with_cors(
+        pv_server::AppState {
+            db: pool,
+            session_ttl_hours: 168,
+            webauthn,
+            rp_id: "localhost".to_string(),
+            dummy_secret,
+            sync_hub: Default::default(),
+        },
+        None,
+        cors,
+    )
 }

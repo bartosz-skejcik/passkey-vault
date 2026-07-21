@@ -12,7 +12,10 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use axum::{
-    http::{request::Parts as RequestParts, HeaderValue},
+    http::{
+        header::{AUTHORIZATION, CONTENT_TYPE},
+        HeaderValue,
+    },
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
@@ -31,6 +34,16 @@ use crate::AppState;
 /// warning log — never a panic — which is also the path every existing
 /// integration test exercises via `router(state, None)`.
 pub fn router(state: AppState, static_dir: Option<PathBuf>) -> Router {
+    router_with_cors(state, static_dir, cors_layer())
+}
+
+/// Same route/state wiring as `router()`, but takes a pre-built `CorsLayer`
+/// instead of reading it from process env via `cors_layer()`. `router()` is
+/// a thin wrapper over this. Exists so integration tests (`test_app_with_cors`
+/// in `tests/common/mod.rs`) can exercise `build_cors_layer()`'s output
+/// directly against a real router, without mutating process-global env vars
+/// (which would be flaky under parallel `cargo test`).
+pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: CorsLayer) -> Router {
     let api = Router::new()
         .route("/healthz", get(healthz))
         .route("/api/auth/prelogin", post(auth::prelogin))
@@ -62,7 +75,7 @@ pub fn router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/api/sessions", get(sessions::list))
         .route("/api/sessions/{id}", delete(sessions::revoke))
         .with_state(state)
-        .layer(cors_layer());
+        .layer(cors);
 
     match static_dir.filter(|d| d.is_dir()) {
         Some(dir) => {
@@ -109,7 +122,7 @@ fn cors_layer() -> CorsLayer {
 /// `cargo test` execution. `extension_origins_csv` is a comma-separated
 /// list of allowed origins, e.g. "chrome-extension://<id>,moz-extension://<id>"
 /// (CONTEXT.md D-08 — additive to, never replacing, PV_DEV_CORS).
-fn build_cors_layer(dev_cors_enabled: bool, extension_origins_csv: &str) -> CorsLayer {
+pub fn build_cors_layer(dev_cors_enabled: bool, extension_origins_csv: &str) -> CorsLayer {
     if dev_cors_enabled {
         return CorsLayer::permissive();
     }
@@ -123,66 +136,22 @@ fn build_cors_layer(dev_cors_enabled: bool, extension_origins_csv: &str) -> Cors
         Ok(parsed) => parsed,
         Err(e) => {
             tracing::error!(error = %e, "PV_EXTENSION_ORIGINS is invalid — refusing to build a CORS allowlist from it");
-            ParsedExtensionOrigins { concrete: Vec::new(), allow_moz_wildcard: false }
+            ParsedExtensionOrigins { concrete: Vec::new() }
         }
     };
-    if parsed.concrete.is_empty() && !parsed.allow_moz_wildcard {
+    if parsed.concrete.is_empty() {
         CorsLayer::new() // unchanged existing behavior when unset
-    } else if parsed.allow_moz_wildcard {
-        // D-10 (13-CONTEXT.md ADDENDUM, Bartek-approved tech-debt): a
-        // scheme-scoped wildcard PATTERN for Firefox's per-install
-        // `moz-extension://<uuid>` origin, implemented via a real
-        // `AllowOrigin::predicate` — never by loosening the bare-`*`
-        // rejection above (WR-07 stays intact; see parse_extension_origins).
-        // Logged as ACTIVE + TECH-DEBT (tracked in STATE.md Deferred Items)
-        // because CORS is not this API's auth boundary (every
-        // state-changing route still requires a bearer token), but a
-        // concrete-origin-only config is hostile UX given Firefox's
-        // per-profile UUID churn.
-        tracing::warn!(
-            concrete_count = parsed.concrete.len(),
-            "CORS allowlist active with moz-extension://* wildcard PATTERN (D-10 tech-debt — \
-             see STATE.md Deferred Items; to be replaced with per-install concrete-origin \
-             configuration later)"
-        );
-        let concrete = parsed.concrete;
-        CorsLayer::new()
-            .allow_origin(AllowOrigin::predicate(move |origin: &HeaderValue, _parts: &RequestParts| {
-                concrete.iter().any(|c| c == origin) || is_well_formed_moz_extension_origin(origin)
-            }))
-            .allow_methods(Any)
-            .allow_headers(Any)
     } else {
         tracing::info!(count = parsed.concrete.len(), "CORS allowlist active for extension origins");
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(parsed.concrete))
             .allow_methods(Any)
-            .allow_headers(Any)
+            // SEC-01: an explicit allowlist, never `Any` — Firefox does not
+            // treat `Access-Control-Allow-Headers: *` as covering
+            // `Authorization` on a credentialed preflight, so the wildcard
+            // silently broke the exact request the extension needs.
+            .allow_headers([AUTHORIZATION, CONTENT_TYPE])
     }
-}
-
-/// Returns `true` if `origin` is a syntactically well-formed
-/// `moz-extension://<uuid>` origin — the "scheme check + well-formed host"
-/// gate D-10's risk acceptance depends on: this must never accept an
-/// unbounded `moz-extension://*` glob, only a real UUID-shaped origin.
-fn is_well_formed_moz_extension_origin(origin: &HeaderValue) -> bool {
-    let Ok(s) = origin.to_str() else { return false };
-    let Some(rest) = s.strip_prefix("moz-extension://") else { return false };
-    if rest.len() != 36 {
-        return false;
-    }
-    let bytes = rest.as_bytes();
-    for (i, b) in bytes.iter().enumerate() {
-        let is_hyphen_pos = matches!(i, 8 | 13 | 18 | 23);
-        if is_hyphen_pos {
-            if *b != b'-' {
-                return false;
-            }
-        } else if !b.is_ascii_hexdigit() {
-            return false;
-        }
-    }
-    true
 }
 
 /// The ONE parser for `PV_EXTENSION_ORIGINS`, shared by `Config::validate()`
@@ -209,25 +178,20 @@ fn is_well_formed_moz_extension_origin(origin: &HeaderValue) -> bool {
 /// An unset/empty value is NOT an error — it is the documented default
 /// (no CORS layer), so this returns an empty result for it.
 ///
-/// D-10 (13-CONTEXT.md ADDENDUM, Bartek-approved tech-debt): the literal
-/// entry `moz-extension://*` is a deliberate, scheme-scoped wildcard
-/// PATTERN — not a general wildcard mechanism — for Firefox's per-install
-/// `moz-extension://<uuid>` origin, which rotates per profile and makes a
-/// concrete-origin-only allowlist hostile UX for self-hosters. It is
-/// recognized as its own case (`allow_moz_wildcard`), kept OUT of
-/// `concrete` (it can never equal a real request's Origin header via exact
-/// match), and every OTHER wildcard shape (`chrome-extension://*`,
-/// `https://*`, `moz-extension://*/*`, etc.) remains a NEW fatal case —
-/// this keeps the carve-out exactly one pattern wide.
+/// D-10's `moz-extension://*` scheme-scoped wildcard carve-out (13-CONTEXT.md
+/// ADDENDUM) was removed by SEC-02 (Phase 19): every origin, including
+/// Firefox's per-install `moz-extension://<uuid>`, must now be a CONCRETE
+/// allowlist entry. There is no wildcard mechanism left in this parser —
+/// `moz-extension://*` falls through to the same generic-wildcard `bail!`
+/// path as any other unsupported wildcard shape (`chrome-extension://*`,
+/// `https://*`, etc.).
 #[derive(Debug)]
 pub struct ParsedExtensionOrigins {
     pub concrete: Vec<HeaderValue>,
-    pub allow_moz_wildcard: bool,
 }
 
 pub fn parse_extension_origins(extension_origins_csv: &str) -> Result<ParsedExtensionOrigins> {
     let mut concrete = Vec::new();
-    let mut allow_moz_wildcard = false;
     for raw in extension_origins_csv.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         if raw == "*" {
             bail!(
@@ -238,16 +202,11 @@ pub fn parse_extension_origins(extension_origins_csv: &str) -> Result<ParsedExte
                  CORS for local development."
             );
         }
-        if raw == "moz-extension://*" {
-            allow_moz_wildcard = true;
-            continue;
-        }
         if raw.contains('*') {
             bail!(
-                "PV_EXTENSION_ORIGINS entry {:?} is not a supported wildcard — only the exact \
-                 literal \"moz-extension://*\" is accepted as a scheme-scoped wildcard pattern \
-                 (D-10 tech-debt, tracked in STATE.md). Every other origin must be a CONCRETE \
-                 value, e.g. chrome-extension://<id> or moz-extension://<uuid>.",
+                "PV_EXTENSION_ORIGINS entry {:?} is not a supported wildcard — every origin must \
+                 be CONCRETE, e.g. chrome-extension://<id> or moz-extension://<uuid>. Per-install \
+                 concrete origins are the only supported mechanism.",
                 raw
             );
         }
@@ -260,7 +219,7 @@ pub fn parse_extension_origins(extension_origins_csv: &str) -> Result<ParsedExte
         })?;
         concrete.push(value);
     }
-    Ok(ParsedExtensionOrigins { concrete, allow_moz_wildcard })
+    Ok(ParsedExtensionOrigins { concrete })
 }
 
 async fn healthz() -> Json<serde_json::Value> {
@@ -390,51 +349,54 @@ mod tests {
         assert_eq!(acao, None);
     }
 
-    // --- D-10: moz-extension://* scheme-scoped wildcard pattern ----------
+    // --- SEC-02: moz-extension://* wildcard removed, concrete origins only ---
 
     #[test]
-    fn parse_extension_origins_moz_wildcard_sets_flag_with_empty_concrete() {
-        let parsed = parse_extension_origins("moz-extension://*").unwrap();
-        assert!(parsed.allow_moz_wildcard);
-        assert!(parsed.concrete.is_empty());
+    fn parse_extension_origins_rejects_other_wildcard_shapes() {
+        // moz-extension://* is included here as a 4th case per the plan's
+        // instruction to fold it into this existing test rather than keep a
+        // separate D-10 test for it — it now falls through to the SAME
+        // generic-wildcard bail! branch as every other unsupported shape.
+        assert!(parse_extension_origins("chrome-extension://*").is_err());
+        assert!(parse_extension_origins("https://*").is_err());
+        assert!(parse_extension_origins("moz-extension://*/*").is_err());
+        assert!(parse_extension_origins("moz-extension://*").is_err());
     }
 
-    #[tokio::test]
-    async fn build_cors_layer_moz_wildcard_grants_arbitrary_moz_extension_uuid_origin() {
-        let layer = build_cors_layer(false, "moz-extension://*");
-        let acao =
-            acao_header_for(layer, "moz-extension://11111111-2222-3333-4444-555555555555").await;
-        assert_eq!(
-            acao.as_deref(),
-            Some("moz-extension://11111111-2222-3333-4444-555555555555")
+    #[test]
+    fn parse_extension_origins_moz_wildcard_fails_with_the_same_error_shape_as_chrome_wildcard() {
+        // ASSUMPTION truth: re-submitting the literal moz-extension://*
+        // fails loudly through the SAME generic-wildcard bail! path
+        // chrome-extension://*/https://* already use — not silently
+        // accepted, not silently dropped, and no D-10/wildcard-carve-out
+        // language survives in the message.
+        let moz_err = parse_extension_origins("moz-extension://*").unwrap_err();
+        let chrome_err = parse_extension_origins("chrome-extension://*").unwrap_err();
+        let moz_msg = moz_err.to_string();
+        let chrome_msg = chrome_err.to_string();
+        assert!(moz_msg.contains("PV_EXTENSION_ORIGINS"), "message: {moz_msg}");
+        assert!(chrome_msg.contains("PV_EXTENSION_ORIGINS"), "message: {chrome_msg}");
+        assert!(
+            !moz_msg.contains("D-10") && !moz_msg.to_lowercase().contains("scheme-scoped"),
+            "no D-10/wildcard-carve-out language may survive: {moz_msg}"
         );
     }
 
     #[tokio::test]
-    async fn build_cors_layer_moz_wildcard_denies_malformed_moz_extension_origin() {
+    async fn build_cors_layer_moz_wildcard_no_longer_grants_any_moz_extension_origin() {
+        // Mirrors build_cors_layer_never_panics_on_a_malformed_entry's shape:
+        // an invalid PV_EXTENSION_ORIGINS entry degrades to no ACAO header,
+        // same as any other malformed/unsupported entry.
         let layer = build_cors_layer(false, "moz-extension://*");
-        let acao = acao_header_for(layer, "moz-extension://not-a-uuid").await;
-        assert_eq!(acao, None);
-    }
-
-    #[tokio::test]
-    async fn build_cors_layer_moz_wildcard_denies_unrelated_origin() {
-        let layer = build_cors_layer(false, "moz-extension://*");
-        let acao = acao_header_for(layer, "https://evil.example").await;
-        assert_eq!(acao, None);
-    }
-
-    #[test]
-    fn parse_extension_origins_rejects_other_wildcard_shapes() {
-        assert!(parse_extension_origins("chrome-extension://*").is_err());
-        assert!(parse_extension_origins("https://*").is_err());
-        assert!(parse_extension_origins("moz-extension://*/*").is_err());
+        let acao =
+            acao_header_for(layer, "moz-extension://11111111-2222-3333-4444-555555555555").await;
+        assert_eq!(acao, None, "the wildcard must no longer grant any moz-extension origin");
     }
 
     #[test]
     fn parse_extension_origins_bare_wildcard_still_rejected_with_pv_dev_cors_message() {
-        // Regression guard: the new moz-extension://* branch must not
-        // accidentally swallow the pre-existing bare-`*` fatal case.
+        // Regression guard: removing the moz-extension://* branch must not
+        // disturb the pre-existing bare-`*` fatal case.
         let err = parse_extension_origins("*").unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("PV_EXTENSION_ORIGINS"));
@@ -442,24 +404,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_cors_layer_mixed_concrete_and_moz_wildcard_coexist() {
-        let layer =
-            build_cors_layer(false, "chrome-extension://abcdefghijklmnop,moz-extension://*");
-        let chrome_acao = acao_header_for(layer, "chrome-extension://abcdefghijklmnop").await;
-        assert_eq!(chrome_acao.as_deref(), Some("chrome-extension://abcdefghijklmnop"));
-
-        let layer2 =
-            build_cors_layer(false, "chrome-extension://abcdefghijklmnop,moz-extension://*");
-        let moz_acao =
-            acao_header_for(layer2, "moz-extension://11111111-2222-3333-4444-555555555555").await;
-        assert_eq!(
-            moz_acao.as_deref(),
-            Some("moz-extension://11111111-2222-3333-4444-555555555555")
-        );
-
-        let layer3 =
-            build_cors_layer(false, "chrome-extension://abcdefghijklmnop,moz-extension://*");
-        let unrelated_acao = acao_header_for(layer3, "https://evil.example").await;
-        assert_eq!(unrelated_acao, None);
+    async fn build_cors_layer_accepts_a_concrete_moz_extension_uuid_origin() {
+        // Edge-probe: a CONCRETE moz-extension://<uuid> origin (not the
+        // wildcard) is accepted via AllowOrigin::list — unchanged mechanism,
+        // now the ONLY path for moz-extension:// origins.
+        let uuid_origin = "moz-extension://11111111-2222-3333-4444-555555555555";
+        let layer = build_cors_layer(false, uuid_origin);
+        let acao = acao_header_for(layer, uuid_origin).await;
+        assert_eq!(acao.as_deref(), Some(uuid_origin));
     }
 }
