@@ -413,7 +413,17 @@ Plans:
   2. Every manual real-Firefox probe (server-unlock, provider-corruption, request-xray, CSP-strict) is wired to its own npm script and documented as a harness lane — none is reachable only by a hand-typed command anymore.
   3. A Rust unit test asserts base64url byte shape for every binary WebAuthn response field, and fails if the serialization path (e.g. `serialize_bytes_as_base64_string`) regresses to a bare number array.
 
-**Plans**: TBD
+**Plans:** 4 plans
+Plans:
+**Wave 1**
+
+- [ ] 20-01-PLAN.md — QA-04: Rust byte-shape regression test for pv-provider's WebAuthn response serialization (crates/pv-provider/tests/response_shape.rs)
+- [ ] 20-02-PLAN.md — QA-02: wire probe-request-xray.cjs + probe-provider-corruption.cjs to npm scripts, document all 6 Firefox harness lanes in README
+- [ ] 20-03-PLAN.md — QA-02/todo: shared Firefox profile pref-injection helper (suppress macOS passkey sheet) + live-Firefox proof + todo resolution
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 20-04-PLAN.md — QA-01: .github/workflows/ci.yml (rust/web/extension/supply-chain jobs) + web/package.json typecheck script
 
 ## Progress
 
