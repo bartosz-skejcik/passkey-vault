@@ -1,0 +1,30 @@
+{
+  "GEOM-CEREMONY-SIZE": {
+    "status": "PASS",
+    "notes": "observed=480x640, expected=480x640"
+  },
+  "GEOM-CEREMONY-POSITION": {
+    "status": "PASS",
+    "notes": "ceremony window: observed=(404,194) expected=(404,194) delta=(0,0) tolerance=5px"
+  },
+  "GEOM-CEREMONY-CLOSE": {
+    "status": "PASS",
+    "notes": "ceremony window handle present after submit=false"
+  },
+  "GEOM-CONSENT-SIZE": {
+    "status": "PASS",
+    "notes": "observed=380x460, expected=380x460"
+  },
+  "GEOM-CONSENT-POSITION": {
+    "status": "PASS",
+    "notes": "consent window: observed=(454,284) expected=(454,284) delta=(0,0) tolerance=5px"
+  },
+  "GEOM-CONSENT-CLOSE-CONFIRM": {
+    "status": "PASS",
+    "notes": "consent window handle present after confirm=false"
+  },
+  "GEOM-CONSENT-CLOSE-DECLINE": {
+    "status": "PASS",
+    "notes": "consent window handle present after decline=false"
+  }
+}
