@@ -3,9 +3,9 @@ phase: 17
 slug: shared-component-visual-alignment
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
 # audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: true) (#2117)
-status: draft
+status: validated
 nyquist_compliant: true
-wave_0_complete: false
+wave_0_complete: true
 created: 2026-07-21
 ---
 
@@ -41,14 +41,14 @@ created: 2026-07-21
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 17-01-01 | 01 | 1 | DS-03 | supply-chain pins | pv-ui local node_modules pins byte-identical to consumer locks | install+build | pv-ui install + both consumer tsc --noEmit | ✅ | ⬜ pending |
-| 17-01-02 | 01 | 1 | DS-03 | — | @source scanning proof (classes survive in compiled CSS) | build smoke | probe class present in both compiled CSS outputs | ✅ | ⬜ pending |
-| 17-02-01 | 02 | 1 | DS-04, UX-01 | — | tokens land inside existing theme blocks (rewrite adapter covers them) | source+build | grep --pv-tile-bg/-fg in tokens.css both theme blocks; ext vitest | ✅ | ⬜ pending |
-| 17-02-02 | 02 | 1 | DS-04, UX-01 | scoped CSS prohibitions | only .pv-row-icon-tile/.pv-row-icon change; NordPass literals untouched | source diff | scoped grep + git diff scope assert | ✅ | ⬜ pending |
-| 17-03-01 | 03 | 2 | DS-03 | zero-knowledge favicon rule | direct-to-domain favicon fetch + no-referrer preserved verbatim | unit+build | both vitest suites + both tsc | ✅ | ⬜ pending |
-| 17-03-02 | 03 | 2 | DS-03 | — | both consumers collapse to shims, no second implementation | grep+unit | duplicate-implementation grep + suites | ✅ | ⬜ pending |
-| 17-04-01 | 04 | 3 | DS-03, DS-04, UX-01 | crypto-free aggregate | overlay-wide design-constant audit + crypto grep + full chains | full suite | both vitest+tsc+builds + overlay audit grep | ✅ | ⬜ pending |
-| 17-04-02 | 04 | 3 | UX-01 | — | visual parity across 4 surfaces, both themes | visual (Playwright) | computed-style cross-check + screenshots to uat-screenshots/ | ✅ | ⬜ pending |
+| 17-01-01 | 01 | 1 | DS-03 | supply-chain pins | pv-ui local node_modules pins byte-identical to consumer locks | install+build | pv-ui install + both consumer tsc --noEmit | ✅ | ✅ green |
+| 17-01-02 | 01 | 1 | DS-03 | — | @source scanning proof (classes survive in compiled CSS) | build smoke | probe class present in both compiled CSS outputs | ✅ | ✅ green |
+| 17-02-01 | 02 | 1 | DS-04, UX-01 | — | tokens land inside existing theme blocks (rewrite adapter covers them) | source+build | grep --pv-tile-bg/-fg in tokens.css both theme blocks; ext vitest | ✅ | ✅ green |
+| 17-02-02 | 02 | 1 | DS-04, UX-01 | scoped CSS prohibitions | only .pv-row-icon-tile/.pv-row-icon change; NordPass literals untouched | source diff | scoped grep + git diff scope assert | ✅ | ✅ green |
+| 17-03-01 | 03 | 2 | DS-03 | zero-knowledge favicon rule | direct-to-domain favicon fetch + no-referrer preserved verbatim | unit+build | both vitest suites + both tsc | ✅ | ✅ green |
+| 17-03-02 | 03 | 2 | DS-03 | — | both consumers collapse to shims, no second implementation | grep+unit | duplicate-implementation grep + suites | ✅ | ✅ green |
+| 17-04-01 | 04 | 3 | DS-03, DS-04, UX-01 | crypto-free aggregate | overlay-wide design-constant audit + crypto grep + full chains | full suite | both vitest+tsc+builds + overlay audit grep | ✅ | ✅ green |
+| 17-04-02 | 04 | 3 | UX-01 | — | visual parity across 4 surfaces, both themes | visual (Playwright) | computed-style cross-check + screenshots to uat-screenshots/ | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -56,8 +56,8 @@ created: 2026-07-21
 
 ## Wave 0 Requirements
 
-- [ ] `@source` directive for `packages/pv-ui/components/` in BOTH consumers' Tailwind CSS entry (web `globals.css` missing it; extension `style.css` needs the formalized line) — must land before the shared component or classes silently drop
-- [ ] pv-ui peer-dep resolution fix (Option A: pv-ui-local node_modules) — must land before any `.tsx` import resolves
+- [x] `@source` directive for `packages/pv-ui/components/` in BOTH consumers' Tailwind CSS entry (web `globals.css` missing it; extension `style.css` needs the formalized line) — must land before the shared component or classes silently drop
+- [x] pv-ui peer-dep resolution fix (Option A: pv-ui-local node_modules) — must land before any `.tsx` import resolves
 
 ---
 
@@ -79,3 +79,15 @@ created: 2026-07-21
 - [x] `nyquist_compliant: true` set in frontmatter
 
 **Approval:** approved 2026-07-21 (map populated from 4 checker-verified plans; checks 8a-8d pass per plan-checker)
+
+---
+
+## Validation Audit 2026-07-21
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+
+All requirements COVERED. DS-03: shared component + shims proven by unedited suites (popup ItemIconTile.test 9/9, web ItemRow.test 28/28), zero-duplication grep, negative-control duplicate-React build proof (CR-01 fix). DS-04: overlay-wide literal audit green (exactly the 8-item allowlist); tokens in both theme blocks with 2 regression tests. UX-01: visual harness 16/16 byte-identical computed colors across web/popup/in-page in both themes + 10 committed screenshots. Final suites: web 481/481, ext 687/687, both tsc clean, wxt build green. The manual-only visual-taste item is satisfied under the standing Playwright self-validation authorization (screenshots committed for Bartek's review).
