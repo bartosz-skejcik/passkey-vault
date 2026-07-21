@@ -6,9 +6,9 @@ license.workspace = true
 description = "Shared crypto core: key hierarchy, PRF unlock, item encryption. WASM-compatible."
 
 [dependencies]
-argon2 = "0.5"
-chacha20poly1305 = "0.10"
-hkdf = "0.12"
+argon2 = "=0.5.3"
+chacha20poly1305 = "=0.10.1"
+hkdf = "=0.12.4"
 sha2 = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 serde.workspace = true
