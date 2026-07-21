@@ -20,11 +20,18 @@ every technique used).
 
 1. Firefox installed locally (tested against 152.0.6; any recent release
    should work — `strict_min_version` is pinned to 115.0 in `wxt.config.ts`).
-2. `pv-server` running with `PV_EXTENSION_ORIGINS` including BOTH the
-   Chrome extension id AND the `moz-extension://*` wildcard (D-10, 13-05),
-   e.g.:
+2. `pv-server` running with `PV_EXTENSION_ORIGINS` including the Chrome
+   extension id AND every lane's own concrete `moz-extension://<uuid>`
+   origin — SEC-02 (Phase 19, Plan 19-01) removed the scheme-scoped
+   `moz-extension://` wildcard fallback, so each lane's pinned UUID must be
+   listed explicitly:
+   `a1b2c3d4-e5f6-4789-a012-3456789abcde` (run-core.cjs, run-autofill-capture.cjs),
+   `b2c3d4e5-f6a7-4890-b123-456789abcdef` (probe-provider-corruption.cjs,
+   run-server-unlock.cjs), `c3d4e5f6-a7b8-4901-b234-56789abcdef0`
+   (probe-request-xray.cjs), `f6a7b8c9-d0e1-4234-a567-89abcdef0123`
+   (probe-window-geometry.cjs). One command covering all four lanes:
    ```
-   PV_EXTENSION_ORIGINS=chrome-extension://<your-chrome-id>,moz-extension://* \
+   PV_EXTENSION_ORIGINS=chrome-extension://<your-chrome-id>,moz-extension://a1b2c3d4-e5f6-4789-a012-3456789abcde,moz-extension://b2c3d4e5-f6a7-4890-b123-456789abcdef,moz-extension://c3d4e5f6-a7b8-4901-b234-56789abcdef0,moz-extension://f6a7b8c9-d0e1-4234-a567-89abcdef0123 \
      cargo run -p pv-server
    ```
 3. `npm run build:firefox` (from `extension/`) — this harness does NOT

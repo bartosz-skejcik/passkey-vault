@@ -11,7 +11,8 @@
 // Prerequisites (see README.md in this directory):
 //   - Firefox installed, pv-server running on http://localhost:8620 with
 //     PV_EXTENSION_ORIGINS including the chrome-extension:// id AND the
-//     moz-extension://* wildcard (D-10, 13-05).
+//     concrete moz-extension://<uuid> origins for every lane (see
+//     e2e-firefox/README.md -- SEC-02 removed the wildcard, Phase 19).
 //   - `npm run build:firefox` run first (this script does NOT rebuild).
 //   - The account below must exist on the target pv-server (adjust EMAIL/
 //     PASSWORD/SERVER for your own instance).
@@ -349,7 +350,7 @@ async function main() {
     `);
     await shot(driver, 'p9-sc6-cors-probe');
     record('P9-SC6', corsProbe.ok && corsProbe.status === 200 ? 'PASS' : 'FAIL',
-      `Real fetch('/healthz') from live origin ${liveOrigin} against pv-server (moz-extension://* wildcard, D-10): ${JSON.stringify(corsProbe)}`);
+      `Real fetch('/healthz') from live origin ${liveOrigin} against pv-server (concrete moz-extension://<uuid> origin allowlist, SEC-02): ${JSON.stringify(corsProbe)}`);
 
     // ================= P9-SC7: fullscreen button =================
     await ensurePopup();

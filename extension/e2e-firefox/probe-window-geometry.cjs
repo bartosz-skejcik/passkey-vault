@@ -60,10 +60,12 @@
 //
 // Prerequisites: identical to probe-request-xray.cjs/run-core.cjs (see
 // README.md) -- pv-server already running on localhost:8620 with
-// PV_EXTENSION_ORIGINS including the moz-extension://* wildcard, `npm run
-// build:firefox` already run (this script does NOT rebuild anything and
-// does NOT restart the server). Reuses the harness's existing shared
-// `uat-prf04@example.local` test account.
+// PV_EXTENSION_ORIGINS including this lane's own concrete
+// moz-extension://<uuid> origin (see e2e-firefox/README.md -- SEC-02
+// removed the wildcard, Phase 19), `npm run build:firefox` already run
+// (this script does NOT rebuild anything and does NOT restart the
+// server). Reuses the harness's existing shared `uat-prf04@example.local`
+// test account.
 'use strict';
 const path = require('path');
 const fs = require('fs');
