@@ -314,17 +314,19 @@ RUN npm ci --ignore-scripts
 | A1 | Option A (`pv-ui` gets its own local `node_modules` via a new install step) is the recommended fix, over Option B (consumer-config-only patches) | Critical Finding | If the team strongly prefers zero new install steps for architectural-purity reasons, Option B is verified to work for runtime bundling but leaves `tsc`'s peer-dep gap unresolved — a genuinely open sub-problem this research did not fully solve. This is presented as a recommendation, not a locked decision — flag for confirmation at plan/discuss time. |
 | A2 | `packages/pv-ui/components/_probe.tsx` and the uncommitted `@source` line in `extension/entrypoints/popup/style.css` are safe, intentional leftovers from a prior exploratory session (not a broken half-applied change that needs investigating as a bug) | Environment State Found | If this assumption is wrong (e.g., it's evidence of an interrupted, more consequential change), the planner should `git log`/ask before building on top of it. This research treated it purely as empirical test material and left it untouched either way. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should `pv-ui`'s peer-dependency resolution be fixed via Option A (local `node_modules` + install step) or Option B (consumer bundler config only)?**
    - What we know: Option A is fully verified to fix all three tools (Vite, Turbopack, tsc) uniformly with zero consumer config changes, at the cost of a new install step + one new Dockerfile line. Option B fixes only the two runtime bundlers and leaves `tsc` unresolved (with a documented dead-end already ruled out).
    - What's unclear: Whether "no build step" in CONTEXT.md's discretion note was meant to also forbid "no install step" — this wasn't anticipated when that note was written (Phase 16 never shipped a `.tsx` with peer deps).
    - Recommendation: Default to Option A unless the user has a strong reason to keep `pv-ui` install-free; surface this explicitly rather than silently picking.
+   - RESOLVED: Option A adopted (orchestrator-binding decision, Plan 17-01) — verified across all three tools; Docker web-builder angle handled explicitly in the plan. CONTEXT.md's "no build step" note forbids a TRANSPILE step, not an install step.
 
 2. **Should the pre-existing uncommitted `_probe.tsx` + `@source` line be formalized, deleted, or replaced?**
    - What we know: `_probe.tsx` is currently untracked, unused, and not wired to anything; the `@source` line in the popup's `style.css` is uncommitted and, per this research, correct and necessary — but `web/src/app/globals.css` is missing the equivalent line entirely.
    - What's unclear: Whether `_probe.tsx` should become a permanent Tailwind-detection regression fixture (a legitimate pattern — a trivial, arbitrary-value-bearing `.tsx` file whose presence in the compiled CSS proves the `@source` scanning still works) or simply be deleted once the real `ItemIconTile.tsx` exists and serves that role implicitly.
    - Recommendation: Add the matching `@source` line to `web/src/app/globals.css` in Wave 0; decide `_probe.tsx`'s fate as part of the same task (delete is the simpler default, since the real promoted component supersedes its purpose).
+   - RESOLVED: leftovers reverted from the main checkout by the orchestrator (probe deleted, uncommitted @source line dropped); plans add fresh `@source` directives to BOTH consumers' CSS entries as a Wave-1 prerequisite (Plan 17-01).
 
 ## Environment Availability
 

@@ -2,9 +2,9 @@
 phase: 17
 slug: shared-component-visual-alignment
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
-# audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: false) (#2117)
+# audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: true) (#2117)
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-07-21
 ---
@@ -41,7 +41,14 @@ created: 2026-07-21
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| (filled at plan time by planner) | — | — | DS-03, DS-04, UX-01 | — | favicon fetch stays direct-to-domain, no proxy | build+unit+visual | see commands above | ✅ | ⬜ pending |
+| 17-01-01 | 01 | 1 | DS-03 | supply-chain pins | pv-ui local node_modules pins byte-identical to consumer locks | install+build | pv-ui install + both consumer tsc --noEmit | ✅ | ⬜ pending |
+| 17-01-02 | 01 | 1 | DS-03 | — | @source scanning proof (classes survive in compiled CSS) | build smoke | probe class present in both compiled CSS outputs | ✅ | ⬜ pending |
+| 17-02-01 | 02 | 1 | DS-04, UX-01 | — | tokens land inside existing theme blocks (rewrite adapter covers them) | source+build | grep --pv-tile-bg/-fg in tokens.css both theme blocks; ext vitest | ✅ | ⬜ pending |
+| 17-02-02 | 02 | 1 | DS-04, UX-01 | scoped CSS prohibitions | only .pv-row-icon-tile/.pv-row-icon change; NordPass literals untouched | source diff | scoped grep + git diff scope assert | ✅ | ⬜ pending |
+| 17-03-01 | 03 | 2 | DS-03 | zero-knowledge favicon rule | direct-to-domain favicon fetch + no-referrer preserved verbatim | unit+build | both vitest suites + both tsc | ✅ | ⬜ pending |
+| 17-03-02 | 03 | 2 | DS-03 | — | both consumers collapse to shims, no second implementation | grep+unit | duplicate-implementation grep + suites | ✅ | ⬜ pending |
+| 17-04-01 | 04 | 3 | DS-03, DS-04, UX-01 | crypto-free aggregate | overlay-wide design-constant audit + crypto grep + full chains | full suite | both vitest+tsc+builds + overlay audit grep | ✅ | ⬜ pending |
+| 17-04-02 | 04 | 3 | UX-01 | — | visual parity across 4 surfaces, both themes | visual (Playwright) | computed-style cross-check + screenshots to uat-screenshots/ | ✅ | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -64,11 +71,11 @@ created: 2026-07-21
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 300s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references (both Wave-0 items are Plan 17-01's own tasks)
+- [x] No watch-mode flags
+- [x] Feedback latency < 300s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-07-21 (map populated from 4 checker-verified plans; checks 8a-8d pass per plan-checker)
