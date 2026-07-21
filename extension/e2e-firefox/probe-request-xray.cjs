@@ -107,7 +107,8 @@ const SHOTS = process.env.PV_FF_SHOTS_DIR || path.join(__dirname, '.ff-screensho
 const RESULTS_FILE = path.join(SHOTS, 'results-probe-request-xray.json');
 const SERVER = process.env.PV_SERVER || 'http://localhost:8620';
 const EMAIL = process.env.PV_UAT_EMAIL || 'uat-prf04@example.local';
-const PASSWORD = process.env.PV_UAT_PASSWORD || 'CorrectHorseBattery-UAT-2026!';
+const PASSWORD = process.env.PV_UAT_PASSWORD;
+if (!PASSWORD) throw new Error('PV_UAT_PASSWORD must be set');
 const RUN = String(Date.now() % 100000);
 const GECKO_ID = 'passkey-vault@extension.local';
 const FIXED_UUID = process.env.PV_FF_FIXED_UUID || 'c3d4e5f6-a7b8-4901-b234-56789abcdef0';

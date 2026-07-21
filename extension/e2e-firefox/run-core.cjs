@@ -33,7 +33,8 @@ const SHOTS = process.env.PV_FF_SHOTS_DIR || path.join(__dirname, '.ff-screensho
 const RESULTS_FILE = path.join(SHOTS, 'results-core.json');
 const SERVER = process.env.PV_SERVER || 'http://localhost:8620';
 const EMAIL = process.env.PV_UAT_EMAIL || 'uat-prf04@example.local';
-const PASSWORD = process.env.PV_UAT_PASSWORD || 'CorrectHorseBattery-UAT-2026!';
+const PASSWORD = process.env.PV_UAT_PASSWORD;
+if (!PASSWORD) throw new Error('PV_UAT_PASSWORD must be set');
 const RUN = String(Date.now() % 100000);
 const GECKO_ID = 'passkey-vault@extension.local';
 // Fixed, pinned UUID (see README.md): keeps the moz-extension origin --

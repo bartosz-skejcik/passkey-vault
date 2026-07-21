@@ -42,7 +42,8 @@ const RUN = String(Date.now() % 100000);
 // A genuinely fresh, never-before-used account -- must have ZERO enrolled
 // passkeys of any kind for the no-passkeys empty-state to be reachable.
 const PROBE_EMAIL = process.env.PV_PROBE_EMAIL || `uat-noext-ff-${RUN}@example.local`;
-const PROBE_PASSWORD = process.env.PV_PROBE_PASSWORD || 'CorrectHorseBattery-Probe-2026!';
+const PROBE_PASSWORD = process.env.PV_PROBE_PASSWORD;
+if (!PROBE_PASSWORD) throw new Error('PV_PROBE_PASSWORD must be set');
 const GECKO_ID = 'passkey-vault@extension.local';
 // A DIFFERENT fixed UUID from run-core.cjs's own (a1b2c3d4-...) -- this
 // scenario uses its own dedicated profile/account, never the shared UAT
