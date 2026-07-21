@@ -114,6 +114,7 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 | getrandom 0.2 `js` (nie 0.4 `wasm_js`) | Zmierzony graf zależności: chacha20poly1305 0.10→rand_core 0.6→getrandom 0.2.17; 0.4/wasm_js dopiero po odroczonym bumpie chacha 0.11 | ✓ Good (Phase 1) |
 | TypeScript 5.9.3 (nie 7.x) | TS7 eksportuje natywny kompilator (Go) — łamie classic Compiler API workera Next.js 16 | ✓ Good (Phase 1) |
 | Tailwind v4 wymaga @tailwindcss/postcss pod Turbopackiem | Bez pluginu dyrektywy CSS-first cicho nie kompilują się (build przechodzi, strona bez styli) — złapane na ludzkim checkpoincie | ✓ Good (Phase 1) |
+| XBR-03: in-page consent panel na Firefox (closed-shadow DOM) vs. okno server-chrome | Recenzja bezpieczeństwa (DEF CON 33, Marek Toth, sierpień 2025) wykazała, że closed shadow-root daje tylko częściową ochronę przed clickjackingiem/manipulacją opacity/z-index/focus() w 11 głównych menedżerach haseł (w tym 1Password i Bitwarden) — panel in-page ponownie otworzyłby domknięte T-12-14; model okna pozostaje strukturalnie odporny | ✓ REJECT-WITH-REASON (Phase 18) |
 
 ## Evolution
 
