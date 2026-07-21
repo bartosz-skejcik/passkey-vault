@@ -31,6 +31,7 @@ const fs = require('fs');
 const EXT_ROOT = path.resolve(__dirname, '..');
 const { Builder, By, until } = require(path.join(EXT_ROOT, 'node_modules/selenium-webdriver'));
 const firefox = require(path.join(EXT_ROOT, 'node_modules/selenium-webdriver/firefox'));
+const { applyNoNativeUiPrefs } = require('./ff-profile-prefs.cjs');
 
 const EXT_DIR = path.join(EXT_ROOT, '.output/firefox-mv2');
 const PROFILE_DIR = process.env.PV_FF_SERVER_UNLOCK_PROFILE_DIR || path.join(__dirname, '.ff-profile-server-unlock');
@@ -139,6 +140,7 @@ async function main() {
   opts.addArguments('-profile', PROFILE_DIR);
   opts.setPreference('extensions.webextensions.uuids', JSON.stringify({ [GECKO_ID]: FIXED_UUID }));
   opts.setPreference('xpinstall.signatures.required', false);
+  applyNoNativeUiPrefs(opts);
   opts.windowSize({ width: 1280, height: 950 });
 
   const driver = await new Builder().forBrowser('firefox').setFirefoxOptions(opts).build();
