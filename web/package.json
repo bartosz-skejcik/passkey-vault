@@ -6,6 +6,7 @@
     "build": "next build",
     "prebuild": "bash ../scripts/build-wasm.sh && (cd ../packages/pv-ui && npm ci)",
     "predev": "bash ../scripts/build-wasm.sh && (cd ../packages/pv-ui && npm ci)",
+    "compile": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {

@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+  web:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_API_BASE_URL: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            packages/pv-ui/package-lock.json
+      - name: Build pv-wasm
+        run: bash scripts/build-wasm.sh
+      - name: Install pv-ui deps
+        run: npm ci
+        working-directory: packages/pv-ui
+      - name: Install web deps
+        run: npm ci
+        working-directory: web
+      - name: Typecheck (tsc --noEmit)
+        run: npm run compile
+        working-directory: web
+      - name: Test (vitest)
+        run: npm test
+        working-directory: web
+      - name: Build (next build)
+        run: npm run build
+        working-directory: web
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            extension/package-lock.json
+            packages/pv-ui/package-lock.json
+      - name: Build pv-wasm
+        run: bash scripts/build-wasm.sh
+      - name: Install pv-ui deps
+        run: npm ci
+        working-directory: packages/pv-ui
+      - name: Install extension deps
+        run: npm ci
+        working-directory: extension
+      - name: Typecheck (tsc --noEmit)
+        run: npm run compile
+        working-directory: extension
+      - name: Test (vitest)
+        run: npm test
+        working-directory: extension
+      - name: Build (Chrome)
+        run: npm run build:chrome
+        working-directory: extension
+      - name: Build (Firefox)
+        run: npm run build:firefox
+        working-directory: extension
+      - name: Lint (web-ext, Firefox build)
+        run: npm run lint:firefox
+        working-directory: extension
+      - name: MAIN-world boundary audit
+        run: bash scripts/audit-mainworld-boundary.sh
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+      - name: Install cargo-audit
+        run: cargo install --version 0.22.2 cargo-audit --locked
+      - name: Install cargo-deny
+        run: cargo install --version 0.20.2 cargo-deny --locked
+      - name: Supply-chain check (cargo audit + cargo deny)
+        run: bash scripts/check-supply-chain.sh
