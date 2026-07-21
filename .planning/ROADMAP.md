@@ -65,7 +65,7 @@ Delivered: 30/30 requirements, all phases verified passed, cross-phase integrati
 - [x] **Phase 17: Shared Component & Visual Alignment** - `ItemIconTile` becomes a single shared React component; in-page autofill surfaces render light tiles and token-aligned styling matching the web app (completed 2026-07-21)
 - [x] **Phase 18: Firefox Window & Consent Hardening** - Ceremony/consent window centering and self-close are formalized and regression-guarded; a security review makes an explicit decision on an in-page consent alternative (completed 2026-07-21)
 - [x] **Phase 19: Server & Supply-Chain Hardening** - CORS explicitly lists `Authorization` and concrete origins, `cargo audit`/`cargo deny` + pinned toolchain, sign-count clone-detection acted on (completed 2026-07-21)
-- [ ] **Phase 20: Test Infrastructure & CI Gate** - Full-gate CI pipeline, real-Firefox probes wired to npm scripts, a permanent byte-serialization regression gate
+- [x] **Phase 20: Test Infrastructure & CI Gate** - Full-gate CI pipeline, real-Firefox probes wired to npm scripts, a permanent byte-serialization regression gate (completed 2026-07-21)
 
 ## Phase Details
 
@@ -413,7 +413,7 @@ Plans:
   2. Every manual real-Firefox probe (server-unlock, provider-corruption, request-xray, CSP-strict) is wired to its own npm script and documented as a harness lane — none is reachable only by a hand-typed command anymore.
   3. A Rust unit test asserts base64url byte shape for every binary WebAuthn response field, and fails if the serialization path (e.g. `serialize_bytes_as_base64_string`) regresses to a bare number array.
 
-**Plans:** 4/4 plans executed
+**Plans:** 4/4 plans complete
 Plans:
 **Wave 1**
 
@@ -451,4 +451,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 17. Shared Component & Visual Alignment | v0.3 | 4/4 | Complete    | 2026-07-21 |
 | 18. Firefox Window & Consent Hardening | v0.3 | 2/2 | Complete    | 2026-07-21 |
 | 19. Server & Supply-Chain Hardening | v0.3 | 3/3 | Complete    | 2026-07-21 |
-| 20. Test Infrastructure & CI Gate | v0.3 | 4/4 | In Progress|  |
+| 20. Test Infrastructure & CI Gate | v0.3 | 4/4 | Complete    | 2026-07-21 |

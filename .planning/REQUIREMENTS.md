@@ -49,10 +49,10 @@
 
 ### QA — Test Rigor & CI
 
-- [ ] **QA-01**: A CI pipeline (`.github/workflows`) runs the full gate — cargo workspace tests, extension vitest, web vitest, tsc (both), both wxt builds, web-ext lint, and the MAIN-world boundary audit — on push / PR.
-- [ ] **QA-02**: The manual real-Firefox probes (server-unlock, provider-corruption, request-xray, CSP-strict) are each wired to an npm script and documented as a harness lane — no orphan probe files reachable only by hand.
+- [x] **QA-01**: A CI pipeline (`.github/workflows`) runs the full gate — cargo workspace tests, extension vitest, web vitest, tsc (both), both wxt builds, web-ext lint, and the MAIN-world boundary audit — on push / PR.
+- [x] **QA-02**: The manual real-Firefox probes (server-unlock, provider-corruption, request-xray, CSP-strict) are each wired to an npm script and documented as a harness lane — no orphan probe files reachable only by hand.
 - [x] **QA-03**: The passkey provider has a real `webauthn-rs` round-trip test that verifies an actual assertion/attestation (real bytes, real signature verification) — not shape/`.ok`/`id`-only assertions — closing the fixture blind spot that hid the v0.2 serialization bug.
-- [ ] **QA-04**: Rust WebAuthn response serialization has a unit gate asserting base64url byte shape for every binary field, and the cross-realm harness asserts real recovered bytes (not merely presence).
+- [x] **QA-04**: Rust WebAuthn response serialization has a unit gate asserting base64url byte shape for every binary field, and the cross-realm harness asserts real recovered bytes (not merely presence).
 
 ## Future Requirements (deferred beyond v0.3)
 
@@ -95,7 +95,7 @@
 | SEC-02 | Phase 19 | Complete |
 | SEC-03 | Phase 19 | Complete |
 | SEC-04 | Phase 19 | Complete |
-| QA-01 | Phase 20 | Pending |
-| QA-02 | Phase 20 | Pending |
+| QA-01 | Phase 20 | Complete |
+| QA-02 | Phase 20 | Complete |
 | QA-03 | Phase 14 | Complete |
-| QA-04 | Phase 20 | Pending |
+| QA-04 | Phase 20 | Complete |
