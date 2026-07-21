@@ -4,8 +4,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "prebuild": "bash ../scripts/build-wasm.sh",
-    "predev": "bash ../scripts/build-wasm.sh",
+    "prebuild": "bash ../scripts/build-wasm.sh && (cd ../packages/pv-ui && npm ci)",
+    "predev": "bash ../scripts/build-wasm.sh && (cd ../packages/pv-ui && npm ci)",
     "test": "vitest run"
   },
   "dependencies": {

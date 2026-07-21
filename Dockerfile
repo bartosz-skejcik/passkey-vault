@@ -97,6 +97,7 @@ WORKDIR /app/web
 # up from this stage's WORKDIR), matching the "../packages/pv-ui"
 # relative path in web/package.json exactly.
 COPY packages/pv-ui/ /app/packages/pv-ui/
+RUN cd /app/packages/pv-ui && npm ci
 
 # Install deps first for cache reuse. --ignore-scripts is load-bearing:
 # web/package.json's prebuild/predev hooks invoke scripts/build-wasm.sh,

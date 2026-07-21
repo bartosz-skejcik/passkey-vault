@@ -9,6 +9,7 @@
    `@layer`) — this one must stay directly after `@import "tailwindcss"`
    and before `@plugin "daisyui";` below. */
 @import "pv-ui/tokens.css";
+@source "../../../packages/pv-ui/components/**/*.tsx";
 @plugin "daisyui";
 
 body {
