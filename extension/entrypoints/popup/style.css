@@ -10,6 +10,7 @@
    after `@import "tailwindcss"` and before `@plugin "daisyui";` below. */
 @import "tailwindcss";
 @import "pv-ui/tokens.css";
+@source "../../../packages/pv-ui/components/**/*.tsx";
 @plugin "daisyui";
 
 /* DM Sans, self-hosted (Group A fix): the two woff2 files below are the
