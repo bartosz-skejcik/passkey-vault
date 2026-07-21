@@ -134,6 +134,23 @@ async function shot(driver, name) {
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
+// Hoisted so the FATAL top-level `.catch` (below `main()`) can quit/close
+// them even when `main()` throws before returning `{ driver, formServer }`
+// -- see WR-03 (18-REVIEW.md): without this hoist, a mid-run throw orphans
+// the geckodriver-spawned Firefox process tree because `driver` was only a
+// local inside `main()`.
+let driver;
+let formServer;
+
+/** Best-effort `driver.quit()` that never hangs the FATAL exit path past
+ * `timeoutMs` -- a wedged geckodriver session must not block `process.exit`. */
+async function quitBounded(d, timeoutMs = 5000) {
+  if (!d) return;
+  try {
+    await Promise.race([d.quit(), sleep(timeoutMs)]);
+  } catch {}
+}
+
 async function tryFind(driver, css, timeout = 8000) {
   try {
     const el = await driver.wait(until.elementLocated(By.css(css)), timeout);
@@ -206,10 +223,10 @@ async function main() {
   opts.setPreference('xpinstall.signatures.required', false);
   opts.windowSize({ width: 1280, height: 950 });
 
-  const formServer = formServerHtml();
+  formServer = formServerHtml();
   await new Promise((resolve) => formServer.listen(FORM_PORT, resolve));
 
-  const driver = await new Builder().forBrowser('firefox').setFirefoxOptions(opts).build();
+  driver = await new Builder().forBrowser('firefox').setFirefoxOptions(opts).build();
   let popupHandle;
 
   async function openPopupTab() {
@@ -423,8 +440,18 @@ if (require.main === module) {
       process.exit(1);
     }
     process.exit(0);
-  }).catch((e) => {
+  }).catch(async (e) => {
     console.error(e);
+    // WR-03 (18-REVIEW.md): the happy path above quits `driver`/closes
+    // `formServer` itself, but a thrown error skips straight here -- without
+    // this, the geckodriver-spawned Firefox process tree (and its
+    // persistent PROFILE_DIR, visible OS window) survives as an orphan.
+    // `driver`/`formServer` are the module-level hoisted bindings `main()`
+    // assigned to (not the now-out-of-scope `{ driver, formServer }`
+    // destructured in the `.then()` above), so they are populated even when
+    // `main()` throws mid-run.
+    await quitBounded(driver);
+    try { formServer && formServer.close(); } catch {}
     process.exit(1);
   });
 }
