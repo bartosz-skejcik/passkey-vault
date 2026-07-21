@@ -3,6 +3,7 @@ name = "pv-wasm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "wasm-bindgen bindings for pv-core — thin FFI layer, no crypto logic of its own."
 
 [lib]

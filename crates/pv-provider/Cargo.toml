@@ -3,13 +3,14 @@ name = "pv-provider"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "passkey-rs soft ES256 WebAuthn authenticator + vault-backed CredentialStore adapter for the extension's passkey provider ceremony."
 
 [dependencies]
 async-trait = "0.1"
 coset = "0.4"
-passkey-authenticator = "0.5.0"
-passkey-client = "0.5.0"
+passkey-authenticator = "=0.5.0"
+passkey-client = "=0.5.0"
 # D-21 fix (.planning/debug/resolved/firefox-provider-corruption.md):
 # `passkey_types::Bytes::serialize` defaults to `serializer.serialize_bytes`
 # (a raw JSON array of byte numbers, e.g. `[1,2,3,...]` -- serde_json has no
@@ -28,7 +29,7 @@ passkey-client = "0.5.0"
 # `visit_seq`/`visit_str` both present, deserialize_any-driven) -- enabling
 # this feature changes ONLY the outbound serialize shape, and cannot break
 # any existing deserialization anywhere in this dependency graph.
-passkey-types = { version = "0.5.0", features = ["serialize_bytes_as_base64_string"] }
+passkey-types = { version = "=0.5.0", features = ["serialize_bytes_as_base64_string"] }
 pollster = "1"
 serde.workspace = true
 serde_json.workspace = true

@@ -1,0 +1,75 @@
+# deny.toml — SEC-03 supply-chain policy (Phase 19, Plan 03).
+#
+# Wired via scripts/check-supply-chain.sh (`cargo deny check`), alongside
+# `cargo audit` (RustSec advisory DB). CI wiring itself is Phase 20's job
+# (QA-01) — this file only needs to be CI-ready.
+#
+# --- Watch-list pin-review table (CODEBASE-GAPS.md Top-5 #5) ---
+# One row per crate the v0.3 codebase sweep flagged. "Direct decl" = does a
+# workspace Cargo.toml declare this crate directly (yes = exact-pinned this
+# plan's Task 2) or is it transitive-only (Cargo.lock-pin-only, no direct
+# declaration anywhere in this workspace)?
+#
+# | Crate                  | Cargo.lock version | Direct decl (crate's Cargo.toml)      | Pin action this plan                          |
+# |-------------------------|--------------------|-----------------------------------------|------------------------------------------------|
+# | webauthn-rs             | 0.5.5               | yes — pv-server                         | exact-pinned Task 2 ("=0.5.5")                  |
+# | passkey-authenticator    | 0.5.0               | yes — pv-provider                       | exact-pinned Task 2 ("=0.5.0")                  |
+# | passkey-client           | 0.5.0               | yes — pv-provider                       | exact-pinned Task 2 ("=0.5.0")                  |
+# | passkey-types            | 0.5.0               | yes — pv-provider                       | exact-pinned Task 2 ("=0.5.0")                  |
+# | argon2                   | 0.5.3               | yes — pv-core                           | exact-pinned Task 2 ("=0.5.3")                  |
+# | chacha20poly1305         | 0.10.1              | yes — pv-core                           | exact-pinned Task 2 ("=0.10.1")                 |
+# | hkdf                     | 0.12.4              | yes — pv-core                           | exact-pinned Task 2 ("=0.12.4")                 |
+# | getrandom                | 0.2.17 / 0.3.4 / 0.4.3 (3 parallel lines) | no — transitive only | Cargo.lock-pin-only; upstream-blocked by webauthn-rs + passkey-rs per CODEBASE-GAPS.md; tracked via [bans] multiple-versions = "warn" below |
+# | openssl-sys              | 0.9.117             | no — transitive only, via webauthn-rs-core | Cargo.lock-pin-only; native CVE surface tracked via `cargo audit`'s advisory scan |
+#
+# --------------------------------------------------------------------------
+
+[advisories]
+version = 2
+# Non-empty entries here MUST carry an inline justification comment — a
+# silent ignore defeats the tripwire's purpose (this plan's prohibition).
+#
+# RUSTSEC-2023-0071 (rsa 0.9.10, "Marvin Attack" timing sidechannel, no
+# fixed upgrade available upstream) is intentionally NOT listed here: it's
+# an optional dependency of sqlx-mysql, present in Cargo.lock's full
+# resolve graph but NOT actually compiled by this workspace (pv-server's
+# Cargo.toml enables only sqlx's "sqlite" feature, never "mysql" --
+# empirically confirmed via a clean `cargo build --workspace` producing no
+# sqlx-mysql/rsa build artifacts under target/debug, Task 3). cargo-deny's
+# own advisory scan is feature-resolution-aware and correctly does not
+# flag rsa at all (unlike `cargo audit`, which scans the full Cargo.lock
+# regardless of enabled features) -- adding an ignore entry here for an
+# advisory cargo-deny never raises would itself produce a persistent
+# "advisory-not-detected" warning on every run. The SAME justification is
+# recorded where it's actually needed: `.cargo/audit.toml`'s own
+# [advisories] ignore list, for `cargo audit`'s naive whole-lockfile scan.
+ignore = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# This workspace's own internal path dependencies (e.g. pv-server ->
+# pv-core, pv-wasm -> pv-core) declare no version requirement by Rust
+# convention (they're local files, not fetched from a registry) --
+# `wildcards = "deny"` otherwise flags them identically to a dangerous
+# `serde = "*"` registry wildcard, which is not the risk this policy
+# targets. `allow-wildcard-paths` scopes the deny to actual registry/git
+# wildcards only.
+allow-wildcard-paths = true
+
+[licenses]
+version = 2
+# MIT/Apache-2.0/MPL-2.0/BSD-3-Clause/ISC/Unicode-3.0 cover the third-party
+# dependency tree per research's skeleton. AGPL-3.0-only is THIS project's
+# own workspace license (all 4 crates: pv-core, pv-server, pv-provider,
+# pv-wasm -- see each crate's `license.workspace = true`) and must be
+# allowed or `cargo deny check` fails on this project's own code, every
+# run, unconditionally -- discovered running this script for real (Task 3).
+# Zlib (foldhash, a transitive hashbrown/sqlx-core dependency) is an
+# OSI-approved, FSF-free permissive license, added after encountering it
+# in this same real run.
+allow = ["MIT", "Apache-2.0", "MPL-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0", "AGPL-3.0-only", "Zlib"]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
