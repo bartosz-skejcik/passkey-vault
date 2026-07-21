@@ -286,17 +286,19 @@ browser.storage.session.onChanged.addListener((changes) => {
 
 **Note:** All claims above are tagged `[CITED]`/`[VERIFIED]` at point of use in the body text where a specific external fact is asserted; this table exists because the underlying provider (WebSearch, even cross-checked) is classified MEDIUM confidence per this project's `classify-confidence` seam, not HIGH — the security reviewer at execution time should treat the clickjacking research as strong, current, multi-source-corroborated evidence, but not re-derive project policy from a single unverified blog post without checking it still resolves.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should the new e2e-firefox probe lane also assert the "zero-one-many" double-window-open race (18-UI-SPEC.md's flagged `🧪 backstop` item)?**
    - What we know: "latest wins" (closing the prior ceremony window on a second concurrent `startServerUnlock()` call) is already implemented AND unit-tested (`server-unlock.test.ts`, "a second concurrent start closes the prior ceremony window and invalidates its nonce", mocked `windows.remove`).
    - What's unclear: There is no LIVE-Firefox regression assertion for this exact race today — 18-UI-SPEC.md explicitly flags this as a backstop, not a silent pass, and says "the plan should decide whether to add one or explicitly defer it."
    - Recommendation: Given the phase's explicit boundary (UX-02's success criteria are about centering/sizing/self-close, not concurrency races) and that unit coverage already exists, the planner can reasonably defer a live-race assertion — but should say so explicitly in the plan rather than silently omitting it, per the UI-SPEC's own instruction.
+   - RESOLVED: double-window-open race deliberately DEFERRED from the live probe (unit coverage exists; noted in Plan 18-01 must_haves backstop + Task 2 header) — an explicit, recorded deferral, not an omission.
 
 2. **What exact verdict format should `18-SECURITY.md` use for XBR-03 given it is NOT a standard threat-register phase (no new code being shipped)?**
    - What we know: CONTEXT.md's discretion note recommends a threat-model-style structure (clickjacking/tapjacking, overlay/occlusion, event-timing, closed-shadow limits, comparison to the window model), referencing Phase 12's SECURITY posture.
    - What's unclear: Whether the planner should model this as a variant of the standard `/gsd-secure-phase` SECURED/threats_open format, or a bespoke "decision-gate verdict" document, since there's no code artifact under review — the review subject is a HYPOTHETICAL panel, not shipped code.
    - Recommendation: Use the standard SECURITY.md shape (Trust Boundaries / Threat Register / Verdict) but frame every threat entry as "would apply IF the in-page panel were built" rather than "found in shipped code" — this keeps the artifact consistent with the project's existing SECURITY.md corpus (readable by the same audiences) while being honest that nothing is being shipped pending the verdict.
+   - RESOLVED: 18-SECURITY.md reuses the standard SECURITY.md table shape with hypothetical-framed threat rows citing T-12-14 (Plan 18-02 Task 1 implements exactly this).
 
 ## Environment Availability
 
