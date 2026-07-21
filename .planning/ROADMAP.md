@@ -370,12 +370,12 @@ Plans:
   2. A dedicated, fresh security review of a closed-shadow-DOM in-page consent panel (including clickjack mitigations) is completed and its verdict is written down.
   3. The requirement resolves either way: the in-page panel ships only if the review clears it without regressing the SECURED posture, or the window model is confirmed as the standing implementation with the rejection reason recorded.
 
-**Plans:** 2 plans
+**Plans:** 2/2 plans executed
 Plans:
 **Wave 1**
 
-- [ ] 18-01-PLAN.md — UX-02: window-geometry regression test case + live-Firefox probe lane (probe-window-geometry.cjs) + npm script wiring
-- [ ] 18-02-PLAN.md — XBR-03: security review verdict (18-SECURITY.md) + PROJECT.md decision entry
+- [x] 18-01-PLAN.md — UX-02: window-geometry regression test case + live-Firefox probe lane (probe-window-geometry.cjs) + npm script wiring
+- [x] 18-02-PLAN.md — XBR-03: security review verdict (18-SECURITY.md) + PROJECT.md decision entry
 
 **UI hint**: yes
 
@@ -430,6 +430,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 15. Login & Unlock Unification (Vaultwarden Model) | v0.3 | 7/7 | Complete    | 2026-07-20 |
 | 16. Design System Extraction — Logic, Types & i18n | v0.3 | 6/6 | Complete    | 2026-07-21 |
 | 17. Shared Component & Visual Alignment | v0.3 | 4/4 | Complete    | 2026-07-21 |
-| 18. Firefox Window & Consent Hardening | v0.3 | 0/TBD | Not started | - |
+| 18. Firefox Window & Consent Hardening | v0.3 | 2/2 | In Progress|  |
 | 19. Server & Supply-Chain Hardening | v0.3 | 0/TBD | Not started | - |
 | 20. Test Infrastructure & CI Gate | v0.3 | 0/TBD | Not started | - |
