@@ -15,8 +15,9 @@ import { detectCardBrand, type CardBrand } from "pv-ui/vault/cardBrand";
 //
 // Zero-knowledge / privacy rule (see this repo's CLAUDE.md "Constraints"):
 // the <img> below is a DIRECT, uncached fetch straight to the item's own
-// domain's /favicon.ico — never a third-party favicon proxy (Google/DDG/s2
-// endpoints etc.) and never routed through pv-server. `referrerPolicy=
+// domain's /favicon.ico — never a third-party favicon-relay service (the
+// well-known hosted favicon-lookup endpoints some password managers use)
+// and never routed through pv-server. `referrerPolicy=
 // "no-referrer"` keeps the request from leaking which vault item triggered
 // it. A missing/broken favicon is an entirely expected, silent case — it
 // just falls back to the neutral type-icon tile, never surfaced as an error.
@@ -121,7 +122,7 @@ export default function ItemIconTile({
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- a direct,
             uncached fetch straight to the item's own domain; next/image
-            would proxy/optimize through our own origin, which is exactly
+            would optimize/relay through our own origin, which is exactly
             the third-party-relay pattern this feature must avoid. */}
         <img
           src={`${FAVICON_URL_PREFIX}${hostname}/favicon.ico`}
