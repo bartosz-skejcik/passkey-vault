@@ -209,6 +209,144 @@ async fn unlock_start_returns_404_when_zero_prf_capable_passkeys() {
     assert_eq!(states_after, states_before, "no webauthn_states row should be created on the 404 path");
 }
 
+/// SEC-04: a deliberately regressed sign-counter assertion still fails the
+/// ceremony (unchanged, fail-closed webauthn-rs behavior — the classifier
+/// added in this plan never weakens `require_valid_counter_value`) AND now
+/// sets `counter_anomaly_at`; a genuinely fresh, never-before-unlocked
+/// passkey's normal legitimate first ceremony is NOT falsely flagged. Both
+/// branches asserted in this single test (must_haves truth 2).
+#[tokio::test]
+async fn unlock_counter_regression_flags_anomaly_while_normal_ceremony_stays_clean() {
+    let pool = common::test_pool().await;
+    let app = common::test_app(pool.clone());
+    let email = "counterregression@example.com";
+    let token = common::register_and_login(&app, email).await;
+
+    // --- Setup: enroll one PRF-capable passkey (its own prf-wrap ceremony
+    // already performs one real `perform_auth`, moving its stored counter
+    // off zero) ---
+    let (mut authenticator, _wrapped_uk) = enroll_prf_capable_passkey(&app, &token, "Regression Key").await;
+
+    let regression_row = sqlx::query(
+        "SELECT id FROM passkeys WHERE user_id = (SELECT id FROM users WHERE email = ?) AND name = ?",
+    )
+    .bind(email)
+    .bind("Regression Key")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let regression_id: String = regression_row.try_get("id").unwrap();
+
+    // One more real, legitimate ceremony — proves the Ok path leaves
+    // counter_anomaly_at NULL, matching this credential's normal use.
+    let (status, start_body) = auth_post(&app, "/api/passkeys/unlock/start", &token, None).await;
+    assert_eq!(status, StatusCode::OK, "unlock/start must succeed: {start_body:?}");
+    let state_id = start_body["state_id"].as_str().unwrap().to_string();
+    let challenge: RequestChallengeResponse = serde_json::from_value(start_body["challenge"].clone()).unwrap();
+    let auth_response = authenticator.perform_auth(origin(), challenge.public_key, 60_000).unwrap();
+    let (status, finish_body) = auth_post(
+        &app,
+        "/api/passkeys/unlock/finish",
+        &token,
+        Some(json!({ "state_id": state_id, "credential": auth_response })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "a normal legitimate ceremony must succeed: {finish_body:?}");
+
+    let anomaly: Option<String> = sqlx::query("SELECT counter_anomaly_at FROM passkeys WHERE id = ?")
+        .bind(&regression_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .try_get("counter_anomaly_at")
+        .unwrap();
+    assert!(anomaly.is_none(), "counter_anomaly_at must stay NULL after a normal legitimate ceremony");
+
+    // --- Case A (regression): directly tamper the stored counter (JSON path
+    // ["cred"]["counter"], NOT ["cred"]["cred"]["counter"]) far above what
+    // the SAME authenticator will present next, then run one more real
+    // ceremony with it. ---
+    let row = sqlx::query("SELECT passkey_json FROM passkeys WHERE id = ?")
+        .bind(&regression_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let passkey_json: String = row.try_get("passkey_json").unwrap();
+    let mut value: Value = serde_json::from_str(&passkey_json).unwrap();
+    value["cred"]["counter"] = json!(999_999);
+    let mutated = serde_json::to_string(&value).unwrap();
+    sqlx::query("UPDATE passkeys SET passkey_json = ? WHERE id = ?")
+        .bind(&mutated)
+        .bind(&regression_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (status, start_body) = auth_post(&app, "/api/passkeys/unlock/start", &token, None).await;
+    assert_eq!(status, StatusCode::OK, "unlock/start must still succeed pre-ceremony: {start_body:?}");
+    let state_id = start_body["state_id"].as_str().unwrap().to_string();
+    let challenge: RequestChallengeResponse = serde_json::from_value(start_body["challenge"].clone()).unwrap();
+    let auth_response = authenticator.perform_auth(origin(), challenge.public_key, 60_000).unwrap();
+    let (status, finish_body) = auth_post(
+        &app,
+        "/api/passkeys/unlock/finish",
+        &token,
+        Some(json!({ "state_id": state_id, "credential": auth_response })),
+    )
+    .await;
+    assert!(status.is_client_error(), "a regressed-counter ceremony must fail with a 4xx: {status} {finish_body:?}");
+
+    let anomaly: Option<String> = sqlx::query("SELECT counter_anomaly_at FROM passkeys WHERE id = ?")
+        .bind(&regression_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .try_get("counter_anomaly_at")
+        .unwrap();
+    assert!(anomaly.is_some(), "counter_anomaly_at must be non-NULL after a regressed-counter ceremony failure");
+
+    // --- Case B (both-zero exemption / normal-use non-flagging): a second,
+    // independently-enrolled fresh passkey completes its first-ever unlock
+    // ceremony normally and is NOT falsely flagged, even though the
+    // regressed "Regression Key" above is also in unlock/start's candidate
+    // set — only a genuine stored>received regression on ITS OWN credential
+    // id sets the flag. ---
+    let (mut fresh_authenticator, _wrapped_uk2) =
+        enroll_prf_capable_passkey(&app, &token, "Fresh Never-Unlocked Key").await;
+    let fresh_row = sqlx::query(
+        "SELECT id FROM passkeys WHERE user_id = (SELECT id FROM users WHERE email = ?) AND name = ?",
+    )
+    .bind(email)
+    .bind("Fresh Never-Unlocked Key")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let fresh_id: String = fresh_row.try_get("id").unwrap();
+
+    let (status, start_body) = auth_post(&app, "/api/passkeys/unlock/start", &token, None).await;
+    assert_eq!(status, StatusCode::OK, "unlock/start must succeed with fresh passkey present: {start_body:?}");
+    let state_id = start_body["state_id"].as_str().unwrap().to_string();
+    let challenge: RequestChallengeResponse = serde_json::from_value(start_body["challenge"].clone()).unwrap();
+    let fresh_auth_response = fresh_authenticator.perform_auth(origin(), challenge.public_key, 60_000).unwrap();
+    let (status, finish_body) = auth_post(
+        &app,
+        "/api/passkeys/unlock/finish",
+        &token,
+        Some(json!({ "state_id": state_id, "credential": fresh_auth_response })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "fresh passkey's first unlock ceremony must succeed: {finish_body:?}");
+
+    let fresh_anomaly: Option<String> = sqlx::query("SELECT counter_anomaly_at FROM passkeys WHERE id = ?")
+        .bind(&fresh_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .try_get("counter_anomaly_at")
+        .unwrap();
+    assert!(fresh_anomaly.is_none(), "a fresh passkey's normal first ceremony must not be falsely flagged");
+}
+
 #[tokio::test]
 async fn unlock_ownership_rejects_cross_user_state() {
     let pool = common::test_pool().await;
