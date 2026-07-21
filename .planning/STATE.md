@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v0.3
 milestone_name: Polish & Hardening
-current_phase: 19
-current_phase_name: Server & Supply-Chain Hardening
-status: executing
-stopped_at: Phase 17 complete, ready to plan Phase 18
-last_updated: "2026-07-21T11:50:42.888Z"
+current_phase: 20
+current_phase_name: Test Infrastructure & CI Gate
+status: planning
+stopped_at: Phase 19 planned; Wave 1 (19-01, 19-02) executing in worktrees — see HANDOFF-v03-autonomous.md
+last_updated: "2026-07-21T12:54:23.944Z"
 last_activity: 2026-07-21
-last_activity_desc: Phase 19 execution started
+last_activity_desc: Phase 19 complete, transitioned to Phase 20
 progress:
   total_phases: 13
-  completed_phases: 10
+  completed_phases: 11
   total_plans: 68
-  completed_plans: 63
-  percent: 77
+  completed_plans: 66
+  percent: 85
 ---
 
 # Project State
@@ -28,16 +28,16 @@ See: .planning/PROJECT.md (updated 2026-07-21)
 
 ## Current Position
 
-Phase: 19 (Server & Supply-Chain Hardening) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 19
-Last activity: 2026-07-21 — Phase 19 execution started
+Phase: 20 — Test Infrastructure & CI Gate
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-21 — Phase 19 complete, transitioned to Phase 20
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 63 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
+- Total plans completed: 66 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
 - Average duration: - min
 - Total execution time: 0 hours (v0.3)
 
@@ -56,6 +56,7 @@ Last activity: 2026-07-21 — Phase 19 execution started
 | 16 | 6 | - | - |
 | 17 | 4 | - | - |
 | 18 | 2 | - | - |
+| 19 | 3 | - | - |
 
 **By Phase (v0.3 — planned, not yet executed):**
 

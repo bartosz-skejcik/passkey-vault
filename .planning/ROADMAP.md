@@ -64,7 +64,7 @@ Delivered: 30/30 requirements, all phases verified passed, cross-phase integrati
 - [x] **Phase 16: Design System Extraction — Logic, Types & i18n** - Pure vault logic/types and the i18n engine move into `packages/pv-ui`, consumed once by web and extension (completed 2026-07-21)
 - [x] **Phase 17: Shared Component & Visual Alignment** - `ItemIconTile` becomes a single shared React component; in-page autofill surfaces render light tiles and token-aligned styling matching the web app (completed 2026-07-21)
 - [x] **Phase 18: Firefox Window & Consent Hardening** - Ceremony/consent window centering and self-close are formalized and regression-guarded; a security review makes an explicit decision on an in-page consent alternative (completed 2026-07-21)
-- [ ] **Phase 19: Server & Supply-Chain Hardening** - CORS explicitly lists `Authorization` and concrete origins, `cargo audit`/`cargo deny` + pinned toolchain, sign-count clone-detection acted on
+- [x] **Phase 19: Server & Supply-Chain Hardening** - CORS explicitly lists `Authorization` and concrete origins, `cargo audit`/`cargo deny` + pinned toolchain, sign-count clone-detection acted on (completed 2026-07-21)
 - [ ] **Phase 20: Test Infrastructure & CI Gate** - Full-gate CI pipeline, real-Firefox probes wired to npm scripts, a permanent byte-serialization regression gate
 
 ## Phase Details
@@ -391,7 +391,7 @@ Plans:
   3. `cargo audit`/`cargo deny` runs as part of the toolchain, and the Rust toolchain plus key crypto/auth crate versions (passkey-rs, webauthn-rs, openssl-sys, argon2/chacha/hkdf, getrandom) are pinned to exact versions and reviewed against the sweep's watch-list.
   4. A WebAuthn assertion carrying a regressed (non-incrementing) sign counter is surfaced — logged or flagged — rather than silently dropped, verified against a deliberately regressed counter in a test.
 
-**Plans:** 3/3 plans executed
+**Plans:** 3/3 plans complete
 Plans:
 **Wave 1**
 
@@ -440,5 +440,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 16. Design System Extraction — Logic, Types & i18n | v0.3 | 6/6 | Complete    | 2026-07-21 |
 | 17. Shared Component & Visual Alignment | v0.3 | 4/4 | Complete    | 2026-07-21 |
 | 18. Firefox Window & Consent Hardening | v0.3 | 2/2 | Complete    | 2026-07-21 |
-| 19. Server & Supply-Chain Hardening | v0.3 | 3/3 | In Progress|  |
+| 19. Server & Supply-Chain Hardening | v0.3 | 3/3 | Complete    | 2026-07-21 |
 | 20. Test Infrastructure & CI Gate | v0.3 | 0/TBD | Not started | - |

@@ -42,10 +42,10 @@
 
 ### SEC — Server & Supply-Chain Hardening
 
-- [ ] **SEC-01**: The pv-server CORS layer explicitly lists `Authorization` (and every header the extension actually sends) in `Access-Control-Allow-Headers` instead of the wildcard `*`, which Firefox does not let cover `Authorization`.
-- [ ] **SEC-02**: The `moz-extension://*` scheme-wildcard in the CORS allowlist (D-10 tech-debt) is replaced with concrete per-install origins; a bare `*` remains fatal (WR-07 preserved).
-- [ ] **SEC-03**: A supply-chain tripwire (`cargo audit` / `cargo deny`) runs in the toolchain, and the Rust toolchain + key crypto/auth crate versions (passkey-rs, webauthn-rs, openssl-sys, argon2/chacha/hkdf, getrandom) are pinned and reviewed.
-- [ ] **SEC-04**: The WebAuthn sign-count clone-detection signal is acted on (surfaced / logged / flagged) rather than discarded — the counter is already persisted; the anomaly signal must not be dropped.
+- [x] **SEC-01**: The pv-server CORS layer explicitly lists `Authorization` (and every header the extension actually sends) in `Access-Control-Allow-Headers` instead of the wildcard `*`, which Firefox does not let cover `Authorization`.
+- [x] **SEC-02**: The `moz-extension://*` scheme-wildcard in the CORS allowlist (D-10 tech-debt) is replaced with concrete per-install origins; a bare `*` remains fatal (WR-07 preserved).
+- [x] **SEC-03**: A supply-chain tripwire (`cargo audit` / `cargo deny`) runs in the toolchain, and the Rust toolchain + key crypto/auth crate versions (passkey-rs, webauthn-rs, openssl-sys, argon2/chacha/hkdf, getrandom) are pinned and reviewed.
+- [x] **SEC-04**: The WebAuthn sign-count clone-detection signal is acted on (surfaced / logged / flagged) rather than discarded — the counter is already persisted; the anomaly signal must not be dropped.
 
 ### QA — Test Rigor & CI
 
@@ -91,10 +91,10 @@
 | UX-02 | Phase 18 | Complete |
 | XBR-02 | Phase 14 | Complete |
 | XBR-03 | Phase 18 | Complete |
-| SEC-01 | Phase 19 | Pending |
-| SEC-02 | Phase 19 | Pending |
-| SEC-03 | Phase 19 | Pending |
-| SEC-04 | Phase 19 | Pending |
+| SEC-01 | Phase 19 | Complete |
+| SEC-02 | Phase 19 | Complete |
+| SEC-03 | Phase 19 | Complete |
+| SEC-04 | Phase 19 | Complete |
 | QA-01 | Phase 20 | Pending |
 | QA-02 | Phase 20 | Pending |
 | QA-03 | Phase 14 | Complete |
