@@ -16,6 +16,7 @@ use sqlx::Row;
 use uuid::Uuid;
 use webauthn_rs::prelude::{Passkey, PasskeyAuthentication, PublicKeyCredential};
 
+use super::passkeys::handle_finish_auth_error;
 use super::session::{extract_bearer_token, SessionUser};
 use super::webauthn_state;
 use crate::{crypto, error::ApiError, AppState};
@@ -543,10 +544,20 @@ pub async fn passkey_login_finish(
     // consume_state_any_user's not-found branch already returns closes this
     // without inventing a new distinguishable variant.
     const ENUMERATION_SAFE_FINISH_ERROR: &str = "passkey ceremony expired or not found";
-    let auth_result = state.webauthn.finish_passkey_authentication(&req.credential, &auth_state).map_err(|e| {
-        tracing::warn!(?e, "passkey-login finish failed");
-        ApiError::BadRequest(ENUMERATION_SAFE_FINISH_ERROR.into())
-    })?;
+    let auth_result = match state.webauthn.finish_passkey_authentication(&req.credential, &auth_state) {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(handle_finish_auth_error(
+                &state.db,
+                &resolved_user_id,
+                req.credential.get_credential_id(),
+                "passkey-login finish",
+                ENUMERATION_SAFE_FINISH_ERROR,
+                e,
+            )
+            .await)
+        }
+    };
 
     // Resolves WHICH of the user's several passkeys actually answered — only
     // known after the ceremony verifies (04-RESEARCH.md Pattern 3). Bound to
