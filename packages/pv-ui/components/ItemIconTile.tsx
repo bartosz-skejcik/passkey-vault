@@ -82,8 +82,28 @@ const SIZE = {
 // dark tile in the vault-dark theme — the tile bg flips to a LIGHT neutral
 // there (and the glyph to a dark neutral), while vault-light keeps the
 // original base-200 tile untouched.
-const TILE_BG = "bg-base-200 [[data-theme=vault-dark]_&]:bg-zinc-100";
-const TILE_FG = "text-base-content/70 [[data-theme=vault-dark]_&]:text-zinc-600";
+//
+// WR-04 fix (17-REVIEW.md): read `--pv-tile-bg`/`--pv-tile-fg` directly
+// via Tailwind v4 arbitrary-value classes instead of re-deriving the same
+// two colors independently with a `[data-theme=vault-dark]` selector
+// variant + a hardcoded `zinc-100`/`zinc-600` pair. Before this fix,
+// tokens.css's `--pv-tile-bg`/`--pv-tile-fg` were the source of truth
+// ONLY for the in-page overlay CSS (inpage-overlay.ts's own
+// `var(--pv-tile-bg)`/`var(--pv-tile-fg)`) — this React component
+// silently duplicated the same intent via a DIFFERENT mechanism
+// (Tailwind theme classes + a manual dark-theme override), held in sync
+// only by the e2e visual-parity harness (best-effort, needs a live
+// server+browser). A future edit to tokens.css's `--pv-tile-bg` would
+// NOT have propagated here, reintroducing the exact dark-tile divergence
+// this phase fixed. tokens.css already declares both custom properties
+// per-theme (`:root, [data-theme=vault-dark]` block AND the
+// `[data-theme=vault-light]` override), so referencing them directly
+// makes both the flip AND the light/dark values themselves single-
+// sourced — this class pair is picked up by Tailwind v4's `@source`
+// scan of `packages/pv-ui/components/**/*.tsx` (already wired into both
+// web/src/app/globals.css and extension/entrypoints/popup/style.css).
+const TILE_BG = "bg-[var(--pv-tile-bg)]";
+const TILE_FG = "text-[var(--pv-tile-fg)]";
 
 export default function ItemIconTile({
   item,

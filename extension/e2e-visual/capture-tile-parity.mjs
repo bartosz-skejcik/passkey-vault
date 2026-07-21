@@ -615,7 +615,15 @@ async function main() {
       await row.waitFor({ timeout: 10000 });
       await row.screenshot({ path: path.join(SHOTS_DIR, `web-itemrow-${theme}.png`) });
 
-      const rowTile = row.locator(".bg-base-200").first();
+      // WR-04 follow-through (17-REVIEW.md): ItemIconTile.tsx no longer
+      // renders a `bg-base-200` class -- it now reads `--pv-tile-bg`
+      // directly via `bg-[var(--pv-tile-bg)]` (a single source of truth
+      // with tokens.css, replacing the old `bg-base-200` +
+      // `[data-theme=vault-dark]` override pair this locator used to
+      // target). An attribute substring match on the class value avoids
+      // needing to CSS-escape the arbitrary-value selector's own literal
+      // brackets/parens.
+      const rowTile = row.locator('[class*="pv-tile-bg"]').first();
       const rowTileBox = await rowTile.boundingBox();
       let rowBg = null;
       if (rowTileBox) {
@@ -638,7 +646,8 @@ async function main() {
       await detail.waitFor({ timeout: 10000 });
       await webPage.waitForTimeout(200);
       await detail.screenshot({ path: path.join(SHOTS_DIR, `web-detailpanel-${theme}.png`) });
-      const detailTile = detail.locator(".bg-base-200").first();
+      // WR-04 follow-through -- same rationale as `rowTile` above.
+      const detailTile = detail.locator('[class*="pv-tile-bg"]').first();
       const detailBg = (await detailTile.count())
         ? await normalizeColor(
             webPage,
@@ -672,18 +681,22 @@ async function main() {
       await popup.evaluate((t) => document.body.setAttribute("data-theme", t), theme);
       await popup.waitForTimeout(150);
       await popup.screenshot({ path: path.join(SHOTS_DIR, `popup-list-${theme}.png`) });
-      // Scoped to `button .bg-base-200` (NOT a bare global `.bg-base-200`)
-      // -- ItemListView.tsx's own search/sort header bar (line ~281) also
-      // carries a plain `bg-base-200` class with NO dark-theme flip
-      // (it's a header fill, not a tile), and it renders BEFORE the item
-      // row in DOM order, so an unscoped `.first()` silently matched the
-      // WRONG element (found live: the "vault-dark" iteration reported
-      // vault-LIGHT's base-200 value). ItemListView's own item row is the
-      // only `.bg-base-200` nested inside an actual `<button>` in this
-      // popup (AutofillItemRow.tsx/TotpFillRow.tsx, the other
-      // `bg-base-200` users, both render a `<div>` wrapper, never a
-      // `<button>`).
-      const tile = popup.locator("button .bg-base-200").first();
+      // Scoped to `button [class*="pv-tile-bg"]` (still `button`-scoped,
+      // same disambiguation rationale as before this class was renamed):
+      // ItemListView.tsx's own search/sort header bar (line ~281) carries
+      // a plain `bg-base-200` class with NO dark-theme flip (it's a
+      // header fill, not a tile) and renders BEFORE the item row in DOM
+      // order -- an unscoped `.first()` on the OLD selector silently
+      // matched the WRONG element (found live: the "vault-dark" iteration
+      // reported vault-LIGHT's base-200 value). WR-04 follow-through
+      // (17-REVIEW.md): ItemIconTile.tsx no longer renders `bg-base-200`
+      // at all (see `rowTile` above for the class-rename rationale), so
+      // that header bar can no longer collide with this selector even
+      // without the `button` scope -- kept anyway as defense-in-depth,
+      // since it costs nothing and the original disambiguation intent
+      // still applies to any OTHER future `pv-tile-bg` consumer that
+      // isn't itself inside a `<button>`.
+      const tile = popup.locator('button [class*="pv-tile-bg"]').first();
       const popupBg = (await tile.count())
         ? await normalizeColor(
             popup,
