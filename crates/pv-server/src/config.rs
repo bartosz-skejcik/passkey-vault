@@ -194,15 +194,18 @@ mod tests {
         .is_ok());
     }
 
-    // --- D-10: moz-extension://* scheme-scoped wildcard pattern ---------
+    // --- SEC-02: moz-extension://* wildcard removed, concrete origins only ---
 
     #[test]
-    fn extension_origins_moz_wildcard_validates_ok() {
-        assert!(
+    fn extension_origins_moz_wildcard_now_rejected() {
+        // SEC-02 (Phase 19) removed D-10's moz-extension://* scheme-scoped
+        // wildcard carve-out — it now fails loudly at startup the same as
+        // any other unsupported wildcard shape.
+        let err =
             cfg_with_extension_origins("localhost", "http://localhost:3000", "moz-extension://*")
                 .validate()
-                .is_ok()
-        );
+                .unwrap_err();
+        assert!(err.to_string().contains("PV_EXTENSION_ORIGINS"));
     }
 
     #[test]
