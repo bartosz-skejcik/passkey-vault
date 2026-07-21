@@ -3,6 +3,7 @@ name = "pv-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "Shared crypto core: key hierarchy, PRF unlock, item encryption. WASM-compatible."
 
 [dependencies]

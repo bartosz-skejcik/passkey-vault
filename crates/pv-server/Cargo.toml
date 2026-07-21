@@ -3,6 +3,7 @@ name = "pv-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "Self-hostable vault server: axum + SQLx/SQLite + webauthn-rs."
 
 [dependencies]

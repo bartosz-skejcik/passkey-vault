@@ -3,6 +3,7 @@ name = "pv-provider"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "passkey-rs soft ES256 WebAuthn authenticator + vault-backed CredentialStore adapter for the extension's passkey provider ceremony."
 
 [dependencies]

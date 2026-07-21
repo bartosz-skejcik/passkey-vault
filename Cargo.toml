@@ -7,6 +7,12 @@ version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 repository = ""
+# Internal application crates, never published to crates.io. Required for
+# deny.toml's [bans] allow-wildcard-paths to treat this workspace's
+# internal path deps (e.g. pv-server -> pv-core) as intended, rather than
+# rejecting them as crates.io-incompatible "public" wildcard deps
+# (SEC-03, Plan 19-03, Task 3).
+publish = false
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
