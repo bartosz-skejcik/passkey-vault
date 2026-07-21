@@ -33,12 +33,12 @@
 ### UX — In-Page & Window Polish
 
 - [x] **UX-01**: The in-page autofill surfaces (Surface A in-field dropdown + Surface B prompt) render item logos on a LIGHT tile, matching the web `ItemIconTile` and the popup — no more dark-tile inconsistency.
-- [ ] **UX-02**: The Firefox consent + ceremony windows are centered over the active window, sized to their content, and self-close on resolution — formalized and regression-guarded (carries v0.2's window-polish work into a verified requirement).
+- [x] **UX-02**: The Firefox consent + ceremony windows are centered over the active window, sized to their content, and self-close on resolution — formalized and regression-guarded (carries v0.2's window-polish work into a verified requirement).
 
 ### XBR — Cross-Browser Hardening
 
 - [x] **XBR-02**: Response-direction cross-realm binary integrity on Firefox — WebAuthn credential fields returned to the page (`rawId`, `clientDataJSON`, `attestationObject`, `signature`, `authenticatorData`) are genuine same-realm `ArrayBuffer`s (or contract-equivalent); root-caused, fixed, byte-asserted in the harness, and the tracking doc git-tracked.
-- [ ] **XBR-03**: (Decision-gated) In-page provider consent on Firefox — evaluate a closed-shadow-DOM consent panel as an alternative to the consent window, with clickjack mitigations, ONLY if a fresh security review confirms it preserves the SECURED posture; otherwise the window model stands and this is documented as rejected-with-reason.
+- [x] **XBR-03**: (Decision-gated) In-page provider consent on Firefox — evaluate a closed-shadow-DOM consent panel as an alternative to the consent window, with clickjack mitigations, ONLY if a fresh security review confirms it preserves the SECURED posture; otherwise the window model stands and this is documented as rejected-with-reason.
 
 ### SEC — Server & Supply-Chain Hardening
 
@@ -88,9 +88,9 @@
 | DS-03 | Phase 17 | Complete |
 | DS-04 | Phase 17 | Complete |
 | UX-01 | Phase 17 | Complete |
-| UX-02 | Phase 18 | Pending |
+| UX-02 | Phase 18 | Complete |
 | XBR-02 | Phase 14 | Complete |
-| XBR-03 | Phase 18 | Pending |
+| XBR-03 | Phase 18 | Complete |
 | SEC-01 | Phase 19 | Pending |
 | SEC-02 | Phase 19 | Pending |
 | SEC-03 | Phase 19 | Pending |

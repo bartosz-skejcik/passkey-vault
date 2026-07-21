@@ -63,7 +63,7 @@ Delivered: 30/30 requirements, all phases verified passed, cross-phase integrati
 - [x] **Phase 15: Login & Unlock Unification (Vaultwarden Model)** - One login path (full sign-in always via the server-origin ceremony window) and one unlock mechanism (password or server-origin passkey), replacing v0.2's dual popup/ext-scoped-PRF model (completed 2026-07-20)
 - [x] **Phase 16: Design System Extraction — Logic, Types & i18n** - Pure vault logic/types and the i18n engine move into `packages/pv-ui`, consumed once by web and extension (completed 2026-07-21)
 - [x] **Phase 17: Shared Component & Visual Alignment** - `ItemIconTile` becomes a single shared React component; in-page autofill surfaces render light tiles and token-aligned styling matching the web app (completed 2026-07-21)
-- [ ] **Phase 18: Firefox Window & Consent Hardening** - Ceremony/consent window centering and self-close are formalized and regression-guarded; a security review makes an explicit decision on an in-page consent alternative
+- [x] **Phase 18: Firefox Window & Consent Hardening** - Ceremony/consent window centering and self-close are formalized and regression-guarded; a security review makes an explicit decision on an in-page consent alternative (completed 2026-07-21)
 - [ ] **Phase 19: Server & Supply-Chain Hardening** - CORS explicitly lists `Authorization` and concrete origins, `cargo audit`/`cargo deny` + pinned toolchain, sign-count clone-detection acted on
 - [ ] **Phase 20: Test Infrastructure & CI Gate** - Full-gate CI pipeline, real-Firefox probes wired to npm scripts, a permanent byte-serialization regression gate
 
@@ -370,7 +370,7 @@ Plans:
   2. A dedicated, fresh security review of a closed-shadow-DOM in-page consent panel (including clickjack mitigations) is completed and its verdict is written down.
   3. The requirement resolves either way: the in-page panel ships only if the review clears it without regressing the SECURED posture, or the window model is confirmed as the standing implementation with the rejection reason recorded.
 
-**Plans:** 2/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
 **Wave 1**
 
@@ -430,6 +430,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 15. Login & Unlock Unification (Vaultwarden Model) | v0.3 | 7/7 | Complete    | 2026-07-20 |
 | 16. Design System Extraction — Logic, Types & i18n | v0.3 | 6/6 | Complete    | 2026-07-21 |
 | 17. Shared Component & Visual Alignment | v0.3 | 4/4 | Complete    | 2026-07-21 |
-| 18. Firefox Window & Consent Hardening | v0.3 | 2/2 | In Progress|  |
+| 18. Firefox Window & Consent Hardening | v0.3 | 2/2 | Complete    | 2026-07-21 |
 | 19. Server & Supply-Chain Hardening | v0.3 | 0/TBD | Not started | - |
 | 20. Test Infrastructure & CI Gate | v0.3 | 0/TBD | Not started | - |
