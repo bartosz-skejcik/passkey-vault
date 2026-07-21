@@ -391,7 +391,7 @@ Plans:
   3. `cargo audit`/`cargo deny` runs as part of the toolchain, and the Rust toolchain plus key crypto/auth crate versions (passkey-rs, webauthn-rs, openssl-sys, argon2/chacha/hkdf, getrandom) are pinned to exact versions and reviewed against the sweep's watch-list.
   4. A WebAuthn assertion carrying a regressed (non-incrementing) sign counter is surfaced — logged or flagged — rather than silently dropped, verified against a deliberately regressed counter in a test.
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans executed
 Plans:
 **Wave 1**
 
@@ -400,7 +400,7 @@ Plans:
 
 **Wave 2** *(blocked on 19-01 — shared crates/pv-server/Cargo.toml)*
 
-- [ ] 19-03-PLAN.md — SEC-03: cargo-audit/cargo-deny supply-chain tripwire + exact-pinned toolchain and watch-list crates
+- [x] 19-03-PLAN.md — SEC-03: cargo-audit/cargo-deny supply-chain tripwire + exact-pinned toolchain and watch-list crates
 
 ### Phase 20: Test Infrastructure & CI Gate
 
@@ -440,5 +440,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 16. Design System Extraction — Logic, Types & i18n | v0.3 | 6/6 | Complete    | 2026-07-21 |
 | 17. Shared Component & Visual Alignment | v0.3 | 4/4 | Complete    | 2026-07-21 |
 | 18. Firefox Window & Consent Hardening | v0.3 | 2/2 | Complete    | 2026-07-21 |
-| 19. Server & Supply-Chain Hardening | v0.3 | 2/3 | In Progress|  |
+| 19. Server & Supply-Chain Hardening | v0.3 | 3/3 | In Progress|  |
 | 20. Test Infrastructure & CI Gate | v0.3 | 0/TBD | Not started | - |
