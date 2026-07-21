@@ -1,0 +1,78 @@
+{
+  "web-itemrow-vault-dark": {
+    "pass": true,
+    "computed": "rgba(244, 244, 245, 1.000)"
+  },
+  "web-detailpanel-vault-dark": {
+    "pass": true,
+    "computed": "rgba(244, 244, 245, 1.000)"
+  },
+  "web-itemrow-vault-light": {
+    "pass": true,
+    "computed": "rgba(252, 251, 250, 1.000)"
+  },
+  "web-detailpanel-vault-light": {
+    "pass": true,
+    "computed": "rgba(252, 251, 250, 1.000)"
+  },
+  "popup-list-vault-dark": {
+    "pass": true,
+    "computed": "rgba(244, 244, 245, 1.000)"
+  },
+  "popup-list-vault-light": {
+    "pass": true,
+    "computed": "rgba(252, 251, 250, 1.000)"
+  },
+  "inpage-prompt-vault-dark": {
+    "pass": true,
+    "computed": "rgba(244, 244, 245, 1.000)"
+  },
+  "inpage-dropdown-vault-dark": {
+    "pass": true,
+    "computed": "rgba(244, 244, 245, 1.000)"
+  },
+  "inpage-prompt-vault-light": {
+    "pass": true,
+    "computed": "rgba(252, 251, 250, 1.000)"
+  },
+  "inpage-dropdown-vault-light": {
+    "pass": true,
+    "computed": "rgba(252, 251, 250, 1.000)"
+  },
+  "parity-web-vs-inpage-dropdown-vault-dark": {
+    "pass": true,
+    "web": "rgba(244, 244, 245, 1.000)",
+    "inpage": "rgba(244, 244, 245, 1.000)"
+  },
+  "parity-popup-vs-inpage-dropdown-vault-dark": {
+    "pass": true,
+    "popup": "rgba(244, 244, 245, 1.000)",
+    "inpage": "rgba(244, 244, 245, 1.000)"
+  },
+  "parity-web-vs-inpage-prompt-vault-dark": {
+    "pass": true,
+    "web": "rgba(244, 244, 245, 1.000)",
+    "inpage": "rgba(244, 244, 245, 1.000)"
+  },
+  "parity-web-vs-inpage-dropdown-vault-light": {
+    "pass": true,
+    "web": "rgba(252, 251, 250, 1.000)",
+    "inpage": "rgba(252, 251, 250, 1.000)"
+  },
+  "parity-popup-vs-inpage-dropdown-vault-light": {
+    "pass": true,
+    "popup": "rgba(252, 251, 250, 1.000)",
+    "inpage": "rgba(252, 251, 250, 1.000)"
+  },
+  "parity-web-vs-inpage-prompt-vault-light": {
+    "pass": true,
+    "web": "rgba(252, 251, 250, 1.000)",
+    "inpage": "rgba(252, 251, 250, 1.000)"
+  },
+  "skipped": [
+    {
+      "step": "Firefox Selenium re-run (Step 8)",
+      "reason": "Firefox binary present, but run-autofill-capture.cjs targets the project's SHARED uat-prf04@example.local account/state, not this script's own dedicated tile-parity account -- invoking it here would conflate two independent test identities. Run `npm run test:e2e:firefox:autofill` separately for supplementary Firefox evidence."
+    }
+  ]
+}

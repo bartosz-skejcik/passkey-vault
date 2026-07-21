@@ -1,0 +1,4 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running `target/debug/pv-server`
+[2m2026-07-21T09:18:13.887423Z[0m [32m INFO[0m [2mpv_server::routes[0m[2m:[0m CORS allowlist active for extension origins [3mcount[0m[2m=[0m1
+[2m2026-07-21T09:18:13.888186Z[0m [32m INFO[0m [2mpv_server[0m[2m:[0m pv-server listening on http://127.0.0.1:8630
