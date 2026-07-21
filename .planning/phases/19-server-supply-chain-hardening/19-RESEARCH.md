@@ -343,7 +343,9 @@ ALTER TABLE passkeys ADD COLUMN counter_anomaly_at TEXT;
 | A1 | The explicit `Access-Control-Allow-Headers` list needs exactly `authorization` and `content-type` and no more | Common Pitfalls #3, Code Examples | LOW — directly grep-verified against both client codebases' only `fetch()` call sites (`auth-api.ts`, `web/src/lib/auth/api.ts`); a future new client header (e.g. a custom `X-` header) would need this list revisited, but nothing today sends one |
 | A2 | `cargo-deny`'s `[bans] multiple-versions = "warn"` (not `"deny"`) is the right default given the existing triple `getrandom`/`rand` stack | Code Examples (deny.toml) | MEDIUM — this is a policy call, not a technical fact; CONTEXT.md doesn't specify pass/warn/deny thresholds for `cargo-deny`'s sections, so the planner or Bartek should confirm severity levels before locking `deny.toml` in |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> RESOLVED 2026-07-21 by orchestrator binding decisions: Q1 → interpretation (a) — webauthn-rs's built-in counter-regression rejection stays enabled; SEC-04 = classifier + additive counter_anomaly_at surfacing (adopted in Plan 19-02 objective). Q2 → test_app cors_csv parameter, no in-process env mutation (adopted in Plan 19-01 Task 2).
 
 1. **CONTEXT.md's "do NOT hard-fail ceremonies" instruction conflicts with webauthn-rs 0.5.5's existing default behavior.**
    - What we know: `require_valid_counter_value` defaults to `true` and is never overridden in `build_webauthn()` (`lib.rs:71-77`) — confirmed by reading the actual `WebauthnBuilder`/`.build()` call and the crate's internal check (`core.rs:1154-1174`). A genuinely regressed counter (stored > 0, new counter ≤ stored) is **already** rejected with `Err(WebauthnError::CredentialPossibleCompromise)` today, before the code ever reaches `update_credential`.
