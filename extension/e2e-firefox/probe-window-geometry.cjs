@@ -314,7 +314,7 @@ async function main() {
     const handlesBeforeConsent = await driver.getAllWindowHandles();
     const randomUserId = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
     const randomChallenge = Array.from({ length: 32 }, () => Math.floor(Math.random() * 256));
-    driver.executeScript(`
+    await driver.executeScript(`
       window.__pv_geom_create_result = null;
       navigator.credentials.create({
         publicKey: {
@@ -372,7 +372,7 @@ async function main() {
     await driver.navigate().refresh();
     await sleep(500);
     const handlesBeforeConsent2 = await driver.getAllWindowHandles();
-    driver.executeScript(`
+    await driver.executeScript(`
       window.__pv_geom_get_result = null;
       navigator.credentials.get({
         publicKey: { rpId: 'localhost', challenge: new Uint8Array(${JSON.stringify(randomChallenge)}), timeout: 30000, userVerification: 'preferred' },
