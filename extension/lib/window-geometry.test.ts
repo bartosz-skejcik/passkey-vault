@@ -37,4 +37,13 @@ describe("centeredWindowPosition", () => {
     expect(Number.isInteger(result.left)).toBe(true);
     expect(Number.isInteger(result.top)).toBe(true);
   });
+
+  it("passes a negative computed left/top through unclamped (multi-monitor edge case, 13-REVIEW-3.md IN-02, 18-UI-SPEC assertion #6)", () => {
+    // Intentional, not a bug: centering a wider new window (380/480) over a
+    // current window positioned left of/above the primary display legitimately
+    // computes a negative left/top -- this must never be clamped to 0.
+    expect(
+      centeredWindowPosition({ left: -50, top: -20, width: 300, height: 300 }, 380, 460),
+    ).toEqual({ left: -90, top: -100 });
+  });
 });

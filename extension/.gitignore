@@ -37,6 +37,11 @@ e2e-firefox/.ff-screenshots-probe-corruption
 # profile/screenshots pair from the four above
 e2e-firefox/.ff-profile-probe-request-xray
 e2e-firefox/.ff-screenshots-probe-request-xray
+# 18-01-PLAN.md's permanent window-geometry regression probe
+# (extension/e2e-firefox/probe-window-geometry.cjs) -- a SEPARATE
+# profile/screenshots pair from the five above
+e2e-firefox/.ff-profile-probe-window-geometry
+e2e-firefox/.ff-screenshots-probe-window-geometry
 
 # Editor directories and files
 .vscode/*

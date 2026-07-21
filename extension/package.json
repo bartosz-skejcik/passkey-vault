@@ -19,6 +19,7 @@
     "test:e2e:firefox:core": "node e2e-firefox/run-core.cjs",
     "test:e2e:firefox:autofill": "node e2e-firefox/run-autofill-capture.cjs",
     "test:e2e:firefox:server-unlock": "node e2e-firefox/run-server-unlock.cjs",
+    "test:e2e:firefox:window-geometry": "node e2e-firefox/probe-window-geometry.cjs",
     "test:e2e:visual": "node e2e-visual/capture-tile-parity.mjs",
     "postinstall": "wxt prepare",
     "predev": "bash ../scripts/build-wasm.sh && (cd ../packages/pv-ui && npm ci)",
@@ -27,6 +28,7 @@
     "pretest:e2e:firefox:core": "wxt build -b firefox",
     "pretest:e2e:firefox:autofill": "wxt build -b firefox",
     "pretest:e2e:firefox:server-unlock": "wxt build -b firefox",
+    "pretest:e2e:firefox:window-geometry": "wxt build -b firefox",
     "pretest:e2e:visual": "wxt build -b chrome"
   },
   "devDependencies": {
