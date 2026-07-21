@@ -32,6 +32,27 @@ describe("centeredWindowPosition", () => {
     expect(centeredWindowPosition({ left: 100, top: 50, width: 1200 }, 380, 420)).toEqual({});
   });
 
+  it.each(["left", "top", "width"] as const)(
+    "returns {} when %s is missing (every one of left/top/width/height must be present)",
+    (key) => {
+      const full: Record<string, number> = { left: 100, top: 50, width: 1200, height: 800 };
+      delete full[key];
+      expect(centeredWindowPosition(full, 380, 420)).toEqual({});
+    },
+  );
+
+  it("returns {} when width is NaN (Number.isFinite guard)", () => {
+    expect(
+      centeredWindowPosition({ left: 0, top: 0, width: NaN, height: 800 }, 380, 420),
+    ).toEqual({});
+  });
+
+  it("returns {} when left is Infinity (Number.isFinite guard)", () => {
+    expect(
+      centeredWindowPosition({ left: Infinity, top: 0, width: 1200, height: 800 }, 380, 420),
+    ).toEqual({});
+  });
+
   it("rounds fractional geometry to integers", () => {
     const result = centeredWindowPosition({ left: 100, top: 50, width: 1200, height: 800.6 }, 381, 421);
     expect(Number.isInteger(result.left)).toBe(true);
