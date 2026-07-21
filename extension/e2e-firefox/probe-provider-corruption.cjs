@@ -232,7 +232,7 @@ async function main() {
     if (!patchCheck.wrapped) throw new Error('MAIN-world patch not installed, aborting probe');
 
     // ================= PROBE: known challenge byte round-trip via create() =================
-    driver.executeScript(`
+    const probeCreate = driver.executeScript(`
       window.__pv_probe_create = null;
       const challengeBytes = new Uint8Array(${JSON.stringify(CHALLENGE_BYTES)});
       navigator.credentials.create({
@@ -272,6 +272,7 @@ async function main() {
       }).catch((e) => { window.__pv_probe_create = {ok:false, error: String(e && e.message || e)}; });
       return true;
     `);
+    await probeCreate;
     await ensurePopup();
     const confirmBtn = await tryFind(driver, '[data-testid="provider-confirm"]', 20000);
     if (!confirmBtn) {
