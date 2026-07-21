@@ -370,7 +370,13 @@ Plans:
   2. A dedicated, fresh security review of a closed-shadow-DOM in-page consent panel (including clickjack mitigations) is completed and its verdict is written down.
   3. The requirement resolves either way: the in-page panel ships only if the review clears it without regressing the SECURED posture, or the window model is confirmed as the standing implementation with the rejection reason recorded.
 
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+**Wave 1**
+
+- [ ] 18-01-PLAN.md — UX-02: window-geometry regression test case + live-Firefox probe lane (probe-window-geometry.cjs) + npm script wiring
+- [ ] 18-02-PLAN.md — XBR-03: security review verdict (18-SECURITY.md) + PROJECT.md decision entry
+
 **UI hint**: yes
 
 ### Phase 19: Server & Supply-Chain Hardening
