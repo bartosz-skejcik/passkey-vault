@@ -234,6 +234,23 @@ async function main() {
     await openPopupTab();
     await sleep(800);
 
+    // Force a clean slate every run -- the persistent PROFILE_DIR carries
+    // the extension's own browser.storage.local/session state (server
+    // config, session token, unlocked key envelope) across separate
+    // invocations of this script, which would otherwise skip straight past
+    // the server-config screen this probe's flow starts from. Mirrors
+    // run-server-unlock.cjs's identical `window.localStorage.clear()`
+    // clean-slate technique, applied to the extension's own storage APIs
+    // instead of the web app's localStorage.
+    await driver.executeScript(`
+      return new Promise((resolve) => {
+        const b = window.browser || window.chrome;
+        Promise.all([b.storage.local.clear(), b.storage.session.clear()]).then(resolve).catch(resolve);
+      });
+    `);
+    await driver.get(`${EXT_ORIGIN}/popup.html`);
+    await sleep(800);
+
     // ================= server config + sign-in =================
     const urlInput = await tryFind(driver, 'input#pv-server-url', 15000);
     if (!urlInput) throw new Error('server-config url input not found');
