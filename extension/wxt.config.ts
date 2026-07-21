@@ -22,6 +22,22 @@ export default defineConfig({
   // Phase 8 -- this module is added HERE, not earlier, confirmed against
   // 08-03-PLAN.md's actual output before assuming.
   modules: ['@wxt-dev/module-react'],
+  // CR-01 fix (17-REVIEW.md): packages/pv-ui/components/*.tsx is consumed
+  // via a symlinked (not workspace-hoisted) `file:` dependency
+  // (extension/node_modules/pv-ui -> ../../packages/pv-ui), and pv-ui
+  // physically installs its OWN React copy under its own node_modules
+  // (needed for tsc/standalone typechecking per 17-01). Vite/rollup
+  // resolves the symlink's realpath before Node module resolution, so a
+  // bare `import "react"` from inside packages/pv-ui/ can resolve to
+  // pv-ui's own React instance instead of this extension's -- two
+  // separate React module instances loaded in the same bundle break every
+  // hook (`useContext` on a `null` dispatcher, "Invalid hook call").
+  // `extension/vitest.config.ts` already applies this exact dedupe for the
+  // test build; `wxt build`'s production Vite/rollup pass needs the same
+  // guard, since @wxt-dev/module-react sets no `resolve.dedupe` itself.
+  vite: () => ({
+    resolve: { dedupe: ['react', 'react-dom', 'lucide-react'] },
+  }),
   // Per-browser FUNCTION form (not a plain object): the pinned `key` below
   // is Chrome-only and must NEVER reach the Firefox manifest -- Firefox's
   // manifest parser rejects unknown top-level keys with a loud warning
