@@ -413,7 +413,7 @@ Plans:
   2. Every manual real-Firefox probe (server-unlock, provider-corruption, request-xray, CSP-strict) is wired to its own npm script and documented as a harness lane — none is reachable only by a hand-typed command anymore.
   3. A Rust unit test asserts base64url byte shape for every binary WebAuthn response field, and fails if the serialization path (e.g. `serialize_bytes_as_base64_string`) regresses to a bare number array.
 
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans executed
 Plans:
 **Wave 1**
 
@@ -423,7 +423,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 20-04-PLAN.md — QA-01: .github/workflows/ci.yml (rust/web/extension/supply-chain jobs) + web/package.json typecheck script
+- [x] 20-04-PLAN.md — QA-01: .github/workflows/ci.yml (rust/web/extension/supply-chain jobs) + web/package.json typecheck script
 
 ## Progress
 
@@ -451,4 +451,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 17. Shared Component & Visual Alignment | v0.3 | 4/4 | Complete    | 2026-07-21 |
 | 18. Firefox Window & Consent Hardening | v0.3 | 2/2 | Complete    | 2026-07-21 |
 | 19. Server & Supply-Chain Hardening | v0.3 | 3/3 | Complete    | 2026-07-21 |
-| 20. Test Infrastructure & CI Gate | v0.3 | 3/4 | In Progress|  |
+| 20. Test Infrastructure & CI Gate | v0.3 | 4/4 | In Progress|  |
