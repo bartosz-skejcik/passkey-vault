@@ -24,7 +24,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-21)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 18 — Firefox Window & Consent Hardening
+**Current focus:** Phase 19 — Server & Supply-Chain Hardening
 
 ## Current Position
 
@@ -158,6 +158,8 @@ Recent decisions affecting current work:
 - [Phase 17]: pv-ui ma WŁASNE node_modules (Option A — react/react-dom/lucide-react/@types/react, package-lock.json commitowany) bo pakiety bez exports map (lucide-react) nie resolvują się przez symlink; konsekwencja: KAŻDY bundler resolvujący realpath musi dedupe'ować React — wxt.config.ts vite.resolve.dedupe (build), oba vitest.config.ts (testy); web działa przez wewnętrzny vendored-React alias Next 16 (nieudokumentowany — kontrakt w packages/pv-ui/README.md)
 - [Phase 17]: --pv-tile-bg/--pv-tile-fg w tokens.css to JEDYNE źródło koloru kafelka ikony; React ItemIconTile czyta je przez bg-[var(--pv-tile-bg)] (WR-04 celowo odwrócił prohibicję planu 17-03); harness parytetu: extension/e2e-visual/capture-tile-parity.mjs (npm run test:e2e:visual)
 - [Phase 17]: overlay literal allowlist = dokładnie 8 (4 cienie rgba, 4 pill-radius 999px) — audyt w 17-04; nowy kafelek w generate-popover/save-toast musi użyć --pv-tile-*
+- [Phase 18]: probe-window-geometry.cjs wymaga serwera z moz-extension://* wildcard (pinned UUID f6a7b8c9 profilu probe nie jest na allowliście koncretnego originu) + konta uat-prf04@example.local — zielony przebieg: izolowany pv-server (PV_SERVER env); dokumentacja lane'a dla Phase 20 CI
+- [Phase 18]: XBR-03 = REJECT-WITH-REASON (verdict w 18-SECURITY.md + PROJECT.md Key Decisions); in-page consent panel NIE wraca bez nowych prymitywów platformy (post-v1.0)
 
 ### Pending Todos
 
@@ -202,7 +204,7 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 ## Session Continuity
 
 Last session: 2026-07-21
-Stopped at: Phase 17 complete, ready to plan Phase 18
+Stopped at: Phase 18 complete, ready to plan Phase 19
 Resume file: None
 
 ## Operator Next Steps
