@@ -12,7 +12,10 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use axum::{
-    http::HeaderValue,
+    http::{
+        header::{AUTHORIZATION, CONTENT_TYPE},
+        HeaderValue,
+    },
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
@@ -31,6 +34,16 @@ use crate::AppState;
 /// warning log — never a panic — which is also the path every existing
 /// integration test exercises via `router(state, None)`.
 pub fn router(state: AppState, static_dir: Option<PathBuf>) -> Router {
+    router_with_cors(state, static_dir, cors_layer())
+}
+
+/// Same route/state wiring as `router()`, but takes a pre-built `CorsLayer`
+/// instead of reading it from process env via `cors_layer()`. `router()` is
+/// a thin wrapper over this. Exists so integration tests (`test_app_with_cors`
+/// in `tests/common/mod.rs`) can exercise `build_cors_layer()`'s output
+/// directly against a real router, without mutating process-global env vars
+/// (which would be flaky under parallel `cargo test`).
+pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: CorsLayer) -> Router {
     let api = Router::new()
         .route("/healthz", get(healthz))
         .route("/api/auth/prelogin", post(auth::prelogin))
@@ -62,7 +75,7 @@ pub fn router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/api/sessions", get(sessions::list))
         .route("/api/sessions/{id}", delete(sessions::revoke))
         .with_state(state)
-        .layer(cors_layer());
+        .layer(cors);
 
     match static_dir.filter(|d| d.is_dir()) {
         Some(dir) => {
@@ -109,7 +122,7 @@ fn cors_layer() -> CorsLayer {
 /// `cargo test` execution. `extension_origins_csv` is a comma-separated
 /// list of allowed origins, e.g. "chrome-extension://<id>,moz-extension://<id>"
 /// (CONTEXT.md D-08 — additive to, never replacing, PV_DEV_CORS).
-fn build_cors_layer(dev_cors_enabled: bool, extension_origins_csv: &str) -> CorsLayer {
+pub fn build_cors_layer(dev_cors_enabled: bool, extension_origins_csv: &str) -> CorsLayer {
     if dev_cors_enabled {
         return CorsLayer::permissive();
     }
@@ -133,7 +146,11 @@ fn build_cors_layer(dev_cors_enabled: bool, extension_origins_csv: &str) -> Cors
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(parsed.concrete))
             .allow_methods(Any)
-            .allow_headers(Any)
+            // SEC-01: an explicit allowlist, never `Any` — Firefox does not
+            // treat `Access-Control-Allow-Headers: *` as covering
+            // `Authorization` on a credentialed preflight, so the wildcard
+            // silently broke the exact request the extension needs.
+            .allow_headers([AUTHORIZATION, CONTENT_TYPE])
     }
 }
 
