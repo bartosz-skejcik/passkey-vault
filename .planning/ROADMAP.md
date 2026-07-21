@@ -342,7 +342,7 @@ Plans:
   2. The in-page autofill dropdown (Surface A) and the in-page prompt (Surface B) render item logos on a light tile that visually matches the web app and popup — the prior dark-tile inconsistency is gone.
   3. The in-page overlays' hand-written styles read their color/spacing/radius values from `pv-ui` design tokens, with no duplicated or hand-copied design constants remaining in the overlay source.
 
-**Plans:** 2/4 plans executed
+**Plans:** 3/4 plans executed
 Plans:
 **Wave 1**
 
@@ -351,7 +351,7 @@ Plans:
 
 **Wave 2** *(blocked on 17-01 completion)*
 
-- [ ] 17-03-PLAN.md — DS-03: promote ItemIconTile to packages/pv-ui/components, both consumers become shims
+- [x] 17-03-PLAN.md — DS-03: promote ItemIconTile to packages/pv-ui/components, both consumers become shims
 
 **Wave 3** *(blocked on 17-02 and 17-03 completion)*
 
@@ -423,7 +423,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 14. Critical Risk Closure — Cross-Realm Integrity & Real-RP Verification | v0.3 | 3/3 | Complete    | 2026-07-20 |
 | 15. Login & Unlock Unification (Vaultwarden Model) | v0.3 | 7/7 | Complete    | 2026-07-20 |
 | 16. Design System Extraction — Logic, Types & i18n | v0.3 | 6/6 | Complete    | 2026-07-21 |
-| 17. Shared Component & Visual Alignment | v0.3 | 2/4 | In Progress|  |
+| 17. Shared Component & Visual Alignment | v0.3 | 3/4 | In Progress|  |
 | 18. Firefox Window & Consent Hardening | v0.3 | 0/TBD | Not started | - |
 | 19. Server & Supply-Chain Hardening | v0.3 | 0/TBD | Not started | - |
 | 20. Test Infrastructure & CI Gate | v0.3 | 0/TBD | Not started | - |
