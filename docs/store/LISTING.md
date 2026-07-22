@@ -10,7 +10,7 @@ _Prepared 2026-07-22. Source of truth for both marketplace forms._
 - **Hosted demo/default server:** https://vault.blonie.cloud
 - **Privacy policy URL:** https://github.com/bartosz-skejcik/passkey-vault/blob/main/PRIVACY.md
 - **Support URL:** https://github.com/bartosz-skejcik/passkey-vault/issues
-- **License (AMO):** MIT *(⚠ repo has no LICENSE file yet — add one before AMO submission and pick the real license)*
+- **License:** AGPL-3.0-only — LICENSE w repo root (decyzja Bartka 2026-07-22). ⚠ Dropdown AMO nie ma AGPL na predefiniowanej liście (MPL/GPL/LGPL/BSD/MIT/Apache) — wybierz „Custom License" i wklej nagłówek AGPL-3.0 + link do LICENSE. Dystrybucja FF: **AMO listed** (nie self-distributed).
 - **Category:** CWS → Productivity / Tools · AMO → Privacy & Security
 
 ## Summary

@@ -44,8 +44,8 @@
 
 <div class="warn"><b>Do zrobienia przez Ciebie przed submisją (3 rzeczy):</b><br>
 1. <b>Logo</b> — ✅ ZROBIONE (logo-master.png → ikony 16–128 w obu buildach, store-icon 128/512, promo tile 440×280).<br>
-2. <b>LICENSE</b> — repo nie ma pliku licencji. AMO wymaga wyboru. Decyzja strategiczna: <b>MIT</b> (maksymalna adopcja) vs <b>AGPL-3.0</b> (chroni przed komercyjnym SaaS-owaniem twojego kodu — tak robi Bitwarden/Vaultwarden). Dla self-hosted menedżera haseł typowy wybór to AGPL.<br>
-3. <b>Konta developerskie</b> — CWS: $5 jednorazowo + obowiązkowe 2FA na koncie Google. AMO: darmowe konto Mozilla.</div>
+2. <b>LICENSE</b> — ✅ ZROBIONE: AGPL-3.0 w repo. W dropdownie AMO wybierz „Custom License" (AGPL nie jest na predefiniowanej liście) i wklej nagłówek + link do LICENSE.<br>
+3. <b>Konta developerskie</b> — ✅ ZROBIONE (oba założone). Dystrybucja FF: AMO listed (decyzja 2026-07-22).</div>
 
 <h2>1. Screenshoty do obu store'ów (1280×800)</h2>
 <div class="shots">
@@ -112,7 +112,7 @@ cd ../.. && bash ../scripts/make-amo-source.sh</pre>
   <tr><td>Name / Summary (≤250)</td><td><code>Passkey Vault</code> / tekst AMO-summary z LISTING.md</td></tr>
   <tr><td>Description</td><td>tekst EN z LISTING.md (markdown wspierany)</td></tr>
   <tr><td>Categories</td><td>Privacy &amp; Security (desktop; Android drugi wybór jeśli dotyczy)</td></tr>
-  <tr><td>License</td><td>wybór z listy — patrz decyzja LICENSE w §0</td></tr>
+  <tr><td>License</td><td>„Custom License" → AGPL-3.0 (nie ma jej na predefiniowanej liście AMO); LICENSE w repo</td></tr>
   <tr><td>Privacy policy</td><td>link do PRIVACY.md na GitHubie (AMO nie wymaga już hostowania u nich)</td></tr>
   <tr><td>Support</td><td>…/issues + opcjonalnie e-mail</td></tr>
   <tr><td>Notes to Reviewer</td><td>wklej <code>docs/store/AMO-REVIEWER-NOTES.md</code> (reprodukcja builda WASM, konto testowe, architektura)</td></tr>
