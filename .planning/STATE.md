@@ -205,10 +205,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-21T14:36:37.288Z
-Stopped at: context exhaustion at 75% (2026-07-21)
-Resume file: .planning/HANDOFF-v03-autonomous.md
+Last session: 2026-07-22 — v0.3 autonomous run COMPLETE (milestone shipped, archived, tagged). No resume file — next entry point: /gsd-new-milestone.
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Start the next milestone with /gsd-new-milestone (kandydaci w PROJECT.md Active: sharing, password health, załączniki, CXF, email masking)
+- Follow-up techniczny: dodaj git remote i zrób pierwszy push/PR, żeby CI gate przeszedł na realnym runnerze GitHub Actions (R-20-03)
+- Przy okazji: 2 debug-doc czekają na Twoją ludzką weryfikację (firefox-provider-corruption, signin-passkeyless-spin)
