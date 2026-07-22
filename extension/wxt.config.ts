@@ -47,6 +47,13 @@ export default defineConfig({
   // below is IDENTICAL across browsers -- only `key`'s presence diverges,
   // via the `browser === 'chrome'` conditional spread.
   manifest: ({ browser }) => ({
+    // Store-facing identity (publication 2026-07-22). Version comes from
+    // package.json; name/description are set here so the packaged manifest
+    // never ships the package.json's internal "extension" placeholder.
+    name: 'Passkey Vault',
+    description:
+      'Self-hosted, zero-knowledge password manager & passkey provider: autofill, TOTP and passkey login on every site.',
+    homepage_url: 'https://github.com/bartosz-skejcik/passkey-vault',
     // Pinned dev-build public key (09-08, 09-CONTEXT AMENDMENT 2026-07-15),
     // Chrome-only (see the per-browser-function comment above):
     //
@@ -173,6 +180,17 @@ export default defineConfig({
         // cannot function at all. 115 happens to also be an ESR release.
         // NEVER set this below 115.
         strict_min_version: '115.0',
+        // AMO data-collection consent (mandatory for new submissions since
+        // 2025-11-03; hard submission blocker without it). Honest
+        // declaration: vault sync transmits CLIENT-SIDE-ENCRYPTED credential
+        // blobs to the user's own configured pv-server — that is still a
+        // "transmission" of authenticationInfo under Mozilla's taxonomy,
+        // even though the server never sees plaintext or keys
+        // (zero-knowledge). Native consent UI needs Firefox 140+; users on
+        // 115–139 see the AMO listing disclosure instead.
+        data_collection_permissions: {
+          required: ['authenticationInfo'],
+        },
       },
     },
     // Phase 12 (Plan 12-03), D-17: Firefox-only. `page-bridge-firefox.ts`

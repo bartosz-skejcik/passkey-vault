@@ -1,0 +1,156 @@
+<meta charset="utf-8">
+<title>Passkey Vault — przewodnik publikacji wtyczki</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, 'DM Sans', system-ui, sans-serif; color: #1c2b2a; line-height: 1.5; font-size: 11.5px; margin: 0; }
+  h1 { font-size: 26px; letter-spacing: -.5px; color: #0f766e; margin: 0 0 4px; }
+  h2 { font-size: 17px; color: #0f766e; border-bottom: 2px solid #0f766e22; padding-bottom: 4px; margin: 26px 0 10px; page-break-after: avoid; }
+  h3 { font-size: 13.5px; margin: 16px 0 6px; page-break-after: avoid; }
+  .sub { color: #5a6b69; margin-bottom: 18px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 14px; font-size: 10.5px; }
+  th, td { border: 1px solid #d8d2c4; padding: 5px 8px; text-align: left; vertical-align: top; }
+  th { background: #f4f1e9; }
+  code, pre { font-family: ui-monospace, Menlo, monospace; font-size: 10px; background: #f4f1e9; border-radius: 4px; }
+  code { padding: 1px 4px; }
+  pre { padding: 10px 12px; white-space: pre-wrap; border: 1px solid #e5e0d5; page-break-inside: avoid; }
+  .copy { background: #f0f7f6; border: 1px solid #bcd9d5; border-left: 4px solid #0f766e; padding: 10px 12px; border-radius: 4px; margin: 8px 0; white-space: pre-wrap; font-size: 10.5px; page-break-inside: avoid; }
+  .warn { background: #fef4ec; border: 1px solid #f5cfae; border-left: 4px solid #f97316; padding: 8px 12px; border-radius: 4px; margin: 8px 0; }
+  .check { list-style: none; padding-left: 0; }
+  .check li { padding-left: 22px; position: relative; margin: 4px 0; }
+  .check li::before { content: "☐"; position: absolute; left: 0; color: #0f766e; font-size: 13px; }
+  .shots { display: flex; flex-wrap: wrap; gap: 8px; }
+  .shots figure { margin: 0; width: 48%; page-break-inside: avoid; }
+  .shots img { width: 100%; border: 1px solid #d8d2c4; border-radius: 6px; }
+  .shots figcaption { font-size: 9.5px; color: #5a6b69; margin-top: 2px; }
+  .pill { display: inline-block; background: #0f766e; color: #fff; border-radius: 99px; padding: 1px 9px; font-size: 9.5px; margin-right: 4px; }
+  .page-break { page-break-before: always; }
+</style>
+
+<h1>Passkey Vault — publikacja wtyczki 🚀</h1>
+<div class="sub">Kompletny pakiet do submisji: Chrome Web Store + Firefox Add-ons (AMO) · przygotowane 2026-07-22 · wersja wtyczki 0.4.0</div>
+
+<h2>0. Stan wyjściowy — co już jest gotowe</h2>
+<ul class="check">
+  <li>Manifest ma store'ową tożsamość: <b>Passkey Vault 0.4.0</b> + opis + homepage (naprawione z „extension 0.0.0")</li>
+  <li>Manifest FF ma wymagany przez AMO klucz <code>data_collection_permissions: required: ["authenticationInfo"]</code> (bez niego AMO odrzuca submisję od XI 2025)</li>
+  <li><code>web-ext lint</code>: 0 błędów · oba buildy przechodzą (<code>npm run build:chrome</code> / <code>build:firefox</code>)</li>
+  <li>Produkcyjny serwer działa: <b>https://vault.blonie.cloud</b> (Coolify na Oracle, LE cert, CORS na wildcardy schematów wtyczek)</li>
+  <li>Repo publiczne: <b>github.com/bartosz-skejcik/passkey-vault</b> — CI zielone na realnym runnerze</li>
+  <li>Privacy policy: <code>PRIVACY.md</code> w repo (link do formularzy w obu store'ach)</li>
+  <li>Screenshoty 1280×800: <code>docs/store/screenshots/final/</code></li>
+  <li>Paczka źródeł dla AMO: <code>scripts/make-amo-source.sh</code> + notatki dla reviewera <code>docs/store/AMO-REVIEWER-NOTES.md</code></li>
+</ul>
+
+<div class="warn"><b>Do zrobienia przez Ciebie przed submisją (3 rzeczy):</b><br>
+1. <b>Logo</b> — wygeneruj w ChatGPT (prompt w §5), wrzuć 1024×1024 PNG jako <code>docs/store/logo-master.png</code> → zrobię z niego wszystkie rozmiary + promo tile.<br>
+2. <b>LICENSE</b> — repo nie ma pliku licencji. AMO wymaga wyboru. Decyzja strategiczna: <b>MIT</b> (maksymalna adopcja) vs <b>AGPL-3.0</b> (chroni przed komercyjnym SaaS-owaniem twojego kodu — tak robi Bitwarden/Vaultwarden). Dla self-hosted menedżera haseł typowy wybór to AGPL.<br>
+3. <b>Konta developerskie</b> — CWS: $5 jednorazowo + obowiązkowe 2FA na koncie Google. AMO: darmowe konto Mozilla.</div>
+
+<h2>1. Screenshoty do obu store'ów (1280×800)</h2>
+<div class="shots">
+  <figure><img src="screenshots/final/01-popup-vault.png"><figcaption>01 — popup z sejfem (kafelki, wyszukiwarka, TOTP)</figcaption></figure>
+  <figure><img src="screenshots/final/02-autofill.png"><figcaption>02 — in-page autofill dropdown na realnej stronie logowania</figcaption></figure>
+  <figure><img src="screenshots/final/03-generator.png"><figcaption>03 — generator haseł na formularzu rejestracji</figcaption></figure>
+  <figure><img src="screenshots/final/04-web-app.png"><figcaption>04 — web app na własnym serwerze</figcaption></figure>
+  <figure><img src="screenshots/final/05-signin.png"><figcaption>05 — sign-in (hasło / passkey przez okno server-ceremony)</figcaption></figure>
+</div>
+<p>Kolejność wgrywania = numeracja (pierwszy screenshot jest najważniejszy — widok sejfu). Regeneracja: <code>cd extension &amp;&amp; PV_DEMO_PASSWORD=… npx playwright test store-screenshots</code>, potem <code>node ../docs/store/compose-frames.mjs</code>.</p>
+
+<h2 class="page-break">2. Chrome Web Store — formularz krok po kroku</h2>
+<h3>2a. Konto (jednorazowo)</h3>
+<ul class="check">
+  <li>chrome.google.com/webstore/devconsole → opłata <b>$5</b> (jednorazowa, do 20 rozszerzeń)</li>
+  <li>Włącz <b>2FA</b> na koncie Google (wymóg twardy)</li>
+  <li>E-mail developerski jest <b>nie do zmiany</b> po założeniu — użyj docelowego</li>
+  <li>Pytanie o „trader" (EU DSA): jako darmowy OSS bez monetyzacji → <b>non-trader</b> (przy traderze twoje imię/adres/telefon są PUBLICZNE na listingu)</li>
+</ul>
+<h3>2b. Paczka</h3>
+<pre>cd extension && npm run build:chrome
+cd .output/chrome-mv3 && zip -r ../../passkey-vault-chrome-0.4.0.zip .</pre>
+<h3>2c. Zakładka Listing</h3>
+<table>
+  <tr><th>Pole</th><th>Wartość</th></tr>
+  <tr><td>Name (≤75)</td><td><code>Passkey Vault</code></td></tr>
+  <tr><td>Summary (≤132)</td><td><code>Self-hosted, zero-knowledge password manager &amp; passkey provider. Autofill, TOTP and passkey login — your server, your keys.</code></td></tr>
+  <tr><td>Description</td><td>pełny tekst EN w <code>docs/store/LISTING.md</code> (sekcja „Detailed description (EN)")</td></tr>
+  <tr><td>Category</td><td>Productivity → Tools (potwierdź w żywym dropdownie — taksonomia świeżo zmieniona)</td></tr>
+  <tr><td>Language</td><td>English; opcjonalnie drugi listing PL (tekst PL w LISTING.md)</td></tr>
+  <tr><td>Store icon</td><td>128×128 PNG (z logo-master)</td></tr>
+  <tr><td>Screenshots</td><td>5 × 1280×800 z <code>screenshots/final/</code></td></tr>
+  <tr><td>Small promo tile</td><td><b>WYMAGANY</b> 440×280 (zrobię z logo)</td></tr>
+  <tr><td>Homepage / Support</td><td>github.com/bartosz-skejcik/passkey-vault · …/issues</td></tr>
+</table>
+<h3>2d. Zakładka Privacy — gotowe do wklejenia</h3>
+<p><b>Single purpose:</b></p>
+<div class="copy">Passkey Vault is a password manager and passkey provider: it stores the user's credentials in an end-to-end-encrypted vault synced to a server the user configures, autofills logins/TOTP/cards/identities on websites, generates strong passwords, and creates/uses WebAuthn passkeys on third-party sites on the user's behalf.</div>
+<p><b>Uzasadnienia uprawnień</b> (dashboard wylistuje każde z manifestu — wklej z tabeli w <code>LISTING.md</code>, sekcja „Permission justifications"; najważniejsze to content scripts na <code>&lt;all_urls&gt;</code> — tekst podkreśla: key-free scripts, decrypt tylko w tle po geście użytkownika, drugi confirm dla kart/tożsamości).</p>
+<p><b>Remote code:</b> No — WASM jest w paczce, serwer wymienia tylko JSON/szyfrogram.</p>
+<p><b>Data usage:</b> ✅ Authentication information · ✅ PII (e-mail konta, minimalnie) · reszta ❌ · wszystkie 4 certyfikaty Limited Use ✅</p>
+<p><b>Privacy policy URL:</b> <code>https://github.com/bartosz-skejcik/passkey-vault/blob/main/PRIVACY.md</code></p>
+<h3>2e. Review</h3>
+<div class="warn">Menedżer haseł + szerokie hosty = <b>ręczny in-depth review</b>. Budżetuj <b>1–2 tygodnie</b> (w 2026 bywały dłuższe kolejki). Nie planuj launchu „na dzień akceptacji". Najczęstsze odrzuty w tej kategorii: nieużywane uprawnienia w manifeście, zbyt ogólne uzasadnienia, brak prominent disclosure. Nasze uzasadnienia są pisane pod reviewera czytającego kod.</div>
+
+<h2 class="page-break">3. Firefox AMO — formularz krok po kroku</h2>
+<h3>3a. Konto</h3>
+<ul class="check">
+  <li>Konto Mozilla (accounts.firefox.com) → addons.mozilla.org/developers — <b>za darmo</b></li>
+  <li>Ustaw display name w profilu AMO (nie syncuje się samo)</li>
+</ul>
+<h3>3b. Paczki (dwie!)</h3>
+<pre># paczka wtyczki:
+cd extension && npm run build:firefox
+cd .output/firefox-mv2 && zip -r ../../passkey-vault-firefox-0.4.0.zip .
+
+# paczka ŹRÓDEŁ (obowiązkowa — bundler + WASM):
+cd ../.. && bash ../scripts/make-amo-source.sh</pre>
+<h3>3c. Flow submisji</h3>
+<table>
+  <tr><th>Krok</th><th>Co wpisać</th></tr>
+  <tr><td>Upload paczki</td><td>zip firefox-mv2; walidacja automatyczna (lint mamy: 0 błędów)</td></tr>
+  <tr><td>„Minified/machine-generated code?"</td><td><b>YES</b> → wgraj archiwum z <code>make-amo-source.sh</code></td></tr>
+  <tr><td>Name / Summary (≤250)</td><td><code>Passkey Vault</code> / tekst AMO-summary z LISTING.md</td></tr>
+  <tr><td>Description</td><td>tekst EN z LISTING.md (markdown wspierany)</td></tr>
+  <tr><td>Categories</td><td>Privacy &amp; Security (desktop; Android drugi wybór jeśli dotyczy)</td></tr>
+  <tr><td>License</td><td>wybór z listy — patrz decyzja LICENSE w §0</td></tr>
+  <tr><td>Privacy policy</td><td>link do PRIVACY.md na GitHubie (AMO nie wymaga już hostowania u nich)</td></tr>
+  <tr><td>Support</td><td>…/issues + opcjonalnie e-mail</td></tr>
+  <tr><td>Notes to Reviewer</td><td>wklej <code>docs/store/AMO-REVIEWER-NOTES.md</code> (reprodukcja builda WASM, konto testowe, architektura)</td></tr>
+</table>
+<div class="warn"><b>Kluczowe dla AMO:</b> reviewer <b>przebuduje</b> paczkę z twoich źródeł i porówna bajt-w-bajt. Archiwum zawiera lockfiles + rust-toolchain.toml (1.97.0) + dokładną sekwencję komend. Obfuskacja = ban; minifikacja Vite = OK. Id <code>passkey-vault@extension.local</code> jest poprawny (liczy się unikalność).</div>
+<h3>3d. data_collection_permissions</h3>
+<p>Zadeklarowane w manifeście: <code>required: ["authenticationInfo"]</code> — uczciwie: sync przesyła zaszyfrowane klienckie blob-y poświadczeń na TWÓJ skonfigurowany serwer. Natywny consent-UI pokazuje się na FF 140+; użytkownicy 115–139 widzą disclosure na listingu (nasz floor 115 zostaje — decyzja: nie odcinamy ESR).</p>
+
+<h2 class="page-break">4. Publikacja krok-po-kroku (kolejność)</h2>
+<ol>
+  <li>Logo (§5) → wrzuć <code>docs/store/logo-master.png</code> → sygnał do mnie → generuję ikony 16–128, podmieniam w manifeście, robię promo tile 440×280, rebuild obu paczek</li>
+  <li>Dodaj LICENSE do repo (decyzja MIT/AGPL) + push</li>
+  <li>Bump wersji jeśli chcesz startować z 1.0.0 zamiast 0.4.0 (opinia: 0.4.0 jest OK i uczciwe)</li>
+  <li>CWS: konto ($5, 2FA) → nowa pozycja → zip chrome → Listing (§2c) → Privacy (§2d) → Submit</li>
+  <li>AMO: konto → Submit New Add-on → zip firefox + źródła (§3b) → formularz (§3c) → Submit</li>
+  <li>Po akceptacji Chrome: sklep nadaje NOWY extension id — <b>daj mi znać</b>, sprawdzimy czy nic nie pinuje starego id (klucz w wxt.config jest tylko dev-owy, produkcyjnie CWS nadpisuje)</li>
+  <li>Ogłoszenie: README repo + link do sklepów; default server w onboardingu wtyczki może promować vault.blonie.cloud</li>
+</ol>
+
+<h2>5. Prompt na logo (ChatGPT free)</h2>
+<div class="copy">A minimal flat vector app icon for a password manager called "Passkey Vault".
+Design: a rounded-square app icon containing a single friendly symbol — a
+simplified keyhole merged with a fingerprint swirl (the fingerprint lines form
+the round top of the keyhole). Warm indie aesthetic: creamy off-white
+background (#FAF7F0), the symbol in deep teal (#0F766E) with one coral accent
+(#F97316) as a small dot or single fingerprint line. Soft 24% corner radius,
+very subtle inner shadow, NO text, NO letters, NO gradients heavier than 5%,
+no metallic effects. Centered composition with generous padding (symbol takes
+~60% of the canvas). Clean thick strokes that stay readable at 16x16 pixels.
+Flat design, high contrast, sticker-like simplicity, dribbble-style app icon.
+Square 1:1, 1024x1024.</div>
+<p>Warianty i wskazówki: <code>docs/store/LOGO-PROMPT.md</code> (m.in. wersja z tarczą i glifem passkey, wersja ciemna, test czytelności przy 16 px).</p>
+
+<h2>6. Konto demo do screenshotów / review</h2>
+<table>
+  <tr><th>Serwer</th><td>https://vault.blonie.cloud</td></tr>
+  <tr><th>E-mail</th><td>demo@blonie.cloud</td></tr>
+  <tr><th>Hasło</th><td>Vault-Demo-2026!xK9mQ4p</td></tr>
+  <tr><th>Zawartość</th><td>3 loginy demo (GitHub / Google / Netflix) — dane fikcyjne</td></tr>
+</table>
+<p class="sub">Pełne materiały: <code>docs/store/LISTING.md</code> · <code>AMO-REVIEWER-NOTES.md</code> · <code>LOGO-PROMPT.md</code> · <code>PRIVACY.md</code> · badania wymagań w tym dokumencie oparte o oficjalne docs (developer.chrome.com / extensionworkshop.com, lipiec 2026).</p>
