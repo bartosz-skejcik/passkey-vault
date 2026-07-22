@@ -194,18 +194,21 @@ mod tests {
         .is_ok());
     }
 
-    // --- SEC-02: moz-extension://* wildcard removed, concrete origins only ---
+    // --- Hosted-deployment mode: scheme-scoped patterns accepted, bare * fatal ---
 
     #[test]
-    fn extension_origins_moz_wildcard_now_rejected() {
-        // SEC-02 (Phase 19) removed D-10's moz-extension://* scheme-scoped
-        // wildcard carve-out — it now fails loudly at startup the same as
-        // any other unsupported wildcard shape.
-        let err =
-            cfg_with_extension_origins("localhost", "http://localhost:3000", "moz-extension://*")
-                .validate()
-                .unwrap_err();
-        assert!(err.to_string().contains("PV_EXTENSION_ORIGINS"));
+    fn extension_origins_scheme_scoped_patterns_validate_ok() {
+        // Hosted multi-user deployment (2026-07-22): a public server cannot
+        // pre-know Firefox's per-install moz-extension UUID, so the exact
+        // patterns moz-extension://* / chrome-extension://* pass startup
+        // validation again. The bare-`*` rejection (WR-07) is untouched.
+        assert!(cfg_with_extension_origins(
+            "localhost",
+            "http://localhost:3000",
+            "moz-extension://*,chrome-extension://*",
+        )
+        .validate()
+        .is_ok());
     }
 
     #[test]
@@ -216,11 +219,11 @@ mod tests {
     }
 
     #[test]
-    fn extension_origins_chrome_wildcard_still_rejected() {
+    fn extension_origins_other_wildcard_shapes_still_rejected() {
         assert!(cfg_with_extension_origins(
             "localhost",
             "http://localhost:3000",
-            "chrome-extension://*",
+            "moz-extension://a*",
         )
         .validate()
         .is_err());
