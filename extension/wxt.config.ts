@@ -46,7 +46,7 @@ export default defineConfig({
   // `about:debugging` load of the firefox-mv2 build. Every other field
   // below is IDENTICAL across browsers -- only `key`'s presence diverges,
   // via the `browser === 'chrome'` conditional spread.
-  manifest: ({ browser }) => ({
+  manifest: ({ browser, mode }) => ({
     // Store-facing identity (publication 2026-07-22). Version comes from
     // package.json; name/description are set here so the packaged manifest
     // never ships the package.json's internal "extension" placeholder.
@@ -95,7 +95,12 @@ export default defineConfig({
     // Resulting stable dev Chrome extension id (visible in
     // chrome://extensions after one load of the rebuilt output, needed for
     // PV_EXTENSION_ORIGINS/09-07's UAT): bbpnpamaoddpkfjnohkkepbjgbjpdbfo
-    ...(browser === 'chrome'
+    // DEV-ONLY (mode gate added 2026-07-22): the Chrome Web Store REJECTS any
+    // uploaded manifest containing `key` ("key field is not allowed in
+    // manifest") — the store derives the published id from its own key. The
+    // pinned key therefore applies only to `wxt dev`/development builds,
+    // where the stable unpacked id is still convenient for local UAT.
+    ...(browser === 'chrome' && mode !== 'production'
       ? {
           key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0jLFyYzoV6yS7N+6/YdetllenktSlcgGYFXB6qorXTrfJzT507l2LyaMniofG49kabxHcELfnes0NWqVXaae/y+qV9LwsRSITYgp8b1shFZCKYNbp0X/GIx9nG6f0lE7AKPrbM1z7CJtZW39dQbe+r/txjUmexHCaDWIwT7tJTcafqZ6mHncOIrhG3ihEKgxoqOZUKFkyQFbjoMDYJtFkrskOTelfhDP5BWrYCud3Ijmtfn/cHnGvxu8UMAtFSV951JySCqkzf05PMCitf1I7LFR3zwLI0iNbvygGYXMYonExEeNxaNRU/jrDfMu8UgB2bNzQOKnia0SEg1NuYhEjQIDAQAB',
         }
