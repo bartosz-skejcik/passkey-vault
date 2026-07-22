@@ -1,0 +1,1 @@
+{"content":"1Password CSV export (legacy, logins-only) header commonly: Title,Url,Username,Password,Notes,Type,... (1Password's modern export is 1PUX JSON; CSV export path is limited/legacy, login-only, no reliable TOTP column).","source":"web","provider":"websearch","confidence":"LOW","fetched_at":"2026-07-14T08:00:41.797Z","ttl":86400000,"kind":"web"}

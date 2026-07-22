@@ -1,0 +1,1 @@
+{"content":"Bitwarden JSON export root: {encrypted, folders:[{id,name}], collections, items:[{id,folderId,type,name,notes,fields,login:{uris,username,password,totp},...}]}. login.totp holds either a bare base32 secret or a full otpauth:// URI.","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-07-14T08:00:41.679Z","ttl":86400000,"kind":"web"}

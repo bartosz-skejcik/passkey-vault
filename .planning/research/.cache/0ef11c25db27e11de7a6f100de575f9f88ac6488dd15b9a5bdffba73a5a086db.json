@@ -1,0 +1,1 @@
+{"content":"wasm-bindgen and wasm-bindgen-cli must be the exact same version (schema-versioned wire protocol); mismatch is a hard build failure. Confirmed current version 0.2.126 via crates.io API (2026-06-24).","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-07-12T11:03:02.128Z","ttl":86400000,"kind":"web"}

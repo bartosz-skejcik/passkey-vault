@@ -10,19 +10,17 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 
 **Lekki self-hostable vault (1 kontener + wtyczka Chrome/Firefox), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.** Jeśli wszystko inne zawiedzie, to musi działać.
 
-## Current Milestone: v0.3 Polish & Hardening
+## Current State
 
-**Goal:** Skonsolidować v0.2: jeden model logowania (Vaultwarden-style — pełny sign-in przez okno, popup = tylko unlock), jeden design system / źródło komponentów (wtyczka zasysa z frontendu przez `packages/pv-ui` na ile architektura pozwala), spójność wizualna in-page, oraz spłata długu technicznego i ukrytych ryzyk wyciągniętych podczas live-debugowania v0.2. Zero-knowledge i SECURED (faza 12) nienaruszone.
+**✅ v0.3 Polish & Hardening SHIPPED 2026-07-22** (fazy 14–20, 29 planów). Trzy milestone'y dowiezione: v0.1 MVP (serwer + web app + PRF unlock + Docker), v0.2 Browser Extension (autofill + passkey provider, Chrome+Firefox), v0.3 Polish & Hardening (jeden model logowania Vaultwarden-style, design system w `packages/pv-ui`, oba Critical risks zamknięte, server/supply-chain hardening, pełny CI gate).
 
-**Target features:**
-- **Model logowania Vaultwarden-style** — full sign-in ZAWSZE przez okno server-ceremony (oba browsery); popup traci password-signin, robi tylko unlock (hasło + passkey przez okno); unifikacja unlock na jeden tor (AUTH-01..04).
-- **Jeden design system** — czysta logika+typy, silnik i18n i `ItemIconTile` żyją raz w `pv-ui`; web i popup współdzielą; in-page overlays token-aligned (DS-01..04).
-- **Spójność wizualna in-page** — jasne kafelki logo w Surface A/B jak na froncie; okna FF wycentrowane + self-close (UX-01/02).
-- **Cross-browser hardening** — cross-realm response-direction fix na FF (byte-asserted); in-page consent FF decyzyjnie po security-review (XBR-02/03).
-- **Serwer + supply-chain** — CORS Authorization jawnie, D-10 konkretne originy, cargo audit/deny + pin toolchain, sign-count clone-detection (SEC-01..04).
-- **Rygor testów + CI** — pipeline CI full-gate, sondy FF w npm-scriptach, real-RP webauthn-rs round-trip, bramka serializacji bajtów (QA-01..04).
+**Stack żywy:** Rust workspace (pv-core / pv-server / pv-provider / pv-wasm), Next.js 16 static-export web app, WXT MV3/MV2 extension, `packages/pv-ui` jako design-system home. Gate: cargo workspace + 481 web vitest + 693 ext vitest + oba tsc + oba buildy + web-ext lint + MAIN-world audit + supply-chain — lokalnie zielony i odwzorowany 1:1 w `.github/workflows/ci.yml`.
 
-**Key context:** v0.2 (fazy 8–13) zapieczętowane 2026-07-20 po brutalnym live-debugu na realnym Firefox/Zen + github.com — 7 klas bugów niewidocznych dla zielonego CI (fixture za grzeczne: localhost bez CSP, tylko Uint8Array, `.ok` zamiast bajtów, jsdom bez Xrayów). v0.3 zamienia tę nauczkę w rygor. Cleanup/complete-milestone ŚWIADOMIE odłożone do v1.0 — pełna historia implementacji zostaje. Dwa Critical (cross-realm response + brak real-RP testów providera) = pierwsza faza. Research: `.planning/research/v0.3/`.
+**Znane follow-upy:** pierwszy push/PR na realny runner GitHub Actions (repo bez remote); 2 debug-doc czekają na ludzką weryfikację Bartka; drobne todo (UI-review v0.1, stale :3000 origin default) — patrz STATE.md Deferred Items.
+
+**Next Milestone:** nie zdefiniowany — `/gsd-new-milestone` (kandydaci w Active poniżej: sharing, password health, załączniki, CXF, email masking).
+
+**Key context (historyczny):** v0.2 zapieczętowane 2026-07-20 po brutalnym live-debugu na realnym Firefox/Zen + github.com — 7 klas bugów niewidocznych dla zielonego CI. v0.3 zamieniło tę nauczkę w rygor (real-RP testy, byte-shape gates, inline-fixture probes, CI). Research: `.planning/research/v0.3/`.
 
 ## Requirements
 
@@ -52,6 +50,8 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 - ✓ Generate & Capture: generator na formularzach signup (popover click-triggered w closed shadow, znaki+passphrase, CSPRNG z współdzielonego `packages/pv-ui`), zapis nowego loginu po udanym submicie (warstwowa heurystyka DOM/URL+brak błędu, toast z originem i maskowanym hasłem), wykrycie zmiany hasła → update bez duplikatu (klasyfikacja origin+username na zaufanym sender-originie, `ensureItemsHydrated` przeciw wyścigowi po idle-killu), origin-mismatch modal (klasa Bitwarden-CVE, oba originy w pełnym brzmieniu, decyzja wyłącznie z danych przeglądarki) + suggested bez formularza (D-11), parytet motywu/stylu z frontendem (lustro `pv-theme-mirror` z web appa, tokeny `pv-ui`, generator 1:1 z webowym) i popup single-scroll (D-14) — Phase 11 (CAP-01/02/03), 4/4 SC, 2 iteracje review (1C+6W naprawione), UAT 28/28 + 12/12 theme parity, 5 rund live-review Bartka, akceptacja explicite
 - ✓ Passkey provider: MAIN-world key-free RPC shim (`credentials.create`/`get` na cudzych stronach), `passkey-rs` soft authenticator + PRF, consent UI, native fallthrough (D-11), security-review gated (SECURED) — Phase 12 (PROV-01..05), zweryfikowane 2026-07-17
 - ✓ Dual-browser hardening: zweryfikowany parytet Chrome/Firefox (lub jawna degradacja — np. ext-scoped WebAuthn niemożliwy na FF), strict_min_version 115, moz-extension CORS pattern (D-10), server-ceremony unlock na FF, headed-Chromium ceremony lane — Phase 13 (XBR-01), zapieczętowana 2026-07-20 (ostatnia faza v0.2)
+
+**✅ v0.2 Browser Extension COMPLETE 2026-07-20** — EXT-01..06, PROV-01..05, FILL-01..04, CAP-01..03, XBR-01 dostarczone; katalogi faz zarchiwizowane przy zamknięciu v0.3 → `.planning/milestones/v0.2-phases/`.
 - ✓ Critical risk closure (pierwsza faza v0.3, risk-first): XBR-02 root-caused — response-direction `instanceof:false` to artefakt pomiaru WebDriver/executeScript (inline-script fixture: `instanceof:true` nawet pre-fix); MAIN-world re-materializacja jako defense-in-depth, probe hard-gate (exit 1 na FAIL) + jsdom cross-realm regression suite; QA-03 zamknięte prawdziwym cross-vendor testem `webauthn-rs` (kanidm weryfikuje realne ceremonie pv-provider/passkey-rs, prawdziwe podpisy nad prawdziwymi challenge'ami); debug doc git-tracked → resolved; pełna 9-komendowa bramka zielona (vitest 674, cargo 151, run-core 17+1, server-unlock 15/2/0, chromium 5/5) — Phase 14 (XBR-02, QA-03), code review 0C/0W po fixach, zweryfikowana 2026-07-20
 
 - ✓ Unifikacja logowania (model Vaultwarden): sign-in ZAWSZE przez okno server-ceremony (hasło+passkey, oba browsery), popup = tylko unlock (hasło-first + passkey przez okno) i URL serwera; ext-scoped PRF twardo usunięty (9 plików + trwały guard-test); zmiana serwera z dialogiem potwierdzenia i czystą migracją sesji/uprawnień (udowodnione żywo na dwóch serwerach, 2 realne bugi znalezione i naprawione przy dowodzie); vitest po raz pierwszy exit 0 (678/678 ext + 474/474 web) — Phase 15 (AUTH-01..04), review 0C/1W(fixed)/3I, zweryfikowana 2026-07-20
@@ -61,11 +61,12 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 - ✓ Server & supply-chain hardening: CORS zawężony (SEC-01 jawna lista allow_headers [authorization, content-type], zero `*`; SEC-02 tylko konkretne per-install originy — wildcard `moz-extension://*` usunięty, D-10 zamknięty, WR-07 zachowany, parse fail-loud na każdy wildcard) z dowodem real-TCP preflight (reqwest); SEC-04 regresja licznika WebAuthn ujawniona — migracja 0013 `counter_anomaly_at` + wspólny klasyfikator `handle_finish_auth_error` (wbudowany hard-fail webauthn-rs nietknięty, tylko log+flag na już-odrzuconej ścieżce) + test regresji; SEC-03 cargo-audit 0.22.2/cargo-deny 0.20.2 + deny.toml + scripts/check-supply-chain.sh (exit 0) + exact `=x.y.z` piny watch-listy + toolchain 1.97.0; review 0C/2W(fixed: warn-log przy write-fail, parytet enumeracji prf_salts); cargo test --workspace 153 zielone — Phase 19 (SEC-01..04), zweryfikowana 2026-07-21 (4/4 SC)
 - ✓ Test infrastructure & CI gate (ostatnia faza v0.3): `.github/workflows/ci.yml` z 4 jobami (rust workspace, web 481 vitest+tsc+build, extension 693 vitest+tsc+oba wxt buildy+web-ext lint+MAIN-world audit, supply-chain cargo-audit/cargo-deny pinned `--locked`) na push/PR — pełny SC1 gate zielony lokalnie (brak remote; cloud-run = follow-up); QA-04 trwały byte-shape regression gate `crates/pv-provider/tests/response_shape.rs` (base64url string dla KAŻDEGO binarnego pola create+get, panic z nazwą pola przy regresji do number-array); QA-02 wszystkie realne lane'y Firefox (server-unlock, provider-corruption, request-xray; CSP-strict wpleciony w core+request-xray wg planu) jako npm scripts + 6 lane'ów w README; `ff-profile-prefs.cjs` wygasza macOS passkey-sheet w automacji (todo resolved); review 1C+5W wszystkie naprawione (exit-1 na CORRUPTED, bounded driver cleanup, `permissions: contents: read`, SHA-pinned actions, fail-fast na hasła UAT bez commitowanych defaultów, awaited ceremony executeScript) — Phase 20 (QA-01/02/04), zweryfikowana 2026-07-21 (3/3 SC)
 
+**✅ v0.3 Polish & Hardening SHIPPED 2026-07-22** — 20/20 requirements, 7/7 faz zweryfikowanych + Nyquist-compliant + threat-secure, integracja 5/5 seams. Audit: `.planning/milestones/v0.3-MILESTONE-AUDIT.md`. Znany follow-up: pierwszy push/PR na realny runner GitHub Actions (repo bez remote — lokalny full-gate jest dowodem, R-20-03).
+
 ### Active
 
-<!-- v0.2 (Browser Extension) i dalej: -->
+<!-- Po v0.3 — kandydaci na kolejne milestone'y: -->
 
-- [ ] Extension (WXT, MV3, Chrome + Firefox): popup, autofill, **passkey provider** (MAIN-world patch navigator.credentials, passkey-rs→WASM, fall-through do natywnych) — obejmuje OBA przepływy: **rejestrację nowego passkeya na cudzej stronie** (`credentials.create` — np. GitHub → Settings → dodaj passkey → zapisuje się do naszego vaulta) i **logowanie zapisanym passkeyem** (`credentials.get`)
 - [ ] Sharing: zaszyfrowane linki (klucz w URL fragment) + współdzielenie rodzinne w ramach instancji
 - [ ] Password Health dashboard (hero-score, słabe/powtórzone/stare) + breach monitor (HIBP k-anonymity)
 - [ ] Załączniki za trait-em storage (implementacja dyskowa w v1)
@@ -137,4 +138,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-21 — Phase 19 (Server & Supply-Chain Hardening) complete; next: Phase 20 (Test Infrastructure & CI Gate)*
+*Last updated: 2026-07-22 after v0.3 milestone (Polish & Hardening — SHIPPED; next: /gsd-new-milestone)*

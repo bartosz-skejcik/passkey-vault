@@ -45,6 +45,46 @@
 
 ---
 
+## Milestone: v0.3 — Polish & Hardening
+
+**Shipped:** 2026-07-22
+**Phases:** 7 (14–20) | **Plans:** 29 | **Mode:** autonomous run (handoff-driven across 3 sessions)
+
+*(v0.2 Browser Extension — fazy 8–13, complete 2026-07-20 — nigdy nie miało formalnego close; jego katalogi faz zarchiwizowano przy tym zamknięciu do `milestones/v0.2-phases/`. Osobnej retrospektywy v0.2 nie ma — nauczka z live-debugu v0.2 JEST treścią v0.3.)*
+
+### What Was Built
+- Oba Critical risks z v0.2 zamknięte risk-first (XBR-02 root-cause = WebDriver artifact + trwałe regression gates; QA-03 real cross-vendor webauthn-rs round-trip).
+- Jeden model logowania (Vaultwarden): sign-in tylko przez okno server-ceremony, popup unlock-only, ext-scoped PRF hard-usunięty z trwałym grep-guardem.
+- Design system w `packages/pv-ui`: logika/typy/i18n + pierwszy współdzielony komponent React (ItemIconTile), token-aligned in-page overlays, harness wizualny.
+- Server/supply-chain hardening (CORS konkretne originy, counter-anomaly, cargo-audit/deny + piny) i pełny 4-jobowy CI gate odwzorowujący lokalną bramkę 1:1.
+
+### What Worked
+- Risk-first ordering (mandat Bartka): oba silent-failure classes zamknięte zanim UX/DS praca mogła na nich budować.
+- Handoff-driven autonomous run: 3 sesje kontynuowane z pliku HANDOFF bez utraty kontekstu; „NIE re-dispatchuj zmergowanej pracy" + git log jako ground truth.
+- Post-review fix chain (opus review → sonnet fixer → opus verifier) domykał fazy z 0 otwartych findings — w fazie 20 review złapał realny false-green (CR-01 exit 0 mimo CORRUPTED).
+- Inline-fixture probes zamiast driver.executeScript() — usunęły całą klasę artefaktów pomiarowych WebDriver.
+
+### What Was Inefficient
+- v0.2 bez formalnego close odbiło się czkawką przy v0.3 close: `milestone.complete` zgarnął fazy 8–13 do archiwum v0.3 i zawyżył staty w MILESTONES.md (13 faz/72 plany) — wymagało ręcznej korekty na 7/29 i przeniesienia do `v0.2-phases/`.
+- decision-coverage parser nie czyta prose-form decisions (3 fazy wymagały override z checker-evidence) — znany, powtarzalny koszt.
+- Świeże worktree executorów wymagały każdorazowego bootstrapu (rsync node_modules + build-wasm + wxt prepare) — zautomatyzowany wzorzec, ale wciąż per-worktree koszt.
+
+### Patterns Established
+- Threat model w każdym PLAN (STRIDE register) → secure-phase L1 short-circuit z grep-weryfikacją mitigacji.
+- SHA-pinned GitHub Actions + `permissions: contents: read` + zero exit-swallowing jako standard CI dla projektu o profilu password-managera.
+- Fail-fast na sekretach harnessu (żadnych commitowanych defaultów haseł; env-var contract w README musi zgadzać się z kodem).
+
+### Key Lessons
+1. Zamykaj milestone formalnie od razu — odroczony close v0.2 skaził staty i archiwizację następnego.
+2. Mierz przez realną powierzchnię (inline `<script>` fixture), nie przez tooling (executeScript) — inaczej root-causujesz artefakty pomiaru.
+3. Regression gate musi failować procesem (exit code), nie tylko logiem — CR-01 pokazał, że „permanent gate" z exit 0 to false-green.
+
+### Cost Observations
+- Model mix: executor=sonnet, reviewer/verifier/auditor/integration=opus, Fable jako orchestrator (standing policy).
+- Notable: fix chain + weryfikacja per faza w jednej sesji; largest single-agent runs ~100–120k tokenów (review/fix).
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -52,14 +92,19 @@
 | Milestone | Sessions | Phases | Key Change |
 |-----------|----------|--------|------------|
 | v0.1 | multiple | 7 | Established the GSD workflow-orchestrated pipeline (background Workflow fan-outs, Opus-verify/Sonnet-execute split, self-driven Playwright UAT). |
+| v0.2 | multiple | 6 | Live-debug na realnym Firefox/Zen jako brakująca warstwa weryfikacji; brak formalnego close (nauczka do v0.3). |
+| v0.3 | 3 (autonomous) | 7 | Handoff-driven autonomous run; risk-first ordering; per-phase review→fix→verify→validate→secure chain domykany w jednej sesji. |
 
 ### Cumulative Quality
 
 | Milestone | Tests | Coverage | Zero-Dep Additions |
 |-----------|-------|----------|-------------------|
 | v0.1 | ~101 Rust workspace + 339 web vitest | all phases verified passed, 5/5 E2E flows wired | papaparse (CSV), totp-rs (TOTP), tower-http fs (static serve) |
+| v0.3 | 153+ Rust workspace + 481 web + 693 ext vitest + 6 live-FF probe lanes + CI gate | 20/20 reqs, 7/7 verified + Nyquist + secured, 5/5 integration | zero nowych zależności package-manager (SHA-pinned Actions only) |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. (v0.1) Commit verification artifacts last to avoid the staleness gate.
 2. (v0.1) Independent adversarial verification catches what single-pass verification misses.
+3. (v0.3) Zamykaj milestone'y formalnie na bieżąco — odroczony close poprzedniego psuje archiwizację następnego.
+4. (v0.3) Bramki regresyjne muszą failować exit-codem; log-only „gate" to false-green.

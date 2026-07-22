@@ -2,18 +2,17 @@
 gsd_state_version: 1.0
 milestone: v0.3
 milestone_name: Polish & Hardening
-current_phase: 20
-status: completed
-stopped_at: context exhaustion at 75% (2026-07-21)
-last_updated: "2026-07-21T15:44:19.036Z"
-last_activity: 2026-07-21
-last_activity_desc: Phase 20 complete
+status: Awaiting next milestone
+last_updated: "2026-07-22T07:17:38.440Z"
+last_activity: 2026-07-22
+last_activity_desc: Milestone v0.3 completed and archived
 progress:
   total_phases: 13
-  completed_phases: 12
+  completed_phases: 13
   total_plans: 72
-  completed_plans: 70
-  percent: 92
+  completed_plans: 72
+  percent: 100
+current_phase: 20
 current_phase_name: Test Infrastructure & CI Gate
 ---
 
@@ -21,17 +20,17 @@ current_phase_name: Test Infrastructure & CI Gate
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-21)
+See: .planning/PROJECT.md (updated 2026-07-22)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 20 — Test Infrastructure & CI Gate
+**Current focus:** Planning next milestone (/gsd-new-milestone) — v0.3 shipped 2026-07-22
 
 ## Current Position
 
-Phase: 20
-Plan: Not started
-Status: All phases complete
-Last activity: 2026-07-21 — Phase 20 complete
+Phase: Milestone v0.3 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-22 — Milestone v0.3 completed and archived
 
 ## Performance Metrics
 
@@ -41,7 +40,7 @@ Last activity: 2026-07-21 — Phase 20 complete
 - Average duration: - min
 - Total execution time: 0 hours (v0.3)
 
-**By Phase (v0.2 — complete):**
+**By Phase (v0.2 + v0.3 — complete, archived):**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
@@ -58,18 +57,6 @@ Last activity: 2026-07-21 — Phase 20 complete
 | 18 | 2 | - | - |
 | 19 | 3 | - | - |
 | 20 | 4 | - | - |
-
-**By Phase (v0.3 — planned, not yet executed):**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 14. Critical Risk Closure | TBD | - | - |
-| 15. Login & Unlock Unification | TBD | - | - |
-| 16. Design System Extraction (Logic/i18n) | TBD | - | - |
-| 17. Shared Component & Visual Alignment | TBD | - | - |
-| 18. Firefox Window & Consent Hardening | TBD | - | - |
-| 19. Server & Supply-Chain Hardening | TBD | - | - |
-| 20. Test Infrastructure & CI Gate | TBD | - | - |
 
 *Updated after each plan completion*
 **Per-Plan Metrics:**
@@ -192,6 +179,18 @@ None yet.
 
 ## Deferred Items
 
+Items acknowledged and deferred at v0.3 milestone close on 2026-07-22 (pre-existing v0.1/v0.2-era artifacts; v0.3's own 7 phases all verified passed):
+
+| Category | Item | Status |
+|----------|------|--------|
+| debug | firefox-provider-corruption — RESOLVED in code, awaiting Bartek's human verify (checkpoint in doc) | awaiting_human_verify |
+| debug | signin-passkeyless-spin — reasoning checkpoint open, awaiting Bartek's human verify | awaiting_human_verify |
+| uat | Phases 05–07 UAT passed (0 pending); Phases 08/09/10/13 UAT files status "unknown" (0 pending scenarios — parser artifact, live UAT evidence in phase SUMMARYs) | acknowledged |
+| quick_task | 260717-lnx one-click-passkey-picker — listed complete in Quick Tasks table; audit flag `needs-decision` is a status-parse artifact | acknowledged |
+| todo | 2026-07-12-ui-review-phase1-fixes (3 cosmetic WARNING findings, already deferred at v0.1 close) | open |
+| todo | 2026-07-20-stale-default-pv-origin-3000 (stale default PV origin :3000 — api) | open |
+| context | Phases 09/10/11/13 CONTEXT "open questions" — all read "None required to unblock planning" (parser artifact) | acknowledged |
+
 Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_closeout):
 
 | Category | Item | Status | Deferred At |
@@ -212,4 +211,4 @@ Resume file: .planning/HANDOFF-v03-autonomous.md
 
 ## Operator Next Steps
 
-- Review the v0.3 roadmap (`.planning/ROADMAP.md`, Phases 14–20); once approved, start with `/gsd-plan-phase 14` (Critical Risk Closure — XBR-02 + QA-03).
+- Start the next milestone with /gsd-new-milestone

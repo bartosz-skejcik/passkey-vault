@@ -1,0 +1,1 @@
+{"content":"otpauth URI (Google Authenticator Key URI Format): otpauth://totp/{label}?secret=BASE32&issuer=X&algorithm=SHA1|SHA256|SHA512&digits=6|8&period=30. secret is base32 (RFC 3548, unpadded ok); algorithm/digits/period optional, default SHA1/6/30.","source":"web","provider":"websearch","confidence":"HIGH","fetched_at":"2026-07-14T08:00:42.023Z","ttl":86400000,"kind":"web"}

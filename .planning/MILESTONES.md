@@ -1,5 +1,30 @@
 # Milestones
 
+## v0.3 Polish & Hardening (Shipped: 2026-07-22)
+
+**Phases completed:** 7 phases (14–20), 29 plans
+
+**Delivered:** Consolidated v0.2 into a single hardened surface — one login model, one design-system source of truth, closed Critical risks, hardened server/supply-chain, and a full CI gate — without regressing the SECURED posture or the zero-knowledge guarantee.
+
+**Key accomplishments:**
+
+- Critical-risk closure first (Phase 14): XBR-02 root-caused as a WebDriver measurement artifact (real fix kept as defense-in-depth) with permanent jsdom + inline-fixture live-Firefox regression gates; QA-03 closed by a real cross-vendor `webauthn-rs` (kanidm) round-trip test verifying pv-provider's actual register+authenticate ceremonies.
+- Login/unlock unification onto the Vaultwarden model (Phase 15): sign-in ALWAYS via the server-origin ceremony window (password + passkey, both browsers), popup reduced to unlock-only + server URL; the ext-scoped PRF path hard-deleted (9 files, 6 message kinds) with a permanent grep-based guard test; clean server-URL migration proven live on two servers.
+- Design-system extraction (Phases 16–17): 7 canonical logic/types/i18n modules and the first shared React component (`ItemIconTile`) live once in `packages/pv-ui`, consumed by web + popup via 1-line shims and by the in-page overlays via `tokens.css` — 16/16 computed-color parity across surfaces, dark-tile inconsistency closed, exactly-8-literal overlay allowlist audited, permanent visual-regression harness (`extension/e2e-visual/`).
+- Firefox window & consent hardening (Phase 18): ceremony/consent window geometry formalized (13 unit tests + live GEOM probe lane 7/7); XBR-03 in-page consent resolved REJECT-WITH-REASON after a four-dimensional security review (DEF CON 33 clickjacking class — window model stands).
+- Server & supply-chain hardening (Phase 19): CORS explicit allow-headers + concrete per-install origins only (D-10 wildcard tech-debt retired, fail-loud parse), WebAuthn sign-counter anomaly surfaced (migration 0013 + classifier, hard-fail untouched), cargo-audit/cargo-deny + deny.toml + exact `=x.y.z` pins + toolchain 1.97.0.
+- Test infrastructure & CI gate (Phase 20): 4-job `.github/workflows/ci.yml` reproducing the full local gate 1:1 (SHA-pinned actions, least-privilege token, supply-chain job), all 6 real-Firefox probe lanes wired to npm scripts and documented, macOS passkey-sheet suppression for unattended harness runs, and the permanent `response_shape.rs` byte-shape regression gate closing the D-21 bug class.
+
+**Quality gates:** 20/20 requirements satisfied (audit passed), 7/7 phases verified + Nyquist-compliant + threat-secure; per-phase code reviews (opus) with all Critical/Warning findings fixed; integration checker 5/5 seams wired.
+
+**Note:** v0.2's phase directories (8–13; milestone completed 2026-07-20 but never formally closed) were archived alongside this close under `milestones/v0.2-phases/`.
+
+---
+
+
+
+---
+
 ## v0.1 MVP (Shipped: 2026-07-14)
 
 **Phases completed:** 7 phases, 29 plans, 67 tasks
