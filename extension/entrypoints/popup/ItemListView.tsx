@@ -365,7 +365,11 @@ export default function ItemListView({
                     <select
                       aria-label={t(locale, "sort.label")}
                       data-testid="popup-sort-select"
-                      className="select select-bordered select-sm shrink-0"
+                      // w-auto: DaisyUI 5's .select defaults to
+                      // width:clamp(3rem,20rem,100%) — 20rem + shrink-0 in a
+                      // 380px popup row overflows the x-axis (Bartek,
+                      // 2026-07-22); content-size it instead.
+                      className="select select-bordered select-sm w-auto shrink-0"
                       value={sortOption}
                       onChange={(e) => void handleSortChange(e.target.value as SortOption)}
                     >

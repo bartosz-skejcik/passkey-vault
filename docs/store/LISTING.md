@@ -151,10 +151,10 @@ data — never executable code.
 
 | Asset | Spec | Status |
 |---|---|---|
-| Store icon 128×128 PNG | both stores | ⚠ needs final logo (see LOGO-PROMPT) |
-| Manifest icons 16/32/48/96/128 | in package | ⚠ placeholder WXT icon — replace with logo |
+| Store icon 128×128 PNG | both stores | ✅ `docs/store/store-icon-128.png` (+512 dla AMO promo) |
+| Manifest icons 16/32/48/96/128 | in package | ✅ generated from logo-master, in both builds |
 | Screenshots 1280×800 PNG (CWS: 1–5, AMO: same size ok) | `docs/store/screenshots/final/` | ✅ generated |
-| CWS small promo tile 440×280 | REQUIRED by CWS | ⚠ make from logo + tagline (template in `docs/store/promo/`) |
+| CWS small promo tile 440×280 | REQUIRED by CWS | ✅ `docs/store/promo-tile-440x280.png` |
 | CWS marquee 1400×560 | optional | skip for launch |
 
 ## Submission gotchas (from research, both stores)

@@ -225,7 +225,12 @@ test.describe("store screenshots", () => {
       await urlInput.fill(SERVER, { timeout: 15000 });
       await popup.locator('button[type="submit"]').first().click({ timeout: 15000 });
     }
-    await popup.waitForSelector('[data-testid="server-ceremony-signin-button"]', { timeout: 20000 });
+    await popup
+      .waitForSelector('[data-testid="server-ceremony-signin-button"]', { timeout: 20000 })
+      .catch(async (e) => {
+        await popup.screenshot({ path: path.join(OUT, "debug-popup-state.png") });
+        throw e;
+      });
     await popup.waitForTimeout(600);
 
     const [ceremonyPage] = await Promise.all([

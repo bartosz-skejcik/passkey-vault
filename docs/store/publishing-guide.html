@@ -43,7 +43,7 @@
 </ul>
 
 <div class="warn"><b>Do zrobienia przez Ciebie przed submisją (3 rzeczy):</b><br>
-1. <b>Logo</b> — wygeneruj w ChatGPT (prompt w §5), wrzuć 1024×1024 PNG jako <code>docs/store/logo-master.png</code> → zrobię z niego wszystkie rozmiary + promo tile.<br>
+1. <b>Logo</b> — ✅ ZROBIONE (logo-master.png → ikony 16–128 w obu buildach, store-icon 128/512, promo tile 440×280).<br>
 2. <b>LICENSE</b> — repo nie ma pliku licencji. AMO wymaga wyboru. Decyzja strategiczna: <b>MIT</b> (maksymalna adopcja) vs <b>AGPL-3.0</b> (chroni przed komercyjnym SaaS-owaniem twojego kodu — tak robi Bitwarden/Vaultwarden). Dla self-hosted menedżera haseł typowy wybór to AGPL.<br>
 3. <b>Konta developerskie</b> — CWS: $5 jednorazowo + obowiązkowe 2FA na koncie Google. AMO: darmowe konto Mozilla.</div>
 
@@ -123,7 +123,7 @@ cd ../.. && bash ../scripts/make-amo-source.sh</pre>
 
 <h2 class="page-break">4. Publikacja krok-po-kroku (kolejność)</h2>
 <ol>
-  <li>Logo (§5) → wrzuć <code>docs/store/logo-master.png</code> → sygnał do mnie → generuję ikony 16–128, podmieniam w manifeście, robię promo tile 440×280, rebuild obu paczek</li>
+  <li>✅ Logo gotowe — ikony w paczkach, promo tile <code>docs/store/promo-tile-440x280.png</code>, store icon <code>store-icon-128.png</code></li>
   <li>Dodaj LICENSE do repo (decyzja MIT/AGPL) + push</li>
   <li>Bump wersji jeśli chcesz startować z 1.0.0 zamiast 0.4.0 (opinia: 0.4.0 jest OK i uczciwe)</li>
   <li>CWS: konto ($5, 2FA) → nowa pozycja → zip chrome → Listing (§2c) → Privacy (§2d) → Submit</li>

@@ -306,6 +306,12 @@ describe("no_other_extension_file_hard_codes_a_server_url", () => {
           // a doc comment referencing e.g. https://developer.chrome.com is
           // not a hard-coded server URL, it never reaches a fetch/tabs call.
           if (trimmed.startsWith("//") || trimmed.startsWith("*")) continue;
+          // Manifest metadata, not a reachable origin: `homepage_url` is a
+          // store-listing link Chrome renders in chrome://extensions — it
+          // never flows into a fetch/tabs.create call in our code, so it is
+          // outside this invariant's threat model (store publication
+          // 2026-07-22 added it to wxt.config.ts).
+          if (trimmed.startsWith("homepage_url:")) continue;
           const match = urlLiteralPattern.exec(line);
           if (match && !match[1].includes("*")) {
             offenders.push(`${fullPath}: ${trimmed}`);
