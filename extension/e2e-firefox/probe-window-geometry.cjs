@@ -81,7 +81,8 @@ const SHOTS = process.env.PV_FF_SHOTS_DIR || path.join(__dirname, '.ff-screensho
 const RESULTS_FILE = path.join(SHOTS, 'results-probe-window-geometry.json');
 const SERVER = process.env.PV_SERVER || 'http://localhost:8620';
 const EMAIL = process.env.PV_UAT_EMAIL || 'uat-prf04@example.local';
-const PASSWORD = process.env.PV_UAT_PASSWORD || 'CorrectHorseBattery-UAT-2026!';
+const PASSWORD = process.env.PV_UAT_PASSWORD;
+if (!PASSWORD) throw new Error('PV_UAT_PASSWORD must be set (shared UAT-account password is not committed)');
 const RUN = String(Date.now() % 100000);
 const GECKO_ID = 'passkey-vault@extension.local';
 // Fresh FIXED_UUID, distinct from every other probe's (run-core.cjs's

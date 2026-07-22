@@ -48,7 +48,8 @@ declare const chrome: any; // eslint-disable-line @typescript-eslint/no-explicit
 
 const SERVER = "http://localhost:8620";
 const EMAIL = "uat-prf04@example.local";
-const PASSWORD = "CorrectHorseBattery-UAT-2026!";
+const PASSWORD = process.env.PV_UAT_PASSWORD ?? "";
+if (!PASSWORD) throw new Error("PV_UAT_PASSWORD must be set (shared UAT-account password is not committed)");
 const RUN = String(Date.now() % 100000);
 
 // Fixture HTTP server for Phase 10/11/12 pages (login/signup/card/identity/
