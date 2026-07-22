@@ -25,17 +25,20 @@ WORKDIR /app
 #    (targets = ["wasm32-unknown-unknown"]).
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
 
-# 2. Copy the REAL crates/pv-core and crates/pv-wasm source trees in FULL.
-#    These are the two crates scripts/build-wasm.sh actually compiles and
-#    binds via wasm-bindgen — a stub lib.rs for either would let `cargo
-#    build` "succeed" against zero real code and wasm-bindgen would then
-#    silently emit glue with no crypto exports at all. Real bodies from the
-#    start is the only way to guarantee the shipped WASM is functional.
+# 2. Copy the REAL crates/pv-core, crates/pv-provider and crates/pv-wasm
+#    source trees in FULL. These are the crates scripts/build-wasm.sh
+#    actually compiles and binds via wasm-bindgen (pv-wasm's provider
+#    bindings link pv-provider since v0.2) — a stub lib.rs for any of them
+#    would let `cargo build` "succeed" against zero real code and
+#    wasm-bindgen would then silently emit glue with no crypto exports at
+#    all. Real bodies from the start is the only way to guarantee the
+#    shipped WASM is functional.
 COPY crates/pv-core/ crates/pv-core/
+COPY crates/pv-provider/ crates/pv-provider/
 COPY crates/pv-wasm/ crates/pv-wasm/
 
 # 3. crates/pv-server is a virtual-workspace member too (root Cargo.toml
-#    lists all three). Cargo refuses to resolve ANY command — including
+#    lists every member). Cargo refuses to resolve ANY command — including
 #    build-wasm.sh's own `cargo build -p pv-wasm` — unless every workspace
 #    member has a manifest present on disk ("failed to load manifest for
 #    workspace member crates/pv-server" otherwise). pv-server is never
