@@ -299,6 +299,48 @@ pub fn unseal_collection_key(
     Ok(WasmCollectionKey(k))
 }
 
+#[wasm_bindgen(js_name = encryptItemForCollection)]
+pub fn encrypt_item_for_collection(
+    ck: &WasmCollectionKey,
+    plaintext: &str,
+    collection_id: &str,
+    item_id: &str,
+    revision: u32,
+) -> Result<String, JsValue> {
+    let collection_key = pv_core::items::CollectionKey::from_bytes(ck.0);
+    let item = pv_core::items::encrypt_item_for_collection(
+        &collection_key,
+        plaintext.as_bytes(),
+        collection_id,
+        item_id,
+        revision,
+    )
+    .map_err(to_js_err)?;
+    serde_json::to_string(&item).map_err(|e| to_js_str_err(&e.to_string()))
+}
+
+#[wasm_bindgen(js_name = decryptItemForCollection)]
+pub fn decrypt_item_for_collection(
+    ck: &WasmCollectionKey,
+    item_json: &str,
+    collection_id: &str,
+    item_id: &str,
+    revision: u32,
+) -> Result<String, JsValue> {
+    let collection_key = pv_core::items::CollectionKey::from_bytes(ck.0);
+    let item: EncryptedItem =
+        serde_json::from_str(item_json).map_err(|e| to_js_str_err(&e.to_string()))?;
+    let plaintext = pv_core::items::decrypt_item_for_collection(
+        &collection_key,
+        &item,
+        collection_id,
+        item_id,
+        revision,
+    )
+    .map_err(to_js_err)?;
+    String::from_utf8(plaintext).map_err(|e| to_js_str_err(&e.to_string()))
+}
+
 /// Nieprzezroczysty wynik `wasmCreateProviderCredential` — WYŁĄCZNIE dwa
 /// pola: publiczna odpowiedź WebAuthn (`credential_response_json`) i
 /// już-zaszyfrowany vault item (`encrypted_item_json`). `pv_provider`'s
@@ -840,6 +882,64 @@ mod tests {
         let sealed_json =
             seal_collection_key(&recipient, &ck).expect("seal should succeed");
         let result = unseal_collection_key(&other_recipient, &sealed_json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn seal_unseal_collection_key_roundtrip() {
+        let recipient = WasmIdentityKey::generate();
+        let ck = WasmCollectionKey::generate();
+
+        let sealed_json =
+            seal_collection_key(&recipient, &ck).expect("seal should succeed");
+        let unsealed = unseal_collection_key(&recipient, &sealed_json)
+            .expect("unseal should succeed");
+
+        // WasmCollectionKey exposes no raw-byte getter — prove equivalence
+        // via a round trip through encryptItemForCollection/
+        // decryptItemForCollection instead (something the original key
+        // encrypts, the unsealed key must be able to decrypt).
+        let item_json = encrypt_item_for_collection(
+            &ck,
+            "{\"type\":\"note\",\"body\":\"fixture\"}",
+            "collection-1",
+            "item-1",
+            1,
+        )
+        .expect("encrypt should succeed");
+        let plaintext =
+            decrypt_item_for_collection(&unsealed, &item_json, "collection-1", "item-1", 1)
+                .expect("decrypt with unsealed key should succeed");
+        assert_eq!(plaintext, "{\"type\":\"note\",\"body\":\"fixture\"}");
+    }
+
+    // --- Task 2 (21-05): encryptItemForCollection/decryptItemForCollection
+
+    #[test]
+    fn collection_item_roundtrip() {
+        let ck = WasmCollectionKey::generate();
+        let item_json = encrypt_item_for_collection(
+            &ck,
+            "{\"type\":\"login\",\"username\":\"bartek\"}",
+            "collection-1",
+            "item-1",
+            1,
+        )
+        .expect("encrypt should succeed");
+        let plaintext =
+            decrypt_item_for_collection(&ck, &item_json, "collection-1", "item-1", 1)
+                .expect("decrypt should succeed");
+        assert_eq!(plaintext, "{\"type\":\"login\",\"username\":\"bartek\"}");
+    }
+
+    #[test]
+    fn collection_item_wrong_collection_id_fails() {
+        let ck = WasmCollectionKey::generate();
+        let item_json =
+            encrypt_item_for_collection(&ck, "secret", "collection-1", "item-1", 1)
+                .expect("encrypt should succeed");
+        let result =
+            decrypt_item_for_collection(&ck, &item_json, "collection-2", "item-1", 1);
         assert!(result.is_err());
     }
 }
