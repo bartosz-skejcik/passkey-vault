@@ -46,7 +46,9 @@
     "security_enforcement": true,
     "security_asvs_level": 1,
     "security_block_on": "high",
-    "_auto_chain_active": false
+    "_auto_chain_active": false,
+    "build_command": "cargo build --workspace && cargo build -p pv-wasm --target wasm32-unknown-unknown --release",
+    "test_command": "cargo test --workspace"
   },
   "ship": {
     "pr_body_sections": [
