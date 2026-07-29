@@ -18,9 +18,29 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 
 **Znane follow-upy:** pierwszy push/PR na realny runner GitHub Actions (repo bez remote); 2 debug-doc czekają na ludzką weryfikację Bartka; drobne todo (UI-review v0.1, stale :3000 origin default) — patrz STATE.md Deferred Items.
 
-**Next Milestone:** nie zdefiniowany — `/gsd-new-milestone` (kandydaci w Active poniżej: sharing, password health, załączniki, CXF, email masking).
+**Next Milestone:** v0.4 Family & Sharing — rozpoczęty 2026-07-29 (sekcja poniżej).
 
 **Key context (historyczny):** v0.2 zapieczętowane 2026-07-20 po brutalnym live-debugu na realnym Firefox/Zen + github.com — 7 klas bugów niewidocznych dla zielonego CI. v0.3 zamieniło tę nauczkę w rygor (real-RP testy, byte-shape gates, inline-fixture probes, CI). Research: `.planning/research/v0.3/`.
+
+## Current Milestone: v0.4 Family & Sharing
+
+**Goal:** Instancja obsługuje wielu użytkowników w ramach rodziny — wpisy i foldery można współdzielić z zachowaniem zero-knowledge, a współdzielone dane działają tak samo w web app jak w autofillu i passkey providerze wtyczki.
+
+**Target features:**
+- Konta rodzinne / multi-user admin — rodzina jako obiekt, właściciel, lista członków, usuwanie członka (z re-key)
+- Zaproszenia przez jednorazowy link/kod — bez SMTP, pozycja „1 kontener" nietknięta
+- Współdzielone foldery (kolekcje) widoczne dla wybranych członków
+- Udostępnienie pojedynczego wpisu konkretnej osobie
+- Trzy poziomy dostępu: odczyt / pełna edycja / ukryte hasło
+- Współdzielone wpisy w extension: autofill, TOTP, passkey provider
+
+**Rationale kolejności:** sharing przed platformami mobilnymi (iOS/Android) — model współdzielenia zmienia hierarchię kluczy i API serwera, więc dorabianie go po drugim providerze oznaczałoby implementację w dwóch miejscach.
+
+**Key context:**
+- Sharing wymaga warstwy asymetrycznej (per-user keypair) w `pv-core` — hierarchia kluczy jej dziś nie ma. Out of Scope odrzuca *RSA layer jak w Bitwardenie*, nie kryptografię klucza publicznego jako taką; wariant minimalny zostanie wybrany i udokumentowany jako decyzja w fazie krypto.
+- Usunięcie członka = re-key współdzielonego zasobu + re-wrap dla pozostałych; projekt musi unikać kosztu O(cały vault).
+- **Ukryte hasło jest zabezpieczeniem UI, nie kryptograficznym** — członek z dostępem posiada klucz i technicznie odczyta hasło (to samo ograniczenie ma Bitwarden). UI musi to komunikować uczciwie.
+- Serwer nadal nie widzi żadnego klucza ani plaintextu — twarda granica całego modelu sharingu.
 
 ## Requirements
 
@@ -67,7 +87,8 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 
 <!-- Po v0.3 — kandydaci na kolejne milestone'y: -->
 
-- [ ] Sharing: zaszyfrowane linki (klucz w URL fragment) + współdzielenie rodzinne w ramach instancji
+- [ ] **→ v0.4 (w toku):** Rodzina w ramach instancji: multi-user admin, zaproszenia linkiem, współdzielone foldery + per-item share, poziomy odczyt/edycja/ukryte hasło, widoczne w extension
+- [ ] Sharing: zaszyfrowane linki (klucz w URL fragment) dla osób bez konta — odłożone z v0.4, kandydat na kolejny milestone
 - [ ] Password Health dashboard (hero-score, słabe/powtórzone/stare) + breach monitor (HIBP k-anonymity)
 - [ ] Załączniki za trait-em storage (implementacja dyskowa w v1)
 - [ ] Import/eksport **FIDO CXF** (crate `credential-exchange-format`)
