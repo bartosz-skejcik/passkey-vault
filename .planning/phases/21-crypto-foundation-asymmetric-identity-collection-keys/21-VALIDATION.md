@@ -55,7 +55,7 @@ created: 2026-07-30
 |--------|----------|-----------|-------------------|-------------|
 | KEY-01 | Identity keypair generate/wrap/unwrap roundtrip; wrong UK fails to unwrap | unit | `cargo test -p pv-core identity::` | ❌ W0 — new `identity.rs` |
 | KEY-02 | Seal/unseal roundtrip to identical bytes across two independently-generated keypairs | unit | `cargo test -p pv-core identity::tests::seal_unseal_roundtrip` | ❌ W0 |
-| KEY-02 | Non-empty AAD on `ChaChaBox` is rejected (permanent regression guard for research Correction 4) | unit | `cargo test -p pv-core identity::tests::chachabox_rejects_aad` | ❌ W0 |
+| KEY-02 | Non-empty AAD on `ChaChaBox` is rejected (permanent regression guard for research Correction 4) | unit | `cargo test -p pv-core identity::tests::chachabox_rejects_nonempty_aad` | ❌ W0 |
 | KEY-03 | Cross-context rejection: personal blob fails under collection AAD and vice versa; collection A fails under collection B; existing `item_id`/`revision` mismatch cases still pass | unit | `cargo test -p pv-core items::tests::aad_mutation_rejected` (extended) | ✅ exists, needs extension |
 | KEY-03 | Length-unambiguous encoding: `("ab","c")` vs `("a","bc")` AAD collision proof | unit | `cargo test -p pv-core items::tests::coll_aad_length_unambiguous` | ❌ W0 |
 | KEY-04 | New domain-separation constants are distinct and versioned; no constant reused across contexts | unit | `cargo test -p pv-core` (constant-distinctness assertion) | ❌ W0 |
