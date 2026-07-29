@@ -87,7 +87,7 @@ Research: [research/v0.4/SUMMARY.md](research/v0.4/SUMMARY.md), [research/v0.4/A
   3. Personal-scope and collection-scope item encryption use distinct, versioned domain-separation constants and AAD; a blob produced under one scope's key/AAD combination provably fails to decrypt under any other scope's (automated cross-context rejection test, mirroring the existing `aad_mutation_rejected` test).
   4. An existing v0.3 account can be given an identity keypair without re-encrypting a single byte of its existing vault (verified against pre-v0.4 fixture data).
 
-**Plans:** 4/5 plans executed
+**Plans:** 5/5 plans executed
 
 Plans:
 **Wave 1**
@@ -105,7 +105,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 21-05-PLAN.md — pv-wasm opaque-handle bridge for all of the above (WasmIdentityKey, WasmCollectionKey, seal/unseal, collection item encrypt/decrypt)
+- [x] 21-05-PLAN.md — pv-wasm opaque-handle bridge for all of the above (WasmIdentityKey, WasmCollectionKey, seal/unseal, collection item encrypt/decrypt)
 
 ### Phase 22: Family & Collection Data Model — Server Authorization
 
@@ -225,7 +225,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 18. Firefox Window & Consent Hardening | v0.3 | 2/2 | Complete    | 2026-07-21 |
 | 19. Server & Supply-Chain Hardening | v0.3 | 3/3 | Complete    | 2026-07-21 |
 | 20. Test Infrastructure & CI Gate | v0.3 | 4/4 | Complete    | 2026-07-21 |
-| 21. Crypto Foundation — Asymmetric Identity & Collection Keys | v0.4 | 4/5 | In Progress|  |
+| 21. Crypto Foundation — Asymmetric Identity & Collection Keys | v0.4 | 5/5 | In Progress|  |
 | 22. Family & Collection Data Model — Server Authorization | v0.4 | 0/TBD | Not started | - |
 | 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 0/TBD | Not started | - |
 | 24. Invitation Flow (No SMTP) | v0.4 | 0/TBD | Not started | - |
