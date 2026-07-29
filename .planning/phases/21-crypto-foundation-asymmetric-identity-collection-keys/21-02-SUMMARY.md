@@ -168,3 +168,11 @@ None - no external service configuration required.
 ---
 *Phase: 21-crypto-foundation-asymmetric-identity-collection-keys*
 *Completed: 2026-07-29*
+
+## Self-Check: PASSED
+
+- FOUND: crates/pv-core/src/identity.rs
+- FOUND: .planning/phases/21-crypto-foundation-asymmetric-identity-collection-keys/21-02-SUMMARY.md
+- FOUND commit: 6c70ee7 (Task 1)
+- FOUND commit: 264e9a6 (Task 2)
+- FOUND commit: be52d9d (this SUMMARY)
