@@ -11,7 +11,8 @@
 //!
 //!  UK → wrapuje per-item Cipher Keys → itemy (XChaCha20-Poly1305)
 //!  UK → wrapuje X25519 IdentitySecretKey (aead_seal, INFO_X25519_SK_WRAP)
-//!  IdentitySecretKey (publiczna połowa) → zapieczętowuje per-recipient
+//!  IdentityPublicKey (publiczna połowa identity keypair) → zapieczętowuje
+//!    (identity::seal/unseal, crypto_box::ChaChaBox) per-recipient
 //!    Collection Keys (Plan 21-04) → kluczują item encryption zakresu
 //!    kolekcji (Plan 21-03)
 //! ```

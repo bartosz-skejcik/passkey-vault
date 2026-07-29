@@ -286,4 +286,62 @@ mod tests {
         );
         assert!(result.is_err());
     }
+
+    /// Task 2, Test 1: seal/unseal round-trips to identical bytes across
+    /// two independently-generated identity keypairs.
+    #[test]
+    fn seal_unseal_roundtrip() {
+        let recipient_a = IdentitySecretKey::generate();
+        let payload = [0x7Au8; 32]; // Collection-Key-shaped: 32 bytes.
+
+        let sealed = seal(&recipient_a.public_key(), &payload).unwrap();
+        let opened = unseal(&recipient_a, &sealed).unwrap();
+
+        assert_eq!(opened, payload.to_vec());
+    }
+
+    /// Task 2, Test 2: the same sealed payload must NOT unseal under a
+    /// different, independently-generated recipient's secret key.
+    #[test]
+    fn wrong_recipient_cannot_unseal() {
+        let recipient_a = IdentitySecretKey::generate();
+        let recipient_b = IdentitySecretKey::generate();
+        let payload = [0x7Au8; 32];
+
+        let sealed = seal(&recipient_a.public_key(), &payload).unwrap();
+        assert!(unseal(&recipient_b, &sealed).is_err());
+    }
+
+    /// Task 2, Test 3: a `SealedKey` with a wrong-length `nonce` is
+    /// rejected with `CryptoError::InvalidInput` before any AEAD call runs
+    /// — never panics, never silently truncates/pads.
+    #[test]
+    fn malformed_sealed_key_wrong_nonce_length_rejected() {
+        let recipient = IdentitySecretKey::generate();
+        let payload = [0x7Au8; 32];
+
+        let mut sealed = seal(&recipient.public_key(), &payload).unwrap();
+        sealed.nonce = vec![0u8; 12]; // 12 bytes instead of NONCE_LEN (24).
+
+        let result = unseal(&recipient, &sealed);
+        assert!(matches!(result, Err(CryptoError::InvalidInput(_))));
+    }
+
+    /// Task 2, Test 4: `ephemeral_pk` is a fixed `[u8; 32]` array in
+    /// `SealedKey`'s type (not a `Vec<u8>`), so a wrong-length ephemeral
+    /// public key is a compile-time impossibility rather than a runtime
+    /// check — this test's mere existence (constructing `SealedKey`
+    /// directly with a 32-byte array literal, and it compiling) is the
+    /// proof. `nonce`/`ciphertext` intentionally stay `Vec<u8>` because
+    /// their lengths are not a fixed protocol constant the way an X25519
+    /// public key's 32 bytes is.
+    #[test]
+    fn malformed_sealed_key_wrong_ephemeral_pk_length_is_compile_time_impossible() {
+        let sealed = SealedKey {
+            ephemeral_pk: [0u8; KEY_LEN], // Compiles ONLY at exactly KEY_LEN (32) bytes.
+            nonce: vec![0u8; NONCE_LEN],
+            ciphertext: vec![0u8; 48],
+        };
+        assert_eq!(sealed.ephemeral_pk.len(), KEY_LEN);
+    }
 }
