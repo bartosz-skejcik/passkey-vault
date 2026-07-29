@@ -124,8 +124,48 @@ Explicitly excluded to prevent scope creep.
 
 ## Traceability
 
-Filled during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| _pending roadmap_ | — | Pending |
+| KEY-01 | Phase 21 | Pending |
+| KEY-02 | Phase 21 | Pending |
+| KEY-03 | Phase 21 | Pending |
+| KEY-04 | Phase 21 | Pending |
+| KEY-05 | Phase 21 | Pending |
+| KEY-06 | Phase 25 | Pending |
+| KEY-07 | Phase 25 | Pending |
+| FAM-01 | Phase 22 | Pending |
+| FAM-02 | Phase 22 | Pending |
+| FAM-03 | Phase 22 | Pending |
+| FAM-04 | Phase 24 | Pending |
+| FAM-05 | Phase 24 | Pending |
+| FAM-06 | Phase 24 | Pending |
+| FAM-07 | Phase 25 | Pending |
+| FAM-08 | Phase 25 | Pending |
+| FAM-09 | Phase 25 | Pending |
+| FAM-10 | Phase 25 | Pending |
+| SHARE-01 | Phase 26 | Pending |
+| SHARE-02 | Phase 26 | Pending |
+| SHARE-03 | Phase 26 | Pending |
+| SHARE-04 | Phase 22 | Pending |
+| SHARE-05 | Phase 22 | Pending |
+| SHARE-06 | Phase 22 | Pending |
+| SYNC-04 | Phase 23 | Pending |
+| SYNC-05 | Phase 23 | Pending |
+| SYNC-06 | Phase 23 | Pending |
+| SYNC-07 | Phase 23 | Pending |
+| SYNC-08 | Phase 23 | Pending |
+| EXT-07 | Phase 27 | Pending |
+| EXT-08 | Phase 27 | Pending |
+| EXT-09 | Phase 27 | Pending |
+| EXT-10 | Phase 27 | Pending |
+| EXT-11 | Phase 27 | Pending |
+| EXT-12 | Phase 27 | Pending |
+| SEC-05 | Phase 26 | Pending |
+| SEC-06 | Phase 22 | Pending |
+| SEC-07 | Phase 25 | Pending |
+| SEC-08 | Phase 23 | Pending |
+| UX-03 | Phase 26 | Pending |
+| UX-04 | Phase 25 | Pending |
+| UX-05 | Phase 26 | Pending |
+
+**Coverage:** 41/41 v0.4 requirements mapped — no orphans, no duplicates. Phase order: 21 Crypto Foundation → 22 Family & Collection Data Model/Server Authorization → 23 Sync Model Extension → 24 Invitation Flow → 25 Member Removal & Re-key → 26 Web App Sharing UI → 27 Extension Integration.

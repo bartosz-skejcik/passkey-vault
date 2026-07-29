@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Family & Sharing
 status: planning
-last_updated: "2026-07-29T20:03:51.670Z"
+last_updated: "2026-07-29T21:30:00.000Z"
 last_activity: 2026-07-29
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-22)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Planning next milestone (/gsd-new-milestone) — v0.3 shipped 2026-07-22
+**Current focus:** v0.4 Family & Sharing — ROADMAP created (Phases 21–27, 41/41 requirements mapped); next: `/gsd-plan-phase 21`
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Phase 21: Crypto Foundation — Asymmetric Identity & Collection Keys (not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-07-29 — Milestone v0.4 started
+Status: Roadmap created, awaiting planning
+Last activity: 2026-07-29 — v0.4 ROADMAP.md created (7 phases, 21–27), STATE.md and REQUIREMENTS.md traceability updated
 
 ## Performance Metrics
 
@@ -91,6 +91,9 @@ Recent decisions affecting current work:
 - [Phase 16 planning] decision-coverage-plan gate override (same Phase 15 precedent): CONTEXT.md decisions are prose-form so the parser extracted 0; plan-checker verified full context compliance (0 blockers — all locked architectural decisions explicitly honored across 6 plans). Treat as resolved-by-checker-evidence.
 - [Phase 19 planning] decision-coverage-plan gate override (same precedent): prose-form CONTEXT decisions, parser extracted 0; plan-checker verified full coverage (1 blocker fixed: missing VALIDATION.md; SEC-01..04 all traced). Resolved-by-checker-evidence.
 
+- Roadmap (v0.4): 7 phases (21–27) derived from `.planning/research/v0.4/SUMMARY.md`'s reconciled build order, which itself reconciles ARCHITECTURE.md/PITFALLS.md/STACK.md/FEATURES.md. Sequence: 21 Crypto Foundation (KEY-01..05 — pv-core identity keypair + sealed Collection Key + AAD scope-binding; KEY-05's `crypto_box`-vs-hand-rolled decision must land here, documented, before any dependent code) → 22 Family & Collection Data Model/Server Authorization (FAM-01..03, SHARE-04..06, SEC-06 — schema + the shared membership-authorization extractor + the Vaultwarden #6269 hidden-password-reassignment fix, all server/API-level) → 23 Sync Model Extension (SYNC-04..08, SEC-08 — highest integration risk per all four research docs; the live multi-session test harness is stood up HERE, not deferred) → 24 Invitation Flow (FAM-04..06 — no-SMTP single-use link/code, sequenced after sync so "new member becomes visible" is demonstrably provable) → 25 Member Removal/Suspension & Re-key (FAM-07..10, KEY-06/07, SEC-07, UX-04 — deliberately after sync since revoked access is unverifiable without it) → 26 Web App Sharing UI (SHARE-01..03, UX-03/05, SEC-05 — the actual share dialogs, hidden-password disclosure, sharing badges, fingerprint display; depends on the full backend stack for real E2E) → 27 Extension Integration (EXT-07..12 — autofill/TOTP/provider parity plus the EXT-10 shared-passkey signature-counter design spike, called out with its own success criterion per explicit instruction, not folded into "extension integration" as an ordinary subtask). 41/41 v0.4 requirements mapped, no orphans, no duplicates, verified by direct count against REQUIREMENTS.md's 7 categories (KEY 7, FAM 10, SHARE 6, SYNC 5, EXT 6, SEC 4, UX 3).
+- Roadmap (v0.4): SHARE-04/05/06 and SEC-06 (server-side permission enforcement, uniform authorization, share revocation) were placed in Phase 22 (backend/API) rather than Phase 26 (web UI) even though SHARE-01/02/03 (the user-facing act of creating a share) live in Phase 26 — the security boundary itself (Pitfalls 7/8 in PITFALLS.md) must exist at the API layer regardless of which phase ships the UI that calls it, and Phase 22's success criteria are deliberately phrased as API/route-sweep-test-observable rather than UI-observable for this reason.
+- Roadmap (v0.4): KEY-06 (re-key cost proportional to collection size) and KEY-07 (re-key atomicity) were placed in Phase 25 (Member Removal & Re-key) rather than Phase 21 (Crypto Foundation) — the two-layer Collection Key *design* that makes proportional cost possible is locked in at Phase 21, but the requirements' actual observable proof (load test scaling with member count, fault-injection test on the real removal transaction) only exists once the removal endpoint is built in Phase 25.
 - Roadmap (v0.3): 7 phases (14–20) derived from `.planning/research/v0.3/CODEBASE-GAPS.md` + `DESIGN-SYSTEM-UNIFICATION.md`. Phase 14 is risk-first per Bartek's explicit mandate — the two Critical findings (XBR-02 Firefox response-direction cross-realm corruption, QA-03 no real-RP-verified provider ceremony) are closed BEFORE any UX/design-system work, since both are silent-failure classes a green v0.2 CI could not see. Phase 15 unifies login/unlock onto the Vaultwarden model (AUTH-01..04). Phases 16–17 extract the shared design system into `packages/pv-ui` in the research's measured order — pure logic/types + i18n engine first (16), then the flagship shared React component `ItemIconTile` + in-page token alignment + light-tile UX-01 (17), since DS-03 and UX-01 share the tile concept. Phase 18 formalizes Firefox ceremony-window polish (UX-02) and decision-gates the in-page consent alternative (XBR-03 — may resolve as "rejected-with-reason", not a guaranteed build). Phase 19 batches the CORS touch (SEC-01/02) with server/supply-chain hardening (SEC-03/04). Phase 20 closes the CI/test-rigor gap (QA-01/02/04). 20/20 v0.3 requirements mapped, no orphans, no duplicates.
 - Roadmap (v0.3): v0.2's milestone header changed from "in progress" to "complete, not formally closed" in ROADMAP.md to reflect reality (phase 13 sealed 2026-07-20) without running `/gsd-complete-milestone` — cleanup/retrospective for v0.2 stays deliberately deferred to v1.0 per PROJECT.md.
 - Roadmap (v0.2): 6 phases derived directly from research's build order — bootstrap/WASM-in-background spike first (de-risks idle-kill + CSP before any feature), session/unlock core+popup+sync second (real vault access before autofill/provider touch it), autofill third, generate & capture fourth, passkey provider fifth (deliberately LAST — highest-risk MAIN-world patch, gated by a `/gsd-secure-phase` security-review checkpoint), dual-browser hardening closes the milestone.
@@ -164,6 +167,8 @@ None yet.
 - **RESOLVED 2026-07-17**: Quick task 260717-lnx's `headless: true` re-enable reproduced the historical `P12-SC1` headless hang (13-03-SUMMARY.md). Fix landed: `extension/playwright.config.ts` now splits into two projects — `chromium` (everything except Phase 12, headless) and `chromium-ceremony` (Phase 12 only, headed); `extension/e2e/fixtures.ts` picks the real `headless` flag from `workerInfo.project.name` (commit `b393f90`). A follow-up verification run then hit a SEPARATE issue — `P12-SC2` failed after 2 retries against a STALE `extension/.output/chrome-mv3` build (predating Task A's one-click-picker source change) — root-caused and fixed via a `pretest:e2e:chrome` npm script that rebuilds chrome before every e2e run (commit `ddc770f`). Whole `chromium-ceremony` project (5 SCs) now passes cleanly and repeatably (5 consecutive full-project runs, headed, zero flake); `npm test` stays 533/533 green. See `.planning/quick/260717-lnx-extension-ux-one-click-passkey-picker-no/260717-lnx-SUMMARY.md` and `.planning/phases/13-dual-browser-hardening/13-03-SUMMARY.md` for the original investigation.
 - web/.env.local's NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8620 breaks same-origin fetch() for any web/out build served/visited via http://localhost:8620 (this project's own documented convention) -- routed around this session via NEXT_PUBLIC_API_BASE_URL="" npm run build, not fixed in .env.local (out of scope, outside file-write permissions). Bartek should review/clean up this env var.
 - **RESOLVED 2026-07-20**: XBR-02 (Firefox response-direction Xray hole) closed. Plan 14-02 fixed `page-bridge-firefox.ts`'s `shapeCredential()` to re-materialize every response-direction binary field as a genuine MAIN-world ArrayBuffer, then discovered mid-verification that the original `instanceof ArrayBuffer: false` signal was itself a WebDriver/geckodriver `executeScript` measurement artifact (a genuine inline `<script>` RP fixture showed correct behavior on both pre-fix and post-fix builds) — the fix was kept anyway as harmless defense-in-depth. Plan 14-03 closed the loop with two permanent, artifact-free proofs: a deterministic jsdom regression test (`page-bridge-firefox.test.ts`) and an upgraded live-Firefox probe (`probe-request-xray.cjs`, now hard-gating every response-direction `*IsArrayBuffer` field via a genuinely inline fixture, never `driver.executeScript()`). Full gate suite green (vitest 674/674, tsc clean, both builds, mainworld-boundary audit PASS, run-core.cjs 17 PASS+1 OBSERVED, run-server-unlock.cjs 15 PASS/2 INFO, probe-request-xray.cjs all PASS, chromium-ceremony 5/5, cargo test --workspace 151 passed). Doc moved to `.planning/debug/resolved/firefox-request-xray-hole.md`; Bartek's own live github.com retest of the original request-direction fix remains open at his leisure (not claimed as done).
+- v0.4 research flags two genuinely open design decisions carried into the roadmap, not resolved by research: KEY-05 (`crypto_box` crate vs. hand-rolled X25519-ECDH — Phase 21 must decide and document before dependent code) and EXT-10 (shared-passkey WebAuthn signature-counter behavior — Phase 27 spike, zero product precedent exists anywhere).
+- v0.4 research flags an account-deletion re-key gap (ARCHITECTURE.md §4.3): today's `ON DELETE CASCADE` on `users` drops membership rows via FK but does not itself trigger a collection re-key — FAM-10 (Phase 25) requires the deletion flow to explicitly run the same re-key path as removal before dropping the user row, not rely on the cascade alone.
 
 ### Quick Tasks Completed
 
@@ -202,10 +207,11 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-22 — v0.3 autonomous run COMPLETE (milestone shipped, archived, tagged). No resume file — next entry point: /gsd-new-milestone.
+Last session: 2026-07-29 — v0.4 ROADMAP.md created (7 phases, 21–27; 41/41 requirements mapped, no orphans/duplicates), STATE.md and REQUIREMENTS.md traceability table updated. No resume file — next entry point: `/gsd-plan-phase 21`.
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone (kandydaci w PROJECT.md Active: sharing, password health, załączniki, CXF, email masking)
-- Follow-up techniczny: dodaj git remote i zrób pierwszy push/PR, żeby CI gate przeszedł na realnym runnerze GitHub Actions (R-20-03)
+- Review/approve v0.4 ROADMAP.md, then start planning: `/gsd-plan-phase 21` (Crypto Foundation)
+- Two explicit open decisions land inside their own phases, not silently assumed: KEY-05 (`crypto_box` vs. hand-rolled X25519 sealed box, Phase 21) and EXT-10 (shared-passkey signature-counter spike, Phase 27)
+- Follow-up techniczny (carried from v0.3): dodaj git remote i zrób pierwszy push/PR, żeby CI gate przeszedł na realnym runnerze GitHub Actions (R-20-03)
 - Przy okazji: 2 debug-doc czekają na Twoją ludzką weryfikację (firefox-provider-corruption, signin-passkeyless-spin)
