@@ -127,6 +127,10 @@ Both phase-level ordering gates (SC#1, SC#4) are now satisfied in git history an
 
 Plans 21-02 through 21-05 (identity keypair module, sealed Collection Key, scope-bound AAD, pv-wasm bridge) can now proceed — the `crypto_box` dependency, `identity.rs` module, and any AAD-touching change in `items.rs` are all unblocked by these two gates. No blockers identified for downstream plans.
 
+## Self-Check: PASSED
+
+All created/modified files confirmed present (`PROJECT.md`, `ARCHITECTURE.md`, fixture, `backward_compat.rs`, this SUMMARY). All task commit hashes (`27735f5`, `8c24514`, `adb973a`) plus this SUMMARY's own commit (`635bd7b`) confirmed present in `git log --oneline --all`.
+
 ---
 *Phase: 21-crypto-foundation-asymmetric-identity-collection-keys*
 *Completed: 2026-07-30*
