@@ -84,7 +84,14 @@ Research: [research/v0.4/SUMMARY.md](research/v0.4/SUMMARY.md), [research/v0.4/A
   2. A client can generate an X25519 identity keypair, publish only the public half, and any client holding the matching private key can seal a Collection Key to it and unseal it back to the identical bytes (round-trip unit test).
   3. Personal-scope and collection-scope item encryption use distinct, versioned domain-separation constants and AAD; a blob produced under one scope's key/AAD combination provably fails to decrypt under any other scope's (automated cross-context rejection test, mirroring the existing `aad_mutation_rejected` test).
   4. An existing v0.3 account can be given an identity keypair without re-encrypting a single byte of its existing vault (verified against pre-v0.4 fixture data).
-**Plans**: TBD
+**Plans:** 5 plans
+
+Plans:
+- [ ] 21-01-PLAN.md — KEY-05 decision record (crypto_box vs. alternatives) + pre-v0.4 backward-compat fixture, both committed before any dependent code (SC#1/SC#4 ordering gates)
+- [ ] 21-02-PLAN.md — X25519 identity keypair primitive: crypto_box dependency, IdentitySecretKey/IdentityPublicKey, wrap/unwrap under UserKey (tracer)
+- [ ] 21-03-PLAN.md — Scope-bound collection-scope item AAD: CollectionKey, build_coll_item_aad, encrypt/decrypt_item_for_collection, cross-context rejection tests
+- [ ] 21-04-PLAN.md — Sealed Collection Key: SealedKey, ephemeral-keypair seal/unseal wrapper, cross-keypair round trip
+- [ ] 21-05-PLAN.md — pv-wasm opaque-handle bridge for all of the above (WasmIdentityKey, WasmCollectionKey, seal/unseal, collection item encrypt/decrypt)
 
 ### Phase 22: Family & Collection Data Model — Server Authorization
 **Goal**: The server exposes a family/collection data model where every membership, collection, and share mutation is authorized through one shared, uniformly-applied membership check — the security boundary the rest of the milestone builds on.
