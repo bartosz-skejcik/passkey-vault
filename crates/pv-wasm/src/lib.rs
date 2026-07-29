@@ -206,6 +206,99 @@ pub fn decrypt_item(
     String::from_utf8(plaintext).map_err(|e| to_js_str_err(&e.to_string()))
 }
 
+/// Nieprzezroczysty handle X25519 identity keypair (Plan 21-02/21-04) —
+/// prywatna połowa tożsamości konta. Jedyna metoda zwracająca surowe bajty
+/// to `publicKeyBytes`, bo klucz publiczny jest z założenia jawny (ta sama
+/// logika co `randomSalt` poniżej) — żadna metoda tego typu nie zwraca
+/// bajtów klucza prywatnego.
+#[wasm_bindgen]
+pub struct WasmIdentityKey(pv_core::identity::IdentitySecretKey);
+
+#[wasm_bindgen]
+impl WasmIdentityKey {
+    #[wasm_bindgen(js_name = generate)]
+    pub fn generate() -> WasmIdentityKey {
+        WasmIdentityKey(pv_core::identity::IdentitySecretKey::generate())
+    }
+
+    #[wasm_bindgen(js_name = publicKeyBytes)]
+    pub fn public_key_bytes(&self) -> Vec<u8> {
+        self.0.public_key().to_bytes().to_vec()
+    }
+}
+
+#[wasm_bindgen(js_name = wrapIdentitySecretKey)]
+pub fn wrap_identity_secret_key(
+    uk: &WasmUserKey,
+    isk: &WasmIdentityKey,
+) -> Result<String, JsValue> {
+    let blob = pv_core::identity::wrap_identity_secret_key(&uk.0, &isk.0).map_err(to_js_err)?;
+    serde_json::to_string(&blob).map_err(|e| to_js_str_err(&e.to_string()))
+}
+
+#[wasm_bindgen(js_name = unwrapIdentitySecretKey)]
+pub fn unwrap_identity_secret_key(
+    uk: &WasmUserKey,
+    wrapped_json: &str,
+) -> Result<WasmIdentityKey, JsValue> {
+    let blob: WrappedKey =
+        serde_json::from_str(wrapped_json).map_err(|e| to_js_str_err(&e.to_string()))?;
+    let isk = pv_core::identity::unwrap_identity_secret_key(&uk.0, &blob).map_err(to_js_err)?;
+    Ok(WasmIdentityKey(isk))
+}
+
+/// Nieprzezroczysty handle Collection Key (Plan 21-03) — WASM-lokalny typ
+/// mirror'ujący `WasmWrappingKey`'s wzorzec (żaden pv-core-owy typ nie
+/// odpowiada temu handle'owi 1:1; `pv_core::items::CollectionKey` istnieje,
+/// ale ten handle owija surowe bajty osobno, tak samo jak `WasmWrappingKey`
+/// owija `[u8; KEY_LEN]` zamiast trzymać `UserKey`). Żadna metoda nie
+/// zwraca surowych bajtów.
+#[wasm_bindgen]
+#[derive(Zeroize, ZeroizeOnDrop)]
+pub struct WasmCollectionKey([u8; KEY_LEN]);
+
+#[wasm_bindgen]
+impl WasmCollectionKey {
+    #[wasm_bindgen(js_name = generate)]
+    pub fn generate() -> WasmCollectionKey {
+        let bytes = random_bytes(KEY_LEN);
+        let mut k = [0u8; KEY_LEN];
+        k.copy_from_slice(&bytes);
+        WasmCollectionKey(k)
+    }
+}
+
+#[wasm_bindgen(js_name = sealCollectionKey)]
+pub fn seal_collection_key(
+    recipient: &WasmIdentityKey,
+    ck: &WasmCollectionKey,
+) -> Result<String, JsValue> {
+    let sealed = pv_core::identity::seal(&recipient.0.public_key(), &ck.0).map_err(to_js_err)?;
+    serde_json::to_string(&sealed).map_err(|e| to_js_str_err(&e.to_string()))
+}
+
+/// Odpieczętowuje `sealed_json` pod `my_identity_key` i waliduje, że
+/// odzyskany plaintext ma dokładnie `KEY_LEN` (32) bajtów — mirror
+/// `importUserKeyFromSession`'s discipline: odrzuć błędną długość zamiast
+/// ją cicho uciąć/dopełnić.
+#[wasm_bindgen(js_name = unsealCollectionKey)]
+pub fn unseal_collection_key(
+    my_identity_key: &WasmIdentityKey,
+    sealed_json: &str,
+) -> Result<WasmCollectionKey, JsValue> {
+    let sealed: pv_core::identity::SealedKey =
+        serde_json::from_str(sealed_json).map_err(|e| to_js_str_err(&e.to_string()))?;
+    let mut plain = pv_core::identity::unseal(&my_identity_key.0, &sealed).map_err(to_js_err)?;
+    if plain.len() != KEY_LEN {
+        plain.zeroize();
+        return Err(to_js_str_err("expected 32 bytes"));
+    }
+    let mut k = [0u8; KEY_LEN];
+    k.copy_from_slice(&plain);
+    plain.zeroize();
+    Ok(WasmCollectionKey(k))
+}
+
 /// Nieprzezroczysty wynik `wasmCreateProviderCredential` — WYŁĄCZNIE dwa
 /// pola: publiczna odpowiedź WebAuthn (`credential_response_json`) i
 /// już-zaszyfrowany vault item (`encrypted_item_json`). `pv_provider`'s
@@ -708,5 +801,45 @@ mod tests {
         let asserted: serde_json::Value =
             serde_json::from_str(&get_result.credential_response_json()).unwrap();
         assert_eq!(created["id"], asserted["id"]);
+    }
+
+    // --- Task 1 (21-05): WasmIdentityKey + WasmCollectionKey bindings -----
+
+    #[test]
+    fn identity_key_generate_wrap_unwrap_roundtrip() {
+        let uk = WasmUserKey::generate();
+        let isk = WasmIdentityKey::generate();
+        let expected_pk = isk.public_key_bytes();
+
+        let wrapped_json =
+            wrap_identity_secret_key(&uk, &isk).expect("wrap should succeed");
+        let unwrapped = unwrap_identity_secret_key(&uk, &wrapped_json)
+            .expect("unwrap should succeed");
+
+        assert_eq!(unwrapped.public_key_bytes(), expected_pk);
+    }
+
+    #[test]
+    fn identity_key_wrong_user_key_fails() {
+        let uk = WasmUserKey::generate();
+        let other_uk = WasmUserKey::generate();
+        let isk = WasmIdentityKey::generate();
+
+        let wrapped_json =
+            wrap_identity_secret_key(&uk, &isk).expect("wrap should succeed");
+        let result = unwrap_identity_secret_key(&other_uk, &wrapped_json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn unseal_wrong_recipient_fails() {
+        let recipient = WasmIdentityKey::generate();
+        let other_recipient = WasmIdentityKey::generate();
+        let ck = WasmCollectionKey::generate();
+
+        let sealed_json =
+            seal_collection_key(&recipient, &ck).expect("seal should succeed");
+        let result = unseal_collection_key(&other_recipient, &sealed_json);
+        assert!(result.is_err());
     }
 }
