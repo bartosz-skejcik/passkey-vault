@@ -92,11 +92,27 @@ FEATURES.md is correct that no shipped product has precedent for this. Neither A
 
 ## Claims to Verify Before They Justify a Requirement
 
-PITFALLS.md cites several external sources this synthesis has not verified (no web access available here) and which should not be treated as established fact until independently checked:
+> **VERIFIED BY ORCHESTRATOR 2026-07-29** — all three citations were checked against primary sources. Outcome summary; details inline below each item.
+>
+> | Claim | Verdict |
+> |---|---|
+> | Vaultwarden #6269 | ✅ **Confirmed exactly as described** — and yields a concrete mitigation to adopt |
+> | CVE-2026-43639 | ⚠️ **Real CVE, different mechanics** than PITFALLS.md described; also Cloud-only (self-hosted unaffected) |
+> | USENIX/eprint 2026/058 | ⚠️ **Paper is real; the specific claim is unconfirmed** from the abstract |
+>
+> Net effect on the roadmap: **none of the mitigations change.** As predicted, each stands on independent engineering merit. One citation upgrades to an actionable requirement (see #6269 below); the other two are downgraded from "precedent" to "corroborating color" and must NOT be cited as fact in product or security documentation.
 
-- **USENIX Security 2026 paper** (Scarlata, Backendal, Torrisi, Paterson, "Zero Knowledge (About) Encryption," eprint.iacr.org/2026/058) — cited as finding 5 successful attacks via unauthenticated public keys across Bitwarden/LastPass/Dashlane/1Password, including a specific "Bitwarden malicious auto-enrolment" key-substitution flaw. This is the primary evidentiary basis for Pitfall 1's severity claim and should be checked before being cited as settled fact in product/security documentation.
-- **CVE-2026-43639** (Bitwarden provider/organization takeover via asymmetric GET/POST authorization checks, CWE-862) — cited as direct precedent for Pitfall 7's IDOR concern. Verify the CVE exists and matches the described mechanics before citing it externally.
-- **dani-garcia/vaultwarden GitHub issue #6269** (hidden-password bypass via moving an item between collections) — cited as direct precedent for Pitfall 8. Verify the issue number and described behavior.
+- **USENIX Security 2026 paper** (Scarlata, Backendal, Torrisi, Paterson, "Zero Knowledge (About) Encryption," eprint.iacr.org/2026/058) — cited as finding 5 successful attacks via unauthenticated public keys across Bitwarden/LastPass/Dashlane/1Password, including a specific "Bitwarden malicious auto-enrolment" key-substitution flaw.
+
+  ⚠️ **PARTIALLY VERIFIED.** The paper exists at that eprint ID and the authors are correct: Scarlata, Torrisi, Backendal, Paterson, *"Zero Knowledge (About) Encryption: A Comparative Security Analysis of Three Cloud-based Password Managers."* Its actual reported counts are **12 attacks against Bitwarden, 7 against LastPass, 6 against Dashlane** (1Password appears only in the full version) — i.e. it analyses **three** managers, not four. The abstract does **not** confirm the specific "5 attacks via unauthenticated public keys" figure, nor the "Bitwarden malicious auto-enrolment" key-substitution flaw; confirming those requires reading the full PDF. **Do not cite the specific numbers.** The paper does support the general thesis (vendor "zero knowledge" claims lack a strict technical definition and real integrity violations were found), which is all Pitfall 1 actually needs.
+
+- **CVE-2026-43639** (Bitwarden provider/organization takeover via asymmetric GET/POST authorization checks, CWE-862) — cited as direct precedent for Pitfall 7's IDOR concern.
+
+  ⚠️ **REAL CVE, DIFFERENT MECHANICS.** It is a genuine missing-authorization flaw (CWE-862) in Bitwarden Server before v2026.4.0: a provider service user could add an arbitrary organization to their provider via `POST /providers/{providerId}/clients/existing`, which failed to verify the caller controls the target org — resulting in organization takeover. That is a missing-authorization-on-one-endpoint bug, **not** the "asymmetric GET vs. POST authorization checking" mechanic PITFALLS.md described; that framing appears to be embellishment. Two further caveats: **self-hosted installs were unaffected** (the endpoint is Cloud-only), which blunts its relevance to this self-hosted-only project, and this project has no provider/MSP concept at all. Keep Pitfall 7's mitigation (uniform per-endpoint membership authorization via a shared extractor) — it is sound regardless — but **do not present this CVE as precedent for our threat model.**
+
+- **dani-garcia/vaultwarden GitHub issue #6269** (hidden-password bypass via moving an item between collections) — cited as direct precedent for Pitfall 8.
+
+  ✅ **FULLY CONFIRMED**, and the most useful of the three. Issue #6269, *"Edit items, hidden passwords" permission issue* (Vaultwarden 1.34.3 / web-vault 2025.7.0): a user with "edit items, hidden passwords" on Collection A can add the item to Collection B where they have full access, then simply read the password there. **Actionable detail the citation carries:** upstream Bitwarden already fixed this in **2025.2.0** by disallowing users with that permission from reassigning items to another collection. This converts directly into a v0.4 requirement — our permission model must block collection reassignment by "hidden password" members from day one, rather than rediscovering this bug ourselves.
 
 None of the engineering recommendations these citations support depend on the citations being exactly correct — the underlying failure modes (server-trust gap on public keys, asymmetric authorization checks between routes, permission bypass via context-transfer) are sound on independent engineering merit regardless of whether these specific external reports check out. Treat the citations as corroborating color to verify, not as the reason to build the mitigations.
 
