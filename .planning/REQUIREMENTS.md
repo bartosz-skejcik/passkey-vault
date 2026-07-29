@@ -31,11 +31,11 @@
 Blocks every other category. Today's hierarchy is entirely symmetric and cannot express
 "give this secret to another person."
 
-- [ ] **KEY-01**: Every account has an X25519 identity keypair — private key wrapped by the User Key, public key published to the server. Accounts created before v0.4 get one generated on upgrade **without re-encrypting their existing vault**.
+- [x] **KEY-01**: Every account has an X25519 identity keypair — private key wrapped by the User Key, public key published to the server. Accounts created before v0.4 get one generated on upgrade **without re-encrypting their existing vault**.
 - [ ] **KEY-02**: A shared collection has its own Collection Key, sealed independently to each member's public key. Adding or removing a member rewraps keys only — item ciphertext (`enc_data`) is never touched.
 - [ ] **KEY-03**: Item AAD binds the encryption **scope** (personal vs. specific collection), so an item cannot be silently reinterpreted after moving between scopes. This is a deliberate change to today's `prefix ‖ item_id ‖ revision` scheme, which encodes no notion of which key wrapped the item.
 - [ ] **KEY-04**: Personal and shared key derivation use distinct, versioned domain-separation constants, following the existing `b"pv:...:v1"` convention.
-- [ ] **KEY-05**: The sealed-box implementation choice — `crypto_box` crate vs. hand-assembled X25519-ECDH over the existing `aead_seal`/HKDF machinery — is made and recorded as a first-class documented decision with rationale, before any dependent code is written.
+- [x] **KEY-05**: The sealed-box implementation choice — `crypto_box` crate vs. hand-assembled X25519-ECDH over the existing `aead_seal`/HKDF machinery — is made and recorded as a first-class documented decision with rationale, before any dependent code is written.
 - [ ] **KEY-06**: Removing a member re-keys only the collections that member could reach. Cost is provably proportional to the shared data and remaining members, never to the whole vault.
 - [ ] **KEY-07**: Re-key is atomic or safely resumable — a partial failure never leaves some recipients rewrapped and others stranded.
 
@@ -126,11 +126,11 @@ Explicitly excluded to prevent scope creep.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| KEY-01 | Phase 21 | Pending |
+| KEY-01 | Phase 21 | Complete |
 | KEY-02 | Phase 21 | Pending |
 | KEY-03 | Phase 21 | Pending |
 | KEY-04 | Phase 21 | Pending |
-| KEY-05 | Phase 21 | Pending |
+| KEY-05 | Phase 21 | Complete |
 | KEY-06 | Phase 25 | Pending |
 | KEY-07 | Phase 25 | Pending |
 | FAM-01 | Phase 22 | Pending |

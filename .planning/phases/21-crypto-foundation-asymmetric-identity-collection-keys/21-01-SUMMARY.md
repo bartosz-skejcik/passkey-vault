@@ -113,7 +113,7 @@ None — plan executed exactly as written. No Rule 1-4 auto-fixes were needed; b
 
 ## Issues Encountered
 
-None.
+None. One note for future readers of `.planning/REQUIREMENTS.md`: this plan's frontmatter declares `requirements: [KEY-05, KEY-01]`, so per standard executor protocol both are marked `[x]`/"Complete" in REQUIREMENTS.md. KEY-05 is genuinely fully satisfied by this plan (the decision record is the entire requirement). KEY-01's full requirement text ("every account has an X25519 identity keypair... generated on upgrade") is only PARTIALLY delivered here — this plan delivers the backward-compatibility proof half (no re-encryption on upgrade); the actual keypair generation/wrap code lands in Plans 21-02 and 21-05, which also declare KEY-01 in their own frontmatter. The checkbox reflects the plan-authoring decision (from `/gsd-plan-phase`) to split KEY-01 across plans, not an executor error.
 
 ## User Setup Required
 
