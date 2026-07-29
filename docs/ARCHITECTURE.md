@@ -80,12 +80,34 @@ master password          passkey #1                     passkey #2
  (blob_pw)              (blob_pk1)                      (blob_pk2)
 
 UK → wrapuje per-item Cipher Keys → itemy (XChaCha20-Poly1305)
+     │
+     └─ UK → wrapuje X25519 identity secret key (aead_seal, INFO_X25519_SK_WRAP)
+              │
+              └─ identity public key → sealuje per-recipient Collection Keys
+                       │
+                       └─ Collection Key → klucze itemów scope'owanych do kolekcji
 ```
 
 - **Prostszy niż Bitwarden**: bez warstwy RSA — `PRF → HKDF → wrapping key → bezpośredni wrap UK`, jeden blob na enrolled passkey. Warstwa RSA u BW służy ergonomii rotacji; przy naszej skali re-wrap N blobów przy rotacji UK jest akceptowalny.
 - **Recovery obowiązkowe**: UK zawsze wrapowany także pod master password (i opcjonalnie pod wydrukowanym recovery code). Usunięcie passkeya nigdy nie może być jedyną kopią klucza — UI musi to wymuszać.
 - Zmiana master password = re-wrap tylko blob_pw.
 - PRF Chromium-first; fallback: unlock hasłem wszędzie tam, gdzie PRF niedostępny.
+
+### Decyzja D: sealed-box dla Collection Key (KEY-05)
+
+Sharing (v0.4) wymaga warstwy asymetrycznej: każde konto dostaje parę kluczy X25519, a Collection Key (klucz kolekcji/foldera współdzielonego) jest sealowany per-recipient do publicznej połówki tej pary — dokładnie ten sam kształt fan-out co dzisiejsze multi-recipient wrapowanie UK (hasło + N passkeyów), tylko z asymetrycznym recipientem zamiast symetrycznego.
+
+**Wybór: crate `crypto_box`, dokładnie przypięty `=0.9.1`, `default-features = false`, `features = ["chacha20", "alloc", "rand_core"]`.** `crypto_box` jest jedynym stabilnym, audytowanym przez Cure53 (finansowanie Threema, konstrukcja niezmieniona od 0.7.1 do 0.9.1) crate'em public-key-encryption w organizacji RustCrypto, który już współdzieli graf zależności `chacha20poly1305`/`rand_core`/`aead` tego projektu. Jego feature `chacha20` daje AEAD **XChaCha20-Poly1305 — dokładnie ten cipher, którego `keys::aead_seal` już używa**. Twierdzenie "zero nowych linii rand_core/getrandom" zostało niezależnie zweryfikowane (nie tylko przyjęte z research milestone'u) przez realne `cargo tree -p pv-core -i rand_core` / `-i getrandom` oraz `cargo tree --duplicates`, zarówno na targecie natywnym, jak i `wasm32-unknown-unknown` — w obu przypadkach wynik to pojedyncza wersja (`rand_core v0.6.4`, `getrandom v0.2.17`), zero duplikatów, a realny build `cargo build -p pv-wasm --target wasm32-unknown-unknown --release` przechodzi czysto z `crypto_box` obecnym.
+
+**Odrzucone alternatywy:**
+- `hpke` 0.14.0 — wymusza podbicie już przypiętych `hkdf =0.12.4` (→ `^0.13`) i `chacha20poly1305 =0.10.1` (→ `^0.11.0`); crate i jego KEM `x25519-dalek 3.0.0` miały ~3 tygodnie w momencie researchu; brak niezależnego audytu.
+- `rsa` 0.9.10 — otwarty, niepatchowany advisory `RUSTSEC-2023-0071` (atak Marvina), który `deny.toml` dziś trzyma uśpiony; bezpośrednia zależność skompilowałaby realnie tę podatną ścieżkę. To też dokładnie wzorzec warstwy RSA Bitwardena, który ten projekt już odrzucił.
+- Ręcznie składany X25519-ECDH przez `x25519-dalek` bezpośrednio — `x25519-dalek 3.0.0` ciągnie major `rand_core ^0.10`, łamiąc wyrównanie grafu zależności, które zachowuje `crypto_box`; ręczne składanie KEM-a to dokładnie to, co recenzent bezpieczeństwa oflaguje jako rolled crypto. `crypto_box` *jest* tą kompozycją, już audytowaną.
+- **Wbudowany `seal()`/`unseal()` crypto_boxa (opcjonalny feature `seal`) — znaleziony i świadomie odrzucony, nie pominięty.** Hardkoduje `SalsaBox` (XSalsa20Poly1305) zamiast `ChaChaBox`, łamiąc własne uzasadnienie spójności cipherów, dla którego wybrano `crypto_box` w pierwszej kolejności. Zamiast tego pv-core ma własny, minimalny, mocno skomentowany wrapper: świeży efemeryczny `SecretKey` per seal, `ChaChaBox::new(&recipient_pk, &ephemeral_sk)`, losowy 24-bajtowy nonce, `{ephemeral_pk, nonce, ciphertext}` w bloku `SealedKey`, efemeryczny sekret zeroizowany natychmiast po użyciu, nigdy nie przechowywany ani reużywany.
+
+**Dwa znane ograniczenia — zapisane wprost, nie obejście po cichu:**
+1. **Brak AAD na warstwie seal.** Wywołania `encrypt`/`decrypt` `ChaChaBox` odrzucają dowolne niepuste associated data (potwierdzone komentarzem w źródle i realnym failing callem w runtime) — nie da się związać sealowanego bloku Collection Key z `(collection_id, recipient_user_id)` na tej warstwie. Scope-binding (KEY-03) jest zamiast tego wymuszany warstwę niżej, na poziomie item-AEAD (`items.rs`): AAD itemu koduje `collection_id`, więc podmieniony/pomieszany `SealedKey` albo nie odszyfruje się w ogóle, albo w skrajnym przypadku wyprodukuje 32 bajty śmieci, które i tak nie odszyfrują żadnego realnego itemu w złej kolekcji.
+2. **`crypto_box::SecretKey` nie implementuje `zeroize::Zeroize`.** Jego własny, ręcznie napisany `Drop` zeroizuje wyłącznie wewnętrzne pole `scalar` (to, które faktycznie bierze udział w mnożeniu skalarnym X25519) — nigdy surowej tablicy `bytes: [u8; 32]`, a typ nie implementuje traitu `Zeroize` wcale. Dlatego opakowanie klucza tożsamości w pv-core (`IdentitySecretKey`) przechowuje własną tablicę bajtów z własnym `Zeroize`/`ZeroizeOnDrop`, zamiast trzymać długożyciowy `crypto_box::SecretKey` jako pole — `crypto_box::SecretKey` jest rekonstruowany tylko przejściowo, na czas pojedynczego seal/unseal. Ten przejściowy egzemplarz wciąż nie gwarantuje zeroizacji swojej surowej kopii `bytes` przy drop — to mała, uczciwie udokumentowana resztkowa ekspozycja skądinąd audytowanego crate'a, nie fabrykowana ani przemilczana.
 
 ### Przepływ PRF unlock
 
