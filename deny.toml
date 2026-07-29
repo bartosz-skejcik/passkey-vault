@@ -18,6 +18,7 @@
 # | passkey-types            | 0.5.0               | yes — pv-provider                       | exact-pinned Task 2 ("=0.5.0")                  |
 # | argon2                   | 0.5.3               | yes — pv-core                           | exact-pinned Task 2 ("=0.5.3")                  |
 # | chacha20poly1305         | 0.10.1              | yes — pv-core                           | exact-pinned Task 2 ("=0.10.1")                 |
+# | crypto_box               | 0.9.1               | yes — pv-core                           | exact-pinned Phase 21 ("=0.9.1")                |
 # | hkdf                     | 0.12.4              | yes — pv-core                           | exact-pinned Task 2 ("=0.12.4")                 |
 # | getrandom                | 0.2.17 / 0.3.4 / 0.4.3 (3 parallel lines) | no — transitive only | Cargo.lock-pin-only; upstream-blocked by webauthn-rs + passkey-rs per CODEBASE-GAPS.md; tracked via [bans] multiple-versions = "warn" below |
 # | openssl-sys              | 0.9.117             | no — transitive only, via webauthn-rs-core | Cargo.lock-pin-only; native CVE surface tracked via `cargo audit`'s advisory scan |
