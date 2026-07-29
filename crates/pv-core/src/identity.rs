@@ -21,7 +21,8 @@ use chacha20poly1305::aead::OsRng;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::keys::KEY_LEN;
+use crate::keys::{aead_open, aead_seal, UserKey, WrappedKey, KEY_LEN};
+use crate::CryptoError;
 
 /// Domain separation dla wrapowania `IdentitySecretKey` pod `UserKey` —
 /// przekazywane jako AEAD associated data do `aead_seal`/`aead_open`
@@ -78,6 +79,33 @@ impl IdentityPublicKey {
     }
 }
 
+/// Wrap `IdentitySecretKey` pod `UserKey` — ponowne użycie istniejącego
+/// symetrycznego `aead_seal`, żadnej nowej kryptografii.
+pub fn wrap_identity_secret_key(
+    uk: &UserKey,
+    isk: &IdentitySecretKey,
+) -> Result<WrappedKey, CryptoError> {
+    aead_seal(uk.expose(), &isk.0, INFO_X25519_SK_WRAP)
+}
+
+/// Unwrap `IdentitySecretKey` spod `UserKey`. Odrzuca blob, którego
+/// odszyfrowany plaintext nie ma dokładnie `KEY_LEN` (32) bajtów —
+/// analogicznie do `unwrap_user_key`'s length check w `keys.rs`.
+pub fn unwrap_identity_secret_key(
+    uk: &UserKey,
+    blob: &WrappedKey,
+) -> Result<IdentitySecretKey, CryptoError> {
+    let mut plain = aead_open(uk.expose(), blob, INFO_X25519_SK_WRAP)?;
+    if plain.len() != KEY_LEN {
+        plain.zeroize();
+        return Err(CryptoError::Decrypt);
+    }
+    let mut k = [0u8; KEY_LEN];
+    k.copy_from_slice(&plain);
+    plain.zeroize();
+    Ok(IdentitySecretKey::from_bytes(k))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +133,40 @@ mod tests {
         assert_ne!(INFO_X25519_SK_WRAP, keys::INFO_PRF_UNLOCK);
         assert_ne!(INFO_X25519_SK_WRAP, keys::INFO_AUTH_HASH);
         assert_ne!(INFO_X25519_SK_WRAP, keys::INFO_EXT_PRF_UNLOCK);
+    }
+
+    #[test]
+    fn wrap_unwrap_roundtrip() {
+        let uk = UserKey::generate();
+        let isk = IdentitySecretKey::generate();
+        let expected_pk = isk.public_key().to_bytes();
+
+        let blob = wrap_identity_secret_key(&uk, &isk).unwrap();
+        let isk2 = unwrap_identity_secret_key(&uk, &blob).unwrap();
+
+        assert_eq!(isk2.public_key().to_bytes(), expected_pk);
+    }
+
+    #[test]
+    fn wrong_user_key_fails_to_unwrap() {
+        let uk = UserKey::generate();
+        let other_uk = UserKey::generate();
+        let isk = IdentitySecretKey::generate();
+
+        let blob = wrap_identity_secret_key(&uk, &isk).unwrap();
+        assert!(unwrap_identity_secret_key(&other_uk, &blob).is_err());
+    }
+
+    #[test]
+    fn wrapped_blob_wrong_length_rejected() {
+        let uk = UserKey::generate();
+        // Wrap a deliberately-wrong-length byte slice (not 32 bytes)
+        // directly through `keys::aead_seal` with `INFO_X25519_SK_WRAP` as
+        // AAD, bypassing `wrap_identity_secret_key`'s fixed-size input.
+        let wrong_length_plaintext = b"too short";
+        let blob = aead_seal(uk.expose(), wrong_length_plaintext, INFO_X25519_SK_WRAP).unwrap();
+
+        let result = unwrap_identity_secret_key(&uk, &blob);
+        assert!(matches!(result, Err(CryptoError::Decrypt)));
     }
 }
