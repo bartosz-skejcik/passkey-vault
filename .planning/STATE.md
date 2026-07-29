@@ -2,9 +2,12 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Family & Sharing
-status: planning
-last_updated: "2026-07-30T00:45:00.000Z"
+current_phase: 21
+current_phase_name: Crypto Foundation — Asymmetric Identity & Collection Keys
+status: executing
+last_updated: "2026-07-29T22:56:00.517Z"
 last_activity: 2026-07-30
+last_activity_desc: Phase 21 execution started
 progress:
   total_phases: 7
   completed_phases: 0
@@ -20,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-22)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** v0.4 Family & Sharing — autonomous run in progress (Phases 21–27); Phase 21 planned (5 plans, 4 waves), next: `/gsd-execute-phase 21`
+**Current focus:** Phase 21 — Crypto Foundation — Asymmetric Identity & Collection Keys
 
 ## Current Position
 
-Phase: Phase 21: Crypto Foundation — Asymmetric Identity & Collection Keys (planned)
-Plan: 0/5 complete
-Status: Ready to execute
-Last activity: 2026-07-30 — Phase 21 planned: CONTEXT + RESEARCH + PATTERNS + VALIDATION + 5 PLANs, plan-checker PASSED (0 blockers/0 warnings after 1 revision)
+Phase: 21 (Crypto Foundation — Asymmetric Identity & Collection Keys) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 21
+Last activity: 2026-07-30 — Phase 21 execution started
 
 ## Performance Metrics
 
