@@ -4,14 +4,14 @@ milestone: v0.4
 milestone_name: Family & Sharing
 current_phase: 22
 current_phase_name: Family & Collection Data Model — Server Authorization
-status: planning
-last_updated: "2026-07-30T01:26:14.089Z"
+status: executing
+last_updated: "2026-07-30T08:26:55.606Z"
 last_activity: 2026-07-30
-last_activity_desc: Phase 21 complete, transitioned to Phase 22
+last_activity_desc: Phase 22 execution started
 progress:
   total_phases: 7
   completed_phases: 1
-  total_plans: 5
+  total_plans: 10
   completed_plans: 5
   percent: 14
 ---
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-22)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 21 — Crypto Foundation — Asymmetric Identity & Collection Keys
+**Current focus:** Phase 22 — Family & Collection Data Model — Server Authorization
 
 ## Current Position
 
-Phase: 22 — Family & Collection Data Model — Server Authorization
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-07-30 — Phase 21 complete, transitioned to Phase 22
+Phase: 22 (Family & Collection Data Model — Server Authorization) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 22
+Last activity: 2026-07-30 — Phase 22 execution started
 
 ## Performance Metrics
 
