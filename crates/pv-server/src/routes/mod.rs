@@ -59,8 +59,6 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
         .route("/api/auth/passkey-login/start", post(auth::passkey_login_start))
         .route("/api/auth/passkey-login/finish", post(auth::passkey_login_finish))
         .route("/api/vault/items", get(vault::list).post(vault::create))
-        .route("/api/vault/items/{id}", put(vault::update).delete(vault::delete))
-        .route("/api/vault/items/{id}/touch", post(vault::touch))
         .route("/api/vault/folders", get(folders::list).post(folders::create))
         .route("/api/vault/folders/{id}", delete(folders::delete))
         .route("/api/sync", get(sync::pull))
@@ -151,16 +149,24 @@ pub(crate) fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<
 }
 
 /// The ONLY place path-`{id}`-based `Membership<R, M>`-gated routes may be
-/// registered (mirrors `family_routes()`'s doc comment above). Empty here —
-/// `Collection`/`Item` resource kinds populate it starting Plan 22-03; this
-/// plan defines the function and its fold-in wiring into `router_with_cors`,
-/// not its first entry.
+/// registered (mirrors `family_routes()`'s doc comment above). `Collection`
+/// entries land in Plan 22-03; Plan 22-04 (this plan) is the first to
+/// register `Item`-kind entries — `PUT`/`DELETE /api/vault/items/{id}` and
+/// `POST /api/vault/items/{id}/touch` are genuine refactors OUT of
+/// `router_with_cors`'s literal chain and INTO this table (SEC-06's "every
+/// mutating endpoint uniformly gated" applied to the item resource that
+/// already existed before this phase), alongside three brand-new endpoints
+/// this plan builds: the move-item endpoint (SHARE-04's headline fix) and
+/// the direct per-item share create/revoke pair (SHARE-02's server half).
 pub(crate) fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
     vec![
         ("/api/vault/collections/{id}", get(collections::get)),
         ("/api/vault/collections/{id}/members", post(collections::add_member)),
         ("/api/vault/collections/{id}/access", get(collections::access_list)),
         ("/api/vault/collections/{id}/access/{user_id}", delete(collections::revoke_access)),
+        ("/api/vault/items/{id}", put(vault::update).delete(vault::delete)),
+        ("/api/vault/items/{id}/touch", post(vault::touch)),
+        ("/api/vault/items/{id}/collection", put(vault::move_item)),
     ]
 }
 

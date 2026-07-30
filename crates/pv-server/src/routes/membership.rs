@@ -332,6 +332,29 @@ where
     }
 }
 
+/// Explicit, reusable SECOND authorization check for a body-supplied
+/// DESTINATION resource id, called from inside a handler body rather than a
+/// second `FromRequestParts` extraction — `Membership<R, M>`'s extractor only
+/// reads a request's own path `{id}`, so it cannot be re-invoked a second
+/// time against an unrelated id carried in the JSON body (`move_item`'s
+/// `new_collection_id`, 22-04-PLAN.md's Pattern 3). Wraps
+/// `Collection::resolve_access` + the SAME `gate::<RequireEdit>()` this
+/// module's extractors use, so the destination-collection check is provably
+/// identical in 404-vs-403 behavior to every other `Membership`-gated route —
+/// just invoked from a different call site (`vault::move_item`, closing
+/// T-22-18: an edit-capable member of the SOURCE collection must not be able
+/// to push an item into a DESTINATION collection they hold a lesser grant
+/// on).
+pub(crate) async fn require_collection_edit(
+    db: &sqlx::SqlitePool,
+    caller_user_id: &str,
+    collection_id: &str,
+) -> Result<(), ApiError> {
+    let resolved = Collection::resolve_access(db, caller_user_id, collection_id).await?;
+    gate::<RequireEdit>(resolved)?;
+    Ok(())
+}
+
 /// Pathless sibling of `Membership<R, M>` for the singleton `families`
 /// resource (v0.4 has exactly one family — CONTEXT.md's locked FAM-01
 /// decision — so there is no `{id}` segment to read at all).

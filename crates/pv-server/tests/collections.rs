@@ -599,3 +599,328 @@ async fn add_member_rejects_malformed_access_level() {
     let count: i64 = count_row.try_get("n").unwrap();
     assert_eq!(count, 0, "a rejected malformed access_level must never leave a collection_keys row behind");
 }
+
+// --- Plan 22-04, Task 1: the move endpoint (SHARE-04 / Vaultwarden #6269) ---
+
+/// The headline regression this plan exists to close (SHARE-04, Vaultwarden
+/// #6269): a member with `hidden_password` access on an item's CURRENT
+/// collection must never be able to reassign it to a different collection —
+/// even one the caller has full `edit` access to — because doing so would
+/// let them accidentally expose the password to themselves in the
+/// destination scope. `hidden_password` sits directly adjacent to `edit` in
+/// the access-level vocabulary but must never be conflated with it at this
+/// gate (`RequireEdit::satisfied_by`'s exact-match design, Plan 22-01).
+#[tokio::test]
+async fn hidden_password_holder_cannot_reassign_item_vaultwarden_6269_regression() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "vw6269-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let hp_member_token =
+        common::register_second_family_member(&app, &owner_token, "vw6269-hp-member@example.com").await;
+    let hp_member_id = user_id_of(&app, &hp_member_token).await;
+    let hp_member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &hp_member_token, hp_member_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+
+    // SOURCE collection: owner (creator, edit) + hp_member at hidden_password.
+    let source_ck = CollectionKey::generate();
+    let owner_sealed_source = seal(&owner_sk.public_key(), source_ck.expose()).unwrap();
+    let create_source_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-vw6269-source-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed_source).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_source_res.status(), StatusCode::CREATED);
+    let source_collection_id = body_json(create_source_res).await["id"].as_str().unwrap().to_string();
+
+    let hp_member_sealed = seal(&hp_member_sk.public_key(), source_ck.expose()).unwrap();
+    let add_hp_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{source_collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": hp_member_id,
+            "sealed_key": serde_json::to_string(&hp_member_sealed).unwrap(),
+            "access_level": "hidden_password",
+        })),
+    )
+    .await;
+    assert_eq!(add_hp_member_res.status(), StatusCode::CREATED);
+
+    // A SEPARATE destination collection ("any other collection", per the
+    // plan's wording) — the hp_member has no relationship to it at all,
+    // which is irrelevant to this test's assertion, since the SOURCE check
+    // (this test's actual subject) rejects the caller before the
+    // destination check ever runs.
+    let dest_ck = CollectionKey::generate();
+    let owner_sealed_dest = seal(&owner_sk.public_key(), dest_ck.expose()).unwrap();
+    let create_dest_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-vw6269-dest-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed_dest).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_dest_res.status(), StatusCode::CREATED);
+    let dest_collection_id = body_json(create_dest_res).await["id"].as_str().unwrap().to_string();
+
+    // Owner creates a personal item, then uses the real move_item endpoint
+    // (this same plan's own output — no forward-dependency concern) to place
+    // it into the source collection.
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"key-blob\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"data-blob\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    let move_into_source_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &owner_token,
+        Some(json!({
+            "new_collection_id": source_collection_id,
+            "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"key-blob-scoped\"}",
+            "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"data-blob-scoped\"}",
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(
+        move_into_source_res.status(),
+        StatusCode::OK,
+        "owner (edit on the source collection) moving their own personal item into it must succeed"
+    );
+
+    // THE REGRESSION: hp_member (hidden_password on the item's CURRENT
+    // collection) attempts to reassign it to the dest collection — rejected
+    // 403 (they provably have SOME access — hidden_password — so this is the
+    // insufficient-level case, never the no-access-at-all 404 case).
+    let hp_move_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &hp_member_token,
+        Some(json!({
+            "new_collection_id": dest_collection_id,
+            "enc_key": "{\"nonce\":\"EEEE\",\"ciphertext\":\"attempted-reassign-key\"}",
+            "enc_data": "{\"nonce\":\"FFFF\",\"ciphertext\":\"attempted-reassign-data\"}",
+            "expected_revision": 2,
+        })),
+    )
+    .await;
+    assert_eq!(
+        hp_move_res.status(),
+        StatusCode::FORBIDDEN,
+        "a hidden_password holder on the item's current collection must never be able to reassign it — Vaultwarden #6269"
+    );
+}
+
+/// The written-rationale destination-collection gate (beyond CONTEXT.md's
+/// literal SHARE-04 text, documented in 22-04-PLAN.md's objective): an
+/// edit-capable member of the SOURCE collection but only read-capable on a
+/// SEPARATE destination collection is rejected 403; the same caller with
+/// edit on BOTH succeeds.
+#[tokio::test]
+async fn move_item_rejected_when_caller_lacks_edit_on_destination_collection() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "movegate-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let mover_token = common::register_second_family_member(&app, &owner_token, "movegate-mover@example.com").await;
+    let mover_id = user_id_of(&app, &mover_token).await;
+    let mover_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &mover_token, mover_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+
+    // Collection A: owner (creator, edit) + mover (edit).
+    let ck_a = CollectionKey::generate();
+    let owner_sealed_a = seal(&owner_sk.public_key(), ck_a.expose()).unwrap();
+    let create_a_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-movegate-collection-a",
+            "sealed_key": serde_json::to_string(&owner_sealed_a).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_a_res.status(), StatusCode::CREATED);
+    let collection_a_id = body_json(create_a_res).await["id"].as_str().unwrap().to_string();
+
+    let mover_sealed_a = seal(&mover_sk.public_key(), ck_a.expose()).unwrap();
+    let add_mover_a_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_a_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": mover_id,
+            "sealed_key": serde_json::to_string(&mover_sealed_a).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_mover_a_res.status(), StatusCode::CREATED);
+
+    // Collection B: owner (creator, edit) + mover (read only, at first).
+    let ck_b = CollectionKey::generate();
+    let owner_sealed_b = seal(&owner_sk.public_key(), ck_b.expose()).unwrap();
+    let create_b_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-movegate-collection-b",
+            "sealed_key": serde_json::to_string(&owner_sealed_b).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_b_res.status(), StatusCode::CREATED);
+    let collection_b_id = body_json(create_b_res).await["id"].as_str().unwrap().to_string();
+
+    let mover_sealed_b_read = seal(&mover_sk.public_key(), ck_b.expose()).unwrap();
+    let add_mover_b_read_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_b_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": mover_id,
+            "sealed_key": serde_json::to_string(&mover_sealed_b_read).unwrap(),
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(add_mover_b_read_res.status(), StatusCode::CREATED);
+
+    // Owner creates a personal item, then moves it into collection A.
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"key-blob\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"data-blob\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    let move_into_a_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &owner_token,
+        Some(json!({
+            "new_collection_id": collection_a_id,
+            "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"scoped-to-a-key\"}",
+            "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"scoped-to-a-data\"}",
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(move_into_a_res.status(), StatusCode::OK);
+
+    // Mover (edit on A, read-only on B) attempts to move the item A -> B:
+    // rejected — edit on the SOURCE alone is not sufficient.
+    let move_a_to_b_denied_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &mover_token,
+        Some(json!({
+            "new_collection_id": collection_b_id,
+            "enc_key": "{\"nonce\":\"EEEE\",\"ciphertext\":\"attempted-a-to-b-key\"}",
+            "enc_data": "{\"nonce\":\"FFFF\",\"ciphertext\":\"attempted-a-to-b-data\"}",
+            "expected_revision": 2,
+        })),
+    )
+    .await;
+    assert_eq!(
+        move_a_to_b_denied_res.status(),
+        StatusCode::FORBIDDEN,
+        "edit on the SOURCE collection alone must not be sufficient to move an item into a DESTINATION collection the caller only holds read on"
+    );
+
+    // Upgrade mover's access on B to edit: revoke the read grant, re-add with edit.
+    let revoke_b_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/vault/collections/{collection_b_id}/access/{mover_id}"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(revoke_b_res.status(), StatusCode::NO_CONTENT);
+
+    let mover_sealed_b_edit = seal(&mover_sk.public_key(), ck_b.expose()).unwrap();
+    let add_mover_b_edit_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_b_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": mover_id,
+            "sealed_key": serde_json::to_string(&mover_sealed_b_edit).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_mover_b_edit_res.status(), StatusCode::CREATED);
+
+    // Now the mover (edit on BOTH source and destination) succeeds — the
+    // positive path proving the gate isn't just failing everything closed.
+    let move_a_to_b_allowed_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &mover_token,
+        Some(json!({
+            "new_collection_id": collection_b_id,
+            "enc_key": "{\"nonce\":\"GGGG\",\"ciphertext\":\"scoped-to-b-key\"}",
+            "enc_data": "{\"nonce\":\"HHHH\",\"ciphertext\":\"scoped-to-b-data\"}",
+            "expected_revision": 2,
+        })),
+    )
+    .await;
+    assert_eq!(
+        move_a_to_b_allowed_res.status(),
+        StatusCode::OK,
+        "edit on BOTH source and destination collections must succeed"
+    );
+    let move_body = body_json(move_a_to_b_allowed_res).await;
+    assert_eq!(move_body["collection_id"].as_str(), Some(collection_b_id.as_str()));
+    assert_eq!(move_body["revision"], 3);
+}
