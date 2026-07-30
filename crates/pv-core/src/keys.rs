@@ -36,8 +36,17 @@ impl UserKey {
         Self(k)
     }
 
-    pub fn from_bytes(bytes: [u8; KEY_LEN]) -> Self {
-        Self(bytes)
+    /// `bytes` is taken BY VALUE and zeroized here after being copied into
+    /// `Self` (WR-11) — `[u8; KEY_LEN]` is `Copy`, so without this the
+    /// callee's own parameter slot would be a second, never-wiped copy of
+    /// the key even when every caller diligently zeroizes ITS copy (WR-01).
+    /// Callers should still zeroize their own copy; this closes the other
+    /// half of that guarantee so it lives with the type, not with every
+    /// call site remembering to do it.
+    pub fn from_bytes(mut bytes: [u8; KEY_LEN]) -> Self {
+        let out = Self(bytes);
+        bytes.zeroize();
+        out
     }
 
     pub fn expose(&self) -> &[u8; KEY_LEN] {

@@ -135,8 +135,14 @@ impl IdentitySecretKey {
         Self(k)
     }
 
-    pub fn from_bytes(bytes: [u8; KEY_LEN]) -> Self {
-        Self(bytes)
+    /// `bytes` is taken BY VALUE and zeroized here after being copied into
+    /// `Self` (WR-11) — `[u8; KEY_LEN]` is `Copy`, so without this the
+    /// callee's own parameter slot would be a second, never-wiped copy of
+    /// the key even when every caller diligently zeroizes ITS copy (WR-01).
+    pub fn from_bytes(mut bytes: [u8; KEY_LEN]) -> Self {
+        let out = Self(bytes);
+        bytes.zeroize();
+        out
     }
 
     /// Rekonstruuje tranzytywny `crypto_box::SecretKey` per wywołanie —

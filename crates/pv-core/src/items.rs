@@ -152,8 +152,18 @@ impl CollectionKey {
         Self(k)
     }
 
-    pub fn from_bytes(bytes: [u8; KEY_LEN]) -> Self {
-        Self(bytes)
+    /// `bytes` is taken BY VALUE and zeroized here after being copied into
+    /// `Self` (WR-11) — `[u8; KEY_LEN]` is `Copy`, so without this the
+    /// callee's own parameter slot would be a second, never-wiped copy of
+    /// the key even when every caller diligently zeroizes ITS copy (WR-01).
+    /// This is the highest-value site for this fix: `pv-wasm`'s
+    /// `encrypt_item_for_collection`/`decrypt_item_for_collection` call this
+    /// on EVERY collection item operation with no local variable to zeroize
+    /// on the caller side at all.
+    pub fn from_bytes(mut bytes: [u8; KEY_LEN]) -> Self {
+        let out = Self(bytes);
+        bytes.zeroize();
+        out
     }
 
     pub fn expose(&self) -> &[u8; KEY_LEN] {
