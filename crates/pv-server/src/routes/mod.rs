@@ -2,6 +2,7 @@ pub mod auth;
 pub mod extension_passkeys;
 pub mod families;
 pub mod folders;
+pub mod identity;
 pub mod membership;
 pub mod passkeys;
 pub mod session;
@@ -85,7 +86,15 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
         // already-anticipated exception (Plan 22-05's sweep test enumerates
         // it, plus the `/api/identity/*` routes Plan 22-02 adds the same way,
         // in an explicit allowlist constant, not just in this comment).
-        .route("/api/families", post(families::create));
+        .route("/api/families", post(families::create))
+        // `/api/identity/*` — `SessionUser` alone is the correct and
+        // sufficient gate (not `Membership<R,M>`/`FamilyMembership<M>`): a
+        // user's own identity keypair is not a shared family/collection/item
+        // resource, and `identity_verifications` is inherently a cross-user
+        // comparison scoped to the viewer's own row, not a resource the
+        // viewer needs membership on (this plan's `key_links` note).
+        .route("/api/identity/keypair", put(identity::upsert).get(identity::get))
+        .route("/api/identity/verify/{user_id}", post(identity::verify));
 
     // family_routes() and membership_routes() are folded in via `.route()`
     // per entry (not a literal chain above) — this is the single source of
