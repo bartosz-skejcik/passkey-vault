@@ -4,6 +4,8 @@
 //! 02-CONTEXT.md Vault Data Model). Każdy handler bierze `SessionUser` i
 //! skopuje zapytania po `session_user.user_id` — nigdy po id z ciała żądania.
 
+use std::collections::HashSet;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -56,6 +58,113 @@ pub(crate) fn validate_blob_len(field: &'static str, value: &str) -> Result<(), 
     Ok(())
 }
 
+// --- Fan-out helpers (Phase 23, SYNC-04/SYNC-05) ---
+//
+// The three functions below close the Phase-22-left WR-09 fan-out handoffs
+// in `update`/`delete`/`move_item`: a shared mutation must bump the
+// affected collection's own revision counter AND every current recipient's
+// `vault_revision`, inside the SAME transaction as the mutation (WR-01), and
+// the WS fan-out publish (call sites in each handler, after `tx.commit()`)
+// must reach every one of those recipients — never just the caller.
+
+/// Resolves the current, deduplicated recipient set for a mutation on
+/// `item_id` (T-23-01: resolved ONLY from `collection_keys`/`item_shares`
+/// rows the server itself queries for this item's own `collection_id`/
+/// `item_id` — never from a caller-supplied list, so a non-recipient can
+/// never be added to the fan-out target by request manipulation).
+///
+/// The DISTINCT union of:
+/// - `collection_keys.recipient_user_id` for `collection_id`, only when
+///   `collection_id` is `Some` (a personal item has no collection to query);
+/// - `item_shares.recipient_user_id` for `item_id`, always (a personal item
+///   can still carry direct per-item shares — SHARE-02);
+/// - `owner_user_id` itself.
+///
+/// `owner_user_id` is always included, so this never returns an empty
+/// `Vec` — a collection/item with no recipient besides its owner still
+/// yields exactly one element (SYNC-05, "no panic, no error, on an
+/// otherwise-empty recipient fan-out").
+///
+/// MUST be called INSIDE the mutation's own transaction and never cached —
+/// this is what makes membership resolution "fresh at emit time" (SYNC-05,
+/// Pitfall 17): a member added/removed a moment ago is correctly
+/// included/excluded because this query runs fresh on every single
+/// mutation, never once and reused.
+pub(crate) async fn resolve_recipients(
+    tx: &mut sqlx::SqliteConnection,
+    item_id: &str,
+    collection_id: Option<&str>,
+    owner_user_id: &str,
+) -> Result<Vec<String>, ApiError> {
+    let mut recipients: HashSet<String> = HashSet::new();
+    recipients.insert(owner_user_id.to_string());
+
+    if let Some(collection_id) = collection_id {
+        let rows = sqlx::query("SELECT recipient_user_id FROM collection_keys WHERE collection_id = ?")
+            .bind(collection_id)
+            .fetch_all(&mut *tx)
+            .await?;
+        for row in rows {
+            let recipient: String = row.try_get("recipient_user_id").map_err(|_| ApiError::Internal)?;
+            recipients.insert(recipient);
+        }
+    }
+
+    let item_share_rows = sqlx::query("SELECT recipient_user_id FROM item_shares WHERE item_id = ?")
+        .bind(item_id)
+        .fetch_all(&mut *tx)
+        .await?;
+    for row in item_share_rows {
+        let recipient: String = row.try_get("recipient_user_id").map_err(|_| ApiError::Internal)?;
+        recipients.insert(recipient);
+    }
+
+    Ok(recipients.into_iter().collect())
+}
+
+/// Bumps ONE collection's own revision counter (SYNC-04) and returns the new
+/// value — exactly one row is always affected here (a single `id = ?`
+/// match), so `RETURNING` + `.fetch_one()` is the CORRECT shape for this
+/// call, unlike the multi-recipient case below where the same pattern would
+/// be wrong (RESEARCH.md's Anti-Patterns section names this exact mistake).
+pub(crate) async fn bump_collection_revision(
+    tx: &mut sqlx::SqliteConnection,
+    collection_id: &str,
+) -> Result<i64, ApiError> {
+    let revision: i64 =
+        sqlx::query_scalar("UPDATE collections SET revision = revision + 1 WHERE id = ? RETURNING revision")
+            .bind(collection_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    Ok(revision)
+}
+
+/// Bumps EVERY resolved recipient's `vault_revision` in ONE batched
+/// statement (T-23-02: `WHERE id IN (...)` built from server-resolved ids
+/// only, never request body content — parameterized placeholders per
+/// recipient, no injection surface). Deliberately `.execute()`, never
+/// `.fetch_one()`/`RETURNING` — N rows are affected here, not 1, and NEVER a
+/// per-recipient `for recipient in recipients { ...execute...await? }` loop
+/// (the same round-trip-avoidance reasoning as SYNC-01's original single-user
+/// bump, applied N-wide). A no-op (not an error) when `recipients` is empty,
+/// though `resolve_recipients` above never actually returns an empty `Vec`.
+pub(crate) async fn bump_recipients_vault_revision(
+    tx: &mut sqlx::SqliteConnection,
+    recipients: &[String],
+) -> Result<(), ApiError> {
+    if recipients.is_empty() {
+        return Ok(());
+    }
+    let placeholders = recipients.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!("UPDATE users SET vault_revision = vault_revision + 1 WHERE id IN ({placeholders})");
+    let mut query = sqlx::query(&sql);
+    for recipient in recipients {
+        query = query.bind(recipient);
+    }
+    query.execute(&mut *tx).await?;
+    Ok(())
+}
+
 /// `POST /api/vault/items` — creates a new item at revision 1.
 pub async fn create(
     State(state): State<AppState>,
@@ -80,8 +189,14 @@ pub async fn create(
     // RETURNING updated_at yields no row when the ON CONFLICT DO NOTHING arm
     // fires, so fetch_optional's None is the exact same "conflict" signal
     // execute()'s rows_affected() == 0 used to be.
+    //
+    // `last_editor_user_id` (Phase 23, Task 2) is appended LAST — after
+    // `enc_key`/`enc_data` — and its bind is the LAST bind of the statement,
+    // matching this creator's own id: the very first "editor" of an item is
+    // whoever created it. Consumed by Plan 23-03's 409 attribution work.
     let result = sqlx::query(
-        "INSERT INTO vault_items (id, user_id, enc_key, enc_data, revision) VALUES (?, ?, ?, ?, 1) \
+        "INSERT INTO vault_items (id, user_id, enc_key, enc_data, revision, last_editor_user_id) \
+         VALUES (?, ?, ?, ?, 1, ?) \
          ON CONFLICT(id) DO NOTHING \
          RETURNING updated_at",
     )
@@ -89,6 +204,7 @@ pub async fn create(
     .bind(&session.user_id)
     .bind(&req.enc_key)
     .bind(&req.enc_data)
+    .bind(&session.user_id)
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -136,6 +252,19 @@ pub struct VaultItem {
     /// create/update/list, and never bumps `revision` (see `touch()`'s doc
     /// comment for why).
     pub last_used_at: Option<String>,
+    /// BLOCKER-1 (Phase 23, Task 3): `true` for a collection-scoped item
+    /// (shared by construction), or a personal item with at least one
+    /// `item_shares` row (a direct share). Metadata-only — sourced from
+    /// server-side columns this handler already authorizes access to, never
+    /// derived from or exposing any ciphertext. Consumed by Plans 23-02/23-05
+    /// for the attribution/sharing-badge read-side gap this task closes.
+    pub is_shared: bool,
+    /// The email of `vault_items.last_editor_user_id`'s current holder, or
+    /// `None` when the item has never been edited since that column existed
+    /// (Migration 0015). Metadata-only, same rationale as `is_shared` above —
+    /// Plan 23-03's 409/live-conflict attribution reads this field, never a
+    /// raw user id.
+    pub last_editor_email: Option<String>,
 }
 
 /// Shared row-fetch body reused by `list()` and `sync::pull`'s snapshot arm
@@ -156,16 +285,32 @@ pub struct VaultItem {
 /// uses; it never starts listing an item someone else created that the
 /// caller can only reach via `collection_keys`/`item_shares`. Widening to
 /// that shape is the deferred Phase 23 read path and is a separate decision.
+///
+/// Phase 23, Task 3 (BLOCKER-1 fix): extends the SELECT column list ONLY —
+/// both arms' WHERE clauses above, and arm 2's three membership JOIN lines
+/// below, are byte-identical to their pre-Task-3 shape (grep-proven by this
+/// plan's own acceptance criteria). A `LEFT JOIN users` never drops or gates
+/// a row, so it cannot alter who this query authorizes — only new,
+/// non-filtering columns are added. Arm 1's previously-unqualified `id`
+/// column is qualified as `vault_items.id` because `LEFT JOIN users` makes
+/// `id` ambiguous (both tables have one); no other selected column collides.
 pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> Result<Vec<VaultItem>, ApiError> {
     let rows = sqlx::query(
-        "SELECT id, enc_key, enc_data, revision, updated_at, last_used_at \
-           FROM vault_items WHERE user_id = ? AND collection_id IS NULL \
+        "SELECT vault_items.id, enc_key, enc_data, revision, updated_at, last_used_at, \
+                (collection_id IS NOT NULL OR EXISTS(SELECT 1 FROM item_shares WHERE item_shares.item_id = vault_items.id)) AS is_shared, \
+                users.email AS last_editor_email \
+           FROM vault_items \
+           LEFT JOIN users ON users.id = vault_items.last_editor_user_id \
+          WHERE user_id = ? AND collection_id IS NULL \
          UNION ALL \
-         SELECT i.id, i.enc_key, i.enc_data, i.revision, i.updated_at, i.last_used_at \
+         SELECT i.id, i.enc_key, i.enc_data, i.revision, i.updated_at, i.last_used_at, \
+                (i.collection_id IS NOT NULL OR EXISTS(SELECT 1 FROM item_shares WHERE item_shares.item_id = i.id)) AS is_shared, \
+                u2.email AS last_editor_email \
            FROM vault_items i \
            JOIN collection_keys ck ON ck.collection_id = i.collection_id AND ck.recipient_user_id = ? \
            JOIN collections c      ON c.id = i.collection_id \
            JOIN family_members fm  ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
+           LEFT JOIN users u2 ON u2.id = i.last_editor_user_id \
           WHERE i.user_id = ?",
     )
     .bind(user_id)
@@ -183,6 +328,8 @@ pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> R
                 revision: row.try_get("revision").map_err(|_| ApiError::Internal)?,
                 updated_at: row.try_get("updated_at").map_err(|_| ApiError::Internal)?,
                 last_used_at: row.try_get("last_used_at").map_err(|_| ApiError::Internal)?,
+                is_shared: row.try_get("is_shared").map_err(|_| ApiError::Internal)?,
+                last_editor_email: row.try_get("last_editor_email").map_err(|_| ApiError::Internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()
@@ -281,17 +428,33 @@ pub async fn update(
     validate_blob_len("enc_key", &req.enc_key)?;
     validate_blob_len("enc_data", &req.enc_data)?;
 
-    // WR-01: mutation + vault_revision bump run inside one transaction (see
+    // WR-01: mutation + revision bump(s) run inside one transaction (see
     // create()'s comment above for the atomicity rationale).
     let mut tx = state.db.begin().await?;
 
+    // `RETURNING` also carries `user_id`/`collection_id` (Phase 23 addition):
+    // `membership.caller_user_id` is WRONG as this item's fan-out owner for a
+    // SHARED item (it's whoever is currently editing, not necessarily the
+    // item's original owner) — the row's own `user_id` is the correct value
+    // `resolve_recipients` below needs, and reading it off this SAME
+    // RETURNING clause avoids a second SELECT (the 409 branch's follow-up
+    // SELECT below is only reached when this UPDATE matched no row at all).
+    // `last_editor_user_id = ?` is appended LAST in the SET-clause list
+    // (after `enc_key`/`enc_data`, never interleaved with them) and its bind
+    // is the LAST SET-clause bind, before the WHERE binds — Plan 23-03's 409
+    // attribution source (Task 2). Per hard constraint (f): this ordering is
+    // what keeps `enc_data`'s own bound parameter position untouched by this
+    // column's addition (a reordering would silently scramble which value
+    // binds to `enc_data`).
     let result = sqlx::query(
-        "UPDATE vault_items SET enc_key = ?, enc_data = ?, revision = revision + 1, updated_at = datetime('now') \
+        "UPDATE vault_items SET enc_key = ?, enc_data = ?, revision = revision + 1, updated_at = datetime('now'), \
+         last_editor_user_id = ? \
          WHERE id = ? AND revision = ? \
-         RETURNING updated_at",
+         RETURNING updated_at, user_id, collection_id",
     )
     .bind(&req.enc_key)
     .bind(&req.enc_data)
+    .bind(&membership.caller_user_id)
     .bind(&id)
     .bind(req.expected_revision)
     .fetch_optional(&mut *tx)
@@ -311,48 +474,60 @@ pub async fn update(
         }
     };
     let updated_at: String = row.try_get("updated_at").map_err(|_| ApiError::Internal)?;
+    let owner_user_id: String = row.try_get("user_id").map_err(|_| ApiError::Internal)?;
+    let collection_id: Option<String> = row.try_get("collection_id").map_err(|_| ApiError::Internal)?;
 
-    // SYNC-01: bump the per-user global change counter (see create()'s
-    // comment above for the atomicity rationale). Bound to the CALLER's own
-    // user_id (`membership.caller_user_id`), matching this codebase's
-    // existing single-user sync semantics — broadcasting a shared item's
-    // change to every co-recipient's own sync channel is Phase 23 territory,
-    // out of this plan's scope.
-    //
-    // TODO(phase-23, WR-09): editing a shared item bumps ONLY the editor's
-    // own `vault_revision` and publishes to ONLY the editor's own sync
-    // channel — every other collection_keys/item_shares holder of this item
-    // keeps a stale cached copy and gets `UpToDate` from their own
-    // `GET /api/sync?since=N` until they touch the item themselves. This is a
-    // stale-credential / lost-update hazard, not cosmetic lag: two holders
-    // can both hold `expected_revision = N` and the second save 409s with no
-    // prior signal anything moved. Phase 23 must bump every current
-    // collection_keys/item_shares recipient's vault_revision (plus the
-    // item's own owner) in this SAME transaction, and publish a SyncEvent to
-    // each of them.
-    let _new_global_revision: i64 = sqlx::query_scalar(
-        "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
-    )
-    .bind(&membership.caller_user_id)
-    .fetch_one(&mut *tx)
-    .await?;
+    // SYNC-04/SYNC-05 (closes this handler's WR-09 fan-out handoff):
+    // resolve the CURRENT recipient set fresh, inside this same transaction
+    // (never cached — Pitfall 17), bump the item's own collection revision
+    // (if collection-scoped) and every resolved recipient's vault_revision in
+    // ONE batched statement (never a per-recipient loop) — replacing the old
+    // single-caller bump this TODO used to leave in place. A personal item
+    // with only direct item_shares recipients has no collection to bump;
+    // signal (2) — the recipients' vault_revision bump — is the whole
+    // mechanism for those (CONTEXT.md's locked framing).
+    let recipients = resolve_recipients(&mut *tx, &id, collection_id.as_deref(), &owner_user_id).await?;
+    let new_collection_revision = match &collection_id {
+        Some(cid) => Some(bump_collection_revision(&mut *tx, cid).await?),
+        None => None,
+    };
+    bump_recipients_vault_revision(&mut *tx, &recipients).await?;
 
     tx.commit().await?;
 
     let new_item_revision = req.expected_revision + 1;
-    // SYNC-02: metadata-only push — only after commit() succeeds; use the
-    // item's OWN per-row revision (the same value this response's own
-    // `revision` field carries), not the global counter this bump just
-    // produced.
-    state.sync_hub.publish(
-        &membership.caller_user_id,
-        SyncEvent {
-            entity_type: EntityType::Item,
-            id: id.clone(),
-            revision: new_item_revision,
-            change_type: ChangeType::Update,
-        },
-    );
+    // SYNC-02/SYNC-05: metadata-only push — only after commit() succeeds, to
+    // every resolved recipient (`publish_to_recipients`, never just the
+    // caller). A collection-scoped item fires ONE `EntityType::Collection`
+    // event carrying the collection's OWN new revision (the existing
+    // Item/Folder wire shape is unchanged, so today's web/extension WS
+    // consumers need zero parsing changes for it); a personal item with only
+    // direct item_shares recipients keeps the existing `EntityType::Item`
+    // shape, unwidened.
+    match (&collection_id, new_collection_revision) {
+        (Some(cid), Some(new_collection_rev)) => {
+            state.sync_hub.publish_to_recipients(
+                &recipients,
+                SyncEvent {
+                    entity_type: EntityType::Collection,
+                    id: cid.clone(),
+                    revision: new_collection_rev,
+                    change_type: ChangeType::Update,
+                },
+            );
+        }
+        _ => {
+            state.sync_hub.publish_to_recipients(
+                &recipients,
+                SyncEvent {
+                    entity_type: EntityType::Item,
+                    id: id.clone(),
+                    revision: new_item_revision,
+                    change_type: ChangeType::Update,
+                },
+            );
+        }
+    }
 
     Ok(Json(UpdateItemResponse { revision: new_item_revision, updated_at }))
 }
@@ -369,48 +544,89 @@ pub async fn delete(
     membership: Membership<Item, RequireEdit>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    // WR-01: mutation + vault_revision bump run inside one transaction (see
+    // WR-01: mutation + revision bump(s) run inside one transaction (see
     // create()'s comment above for the atomicity rationale).
     let mut tx = state.db.begin().await?;
 
-    let result = sqlx::query("DELETE FROM vault_items WHERE id = ?").bind(&id).execute(&mut *tx).await?;
+    // Read the item's pre-delete owner/collection_id BEFORE any mutation —
+    // this MUST happen before the DELETE below, not after: `item_shares`
+    // rows for this item ON DELETE CASCADE the instant the row disappears
+    // (0014_family_sharing.sql), so `resolve_recipients`'s `item_shares`
+    // query would see zero rows if run after the delete.
+    let item_row = sqlx::query("SELECT user_id, collection_id FROM vault_items WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some(item_row) = item_row else {
+        return Err(ApiError::NotFound);
+    };
+    let owner_user_id: String = item_row.try_get("user_id").map_err(|_| ApiError::Internal)?;
+    let collection_id: Option<String> = item_row.try_get("collection_id").map_err(|_| ApiError::Internal)?;
 
+    // SYNC-04/SYNC-05 (closes this handler's WR-09 fan-out handoff):
+    // resolve the CURRENT recipient set fresh, inside this same transaction,
+    // BEFORE the cascade below removes it.
+    let recipients = resolve_recipients(&mut *tx, &id, collection_id.as_deref(), &owner_user_id).await?;
+
+    let result = sqlx::query("DELETE FROM vault_items WHERE id = ?").bind(&id).execute(&mut *tx).await?;
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound);
     }
 
-    // SYNC-01: bump the per-user global change counter (see create()'s
-    // comment above for the atomicity rationale). Bound to the CALLER's own
-    // user_id — see update()'s comment above on why this stays single-user
-    // scoped in this plan.
-    //
-    // TODO(phase-23, WR-09): deleting a shared item bumps ONLY the deleter's
-    // own vault_revision — every other collection_keys/item_shares holder
-    // keeps serving a cached copy of a row that no longer exists until they
-    // happen to touch it. See update()'s identical TODO above for the full
-    // fan-out requirement Phase 23 must implement here too.
-    let new_global_revision: i64 = sqlx::query_scalar(
-        "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
-    )
-    .bind(&membership.caller_user_id)
-    .fetch_one(&mut *tx)
-    .await?;
+    // Bump the item's own collection revision (if collection-scoped) and
+    // every resolved recipient's vault_revision in ONE batched statement —
+    // replacing the old single-caller bump this TODO used to leave in place.
+    let new_collection_revision = match &collection_id {
+        Some(cid) => Some(bump_collection_revision(&mut *tx, cid).await?),
+        None => None,
+    };
+    bump_recipients_vault_revision(&mut *tx, &recipients).await?;
+
+    // SYNC-01: the pre-existing "global-vault_revision-as-event-revision"
+    // convention this handler used before Phase 23 for a personal item's
+    // Item-typed delete event (the deleted row has no per-row revision left
+    // to report). Every recipient's OWN vault_revision now potentially
+    // differs (each was independently bumped above by the batched
+    // statement) — this ONE extra read fetches the CALLER's own
+    // already-bumped value specifically for that convention; never a
+    // per-recipient loop.
+    let new_global_revision: i64 = sqlx::query_scalar("SELECT vault_revision FROM users WHERE id = ?")
+        .bind(&membership.caller_user_id)
+        .fetch_one(&mut *tx)
+        .await?;
 
     tx.commit().await?;
 
-    // SYNC-02: only after commit() succeeds — the deleted row no longer
-    // exists, so it has no per-row revision to report — use the
-    // freshly-bumped GLOBAL vault_revision for this one call site only (per
-    // 05-02-PLAN's explicit instruction).
-    state.sync_hub.publish(
-        &membership.caller_user_id,
-        SyncEvent {
-            entity_type: EntityType::Item,
-            id: id.clone(),
-            revision: new_global_revision,
-            change_type: ChangeType::Delete,
-        },
-    );
+    // SYNC-02/SYNC-05: metadata-only push — only after commit() succeeds, to
+    // every resolved recipient (`publish_to_recipients`, never just the
+    // caller). A collection-scoped item fires ONE `EntityType::Collection`
+    // event carrying the collection's own new revision; a personal item
+    // (only direct item_shares recipients, if any) keeps the existing
+    // `EntityType::Item`/`ChangeType::Delete` shape, unwidened.
+    match (&collection_id, new_collection_revision) {
+        (Some(cid), Some(new_collection_rev)) => {
+            state.sync_hub.publish_to_recipients(
+                &recipients,
+                SyncEvent {
+                    entity_type: EntityType::Collection,
+                    id: cid.clone(),
+                    revision: new_collection_rev,
+                    change_type: ChangeType::Update,
+                },
+            );
+        }
+        _ => {
+            state.sync_hub.publish_to_recipients(
+                &recipients,
+                SyncEvent {
+                    entity_type: EntityType::Item,
+                    id: id.clone(),
+                    revision: new_global_revision,
+                    change_type: ChangeType::Delete,
+                },
+            );
+        }
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -515,21 +731,26 @@ pub async fn move_item(
     validate_blob_len("enc_key", &req.enc_key)?;
     validate_blob_len("enc_data", &req.enc_data)?;
 
-    // WR-01: mutation + vault_revision bump run inside one transaction (see
+    // WR-01: mutation + revision bump(s) run inside one transaction (see
     // create()'s comment above for the atomicity rationale).
     let mut tx = state.db.begin().await?;
 
     // Re-encrypt-and-replace (T-22-19): collection_id, enc_key, enc_data all
     // update together in this ONE statement — never split across two writes.
+    // `last_editor_user_id = ?` is appended LAST in the SET-clause list
+    // (after `enc_key`/`enc_data`, matching update()'s identical ordering
+    // discipline — hard constraint f) and its bind is the LAST SET-clause
+    // bind, before the WHERE binds.
     let result = sqlx::query(
         "UPDATE vault_items SET collection_id = ?, enc_key = ?, enc_data = ?, revision = revision + 1, \
-         updated_at = datetime('now') \
+         updated_at = datetime('now'), last_editor_user_id = ? \
          WHERE id = ? AND revision = ? \
          RETURNING revision, updated_at",
     )
     .bind(&req.new_collection_id)
     .bind(&req.enc_key)
     .bind(&req.enc_data)
+    .bind(&source.caller_user_id)
     .bind(&id)
     .bind(req.expected_revision)
     .fetch_optional(&mut *tx)
@@ -554,37 +775,81 @@ pub async fn move_item(
     let new_revision: i64 = row.try_get("revision").map_err(|_| ApiError::Internal)?;
     let updated_at: String = row.try_get("updated_at").map_err(|_| ApiError::Internal)?;
 
-    // SYNC-01: bump the per-user global change counter (see create()'s
-    // comment above for the atomicity rationale). Bound to the CALLER's own
-    // user_id — see update()'s comment above on why this stays single-user
-    // scoped in this plan.
-    //
-    // TODO(phase-23, WR-09): moving a shared item bumps ONLY the mover's own
-    // vault_revision — every other collection_keys/item_shares holder (on
-    // EITHER the source or destination collection) keeps serving a cached
-    // copy of the item's old collection scope until they happen to touch it.
-    // See update()'s identical TODO above for the full fan-out requirement
-    // Phase 23 must implement here too.
-    let _new_global_revision: i64 = sqlx::query_scalar(
-        "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
-    )
-    .bind(&source.caller_user_id)
-    .fetch_one(&mut *tx)
-    .await?;
+    // SYNC-04/SYNC-05 (closes this handler's WR-09 fan-out handoff):
+    // resolve_recipients is called ONCE per non-null side of
+    // {current_collection, req.new_collection_id} — "holders on EITHER the
+    // source or destination collection" (this TODO's own wording) — and the
+    // two sets are unioned for the vault_revision bump (a caller present in
+    // both is only bumped once — the batched `WHERE id IN (...)` naturally
+    // de-duplicates). Both `owner_row`'s `current_collection` (fetched
+    // above, Gate 0) and `req.new_collection_id` get their OWN collection
+    // revision bumped in this SAME transaction as the move.
+    let source_recipients = resolve_recipients(&mut *tx, &id, current_collection.as_deref(), &owner_user_id).await?;
+    let dest_recipients = match &req.new_collection_id {
+        Some(dest_id) => Some(resolve_recipients(&mut *tx, &id, Some(dest_id.as_str()), &owner_user_id).await?),
+        None => None,
+    };
+
+    let mut all_recipients: HashSet<String> = source_recipients.iter().cloned().collect();
+    if let Some(dest) = &dest_recipients {
+        all_recipients.extend(dest.iter().cloned());
+    }
+    let all_recipients: Vec<String> = all_recipients.into_iter().collect();
+    bump_recipients_vault_revision(&mut *tx, &all_recipients).await?;
+
+    let new_source_collection_revision = match &current_collection {
+        Some(cid) => Some(bump_collection_revision(&mut *tx, cid).await?),
+        None => None,
+    };
+    let new_dest_collection_revision = match &req.new_collection_id {
+        Some(cid) => Some(bump_collection_revision(&mut *tx, cid).await?),
+        None => None,
+    };
 
     tx.commit().await?;
 
-    // SYNC-02: metadata-only push — only after commit() succeeds; same
-    // EntityType::Item / ChangeType::Update shape update() uses.
-    state.sync_hub.publish(
-        &source.caller_user_id,
-        SyncEvent {
-            entity_type: EntityType::Item,
-            id: id.clone(),
-            revision: new_revision,
-            change_type: ChangeType::Update,
-        },
-    );
+    // SYNC-02/SYNC-05: metadata-only push — only after commit() succeeds.
+    // Two Collection-typed SyncEvents are published when both sides are
+    // collections — one per collection id, EACH to its OWN resolved
+    // recipient set (`source_recipients`/`dest_recipients`), never the union
+    // — a source-only holder must never learn the destination collection's
+    // new revision, and vice versa (this is the specific leak SC 4/SYNC-07
+    // guards against). A personal-to-personal move (both sides `None`) keeps
+    // the pre-existing `EntityType::Item`/`ChangeType::Update` shape,
+    // published to the (necessarily item_shares-only) union set.
+    if let Some(cid) = &current_collection {
+        state.sync_hub.publish_to_recipients(
+            &source_recipients,
+            SyncEvent {
+                entity_type: EntityType::Collection,
+                id: cid.clone(),
+                revision: new_source_collection_revision.expect("source collection was bumped above"),
+                change_type: ChangeType::Update,
+            },
+        );
+    }
+    if let Some(cid) = &req.new_collection_id {
+        state.sync_hub.publish_to_recipients(
+            dest_recipients.as_ref().expect("dest_recipients resolved above when new_collection_id is Some"),
+            SyncEvent {
+                entity_type: EntityType::Collection,
+                id: cid.clone(),
+                revision: new_dest_collection_revision.expect("dest collection was bumped above"),
+                change_type: ChangeType::Update,
+            },
+        );
+    }
+    if current_collection.is_none() && req.new_collection_id.is_none() {
+        state.sync_hub.publish_to_recipients(
+            &all_recipients,
+            SyncEvent {
+                entity_type: EntityType::Item,
+                id: id.clone(),
+                revision: new_revision,
+                change_type: ChangeType::Update,
+            },
+        );
+    }
 
     Ok(Json(MoveItemResponse { revision: new_revision, collection_id: req.new_collection_id, updated_at }))
 }

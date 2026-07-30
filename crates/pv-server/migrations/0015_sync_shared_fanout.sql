@@ -1,0 +1,22 @@
+-- Sync model extension — shared-data fan-out (SYNC-04, SYNC-05, SC 1;
+-- 23-CONTEXT.md Pitfall 14). Additive only, continuing 0014's numbering and
+-- header-comment convention: no existing column is renamed or repurposed,
+-- and every existing row keeps its current behavior byte-for-byte.
+--
+-- `collections.revision` is the PER-COLLECTION counter SYNC-04/SC 1 lock in
+-- (research's alternative — a per-user fold, Pitfall 14 — was explicitly
+-- NOT chosen). It starts at 0 for every existing collection (`NOT NULL
+-- DEFAULT 0` backfills cleanly in SQLite, verified against 0014's own
+-- `collections` table shape) and is bumped inside the SAME transaction as
+-- any mutation to one of the collection's items (WR-01 discipline), never
+-- via a separate statement.
+--
+-- `vault_items.last_editor_user_id` is the 409-attribution source Plan
+-- 23-03 later reads (SYNC-06): nullable, NULL meaning "never edited since
+-- this column existed" for every pre-existing row — never backfilled with a
+-- guess. Per hard constraint (f) (carried from Phases 21-22): this column is
+-- set ALONGSIDE `enc_key`/`enc_data`, never REPLACING or reordering them —
+-- see `vault.rs`'s `create`/`update`/`move_item` for the append-only
+-- SET-clause discipline this column's presence must never violate.
+ALTER TABLE collections ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE vault_items ADD COLUMN last_editor_user_id TEXT REFERENCES users(id);
