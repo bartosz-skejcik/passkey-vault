@@ -26,28 +26,22 @@ use super::membership::{
     parse_access_level_from_request, Collection, FamilyMembership, Membership, RequireEdit, RequireRead,
 };
 use super::sync::{ChangeType, EntityType, SyncEvent};
-use super::vault::validate_blob_len;
+use super::vault::{resolve_collection_members, validate_blob_len};
 use crate::{error::ApiError, AppState};
 
-/// Resolves the CURRENT recipient set for `collection_id` — a fresh query,
-/// never cached (Phase 23, SYNC-05/Pitfall 17). Called by `add_member`
-/// AFTER its `INSERT` and by `revoke_access` AFTER its `DELETE`, so the
-/// just-added member is naturally included and the just-removed member is
-/// naturally excluded, with zero invalidation logic anywhere — this is the
-/// same "resolved fresh at emit time" property `vault.rs::resolve_recipients`
-/// already relies on.
-async fn resolve_collection_recipients(
-    tx: &mut sqlx::SqliteConnection,
-    collection_id: &str,
-) -> Result<Vec<String>, ApiError> {
-    let rows = sqlx::query("SELECT recipient_user_id FROM collection_keys WHERE collection_id = ?")
-        .bind(collection_id)
-        .fetch_all(&mut *tx)
-        .await?;
-    rows.into_iter()
-        .map(|row| row.try_get("recipient_user_id").map_err(|_| ApiError::Internal))
-        .collect::<Result<Vec<_>, ApiError>>()
-}
+// WR-06 (code review iteration 2): this module used to keep its own copy of
+// "resolve a collection's current recipient set" (`resolve_collection_recipients`,
+// a bare `SELECT recipient_user_id FROM collection_keys WHERE collection_id = ?`)
+// alongside `vault.rs::resolve_collection_members`'s own — the SAME question,
+// answered by TWO different queries. `vault.rs`'s version additionally joins
+// `family_members` (mirroring `membership::Collection::resolve_access`
+// exactly), so a stale `collection_keys` row for a caller no longer in the
+// owning family could NOT resolve to access via `Membership<Collection, _>`
+// (404) but WOULD still have received an `EntityType::Collection` event from
+// this module's own copy — the precise shape of CR-01, just not reachable
+// today (no family-removal endpoint exists yet; Phase 25 owns it). Deleted
+// this module's copy entirely and imported the one, shared definition below
+// instead of letting the divergence sit invisibly between two call sites.
 
 #[derive(Deserialize)]
 pub struct CreateCollectionRequest {
@@ -277,10 +271,11 @@ pub async fn add_member(
     // resolution is fresh at emit time, never cached). `collections.revision`
     // itself is NOT bumped here — only item mutations bump it (SYNC-04); this
     // event carries the collection's CURRENT (unbumped-by-this-call)
-    // revision, matching the client contract "any Collection-typed event
-    // means: drop any cached Collection Key for this collection and
-    // re-fetch."
-    let recipients = resolve_collection_recipients(&mut tx, &membership.resource_id).await?;
+    // revision. WR-05 (code review iteration 2): this is a KNOWN, documented
+    // wire-contract gap, not an oversight — see `sync.rs`'s
+    // `EntityType::Collection` doc comment for the full rationale and the
+    // resulting "never gate a re-fetch on this event's revision" client rule.
+    let recipients = resolve_collection_members(&mut tx, &membership.resource_id).await?;
     let current_revision: i64 = sqlx::query_scalar("SELECT revision FROM collections WHERE id = ?")
         .bind(&membership.resource_id)
         .fetch_one(&mut *tx)
@@ -392,8 +387,12 @@ pub async fn revoke_access(
     // collection_keys row is gone), so the just-removed member's own WS
     // channel receives NOTHING about this collection ever again from this
     // call (T-23-10's mitigation: never notify a removed member of their own
-    // removal through the very channel being cut).
-    let recipients = resolve_collection_recipients(&mut tx, &membership.resource_id).await?;
+    // removal through the very channel being cut). WR-05 (code review
+    // iteration 2): this event's `revision` is `collections.revision`,
+    // unbumped by this membership-only change — see `sync.rs`'s
+    // `EntityType::Collection` doc comment for the documented wire-contract
+    // rationale and the resulting client rule.
+    let recipients = resolve_collection_members(&mut tx, &membership.resource_id).await?;
     let current_revision: i64 = sqlx::query_scalar("SELECT revision FROM collections WHERE id = ?")
         .bind(&membership.resource_id)
         .fetch_one(&mut *tx)

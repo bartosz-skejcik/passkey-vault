@@ -344,6 +344,28 @@ pub async fn pull_shared_direct(
 /// same contract also covers Phase 25's re-key and Phase 27's cache
 /// invalidation (Pitfall 16); no new `ChangeType` variant is needed for
 /// either, `Update` is reused.
+///
+/// **WR-05 (code review iteration 2) — known, deliberate contract gap:** this
+/// event's `revision` field is `collections.revision`, which is bumped ONLY
+/// by an item mutation inside the collection (SYNC-04) — `collections::add_member`
+/// and `collections::revoke_access` publish this SAME event type on a pure
+/// MEMBERSHIP change, but do NOT bump `collections.revision` (a locked
+/// CONTEXT.md design call: "only item mutations bump it"; reversing it would
+/// silently change the asserted revision values several existing
+/// `tests/collections.rs`/`tests/sync_shared.rs` fixtures depend on). The
+/// practical consequence: a membership-change event's `revision` can equal a
+/// value the recipient already has, so `GET /api/vault/collections/{id}/sync?since=N`'s
+/// cheap-check (`pull_shared_collection`, above) answers `UpToDate` for a
+/// membership change even though membership genuinely changed. Clients MUST
+/// therefore treat receipt of ANY `Collection`-typed WS event as an
+/// UNCONDITIONAL trigger — re-fetch access/membership state directly (e.g.
+/// `GET /api/vault/collections/{id}/access`), never gate that re-fetch on
+/// comparing this event's `revision` against a locally cached value first.
+/// This is why the "drop cache and re-fetch" instruction above is phrased as
+/// unconditional, not "re-fetch if revision advanced" — Phase 25/26/27
+/// consumers of this event must preserve that reading rather than
+/// re-introducing a revision-comparison gate that would silently swallow a
+/// membership-only change.
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityType {
