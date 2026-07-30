@@ -284,6 +284,19 @@ pub struct SealedKey {
 /// (collection_id, recipient) dzieje się jedną warstwę niżej, w
 /// `items.rs`'s `build_coll_item_aad` (Plan 21-03) — patrz
 /// 21-RESEARCH.md "AAD Binding — Where It Actually Lives".
+///
+/// **UWAGA (WR-10) — walidacja ENCODINGU `recipient_pk` to NIE to samo, co
+/// walidacja jego PROVENANCE.** `IdentityPublicKey`'s small-order guard
+/// (CR-01) odrzuca zdegenerowane klucze, ale ta funkcja NIE uwierzytelnia
+/// NADAWCY ani odbiorcy — anonymous sealed box z definicji nie ma klucza
+/// nadawcy, więc nie ma nic do zweryfikowania z tej strony. Każdy, kto zna
+/// PUBLICZNY klucz `recipient_pk` (publikowany z założenia — patrz katalog
+/// członków), może zapieczętować dowolny plaintext pod niego; a złośliwy/
+/// przejęty serwer, który podmieni WŁASNY, w pełni poprawny klucz publiczny
+/// jako "klucza recipienta X", odzyska każdy tak zapieczętowany Collection
+/// Key. `recipient_pk` MUSI być uwierzytelniony poza tą warstwą (podpisany
+/// katalog członków / TOFU pin / potwierdzenie fingerprintu) zanim trafi
+/// tutaj — patrz `docs/ARCHITECTURE.md` "Trzy znane ograniczenia".
 pub fn seal(recipient_pk: &IdentityPublicKey, plaintext: &[u8]) -> Result<SealedKey, CryptoError> {
     // Defense in depth (CR-01): `recipient_pk` should already be validated
     // at construction time (`IdentityPublicKey::from_bytes`/`Deserialize`
@@ -355,10 +368,22 @@ pub fn unseal(
     // shared secret this recipient computes lands in a small
     // publicly-enumerable set (or is unconditionally the all-zero box key
     // for `0`/`p`) REGARDLESS of `my_sk` — letting an attacker forge a
-    // `SealedKey` that "successfully" unseals to attacker-chosen bytes for
-    // EVERY recipient, not just leaking confidentiality but forging
-    // integrity too. Canonicalize + reject exactly like
+    // `SealedKey` that unseals to attacker-chosen bytes for EVERY recipient
+    // with NO key at all (the box key becomes the fixed, publicly derivable
+    // `HChaCha20(zeros, zeros)`). Canonicalize + reject exactly like
     // `IdentityPublicKey::from_bytes`.
+    //
+    // WR-10: this guard removes ONLY that unkeyed/degenerate-key variant.
+    // It does NOT make `unseal` authenticated: an attacker who merely knows
+    // this recipient's PUBLIC key (public by construction, published by the
+    // server) can still forge a non-degenerate `SealedKey` this recipient
+    // will happily accept — this primitive is an anonymous sealed box, it
+    // has no sender key to check anything against. Sender authentication
+    // (and recipient-key provenance — a malicious server could substitute
+    // its OWN valid public key as "the recipient's") must be enforced by
+    // the invite/sharing protocol layer that calls `seal`/`unseal`, not
+    // here. See `docs/ARCHITECTURE.md` "Trzy znane ograniczenia" and
+    // `seal`'s own doc comment above.
     let mut ephemeral_canonical = sealed.ephemeral_pk;
     ephemeral_canonical[31] &= 0x7f;
     if is_small_order(&ephemeral_canonical) {
