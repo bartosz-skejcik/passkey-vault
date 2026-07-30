@@ -61,3 +61,29 @@ async fn family_create_creates_sole_member_with_join_timestamp() {
     let joined_at = members[0]["joined_at"].as_str().unwrap();
     assert!(!joined_at.is_empty(), "joined_at must be a non-empty string");
 }
+
+/// A second `POST /api/families` — a genuine duplicate-create attempt, or a
+/// client retry after a dropped response (idempotency edge, same mechanism)
+/// — must return `409`, never a silent duplicate or a second success.
+#[tokio::test]
+async fn second_family_create_returns_conflict() {
+    let pool = common::test_pool().await;
+    let app = common::test_app(pool);
+    let token = common::register_and_login(&app, "owner2@example.com").await;
+
+    let make_request = || {
+        Request::builder()
+            .method("POST")
+            .uri("/api/families")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from(serde_json::to_vec(&json!({ "name": "Test Family" })).unwrap()))
+            .unwrap()
+    };
+
+    let first_res = app.clone().oneshot(make_request()).await.unwrap();
+    assert_eq!(first_res.status(), StatusCode::CREATED);
+
+    let second_res = app.clone().oneshot(make_request()).await.unwrap();
+    assert_eq!(second_res.status(), StatusCode::CONFLICT);
+}

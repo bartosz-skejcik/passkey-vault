@@ -140,6 +140,94 @@ pub trait ResourceKind {
     ) -> impl std::future::Future<Output = Result<Option<AccessLevel>, ApiError>> + Send;
 }
 
+/// A shared collection — access resolved from a single `collection_keys` row
+/// for `(collection_id, caller)`.
+pub struct Collection;
+
+impl ResourceKind for Collection {
+    async fn resolve_access(
+        db: &sqlx::SqlitePool,
+        caller_user_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<AccessLevel>, ApiError> {
+        let row = sqlx::query("SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+            .bind(resource_id)
+            .bind(caller_user_id)
+            .fetch_optional(db)
+            .await?;
+
+        match row {
+            None => Ok(None),
+            Some(row) => {
+                let access_level: String = row.try_get("access_level").map_err(|_| ApiError::Internal)?;
+                Ok(Some(parse_access_level(&access_level)?))
+            }
+        }
+    }
+}
+
+/// A vault item — dual-mode (22-RESEARCH.md Pattern 2): a personal item
+/// (`collection_id IS NULL`) preserves today's EXACT `user_id == caller`
+/// rule, expressed as an access level instead of a query filter; a
+/// collection-scoped item (`collection_id IS NOT NULL`) resolves the MAX of
+/// two independent grants — collection-level membership OR a direct
+/// per-item override share — via `combine_access`, never just one or the
+/// other.
+pub struct Item;
+
+impl ResourceKind for Item {
+    async fn resolve_access(
+        db: &sqlx::SqlitePool,
+        caller_user_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<AccessLevel>, ApiError> {
+        let item_row = sqlx::query("SELECT user_id, collection_id FROM vault_items WHERE id = ?")
+            .bind(resource_id)
+            .fetch_optional(db)
+            .await?;
+
+        let Some(item_row) = item_row else { return Ok(None) };
+        let owner_user_id: String = item_row.try_get("user_id").map_err(|_| ApiError::Internal)?;
+        let collection_id: Option<String> = item_row.try_get("collection_id").map_err(|_| ApiError::Internal)?;
+
+        let Some(collection_id) = collection_id else {
+            // Personal item — byte-for-byte the existing `WHERE id=? AND
+            // user_id=?` rule from vault.rs, just expressed as an access
+            // level instead of a query filter.
+            return Ok(if owner_user_id == caller_user_id { Some(AccessLevel::Edit) } else { None });
+        };
+
+        let collection_row =
+            sqlx::query("SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+                .bind(&collection_id)
+                .bind(caller_user_id)
+                .fetch_optional(db)
+                .await?;
+        let collection_access = match collection_row {
+            None => None,
+            Some(row) => {
+                let access_level: String = row.try_get("access_level").map_err(|_| ApiError::Internal)?;
+                Some(parse_access_level(&access_level)?)
+            }
+        };
+
+        let item_share_row = sqlx::query("SELECT access_level FROM item_shares WHERE item_id = ? AND recipient_user_id = ?")
+            .bind(resource_id)
+            .bind(caller_user_id)
+            .fetch_optional(db)
+            .await?;
+        let item_share_access = match item_share_row {
+            None => None,
+            Some(row) => {
+                let access_level: String = row.try_get("access_level").map_err(|_| ApiError::Internal)?;
+                Some(parse_access_level(&access_level)?)
+            }
+        };
+
+        Ok(combine_access(collection_access, item_share_access))
+    }
+}
+
 /// Shared 404-vs-403 mapping, called by BOTH `Membership<R, M>` and
 /// `FamilyMembership<M>` — this is the ONE place the status-code discipline
 /// lives (W1 / CONTEXT.md locked rule): `None` (no row at all) never
@@ -279,4 +367,133 @@ pub(crate) async fn resolve_family_role(
         _ => return Err(ApiError::Internal),
     };
     Ok(Some((family_id, access)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Migrates a fresh in-memory pool, mirroring `tests/common/mod.rs::test_pool` —
+    /// duplicated (not imported) because this is a `src/`-internal unit test
+    /// and cannot reach the `tests/common` module.
+    async fn seeded_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite pool");
+        sqlx::migrate!("./migrations").run(&pool).await.expect("run migrations");
+        pool
+    }
+
+    async fn seed_user(pool: &sqlx::SqlitePool, id: &str, email: &str) {
+        sqlx::query(
+            "INSERT INTO users (id, email, kdf_params, kdf_salt, pw_wrapped_uk, auth_hash, auth_hash_salt) \
+             VALUES (?, ?, '{}', X'00', '{}', X'00', X'00')",
+        )
+        .bind(id)
+        .bind(email)
+        .execute(pool)
+        .await
+        .expect("seed user");
+    }
+
+    async fn seed_family_and_collection(pool: &sqlx::SqlitePool, owner_id: &str) -> String {
+        sqlx::query("INSERT INTO families (id, owner_user_id, name) VALUES ('fam1', ?, 'Test Family')")
+            .bind(owner_id)
+            .execute(pool)
+            .await
+            .expect("seed family");
+        sqlx::query("INSERT INTO collections (id, family_id, enc_name) VALUES ('coll1', 'fam1', 'enc')")
+            .execute(pool)
+            .await
+            .expect("seed collection");
+        "coll1".to_string()
+    }
+
+    #[tokio::test]
+    async fn collection_resolve_access_returns_seeded_level_and_none_otherwise() {
+        let pool = seeded_pool().await;
+        seed_user(&pool, "owner", "owner@example.com").await;
+        seed_user(&pool, "stranger", "stranger@example.com").await;
+        let collection_id = seed_family_and_collection(&pool, "owner").await;
+
+        sqlx::query(
+            "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) \
+             VALUES (?, 'owner', 'sealed', 'edit')",
+        )
+        .bind(&collection_id)
+        .execute(&pool)
+        .await
+        .expect("seed collection_keys");
+
+        let access = Collection::resolve_access(&pool, "owner", &collection_id).await.unwrap();
+        assert_eq!(access, Some(AccessLevel::Edit));
+
+        let no_access = Collection::resolve_access(&pool, "stranger", &collection_id).await.unwrap();
+        assert_eq!(no_access, None);
+    }
+
+    #[tokio::test]
+    async fn item_resolve_access_personal_branch_preserves_ownership_rule() {
+        let pool = seeded_pool().await;
+        seed_user(&pool, "a", "a@example.com").await;
+        seed_user(&pool, "b", "b@example.com").await;
+
+        sqlx::query("INSERT INTO vault_items (id, user_id, enc_key, enc_data) VALUES ('item1', 'a', 'k', 'd')")
+            .execute(&pool)
+            .await
+            .expect("seed personal item");
+
+        let owner_access = Item::resolve_access(&pool, "a", "item1").await.unwrap();
+        assert_eq!(owner_access, Some(AccessLevel::Edit));
+
+        let other_access = Item::resolve_access(&pool, "b", "item1").await.unwrap();
+        assert_eq!(other_access, None);
+    }
+
+    #[tokio::test]
+    async fn item_resolve_access_collection_branch_returns_max_of_both_grants() {
+        let pool = seeded_pool().await;
+        seed_user(&pool, "owner", "owner@example.com").await;
+        seed_user(&pool, "c", "c@example.com").await;
+        let collection_id = seed_family_and_collection(&pool, "owner").await;
+
+        sqlx::query(
+            "INSERT INTO vault_items (id, user_id, enc_key, enc_data, collection_id) \
+             VALUES ('item2', 'owner', 'k', 'd', ?)",
+        )
+        .bind(&collection_id)
+        .execute(&pool)
+        .await
+        .expect("seed collection item");
+
+        sqlx::query(
+            "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) \
+             VALUES (?, 'c', 'sealed', 'read')",
+        )
+        .bind(&collection_id)
+        .execute(&pool)
+        .await
+        .expect("seed collection_keys read grant");
+
+        sqlx::query(
+            "INSERT INTO item_shares (item_id, recipient_user_id, sealed_key, access_level) \
+             VALUES ('item2', 'c', 'sealed', 'edit')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed item_shares edit grant");
+
+        let access = Item::resolve_access(&pool, "c", "item2").await.unwrap();
+        assert_eq!(access, Some(AccessLevel::Edit), "MAX of collection read + item-share edit must be Edit");
+    }
+
+    #[test]
+    fn parse_access_level_rejects_unrecognized_strings() {
+        assert!(matches!(parse_access_level("bogus"), Err(ApiError::Internal)));
+        assert_eq!(parse_access_level("read").unwrap(), AccessLevel::Read);
+        assert_eq!(parse_access_level("edit").unwrap(), AccessLevel::Edit);
+        assert_eq!(parse_access_level("hidden_password").unwrap(), AccessLevel::HiddenPassword);
+    }
 }
