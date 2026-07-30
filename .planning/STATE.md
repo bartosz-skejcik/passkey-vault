@@ -28,9 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-22)
 ## Current Position
 
 Phase: 23 — Sync Model Extension — Shared-Data Fan-Out
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-07-30 — Phase 22 complete, transitioned to Phase 23
+Plan: 6 plans created (23-01..23-06), 4 waves — ready to execute
+Status: Planned
+Last activity: 2026-07-30 — Phase 23 planned (server fan-out core + read endpoints + attribution +
+standing web Playwright harness + live proofs + CI wiring)
 
 ## Performance Metrics
 
@@ -212,11 +213,17 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-29 — v0.4 ROADMAP.md created (7 phases, 21–27; 41/41 requirements mapped, no orphans/duplicates), STATE.md and REQUIREMENTS.md traceability table updated. No resume file — next entry point: `/gsd-plan-phase 21`.
+Last session: 2026-07-30 — Phase 23 planned: 6 plans across 4 waves. Wave 1 (23-01 server fan-out
+core/tracer + 23-04 Playwright harness scaffold, parallel/independent) → Wave 2 (23-02 shared-pull
+read endpoints + 23-03 409 attribution/collection events, parallel, both depend on 23-01) → Wave 3
+(23-05 client sync engine + attribution UI, depends on 23-02/23-03) → Wave 4 (23-06 live Playwright
+proofs + CI wiring, depends on 23-04/23-05). decision-coverage-plan gate: 0 trackable D-NN decisions
+(CONTEXT.md is prose-form, same precedent as Phases 15/16/19) — resolved-by-checker-evidence at
+verify time. Next entry point: `/gsd-execute-phase 23`.
 
 ## Operator Next Steps
 
-- Review/approve v0.4 ROADMAP.md, then start planning: `/gsd-plan-phase 21` (Crypto Foundation)
+- Run `/clear` for a fresh context window, then execute: `/gsd-execute-phase 23`
 - Two explicit open decisions land inside their own phases, not silently assumed: KEY-05 (`crypto_box` vs. hand-rolled X25519 sealed box, Phase 21) and EXT-10 (shared-passkey signature-counter spike, Phase 27)
 - Follow-up techniczny (carried from v0.3): dodaj git remote i zrób pierwszy push/PR, żeby CI gate przeszedł na realnym runnerze GitHub Actions (R-20-03)
 - Przy okazji: 2 debug-doc czekają na Twoją ludzką weryfikację (firefox-provider-corruption, signin-passkeyless-spin)

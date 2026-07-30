@@ -154,7 +154,26 @@ Plans:
   4. A user who isn't a member of a given collection receives zero data or events about it through sync or WebSocket, even as a side effect of unrelated activity.
   5. The hardened personal `GET /api/sync` path keeps its `session.user_id`-only authorization scope unchanged; shared data arrives exclusively through a separate, additively-introduced query.
 
-**Plans**: TBD
+**Plans:** 6 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 23-01-PLAN.md — Migration 0015 (collections.revision + vault_items.last_editor_user_id) + fan-out core helpers + close update()/delete()/move_item() TODOs (tracer)
+- [ ] 23-04-PLAN.md — Standing Playwright harness scaffold in web/ (config, fixtures, smoke spec) — SEC-08 layer 2
+
+**Wave 2** *(blocked on 23-01)*
+
+- [ ] 23-02-PLAN.md — Shared-pull read endpoints (revisions-map, per-collection fetch, direct-shares bucket) + route registration + SYNC-07/SYNC-08 adversarial tests
+- [ ] 23-03-PLAN.md — 409 conflict attribution (StaleRevisionShared) + collection membership-change events + SC2 live add/remove test
+
+**Wave 3** *(blocked on 23-02, 23-03)*
+
+- [ ] 23-05-PLAN.md — Client sync engine wiring (api.ts/types.ts contracts, store.ts/sync.ts engine, DetailPanel.tsx/dictionary.ts attribution UI)
+
+**Wave 4** *(blocked on 23-04, 23-05)*
+
+- [ ] 23-06-PLAN.md — Live Playwright proofs (revision fan-out + conflict attribution) + web-e2e CI wiring
 
 ### Phase 24: Invitation Flow (No SMTP)
 
@@ -249,7 +268,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 20. Test Infrastructure & CI Gate | v0.3 | 4/4 | Complete    | 2026-07-21 |
 | 21. Crypto Foundation — Asymmetric Identity & Collection Keys | v0.4 | 5/5 | Complete    | 2026-07-30 |
 | 22. Family & Collection Data Model — Server Authorization | v0.4 | 5/5 | Complete    | 2026-07-30 |
-| 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 0/TBD | Not started | - |
+| 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 0/6 | Not started | - |
 | 24. Invitation Flow (No SMTP) | v0.4 | 0/TBD | Not started | - |
 | 25. Member Removal, Suspension & Re-key | v0.4 | 0/TBD | Not started | - |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 0/TBD | Not started | - |
