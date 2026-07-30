@@ -879,10 +879,20 @@ pub async fn move_item(
     // out permanently, with no recovery path anywhere in the API. Runs
     // BEFORE the destination gate below so this decision-free ownership
     // check is never skipped by a caller lacking destination access.
+    // WR-03 (code review iteration 1): `fetch_optional` + explicit `NotFound`,
+    // never `fetch_one` — a concurrent `DELETE` between `Membership<Item,
+    // _>`'s own extraction and this read would otherwise turn `fetch_one`'s
+    // `sqlx::Error::RowNotFound` into `ApiError::Internal` (500) via the
+    // blanket `From<sqlx::Error>` impl, logging a legitimate race as a "db
+    // error" instead of the ordinary 404 every other missing-row path in
+    // this file already returns.
     let owner_row = sqlx::query("SELECT user_id, collection_id FROM vault_items WHERE id = ?")
         .bind(&source.resource_id)
-        .fetch_one(&state.db)
+        .fetch_optional(&state.db)
         .await?;
+    let Some(owner_row) = owner_row else {
+        return Err(ApiError::NotFound);
+    };
     let current_collection: Option<String> =
         owner_row.try_get("collection_id").map_err(|_| ApiError::Internal)?;
     let owner_user_id: String = owner_row.try_get("user_id").map_err(|_| ApiError::Internal)?;
