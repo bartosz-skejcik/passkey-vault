@@ -914,6 +914,31 @@ pub async fn create_share(
     // (mirrors collections::add_member's own ordering).
     parse_access_level_from_request(&req.access_level)?;
 
+    // WR-10 (code review iteration 1): forbid a direct item_shares grant on a
+    // collection-scoped item. Collection membership is meant to be the SOLE
+    // access mechanism there; stacking a per-item share on top of it created
+    // a recipient who is writable-but-unreadable through EVERY read path
+    // (`fetch_items_for`, `pull_shared_collection`, `pull_shared_direct` all
+    // omit them, yet `Item::resolve_access` grants them real edit/delete —
+    // WR-10's own finding) and who is not a collection member at all, yet
+    // still received a Collection-typed fan-out event naming a collection
+    // `Membership<Collection, _>` denies them with 404 (CR-01's second leak
+    // path). Fails closed with 400 rather than silently ignoring the
+    // request.
+    let item_row = sqlx::query("SELECT collection_id FROM vault_items WHERE id = ?")
+        .bind(&membership.resource_id)
+        .fetch_optional(&state.db)
+        .await?;
+    let collection_id: Option<String> = match item_row {
+        Some(row) => row.try_get("collection_id").map_err(|_| ApiError::Internal)?,
+        None => None,
+    };
+    if collection_id.is_some() {
+        return Err(ApiError::BadRequest(
+            "cannot create a direct share on a collection-scoped item; use collection membership instead".into(),
+        ));
+    }
+
     let is_family_member = sqlx::query("SELECT 1 FROM family_members WHERE user_id = ?")
         .bind(&req.recipient_user_id)
         .fetch_optional(&state.db)
