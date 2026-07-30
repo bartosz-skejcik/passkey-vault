@@ -791,6 +791,23 @@ mod tests {
         // altogether — `unwrap_user_key` in particular is the single most
         // direct zero-knowledge violation available (server-side unwrapping
         // of the User Key) and was invisible to this audit in ANY form.
+        //
+        // W4 (iteration 2): the list was STILL a subset of the real
+        // `pv-core` plaintext-handling surface even after WR-03 — a plain
+        // `grep 'pub fn' crates/pv-core/src/` turns up five more entry
+        // points this audit could not see in any form: `totp::generate_code`
+        // (needs the plaintext TOTP seed), `kdf::derive_master_key` /
+        // `kdf::wrapping_key_from_password` (needs the plaintext master
+        // password), `prf::wrapping_key_from_prf` /
+        // `prf::wrapping_key_from_ext_prf` (needs the raw WebAuthn PRF
+        // output — CONTEXT.md's "server never sees PRF output"), and
+        // `keys::hkdf_expand_key` (derives key material from an IKM the
+        // server must not hold). `keys::random_bytes` and
+        // `kdf::auth_hash_from_password` are deliberately still absent —
+        // both are legitimately server-side (random_bytes for salts/dummy
+        // secrets; auth_hash_from_password is what the server compares
+        // stored hashes against).
+        //
         // Extend this list whenever `pv-core` gains a new plaintext-handling
         // `pub fn`.
         let bare_needles = [
@@ -805,6 +822,12 @@ mod tests {
             "decrypt_item",
             "encrypt_item_for_collection",
             "decrypt_item_for_collection",
+            "generate_code",
+            "derive_master_key",
+            "wrapping_key_from_password",
+            "wrapping_key_from_prf",
+            "wrapping_key_from_ext_prf",
+            "hkdf_expand_key",
         ];
 
         for file in &files {
