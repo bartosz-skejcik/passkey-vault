@@ -280,7 +280,15 @@ pub fn seal(recipient_pk: &IdentityPublicKey, plaintext: &[u8]) -> Result<Sealed
     // the check so a single future caller/refactor that gains another way
     // to build an `IdentityPublicKey` cannot silently reopen the
     // recoverable-shared-secret attack this function exists to prevent.
-    if is_small_order(&recipient_pk.0) {
+    // Mask bit 255 first, exactly like `from_bytes`/`unseal` do (WR-08) — an
+    // `IdentityPublicKey` built by some future non-`from_bytes` constructor
+    // could hold a raw, non-canonicalized bit-255-set encoding, and without
+    // this mask this duplicate guard would be strictly weaker than the
+    // primary one it exists to back up (a bit-255-set alias of a
+    // small-order point would sail through `is_small_order` unmasked).
+    let mut recipient_canonical = recipient_pk.0;
+    recipient_canonical[31] &= 0x7f;
+    if is_small_order(&recipient_canonical) {
         return Err(CryptoError::InvalidInput("small-order X25519 public key"));
     }
 
