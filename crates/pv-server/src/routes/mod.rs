@@ -135,7 +135,13 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
 /// extractors need different sweep-fixture shapes: a `FamilyMembership<M>`
 /// route needs no path `{id}` at all (the singleton IS the resource), while a
 /// `Membership<R, M>` route needs a real path `{id}`.
-pub(crate) fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
+///
+/// `pub`, not `pub(crate)`: `tests/membership_route_sweep.rs` is a SEPARATE
+/// integration-test crate that links against this crate's lib target and
+/// cannot see `pub(crate)` items — this widening exists solely so that sweep
+/// test can call this function directly, not as a general API surface
+/// widening.
+pub fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
     vec![
         ("/api/families/members", get(families::members).post(families::add_member)),
         ("/api/families/members/{user_id}/access", get(families::member_access)),
@@ -158,7 +164,11 @@ pub(crate) fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<
 /// already existed before this phase), alongside three brand-new endpoints
 /// this plan builds: the move-item endpoint (SHARE-04's headline fix) and
 /// the direct per-item share create/revoke pair (SHARE-02's server half).
-pub(crate) fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
+///
+/// `pub`, not `pub(crate)`: same rationale as `family_routes()` above —
+/// `tests/membership_route_sweep.rs` cannot see `pub(crate)` items from a
+/// separate integration-test crate.
+pub fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
     vec![
         ("/api/vault/collections/{id}", get(collections::get)),
         ("/api/vault/collections/{id}/members", post(collections::add_member)),
@@ -608,5 +618,24 @@ mod tests {
         let layer = build_cors_layer(false, uuid_origin);
         let acao = acao_header_for(layer, uuid_origin).await;
         assert_eq!(acao.as_deref(), Some(uuid_origin));
+    }
+
+    // --- Plan 22-05: SC#2 headline cardinality tripwire ---------------------
+
+    /// The tripwire RESEARCH.md's Pattern 4 "honest limitation" section calls
+    /// for: read the ACTUAL current `membership_routes().len()` AND
+    /// `family_routes().len()` and pin them as literal assertions. This does
+    /// NOT prevent a route being registered OUTSIDE either table via a stray
+    /// literal `.route()` call elsewhere (a structural backstop for that case
+    /// lands separately) — it only catches either table's own cardinality
+    /// silently drifting.
+    #[test]
+    fn membership_routes_table_has_expected_cardinality() {
+        // bump this literal AND extend tests/membership_route_sweep.rs's
+        // per-route id substitution when adding a new membership-gated route
+        assert_eq!(membership_routes().len(), 9);
+        // bump this literal AND extend tests/membership_route_sweep.rs's
+        // per-route id substitution when adding a new family-gated route
+        assert_eq!(family_routes().len(), 3);
     }
 }
