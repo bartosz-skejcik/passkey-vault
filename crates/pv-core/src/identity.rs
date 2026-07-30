@@ -152,12 +152,23 @@ impl IdentitySecretKey {
 }
 
 /// Publiczna połowa X25519 identity keypair. Publikowalna z założenia —
-/// bezpiecznie derive'ować `Debug`/`Eq` (canonicalizacja w `from_bytes`
-/// gwarantuje, że dwie kryptograficznie identyczne wartości ZAWSZE mają te
-/// same bajty wewnętrzne — patrz WR-04), w przeciwieństwie do
+/// bezpiecznie derive'ować `Debug`/`Eq`, w przeciwieństwie do
 /// `IdentitySecretKey`. `Deserialize` jest NIE derive'owany — patrz custom
 /// `impl` poniżej, który (jak `from_bytes`) waliduje/canonicalizuje zamiast
 /// tworzyć wartość bezpośrednio z surowych bajtów (CR-01).
+///
+/// **UWAGA (WR-09) — `Eq` to NIE tożsamość klucza.** `from_bytes`
+/// kanonikalizuje WYŁĄCZNIE bit 255 (ignorowany przy dekodowaniu pola
+/// X25519 — WR-04); NIE redukuje modulo `p = 2^255-19`. Kodowania `>= p`
+/// (dokładnie 19 z nich, u ∈ {2..18} po zamaskowaniu bitu 255 — `p`/`p+1`
+/// same są odrzucane przez blocklistę, więc realny alias to u ∈ {2..18})
+/// dekodują się do TEGO SAMEGO pola X25519, co ich kanoniczny odpowiednik,
+/// ale porównują się jako RÓŻNE przez derive'owane `Eq`, bo bajty się
+/// różnią. Żaden realny wygenerowany klucz publiczny (`IdentitySecretKey::
+/// public_key()`) nigdy nie wyprodukuje takiego kodowania — okno ataku jest
+/// praktycznie zerowe — ale NIE buduj na tych bajtach tabeli
+/// dedup/trust-pin/revocation traktującej `Eq` jako tożsamość klucza; to
+/// jest DOKŁADNIE gwarancja, której ten typ nie daje.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct IdentityPublicKey([u8; KEY_LEN]);
 
