@@ -1240,6 +1240,25 @@ async fn revoked_creator_loses_edit_on_their_own_created_item_next_request() {
     .await;
     assert_eq!(move_res.status(), StatusCode::OK, "marek moving his own item into the shared collection must succeed");
 
+    // CR-01 (iteration 3) sanity, BEFORE the revoke: the item must actually
+    // be visible via both read paths first — otherwise the "absent after
+    // revoke" assertions below would pass vacuously (the item was never
+    // there to begin with).
+    let list_before_revoke_res = req(&app, "GET", "/api/vault/items", &marek_token, None).await;
+    assert_eq!(list_before_revoke_res.status(), StatusCode::OK);
+    let list_before_revoke_body = body_json(list_before_revoke_res).await;
+    assert!(
+        list_before_revoke_body.as_array().unwrap().iter().any(|it| it["id"] == item_id),
+        "CR-01 sanity: before revocation, GET /api/vault/items must still list the item Marek created"
+    );
+    let sync_before_revoke_res = req(&app, "GET", "/api/sync?since=0", &marek_token, None).await;
+    assert_eq!(sync_before_revoke_res.status(), StatusCode::OK);
+    let sync_before_revoke_body = body_json(sync_before_revoke_res).await;
+    assert!(
+        sync_before_revoke_body["items"].as_array().unwrap().iter().any(|it| it["id"] == item_id),
+        "CR-01 sanity: before revocation, GET /api/sync must still list the item Marek created"
+    );
+
     // The owner revokes MAREK's own access — he created the item, and this
     // must strip him of it exactly as it would for any other member.
     let revoke_res = req(
@@ -1251,6 +1270,31 @@ async fn revoked_creator_loses_edit_on_their_own_created_item_next_request() {
     )
     .await;
     assert_eq!(revoke_res.status(), StatusCode::NO_CONTENT);
+
+    // CR-01 (iteration 3): revocation must also be enforced on the READ
+    // path, via the SAME still-valid bearer token — Marek held the
+    // collection's CollectionKey while he was a member and the server does
+    // not re-key on revocation (no re-key path in this phase), so
+    // continuing to serve fresh ciphertext through GET /api/vault/items or
+    // GET /api/sync would be a genuine confidentiality failure, not merely a
+    // cosmetic listing bug. This must FAIL against the pre-fix
+    // `WHERE user_id = ?` query (the item is still present) and pass once
+    // `fetch_items_for` is brought in line with `Item::resolve_access`.
+    let list_after_revoke_res = req(&app, "GET", "/api/vault/items", &marek_token, None).await;
+    assert_eq!(list_after_revoke_res.status(), StatusCode::OK);
+    let list_after_revoke_body = body_json(list_after_revoke_res).await;
+    assert!(
+        !list_after_revoke_body.as_array().unwrap().iter().any(|it| it["id"] == item_id),
+        "CR-01: after revocation, GET /api/vault/items must no longer return the item Marek created — \
+         he held the CollectionKey and the server keeps handing him fresh ciphertext otherwise"
+    );
+    let sync_after_revoke_res = req(&app, "GET", "/api/sync?since=0", &marek_token, None).await;
+    assert_eq!(sync_after_revoke_res.status(), StatusCode::OK);
+    let sync_after_revoke_body = body_json(sync_after_revoke_res).await;
+    assert!(
+        !sync_after_revoke_body["items"].as_array().unwrap().iter().any(|it| it["id"] == item_id),
+        "CR-01: after revocation, GET /api/sync must no longer return the item Marek created either"
+    );
 
     // Reuse Marek's ORIGINAL still-valid bearer token — no re-login — for
     // every mutating verb on the item HE HIMSELF created. All three must be

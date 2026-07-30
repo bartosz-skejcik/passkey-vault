@@ -141,10 +141,35 @@ pub struct VaultItem {
 /// Shared row-fetch body reused by `list()` and `sync::pull`'s snapshot arm
 /// (05-RESEARCH.md Open Question 1 — one SQL source of truth per table,
 /// never duplicated across response shapes).
+///
+/// CR-01 (iteration 3): a bare `WHERE user_id = ?` disagreed with
+/// `Item::resolve_access` — a revoked collection member whose
+/// `collection_keys` row was deleted correctly gets 404 on every mutating
+/// verb for an item they created, but `vault_items.user_id` (the item's
+/// original CREATOR) never changes on revocation, so this unfiltered query
+/// kept handing them the item's current ciphertext, including every
+/// post-revocation edit. Deliberately NON-WIDENING: the `collection_id IS
+/// NULL` arm is byte-identical to the old behavior for personal items, and
+/// the collection-scoped arm keeps `i.user_id = ?` — it only STOPS listing a
+/// row the caller can no longer resolve access to via the same
+/// `collection_keys` + `family_members` join `Collection::resolve_access`
+/// uses; it never starts listing an item someone else created that the
+/// caller can only reach via `collection_keys`/`item_shares`. Widening to
+/// that shape is the deferred Phase 23 read path and is a separate decision.
 pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> Result<Vec<VaultItem>, ApiError> {
     let rows = sqlx::query(
-        "SELECT id, enc_key, enc_data, revision, updated_at, last_used_at FROM vault_items WHERE user_id = ?",
+        "SELECT id, enc_key, enc_data, revision, updated_at, last_used_at \
+           FROM vault_items WHERE user_id = ? AND collection_id IS NULL \
+         UNION ALL \
+         SELECT i.id, i.enc_key, i.enc_data, i.revision, i.updated_at, i.last_used_at \
+           FROM vault_items i \
+           JOIN collection_keys ck ON ck.collection_id = i.collection_id AND ck.recipient_user_id = ? \
+           JOIN collections c      ON c.id = i.collection_id \
+           JOIN family_members fm  ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
+          WHERE i.user_id = ?",
     )
+    .bind(user_id)
+    .bind(user_id)
     .bind(user_id)
     .fetch_all(pool)
     .await?;
