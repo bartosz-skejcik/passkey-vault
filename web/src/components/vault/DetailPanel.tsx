@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Check, Copy, Eye, EyeOff, KeyRound, Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import type { ItemFields, VaultItem } from "@/lib/vault/types";
 import { RevisionConflictError, touchVaultItem, useFolders } from "@/lib/vault/store";
+import { getStoredEmail } from "@/lib/auth/session";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
 import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
@@ -310,8 +311,14 @@ export default function DetailPanel({
           {liveConflict ? (
             <div data-testid="live-edit-conflict-banner" className="alert alert-error text-sm">
               <div className="flex w-full flex-col gap-2">
+                {/* WR-05 (code review iteration 1): suppress the attributed
+                    variant when `lastEditorEmail` is the VIEWER's own
+                    account — otherwise a user who edited this item from
+                    another device/tab sees a banner naming themselves,
+                    which reads as nonsensical regardless of the copy's
+                    wording. */}
                 <span>
-                  {item.isShared && item.lastEditorEmail
+                  {item.isShared && item.lastEditorEmail && item.lastEditorEmail !== getStoredEmail()
                     ? interpolate(t("sync.itemChangedElsewhereAttributed"), {
                         email: item.lastEditorEmail,
                       })

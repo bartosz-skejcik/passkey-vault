@@ -700,9 +700,20 @@ export const DICTIONARY = {
   // sync.itemChangedElsewhere only when item.isShared && item.lastEditorEmail
   // are both present on the currently-viewed item; a personal item's live
   // conflict always keeps the generic copy above, byte-for-byte unchanged.
+  //
+  // WR-05 (code review iteration 1): reworded from "{email} is currently
+  // editing this item" — `lastEditorEmail` is sourced from
+  // `vault_items.last_editor_user_id`, which records who last SAVED an edit,
+  // never who is presently editing (there is no presence tracking anywhere
+  // in this codebase). The old copy asserted a live-presence fact the
+  // server has no way to back up: the named person may have finished and
+  // closed the tab an hour ago, or (DetailPanel.tsx's own suppression logic
+  // below) the viewer may be looking at their own prior edit from another
+  // device. Matches `error.revisionConflictAttributed`'s already-correct
+  // past-tense phrasing.
   "sync.itemChangedElsewhereAttributed": {
-    pl: "{email} właśnie edytuje ten element.",
-    en: "{email} is currently editing this item.",
+    pl: "{email} zmienił(a) ten element.",
+    en: "{email} changed this item.",
   },
   "sync.itemChangedElsewhereConsequence": {
     pl: "Odświeżenie zastąpi Twoje niezapisane zmiany.",
