@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetSessionToken, mockGetSyncSnapshot } = vi.hoisted(() => ({
+const { mockGetSessionToken, mockGetSyncSnapshot, mockGetSharedRevisions } = vi.hoisted(() => ({
   mockGetSessionToken: vi.fn(),
   mockGetSyncSnapshot: vi.fn(),
+  mockGetSharedRevisions: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -11,6 +12,7 @@ vi.mock("@/lib/auth/session", () => ({
 
 vi.mock("./api", () => ({
   getSyncSnapshot: mockGetSyncSnapshot,
+  getSharedRevisions: mockGetSharedRevisions,
 }));
 
 /** Minimal mock WebSocket — records every constructed instance so tests can
@@ -55,6 +57,7 @@ beforeEach(() => {
   vi.stubGlobal("WebSocket", MockWebSocket);
   mockGetSessionToken.mockReturnValue("session-token");
   mockGetSyncSnapshot.mockResolvedValue({ revision: 0 });
+  mockGetSharedRevisions.mockResolvedValue({ collections: [], direct: { revision: 0 } });
 });
 
 afterEach(() => {
@@ -150,5 +153,80 @@ describe("poll timer fallback", () => {
     await vi.advanceTimersByTimeAsync(30_000);
 
     expect(mockGetSyncSnapshot).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Plan 23-05: pullOnce also calls the new GET /api/sync/shared
+// revisions-map endpoint on every WS-triggered or poll-triggered pull —
+// same try/catch-and-ignore-transient-failure shape as the existing
+// personal pull, never a separate differently-shaped error path.
+describe("shared-revisions pull (Plan 23-05)", () => {
+  it("calls getSharedRevisions on every WS-open-triggered pull cycle", async () => {
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls getSharedRevisions on every onmessage-triggered pull cycle", async () => {
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+
+    const socket = lastSocket();
+    socket.onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+    mockGetSharedRevisions.mockClear();
+
+    socket.onmessage?.({ data: "some-opaque-frame-content" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls getSharedRevisions on every poll-timer-triggered pull cycle", async () => {
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+  });
+
+  it("a rejected getSharedRevisions call is silently ignored, same as a rejected getSyncSnapshot call — never throws, never a separate error path", async () => {
+    mockGetSharedRevisions.mockRejectedValue(new Error("transient network failure"));
+    const onSnapshot = vi.fn();
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot });
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The personal snapshot callback still fires — a shared-revisions
+    // failure never blocks or breaks the existing personal pull path.
+    expect(onSnapshot).toHaveBeenCalled();
+  });
+
+  it("resolves getSharedRevisions and hands the value to the optional onSharedRevisions callback", async () => {
+    const revisions = { collections: [{ id: "col-1", revision: 3 }], direct: { revision: 1 } };
+    mockGetSharedRevisions.mockResolvedValue(revisions);
+    const onSharedRevisions = vi.fn();
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions });
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onSharedRevisions).toHaveBeenCalledWith(revisions);
+  });
+
+  it("never throws when onSharedRevisions is left unimplemented (optional callback)", async () => {
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() }); // no onSharedRevisions
+
+    lastSocket().onopen?.();
+    await expect(vi.advanceTimersByTimeAsync(0)).resolves.not.toThrow();
   });
 });
