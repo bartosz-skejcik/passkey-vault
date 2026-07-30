@@ -252,6 +252,19 @@ pub struct VaultItem {
     /// create/update/list, and never bumps `revision` (see `touch()`'s doc
     /// comment for why).
     pub last_used_at: Option<String>,
+    /// BLOCKER-1 (Phase 23, Task 3): `true` for a collection-scoped item
+    /// (shared by construction), or a personal item with at least one
+    /// `item_shares` row (a direct share). Metadata-only — sourced from
+    /// server-side columns this handler already authorizes access to, never
+    /// derived from or exposing any ciphertext. Consumed by Plans 23-02/23-05
+    /// for the attribution/sharing-badge read-side gap this task closes.
+    pub is_shared: bool,
+    /// The email of `vault_items.last_editor_user_id`'s current holder, or
+    /// `None` when the item has never been edited since that column existed
+    /// (Migration 0015). Metadata-only, same rationale as `is_shared` above —
+    /// Plan 23-03's 409/live-conflict attribution reads this field, never a
+    /// raw user id.
+    pub last_editor_email: Option<String>,
 }
 
 /// Shared row-fetch body reused by `list()` and `sync::pull`'s snapshot arm
@@ -272,16 +285,32 @@ pub struct VaultItem {
 /// uses; it never starts listing an item someone else created that the
 /// caller can only reach via `collection_keys`/`item_shares`. Widening to
 /// that shape is the deferred Phase 23 read path and is a separate decision.
+///
+/// Phase 23, Task 3 (BLOCKER-1 fix): extends the SELECT column list ONLY —
+/// both arms' WHERE clauses above, and arm 2's three membership JOIN lines
+/// below, are byte-identical to their pre-Task-3 shape (grep-proven by this
+/// plan's own acceptance criteria). A `LEFT JOIN users` never drops or gates
+/// a row, so it cannot alter who this query authorizes — only new,
+/// non-filtering columns are added. Arm 1's previously-unqualified `id`
+/// column is qualified as `vault_items.id` because `LEFT JOIN users` makes
+/// `id` ambiguous (both tables have one); no other selected column collides.
 pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> Result<Vec<VaultItem>, ApiError> {
     let rows = sqlx::query(
-        "SELECT id, enc_key, enc_data, revision, updated_at, last_used_at \
-           FROM vault_items WHERE user_id = ? AND collection_id IS NULL \
+        "SELECT vault_items.id, enc_key, enc_data, revision, updated_at, last_used_at, \
+                (collection_id IS NOT NULL OR EXISTS(SELECT 1 FROM item_shares WHERE item_shares.item_id = vault_items.id)) AS is_shared, \
+                users.email AS last_editor_email \
+           FROM vault_items \
+           LEFT JOIN users ON users.id = vault_items.last_editor_user_id \
+          WHERE user_id = ? AND collection_id IS NULL \
          UNION ALL \
-         SELECT i.id, i.enc_key, i.enc_data, i.revision, i.updated_at, i.last_used_at \
+         SELECT i.id, i.enc_key, i.enc_data, i.revision, i.updated_at, i.last_used_at, \
+                (i.collection_id IS NOT NULL OR EXISTS(SELECT 1 FROM item_shares WHERE item_shares.item_id = i.id)) AS is_shared, \
+                u2.email AS last_editor_email \
            FROM vault_items i \
            JOIN collection_keys ck ON ck.collection_id = i.collection_id AND ck.recipient_user_id = ? \
            JOIN collections c      ON c.id = i.collection_id \
            JOIN family_members fm  ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
+           LEFT JOIN users u2 ON u2.id = i.last_editor_user_id \
           WHERE i.user_id = ?",
     )
     .bind(user_id)
@@ -299,6 +328,8 @@ pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> R
                 revision: row.try_get("revision").map_err(|_| ApiError::Internal)?,
                 updated_at: row.try_get("updated_at").map_err(|_| ApiError::Internal)?,
                 last_used_at: row.try_get("last_used_at").map_err(|_| ApiError::Internal)?,
+                is_shared: row.try_get("is_shared").map_err(|_| ApiError::Internal)?,
+                last_editor_email: row.try_get("last_editor_email").map_err(|_| ApiError::Internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()

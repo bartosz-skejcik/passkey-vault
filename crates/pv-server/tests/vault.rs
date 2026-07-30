@@ -528,3 +528,118 @@ async fn item_share_create_and_revoke_round_trip() {
         "the revoked recipient must lose access on the very next request via the same still-valid session"
     );
 }
+
+// --- is_shared/last_editor_email metadata (Plan 23-01, Task 3 — BLOCKER-1 fix) ---
+
+/// Covers all three of Task 3's behavior bullets in one round trip: (a) a
+/// personal item with zero `item_shares` rows returns `is_shared: false` /
+/// `last_editor_email: null`; (b) the SAME personal item, after a
+/// raw-SQL-seeded `item_shares` row (mirrors this file's own
+/// `item_share_create_and_revoke_round_trip` fixture style), returns
+/// `is_shared: true`; (c) a collection member's own `GET /api/vault/items`
+/// for a collection-scoped item returns `is_shared: true` regardless of
+/// `item_shares` — proving `fetch_items_for`'s two arms both populate the
+/// new fields without widening either arm's authorization scope (grep-proven
+/// separately by this plan's own acceptance criteria).
+///
+/// (a)'s item is seeded via raw SQL rather than `POST /api/vault/items`:
+/// Task 2 (this same plan) made `create()` set `last_editor_user_id` to the
+/// CREATOR's own id immediately, so a `POST`-created item already has a
+/// non-null last editor — genuinely matching Migration 0015's own "NULL
+/// means never edited since this column existed" semantics requires an item
+/// that predates any create()/update()/move_item() call, exactly like a
+/// pre-Phase-23 row. `create_item_returns_201_with_revision_1` elsewhere in
+/// this file already covers the POST-created path.
+#[tokio::test]
+async fn fetch_items_for_is_shared() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "isshared-owner@example.com").await;
+    let owner_id_for_seed =
+        body_json(req(&app, "GET", "/api/auth/me", &owner_token, None).await).await["user_id"].as_str().unwrap().to_string();
+
+    // (a) A personal item with zero item_shares rows AND no last_editor_user_id
+    // set at all (raw SQL insert — never touched by any handler).
+    let personal_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO vault_items (id, user_id, enc_key, enc_data, revision) \
+         VALUES (?, ?, '{\"nonce\":\"AAAA\",\"ciphertext\":\"key-blob\"}', \
+                 '{\"nonce\":\"BBBB\",\"ciphertext\":\"data-blob\"}', 1)",
+    )
+    .bind(&personal_id)
+    .bind(&owner_id_for_seed)
+    .execute(&pool)
+    .await
+    .expect("seed a never-touched personal vault_items row");
+
+    let list_res = req(&app, "GET", "/api/vault/items", &owner_token, None).await;
+    let items = body_json(list_res).await;
+    let items = items.as_array().unwrap();
+    let personal_item = items.iter().find(|i| i["id"] == personal_id).unwrap();
+    assert_eq!(personal_item["is_shared"], false, "a personal item with no item_shares row must report is_shared: false");
+    assert!(personal_item["last_editor_email"].is_null(), "a never-edited item must report last_editor_email: null");
+
+    // (b) The SAME personal item, WITH a raw-SQL-seeded item_shares row.
+    let create_family_res =
+        req(&app, "POST", "/api/families", &owner_token, Some(json!({ "name": "IsShared Family" }))).await;
+    assert_eq!(create_family_res.status(), StatusCode::CREATED);
+    let member_token = common::register_second_family_member(&app, &owner_token, "isshared-member@example.com").await;
+    let member_id =
+        body_json(req(&app, "GET", "/api/auth/me", &member_token, None).await).await["user_id"].as_str().unwrap().to_string();
+
+    sqlx::query(
+        "INSERT INTO item_shares (item_id, recipient_user_id, sealed_key, access_level) VALUES (?, ?, 'sealed', 'read')",
+    )
+    .bind(&personal_id)
+    .bind(&member_id)
+    .execute(&pool)
+    .await
+    .expect("seed item_shares row on the personal item");
+
+    let list_res_2 = req(&app, "GET", "/api/vault/items", &owner_token, None).await;
+    let items_2 = body_json(list_res_2).await;
+    let items_2 = items_2.as_array().unwrap();
+    let shared_item = items_2.iter().find(|i| i["id"] == personal_id).unwrap();
+    assert_eq!(shared_item["is_shared"], true, "a personal item with an item_shares row must report is_shared: true");
+
+    // (c) A collection member's own GET for a collection-scoped item.
+    let owner_id =
+        body_json(req(&app, "GET", "/api/auth/me", &owner_token, None).await).await["user_id"].as_str().unwrap().to_string();
+
+    let create_coll_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
+            "sealed_key": "{\"nonce\":\"BBBB\",\"ciphertext\":\"sealed-coll-key-owner\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_coll_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_coll_res).await["id"].as_str().unwrap().to_string();
+
+    let coll_item_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO vault_items (id, user_id, collection_id, enc_key, enc_data, revision) \
+         VALUES (?, ?, ?, '{\"nonce\":\"CCCC\",\"ciphertext\":\"key-blob\"}', \
+                 '{\"nonce\":\"DDDD\",\"ciphertext\":\"data-blob\"}', 1)",
+    )
+    .bind(&coll_item_id)
+    .bind(&owner_id)
+    .bind(&collection_id)
+    .execute(&pool)
+    .await
+    .expect("seed collection-scoped vault_items row (collections::create already wired the owner's own collection_keys row)");
+
+    let coll_list_res = req(&app, "GET", "/api/vault/items", &owner_token, None).await;
+    let coll_items = body_json(coll_list_res).await;
+    let coll_items = coll_items.as_array().unwrap();
+    let coll_item = coll_items.iter().find(|i| i["id"] == coll_item_id).unwrap();
+    assert_eq!(
+        coll_item["is_shared"], true,
+        "a collection-scoped item must report is_shared: true regardless of item_shares rows"
+    );
+}
