@@ -1,6 +1,8 @@
 pub mod auth;
 pub mod extension_passkeys;
+pub mod families;
 pub mod folders;
+pub mod membership;
 pub mod passkeys;
 pub mod session;
 pub mod sessions;
@@ -75,6 +77,28 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
         .route("/api/extension-passkeys/{credential_id}", delete(extension_passkeys::delete_credential))
         .route("/api/sessions", get(sessions::list))
         .route("/api/sessions/{id}", delete(sessions::revoke))
+        // `POST /api/families` needs no membership check at all — nothing
+        // exists yet to check membership against, since creating the family
+        // IS what establishes the caller's own membership — so it stays a
+        // literal `.route()` call here, matching how `auth`/`session`/
+        // `healthz` already work. This is the ONE deliberate,
+        // already-anticipated exception (Plan 22-05's sweep test enumerates
+        // it, plus the `/api/identity/*` routes Plan 22-02 adds the same way,
+        // in an explicit allowlist constant, not just in this comment).
+        .route("/api/families", post(families::create));
+
+    // family_routes() and membership_routes() are folded in via `.route()`
+    // per entry (not a literal chain above) — this is the single source of
+    // truth Plan 22-05's route-sweep test iterates over, so a route that
+    // exists in the running server necessarily exists in one of these two
+    // tables. Folded in BEFORE `.with_state()` — a `Router<AppState>` can
+    // still accept `MethodRouter<AppState>` entries; `.with_state()` must
+    // stay the LAST state-typed call, exactly once, matching every other
+    // handler above.
+    let api = family_routes()
+        .into_iter()
+        .chain(membership_routes())
+        .fold(api, |r, (path, mr)| r.route(path, mr))
         .with_state(state)
         .layer(cors);
 
@@ -94,6 +118,26 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
             api
         }
     }
+}
+
+/// The ONLY place `FamilyMembership<M>`-gated routes may be registered
+/// (SEC-06/SHARE-05 — a route registered any other way is invisible to Plan
+/// 22-05's route-sweep test, which iterates this exact function). Kept
+/// deliberately distinct from `membership_routes()` because the two
+/// extractors need different sweep-fixture shapes: a `FamilyMembership<M>`
+/// route needs no path `{id}` at all (the singleton IS the resource), while a
+/// `Membership<R, M>` route needs a real path `{id}`.
+pub(crate) fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
+    vec![("/api/families/members", get(families::members))]
+}
+
+/// The ONLY place path-`{id}`-based `Membership<R, M>`-gated routes may be
+/// registered (mirrors `family_routes()`'s doc comment above). Empty here —
+/// `Collection`/`Item` resource kinds populate it starting Plan 22-03; this
+/// plan defines the function and its fold-in wiring into `router_with_cors`,
+/// not its first entry.
+pub(crate) fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
+    vec![]
 }
 
 /// Permissive CORS is a dev-mode-only convenience: Phase 7's Docker

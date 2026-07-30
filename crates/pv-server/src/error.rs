@@ -12,6 +12,14 @@ pub enum ApiError {
     Unauthorized,
     #[error("not found")]
     NotFound,
+    /// Caller is authenticated AND provably has SOME access to this exact
+    /// resource, but not enough for the operation attempted (e.g. a `read`
+    /// holder attempting `edit`). No-access-at-all stays `NotFound` — see
+    /// `routes/membership.rs`'s `gate::<M>()`, the ONE place this 404-vs-403
+    /// split is decided (SEC-06/SHARE-05). Deliberately no payload: existence
+    /// must never leak via a caller-supplied message on this variant.
+    #[error("forbidden")]
+    Forbidden,
     #[error("conflict: {0}")]
     Conflict(String),
     #[error("internal error")]
@@ -24,6 +32,7 @@ impl IntoResponse for ApiError {
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, self.to_string()),
             ApiError::NotFound => (StatusCode::NOT_FOUND, self.to_string()),
+            ApiError::Forbidden => (StatusCode::FORBIDDEN, self.to_string()),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             ApiError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
