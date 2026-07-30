@@ -76,7 +76,16 @@ async function pullOnce(): Promise<void> {
     // Transient network failure — the poll timer / next WS event retries;
     // sync is self-healing because the pull is the source of truth.
   }
-  if (sharedPullDisabled) {
+  // WR-07 (code review iteration 2): iteration 1's fix stopped the 404 storm
+  // for a single-user vault (`sharedPullDisabled`, above), but left the
+  // round trip itself unconditional for every user who IS in a family — the
+  // result was handed to `callbacks.onSharedRevisions?.()`, which no caller
+  // wires up yet (Collection Key unwrap/decrypt is Phase 26/27 work), so the
+  // response was fetched and immediately discarded on every WS open, every
+  // WS message, and every 30s poll. Skipping the call entirely when nobody
+  // will consume its result costs nothing and shrinks request volume back
+  // down for the (today, only) real caller shape.
+  if (sharedPullDisabled || callbacks.onSharedRevisions === undefined) {
     return;
   }
   try {

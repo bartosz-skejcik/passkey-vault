@@ -160,10 +160,16 @@ describe("poll timer fallback", () => {
 // revisions-map endpoint on every WS-triggered or poll-triggered pull —
 // same try/catch-and-ignore-transient-failure shape as the existing
 // personal pull, never a separate differently-shaped error path.
+//
+// WR-07 (code review iteration 2): every test below that expects
+// getSharedRevisions to actually FIRE now passes a real `onSharedRevisions`
+// callback — sync.ts skips the call entirely when nobody would consume its
+// result (see the dedicated describe block further down for that gating
+// behavior itself).
 describe("shared-revisions pull (Plan 23-05)", () => {
   it("calls getSharedRevisions on every WS-open-triggered pull cycle", async () => {
     const { startSync } = await import("./sync");
-    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions: vi.fn() });
 
     lastSocket().onopen?.();
     await vi.advanceTimersByTimeAsync(0);
@@ -173,7 +179,7 @@ describe("shared-revisions pull (Plan 23-05)", () => {
 
   it("calls getSharedRevisions on every onmessage-triggered pull cycle", async () => {
     const { startSync } = await import("./sync");
-    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions: vi.fn() });
 
     const socket = lastSocket();
     socket.onopen?.();
@@ -188,7 +194,7 @@ describe("shared-revisions pull (Plan 23-05)", () => {
 
   it("calls getSharedRevisions on every poll-timer-triggered pull cycle", async () => {
     const { startSync } = await import("./sync");
-    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions: vi.fn() });
 
     await vi.advanceTimersByTimeAsync(30_000);
 
@@ -199,7 +205,7 @@ describe("shared-revisions pull (Plan 23-05)", () => {
     mockGetSharedRevisions.mockRejectedValue(new Error("transient network failure"));
     const onSnapshot = vi.fn();
     const { startSync } = await import("./sync");
-    startSync({ getSinceRevision: () => 0, onSnapshot });
+    startSync({ getSinceRevision: () => 0, onSnapshot, onSharedRevisions: vi.fn() });
 
     lastSocket().onopen?.();
     await vi.advanceTimersByTimeAsync(0);
@@ -222,14 +228,6 @@ describe("shared-revisions pull (Plan 23-05)", () => {
     expect(onSharedRevisions).toHaveBeenCalledWith(revisions);
   });
 
-  it("never throws when onSharedRevisions is left unimplemented (optional callback)", async () => {
-    const { startSync } = await import("./sync");
-    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() }); // no onSharedRevisions
-
-    lastSocket().onopen?.();
-    await expect(vi.advanceTimersByTimeAsync(0)).resolves.not.toThrow();
-  });
-
   // WR-01 (code review iteration 1): a 404 from GET /api/sync/shared means
   // "this account has no family_members row at all" — a PERMANENT condition
   // for a single-user vault (the project's headline persona), not a
@@ -239,7 +237,7 @@ describe("shared-revisions pull (Plan 23-05)", () => {
     mockGetSharedRevisions.mockRejectedValue({ status: 404 });
     const onSnapshot = vi.fn();
     const { startSync } = await import("./sync");
-    startSync({ getSinceRevision: () => 0, onSnapshot });
+    startSync({ getSinceRevision: () => 0, onSnapshot, onSharedRevisions: vi.fn() });
 
     const socket = lastSocket();
     socket.onopen?.();
@@ -261,7 +259,7 @@ describe("shared-revisions pull (Plan 23-05)", () => {
   it("a non-404 rejection does NOT disable further shared-revisions calls (transient, retried next cycle)", async () => {
     mockGetSharedRevisions.mockRejectedValue(new Error("transient network failure"));
     const { startSync } = await import("./sync");
-    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions: vi.fn() });
 
     const socket = lastSocket();
     socket.onopen?.();
@@ -276,7 +274,7 @@ describe("shared-revisions pull (Plan 23-05)", () => {
   it("startSync() re-arms a previously-disabled shared-revisions pull on the next unlock", async () => {
     mockGetSharedRevisions.mockRejectedValue({ status: 404 });
     const { startSync, stopSync } = await import("./sync");
-    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions: vi.fn() });
 
     lastSocket().onopen?.();
     await vi.advanceTimersByTimeAsync(0);
@@ -285,7 +283,60 @@ describe("shared-revisions pull (Plan 23-05)", () => {
     stopSync();
     mockGetSharedRevisions.mockClear();
     mockGetSharedRevisions.mockResolvedValue({ collections: [], direct: { revision: 0 } });
-    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions: vi.fn() });
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+  });
+});
+
+// WR-07 (code review iteration 2): `onSharedRevisions` is genuinely optional
+// (`store.ts` does not wire it up yet — Collection Key unwrap/decrypt is
+// Phase 26/27 work) — but "optional" must mean "the request is skipped
+// entirely when unused", not "the request still fires and the response is
+// thrown away". Iteration 1's fix only closed the single-user-vault 404
+// storm; it left this round trip unconditional for every family member.
+describe("shared-revisions pull is skipped when no consumer is wired up (WR-07)", () => {
+  it("never calls getSharedRevisions when onSharedRevisions is left unimplemented", async () => {
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() }); // no onSharedRevisions
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockGetSharedRevisions).not.toHaveBeenCalled();
+  });
+
+  it("still calls the personal getSyncSnapshot pull normally when onSharedRevisions is left unimplemented", async () => {
+    const onSnapshot = vi.fn();
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot }); // no onSharedRevisions
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockGetSyncSnapshot).toHaveBeenCalledTimes(1);
+    expect(onSnapshot).toHaveBeenCalled();
+  });
+
+  it("never throws when onSharedRevisions is left unimplemented (optional callback)", async () => {
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() }); // no onSharedRevisions
+
+    lastSocket().onopen?.();
+    await expect(vi.advanceTimersByTimeAsync(0)).resolves.not.toThrow();
+  });
+
+  it("resumes calling getSharedRevisions once a real onSharedRevisions callback is supplied on a later startSync()", async () => {
+    const { startSync, stopSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() }); // no onSharedRevisions
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetSharedRevisions).not.toHaveBeenCalled();
+
+    stopSync();
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions: vi.fn() });
     lastSocket().onopen?.();
     await vi.advanceTimersByTimeAsync(0);
 
