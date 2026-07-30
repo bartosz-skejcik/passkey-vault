@@ -66,6 +66,12 @@ export default defineConfig({
   workers: 1,
   retries: 2,
   reporter: [["list"]],
+  use: {
+    // pv-server serves the built static web/out (PV_STATIC_DIR below) from
+    // this same origin -- relative page.goto("/") calls resolve against
+    // this baseURL.
+    baseURL: "http://localhost:8620",
+  },
   projects: [
     {
       name: "chromium",
