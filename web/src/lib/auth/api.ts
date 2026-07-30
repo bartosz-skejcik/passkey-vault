@@ -27,11 +27,19 @@ export function base64Decode(b64: string): Uint8Array {
 
 export class ApiClientError extends Error {
   status: number;
+  // Full parsed JSON error body (Plan 23-05), when the non-ok response's
+  // body actually parsed as JSON — `undefined` when omitted (every existing
+  // `new ApiClientError(status, message)` two-arg call site keeps
+  // compiling unchanged) or when the body wasn't JSON/was empty. Lets
+  // callers (lib/vault/store.ts) read fields beyond the extracted `message`
+  // string, e.g. a 409 body's `last_editor_email`.
+  details?: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, details?: unknown) {
     super(message);
     this.name = "ApiClientError";
     this.status = status;
+    this.details = details;
   }
 }
 

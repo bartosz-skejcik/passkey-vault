@@ -23,7 +23,15 @@ const {
   // vi.mock factories are hoisted above the rest of the file — any value
   // they reference (like this error class) must be created inside
   // vi.hoisted() too, or it's a "Cannot access before initialization" ReferenceError.
-  MockRevisionConflictError: class MockRevisionConflictError extends Error {},
+  // Mirrors the real RevisionConflictError's shape (Plan 23-05): an
+  // optional lastEditorEmail constructor arg stored as a public field.
+  MockRevisionConflictError: class MockRevisionConflictError extends Error {
+    lastEditorEmail?: string;
+    constructor(lastEditorEmail?: string) {
+      super("conflict");
+      this.lastEditorEmail = lastEditorEmail;
+    }
+  },
 }));
 
 vi.mock("@/lib/vault/store", () => ({
@@ -171,7 +179,9 @@ describe("DetailPanel", () => {
   });
 
   it("shows a revision-conflict banner and keeps the in-progress edit on RevisionConflictError", async () => {
-    mockUpdateVaultItem.mockRejectedValue(new MockRevisionConflictError("conflict"));
+    // No lastEditorEmail (personal-item conflict) — the banner shows the
+    // exact existing generic copy, zero wording change.
+    mockUpdateVaultItem.mockRejectedValue(new MockRevisionConflictError());
     render(<DetailPanel item={item} onClose={vi.fn()} />);
     fireEvent.click(screen.getByTestId("detail-panel-edit"));
 
@@ -184,6 +194,27 @@ describe("DetailPanel", () => {
       expect(screen.getByTestId("revision-conflict-banner")).toBeInTheDocument(),
     );
     expect(screen.getByTestId("item-body")).toHaveValue("in-progress-edit");
+    expect(screen.getByTestId("revision-conflict-banner")).toHaveTextContent(
+      "error.revisionConflict",
+    );
+  });
+
+  // Plan 23-05 (SYNC-06 client half): the reactive 409 conflict banner
+  // attributes to the current last editor's email when RevisionConflictError
+  // carries one (a shared item's conflict) — never for a personal item's.
+  it("shows the attributed revision-conflict banner copy when RevisionConflictError carries a lastEditorEmail", async () => {
+    mockUpdateVaultItem.mockRejectedValue(
+      new MockRevisionConflictError("anna@example.com"),
+    );
+    render(<DetailPanel item={item} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("detail-panel-edit"));
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("revision-conflict-banner")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("revision-conflict-banner")).toHaveTextContent("anna@example.com");
   });
 
   it("opens the delete confirmation dialog when the Trash2 button is clicked", () => {
@@ -556,5 +587,39 @@ describe("DetailPanel proactive live-edit-conflict banner (SYNC-03, Plan 05-04)"
       render(<DetailPanel item={identityItem} onClose={vi.fn()} />);
       expect(screen.getByTestId("detail-panel-edit")).toBeInTheDocument();
     });
+  });
+});
+
+// Plan 23-05 (SYNC-06 client half): the proactive live-edit-conflict banner
+// attributes to the currently-viewed item's OWN isShared/lastEditorEmail
+// fields (populated by the personal sync/list endpoints an item's own owner
+// already receives) — never a separate shared-item fetch.
+describe("DetailPanel proactive live-edit-conflict banner attribution (Plan 23-05, SYNC-06)", () => {
+  it("shows the attributed copy (containing the editor's email) when the live item is shared and carries a lastEditorEmail", () => {
+    const sharedItem: typeof item = { ...item, isShared: true, lastEditorEmail: "anna@example.com" };
+    const { rerender } = render(
+      <DetailPanel item={sharedItem} initialMode="edit" onClose={vi.fn()} />,
+    );
+
+    const bumpedItem: typeof sharedItem = { ...sharedItem, revision: 2 };
+    rerender(<DetailPanel item={bumpedItem} initialMode="edit" onClose={vi.fn()} />);
+
+    expect(screen.getByTestId("live-edit-conflict-banner")).toHaveTextContent(
+      "anna@example.com",
+    );
+  });
+
+  it("shows the exact existing generic copy, unchanged, when the live item is not shared (isShared: false)", () => {
+    const personalItem: typeof item = { ...item, isShared: false, lastEditorEmail: undefined };
+    const { rerender } = render(
+      <DetailPanel item={personalItem} initialMode="edit" onClose={vi.fn()} />,
+    );
+
+    const bumpedItem: typeof personalItem = { ...personalItem, revision: 2 };
+    rerender(<DetailPanel item={bumpedItem} initialMode="edit" onClose={vi.fn()} />);
+
+    const banner = screen.getByTestId("live-edit-conflict-banner");
+    expect(banner).toHaveTextContent("sync.itemChangedElsewhere");
+    expect(banner).not.toHaveTextContent("anna@example.com");
   });
 });

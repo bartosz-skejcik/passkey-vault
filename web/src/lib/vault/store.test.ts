@@ -263,6 +263,8 @@ async function unlockWithTwoItems() {
         revision: 1,
         updated_at: "2026-07-14 12:00:00",
         last_used_at: null,
+        is_shared: false,
+        last_editor_email: null,
       },
       {
         id: "item-2",
@@ -271,6 +273,8 @@ async function unlockWithTwoItems() {
         revision: 1,
         updated_at: "2026-07-14 12:00:00",
         last_used_at: null,
+        is_shared: false,
+        last_editor_email: null,
       },
     ],
     folders: [],
@@ -304,6 +308,8 @@ describe("applySyncSnapshot (background sync merge)", () => {
           revision: 1,
           updated_at: "2026-07-14 12:00:00",
           last_used_at: null,
+          is_shared: false,
+          last_editor_email: null,
         },
       ],
       folders: [],
@@ -354,6 +360,8 @@ describe("applySyncSnapshot (background sync merge)", () => {
             revision: 1,
             updated_at: "2026-07-14 12:00:00",
             last_used_at: null,
+            is_shared: false,
+            last_editor_email: null,
           },
           {
             id: "item-2",
@@ -362,6 +370,8 @@ describe("applySyncSnapshot (background sync merge)", () => {
             revision: 2,
             updated_at: "2026-07-14 12:00:00",
             last_used_at: null,
+            is_shared: false,
+            last_editor_email: null,
           },
         ],
         folders: [],
@@ -393,6 +403,8 @@ describe("applySyncSnapshot (background sync merge)", () => {
             revision: 1,
             updated_at: "2026-07-14 12:00:00",
             last_used_at: null,
+            is_shared: false,
+            last_editor_email: null,
           },
         ],
         folders: [],
@@ -578,6 +590,109 @@ describe("updateVaultItem", () => {
     expect(stored?.fields.name).not.toBe("conflicting-edit");
     // Truth was re-fetched (loadAndDecryptAll re-ran the snapshot pull).
     expect(mockGetSyncSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  // Plan 23-05 (SYNC-06 client half): a shared item's 409 conflict body
+  // carries the current last editor's email, attributed via
+  // ApiClientError.details — a personal item's conflict has no such field.
+  it("on a shared item's 409, RevisionConflictError carries the mocked last_editor_email from the response body", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      folders: [],
+    });
+    mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    mockEncryptItem.mockReturnValue(JSON.stringify({ enc_key: {}, enc_data: {} }));
+    mockUpdateItem.mockRejectedValue(
+      new ApiClientError(409, "stale revision", { error: "stale revision", last_editor_email: "anna@example.com" }),
+    );
+    mockGetSyncSnapshot.mockClear();
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 2,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 2 }],
+      folders: [],
+    });
+
+    const conflictingFields = {
+      type: "note" as const,
+      name: "conflicting-edit",
+      body: "b",
+      folderId: null,
+      tags: [],
+    };
+
+    let caught: unknown;
+    try {
+      await store.updateVaultItem("item-1", conflictingFields, 1);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(store.RevisionConflictError);
+    expect((caught as InstanceType<typeof store.RevisionConflictError>).lastEditorEmail).toBe(
+      "anna@example.com",
+    );
+  });
+
+  it("on a personal item's 409 (no last_editor_email in the body), RevisionConflictError's lastEditorEmail is undefined", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      folders: [],
+    });
+    mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    mockEncryptItem.mockReturnValue(JSON.stringify({ enc_key: {}, enc_data: {} }));
+    // Personal-item conflict body: no last_editor_email key at all
+    // (ApiError::Conflict's byte-identical existing wire shape).
+    mockUpdateItem.mockRejectedValue(
+      new ApiClientError(409, "stale revision", { error: "stale revision" }),
+    );
+    mockGetSyncSnapshot.mockClear();
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 2,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 2 }],
+      folders: [],
+    });
+
+    const conflictingFields = {
+      type: "note" as const,
+      name: "conflicting-edit",
+      body: "b",
+      folderId: null,
+      tags: [],
+    };
+
+    let caught: unknown;
+    try {
+      await store.updateVaultItem("item-1", conflictingFields, 1);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(store.RevisionConflictError);
+    expect(
+      (caught as InstanceType<typeof store.RevisionConflictError>).lastEditorEmail,
+    ).toBeUndefined();
   });
 });
 

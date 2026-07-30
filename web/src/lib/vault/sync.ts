@@ -13,7 +13,7 @@
 // singleton; lifecycle (startSync on unlock, stopSync on lock) is wired by
 // store.ts's existing subscribeLockState side effect.
 import { getSessionToken } from "@/lib/auth/session";
-import { getSyncSnapshot, type SyncSnapshot } from "./api";
+import { getSharedRevisions, getSyncSnapshot, type SharedRevisions, type SyncSnapshot } from "./api";
 import { setSyncStatus } from "./syncStatus";
 
 const POLL_INTERVAL_MS = 30_000;
@@ -23,6 +23,11 @@ const BACKOFF_MAX_MS = 30_000;
 export interface SyncCallbacks {
   getSinceRevision: () => number;
   onSnapshot: (snapshot: SyncSnapshot) => void;
+  // Plan 23-05: resolved value of GET /api/sync/shared, handed off on every
+  // pull cycle alongside the existing personal snapshot. Optional — no
+  // consumer wires this up yet beyond what Plan 23-06's Playwright spec
+  // observes over the network; store.ts may leave it unimplemented.
+  onSharedRevisions?: (revisions: SharedRevisions) => void;
 }
 
 let ws: WebSocket | null = null;
@@ -50,6 +55,19 @@ async function pullOnce(): Promise<void> {
   } catch {
     // Transient network failure — the poll timer / next WS event retries;
     // sync is self-healing because the pull is the source of truth.
+  }
+  try {
+    // Plan 23-05: the shared-revisions pull runs in the SAME pull cycle as
+    // the personal snapshot above, in its OWN try/catch — a failure here is
+    // equally silent/transient-retry, never a separate differently-shaped
+    // error path, and never blocks/breaks the personal pull above (which
+    // already ran, in its own try block).
+    const revisions = await getSharedRevisions();
+    if (activeCallbacks === callbacks) {
+      callbacks.onSharedRevisions?.(revisions);
+    }
+  } catch {
+    // Transient network failure — same self-healing rationale as above.
   }
 }
 

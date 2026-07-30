@@ -138,6 +138,17 @@ export interface VaultItem {
   // `updatedAt` is: existing hand-built test fixtures construct this type
   // without it.
   lastUsedAt?: string;
+  // Server-sourced sharing metadata (Phase 23, SYNC-06) — optional because
+  // several existing hand-built VaultItem test fixtures across web/ and
+  // extension/ construct this type without them, and because they're
+  // METADATA only (never derived from ciphertext): `isShared` mirrors the
+  // server's own `is_shared` column (collection-scoped item or an
+  // item_shares grant), `lastEditorEmail` mirrors `last_editor_email`
+  // (undefined/absent when never edited since Migration 0015, or when the
+  // item isn't shared at all). The client can never fabricate a
+  // shared-looking conflict for a personal item from these two fields.
+  isShared?: boolean;
+  lastEditorEmail?: string;
 }
 
 export interface Folder {

@@ -471,6 +471,14 @@ export const DICTIONARY = {
     pl: "Ten item zmienił się w międzyczasie (np. na innym urządzeniu). Odśwież i spróbuj ponownie.",
     en: "This item changed elsewhere in the meantime. Refresh and try again.",
   },
+  // Attributed variant (Plan 23-05, SYNC-06) — shown INSTEAD OF
+  // error.revisionConflict only when the conflicting item is shared and the
+  // 409 body carried a last_editor_email; a personal item's conflict always
+  // keeps the generic copy above, byte-for-byte unchanged.
+  "error.revisionConflictAttributed": {
+    pl: "{email} zmienił(a) ten item w międzyczasie. Odśwież i spróbuj ponownie.",
+    en: "{email} changed this item in the meantime. Refresh and try again.",
+  },
   "error.itemSaveFailed": {
     pl: "Nie udało się zapisać itemu. Spróbuj ponownie.",
     en: "Failed to save item. Please try again.",
@@ -687,6 +695,14 @@ export const DICTIONARY = {
   "sync.itemChangedElsewhere": {
     pl: "Ten element zmienił się na innym urządzeniu.",
     en: "This item changed on another device.",
+  },
+  // Attributed variant (Plan 23-05, SYNC-06) — shown INSTEAD OF
+  // sync.itemChangedElsewhere only when item.isShared && item.lastEditorEmail
+  // are both present on the currently-viewed item; a personal item's live
+  // conflict always keeps the generic copy above, byte-for-byte unchanged.
+  "sync.itemChangedElsewhereAttributed": {
+    pl: "{email} właśnie edytuje ten element.",
+    en: "{email} is currently editing this item.",
   },
   "sync.itemChangedElsewhereConsequence": {
     pl: "Odświeżenie zastąpi Twoje niezapisane zmiany.",
