@@ -249,11 +249,33 @@ impl ResourceKind for Item {
         // against a PERSONAL item (`collection_id IS NULL`) — the exact case
         // `vault::create_share`'s own doc comment advertises — was silently
         // ignored: the row was inserted, `201`-accepted, and granted nothing.
-        let item_share_row = sqlx::query("SELECT access_level FROM item_shares WHERE item_id = ? AND recipient_user_id = ?")
-            .bind(resource_id)
-            .bind(caller_user_id)
-            .fetch_optional(db)
-            .await?;
+        //
+        // W2 (iteration 2): CR-01 widened this query to run on EVERY item —
+        // which means an unjoined `item_shares` row is now a MORE exposed
+        // surface than before the fix, not less (pre-CR-01 it only ran for
+        // collection-scoped items). Join through the item OWNER's family —
+        // pinned to `owner_user_id` (this resource's own `vault_items.user_id`,
+        // never a client-controlled value) — and require the recipient
+        // (pinned to `caller_user_id` via the WHERE clause, matching every
+        // other resolver query in this module) to still hold a
+        // `family_members` row in that SAME family. A stale `item_shares`
+        // row for a recipient no longer in the owner's family can no longer
+        // resolve to access, mirroring `Collection::resolve_access`'s
+        // identical `family_members` join (WR-07, iteration 1). Not
+        // exploitable today (no family-removal endpoint exists yet — Phase
+        // 25 owns it), but this is the phase that fixes the resolution
+        // rule, and Phase 25 inherits it as-is.
+        let item_share_row = sqlx::query(
+            "SELECT s.access_level FROM item_shares s \
+               JOIN family_members fm_o ON fm_o.user_id = ? \
+               JOIN family_members fm_r ON fm_r.family_id = fm_o.family_id AND fm_r.user_id = s.recipient_user_id \
+              WHERE s.item_id = ? AND s.recipient_user_id = ?",
+        )
+        .bind(&owner_user_id)
+        .bind(resource_id)
+        .bind(caller_user_id)
+        .fetch_optional(db)
+        .await?;
         let item_share_access = match item_share_row {
             None => None,
             Some(row) => {
@@ -638,6 +660,23 @@ mod tests {
         let pool = seeded_pool().await;
         seed_user(&pool, "owner2", "owner2@example.com").await;
         seed_user(&pool, "recipient", "recipient@example.com").await;
+        // W2 (iteration 2): the `item_shares` resolver query now joins
+        // `family_members` (through the item OWNER's family) — a real
+        // per-item share is always created between two family members, so
+        // this fixture must seed that invariant explicitly, same as
+        // `seed_family_and_collection` does for the collection-branch tests.
+        sqlx::query("INSERT INTO families (id, owner_user_id, name) VALUES ('fam2', 'owner2', 'Test Family 2')")
+            .execute(&pool)
+            .await
+            .expect("seed family");
+        sqlx::query("INSERT INTO family_members (family_id, user_id, role) VALUES ('fam2', 'owner2', 'owner')")
+            .execute(&pool)
+            .await
+            .expect("seed owner2's family_members row");
+        sqlx::query("INSERT INTO family_members (family_id, user_id, role) VALUES ('fam2', 'recipient', 'member')")
+            .execute(&pool)
+            .await
+            .expect("seed recipient's family_members row");
 
         sqlx::query("INSERT INTO vault_items (id, user_id, enc_key, enc_data) VALUES ('item3', 'owner2', 'k', 'd')")
             .execute(&pool)
@@ -666,6 +705,51 @@ mod tests {
         // The owner's own access is untouched by the recipient's grant.
         let owner_access = Item::resolve_access(&pool, "owner2", "item3").await.unwrap();
         assert_eq!(owner_access, Some(AccessLevel::Edit));
+    }
+
+    /// W2 (iteration 2) regression: a stale `item_shares` row for a
+    /// recipient no longer in the item owner's family must NOT confer
+    /// access — the same `family_members` join `Collection::resolve_access`
+    /// already applies (WR-07, iteration 1), now also applied to the
+    /// `item_shares` query CR-01 widened to run on every item, not just
+    /// collection-scoped ones. `"outsider"` never receives a
+    /// `family_members` row for the item owner's family at all, which is
+    /// the strongest form of "no longer in the family" this fixture can
+    /// express without a member-removal endpoint (Phase 25).
+    #[tokio::test]
+    async fn item_resolve_access_item_shares_rejects_recipient_outside_owners_family() {
+        let pool = seeded_pool().await;
+        seed_user(&pool, "owner3", "owner3@example.com").await;
+        seed_user(&pool, "outsider", "outsider@example.com").await;
+        sqlx::query("INSERT INTO families (id, owner_user_id, name) VALUES ('fam3', 'owner3', 'Test Family 3')")
+            .execute(&pool)
+            .await
+            .expect("seed family");
+        sqlx::query("INSERT INTO family_members (family_id, user_id, role) VALUES ('fam3', 'owner3', 'owner')")
+            .execute(&pool)
+            .await
+            .expect("seed owner3's family_members row");
+        // Deliberately NO family_members row for "outsider" — they are not,
+        // and never were (in this fixture), a member of owner3's family.
+
+        sqlx::query("INSERT INTO vault_items (id, user_id, enc_key, enc_data) VALUES ('item4', 'owner3', 'k', 'd')")
+            .execute(&pool)
+            .await
+            .expect("seed personal item");
+
+        sqlx::query(
+            "INSERT INTO item_shares (item_id, recipient_user_id, sealed_key, access_level) \
+             VALUES ('item4', 'outsider', 'sealed', 'edit')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed a stale item_shares row for a non-family-member recipient");
+
+        let access = Item::resolve_access(&pool, "outsider", "item4").await.unwrap();
+        assert_eq!(
+            access, None,
+            "W2: an item_shares row for a recipient outside the item owner's family must confer NO access"
+        );
     }
 
     /// CR-01 (iteration 2) regression: the creator of a collection-scoped
