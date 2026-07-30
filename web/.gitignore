@@ -1,0 +1,6 @@
+# Playwright (23-04-PLAN.md web/ harness) run artifacts -- mirrors
+# extension/.gitignore's own Playwright-artifact entries.
+test-results
+playwright-report
+blob-report
+playwright/.cache
