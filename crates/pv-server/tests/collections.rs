@@ -1552,3 +1552,135 @@ async fn hidden_password_creator_cannot_reassign_own_item_vaultwarden_6269_regre
     assert_eq!(stored_collection_id.as_deref(), Some(source_collection_id.as_str()));
     assert_eq!(stored_revision, 2);
 }
+
+// --- CR-02 (iteration 3): an `edit` item-share recipient must not be able
+// to re-scope the OWNER's personal item into a collection the recipient
+// controls — that would strand the owner with a 404 on every verb and no
+// recovery path anywhere in the API. ---
+
+/// **CR-02 (iteration 3) regression.** Removing the iteration-1 ownership
+/// fold from `Item::resolve_access`'s collection branch (CR-01, iteration 2)
+/// was correct and necessary for revocation to be absolute — but it also
+/// means a personal item's owner resolves `None` on their own item the
+/// moment someone else moves it into a collection the owner holds no grant
+/// on. An `edit` item-share recipient must never be able to trigger that:
+/// `access_level: "edit"` on a share means "may modify this item's
+/// contents", not "may re-scope, delegate, or destroy it". This test must
+/// FAIL against code that lacks the CR-02 ownership gate (the move would
+/// succeed with `200`, permanently locking Anna out of her own item) and
+/// pass once `move_item` rejects a non-owner re-scoping a personal item.
+#[tokio::test]
+async fn edit_item_share_recipient_cannot_move_owners_personal_item_cr02_regression() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let anna_token = register_and_login(&app, "cr02-anna@example.com").await;
+    create_family(&app, &anna_token).await;
+    let r_token = common::register_second_family_member(&app, &anna_token, "cr02-r@example.com").await;
+    let r_id = user_id_of(&app, &r_token).await;
+    let r_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &r_token, r_sk.public_key().to_bytes()).await;
+
+    // Anna creates a personal item and shares it with R at `edit`.
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &anna_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"key-blob\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"data-blob\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    let create_share_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/items/{item_id}/shares"),
+        &anna_token,
+        Some(json!({
+            "recipient_user_id": r_id,
+            "sealed_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"sealed-item-key\"}",
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(create_share_res.status(), StatusCode::CREATED);
+
+    // R creates their OWN collection — `collections::create` hard-codes the
+    // creator to `edit`, so R fully controls it.
+    let ck = CollectionKey::generate();
+    let r_sealed = seal(&r_sk.public_key(), ck.expose()).unwrap();
+    let create_collection_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &r_token,
+        Some(json!({
+            "enc_name": "enc-cr02-r-collection",
+            "sealed_key": serde_json::to_string(&r_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_collection_res.status(), StatusCode::CREATED);
+    let r_collection_id = body_json(create_collection_res).await["id"].as_str().unwrap().to_string();
+
+    // THE REGRESSION: R attempts to move Anna's personal item into R's own
+    // collection. Must be rejected 403 — R provably has SOME access (the
+    // `edit` item share), so this is the insufficient-scope case, never the
+    // no-access-at-all 404 case.
+    let move_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &r_token,
+        Some(json!({
+            "new_collection_id": r_collection_id,
+            "enc_key": "{\"nonce\":\"EEEE\",\"ciphertext\":\"attempted-steal-key\"}",
+            "enc_data": "{\"nonce\":\"FFFF\",\"ciphertext\":\"attempted-steal-data\"}",
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(
+        move_res.status(),
+        StatusCode::FORBIDDEN,
+        "CR-02: an `edit` item-share recipient must never be able to re-scope the owner's personal item — \
+         `edit` grants content modification, never delegation/re-scoping/destruction"
+    );
+
+    // Sanity: the item is untouched — still personal, still at revision 1.
+    let row = sqlx::query("SELECT collection_id, revision FROM vault_items WHERE id = ?")
+        .bind(&item_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let stored_collection_id: Option<String> = row.try_get("collection_id").unwrap();
+    let stored_revision: i64 = row.try_get("revision").unwrap();
+    assert_eq!(stored_collection_id, None);
+    assert_eq!(stored_revision, 1);
+
+    // Proving nothing was stranded: Anna, the owner, can still PUT her own
+    // item after R's rejected attempt.
+    let anna_update_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}"),
+        &anna_token,
+        Some(json!({
+            "enc_key": "{\"nonce\":\"GGGG\",\"ciphertext\":\"anna-update-key\"}",
+            "enc_data": "{\"nonce\":\"HHHH\",\"ciphertext\":\"anna-update-data\"}",
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(
+        anna_update_res.status(),
+        StatusCode::OK,
+        "the owner must retain full access to her own item after the rejected re-scope attempt — nothing stranded"
+    );
+}

@@ -480,6 +480,31 @@ pub async fn move_item(
     Path(id): Path<String>,
     Json(req): Json<MoveItemRequest>,
 ) -> Result<Json<MoveItemResponse>, ApiError> {
+    // Gate 0 (CR-02, iteration 3): a PERSONAL item (`collection_id IS NULL`)
+    // may only be re-scoped by its OWNER. `source: Membership<Item,
+    // RequireEdit>` resolves `Edit` for two independent parties on a
+    // personal item — the owner, and any `edit`-level `item_shares`
+    // recipient (CR-01, iteration 1) — but `access_level: "edit"` on an item
+    // share means "may modify the item's contents", never "may re-scope,
+    // delegate, or destroy an item belonging to someone else." Without this
+    // gate, an edit-share recipient could move the owner's personal item
+    // into a collection the recipient controls, after which the owner
+    // resolves `None` on their own item (no `collection_keys` row, no
+    // `item_shares` row — they're the owner, not a recipient) and is locked
+    // out permanently, with no recovery path anywhere in the API. Runs
+    // BEFORE the destination gate below so this decision-free ownership
+    // check is never skipped by a caller lacking destination access.
+    let owner_row = sqlx::query("SELECT user_id, collection_id FROM vault_items WHERE id = ?")
+        .bind(&source.resource_id)
+        .fetch_one(&state.db)
+        .await?;
+    let current_collection: Option<String> =
+        owner_row.try_get("collection_id").map_err(|_| ApiError::Internal)?;
+    let owner_user_id: String = owner_row.try_get("user_id").map_err(|_| ApiError::Internal)?;
+    if current_collection.is_none() && owner_user_id != source.caller_user_id {
+        return Err(ApiError::Forbidden);
+    }
+
     // Gate 2 (destination) — runs BEFORE any DB mutation, and before the
     // blob-length validation below, so a caller who fails this check never
     // learns whether their oversized blob would otherwise have been accepted.
