@@ -121,7 +121,7 @@ Plans:
   5. **KEY-01 server half** (carried forward from Phase 21, which delivered only the pv-core crypto): an account's X25519 **public** key is published to and served by the server, its wrapped private key is stored as an opaque blob the server never unwraps, and an account created before v0.4 gets a keypair generated on upgrade **without re-encrypting a single byte of its existing vault**. Phase 21 proved the no-re-encryption property at the crypto layer against committed fixture data; this criterion is that property holding end-to-end through real persistence.
   6. **KEY-02 per-member fan-out** (carried forward from Phase 21, which delivered only the single-recipient `seal` primitive): one collection's Collection Key is sealed **independently to each member's published public key** — N members yield N distinct `SealedKey` rows for the same collection, each openable only by that member's private key and by no other member's, proven with 3+ members in a test. Adding a member creates exactly one new wrap row and **rewrites no item ciphertext** (`enc_data` byte-identical before and after, asserted).
 
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 
 Plans:
 **Wave 1**
@@ -135,7 +135,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 — shared mod.rs)*
 
-- [ ] 22-04-PLAN.md — Collection-aware vault.rs + item move endpoint (SHARE-04 Vaultwarden #6269 fix) + item shares
+- [x] 22-04-PLAN.md — Collection-aware vault.rs + item move endpoint (SHARE-04 Vaultwarden #6269 fix) + item shares
 
 **Wave 4** *(blocked on Wave 3 — shared mod.rs; the phase's headline route-sweep proof)*
 
@@ -247,7 +247,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 19. Server & Supply-Chain Hardening | v0.3 | 3/3 | Complete    | 2026-07-21 |
 | 20. Test Infrastructure & CI Gate | v0.3 | 4/4 | Complete    | 2026-07-21 |
 | 21. Crypto Foundation — Asymmetric Identity & Collection Keys | v0.4 | 5/5 | Complete    | 2026-07-30 |
-| 22. Family & Collection Data Model — Server Authorization | v0.4 | 3/5 | In Progress|  |
+| 22. Family & Collection Data Model — Server Authorization | v0.4 | 4/5 | In Progress|  |
 | 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 0/TBD | Not started | - |
 | 24. Invitation Flow (No SMTP) | v0.4 | 0/TBD | Not started | - |
 | 25. Member Removal, Suspension & Re-key | v0.4 | 0/TBD | Not started | - |
