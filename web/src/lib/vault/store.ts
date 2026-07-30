@@ -47,11 +47,18 @@ import { normalizeItemFields, type Folder, type ItemFields, type VaultItem } fro
 /** Distinguishable error type for a stale-revision (409) PUT — lets the UI
  * layer (DetailPanel) tell "the item changed elsewhere" apart from any other
  * failure and show T-02-22's clear conflict message instead of silently
- * overwriting or discarding the user's edit. */
+ * overwriting or discarding the user's edit. `lastEditorEmail` (Plan 23-05,
+ * SYNC-06) is populated only for a SHARED item's conflict, sourced from the
+ * 409 response body's `last_editor_email` — `undefined` for a personal
+ * item's conflict (that body has no such key at all), so a personal-item
+ * conflict's UI copy never mentions an email. */
 export class RevisionConflictError extends Error {
-  constructor() {
+  readonly lastEditorEmail?: string;
+
+  constructor(lastEditorEmail?: string) {
     super("item revision changed elsewhere — refresh and try again");
     this.name = "RevisionConflictError";
+    this.lastEditorEmail = lastEditorEmail;
   }
 }
 
@@ -156,6 +163,8 @@ function decryptItemRow(row: ItemRow, uk: WasmUserKey): VaultItem {
     fields,
     updatedAt: row.updated_at,
     lastUsedAt: row.last_used_at ?? undefined,
+    isShared: row.is_shared,
+    lastEditorEmail: row.last_editor_email ?? undefined,
   };
 }
 
@@ -277,7 +286,14 @@ export async function updateVaultItem(
   } catch (err) {
     if (isConflictError(err)) {
       await loadAndDecryptAll();
-      throw new RevisionConflictError();
+      // The 409 body's full parsed JSON was carried onto ApiClientError as
+      // `details` (Plan 23-05) — a shared item's conflict carries
+      // `last_editor_email`, a personal item's does not (the key is absent
+      // entirely, never null-vs-undefined ambiguity to resolve here since
+      // both `null`/absent normalize to `undefined`).
+      const details = (err as { details?: { last_editor_email?: string | null } }).details;
+      const lastEditorEmail = details?.last_editor_email ?? undefined;
+      throw new RevisionConflictError(lastEditorEmail);
     }
     throw err;
   }
