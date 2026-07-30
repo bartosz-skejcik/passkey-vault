@@ -720,6 +720,15 @@ export const DICTIONARY = {
     en: "Refreshing will replace your unsaved changes.",
   },
   "sync.refreshAction": { pl: "Odśwież", en: "Refresh" },
+  // CR-03 (code review iteration 1): shown on an item whose last background
+  // sync merge failed to decrypt its server row (DetailPanel.tsx's
+  // `item.undecryptable` banner) — the retained copy is a last-known-good
+  // fallback at a now-stale revision, so editing is disabled until a
+  // refresh resolves the failure.
+  "sync.itemUndecryptableWarning": {
+    pl: "Ten element nie mógł zostać odszyfrowany podczas ostatniej synchronizacji. Wyświetlana jest ostatnia znana wersja — edycja jest zablokowana. Spróbuj odświeżyć stronę.",
+    en: "This item failed to decrypt during the last sync. Showing the last known version -- editing is disabled. Try refreshing the page.",
+  },
   "sync.itemDeletedElsewhere": {
     pl: "Ten element został usunięty na innym urządzeniu.",
     en: "This item was deleted on another device.",

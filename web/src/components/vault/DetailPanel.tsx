@@ -254,8 +254,12 @@ export default function DetailPanel({
                   provider ceremony's only source of truth for
                   key_cbor/counter/hmac_secret). Deletion stays available
                   below (a passkey item can always be removed, just never
-                  hand-edited). */}
-              {item.fields.type !== "passkey" ? (
+                  hand-edited). CR-03 (code review iteration 1): same
+                  suppression for `item.undecryptable` — its `revision` is
+                  known stale, and `updateVaultItem` itself refuses the save
+                  (`UndecryptableItemError`); hiding the affordance here is
+                  defense in depth, not the only guard. */}
+              {item.fields.type !== "passkey" && item.undecryptable !== true ? (
                 <button
                   type="button"
                   data-testid="detail-panel-edit"
@@ -288,6 +292,21 @@ export default function DetailPanel({
           </button>
         </div>
       </div>
+
+      {/* CR-03 (code review iteration 1): this item's last background sync
+          merge failed to decrypt its server row and is showing a retained
+          last-known-good copy at a now-stale revision — the AEAD
+          integrity-failure signal a zero-knowledge vault has to surface,
+          rather than silently rendering stale plaintext as current. Shown
+          in BOTH view and edit mode (edit mode is unreachable through the
+          UI for a flagged item via the hidden Edit button above, but this
+          banner is the same defense-in-depth as that guard, not a
+          replacement for it). */}
+      {item.undecryptable === true ? (
+        <div data-testid="undecryptable-item-banner" className="alert alert-warning text-sm">
+          {t("sync.itemUndecryptableWarning")}
+        </div>
+      ) : null}
 
       {/* Defense-in-depth alongside the hidden Edit button above and
           ItemContextMenu.tsx's own guard: even if `initialMode="edit"` were

@@ -62,6 +62,22 @@ export class RevisionConflictError extends Error {
   }
 }
 
+/** CR-03 (code review iteration 1): thrown by `updateVaultItem` when the
+ * in-memory item is flagged `undecryptable` (a background sync merge's
+ * server row failed to decrypt, and this is the retained last-known-good
+ * copy — see `applySyncSnapshot`'s doc comment). Its `revision` is known
+ * STALE relative to the server, so saving over it with a caller-supplied
+ * `expected_revision` would either silently 409 forever or, worse, race a
+ * revision the server has since moved past for reasons the client cannot
+ * verify. Defense in depth alongside `DetailPanel` hiding the Edit
+ * affordance for a flagged item entirely. */
+export class UndecryptableItemError extends Error {
+  constructor() {
+    super("this item failed to decrypt during the last sync -- refresh before making changes");
+    this.name = "UndecryptableItemError";
+  }
+}
+
 /** Combined JSON shape encryptItem produces / decryptItem expects:
  * `{"enc_key": WrappedKey, "enc_data": WrappedKey}`. The server instead
  * stores these as two separate opaque-string columns — this module is the
@@ -190,9 +206,24 @@ let lastKnownRevision = 0;
  * snapshot decision). An up-to-date snapshot (no items/folders keys)
  * leaves the in-memory state completely untouched — but still advances
  * the revision watermark, otherwise the NEXT poll tick would immediately
- * re-detect "stale" against a revision the client already knows about. */
+ * re-detect "stale" against a revision the client already knows about.
+ *
+ * CR-03 (code review iteration 1): the decrypt-failure fallback below no
+ * longer pretends the merge fully succeeded. Previously `lastKnownRevision`
+ * was assigned UNCONDITIONALLY, before any row was even attempted, so a
+ * client whose every row failed to decrypt still recorded itself as caught
+ * up — the failure was never retried, and the retained fallback copy's
+ * STALE revision then 409'd every subsequent save forever (the 409 handler
+ * re-runs this exact same merge, which fails the exact same way). The
+ * AEAD's authentication tag is bound to `(item_id, revision)` — a server
+ * substituting or replaying ciphertext produces exactly this failure mode,
+ * so silently discarding it defeats the one integrity signal a
+ * zero-knowledge vault has to offer. The watermark now only advances when
+ * EVERY row in the snapshot decrypted successfully; a failing row's
+ * retained last-known-good copy is flagged `undecryptable: true` so
+ * `updateVaultItem` can refuse to save over its now-untrustworthy revision
+ * and the UI layer can surface the integrity warning (`DetailPanel`). */
 function applySyncSnapshot(snapshot: SyncSnapshot): void {
-  lastKnownRevision = snapshot.revision;
   // Re-check unlock state — a lock event may have fired while the fetch
   // was in flight, and we must never decrypt with a stale/freed key
   // handle or repopulate state after the user has since locked.
@@ -200,6 +231,7 @@ function applySyncSnapshot(snapshot: SyncSnapshot): void {
   if (uk === null) {
     return;
   }
+  let anyRowFailed = false;
   if (snapshot.items !== undefined) {
     // A single row that fails to decrypt (corrupted blob, a stale/foreign
     // ciphertext, ...) must never crash the WHOLE snapshot merge — this is
@@ -213,13 +245,17 @@ function applySyncSnapshot(snapshot: SyncSnapshot): void {
     // make `selectedItem` resolve to `undefined` and unmount the very
     // DetailPanel that needs to show the conflict banner.
     const previousById = new Map(items.map((item) => [item.id, item]));
-    items = snapshot.items.flatMap((row) => {
+    items = snapshot.items.flatMap((row): VaultItem[] => {
       try {
-        return [decryptItemRow(row, uk)];
+        // A row that decrypts cleanly is never `undecryptable` — explicit
+        // `false` (not merely omitted) covers the case where a PREVIOUS
+        // merge had flagged this same id and a later one recovers.
+        return [{ ...decryptItemRow(row, uk), undecryptable: false }];
       } catch (err) {
+        anyRowFailed = true;
         console.error(`pv: failed to decrypt item ${row.id} during sync merge -- keeping last-known-good copy`, err);
         const previous = previousById.get(row.id);
-        return previous !== undefined ? [previous] : [];
+        return previous !== undefined ? [{ ...previous, undecryptable: true }] : [];
       }
     });
     recomputeAllTags();
@@ -227,16 +263,23 @@ function applySyncSnapshot(snapshot: SyncSnapshot): void {
   }
   if (snapshot.folders !== undefined) {
     const previousFolderById = new Map(folders.map((folder) => [folder.id, folder]));
-    folders = snapshot.folders.flatMap((row) => {
+    folders = snapshot.folders.flatMap((row): Folder[] => {
       try {
-        return [decryptFolderRow(row, uk)];
+        return [{ ...decryptFolderRow(row, uk), undecryptable: false }];
       } catch (err) {
+        anyRowFailed = true;
         console.error(`pv: failed to decrypt folder ${row.id} during sync merge -- keeping last-known-good copy`, err);
         const previous = previousFolderById.get(row.id);
-        return previous !== undefined ? [previous] : [];
+        return previous !== undefined ? [{ ...previous, undecryptable: true }] : [];
       }
     });
     notifyFolderListeners();
+  }
+  // Only advance the watermark when the WHOLE snapshot actually applied —
+  // otherwise the next poll must re-fetch and retry rather than believing
+  // itself caught up on a revision it never actually merged.
+  if (!anyRowFailed) {
+    lastKnownRevision = snapshot.revision;
   }
 }
 
@@ -304,6 +347,13 @@ export async function updateVaultItem(
   const uk = getUnlockedUserKey();
   if (uk === null) {
     throw new Error("cannot update an item while the vault is locked");
+  }
+  // CR-03: refuse to save over an item whose current in-memory copy is
+  // known-stale (a decrypt failure during the last sync merge) — see
+  // UndecryptableItemError's own doc comment.
+  const existingBeforeSave = items.find((item) => item.id === id);
+  if (existingBeforeSave?.undecryptable === true) {
+    throw new UndecryptableItemError();
   }
   const newRevision = currentRevision + 1;
   const plaintext = JSON.stringify(fields);

@@ -414,6 +414,180 @@ describe("applySyncSnapshot (background sync merge)", () => {
     expect(mockDecryptItem).not.toHaveBeenCalled();
     expect(store.getItems().map((item) => item.id)).toEqual(["item-1", "item-2"]);
   });
+
+  // CR-03 (code review iteration 1): a decrypt failure must never be
+  // silently discarded as if the merge fully succeeded — see
+  // applySyncSnapshot's own doc comment for the full rationale (a stuck
+  // save-409 loop with no way out through the UI, and a swallowed integrity
+  // signal in a zero-knowledge product).
+  describe("decrypt-failure fallback (CR-03)", () => {
+    it("a single failing row keeps the merge alive for every other row", async () => {
+      const { store, callbacks } = await unlockWithTwoItems();
+
+      mockDecryptItem.mockImplementation((_uk: unknown, _combined: string, id: string) => {
+        if (id === "item-2") {
+          throw new Error("AEAD authentication failed");
+        }
+        return NOTE_PLAINTEXT;
+      });
+      act(() => {
+        callbacks.onSnapshot({
+          revision: 5,
+          items: [
+            {
+              id: "item-1",
+              enc_key: "{}",
+              enc_data: "{}",
+              revision: 1,
+              updated_at: "2026-07-14 12:00:00",
+              last_used_at: null,
+              is_shared: false,
+              last_editor_email: null,
+            },
+            {
+              id: "item-2",
+              enc_key: "{}",
+              enc_data: "{}",
+              revision: 2,
+              updated_at: "2026-07-14 12:00:00",
+              last_used_at: null,
+              is_shared: false,
+              last_editor_email: null,
+            },
+          ],
+          folders: [],
+        });
+      });
+
+      const ids = store.getItems().map((item) => item.id);
+      expect(ids).toEqual(["item-1", "item-2"]);
+    });
+
+    it("does NOT advance the revision watermark when any row fails to decrypt", async () => {
+      const { callbacks } = await unlockWithTwoItems();
+      // The initial unlock merge left the watermark at 2 (unlockWithTwoItems'
+      // own fixture snapshot revision).
+      expect(callbacks.getSinceRevision()).toBe(2);
+
+      mockDecryptItem.mockImplementation((_uk: unknown, _combined: string, id: string) => {
+        if (id === "item-2") {
+          throw new Error("AEAD authentication failed");
+        }
+        return NOTE_PLAINTEXT;
+      });
+      act(() => {
+        callbacks.onSnapshot({
+          revision: 5,
+          items: [
+            {
+              id: "item-1",
+              enc_key: "{}",
+              enc_data: "{}",
+              revision: 1,
+              updated_at: "2026-07-14 12:00:00",
+              last_used_at: null,
+              is_shared: false,
+              last_editor_email: null,
+            },
+            {
+              id: "item-2",
+              enc_key: "{}",
+              enc_data: "{}",
+              revision: 2,
+              updated_at: "2026-07-14 12:00:00",
+              last_used_at: null,
+              is_shared: false,
+              last_editor_email: null,
+            },
+          ],
+          folders: [],
+        });
+      });
+
+      // Watermark stayed at 2 -- the NEXT poll must re-fetch and retry,
+      // never believe itself caught up on a revision it never actually
+      // merged.
+      expect(callbacks.getSinceRevision()).toBe(2);
+    });
+
+    it("flags the retained last-known-good row as undecryptable", async () => {
+      const { store, callbacks } = await unlockWithTwoItems();
+
+      mockDecryptItem.mockImplementation((_uk: unknown, _combined: string, id: string) => {
+        if (id === "item-2") {
+          throw new Error("AEAD authentication failed");
+        }
+        return NOTE_PLAINTEXT;
+      });
+      act(() => {
+        callbacks.onSnapshot({
+          revision: 5,
+          items: [
+            {
+              id: "item-1",
+              enc_key: "{}",
+              enc_data: "{}",
+              revision: 1,
+              updated_at: "2026-07-14 12:00:00",
+              last_used_at: null,
+              is_shared: false,
+              last_editor_email: null,
+            },
+            {
+              id: "item-2",
+              enc_key: "{}",
+              enc_data: "{}",
+              revision: 2,
+              updated_at: "2026-07-14 12:00:00",
+              last_used_at: null,
+              is_shared: false,
+              last_editor_email: null,
+            },
+          ],
+          folders: [],
+        });
+      });
+
+      const item1 = store.getItems().find((item) => item.id === "item-1");
+      const item2 = store.getItems().find((item) => item.id === "item-2");
+      expect(item1?.undecryptable).toBe(false);
+      expect(item2?.undecryptable).toBe(true);
+    });
+
+    it("the folder branch gets the identical treatment: keeps the merge alive, flags the retained folder, and withholds the watermark", async () => {
+      mockGetUnlockedUserKey.mockReturnValue({});
+      mockGetSyncSnapshot.mockResolvedValue({
+        revision: 1,
+        items: [],
+        folders: [{ id: "folder-1", enc_name: "{}" }],
+      });
+      mockDecryptItem.mockReturnValue('{"name":"Folder One"}');
+      const { store, lockListener } = await importStoreAndGetLockListener();
+      mockIsUnlocked.mockReturnValue(true);
+      await act(async () => {
+        lockListener();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const callbacks = getSyncCallbacks();
+      expect(store.getFolders()).toHaveLength(1);
+
+      mockDecryptItem.mockImplementation(() => {
+        throw new Error("AEAD authentication failed");
+      });
+      act(() => {
+        callbacks.onSnapshot({
+          revision: 4,
+          items: [],
+          folders: [{ id: "folder-1", enc_name: "{}" }],
+        });
+      });
+
+      expect(store.getFolders()).toHaveLength(1);
+      expect(store.getFolders()[0]?.undecryptable).toBe(true);
+      expect(callbacks.getSinceRevision()).toBe(1);
+    });
+  });
 });
 
 // NordPass-style last-used tracking (quick-260717): the single fire-and-

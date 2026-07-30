@@ -149,11 +149,26 @@ export interface VaultItem {
   // shared-looking conflict for a personal item from these two fields.
   isShared?: boolean;
   lastEditorEmail?: string;
+  // CR-03 (code review iteration 1): `true` when this item is a retained
+  // last-known-good copy from a background sync merge whose server row
+  // failed to decrypt (corrupted blob, a stale/foreign ciphertext, or —
+  // since the AEAD's authentication tag is bound to `(item_id, revision)` —
+  // a server substituting or replaying ciphertext). Its `revision` is known
+  // STALE relative to the server, so any save path must refuse to use it as
+  // `expected_revision`; the UI layer should surface this as an integrity
+  // warning rather than silently rendering stale plaintext as current.
+  // `false` (not merely omitted) once a later merge decrypts the same id
+  // successfully again. Never set by anything other than
+  // `lib/vault/store.ts`'s own `applySyncSnapshot`.
+  undecryptable?: boolean;
 }
 
 export interface Folder {
   id: string;
   name: string;
+  // See VaultItem.undecryptable's doc comment above — identical meaning,
+  // set by the same merge.
+  undecryptable?: boolean;
 }
 
 /** Sidebar's active list filter — client-side only, ANDed with the
