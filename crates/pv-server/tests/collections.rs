@@ -285,3 +285,317 @@ async fn collection_key_fan_out_three_members_each_opens_only_own_seal() {
     assert!(unseal_collection_key(&owner_sk, member3_row).is_err());
     assert!(unseal_collection_key(&member2_sk, member3_row).is_err());
 }
+
+/// Task 2 (KEY-02 no-rewrite proof): adding a member to a collection that
+/// already has an item in it creates exactly one new `collection_keys` row
+/// and rewrites NOT ONE BYTE of the item's `enc_data`.
+///
+/// NOTE (deliberate test-fixture shortcut): this test seeds
+/// `vault_items.collection_id` via a raw SQL `UPDATE` executed directly
+/// against `common::test_pool()`'s pool — the real "move an item into a
+/// collection" endpoint does not exist until Plan 22-04. This bypasses the
+/// production move path entirely; do not confuse this with it.
+#[tokio::test]
+async fn adding_member_creates_one_wrap_row_no_ciphertext_rewrite() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "norewrite-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member2_token =
+        common::register_second_family_member(&app, &owner_token, "norewrite-member2@example.com").await;
+    let member2_id = user_id_of(&app, &member2_token).await;
+    let member2_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member2_token, member2_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-norewrite-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    // Create a personal vault item via the existing production endpoint.
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"key-blob\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"data-blob-must-not-change\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    // Deliberate test-fixture shortcut (see this test's doc comment above):
+    // seed collection_id directly, bypassing the real move endpoint (Plan
+    // 22-04).
+    sqlx::query("UPDATE vault_items SET collection_id = ? WHERE id = ?")
+        .bind(&collection_id)
+        .bind(&item_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let before_res = req(&app, "GET", "/api/vault/items", &owner_token, None).await;
+    assert_eq!(before_res.status(), StatusCode::OK);
+    let before_body = body_json(before_res).await;
+    let enc_data_before = before_body[0]["enc_data"].as_str().unwrap().to_string();
+
+    let count_before_row = sqlx::query("SELECT COUNT(*) as n FROM collection_keys WHERE collection_id = ?")
+        .bind(&collection_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let count_before: i64 = count_before_row.try_get("n").unwrap();
+
+    let member2_sealed = seal(&member2_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member2_id,
+            "sealed_key": serde_json::to_string(&member2_sealed).unwrap(),
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    let count_after_row = sqlx::query("SELECT COUNT(*) as n FROM collection_keys WHERE collection_id = ?")
+        .bind(&collection_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let count_after: i64 = count_after_row.try_get("n").unwrap();
+    assert_eq!(count_after - count_before, 1, "adding a member must create EXACTLY one new collection_keys row");
+
+    let after_res = req(&app, "GET", "/api/vault/items", &owner_token, None).await;
+    assert_eq!(after_res.status(), StatusCode::OK);
+    let after_body = body_json(after_res).await;
+    let enc_data_after = after_body[0]["enc_data"].as_str().unwrap().to_string();
+
+    assert_eq!(
+        enc_data_before, enc_data_after,
+        "adding a member must not rewrite a single byte of the item's enc_data"
+    );
+}
+
+/// Task 2 (SHARE-06): revocation is enforced on the VERY NEXT request, via
+/// the SAME still-valid bearer token (no re-login) — proving the
+/// "never cached, always resolved fresh from the DB" property end-to-end.
+#[tokio::test]
+async fn revoked_share_loses_access_on_next_request_same_session() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "revoke-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member2_token = common::register_second_family_member(&app, &owner_token, "revoke-member2@example.com").await;
+    let member2_id = user_id_of(&app, &member2_token).await;
+    let member2_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member2_token, member2_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-revoke-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let member2_sealed = seal(&member2_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member2_id,
+            "sealed_key": serde_json::to_string(&member2_sealed).unwrap(),
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    // The second member's OWN session successfully reads the collection.
+    let member2_get_res =
+        req(&app, "GET", &format!("/api/vault/collections/{collection_id}"), &member2_token, None).await;
+    assert_eq!(member2_get_res.status(), StatusCode::OK);
+
+    // The FIRST (edit) member revokes the second member's access.
+    let revoke_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/vault/collections/{collection_id}/access/{member2_id}"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(revoke_res.status(), StatusCode::NO_CONTENT);
+
+    // Reuse the SECOND member's ORIGINAL still-valid bearer token — no
+    // re-login — to GET the collection again: must now be 404, proving
+    // revocation is enforced on the very next request via the SAME session.
+    let member2_get_after_revoke_res =
+        req(&app, "GET", &format!("/api/vault/collections/{collection_id}"), &member2_token, None).await;
+    assert_eq!(member2_get_after_revoke_res.status(), StatusCode::NOT_FOUND);
+
+    // Sanity: the owner still retains their own access — only the revoked
+    // member's own share was removed, not the whole collection.
+    let owner_get_res = req(&app, "GET", &format!("/api/vault/collections/{collection_id}"), &owner_token, None).await;
+    assert_eq!(owner_get_res.status(), StatusCode::OK);
+
+    let remaining_row = sqlx::query("SELECT COUNT(*) as n FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+        .bind(&collection_id)
+        .bind(&member2_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let remaining: i64 = remaining_row.try_get("n").unwrap();
+    assert_eq!(remaining, 0, "the revoked member's collection_keys row must be gone");
+}
+
+/// Task 2 confused-deputy guard (T-22-11, RESEARCH.md Pitfall 9):
+/// `add_member` targeting a `recipient_user_id` who is NOT a family member
+/// is rejected with `400`, never silently wrapping-and-storing for an
+/// outsider.
+#[tokio::test]
+async fn add_member_rejects_non_family_member() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+
+    let owner_token = register_and_login(&app, "guard-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    // A registered user who is NOT a member of the owner's family.
+    let outsider_token = register_and_login(&app, "guard-outsider@example.com").await;
+    let outsider_id = user_id_of(&app, &outsider_token).await;
+    let outsider_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &outsider_token, outsider_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-guard-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let outsider_sealed = seal(&outsider_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": outsider_id,
+            "sealed_key": serde_json::to_string(&outsider_sealed).unwrap(),
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(
+        add_member_res.status(),
+        StatusCode::BAD_REQUEST,
+        "add_member must never wrap-and-store a sealed key for a non-family-member recipient"
+    );
+}
+
+/// Task 2 (this plan's authored prohibition): a malformed/unrecognized
+/// `access_level` on `POST .../members` is rejected with `400`, never
+/// silently coerced to a working/permissive default.
+#[tokio::test]
+async fn add_member_rejects_malformed_access_level() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "malformed-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member2_token =
+        common::register_second_family_member(&app, &owner_token, "malformed-member2@example.com").await;
+    let member2_id = user_id_of(&app, &member2_token).await;
+    let member2_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member2_token, member2_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-malformed-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let member2_sealed = seal(&member2_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member2_id,
+            "sealed_key": serde_json::to_string(&member2_sealed).unwrap(),
+            "access_level": "super-admin-mode",
+        })),
+    )
+    .await;
+    assert_eq!(
+        add_member_res.status(),
+        StatusCode::BAD_REQUEST,
+        "a malformed access_level must be rejected with 400, never silently defaulted"
+    );
+
+    // The row must NOT have been created despite the rejection.
+    let count_row = sqlx::query("SELECT COUNT(*) as n FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+        .bind(&collection_id)
+        .bind(&member2_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let count: i64 = count_row.try_get("n").unwrap();
+    assert_eq!(count, 0, "a rejected malformed access_level must never leave a collection_keys row behind");
+}
