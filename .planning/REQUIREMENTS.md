@@ -33,7 +33,8 @@ Blocks every other category. Today's hierarchy is entirely symmetric and cannot 
 
 - [ ] **KEY-01**: Every account has an X25519 identity keypair — private key wrapped by the User Key, public key published to the server. Accounts created before v0.4 get one generated on upgrade **without re-encrypting their existing vault**.
   - **PARTIAL after Phase 21.** Delivered: keypair generation, private-key wrapping under the User Key (`INFO_X25519_SK_WRAP`), and the no-re-encryption proof against committed pre-v0.4 fixture data. **Still outstanding: "public key published to the server" and on-upgrade generation** — both need the server, so they land in **Phase 22** (see ROADMAP). Flagged by 21-01's executor and confirmed by 21-VERIFICATION.md; do not mark Complete until Phase 22 delivers the server half.
-- [x] **KEY-02**: A shared collection has its own Collection Key, sealed independently to each member's public key. Adding or removing a member rewraps keys only — item ciphertext (`enc_data`) is never touched.
+- [ ] **KEY-02**: A shared collection has its own Collection Key, sealed independently to each member's public key. Adding or removing a member rewraps keys only — item ciphertext (`enc_data`) is never touched.
+  - **PARTIAL after Phase 21.** Delivered: the Collection Key type and the single-recipient `seal`/`unseal` primitive every per-member wrap is built from. **Still outstanding — both clauses are membership properties Phase 21 has no membership code for:** "sealed independently to *each member's* public key" (the per-recipient fan-out) lands in **Phase 22** with the `collection_keys` data model, and "adding or removing a member rewraps keys only — `enc_data` never touched" is provable only against the real removal path in **Phase 25**. Caught in re-verification after this row was briefly and wrongly marked Complete; do not mark Complete until both phases deliver.
 - [x] **KEY-03**: Item AAD binds the encryption **scope** (personal vs. specific collection), so an item cannot be silently reinterpreted after moving between scopes. This is a deliberate change to today's `prefix ‖ item_id ‖ revision` scheme, which encodes no notion of which key wrapped the item.
 - [x] **KEY-04**: Personal and shared key derivation use distinct, versioned domain-separation constants, following the existing `b"pv:...:v1"` convention.
 - [x] **KEY-05**: The sealed-box implementation choice — `crypto_box` crate vs. hand-assembled X25519-ECDH over the existing `aead_seal`/HKDF machinery — is made and recorded as a first-class documented decision with rationale, before any dependent code is written.
@@ -128,7 +129,7 @@ Explicitly excluded to prevent scope creep.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | KEY-01 | Phase 21 (crypto half) + Phase 22 (server publication, on-upgrade generation) | Partial |
-| KEY-02 | Phase 21 | Complete |
+| KEY-02 | Phase 21 (seal primitive) + Phase 22 (per-member fan-out) + Phase 25 (rewrap-only on removal) | Partial |
 | KEY-03 | Phase 21 | Complete |
 | KEY-04 | Phase 21 | Complete |
 | KEY-05 | Phase 21 | Complete |

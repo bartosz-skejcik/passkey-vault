@@ -111,7 +111,7 @@ Plans:
 
 **Goal**: The server exposes a family/collection data model where every membership, collection, and share mutation is authorized through one shared, uniformly-applied membership check — the security boundary the rest of the milestone builds on.
 **Depends on**: Phase 21
-**Requirements**: FAM-01, FAM-02, FAM-03, SHARE-04, SHARE-05, SHARE-06, SEC-06, KEY-01 (server half — see SC 5)
+**Requirements**: FAM-01, FAM-02, FAM-03, SHARE-04, SHARE-05, SHARE-06, SEC-06, KEY-01 (server half — see SC 5), KEY-02 (per-member fan-out — see SC 6)
 **Success Criteria** (what must be TRUE):
 
   1. An authenticated user can create a family via the API and see themselves listed as its sole member with a join timestamp; the owner can query, per member, exactly which collections and individually-shared items that member can reach.
@@ -119,6 +119,7 @@ Plans:
   3. A member with hidden-password access on an item is rejected by the server if they attempt to reassign it to a different collection — closing the exact Vaultwarden #6269 bypass, verified by a dedicated regression test replaying that scenario.
   4. The owner of a share can revoke that single share without removing the recipient from the family, and revocation is enforced on the very next request.
   5. **KEY-01 server half** (carried forward from Phase 21, which delivered only the pv-core crypto): an account's X25519 **public** key is published to and served by the server, its wrapped private key is stored as an opaque blob the server never unwraps, and an account created before v0.4 gets a keypair generated on upgrade **without re-encrypting a single byte of its existing vault**. Phase 21 proved the no-re-encryption property at the crypto layer against committed fixture data; this criterion is that property holding end-to-end through real persistence.
+  6. **KEY-02 per-member fan-out** (carried forward from Phase 21, which delivered only the single-recipient `seal` primitive): one collection's Collection Key is sealed **independently to each member's published public key** — N members yield N distinct `SealedKey` rows for the same collection, each openable only by that member's private key and by no other member's, proven with 3+ members in a test. Adding a member creates exactly one new wrap row and **rewrites no item ciphertext** (`enc_data` byte-identical before and after, asserted).
 
 **Plans**: TBD
 
@@ -156,7 +157,7 @@ Plans:
 
 **Goal**: An owner can suspend or permanently remove a family member with correctly-scoped, atomic re-key, and both the system and the UI are honest that removal cannot undo prior exposure.
 **Depends on**: Phase 21, Phase 22, Phase 23
-**Requirements**: FAM-07, FAM-08, FAM-09, FAM-10, KEY-06, KEY-07, SEC-07, UX-04
+**Requirements**: FAM-07, FAM-08, FAM-09, FAM-10, KEY-06, KEY-07, SEC-07, UX-04, KEY-02 (rewrap-only on removal — see SC 6)
 **Success Criteria** (what must be TRUE):
 
   1. An owner can suspend a member: access is revoked immediately and reversibly, with no re-key triggered.
@@ -164,6 +165,7 @@ Plans:
   3. Re-key is atomic — a fault injected mid-transaction leaves a collection in either its fully-old or fully-new state, never mixed or stranded — and the batch of new key-wraps never reuses a nonce.
   4. A suspended or removed member's existing, still-valid session loses access on its very next request; access is never carried by an already-issued token.
   5. Deleting an account that was a family member runs the same re-key path as explicit removal, and the remove/suspend confirmation UI lists what that member could see and recommends rotating those credentials, stating plainly that re-key cannot undo access they already had.
+  6. **KEY-02 rewrap-only guarantee** (the second half of KEY-02, carried forward from Phase 21): removing a member rewraps **keys only** — every affected item's `enc_data` ciphertext is byte-identical before and after the re-key, asserted directly rather than inferred from the cost measurement in SC 2. This is the clause that makes member removal cheap; SC 2 proves the *scope* is right, SC 6 proves nothing re-encrypted payloads.
 
 **Plans**: TBD
 **UI hint**: yes
