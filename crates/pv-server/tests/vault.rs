@@ -8,7 +8,9 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
+use sqlx::Row;
 use tower::ServiceExt;
 
 use common::{register_and_login, test_app, test_pool};
@@ -387,4 +389,129 @@ async fn delete_folder_removes_it_and_cross_user_delete_is_404() {
     // Deleting again is 404.
     let delete_again = req(&app, "DELETE", &format!("/api/vault/folders/{folder_id}"), &token_a, None).await;
     assert_eq!(delete_again.status(), StatusCode::NOT_FOUND);
+}
+
+// --- Direct per-item shares (Plan 22-04, Task 2 — SHARE-02 server half) ---
+
+/// Covers all three of Task 2's behavior bullets in one round trip: create
+/// succeeds for a valid family member with a published identity keypair,
+/// create rejects a non-family-member recipient with 400 (same
+/// confused-deputy guard as `collections::add_member`), and revoke removes
+/// the row — verified via a direct SQL count against `item_shares`
+/// before/after the `DELETE` call (the primary, deterministic assertion),
+/// plus a live-endpoint proof via `POST .../touch` (no single-item `GET`
+/// route exists — `vault.rs` only serves `GET /api/vault/items` as a list).
+#[tokio::test]
+async fn item_share_create_and_revoke_round_trip() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "share-owner@example.com").await;
+
+    let create_family_res =
+        req(&app, "POST", "/api/families", &owner_token, Some(json!({ "name": "Share Test Family" }))).await;
+    assert_eq!(create_family_res.status(), StatusCode::CREATED);
+
+    let member_token = common::register_second_family_member(&app, &owner_token, "share-member@example.com").await;
+
+    let member_me_res = req(&app, "GET", "/api/auth/me", &member_token, None).await;
+    assert_eq!(member_me_res.status(), StatusCode::OK);
+    let member_id = body_json(member_me_res).await["user_id"].as_str().unwrap().to_string();
+
+    // create_share's confused-deputy guard also requires a published
+    // user_keypairs row for the recipient (mirrors collections::add_member).
+    let publish_keypair_res = req(
+        &app,
+        "PUT",
+        "/api/identity/keypair",
+        &member_token,
+        Some(json!({
+            "public_key": STANDARD.encode([9u8; 32]),
+            "wrapped_secret_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"BBBB\"}",
+        })),
+    )
+    .await;
+    assert_eq!(publish_keypair_res.status(), StatusCode::OK);
+
+    // A registered user who is NOT a member of the owner's family.
+    let outsider_token = register_and_login(&app, "share-outsider@example.com").await;
+    let outsider_me_res = req(&app, "GET", "/api/auth/me", &outsider_token, None).await;
+    let outsider_id = body_json(outsider_me_res).await["user_id"].as_str().unwrap().to_string();
+
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(&app, "POST", "/api/vault/items", &owner_token, Some(item_body(&item_id))).await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    // Create succeeds for a valid family member with a published keypair.
+    let create_share_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/items/{item_id}/shares"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"sealed-item-key\"}",
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(create_share_res.status(), StatusCode::CREATED);
+
+    let count_after_create_row =
+        sqlx::query("SELECT COUNT(*) as n FROM item_shares WHERE item_id = ? AND recipient_user_id = ?")
+            .bind(&item_id)
+            .bind(&member_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let count_after_create: i64 = count_after_create_row.try_get("n").unwrap();
+    assert_eq!(count_after_create, 1, "create_share must insert exactly one item_shares row");
+
+    // Create rejects a non-family-member recipient with 400 — never silently
+    // wrap-and-store a sealed key for an outsider.
+    let create_share_outsider_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/items/{item_id}/shares"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": outsider_id,
+            "sealed_key": "{\"nonce\":\"DDDD\",\"ciphertext\":\"sealed-item-key-outsider\"}",
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(
+        create_share_outsider_res.status(),
+        StatusCode::BAD_REQUEST,
+        "create_share must never wrap-and-store a sealed key for a non-family-member recipient"
+    );
+
+    // Revoke removes the row — the primary, deterministic assertion via a
+    // direct SQL count.
+    let revoke_res =
+        req(&app, "DELETE", &format!("/api/vault/items/{item_id}/shares/{member_id}"), &owner_token, None).await;
+    assert_eq!(revoke_res.status(), StatusCode::NO_CONTENT);
+
+    let count_after_revoke_row =
+        sqlx::query("SELECT COUNT(*) as n FROM item_shares WHERE item_id = ? AND recipient_user_id = ?")
+            .bind(&item_id)
+            .bind(&member_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let count_after_revoke: i64 = count_after_revoke_row.try_get("n").unwrap();
+    assert_eq!(count_after_revoke, 0, "revoke_share must remove the item_shares row");
+
+    // Live-endpoint proof, in addition to the SQL count above: the former
+    // recipient's ONLY grant on this item (the just-revoked item_shares row)
+    // is gone, so POST .../touch (Membership<Item, RequireRead>) now 404s for
+    // them.
+    let touch_after_revoke_res =
+        req(&app, "POST", &format!("/api/vault/items/{item_id}/touch"), &member_token, None).await;
+    assert_eq!(
+        touch_after_revoke_res.status(),
+        StatusCode::NOT_FOUND,
+        "the revoked recipient must lose access on the very next request via the same still-valid session"
+    );
 }

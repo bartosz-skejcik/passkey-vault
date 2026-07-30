@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use uuid::Uuid;
 
+use super::membership::{
+    parse_access_level_from_request, require_collection_edit, Item, Membership, RequireEdit, RequireRead,
+};
 use super::session::SessionUser;
 use super::sync::{ChangeType, EntityType, SyncEvent};
 use crate::{error::ApiError, AppState};
@@ -176,17 +179,25 @@ pub struct TouchItemResponse {
 /// touch either — broadcasting one for every reveal/copy/autofill would make
 /// the metadata-only sync channel unnecessarily chatty; other devices simply
 /// pick up the new `last_used_at` on their next pull/snapshot.
+///
+/// Collection-aware (22-04-PLAN.md Task 1): `Membership<Item, RequireRead>` —
+/// marking an item "used" only requires READ access, matching NordPass-style
+/// reveal/autofill semantics; a `read`-only collection member (or a
+/// `hidden_password` holder) may still autofill a shared login. A personal
+/// item (`collection_id IS NULL`) is scoped exactly as before, via
+/// `Item::resolve_access`'s personal-ownership branch — the extractor already
+/// proved access before this handler body runs, so the query below drops the
+/// now-redundant `AND user_id = ?` filter.
 pub async fn touch(
     State(state): State<AppState>,
-    session: SessionUser,
+    _membership: Membership<Item, RequireRead>,
     Path(id): Path<String>,
 ) -> Result<Json<TouchItemResponse>, ApiError> {
     let result = sqlx::query(
-        "UPDATE vault_items SET last_used_at = datetime('now') WHERE id = ? AND user_id = ? \
+        "UPDATE vault_items SET last_used_at = datetime('now') WHERE id = ? \
          RETURNING last_used_at",
     )
     .bind(&id)
-    .bind(&session.user_id)
     .fetch_optional(&state.db)
     .await?;
 
@@ -222,13 +233,23 @@ pub struct UpdateItemResponse {
 /// `PUT /api/vault/items/{id}` — single-statement optimistic-concurrency
 /// update (RESEARCH.md Pattern 3): no separate SELECT-then-UPDATE race
 /// window. A `None` from `RETURNING updated_at` (no row matched
-/// id+user_id+revision) is disambiguated by a follow-up SELECT into
+/// id+revision) is disambiguated by a follow-up SELECT into
 /// "doesn't exist / not yours" (404) vs. "stale revision" (409) — the same
 /// disambiguation `rows_affected() == 0` drove before this change, only the
 /// zero-rows signal now comes from `fetch_optional` returning `None`.
+///
+/// Collection-aware (22-04-PLAN.md Task 1): `Membership<Item, RequireEdit>` —
+/// a personal item (`collection_id IS NULL`) is scoped exactly as before
+/// (caller must own it), expressed via `Item::resolve_access`'s
+/// personal-ownership branch rather than a query filter; a collection-scoped
+/// item additionally succeeds for any caller with `edit` access via
+/// `collection_keys`/`item_shares`. The extractor already proved access
+/// before this handler body runs, so the query below drops the now-redundant
+/// (and, for a shared item, actively WRONG — `user_id` on a shared item is
+/// the ORIGINAL creator, not every current editor) `AND user_id = ?` filter.
 pub async fn update(
     State(state): State<AppState>,
-    session: SessionUser,
+    membership: Membership<Item, RequireEdit>,
     Path(id): Path<String>,
     Json(req): Json<UpdateItemRequest>,
 ) -> Result<Json<UpdateItemResponse>, ApiError> {
@@ -241,13 +262,12 @@ pub async fn update(
 
     let result = sqlx::query(
         "UPDATE vault_items SET enc_key = ?, enc_data = ?, revision = revision + 1, updated_at = datetime('now') \
-         WHERE id = ? AND user_id = ? AND revision = ? \
+         WHERE id = ? AND revision = ? \
          RETURNING updated_at",
     )
     .bind(&req.enc_key)
     .bind(&req.enc_data)
     .bind(&id)
-    .bind(&session.user_id)
     .bind(req.expected_revision)
     .fetch_optional(&mut *tx)
     .await?;
@@ -255,9 +275,8 @@ pub async fn update(
     let row = match result {
         Some(row) => row,
         None => {
-            let exists = sqlx::query("SELECT 1 FROM vault_items WHERE id = ? AND user_id = ?")
+            let exists = sqlx::query("SELECT 1 FROM vault_items WHERE id = ?")
                 .bind(&id)
-                .bind(&session.user_id)
                 .fetch_optional(&mut *tx)
                 .await?;
             return match exists {
@@ -269,11 +288,15 @@ pub async fn update(
     let updated_at: String = row.try_get("updated_at").map_err(|_| ApiError::Internal)?;
 
     // SYNC-01: bump the per-user global change counter (see create()'s
-    // comment above for the atomicity rationale).
+    // comment above for the atomicity rationale). Bound to the CALLER's own
+    // user_id (`membership.caller_user_id`), matching this codebase's
+    // existing single-user sync semantics — broadcasting a shared item's
+    // change to every co-recipient's own sync channel is Phase 23 territory,
+    // out of this plan's scope.
     let _new_global_revision: i64 = sqlx::query_scalar(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
-    .bind(&session.user_id)
+    .bind(&membership.caller_user_id)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -285,7 +308,7 @@ pub async fn update(
     // `revision` field carries), not the global counter this bump just
     // produced.
     state.sync_hub.publish(
-        &session.user_id,
+        &membership.caller_user_id,
         SyncEvent {
             entity_type: EntityType::Item,
             id: id.clone(),
@@ -299,31 +322,34 @@ pub async fn update(
 
 /// `DELETE /api/vault/items/{id}` — permanent delete (no trash/soft-delete
 /// in this phase, per CONTEXT.md's locked decision).
+///
+/// Collection-aware (22-04-PLAN.md Task 1): `Membership<Item, RequireEdit>` —
+/// same dual-mode scoping rationale as `update()` above; the extractor
+/// already proved access, so the query drops the now-redundant (and, for a
+/// shared item, WRONG) `AND user_id = ?` filter.
 pub async fn delete(
     State(state): State<AppState>,
-    session: SessionUser,
+    membership: Membership<Item, RequireEdit>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     // WR-01: mutation + vault_revision bump run inside one transaction (see
     // create()'s comment above for the atomicity rationale).
     let mut tx = state.db.begin().await?;
 
-    let result = sqlx::query("DELETE FROM vault_items WHERE id = ? AND user_id = ?")
-        .bind(&id)
-        .bind(&session.user_id)
-        .execute(&mut *tx)
-        .await?;
+    let result = sqlx::query("DELETE FROM vault_items WHERE id = ?").bind(&id).execute(&mut *tx).await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound);
     }
 
     // SYNC-01: bump the per-user global change counter (see create()'s
-    // comment above for the atomicity rationale).
+    // comment above for the atomicity rationale). Bound to the CALLER's own
+    // user_id — see update()'s comment above on why this stays single-user
+    // scoped in this plan.
     let new_global_revision: i64 = sqlx::query_scalar(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
-    .bind(&session.user_id)
+    .bind(&membership.caller_user_id)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -334,7 +360,7 @@ pub async fn delete(
     // freshly-bumped GLOBAL vault_revision for this one call site only (per
     // 05-02-PLAN's explicit instruction).
     state.sync_hub.publish(
-        &session.user_id,
+        &membership.caller_user_id,
         SyncEvent {
             entity_type: EntityType::Item,
             id: id.clone(),
@@ -342,6 +368,240 @@ pub async fn delete(
             change_type: ChangeType::Delete,
         },
     );
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub struct MoveItemRequest {
+    /// `None` moves the item back to personal scope (`collection_id` becomes
+    /// `NULL`); `Some(dest_id)` moves it into that collection — both
+    /// directions go through this one endpoint.
+    pub new_collection_id: Option<String>,
+    /// Fresh ciphertext, re-encrypted CLIENT-SIDE under the DESTINATION
+    /// scope's Collection Key and AAD (pv-core's `build_coll_item_aad`,
+    /// Phase 21 KEY-03, binds `collection_id` into the item's AEAD
+    /// associated data) — never derived server-side, never validated for
+    /// content, just an opaque blob like every other `enc_key`/`enc_data`
+    /// pair in this codebase.
+    pub enc_key: String,
+    pub enc_data: String,
+    pub expected_revision: i64,
+}
+
+#[derive(Serialize)]
+pub struct MoveItemResponse {
+    pub revision: i64,
+    pub collection_id: Option<String>,
+    pub updated_at: String,
+}
+
+/// `PUT /api/vault/items/{id}/collection` — SHARE-04's headline fix,
+/// closing the exact Vaultwarden #6269 bypass. Two independent
+/// authorization gates fire before any DB mutation:
+///
+/// 1. `source: Membership<Item, RequireEdit>` — resolved on the item's
+///    CURRENT collection (or personal ownership, via `Item::resolve_access`).
+///    A `HiddenPassword` holder on the current collection fails
+///    `RequireEdit::satisfied_by` right here, in the extractor, BEFORE this
+///    function body ever runs — a member with hidden-password access must
+///    never be able to reassign an item into a collection where they happen
+///    to have fuller access, exposing the password to themselves. This is an
+///    ACCIDENTAL-EXPOSURE guard, never a cryptographic boundary: a
+///    hidden_password holder still HOLDS the unwrapped item key regardless of
+///    what this endpoint permits — this endpoint only controls what the
+///    SERVER will let them do with their own session, not what they could do
+///    by inspecting client-side memory. Phase 26 owns saying so explicitly in
+///    the UI; this comment must not contradict that framing.
+/// 2. `require_collection_edit()` on the DESTINATION collection, run
+///    explicitly inside this function body when `new_collection_id` is
+///    `Some` — a written-rationale addition beyond CONTEXT.md's literal SHARE-04
+///    text (this plan's objective documents the deviation): without this
+///    second, independent check, an edit-capable member of the SOURCE
+///    collection could push an item into a DESTINATION collection they hold
+///    only `read` (or no) access to at all — a variant of the same
+///    asymmetric-check bug class SHARE-05 exists to prevent.
+///
+/// The move itself is a re-encrypt-and-replace, never a bare
+/// `UPDATE vault_items SET collection_id = ?`: since `collection_id` is bound
+/// into the item's AEAD associated data (KEY-03), a bare FK reassignment
+/// would silently produce an item that can never be decrypted again. The
+/// client supplies fresh `enc_key`/`enc_data`, and this handler writes
+/// `collection_id`, `enc_key`, `enc_data`, and the optimistic-concurrency
+/// `revision` bump all in the SAME `UPDATE` statement — no code path in this
+/// file can silently retarget an item's scope without the AAD-consistent
+/// ciphertext alongside it.
+pub async fn move_item(
+    State(state): State<AppState>,
+    source: Membership<Item, RequireEdit>,
+    Path(id): Path<String>,
+    Json(req): Json<MoveItemRequest>,
+) -> Result<Json<MoveItemResponse>, ApiError> {
+    // Gate 2 (destination) — runs BEFORE any DB mutation, and before the
+    // blob-length validation below, so a caller who fails this check never
+    // learns whether their oversized blob would otherwise have been accepted.
+    if let Some(dest_id) = &req.new_collection_id {
+        require_collection_edit(&state.db, &source.caller_user_id, dest_id).await?;
+    }
+
+    validate_blob_len("enc_key", &req.enc_key)?;
+    validate_blob_len("enc_data", &req.enc_data)?;
+
+    // WR-01: mutation + vault_revision bump run inside one transaction (see
+    // create()'s comment above for the atomicity rationale).
+    let mut tx = state.db.begin().await?;
+
+    // Re-encrypt-and-replace (T-22-19): collection_id, enc_key, enc_data all
+    // update together in this ONE statement — never split across two writes.
+    let result = sqlx::query(
+        "UPDATE vault_items SET collection_id = ?, enc_key = ?, enc_data = ?, revision = revision + 1, \
+         updated_at = datetime('now') \
+         WHERE id = ? AND revision = ? \
+         RETURNING revision, updated_at",
+    )
+    .bind(&req.new_collection_id)
+    .bind(&req.enc_key)
+    .bind(&req.enc_data)
+    .bind(&id)
+    .bind(req.expected_revision)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let row = match result {
+        Some(row) => row,
+        None => {
+            // Same disambiguation shape as update()'s: a None result needs a
+            // follow-up SELECT to tell "doesn't exist" (404) from "stale
+            // revision" (409).
+            let exists = sqlx::query("SELECT 1 FROM vault_items WHERE id = ?")
+                .bind(&id)
+                .fetch_optional(&mut *tx)
+                .await?;
+            return match exists {
+                Some(_) => Err(ApiError::Conflict("stale revision".into())),
+                None => Err(ApiError::NotFound),
+            };
+        }
+    };
+    let new_revision: i64 = row.try_get("revision").map_err(|_| ApiError::Internal)?;
+    let updated_at: String = row.try_get("updated_at").map_err(|_| ApiError::Internal)?;
+
+    // SYNC-01: bump the per-user global change counter (see create()'s
+    // comment above for the atomicity rationale). Bound to the CALLER's own
+    // user_id — see update()'s comment above on why this stays single-user
+    // scoped in this plan.
+    let _new_global_revision: i64 = sqlx::query_scalar(
+        "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
+    )
+    .bind(&source.caller_user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    // SYNC-02: metadata-only push — only after commit() succeeds; same
+    // EntityType::Item / ChangeType::Update shape update() uses.
+    state.sync_hub.publish(
+        &source.caller_user_id,
+        SyncEvent {
+            entity_type: EntityType::Item,
+            id: id.clone(),
+            revision: new_revision,
+            change_type: ChangeType::Update,
+        },
+    );
+
+    Ok(Json(MoveItemResponse { revision: new_revision, collection_id: req.new_collection_id, updated_at }))
+}
+
+#[derive(Deserialize)]
+pub struct CreateItemShareRequest {
+    pub recipient_user_id: String,
+    /// The item's own key, `seal()`ed client-side to the recipient's own
+    /// `IdentityPublicKey` — opaque to this server, mirrors
+    /// `collections::AddMemberRequest::sealed_key`'s treatment.
+    pub sealed_key: String,
+    pub access_level: String,
+}
+
+/// `POST /api/vault/items/{id}/shares` — SHARE-02's server half: direct
+/// per-item sharing, independent of any collection membership. Same
+/// confused-deputy guard as `collections::add_member` (T-22-11's pattern
+/// applied to items): `recipient_user_id` must already be a family member AND
+/// have published an identity keypair before any `item_shares` row is
+/// created. The family-membership check is deliberately FAMILY-WIDE (`SELECT
+/// ... FROM family_members WHERE user_id = ?`, not scoped through the item's
+/// own collection) — v0.4 has exactly one family, and a PERSONAL item
+/// (`collection_id IS NULL`) being shared directly has no collection to
+/// derive a family from in the first place, so "any family member" is the
+/// only well-defined guard for this endpoint.
+pub async fn create_share(
+    State(state): State<AppState>,
+    membership: Membership<Item, RequireEdit>,
+    Json(req): Json<CreateItemShareRequest>,
+) -> Result<StatusCode, ApiError> {
+    // Validate BEFORE any DB work — fails closed on a malformed/unrecognized
+    // access_level string, never silently coerced to a working default
+    // (mirrors collections::add_member's own ordering).
+    parse_access_level_from_request(&req.access_level)?;
+
+    let is_family_member = sqlx::query("SELECT 1 FROM family_members WHERE user_id = ?")
+        .bind(&req.recipient_user_id)
+        .fetch_optional(&state.db)
+        .await?;
+    if is_family_member.is_none() {
+        return Err(ApiError::BadRequest("recipient is not a family member".into()));
+    }
+
+    let has_keypair = sqlx::query("SELECT 1 FROM user_keypairs WHERE user_id = ?")
+        .bind(&req.recipient_user_id)
+        .fetch_optional(&state.db)
+        .await?;
+    if has_keypair.is_none() {
+        return Err(ApiError::BadRequest("recipient has not published an identity keypair yet".into()));
+    }
+
+    validate_blob_len("sealed_key", &req.sealed_key)?;
+
+    let inserted = sqlx::query(
+        "INSERT INTO item_shares (item_id, recipient_user_id, sealed_key, access_level) \
+         VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING recipient_user_id",
+    )
+    .bind(&membership.resource_id)
+    .bind(&req.recipient_user_id)
+    .bind(&req.sealed_key)
+    .bind(&req.access_level)
+    .fetch_optional(&state.db)
+    .await?;
+
+    match inserted {
+        Some(_) => Ok(StatusCode::CREATED),
+        None => Err(ApiError::Conflict("recipient already has a share on this item".into())),
+    }
+}
+
+/// `DELETE /api/vault/items/{id}/shares/{user_id}` — removes a direct
+/// per-item share. This route has TWO path captures — this only works
+/// because `Membership<Item, RequireEdit>` reads its own `{id}` via
+/// `Path::<HashMap<String, String>>` (Plan 22-01's B1 fix), not
+/// `Path::<String>`, which would reject any route with more than one
+/// capture; this handler's own `Path<(String, String)>` then re-reads the
+/// same, still-intact `UrlParams` extension for both captures (mirrors
+/// `collections::revoke_access`'s identical shape).
+pub async fn revoke_share(
+    State(state): State<AppState>,
+    membership: Membership<Item, RequireEdit>,
+    Path((_item_id, target_user_id)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let result = sqlx::query("DELETE FROM item_shares WHERE item_id = ? AND recipient_user_id = ?")
+        .bind(&membership.resource_id)
+        .bind(&target_user_id)
+        .execute(&state.db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
