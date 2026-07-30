@@ -252,13 +252,26 @@ async fn membership_route_sweep_rejects_non_member_on_every_route() {
             .map(|(_, path)| path)
             .unwrap_or_else(|| panic!("SESSION_ONLY_ROUTES_NOT_SWEPT entries must be \"METHOD path\": {entry:?}"));
 
-        // Absent from either swept table — if a future plan accidentally
+        // (1) Absent from either swept table — if a future plan accidentally
         // moves one of these into a swept table without updating this
         // constant, or vice versa, this assertion catches the drift.
         assert!(
             !swept_paths.contains(bare),
             "{bare} is listed in SESSION_ONLY_ROUTES_NOT_SWEPT but ALSO appears in membership_routes()/\
              family_routes() — drift between the two classifications"
+        );
+
+        // (2) Present in the audited LITERAL_ROUTES_NOT_MEMBERSHIP_GATED
+        // allowlist — closes the "append a fictional exclusion to document
+        // the gap away" escape: an entry can no longer be padded into
+        // SESSION_ONLY_ROUTES_NOT_SWEPT unless the router actually registers
+        // it as a literal route AND that registration is itself accounted
+        // for in the audited allowlist.
+        assert!(
+            pv_server::routes::LITERAL_ROUTES_NOT_MEMBERSHIP_GATED.contains(&bare),
+            "{bare} is listed in SESSION_ONLY_ROUTES_NOT_SWEPT but is absent from \
+             LITERAL_ROUTES_NOT_MEMBERSHIP_GATED — cannot document a gap that isn't a real, audited router \
+             registration"
         );
     }
 }
