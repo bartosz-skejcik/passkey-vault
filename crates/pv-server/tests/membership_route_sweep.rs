@@ -241,6 +241,66 @@ async fn membership_route_sweep_rejects_non_member_on_every_route() {
     assert!(saw_get_method, "sweep must exercise at least one GET-family route");
     assert!(saw_mutating_method, "sweep must exercise at least one mutating (POST/PUT/DELETE) route");
 
+    // WR-08: U above is a total outsider — belongs to NO family — so
+    // `FamilyMembership`/`Membership<Collection|Item, M>` reject it before
+    // any collection/item-scoped logic ever runs, which proves only "an
+    // outsider cannot reach family resources" (never the hard case for a
+    // family-sharing feature). B here is a GENUINE family member — added via
+    // `register_second_family_member`, so `FamilyMembership` correctly admits
+    // them — who holds NO `collection_keys`/`item_shares` row for FAMILY-A's
+    // collection/item. This is member-vs-member isolation, the actual threat
+    // model: family membership alone must never satisfy a per-resource
+    // `Membership<R, M>` check.
+    //
+    // Deliberately scoped to `membership_entries` only (not `family_entries`)
+    // — every `membership_routes()` entry is resource-scoped via
+    // `Membership<R, M>`, exactly the routes WR-08 names (`GET
+    // /api/vault/collections/{id}`, `POST .../members`, `GET .../access`,
+    // `DELETE .../access/{user_id}`, every `/api/vault/items/{id}/*` route).
+    // `family_entries()` routes are `FamilyMembership<M>`-gated (family-WIDE,
+    // not per-resource) and have legitimate member-level successes for B
+    // (e.g. `POST /api/vault/collections` — any family member may create
+    // their own collection) that would need a second, separate expected-
+    // status table out of this coverage gap's scope; `families.rs`'s and
+    // `collections.rs`'s own test suites already cover owner-vs-member
+    // semantics on those routes.
+    let b_token = common::register_second_family_member(&app, &owner_token, "sweep-family-member@example.com").await;
+
+    for (path, _method_router) in membership_entries.iter() {
+        let target = substitute(path, &ids);
+
+        for method in ["GET", "POST", "PUT", "DELETE"] {
+            let res = req(&app, method, &target, &b_token, None).await;
+            let status = res.status();
+
+            if status == StatusCode::METHOD_NOT_ALLOWED {
+                continue;
+            }
+
+            // Per WR-08's own note: `INSUFFICIENT_LEVEL_EXCEPTIONS` stays the
+            // single source of truth for "this caller provably has SOME
+            // access, so 403 not 404" — reused here too, though every
+            // membership_routes() entry is expected to reject B with 404
+            // (B's family membership grants nothing resource-specific).
+            let key = format!("{method} {path}");
+            if INSUFFICIENT_LEVEL_EXCEPTIONS.contains(&key.as_str()) {
+                assert_eq!(
+                    status,
+                    StatusCode::FORBIDDEN,
+                    "{key} (documented insufficient-level exception) must reject B with 403, got {status}"
+                );
+            } else {
+                assert_eq!(
+                    status,
+                    StatusCode::NOT_FOUND,
+                    "{key} must reject a family member B with no per-resource grant with 404 (no access to \
+                     THIS resource — family membership alone must never satisfy a Membership<R, M> check), got \
+                     {status}"
+                );
+            }
+        }
+    }
+
     // SESSION_ONLY_ROUTES_NOT_SWEPT cross-check: give the constant real
     // teeth, not just documentation value.
     let swept_paths: HashSet<&str> =
