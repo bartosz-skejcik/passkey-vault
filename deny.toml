@@ -19,6 +19,11 @@
 # | argon2                   | 0.5.3               | yes — pv-core                           | exact-pinned Task 2 ("=0.5.3")                  |
 # | chacha20poly1305         | 0.10.1              | yes — pv-core                           | exact-pinned Task 2 ("=0.10.1")                 |
 # | crypto_box               | 0.9.1               | yes — pv-core                           | exact-pinned Phase 21 ("=0.9.1")                |
+# | crypto_secretbox         | 0.1.1               | no — transitive via crypto_box          | Cargo.lock-pin-only (Phase 21 REVIEW-FIX WR-07); AEAD + non-empty-AAD rejection depend on it |
+# | curve25519-dalek         | 4.1.3               | no — transitive via crypto_box          | Cargo.lock-pin-only (Phase 21 REVIEW-FIX WR-07); performs the X25519 scalar mult; >= 4.1.3 required for RUSTSEC-2024-0344 |
+# | curve25519-dalek-derive  | 0.1.1               | no — transitive via curve25519-dalek    | Cargo.lock-pin-only (Phase 21 REVIEW-FIX WR-07); proc-macro companion to curve25519-dalek, same pin rationale |
+# | fiat-crypto              | 0.2.9               | no — transitive via curve25519-dalek    | Cargo.lock-pin-only (Phase 21 REVIEW-FIX WR-07); formally-verified field arithmetic backend |
+# | subtle                   | 2.6.1               | yes — pv-core (Phase 21 REVIEW-FIX CR-01) | exact-pinned ("=2.6.1"); constant-time small-order X25519 public-key rejection |
 # | hkdf                     | 0.12.4              | yes — pv-core                           | exact-pinned Task 2 ("=0.12.4")                 |
 # | getrandom                | 0.2.17 / 0.3.4 / 0.4.3 (3 parallel lines) | no — transitive only | Cargo.lock-pin-only; upstream-blocked by webauthn-rs + passkey-rs per CODEBASE-GAPS.md; tracked via [bans] multiple-versions = "warn" below |
 # | openssl-sys              | 0.9.117             | no — transitive only, via webauthn-rs-core | Cargo.lock-pin-only; native CVE surface tracked via `cargo audit`'s advisory scan |
