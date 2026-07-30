@@ -782,8 +782,30 @@ mod tests {
             "pv_core::items::encrypt_item",
             "pv_core::items::decrypt_item",
         ];
-        // (b) bare identifiers — word-boundary matched.
-        let bare_needles = ["seal", "unseal", "unseal_collection_key", "unwrap_identity_secret_key"];
+        // (b) bare identifiers — word-boundary matched. WR-03: this list used
+        // to omit `encrypt_item`/`decrypt_item`/`*_for_collection` entirely
+        // (they were checked ONLY fully-qualified via `fq_needles` above, so
+        // a grouped import like `use pv_core::items::decrypt_item;` followed
+        // by a bare call evaded both lists) and omitted
+        // `unwrap_user_key`/`wrap_user_key`/`wrap_identity_secret_key`
+        // altogether — `unwrap_user_key` in particular is the single most
+        // direct zero-knowledge violation available (server-side unwrapping
+        // of the User Key) and was invisible to this audit in ANY form.
+        // Extend this list whenever `pv-core` gains a new plaintext-handling
+        // `pub fn`.
+        let bare_needles = [
+            "seal",
+            "unseal",
+            "unseal_collection_key",
+            "unwrap_identity_secret_key",
+            "wrap_identity_secret_key",
+            "unwrap_user_key",
+            "wrap_user_key",
+            "encrypt_item",
+            "decrypt_item",
+            "encrypt_item_for_collection",
+            "decrypt_item_for_collection",
+        ];
 
         for file in &files {
             if file == &self_path {
@@ -870,9 +892,51 @@ mod tests {
         // `.merge(` would be invisible to the `.route(` scan below — the ONLY
         // two documented ways `family_routes()`/`membership_routes()` fold
         // into the router is the single `.fold(api, |r, (path, mr)| r.route(path, mr))`
-        // call, which uses neither `.nest(` nor `.merge(`.
-        assert!(!body.contains(".nest("), "router_with_cors must not use .nest() — would hide routes from this scan");
-        assert!(!body.contains(".merge("), "router_with_cors must not use .merge() — would hide routes from this scan");
+        // call, which uses none of these forms.
+        //
+        // WR-02: `.nest_service(`/`.route_service(` register a real path just
+        // like `.nest(`/`.route(` do, but neither CONTAINS the shorter
+        // substring (`nest`/`route` immediately followed by `_`, not `(`), so
+        // the original two-entry check missed them entirely — a mutating
+        // endpoint could be registered via `.nest_service("/api", secret_router)`
+        // or `.route_service("/api/secret", svc)` with zero sweep coverage and
+        // a fully green test suite.
+        //
+        // `.fallback_service(` is deliberately NOT in this list: unlike
+        // `.nest(`/`.route(`/their `_service` twins, it never registers a
+        // named PATH string this scan could otherwise catch — it is the
+        // SPA-fallback catch-all applied to the whole already-built router
+        // (`api.fallback_service(serve)` below, inside this same extracted
+        // body), which is why the doc comment on
+        // `router_literal_routes_match_documented_allowlist` explains it's
+        // excluded "by name" rather than needing pattern-matching code.
+        // Forbidding it here would break that legitimate, already-reviewed
+        // use with no security benefit — it hides no membership-gated route.
+        for forbidden in [".nest(", ".nest_service(", ".merge(", ".route_service("] {
+            assert!(
+                !body.contains(forbidden),
+                "router_with_cors must not use {forbidden} — would hide routes from this scan"
+            );
+        }
+
+        // WR-02 (helper-function escape): a route registered from inside a
+        // separate helper fn — `let api = extra_routes(api);` where
+        // `extra_routes` internally calls `.route(...)` — would put that
+        // `.route(` call outside this extracted body entirely, invisible to
+        // the scan below. The only two documented rebindings of `api` in this
+        // function are its initial `Router::new()...` chain and the single
+        // trailing `family_routes().into_iter().chain(...).fold(...)` call —
+        // exactly two occurrences of `let api =`. A third occurrence means an
+        // extra rebinding (a helper-function call, or an unexpected chain)
+        // this scan cannot see into.
+        let let_api_count = body.matches("let api =").count();
+        assert_eq!(
+            let_api_count, 2,
+            "router_with_cors must rebind `api` exactly twice (the initial Router::new() chain, then the \
+             family_routes()/membership_routes() fold) — found {let_api_count} occurrences of `let api =`. A third \
+             rebinding (e.g. `let api = some_helper_fn(api);`) could register a `.route(...)` call this scan cannot \
+             see into."
+        );
 
         let mut literal_routes: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut search_from = 0usize;
