@@ -70,7 +70,7 @@ scalar and `SyncHub` is keyed by `user_id` — neither can express "someone else
 
 - [x] **SYNC-04**: A shared item edited by one member becomes visible to every other member with access, driven by a **per-collection** revision counter (not per-user, not global).
 - [x] **SYNC-05**: WebSocket push reaches exactly the current members of a collection, with membership resolved **at emit time** rather than from a cached list — so a just-removed member is never notified and a just-added one is not missed.
-- [ ] **SYNC-06**: Concurrent edits to a shared item are handled without silent data loss, extending the existing live-edit conflict affordance from v0.1.
+- [x] **SYNC-06**: Concurrent edits to a shared item are handled without silent data loss, extending the existing live-edit conflict affordance from v0.1.
 - [ ] **SYNC-07**: Sync responses leak no metadata about collections or members the requesting user does not belong to.
 - [ ] **SYNC-08**: The hardened personal `GET /api/sync` path keeps its "scoped strictly to `session.user_id`" authorization boundary — shared data arrives via a separate, additively-introduced query rather than by widening the existing one.
 
@@ -153,7 +153,7 @@ Explicitly excluded to prevent scope creep.
 | SHARE-06 | Phase 22 | Complete |
 | SYNC-04 | Phase 23 | Complete |
 | SYNC-05 | Phase 23 | Complete |
-| SYNC-06 | Phase 23 | Pending |
+| SYNC-06 | Phase 23 | Complete |
 | SYNC-07 | Phase 23 | Pending |
 | SYNC-08 | Phase 23 | Pending |
 | EXT-07 | Phase 27 | Pending |

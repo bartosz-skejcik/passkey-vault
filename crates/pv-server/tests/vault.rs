@@ -9,6 +9,8 @@ use axum::{
     http::{Request, StatusCode},
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use pv_core::identity::{seal, IdentitySecretKey};
+use pv_core::items::CollectionKey;
 use serde_json::{json, Value};
 use sqlx::Row;
 use tower::ServiceExt;
@@ -642,4 +644,167 @@ async fn fetch_items_for_is_shared() {
         coll_item["is_shared"], true,
         "a collection-scoped item must report is_shared: true regardless of item_shares rows"
     );
+}
+
+// --- 409 conflict attribution (Plan 23-03, Task 1 — SYNC-06) ---
+
+async fn publish_keypair_for_conflict_test(app: &axum::Router, token: &str, public_key: [u8; 32]) {
+    let res = req(
+        app,
+        "PUT",
+        "/api/identity/keypair",
+        token,
+        Some(json!({
+            "public_key": STANDARD.encode(public_key),
+            "wrapped_secret_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"BBBB\"}",
+        })),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK, "publishing an identity keypair must succeed");
+}
+
+/// Covers Task 1's shared-item behavior bullet: a PUT with a stale
+/// `expected_revision` on a collection-scoped item, attempted by a SECOND
+/// member (not the last editor), returns a 409 whose body carries a
+/// non-null `last_editor_email` matching the OWNER's own email — the actual
+/// last person to have successfully edited the item (D-03: full email).
+#[tokio::test]
+async fn stale_revision_conflict_attribution_on_shared_item_returns_last_editor_email() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+
+    let owner_token = register_and_login(&app, "conflict-attribution-owner@example.com").await;
+    let create_family_res =
+        req(&app, "POST", "/api/families", &owner_token, Some(json!({ "name": "Conflict Attribution Family" })))
+            .await;
+    assert_eq!(create_family_res.status(), StatusCode::CREATED);
+
+    let member_token =
+        common::register_second_family_member(&app, &owner_token, "conflict-attribution-member@example.com").await;
+    let member_me_res = req(&app, "GET", "/api/auth/me", &member_token, None).await;
+    let member_id = body_json(member_me_res).await["user_id"].as_str().unwrap().to_string();
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair_for_conflict_test(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_coll_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_coll_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_coll_res).await["id"].as_str().unwrap().to_string();
+
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    // Owner creates a personal item, then moves it into the shared collection.
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(&app, "POST", "/api/vault/items", &owner_token, Some(item_body(&item_id))).await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    let move_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &owner_token,
+        Some(json!({
+            "new_collection_id": collection_id,
+            "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"key-blob-scoped\"}",
+            "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"data-blob-scoped\"}",
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(move_res.status(), StatusCode::OK);
+
+    // The OWNER edits the item, becoming its current last_editor_user_id.
+    let owner_update_body = json!({
+        "enc_key": "{\"nonce\":\"EEEE\",\"ciphertext\":\"owner-edit-key\"}",
+        "enc_data": "{\"nonce\":\"FFFF\",\"ciphertext\":\"owner-edit-data\"}",
+        "expected_revision": 2,
+    });
+    let owner_update_res =
+        req(&app, "PUT", &format!("/api/vault/items/{item_id}"), &owner_token, Some(owner_update_body)).await;
+    assert_eq!(owner_update_res.status(), StatusCode::OK);
+
+    // The MEMBER now attempts a stale-revision update (still believes
+    // expected_revision is 2) — the 409 must attribute the conflict to the
+    // OWNER's own email.
+    let member_stale_update_body = json!({
+        "enc_key": "{\"nonce\":\"1111\",\"ciphertext\":\"member-stale-key\"}",
+        "enc_data": "{\"nonce\":\"2222\",\"ciphertext\":\"member-stale-data\"}",
+        "expected_revision": 2,
+    });
+    let member_stale_res =
+        req(&app, "PUT", &format!("/api/vault/items/{item_id}"), &member_token, Some(member_stale_update_body)).await;
+    assert_eq!(member_stale_res.status(), StatusCode::CONFLICT);
+    let member_stale_body = body_json(member_stale_res).await;
+    assert_eq!(member_stale_body["error"], "stale revision");
+    assert_eq!(
+        member_stale_body["last_editor_email"].as_str(),
+        Some("conflict-attribution-owner@example.com"),
+        "a shared item's 409 must attribute the conflict to the actual last editor's email"
+    );
+}
+
+/// Covers Task 1's personal-item behavior bullet: a PUT with a stale
+/// `expected_revision` on a PERSONAL item (never shared) returns the EXACT
+/// existing `{"error": "stale revision"}` body — no `last_editor_email` key
+/// at all, zero wording/shape change for a single-user vault.
+#[tokio::test]
+async fn stale_revision_conflict_attribution_on_personal_item_has_no_last_editor_email_key() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+    let token = register_and_login(&app, "conflict-attribution-personal@example.com").await;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    req(&app, "POST", "/api/vault/items", &token, Some(item_body(&id))).await;
+
+    let ok_update = json!({
+        "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"key-blob-2\"}",
+        "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"data-blob-2\"}",
+        "expected_revision": 1,
+    });
+    assert_eq!(
+        req(&app, "PUT", &format!("/api/vault/items/{id}"), &token, Some(ok_update)).await.status(),
+        StatusCode::OK
+    );
+
+    let stale_update = json!({
+        "enc_key": "{\"nonce\":\"EEEE\",\"ciphertext\":\"stale-attempt\"}",
+        "enc_data": "{\"nonce\":\"FFFF\",\"ciphertext\":\"stale-attempt-data\"}",
+        "expected_revision": 1,
+    });
+    let stale_res = req(&app, "PUT", &format!("/api/vault/items/{id}"), &token, Some(stale_update)).await;
+    assert_eq!(stale_res.status(), StatusCode::CONFLICT);
+    let stale_body = body_json(stale_res).await;
+    let mut keys: Vec<&str> = stale_body.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec!["error"],
+        "a personal item's 409 body must contain exactly the `error` key — no `last_editor_email` key at all"
+    );
+    assert_eq!(stale_body["error"], "stale revision");
 }

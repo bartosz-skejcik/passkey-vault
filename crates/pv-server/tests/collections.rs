@@ -1684,3 +1684,181 @@ async fn edit_item_share_recipient_cannot_move_owners_personal_item_cr02_regress
         "the owner must retain full access to her own item after the rejected re-scope attempt — nothing stranded"
     );
 }
+
+// --- Plan 23-03, Task 2 (SYNC-05): membership-change events + SC2 live add/remove test ---
+
+/// Same reserved-character percent-encoding as `tests/sync.rs::url_encode_token`
+/// — duplicated here since no shared non-`common` test helper module exists
+/// (23-PATTERNS.md).
+fn url_encode_token(token: &str) -> String {
+    token.replace('+', "%2B").replace('/', "%2F").replace('=', "%3D")
+}
+
+/// Live proof of SYNC-05's add/remove membership fan-out (SC 2): B's
+/// already-open WS receives an `EntityType::Collection` frame both right
+/// after being added to the collection AND after the owner's next item
+/// mutation inside it; after B is removed via `revoke_access`, a further
+/// owner mutation produces ZERO frames on B's STILL-OPEN socket within
+/// 500ms — mirroring `tests/sync.rs::ws_cross_user_isolation`'s
+/// timeout-based negative assertion. Proves both `add_member` and
+/// `revoke_access` emit correctly-scoped `Collection` events to a real
+/// bound socket, not a mocked hub, and that membership resolution is fresh
+/// at emit time end-to-end (never cached).
+#[tokio::test]
+async fn membership_change_events_add_then_remove_live() {
+    use futures_util::StreamExt;
+
+    let pool = test_pool().await;
+    let (app, port) = common::test_server(pool).await;
+
+    let owner_token = register_and_login(&app, "memberevents-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member_token =
+        common::register_second_family_member(&app, &owner_token, "memberevents-member@example.com").await;
+    let member_id = user_id_of(&app, &member_token).await;
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-memberevents-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    // Owner creates a personal item, then moves it into the collection —
+    // this is the target of the "owner's next item mutation" below.
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"key-blob\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"data-blob\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    let move_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &owner_token,
+        Some(json!({
+            "new_collection_id": collection_id,
+            "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"key-blob-scoped\"}",
+            "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"data-blob-scoped\"}",
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(move_res.status(), StatusCode::OK);
+
+    // B's WS connects BEFORE being added — "already-open" per this test's
+    // own name/spec.
+    let url_member = format!("ws://127.0.0.1:{port}/api/sync/ws?token={}", url_encode_token(&member_token));
+    let (mut ws_member, _) =
+        tokio_tungstenite::connect_async(&url_member).await.expect("member's token upgrades the socket");
+
+    // Owner adds B to the collection — add_member's OWN emitted event
+    // (Task 2) reaches B because the recipient set is queried FRESH after
+    // the INSERT, naturally including the just-added member.
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    let add_frame = tokio::time::timeout(std::time::Duration::from_secs(2), ws_member.next())
+        .await
+        .expect("a Collection frame must arrive within 2s after B is added")
+        .expect("stream must not end")
+        .expect("frame must not be a protocol error");
+    let add_text = match add_frame {
+        tokio_tungstenite::tungstenite::Message::Text(text) => text.to_string(),
+        other => panic!("expected a Text frame, got {other:?}"),
+    };
+    let add_parsed: Value = serde_json::from_str(&add_text).expect("frame must be valid JSON");
+    assert_eq!(add_parsed["entity_type"], "collection");
+    assert_eq!(add_parsed["id"], collection_id);
+
+    // The owner's NEXT item mutation inside the collection (an update on the
+    // already-collection-scoped item) fans out to B too — B is now a
+    // current recipient via collection_keys.
+    let owner_update_body = json!({
+        "enc_key": "{\"nonce\":\"EEEE\",\"ciphertext\":\"owner-edit-key\"}",
+        "enc_data": "{\"nonce\":\"FFFF\",\"ciphertext\":\"owner-edit-data\"}",
+        "expected_revision": 2,
+    });
+    let owner_update_res =
+        req(&app, "PUT", &format!("/api/vault/items/{item_id}"), &owner_token, Some(owner_update_body)).await;
+    assert_eq!(owner_update_res.status(), StatusCode::OK);
+
+    let mutation_frame = tokio::time::timeout(std::time::Duration::from_secs(2), ws_member.next())
+        .await
+        .expect("a Collection frame must arrive within 2s after the owner's next item mutation")
+        .expect("stream must not end")
+        .expect("frame must not be a protocol error");
+    let mutation_text = match mutation_frame {
+        tokio_tungstenite::tungstenite::Message::Text(text) => text.to_string(),
+        other => panic!("expected a Text frame, got {other:?}"),
+    };
+    let mutation_parsed: Value = serde_json::from_str(&mutation_text).expect("frame must be valid JSON");
+    assert_eq!(mutation_parsed["entity_type"], "collection");
+    assert_eq!(mutation_parsed["id"], collection_id);
+
+    // Owner revokes B's access — revoke_access's OWN emitted event queries
+    // recipients AFTER the DELETE, so B (just removed) is structurally
+    // absent and never learns of their own removal through this channel
+    // (T-23-10's mitigation).
+    let revoke_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/vault/collections/{collection_id}/access/{member_id}"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(revoke_res.status(), StatusCode::NO_CONTENT);
+
+    // A FURTHER owner mutation, after B's removal, produces ZERO frames on
+    // B's still-open socket — mirroring `ws_cross_user_isolation`'s
+    // timeout-based negative assertion.
+    let owner_update_body_2 = json!({
+        "enc_key": "{\"nonce\":\"1111\",\"ciphertext\":\"owner-edit-key-2\"}",
+        "enc_data": "{\"nonce\":\"2222\",\"ciphertext\":\"owner-edit-data-2\"}",
+        "expected_revision": 3,
+    });
+    let owner_update_res_2 =
+        req(&app, "PUT", &format!("/api/vault/items/{item_id}"), &owner_token, Some(owner_update_body_2)).await;
+    assert_eq!(owner_update_res_2.status(), StatusCode::OK);
+
+    let result = tokio::time::timeout(std::time::Duration::from_millis(500), ws_member.next()).await;
+    assert!(
+        result.is_err(),
+        "a just-removed collection member's socket must receive ZERO frames from a mutation after their removal"
+    );
+}

@@ -25,8 +25,26 @@ use sqlx::Row;
 use super::membership::{
     parse_access_level_from_request, Collection, FamilyMembership, Membership, RequireEdit, RequireRead,
 };
+use super::sync::{ChangeType, EntityType, SyncEvent};
 use super::vault::validate_blob_len;
 use crate::{error::ApiError, AppState};
+
+/// Resolves the CURRENT recipient set for `collection_id` — a fresh query,
+/// never cached (Phase 23, SYNC-05/Pitfall 17). Called by `add_member`
+/// AFTER its `INSERT` and by `revoke_access` AFTER its `DELETE`, so the
+/// just-added member is naturally included and the just-removed member is
+/// naturally excluded, with zero invalidation logic anywhere — this is the
+/// same "resolved fresh at emit time" property `vault.rs::resolve_recipients`
+/// already relies on.
+async fn resolve_collection_recipients(pool: &sqlx::SqlitePool, collection_id: &str) -> Result<Vec<String>, ApiError> {
+    let rows = sqlx::query("SELECT recipient_user_id FROM collection_keys WHERE collection_id = ?")
+        .bind(collection_id)
+        .fetch_all(pool)
+        .await?;
+    rows.into_iter()
+        .map(|row| row.try_get("recipient_user_id").map_err(|_| ApiError::Internal))
+        .collect::<Result<Vec<_>, ApiError>>()
+}
 
 #[derive(Deserialize)]
 pub struct CreateCollectionRequest {
@@ -236,10 +254,36 @@ pub async fn add_member(
     .fetch_optional(&state.db)
     .await?;
 
-    match inserted {
-        Some(_) => Ok(StatusCode::CREATED),
-        None => Err(ApiError::Conflict("recipient already has access to this collection".into())),
+    if inserted.is_none() {
+        return Err(ApiError::Conflict("recipient already has access to this collection".into()));
     }
+
+    // SYNC-05 (Phase 23, Task 2): membership just changed — fan out an
+    // EntityType::Collection event to the FULL current recipient set,
+    // queried FRESH after the INSERT above, so it naturally includes the
+    // just-added member (CONTEXT.md's hard constraint #2: membership
+    // resolution is fresh at emit time, never cached). `collections.revision`
+    // itself is NOT bumped here — only item mutations bump it (SYNC-04); this
+    // event carries the collection's CURRENT (unbumped-by-this-call)
+    // revision, matching the client contract "any Collection-typed event
+    // means: drop any cached Collection Key for this collection and
+    // re-fetch."
+    let recipients = resolve_collection_recipients(&state.db, &membership.resource_id).await?;
+    let current_revision: i64 = sqlx::query_scalar("SELECT revision FROM collections WHERE id = ?")
+        .bind(&membership.resource_id)
+        .fetch_one(&state.db)
+        .await?;
+    state.sync_hub.publish_to_recipients(
+        &recipients,
+        SyncEvent {
+            entity_type: EntityType::Collection,
+            id: membership.resource_id.clone(),
+            revision: current_revision,
+            change_type: ChangeType::Update,
+        },
+    );
+
+    Ok(StatusCode::CREATED)
 }
 
 /// `DELETE /api/vault/collections/{id}/access/{user_id}` — SHARE-06's
@@ -318,6 +362,27 @@ pub async fn revoke_access(
             None => Err(ApiError::NotFound),
         };
     }
+
+    // SYNC-05 (Phase 23, Task 2): fan out AFTER the DELETE — recipients
+    // resolved fresh now naturally EXCLUDE `target_user_id` (their
+    // collection_keys row is gone), so the just-removed member's own WS
+    // channel receives NOTHING about this collection ever again from this
+    // call (T-23-10's mitigation: never notify a removed member of their own
+    // removal through the very channel being cut).
+    let recipients = resolve_collection_recipients(&state.db, &membership.resource_id).await?;
+    let current_revision: i64 = sqlx::query_scalar("SELECT revision FROM collections WHERE id = ?")
+        .bind(&membership.resource_id)
+        .fetch_one(&state.db)
+        .await?;
+    state.sync_hub.publish_to_recipients(
+        &recipients,
+        SyncEvent {
+            entity_type: EntityType::Collection,
+            id: membership.resource_id.clone(),
+            revision: current_revision,
+            change_type: ChangeType::Update,
+        },
+    );
 
     Ok(StatusCode::NO_CONTENT)
 }
