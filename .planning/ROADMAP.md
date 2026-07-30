@@ -128,19 +128,16 @@ Plans:
 
 - [ ] 22-01-PLAN.md — Migration 0014 + Membership&lt;R,M&gt;/FamilyMembership&lt;M&gt; extractor core + family create/list/add-member/per-member breakdown (FAM-01/02/03, SEC-06+SHARE-05 foundation)
 
-**Wave 2** *(blocked on Wave 1 — shared mod.rs route-table file)*
+**Wave 2** *(blocked on Wave 1 — shared mod.rs route-table file; 22-02/22-03 touch disjoint regions of mod.rs and run in parallel)*
 
 - [ ] 22-02-PLAN.md — Identity keypair publish/serve + per-viewer verification (KEY-01 server half)
+- [ ] 22-03-PLAN.md — Collections CRUD + KEY-02 fan-out + SHARE-06 revocation + co-recipient visibility
 
 **Wave 3** *(blocked on Wave 2 — shared mod.rs)*
 
-- [ ] 22-03-PLAN.md — Collections CRUD + KEY-02 fan-out + SHARE-06 revocation + co-recipient visibility
-
-**Wave 4** *(blocked on Wave 3 — shared mod.rs)*
-
 - [ ] 22-04-PLAN.md — Collection-aware vault.rs + item move endpoint (SHARE-04 Vaultwarden #6269 fix) + item shares
 
-**Wave 5** *(blocked on Wave 4 — shared mod.rs; the phase's headline route-sweep proof)*
+**Wave 4** *(blocked on Wave 3 — shared mod.rs; the phase's headline route-sweep proof)*
 
 - [ ] 22-05-PLAN.md — Route-sweep test + zero-knowledge boundary audit (SEC-06/SHARE-05 headline)
 
