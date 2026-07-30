@@ -115,9 +115,12 @@ pub struct CollectionRevision {
 
 /// The caller's own direct (`item_shares`, `collection_id IS NULL`) items'
 /// cheap-check revision — a synthetic "bucket" with no `collections` row of
-/// its own to read a revision off, so its value is
-/// `COALESCE(MAX(vault_items.revision), 0)` over exactly those rows (D-02,
-/// RESEARCH.md Open Question 2).
+/// its own to read a revision off, so its value is the caller's own
+/// `users.shared_direct_revision` counter (D-02, RESEARCH.md Open Question 2;
+/// CR-02, code review iteration 1: this used to be
+/// `COALESCE(MAX(vault_items.revision), 0)` over exactly those rows, but a
+/// MAX over a SET cannot represent a deletion or a share-set change — see
+/// Migration 0016's own comment for the full rationale).
 #[derive(Serialize)]
 pub struct DirectBucket {
     pub revision: i64,
@@ -170,17 +173,15 @@ pub async fn pull_shared_revisions(
         .collect::<Result<Vec<_>, ApiError>>()?;
 
     // Synthetic "direct" bucket (D-02): no `collections` row backs this, so
-    // its cheap-check value is the MAX revision over the caller's own
-    // directly-shared (item_shares, collection_id IS NULL) items —
-    // COALESCE'd to 0 when the caller has none, never an error/None.
-    let direct_revision: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(vault_items.revision), 0) FROM vault_items \
-           JOIN item_shares ON item_shares.item_id = vault_items.id \
-          WHERE item_shares.recipient_user_id = ? AND vault_items.collection_id IS NULL",
-    )
-    .bind(&family.caller_user_id)
-    .fetch_one(&state.db)
-    .await?;
+    // its cheap-check value is the caller's own `users.shared_direct_revision`
+    // counter (CR-02) — bumped by `create_share`/`revoke_share`/`update`/
+    // `delete` inside their own mutation transaction, never a MAX/SUM fold
+    // over the caller's directly-shared items (which cannot represent a
+    // deletion or a share-set change).
+    let direct_revision: i64 = sqlx::query_scalar("SELECT shared_direct_revision FROM users WHERE id = ?")
+        .bind(&family.caller_user_id)
+        .fetch_one(&state.db)
+        .await?;
 
     Ok(Json(SharedRevisionsResponse { collections, direct: DirectBucket { revision: direct_revision } }))
 }
@@ -281,19 +282,15 @@ pub async fn pull_shared_direct(
     session: SessionUser,
     Query(q): Query<OptionalSyncQuery>,
 ) -> Result<Json<SharedCollectionSyncResponse>, ApiError> {
-    // Keyed off the SAME MAX(revision) shape `pull_shared_revisions`'s
-    // "direct" bucket uses above — kept independent (not extracted to a
-    // shared fn) since the two call sites' surrounding queries differ enough
-    // (this one also needs the full item body) that a helper would save
-    // little.
-    let revision: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(vault_items.revision), 0) FROM vault_items \
-           JOIN item_shares ON item_shares.item_id = vault_items.id \
-          WHERE item_shares.recipient_user_id = ? AND vault_items.collection_id IS NULL",
-    )
-    .bind(&session.user_id)
-    .fetch_one(&state.db)
-    .await?;
+    // Keyed off the SAME `users.shared_direct_revision` counter
+    // `pull_shared_revisions`'s "direct" bucket uses above (CR-02) — kept
+    // independent (not extracted to a shared fn) since the two call sites'
+    // surrounding queries differ enough (this one also needs the full item
+    // body) that a helper would save little.
+    let revision: i64 = sqlx::query_scalar("SELECT shared_direct_revision FROM users WHERE id = ?")
+        .bind(&session.user_id)
+        .fetch_one(&state.db)
+        .await?;
 
     if let Some(since) = q.since {
         if since == revision {

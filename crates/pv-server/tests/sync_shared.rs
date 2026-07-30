@@ -821,3 +821,141 @@ async fn non_member_with_live_websocket_receives_zero_frames_for_collection_they
         "a non-member must get 404 from the shared per-collection pull endpoint too, never 403"
     );
 }
+
+/// CR-01 regression (code review iteration 1): the exact "revoked creator"
+/// leak path — the CREATOR of a collection-scoped item is revoked from the
+/// collection, and a FURTHER mutation inside the collection must reach them
+/// with ZERO frames and ZERO `vault_revision` bump, even though
+/// `vault_items.user_id` (the item's original creator) still names them.
+/// `resolve_recipients`'s pre-fix unconditional `owner_user_id` insert made
+/// this leak invisible to every OTHER fixture in this file, since none of
+/// them seed a non-member who is ALSO the item's own creator — this test is
+/// the one review flagged as missing.
+#[tokio::test]
+async fn revoked_creator_of_shared_item_receives_zero_events_and_no_vault_revision_bump() {
+    let pool = test_pool().await;
+    let (app, port) = test_server(pool.clone()).await;
+
+    let owner_token = register_and_login(&app, "cr01-owner@example.com").await;
+    let create_family_res =
+        req(&app, "POST", "/api/families", &owner_token, Some(json!({ "name": "CR01 Family" }))).await;
+    assert_eq!(create_family_res.status(), StatusCode::CREATED);
+
+    let member_token = register_second_family_member(&app, &owner_token, "cr01-member@example.com").await;
+    let member_id = user_id_of(&app, &member_token).await;
+    publish_keypair(&app, &member_token, 42).await;
+
+    let create_coll_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
+            "sealed_key": "{\"nonce\":\"BBBB\",\"ciphertext\":\"sealed-coll-key-owner\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_coll_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_coll_res).await["id"].as_str().unwrap().to_string();
+
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"sealed-coll-key-member\"}",
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    // The MEMBER creates a personal item, then moves it INTO the collection
+    // — `vault_items.user_id` now names the member as this item's creator,
+    // exactly the CR-01 path 1 setup ("the creator of a collection-scoped
+    // item is revoked, but `vault_items.user_id` never changes on
+    // revocation").
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &member_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": "{\"nonce\":\"DDDD\",\"ciphertext\":\"key-blob\"}",
+            "enc_data": "{\"nonce\":\"EEEE\",\"ciphertext\":\"data-blob\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    let move_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &member_token,
+        Some(json!({
+            "new_collection_id": collection_id,
+            "enc_key": "{\"nonce\":\"FFFF\",\"ciphertext\":\"key-blob-scoped\"}",
+            "enc_data": "{\"nonce\":\"GGGG\",\"ciphertext\":\"data-blob-scoped\"}",
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(move_res.status(), StatusCode::OK, "member's move of their own item into the collection must succeed");
+
+    // Capture the member's OWN baseline vault_revision before revocation —
+    // `since=-1` is guaranteed to mismatch, so either response shape's
+    // top-level `revision` field carries the member's true current value.
+    let baseline_body = body_json(req(&app, "GET", "/api/sync?since=-1", &member_token, None).await).await;
+    let baseline_revision = baseline_body["revision"].as_i64().expect("revision field must be present");
+
+    // Owner revokes the member's access — the member (who CREATED this very
+    // item) is now a non-member of the collection.
+    let revoke_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/vault/collections/{collection_id}/access/{member_id}"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(revoke_res.status(), StatusCode::NO_CONTENT);
+
+    // The revoked member's WS connects AFTER revocation — mirrors this
+    // file's other adversarial fixtures.
+    let url_member = format!("ws://127.0.0.1:{port}/api/sync/ws?token={}", url_encode_token(&member_token));
+    let (mut ws_member, _) =
+        tokio_tungstenite::connect_async(&url_member).await.expect("member's token must still upgrade the socket");
+
+    // The owner (still a member, still holding collection_keys) edits the
+    // item the revoked member used to own.
+    let owner_update_body = json!({
+        "enc_key": "{\"nonce\":\"HHHH\",\"ciphertext\":\"owner-edit-key\"}",
+        "enc_data": "{\"nonce\":\"IIII\",\"ciphertext\":\"owner-edit-data\"}",
+        "expected_revision": 2,
+    });
+    let owner_update_res =
+        req(&app, "PUT", &format!("/api/vault/items/{item_id}"), &owner_token, Some(owner_update_body)).await;
+    assert_eq!(owner_update_res.status(), StatusCode::OK, "owner's edit of the now-revoked-member's former item must succeed");
+
+    let result = tokio::time::timeout(std::time::Duration::from_millis(500), ws_member.next()).await;
+    assert!(
+        result.is_err(),
+        "the revoked CREATOR of a collection-scoped item must receive ZERO frames for further mutations inside it"
+    );
+
+    // The revoked member's OWN vault_revision must not have moved either —
+    // their prior baseline must still match (UpToDate), proving the
+    // vault_revision bump audience also excludes them, not just the WS fan-out.
+    let after_body = body_json(req(&app, "GET", &format!("/api/sync?since={baseline_revision}"), &member_token, None).await).await;
+    assert_eq!(
+        after_body,
+        json!({ "revision": baseline_revision }),
+        "the revoked creator's own vault_revision must NOT bump as a side effect of activity in a collection they can no longer see"
+    );
+}

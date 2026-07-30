@@ -1,0 +1,21 @@
+-- Shared-data fan-out fix-up (CR-02, code review iteration 1 against Phase
+-- 23): the "direct" bucket `pull_shared_revisions`/`pull_shared_direct`
+-- expose used `COALESCE(MAX(vault_items.revision), 0)` over the caller's own
+-- directly-shared (`item_shares`, `collection_id IS NULL`) items as its
+-- cheap-check value. A MAX over a SET cannot represent every change to that
+-- set: deleting a non-max-revision shared item, or adding/revoking a share
+-- entirely, leaves the MAX unchanged, so the recipient's cheap-check stays
+-- `UpToDate` and a revoked/deleted shared item is never dropped from their
+-- store (a stale-secret exposure, not merely a UI lag).
+--
+-- `users.shared_direct_revision` replaces that fold with a real per-RECIPIENT
+-- monotonic counter, bumped inside the SAME transaction as any mutation that
+-- changes what the recipient's own direct-share bucket contains
+-- (`create_share`, `revoke_share`, and `update`/`delete` on an item that
+-- carries a direct `item_shares` row) — the exact "collections.revision"
+-- discipline already used for collection-scoped data, applied to the
+-- direct-share bucket instead. Additive only, continuing 0015's numbering
+-- and header-comment convention: no existing column is renamed or
+-- repurposed, and every existing row starts at 0 (byte-for-byte unchanged
+-- behavior until the next share mutation bumps it).
+ALTER TABLE users ADD COLUMN shared_direct_revision INTEGER NOT NULL DEFAULT 0;

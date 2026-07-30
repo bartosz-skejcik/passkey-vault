@@ -97,7 +97,6 @@ pub(crate) async fn resolve_recipients(
     owner_user_id: &str,
 ) -> Result<Vec<String>, ApiError> {
     let mut recipients: HashSet<String> = HashSet::new();
-    recipients.insert(owner_user_id.to_string());
 
     if let Some(collection_id) = collection_id {
         let rows = sqlx::query("SELECT recipient_user_id FROM collection_keys WHERE collection_id = ?")
@@ -108,6 +107,23 @@ pub(crate) async fn resolve_recipients(
             let recipient: String = row.try_get("recipient_user_id").map_err(|_| ApiError::Internal)?;
             recipients.insert(recipient);
         }
+    } else {
+        // CR-01 (code review iteration 1): the owner is unconditionally a
+        // recipient ONLY for a personal item — `Item::resolve_access`'s
+        // personal-ownership branch keeps the owner at `Edit` forever, so
+        // this fan-out audience must match that same rule exactly. A
+        // collection-scoped item's owner confers NOTHING by itself once
+        // collection-scoped (`Item::resolve_access`'s own doc comment,
+        // membership.rs) — folding them in here unconditionally kept a
+        // REVOKED creator (whose `vault_items.user_id` never changes on
+        // revocation) receiving `Collection`-typed events and
+        // `vault_revision` bumps for a collection they can no longer resolve
+        // access to, and let `move_item`'s destination side leak the
+        // destination collection's revision to an owner with no grant on
+        // it. If a collection-scoped item's owner still has real access,
+        // the `collection_keys` query above already includes them — no
+        // separate insert is needed or correct here.
+        recipients.insert(owner_user_id.to_string());
     }
 
     let item_share_rows = sqlx::query("SELECT recipient_user_id FROM item_shares WHERE item_id = ?")
@@ -120,6 +136,35 @@ pub(crate) async fn resolve_recipients(
     }
 
     Ok(recipients.into_iter().collect())
+}
+
+/// Members of `collection_id` ONLY — never the item owner, never
+/// `item_shares` recipients (CR-01, code review iteration 1). This is the
+/// audience a `Collection`-typed `SyncEvent` may legitimately reach: exactly
+/// the same set `Membership<Collection, RequireRead>` would also grant
+/// access to (`collection_keys` joined through `family_members`, mirroring
+/// `membership::Collection::resolve_access`'s own query verbatim). Callers
+/// needing the WIDER "who should learn to go pull" audience (which
+/// legitimately includes item_shares recipients and, for a personal item,
+/// its owner) must use `resolve_recipients` above instead — the two answer
+/// different questions and must never be conflated for a Collection-typed
+/// event's audience.
+pub(crate) async fn resolve_collection_members(
+    tx: &mut sqlx::SqliteConnection,
+    collection_id: &str,
+) -> Result<Vec<String>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT ck.recipient_user_id FROM collection_keys ck \
+           JOIN collections c ON c.id = ck.collection_id \
+           JOIN family_members fm ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
+          WHERE ck.collection_id = ?",
+    )
+    .bind(collection_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    rows.into_iter()
+        .map(|row| row.try_get("recipient_user_id").map_err(|_| ApiError::Internal))
+        .collect::<Result<Vec<_>, ApiError>>()
 }
 
 /// Bumps ONE collection's own revision counter (SYNC-04) and returns the new
@@ -162,6 +207,31 @@ pub(crate) async fn bump_recipients_vault_revision(
         query = query.bind(recipient);
     }
     query.execute(&mut *tx).await?;
+    Ok(())
+}
+
+/// Bumps every DIRECT item-share recipient's own `shared_direct_revision`
+/// counter (CR-02, code review iteration 1) — the monotonic counter
+/// `pull_shared_revisions`'s/`pull_shared_direct`'s "direct" bucket
+/// cheap-check now reads, replacing the old `MAX(vault_items.revision)` fold
+/// that could not represent a deletion or a share-set change. MUST be called
+/// BEFORE any `DELETE FROM vault_items` for this item (its `item_shares`
+/// rows would otherwise already have cascade-deleted, mirroring
+/// `resolve_recipients`'s own ordering requirement in `delete()` below). A
+/// no-op (zero rows matched) for an item with no `item_shares` recipients —
+/// including every collection-scoped item, since WR-10 forbids new
+/// `item_shares` rows there going forward.
+pub(crate) async fn bump_direct_share_revision(
+    tx: &mut sqlx::SqliteConnection,
+    item_id: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE users SET shared_direct_revision = shared_direct_revision + 1 \
+          WHERE id IN (SELECT recipient_user_id FROM item_shares WHERE item_id = ?)",
+    )
+    .bind(item_id)
+    .execute(&mut *tx)
+    .await?;
     Ok(())
 }
 
@@ -516,11 +586,31 @@ pub async fn update(
     // signal (2) — the recipients' vault_revision bump — is the whole
     // mechanism for those (CONTEXT.md's locked framing).
     let recipients = resolve_recipients(&mut *tx, &id, collection_id.as_deref(), &owner_user_id).await?;
+    // CR-01 (code review iteration 1): the audience for the "go pull"
+    // vault_revision bump (`recipients` above, unchanged) is intentionally a
+    // SUPERSET of collection membership (item_shares recipients, and a
+    // personal item's owner) — but the audience for a Collection-TYPED event
+    // must equal actual collection membership exactly, or a direct
+    // item_shares recipient (who has real access to THIS item but not to
+    // the collection) learns a collection's id/revision that
+    // `Membership<Collection, _>` would deny them with 404. Resolved fresh,
+    // same as `recipients`, never cached.
+    let collection_members = match &collection_id {
+        Some(cid) => Some(resolve_collection_members(&mut *tx, cid).await?),
+        None => None,
+    };
     let new_collection_revision = match &collection_id {
         Some(cid) => Some(bump_collection_revision(&mut *tx, cid).await?),
         None => None,
     };
     bump_recipients_vault_revision(&mut *tx, &recipients).await?;
+    // CR-02: an item's own direct item_shares recipients (if any — always
+    // empty for a collection-scoped item after WR-10) get their "direct"
+    // bucket counter bumped too, independent of the collection/vault_revision
+    // bumps above.
+    if collection_id.is_none() {
+        bump_direct_share_revision(&mut *tx, &id).await?;
+    }
 
     tx.commit().await?;
 
@@ -530,13 +620,16 @@ pub async fn update(
     // caller). A collection-scoped item fires ONE `EntityType::Collection`
     // event carrying the collection's OWN new revision (the existing
     // Item/Folder wire shape is unchanged, so today's web/extension WS
-    // consumers need zero parsing changes for it); a personal item with only
+    // consumers need zero parsing changes for it) — but ONLY to
+    // `collection_members` (CR-01); any recipient reached only via
+    // item_shares/ownership gets an `EntityType::Item` event instead, naming
+    // an id they provably already have access to. A personal item with only
     // direct item_shares recipients keeps the existing `EntityType::Item`
     // shape, unwidened.
-    match (&collection_id, new_collection_revision) {
-        (Some(cid), Some(new_collection_rev)) => {
+    match (&collection_id, new_collection_revision, &collection_members) {
+        (Some(cid), Some(new_collection_rev), Some(members)) => {
             state.sync_hub.publish_to_recipients(
-                &recipients,
+                members,
                 SyncEvent {
                     entity_type: EntityType::Collection,
                     id: cid.clone(),
@@ -544,6 +637,20 @@ pub async fn update(
                     change_type: ChangeType::Update,
                 },
             );
+            let members_set: HashSet<&String> = members.iter().collect();
+            let item_only: Vec<String> =
+                recipients.iter().filter(|r| !members_set.contains(r)).cloned().collect();
+            if !item_only.is_empty() {
+                state.sync_hub.publish_to_recipients(
+                    &item_only,
+                    SyncEvent {
+                        entity_type: EntityType::Item,
+                        id: id.clone(),
+                        revision: new_item_revision,
+                        change_type: ChangeType::Update,
+                    },
+                );
+            }
         }
         _ => {
             state.sync_hub.publish_to_recipients(
@@ -596,6 +703,22 @@ pub async fn delete(
     // resolve the CURRENT recipient set fresh, inside this same transaction,
     // BEFORE the cascade below removes it.
     let recipients = resolve_recipients(&mut *tx, &id, collection_id.as_deref(), &owner_user_id).await?;
+    // CR-01: see update()'s identical comment above — the Collection-typed
+    // event's audience must equal actual collection membership, never the
+    // wider `recipients` set (which correctly includes item_shares
+    // recipients/a personal owner for the vault_revision bump below, but not
+    // for this). Resolved BEFORE the DELETE, same ordering requirement as
+    // `recipients` above.
+    let collection_members = match &collection_id {
+        Some(cid) => Some(resolve_collection_members(&mut *tx, cid).await?),
+        None => None,
+    };
+    // CR-02: bump direct item_shares recipients' own "direct" bucket counter
+    // BEFORE the DELETE cascades their item_shares rows away — same ordering
+    // requirement as `resolve_recipients` above.
+    if collection_id.is_none() {
+        bump_direct_share_revision(&mut *tx, &id).await?;
+    }
 
     let result = sqlx::query("DELETE FROM vault_items WHERE id = ?").bind(&id).execute(&mut *tx).await?;
     if result.rows_affected() == 0 {
@@ -629,13 +752,16 @@ pub async fn delete(
     // SYNC-02/SYNC-05: metadata-only push — only after commit() succeeds, to
     // every resolved recipient (`publish_to_recipients`, never just the
     // caller). A collection-scoped item fires ONE `EntityType::Collection`
-    // event carrying the collection's own new revision; a personal item
-    // (only direct item_shares recipients, if any) keeps the existing
-    // `EntityType::Item`/`ChangeType::Delete` shape, unwidened.
-    match (&collection_id, new_collection_revision) {
-        (Some(cid), Some(new_collection_rev)) => {
+    // event carrying the collection's own new revision, ONLY to
+    // `collection_members` (CR-01); a recipient reached only via
+    // item_shares/ownership gets an `EntityType::Item`/`ChangeType::Delete`
+    // event instead. A personal item (only direct item_shares recipients, if
+    // any) keeps the existing `EntityType::Item`/`ChangeType::Delete` shape,
+    // unwidened.
+    match (&collection_id, new_collection_revision, &collection_members) {
+        (Some(cid), Some(new_collection_rev), Some(members)) => {
             state.sync_hub.publish_to_recipients(
-                &recipients,
+                members,
                 SyncEvent {
                     entity_type: EntityType::Collection,
                     id: cid.clone(),
@@ -643,6 +769,20 @@ pub async fn delete(
                     change_type: ChangeType::Update,
                 },
             );
+            let members_set: HashSet<&String> = members.iter().collect();
+            let item_only: Vec<String> =
+                recipients.iter().filter(|r| !members_set.contains(r)).cloned().collect();
+            if !item_only.is_empty() {
+                state.sync_hub.publish_to_recipients(
+                    &item_only,
+                    SyncEvent {
+                        entity_type: EntityType::Item,
+                        id: id.clone(),
+                        revision: new_global_revision,
+                        change_type: ChangeType::Delete,
+                    },
+                );
+            }
         }
         _ => {
             state.sync_hub.publish_to_recipients(
@@ -818,6 +958,24 @@ pub async fn move_item(
         Some(dest_id) => Some(resolve_recipients(&mut *tx, &id, Some(dest_id.as_str()), &owner_user_id).await?),
         None => None,
     };
+    // CR-01 (code review iteration 1): each side's ACTUAL collection
+    // membership, resolved fresh, never cached — this is the audience a
+    // Collection-typed event for THAT side may reach; `source_recipients`/
+    // `dest_recipients` above stay the WIDER "go pull" bump audience (which
+    // correctly still includes item_shares recipients and a non-collection-
+    // scoped owner) but must never be reused as a Collection event's
+    // audience directly, or an item_shares recipient on the item (who is
+    // not a member of either collection) — or, on the destination side, an
+    // owner with no grant there — learns a collection id/revision
+    // `Membership<Collection, _>` would deny them with 404.
+    let source_collection_members = match &current_collection {
+        Some(cid) => Some(resolve_collection_members(&mut *tx, cid).await?),
+        None => None,
+    };
+    let dest_collection_members = match &req.new_collection_id {
+        Some(cid) => Some(resolve_collection_members(&mut *tx, cid).await?),
+        None => None,
+    };
 
     let mut all_recipients: HashSet<String> = source_recipients.iter().cloned().collect();
     if let Some(dest) = &dest_recipients {
@@ -825,6 +983,16 @@ pub async fn move_item(
     }
     let all_recipients: Vec<String> = all_recipients.into_iter().collect();
     bump_recipients_vault_revision(&mut *tx, &all_recipients).await?;
+    // CR-02: bump the item's own direct item_shares recipients' "direct"
+    // bucket counter when it ends up (or stays) personal. A move BETWEEN two
+    // collections, or INTO a collection, drops any pre-existing item_shares
+    // relevance to the "direct" bucket entirely (WR-10 forbids new
+    // collection-scoped item_shares rows, and any legacy row's recipient is
+    // already covered by `bump_recipients_vault_revision` above) — so this
+    // only needs to run for the "ends up personal" case.
+    if req.new_collection_id.is_none() {
+        bump_direct_share_revision(&mut *tx, &id).await?;
+    }
 
     let new_source_collection_revision = match &current_collection {
         Some(cid) => Some(bump_collection_revision(&mut *tx, cid).await?),
@@ -840,15 +1008,29 @@ pub async fn move_item(
     // SYNC-02/SYNC-05: metadata-only push — only after commit() succeeds.
     // Two Collection-typed SyncEvents are published when both sides are
     // collections — one per collection id, EACH to its OWN resolved
-    // recipient set (`source_recipients`/`dest_recipients`), never the union
-    // — a source-only holder must never learn the destination collection's
-    // new revision, and vice versa (this is the specific leak SC 4/SYNC-07
-    // guards against). A personal-to-personal move (both sides `None`) keeps
-    // the pre-existing `EntityType::Item`/`ChangeType::Update` shape,
-    // published to the (necessarily item_shares-only) union set.
+    // COLLECTION-MEMBER set (`source_collection_members`/
+    // `dest_collection_members`, CR-01 — never `source_recipients`/
+    // `dest_recipients` directly, and never the union) — a source-only
+    // holder must never learn the destination collection's new revision,
+    // and vice versa (this is the specific leak SC 4/SYNC-07 guards
+    // against), and neither an item_shares-only recipient nor a
+    // non-member owner ever learns either collection's id/revision. A
+    // personal-to-personal move (both sides `None`) keeps the pre-existing
+    // `EntityType::Item`/`ChangeType::Update` shape, published to the
+    // (necessarily item_shares-only) union set. Any recipient reached only
+    // via item_shares/ownership on either collection side gets an
+    // `EntityType::Item` event instead of a `Collection` one, naming an id
+    // they provably already have access to.
+    let mut collection_member_union: HashSet<String> = HashSet::new();
+    if let Some(members) = &source_collection_members {
+        collection_member_union.extend(members.iter().cloned());
+    }
+    if let Some(members) = &dest_collection_members {
+        collection_member_union.extend(members.iter().cloned());
+    }
     if let Some(cid) = &current_collection {
         state.sync_hub.publish_to_recipients(
-            &source_recipients,
+            source_collection_members.as_ref().expect("source_collection_members resolved above when current_collection is Some"),
             SyncEvent {
                 entity_type: EntityType::Collection,
                 id: cid.clone(),
@@ -859,7 +1041,7 @@ pub async fn move_item(
     }
     if let Some(cid) = &req.new_collection_id {
         state.sync_hub.publish_to_recipients(
-            dest_recipients.as_ref().expect("dest_recipients resolved above when new_collection_id is Some"),
+            dest_collection_members.as_ref().expect("dest_collection_members resolved above when new_collection_id is Some"),
             SyncEvent {
                 entity_type: EntityType::Collection,
                 id: cid.clone(),
@@ -878,6 +1060,20 @@ pub async fn move_item(
                 change_type: ChangeType::Update,
             },
         );
+    } else {
+        let item_only: Vec<String> =
+            all_recipients.iter().filter(|r| !collection_member_union.contains(*r)).cloned().collect();
+        if !item_only.is_empty() {
+            state.sync_hub.publish_to_recipients(
+                &item_only,
+                SyncEvent {
+                    entity_type: EntityType::Item,
+                    id: id.clone(),
+                    revision: new_revision,
+                    change_type: ChangeType::Update,
+                },
+            );
+        }
     }
 
     Ok(Json(MoveItemResponse { revision: new_revision, collection_id: req.new_collection_id, updated_at }))
@@ -957,6 +1153,13 @@ pub async fn create_share(
 
     validate_blob_len("sealed_key", &req.sealed_key)?;
 
+    // CR-02 (code review iteration 1): the INSERT, the recipient's own
+    // `shared_direct_revision` bump, and the revision read all run in ONE
+    // transaction (WR-01 discipline) — a crash between the INSERT and the
+    // bump would otherwise durably create the share while leaving the
+    // recipient's own "direct" bucket cheap-check unaware of it.
+    let mut tx = state.db.begin().await?;
+
     let inserted = sqlx::query(
         "INSERT INTO item_shares (item_id, recipient_user_id, sealed_key, access_level) \
          VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING recipient_user_id",
@@ -965,13 +1168,41 @@ pub async fn create_share(
     .bind(&req.recipient_user_id)
     .bind(&req.sealed_key)
     .bind(&req.access_level)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
 
-    match inserted {
-        Some(_) => Ok(StatusCode::CREATED),
-        None => Err(ApiError::Conflict("recipient already has a share on this item".into())),
+    if inserted.is_none() {
+        return Err(ApiError::Conflict("recipient already has a share on this item".into()));
     }
+
+    // Bumps the RECIPIENT's own `shared_direct_revision` counter — this is
+    // what `pull_shared_revisions`'s/`pull_shared_direct`'s "direct" bucket
+    // cheap-check reads, replacing the old `MAX(vault_items.revision)` fold
+    // that could never represent a brand-new share (CR-02).
+    sqlx::query("UPDATE users SET shared_direct_revision = shared_direct_revision + 1 WHERE id = ?")
+        .bind(&req.recipient_user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    let item_revision: i64 = sqlx::query_scalar("SELECT revision FROM vault_items WHERE id = ?")
+        .bind(&membership.resource_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    // SYNC-02/SYNC-05: metadata-only push — only after commit() succeeds.
+    // This IS a legitimate new access grant for the recipient, so naming the
+    // item's own id/revision to them here leaks nothing they don't already
+    // now hold real access to (unlike a Collection-typed event, which would
+    // name a resource they may not be a member of — not reachable from this
+    // handler after WR-10's guard above anyway).
+    state.sync_hub.publish(
+        &req.recipient_user_id,
+        SyncEvent { entity_type: EntityType::Item, id: membership.resource_id.clone(), revision: item_revision, change_type: ChangeType::Create },
+    );
+
+    Ok(StatusCode::CREATED)
 }
 
 /// `DELETE /api/vault/items/{id}/shares/{user_id}` — removes a direct
@@ -987,15 +1218,42 @@ pub async fn revoke_share(
     membership: Membership<Item, RequireEdit>,
     Path((_item_id, target_user_id)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
+    // CR-02 (code review iteration 1): the DELETE and the revoked
+    // recipient's own `shared_direct_revision` bump run in ONE transaction
+    // (WR-01 discipline).
+    let mut tx = state.db.begin().await?;
+
     let result = sqlx::query("DELETE FROM item_shares WHERE item_id = ? AND recipient_user_id = ?")
         .bind(&membership.resource_id)
         .bind(&target_user_id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound);
     }
+
+    // Bumps the REVOKED recipient's own `shared_direct_revision` counter, so
+    // their OWN next `/api/sync/shared` cheap-check stops matching their
+    // stale `since` and their next `pull_shared_direct` re-fetch naturally
+    // omits the now-unshared item (its `item_shares` row is gone) — this is
+    // CR-02's headline fix: the old `MAX(vault_items.revision)` fold could
+    // not represent a revocation at all if the revoked item wasn't the
+    // recipient's max-revision share, so the item stayed visible and
+    // decrypted in their store forever. Deliberately NO WS event is
+    // published to `target_user_id` here — mirrors
+    // `collections::revoke_access`'s "never notify a removed member of
+    // their own removal through the very channel being cut": this item's
+    // id/revision is exactly what they must not keep learning about once
+    // revoked. They still discover the change, just via their own polled
+    // `GET /api/sync/shared` reading their own already-bumped counter, never
+    // a push naming the item to them.
+    sqlx::query("UPDATE users SET shared_direct_revision = shared_direct_revision + 1 WHERE id = ?")
+        .bind(&target_user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
