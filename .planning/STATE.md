@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Family & Sharing
-current_phase: 21
-current_phase_name: Crypto Foundation — Asymmetric Identity & Collection Keys
-status: executing
-last_updated: "2026-07-29T22:56:00.517Z"
+current_phase: 22
+current_phase_name: Family & Collection Data Model — Server Authorization
+status: planning
+last_updated: "2026-07-30T01:26:14.089Z"
 last_activity: 2026-07-30
-last_activity_desc: Phase 21 execution started
+last_activity_desc: Phase 21 complete, transitioned to Phase 22
 progress:
   total_phases: 7
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 5
-  completed_plans: 0
-  percent: 0
+  completed_plans: 5
+  percent: 14
 ---
 
 # Project State
@@ -27,16 +27,16 @@ See: .planning/PROJECT.md (updated 2026-07-22)
 
 ## Current Position
 
-Phase: 21 (Crypto Foundation — Asymmetric Identity & Collection Keys) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 21
-Last activity: 2026-07-30 — Phase 21 execution started
+Phase: 22 — Family & Collection Data Model — Server Authorization
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-30 — Phase 21 complete, transitioned to Phase 22
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 70 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
+- Total plans completed: 75 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
 - Average duration: - min
 - Total execution time: 0 hours (v0.3)
 
@@ -57,6 +57,7 @@ Last activity: 2026-07-30 — Phase 21 execution started
 | 18 | 2 | - | - |
 | 19 | 3 | - | - |
 | 20 | 4 | - | - |
+| 21 | 5 | - | - |
 
 *Updated after each plan completion*
 **Per-Plan Metrics:**

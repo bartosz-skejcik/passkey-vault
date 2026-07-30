@@ -63,7 +63,7 @@ Delivered: 20/20 requirements, 7/7 phases verified + Nyquist-compliant + threat-
 
 ### 🚧 v0.4 Family & Sharing (Phases 21–27) — IN PROGRESS, started 2026-07-29
 
-- [ ] **Phase 21: Crypto Foundation — Asymmetric Identity & Collection Keys** - X25519 identity keypairs and sealed Collection Keys land in pv-core, with the crypto_box-vs-hand-rolled decision made and documented first
+- [x] **Phase 21: Crypto Foundation — Asymmetric Identity & Collection Keys** - X25519 identity keypairs and sealed Collection Keys land in pv-core, with the crypto_box-vs-hand-rolled decision made and documented first (completed 2026-07-30)
 - [ ] **Phase 22: Family & Collection Data Model — Server Authorization** - Additive schema plus a uniformly-enforced membership-authorization extractor for every family/collection/item endpoint
 - [ ] **Phase 23: Sync Model Extension — Shared-Data Fan-Out** - Per-collection revision counters and emit-time WS fan-out make shared edits visible live, proven with a standing multi-session test harness
 - [ ] **Phase 24: Invitation Flow (No SMTP)** - Single-use, expiring invite links/codes join new or existing users to a family or collection without SMTP
@@ -87,7 +87,7 @@ Research: [research/v0.4/SUMMARY.md](research/v0.4/SUMMARY.md), [research/v0.4/A
   3. Personal-scope and collection-scope item encryption use distinct, versioned domain-separation constants and AAD; a blob produced under one scope's key/AAD combination provably fails to decrypt under any other scope's (automated cross-context rejection test, mirroring the existing `aad_mutation_rejected` test).
   4. An existing v0.3 account can be given an identity keypair without re-encrypting a single byte of its existing vault (verified against pre-v0.4 fixture data).
 
-**Plans:** 5/5 plans executed
+**Plans:** 5/5 plans complete
 
 Plans:
 **Wave 1**
@@ -228,7 +228,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 18. Firefox Window & Consent Hardening | v0.3 | 2/2 | Complete    | 2026-07-21 |
 | 19. Server & Supply-Chain Hardening | v0.3 | 3/3 | Complete    | 2026-07-21 |
 | 20. Test Infrastructure & CI Gate | v0.3 | 4/4 | Complete    | 2026-07-21 |
-| 21. Crypto Foundation — Asymmetric Identity & Collection Keys | v0.4 | 5/5 | In Progress|  |
+| 21. Crypto Foundation — Asymmetric Identity & Collection Keys | v0.4 | 5/5 | Complete    | 2026-07-30 |
 | 22. Family & Collection Data Model — Server Authorization | v0.4 | 0/TBD | Not started | - |
 | 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 0/TBD | Not started | - |
 | 24. Invitation Flow (No SMTP) | v0.4 | 0/TBD | Not started | - |
