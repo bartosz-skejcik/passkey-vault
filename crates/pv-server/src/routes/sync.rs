@@ -74,11 +74,22 @@ pub async fn pull(
 
 /// Which table a `SyncEvent` refers to. `snake_case` serialization matches
 /// 05-CONTEXT.md's locked wire schema (`"item"`/`"folder"`) exactly.
+///
+/// `Collection` (added Phase 23, SYNC-05): a collection-SCOPED event —
+/// carries the collection's own id in `SyncEvent`'s existing `id` field
+/// (never a new field, see `SyncEvent`'s doc comment below) and is delivered
+/// ONLY to that collection's current members via `SyncHub::publish_to_recipients`,
+/// resolved fresh at emit time. Clients treat ANY `Collection`-typed event as
+/// "drop any cached Collection Key for this collection and re-fetch" — this
+/// same contract also covers Phase 25's re-key and Phase 27's cache
+/// invalidation (Pitfall 16); no new `ChangeType` variant is needed for
+/// either, `Update` is reused.
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityType {
     Item,
     Folder,
+    Collection,
 }
 
 /// What kind of mutation happened. `snake_case` serialization matches
@@ -95,6 +106,15 @@ pub enum ChangeType {
 /// four fields ONLY — never add a field capable of holding an item's
 /// encrypted payload (T-05-04). Clients treat this purely as a "go pull"
 /// trigger, never as the data itself (SYNC-02).
+///
+/// T-05-04 extended (Phase 23, Pitfall 18): this rule now also covers
+/// sensitive METADATA, not just ciphertext/key material — no `actor`/
+/// `collection_id` field is ever added here either, since `SyncEvent`s fan
+/// out to every resolved recipient of a mutation and a field naming WHO
+/// changed something, or which OTHER collection is affected, would leak to
+/// recipients who have no business learning it. A collection-scoped event
+/// carries the collection's id in the `id` field below via
+/// `EntityType::Collection` instead of a dedicated field.
 #[derive(Clone, Serialize)]
 pub struct SyncEvent {
     pub entity_type: EntityType,
@@ -129,6 +149,23 @@ impl SyncHub {
         let map = self.0.lock().expect("sync_hub mutex poisoned");
         if let Some(tx) = map.get(user_id) {
             let _ = tx.send(event);
+        }
+    }
+
+    /// Fan-out publish for a shared mutation (SYNC-05): `recipients` MUST be
+    /// resolved fresh, inside the mutation's own transaction, at emit time —
+    /// never cached anywhere (this is the property that makes a just-added
+    /// member see the event and a just-removed member never does, with zero
+    /// invalidation logic; see `vault.rs::resolve_recipients`). Deliberately
+    /// a loop over the existing single-user `publish()` — reuses its
+    /// silent-no-op-for-no-listener semantics verbatim and does NOT re-key
+    /// `SyncHub` by collection (CONTEXT.md's locked "keep SyncHub keyed by
+    /// user_id"). A one-element `recipients` slice (e.g. a collection with no
+    /// member besides its owner) is the normal case, not a special case —
+    /// this loop runs once and returns, no panic, no error.
+    pub(crate) fn publish_to_recipients(&self, recipients: &[String], event: SyncEvent) {
+        for user_id in recipients {
+            self.publish(user_id, event.clone());
         }
     }
 
