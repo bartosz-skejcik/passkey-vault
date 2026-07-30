@@ -318,6 +318,41 @@ mod tests {
     }
 
     #[test]
+    fn collection_blob_rejected_under_personal_scope() {
+        // Kierunek odwrotny do personal_blob_rejected_under_collection_scope.
+        // SC#3 wymaga, żeby blob z JEDNEGO scope'u nie odszyfrował się pod
+        // ŻADNYM innym — jeden kierunek tego nie dowodzi, bo nie wyklucza
+        // asymetrii w budowie AAD. Ten sam materiał klucza w obu typach, więc
+        // odrzucenie wynika wyłącznie z prefiksu/AAD scope'u (IN-05).
+        let key_bytes = [7u8; KEY_LEN];
+        let ck = CollectionKey::from_bytes(key_bytes);
+        let uk = UserKey::from_bytes(key_bytes);
+
+        let item =
+            encrypt_item_for_collection(&ck, b"secret", "collection-1", "item-1", 1).unwrap();
+        assert!(matches!(
+            decrypt_item(&uk, &item, "item-1", 1),
+            Err(CryptoError::Decrypt)
+        ));
+    }
+
+    #[test]
+    fn key_wrap_prefix_not_interchangeable_with_data_prefix() {
+        // Izolacja prefiksów WEWNĄTRZ jednego scope'u: AAD key-wrapa i AAD
+        // payloadu muszą być rozróżnialne, inaczej podmiana enc_key<->enc_data
+        // przeszłaby cicho. Prefiksy są dziś parami różne, ale nic tego nie
+        // przypinało (IN-05).
+        assert_ne!(
+            build_item_aad(AAD_ITEM_KEY_PREFIX, "item-1", 0),
+            build_item_aad(AAD_ITEM_DATA_PREFIX, "item-1", 0)
+        );
+        assert_ne!(
+            build_coll_item_aad(AAD_COLL_ITEM_KEY_PREFIX, "collection-1", "item-1", 0),
+            build_coll_item_aad(AAD_COLL_ITEM_DATA_PREFIX, "collection-1", "item-1", 0)
+        );
+    }
+
+    #[test]
     fn collection_blob_rejected_under_different_collection() {
         let ck = CollectionKey::generate();
         let item =
