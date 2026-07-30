@@ -487,6 +487,19 @@ async fn item_share_create_and_revoke_round_trip() {
         "create_share must never wrap-and-store a sealed key for a non-family-member recipient"
     );
 
+    // WR-01: assert access BEFORE the revoke too — without this, the 404
+    // asserted after the revoke below cannot distinguish "revocation worked"
+    // from "the grant never conferred access in the first place" (the exact
+    // gap CR-01 shipped through). This assertion fails against the pre-CR-01
+    // code, since `item_shares` was silently ignored for personal items.
+    let touch_before_revoke_res =
+        req(&app, "POST", &format!("/api/vault/items/{item_id}/touch"), &member_token, None).await;
+    assert_eq!(
+        touch_before_revoke_res.status(),
+        StatusCode::OK,
+        "a `read` item_shares grant must actually confer access — otherwise the post-revoke 404 proves nothing"
+    );
+
     // Revoke removes the row — the primary, deterministic assertion via a
     // direct SQL count.
     let revoke_res =
