@@ -269,28 +269,54 @@ pub async fn revoke_access(
     // `Item::resolve_access`'s collection branch resolves to `None` for
     // EVERY caller once no `collection_keys` row remains, and nothing in this
     // API can ever recover them.
-    let remaining: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM collection_keys WHERE collection_id = ? AND recipient_user_id <> ?",
+    //
+    // W1 (iteration 2): the guard MUST be part of the write itself, not a
+    // separate `COUNT(*)` followed by a `DELETE` — two independent
+    // statements against `&state.db` (no `tx`) are not atomic with respect
+    // to a second concurrent request. Two concurrent revokes against a
+    // 2-key-holder collection (A revoking B, B revoking A — a double-submit
+    // from one edit-holder's UI is enough, no second actor required) could
+    // each read "the other holder is still present" before either DELETE
+    // ran, and both would then succeed, orphaning the collection — exactly
+    // the state this guard exists to prevent. Folding the "at least one
+    // OTHER key-holder still exists" check into the DELETE's own `WHERE`
+    // clause makes SQLite's single-statement execution the enforcement
+    // mechanism: the row only disappears if the EXISTS subquery is still
+    // true at the moment the DELETE actually runs.
+    let result = sqlx::query(
+        "DELETE FROM collection_keys \
+          WHERE collection_id = ? AND recipient_user_id = ? \
+            AND EXISTS (SELECT 1 FROM collection_keys \
+                         WHERE collection_id = ? AND recipient_user_id <> ?)",
     )
     .bind(&membership.resource_id)
     .bind(&target_user_id)
-    .fetch_one(&state.db)
+    .bind(&membership.resource_id)
+    .bind(&target_user_id)
+    .execute(&state.db)
     .await?;
-    if remaining == 0 {
-        return Err(ApiError::Conflict(
-            "cannot revoke the last key-holder — the collection's contents would become permanently unreadable"
-                .into(),
-        ));
-    }
-
-    let result = sqlx::query("DELETE FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
-        .bind(&membership.resource_id)
-        .bind(&target_user_id)
-        .execute(&state.db)
-        .await?;
 
     if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound);
+        // Zero rows affected is ambiguous by construction — it means EITHER
+        // "no such grant" (404) OR "the grant exists but is the last
+        // key-holder, so the EXISTS guard blocked the delete" (409).
+        // Disambiguate with one follow-up SELECT, mirroring the same
+        // `fetch_optional`-then-`match` shape `vault::update`/`vault::move_item`
+        // already use for their own stale-revision-vs-not-found split.
+        let exists: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+        )
+        .bind(&membership.resource_id)
+        .bind(&target_user_id)
+        .fetch_optional(&state.db)
+        .await?;
+        return match exists {
+            Some(_) => Err(ApiError::Conflict(
+                "cannot revoke the last key-holder — the collection's contents would become permanently unreadable"
+                    .into(),
+            )),
+            None => Err(ApiError::NotFound),
+        };
     }
 
     Ok(StatusCode::NO_CONTENT)

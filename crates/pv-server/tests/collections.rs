@@ -544,6 +544,169 @@ async fn revoke_access_rejects_emptying_the_last_key_holder() {
     assert_eq!(get_res.status(), StatusCode::OK);
 }
 
+/// **W1 (iteration 2) regression.** The last-key-holder guard above is
+/// correct for a single sequential request, but the ORIGINAL implementation
+/// (`COUNT(*)` then a separate `DELETE`, both against `&state.db` with no
+/// `tx`) is a non-transactional TOCTOU: two concurrent revokes against a
+/// collection with EXACTLY two key-holders can each observe "the other
+/// holder is still present" before either `DELETE` commits, and BOTH
+/// succeed — orphaning the collection with zero remaining `collection_keys`
+/// rows, exactly the state the guard exists to prevent. The fix folds the
+/// "at least one other key-holder still exists" check into the `DELETE`'s
+/// own `WHERE ... AND EXISTS (...)` clause so a single atomic SQL statement
+/// is the enforcement mechanism, not two independently-awaited round trips.
+///
+/// Mirrors `tests/passkeys.rs::consume_state_is_atomic_under_concurrent_callers`'s
+/// shape: `common::test_pool()` is deliberately `max_connections(1)`, which
+/// would serialize any race away and prove nothing, so this test builds its
+/// own multi-connection shared-cache in-memory pool and uses a `Barrier` to
+/// release both concurrent requests at the same instant, repeated across
+/// several trials (a single `tokio::join!` pair is not reliably enough to
+/// force the interleaving against a microsecond-scale in-memory query).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn revoke_access_last_key_holder_guard_is_atomic_under_concurrency() {
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::sync::Arc;
+    use tokio::sync::Barrier;
+
+    const TRIALS: usize = 20;
+    let mut double_wins = 0usize;
+
+    for i in 0..TRIALS {
+        // Unique shared-cache name per trial so trials (and parallel
+        // `cargo test` runs of this file) never collide on the same
+        // in-memory database.
+        let db_name = format!("w1_revoke_race_{}", uuid::Uuid::new_v4().simple());
+        let db_url = format!("file:{db_name}?mode=memory&cache=shared");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(4)
+            // Shared-cache in-memory DBs are dropped once the last connection
+            // to them closes — keep at least one idle connection alive for
+            // the pool's lifetime so migrations + both racing calls see the
+            // same DB.
+            .min_connections(1)
+            .connect(&db_url)
+            .await
+            .expect("connect shared-cache in-memory sqlite pool");
+        sqlx::migrate!("./migrations").run(&pool).await.expect("run migrations");
+
+        let app = test_app(pool.clone());
+
+        let owner_token = register_and_login(&app, &format!("w1-race-owner-{i}@example.com")).await;
+        create_family(&app, &owner_token).await;
+        let member_token = common::register_second_family_member(
+            &app,
+            &owner_token,
+            &format!("w1-race-member-{i}@example.com"),
+        )
+        .await;
+        let owner_id = user_id_of(&app, &owner_token).await;
+        let member_id = user_id_of(&app, &member_token).await;
+
+        let owner_sk = IdentitySecretKey::generate();
+        let member_sk = IdentitySecretKey::generate();
+        publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+        let ck = CollectionKey::generate();
+        let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+        let create_res = req(
+            &app,
+            "POST",
+            "/api/vault/collections",
+            &owner_token,
+            Some(json!({
+                "enc_name": "enc-w1-race-collection",
+                "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+            })),
+        )
+        .await;
+        assert_eq!(create_res.status(), StatusCode::CREATED);
+        let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+        let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+        let add_res = req(
+            &app,
+            "POST",
+            &format!("/api/vault/collections/{collection_id}/members"),
+            &owner_token,
+            Some(json!({
+                "recipient_user_id": member_id,
+                "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+                "access_level": "edit",
+            })),
+        )
+        .await;
+        assert_eq!(add_res.status(), StatusCode::CREATED);
+
+        // Exactly two key-holders now (owner, member). Race two DELETEs —
+        // A revoking B, B revoking A — released at the same instant.
+        let barrier = Arc::new(Barrier::new(2));
+        let app_a = app.clone();
+        let app_b = app.clone();
+        let owner_token_a = owner_token.clone();
+        let member_token_b = member_token.clone();
+        let collection_id_a = collection_id.clone();
+        let collection_id_b = collection_id.clone();
+        let member_id_a = member_id.clone();
+        let owner_id_b = owner_id.clone();
+        let barrier_a = barrier.clone();
+        let barrier_b = barrier.clone();
+
+        let task_a = tokio::spawn(async move {
+            barrier_a.wait().await;
+            req(
+                &app_a,
+                "DELETE",
+                &format!("/api/vault/collections/{collection_id_a}/access/{member_id_a}"),
+                &owner_token_a,
+                None,
+            )
+            .await
+            .status()
+        });
+        let task_b = tokio::spawn(async move {
+            barrier_b.wait().await;
+            req(
+                &app_b,
+                "DELETE",
+                &format!("/api/vault/collections/{collection_id_b}/access/{owner_id_b}"),
+                &member_token_b,
+                None,
+            )
+            .await
+            .status()
+        });
+
+        let (status_a, status_b) = tokio::join!(task_a, task_b);
+        let status_a = status_a.expect("task a must not panic");
+        let status_b = status_b.expect("task b must not panic");
+
+        let successes =
+            usize::from(status_a == StatusCode::NO_CONTENT) + usize::from(status_b == StatusCode::NO_CONTENT);
+        assert!(successes >= 1, "trial {i}: at least one concurrent revoke must succeed");
+        if successes == 2 {
+            double_wins += 1;
+        }
+
+        let remaining_row = sqlx::query("SELECT COUNT(*) as n FROM collection_keys WHERE collection_id = ?")
+            .bind(&collection_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let remaining: i64 = remaining_row.try_get("n").unwrap();
+        assert!(
+            remaining >= 1,
+            "trial {i}: the collection must never end up with zero key-holders (orphaned) — got {remaining}"
+        );
+    }
+
+    assert_eq!(
+        double_wins, 0,
+        "{double_wins}/{TRIALS} trials had BOTH concurrent last-key-holder revokes succeed — the \
+         atomic guard (W1, iteration 2) is broken and the collection was orphaned"
+    );
+}
+
 /// Task 2 confused-deputy guard (T-22-11, RESEARCH.md Pitfall 9):
 /// `add_member` targeting a `recipient_user_id` who is NOT a family member
 /// is rejected with `400`, never silently wrapping-and-storing for an
