@@ -154,13 +154,13 @@ Plans:
   4. A user who isn't a member of a given collection receives zero data or events about it through sync or WebSocket, even as a side effect of unrelated activity.
   5. The hardened personal `GET /api/sync` path keeps its `session.user_id`-only authorization scope unchanged; shared data arrives exclusively through a separate, additively-introduced query.
 
-**Plans:** 6 plans
+**Plans:** 2/6 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 23-01-PLAN.md — Migration 0015 (collections.revision + vault_items.last_editor_user_id) + fan-out core helpers + close update()/delete()/move_item() TODOs (tracer)
-- [ ] 23-04-PLAN.md — Standing Playwright harness scaffold in web/ (config, fixtures, smoke spec) — SEC-08 layer 2
+- [x] 23-01-PLAN.md — Migration 0015 (collections.revision + vault_items.last_editor_user_id) + fan-out core helpers + close update()/delete()/move_item() TODOs (tracer)
+- [x] 23-04-PLAN.md — Standing Playwright harness scaffold in web/ (config, fixtures, smoke spec) — SEC-08 layer 2
 
 **Wave 2** *(blocked on 23-01)*
 
@@ -268,7 +268,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 20. Test Infrastructure & CI Gate | v0.3 | 4/4 | Complete    | 2026-07-21 |
 | 21. Crypto Foundation — Asymmetric Identity & Collection Keys | v0.4 | 5/5 | Complete    | 2026-07-30 |
 | 22. Family & Collection Data Model — Server Authorization | v0.4 | 5/5 | Complete    | 2026-07-30 |
-| 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 0/6 | Not started | - |
+| 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 2/6 | In Progress|  |
 | 24. Invitation Flow (No SMTP) | v0.4 | 0/TBD | Not started | - |
 | 25. Member Removal, Suspension & Re-key | v0.4 | 0/TBD | Not started | - |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 0/TBD | Not started | - |

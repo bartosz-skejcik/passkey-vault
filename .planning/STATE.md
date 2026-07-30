@@ -4,14 +4,14 @@ milestone: v0.4
 milestone_name: Family & Sharing
 current_phase: 23
 current_phase_name: Sync Model Extension — Shared-Data Fan-Out
-status: planning
-last_updated: "2026-07-30T11:21:17.056Z"
+status: executing
+last_updated: "2026-07-30T14:20:01.930Z"
 last_activity: 2026-07-30
-last_activity_desc: Phase 22 complete, transitioned to Phase 23
+last_activity_desc: Phase 23 execution started
 progress:
   total_phases: 7
   completed_phases: 2
-  total_plans: 10
+  total_plans: 16
   completed_plans: 10
   percent: 29
 ---
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-22)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 22 — Family & Collection Data Model — Server Authorization
+**Current focus:** Phase 23 — Sync Model Extension — Shared-Data Fan-Out
 
 ## Current Position
 
-Phase: 23 — Sync Model Extension — Shared-Data Fan-Out
-Plan: 6 plans created (23-01..23-06), 4 waves — ready to execute
-Status: Planned
-Last activity: 2026-07-30 — Phase 23 planned (server fan-out core + read endpoints + attribution +
+Phase: 23 (Sync Model Extension — Shared-Data Fan-Out) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 23
+Last activity: 2026-07-30 — Phase 23 execution started
 standing web Playwright harness + live proofs + CI wiring)
 
 ## Performance Metrics
