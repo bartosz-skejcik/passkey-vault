@@ -63,6 +63,16 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
         .route("/api/vault/folders/{id}", delete(folders::delete))
         .route("/api/sync", get(sync::pull))
         .route("/api/sync/ws", get(sync::ws_handler))
+        // Phase 23, Plan 23-02 (SYNC-08/D-02): `GET /api/sync/shared/direct`
+        // is `SessionUser`-only (mirrors `/api/sync`'s own scoping exactly —
+        // every row filtered by `item_shares.recipient_user_id =
+        // session.user_id`, never a client-supplied id) — it is NOT
+        // `Membership<R,M>`/`FamilyMembership<M>`-gated because there is no
+        // shared "resource" to authorize against here, only the caller's OWN
+        // personal items that merely happen to be shared TO them. A literal
+        // `.route()` call, same rationale as `/api/sync` above; listed in
+        // `LITERAL_ROUTES_NOT_MEMBERSHIP_GATED` below.
+        .route("/api/sync/shared/direct", get(sync::pull_shared_direct))
         .route("/api/passkeys", get(passkeys::list))
         .route("/api/passkeys/register/start", post(passkeys::register_start))
         .route("/api/passkeys/register/finish", post(passkeys::register_finish))
@@ -151,6 +161,12 @@ pub fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppStat
         // here (FamilyMembership<RequireRead>, no {id} segment), never
         // registered via a literal `.route()` call.
         ("/api/vault/collections", post(collections::create).get(collections::list)),
+        // Plan 23-02 (SYNC-04/SYNC-07): the shared-pull revisions-map
+        // endpoint is pathless (no `{id}` segment — it lists EVERY collection
+        // the caller currently belongs to), so `FamilyMembership<RequireRead>`
+        // is the correct extractor, matching `POST /api/vault/collections`'s
+        // own rationale above.
+        ("/api/sync/shared", get(sync::pull_shared_revisions)),
     ]
 }
 
@@ -174,6 +190,11 @@ pub fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRouter<App
         ("/api/vault/collections/{id}/members", post(collections::add_member)),
         ("/api/vault/collections/{id}/access", get(collections::access_list)),
         ("/api/vault/collections/{id}/access/{user_id}", delete(collections::revoke_access)),
+        // Plan 23-02 (SYNC-04/SYNC-07, RESEARCH.md Open Question 1): the
+        // per-collection sync-pull endpoint is path-`{id}`-based specifically
+        // so it reuses `Membership<Collection, RequireRead>` verbatim, with
+        // zero extractor changes.
+        ("/api/vault/collections/{id}/sync", get(sync::pull_shared_collection)),
         ("/api/vault/items/{id}", put(vault::update).delete(vault::delete)),
         ("/api/vault/items/{id}/touch", post(vault::touch)),
         ("/api/vault/items/{id}/collection", put(vault::move_item)),
@@ -213,6 +234,7 @@ pub const LITERAL_ROUTES_NOT_MEMBERSHIP_GATED: &[&str] = &[
     "/api/auth/passkey-login/finish",
     "/api/sync",
     "/api/sync/ws",
+    "/api/sync/shared/direct",
     "/api/passkeys",
     "/api/passkeys/register/start",
     "/api/passkeys/register/finish",
@@ -692,10 +714,10 @@ mod tests {
     fn membership_routes_table_has_expected_cardinality() {
         // bump this literal AND extend tests/membership_route_sweep.rs's
         // per-route id substitution when adding a new membership-gated route
-        assert_eq!(membership_routes().len(), 9);
+        assert_eq!(membership_routes().len(), 10);
         // bump this literal AND extend tests/membership_route_sweep.rs's
         // per-route id substitution when adding a new family-gated route
-        assert_eq!(family_routes().len(), 3);
+        assert_eq!(family_routes().len(), 4);
     }
 
     // --- Plan 22-05: zero-knowledge boundary audit + literal-route allowlist audit ---

@@ -11,6 +11,7 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
+use base64::{engine::general_purpose::STANDARD, Engine};
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -160,6 +161,136 @@ async fn sync_is_scoped_to_the_authenticated_user() {
     let body_b = body_json(res_b).await;
     assert_eq!(body_b["revision"], 0);
     assert!(body_b.get("items").is_none(), "user B must not see any effect of user A's mutation");
+}
+
+/// SYNC-08/SC 5's textual guarantee: `GET /api/sync`'s own handler and query
+/// scope are UNCHANGED by Phase 23 — a collection member's personal
+/// snapshot still contains only rows this endpoint's pre-existing
+/// `session.user_id`-owned query would return, even after a FELLOW member
+/// edits a shared item in that same collection. The member's own
+/// `vault_revision` DOES bump (signal (2) — this is what tells their client
+/// to pull at all, CONTEXT.md's locked framing), but the shared item itself
+/// must never appear in their personal `/api/sync` snapshot: the
+/// collection-scoped arm of `fetch_items_for` is still gated by
+/// `i.user_id = ?` (ownership), never mere `collection_keys` membership —
+/// shared data arrives exclusively through `GET /api/sync/shared*` (Plan
+/// 23-02), not this endpoint.
+#[tokio::test]
+async fn personal_sync_scope_unaffected_by_fellow_collection_members_shared_edit() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "sync-collmember-owner@example.com").await;
+    assert_eq!(
+        req(&app, "POST", "/api/families", &owner_token, Some(json!({ "name": "Personal Scope Family" }))).await.status(),
+        StatusCode::CREATED
+    );
+    let owner_user_id = body_json(req(&app, "GET", "/api/auth/me", &owner_token, None).await).await["user_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let member_token = common::register_second_family_member(&app, &owner_token, "sync-collmember-member@example.com").await;
+    let member_user_id = body_json(req(&app, "GET", "/api/auth/me", &member_token, None).await).await["user_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Publish an identity keypair for the member — required by
+    // collections::add_member's confused-deputy guard; contents are opaque
+    // and never validated server-side beyond a small-order/length sanity
+    // check, so any non-zero 32-byte value works (mirrors
+    // `tests/sync_shared.rs`'s own `publish_keypair` helper — an all-zero
+    // key is a rejected small-order point).
+    let publish_res = req(
+        &app,
+        "PUT",
+        "/api/identity/keypair",
+        &member_token,
+        Some(json!({
+            "public_key": STANDARD.encode([9u8; 32]),
+            "wrapped_secret_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"BBBB\"}",
+        })),
+    )
+    .await;
+    assert_eq!(publish_res.status(), StatusCode::OK);
+
+    let create_coll_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
+            "sealed_key": "{\"nonce\":\"BBBB\",\"ciphertext\":\"sealed-coll-key-owner\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_coll_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_coll_res).await["id"].as_str().unwrap().to_string();
+
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_user_id,
+            "sealed_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"sealed-coll-key-member\"}",
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    // Seeded via raw SQL — the owner's own collection-scoped item, mirroring
+    // `tests/sync_shared.rs::setup_shared_fixture`'s identical rationale
+    // (no API path yet re-scopes an existing item into a collection outside
+    // `move_item`, and this fixture only needs a real row, not a real move).
+    let shared_item_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO vault_items (id, user_id, collection_id, enc_key, enc_data, revision) \
+         VALUES (?, ?, ?, '{\"nonce\":\"DDDD\",\"ciphertext\":\"key-blob\"}', \
+                 '{\"nonce\":\"EEEE\",\"ciphertext\":\"data-blob\"}', 1)",
+    )
+    .bind(&shared_item_id)
+    .bind(&owner_user_id)
+    .bind(&collection_id)
+    .execute(&pool)
+    .await
+    .expect("seed collection-scoped vault_items row owned by the family owner");
+
+    // The MEMBER (not the owner) edits the shared item — proving this
+    // isn't merely "the owner's own view is fine", but that a collection
+    // member with genuine edit access still can't see it via the PERSONAL
+    // endpoint.
+    let update_body = json!({
+        "enc_key": "{\"nonce\":\"FFFF\",\"ciphertext\":\"key-blob-2\"}",
+        "enc_data": "{\"nonce\":\"GGGG\",\"ciphertext\":\"data-blob-2\"}",
+        "expected_revision": 1,
+    });
+    assert_eq!(
+        req(&app, "PUT", &format!("/api/vault/items/{shared_item_id}"), &member_token, Some(update_body)).await.status(),
+        StatusCode::OK,
+        "member's edit of the shared item (they have collection-level edit access) must succeed"
+    );
+
+    // The member's OWN personal `/api/sync` — signal (2) means their own
+    // vault_revision DID bump (they are a resolved recipient of the shared
+    // mutation), so `since=0` returns a Snapshot, not UpToDate. The
+    // assertion that matters: the shared item must be ABSENT from this
+    // personal snapshot.
+    let res = req(&app, "GET", "/api/sync?since=0", &member_token, None).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = body_json(res).await;
+    assert!(body["revision"].as_i64().unwrap() > 0, "member's own vault_revision must have bumped (signal 2)");
+    let items = body["items"].as_array().expect("stale response must include an items array");
+    assert!(
+        items.is_empty(),
+        "a collection member's personal /api/sync must NEVER include an item they only have collection-level \
+         access to (not ownership) — shared data arrives exclusively through GET /api/sync/shared*, this response \
+         was: {items:?}"
+    );
 }
 
 #[tokio::test]

@@ -143,6 +143,15 @@ fn substitute(path: &str, ids: &TestIds) -> String {
         "/api/vault/collections/{id}/access/{user_id}" => {
             format!("/api/vault/collections/{}/access/{}", ids.collection_id, ids.some_user_id)
         }
+        // Plan 23-02 (SYNC-04/SYNC-07): the new path-`{id}`-based
+        // per-collection sync-pull route, `Membership<Collection,
+        // RequireRead>`-gated exactly like the other `/api/vault/collections/{id}/*`
+        // entries above.
+        "/api/vault/collections/{id}/sync" => format!("/api/vault/collections/{}/sync", ids.collection_id),
+        // Plan 23-02: the pathless revisions-map route — no `{id}` segment
+        // to substitute, same shape as `/api/vault/collections`/
+        // `/api/families/members` above.
+        "/api/sync/shared" => path.to_string(),
         "/api/vault/items/{id}" => format!("/api/vault/items/{}", ids.item_id),
         "/api/vault/items/{id}/touch" => format!("/api/vault/items/{}/touch", ids.item_id),
         "/api/vault/items/{id}/collection" => format!("/api/vault/items/{}/collection", ids.item_id),
