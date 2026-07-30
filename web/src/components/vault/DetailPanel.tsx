@@ -93,6 +93,11 @@ export default function DetailPanel({
   const folders = useFolders();
   const [mode, setMode] = useState<"view" | "edit">(initialMode);
   const [conflict, setConflict] = useState(false);
+  // Reactive (409) conflict-attribution (Plan 23-05, SYNC-06) — set
+  // alongside setConflict(true) from the caught RevisionConflictError's own
+  // lastEditorEmail; `undefined` for a personal item's conflict (byte-for-
+  // byte unchanged generic copy), a real email for a shared item's.
+  const [conflictEditorEmail, setConflictEditorEmail] = useState<string | undefined>(undefined);
   // Proactive live-edit-conflict banner (SYNC-03) — a SECOND, independently
   // controlled trigger path alongside the reactive save-time `conflict`
   // state above; never merged into one boolean. Captured only at edit-entry
@@ -126,6 +131,7 @@ export default function DetailPanel({
   useEffect(() => {
     setMode(initialMode);
     setConflict(false);
+    setConflictEditorEmail(undefined);
     if (initialMode === "edit") {
       setEditBaselineRevision(item.revision);
     }
@@ -162,6 +168,7 @@ export default function DetailPanel({
 
   function startEditing() {
     setConflict(false);
+    setConflictEditorEmail(undefined);
     setEditBaselineRevision(item.revision);
     setMode("edit");
   }
@@ -293,13 +300,23 @@ export default function DetailPanel({
               data-testid="revision-conflict-banner"
               className="alert alert-error text-sm"
             >
-              {t("error.revisionConflict")}
+              {conflictEditorEmail
+                ? interpolate(t("error.revisionConflictAttributed"), {
+                    email: conflictEditorEmail,
+                  })
+                : t("error.revisionConflict")}
             </div>
           ) : null}
           {liveConflict ? (
             <div data-testid="live-edit-conflict-banner" className="alert alert-error text-sm">
               <div className="flex w-full flex-col gap-2">
-                <span>{t("sync.itemChangedElsewhere")}</span>
+                <span>
+                  {item.isShared && item.lastEditorEmail
+                    ? interpolate(t("sync.itemChangedElsewhereAttributed"), {
+                        email: item.lastEditorEmail,
+                      })
+                    : t("sync.itemChangedElsewhere")}
+                </span>
                 <span className="text-xs opacity-70">
                   {t("sync.itemChangedElsewhereConsequence")}
                 </span>
@@ -324,11 +341,13 @@ export default function DetailPanel({
             initialFields={item.fields}
             onCreated={() => {
               setConflict(false);
+              setConflictEditorEmail(undefined);
               setMode("view");
             }}
             onError={(err) => {
               if (err instanceof RevisionConflictError) {
                 setConflict(true);
+                setConflictEditorEmail(err.lastEditorEmail);
               }
             }}
           />
