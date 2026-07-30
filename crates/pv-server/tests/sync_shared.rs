@@ -544,3 +544,280 @@ async fn move_item_bumps_both_collections_each_notified_only_own_recipients() {
     let no_second_frame_b = tokio::time::timeout(std::time::Duration::from_millis(300), ws_b.next()).await;
     assert!(no_second_frame_b.is_err(), "memberB must never receive a second frame (the source collection's event)");
 }
+
+// --- Plan 23-02: shared-pull read endpoints ---
+
+/// `GET /api/sync/shared`'s must-have zero-collections shape (Task 1's own
+/// acceptance criteria): a genuine family member (NOT the zero-family-
+/// membership case below) with no collection memberships and no direct
+/// shares gets `{"collections":[],"direct":{"revision":0}}` — never an
+/// error, never a differently-shaped body.
+#[tokio::test]
+async fn shared_revisions_pull_returns_empty_arrays_for_family_member_with_no_grants() {
+    let pool = test_pool().await;
+    let (app, _port) = test_server(pool).await;
+
+    let owner_token = register_and_login(&app, "sr23-02-owner-empty@example.com").await;
+    assert_eq!(
+        req(&app, "POST", "/api/families", &owner_token, Some(json!({ "name": "Empty Grants Family" }))).await.status(),
+        StatusCode::CREATED
+    );
+
+    let res = req(&app, "GET", "/api/sync/shared", &owner_token, None).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = body_json(res).await;
+    assert_eq!(
+        body,
+        json!({ "collections": [], "direct": { "revision": 0 } }),
+        "a family member with zero collection memberships and zero direct shares must get exactly this shape"
+    );
+}
+
+/// SC 4/SYNC-07's must-have truth, stated for `GET /api/sync/shared`
+/// specifically: a caller with NO `family_members` row at all gets `404`,
+/// never a `200` with empty arrays — existence of the sharing feature must
+/// never be confirmed via a differently-shaped empty response.
+#[tokio::test]
+async fn shared_revisions_pull_returns_404_for_caller_with_no_family_membership_at_all() {
+    let pool = test_pool().await;
+    let (app, _port) = test_server(pool).await;
+    let token = register_and_login(&app, "sr23-02-no-family@example.com").await;
+
+    let res = req(&app, "GET", "/api/sync/shared", &token, None).await;
+    assert_eq!(
+        res.status(),
+        StatusCode::NOT_FOUND,
+        "a caller with zero family membership must get 404 from GET /api/sync/shared, never an empty-array 200 \
+         — existence of the sharing feature must not be confirmed via a differently-shaped empty response"
+    );
+}
+
+/// `pull_shared_revisions` positive path: a real collection member sees
+/// their own collection listed with its current revision, plus the "direct"
+/// bucket. Uses `setup_shared_fixture`'s owner+member+collection+item
+/// fixture, then bumps the collection once via a real `PUT` to prove the
+/// revision reflected here is the SAME live counter the WS fan-out reads,
+/// never a stale/cached value.
+#[tokio::test]
+async fn shared_revisions_pull_lists_members_own_collection_with_current_revision() {
+    let pool = test_pool().await;
+    let fixture = setup_shared_fixture(pool).await;
+
+    let before = body_json(req(&fixture.app, "GET", "/api/sync/shared", &fixture.member_token, None).await).await;
+    assert_eq!(
+        before,
+        json!({ "collections": [{ "id": fixture.collection_id, "revision": 0 }], "direct": { "revision": 0 } }),
+        "member's own collection must appear with its starting revision 0 and no direct-bucket entries"
+    );
+
+    let update_body = json!({
+        "enc_key": "{\"nonce\":\"YYYY\",\"ciphertext\":\"key-blob-6\"}",
+        "enc_data": "{\"nonce\":\"ZZZZ\",\"ciphertext\":\"data-blob-6\"}",
+        "expected_revision": 1,
+    });
+    assert_eq!(
+        req(&fixture.app, "PUT", &format!("/api/vault/items/{}", fixture.item_id), &fixture.owner_token, Some(update_body))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    let after = body_json(req(&fixture.app, "GET", "/api/sync/shared", &fixture.member_token, None).await).await;
+    assert_eq!(
+        after["collections"][0]["revision"], 1,
+        "the SAME collection's revision must reflect the just-committed bump, not a cached/stale value"
+    );
+}
+
+/// `pull_shared_collection`'s cheap-check contract (SYNC-04): an absent
+/// `since` always degrades to a full snapshot; a `since` matching the
+/// collection's CURRENT revision returns `UpToDate` instead.
+#[tokio::test]
+async fn shared_collection_pull_full_snapshot_without_since_and_up_to_date_when_matching() {
+    let pool = test_pool().await;
+    let fixture = setup_shared_fixture(pool).await;
+
+    let no_since = body_json(
+        req(&fixture.app, "GET", &format!("/api/vault/collections/{}/sync", fixture.collection_id), &fixture.member_token, None).await,
+    )
+    .await;
+    let items = no_since["items"].as_array().expect("no `since` at all must always degrade to a full snapshot");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], fixture.item_id);
+    assert_eq!(items[0]["is_shared"], true, "every item returned by this endpoint is shared by construction");
+
+    let up_to_date = body_json(
+        req(
+            &fixture.app,
+            "GET",
+            &format!("/api/vault/collections/{}/sync?since=0", fixture.collection_id),
+            &fixture.member_token,
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(up_to_date, json!({ "revision": 0 }), "since=0 matching the collection's own starting revision must return UpToDate, no items key");
+}
+
+/// SC 4/SYNC-07 for `pull_shared_collection` specifically (the route-sweep
+/// test already covers this structurally across every `membership_routes()`
+/// entry; this test pins the exact 404-not-403 behavior for THIS new route
+/// by name, matching the plan's own written acceptance criteria).
+#[tokio::test]
+async fn shared_collection_pull_rejects_non_member_with_404_never_403() {
+    let pool = test_pool().await;
+    let fixture = setup_shared_fixture(pool).await;
+    let outsider_token = register_and_login(&fixture.app, "sr23-02-collpull-outsider@example.com").await;
+
+    let res = req(&fixture.app, "GET", &format!("/api/vault/collections/{}/sync", fixture.collection_id), &outsider_token, None).await;
+    assert_eq!(
+        res.status(),
+        StatusCode::NOT_FOUND,
+        "a non-member must get 404 from the per-collection shared-pull endpoint, never 403 (existence must not leak)"
+    );
+}
+
+/// `pull_shared_direct` positive path: a directly-shared PERSONAL item
+/// (`item_shares`, `collection_id IS NULL`) is returned to its recipient,
+/// with `is_shared: true` and the correct revision — proving this endpoint's
+/// query is independent of `pull_shared_collection`'s collection-scoped one.
+#[tokio::test]
+async fn shared_direct_pull_returns_recipients_own_directly_shared_items() {
+    let pool = test_pool().await;
+    let (app, _port) = test_server(pool.clone()).await;
+
+    let owner_token = register_and_login(&app, "sr23-02-direct-owner@example.com").await;
+    assert_eq!(
+        req(&app, "POST", "/api/families", &owner_token, Some(json!({ "name": "Direct Share Family" }))).await.status(),
+        StatusCode::CREATED
+    );
+    let recipient_token = register_second_family_member(&app, &owner_token, "sr23-02-direct-recipient@example.com").await;
+    publish_keypair(&app, &recipient_token, 33).await;
+    let recipient_id = user_id_of(&app, &recipient_token).await;
+
+    let item_id = uuid::Uuid::new_v4().to_string();
+    assert_eq!(
+        req(
+            &app,
+            "POST",
+            "/api/vault/items",
+            &owner_token,
+            Some(json!({
+                "id": item_id,
+                "enc_key": "{\"nonce\":\"1111\",\"ciphertext\":\"direct-key\"}",
+                "enc_data": "{\"nonce\":\"2222\",\"ciphertext\":\"direct-data\"}",
+            })),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+
+    let share_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/items/{item_id}/shares"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": recipient_id,
+            "sealed_key": "{\"nonce\":\"3333\",\"ciphertext\":\"sealed-item-key\"}",
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(share_res.status(), StatusCode::CREATED);
+
+    let pull_res = req(&app, "GET", "/api/sync/shared/direct", &recipient_token, None).await;
+    assert_eq!(pull_res.status(), StatusCode::OK);
+    let body = body_json(pull_res).await;
+    let items = body["items"].as_array().expect("no `since` must always degrade to a full snapshot");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], item_id);
+    assert_eq!(items[0]["is_shared"], true);
+
+    // Someone with NO share on this item sees nothing at all — asserted via
+    // `since=0` (their own direct-bucket revision, since they have no
+    // shares at all) to get the cheap UpToDate shape rather than an empty
+    // Snapshot, proving the revision-compare path also works correctly at 0.
+    let stranger_token = register_and_login(&app, "sr23-02-direct-stranger@example.com").await;
+    let stranger_body =
+        body_json(req(&app, "GET", "/api/sync/shared/direct?since=0", &stranger_token, None).await).await;
+    assert_eq!(stranger_body, json!({ "revision": 0 }), "a caller with no direct shares gets UpToDate at revision 0, not an error");
+}
+
+/// SC 4's "even as a side effect of unrelated activity" (CONTEXT.md's
+/// Specifics guidance): the interesting adversarial case is NOT "a
+/// non-member calls the shared endpoint" — it is a non-member with a
+/// genuinely LIVE, open WebSocket (proven live by first observing their own
+/// personal-vault mutation's frame) receiving ZERO further frames when a
+/// collection they cannot see is mutated by its real members, AND being
+/// rejected with 404 (never 403) from the new per-collection pull endpoint
+/// for that same collection. Proving the socket is live first is what makes
+/// the zero-frames assertion meaningful — a socket that never receives
+/// anything at all would prove nothing about THIS specific leak.
+#[tokio::test]
+async fn non_member_with_live_websocket_receives_zero_frames_for_collection_they_cannot_see() {
+    let pool = test_pool().await;
+    let fixture = setup_shared_fixture(pool).await;
+    let outsider_token = register_and_login(&fixture.app, "sr23-02-live-outsider@example.com").await;
+
+    let url_outsider =
+        format!("ws://127.0.0.1:{}/api/sync/ws?token={}", fixture.port, url_encode_token(&outsider_token));
+    let (mut ws_outsider, _) =
+        tokio_tungstenite::connect_async(&url_outsider).await.expect("outsider's own token must upgrade the socket");
+
+    // Prove the socket is genuinely live: the outsider's own UNRELATED
+    // personal-vault mutation produces exactly one frame (their own
+    // Item-typed event) — this rules out "the socket never receives
+    // anything" as a confound for the zero-frames assertion below.
+    let own_item_id = uuid::Uuid::new_v4().to_string();
+    let create_res = req(
+        &fixture.app,
+        "POST",
+        "/api/vault/items",
+        &outsider_token,
+        Some(json!({
+            "id": own_item_id,
+            "enc_key": "{\"nonce\":\"4444\",\"ciphertext\":\"own-key\"}",
+            "enc_data": "{\"nonce\":\"5555\",\"ciphertext\":\"own-data\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+
+    let own_frame = recv_ws_json(&mut ws_outsider).await;
+    assert_eq!(
+        own_frame["entity_type"], "item",
+        "outsider's own unrelated personal mutation must produce their own Item event, proving the socket is genuinely live"
+    );
+
+    // Now a REAL member mutates the collection the outsider cannot see.
+    let update_body = json!({
+        "enc_key": "{\"nonce\":\"6666\",\"ciphertext\":\"key-blob-shared\"}",
+        "enc_data": "{\"nonce\":\"7777\",\"ciphertext\":\"data-blob-shared\"}",
+        "expected_revision": 1,
+    });
+    assert_eq!(
+        req(&fixture.app, "PUT", &format!("/api/vault/items/{}", fixture.item_id), &fixture.owner_token, Some(update_body))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    let result = tokio::time::timeout(std::time::Duration::from_millis(500), ws_outsider.next()).await;
+    assert!(
+        result.is_err(),
+        "a non-member's LIVE (proven-alive) socket must receive ZERO further frames for a collection they cannot see"
+    );
+
+    // Same non-membership also denies the new per-collection pull endpoint —
+    // 404, never 403 (existence must not leak).
+    let pull_res =
+        req(&fixture.app, "GET", &format!("/api/vault/collections/{}/sync", fixture.collection_id), &outsider_token, None).await;
+    assert_eq!(
+        pull_res.status(),
+        StatusCode::NOT_FOUND,
+        "a non-member must get 404 from the shared per-collection pull endpoint too, never 403"
+    );
+}
