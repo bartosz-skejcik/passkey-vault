@@ -17,6 +17,26 @@
 // encrypt/decrypt -- B, the second family member, never decrypts anything in
 // either test below, matching Plan 23-05's own client-side identity-keypair
 // scope boundary for this phase.
+//
+// CR-03 (code review iteration 1): "conflict attribution" below submits
+// B's conflicting write as OPAQUE placeholder bytes (`DUMMY_ENC_KEY`/
+// `DUMMY_ENC_DATA`), per the posture above -- B never holds any real
+// crypto material for this item (no Collection Key / item-key-unwrap
+// client-side infrastructure exists yet; that is Phase 26/27 scope, see
+// 23-CONTEXT.md's Deferred list), so there is architecturally no way for
+// B's write to be genuinely decryptable-by-A ciphertext in this fixture:
+// the payload AAD is bound to `(item_id, revision)`
+// (`pv-core/src/items.rs::build_item_aad`), so even resubmitting A's OWN
+// prior valid ciphertext at the bumped revision would ALSO fail to
+// decrypt. This means A's subsequent `loadAndDecryptAll()` (triggered by
+// the 409 handler) genuinely, unavoidably hits a decrypt failure on this
+// exact item -- this spec used to ignore that entirely and only assert on
+// the (still real, still correct) 409-attribution banner, which is exactly
+// the gap CR-01's review flagged: "the harness is proving the masking
+// works". This test now ALSO asserts on the CR-03 fix's own visible
+// behavior in this exact scenario (the `undecryptable-item-banner`) --
+// proving the failure is surfaced rather than silently swallowed, instead
+// of merely happening not to notice it.
 import type { APIRequestContext, Page } from "@playwright/test";
 import { test, expect, type Session } from "./fixtures";
 
@@ -262,7 +282,7 @@ test("revision fan-out", async ({ twoSessions }) => {
   expect(b.dialogFired()).toBe(false);
 });
 
-test("conflict attribution", async ({ twoSessions }) => {
+test("conflict attribution, and the resulting decrypt failure is surfaced (CR-03)", async ({ twoSessions }) => {
   const [a, b] = twoSessions;
   const aToken = await tokenFor(a.page);
   const bToken = await tokenFor(b.page);
@@ -289,7 +309,12 @@ test("conflict attribution", async ({ twoSessions }) => {
   // B performs a raw authenticated PUT at A's own still-current revision
   // (1) -- the server accepts it (B holds edit-level item_shares access via
   // `Membership<Item, RequireEdit>`), bumps the item to revision 2, and
-  // records B as the item's `last_editor_user_id`.
+  // records B as the item's `last_editor_user_id`. Per this file's own
+  // top-of-file CR-03 comment: `DUMMY_ENC_KEY`/`DUMMY_ENC_DATA` are NOT
+  // valid ciphertext under A's real key -- there is no crypto material
+  // available to B in this fixture that WOULD be, so A's later re-decrypt
+  // of this exact row is a genuine, unavoidable decrypt failure, not an
+  // artifact of sloppy test data.
   const bEditRes = await apiPut(b.context.request, `/api/vault/items/${item.id}`, bToken, {
     enc_key: DUMMY_ENC_KEY,
     enc_data: DUMMY_ENC_DATA,
@@ -304,7 +329,11 @@ test("conflict attribution", async ({ twoSessions }) => {
   // `editBaselineRevision`, which nothing in this flow changes, so this
   // submission deterministically retries with the stale value and the
   // server responds 409 attributing the conflict to B's email
-  // (`vault.rs::update`'s `StaleRevisionShared` branch).
+  // (`vault.rs::update`'s `StaleRevisionShared` branch). The 409 handler
+  // (`lib/vault/store.ts::updateVaultItem`) then calls `loadAndDecryptAll()`
+  // BEFORE throwing `RevisionConflictError` -- that re-fetch is what hits
+  // the genuine decrypt failure on B's corrupted row, exercised for real
+  // here, not mocked.
   await a.page.getByTestId("item-password").fill("attempted-overwrite-pw");
   await a.page.getByTestId("item-form-submit").click();
 
@@ -314,6 +343,14 @@ test("conflict attribution", async ({ twoSessions }) => {
   // email address -- not a placeholder/generic string (SYNC-06/SC3's own
   // acceptance criterion).
   await expect(conflictBanner).toContainText(b.email);
+
+  // CR-03: the decrypt failure the 409 handler's own loadAndDecryptAll()
+  // just hit must be SURFACED, not silently swallowed while rendering
+  // A's stale last-known-good plaintext as if nothing happened -- this is
+  // the exact gap the code review flagged ("the harness is proving the
+  // masking works"). `DetailPanel`'s `undecryptable-item-banner` is
+  // `applySyncSnapshot`'s flagged retained copy reaching the UI.
+  await expect(a.page.getByTestId("undecryptable-item-banner")).toBeVisible();
 
   expect(a.dialogFired()).toBe(false);
   expect(b.dialogFired()).toBe(false);
