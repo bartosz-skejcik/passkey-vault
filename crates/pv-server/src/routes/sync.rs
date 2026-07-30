@@ -11,6 +11,23 @@
 //! field capable of holding an item's ciphertext or key material ever
 //! belongs on this type; this is the entire attack surface T-05-04's
 //! threat-model mitigation addresses.
+//!
+//! Phase 23, Plan 23-02 (SYNC-04/SYNC-07/SYNC-08): three new read endpoints
+//! — the read half of the shared-data fan-out `pull()` above deliberately
+//! does NOT grow to cover. `pull()`'s own query scope is untouched by this
+//! plan (SC 5/SYNC-08's textual guarantee); shared data arrives exclusively
+//! through:
+//! - `GET /api/sync/shared` (`pull_shared_revisions`) — per-collection
+//!   revision map + a synthetic "direct" bucket, `FamilyMembership<RequireRead>`-gated.
+//! - `GET /api/vault/collections/{id}/sync` (`pull_shared_collection`) — one
+//!   collection's full item snapshot/cheap-check, `Membership<Collection,
+//!   RequireRead>`-gated (reused verbatim, zero extractor changes).
+//! - `GET /api/sync/shared/direct` (`pull_shared_direct`) — the caller's own
+//!   directly-shared (`item_shares`, `collection_id IS NULL`) items,
+//!   `SessionUser`-only (mirrors `pull()`'s own scoping).
+//!
+//! All three are read-only and authorize exclusively through the Phase 22
+//! membership extractors (SEC-06) — never a hand-written `WHERE`.
 
 use axum::{
     extract::{
@@ -28,12 +45,26 @@ use std::{
 };
 use tokio::sync::broadcast;
 
+use super::membership::{Collection, FamilyMembership, Membership, RequireRead};
 use super::session::SessionUser;
 use crate::{error::ApiError, AppState};
 
 #[derive(Deserialize)]
 pub struct SyncQuery {
     since: i64,
+}
+
+/// Query params for `pull_shared_collection`/`pull_shared_direct` below —
+/// `since` is OPTIONAL here, unlike `SyncQuery` above: CONTEXT.md's locked
+/// contract requires both endpoints to "degrade to a full snapshot when the
+/// client sends no cursor (first sync, cache clear)". An absent `since` key
+/// deserializes to `None` (serde's derive special-cases `Option<T>` fields
+/// via its generated `missing_field`/`deserialize_option` handling, so no
+/// `#[serde(default)]` attribute is needed here), which both handlers below
+/// treat as "always a full snapshot, revision compare skipped entirely".
+#[derive(Deserialize)]
+pub struct OptionalSyncQuery {
+    since: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -70,6 +101,238 @@ pub async fn pull(
     let items = super::vault::fetch_items_for(&state.db, &session.user_id).await?;
     let folders = super::folders::fetch_folders_for(&state.db, &session.user_id).await?;
     Ok(Json(SyncResponse::Snapshot { revision, items, folders }))
+}
+
+/// One collection's cheap-check revision, keyed by id — `GET /api/sync/shared`'s
+/// per-collection cursor (SYNC-04/SYNC-07): a single scalar cannot express N
+/// independent collection counters, so this is a `Vec`, never a `MAX`/`SUM`
+/// fold across collections (CONTEXT.md's locked constraint).
+#[derive(Serialize)]
+pub struct CollectionRevision {
+    pub id: String,
+    pub revision: i64,
+}
+
+/// The caller's own direct (`item_shares`, `collection_id IS NULL`) items'
+/// cheap-check revision — a synthetic "bucket" with no `collections` row of
+/// its own to read a revision off, so its value is
+/// `COALESCE(MAX(vault_items.revision), 0)` over exactly those rows (D-02,
+/// RESEARCH.md Open Question 2).
+#[derive(Serialize)]
+pub struct DirectBucket {
+    pub revision: i64,
+}
+
+/// `GET /api/sync/shared`'s response body — never an error for a family
+/// member with zero collections and zero direct shares (`collections: []`,
+/// `direct: { revision: 0 }`); a caller with NO family membership at all
+/// never reaches this type — `FamilyMembership<RequireRead>` rejects them
+/// with `404` before the handler body ever runs (SYNC-07's "existence never
+/// leaks via a differently-shaped empty response").
+#[derive(Serialize)]
+pub struct SharedRevisionsResponse {
+    pub collections: Vec<CollectionRevision>,
+    pub direct: DirectBucket,
+}
+
+/// `GET /api/sync/shared` — the shared-data sibling of `GET /api/sync`
+/// above (SYNC-08's hard split: `pull()`'s own query scope is NOT touched by
+/// this plan). `FamilyMembership<RequireRead>` is the ONLY gate — a caller
+/// with no `family_members` row at all gets `404` here, never a `200` with
+/// empty arrays (SYNC-07's must-have truth). Per-collection revisions come
+/// from the SAME join `Collection::resolve_access`/`collections::list` use
+/// (`collection_keys` + `family_members`, scoped to `recipient_user_id =
+/// caller` — never a hand-written `WHERE`), `ORDER BY c.id ASC` for a
+/// deterministic (per-caller) ordering — CONTEXT.md's own backstop truth
+/// notes this carries no cross-caller ordering guarantee.
+pub async fn pull_shared_revisions(
+    State(state): State<AppState>,
+    family: FamilyMembership<RequireRead>,
+) -> Result<Json<SharedRevisionsResponse>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT c.id, c.revision FROM collections c \
+           JOIN collection_keys ck ON ck.collection_id = c.id AND ck.recipient_user_id = ? \
+           JOIN family_members fm ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
+          ORDER BY c.id ASC",
+    )
+    .bind(&family.caller_user_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let collections = rows
+        .into_iter()
+        .map(|row| {
+            Ok(CollectionRevision {
+                id: row.try_get("id").map_err(|_| ApiError::Internal)?,
+                revision: row.try_get("revision").map_err(|_| ApiError::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    // Synthetic "direct" bucket (D-02): no `collections` row backs this, so
+    // its cheap-check value is the MAX revision over the caller's own
+    // directly-shared (item_shares, collection_id IS NULL) items —
+    // COALESCE'd to 0 when the caller has none, never an error/None.
+    let direct_revision: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(vault_items.revision), 0) FROM vault_items \
+           JOIN item_shares ON item_shares.item_id = vault_items.id \
+          WHERE item_shares.recipient_user_id = ? AND vault_items.collection_id IS NULL",
+    )
+    .bind(&family.caller_user_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(SharedRevisionsResponse { collections, direct: DirectBucket { revision: direct_revision } }))
+}
+
+/// Response shape for BOTH `pull_shared_collection` and `pull_shared_direct`
+/// below — same untagged `UpToDate`/`Snapshot` convention as `SyncResponse`
+/// above, but scoped to one collection's (or the direct bucket's) items
+/// only, never `folders` (folders are a personal-vault-only concept, never
+/// collection- or share-scoped).
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum SharedCollectionSyncResponse {
+    UpToDate {
+        revision: i64,
+    },
+    Snapshot {
+        revision: i64,
+        items: Vec<super::vault::VaultItem>,
+    },
+}
+
+/// `GET /api/vault/collections/{id}/sync?since=N` — the per-collection sync
+/// pull (SYNC-04/SYNC-07), gated by `Membership<Collection, RequireRead>`
+/// verbatim (RESEARCH.md's Open Question 1: a path-`{id}`-based route needs
+/// zero extractor changes, unlike a query-param design). Mirrors `pull()`'s
+/// cheap-check shape above, but its Snapshot's items come from a NEW query —
+/// `WHERE collection_id = ?` with NO `user_id` filter at all (Pitfall A:
+/// `vault::fetch_items_for` is deliberately non-widening and must NEVER be
+/// reused here — it would silently exclude every item another member
+/// created). `since` is OPTIONAL (`OptionalSyncQuery`) — an absent `since`
+/// is always treated as a full-snapshot request, revision compare skipped
+/// entirely.
+pub async fn pull_shared_collection(
+    State(state): State<AppState>,
+    membership: Membership<Collection, RequireRead>,
+    Query(q): Query<OptionalSyncQuery>,
+) -> Result<Json<SharedCollectionSyncResponse>, ApiError> {
+    let revision: i64 = sqlx::query_scalar("SELECT revision FROM collections WHERE id = ?")
+        .bind(&membership.resource_id)
+        .fetch_one(&state.db)
+        .await?;
+
+    if let Some(since) = q.since {
+        if since == revision {
+            return Ok(Json(SharedCollectionSyncResponse::UpToDate { revision }));
+        }
+    }
+
+    // Pitfall A: no `user_id`/`i.user_id` filter of any kind — correctness
+    // depends entirely on `Membership<Collection, RequireRead>` having
+    // already authorized this request before this handler body ever runs.
+    // Mirrors `fetch_items_for`'s arm-1 SELECT column list verbatim, minus
+    // its `user_id = ?` personal-ownership filter.
+    let rows = sqlx::query(
+        "SELECT vault_items.id, enc_key, enc_data, revision, updated_at, last_used_at, \
+                users.email AS last_editor_email \
+           FROM vault_items \
+           LEFT JOIN users ON users.id = vault_items.last_editor_user_id \
+          WHERE collection_id = ?",
+    )
+    .bind(&membership.resource_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            Ok(super::vault::VaultItem {
+                id: row.try_get("id").map_err(|_| ApiError::Internal)?,
+                enc_key: row.try_get("enc_key").map_err(|_| ApiError::Internal)?,
+                enc_data: row.try_get("enc_data").map_err(|_| ApiError::Internal)?,
+                revision: row.try_get("revision").map_err(|_| ApiError::Internal)?,
+                updated_at: row.try_get("updated_at").map_err(|_| ApiError::Internal)?,
+                last_used_at: row.try_get("last_used_at").map_err(|_| ApiError::Internal)?,
+                // Every item this query returns IS collection-scoped by
+                // construction (Pitfall A's whole point) — unconditionally
+                // `true`, never derived from a second query.
+                is_shared: true,
+                last_editor_email: row.try_get("last_editor_email").map_err(|_| ApiError::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    Ok(Json(SharedCollectionSyncResponse::Snapshot { revision, items }))
+}
+
+/// `GET /api/sync/shared/direct?since=N` — the caller's own directly-shared
+/// (`item_shares`, `collection_id IS NULL`) items. `SessionUser`-only gate
+/// (mirrors `pull()`'s own scoping exactly, D-02): every row is filtered by
+/// `item_shares.recipient_user_id = session.user_id`, never a
+/// client-supplied id — this is NOT a `Membership<R,M>`/`FamilyMembership<M>`-
+/// gated route, since there is no shared "resource" here to authorize
+/// against; it's the caller's own personal items that merely happen to be
+/// shared TO them. Registered as a documented literal `.route()` in
+/// `routes/mod.rs`, same rationale as `GET /api/sync` itself.
+pub async fn pull_shared_direct(
+    State(state): State<AppState>,
+    session: SessionUser,
+    Query(q): Query<OptionalSyncQuery>,
+) -> Result<Json<SharedCollectionSyncResponse>, ApiError> {
+    // Keyed off the SAME MAX(revision) shape `pull_shared_revisions`'s
+    // "direct" bucket uses above — kept independent (not extracted to a
+    // shared fn) since the two call sites' surrounding queries differ enough
+    // (this one also needs the full item body) that a helper would save
+    // little.
+    let revision: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(vault_items.revision), 0) FROM vault_items \
+           JOIN item_shares ON item_shares.item_id = vault_items.id \
+          WHERE item_shares.recipient_user_id = ? AND vault_items.collection_id IS NULL",
+    )
+    .bind(&session.user_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    if let Some(since) = q.since {
+        if since == revision {
+            return Ok(Json(SharedCollectionSyncResponse::UpToDate { revision }));
+        }
+    }
+
+    let rows = sqlx::query(
+        "SELECT vault_items.id, enc_key, enc_data, revision, updated_at, last_used_at, \
+                users.email AS last_editor_email \
+           FROM vault_items \
+           JOIN item_shares ON item_shares.item_id = vault_items.id \
+           LEFT JOIN users ON users.id = vault_items.last_editor_user_id \
+          WHERE item_shares.recipient_user_id = ? AND vault_items.collection_id IS NULL",
+    )
+    .bind(&session.user_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            Ok(super::vault::VaultItem {
+                id: row.try_get("id").map_err(|_| ApiError::Internal)?,
+                enc_key: row.try_get("enc_key").map_err(|_| ApiError::Internal)?,
+                enc_data: row.try_get("enc_data").map_err(|_| ApiError::Internal)?,
+                revision: row.try_get("revision").map_err(|_| ApiError::Internal)?,
+                updated_at: row.try_get("updated_at").map_err(|_| ApiError::Internal)?,
+                last_used_at: row.try_get("last_used_at").map_err(|_| ApiError::Internal)?,
+                // Every item this query returns IS directly shared by
+                // construction (the `JOIN item_shares` above) — unconditionally
+                // `true`, never derived from a second query.
+                is_shared: true,
+                last_editor_email: row.try_get("last_editor_email").map_err(|_| ApiError::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    Ok(Json(SharedCollectionSyncResponse::Snapshot { revision, items }))
 }
 
 /// Which table a `SyncEvent` refers to. `snake_case` serialization matches
