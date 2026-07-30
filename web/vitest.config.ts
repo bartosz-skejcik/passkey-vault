@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
@@ -25,5 +25,14 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
+    // 23-04-PLAN.md: "e2e/**" holds @playwright/test specs
+    // (web/e2e/smoke.spec.ts), which vitest must never collect --
+    // Playwright's test()/expect() are a different framework than
+    // vitest's, and without this exclusion vitest's default include glob
+    // (`**/*.{test,spec}.?(c|m)[jt]s?(x)`) picks the Playwright spec up
+    // and crashes `npm test` ("Playwright Test did not expect test() to be
+    // called here"). Mirrors extension/vitest.config.ts's identical
+    // e2e/** exclusion for the same reason.
+    exclude: [...configDefaults.exclude, "e2e/**"],
   },
 });
