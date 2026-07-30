@@ -15,6 +15,13 @@ export interface ItemRow {
   // item's secret has been used at least once (server column is nullable),
   // set via POST /api/vault/items/{id}/touch below.
   last_used_at: string | null;
+  // Phase 23 (Plan 23-01/23-05): server-sourced sharing metadata, never
+  // client-computed — is_shared true for a collection-scoped item or one
+  // with an item_shares grant; last_editor_email is the current
+  // last_editor_user_id's email, null when never edited since Migration
+  // 0015 or when the item isn't shared at all.
+  is_shared: boolean;
+  last_editor_email: string | null;
 }
 
 /** Wire shape of a single folder row as returned by GET /api/vault/folders. */
@@ -27,8 +34,13 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(path, init);
   if (!response.ok) {
     let message = response.statusText;
+    // The FULL parsed body (not just the extracted `message` string) is
+    // carried as `details` (Plan 23-05) — this is what lets store.ts read
+    // `last_editor_email` back out of a 409 response.
+    let details: unknown;
     try {
       const body: unknown = await response.json();
+      details = body;
       if (
         typeof body === "object" &&
         body !== null &&
@@ -40,7 +52,7 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // response body wasn't JSON (or was empty) — fall back to statusText
     }
-    throw new ApiClientError(response.status, message);
+    throw new ApiClientError(response.status, message, details);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -59,6 +71,19 @@ export interface SyncSnapshot {
 
 export function getSyncSnapshot(since: number): Promise<SyncSnapshot> {
   return apiJson(`/api/sync?since=${since}`);
+}
+
+/** Wire shape of GET /api/sync/shared — the per-collection revision map plus
+ * a synthetic "direct" bucket (Plan 23-02's `pull_shared_revisions`). Never a
+ * MAX/SUM fold across collections — one entry per collection the caller is
+ * a member of. */
+export interface SharedRevisions {
+  collections: { id: string; revision: number }[];
+  direct: { revision: number };
+}
+
+export function getSharedRevisions(): Promise<SharedRevisions> {
+  return apiJson("/api/sync/shared");
 }
 
 export function listItems(): Promise<ItemRow[]> {
