@@ -982,4 +982,92 @@ mod tests {
             allowlisted.difference(&literal_routes).collect::<Vec<_>>(),
         );
     }
+
+    /// **W3 (iteration 2) — closes the two evasions
+    /// `router_literal_routes_match_documented_allowlist` above could not
+    /// see:**
+    ///
+    /// 1. That test only scans `router_with_cors`'s OWN extracted body — the
+    ///    public `pub fn router(state, static_dir) -> Router` WRAPPER around
+    ///    it (the function every test in this crate, including
+    ///    `tests/common/mod.rs::test_app`, actually calls) sits entirely
+    ///    OUTSIDE the scanned region. `router()` appending
+    ///    `.route("/api/secret", post(h))` after its call to
+    ///    `router_with_cors(...)` would register a real, live, ungated path
+    ///    that neither the literal-route scan, the cardinality tripwire, nor
+    ///    the sweep (which only iterates `family_routes()`/
+    ///    `membership_routes()`) would ever see — and it is also the most
+    ///    natural place a future author would add a route, since it is the
+    ///    crate's actual public entry point.
+    /// 2. The `let api =` counter above is a NAME check, not a structural
+    ///    one — `let api: Router<AppState> = ...` (a benign type annotation)
+    ///    or `let app = extra_routes(api);` (a genuine third rebinding under
+    ///    a DIFFERENT name) both defeat it, one by false-failing a harmless
+    ///    change, the other by silently not detecting a real one.
+    ///
+    /// This test closes both by (a) asserting `router()`'s own body performs
+    /// no route registration of any kind (no `.route(`/`.nest(`/`.merge(`/
+    /// their `_service` twins) and does forward through
+    /// `router_with_cors(`, and (b) scanning the ENTIRE production region of
+    /// this file (everything before the `#[cfg(test)]` module — test-only
+    /// fixtures like `probe_router` below are deliberately out of scope, and
+    /// this test's OWN source contains the string `".route("` as a scanned
+    /// literal, which is exactly why the scan must stop before it) for
+    /// `.route(` and requiring every occurrence to fall inside
+    /// `router_with_cors`, `family_routes`, or `membership_routes` — a
+    /// `.route(` call added via ANY helper function, under ANY binding name,
+    /// anywhere else in the production source, fails this test immediately.
+    #[test]
+    fn router_wrapper_and_whole_file_route_scan_has_no_blind_spot() {
+        let mod_rs_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/mod.rs");
+        let all_non_comment_lines = non_comment_lines(&mod_rs_path);
+
+        // Production-only region: everything strictly before the
+        // `#[cfg(test)]` module. Test-only fixtures (`probe_router`'s own
+        // real `.route("/probe", ...)` call) and this very test's own source
+        // (which necessarily contains the string `".route("` as literal scan
+        // data, e.g. `body[search_from..].find(".route(")`) live inside that
+        // module and must never be mistaken for production route wiring.
+        let test_mod_idx = all_non_comment_lines
+            .iter()
+            .position(|line| line.trim() == "#[cfg(test)]")
+            .unwrap_or_else(|| panic!("could not locate `#[cfg(test)]` — this test's source anchor is stale"));
+        let production_source = all_non_comment_lines[..test_mod_idx].join(" ");
+
+        // (a) `router()` itself must perform no route registration of any
+        // kind — it must be a pure pass-through to `router_with_cors(`.
+        let router_wrapper_body = extract_fn_body(&production_source, "pub fn router(");
+        for forbidden in [".route(", ".nest(", ".nest_service(", ".merge(", ".route_service(", ".fallback_service("]
+        {
+            assert!(
+                !router_wrapper_body.contains(forbidden),
+                "pub fn router() must perform NO route registration itself (found {forbidden}) — it exists solely \
+                 to forward into router_with_cors(), which IS scanned; anything registered here would be invisible \
+                 to every other structural guard in this module"
+            );
+        }
+        assert!(
+            router_wrapper_body.contains("router_with_cors("),
+            "pub fn router() must call router_with_cors( — if this ever stops being true, this whole test's \
+             reasoning (that router()'s body doing nothing but forwarding is what makes skipping its OWN route \
+             registration meaningless-because-there-is-none) no longer holds"
+        );
+
+        // (b) every `.route(` in the ENTIRE production region must live
+        // inside one of exactly three functions — no helper function, under
+        // any binding name, may register a route this scan cannot see into.
+        let accounted: usize = ["pub fn router_with_cors(", "pub fn family_routes(", "pub fn membership_routes("]
+            .iter()
+            .map(|marker| extract_fn_body(&production_source, marker).matches(".route(").count())
+            .sum();
+        let total_in_production = production_source.matches(".route(").count();
+        assert_eq!(
+            total_in_production, accounted,
+            "found {total_in_production} total `.route(` occurrences in the production region of \
+             src/routes/mod.rs but could only account for {accounted} inside router_with_cors/family_routes/\
+             membership_routes — a `.route(` call exists outside all three, e.g. via a helper function \
+             (`let app = extra_routes(api);`) that `router_literal_routes_match_documented_allowlist`'s \
+             per-function extraction and `let api =` name-based counter cannot see into"
+        );
+    }
 }
