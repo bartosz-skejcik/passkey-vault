@@ -1234,7 +1234,16 @@ pub async fn create_share(
     // collection between this read and the INSERT could still let the INSERT
     // through, producing exactly the forbidden row this guard exists to
     // prevent (the same structural TOCTOU class as BL-01/WR-03).
-    let mut tx = state.db.begin().await?;
+    //
+    // WR-04 (code review iteration 3): `BEGIN IMMEDIATE`, not a deferred
+    // `BEGIN`. Moving the guard's read inside the transaction (above) closed
+    // the TOCTOU but made this handler read-then-write, which is exactly the
+    // shape `delete()`'s comment documents as `SQLITE_BUSY_SNAPSHOT`-prone
+    // under WAL: SQLite does not invoke the busy handler for that rejection,
+    // so `lib.rs`'s 5s `busy_timeout` gives no protection and the request
+    // fails outright with a 500. Taking the write lock up front serializes
+    // behind a concurrent writer instead. Same trade `delete()` already makes.
+    let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
 
     let item_row = sqlx::query("SELECT collection_id FROM vault_items WHERE id = ?")
         .bind(&membership.resource_id)
