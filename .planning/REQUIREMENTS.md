@@ -88,7 +88,7 @@ scalar and `SyncHub` is keyed by `user_id` — neither can express "someone else
 - [ ] **SEC-05**: A member can view their own and other members' identity-key fingerprints, so key authenticity can be verified out-of-band. This is the honest, v0.4-scope mitigation for the server-distributes-public-keys trust gap (TOFU posture); a "key changed" banner and a transparency log are explicitly deferred, not silently dropped.
 - [x] **SEC-06**: Every collection/item/family endpoint enforces membership authorization uniformly — no route reachable without the same check its siblings apply.
 - [ ] **SEC-07**: Batch rewrapping of many keys during share or re-key operations never reuses a nonce.
-- [ ] **SEC-08**: A live multi-session test harness (2+ concurrent authenticated sessions, real browser) exists and covers the sharing flows. Stood up **with the sync phase, not at the end** — this milestone's direct application of the v0.2→v0.3 lesson that green CI missed 7 bug classes only visible live.
+- [x] **SEC-08**: A live multi-session test harness (2+ concurrent authenticated sessions, real browser) exists and covers the sharing flows. Stood up **with the sync phase, not at the end** — this milestone's direct application of the v0.2→v0.3 lesson that green CI missed 7 bug classes only visible live.
 
 ### UX — Honest Communication
 
@@ -165,7 +165,7 @@ Explicitly excluded to prevent scope creep.
 | SEC-05 | Phase 26 | Pending |
 | SEC-06 | Phase 22 | Complete |
 | SEC-07 | Phase 25 | Pending |
-| SEC-08 | Phase 23 | Pending |
+| SEC-08 | Phase 23 | Complete |
 | UX-03 | Phase 26 | Pending |
 | UX-04 | Phase 25 | Pending |
 | UX-05 | Phase 26 | Pending |
