@@ -229,4 +229,66 @@ describe("shared-revisions pull (Plan 23-05)", () => {
     lastSocket().onopen?.();
     await expect(vi.advanceTimersByTimeAsync(0)).resolves.not.toThrow();
   });
+
+  // WR-01 (code review iteration 1): a 404 from GET /api/sync/shared means
+  // "this account has no family_members row at all" — a PERMANENT condition
+  // for a single-user vault (the project's headline persona), not a
+  // transient failure. Without this, the endpoint 404s silently forever, on
+  // every WS-open, every WS message, and every 30s poll.
+  it("a 404 from getSharedRevisions permanently disables further shared-revisions calls for this session", async () => {
+    mockGetSharedRevisions.mockRejectedValue({ status: 404 });
+    const onSnapshot = vi.fn();
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot });
+
+    const socket = lastSocket();
+    socket.onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+
+    // A further poll-timer tick, and a further WS message, must NOT call
+    // getSharedRevisions again — the 404 disabled it for the rest of this
+    // session. The personal snapshot pull is completely unaffected.
+    mockGetSharedRevisions.mockClear();
+    socket.onmessage?.({ data: "some-opaque-frame-content" });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(mockGetSharedRevisions).not.toHaveBeenCalled();
+    expect(onSnapshot).toHaveBeenCalled();
+  });
+
+  it("a non-404 rejection does NOT disable further shared-revisions calls (transient, retried next cycle)", async () => {
+    mockGetSharedRevisions.mockRejectedValue(new Error("transient network failure"));
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+
+    const socket = lastSocket();
+    socket.onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+
+    mockGetSharedRevisions.mockClear();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+  });
+
+  it("startSync() re-arms a previously-disabled shared-revisions pull on the next unlock", async () => {
+    mockGetSharedRevisions.mockRejectedValue({ status: 404 });
+    const { startSync, stopSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+
+    stopSync();
+    mockGetSharedRevisions.mockClear();
+    mockGetSharedRevisions.mockResolvedValue({ collections: [], direct: { revision: 0 } });
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+  });
 });

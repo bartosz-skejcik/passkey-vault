@@ -39,6 +39,26 @@ let activeCallbacks: SyncCallbacks | null = null;
 // (which fires asynchronously, after stopSync already ran) re-arming a
 // reconnect timer. stopSync sets this true BEFORE closing the socket.
 let intentionalStop = true;
+// WR-01 (code review iteration 1): once a `getSharedRevisions()` call comes
+// back 404 (this account has no `family_members` row at all —
+// `pull_shared_revisions`'s own `FamilyMembership<RequireRead>` gate), that
+// is a PERMANENT condition for this session, not a transient failure —
+// every single-user self-hosted vault (this project's headline persona)
+// would otherwise 404 this endpoint silently on every WS-open, every WS
+// message, and every 30s poll forever, doubling request volume for no
+// client-visible effect. Reset on every startSync() (i.e. every unlock), so
+// a user who is later added to a family picks the pull back up on their
+// next unlock rather than staying disabled for the lifetime of the tab.
+let sharedPullDisabled = false;
+
+/** Duck-typed 404 check (mirrors `lib/vault/store.ts`'s own
+ * `isConflictError` — see that function's comment for why this is NOT an
+ * `instanceof ApiClientError` check: this module is re-imported per-test via
+ * `vi.resetModules()`, which would make a statically-bound class reference
+ * here a different object than the one a test's mock rejects with). */
+function isNotFoundError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "status" in err && (err as { status: unknown }).status === 404;
+}
 
 async function pullOnce(): Promise<void> {
   const callbacks = activeCallbacks;
@@ -56,6 +76,9 @@ async function pullOnce(): Promise<void> {
     // Transient network failure — the poll timer / next WS event retries;
     // sync is self-healing because the pull is the source of truth.
   }
+  if (sharedPullDisabled) {
+    return;
+  }
   try {
     // Plan 23-05: the shared-revisions pull runs in the SAME pull cycle as
     // the personal snapshot above, in its OWN try/catch — a failure here is
@@ -66,8 +89,11 @@ async function pullOnce(): Promise<void> {
     if (activeCallbacks === callbacks) {
       callbacks.onSharedRevisions?.(revisions);
     }
-  } catch {
-    // Transient network failure — same self-healing rationale as above.
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      sharedPullDisabled = true;
+    }
+    // Any other failure is transient — same self-healing rationale as above.
   }
 }
 
@@ -137,6 +163,7 @@ export function startSync(callbacks: SyncCallbacks): void {
   activeCallbacks = callbacks;
   intentionalStop = false;
   backoffMs = BACKOFF_START_MS;
+  sharedPullDisabled = false; // WR-01: re-arm on every unlock, see its own comment above
   connectWs();
   // Unconditional poll fallback, regardless of WS state (locked decision).
   pollTimer = setInterval(() => {
