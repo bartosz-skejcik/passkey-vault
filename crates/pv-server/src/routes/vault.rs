@@ -682,7 +682,23 @@ pub async fn delete(
 ) -> Result<StatusCode, ApiError> {
     // WR-01: mutation + revision bump(s) run inside one transaction (see
     // create()'s comment above for the atomicity rationale).
-    let mut tx = state.db.begin().await?;
+    //
+    // WR-04 (code review iteration 1): `BEGIN IMMEDIATE`, not a deferred
+    // `BEGIN` — this handler's first statements are READS (the SELECT right
+    // below, then `resolve_recipients`'s own SELECTs), and only the later
+    // DELETE is a write. Under WAL, a deferred transaction that reads first
+    // and writes later can be rejected with `SQLITE_BUSY_SNAPSHOT` when
+    // another writer committed in between, and SQLite does NOT invoke the
+    // busy handler for that case — `lib.rs`'s 5s `busy_timeout` provides no
+    // protection against it, so the request previously failed outright with
+    // a 500 instead of serializing behind the other writer. `BEGIN
+    // IMMEDIATE` acquires the write lock up front, at the cost of this
+    // transaction always taking the lock even when the delete ultimately
+    // 404s — an acceptable trade for a handler whose entire body is a single
+    // short read-then-write. `create`/`update`/`move_item` are unaffected —
+    // their own first statement is already a write, so a deferred `BEGIN`
+    // never exposes them to this same collision.
+    let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
 
     // Read the item's pre-delete owner/collection_id BEFORE any mutation —
     // this MUST happen before the DELETE below, not after: `item_shares`
