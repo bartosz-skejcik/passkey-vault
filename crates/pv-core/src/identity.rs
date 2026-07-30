@@ -574,8 +574,15 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// Task 2, Test 1: seal/unseal round-trips to identical bytes across
-    /// two independently-generated identity keypairs.
+    /// Task 2, Test 1: seal/unseal round-trips to identical bytes.
+    ///
+    /// NOTE: this test uses ONE keypair (seal to its public half, unseal with
+    /// its secret half) — the fresh per-seal ephemeral keypair is what makes
+    /// that a meaningful round trip rather than a no-op. The genuinely
+    /// cross-party property (Alice seals holding only Bob's PUBLISHED public
+    /// bytes) is proven by `seal_with_recipient_public_key_only_cross_party`
+    /// in `pv-wasm`, not here. An earlier version of this comment claimed
+    /// "two independently-generated keypairs", which the body never did.
     #[test]
     fn seal_unseal_roundtrip() {
         let recipient_a = IdentitySecretKey::generate();
