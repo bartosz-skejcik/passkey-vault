@@ -36,7 +36,7 @@ fn pre_v0_4_item_decrypts_unchanged() {
         .expect("pre-v0.4 fixture must decrypt unchanged under the frozen personal-scope AAD");
 
     assert_eq!(
-        plaintext,
+        *plaintext,
         br#"{"type":"login","username":"fixture-user","password":"fixture-pre-v0.4-password"}"#
     );
 }

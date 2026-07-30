@@ -11,7 +11,7 @@
 
 use chacha20poly1305::aead::{rand_core::RngCore, OsRng};
 use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::{
     keys::{aead_open, aead_seal, UserKey, WrappedKey, KEY_LEN},
@@ -109,12 +109,17 @@ pub fn encrypt_item(
     Ok(EncryptedItem { enc_key, enc_data })
 }
 
+/// Zwraca `Zeroizing<Vec<u8>>` (WR-12, consistent with `identity::unseal`'s
+/// WR-06 convention), nie gołe `Vec<u8>` — odzyskany payload itemu (login/
+/// passkey prywatny klucz/karta/notatka) niesie własny obowiązek
+/// wyzerowania jako część typu, zamiast liczyć na to, że każdy przyszły
+/// wywołujący o tym pamięta.
 pub fn decrypt_item(
     uk: &UserKey,
     item: &EncryptedItem,
     item_id: &str,
     revision: u32,
-) -> Result<Vec<u8>, CryptoError> {
+) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
     let mut key_bytes = aead_open(
         uk.expose(),
         &item.enc_key,
@@ -131,11 +136,12 @@ pub fn decrypt_item(
     // `[u8; KEY_LEN]` is `Copy` — `ItemKey(k)` copied `k`, it did not move
     // it (WR-01). Wipe our own copy explicitly.
     k.zeroize();
-    aead_open(
+    let plaintext = aead_open(
         &item_key.0,
         &item.enc_data,
         &build_item_aad(AAD_ITEM_DATA_PREFIX, item_id, revision),
-    )
+    )?;
+    Ok(Zeroizing::new(plaintext))
 }
 
 /// Losowy 256-bit klucz kolekcji — analogiczny do `UserKey`, ale scope'owany
@@ -196,13 +202,17 @@ pub fn encrypt_item_for_collection(
     Ok(EncryptedItem { enc_key, enc_data })
 }
 
+/// Zwraca `Zeroizing<Vec<u8>>` (WR-12), tak samo i z tego samego powodu co
+/// `decrypt_item` powyżej — na tej ścieżce payload item bywa passkey
+/// prywatnym kluczem w JSON (patrz `pv-wasm`'s provider-ceremony
+/// wywołania), więc obowiązek wyzerowania jest szczególnie load-bearing.
 pub fn decrypt_item_for_collection(
     ck: &CollectionKey,
     item: &EncryptedItem,
     collection_id: &str,
     item_id: &str,
     revision: u32,
-) -> Result<Vec<u8>, CryptoError> {
+) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
     let mut key_bytes = aead_open(
         ck.expose(),
         &item.enc_key,
@@ -219,11 +229,12 @@ pub fn decrypt_item_for_collection(
     // `[u8; KEY_LEN]` is `Copy` — `ItemKey(k)` copied `k`, it did not move
     // it (WR-01). Wipe our own copy explicitly.
     k.zeroize();
-    aead_open(
+    let plaintext = aead_open(
         &item_key.0,
         &item.enc_data,
         &build_coll_item_aad(AAD_COLL_ITEM_DATA_PREFIX, collection_id, item_id, revision),
-    )
+    )?;
+    Ok(Zeroizing::new(plaintext))
 }
 
 #[cfg(test)]
@@ -235,7 +246,7 @@ mod tests {
         let uk = UserKey::generate();
         let payload = br#"{"type":"login","username":"bartek","password":"s3cret"}"#;
         let item = encrypt_item(&uk, payload, "item-1", 1).unwrap();
-        assert_eq!(decrypt_item(&uk, &item, "item-1", 1).unwrap(), payload);
+        assert_eq!(*decrypt_item(&uk, &item, "item-1", 1).unwrap(), payload);
     }
 
     #[test]
@@ -268,7 +279,7 @@ mod tests {
         let payload = br#"{"type":"login","username":"bartek","password":"s3cret"}"#;
         let item = encrypt_item_for_collection(&ck, payload, "collection-1", "item-1", 1).unwrap();
         assert_eq!(
-            decrypt_item_for_collection(&ck, &item, "collection-1", "item-1", 1).unwrap(),
+            *decrypt_item_for_collection(&ck, &item, "collection-1", "item-1", 1).unwrap(),
             payload
         );
     }

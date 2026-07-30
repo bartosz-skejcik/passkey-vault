@@ -207,8 +207,14 @@ pub fn decrypt_item(
 ) -> Result<String, JsValue> {
     let item: EncryptedItem =
         serde_json::from_str(item_json).map_err(|e| to_js_str_err(&e.to_string()))?;
-    let plaintext = core_decrypt_item(&uk.0, &item, item_id, revision).map_err(to_js_err)?;
-    String::from_utf8(plaintext).map_err(|e| to_js_str_err(&e.to_string()))
+    let mut plaintext = core_decrypt_item(&uk.0, &item, item_id, revision).map_err(to_js_err)?;
+    // `core_decrypt_item` now returns `Zeroizing<Vec<u8>>` (WR-12) — move
+    // the inner `Vec<u8>` out via `mem::take` (leaves an empty, already-
+    // zero `Vec` in `plaintext`'s place) instead of `.clone()`ing it, so
+    // building the returned `String` costs zero extra heap copies of the
+    // plaintext beyond the one `String::from_utf8` already needed to make.
+    let bytes = std::mem::take(&mut *plaintext);
+    String::from_utf8(bytes).map_err(|e| to_js_str_err(&e.to_string()))
 }
 
 /// Nieprzezroczysty handle X25519 identity keypair (Plan 21-02/21-04) —
@@ -363,7 +369,7 @@ pub fn decrypt_item_for_collection(
     let collection_key = pv_core::items::CollectionKey::from_bytes(ck.0);
     let item: EncryptedItem =
         serde_json::from_str(item_json).map_err(|e| to_js_str_err(&e.to_string()))?;
-    let plaintext = pv_core::items::decrypt_item_for_collection(
+    let mut plaintext = pv_core::items::decrypt_item_for_collection(
         &collection_key,
         &item,
         collection_id,
@@ -371,7 +377,10 @@ pub fn decrypt_item_for_collection(
         revision,
     )
     .map_err(to_js_err)?;
-    String::from_utf8(plaintext).map_err(|e| to_js_str_err(&e.to_string()))
+    // See `decrypt_item` above — `Zeroizing<Vec<u8>>` (WR-12), moved out via
+    // `mem::take` rather than cloned.
+    let bytes = std::mem::take(&mut *plaintext);
+    String::from_utf8(bytes).map_err(|e| to_js_str_err(&e.to_string()))
 }
 
 /// Nieprzezroczysty wynik `wasmCreateProviderCredential` — WYŁĄCZNIE dwa
@@ -469,9 +478,22 @@ pub fn wasm_get_provider_assertion(
 ) -> Result<WasmGetProviderResult, JsValue> {
     let item: EncryptedItem =
         serde_json::from_str(matching_item_json).map_err(|e| to_js_str_err(&e.to_string()))?;
-    let plaintext = core_decrypt_item(&uk.0, &item, item_id, revision).map_err(to_js_err)?;
+    let mut plaintext = core_decrypt_item(&uk.0, &item, item_id, revision).map_err(to_js_err)?;
+    // See `decrypt_item` above — `Zeroizing<Vec<u8>>` (WR-12), moved out via
+    // `mem::take` rather than cloned.
+    let bytes = std::mem::take(&mut *plaintext);
     let passkey_json =
-        String::from_utf8(plaintext).map_err(|e| to_js_str_err(&e.to_string()))?;
+        String::from_utf8(bytes).map_err(|e| to_js_str_err(&e.to_string()))?;
+    // KNOWN LIMITATION (WR-12, not fixed this phase): `format!` below
+    // allocates a SECOND, never-zeroized heap copy of `passkey_json` (a
+    // passkey private key in JSON form) to build the one-element JSON
+    // array `pv_provider::get_provider_assertion` expects. Closing this
+    // fully requires changing that function's signature to accept
+    // `&[&str]` and building `PvCredentialStore` from individually-parsed
+    // JSON strings instead of one pre-joined array string — a cross-crate
+    // change to `pv-provider` (outside this phase's reviewed files) left
+    // for a follow-up rather than applied without full context on its own
+    // test coverage (`pv-provider/tests/{response_shape,real_rp_verification}.rs`).
     let existing_credentials_json = format!("[{passkey_json}]");
 
     let result = pv_provider::get_provider_assertion(request_json, origin, &existing_credentials_json)
