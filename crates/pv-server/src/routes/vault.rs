@@ -463,12 +463,41 @@ pub async fn update(
     let row = match result {
         Some(row) => row,
         None => {
-            let exists = sqlx::query("SELECT 1 FROM vault_items WHERE id = ?")
-                .bind(&id)
-                .fetch_optional(&mut *tx)
-                .await?;
-            return match exists {
-                Some(_) => Err(ApiError::Conflict("stale revision".into())),
+            // Disambiguate "doesn't exist" (404) from "stale revision" (409)
+            // — same shape as before Phase 23. When the item DOES exist,
+            // this ONE follow-up query (Plan 23-03, Task 1, SYNC-06)
+            // additionally resolves whether it's SHARED (collection-scoped
+            // OR carrying an `item_shares` row) and, if so, the CURRENT
+            // `last_editor_user_id`'s email via a `LEFT JOIN` — this is what
+            // lets the 409 attribute the conflict to the other member (D-03:
+            // full email, never local-part-only/anonymous; `None` when
+            // `last_editor_user_id` is still NULL — never a panic or 500). A
+            // PERSONAL item's 409 stays the byte-identical
+            // `ApiError::Conflict("stale revision".into())` it always was —
+            // zero wording/shape change for a single-user vault
+            // (CONTEXT.md's locked decision).
+            let exists_row = sqlx::query(
+                "SELECT (vault_items.collection_id IS NOT NULL OR \
+                         EXISTS(SELECT 1 FROM item_shares WHERE item_shares.item_id = vault_items.id)) AS is_shared, \
+                        users.email AS last_editor_email \
+                   FROM vault_items \
+                   LEFT JOIN users ON users.id = vault_items.last_editor_user_id \
+                  WHERE vault_items.id = ?",
+            )
+            .bind(&id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            return match exists_row {
+                Some(exists_row) => {
+                    let is_shared: bool = exists_row.try_get("is_shared").map_err(|_| ApiError::Internal)?;
+                    if is_shared {
+                        let last_editor_email: Option<String> =
+                            exists_row.try_get("last_editor_email").map_err(|_| ApiError::Internal)?;
+                        Err(ApiError::StaleRevisionShared { message: "stale revision".into(), last_editor_email })
+                    } else {
+                        Err(ApiError::Conflict("stale revision".into()))
+                    }
+                }
                 None => Err(ApiError::NotFound),
             };
         }
