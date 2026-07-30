@@ -201,12 +201,41 @@ function applySyncSnapshot(snapshot: SyncSnapshot): void {
     return;
   }
   if (snapshot.items !== undefined) {
-    items = snapshot.items.map((row) => decryptItemRow(row, uk));
+    // A single row that fails to decrypt (corrupted blob, a stale/foreign
+    // ciphertext, ...) must never crash the WHOLE snapshot merge — this is
+    // exactly the recovery path `updateVaultItem`'s 409 handler calls (via
+    // `loadAndDecryptAll`) immediately after a revision conflict, so an
+    // uncaught throw here would silently replace the `RevisionConflictError`
+    // the UI layer needs with an unrelated decrypt exception, and the
+    // conflict the user just hit would go unexplained. Falling back to the
+    // LAST-KNOWN-GOOD copy (rather than dropping the row entirely) also
+    // keeps a currently-open item present in the store — dropping it would
+    // make `selectedItem` resolve to `undefined` and unmount the very
+    // DetailPanel that needs to show the conflict banner.
+    const previousById = new Map(items.map((item) => [item.id, item]));
+    items = snapshot.items.flatMap((row) => {
+      try {
+        return [decryptItemRow(row, uk)];
+      } catch (err) {
+        console.error(`pv: failed to decrypt item ${row.id} during sync merge -- keeping last-known-good copy`, err);
+        const previous = previousById.get(row.id);
+        return previous !== undefined ? [previous] : [];
+      }
+    });
     recomputeAllTags();
     notifyListeners();
   }
   if (snapshot.folders !== undefined) {
-    folders = snapshot.folders.map((row) => decryptFolderRow(row, uk));
+    const previousFolderById = new Map(folders.map((folder) => [folder.id, folder]));
+    folders = snapshot.folders.flatMap((row) => {
+      try {
+        return [decryptFolderRow(row, uk)];
+      } catch (err) {
+        console.error(`pv: failed to decrypt folder ${row.id} during sync merge -- keeping last-known-good copy`, err);
+        const previous = previousFolderById.get(row.id);
+        return previous !== undefined ? [previous] : [];
+      }
+    });
     notifyFolderListeners();
   }
 }
