@@ -167,6 +167,8 @@ pub(crate) fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRou
         ("/api/vault/items/{id}", put(vault::update).delete(vault::delete)),
         ("/api/vault/items/{id}/touch", post(vault::touch)),
         ("/api/vault/items/{id}/collection", put(vault::move_item)),
+        ("/api/vault/items/{id}/shares", post(vault::create_share)),
+        ("/api/vault/items/{id}/shares/{user_id}", delete(vault::revoke_share)),
     ]
 }
 

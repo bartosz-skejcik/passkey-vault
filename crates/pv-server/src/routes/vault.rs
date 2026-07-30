@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use uuid::Uuid;
 
-use super::membership::{require_collection_edit, Item, Membership, RequireEdit, RequireRead};
+use super::membership::{
+    parse_access_level_from_request, require_collection_edit, Item, Membership, RequireEdit, RequireRead,
+};
 use super::session::SessionUser;
 use super::sync::{ChangeType, EntityType, SyncEvent};
 use crate::{error::ApiError, AppState};
@@ -510,4 +512,96 @@ pub async fn move_item(
     );
 
     Ok(Json(MoveItemResponse { revision: new_revision, collection_id: req.new_collection_id, updated_at }))
+}
+
+#[derive(Deserialize)]
+pub struct CreateItemShareRequest {
+    pub recipient_user_id: String,
+    /// The item's own key, `seal()`ed client-side to the recipient's own
+    /// `IdentityPublicKey` — opaque to this server, mirrors
+    /// `collections::AddMemberRequest::sealed_key`'s treatment.
+    pub sealed_key: String,
+    pub access_level: String,
+}
+
+/// `POST /api/vault/items/{id}/shares` — SHARE-02's server half: direct
+/// per-item sharing, independent of any collection membership. Same
+/// confused-deputy guard as `collections::add_member` (T-22-11's pattern
+/// applied to items): `recipient_user_id` must already be a family member AND
+/// have published an identity keypair before any `item_shares` row is
+/// created. The family-membership check is deliberately FAMILY-WIDE (`SELECT
+/// ... FROM family_members WHERE user_id = ?`, not scoped through the item's
+/// own collection) — v0.4 has exactly one family, and a PERSONAL item
+/// (`collection_id IS NULL`) being shared directly has no collection to
+/// derive a family from in the first place, so "any family member" is the
+/// only well-defined guard for this endpoint.
+pub async fn create_share(
+    State(state): State<AppState>,
+    membership: Membership<Item, RequireEdit>,
+    Json(req): Json<CreateItemShareRequest>,
+) -> Result<StatusCode, ApiError> {
+    // Validate BEFORE any DB work — fails closed on a malformed/unrecognized
+    // access_level string, never silently coerced to a working default
+    // (mirrors collections::add_member's own ordering).
+    parse_access_level_from_request(&req.access_level)?;
+
+    let is_family_member = sqlx::query("SELECT 1 FROM family_members WHERE user_id = ?")
+        .bind(&req.recipient_user_id)
+        .fetch_optional(&state.db)
+        .await?;
+    if is_family_member.is_none() {
+        return Err(ApiError::BadRequest("recipient is not a family member".into()));
+    }
+
+    let has_keypair = sqlx::query("SELECT 1 FROM user_keypairs WHERE user_id = ?")
+        .bind(&req.recipient_user_id)
+        .fetch_optional(&state.db)
+        .await?;
+    if has_keypair.is_none() {
+        return Err(ApiError::BadRequest("recipient has not published an identity keypair yet".into()));
+    }
+
+    validate_blob_len("sealed_key", &req.sealed_key)?;
+
+    let inserted = sqlx::query(
+        "INSERT INTO item_shares (item_id, recipient_user_id, sealed_key, access_level) \
+         VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING recipient_user_id",
+    )
+    .bind(&membership.resource_id)
+    .bind(&req.recipient_user_id)
+    .bind(&req.sealed_key)
+    .bind(&req.access_level)
+    .fetch_optional(&state.db)
+    .await?;
+
+    match inserted {
+        Some(_) => Ok(StatusCode::CREATED),
+        None => Err(ApiError::Conflict("recipient already has a share on this item".into())),
+    }
+}
+
+/// `DELETE /api/vault/items/{id}/shares/{user_id}` — removes a direct
+/// per-item share. This route has TWO path captures — this only works
+/// because `Membership<Item, RequireEdit>` reads its own `{id}` via
+/// `Path::<HashMap<String, String>>` (Plan 22-01's B1 fix), not
+/// `Path::<String>`, which would reject any route with more than one
+/// capture; this handler's own `Path<(String, String)>` then re-reads the
+/// same, still-intact `UrlParams` extension for both captures (mirrors
+/// `collections::revoke_access`'s identical shape).
+pub async fn revoke_share(
+    State(state): State<AppState>,
+    membership: Membership<Item, RequireEdit>,
+    Path((_item_id, target_user_id)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let result = sqlx::query("DELETE FROM item_shares WHERE item_id = ? AND recipient_user_id = ?")
+        .bind(&membership.resource_id)
+        .bind(&target_user_id)
+        .execute(&state.db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }
