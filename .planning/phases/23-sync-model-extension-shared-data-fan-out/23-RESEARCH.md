@@ -392,9 +392,10 @@ routes, new EntityType variant, new files).
 **If this table is empty:** N/A — two low-risk items above; everything else in this document is
 `[VERIFIED: file:line]` against the actual codebase, per the phase's grounding mandate.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Does `Membership<Collection, RequireRead>` need a variant that accepts `collection_id` as a
+1. **(RESOLVED — path-based routing, per Plan 23-02's D-01) Does `Membership<Collection,
+   RequireRead>` need a variant that accepts `collection_id` as a
    query param instead of a path segment, for the per-collection fetch endpoint
    (`GET /api/sync/shared?collection_id=X&since=N`)?**
    - What we know: `Membership<R, M>`'s `from_request_parts` reads `collection_id`/`item_id` from
@@ -412,7 +413,8 @@ routes, new EntityType variant, new files).
      collection-scoped entries (`mod.rs:171-183`). The revisions-map endpoint stays
      `GET /api/sync/shared` (or similar), `FamilyMembership`-gated, no `{id}`.
 
-2. **Should the direct-item-shares-on-personal-items bucket (CONTEXT.md's "signal (2) is the whole
+2. **(RESOLVED — reserved "direct" bucket, per Plan 23-02's D-02) Should the
+   direct-item-shares-on-personal-items bucket (CONTEXT.md's "signal (2) is the whole
    mechanism") get its own tiny endpoint, or fold into the revisions-map response as a synthetic
    `"direct"` key?**
    - What we know: these items have no `collection_id` to key a per-collection revision by; CONTEXT.md
@@ -427,7 +429,8 @@ routes, new EntityType variant, new files).
      open question — flagging here mainly so the planner sees the shape decision explicitly rather
      than discovering the personal-item-share gap mid-implementation.
 
-3. **Is the web Playwright harness expected to run in CI, or only as a local/manual gate?**
+3. **(RESOLVED — added as a real, blocking job, per Plan 23-06's Task 2) Is the web Playwright
+   harness expected to run in CI, or only as a local/manual gate?**
    - What we know: `.github/workflows/ci.yml` runs `cargo test --workspace` and `npm test` (vitest)
      for both `web/` and `extension/`, but runs **no Playwright suite at all** today — the
      extension's own `dual-browser.spec.ts` (21+ SCs) is NOT wired into CI
