@@ -161,7 +161,12 @@ pub fn import_user_key_from_session(bytes: &mut [u8]) -> Result<WasmUserKey, JsV
     let mut arr = [0u8; KEY_LEN];
     arr.copy_from_slice(bytes);
     bytes.zeroize();
-    Ok(WasmUserKey(UserKey::from_bytes(arr)))
+    let out = WasmUserKey(UserKey::from_bytes(arr));
+    // `[u8; KEY_LEN]` is `Copy` — `UserKey::from_bytes` copied `arr`, it did
+    // not move it (WR-01, Phase 21 code review). Wipe our own copy
+    // explicitly.
+    arr.zeroize();
+    Ok(out)
 }
 
 #[wasm_bindgen(js_name = wrapUserKey)]
@@ -247,6 +252,33 @@ pub fn unwrap_identity_secret_key(
     Ok(WasmIdentityKey(isk))
 }
 
+/// Nieprzezroczysty handle PUBLICZNEJ połowy X25519 identity keypair
+/// (CR-01/CR-02, Phase 21 code review). W przeciwieństwie do
+/// `WasmIdentityKey` (który owija PRYWATNĄ połowę i nigdy nie zwraca jej
+/// surowych bajtów), ten handle jest publiczny z założenia — surowe bajty
+/// mogą przekraczać granicę WASM/JS w OBIE strony (tak samo jak
+/// `randomSalt`), bo to jest dokładnie ten "publikowalny" materiał, który
+/// inny recipient musi umieć zrekonstruować z samych bajtów, żeby
+/// zapieczętować (`sealCollectionKey`) coś pod cudzy klucz, NIGDY nie
+/// widząc jego prywatnej połowy.
+#[wasm_bindgen]
+pub struct WasmIdentityPublicKey(pv_core::identity::IdentityPublicKey);
+
+#[wasm_bindgen]
+impl WasmIdentityPublicKey {
+    /// Waliduje/canonicalizuje przez `pv_core::identity::IdentityPublicKey::from_bytes`
+    /// (odrzuca small-order encodings — CR-01) zamiast tworzyć wartość
+    /// bezpośrednio z surowych bajtów.
+    #[wasm_bindgen(js_name = fromBytes)]
+    pub fn from_bytes(bytes: &[u8]) -> Result<WasmIdentityPublicKey, JsValue> {
+        let arr: [u8; KEY_LEN] = bytes
+            .try_into()
+            .map_err(|_| to_js_str_err("expected 32 bytes"))?;
+        let pk = pv_core::identity::IdentityPublicKey::from_bytes(arr).map_err(to_js_err)?;
+        Ok(WasmIdentityPublicKey(pk))
+    }
+}
+
 /// Nieprzezroczysty handle Collection Key (Plan 21-03) — WASM-lokalny typ
 /// mirror'ujący `WasmWrappingKey`'s wzorzec (żaden pv-core-owy typ nie
 /// odpowiada temu handle'owi 1:1; `pv_core::items::CollectionKey` istnieje,
@@ -259,28 +291,35 @@ pub struct WasmCollectionKey([u8; KEY_LEN]);
 
 #[wasm_bindgen]
 impl WasmCollectionKey {
+    /// Deleguje do `pv_core::items::CollectionKey::generate` (WR-05) —
+    /// wypełnia tablicę bezpośrednio, zamiast przechodzić przez
+    /// `random_bytes`'s niezerowalny heap `Vec<u8>` (ta funkcja jest
+    /// udokumentowana w `keys.rs` jako przeznaczona wyłącznie do jawnej
+    /// losowości typu sól, NIE do materiału kluczowego).
     #[wasm_bindgen(js_name = generate)]
     pub fn generate() -> WasmCollectionKey {
-        let bytes = random_bytes(KEY_LEN);
-        let mut k = [0u8; KEY_LEN];
-        k.copy_from_slice(&bytes);
-        WasmCollectionKey(k)
+        let ck = pv_core::items::CollectionKey::generate();
+        WasmCollectionKey(*ck.expose())
     }
 }
 
+/// Zapieczętowuje `ck` pod PUBLICZNYM kluczem recipienta (CR-02): przyjmuje
+/// `&WasmIdentityPublicKey`, NIE `&WasmIdentityKey` — sealing musi być
+/// wyrażalny mając wyłącznie publiczną połowę recipienta (dokładnie to, co
+/// `WasmIdentityKey::publicKeyBytes()` produkuje), nigdy jego prywatny
+/// klucz, którego sender z definicji nie posiada.
 #[wasm_bindgen(js_name = sealCollectionKey)]
 pub fn seal_collection_key(
-    recipient: &WasmIdentityKey,
+    recipient_pk: &WasmIdentityPublicKey,
     ck: &WasmCollectionKey,
 ) -> Result<String, JsValue> {
-    let sealed = pv_core::identity::seal(&recipient.0.public_key(), &ck.0).map_err(to_js_err)?;
+    let sealed = pv_core::identity::seal(&recipient_pk.0, &ck.0).map_err(to_js_err)?;
     serde_json::to_string(&sealed).map_err(|e| to_js_str_err(&e.to_string()))
 }
 
-/// Odpieczętowuje `sealed_json` pod `my_identity_key` i waliduje, że
-/// odzyskany plaintext ma dokładnie `KEY_LEN` (32) bajtów — mirror
-/// `importUserKeyFromSession`'s discipline: odrzuć błędną długość zamiast
-/// ją cicho uciąć/dopełnić.
+/// Odpieczętowuje `sealed_json` pod `my_identity_key`. Deleguje do
+/// `pv_core::identity::unseal_collection_key` (WR-06) — długość plaintextu
+/// jest walidowana raz, w pv-core, zamiast być zduplikowana tutaj.
 #[wasm_bindgen(js_name = unsealCollectionKey)]
 pub fn unseal_collection_key(
     my_identity_key: &WasmIdentityKey,
@@ -288,15 +327,9 @@ pub fn unseal_collection_key(
 ) -> Result<WasmCollectionKey, JsValue> {
     let sealed: pv_core::identity::SealedKey =
         serde_json::from_str(sealed_json).map_err(|e| to_js_str_err(&e.to_string()))?;
-    let mut plain = pv_core::identity::unseal(&my_identity_key.0, &sealed).map_err(to_js_err)?;
-    if plain.len() != KEY_LEN {
-        plain.zeroize();
-        return Err(to_js_str_err("expected 32 bytes"));
-    }
-    let mut k = [0u8; KEY_LEN];
-    k.copy_from_slice(&plain);
-    plain.zeroize();
-    Ok(WasmCollectionKey(k))
+    let collection_key =
+        pv_core::identity::unseal_collection_key(&my_identity_key.0, &sealed).map_err(to_js_err)?;
+    Ok(WasmCollectionKey(*collection_key.expose()))
 }
 
 #[wasm_bindgen(js_name = encryptItemForCollection)]
@@ -879,8 +912,10 @@ mod tests {
         let other_recipient = WasmIdentityKey::generate();
         let ck = WasmCollectionKey::generate();
 
+        let recipient_pk = WasmIdentityPublicKey::from_bytes(&recipient.public_key_bytes())
+            .expect("a real generated public key must never be small-order");
         let sealed_json =
-            seal_collection_key(&recipient, &ck).expect("seal should succeed");
+            seal_collection_key(&recipient_pk, &ck).expect("seal should succeed");
         let result = unseal_collection_key(&other_recipient, &sealed_json);
         assert!(result.is_err());
     }
@@ -890,8 +925,10 @@ mod tests {
         let recipient = WasmIdentityKey::generate();
         let ck = WasmCollectionKey::generate();
 
+        let recipient_pk = WasmIdentityPublicKey::from_bytes(&recipient.public_key_bytes())
+            .expect("a real generated public key must never be small-order");
         let sealed_json =
-            seal_collection_key(&recipient, &ck).expect("seal should succeed");
+            seal_collection_key(&recipient_pk, &ck).expect("seal should succeed");
         let unsealed = unseal_collection_key(&recipient, &sealed_json)
             .expect("unseal should succeed");
 
@@ -911,6 +948,56 @@ mod tests {
             decrypt_item_for_collection(&unsealed, &item_json, "collection-1", "item-1", 1)
                 .expect("decrypt with unsealed key should succeed");
         assert_eq!(plaintext, "{\"type\":\"note\",\"body\":\"fixture\"}");
+    }
+
+    /// CR-02 regression: the real sharing flow. Bob generates his identity
+    /// keypair once; only its PUBLIC bytes are "published" (as they would
+    /// be via the server). Alice reconstructs a public-key-only handle from
+    /// those bytes alone and seals with it — she never touches `bob` (the
+    /// secret half) at seal time. This is exactly the boundary CR-02 found
+    /// missing: sealing must be expressible holding only the recipient's
+    /// PUBLIC value, and only Bob's real secret-key handle can unseal it.
+    #[test]
+    fn seal_with_recipient_public_key_only_cross_party() {
+        let bob = WasmIdentityKey::generate();
+        let bob_public_key_bytes = bob.public_key_bytes();
+
+        let alice_view_of_bob_pk = WasmIdentityPublicKey::from_bytes(&bob_public_key_bytes)
+            .expect("valid public key bytes");
+        let ck = WasmCollectionKey::generate();
+        let sealed_json = seal_collection_key(&alice_view_of_bob_pk, &ck)
+            .expect("seal with public-key-only handle should succeed");
+
+        let unsealed = unseal_collection_key(&bob, &sealed_json)
+            .expect("bob should be able to unseal what alice sealed to his public key");
+
+        let item_json = encrypt_item_for_collection(
+            &ck,
+            "{\"type\":\"note\",\"body\":\"cross-party fixture\"}",
+            "collection-1",
+            "item-1",
+            1,
+        )
+        .expect("encrypt should succeed");
+        let plaintext =
+            decrypt_item_for_collection(&unsealed, &item_json, "collection-1", "item-1", 1)
+                .expect("bob's unsealed key should decrypt what alice's ck encrypted");
+        assert_eq!(plaintext, "{\"type\":\"note\",\"body\":\"cross-party fixture\"}");
+    }
+
+    /// CR-01 regression at the WASM boundary: `WasmIdentityPublicKey::fromBytes`
+    /// must reject small-order encodings (all-zero) that a malicious/buggy
+    /// server could hand to a JS caller before it ever reaches `sealCollectionKey`.
+    #[test]
+    fn wasm_identity_public_key_from_bytes_rejects_small_order() {
+        let result = WasmIdentityPublicKey::from_bytes(&[0u8; KEY_LEN]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn wasm_identity_public_key_from_bytes_rejects_wrong_length() {
+        let result = WasmIdentityPublicKey::from_bytes(&[0u8; 16]);
+        assert!(result.is_err());
     }
 
     // --- Task 2 (21-05): encryptItemForCollection/decryptItemForCollection

@@ -12,6 +12,12 @@ chacha20poly1305 = "=0.10.1"
 crypto_box = { version = "=0.9.1", default-features = false, features = ["chacha20", "alloc", "rand_core"] }
 hkdf = "=0.12.4"
 sha2 = "0.10"
+# CR-01 (Phase 21 code review): constant-time small-order X25519 public-key
+# rejection in `identity.rs`. Already resolved transitively (crypto_box ->
+# curve25519-dalek -> subtle) at exactly this version -- direct-declaring it
+# here does not move the resolved graph, just makes the existing pin explicit
+# and reviewable (see deny.toml watch-list).
+subtle = "=2.6.1"
 zeroize = { version = "1", features = ["derive"] }
 serde.workspace = true
 thiserror.workspace = true
