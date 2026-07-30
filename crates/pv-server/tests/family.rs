@@ -87,3 +87,133 @@ async fn second_family_create_returns_conflict() {
     let second_res = app.clone().oneshot(make_request()).await.unwrap();
     assert_eq!(second_res.status(), StatusCode::CONFLICT);
 }
+
+/// FAM-02: the member-list endpoint, called immediately after family
+/// creation, includes a present, non-empty `joined_at` for the sole member —
+/// this exact assertion is already covered by
+/// `family_create_creates_sole_member_with_join_timestamp` above (Task 1's
+/// tracer test), so this test is a lightweight standalone re-assertion under
+/// its own FAM-02-named test id, per this task's own test-name requirement,
+/// not a duplicate of the tracer's fuller create+list flow.
+#[tokio::test]
+async fn member_list_includes_joined_at() {
+    let pool = common::test_pool().await;
+    let app = common::test_app(pool);
+    let token = common::register_and_login(&app, "owner3@example.com").await;
+
+    let create_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/families")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(serde_json::to_vec(&json!({ "name": "Test Family" })).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+
+    let members_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/families/members")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(members_res.status(), StatusCode::OK);
+
+    let members_bytes = to_bytes(members_res.into_body(), usize::MAX).await.unwrap();
+    let members: Value = serde_json::from_slice(&members_bytes).unwrap();
+    let members = members.as_array().unwrap();
+    assert_eq!(members.len(), 1);
+    assert!(!members[0]["joined_at"].as_str().unwrap().is_empty());
+}
+
+/// FAM-03: the owner can add an existing registered user, then query exactly
+/// which collections/item shares that member can reach — empty lists (not
+/// omitted, not erroring) since no sharing exists yet in this plan's scope.
+/// Also proves the 403-vs-404 split: the non-owner member themselves hitting
+/// the SAME endpoint gets `403` (they provably have SOME family access, just
+/// not owner-level), never `404`.
+#[tokio::test]
+async fn owner_sees_per_member_access_breakdown() {
+    let pool = common::test_pool().await;
+    let app = common::test_app(pool);
+    let owner_token = common::register_and_login(&app, "owner4@example.com").await;
+
+    let create_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/families")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::from(serde_json::to_vec(&json!({ "name": "Test Family" })).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+
+    let member_token = common::register_second_family_member(&app, &owner_token, "member4@example.com").await;
+
+    let me_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/auth/me")
+                .header("authorization", format!("Bearer {member_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let me_bytes = to_bytes(me_res.into_body(), usize::MAX).await.unwrap();
+    let me_body: Value = serde_json::from_slice(&me_bytes).unwrap();
+    let member_user_id = me_body["user_id"].as_str().unwrap().to_string();
+
+    let access_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/families/members/{member_user_id}/access"))
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(access_res.status(), StatusCode::OK);
+    let access_bytes = to_bytes(access_res.into_body(), usize::MAX).await.unwrap();
+    let access_body: Value = serde_json::from_slice(&access_bytes).unwrap();
+    assert_eq!(access_body["collections"].as_array().unwrap().len(), 0);
+    assert_eq!(access_body["item_shares"].as_array().unwrap().len(), 0);
+
+    // Non-owner member hitting the SAME endpoint gets 403, not 404 — they
+    // provably have SOME family access, just insufficient (member, not
+    // owner) role.
+    let non_owner_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/families/members/{member_user_id}/access"))
+                .header("authorization", format!("Bearer {member_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(non_owner_res.status(), StatusCode::FORBIDDEN);
+}

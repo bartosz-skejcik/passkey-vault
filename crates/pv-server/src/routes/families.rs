@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 use uuid::Uuid;
 
-use super::membership::{FamilyMembership, RequireRead};
+use super::membership::{FamilyMembership, RequireEdit, RequireRead};
 use super::session::SessionUser;
 use crate::{error::ApiError, AppState};
 
@@ -161,4 +161,114 @@ pub async fn members(
         .collect::<Result<Vec<_>, ApiError>>()?;
 
     Ok(Json(records))
+}
+
+#[derive(Deserialize)]
+pub struct AddMemberRequest {
+    pub user_id: String,
+}
+
+/// `POST /api/families/members` — owner-only (`FamilyMembership<RequireEdit>`
+/// gates "owner only" per `resolve_family_role`'s role mapping). Direct
+/// owner-side add of an EXISTING registered user — no invite token, matching
+/// the Phase 24 scope fence.
+pub async fn add_member(
+    State(state): State<AppState>,
+    membership: FamilyMembership<RequireEdit>,
+    Json(req): Json<AddMemberRequest>,
+) -> Result<StatusCode, ApiError> {
+    let target_exists = sqlx::query("SELECT 1 FROM users WHERE id = ?")
+        .bind(&req.user_id)
+        .fetch_optional(&state.db)
+        .await?;
+    if target_exists.is_none() {
+        return Err(ApiError::NotFound);
+    }
+
+    let result = sqlx::query(
+        "INSERT INTO family_members (family_id, user_id, role) VALUES (?, ?, 'member') \
+         ON CONFLICT DO NOTHING \
+         RETURNING user_id",
+    )
+    .bind(&membership.family_id)
+    .bind(&req.user_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    match result {
+        Some(_) => Ok(StatusCode::CREATED),
+        None => Err(ApiError::Conflict("user is already a family member".into())),
+    }
+}
+
+#[derive(Serialize)]
+pub struct CollectionAccessEntry {
+    pub id: String,
+    pub access_level: String,
+}
+
+#[derive(Serialize)]
+pub struct ItemShareEntry {
+    pub item_id: String,
+    pub access_level: String,
+}
+
+#[derive(Serialize)]
+pub struct MemberAccessResponse {
+    pub collections: Vec<CollectionAccessEntry>,
+    pub item_shares: Vec<ItemShareEntry>,
+}
+
+/// `GET /api/families/members/{user_id}/access` — owner-only per-member
+/// breakdown of collections + individual item shares (FAM-03). The
+/// `{user_id}` path segment is read by this handler's OWN `Path<String>`
+/// extraction, never by the `FamilyMembership` extractor itself (which stays
+/// pathless) — this route belongs in `family_routes()` because the
+/// AUTHORIZATION GUARD is `FamilyMembership`, regardless of the path
+/// happening to carry an unrelated `{user_id}` query target. Deliberately
+/// does NOT first validate the path's `{user_id}` is itself a family member —
+/// an owner asking about a non-member correctly returns two empty lists, not
+/// an error; there is nothing to leak either way.
+pub async fn member_access(
+    State(state): State<AppState>,
+    _membership: FamilyMembership<RequireEdit>,
+    axum::extract::Path(target_user_id): axum::extract::Path<String>,
+) -> Result<Json<MemberAccessResponse>, ApiError> {
+    let collection_rows = sqlx::query(
+        "SELECT collection_id, access_level FROM collection_keys \
+         WHERE recipient_user_id = ? ORDER BY collection_id ASC",
+    )
+    .bind(&target_user_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let collections = collection_rows
+        .into_iter()
+        .map(|row| {
+            Ok(CollectionAccessEntry {
+                id: row.try_get("collection_id").map_err(|_| ApiError::Internal)?,
+                access_level: row.try_get("access_level").map_err(|_| ApiError::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    let item_share_rows = sqlx::query(
+        "SELECT item_id, access_level FROM item_shares \
+         WHERE recipient_user_id = ? ORDER BY item_id ASC",
+    )
+    .bind(&target_user_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let item_shares = item_share_rows
+        .into_iter()
+        .map(|row| {
+            Ok(ItemShareEntry {
+                item_id: row.try_get("item_id").map_err(|_| ApiError::Internal)?,
+                access_level: row.try_get("access_level").map_err(|_| ApiError::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    Ok(Json(MemberAccessResponse { collections, item_shares }))
 }

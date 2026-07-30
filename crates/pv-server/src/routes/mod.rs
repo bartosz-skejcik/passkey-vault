@@ -128,7 +128,10 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
 /// route needs no path `{id}` at all (the singleton IS the resource), while a
 /// `Membership<R, M>` route needs a real path `{id}`.
 pub(crate) fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
-    vec![("/api/families/members", get(families::members))]
+    vec![
+        ("/api/families/members", get(families::members).post(families::add_member)),
+        ("/api/families/members/{user_id}/access", get(families::member_access)),
+    ]
 }
 
 /// The ONLY place path-`{id}`-based `Membership<R, M>`-gated routes may be
