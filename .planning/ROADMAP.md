@@ -192,13 +192,14 @@ Plans:
 
 **Goal**: The web app lets a member actually share folders and items at three access levels, honestly communicates what hidden-password does and doesn't protect, and makes sharing state and identity trust visible everywhere in the vault UI.
 **Depends on**: Phase 21, Phase 22, Phase 23, Phase 24, Phase 25
-**Requirements**: SHARE-01, SHARE-02, SHARE-03, UX-03, UX-05, SEC-05
+**Requirements**: SHARE-01, SHARE-02, SHARE-03, UX-03, UX-05, SEC-05, KEY-01 (client trigger — see SC 5)
 **Success Criteria** (what must be TRUE):
 
   1. A member can share a folder/collection with selected family members, and independently share a single item with a specific person regardless of folder, choosing one of three access levels: read-only, full-edit, or hidden-password.
   2. At share time, the UI states plainly that hidden-password is an interface protection, not a cryptographic one — a member with access still holds the key and can technically recover the password.
   3. Every item and collection view visually distinguishes shared items from personal ones and shows who a given shared item is shared with.
   4. A member can view their own and other members' identity-key fingerprints in the member list, so key authenticity can be checked out-of-band.
+  5. **KEY-01 client trigger** (the last unowned clause, carried from Phases 21→22): the web app generates an X25519 identity keypair **client-side on the first unlock that finds no published public key**, and publishes it via `PUT /api/identity/keypair` — so "every account HAS a keypair, including one created before v0.4, generated on upgrade" becomes true in practice rather than only possible. Phase 21 built the crypto, Phase 22 built the server endpoint and proved no vault byte is re-encrypted; nothing yet CALLS it, which is why this criterion exists. Idempotent under concurrent double-unlock (two devices at once): the race loser unwraps the winner's published blob rather than overwriting it. Phase 27 owes the same trigger for the extension.
 
 **Plans**: TBD
 **UI hint**: yes
@@ -207,7 +208,7 @@ Plans:
 
 **Goal**: Shared items work identically to personal ones across autofill, TOTP, and the passkey provider in the extension, with the concurrent-shared-passkey signature-counter question resolved by an explicit design spike rather than assumed.
 **Depends on**: Phase 26
-**Requirements**: EXT-07, EXT-08, EXT-09, EXT-10, EXT-11, EXT-12
+**Requirements**: EXT-07, EXT-08, EXT-09, EXT-10, EXT-11, EXT-12, KEY-01 (extension client trigger — mirrors Phase 26 SC 5)
 **Success Criteria** (what must be TRUE):
 
   1. A shared login autofills in the extension exactly like a personal one through the existing fill pipeline unchanged, and TOTP codes generate correctly for shared items.
