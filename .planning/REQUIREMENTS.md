@@ -43,9 +43,9 @@ Blocks every other category. Today's hierarchy is entirely symmetric and cannot 
 
 ### FAM — Family, Membership & Invitations
 
-- [ ] **FAM-01**: An instance owner can create a family (single family object, flat member list — no multi-org, no nested groups).
-- [ ] **FAM-02**: The owner sees a member list showing who belongs to the family and when they joined.
-- [ ] **FAM-03**: The owner can see, per member, exactly what that member has access to (which collections and individually-shared items).
+- [x] **FAM-01**: An instance owner can create a family (single family object, flat member list — no multi-org, no nested groups).
+- [x] **FAM-02**: The owner sees a member list showing who belongs to the family and when they joined.
+- [x] **FAM-03**: The owner can see, per member, exactly what that member has access to (which collections and individually-shared items).
 - [ ] **FAM-04**: The owner can generate a **single-use, expiring** invite link or code, delivered out-of-band by the owner (no SMTP — the 1-container constraint stands).
 - [ ] **FAM-05**: An invitee sees an explicit "Join [Family]?" confirmation before membership takes effect; the invite landing page leaks no vault metadata (no folder names, no item counts) before redemption.
 - [ ] **FAM-06**: One invite link works for both cases — a brand-new user registering, and an existing account joining a family — branching at redemption time on whether a session exists.
@@ -59,9 +59,9 @@ Blocks every other category. Today's hierarchy is entirely symmetric and cannot 
 - [ ] **SHARE-01**: A member can share a folder/collection with selected family members.
 - [ ] **SHARE-02**: A member can share a single item with a specific person, independent of any folder.
 - [ ] **SHARE-03**: Each share carries one of three access levels: **read-only**, **full edit**, or **hidden password** (usable but the password field is masked).
-- [ ] **SHARE-04**: A member holding "hidden password" access **cannot reassign the item to another collection**. This closes the exact bypass confirmed in Vaultwarden issue #6269 (upstream Bitwarden fixed it in 2025.2.0) — we implement the fix from day one rather than rediscovering the bug.
-- [ ] **SHARE-05**: Every permission is enforced **server-side** on every endpoint through a shared membership-authorization extractor — never client-side only, and never inconsistently between routes.
-- [ ] **SHARE-06**: The owner of a share can revoke that single share without removing the person from the family.
+- [x] **SHARE-04**: A member holding "hidden password" access **cannot reassign the item to another collection**. This closes the exact bypass confirmed in Vaultwarden issue #6269 (upstream Bitwarden fixed it in 2025.2.0) — we implement the fix from day one rather than rediscovering the bug.
+- [x] **SHARE-05**: Every permission is enforced **server-side** on every endpoint through a shared membership-authorization extractor — never client-side only, and never inconsistently between routes.
+- [x] **SHARE-06**: The owner of a share can revoke that single share without removing the person from the family.
 
 ### SYNC — Shared-Data Synchronization
 
@@ -86,7 +86,7 @@ scalar and `SyncHub` is keyed by `user_id` — neither can express "someone else
 ### SEC — Security Posture for Multi-User
 
 - [ ] **SEC-05**: A member can view their own and other members' identity-key fingerprints, so key authenticity can be verified out-of-band. This is the honest, v0.4-scope mitigation for the server-distributes-public-keys trust gap (TOFU posture); a "key changed" banner and a transparency log are explicitly deferred, not silently dropped.
-- [ ] **SEC-06**: Every collection/item/family endpoint enforces membership authorization uniformly — no route reachable without the same check its siblings apply.
+- [x] **SEC-06**: Every collection/item/family endpoint enforces membership authorization uniformly — no route reachable without the same check its siblings apply.
 - [ ] **SEC-07**: Batch rewrapping of many keys during share or re-key operations never reuses a nonce.
 - [ ] **SEC-08**: A live multi-session test harness (2+ concurrent authenticated sessions, real browser) exists and covers the sharing flows. Stood up **with the sync phase, not at the end** — this milestone's direct application of the v0.2→v0.3 lesson that green CI missed 7 bug classes only visible live.
 
@@ -135,9 +135,9 @@ Explicitly excluded to prevent scope creep.
 | KEY-05 | Phase 21 | Complete |
 | KEY-06 | Phase 25 | Pending |
 | KEY-07 | Phase 25 | Pending |
-| FAM-01 | Phase 22 | Pending |
-| FAM-02 | Phase 22 | Pending |
-| FAM-03 | Phase 22 | Pending |
+| FAM-01 | Phase 22 | Complete |
+| FAM-02 | Phase 22 | Complete |
+| FAM-03 | Phase 22 | Complete |
 | FAM-04 | Phase 24 | Pending |
 | FAM-05 | Phase 24 | Pending |
 | FAM-06 | Phase 24 | Pending |
@@ -148,9 +148,9 @@ Explicitly excluded to prevent scope creep.
 | SHARE-01 | Phase 26 | Pending |
 | SHARE-02 | Phase 26 | Pending |
 | SHARE-03 | Phase 26 | Pending |
-| SHARE-04 | Phase 22 | Pending |
-| SHARE-05 | Phase 22 | Pending |
-| SHARE-06 | Phase 22 | Pending |
+| SHARE-04 | Phase 22 | Complete |
+| SHARE-05 | Phase 22 | Complete |
+| SHARE-06 | Phase 22 | Complete |
 | SYNC-04 | Phase 23 | Pending |
 | SYNC-05 | Phase 23 | Pending |
 | SYNC-06 | Phase 23 | Pending |
@@ -163,7 +163,7 @@ Explicitly excluded to prevent scope creep.
 | EXT-11 | Phase 27 | Pending |
 | EXT-12 | Phase 27 | Pending |
 | SEC-05 | Phase 26 | Pending |
-| SEC-06 | Phase 22 | Pending |
+| SEC-06 | Phase 22 | Complete |
 | SEC-07 | Phase 25 | Pending |
 | SEC-08 | Phase 23 | Pending |
 | UX-03 | Phase 26 | Pending |
