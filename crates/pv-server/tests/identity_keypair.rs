@@ -10,6 +10,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
+use sqlx::Row;
 use tower::ServiceExt;
 
 use common::{register_and_login, test_app, test_pool};
@@ -35,6 +36,13 @@ async fn req(
         None => Body::empty(),
     };
     app.clone().oneshot(builder.body(body).unwrap()).await.unwrap()
+}
+
+async fn user_id_of(app: &axum::Router, token: &str) -> String {
+    let res = req(app, "GET", "/api/auth/me", token, None).await;
+    assert_eq!(res.status(), StatusCode::OK, "fetching own user id via /api/auth/me must succeed");
+    let body = body_json(res).await;
+    body["user_id"].as_str().unwrap().to_string()
 }
 
 fn keypair_body(public_key: &[u8; 32], wrapped_secret_key: &str) -> Value {
@@ -171,4 +179,105 @@ async fn keypair_get_returns_404_when_absent() {
 
     let res = req(&app, "GET", "/api/identity/keypair", &token, None).await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+/// Task 2: byte-level no-re-encryption proof (KEY-01 SC#5) — a pre-v0.4
+/// account generating a keypair on upgrade must not rewrite a single byte of
+/// its existing vault's `enc_data`.
+#[tokio::test]
+async fn keypair_generation_does_not_rewrite_enc_data_bytes() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+    let token = register_and_login(&app, "no-reencrypt@example.com").await;
+
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_body = json!({
+        "id": item_id,
+        "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"key-blob\"}",
+        "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"data-blob-must-not-change\"}",
+    });
+    let create_res = req(&app, "POST", "/api/vault/items", &token, Some(create_body)).await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+
+    let before_res = req(&app, "GET", "/api/vault/items", &token, None).await;
+    assert_eq!(before_res.status(), StatusCode::OK);
+    let before_body = body_json(before_res).await;
+    let enc_data_before = before_body[0]["enc_data"].as_str().unwrap().to_string();
+
+    // Simulate on-upgrade keypair generation.
+    let put_res = req(
+        &app,
+        "PUT",
+        "/api/identity/keypair",
+        &token,
+        Some(keypair_body(&[0xCCu8; 32], "wrapped-on-upgrade")),
+    )
+    .await;
+    assert_eq!(put_res.status(), StatusCode::OK);
+
+    let after_res = req(&app, "GET", "/api/vault/items", &token, None).await;
+    assert_eq!(after_res.status(), StatusCode::OK);
+    let after_body = body_json(after_res).await;
+    let enc_data_after = after_body[0]["enc_data"].as_str().unwrap().to_string();
+
+    assert_eq!(
+        enc_data_before, enc_data_after,
+        "keypair generation must not re-encrypt/rewrite a single byte of enc_data"
+    );
+}
+
+/// Task 2: `POST /api/identity/verify/{user_id}` is per-viewer, never
+/// symmetric — Anna verifying Piotr says nothing about Piotr verifying Anna.
+#[tokio::test]
+async fn identity_verification_is_per_viewer_not_symmetric() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+    let viewer_token = register_and_login(&app, "viewer@example.com").await;
+    let subject_token = register_and_login(&app, "subject@example.com").await;
+
+    let viewer_id = user_id_of(&app, &viewer_token).await;
+    let subject_id = user_id_of(&app, &subject_token).await;
+
+    // Viewer marks subject verified.
+    let verify_res =
+        req(&app, "POST", &format!("/api/identity/verify/{subject_id}"), &viewer_token, None).await;
+    assert_eq!(verify_res.status(), StatusCode::NO_CONTENT);
+
+    // A repeat call is idempotent: still exactly one row for the pair.
+    let verify_again_res =
+        req(&app, "POST", &format!("/api/identity/verify/{subject_id}"), &viewer_token, None).await;
+    assert_eq!(verify_again_res.status(), StatusCode::NO_CONTENT);
+
+    let forward_rows =
+        sqlx::query("SELECT COUNT(*) as n FROM identity_verifications WHERE viewer_user_id = ? AND subject_user_id = ?")
+            .bind(&viewer_id)
+            .bind(&subject_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let forward_count: i64 = forward_rows.try_get("n").unwrap();
+    assert_eq!(forward_count, 1, "a repeat verify must refresh, never duplicate, the same pair's row");
+
+    // The reverse direction (subject verifying viewer) has NOT thereby
+    // happened — the per-viewer, non-symmetric property.
+    let reverse_rows =
+        sqlx::query("SELECT COUNT(*) as n FROM identity_verifications WHERE viewer_user_id = ? AND subject_user_id = ?")
+            .bind(&subject_id)
+            .bind(&viewer_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let reverse_count: i64 = reverse_rows.try_get("n").unwrap();
+    assert_eq!(reverse_count, 0, "verifying in one direction must not create a row in the other direction");
+
+    // A user_id that does not exist returns 404.
+    let missing_res = req(
+        &app,
+        "POST",
+        &format!("/api/identity/verify/{}", uuid::Uuid::new_v4()),
+        &viewer_token,
+        None,
+    )
+    .await;
+    assert_eq!(missing_res.status(), StatusCode::NOT_FOUND);
 }

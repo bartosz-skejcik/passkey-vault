@@ -16,7 +16,11 @@
 //! rejection) — it never touches, unwraps, or unseals anything, so it does
 //! not cross the line this doc comment draws.
 
-use axum::{extract::State, Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -140,4 +144,38 @@ pub async fn get(State(state): State<AppState>, session: SessionUser) -> Result<
         wrapped_secret_key,
         adopted_existing: false,
     }))
+}
+
+/// `POST /api/identity/verify/{user_id}` — the CALLER (viewer) marks
+/// `user_id` (the subject) as verified. Idempotent: a repeat call refreshes
+/// `verified_at` on the same `(viewer_user_id, subject_user_id)` row rather
+/// than erroring or duplicating. Intentionally scoped to "any registered
+/// user", not gated by family membership — CONTEXT.md's Carried Product
+/// Decision only requires the data to exist and be per-viewer, and v0.4 has
+/// exactly one family anyway (FAM-01), so an out-of-family verification is
+/// inert (no route ever surfaces a non-family member's fingerprint to
+/// compare against) rather than a real widening of scope.
+pub async fn verify(
+    State(state): State<AppState>,
+    session: SessionUser,
+    Path(subject_user_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let target_exists = sqlx::query("SELECT 1 FROM users WHERE id = ?")
+        .bind(&subject_user_id)
+        .fetch_optional(&state.db)
+        .await?;
+    if target_exists.is_none() {
+        return Err(ApiError::NotFound);
+    }
+
+    sqlx::query(
+        "INSERT INTO identity_verifications (viewer_user_id, subject_user_id) VALUES (?, ?) \
+         ON CONFLICT(viewer_user_id, subject_user_id) DO UPDATE SET verified_at = datetime('now')",
+    )
+    .bind(&session.user_id)
+    .bind(&subject_user_id)
+    .execute(&state.db)
+    .await?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
