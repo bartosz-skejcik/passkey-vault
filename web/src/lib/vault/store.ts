@@ -327,17 +327,31 @@ export async function updateVaultItem(
     throw err;
   }
   const existingIndex = items.findIndex((item) => item.id === id);
+  const existing = existingIndex === -1 ? undefined : items[existingIndex];
   // `update()`'s server route (crates/pv-server/src/routes/vault.rs) never
   // touches `last_used_at` — carry the existing item's value forward
   // explicitly, otherwise an edit-save would silently wipe out this item's
   // last-used timestamp (Rule 1: this would be a real regression, since
   // nothing about "last used" changed just because content was edited).
+  //
+  // WR-02 (code review iteration 1): `isShared`/`lastEditorEmail` (Phase 23)
+  // must be carried forward the SAME way — this handler's own response body
+  // has neither field (the server route returns only `{revision,
+  // updated_at}`), so dropping them here made `item.isShared` become
+  // `undefined` immediately after ANY save of a shared item, right up until
+  // the next background snapshot repopulated it. `DetailPanel`'s live-
+  // conflict attribution reads `item.isShared && item.lastEditorEmail`
+  // together, so this silently fell back to the generic (non-attributed)
+  // copy in exactly the window a shared item is most likely to conflict —
+  // immediately after this same user's own save.
   const updated: VaultItem = {
     id,
     revision: newRevision,
     fields,
     updatedAt: response.updated_at,
-    lastUsedAt: existingIndex === -1 ? undefined : items[existingIndex].lastUsedAt,
+    lastUsedAt: existing?.lastUsedAt,
+    isShared: existing?.isShared,
+    lastEditorEmail: existing?.lastEditorEmail,
   };
   items =
     existingIndex === -1
