@@ -482,6 +482,68 @@ async fn revoked_share_loses_access_on_next_request_same_session() {
     assert_eq!(remaining, 0, "the revoked member's collection_keys row must be gone");
 }
 
+/// WR-06: revoking the collection's LAST remaining `collection_keys` row must
+/// be rejected with `409`, never silently succeed — `create()`'s own doc
+/// comment states "a collection never exists with zero key-holders, even for
+/// an instant", and a sole key-holder self-revoking (e.g. an accidental
+/// "leave" click, no attacker required) would otherwise permanently orphan
+/// every item in the collection with no way to recover them.
+#[tokio::test]
+async fn revoke_access_rejects_emptying_the_last_key_holder() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "lastkey-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-lastkey-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    // The owner is the ONLY key-holder — self-revoking must be rejected.
+    let revoke_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/vault/collections/{collection_id}/access/{owner_id}"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(
+        revoke_res.status(),
+        StatusCode::CONFLICT,
+        "revoking the collection's last remaining key-holder must be rejected with 409, never silently succeed"
+    );
+
+    // The row must still be there — the rejected request left it untouched.
+    let count_row = sqlx::query("SELECT COUNT(*) as n FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+        .bind(&collection_id)
+        .bind(&owner_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let count: i64 = count_row.try_get("n").unwrap();
+    assert_eq!(count, 1, "a rejected last-key-holder revocation must leave the collection_keys row in place");
+
+    // The owner still has full access — the collection was never orphaned.
+    let get_res = req(&app, "GET", &format!("/api/vault/collections/{collection_id}"), &owner_token, None).await;
+    assert_eq!(get_res.status(), StatusCode::OK);
+}
+
 /// Task 2 confused-deputy guard (T-22-11, RESEARCH.md Pitfall 9):
 /// `add_member` targeting a `recipient_user_id` who is NOT a family member
 /// is rejected with `400`, never silently wrapping-and-storing for an

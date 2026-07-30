@@ -258,6 +258,31 @@ pub async fn revoke_access(
     membership: Membership<Collection, RequireEdit>,
     Path((_collection_id, target_user_id)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
+    // WR-06: refuse a revocation that would empty the collection's last
+    // key-holder — `create()`'s own doc comment states the invariant
+    // explicitly ("a collection never exists with zero key-holders, even for
+    // an instant") and enforces it transactionally at creation time, but
+    // nothing enforced its converse here. Without this guard, a sole
+    // key-holder revoking their own access (accidental "leave" click, no
+    // attacker required) — or an edit-capable member stripping every other
+    // recipient first — permanently orphans every item in the collection:
+    // `Item::resolve_access`'s collection branch resolves to `None` for
+    // EVERY caller once no `collection_keys` row remains, and nothing in this
+    // API can ever recover them.
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM collection_keys WHERE collection_id = ? AND recipient_user_id <> ?",
+    )
+    .bind(&membership.resource_id)
+    .bind(&target_user_id)
+    .fetch_one(&state.db)
+    .await?;
+    if remaining == 0 {
+        return Err(ApiError::Conflict(
+            "cannot revoke the last key-holder — the collection's contents would become permanently unreadable"
+                .into(),
+        ));
+    }
+
     let result = sqlx::query("DELETE FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
         .bind(&membership.resource_id)
         .bind(&target_user_id)
