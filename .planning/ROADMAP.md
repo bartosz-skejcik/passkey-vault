@@ -154,7 +154,7 @@ Plans:
   4. A user who isn't a member of a given collection receives zero data or events about it through sync or WebSocket, even as a side effect of unrelated activity.
   5. The hardened personal `GET /api/sync` path keeps its `session.user_id`-only authorization scope unchanged; shared data arrives exclusively through a separate, additively-introduced query.
 
-**Plans:** 4/6 plans executed
+**Plans:** 5/6 plans executed
 
 Plans:
 **Wave 1**
@@ -169,7 +169,7 @@ Plans:
 
 **Wave 3** *(blocked on 23-02, 23-03)*
 
-- [ ] 23-05-PLAN.md — Client sync engine wiring (api.ts/types.ts contracts, store.ts/sync.ts engine, DetailPanel.tsx/dictionary.ts attribution UI)
+- [x] 23-05-PLAN.md — Client sync engine wiring (api.ts/types.ts contracts, store.ts/sync.ts engine, DetailPanel.tsx/dictionary.ts attribution UI)
 
 **Wave 4** *(blocked on 23-04, 23-05)*
 
@@ -268,7 +268,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 20. Test Infrastructure & CI Gate | v0.3 | 4/4 | Complete    | 2026-07-21 |
 | 21. Crypto Foundation — Asymmetric Identity & Collection Keys | v0.4 | 5/5 | Complete    | 2026-07-30 |
 | 22. Family & Collection Data Model — Server Authorization | v0.4 | 5/5 | Complete    | 2026-07-30 |
-| 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 4/6 | In Progress|  |
+| 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 5/6 | In Progress|  |
 | 24. Invitation Flow (No SMTP) | v0.4 | 0/TBD | Not started | - |
 | 25. Member Removal, Suspension & Re-key | v0.4 | 0/TBD | Not started | - |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 0/TBD | Not started | - |
