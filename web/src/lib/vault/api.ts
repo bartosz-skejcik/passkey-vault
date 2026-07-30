@@ -1,8 +1,11 @@
 // Vault items/folders API client for pv-server's /api/vault/* routes
-// (Plan 02-03). Reuses `apiFetch`'s base-URL/auth-header/wire-encoding
-// logic from lib/auth/api rather than duplicating it — see that file's
-// module comment.
-import { apiFetch, ApiClientError } from "@/lib/auth/api";
+// (Plan 02-03). Reuses `apiJson`'s base-URL/auth-header/wire-encoding/error-
+// unwrapping logic from lib/auth/api rather than duplicating it — see that
+// file's module comment. WR-11 (code review iteration 1): this module used
+// to carry its own byte-identical copy of `apiJson` (only this one attached
+// the parsed error body as `ApiClientError.details`) — deleted in favor of
+// importing the shared, `details`-carrying implementation directly.
+import { apiJson } from "@/lib/auth/api";
 
 /** Wire shape of a single item row as returned by GET /api/vault/items. */
 export interface ItemRow {
@@ -28,36 +31,6 @@ export interface ItemRow {
 export interface FolderRow {
   id: string;
   enc_name: string;
-}
-
-async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await apiFetch(path, init);
-  if (!response.ok) {
-    let message = response.statusText;
-    // The FULL parsed body (not just the extracted `message` string) is
-    // carried as `details` (Plan 23-05) — this is what lets store.ts read
-    // `last_editor_email` back out of a 409 response.
-    let details: unknown;
-    try {
-      const body: unknown = await response.json();
-      details = body;
-      if (
-        typeof body === "object" &&
-        body !== null &&
-        "error" in body &&
-        typeof (body as { error: unknown }).error === "string"
-      ) {
-        message = (body as { error: string }).error;
-      }
-    } catch {
-      // response body wasn't JSON (or was empty) — fall back to statusText
-    }
-    throw new ApiClientError(response.status, message, details);
-  }
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  return (await response.json()) as T;
 }
 
 /** Wire shape of GET /api/sync?since=N — a cheap `{revision}` body when the

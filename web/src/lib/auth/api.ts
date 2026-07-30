@@ -61,12 +61,23 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   return fetch(`${API_BASE}${path}`, { ...init, headers });
 }
 
-async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+/** WR-11 (code review iteration 1): the ONE `apiJson` implementation, shared
+ * by every API client module in this directory (`lib/vault/api.ts` used to
+ * carry a byte-identical copy — see that file's own import below). The full
+ * parsed error body is carried as `details` (Plan 23-05) whenever the
+ * non-ok response's body parses as JSON — this is what lets
+ * `lib/vault/store.ts` read `last_editor_email` back out of a 409 response;
+ * an auth-route error body gaining a field beyond `error` in the future is
+ * no longer silently dropped by a second, out-of-sync copy of this
+ * function. */
+export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(path, init);
   if (!response.ok) {
     let message = response.statusText;
+    let details: unknown;
     try {
       const body: unknown = await response.json();
+      details = body;
       if (
         typeof body === "object" &&
         body !== null &&
@@ -78,7 +89,7 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // response body wasn't JSON (or was empty) — fall back to statusText
     }
-    throw new ApiClientError(response.status, message);
+    throw new ApiClientError(response.status, message, details);
   }
   if (response.status === 204) {
     return undefined as T;
