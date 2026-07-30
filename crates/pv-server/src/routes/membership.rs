@@ -209,15 +209,23 @@ impl ResourceKind for Collection {
 /// A vault item — dual-mode (22-RESEARCH.md Pattern 2): a personal item
 /// (`collection_id IS NULL`) preserves today's EXACT `user_id == caller`
 /// rule, expressed as an access level instead of a query filter, COMBINED
-/// (CR-01) with any direct `item_shares` grant — SHARE-02's whole point is
-/// that a personal item can be shared independently of any collection, so
-/// `item_shares` must be consulted on this branch too, not only when
-/// `collection_id IS NOT NULL`; a collection-scoped item resolves the MAX of
-/// THREE independent grants — the creator's own ownership (WR-05: never lost,
-/// even after a co-editor moves the item into a collection the creator holds
-/// no `collection_keys` row for), collection-level membership, and a direct
-/// per-item override share — via `combine_access`, never just one or the
-/// other.
+/// (CR-01, iteration 1) with any direct `item_shares` grant — SHARE-02's
+/// whole point is that a personal item can be shared independently of any
+/// collection, so `item_shares` must be consulted on this branch too, not
+/// only when `collection_id IS NOT NULL`. A collection-scoped item resolves
+/// the MAX of exactly TWO independent grants — collection-level membership
+/// and a direct per-item override share — via `combine_access`. The
+/// creator's own ownership confers NOTHING once an item is collection-scoped
+/// (CR-01, iteration 2 — this is deliberate and load-bearing: the
+/// iteration-1 fold of an unconditional creator `Edit` into this branch was
+/// withdrawn because "creator has no `collection_keys` row" and "member was
+/// revoked" are the same DB predicate, so the fold could not tell a creator
+/// apart from a just-revoked member and defeated SC#4's revocation
+/// guarantee for any item they had created). If a co-editor moves an item
+/// into a collection its creator holds no grant on, the creator correctly
+/// loses access to it — `fetch_items_for` must not list a row the creator
+/// cannot resolve access to (Phase 23/list-layer concern, tracked, not an
+/// authorization relaxation).
 pub struct Item;
 
 impl ResourceKind for Item {
@@ -254,9 +262,11 @@ impl ResourceKind for Item {
             }
         };
 
-        // The creator's own ownership grant — independent of collection
-        // membership (WR-05). Computed once, folded into whichever branch
-        // below applies.
+        // The creator's own ownership grant — used ONLY by the personal-item
+        // branch below (`collection_id IS NULL`). Deliberately NOT folded
+        // into the collection branch (CR-01, iteration 2) — see this
+        // struct's doc comment above for why an unconditional ownership
+        // grant on a collection-scoped item defeats revocation.
         let owner_access = (owner_user_id == caller_user_id).then_some(AccessLevel::Edit);
 
         let Some(collection_id) = collection_id else {
@@ -292,16 +302,21 @@ impl ResourceKind for Item {
             }
         };
 
-        // WR-05: fold the creator's own ownership grant in here too — a
-        // cross-collection move never revokes `collection_keys` from the
-        // MOVER, but it can absolutely leave the ORIGINAL CREATOR without a
-        // `collection_keys` row on the destination collection. Without this,
-        // the creator 404s on their own item (PUT/DELETE/touch) while
-        // `fetch_items_for`'s `WHERE user_id = ?` still lists it — an
-        // undecryptable entry the owning client can never remove. Folding
-        // `owner_access` in here makes `Item::resolve_access` and
-        // `fetch_items_for` agree on who "owns" a collection-scoped item.
-        Ok(combine_access(combine_access(owner_access, collection_access), item_share_access))
+        // CR-01 (iteration 2): do NOT fold `owner_access` in here.
+        // "the creator has no `collection_keys` row" and "a revoked member
+        // has no `collection_keys` row" are the SAME predicate against this
+        // DB state — folding ownership in unconditionally makes revocation
+        // meaningless for any item the revoked member happened to create,
+        // defeating SC#4 ("revocation enforced on the very next request")
+        // and the SHARE-04 / Vaultwarden #6269 hidden-password reassignment
+        // gate for any item the caller created. In a collection, access
+        // comes from the `collection_keys` row (plus any direct item share)
+        // and nothing else. The iteration-1 WR-05 fold that used to live
+        // here is withdrawn; WR-05's actual symptom (a creator's moved item
+        // still appearing, undecryptable, in their own personal list) is a
+        // LISTING concern for `fetch_items_for`, not an authorization one,
+        // and must not be solved by widening authorization here.
+        Ok(combine_access(collection_access, item_share_access))
     }
 }
 
@@ -653,12 +668,20 @@ mod tests {
         assert_eq!(owner_access, Some(AccessLevel::Edit));
     }
 
-    /// WR-05 regression: the creator of a collection-scoped item must never
-    /// lose access to their own row, even if they hold no `collection_keys`
-    /// row for its CURRENT collection (the exact state a co-editor's
-    /// cross-collection `move_item` call can leave them in).
+    /// CR-01 (iteration 2) regression: the creator of a collection-scoped
+    /// item must NOT retain access purely by having created it once no
+    /// `collection_keys` row names them — this is the exact DB state a
+    /// revoked member is left in, and the two cases are indistinguishable
+    /// from inside `resolve_access`. This test supersedes iteration 1's
+    /// `item_resolve_access_collection_branch_creator_never_loses_own_item`,
+    /// which asserted the OPPOSITE (`Some(Edit)`) — that assertion encoded
+    /// the very bug this iteration withdraws. See the two adversarial
+    /// `Membership<Item, ...>`-level integration tests in
+    /// `tests/collections.rs` for the end-to-end version of this same
+    /// property (revoked creator gets 404 on PUT/DELETE/move_item, and a
+    /// hidden_password creator cannot reassign their own item).
     #[tokio::test]
-    async fn item_resolve_access_collection_branch_creator_never_loses_own_item() {
+    async fn item_resolve_access_collection_branch_creator_with_no_grant_has_no_access() {
         let pool = seeded_pool().await;
         seed_user(&pool, "creator", "creator@example.com").await;
         seed_user(&pool, "editor", "editor@example.com").await;
@@ -666,8 +689,9 @@ mod tests {
         seed_family_member(&pool, "creator").await;
 
         // "creator" made this item but holds NO collection_keys row for the
-        // collection it now lives in — simulating the aftermath of another
-        // editor moving it there.
+        // collection it now lives in — the same state left behind either by
+        // a co-editor moving the item there, or by revoking the creator's
+        // own access to a collection they created an item in.
         sqlx::query(
             "INSERT INTO vault_items (id, user_id, enc_key, enc_data, collection_id) \
              VALUES ('item5', 'creator', 'k', 'd', ?)",
@@ -679,9 +703,10 @@ mod tests {
 
         let access = Item::resolve_access(&pool, "creator", "item5").await.unwrap();
         assert_eq!(
-            access,
-            Some(AccessLevel::Edit),
-            "WR-05: the creator must retain Edit on their own item even without a collection_keys row"
+            access, None,
+            "CR-01 (iteration 2): a creator with no collection_keys row must resolve to NO access — \
+             folding ownership into the collection branch makes revocation indistinguishable from \
+             the stranded-creator case and defeats SC#4"
         );
     }
 

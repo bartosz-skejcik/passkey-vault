@@ -986,3 +986,362 @@ async fn move_item_rejected_when_caller_lacks_edit_on_destination_collection() {
     assert_eq!(move_body["collection_id"].as_str(), Some(collection_b_id.as_str()));
     assert_eq!(move_body["revision"], 3);
 }
+
+// --- Iteration 2, CR-01: revocation must be absolute — the creator's own
+// ownership must never survive a revoked `collection_keys` grant. ---
+
+/// **CR-01 (iteration 2) regression — the SC#4 case.** A member who created
+/// an item inside a collection, then had their OWN collection access
+/// revoked, must lose PUT/DELETE/move access to that item on the very next
+/// request, via the SAME still-valid bearer token — exactly like any other
+/// revoked member. Iteration 1's WR-05 fix folded an unconditional creator
+/// `Edit` into the collection branch of `Item::resolve_access`, which meant
+/// this exact scenario kept granting `Edit` after revocation (the fold could
+/// not tell "creator with no collection_keys row" apart from "revoked member
+/// with no collection_keys row" — same DB state). This test must FAIL
+/// against that iteration-1 code and pass against the iteration-2 fix.
+#[tokio::test]
+async fn revoked_creator_loses_edit_on_their_own_created_item_next_request() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "cr01-revoke-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let marek_token = common::register_second_family_member(&app, &owner_token, "cr01-revoke-marek@example.com").await;
+    let marek_id = user_id_of(&app, &marek_token).await;
+    let marek_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &marek_token, marek_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-cr01-revoke-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    // Marek gets `edit` on the collection so he can create+move an item into it.
+    let marek_sealed = seal(&marek_sk.public_key(), ck.expose()).unwrap();
+    let add_marek_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": marek_id,
+            "sealed_key": serde_json::to_string(&marek_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_marek_res.status(), StatusCode::CREATED);
+
+    // Marek creates a personal item, then moves it into the shared collection
+    // — he is the item's `user_id` (creator) from here on.
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &marek_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"key-blob\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"data-blob\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    let move_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &marek_token,
+        Some(json!({
+            "new_collection_id": collection_id,
+            "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"key-blob-scoped\"}",
+            "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"data-blob-scoped\"}",
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(move_res.status(), StatusCode::OK, "marek moving his own item into the shared collection must succeed");
+
+    // The owner revokes MAREK's own access — he created the item, and this
+    // must strip him of it exactly as it would for any other member.
+    let revoke_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/vault/collections/{collection_id}/access/{marek_id}"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(revoke_res.status(), StatusCode::NO_CONTENT);
+
+    // Reuse Marek's ORIGINAL still-valid bearer token — no re-login — for
+    // every mutating verb on the item HE HIMSELF created. All three must be
+    // 404: he provably has NO access left, not merely insufficient access.
+    let put_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}"),
+        &marek_token,
+        Some(json!({
+            "enc_key": "{\"nonce\":\"EEEE\",\"ciphertext\":\"attempted-update-key\"}",
+            "enc_data": "{\"nonce\":\"FFFF\",\"ciphertext\":\"attempted-update-data\"}",
+            "expected_revision": 2,
+        })),
+    )
+    .await;
+    assert_eq!(
+        put_res.status(),
+        StatusCode::NOT_FOUND,
+        "SC#4: a revoked creator must not be able to PUT the item they created — revocation must be absolute"
+    );
+
+    let move_out_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &marek_token,
+        Some(json!({
+            "new_collection_id": Value::Null,
+            "enc_key": "{\"nonce\":\"GGGG\",\"ciphertext\":\"attempted-move-out-key\"}",
+            "enc_data": "{\"nonce\":\"HHHH\",\"ciphertext\":\"attempted-move-out-data\"}",
+            "expected_revision": 2,
+        })),
+    )
+    .await;
+    assert_eq!(
+        move_out_res.status(),
+        StatusCode::NOT_FOUND,
+        "SC#4: a revoked creator must not be able to move their own item back to personal scope"
+    );
+
+    let delete_res = req(&app, "DELETE", &format!("/api/vault/items/{item_id}"), &marek_token, None).await;
+    assert_eq!(
+        delete_res.status(),
+        StatusCode::NOT_FOUND,
+        "SC#4: a revoked creator must not be able to DELETE the item they created"
+    );
+
+    // Sanity: the item survives untouched (still in the collection, at
+    // revision 2, none of the rejected requests mutated it), and the owner
+    // (still a key-holder) retains full access to it.
+    let row = sqlx::query("SELECT collection_id, revision FROM vault_items WHERE id = ?")
+        .bind(&item_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let stored_collection_id: Option<String> = row.try_get("collection_id").unwrap();
+    let stored_revision: i64 = row.try_get("revision").unwrap();
+    assert_eq!(stored_collection_id.as_deref(), Some(collection_id.as_str()));
+    assert_eq!(stored_revision, 2);
+
+    let owner_delete_check_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}"),
+        &owner_token,
+        Some(json!({
+            "enc_key": "{\"nonce\":\"IIII\",\"ciphertext\":\"owner-update-key\"}",
+            "enc_data": "{\"nonce\":\"JJJJ\",\"ciphertext\":\"owner-update-data\"}",
+            "expected_revision": 2,
+        })),
+    )
+    .await;
+    assert_eq!(
+        owner_delete_check_res.status(),
+        StatusCode::OK,
+        "the remaining key-holder (owner) must retain full access to the item"
+    );
+}
+
+/// **CR-01 (iteration 2) regression — the SHARE-04 / Vaultwarden #6269
+/// case, replayed with the hidden_password holder as the item's CREATOR.**
+/// The original `hidden_password_holder_cannot_reassign_item_vaultwarden_6269_regression`
+/// test above always has the OWNER create the item, so the hidden_password
+/// member is never its creator — iteration 1's WR-05 fold would have let a
+/// creator-turned-hidden_password-holder bypass this exact gate via their
+/// ownership grant. This test forces that path: hp_member creates the item
+/// (while holding `edit`), is then downgraded to `hidden_password` on the
+/// same collection, and must still be rejected when attempting to reassign
+/// the item they themselves created.
+#[tokio::test]
+async fn hidden_password_creator_cannot_reassign_own_item_vaultwarden_6269_regression() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "cr01-hp-creator-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let hp_member_token =
+        common::register_second_family_member(&app, &owner_token, "cr01-hp-creator-member@example.com").await;
+    let hp_member_id = user_id_of(&app, &hp_member_token).await;
+    let hp_member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &hp_member_token, hp_member_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+
+    // SOURCE collection: owner (creator, edit) + hp_member starts at `edit`
+    // (so hp_member can actually create+move the item into it).
+    let source_ck = CollectionKey::generate();
+    let owner_sealed_source = seal(&owner_sk.public_key(), source_ck.expose()).unwrap();
+    let create_source_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-cr01-hp-creator-source-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed_source).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_source_res.status(), StatusCode::CREATED);
+    let source_collection_id = body_json(create_source_res).await["id"].as_str().unwrap().to_string();
+
+    let hp_member_sealed_edit = seal(&hp_member_sk.public_key(), source_ck.expose()).unwrap();
+    let add_hp_member_edit_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{source_collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": hp_member_id,
+            "sealed_key": serde_json::to_string(&hp_member_sealed_edit).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_hp_member_edit_res.status(), StatusCode::CREATED);
+
+    // A SEPARATE destination collection the hp_member has no relationship to
+    // at all — irrelevant, since the SOURCE check must reject first.
+    let dest_ck = CollectionKey::generate();
+    let owner_sealed_dest = seal(&owner_sk.public_key(), dest_ck.expose()).unwrap();
+    let create_dest_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "enc-cr01-hp-creator-dest-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed_dest).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_dest_res.status(), StatusCode::CREATED);
+    let dest_collection_id = body_json(create_dest_res).await["id"].as_str().unwrap().to_string();
+
+    // hp_member (NOT the owner) creates the item and moves it into the
+    // source collection while still at `edit` — hp_member is now the item's
+    // `user_id` (creator).
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &hp_member_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"key-blob\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"data-blob\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    let move_into_source_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &hp_member_token,
+        Some(json!({
+            "new_collection_id": source_collection_id,
+            "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"key-blob-scoped\"}",
+            "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"data-blob-scoped\"}",
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(
+        move_into_source_res.status(),
+        StatusCode::OK,
+        "hp_member (edit on the source collection) moving their own personal item into it must succeed"
+    );
+
+    // Owner downgrades hp_member: revoke the `edit` grant, re-add at
+    // `hidden_password` — the exact revoke+re-add sequence both endpoints
+    // this phase ships already support.
+    let revoke_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/vault/collections/{source_collection_id}/access/{hp_member_id}"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(revoke_res.status(), StatusCode::NO_CONTENT);
+
+    let hp_member_sealed_hp = seal(&hp_member_sk.public_key(), source_ck.expose()).unwrap();
+    let add_hp_member_hp_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{source_collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": hp_member_id,
+            "sealed_key": serde_json::to_string(&hp_member_sealed_hp).unwrap(),
+            "access_level": "hidden_password",
+        })),
+    )
+    .await;
+    assert_eq!(add_hp_member_hp_res.status(), StatusCode::CREATED);
+
+    // THE REGRESSION: hp_member — hidden_password on the item's CURRENT
+    // collection, AND the item's own creator — attempts to reassign it.
+    // Must be rejected 403 (they provably have SOME access — hidden_password
+    // — so this is the insufficient-level case, never the no-access 404
+    // case). Iteration 1's WR-05 fold would have let ownership grant `Edit`
+    // here regardless of the hidden_password downgrade.
+    let hp_move_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &hp_member_token,
+        Some(json!({
+            "new_collection_id": dest_collection_id,
+            "enc_key": "{\"nonce\":\"EEEE\",\"ciphertext\":\"attempted-reassign-key\"}",
+            "enc_data": "{\"nonce\":\"FFFF\",\"ciphertext\":\"attempted-reassign-data\"}",
+            "expected_revision": 2,
+        })),
+    )
+    .await;
+    assert_eq!(
+        hp_move_res.status(),
+        StatusCode::FORBIDDEN,
+        "a hidden_password holder must never reassign an item, even one they created themselves — Vaultwarden #6269"
+    );
+
+    // Sanity: the item is untouched, still in the source collection.
+    let row = sqlx::query("SELECT collection_id, revision FROM vault_items WHERE id = ?")
+        .bind(&item_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let stored_collection_id: Option<String> = row.try_get("collection_id").unwrap();
+    let stored_revision: i64 = row.try_get("revision").unwrap();
+    assert_eq!(stored_collection_id.as_deref(), Some(source_collection_id.as_str()));
+    assert_eq!(stored_revision, 2);
+}
