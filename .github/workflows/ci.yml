@@ -52,6 +52,60 @@ jobs:
         run: npm run build
         working-directory: web
 
+  # Standing SEC-08 blocking gate (Phase 23, Plan 23-06): the first Playwright
+  # suite of ANY kind wired into this workflow -- two real, independently
+  # authenticated browser sessions (web/e2e/fixtures.ts's `twoSessions`) drive
+  # SYNC-04's revision fan-out and SYNC-06/SC3's conflict attribution live
+  # against a real pv-server + Chromium, on every push/PR. Deliberately NOT
+  # `continue-on-error` -- SEC-08 exists specifically to close the exact
+  # "green CI missed 7 bug classes" gap the v0.2->v0.3 lesson recorded, so a
+  # soft/non-blocking gate here would silently reproduce it. No headed-mode
+  # carry-out project (unlike `extension/playwright.config.ts`'s
+  # `chromium-ceremony`) -- every session in this suite is password-only, so
+  # the headless-hangs-real-WebAuthn-ceremonies hazard that carve-out exists
+  # for does not apply here. Retries (2) / workers (1) come from
+  # `web/playwright.config.ts` itself (Plan 23-04), not repeated here.
+  # Expected wall-clock: ~1-2 min once the Rust cache below is warm
+  # (dominated by Playwright's own browser install + this suite's two
+  # tests) -- the cache step is what keeps it there, rather than repeating
+  # `web/playwright.config.ts`'s `webServer`'s own cold
+  # `cargo build --release -p pv-server` (whose 600s `timeout` exists to
+  # survive exactly that cold-checkout case) on every ordinary push.
+  web-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
+        with:
+          target: wasm32-unknown-unknown
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            packages/pv-ui/package-lock.json
+      - name: Build pv-wasm
+        run: bash scripts/build-wasm.sh
+      - name: Install pv-ui deps
+        run: npm ci
+        working-directory: packages/pv-ui
+      - name: Install web deps
+        run: npm ci
+        working-directory: web
+      # Rust build-cache step -- MUST precede any cargo build/test step.
+      # `web/playwright.config.ts`'s own `webServer` command runs
+      # `cargo build --release -p pv-server` internally (Plan 23-04's own
+      # server bring-up); this is what keeps that build warm (seconds) on
+      # every ordinary run instead of cold (minutes) once populated.
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Install Playwright browsers (Chromium)
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: Test (Playwright e2e)
+        run: npm run test:e2e
+        working-directory: web
+
   extension:
     runs-on: ubuntu-latest
     steps:
