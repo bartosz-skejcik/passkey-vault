@@ -251,6 +251,25 @@ describe("ItemContextMenu", () => {
     expect(screen.getByTestId("context-menu-delete")).toBeInTheDocument();
   });
 
+  // WR-02 (code review iteration 2): mirrors DetailPanel.tsx's own guard for
+  // a flagged item's Edit affordance — before this fix, this menu had no
+  // matching guard, so reaching Edit through it still mounted ItemForm in
+  // edit mode against a known-stale revision, whose save throws
+  // UndecryptableItemError into a handler that (pre-fix) silently swallowed
+  // it (see DetailPanel.test.tsx's own WR-02 coverage for that half).
+  it("offers no Edit entry for an item flagged undecryptable (deletion stays available)", () => {
+    render(
+      <ItemContextMenu
+        item={{ ...loginItem(), undecryptable: true }}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+        onDeleteRequest={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("context-menu-edit")).not.toBeInTheDocument();
+    expect(screen.getByTestId("context-menu-delete")).toBeInTheDocument();
+  });
+
   it("clicking Delete calls onDeleteRequest without performing a direct delete", () => {
     const onDeleteRequest = vi.fn();
     render(

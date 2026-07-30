@@ -217,6 +217,26 @@ describe("DetailPanel", () => {
     expect(screen.getByTestId("revision-conflict-banner")).toHaveTextContent("anna@example.com");
   });
 
+  // WR-02 (code review iteration 2): before this fix, ItemForm's edit-mode
+  // catch routed EVERY error (not just RevisionConflictError) to onError,
+  // and this component's onError only ever branched on RevisionConflictError
+  // — any other error (a plain network failure, or CR-03's
+  // UndecryptableItemError) was silently swallowed: the spinner stopped,
+  // nothing saved, nothing said. This asserts the exhaustive fallback.
+  it("shows a generic save-error banner (never swallows) when updateVaultItem rejects with a non-conflict error", async () => {
+    mockUpdateVaultItem.mockRejectedValue(new Error("network error"));
+    render(<DetailPanel item={item} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("detail-panel-edit"));
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("item-save-error-banner")).toBeInTheDocument(),
+    );
+    // Never the conflict banner — this is a DIFFERENT error class.
+    expect(screen.queryByTestId("revision-conflict-banner")).not.toBeInTheDocument();
+  });
+
   it("opens the delete confirmation dialog when the Trash2 button is clicked", () => {
     render(<DetailPanel item={item} onClose={vi.fn()} />);
 

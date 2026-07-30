@@ -156,8 +156,18 @@ export default function ItemContextMenu({
 
       {/* Phase 12 cross-client fix: no Edit affordance for passkey items —
           mirrors DetailPanel.tsx's own hidden pencil button (ItemForm has no
-          passkey branch; editing would risk corrupting rawPasskeyJson). */}
-      {item.fields.type !== "passkey" ? (
+          passkey branch; editing would risk corrupting rawPasskeyJson).
+          WR-02 (code review iteration 2): same suppression for
+          `item.undecryptable` — DetailPanel.tsx already hides its own Edit
+          button for a flagged item (its revision is known-stale, and
+          updateVaultItem itself refuses the save with
+          UndecryptableItemError), but this menu had no matching guard.
+          Reaching Edit via THIS menu still mounted ItemForm in edit mode,
+          whose catch routes every edit-mode error to onError — and
+          DetailPanel's onError only handled RevisionConflictError, so the
+          UndecryptableItemError was silently swallowed: the spinner just
+          stopped, nothing saved, nothing said. */}
+      {item.fields.type !== "passkey" && item.undecryptable !== true ? (
         <li>
           <button type="button" data-testid="context-menu-edit" onClick={handleEdit}>
             {t("item.edit")}

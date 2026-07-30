@@ -99,6 +99,15 @@ export default function DetailPanel({
   // lastEditorEmail; `undefined` for a personal item's conflict (byte-for-
   // byte unchanged generic copy), a real email for a shared item's.
   const [conflictEditorEmail, setConflictEditorEmail] = useState<string | undefined>(undefined);
+  // WR-02 (code review iteration 2): every OTHER edit-mode error ItemForm's
+  // `onError` can hand back (network failure, and now `UndecryptableItemError`
+  // from CR-03's guard) used to be silently swallowed here — this `onError`
+  // only ever branched on `RevisionConflictError`. The spinner just stopped,
+  // nothing saved, nothing said. Never `err.message` directly (this
+  // codebase's i18n discipline routes all user-facing copy through `t()`);
+  // reuses the existing generic "itemSaveFailed" string ItemForm's own
+  // create-mode path already shows for the same class of failure.
+  const [saveError, setSaveError] = useState(false);
   // Proactive live-edit-conflict banner (SYNC-03) — a SECOND, independently
   // controlled trigger path alongside the reactive save-time `conflict`
   // state above; never merged into one boolean. Captured only at edit-entry
@@ -133,6 +142,7 @@ export default function DetailPanel({
     setMode(initialMode);
     setConflict(false);
     setConflictEditorEmail(undefined);
+    setSaveError(false);
     if (initialMode === "edit") {
       setEditBaselineRevision(item.revision);
     }
@@ -170,6 +180,7 @@ export default function DetailPanel({
   function startEditing() {
     setConflict(false);
     setConflictEditorEmail(undefined);
+    setSaveError(false);
     setEditBaselineRevision(item.revision);
     setMode("edit");
   }
@@ -358,6 +369,17 @@ export default function DetailPanel({
               </div>
             </div>
           ) : null}
+          {/* WR-02 (code review iteration 2): the exhaustive fallback below —
+              any edit-mode error ItemForm hands back that is NOT a
+              RevisionConflictError (a network failure, or CR-03's
+              UndecryptableItemError guard tripping on a save that raced a
+              background sync flagging this same item) used to be silently
+              swallowed here entirely. */}
+          {saveError ? (
+            <div data-testid="item-save-error-banner" className="alert alert-error text-sm">
+              {t("error.itemSaveFailed")}
+            </div>
+          ) : null}
           <ItemForm
             key={`${item.id}-${editBaselineRevision}`}
             type={item.fields.type}
@@ -368,12 +390,17 @@ export default function DetailPanel({
             onCreated={() => {
               setConflict(false);
               setConflictEditorEmail(undefined);
+              setSaveError(false);
               setMode("view");
             }}
             onError={(err) => {
               if (err instanceof RevisionConflictError) {
                 setConflict(true);
                 setConflictEditorEmail(err.lastEditorEmail);
+              } else {
+                // Never swallow: a network failure or UndecryptableItemError
+                // (CR-03) must surface something, not just stop the spinner.
+                setSaveError(true);
               }
             }}
           />
