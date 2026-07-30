@@ -293,6 +293,18 @@ pub async fn update(
     // existing single-user sync semantics — broadcasting a shared item's
     // change to every co-recipient's own sync channel is Phase 23 territory,
     // out of this plan's scope.
+    //
+    // TODO(phase-23, WR-09): editing a shared item bumps ONLY the editor's
+    // own `vault_revision` and publishes to ONLY the editor's own sync
+    // channel — every other collection_keys/item_shares holder of this item
+    // keeps a stale cached copy and gets `UpToDate` from their own
+    // `GET /api/sync?since=N` until they touch the item themselves. This is a
+    // stale-credential / lost-update hazard, not cosmetic lag: two holders
+    // can both hold `expected_revision = N` and the second save 409s with no
+    // prior signal anything moved. Phase 23 must bump every current
+    // collection_keys/item_shares recipient's vault_revision (plus the
+    // item's own owner) in this SAME transaction, and publish a SyncEvent to
+    // each of them.
     let _new_global_revision: i64 = sqlx::query_scalar(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
@@ -346,6 +358,12 @@ pub async fn delete(
     // comment above for the atomicity rationale). Bound to the CALLER's own
     // user_id — see update()'s comment above on why this stays single-user
     // scoped in this plan.
+    //
+    // TODO(phase-23, WR-09): deleting a shared item bumps ONLY the deleter's
+    // own vault_revision — every other collection_keys/item_shares holder
+    // keeps serving a cached copy of a row that no longer exists until they
+    // happen to touch it. See update()'s identical TODO above for the full
+    // fan-out requirement Phase 23 must implement here too.
     let new_global_revision: i64 = sqlx::query_scalar(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
@@ -490,6 +508,13 @@ pub async fn move_item(
     // comment above for the atomicity rationale). Bound to the CALLER's own
     // user_id — see update()'s comment above on why this stays single-user
     // scoped in this plan.
+    //
+    // TODO(phase-23, WR-09): moving a shared item bumps ONLY the mover's own
+    // vault_revision — every other collection_keys/item_shares holder (on
+    // EITHER the source or destination collection) keeps serving a cached
+    // copy of the item's old collection scope until they happen to touch it.
+    // See update()'s identical TODO above for the full fan-out requirement
+    // Phase 23 must implement here too.
     let _new_global_revision: i64 = sqlx::query_scalar(
         "UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ? RETURNING vault_revision",
     )
