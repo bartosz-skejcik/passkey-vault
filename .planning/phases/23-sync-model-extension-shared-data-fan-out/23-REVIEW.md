@@ -1,10 +1,12 @@
 ---
 phase: 23-sync-model-extension-shared-data-fan-out
-reviewed: 2026-07-30T00:00:00Z
+reviewed: 2026-07-30T23:05:00Z
 depth: standard
-files_reviewed: 28
+iteration: 3
+files_reviewed: 30
 files_reviewed_list:
   - crates/pv-server/migrations/0015_sync_shared_fanout.sql
+  - crates/pv-server/migrations/0016_shared_direct_revision.sql
   - crates/pv-server/src/error.rs
   - crates/pv-server/src/routes/collections.rs
   - crates/pv-server/src/routes/mod.rs
@@ -18,6 +20,8 @@ files_reviewed_list:
   - packages/pv-ui/vault/types.ts
   - web/src/components/vault/DetailPanel.tsx
   - web/src/components/vault/DetailPanel.test.tsx
+  - web/src/components/vault/ItemContextMenu.tsx
+  - web/src/components/vault/ItemContextMenu.test.tsx
   - web/src/lib/auth/api.ts
   - web/src/lib/i18n/dictionary.ts
   - web/src/lib/vault/api.ts
@@ -28,642 +32,482 @@ files_reviewed_list:
   - web/e2e/fixtures.ts
   - web/e2e/smoke.spec.ts
   - web/e2e/shared-sync.spec.ts
+  - web/e2e/global-teardown.ts
   - web/playwright.config.ts
-  - web/vitest.config.ts
-  - web/package.json
   - .github/workflows/ci.yml
 findings:
-  critical: 3
-  warning: 11
-  info: 3
-  total: 17
+  critical: 0
+  warning: 9
+  info: 7
+  total: 16
 status: issues_found
 ---
 
-# Phase 23: Code Review Report
+# Phase 23: Code Review Report (iteration 3 — final pass)
 
 **Reviewed:** 2026-07-30
 **Depth:** standard
-**Files Reviewed:** 28 (plus `routes/membership.rs`, `src/lib.rs`, `src/config.rs`, migrations 0001–0014 read as context)
-**Status:** issues_found
+**Files Reviewed:** 30 (plus `routes/membership.rs`, `routes/families.rs`,
+`components/vault/ItemForm.tsx`, `app/page.tsx`, `tests/common/mod.rs` read as
+context)
+**Status:** issues_found — **0 BLOCKER**, 9 WARNING, 7 INFO
 
 ## Summary
 
-The six locked invariants were checked directly against the SQL and the fan-out
-call sites. Four of them hold:
+I re-verified the iteration-2 fix pass against the code, re-ran both suites
+independently (`cargo test -p pv-server --tests` → 166 tests, all green;
+`cd web && npx vitest run` → 56 files / 504 tests, all green), and traced the
+paths the fix report claims to have closed.
 
-- **Invariant 1 (`GET /api/sync` scope not widened) — HOLDS.** `sync::pull`
-  (`sync.rs:84-104`) is unchanged. `fetch_items_for` (`vault.rs:297-336`) added
-  only non-filtering SELECT columns; both arms' `WHERE`/`JOIN` clauses are
-  intact, arm 1's `id` is correctly qualified as `vault_items.id`, and the
-  `LEFT JOIN users` introduces no other column collision (`users` has none of
-  `enc_key`/`enc_data`/`revision`/`updated_at`/`last_used_at`/`user_id`/
-  `collection_id`; verified against migrations 0001/0002/0010/0014).
-- **Invariant 4 (`SyncEvent` shape) — HOLDS.** Still exactly four fields
-  (`sync.rs:381-387`); `EntityType::Collection` carries the id in the existing
-  `id` field.
-- **Invariant 5 (bump + mutation in one transaction) — HOLDS** for
-  `create`/`update`/`delete`/`move_item`. Every `bump_collection_revision` /
-  `bump_recipients_vault_revision` call is inside the same `tx` as its mutation,
-  and every publish is strictly after `tx.commit()`.
-- **Invariant 6 (`enc_data` never rewritten / bind order) — HOLDS.**
-  `last_editor_user_id` is appended last in every SET clause and bound last
-  before the WHERE binds (`vault.rs:197-208`, `449-461`, `773-786`). No
-  reordering.
+**Headline: BL-01 is genuinely closed, on both halves, and the regression test
+is real.** There are no blockers left. Everything below is recorded debt — nine
+warnings, none of which is a live secret-exposure or authorization bypass, and
+several of which are test-quality rather than behavior.
 
-Two do **not** hold, and a third client-side change introduces an
-unrecoverable stuck state:
+### BL-01 verdict: CLOSED (both halves)
 
-- **Invariant 2/3 (fan-out audience) — BROKEN.** Membership *is* resolved fresh,
-  but `resolve_recipients` computes a superset of the collection's membership,
-  and the `EntityType::Collection` event is published to that superset. A
-  revoked creator and a direct-item-share recipient both receive a collection id
-  + revision for a collection they are denied by `Membership<Collection>`
-  (CR-01).
-- The `direct` bucket's `MAX(revision)` cheap-check cannot represent deletions
-  or share changes, and `create_share`/`revoke_share` bump nothing (CR-02).
-- `applySyncSnapshot`'s new decrypt-failure fallback advances the revision
-  watermark while retaining a stale row at a stale revision, producing a
-  permanently stuck item with only a `console.error` (CR-03).
+- **Counter half.** `bump_direct_share_revision` is now unconditional
+  (`vault.rs:1085`), placed after the `UPDATE` and **before** the
+  `item_shares` `DELETE` — the ordering is required (the bump's subquery reads
+  the rows the delete removes) and it is correct as written.
+- **Invariant half.** `move_item` deletes `item_shares` when the destination is
+  a collection (`vault.rs:1086-1100`). I grep-verified there are exactly two
+  production writers that can put the system into the forbidden
+  "collection-scoped item carrying a direct grant" state:
+  `create_share`'s `INSERT` (guarded, now re-read inside its own tx) and
+  `move_item`'s `UPDATE ... SET collection_id` (now followed by the DELETE).
+  `membership.rs`'s three `INSERT INTO item_shares` are inside `#[cfg(test)]`.
+  The invariant now holds regardless of which endpoint moves the item.
+- **Concurrency.** A `create_share` racing a `move_item` into a collection
+  cannot slip the forbidden row through: `move_item` opens `BEGIN IMMEDIATE`
+  and holds the write lock, so `create_share`'s later `INSERT` fails rather
+  than committing (see WR-04 — the invariant is preserved by failing, not by
+  corrupting, but the failure mode is a 500).
+- **The regression test is discriminating.**
+  `share_then_move_into_collection_bumps_recipients_direct_revision_and_revokes_their_access`
+  (`sync_shared.rs:975-1114`) replays the exact sequence and would fail against
+  pre-fix code on **two** independent assertions: `assert_ne!` on the
+  recipient's `direct.revision` (pre-fix: unchanged), and the post-move
+  `PUT`/`DELETE` returning `404` (pre-fix: `200`/`204` via the surviving
+  `item_shares` row). It also proves the grant was live before the move. This
+  is a good test.
 
-`ApiError::Conflict`'s wire shape is genuinely unchanged (`error.rs:52`,
-`70`) — the new `StaleRevisionShared` arm returns early and does not touch it.
-The 404-vs-403 discipline in `membership.rs::gate` is intact and the new routes
-route through it. `routes/mod.rs`'s structural guards (cardinality 10/4,
-literal-route allowlist) were correctly updated.
+**On the choice to delete rather than reject:** deleting is defensible — it
+enforces the invariant at the state transition instead of leaving a
+writable-but-unreadable grant — but it is a *destructive, irreversible, silent*
+product decision made inside a code-review fix pass. See WR-01. Does the
+recipient learn? Server-side, yes, weakly: their `shared_direct_revision` moves,
+so their next `/api/sync/shared/direct` returns a list without the item. But no
+client consumes that endpoint yet (WR-07's own fix now skips the call entirely),
+and they additionally get a final `Item`-typed WS frame for an item they can no
+longer read (WR-02).
+
+### The self-caught deadlock / TOCTOU re-order: PARTIALLY closed
+
+The re-order is sound for what it covers. `current_collection` and
+`owner_user_id` — the two values that actually decide which collection revision
+is bumped and which member sets are notified — are now re-read on the
+transaction's own connection (`vault.rs:961-973`) with Gate 0's ownership rule
+re-validated against that fresher read. The pre-tx read at `vault.rs:911-923` is
+demoted to a fast-fail precheck and correctly renamed (`precheck_*`), so no
+stale value survives into the mutation's decisions. The `max_connections(1)`
+constraint is real (`tests/common/mod.rs`) and correctly documented inline.
+
+**But it left one gate in exactly the shape it was meant to eliminate:**
+Gate 2, the destination-collection *authorization* check (`vault.rs:938-940`),
+still runs `require_collection_edit(&state.db, ...)` on a pool connection, and
+the mutation happens in a transaction opened afterwards. That is "authorize on
+pool state, mutate on transaction state" — WR-03 below. It is narrow (requires a
+concurrent `revoke_access` in a millisecond window) and it is not a privilege
+escalation, but it is the same class the fix pass claims to have closed, and the
+fix report does not disclose it.
+
+### WR-05's deferred-with-documentation call: ACCEPTABLE, with one omission
+
+The documentation is honest and load-bearing, not a comment papering over a
+contradiction: `sync.rs:347-368` states plainly that a membership-change event's
+`revision` is unbumped, forbids clients from gating a re-fetch on it, and names a
+concrete remedy — `GET /api/vault/collections/{id}/access`, which I verified
+actually exists (`routes/mod.rs:191`). Both call sites cross-reference it.
+`resolve_collection_recipients` was genuinely deleted and both handlers now call
+the one `resolve_collection_members` (whose `family_members` join matches
+`Collection::resolve_access`), and `add_member`'s own recipient guard is
+family-scoped (`collections.rs:222-231`), so a just-added member is still inside
+their own event's audience. That is a real dedupe, not a rename.
+
+The omission: the documented rule only works for a client with a live socket.
+Nothing in the *polling* path can observe a membership change at all (WR-08),
+and the revoked member observes nothing whatsoever (WR-07).
+
+### Six hard invariants — all six hold
+
+| Invariant | Status | Evidence |
+|---|---|---|
+| 1. `GET /api/sync` scope not widened | HOLDS | `fetch_items_for` (`vault.rs:367-390`) untouched since the review baseline; arm 1 `WHERE user_id = ? AND collection_id IS NULL`, arm 2's three membership JOINs byte-identical; only non-filtering columns + a `LEFT JOIN users` added |
+| 2/3. Fan-out audience == membership | HOLDS, with one edge | `resolve_recipients`/`resolve_collection_members` split intact; `collections.rs` now shares the latter. Edge: `move_item`'s audience is resolved before the same-tx `item_shares` DELETE — WR-02 |
+| 4. `SyncEvent` shape | HOLDS | exactly four fields (`sync.rs:401-406`) |
+| 5. bump + mutation in one tx | HOLDS | every `bump_*` inside `tx`; every `publish*` strictly after `tx.commit()` in `move_item`, `create_share`, `revoke_share`, `add_member`, `revoke_access` |
+| 6. `enc_data` bind position | HOLDS | `move_item`'s SET list is `collection_id, enc_key, enc_data, revision, updated_at, last_editor_user_id`, binds in that order then the WHERE binds (`vault.rs:981-993`) |
+| 404-not-403 for non-membership | HOLDS | `membership.rs` untouched; `shared_collection_pull_rejects_non_member_with_404_never_403` green |
 
 ---
+
+## Narrative Findings (AI reviewer)
 
 ## Critical Issues
 
-### CR-01: `EntityType::Collection` events fan out to non-members — collection id + revision leaked
-
-**File:** `crates/pv-server/src/routes/vault.rs:93-123` (`resolve_recipients`),
-`536-559` (`update`), `635-658` (`delete`), `816-870` (`move_item`)
-
-**Issue:** `resolve_recipients` returns
-`{collection_keys recipients} ∪ {item_shares recipients} ∪ {vault_items.user_id}`,
-and that whole set is then handed to `publish_to_recipients` for a
-`SyncEvent { entity_type: Collection, id: <collection_id>, revision }`. The
-`item_shares` and owner terms are **not** filtered by collection membership, so
-the event reaches users whom `Membership<Collection, RequireRead>` would answer
-`404` for. Three independently reachable paths:
-
-1. **Revoked creator.** `vault_items.user_id` never changes on revocation.
-   `membership.rs::Item::resolve_access` (lines 327-341) deliberately confers
-   *nothing* on the creator of a collection-scoped item — that is the SC#4
-   revocation guarantee. But `vault.rs:100` unconditionally inserts
-   `owner_user_id` into the recipient set. A member revoked via
-   `collections::revoke_access` therefore keeps receiving `Collection` events
-   naming a collection they can no longer read, plus a `users.vault_revision`
-   bump (`bump_recipients_vault_revision`, `vault.rs:151-166`) on every
-   subsequent edit inside it. This directly contradicts invariant 2's
-   "a just-removed member never does".
-
-2. **Direct-share recipient on a collection-scoped item.** `vault.rs:113-120`
-   unions `item_shares` recipients regardless of `collection_id`. Such a user
-   passes `Membership<Item, RequireEdit>` (via `combine_access`) but is denied
-   `GET /api/vault/collections/{id}/sync` with `404`. They still learn the
-   collection's id and revision from the WS frame. The executor's own flag on
-   this is correct: it *is* an access-control hole, not benign — it is the exact
-   "collection exists but you're not a member" distinction invariant 3 forbids,
-   delivered over a channel that bypasses the `404`-returning gate.
-
-3. **`move_item`'s destination side.** `vault.rs:817-820` builds
-   `dest_recipients` from `resolve_recipients(..., Some(dest_id), owner_user_id)`
-   — which again unconditionally includes `owner_user_id`. Gate 2
-   (`vault.rs:756-758`) only proves the **caller** has edit on the destination,
-   never the owner. So `B` (edit on C1 and C2) moving `A`'s item from C1 into C2
-   sends `A` a `Collection` event for C2 even though `A` has no grant on C2. The
-   comment at `vault.rs:840-848` explicitly claims "a source-only holder must
-   never learn the destination collection's new revision, and vice versa" — that
-   guarantee is not implemented for the owner.
-
-The `bump_recipients_vault_revision` side effect makes this observable even
-without a WS tab: a non-member's `GET /api/sync` flips from `UpToDate` to a full
-snapshot purely because of activity in a collection they cannot see — invariant
-3's "zero events... including as a side effect of unrelated activity".
-
-**Fix:** Separate the *revision-bump* audience from the *event* audience, and
-scope the `Collection`-typed event to actual collection membership. Minimal
-shape:
-
-```rust
-/// Members of `collection_id` ONLY — never the item owner, never item_shares
-/// recipients. This is the audience a Collection-typed SyncEvent may reach.
-pub(crate) async fn resolve_collection_members(
-    tx: &mut sqlx::SqliteConnection,
-    collection_id: &str,
-) -> Result<Vec<String>, ApiError> {
-    let rows = sqlx::query(
-        "SELECT ck.recipient_user_id FROM collection_keys ck \
-           JOIN collections c ON c.id = ck.collection_id \
-           JOIN family_members fm ON fm.family_id = c.family_id \
-                                 AND fm.user_id = ck.recipient_user_id \
-          WHERE ck.collection_id = ?",
-    )
-    .bind(collection_id)
-    .fetch_all(&mut *tx)
-    .await?;
-    rows.into_iter()
-        .map(|r| r.try_get("recipient_user_id").map_err(|_| ApiError::Internal))
-        .collect()
-}
-```
-
-Then in `update`/`delete`/`move_item`:
-
-```rust
-// Collection event -> members only.
-let collection_members = resolve_collection_members(&mut *tx, cid).await?;
-state.sync_hub.publish_to_recipients(&collection_members, SyncEvent {
-    entity_type: EntityType::Collection, id: cid.clone(), revision: new_collection_rev,
-    change_type: ChangeType::Update,
-});
-// Anyone reached only via item_shares/ownership gets an Item-typed event
-// instead — it names an id they provably already have access to.
-let item_only: Vec<String> = recipients.iter()
-    .filter(|r| !collection_members.contains(r)).cloned().collect();
-state.sync_hub.publish_to_recipients(&item_only, SyncEvent {
-    entity_type: EntityType::Item, id: id.clone(), revision: new_item_revision,
-    change_type: ChangeType::Update,
-});
-```
-
-Additionally, drop `owner_user_id` from the unconditional insert at
-`vault.rs:100` for the collection-scoped case, or gate it on the owner actually
-resolving access (`Item::resolve_access`'s own predicate). No test in
-`tests/sync_shared.rs` covers any of the three paths above —
-`non_member_websocket_receives_zero_frames_on_shared_mutation` (line 269) seeds
-a non-member with *no* `item_shares` row and *no* ownership, so it cannot catch
-this. Add a case where the non-member is the item's original `user_id`.
-
----
-
-### CR-02: the `direct` bucket's `MAX(revision)` cheap-check cannot detect deletions or share changes — recipients keep stale/revoked shared items indefinitely
-
-**File:** `crates/pv-server/src/routes/sync.rs:176-185` and `289-296`;
-`crates/pv-server/src/routes/vault.rs:935-949` (`create_share`), `960-976`
-(`revoke_share`)
-
-**Issue:** The synthetic bucket is
-`COALESCE(MAX(vault_items.revision), 0)` over the caller's directly-shared,
-`collection_id IS NULL` items. That value is not a monotonic change counter for
-the *set* — it is a max over the set's members, so several real changes are
-invisible:
-
-- **Deletion.** Recipient holds item X at revision 5 and item Y at revision 5.
-  `MAX = 5`. X is deleted (`vault_items` row gone, `item_shares` cascades). `MAX`
-  is still 5. `pull_shared_direct` (`sync.rs:298-302`) returns
-  `UpToDate { revision: 5 }` for `since=5`. The recipient's client never learns X
-  is gone and keeps rendering its decrypted plaintext.
-- **New share.** Recipient already holds item X at revision 7. Owner shares item
-  Y (revision 3). `MAX` is still 7 → `UpToDate`. The new share never surfaces.
-  `create_share` (`vault.rs:935-949`) bumps nothing at all: no
-  `users.vault_revision`, no `collections.revision`, no `SyncEvent`.
-- **Revoked share.** `revoke_share` (`vault.rs:960-976`) is a bare `DELETE` with
-  no bump and no event. If the revoked item was not the max, the recipient's
-  cheap-check stays `UpToDate` and the revoked item stays visible and decrypted
-  in their store. This is a stale-secret exposure, not merely a UI lag.
-
-`GET /api/sync` does not compensate: `fetch_items_for` never returns items the
-caller only reaches via `item_shares`, so the `vault_revision` bump that
-`update`/`delete` *do* perform produces a snapshot that silently omits the
-shared item.
-
-**Fix:** Stop deriving the bucket from `MAX`. Two workable shapes:
-
-```rust
-// (a) Make the bucket a real counter: give item_shares its own monotonic
-// column bumped in the same tx as any mutation/creation/revocation, e.g.
-//   ALTER TABLE users ADD COLUMN shared_direct_revision INTEGER NOT NULL DEFAULT 0;
-// and bump the RECIPIENT's counter from create_share/revoke_share/update/delete.
-
-// (b) Or make the bucket set-sensitive rather than max-sensitive:
-"SELECT COUNT(*) * 1000000 + COALESCE(SUM(vault_items.revision), 0) ..."  // fragile
-```
-
-(a) is the correct one — it is the same discipline `collections.revision`
-already uses, and it makes deletion and revocation representable. In either
-case, `create_share` and `revoke_share` must join the WR-01 transaction
-discipline and publish an `EntityType::Item` event to the affected recipient
-(revocation should notify the *remaining* holders, and must not notify the
-just-revoked user — the same shape `collections::revoke_access` already uses at
-`collections.rs:366-385`).
-
----
-
-### CR-03: `applySyncSnapshot`'s decrypt-failure fallback permanently strands the item — stale plaintext, stale revision, and a watermark that says "up to date"
-
-**File:** `web/src/lib/vault/store.ts:194-241` (fallback at `215-224`, folder
-twin at `228-240`)
-
-**Issue:** Three interacting problems make this an unrecoverable state, not a
-graceful degradation:
-
-1. `lastKnownRevision = snapshot.revision` is assigned at line 195, **before**
-   any decrypt is attempted. So even when every row fails to decrypt, the client
-   records itself as fully caught up. The next poll sends the new `since` and
-   gets `UpToDate` — the failure is never retried.
-2. The retained fallback object is the *previous* `VaultItem`, carrying the
-   **old** `revision`. So the store believes the item is at revision N while the
-   server is at N+1. Any subsequent `updateVaultItem` sends
-   `expected_revision: N` → server 409 → the 409 handler calls
-   `loadAndDecryptAll()` (`store.ts:317`) → same decrypt failure → same stale
-   copy at revision N → `RevisionConflictError` again. The user is in a
-   permanent save loop with no path out through the UI.
-3. The only signal is `console.error` (`store.ts:220`, `234`). Nothing reaches
-   the UI. In a zero-knowledge product, "a row from the server no longer
-   authenticates under my key" is precisely the tamper signal the design exists
-   to surface, and it is now swallowed. The AEAD's authentication tag is bound
-   to `(item_id, revision)` — a server substituting or replaying ciphertext
-   produces exactly this failure mode, and the user sees the *old* plaintext
-   presented as current.
-
-This is not hypothetical in this repo: `web/e2e/shared-sync.spec.ts:293-299` has
-session B write `DUMMY_ENC_KEY`/`DUMMY_ENC_DATA` (non-ciphertext placeholders)
-over a real item, and the "conflict attribution" test only passes because this
-fallback silently discards the resulting decrypt failure on A's side. The
-harness is proving the masking works.
-
-There is also **zero test coverage** for either fallback branch — `grep` over
-`web/src/lib/vault/store.test.ts` finds no test that makes `decryptItem` throw
-during a merge.
-
-**Fix:** Keep the crash-avoidance, but stop pretending success.
-
-```ts
-function applySyncSnapshot(snapshot: SyncSnapshot): void {
-  const uk = getUnlockedUserKey();
-  if (uk === null) return;
-
-  let anyRowFailed = false;
-  if (snapshot.items !== undefined) {
-    const previousById = new Map(items.map((i) => [i.id, i]));
-    items = snapshot.items.flatMap((row) => {
-      try {
-        return [decryptItemRow(row, uk)];
-      } catch (err) {
-        anyRowFailed = true;
-        const previous = previousById.get(row.id);
-        // Mark the retained copy so the UI can surface it and so no save
-        // path treats its stale `revision` as authoritative.
-        return previous !== undefined ? [{ ...previous, undecryptable: true }] : [];
-      }
-    });
-    recomputeAllTags();
-    notifyListeners();
-  }
-  // ... folders, same treatment ...
-
-  // Only advance the watermark when the whole snapshot actually applied —
-  // otherwise the next poll must re-fetch and retry.
-  if (!anyRowFailed) {
-    lastKnownRevision = snapshot.revision;
-  }
-  if (anyRowFailed) {
-    setSyncStatus("error"); // or a dedicated integrity-warning channel
-  }
-}
-```
-
-`updateVaultItem` must refuse to save an item flagged `undecryptable` (its
-`revision` is known-stale), and `DetailPanel` needs a banner for it. Add unit
-tests for: (a) a single failing row keeps the merge alive; (b) the watermark is
-NOT advanced; (c) the retained row is flagged; (d) the folder branch behaves
-identically.
-
----
+None. No finding in this pass causes an incorrect access-control decision,
+exposes plaintext the affected party did not already hold, or loses vault data.
 
 ## Warnings
 
-### WR-01: `onSharedRevisions` is never wired — `GET /api/sync/shared` is fetched on every pull cycle and thrown away, and 404s for every single-user vault
+### WR-01: `move_item` silently and irreversibly destroys the owner's direct shares, with no API signal and no decision record outside the fix report
 
-**File:** `web/src/lib/vault/sync.ts:59-71`, `web/src/lib/vault/store.ts:415-418`
+**File:** `crates/pv-server/src/routes/vault.rs:1086-1100`
 
-**Issue:** `pullOnce` unconditionally calls `getSharedRevisions()`, but
-`store.ts`'s `syncCallbacks` object declares only `getSinceRevision` and
-`onSnapshot` — `onSharedRevisions` is absent, so `callbacks.onSharedRevisions?.()`
-is a no-op. A repo-wide grep confirms nothing in `web/src` ever calls
-`GET /api/vault/collections/{id}/sync` or `GET /api/sync/shared/direct` either.
-The entire client half of the shared pull is dead: the data is fetched and
-discarded.
+**Issue:** `DELETE FROM item_shares WHERE item_id = ?` runs unconditionally on a
+move into a collection. The rows destroyed contain `sealed_key` — an item key
+sealed to the recipient's identity public key, which the server cannot
+reconstruct. The consequences the code does not acknowledge:
 
-Worse for the primary use case: `pull_shared_revisions` is
-`FamilyMembership<RequireRead>`-gated, so a user with no `family_members` row —
-i.e. every single-user self-hosted vault, the project's headline persona — gets a
-**404 on every pull cycle**: on WS open, on *every* WS message, and every 30s
-forever. It is silently swallowed by the `catch` at `sync.ts:69`, so it shows up
-only as server access-log noise and doubled request volume.
+- The owner gets no indication. `MoveItemResponse` is
+  `{revision, collection_id, updated_at}` — no revoked-share count, no warning,
+  nothing a UI could confirm against. An owner who shares a login with their
+  partner and later drags it into a "Household" collection silently revokes the
+  partner, with no prompt and no undo.
+- It is not reversible by moving the item back: the sealed keys are gone, and
+  re-sharing requires the client to re-seal (a Phase 26 UI that does not exist).
+- The alternative — reject the move with `409`/`400` ("revoke the direct shares
+  first") — is *also* invariant-preserving, fails closed, and is
+  non-destructive. Nothing in `23-CONTEXT.md` or any `23-0x-PLAN.md` chooses
+  between the two; the choice was made inside a review-fix pass and is
+  documented only in `23-REVIEW-FIX.md`.
+- No test asserts the owner learns anything. The regression test asserts only
+  the recipient's loss.
 
-**Fix:** Either wire `onSharedRevisions` into `store.ts` and implement the
-per-collection/direct fetches it is supposed to drive, or gate the call:
+**Fix:** either fail closed —
 
-```ts
-// sync.ts — skip entirely until a consumer exists / the caller is in a family.
-if (callbacks.onSharedRevisions !== undefined && !sharedPullDisabled) {
-  try {
-    const revisions = await getSharedRevisions();
-    if (activeCallbacks === callbacks) callbacks.onSharedRevisions(revisions);
-  } catch (err) {
-    // A 404 means "not in a family" — a permanent condition, not transient.
-    if (isNotFoundError(err)) sharedPullDisabled = true;
-  }
+```rust
+if req.new_collection_id.is_some() {
+    let has_direct: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM item_shares WHERE item_id = ? LIMIT 1")
+        .bind(&id).fetch_optional(&mut *tx).await?;
+    if has_direct.is_some() {
+        return Err(ApiError::Conflict(
+            "revoke this item's direct shares before moving it into a collection".into()));
+    }
 }
 ```
 
-### WR-02: `updateVaultItem` drops `isShared` and `lastEditorEmail` from the in-memory item after a successful save
+— or keep the delete and make it visible: return the revoked recipient ids in
+`MoveItemResponse`, and record the choice in the phase's decision log so Phase
+26's sharing UI can warn before issuing the move.
 
-**File:** `web/src/lib/vault/store.ts:335-345`
+### WR-02: the just-revoked direct-share recipient still receives one `EntityType::Item` frame naming the item and its post-move revision
 
-**Issue:** The replacement `VaultItem` carries `id`, `revision`, `fields`,
-`updatedAt`, `lastUsedAt` — but not `isShared`/`lastEditorEmail`, the two fields
-this phase added. After saving a shared item, `item.isShared` becomes
-`undefined` until the next snapshot lands. `DetailPanel`'s live-conflict
-attribution (`DetailPanel.tsx:314`) tests `item.isShared && item.lastEditorEmail`
-and will silently fall back to the generic copy in exactly the window a shared
-item is most likely to conflict. This is the same class of bug the adjacent
-comment (`store.ts:330-334`) documents for `lastUsedAt`.
+**File:** `crates/pv-server/src/routes/vault.rs:1048-1051`, `1168-1182`
 
-**Fix:**
+**Issue:** `all_recipients` is built from `source_recipients`, resolved at
+`vault.rs:1024` — *before* the same transaction's `item_shares` DELETE at line
+1099. On a personal→collection move the publish at line 1168 takes the `else`
+branch and sends an `Item`-typed event to
+`all_recipients \ collection_member_union`, which is exactly the set of
+direct-share recipients whose grant was just destroyed. They learn the item's
+new `revision` for an item that, at emit time, they can no longer resolve any
+access to — not via `fetch_items_for` (never returned it to them), not via
+`pull_shared_direct` (now filtered out by `collection_id IS NULL`), not via
+`pull_shared_collection` (404).
 
-```ts
-const existing = existingIndex === -1 ? undefined : items[existingIndex];
-const updated: VaultItem = {
-  id, revision: newRevision, fields, updatedAt: response.updated_at,
-  lastUsedAt: existing?.lastUsedAt,
-  isShared: existing?.isShared,
-  // The caller just became the last editor; the server recorded their id.
-  lastEditorEmail: existing?.lastEditorEmail,
-};
-```
+This contradicts the phase's own "membership resolved fresh at emit time"
+constraint, which `resolve_recipients`' doc comment (`vault.rs:88-92`) gives as
+the reason the query must live inside the transaction. Here the query *is*
+inside the transaction — it just runs before the mutation that changes its
+answer. Impact is bounded (they already knew the item id and its prior
+revision), which is why this is a warning and not a blocker.
 
-### WR-03: `move_item`'s Gate 0 reads outside the transaction and returns 500 instead of 404 on a missing row
-
-**File:** `crates/pv-server/src/routes/vault.rs:742-751`
-
-**Issue:** `owner_row` is fetched with `.fetch_one(&state.db)` — outside the `tx`
-begun at line 765 — and `fetch_one` on zero rows yields `sqlx::Error::RowNotFound`,
-which `From<sqlx::Error> for ApiError` (`error.rs:74-79`) maps to
-`ApiError::Internal` (500). The `Membership<Item>` extractor makes the row's
-existence overwhelmingly likely, but a concurrent `DELETE` between extraction and
-this read turns a legitimate 404 into a 500 and logs it as a `db error`. The
-out-of-tx read also means `current_collection` (used at `vault.rs:816`, `829`,
-`849` to decide which collection to bump and whom to notify) is read at a
-different point in time from the mutation.
-
-**Fix:** Move the read inside `tx` and use `fetch_optional`:
+**Fix:** re-resolve after the DELETE and use that set for the *event* audience
+only (the bump audience must stay the pre-delete set, so the losing recipients
+still get told to re-pull):
 
 ```rust
-let mut tx = state.db.begin().await?;
-let Some(owner_row) = sqlx::query("SELECT user_id, collection_id FROM vault_items WHERE id = ?")
-    .bind(&source.resource_id)
-    .fetch_optional(&mut *tx)
-    .await?
-else { return Err(ApiError::NotFound) };
+// after the DELETE, before the publish block:
+let event_recipients =
+    resolve_recipients(&mut *tx, &id, req.new_collection_id.as_deref(), &owner_user_id).await?;
 ```
 
-(The destination gate at line 757 must then be re-ordered or take the same
-connection.)
+### WR-03: Gate 2 (destination authorization) still authorizes on the pool and mutates in the transaction
 
-### WR-04: `delete()`'s transaction upgrades read→write — `SQLITE_BUSY_SNAPSHOT` is not covered by `busy_timeout`
+**File:** `crates/pv-server/src/routes/vault.rs:938-940` vs `959`
 
-**File:** `crates/pv-server/src/routes/vault.rs:578-600`
+**Issue:** The iteration-2 fix moved the *source* read into `tx` and documented
+why Gate 2 must release its pool connection first (the `max_connections(1)`
+harness). Correct as far as it goes — but the consequence is that the one
+genuinely security-relevant check in this handler ("may the caller write into
+the destination collection") is decided against a snapshot the mutation never
+re-validates. A concurrent `DELETE /api/vault/collections/{C}/access/{caller}`
+landing between line 940 and line 959 lets the caller push an item into a
+collection they no longer hold edit on. The `expected_revision` guard does not
+narrow this one — a revoke does not touch `vault_items.revision`.
 
-**Issue:** `state.db.begin()` issues a *deferred* `BEGIN`. In `delete()` the
-first statements are reads (`SELECT user_id, collection_id`, then
-`resolve_recipients`'s two `SELECT`s), and only at line 600 does the first write
-run. Under WAL, a deferred transaction that reads first and writes later can be
-rejected with `SQLITE_BUSY_SNAPSHOT` when another writer committed in between —
-and SQLite does **not** invoke the busy handler for that case, so the 5 s
-`busy_timeout` configured in `lib.rs:62` provides no protection. The request
-fails with a 500 rather than serializing. `create`/`update`/`move_item` are
-unaffected (their first statement is a write). Phase 23 widened the write set
-per transaction, which raises the collision probability this path is exposed to.
+The fix report's WR-03 entry claims the "read at a different point in time than
+the mutation" gap was closed; it was closed for the source values only. This is
+the same shape as the finding it claims to fix.
 
-**Fix:** Force an immediate write lock at the top of `delete()`:
+**Fix:** re-run the destination authorization inside `tx`, after the pool-scoped
+copy (the pool connection is released by then, so the documented deadlock
+constraint is satisfied):
 
 ```rust
-let mut tx = state.db.begin().await?;
-sqlx::query("SELECT 1 FROM vault_items WHERE id = ? FOR UPDATE") // no-op in SQLite
+let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+if let Some(dest_id) = &req.new_collection_id {
+    require_collection_edit_tx(&mut *tx, &source.caller_user_id, dest_id).await?;
+}
 ```
 
-is not available; use an explicit immediate transaction instead —
+(needs a `&mut SqliteConnection`-taking twin of `require_collection_edit` — the
+same split `resolve_recipients` already uses.)
+
+### WR-04: WR-04's own fix made `create_share` a read-then-write **deferred** transaction — the shape this file documents as `SQLITE_BUSY_SNAPSHOT`-prone
+
+**File:** `crates/pv-server/src/routes/vault.rs:1237-1285`
+
+**Issue:** Moving the three guard reads inside `tx` was right for the TOCTOU,
+but `create_share` opens `state.db.begin()` (a deferred `BEGIN`) and its first
+three statements are now `SELECT`s, with the `INSERT` after them. `delete()`'s
+own comment at `vault.rs:686-700` documents precisely this hazard: under WAL, a
+deferred transaction that reads first and writes later is rejected with
+`SQLITE_BUSY_SNAPSHOT` when another writer commits in between, SQLite does
+**not** invoke the busy handler for that case, so `lib.rs`'s 5 s `busy_timeout`
+gives no protection and the request fails outright with a 500. `delete()` and
+`move_item` both use `begin_with("BEGIN IMMEDIATE")` for exactly this reason;
+`create_share` now needs it and does not have it. Correctness is preserved (the
+transaction aborts rather than inserting a forbidden row) — this is an
+availability/UX regression, and it is most likely to fire in exactly the race
+WR-04 was introduced for (a concurrent `move_item`, which holds an IMMEDIATE
+write lock).
+
+**Fix:** `let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;` in
+`create_share`, matching the two precedents in the same file.
+
+### WR-05: the new `create_share` guard test cannot fail — it is satisfied by a different 400
+
+**File:** `crates/pv-server/tests/sync_shared.rs:1128-1152`
+
+**Issue:** `create_share_on_collection_scoped_item_is_bad_request` uses an
+outsider created by `register_and_login` (`tests/common/mod.rs:87`), which
+registers and logs in but never joins a family. `create_share` returns
+`ApiError::BadRequest` for the collection-scoped guard (`vault.rs:1247-1251`)
+**and** for "recipient is not a family member" (`vault.rs:1253-1259`); the test
+asserts only `StatusCode::BAD_REQUEST` and never inspects the message. Delete
+the WR-10 guard entirely and this test still passes. The fix report presents it
+as closing the review's "WR-10's guard has zero test coverage" gap; the gap is
+still open.
+
+**Fix:** use a recipient who passes every *other* guard, so only the
+collection-scoped check can produce the 400 — and assert the message:
 
 ```rust
-let mut conn = state.db.acquire().await?;
-sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
-// ... reads + writes on &mut *conn ...
-sqlx::query("COMMIT").execute(&mut *conn).await?;
+let fixture = setup_shared_fixture(pool).await;      // fixture.item_id IS collection-scoped
+let member_id = user_id_of(&fixture.app, &fixture.member_token).await; // family member + keypair
+// ... POST /api/vault/items/{item_id}/shares with member_id
+assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+assert!(body_json(res).await["error"].as_str().unwrap().contains("collection-scoped"));
 ```
 
-or reorder so a write is the first statement. At minimum, add a retry on
-`SQLITE_BUSY`/`SQLITE_BUSY_SNAPSHOT` for this handler.
+### WR-06: WR-01's bounded-retry behaviour change is entirely untested, and the existing test's name now overstates the guarantee
 
-### WR-05: `sync.itemChangedElsewhereAttributed` asserts a live-presence fact the server never records, and can show the viewer their own email
+**File:** `web/src/lib/vault/store.ts:308-316`, `web/src/lib/vault/store.test.ts:466`
 
-**File:** `web/src/lib/i18n/dictionary.ts:703-706`, consumed at
-`web/src/components/vault/DetailPanel.tsx:314-318`
+**Issue:** `applySyncSnapshot` now advances `lastKnownRevision` after
+`MAX_FAILED_MERGE_RETRIES` (3) consecutive failing merges. Nothing asserts it —
+`store.test.ts` has no test that drives three merges, and the fix report's own
+verification note concedes no new `store.test.ts` cases were added. The suite's
+existing guard, `"does NOT advance the revision watermark when any row fails to
+decrypt"` (line 466), passes only because it performs a *single* merge; its name
+now describes a guarantee the code deliberately no longer makes. A future change
+to the constant, to the reset points, or to the `>=` boundary is unprotected —
+and this is the sync loop's termination condition.
 
-**Issue:** The copy is "{email} is currently editing this item." /
-"{email} właśnie edytuje ten element." The value bound to `{email}` is
-`item.lastEditorEmail`, sourced from `vault_items.last_editor_user_id` — which
-records who last **saved** an edit, not who is currently editing. There is no
-presence tracking anywhere in this codebase. Two concrete wrong outputs: (a) the
-named person finished and closed the tab an hour ago; (b) the user edited from
-their own phone, so the banner tells them *they* are currently editing.
+**Fix:** add two cases — (a) three consecutive failing merges leave the
+watermark advanced on the third while the row stays flagged `undecryptable`;
+(b) a clean merge between two failures resets the counter so the budget starts
+over. Rename the line-466 test to name the bound it actually proves.
 
-**Fix:** Reword to the fact actually held, e.g. `pl: "{email} zmienił(a) ten
-element."` / `en: "{email} changed this item."` — matching
-`error.revisionConflictAttributed`'s already-correct phrasing at
-`dictionary.ts:478-481` — and suppress the attributed variant when
-`lastEditorEmail` equals the current session's own email.
+### WR-07: `revoke_access` moves no counter the revoked member can observe — their client keeps listing collection items until an unrelated bump
 
-### WR-06: `collections::add_member` / `revoke_access` publish a Collection event but bump nothing, and run their write + fan-out resolution outside a transaction
+**File:** `crates/pv-server/src/routes/collections.rs:347-411`
 
-**File:** `crates/pv-server/src/routes/collections.rs:246-286`, `330-385`
+**Issue:** Revocation deletes the `collection_keys` row and publishes a
+`Collection` event to the *remaining* members. The revoked member is
+deliberately not published to (`collections.rs:385-390`, a defensible call) —
+but nothing bumps their `users.vault_revision` either. Their client's only
+polling signal is `GET /api/sync?since=N`, which compares exactly that counter,
+so it answers `UpToDate` indefinitely. `fetch_items_for`'s arm 2 has stopped
+returning the collection's rows to them, but they never re-pull to find out.
+Their vault view keeps listing (and their store keeps holding decrypted) the
+collection items **they authored** until some unrelated mutation of theirs
+happens to bump the counter.
 
-**Issue:** Two problems:
+Severity honestly scoped: this is *not* a secret exposure. `fetch_items_for`
+arm 2 is `WHERE i.user_id = ?`, so the only stale rows retained are ones the
+revoked member created themselves, and no post-revocation ciphertext ever
+reaches them. It is a correctness/expectation failure — an owner who revokes
+believes the revocation is observable, and it is not — of the same structural
+class as CR-02 (a set changed; no counter moved), which this phase otherwise
+fixed everywhere else.
 
-1. Neither bumps `collections.revision` nor any recipient's
-   `users.vault_revision`. The doc comment at `collections.rs:261-270` argues
-   this is intentional ("only item mutations bump it"), but the consequence is
-   that a client which receives the `Collection` event and does the documented
-   "drop the cached key and re-fetch" against
-   `GET /api/vault/collections/{id}/sync?since=N` gets `UpToDate` back, because
-   the revision genuinely did not move. The event carries no way to distinguish
-   "membership changed" from "nothing changed". Combined with WR-01 (nothing
-   consumes `GET /api/sync/shared`), adding or removing a member currently has
-   no observable client effect at all.
-2. The `INSERT`/`DELETE`, the `resolve_collection_recipients` call, and the
-   `SELECT revision` all run against `&state.db` as three independent
-   statements — no transaction. This is the same WR-01 atomicity discipline
-   every handler in `vault.rs` follows and `collections::create`
-   (`collections.rs:92-116`) itself follows. A concurrent revoke between the
-   `INSERT` and the recipient resolution produces a fan-out set that matches
-   neither before- nor after-state.
+**Fix:** one line inside the existing transaction, leaking nothing beyond "your
+snapshot changed":
 
-**Fix:** Wrap each handler's write + recipient resolution + revision read in one
-`state.db.begin()` transaction (publishing after commit, as `vault.rs` does), and
-bump `collections.revision` on a membership change so the per-collection
-cheap-check can actually represent it.
-
-### WR-07: no test coverage for the new `applySyncSnapshot` decrypt-failure fallback
-
-**File:** `web/src/lib/vault/store.test.ts` (whole file), against
-`web/src/lib/vault/store.ts:215-224`, `228-240`
-
-**Issue:** `store.test.ts` has a full `describe("applySyncSnapshot (background
-sync merge)")` block (lines 295-419) covering wholesale replacement, up-to-date
-no-op, unrelated-item isolation and post-lock safety — but not one test makes
-`decryptItem` throw. The single most security-relevant new branch in the file
-(see CR-03) ships untested, and the same gap exists for the folder branch.
-
-**Fix:** Add tests as sketched in CR-03's fix block.
-
-### WR-08: the blocking `web-e2e` CI job runs on Playwright's 30 s default test timeout while the fixture performs four Argon2id derivations
-
-**File:** `web/playwright.config.ts:58-93` (no `timeout` set),
-`web/e2e/fixtures.ts:112-122`, `web/e2e/shared-sync.spec.ts:95-118`,
-`.github/workflows/ci.yml` (`web-e2e` job)
-
-**Issue:** `defineConfig` sets `webServer.timeout: 600_000` but never sets the
-per-test `timeout`, so Playwright's 30 s default applies — and Playwright counts
-fixture setup against it. The `twoSessions` fixture registers **two** accounts
-in parallel, each performing a client-side Argon2id at the default
-`m_cost_kib: 65536, t_cost: 3, p_cost: 4` in WASM, plus a server-side
-`auth_hash` re-hash. `shared-sync.spec.ts` then additionally registers *and*
-logs in the fixed seed account (two more server-side Argon2 rounds) before the
-test body starts. On a shared 2-vCPU GitHub runner two concurrent 64 MiB
-memory-hard derivations plus WASM instantiation can plausibly exceed 30 s. This
-is a **blocking, non-`continue-on-error`** job by explicit design
-(`ci.yml` comment), so a timeout wedges the repo, and `retries: 2` triples the
-wall-clock cost of each such flake.
-
-**Fix:** Set an explicit, generous per-test timeout and shrink the fixture's KDF
-cost:
-
-```ts
-// web/playwright.config.ts
-export default defineConfig({
-  timeout: 120_000,
-  expect: { timeout: 15_000 },
-  // ...
-});
+```rust
+bump_recipients_vault_revision(&mut tx, std::slice::from_ref(&target_user_id)).await?;
 ```
 
-and consider a `PV_E2E` build flag that lowers the register form's `m_cost_kib`
-for the harness only (it never guards real data — the seed account's own comment
-at `shared-sync.spec.ts:80-82` already concedes this).
+### WR-08: WR-05's documented deferral covers the WS-connected client only; a client that misses the frame has no recovery, and the doc does not say so
 
-### WR-09: `playwright.config.ts` creates a temp directory as a module-scope side effect — one per config evaluation, never cleaned up
+**File:** `crates/pv-server/src/routes/sync.rs:347-368`
 
-**File:** `web/playwright.config.ts:33-34`
+**Issue:** The contract now reads "treat receipt of ANY `Collection`-typed event
+as an unconditional re-fetch trigger." That is correct and sufficient *while the
+socket is up*. There is no replay: `SyncHub` is an in-process
+`tokio::sync::broadcast` with no persistence, and the only polling fallback
+(`web/src/lib/vault/sync.ts`'s 30 s tick) hits `GET /api/sync`, whose counter a
+membership change does not move either (WR-07). A client that is offline,
+reconnecting, or simply started after the change learns nothing — the
+`collections.revision` cheap-check keeps answering `UpToDate`. The documented
+rule therefore describes a contract with no durable half, and the doc comment
+does not disclose that limitation.
 
-**Issue:** `fs.mkdtempSync(...)` runs at import time. Playwright imports the
-config in the runner process **and** in every worker process, so each run leaks
-at least two `pv-e2e-db-*` directories under `os.tmpdir()`, none of which is ever
-removed. Only the runner's `dbPath` is actually used (it is baked into the
-`webServer` command string); the workers' copies are silently dead. That is a
-latent trap: any future code that reads `dbPath` from inside a test would get a
-different, non-existent database and fail confusingly.
+**Fix:** either bump `collections.revision` on a membership change (and update
+the ~4 asserting fixtures — the honest resolution), or add the sentence the
+contract is missing: "a client that misses this frame has no polling-observable
+signal until Phase 25; it MUST re-fetch access state on every reconnect." The
+second is a one-line doc change and makes the deferral complete rather than
+half-stated.
 
-**Fix:** Derive the path deterministically from an env var so all evaluations
-agree, and clean up in a global teardown:
+### WR-09: the Playwright global teardown `rm -rf`s whatever directory `PV_E2E_DB_DIR` names, including one the developer set
+
+**File:** `web/e2e/global-teardown.ts:11-20`, `web/playwright.config.ts:50-51`
+
+**Issue:** The config reads `process.env.PV_E2E_DB_DIR ?? fs.mkdtempSync(...)`,
+so an externally-set value wins; the teardown then unconditionally
+`fs.rmSync(dbDir, { recursive: true, force: true })`. A developer who exports
+`PV_E2E_DB_DIR` to point at a directory they want to keep (a persistent test DB,
+or — with a typo — anything else) has it recursively deleted at the end of the
+run, with `force: true` suppressing every error that would otherwise warn them.
+The variable is documented as internal; nothing enforces that.
+
+**Fix:** only delete what this run minted:
 
 ```ts
+// playwright.config.ts
+const mintedHere = process.env.PV_E2E_DB_DIR === undefined;
 const dbDir = process.env.PV_E2E_DB_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), "pv-e2e-db-"));
 process.env.PV_E2E_DB_DIR = dbDir;
-// ...
-globalTeardown: "./e2e/global-teardown.ts", // fs.rmSync(process.env.PV_E2E_DB_DIR, {recursive:true})
+if (mintedHere) process.env.PV_E2E_DB_DIR_OWNED = "1";
+
+// global-teardown.ts
+if (process.env.PV_E2E_DB_DIR_OWNED !== "1") return;
 ```
-
-### WR-10: a collection-scoped item carrying an `item_shares` grant is writable but unreadable through every read path
-
-**File:** `crates/pv-server/src/routes/vault.rs:297-336` (`fetch_items_for` arm
-2), `crates/pv-server/src/routes/sync.rs:216-268`, `279-336`
-
-**Issue:** For user `R` holding only an `item_shares` grant on an item whose
-`collection_id IS NOT NULL`:
-
-- `fetch_items_for` arm 2 requires both `ck.recipient_user_id = R` **and**
-  `i.user_id = R` — `R` matches neither, so `GET /api/vault/items` and
-  `GET /api/sync` omit the item.
-- `pull_shared_collection` is `Membership<Collection, RequireRead>`-gated — `R`
-  gets `404`.
-- `pull_shared_direct` filters `vault_items.collection_id IS NULL` — the item is
-  excluded.
-
-Yet `Item::resolve_access` (`membership.rs:268-285`, `341`) grants `R` real
-access, so `PUT /api/vault/items/{id}` and `DELETE` both succeed. `R` can
-destroy or overwrite an item they can never read. Combined with CR-01 they also
-receive `Collection` events they cannot act on.
-
-**Fix:** Either forbid `item_shares` grants on collection-scoped items in
-`create_share` (`vault.rs:907-950`) — returning `BadRequest("use collection
-membership for a collection-scoped item")` — or widen `pull_shared_direct` to
-include `item_shares` rows on collection-scoped items when the caller is not a
-collection member. The former matches CONTEXT.md's framing more closely and also
-removes CR-01's second path.
-
-### WR-11: `apiJson` is duplicated in `auth/api.ts` and `vault/api.ts`, and only one carries `details`
-
-**File:** `web/src/lib/auth/api.ts:64-87` vs `web/src/lib/vault/api.ts:33-61`
-
-**Issue:** The two implementations are byte-identical except that
-`vault/api.ts`'s version now attaches the full parsed body as
-`ApiClientError.details` (the Plan 23-05 addition) while `auth/api.ts`'s does
-not. `auth/api.ts` explicitly exists as the shared base
-("Also exports the base apiFetch/base64 helpers so ... lib/vault/api.ts can
-reuse the same ... logic rather than duplicating it") — that intent has now
-drifted. Any error-body field an auth route grows will be silently dropped.
-
-**Fix:** Delete `vault/api.ts`'s copy, move the `details`-carrying version into
-`auth/api.ts`, export it, and import it from `vault/api.ts`.
-
----
 
 ## Info
 
-### IN-01: `move_item` runs the identical `item_shares` query twice
+### IN-01: `updateVaultItem`'s `UndecryptableItemError` guard is still untested
 
-**File:** `crates/pv-server/src/routes/vault.rs:816-820`
+**File:** `web/src/lib/vault/store.ts:387-389`
 
-`resolve_recipients` is called once per collection side, both times with the same
-`item_id`, so the `SELECT recipient_user_id FROM item_shares WHERE item_id = ?`
-query (`vault.rs:113-116`) executes twice with identical parameters inside the
-same transaction. Harmless today, but it makes the two recipient sets
-structurally overlap in a way that obscures the source/destination separation the
-comment at `vault.rs:840-848` claims. Splitting `resolve_recipients` into
-`collection_recipients(collection_id)` + `item_share_recipients(item_id)` would
-make both the dedup and CR-01's fix clearer.
+Carried from iteration 2 (IN-07), unchanged. `store.test.ts` covers the merge
+side of CR-03 thoroughly but never asserts that a save over a flagged item
+throws. With WR-02's UI fix landed, this throw is both the last line of defense
+and the thing the new `item-save-error-banner` renders for — one short test
+would cover both.
 
-### IN-02: the new `console.error` calls are the only signal for a decrypt failure, and carry vestigial lint conventions
+### IN-02: `Folder.undecryptable` is written and never read
 
-**File:** `web/src/lib/vault/store.ts:220`, `234`
+**File:** `packages/pv-ui/vault/types.ts:171`, `web/src/lib/vault/store.ts:282-287`
 
-Unlike `touchVaultItem`'s `console.debug` (line 387-388, prefixed with
-`// eslint-disable-next-line no-console`), the two new `console.error` calls
-carry no such directive. There is in fact no ESLint config under `web/` and no
-lint step in the `web` CI job, so neither convention is enforced — worth noting
-that the codebase's `no-console` discipline is now purely aspirational. Also see
-CR-03: a console log is not an adequate channel for an integrity failure.
+Carried from iteration 2 (IN-05). Grep-confirmed: the only readers of
+`undecryptable` are `DetailPanel.tsx:273/316` and `ItemContextMenu.tsx:170`,
+both on `VaultItem`. A folder whose name fails to decrypt renders its stale name
+in the sidebar with no indication. Either surface it or drop the field.
 
-### IN-03: `pull_shared_revisions`'s `family_members` join can duplicate rows in a future multi-family world
+### IN-03: `move_item`'s four `.expect()` calls panic the request task
 
-**File:** `crates/pv-server/src/routes/sync.rs:152-160`; same shape in
-`vault.rs:310-312`
+**File:** `crates/pv-server/src/routes/vault.rs:1138`, `1142`, `1149`, `1153`
 
-`JOIN family_members fm ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id`
-produces one row per matching `family_members` row. Today `idx_families_singleton`
-(`0014_family_sharing.sql`) guarantees exactly one family, so a user has at most
-one `family_members` row and duplication is unreachable. When Phase 25+ removes
-the singleton constraint, both queries will start emitting duplicate
-`CollectionRevision`/`VaultItem` entries. A `SELECT DISTINCT` or an
-`EXISTS (...)` subquery instead of a join would be duplication-proof now.
+Carried from iteration 2 (IN-06). Structurally unreachable (each `Option` is
+matched on the condition that produced it), but a panic in an axum handler drops
+the connection instead of returning a 500, and the invariant is spread across
+four separated `match` expressions. Pairing `(collection_id, revision, members)`
+in one struct would make it type-enforced.
+
+### IN-04: `failedMergeAttempts`' own comment describes a reset that is not where it says
+
+**File:** `web/src/lib/vault/store.ts:209-211` vs `512-531`
+
+The comment says the counter is reset "on every `startSync()` (unlock) — see
+`syncCallbacks`'s own reset". `syncCallbacks` (lines 512-515) contains no reset;
+the actual reset is in the **lock** branch (line 524). Behaviourally equivalent
+(a lock always precedes the next unlock, and the module initialises to 0), but
+the comment sends a future reader to the wrong place.
+
+### IN-05: a same-collection `move_item` double-bumps that collection and emits two events
+
+**File:** `crates/pv-server/src/routes/vault.rs:1102-1109`, `1136-1157`
+
+When `req.new_collection_id == current_collection`, `bump_collection_revision`
+runs twice (revision +2) and two `Collection` events are published to the same
+audience, the first carrying an already-superseded revision. Harmless for a
+client following the "any Collection event = re-fetch" rule, but it is
+observable noise and one
+`if req.new_collection_id.as_deref() != current_collection.as_deref()` away.
+
+### IN-06: `shared-sync.spec.ts`'s fan-out comments still describe `direct.revision` as the item's revision
+
+**File:** `web/e2e/shared-sync.spec.ts:254-257`, `274-277`
+
+Carried from iteration 2 (IN-03), unchanged. The assertions (1 then 2) are
+correct, but for a different reason than the comments claim: post-CR-02 that
+field is `users.shared_direct_revision`, a per-recipient event counter. It reads
+1/2 here only because B is a fresh account bumped exactly once by `create_share`
+and once by A's edit. A second shared item would make the two quantities diverge
+and the comment actively wrong.
+
+### IN-07: iteration 2's remaining test-coverage gaps are all still open
+
+Carried verbatim; none were in the iteration-3 fix scope:
+- **IN-01 (iter 2):** the CR-01 regression test's zero-WS-frames half has no
+  liveness proof, unlike its sibling at `sync_shared.rs:760`; only the
+  `vault_revision` assertion discriminates.
+- **IN-02 (iter 2):** no test for an `item_shares` recipient receiving an
+  `Item`- rather than `Collection`-typed event, nor for `move_item`'s
+  destination side with a non-member owner.
+- **IN-04 (iter 2):** no test (not even a `test.fixme` placeholder) for a shared
+  conflict whose write *is* decryptable by the other party — architecturally
+  impossible to fixture before Phase 26/27, and therefore worth marking as a
+  known gap rather than leaving it looking covered.
+
+---
+
+## Ship judgement
+
+**Safe to ship as recorded debt.** No blocker remains; BL-01 is genuinely and
+verifiably closed, and all six hard invariants hold.
+
+The two findings a human should weigh before merging are **WR-01** (an owner's
+direct shares are destroyed silently on a move — a product decision that
+deserves an explicit sign-off rather than being a fix-pass side effect) and
+**WR-07** (revocation is not observable by the revoked party through any polling
+path). Neither leaks plaintext the affected party did not already hold.
+**WR-04** is the cheapest real fix here — one `begin_with("BEGIN IMMEDIATE")` —
+and it prevents a 500 in exactly the race the iteration-2 fix was written for.
+**WR-05** and **WR-06** are the two places where the fix pass's test evidence
+does not support its claim; neither finding should be recorded as closed until
+those tests actually discriminate.
 
 ---
 
 _Reviewed: 2026-07-30_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
+_Iteration: 3 (final — verification of the 9-finding iteration-2 fix pass)_
