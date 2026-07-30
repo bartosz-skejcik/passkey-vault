@@ -128,6 +128,9 @@ pub fn decrypt_item(
     k.copy_from_slice(&key_bytes);
     key_bytes.zeroize();
     let item_key = ItemKey(k);
+    // `[u8; KEY_LEN]` is `Copy` — `ItemKey(k)` copied `k`, it did not move
+    // it (WR-01). Wipe our own copy explicitly.
+    k.zeroize();
     aead_open(
         &item_key.0,
         &item.enc_data,
@@ -203,6 +206,9 @@ pub fn decrypt_item_for_collection(
     k.copy_from_slice(&key_bytes);
     key_bytes.zeroize();
     let item_key = ItemKey(k);
+    // `[u8; KEY_LEN]` is `Copy` — `ItemKey(k)` copied `k`, it did not move
+    // it (WR-01). Wipe our own copy explicitly.
+    k.zeroize();
     aead_open(
         &item_key.0,
         &item.enc_data,

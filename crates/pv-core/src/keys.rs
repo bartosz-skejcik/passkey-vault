@@ -118,7 +118,12 @@ pub fn unwrap_user_key(
     let mut k = [0u8; KEY_LEN];
     k.copy_from_slice(&plain);
     plain.zeroize();
-    Ok(UserKey::from_bytes(k))
+    let out = UserKey::from_bytes(k);
+    // `[u8; KEY_LEN]` is `Copy` — `from_bytes` copied `k`, it did not move
+    // it (WR-01, Phase 21 code review). Wipe our own copy explicitly; the
+    // newtype holds an independent copy zeroized by its own `ZeroizeOnDrop`.
+    k.zeroize();
+    Ok(out)
 }
 
 #[cfg(test)]
