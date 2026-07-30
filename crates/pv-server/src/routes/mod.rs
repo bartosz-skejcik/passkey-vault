@@ -135,7 +135,13 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
 /// extractors need different sweep-fixture shapes: a `FamilyMembership<M>`
 /// route needs no path `{id}` at all (the singleton IS the resource), while a
 /// `Membership<R, M>` route needs a real path `{id}`.
-pub(crate) fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
+///
+/// `pub`, not `pub(crate)`: `tests/membership_route_sweep.rs` is a SEPARATE
+/// integration-test crate that links against this crate's lib target and
+/// cannot see `pub(crate)` items — this widening exists solely so that sweep
+/// test can call this function directly, not as a general API surface
+/// widening.
+pub fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
     vec![
         ("/api/families/members", get(families::members).post(families::add_member)),
         ("/api/families/members/{user_id}/access", get(families::member_access)),
@@ -158,7 +164,11 @@ pub(crate) fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<
 /// already existed before this phase), alongside three brand-new endpoints
 /// this plan builds: the move-item endpoint (SHARE-04's headline fix) and
 /// the direct per-item share create/revoke pair (SHARE-02's server half).
-pub(crate) fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
+///
+/// `pub`, not `pub(crate)`: same rationale as `family_routes()` above —
+/// `tests/membership_route_sweep.rs` cannot see `pub(crate)` items from a
+/// separate integration-test crate.
+pub fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
     vec![
         ("/api/vault/collections/{id}", get(collections::get)),
         ("/api/vault/collections/{id}/members", post(collections::add_member)),
@@ -171,6 +181,65 @@ pub(crate) fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRou
         ("/api/vault/items/{id}/shares/{user_id}", delete(vault::revoke_share)),
     ]
 }
+
+/// Every literal `.route(...)` path in `router_with_cors` that predates this
+/// phase's authorization model or is deliberately session-scoped only
+/// (`healthz`, the `auth`/`session`/`sync`/`passkeys`/`extension-passkeys`
+/// routes, and the same `POST /api/families` + `/api/identity/*` paths
+/// `SESSION_ONLY_ROUTES_NOT_SWEPT` — in `tests/membership_route_sweep.rs` —
+/// names — list them here too, since this constant is now the complete
+/// audited set; `SESSION_ONLY_ROUTES_NOT_SWEPT`'s job becomes naming the
+/// subset that also needs the family/collection-adjacent doc comment, not
+/// being independently exhaustive).
+///
+/// Adding an entry here requires a written justification for why that path is
+/// not family/collection/item-scoped — a stray mutating route added directly
+/// to `router_with_cors`'s chain instead of through `membership_routes()`/
+/// `family_routes()` trips `router_literal_routes_match_documented_allowlist`
+/// (this module's `#[cfg(test)] mod tests`) on the very commit that adds it.
+///
+/// `pub`, not `#[cfg(test)]`-gated: must be visible to the separate
+/// `tests/membership_route_sweep.rs` integration-test crate, and
+/// `#[cfg(test)] mod tests` items in this crate's lib target are NOT compiled
+/// into the build integration tests link against.
+pub const LITERAL_ROUTES_NOT_MEMBERSHIP_GATED: &[&str] = &[
+    "/healthz",
+    "/api/auth/prelogin",
+    "/api/auth/register",
+    "/api/auth/login",
+    "/api/auth/logout",
+    "/api/auth/me",
+    "/api/auth/passkey-login/start",
+    "/api/auth/passkey-login/finish",
+    "/api/sync",
+    "/api/sync/ws",
+    "/api/passkeys",
+    "/api/passkeys/register/start",
+    "/api/passkeys/register/finish",
+    "/api/passkeys/{id}/prf-wrap",
+    "/api/passkeys/unlock/start",
+    "/api/passkeys/unlock/finish",
+    "/api/passkeys/{id}",
+    "/api/extension-passkeys",
+    "/api/extension-passkeys/{credential_id}",
+    "/api/sessions",
+    "/api/sessions/{id}",
+    "/api/families",
+    "/api/identity/keypair",
+    "/api/identity/verify/{user_id}",
+];
+
+/// Literal `.route(...)` paths registered outside `membership_routes()`/
+/// `family_routes()` that predate Phase 22 entirely and are scoped by
+/// `SessionUser`-based ownership checks inside their own handlers, not by
+/// `Membership<R, M>` — `POST`/`GET /api/vault/items` and every `folders`
+/// route. Listed here so `router_literal_routes_match_documented_allowlist`'s
+/// audit is complete rather than partial.
+///
+/// `pub`, not `#[cfg(test)]`-gated — same rationale as
+/// `LITERAL_ROUTES_NOT_MEMBERSHIP_GATED` above.
+pub const PRE_EXISTING_PERSONAL_SCOPE_ROUTES: &[&str] =
+    &["/api/vault/items", "/api/vault/folders", "/api/vault/folders/{id}"];
 
 /// Permissive CORS is a dev-mode-only convenience: Phase 7's Docker
 /// packaging serves both the API and the static web export from one origin
@@ -608,5 +677,245 @@ mod tests {
         let layer = build_cors_layer(false, uuid_origin);
         let acao = acao_header_for(layer, uuid_origin).await;
         assert_eq!(acao.as_deref(), Some(uuid_origin));
+    }
+
+    // --- Plan 22-05: SC#2 headline cardinality tripwire ---------------------
+
+    /// The tripwire RESEARCH.md's Pattern 4 "honest limitation" section calls
+    /// for: read the ACTUAL current `membership_routes().len()` AND
+    /// `family_routes().len()` and pin them as literal assertions. This does
+    /// NOT prevent a route being registered OUTSIDE either table via a stray
+    /// literal `.route()` call elsewhere (`router_literal_routes_match_documented_allowlist`
+    /// below is the backstop for that case) — it only catches either table's
+    /// own cardinality silently drifting.
+    #[test]
+    fn membership_routes_table_has_expected_cardinality() {
+        // bump this literal AND extend tests/membership_route_sweep.rs's
+        // per-route id substitution when adding a new membership-gated route
+        assert_eq!(membership_routes().len(), 9);
+        // bump this literal AND extend tests/membership_route_sweep.rs's
+        // per-route id substitution when adding a new family-gated route
+        assert_eq!(family_routes().len(), 3);
+    }
+
+    // --- Plan 22-05: zero-knowledge boundary audit + literal-route allowlist audit ---
+
+    /// Recursively collects every `.rs` file path under `dir`. No `walkdir`
+    /// dependency (not pinned in `pv-server`'s `Cargo.toml`) — a hand-rolled
+    /// recursion suffices for this crate's shallow `src/` tree.
+    fn collect_rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files(&path, out);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Returns every line of `path` whose trimmed content does NOT start with
+    /// `//` (covers `//`, `///`, `//!`) — shared by both tests below, so
+    /// mandated doc comments that deliberately spell out forbidden call names
+    /// (`identity.rs`/`collections.rs`'s "MUST NEVER call unseal" module
+    /// docs) never trip either scanner.
+    fn non_comment_lines(path: &std::path::Path) -> Vec<String> {
+        let Ok(content) = std::fs::read_to_string(path) else { return Vec::new() };
+        content.lines().filter(|line| !line.trim_start().starts_with("//")).map(str::to_string).collect()
+    }
+
+    fn is_ident_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_'
+    }
+
+    /// Manual word-boundary identifier match — no `regex` crate pinned in
+    /// `pv-server`'s `Cargo.toml`. Catches `use pv_core::identity::{seal,
+    /// unseal};` grouped imports and `id::unseal(...)` aliased calls, neither
+    /// of which contain the fully-qualified substrings the caller also
+    /// checks. Deliberately rejects a match where `needle` is only a PREFIX
+    /// of a longer identifier (e.g. `seal` inside `sealed_key`) — the char
+    /// immediately before/after each match, if any, must not itself be an
+    /// identifier byte.
+    fn contains_identifier(line: &str, needle: &str) -> bool {
+        let bytes = line.as_bytes();
+        let mut start = 0;
+        while let Some(rel) = line[start..].find(needle) {
+            let idx = start + rel;
+            let before_ok = idx == 0 || !is_ident_byte(bytes[idx - 1]);
+            let end = idx + needle.len();
+            let after_ok = end >= bytes.len() || !is_ident_byte(bytes[end]);
+            if before_ok && after_ok {
+                return true;
+            }
+            start = idx + 1;
+        }
+        false
+    }
+
+    /// The permanent, automated version of the ad-hoc `grep` spot-checks
+    /// Plans 22-01/22-02/22-04 already ran manually against
+    /// `identity.rs`/`collections.rs` individually — this covers the WHOLE
+    /// `src/` tree (minus this one self-excluded file), including any future
+    /// addition, not just the two files known today.
+    #[test]
+    fn pv_server_never_calls_pv_core_seal_or_unseal_or_decrypt() {
+        let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        collect_rs_files(&src_dir, &mut files);
+
+        // Self-exclusion: this very test lives in `routes/mod.rs`, and its
+        // own assertion logic necessarily contains the forbidden substrings
+        // as plain `&str` literals (it has to name them to check for them).
+        // `mod.rs`'s actual production code is route-table wiring only and
+        // calls no `pv_core::identity`/`pv_core::items` function directly, so
+        // excluding the whole file from the scan does not reduce real
+        // coverage.
+        let self_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/mod.rs");
+
+        // (a) fully-qualified — deliberately broad so the shared
+        // `encrypt_item`/`decrypt_item` prefix also catches the
+        // `_for_collection` variants via plain substring `.contains()`.
+        let fq_needles = [
+            "pv_core::identity::seal",
+            "pv_core::identity::unseal",
+            "pv_core::items::encrypt_item",
+            "pv_core::items::decrypt_item",
+        ];
+        // (b) bare identifiers — word-boundary matched.
+        let bare_needles = ["seal", "unseal", "unseal_collection_key", "unwrap_identity_secret_key"];
+
+        for file in &files {
+            if file == &self_path {
+                continue;
+            }
+            for (lineno, line) in non_comment_lines(file).into_iter().enumerate() {
+                for needle in fq_needles {
+                    assert!(
+                        !line.contains(needle),
+                        "zero-knowledge boundary violation: {}:{} calls `{}`: {}",
+                        file.display(),
+                        lineno + 1,
+                        needle,
+                        line.trim()
+                    );
+                }
+                for needle in bare_needles {
+                    assert!(
+                        !contains_identifier(&line, needle),
+                        "zero-knowledge boundary violation: {}:{} references bare identifier `{}`: {}",
+                        file.display(),
+                        lineno + 1,
+                        needle,
+                        line.trim()
+                    );
+                }
+            }
+        }
+    }
+
+    /// Extracts the `{ ... }` body text following the FIRST occurrence of
+    /// `marker` in `source`, via simple brace-depth counting. Safe even
+    /// though several of `router_with_cors`'s own route-path string literals
+    /// contain `{id}`/`{user_id}`/`{credential_id}` placeholders: every such
+    /// placeholder is itself a BALANCED `{`/`}` pair, so it nets to zero
+    /// depth change and never disturbs where the true function-closing brace
+    /// is found.
+    fn extract_fn_body(source: &str, marker: &str) -> String {
+        let start = source
+            .find(marker)
+            .unwrap_or_else(|| panic!("could not locate `{marker}` — this test's source anchor is stale"));
+        let after_sig = &source[start..];
+        let brace_start = after_sig.find('{').expect("fn signature must be followed by an opening brace");
+        let mut depth = 0i32;
+        let mut end = None;
+        for (i, ch) in after_sig[brace_start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(brace_start + i + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let end = end.expect("unbalanced braces while extracting fn body");
+        after_sig[..end].to_string()
+    }
+
+    /// **BLOCKER fix — makes SC#2's guarantee structural, not conventional.**
+    /// Scans `router_with_cors`'s OWN literal `.route(...)` calls (never
+    /// `.route("` as a contiguous substring — rustfmt wraps long calls,
+    /// putting `.route(` at end-of-line and the path literal on the NEXT
+    /// line, e.g. the `/api/extension-passkeys` registration) and asserts the
+    /// scanned set equals `LITERAL_ROUTES_NOT_MEMBERSHIP_GATED` ∪
+    /// `PRE_EXISTING_PERSONAL_SCOPE_ROUTES` exactly — a route added to
+    /// `router_with_cors` without a corresponding allowlist entry fails this
+    /// test immediately, and a route removed without removing its now-stale
+    /// allowlist entry also fails it.
+    ///
+    /// `.fallback_service(serve)` at the static-file branch is NOT an API
+    /// route — it never contains the substring `.route(`, so it is excluded
+    /// by name (this comment) rather than needing any pattern-matching code.
+    #[test]
+    fn router_literal_routes_match_documented_allowlist() {
+        let mod_rs_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/mod.rs");
+        let joined = non_comment_lines(&mod_rs_path).join(" ");
+        let body = extract_fn_body(&joined, "pub fn router_with_cors(");
+
+        // Structural backstop: a whole sub-router attached via `.nest(`/
+        // `.merge(` would be invisible to the `.route(` scan below — the ONLY
+        // two documented ways `family_routes()`/`membership_routes()` fold
+        // into the router is the single `.fold(api, |r, (path, mr)| r.route(path, mr))`
+        // call, which uses neither `.nest(` nor `.merge(`.
+        assert!(!body.contains(".nest("), "router_with_cors must not use .nest() — would hide routes from this scan");
+        assert!(!body.contains(".merge("), "router_with_cors must not use .merge() — would hide routes from this scan");
+
+        let mut literal_routes: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut search_from = 0usize;
+        while let Some(rel) = body[search_from..].find(".route(") {
+            let idx = search_from + rel;
+            let after = idx + ".route(".len();
+            let rest = &body[after..];
+            let trimmed = rest.trim_start();
+            if let Some(stripped) = trimmed.strip_prefix('"') {
+                let close = stripped
+                    .find('"')
+                    .unwrap_or_else(|| panic!("unterminated string literal after .route( at byte offset {idx}"));
+                literal_routes.insert(stripped[..close].to_string());
+            } else if trimmed.starts_with("path, mr)") {
+                // The documented dynamic fold that registers every
+                // `membership_routes()`/`family_routes()` entry — not a
+                // literal registration, deliberately excluded from the
+                // scanned set (the cardinality tripwire above covers these
+                // two tables instead).
+            } else {
+                let preview: String = trimmed.chars().take(40).collect();
+                panic!(
+                    "router_literal_routes_match_documented_allowlist: .route( at byte offset {idx} is followed \
+                     by neither a string literal nor the documented `path, mr)` fold call — found: {preview:?}. \
+                     This could be `.route(SOME_CONST, ...)` registering a route invisible to this scan."
+                );
+            }
+            search_from = after;
+        }
+
+        let allowlisted: std::collections::HashSet<String> = LITERAL_ROUTES_NOT_MEMBERSHIP_GATED
+            .iter()
+            .chain(PRE_EXISTING_PERSONAL_SCOPE_ROUTES.iter())
+            .map(|s| s.to_string())
+            .collect();
+
+        assert_eq!(
+            literal_routes, allowlisted,
+            "router_with_cors's literal .route(...) registrations must match \
+             LITERAL_ROUTES_NOT_MEMBERSHIP_GATED ∪ PRE_EXISTING_PERSONAL_SCOPE_ROUTES exactly — \
+             symmetric difference: scanned-only={:?}, allowlist-only={:?}",
+            literal_routes.difference(&allowlisted).collect::<Vec<_>>(),
+            allowlisted.difference(&literal_routes).collect::<Vec<_>>(),
+        );
     }
 }
