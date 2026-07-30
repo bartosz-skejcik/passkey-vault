@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod collections;
 pub mod extension_passkeys;
 pub mod families;
 pub mod folders;
@@ -140,6 +141,12 @@ pub(crate) fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<
     vec![
         ("/api/families/members", get(families::members).post(families::add_member)),
         ("/api/families/members/{user_id}/access", get(families::member_access)),
+        // Plan 22-03: `POST /api/vault/collections` is itself a
+        // collection-mutating endpoint, so it MUST be visible to Plan
+        // 22-05's route-sweep test and cardinality tripwire — it belongs
+        // here (FamilyMembership<RequireRead>, no {id} segment), never
+        // registered via a literal `.route()` call.
+        ("/api/vault/collections", post(collections::create).get(collections::list)),
     ]
 }
 
@@ -149,7 +156,12 @@ pub(crate) fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<
 /// plan defines the function and its fold-in wiring into `router_with_cors`,
 /// not its first entry.
 pub(crate) fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppState>)> {
-    vec![]
+    vec![
+        ("/api/vault/collections/{id}", get(collections::get)),
+        ("/api/vault/collections/{id}/members", post(collections::add_member)),
+        ("/api/vault/collections/{id}/access", get(collections::access_list)),
+        ("/api/vault/collections/{id}/access/{user_id}", delete(collections::revoke_access)),
+    ]
 }
 
 /// Permissive CORS is a dev-mode-only convenience: Phase 7's Docker

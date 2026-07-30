@@ -55,6 +55,21 @@ pub enum AccessLevel {
     Edit,
 }
 
+impl AccessLevel {
+    /// The exact inverse of `parse_access_level` — the sole place an
+    /// `AccessLevel` is rendered back to its wire-vocabulary string, reused
+    /// by every handler that needs to echo the caller's own resolved level
+    /// back in a response (`collections::get`, Plan 22-03) rather than
+    /// hand-rolling a second string mapping.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            AccessLevel::Read => "read",
+            AccessLevel::Edit => "edit",
+            AccessLevel::HiddenPassword => "hidden_password",
+        }
+    }
+}
+
 /// Type-level minimum-access floor a `Membership<R, M>`/`FamilyMembership<M>`
 /// extraction must clear. Making this a second type parameter (not a runtime
 /// check inside the handler body) means a handler that only declares
@@ -96,6 +111,18 @@ pub(crate) fn parse_access_level(s: &str) -> Result<AccessLevel, ApiError> {
         "hidden_password" => Ok(AccessLevel::HiddenPassword),
         _ => Err(ApiError::Internal),
     }
+}
+
+/// Thin `BadRequest`-mapping wrapper around `parse_access_level`, for the
+/// CALLER-FACING request-validation path (e.g. `collections::add_member`'s
+/// `access_level` field) — keeps the DB-decode path's `ApiError::Internal`
+/// semantics (an unrecognized DB value should be unreachable given the
+/// `CHECK` constraint; a bug if it happens) distinct from the
+/// request-validation path's `ApiError::BadRequest` (a malformed client
+/// value; not a bug, a rejected request), both funneling through the one
+/// canonical string-match in `parse_access_level` above.
+pub(crate) fn parse_access_level_from_request(s: &str) -> Result<AccessLevel, ApiError> {
+    parse_access_level(s).map_err(|_| ApiError::BadRequest("invalid access_level".into()))
 }
 
 /// Ranks `Read=0, HiddenPassword=1, Edit=2` ONLY for picking the better of

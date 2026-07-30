@@ -181,6 +181,54 @@ pub async fn register_second_family_member(app: &axum::Router, owner_token: &str
     member_token
 }
 
+/// Same shape as `register_second_family_member` above, for a THIRD family
+/// member — the 3-member fan-out proof (KEY-02, Plan 22-03 Task 1) needs an
+/// owner plus two independently-added members, and this mirrors the exact
+/// same register+add-via-owner-token sequence rather than duplicating it
+/// inline in `tests/collections.rs`.
+///
+/// `#[allow(dead_code)]`: not every integration test binary that compiles
+/// this `common` module calls this helper (mirrors `register_second_family_member`'s
+/// own treatment above).
+#[allow(dead_code)]
+pub async fn register_third_family_member(app: &axum::Router, owner_token: &str, email: &str) -> String {
+    let member_token = register_and_login(app, email).await;
+
+    let me_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/auth/me")
+                .header("authorization", format!("Bearer {member_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(me_res.status(), StatusCode::OK, "fetching the new member's own id via /api/auth/me must succeed");
+    let me_bytes = to_bytes(me_res.into_body(), usize::MAX).await.unwrap();
+    let me_body: serde_json::Value = serde_json::from_slice(&me_bytes).unwrap();
+    let member_user_id = me_body["user_id"].as_str().unwrap().to_string();
+
+    let add_res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/families/members")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .body(Body::from(serde_json::to_vec(&json!({ "user_id": member_user_id })).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(add_res.status(), StatusCode::CREATED, "owner adding the new member must succeed");
+
+    member_token
+}
+
 /// Binds a real `TcpListener` and serves the given `app` `Router` from it in
 /// a background task, returning `(app, port)`. `oneshot()` cannot perform a
 /// real HTTP Upgrade handshake (05-RESEARCH.md Pitfall 2) and cannot prove a
