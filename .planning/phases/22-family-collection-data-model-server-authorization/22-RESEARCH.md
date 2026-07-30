@@ -508,17 +508,19 @@ tx.commit().await?;
 
 **If this table is empty:** N/A — see above; all three items are design *recommendations* filling gaps CONTEXT.md left open, not claims about external facts, and are flagged as such rather than presented as locked decisions.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should the destination-collection check (Pattern 3, A1) be a locked decision or Claude's Discretion for the planner?**
+1. **(RESOLVED — adopted by Plan 22-04, W5) Should the destination-collection check (Pattern 3, A1) be a locked decision or Claude's Discretion for the planner?**
    - What we know: SHARE-04 as literally stated only constrains the *source* collection.
    - What's unclear: whether CONTEXT.md's author considered and implicitly accepted the destination gap, or simply didn't address it.
    - Recommendation: planner implements the two-check design and records it as a written-rationale deviation (permitted per CONTEXT.md's "may deviate with written rationale" framing), rather than escalating — the security argument is strong enough not to need a human round-trip.
+   - **Resolution:** Plan 22-04 Task 1 implements the two-check design exactly as recommended — `Membership<Item, RequireEdit>` on the item's current collection (SHARE-04's own gate) plus a second, independent `require_collection_edit()` check on the destination collection — and records it as a written-rationale deviation in the plan's objective, per CONTEXT.md's discretion framing. Not escalated.
 
-2. **Exact HTTP verb/path for "revoke a single share" (SHARE-06) — collection member vs. independent item share.**
+2. **(RESOLVED — adopted by Plan 22-03) Exact HTTP verb/path for "revoke a single share" (SHARE-06) — collection member vs. independent item share.**
    - What we know: two distinct tables (`collection_keys`, `item_shares`) both need a revoke path; CONTEXT.md doesn't specify the URL shape.
    - What's unclear: whether `DELETE /api/vault/collections/{id}/members/{user_id}` (revoking a collection membership's sealed key, not the family membership) reads as confusingly similar to a future Phase 25 "remove from family" endpoint.
    - Recommendation: name it unambiguously, e.g. `DELETE /api/vault/collections/{id}/access/{user_id}` and `DELETE /api/vault/items/{id}/shares/{user_id}` — avoiding the word "members" for the collection-revoke path specifically so it's never confused with family membership removal (Phase 25's territory).
+   - **Resolution:** Plan 22-03 Task 2 adopts exactly this naming — `DELETE /api/vault/collections/{id}/access/{user_id}` for collection-share revocation, `DELETE /api/vault/items/{id}/shares/{user_id}` (Plan 22-04 Task 2) for item-share revocation — with `/members/...` explicitly reserved vocabulary for Phase 25's family-member removal, documented inline at the route registration site.
 
 ## Environment Availability
 
