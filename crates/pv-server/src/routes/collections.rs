@@ -36,10 +36,13 @@ use crate::{error::ApiError, AppState};
 /// naturally excluded, with zero invalidation logic anywhere — this is the
 /// same "resolved fresh at emit time" property `vault.rs::resolve_recipients`
 /// already relies on.
-async fn resolve_collection_recipients(pool: &sqlx::SqlitePool, collection_id: &str) -> Result<Vec<String>, ApiError> {
+async fn resolve_collection_recipients(
+    tx: &mut sqlx::SqliteConnection,
+    collection_id: &str,
+) -> Result<Vec<String>, ApiError> {
     let rows = sqlx::query("SELECT recipient_user_id FROM collection_keys WHERE collection_id = ?")
         .bind(collection_id)
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await?;
     rows.into_iter()
         .map(|row| row.try_get("recipient_user_id").map_err(|_| ApiError::Internal))
@@ -243,6 +246,15 @@ pub async fn add_member(
 
     validate_blob_len("sealed_key", &req.sealed_key)?;
 
+    // WR-06 (code review iteration 1): the INSERT, the recipient resolution,
+    // and the revision read all now run in ONE transaction (WR-01
+    // discipline, matching every `vault.rs` mutation handler) — previously
+    // three independent statements against `&state.db`, so a concurrent
+    // revoke between the INSERT and the recipient resolution could produce a
+    // fan-out set matching neither the before- nor the after-state. Publish
+    // still happens strictly AFTER `tx.commit()` succeeds.
+    let mut tx = state.db.begin().await?;
+
     let inserted = sqlx::query(
         "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) \
          VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING recipient_user_id",
@@ -251,7 +263,7 @@ pub async fn add_member(
     .bind(&req.recipient_user_id)
     .bind(&req.sealed_key)
     .bind(&req.access_level)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
 
     if inserted.is_none() {
@@ -268,11 +280,14 @@ pub async fn add_member(
     // revision, matching the client contract "any Collection-typed event
     // means: drop any cached Collection Key for this collection and
     // re-fetch."
-    let recipients = resolve_collection_recipients(&state.db, &membership.resource_id).await?;
+    let recipients = resolve_collection_recipients(&mut tx, &membership.resource_id).await?;
     let current_revision: i64 = sqlx::query_scalar("SELECT revision FROM collections WHERE id = ?")
         .bind(&membership.resource_id)
-        .fetch_one(&state.db)
+        .fetch_one(&mut *tx)
         .await?;
+
+    tx.commit().await?;
+
     state.sync_hub.publish_to_recipients(
         &recipients,
         SyncEvent {
@@ -327,6 +342,15 @@ pub async fn revoke_access(
     // clause makes SQLite's single-statement execution the enforcement
     // mechanism: the row only disappears if the EXISTS subquery is still
     // true at the moment the DELETE actually runs.
+    // WR-06 (code review iteration 1): the guarded DELETE, the follow-up
+    // recipient resolution, and the revision read all now run in ONE
+    // transaction (WR-01 discipline) — previously three independent
+    // statements against `&state.db`, so a concurrent revoke between the
+    // DELETE and the recipient resolution could produce a fan-out set
+    // matching neither the before- nor the after-state. Publish still
+    // happens strictly AFTER `tx.commit()` succeeds.
+    let mut tx = state.db.begin().await?;
+
     let result = sqlx::query(
         "DELETE FROM collection_keys \
           WHERE collection_id = ? AND recipient_user_id = ? \
@@ -337,7 +361,7 @@ pub async fn revoke_access(
     .bind(&target_user_id)
     .bind(&membership.resource_id)
     .bind(&target_user_id)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
 
     if result.rows_affected() == 0 {
@@ -352,7 +376,7 @@ pub async fn revoke_access(
         )
         .bind(&membership.resource_id)
         .bind(&target_user_id)
-        .fetch_optional(&state.db)
+        .fetch_optional(&mut *tx)
         .await?;
         return match exists {
             Some(_) => Err(ApiError::Conflict(
@@ -369,11 +393,14 @@ pub async fn revoke_access(
     // channel receives NOTHING about this collection ever again from this
     // call (T-23-10's mitigation: never notify a removed member of their own
     // removal through the very channel being cut).
-    let recipients = resolve_collection_recipients(&state.db, &membership.resource_id).await?;
+    let recipients = resolve_collection_recipients(&mut tx, &membership.resource_id).await?;
     let current_revision: i64 = sqlx::query_scalar("SELECT revision FROM collections WHERE id = ?")
         .bind(&membership.resource_id)
-        .fetch_one(&state.db)
+        .fetch_one(&mut *tx)
         .await?;
+
+    tx.commit().await?;
+
     state.sync_hub.publish_to_recipients(
         &recipients,
         SyncEvent {
