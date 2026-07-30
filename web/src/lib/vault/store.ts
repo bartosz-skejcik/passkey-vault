@@ -198,6 +198,20 @@ function decryptFolderRow(row: FolderRow, uk: WasmUserKey): Folder {
 // a full snapshot again.
 let lastKnownRevision = 0;
 
+// WR-01 (code review iteration 2): counts CONSECUTIVE merges where at least
+// one row failed to decrypt. Withholding the watermark forever (iteration
+// 1's fix) is correct for a TRANSIENT failure (worth retrying — the next
+// poll/WS tick might see a corrected row) but wrong for a PERSISTENT one: an
+// unbounded retry means every WS frame and every 30s poll re-downloads and
+// re-decrypts the ENTIRE snapshot, forever, reassigning `items`/`folders`
+// wholesale and re-rendering the whole list twice a minute with no recovery
+// path — the review's exact "permanent full-snapshot re-download loop"
+// finding. Reset to 0 on any fully-clean merge (see below) and on every
+// startSync() (unlock) — see `syncCallbacks`'s own reset, mirroring
+// `sync.ts`'s identical `sharedPullDisabled` re-arm-on-unlock rationale.
+let failedMergeAttempts = 0;
+const MAX_FAILED_MERGE_RETRIES = 3;
+
 /** The ONE merge implementation shared by initial load (unlock) and
  * ongoing background sync (WS/poll via sync.ts). A stale snapshot's
  * items/folders arrays replace the in-memory arrays WHOLESALE — a
@@ -278,8 +292,27 @@ function applySyncSnapshot(snapshot: SyncSnapshot): void {
   // Only advance the watermark when the WHOLE snapshot actually applied —
   // otherwise the next poll must re-fetch and retry rather than believing
   // itself caught up on a revision it never actually merged.
+  //
+  // WR-01 (code review iteration 2): but only up to MAX_FAILED_MERGE_RETRIES
+  // consecutive attempts — a decrypt failure caused by tampered/corrupted
+  // ciphertext (rather than a transient race with an in-flight write) will
+  // NEVER self-heal by retrying, and withholding the watermark unconditionally
+  // turns a permanent failure into a permanent full-resync-every-poll loop
+  // (see `failedMergeAttempts`'s own doc comment above). Once the retry
+  // budget is exhausted, the watermark advances anyway so the poll/WS loop
+  // stops hammering the server — every affected row stays flagged
+  // `undecryptable: true` regardless (set in the `flatMap` above), so
+  // `updateVaultItem`'s guard still refuses to save over it and the UI still
+  // shows the integrity warning; this only stops the endless re-download,
+  // it does not pretend the row is trustworthy again.
   if (!anyRowFailed) {
+    failedMergeAttempts = 0;
     lastKnownRevision = snapshot.revision;
+  } else {
+    failedMergeAttempts += 1;
+    if (failedMergeAttempts >= MAX_FAILED_MERGE_RETRIES) {
+      lastKnownRevision = snapshot.revision;
+    }
   }
 }
 
@@ -488,6 +521,7 @@ subscribeLockState(() => {
   } else {
     stopSync();
     lastKnownRevision = 0;
+    failedMergeAttempts = 0;
     items = [];
     folders = [];
     recomputeAllTags();

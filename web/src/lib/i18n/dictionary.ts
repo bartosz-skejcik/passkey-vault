@@ -725,9 +725,17 @@ export const DICTIONARY = {
   // `item.undecryptable` banner) — the retained copy is a last-known-good
   // fallback at a now-stale revision, so editing is disabled until a
   // refresh resolves the failure.
+  //
+  // WR-01 (code review iteration 2): "Try refreshing the page" was actively
+  // misleading — a page refresh re-locks the vault and re-runs the exact
+  // same full-snapshot decrypt that just failed, so it cannot possibly help
+  // (store.ts's `applySyncSnapshot` re-fetches the identical server row on
+  // every unlock). Reworded to the honest remedy: this is an AEAD
+  // integrity-failure signal (corrupted or tampered ciphertext), not a
+  // transient glitch, so the right next step is reporting it, not refreshing.
   "sync.itemUndecryptableWarning": {
-    pl: "Ten element nie mógł zostać odszyfrowany podczas ostatniej synchronizacji. Wyświetlana jest ostatnia znana wersja — edycja jest zablokowana. Spróbuj odświeżyć stronę.",
-    en: "This item failed to decrypt during the last sync. Showing the last known version -- editing is disabled. Try refreshing the page.",
+    pl: "Ten element nie mógł zostać odszyfrowany podczas ostatniej synchronizacji. Wyświetlana jest ostatnia znana wersja — edycja jest zablokowana. Może to oznaczać uszkodzone lub sfałszowane dane; jeśli się powtarza, skontaktuj się z administratorem serwera.",
+    en: "This item failed to decrypt during the last sync. Showing the last known version -- editing is disabled. This can indicate corrupted or tampered data; if it persists, contact your server operator.",
   },
   "sync.itemDeletedElsewhere": {
     pl: "Ten element został usunięty na innym urządzeniu.",
