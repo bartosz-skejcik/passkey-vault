@@ -111,13 +111,14 @@ Plans:
 
 **Goal**: The server exposes a family/collection data model where every membership, collection, and share mutation is authorized through one shared, uniformly-applied membership check — the security boundary the rest of the milestone builds on.
 **Depends on**: Phase 21
-**Requirements**: FAM-01, FAM-02, FAM-03, SHARE-04, SHARE-05, SHARE-06, SEC-06
+**Requirements**: FAM-01, FAM-02, FAM-03, SHARE-04, SHARE-05, SHARE-06, SEC-06, KEY-01 (server half — see SC 5)
 **Success Criteria** (what must be TRUE):
 
   1. An authenticated user can create a family via the API and see themselves listed as its sole member with a join timestamp; the owner can query, per member, exactly which collections and individually-shared items that member can reach.
   2. Every collection/item/family mutating endpoint is gated by the same membership-authorization extractor — a route-sweep test proves no mutating endpoint is reachable by a caller who isn't a member of the target resource.
   3. A member with hidden-password access on an item is rejected by the server if they attempt to reassign it to a different collection — closing the exact Vaultwarden #6269 bypass, verified by a dedicated regression test replaying that scenario.
   4. The owner of a share can revoke that single share without removing the recipient from the family, and revocation is enforced on the very next request.
+  5. **KEY-01 server half** (carried forward from Phase 21, which delivered only the pv-core crypto): an account's X25519 **public** key is published to and served by the server, its wrapped private key is stored as an opaque blob the server never unwraps, and an account created before v0.4 gets a keypair generated on upgrade **without re-encrypting a single byte of its existing vault**. Phase 21 proved the no-re-encryption property at the crypto layer against committed fixture data; this criterion is that property holding end-to-end through real persistence.
 
 **Plans**: TBD
 
