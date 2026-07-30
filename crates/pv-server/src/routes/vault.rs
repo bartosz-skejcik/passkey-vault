@@ -895,13 +895,19 @@ pub async fn move_item(
     // out permanently, with no recovery path anywhere in the API. Runs
     // BEFORE the destination gate below so this decision-free ownership
     // check is never skipped by a caller lacking destination access.
-    // WR-03 (code review iteration 1): `fetch_optional` + explicit `NotFound`,
-    // never `fetch_one` — a concurrent `DELETE` between `Membership<Item,
-    // _>`'s own extraction and this read would otherwise turn `fetch_one`'s
-    // `sqlx::Error::RowNotFound` into `ApiError::Internal` (500) via the
-    // blanket `From<sqlx::Error>` impl, logging a legitimate race as a "db
-    // error" instead of the ordinary 404 every other missing-row path in
-    // this file already returns.
+    // WR-03 (code review iteration 1): `fetch_optional` + explicit
+    // `NotFound`, never `fetch_one` — a concurrent `DELETE` between
+    // `Membership<Item, _>`'s own extraction and this read would otherwise
+    // turn `fetch_one`'s `sqlx::Error::RowNotFound` into `ApiError::Internal`
+    // (500) via the blanket `From<sqlx::Error>` impl, logging a legitimate
+    // race as a "db error" instead of the ordinary 404 every other
+    // missing-row path in this file already returns. This FIRST read runs on
+    // the pool (`&state.db`), same as before — it exists ONLY to fail fast
+    // on Gate 0's ownership check, which per this comment block's own
+    // requirement must run BEFORE Gate 2 below; it does NOT feed the
+    // mutation's own recipient-resolution/revision-bump decisions further
+    // down (see the tx-scoped re-read after Gate 2, and its own comment, for
+    // why).
     let owner_row = sqlx::query("SELECT user_id, collection_id FROM vault_items WHERE id = ?")
         .bind(&source.resource_id)
         .fetch_optional(&state.db)
@@ -909,16 +915,26 @@ pub async fn move_item(
     let Some(owner_row) = owner_row else {
         return Err(ApiError::NotFound);
     };
-    let current_collection: Option<String> =
+    let precheck_collection: Option<String> =
         owner_row.try_get("collection_id").map_err(|_| ApiError::Internal)?;
-    let owner_user_id: String = owner_row.try_get("user_id").map_err(|_| ApiError::Internal)?;
-    if current_collection.is_none() && owner_user_id != source.caller_user_id {
+    let precheck_owner_user_id: String = owner_row.try_get("user_id").map_err(|_| ApiError::Internal)?;
+    if precheck_collection.is_none() && precheck_owner_user_id != source.caller_user_id {
         return Err(ApiError::Forbidden);
     }
 
     // Gate 2 (destination) — runs BEFORE any DB mutation, and before the
     // blob-length validation below, so a caller who fails this check never
-    // learns whether their oversized blob would otherwise have been accepted.
+    // learns whether their oversized blob would otherwise have been
+    // accepted. MUST complete (and release its pool connection) before `tx`
+    // opens below — `require_collection_edit` acquires its OWN connection
+    // from `state.db`'s pool, and this codebase's own integration test
+    // harness (`tests/common/mod.rs`) deliberately runs that pool at
+    // `max_connections(1)` (a single, non-shared-cache in-memory SQLite
+    // needs exactly one connection to see its own writes). Opening `tx`
+    // before this gate would hold that one connection for the rest of the
+    // request while this call tried to acquire a SECOND one — a genuine
+    // self-deadlock (observed directly: it manifested as a 500 from a pool
+    // acquire timeout when tried during this fix).
     if let Some(dest_id) = &req.new_collection_id {
         require_collection_edit(&state.db, &source.caller_user_id, dest_id).await?;
     }
@@ -926,9 +942,35 @@ pub async fn move_item(
     validate_blob_len("enc_key", &req.enc_key)?;
     validate_blob_len("enc_data", &req.enc_data)?;
 
-    // WR-01: mutation + revision bump(s) run inside one transaction (see
-    // create()'s comment above for the atomicity rationale).
-    let mut tx = state.db.begin().await?;
+    // WR-03 (code review iteration 2): begin the transaction and RE-READ
+    // `current_collection`/`owner_user_id` on the SAME connection as the
+    // eventual mutation, immediately adjacent to it — this is what actually
+    // feeds `resolve_recipients`/the collection-revision-bump decisions
+    // further down, closing the "read at a different point in time than the
+    // mutation" gap the precheck read above (necessarily pre-tx, per the
+    // pool-deadlock constraint documented at Gate 2) cannot close on its
+    // own. Re-validates Gate 0's ownership rule again too, cheaply, against
+    // this fresher read. `BEGIN IMMEDIATE`, not a deferred `BEGIN` — this
+    // transaction's first statement is a READ (this SELECT) followed by a
+    // WRITE (the UPDATE below), the exact shape `delete()`'s own
+    // WR-04-iteration-1 comment documents as exposed to
+    // `SQLITE_BUSY_SNAPSHOT` under WAL when a deferred transaction is used
+    // for it.
+    let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+
+    let fresh_owner_row = sqlx::query("SELECT user_id, collection_id FROM vault_items WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some(fresh_owner_row) = fresh_owner_row else {
+        return Err(ApiError::NotFound);
+    };
+    let current_collection: Option<String> =
+        fresh_owner_row.try_get("collection_id").map_err(|_| ApiError::Internal)?;
+    let owner_user_id: String = fresh_owner_row.try_get("user_id").map_err(|_| ApiError::Internal)?;
+    if current_collection.is_none() && owner_user_id != source.caller_user_id {
+        return Err(ApiError::Forbidden);
+    }
 
     // Re-encrypt-and-replace (T-22-19): collection_id, enc_key, enc_data all
     // update together in this ONE statement — never split across two writes.
@@ -1007,17 +1049,54 @@ pub async fn move_item(
     if let Some(dest) = &dest_recipients {
         all_recipients.extend(dest.iter().cloned());
     }
+    // WR-08 (code review iteration 2): union the item's own owner into the
+    // bump audience whenever the move leaves the item PERSONAL. A
+    // collection->personal move can otherwise strand the owner: if the
+    // owner was not a member of the SOURCE collection (reachable — the
+    // creator was revoked from it, then some remaining edit-capable member
+    // moves the item back out), `source_recipients` excludes them (CR-01's
+    // collection-arm owner exclusion), so their own `vault_revision` never
+    // bumps even though `collection_id IS NULL AND user_id = owner` now
+    // makes `fetch_items_for` return the item to them again. This ONLY
+    // widens the BUMP audience, never a Collection-typed event's audience
+    // (`source_collection_members`/`dest_collection_members` below stay
+    // untouched).
+    if req.new_collection_id.is_none() {
+        all_recipients.insert(owner_user_id.clone());
+    }
     let all_recipients: Vec<String> = all_recipients.into_iter().collect();
     bump_recipients_vault_revision(&mut *tx, &all_recipients).await?;
-    // CR-02: bump the item's own direct item_shares recipients' "direct"
-    // bucket counter when it ends up (or stays) personal. A move BETWEEN two
-    // collections, or INTO a collection, drops any pre-existing item_shares
-    // relevance to the "direct" bucket entirely (WR-10 forbids new
-    // collection-scoped item_shares rows, and any legacy row's recipient is
-    // already covered by `bump_recipients_vault_revision` above) — so this
-    // only needs to run for the "ends up personal" case.
-    if req.new_collection_id.is_none() {
-        bump_direct_share_revision(&mut *tx, &id).await?;
+    // BL-01 (code review iteration 2): bump the item's own direct
+    // item_shares recipients' "direct" bucket counter UNCONDITIONALLY, on
+    // BOTH directions of the move — never only "ends up personal". The
+    // prior gate here (`if req.new_collection_id.is_none()`) assumed a
+    // direct-share recipient's bucket contents only ever change on that one
+    // direction, which was true only as long as no `item_shares` row could
+    // survive a move INTO a collection — but nothing enforced that (this is
+    // exactly the gap the DELETE below closes). Moving a personal item that
+    // carries `item_shares` rows INTO a collection changes what those
+    // recipients' direct bucket contains (the item leaves it) without this
+    // bump, their cheap-check kept reporting "current" while they still held
+    // a live `Edit` grant on an item they could no longer read through any
+    // endpoint. MUST run BEFORE the DELETE below, which would otherwise
+    // remove the very `item_shares` rows this bump needs to discover the
+    // affected recipients from (mirrors `resolve_recipients`'s own ordering
+    // requirement elsewhere in this file).
+    bump_direct_share_revision(&mut *tx, &id).await?;
+    if req.new_collection_id.is_some() {
+        // BL-01: WR-10's invariant ("a collection-scoped item must never
+        // carry a direct item_shares grant") was previously enforced ONLY at
+        // `create_share`'s choke point — `move_item` was the other,
+        // unguarded way to reach the same forbidden state: share a personal
+        // item directly, then move it into a collection. The bump above
+        // already told the affected recipients to re-pull; dropping the row
+        // here is what makes their now-stale `Edit` on this item stop
+        // resolving entirely (`Item::resolve_access`'s collection branch
+        // has no `item_shares` row left to combine with whatever collection
+        // access they may or may not separately hold) — closing the
+        // "writable but unreadable through every read path" gap this same
+        // sequence re-opened.
+        sqlx::query("DELETE FROM item_shares WHERE item_id = ?").bind(&id).execute(&mut *tx).await?;
     }
 
     let new_source_collection_revision = match &current_collection {
@@ -1147,9 +1226,19 @@ pub async fn create_share(
     // `Membership<Collection, _>` denies them with 404 (CR-01's second leak
     // path). Fails closed with 400 rather than silently ignoring the
     // request.
+    //
+    // WR-04 (code review iteration 2): the transaction begins FIRST and this
+    // guard's `collection_id` read runs on the SAME connection as the INSERT
+    // below, not a separate pre-tx pool connection — iteration 1's guard read
+    // `&state.db` before this tx began, so a concurrent `move_item` into a
+    // collection between this read and the INSERT could still let the INSERT
+    // through, producing exactly the forbidden row this guard exists to
+    // prevent (the same structural TOCTOU class as BL-01/WR-03).
+    let mut tx = state.db.begin().await?;
+
     let item_row = sqlx::query("SELECT collection_id FROM vault_items WHERE id = ?")
         .bind(&membership.resource_id)
-        .fetch_optional(&state.db)
+        .fetch_optional(&mut *tx)
         .await?;
     let collection_id: Option<String> = match item_row {
         Some(row) => row.try_get("collection_id").map_err(|_| ApiError::Internal)?,
@@ -1163,7 +1252,7 @@ pub async fn create_share(
 
     let is_family_member = sqlx::query("SELECT 1 FROM family_members WHERE user_id = ?")
         .bind(&req.recipient_user_id)
-        .fetch_optional(&state.db)
+        .fetch_optional(&mut *tx)
         .await?;
     if is_family_member.is_none() {
         return Err(ApiError::BadRequest("recipient is not a family member".into()));
@@ -1171,7 +1260,7 @@ pub async fn create_share(
 
     let has_keypair = sqlx::query("SELECT 1 FROM user_keypairs WHERE user_id = ?")
         .bind(&req.recipient_user_id)
-        .fetch_optional(&state.db)
+        .fetch_optional(&mut *tx)
         .await?;
     if has_keypair.is_none() {
         return Err(ApiError::BadRequest("recipient has not published an identity keypair yet".into()));
@@ -1184,8 +1273,6 @@ pub async fn create_share(
     // transaction (WR-01 discipline) — a crash between the INSERT and the
     // bump would otherwise durably create the share while leaving the
     // recipient's own "direct" bucket cheap-check unaware of it.
-    let mut tx = state.db.begin().await?;
-
     let inserted = sqlx::query(
         "INSERT INTO item_shares (item_id, recipient_user_id, sealed_key, access_level) \
          VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING recipient_user_id",

@@ -959,3 +959,194 @@ async fn revoked_creator_of_shared_item_receives_zero_events_and_no_vault_revisi
         "the revoked creator's own vault_revision must NOT bump as a side effect of activity in a collection they can no longer see"
     );
 }
+
+/// BL-01 (code review iteration 2): replays the EXACT sequence the review
+/// names as the still-open leak — `create_share` (direct grant on a
+/// PERSONAL item) followed by `move_item` (into a collection the recipient
+/// is not a member of). Before this fix, `move_item`'s direct-bucket bump
+/// was gated on `new_collection_id.is_none()`, so this sequence changed what
+/// the recipient's direct bucket contained (the item silently left it)
+/// WITHOUT moving their `shared_direct_revision` counter — their cheap-check
+/// kept reporting "current" while `item_shares` (never touched by
+/// `move_item`) kept resolving them a live `Edit` grant on an item they
+/// could no longer read through any endpoint (WR-10's exact "writable but
+/// unreadable" state, reachable again via this path).
+#[tokio::test]
+async fn share_then_move_into_collection_bumps_recipients_direct_revision_and_revokes_their_access() {
+    let pool = test_pool().await;
+    let (app, _port) = test_server(pool.clone()).await;
+
+    let owner_token = register_and_login(&app, "bl01-owner@example.com").await;
+    assert_eq!(
+        req(&app, "POST", "/api/families", &owner_token, Some(json!({ "name": "BL01 Family" }))).await.status(),
+        StatusCode::CREATED
+    );
+    let recipient_token = register_second_family_member(&app, &owner_token, "bl01-recipient@example.com").await;
+    let recipient_id = user_id_of(&app, &recipient_token).await;
+    publish_keypair(&app, &recipient_token, 55).await;
+
+    // 1. POST /api/vault/items -- personal item I, owner A.
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"key-blob\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"data-blob\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+
+    // 2. POST /api/vault/items/{I}/shares -- R gets an item_shares grant
+    //    (I.collection_id IS NULL -> WR-10's guard passes).
+    let share_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/items/{item_id}/shares"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": recipient_id,
+            "sealed_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"sealed-item-key\"}",
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(share_res.status(), StatusCode::CREATED);
+
+    // Prove the share is real BEFORE the move: the recipient can edit it.
+    let pre_move_edit = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}"),
+        &recipient_token,
+        Some(json!({
+            "enc_key": "{\"nonce\":\"DDDD\",\"ciphertext\":\"key-blob-2\"}",
+            "enc_data": "{\"nonce\":\"EEEE\",\"ciphertext\":\"data-blob-2\"}",
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(pre_move_edit.status(), StatusCode::OK, "recipient's direct-share edit must succeed before the move");
+
+    // Capture the recipient's baseline "direct" bucket cheap-check revision
+    // BEFORE the move.
+    let baseline = body_json(req(&app, "GET", "/api/sync/shared", &recipient_token, None).await).await;
+    let baseline_direct_revision = baseline["direct"]["revision"].as_i64().expect("direct.revision must be present");
+
+    // 3. PUT /api/vault/items/{I}/collection {C} -- I is now collection-
+    //    scoped. R is NOT a member of C; R's item_shares row is untouched by
+    //    the pre-fix code, and R.shared_direct_revision stays put.
+    let create_coll_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "enc_name": "{\"nonce\":\"FFFF\",\"ciphertext\":\"coll-name\"}",
+            "sealed_key": "{\"nonce\":\"GGGG\",\"ciphertext\":\"sealed-coll-key-owner\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_coll_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_coll_res).await["id"].as_str().unwrap().to_string();
+
+    let move_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &owner_token,
+        Some(json!({
+            "new_collection_id": collection_id,
+            "enc_key": "{\"nonce\":\"HHHH\",\"ciphertext\":\"key-blob-scoped\"}",
+            "enc_data": "{\"nonce\":\"IIII\",\"ciphertext\":\"data-blob-scoped\"}",
+            "expected_revision": 2,
+        })),
+    )
+    .await;
+    assert_eq!(
+        move_res.status(),
+        StatusCode::OK,
+        "owner's move of the directly-shared item into their own collection must succeed"
+    );
+
+    // (b) the recipient's direct-bucket cheap-check must NOT still report
+    // the pre-move value — the bucket's contents just changed (the item left
+    // it), even though the move happened on a DIFFERENT endpoint than
+    // create_share/revoke_share.
+    let after = body_json(req(&app, "GET", "/api/sync/shared", &recipient_token, None).await).await;
+    let after_direct_revision = after["direct"]["revision"].as_i64().expect("direct.revision must be present");
+    assert_ne!(
+        after_direct_revision, baseline_direct_revision,
+        "BL-01: moving a directly-shared item into a collection must bump the recipient's OWN shared_direct_revision \
+         counter -- otherwise their cheap-check keeps reporting \"current\" even though the item just left their \
+         direct bucket"
+    );
+
+    // (c) the recipient's item_shares row must be gone, and their now-stale
+    // `Edit` must no longer resolve on this collection-scoped item at all —
+    // NOT WR-10's forbidden "writable but unreadable" state, a plain 404.
+    let post_move_edit = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}"),
+        &recipient_token,
+        Some(json!({
+            "enc_key": "{\"nonce\":\"JJJJ\",\"ciphertext\":\"key-blob-3\"}",
+            "enc_data": "{\"nonce\":\"KKKK\",\"ciphertext\":\"data-blob-3\"}",
+            "expected_revision": 3,
+        })),
+    )
+    .await;
+    assert_eq!(
+        post_move_edit.status(),
+        StatusCode::NOT_FOUND,
+        "BL-01: the recipient's now-stranded item_shares grant must not resolve to Edit on a collection-scoped item \
+         they hold no membership on -- move_item must drop the item_shares row on this transition"
+    );
+
+    let post_move_delete = req(&app, "DELETE", &format!("/api/vault/items/{item_id}"), &recipient_token, None).await;
+    assert_eq!(
+        post_move_delete.status(),
+        StatusCode::NOT_FOUND,
+        "BL-01: the recipient must not be able to delete a collection item they hold no membership on, via a stale \
+         direct-share row"
+    );
+}
+
+/// WR-10's own guard (code review iteration 1), previously untested by name
+/// (BL-01's review flagged this gap directly: "grep for 'collection-scoped
+/// item' across tests/ finds only doc comments, never an assertion on the
+/// 400"). `create_share` must reject a direct grant on an ALREADY
+/// collection-scoped item with 400, closing this leak path at its OTHER
+/// choke point (the one `move_item`'s own fix above closes is the reverse
+/// direction: sharing first, then moving).
+#[tokio::test]
+async fn create_share_on_collection_scoped_item_is_bad_request() {
+    let pool = test_pool().await;
+    let fixture = setup_shared_fixture(pool).await;
+
+    let outsider_token = register_and_login(&fixture.app, "wr10-outsider@example.com").await;
+    let outsider_id = user_id_of(&fixture.app, &outsider_token).await;
+
+    let share_res = req(
+        &fixture.app,
+        "POST",
+        &format!("/api/vault/items/{}/shares", fixture.item_id),
+        &fixture.owner_token,
+        Some(json!({
+            "recipient_user_id": outsider_id,
+            "sealed_key": "{\"nonce\":\"LLLL\",\"ciphertext\":\"sealed-item-key\"}",
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(
+        share_res.status(),
+        StatusCode::BAD_REQUEST,
+        "WR-10: a direct item_shares grant on an already collection-scoped item must be rejected with 400"
+    );
+}
