@@ -26,11 +26,29 @@ const webDir = __dirname;
 const repoRoot = path.resolve(webDir, "..");
 const staticDir = path.join(webDir, "out");
 
-// T-23-12 (threat register): the DB path is generated fresh per config
-// evaluation under a unique tmp directory -- never a fixed/shared file, so
-// this suite never collides with a developer's real data/pv.db and leaves
-// no cross-run state behind.
-const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), "pv-e2e-db-"));
+// T-23-12 (threat register): the DB path lives under a unique tmp
+// directory -- never a fixed/shared file, so this suite never collides with
+// a developer's real data/pv.db and leaves no cross-run state behind.
+//
+// WR-09 (code review iteration 1): Playwright imports this config in the
+// RUNNER process AND in every worker process -- `fs.mkdtempSync` running
+// unconditionally at module-import time therefore used to mint a FRESH
+// directory on every single evaluation, leaking at least two
+// (runner + this suite's one configured worker) `pv-e2e-db-*` directories
+// under `os.tmpdir()` per run, none of them ever removed. Only the
+// RUNNER's `dbPath` was ever actually used (baked into the `webServer`
+// command string below); a worker's own copy was silently dead -- a latent
+// trap for any future test code that read `dbPath` from inside a test
+// expecting it to be the real, in-use database. `PV_E2E_DB_DIR` makes every
+// evaluation within one Playwright run agree on the SAME path (the runner
+// process sets it in its own `process.env` before any worker process is
+// forked, and a forked child process inherits its parent's environment at
+// fork time, so a worker's later re-evaluation of this same module sees the
+// already-set value and reuses it instead of minting a new one).
+// `globalTeardown` below removes the directory once, after the whole run
+// finishes, regardless of which/how many processes evaluated this file.
+const dbDir = process.env.PV_E2E_DB_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), "pv-e2e-db-"));
+process.env.PV_E2E_DB_DIR = dbDir;
 const dbPath = path.join(dbDir, "pv.db");
 
 // Build web/ (static export) with NEXT_PUBLIC_API_BASE_URL="" so the built
@@ -57,6 +75,25 @@ const runServer = [
 
 export default defineConfig({
   testDir: "./e2e",
+  // WR-09: removes the `PV_E2E_DB_DIR` directory once, after the whole run
+  // finishes -- see that env var's own doc comment above.
+  globalTeardown: "./e2e/global-teardown.ts",
+  // WR-08 (code review iteration 1): explicit, generous per-test timeout --
+  // without this, Playwright's 30s DEFAULT applies, and Playwright counts
+  // fixture setup against it. `twoSessions` (web/e2e/fixtures.ts) registers
+  // TWO accounts in parallel, each performing a client-side Argon2id at the
+  // default `m_cost_kib: 65536, t_cost: 3, p_cost: 4` in WASM, plus a
+  // server-side `auth_hash` re-hash; `shared-sync.spec.ts` additionally
+  // registers/logs in a fixed seed account (two more server-side Argon2
+  // rounds) before the test body even starts. On a shared, resource-
+  // constrained runner, two-plus concurrent 64 MiB memory-hard derivations
+  // plus WASM instantiation can plausibly exceed 30s. This is a blocking,
+  // non-`continue-on-error` CI job by explicit design, so a timeout here
+  // wedges the repo, and `retries: 2` below would triple the wall-clock
+  // cost of each such flake. 120s mirrors this file's own `webServer`
+  // generosity rationale, applied per-test instead of just to server boot.
+  timeout: 120_000,
+  expect: { timeout: 15_000 },
   // Mirrors extension/playwright.config.ts's own discipline: a single
   // worker running tests in file order, never parallelized against each
   // other -- this is a still-young suite with no established flake baseline
