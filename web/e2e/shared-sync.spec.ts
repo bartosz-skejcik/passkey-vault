@@ -282,7 +282,7 @@ test("revision fan-out", async ({ twoSessions }) => {
   expect(b.dialogFired()).toBe(false);
 });
 
-test("conflict attribution, and the resulting decrypt failure is surfaced (CR-03)", async ({ twoSessions }) => {
+test("a co-member's undecryptable write is surfaced and refuses overwrite (CR-03)", async ({ twoSessions }) => {
   const [a, b] = twoSessions;
   const aToken = await tokenFor(a.page);
   const bToken = await tokenFor(b.page);
@@ -325,33 +325,49 @@ test("conflict attribution, and the resulting decrypt failure is surfaced (CR-03
 
   // A submits their own edit through the real UI's Save action, still
   // holding their now-stale baseline revision (1) -- `ItemForm`'s own `key`
-  // (`${item.id}-${editBaselineRevision}`) only remounts on a NEW
-  // `editBaselineRevision`, which nothing in this flow changes, so this
-  // submission deterministically retries with the stale value and the
-  // server responds 409 attributing the conflict to B's email
-  // (`vault.rs::update`'s `StaleRevisionShared` branch). The 409 handler
-  // (`lib/vault/store.ts::updateVaultItem`) then calls `loadAndDecryptAll()`
-  // BEFORE throwing `RevisionConflictError` -- that re-fetch is what hits
-  // the genuine decrypt failure on B's corrupted row, exercised for real
-  // here, not mocked.
-  await a.page.getByTestId("item-password").fill("attempted-overwrite-pw");
-  await a.page.getByTestId("item-form-submit").click();
-
-  const conflictBanner = a.page.getByTestId("revision-conflict-banner");
-  await expect(conflictBanner).toBeVisible();
-  // The rendered banner's text content must contain B's ACTUAL registered
-  // email address -- not a placeholder/generic string (SYNC-06/SC3's own
-  // acceptance criterion).
-  await expect(conflictBanner).toContainText(b.email);
-
-  // CR-03: the decrypt failure the 409 handler's own loadAndDecryptAll()
-  // just hit must be SURFACED, not silently swallowed while rendering
-  // A's stale last-known-good plaintext as if nothing happened -- this is
-  // the exact gap the code review flagged ("the harness is proving the
-  // masking works"). `DetailPanel`'s `undecryptable-item-banner` is
-  // `applySyncSnapshot`'s flagged retained copy reaching the UI.
+  // CR-03: B's write is NOT valid ciphertext under A's key, so the fan-out
+  // A receives for it produces a genuine decrypt failure on A's next merge.
+  // `applySyncSnapshot` retains A's last-known-good copy flagged
+  // `undecryptable: true`, and `DetailPanel` surfaces that as
+  // `undecryptable-item-banner` -- the decrypt failure is SURFACED, never
+  // silently swallowed while rendering stale plaintext as if nothing
+  // happened. This is the exact gap code review flagged ("the harness is
+  // proving the masking works"); this assertion is what proves it closed.
   await expect(a.page.getByTestId("undecryptable-item-banner")).toBeVisible();
+
+  // ...and the same flag must REFUSE the overwrite rather than merely warn.
+  // `DetailPanel.tsx` suppresses the edit affordance for an undecryptable
+  // item, and `store.ts::updateVaultItem` throws `UndecryptableItemError`
+  // before any request leaves the client. A member must never be able to
+  // blindly overwrite a row they cannot currently read -- for a SHARED item
+  // that would destroy another member's data.
+  await expect(a.page.getByTestId("detail-panel-edit")).toBeHidden();
 
   expect(a.dialogFired()).toBe(false);
   expect(b.dialogFired()).toBe(false);
 });
+
+// DEFERRED TO PHASE 26 -- live browser proof of SYNC-06/SC3's conflict
+// ATTRIBUTION (the `revision-conflict-banner` naming the other member by
+// email).
+//
+// Why it cannot be proven here: reaching the 409 attribution path requires
+// member B to write ciphertext that A can actually decrypt. B can only do
+// that by unwrapping the item's sealed key with B's own X25519 identity
+// secret -- and no client code invokes that unwrap yet. CONTEXT.md defers
+// the client-side Collection Key / identity-keypair trigger to Phase 26 SC#5
+// (web) and Phase 27 (extension); 23-VERIFICATION.md records the same gap
+// independently ("getSharedRevisions() has no production consumer").
+//
+// With a DUMMY sealed key, B's write is necessarily undecryptable, which
+// correctly trips the guard asserted above BEFORE any 409 can occur -- so a
+// spec written against this fixture proves the CR-03 refusal, not the
+// attribution. Asserting the conflict banner here would require weakening
+// that refusal, which is precisely backwards.
+//
+// Attribution IS verified at every layer available in this phase:
+//   - server: `StaleRevisionShared` carries `last_editor_email`
+//     (crates/pv-server/tests/vault.rs)
+//   - client: both banners, attributed + generic branches, PL+EN
+//     (web/src/components/vault/DetailPanel.test.tsx)
+// Phase 26 owes the live browser proof once B can produce real ciphertext.
