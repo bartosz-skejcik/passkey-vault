@@ -9,13 +9,14 @@
 //
 // Scope fence (critical_correctness_notes #3, this plan's own instruction):
 // every invite generated below is WHOLE-FAMILY (`scopeChoice==="family"`,
-// FamilyTab's own default, never touched). The "Family + one folder" scope
-// is a documented stub as of 24-07-SUMMARY.md's "Known Stubs" -- personal
+// FamilyTab's only reachable value). The "Family + one folder" scope is
+// UNCONDITIONALLY disabled in the UI as of 24-REVIEW.md CR-02 -- personal
 // `folders` and Phase 22's `collections` are distinct tables with unrelated
-// id spaces, and no client-side collections-authoring surface exists yet.
-// Testing that path here would either assert a guaranteed-broken generate
-// call or require inventing new production UI outside this plan's scope;
-// neither belongs in a blocking CI gate. Likewise, 24-06-SUMMARY.md's own
+// id spaces, and no client-side collections-authoring surface exists yet, so
+// the option would 100%-fail `getCollection()` for every user if it could be
+// selected at all. `FamilyTab.test.tsx`'s CR-02 regression guards cover the
+// disabled state at the unit level; there is nothing left to select here.
+// Likewise, 24-06-SUMMARY.md's own
 // documented gap (no `VaultFilter` "collection" variant, so a freshly-joined
 // member is never pre-filtered to the shared collection) means this spec
 // asserts "lands in the normal vault shell", never "lands with the shared
@@ -239,6 +240,29 @@ test.describe.serial("invite flow — real two-session UI proof (Plan 24-08)", (
       baseline.length + 1,
     );
     expect(afterJoin).toContain(inviteeEmail);
+  });
+
+  // CR-02 regression guard (24-REVIEW.md): the "Family + one folder" scope
+  // is unconditionally disabled at the UI layer -- personal folders and the
+  // server's `collections` table have no id overlap, so this option would
+  // 100%-fail `getCollection()` for every user if it were ever reachable. A
+  // real browser (unlike jsdom) actually enforces `disabled` on a native
+  // `<option>` -- selecting it here proves the option cannot be chosen, not
+  // merely that a mock never got called.
+  test("folder_scope_option_is_disabled_and_cannot_be_selected", async () => {
+    await openFamilyTab(ownerPage);
+
+    const scopeSelect = ownerPage.getByTestId("invite-scope-select");
+    const folderOption = scopeSelect.locator('option[value="folder"]');
+    await expect(folderOption).toBeDisabled();
+
+    // A real browser refuses to change a <select>'s value to a disabled
+    // option -- selectOption on a disabled option throws rather than
+    // silently no-op'ing, which is itself the proof.
+    await expect(scopeSelect.selectOption("folder")).rejects.toThrow();
+    await expect(scopeSelect).toHaveValue("family");
+
+    await expect(ownerPage.getByTestId("invite-scope-folder-unavailable-note")).toBeVisible();
   });
 
   test("existing_logged_in_session_joins_directly_no_registration_shown", async ({ twoSessions }) => {

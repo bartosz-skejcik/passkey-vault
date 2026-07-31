@@ -813,12 +813,32 @@ export const DICTIONARY = {
   "invite.sectionHeading": { pl: "Zaproś kogoś", en: "Invite someone" },
   "invite.scopeLabel": { pl: "Co udostępnić", en: "What to share" },
   "invite.scopeWholeFamily": { pl: "Cała rodzina", en: "Whole family" },
+  // CR-01/24-REVIEW.md CR-02: `invite.scopeFolder` names a real Phase 26
+  // deliverable but has NO client-side `collections`-authoring surface
+  // today -- `FamilyTab`'s folder picker sourced from `useFolders()` (personal
+  // `vault_items.folder_id`) has no id overlap with the server's
+  // `collections` table, so selecting it 100%-fails `getCollection()`. Kept
+  // (not deleted) because Phase 26 needs this exact string verbatim once the
+  // real collections UI lands; it is currently unreachable dead copy.
   "invite.scopeFolder": { pl: "Rodzina + jeden folder", en: "Family + one folder" },
+  "invite.scopeFolderComingSoon": {
+    pl: "Rodzina + jeden folder (wkrótce)",
+    en: "Family + one folder (coming soon)",
+  },
+  "invite.scopeFolderUnavailableNote": {
+    pl: "Udostępnianie pojedynczego folderu pojawi się w kolejnej wersji. Na razie zaproszenie daje dostęp do rodziny.",
+    en: "Sharing a single folder is coming in a later version. For now an invite grants family access.",
+  },
   "invite.folderPickerLabel": { pl: "Wybierz folder", en: "Choose a folder" },
   "invite.folderPickerEmpty": {
     pl: "Utwórz najpierw folder, aby móc go udostępnić.",
     en: "Create a folder first so you can share it.",
   },
+  // CR-02: kept verbatim (never rendered today) for Phase 26, which needs
+  // this exact string once a real collection-scoped invite ships. Its own
+  // render branch is deleted in FamilyTab.tsx because the present-tense
+  // "sharing doesn't hide..." framing describes an operation that cannot
+  // currently occur (invite.scopeFolder is disabled, see above).
   "invite.honestVisibilityNote": {
     pl: "Udostępnienie nie ukrywa zawartości tego folderu przed Tobą — jako właściciel/właścicielka rodziny zawsze masz do niej dostęp.",
     en: "Sharing doesn't hide this folder's contents from you — as the family owner, you always keep full access to it.",

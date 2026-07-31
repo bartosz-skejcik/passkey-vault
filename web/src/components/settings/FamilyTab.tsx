@@ -14,7 +14,6 @@ import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { ApiClientError } from "@/lib/auth/api";
 import { getUnlockedUserKey } from "@/lib/crypto";
-import { useFolders } from "@/lib/vault/store";
 import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
 import { showCopyToast } from "@/lib/vault/copyToast";
 import { createFamily, getFamilyMembers } from "@/lib/families/api";
@@ -22,6 +21,12 @@ import { generateInviteLink, type InviteExpiry, type InviteScope } from "@/lib/i
 import { revokeInvite } from "@/lib/invite/api";
 
 type Mode = "checking" | "bootstrap" | "normal";
+// CR-02 (24-REVIEW.md): "folder" is intentionally unreachable from the UI --
+// personal folders (`vault_items.folder_id`) have no id overlap with the
+// server's `collections` table, so a folder-scoped invite would 100%-fail
+// `getCollection()` for every user, every time. The type stays a union (not
+// narrowed to a literal `"family"`) only so Phase 26 can re-wire a real
+// collections picker into the same `InviteScope` shape later.
 type ScopeChoice = "family" | "folder";
 
 const DEFAULT_EXPIRY: InviteExpiry = "7d";
@@ -45,7 +50,6 @@ function formatExpiryDate(iso: string, locale: "pl" | "en"): string {
 
 export default function FamilyTab() {
   const { t, locale } = useLocale();
-  const folders = useFolders();
 
   const [mode, setMode] = useState<Mode>("checking");
 
@@ -54,9 +58,12 @@ export default function FamilyTab() {
   const [creatingFamily, setCreatingFamily] = useState(false);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
 
-  // Invite-creation (E5) state.
-  const [scopeChoice, setScopeChoice] = useState<ScopeChoice>("family");
-  const [selectedFolderId, setSelectedFolderId] = useState("");
+  // Invite-creation (E5) state. `scopeChoice` can never leave "family" today
+  // -- the "folder" `<option>` is unconditionally `disabled` (CR-02) -- so
+  // there is deliberately no `selectedFolderId` state; re-adding one without
+  // also building a real collections picker would silently resurrect the
+  // 100%-failure path this fix closes.
+  const [scopeChoice] = useState<ScopeChoice>("family");
   const [expiry, setExpiry] = useState<InviteExpiry>(DEFAULT_EXPIRY);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
@@ -110,13 +117,6 @@ export default function FamilyTab() {
     }
   }
 
-  function handleScopeChange(next: ScopeChoice) {
-    setScopeChoice(next);
-    if (next === "folder" && selectedFolderId === "" && folders.length > 0) {
-      setSelectedFolderId(folders[0].id);
-    }
-  }
-
   async function handleGenerate(e: FormEvent) {
     e.preventDefault();
     setGenerateError(null);
@@ -127,10 +127,13 @@ export default function FamilyTab() {
     }
     setGenerating(true);
     try {
-      const scope: InviteScope =
-        scopeChoice === "folder"
-          ? { kind: "collection", collectionId: selectedFolderId, accessLevel: "read" }
-          : { kind: "family" };
+      // CR-02: the only reachable scope is "family" today -- the
+      // collection-scoped branch is disabled at the UI layer (the "folder"
+      // `<option>` is unconditionally `disabled`), so there is nothing left
+      // here to branch on. Reintroducing a `scope.kind === "collection"` path
+      // requires a real client-side collections-authoring surface (Phase 26),
+      // not just re-wiring `selectedFolderId` back in.
+      const scope: InviteScope = { kind: "family" };
       const result = await generateInviteLink(scope, expiry, uk);
       setInvite({ id: extractInviteId(result.url), url: result.url, expiresAt: result.expiresAt });
     } catch {
@@ -155,8 +158,7 @@ export default function FamilyTab() {
   }
 
   function resetInviteForm() {
-    setScopeChoice("family");
-    setSelectedFolderId("");
+    // scopeChoice has no setter (CR-02: always "family") -- nothing to reset.
     setExpiry(DEFAULT_EXPIRY);
     setGenerateError(null);
   }
@@ -326,8 +328,6 @@ export default function FamilyTab() {
     );
   }
 
-  const foldersEmpty = folders.length === 0;
-
   return (
     <div className="flex flex-col gap-4 py-4">
       <h3 className="flex items-center gap-2 text-[20px] font-bold leading-[1.2]">
@@ -339,49 +339,28 @@ export default function FamilyTab() {
           <label htmlFor="invite-scope-select" className="text-sm">
             {t("invite.scopeLabel")}
           </label>
+          {/* CR-02 (24-REVIEW.md): unconditionally disabled -- not gated on
+              `foldersEmpty`. The folder picker sourced from `useFolders()`
+              (personal folders) has no id overlap with the server's
+              `collections` table, so this option 100%-fails for EVERY user,
+              not just one with zero folders. Framed as "coming soon"
+              (Phase 26 ships the real collections-authoring surface), never
+              silently re-enabled by populating folders. */}
           <select
             id="invite-scope-select"
             data-testid="invite-scope-select"
             className="select select-bordered w-full"
-            value={scopeChoice}
-            onChange={(e) => handleScopeChange(e.target.value as ScopeChoice)}
+            defaultValue={scopeChoice}
           >
             <option value="family">{t("invite.scopeWholeFamily")}</option>
-            <option value="folder" disabled={foldersEmpty}>
-              {t("invite.scopeFolder")}
+            <option value="folder" disabled>
+              {t("invite.scopeFolderComingSoon")}
             </option>
           </select>
-        </div>
-
-        {foldersEmpty ? (
-          <p data-testid="invite-folder-picker-empty" className="text-sm text-base-content/70">
-            {t("invite.folderPickerEmpty")}
+          <p data-testid="invite-scope-folder-unavailable-note" className="text-sm text-base-content/70">
+            {t("invite.scopeFolderUnavailableNote")}
           </p>
-        ) : scopeChoice === "folder" ? (
-          <>
-            <div className="flex flex-col gap-1">
-              <label htmlFor="invite-folder-select" className="text-sm">
-                {t("invite.folderPickerLabel")}
-              </label>
-              <select
-                id="invite-folder-select"
-                data-testid="invite-folder-select"
-                className="select select-bordered w-full truncate"
-                value={selectedFolderId}
-                onChange={(e) => setSelectedFolderId(e.target.value)}
-              >
-                {folders.map((folder) => (
-                  <option key={folder.id} value={folder.id} className="truncate" title={folder.name}>
-                    {folder.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <p data-testid="invite-honest-visibility-note" className="text-sm text-base-content/70">
-              {t("invite.honestVisibilityNote")}
-            </p>
-          </>
-        ) : null}
+        </div>
 
         <div className="flex flex-col gap-1">
           <label htmlFor="invite-expiry-select" className="text-sm">
@@ -410,7 +389,7 @@ export default function FamilyTab() {
           type="submit"
           data-testid="invite-generate-cta"
           className="btn btn-primary self-start"
-          disabled={generating || (scopeChoice === "folder" && selectedFolderId === "")}
+          disabled={generating}
         >
           {generating ? <span className="loading loading-spinner loading-sm" aria-hidden="true" /> : null}
           {t("invite.generateCta")}
