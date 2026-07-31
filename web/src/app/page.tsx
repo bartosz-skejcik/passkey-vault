@@ -217,7 +217,10 @@ export default function Home() {
   // ONCE at mount (before any inline registration could have happened) and
   // is never re-read from storage afterwards.
   //
-  // Known gap (documented, not silently dropped): 24-UI-SPEC.md §3 asks for
+  // Known gap (documented, not silently dropped -- also tracked outside this
+  // comment per WR-06 (24-REVIEW.md) in
+  // .planning/phases/24-invitation-flow-no-smtp/deferred-items.md, since
+  // Phase 26 needs to pick this back up): 24-UI-SPEC.md §3 asks for
   // the newly-shared collection to be pre-selected via `filter` when
   // `selectCollectionId` is non-null. `VaultFilter` (packages/pv-ui/vault/
   // types.ts) has no "collection" variant today -- it only ever offers
