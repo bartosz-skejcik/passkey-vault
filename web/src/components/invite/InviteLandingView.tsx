@@ -357,9 +357,26 @@ export default function InviteLandingView({
                     ? t("invite.joining")
                     : interpolate(t("invite.joinCta"), { family: metadata.family_name })}
                 </button>
+                {/* Plan 24-08 gap-fix (found via a real browser run, never
+                    caught by any unit test -- JSDOM has no real hit-testing,
+                    so a fixed-position overlay sitting on top of this button
+                    never actually blocked a `fireEvent.click` there):
+                    `UnlockOverlay` above renders a `fixed inset-0 z-50`
+                    modal whenever the visiting session is LOCKED -- which,
+                    with no z-index of its own, this escape button sat
+                    directly UNDERNEATH, completely unclickable. That
+                    defeated the entire point of this button: a visitor who
+                    wants to "join as a different account" precisely because
+                    the CURRENT (wrong) account is signed in should never be
+                    forced to unlock that wrong account's vault first just to
+                    reach the escape hatch. `relative z-[60]` keeps this ONE
+                    button paintable (and clickable) above UnlockOverlay's
+                    z-50, with zero effect on any other UnlockOverlay call
+                    site in the app (no other one has an escape affordance
+                    rendered alongside it). */}
                 <button
                   type="button"
-                  className="btn btn-ghost btn-sm"
+                  className="btn btn-ghost btn-sm relative z-[60]"
                   disabled={viewState === "joining"}
                   onClick={handleJoinAsDifferentAccount}
                   data-testid="invite-join-as-different-account"

@@ -47,12 +47,22 @@
 // One invite is shown at a time in FamilyTab's UI by design (24-07-SUMMARY.md:
 // "exactly one invite shown at a time... Phase 26 owns the richer management
 // view"), and `DELETE /api/invitations/{id}` only affects a still-`pending`
-// row -- so every scenario below that needs a SECOND invite must revoke the
-// previous one first. Discovering that a revoke against an already-consumed
-// invite 404'd and left the owner permanently stuck (no way to ever invite a
-// second person) is this plan's own Rule 2 gap-fix, applied to
-// `FamilyTab.tsx` directly (see its own doc comment on `handleRevokeConfirm`)
-// -- without it, this file's second scenario below could never run.
+// row -- so every scenario below that needs a SECOND or THIRD invite must
+// revoke the previous one first. Discovering that a revoke against an
+// already-consumed invite 404'd and left the owner permanently stuck (no way
+// to ever invite a second person) is this plan's own Rule 2 gap-fix, applied
+// to `FamilyTab.tsx` directly (see its own doc comment on
+// `handleRevokeConfirm`) -- without it, Tasks 1 and 2 below could not both
+// run against the same owner account at all.
+//
+// Task 2's wrong-account-escape scenario surfaced a second real-browser bug:
+// `InviteLandingView`'s session-exists branch renders `UnlockOverlay` (a
+// `fixed inset-0 z-50` modal) whenever the visiting session is LOCKED --
+// which sat directly on top of the "join as a different account" escape
+// button, making it unclickable. That defeated the button's entire purpose:
+// a visitor escaping the WRONG account should never have to unlock that
+// wrong account's vault first just to reach the escape hatch. See
+// `InviteLandingView.tsx`'s own doc comment on that button for the fix.
 import type { Page } from "@playwright/test";
 import {
   test,
@@ -184,6 +194,12 @@ test.describe.serial("invite flow — real two-session UI proof (Plan 24-08)", (
   let ownerPage: Page;
   let ownerDialogFired: () => boolean;
   let ownerToken: string;
+  // Set by the wrong-account-escape test, read by the already-a-member test
+  // right after it -- the escaped-from invite is left genuinely `pending`
+  // (never redeemed), so it's exactly the still-valid link the next test
+  // needs to onboard a brand-new member with (see this file's header
+  // comment on `describe.serial`'s intentional cross-test state).
+  let pendingUnredeemedInviteLink: string;
 
   test.beforeAll(async ({ browser }) => {
     const owner = await newBareContext(browser);
@@ -259,5 +275,62 @@ test.describe.serial("invite flow — real two-session UI proof (Plan 24-08)", (
     const bodyText = await page.locator("body").innerText();
     expect(bodyText).not.toContain(FAMILY_OWNER_EMAIL);
     expect(bodyText).not.toContain(FAMILY_NAME);
+  });
+
+  // --- Task 2 -------------------------------------------------------------
+
+  test("join_as_different_account_clears_session_and_shows_register_branch", async ({ twoSessions }) => {
+    const [, b] = twoSessions;
+
+    await openFamilyTab(ownerPage);
+    const link = await generateInviteViaUI(ownerPage, { revokeExisting: true });
+    pendingUnredeemedInviteLink = link;
+
+    await b.page.goto(link);
+    const differentAccountCta = b.page.getByTestId("invite-join-as-different-account");
+    await differentAccountCta.waitFor({ state: "visible" });
+
+    const urlBeforeEscape = b.page.url();
+    await differentAccountCta.click();
+
+    // The register/login branch now shows, in place of the current-account
+    // notice -- and defaults to Register (InviteLandingView's own `mode`
+    // default), with no browser navigation involved (React state only).
+    await expect(b.page.getByTestId("register-email")).toBeVisible();
+    await expect(b.page.getByTestId("invite-current-account")).toHaveCount(0);
+    expect(b.page.url()).toBe(urlBeforeEscape);
+
+    expect(b.dialogFired()).toBe(false);
+    // Deliberately does NOT redeem `link` -- it must stay `pending` for the
+    // next test, which reuses it to onboard a brand-new member.
+  });
+
+  test("already_a_member_redeeming_a_different_invite_lands_in_vault_without_error", async ({
+    browser,
+  }) => {
+    const member = await newBareContext(browser);
+    const memberEmail = uniqueEmail("already-member");
+
+    // Step 1: become a family member via the still-`pending` invite the
+    // previous test escaped from without redeeming.
+    await member.page.goto(pendingUnredeemedInviteLink);
+    await registerAndJoinViaUI(member.page, memberEmail, MEMBER_PASSWORD);
+    await waitForVaultShell(member.page);
+
+    // Step 2: the owner revokes that now-`accepted` invite (the Rule 2
+    // gap-fix's own 404-tolerant path) and issues a fresh one.
+    await openFamilyTab(ownerPage);
+    const secondLink = await generateInviteViaUI(ownerPage, { revokeExisting: true });
+
+    // Step 3: the already-a-member session redeems the DIFFERENT invite —
+    // `invitations.rs::accept`'s own no-op-and-succeed path for an existing
+    // member, never an error screen.
+    await member.page.goto(secondLink);
+    await joinAsAuthenticatedSession(member.page, MEMBER_PASSWORD);
+    await expect(member.page.getByTestId("invite-invalid")).toHaveCount(0);
+    await waitForVaultShell(member.page);
+
+    expect(member.dialogFired()).toBe(false);
+    await member.context.close();
   });
 });
