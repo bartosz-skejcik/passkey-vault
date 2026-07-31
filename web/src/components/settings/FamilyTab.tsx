@@ -169,7 +169,23 @@ export default function FamilyTab() {
       setInvite(null);
       setShowRevokeConfirm(false);
       resetInviteForm();
-    } catch {
+    } catch (err) {
+      // Plan 24-08 gap-fix: `invitations.rs::revoke` only affects a row that
+      // is STILL `status='pending'` (`WHERE ... AND status = 'pending'`), so
+      // it 404s once the invite has already been accepted or has expired.
+      // Before this fix, that 404 fell into the generic failure branch below
+      // and left `invite` non-null — since Revoke was the ONLY way back to
+      // the create form, an owner who successfully invited someone had no
+      // way to ever invite a SECOND person: every subsequent revoke attempt
+      // on the (now non-pending) link 404'd forever. A 404 here means the
+      // owner's actual goal ("this link should stop working") is already
+      // true, so it is treated as success, not failure.
+      if (err instanceof ApiClientError && err.status === 404) {
+        setInvite(null);
+        setShowRevokeConfirm(false);
+        resetInviteForm();
+        return;
+      }
       setShowRevokeConfirm(false);
       setGenerateError(t("invite.revokeFailed"));
     } finally {

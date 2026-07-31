@@ -37,8 +37,8 @@
 // behavior in this exact scenario (the `undecryptable-item-banner`) --
 // proving the failure is surfaced rather than silently swallowed, instead
 // of merely happening not to notice it.
-import type { APIRequestContext, Page } from "@playwright/test";
-import { test, expect, type Session } from "./fixtures";
+import type { APIRequestContext, Browser, Page } from "@playwright/test";
+import { test, expect, newBareContext, ensureFamilyOwnerSession, type Session } from "./fixtures";
 
 // `context.request` (unlike `page.goto`, which resolves against
 // playwright.config.ts's `use.baseURL`) does NOT inherit that baseURL for a
@@ -87,54 +87,39 @@ async function apiPut(request: APIRequestContext, path: string, token: string, d
 // `families.rs::create`'s own doc comment: "creates the (singleton, v0.4)
 // family" -- a partial unique index (`idx_families_singleton`) enforces
 // EXACTLY ONE `families` row for the whole running server/DB, not one per
-// caller. A JS module-level cache of "whoever creates it first" would NOT
-// survive Playwright retrying a failed test in a fresh worker process (module
-// state resets to nothing, yet the DB-level family from the earlier attempt
-// still exists -- a real failure mode hit while developing this file). A
-// FIXED, deterministic seed account sidesteps that entirely: every single
-// test run independently (idempotent-)registers + logs into the SAME email,
-// tolerating `409` (already registered/already created) at every step, so it
-// works identically on a fresh DB (this account creates the family) and on a
-// DB where an earlier test/retry in this same run already created it (this
-// account is ALSO that earlier owner, since the email is fixed) -- with zero
-// dependency on in-process JS state. This seed account never stores or
-// decrypts a real vault item, so a raw, non-WASM-derived `auth_hash`/
-// `pw_wrapped_uk` is fine -- it exists solely to own the ONE possible family.
-const FAMILY_OWNER_SEED_EMAIL = "pv-e2e-shared-sync-family-owner@example.test";
-const FAMILY_OWNER_SEED_AUTH_HASH_B64 = Buffer.from(new Uint8Array(32).fill(0x42)).toString("base64");
-const FAMILY_OWNER_SEED_SALT_B64 = Buffer.from(new Uint8Array(16).fill(0x24)).toString("base64");
-const FAMILY_OWNER_SEED_PW_WRAPPED_UK = JSON.stringify({ nonce: "HHHH", ciphertext: "IIII" });
-
-/** Idempotently registers (tolerating `409` "already registered") the fixed
- * family-owner seed account, then logs in as it -- entirely raw
- * (`context.request`), no browser/UI involvement, matching `login()`'s own
- * deterministic `server_rehash(auth_hash, salt)` contract: passing the SAME
- * fixed `auth_hash` bytes at both register- and login-time always verifies,
- * regardless of how many times (or in how many separate worker processes)
- * this function runs across this file's two tests. */
-async function loginAsFamilyOwnerSeed(request: APIRequestContext): Promise<string> {
-  const registerRes = await request.post(`${BASE_URL}/api/auth/register`, {
-    data: {
-      email: FAMILY_OWNER_SEED_EMAIL,
-      kdf: { m_cost_kib: 65536, t_cost: 3, p_cost: 4 },
-      salt: FAMILY_OWNER_SEED_SALT_B64,
-      auth_hash: FAMILY_OWNER_SEED_AUTH_HASH_B64,
-      pw_wrapped_uk: FAMILY_OWNER_SEED_PW_WRAPPED_UK,
-    },
-  });
-  if (registerRes.status() !== 201 && registerRes.status() !== 409) {
-    throw new Error(
-      `pv-e2e: unexpected status ${registerRes.status()} registering the family-owner seed account`,
-    );
+// caller.
+//
+// [Plan 24-08 deviation, Rule 3 -- blocking cross-file regression] This file
+// originally seeded its OWN raw, non-WASM-derived owner account (a fixed
+// `auth_hash`/`pw_wrapped_uk`, registered via a bare `context.request` POST,
+// no browser involved at all) precisely because it never needed that account
+// to do anything beyond hold a bearer token for raw API calls. Plan 24-08
+// added `web/e2e/invite-flow.spec.ts`, which ALSO needs owner-only family
+// authority -- but to drive the REAL Settings > Family tab UI, which
+// requires a genuinely unlockable UserKey no raw-registered account could
+// ever produce. Since the singleton constraint means whichever caller's
+// `POST /api/families` succeeds FIRST in a run's DB becomes the PERMANENT
+// owner with no ownership-transfer path, and Playwright's default alphabetic
+// file order runs `invite-flow.spec.ts` BEFORE this file, this file's old
+// fixed-fake-seed account would never again become the owner once the full
+// suite ran both files together -- every `add_member` call below would 404,
+// breaking both tests in this file. `fixtures.ts`'s `FAMILY_OWNER_EMAIL`/
+// `ensureFamilyOwnerSession` (real RegisterForm/LoginForm/UnlockOverlay UI,
+// register-or-login idempotent) is the ONE identity both files now resolve
+// to, so this file's own two tests keep working whether THIS file happens to
+// establish ownership first (run alone, or before invite-flow.spec.ts) or
+// discovers it already established (the normal full-suite run order) --
+// with zero dependency on in-process JS state, matching this function's
+// original idempotency goal exactly, just now real-UI-backed instead of raw.
+async function loginAsFamilyOwnerSeed(browser: Browser): Promise<string> {
+  const { context, page } = await newBareContext(browser);
+  await ensureFamilyOwnerSession(page);
+  const token = await page.evaluate(() => window.localStorage.getItem("pv-session-token"));
+  await context.close();
+  if (token === null || token === "") {
+    throw new Error("pv-e2e: family-owner session produced no bearer token");
   }
-
-  const loginRes = await request.post(`${BASE_URL}/api/auth/login`, {
-    data: { email: FAMILY_OWNER_SEED_EMAIL, auth_hash: FAMILY_OWNER_SEED_AUTH_HASH_B64 },
-  });
-  if (loginRes.status() !== 200) {
-    throw new Error(`pv-e2e: family-owner seed account login failed with status ${loginRes.status()}`);
-  }
-  return ((await loginRes.json()) as { session_token: string }).session_token;
+  return token;
 }
 
 /** Ensures BOTH `a` and `b` are members of the one singleton family, and
@@ -148,6 +133,7 @@ async function loginAsFamilyOwnerSeed(request: APIRequestContext): Promise<strin
  * that join is symmetric. Returns both real user ids (read via each
  * session's OWN `/api/auth/me`, never guessed/constructed client-side). */
 async function ensureFamilyMembers(
+  browser: Browser,
   a: Session,
   aToken: string,
   b: Session,
@@ -168,7 +154,7 @@ async function ensureFamilyMembers(
   });
   expect(keypairRes.status(), "PUT /api/identity/keypair must publish B's dummy keypair").toBe(200);
 
-  const ownerToken = await loginAsFamilyOwnerSeed(a.context.request);
+  const ownerToken = await loginAsFamilyOwnerSeed(browser);
 
   const familyRes = await apiPost(a.context.request, "/api/families", ownerToken, {
     name: "pv-e2e-shared-sync-family",
@@ -227,11 +213,11 @@ async function fetchSoleItem(a: Session, aToken: string): Promise<{ id: string; 
   return { id: items[0].id, revision: items[0].revision };
 }
 
-test("revision fan-out", async ({ twoSessions }) => {
+test("revision fan-out", async ({ twoSessions, browser }) => {
   const [a, b] = twoSessions;
   const aToken = await tokenFor(a.page);
   const bToken = await tokenFor(b.page);
-  const { bUserId } = await ensureFamilyMembers(a, aToken, b, bToken, 11);
+  const { bUserId } = await ensureFamilyMembers(browser, a, aToken, b, bToken, 11);
 
   await createLoginItemViaUI(a.page, "Fan-out Login", "orig-pw-fan-out");
   const item = await fetchSoleItem(a, aToken);
@@ -282,11 +268,14 @@ test("revision fan-out", async ({ twoSessions }) => {
   expect(b.dialogFired()).toBe(false);
 });
 
-test("a co-member's undecryptable write is surfaced and refuses overwrite (CR-03)", async ({ twoSessions }) => {
+test("a co-member's undecryptable write is surfaced and refuses overwrite (CR-03)", async ({
+  twoSessions,
+  browser,
+}) => {
   const [a, b] = twoSessions;
   const aToken = await tokenFor(a.page);
   const bToken = await tokenFor(b.page);
-  const { bUserId } = await ensureFamilyMembers(a, aToken, b, bToken, 22);
+  const { bUserId } = await ensureFamilyMembers(browser, a, aToken, b, bToken, 22);
 
   await createLoginItemViaUI(a.page, "Conflict Login", "orig-pw-conflict");
   const item = await fetchSoleItem(a, aToken);

@@ -13,6 +13,7 @@
 // `secretFragment` STRING itself, held only in React state by the caller —
 // never persisted to localStorage/sessionStorage anywhere in this module.
 import {
+  initCrypto,
   WasmInviteChannel,
   WasmIdentityPublicKey,
   generateInviteSecret,
@@ -63,6 +64,17 @@ export async function generateInviteLink(
   expiresIn: InviteExpiry,
   uk: WasmUserKey,
 ): Promise<{ url: string; expiresAt: string }> {
+  // WASM musi być zainstancjonowane przed pierwszym wywołaniem krypto —
+  // memoizowany singleton (lib/crypto's own `ready` promise), więc kolejne
+  // wywołania są darmowe. Plan 24-08 gap-fix: this call site (like the two
+  // below) previously relied entirely on page.tsx's fire-and-forget
+  // "Rozgrzewka WASM" warm-up having already won its race against whatever
+  // triggered this call — true for the owner's OWN Settings-panel flow
+  // (already unlocked via RegisterForm/LoginForm, which DOES await this),
+  // but never guaranteed, and every other WASM-touching entry point in this
+  // codebase (RegisterForm/LoginForm/UnlockOverlay) awaits this explicitly
+  // rather than depending on that race.
+  await initCrypto();
   const identityKey = await ensureOwnIdentityKeypair(uk);
   let channel: WasmInviteChannel | undefined;
   let collectionKey: WasmCollectionKey | undefined;
@@ -121,6 +133,16 @@ export async function fetchInviteMetadataFlow(
   inviteId: string,
   secretFragment: string,
 ): Promise<InvitePublicMetadata> {
+  // Plan 24-08 gap-fix (found via a REAL browser end-to-end run, never
+  // caught by any unit test — every unit test mocks `@/lib/crypto` wholesale,
+  // so this missing await never mattered there): a brand-new visitor landing
+  // directly on `/invite/{id}#<secret>` has NEVER triggered any other
+  // WASM-touching code yet, so `WasmInviteChannel.fromSecret` below could
+  // race page.tsx's own fire-and-forget warm-up and run before the wasm
+  // module finishes instantiating, throwing and collapsing straight into the
+  // unified "invalid" state with no network call ever made. See
+  // `generateInviteLink`'s identical fix above for the full rationale.
+  await initCrypto();
   const secretBytes = base64UrlDecode(secretFragment);
   const channel = WasmInviteChannel.fromSecret(secretBytes);
   try {
@@ -148,6 +170,11 @@ export async function redeemInviteFlow(
   secretFragment: string,
   uk: WasmUserKey,
 ): Promise<{ alreadyMember: boolean; collectionId: string | null }> {
+  // Plan 24-08 gap-fix — see `fetchInviteMetadataFlow`'s identical comment
+  // above; this call site is reachable independently (the `joinFailedRetryable`
+  // retry path calls this without a preceding `fetchInviteMetadataFlow` in
+  // the same tick), so it needs its own await, not a shared one.
+  await initCrypto();
   const secretBytes = base64UrlDecode(secretFragment);
   const channel = WasmInviteChannel.fromSecret(secretBytes);
   let identityKey: Awaited<ReturnType<typeof ensureOwnIdentityKeypair>> | undefined;

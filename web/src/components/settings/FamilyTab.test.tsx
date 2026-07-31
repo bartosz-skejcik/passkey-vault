@@ -309,5 +309,19 @@ describe("FamilyTab", () => {
       await waitFor(() => expect(screen.getByTestId("invite-revoke-error")).toBeInTheDocument());
       expect(screen.getByTestId("invite-generated-display")).toBeInTheDocument();
     });
+
+    it("Plan 24-08 gap-fix: a revoke 404 (invite already accepted/expired, no longer pending) reverts to the create form instead of getting stuck", async () => {
+      mockRevokeInvite.mockRejectedValue(new ApiClientError(404, "not found"));
+      await generateInvite();
+
+      fireEvent.click(screen.getByTestId("invite-revoke-cta"));
+      fireEvent.click(screen.getByTestId("invite-revoke-confirm-confirm"));
+
+      await waitFor(() =>
+        expect(screen.queryByTestId("invite-generated-display")).not.toBeInTheDocument(),
+      );
+      expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument();
+      expect(screen.queryByTestId("invite-revoke-error")).not.toBeInTheDocument();
+    });
   });
 });

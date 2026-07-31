@@ -125,8 +125,22 @@ export default function Home() {
   const [invite, setInvite] = useState<{ inviteId: string; inviteSecret: string } | null>(() => {
     if (typeof window === "undefined") return null;
     const m = window.location.pathname.match(/^\/invite\/([^/]+)\/?$/);
+    if (m === null) return null;
+    // Plan 24-08 gap-fix: a `/invite/{id}` path with NO fragment at all (a
+    // stripped/malformed link -- e.g. a URL shortener or a browser-history
+    // entry that dropped the fragment) must still resolve to the invite
+    // view, not silently fall through to the normal login/vault screen --
+    // the ORIGINAL `m && secret` condition below treated a missing fragment
+    // as "not an invite route at all", which contradicts Amendment 2's own
+    // point that `invite_id` alone must never look any different from a
+    // genuinely invalid link. `inviteSecret` may be `""` here;
+    // InviteLandingView's own `fetchInviteMetadataFlow` throws cleanly on an
+    // empty/invalid secret (`WasmInviteChannel::fromSecret` returns a
+    // JS-catchable `Result<_, JsValue>`, never a raw panic), which its
+    // existing catch block already routes to the SAME unified failure state
+    // every other cause uses.
     const secret = window.location.hash.slice(1);
-    return m && secret ? { inviteId: m[1], inviteSecret: secret } : null;
+    return { inviteId: m[1], inviteSecret: secret };
   });
   const [extUnlockNonce] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;

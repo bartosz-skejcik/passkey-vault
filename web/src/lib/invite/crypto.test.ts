@@ -90,6 +90,12 @@ const {
 });
 
 vi.mock("@/lib/crypto", () => ({
+  // Plan 24-08 gap-fix: `generateInviteLink`/`fetchInviteMetadataFlow`/
+  // `redeemInviteFlow` now `await initCrypto()` first (a real e2e run
+  // surfaced that the missing await let a brand-new invitee's metadata fetch
+  // race the app's fire-and-forget WASM warm-up and lose) — this mock's own
+  // resolved no-op keeps every existing assertion below unchanged.
+  initCrypto: vi.fn().mockResolvedValue(undefined),
   WasmInviteChannel: FakeInviteChannel,
   WasmIdentityPublicKey: { fromBytes: (bytes: Uint8Array) => ({ bytes, free: vi.fn() }) },
   generateInviteSecret: mockGenerateInviteSecret,
