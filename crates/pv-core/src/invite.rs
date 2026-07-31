@@ -26,7 +26,7 @@
 //! test proves the asymmetric primitive rejects non-empty AAD outright.
 
 use sha2::{Digest, Sha256};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::keys::{self, KEY_LEN};
 use crate::CryptoError;
@@ -104,8 +104,15 @@ pub fn unwrap_collection_key_for_invite(
 /// reused by the client for BOTH the creation-time hash (see
 /// [`hash_invite_proof`]) and the redemption-time presentation, never itself
 /// transmitted at creation time.
-pub fn derive_invite_proof(invite_secret: &[u8; KEY_LEN]) -> [u8; KEY_LEN] {
-    keys::hkdf_expand_key(invite_secret, INFO_INVITE_PROOF)
+///
+/// WR-08 (24-REVIEW.md): `invite_proof` is a bearer credential — presenting
+/// it is what authorises reading invite metadata and redeeming. Returned
+/// wrapped in `Zeroizing` (not a bare `[u8; KEY_LEN]`) so it is zeroized on
+/// drop, matching this same file's own discipline three functions up
+/// (`wrap_collection_key_for_invite` explicitly zeroizes `invite_wrap_key`)
+/// and CLAUDE.md's standing rule to wrap key material in `Zeroizing<T>`.
+pub fn derive_invite_proof(invite_secret: &[u8; KEY_LEN]) -> Zeroizing<[u8; KEY_LEN]> {
+    Zeroizing::new(keys::hkdf_expand_key(invite_secret, INFO_INVITE_PROOF))
 }
 
 /// Hashes `invite_proof` with SHA-256 — this is what the inviter's client
@@ -201,16 +208,24 @@ mod tests {
         assert!(!a.contains('='));
     }
 
+    // IN-06 (24-REVIEW.md): renamed from `..._is_deterministic_and_independent_
+    // of_the_other_two_derivations` — asserting pairwise `assert_ne!` is a much
+    // weaker property than "independent" implies; this name no longer
+    // overclaims what is actually proven (a smoke test that the three
+    // derivations differ, not a domain-separation proof).
     #[test]
-    fn derive_invite_proof_is_deterministic_and_independent_of_the_other_two_derivations() {
+    fn derive_invite_proof_is_deterministic_and_differs_from_the_other_two_derivations() {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
         let secret = random_secret();
         let a = derive_invite_proof(&secret);
         let b = derive_invite_proof(&secret);
-        assert_eq!(a, b);
+        assert_eq!(*a, *b);
 
-        assert_ne!(a, pv_keys::hkdf_expand_key(&secret, INFO_INVITE_WRAP));
+        // WR-08: `a`/`b` are now `Zeroizing<[u8; KEY_LEN]>` (zeroized on
+        // drop) — `*a` dereferences to the inner array for comparison
+        // against the bare-array outputs of the other two derivations.
+        assert_ne!(*a, pv_keys::hkdf_expand_key(&secret, INFO_INVITE_WRAP));
 
         let invite_id = derive_invite_id(&secret);
         let invite_id_bytes = URL_SAFE_NO_PAD.decode(invite_id).unwrap();

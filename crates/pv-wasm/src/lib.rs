@@ -690,6 +690,10 @@ impl WasmInviteChannel {
     /// później odtworzyć), nie surowa wartość.
     #[wasm_bindgen(js_name = proofHashForCreation)]
     pub fn proof_hash_for_creation(&self) -> Vec<u8> {
+        // WR-08 (24-REVIEW.md): `derive_invite_proof` now returns
+        // `Zeroizing<[u8; KEY_LEN]>`, so `proof` (a bearer credential) is
+        // zeroized automatically when it drops at the end of this scope --
+        // previously a bare `[u8; KEY_LEN]` dropped un-zeroized here.
         let proof = pv_core::invite::derive_invite_proof(&self.invite_secret);
         pv_core::invite::hash_invite_proof(&proof).to_vec()
     }
