@@ -139,6 +139,70 @@ Crypto and data-model choices are recorded as decisions under the standing proje
   join one transaction that also bumps `collections.revision` and fans out the `Collection`
   `SyncEvent` to existing members through Phase 23's `resolve_collection_members` path.
 
+### Amendment — two open questions closed after research (2026-07-31)
+
+Research verified §7 against the shipped code and surfaced two items it deliberately did not decide.
+Both are technical, so both are decided here rather than escalated.
+
+- **Rate limiting: a persisted `invitations.failed_attempts` counter on the invite row, not an
+  in-process map.** No rate-limit dependency exists anywhere in the workspace, and the "1 container,
+  no external services" constraint forbids adding one. An in-process map also dies on every container
+  restart, which is exactly the posture this project optimizes for. The counter is incremented inside
+  the redemption transaction that is already being written, so it costs nothing extra. Scope it
+  **per `invite_id`**: enumerating invite ids is infeasible (the id is HKDF-derived from 32 random
+  bytes), so the only meaningful attack is repeated guessing against a known id, which is what this
+  counts. Exceeding the threshold renders the invite permanently invalid and returns the same
+  indistinguishable failure as every other cause.
+- **This phase writes NOTHING to `identity_verifications`.** That table records that a *viewer*
+  asserted they compared a fingerprint out-of-band. Phase 24 only *displays* the fingerprint, passively,
+  per Phase 22's locked "passive display + a dismissible nudge, nothing blocks" decision — it never
+  asks the user to confirm a comparison, so it has nothing truthful to record. Writing a row here
+  would manufacture a verification that did not happen, which is precisely the honesty failure the
+  UI copy is written to avoid. Phase 26 (SEC-05) owns the verification-asserting UI.
+
+### Amendment 2 — invite_id alone must NOT be redeemable (2026-07-31, orchestrator)
+
+Planning surfaced T-24-07 and proposed to *accept* it: anyone who merely learns `invite_id` — from a
+server access log, a proxy log, a `Referer`, or a glance at the URL bar — could call `accept` and
+become a family member, without ever holding the fragment secret. They could not decrypt anything
+(their `sealed_for_self` would be garbage), but family membership is itself meaningful: FAM-02/FAM-03
+expose the member roster with emails and fingerprints.
+
+**This is rejected as an accepted risk, because its rationale contains a false step.** The rationale
+was "the server never sees `invite_secret`, so it cannot verify possession." The server does not need
+to see the secret to verify possession — it only needs a *verifier*, which is exactly the pattern this
+codebase already uses for session tokens (the `sessions` table stores a hashed token, never the token).
+
+**Decision — add a proof-of-possession leg:**
+
+- Derive a third value alongside the existing two: `invite_proof = HKDF(invite_secret,
+  "pv:invite-proof:v1")`. Same construction, new domain-separation constant, provably distinct from
+  `pv:invite-id:v1` and `pv:invite-wrap:v1`.
+- At **creation**, the inviter's client sends `SHA-256(invite_proof)` as a `proof_hash` column. The
+  server stores the hash and never sees `invite_proof` itself, preserving the zero-knowledge boundary
+  exactly as before.
+- At **redemption**, the client sends `invite_proof`; the server compares `SHA-256(invite_proof)`
+  against the stored `proof_hash` in **constant time**, and treats a mismatch as the same
+  indistinguishable failure as every other cause.
+- Apply the same proof to the **pre-redemption metadata fetch**, so `invite_id` alone reveals not even
+  the family name. The client already holds the secret at that moment (it is in the fragment), so this
+  is free. Because the request now carries a credential, make it a **POST with the proof in the body**
+  rather than a GET with it in the path or query — a query-string credential would land in access logs,
+  which is the precise failure the fragment design exists to avoid, and would need a new proxy
+  log-stripping rule (the `?token=` precedent in the DEPLOY-01/02 reference configs).
+- A failed proof counts toward the `failed_attempts` ceiling from Amendment 1.
+
+Net effect: `invite_id` returns to being what the design intended — a public lookup handle, useless on
+its own. T-24-07 moves from `accept` (medium) to `mitigate`, and the fragment becomes the sole
+credential in fact as well as in intent.
+
+**Research correction the planner must honor:** `pv_core::identity::seal`/`unseal` take **no AAD
+parameter**, and the existing test `chachabox_rejects_nonempty_aad` proves `crypto_box::ChaChaBox`
+rejects non-empty AAD. ARCHITECTURE.md §7.1's pseudocode conflates two different primitives. The
+invite flow uses **both**, correctly separated: the symmetric invite-wrap is `aead_seal` (AAD-capable,
+and the AAD binding is real there), while the invitee's self-seal to their own identity key is
+`identity::seal` (AAD-incapable). Do not pass AAD to the latter.
+
 ### Claude's Discretion
 
 The planner may deviate with written rationale in the PLAN, except on these hard constraints:
