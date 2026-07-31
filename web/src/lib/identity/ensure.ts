@@ -29,20 +29,38 @@ export async function ensureOwnIdentityKeypair(uk: WasmUserKey): Promise<WasmIde
   }
 
   const isk = WasmIdentityKey.generate();
-  const wrapped = wrapIdentitySecretKey(uk, isk);
-  const publicKeyB64 = base64Encode(isk.publicKeyBytes());
+  // WR-07 (24-REVIEW.md): every other WASM-handle call site in this phase
+  // frees via try/finally (invite/crypto.ts:119-123, 156-158, 212-216) --
+  // this one didn't. If `putIdentityKeypair` rejects (network drop, 500,
+  // 401 after a session expiry), `isk` was thrown away with no `free()`,
+  // leaking the secret key un-zeroized in WASM linear memory for the tab's
+  // lifetime. `redeemInviteFlow` calls this on the low-trust redemption
+  // path, so a failure here is not exotic. `freeOnError` tracks whether
+  // ownership of `isk` has been handed to the caller (return value) --
+  // only free it here if it has NOT.
+  let freeOnError = true;
+  try {
+    const wrapped = wrapIdentitySecretKey(uk, isk);
+    const publicKeyB64 = base64Encode(isk.publicKeyBytes());
 
-  const response = await putIdentityKeypair({
-    public_key: publicKeyB64,
-    wrapped_secret_key: wrapped,
-  });
+    const response = await putIdentityKeypair({
+      public_key: publicKeyB64,
+      wrapped_secret_key: wrapped,
+    });
 
-  if (response.adopted_existing) {
-    // A concurrent caller won the race — discard the locally-generated
-    // handle and adopt the server's canonical one instead.
-    isk.free?.();
-    return unwrapIdentitySecretKey(uk, response.wrapped_secret_key);
+    if (response.adopted_existing) {
+      // A concurrent caller won the race — discard the locally-generated
+      // handle and adopt the server's canonical one instead. `finally`
+      // below still runs, but `freeOnError` stays true, so this IS the
+      // free — no double-free.
+      return unwrapIdentitySecretKey(uk, response.wrapped_secret_key);
+    }
+
+    freeOnError = false; // caller now owns `isk` — do not free it on the way out
+    return isk;
+  } finally {
+    if (freeOnError) {
+      isk.free?.();
+    }
   }
-
-  return isk;
 }

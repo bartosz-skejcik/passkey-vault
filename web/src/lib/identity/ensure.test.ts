@@ -100,4 +100,22 @@ describe("ensureOwnIdentityKeypair", () => {
     expect(localIsk.free).toHaveBeenCalledTimes(1);
     expect(mockUnwrapIdentitySecretKey).toHaveBeenCalledWith(FAKE_UK, "winner-wrapped-json");
   });
+
+  // WR-07 (24-REVIEW.md): a `putIdentityKeypair` rejection (network drop,
+  // 500, 401 after a session expiry) must not leak the freshly-generated
+  // WASM handle -- `redeemInviteFlow` calls this on the low-trust
+  // redemption path, so this is not an exotic failure.
+  it("WR-07 regression guard: frees the freshly-generated handle if publishing it fails", async () => {
+    const freshIsk = { publicKeyBytes: () => new Uint8Array([5, 6, 7, 8]), free: vi.fn() };
+    mockGenerate.mockReturnValue(freshIsk);
+    mockWrapIdentitySecretKey.mockReturnValue("wrapped-json");
+
+    (global.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(jsonResponse(404, { error: "not found" })) // GET /api/identity/keypair
+      .mockRejectedValueOnce(new Error("network drop")); // PUT /api/identity/keypair
+
+    await expect(ensureOwnIdentityKeypair(FAKE_UK)).rejects.toThrow("network drop");
+
+    expect(freshIsk.free).toHaveBeenCalledTimes(1);
+  });
 });
