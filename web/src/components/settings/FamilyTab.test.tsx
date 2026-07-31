@@ -66,7 +66,7 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
   }),
 }));
 
-import FamilyTab from "./FamilyTab";
+import FamilyTab, { formatExpiryDate } from "./FamilyTab";
 import { ApiClientError } from "@/lib/auth/api";
 
 // A minimal fake WasmUserKey handle — FamilyTab only ever passes it through
@@ -85,6 +85,24 @@ beforeEach(() => {
   mockGetUnlockedUserKey.mockReturnValue(uk);
   mockReadClipboardSeconds.mockReturnValue(30);
   mockMe.mockResolvedValue(OWNER_ACCOUNT);
+});
+
+describe("WR-01: formatExpiryDate interprets SQLite's timezone-less timestamp as UTC", () => {
+  it("parses a space-separated, non-ISO SQLite timestamp identically to its UTC-ISO equivalent", () => {
+    // SQLite's `datetime('now', ?)` shape -- no "T", no "Z", always UTC.
+    const sqliteShaped = "2026-08-07 12:00:00";
+    const expected = new Date("2026-08-07T12:00:00Z").toLocaleString("en-US");
+    expect(formatExpiryDate(sqliteShaped, "en")).toBe(expected);
+  });
+
+  it("passes an already-ISO timestamp through unchanged (no double-normalization)", () => {
+    const iso = "2026-08-07T12:00:00Z";
+    expect(formatExpiryDate(iso, "en")).toBe(new Date(iso).toLocaleString("en-US"));
+  });
+
+  it("falls back to the raw string rather than rendering 'Invalid Date' for unparseable input", () => {
+    expect(formatExpiryDate("not-a-date", "en")).toBe("not-a-date");
+  });
 });
 
 describe("FamilyTab", () => {

@@ -11,8 +11,12 @@ const DAY_MS = 24 * HOUR_MS;
 const THIRTY_DAYS_MS = 30 * DAY_MS;
 
 /** SQLite's `datetime('now')` shape has no `T`/timezone designator — an
- * already-ISO (`T`-containing) string is passed through as-is. */
-function toIsoUtc(raw: string): string {
+ * already-ISO (`T`-containing) string is passed through as-is. Exported
+ * (WR-01, 24-REVIEW.md) so other server-timestamp consumers (e.g.
+ * FamilyTab.tsx's invite-expiry display) share this one hazard-aware
+ * normalization instead of re-deriving it and silently parsing as local
+ * time. */
+export function toIsoUtc(raw: string): string {
   if (raw.includes("T")) {
     return raw;
   }

@@ -19,6 +19,7 @@ import { showCopyToast } from "@/lib/vault/copyToast";
 import { createFamily, getFamilyMembers } from "@/lib/families/api";
 import { generateInviteLink, type InviteExpiry, type InviteScope } from "@/lib/invite/crypto";
 import { revokeInvite } from "@/lib/invite/api";
+import { toIsoUtc } from "@/lib/format/relativeTime";
 
 type Mode = "checking" | "bootstrap" | "normal";
 // CR-02 (24-REVIEW.md): "folder" is intentionally unreachable from the UI --
@@ -43,9 +44,21 @@ function extractInviteId(url: string): string {
 }
 
 /** Browser-native formatting only (Intl via toLocaleString) — no new date
- * library, per 24-UI-SPEC.md's Phase-Specific Notes §2. */
-function formatExpiryDate(iso: string, locale: "pl" | "en"): string {
-  return new Date(iso).toLocaleString(locale === "pl" ? "pl-PL" : "en-US");
+ * library, per 24-UI-SPEC.md's Phase-Specific Notes §2. WR-01 (24-REVIEW.md):
+ * `expires_at` comes back from SQLite's `datetime('now', ?)` as a
+ * space-separated "YYYY-MM-DD HH:MM:SS" string with NO timezone designator
+ * (always UTC) — `new Date(...)` on that raw shape is parsed as LOCAL time
+ * by some engines (or rejected outright by others), silently showing an
+ * expiry time hours off from reality. `toIsoUtc` (the same normalization
+ * `relativeTime.ts` already carries for the identical hazard) must run
+ * first. Renamed the parameter from `iso` (IN-02) -- it never received
+ * actual ISO-8601 input, which is what made this easy to miss on review. */
+export function formatExpiryDate(serverTimestamp: string, locale: "pl" | "en"): string {
+  const parsed = new Date(toIsoUtc(serverTimestamp));
+  if (Number.isNaN(parsed.getTime())) {
+    return serverTimestamp;
+  }
+  return parsed.toLocaleString(locale === "pl" ? "pl-PL" : "en-US");
 }
 
 export default function FamilyTab() {
