@@ -20,9 +20,15 @@ import { setSessionToken, setStoredEmail } from "@/lib/auth/session";
 export default function RegisterForm({
   onToggle,
   onAuthed,
+  submitLabel,
 }: {
   onToggle: () => void;
   onAuthed?: () => void;
+  // Plan 24-06: overrides the submit button's copy for the invite-landing
+  // "register and join" flow (invite.registerAndJoinCta) without touching
+  // this form's own internal logic. Absent -> zero behavior change for the
+  // normal `/` auth screen (falls back to auth.registerSubmit, unchanged).
+  submitLabel?: string;
 }) {
   const { t } = useLocale();
   const [email, setEmail] = useState("");
@@ -169,7 +175,7 @@ export default function RegisterForm({
         className="btn btn-primary"
         disabled={submitting}
       >
-        {t("auth.registerSubmit")}
+        {submitLabel ?? t("auth.registerSubmit")}
       </button>
 
       <button type="button" className="link link-secondary text-sm" onClick={onToggle}>

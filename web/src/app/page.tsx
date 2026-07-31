@@ -10,6 +10,7 @@ import RegisterForm from "@/components/auth/RegisterForm";
 import LoginForm from "@/components/auth/LoginForm";
 import UnlockOverlay from "@/components/auth/UnlockOverlay";
 import ExtUnlockBridge from "@/components/auth/ExtUnlockBridge";
+import InviteLandingView from "@/components/invite/InviteLandingView";
 import ItemList from "@/components/vault/ItemList";
 import DetailPanel from "@/components/vault/DetailPanel";
 import TypePicker from "@/components/vault/TypePicker";
@@ -113,6 +114,20 @@ export default function Home() {
   // own vault to be unlocked (or even the popup register/login flow to have
   // been reached yet beyond having a session token), and it must never
   // mount the vault-data component tree.
+  // Plan 24-06: the invitee's `/invite/{id}#<secret>` landing, resolved once
+  // at mount from `location.pathname` + `location.hash` -- the SAME idiom as
+  // `extUnlockNonce` immediately below, and checked BEFORE it (an invite
+  // link must work regardless of any other deep-link/auth state). Unlike
+  // `extUnlockNonce` (which never hands control back -- ExtUnlockBridge just
+  // closes its own popup window), this DOES need a setter: `handleInviteDone`
+  // clears it once redemption completes so the normal authed/vault branches
+  // take over on the next render (24-UI-SPEC.md Phase-Specific Notes §0).
+  const [invite, setInvite] = useState<{ inviteId: string; inviteSecret: string } | null>(() => {
+    if (typeof window === "undefined") return null;
+    const m = window.location.pathname.match(/^\/invite\/([^/]+)\/?$/);
+    const secret = window.location.hash.slice(1);
+    return m && secret ? { inviteId: m[1], inviteSecret: secret } : null;
+  });
   const [extUnlockNonce] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     return new URLSearchParams(window.location.search).get("pv-ext-unlock");
@@ -180,6 +195,48 @@ export default function Home() {
     setSettingsOpen(true);
   }
 
+  // Plan 24-06: InviteLandingView's own onDone -- called only after a
+  // genuinely successful (new-or-already-member) redemption, so a session
+  // necessarily exists by this point (either pre-existing, or created by the
+  // invite view's own inline register/login sub-flow). `setAuthed(true)`
+  // is required here because this component's `authed` state was resolved
+  // ONCE at mount (before any inline registration could have happened) and
+  // is never re-read from storage afterwards.
+  //
+  // Known gap (documented, not silently dropped): 24-UI-SPEC.md §3 asks for
+  // the newly-shared collection to be pre-selected via `filter` when
+  // `selectCollectionId` is non-null. `VaultFilter` (packages/pv-ui/vault/
+  // types.ts) has no "collection" variant today -- it only ever offers
+  // `all`/`folder`/`tag`/`itemType`, and no decrypted item field carries a
+  // `collectionId` for such a filter to match against (only `folderId`,
+  // pv-ui/vault/types.ts). Fabricating a `{kind:"collection"}` filter here
+  // without wiring ItemList's/Sidebar's matching logic would render an
+  // empty list for a real shared collection -- actively misleading, worse
+  // than the honest no-op below. Wiring a real collection filter is a
+  // cross-package UI feature (ItemList/Sidebar/pv-ui) outside this plan's
+  // file scope; `selectCollectionId` is accepted (never re-fetched, per the
+  // plan's own contract) and intentionally not acted upon until that
+  // surface exists. The member still lands in their normal, already-synced
+  // vault, where the shared items are present (just not pre-filtered).
+  function handleInviteDone({
+    selectCollectionId: _selectCollectionId,
+  }: {
+    selectCollectionId: string | null;
+  }) {
+    setAuthed(true);
+    // Hash hygiene (24-UI-SPEC.md §0): only safe to strip the invite's own
+    // path+fragment down to the bare origin AFTER a successful-or-already-
+    // consumed redemption, never before -- the secret must survive the
+    // inline-register round trip while InviteLandingView stays mounted.
+    try {
+      window.history.replaceState({}, "", window.location.origin + "/");
+    } catch {
+      // A test/runtime environment without full History support -- the
+      // in-memory view already advances past the invite view below.
+    }
+    setInvite(null);
+  }
+
   useEffect(() => {
     // Rozgrzewka WASM przy starcie — fire-and-forget; każde faktyczne użycie
     // krypto i tak awaituje initCrypto() (memoizowany singleton), więc błąd
@@ -240,6 +297,16 @@ export default function Home() {
   // so this is safe to keep running unconditionally rather than gating it
   // on `unlocked` — no extra branch, no risk of double-locking.
   useIdleTimer(autolockMinutes * 60_000, lockVault);
+
+  if (invite !== null) {
+    return (
+      <InviteLandingView
+        inviteId={invite.inviteId}
+        inviteSecret={invite.inviteSecret}
+        onDone={handleInviteDone}
+      />
+    );
+  }
 
   if (extUnlockNonce !== null) {
     return <ExtUnlockBridge nonce={extUnlockNonce} mode={extUnlockMode} />;
