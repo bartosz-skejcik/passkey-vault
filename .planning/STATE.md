@@ -5,14 +5,15 @@ milestone_name: Family & Sharing
 current_phase: 24
 current_phase_name: Invitation Flow (No SMTP)
 status: planning
-last_updated: "2026-07-31T07:32:39.521Z"
+stopped_at: Completed 24-01-PLAN.md
+last_updated: "2026-07-31T09:59:09.124Z"
 last_activity: 2026-07-31
-last_activity_desc: Phase 23 complete, transitioned to Phase 24
+last_activity_desc: Plan 24-01 executed (tracer foundation for the phase; waves 2-5 depend on it)
 progress:
   total_phases: 7
   completed_phases: 3
-  total_plans: 16
-  completed_plans: 16
+  total_plans: 24
+  completed_plans: 17
   percent: 43
 ---
 
@@ -28,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 ## Current Position
 
 Phase: 24 — Invitation Flow (No SMTP)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-07-31 — Phase 23 complete (verification passed, threat-secure 17/17), transitioned to Phase 24
+Plan: 01 complete (of 8) — invitations migration + pv-core invite channel + OptionalSessionUser + shared membership-write helpers
+Status: In progress
+Last activity: 2026-07-31 — Plan 24-01 executed (tracer foundation for the phase; waves 2-5 depend on it)
 
 ## Performance Metrics
 
@@ -85,6 +86,7 @@ Last activity: 2026-07-31 — Phase 23 complete (verification passed, threat-sec
 | Phase 13 P06 | ~4h | 3 tasks | 20 files |
 | Phase 14 P03 | ~50min | 3 tasks | 5 files |
 | Phase 15 P07 | 190 | 3 tasks | 5 files |
+| Phase 24 P01 | 25min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -156,6 +158,7 @@ Recent decisions affecting current work:
 - [Phase 17]: overlay literal allowlist = dokładnie 8 (4 cienie rgba, 4 pill-radius 999px) — audyt w 17-04; nowy kafelek w generate-popover/save-toast musi użyć --pv-tile-*
 - [Phase 18]: probe-window-geometry.cjs wymaga serwera z moz-extension://* wildcard (pinned UUID f6a7b8c9 profilu probe nie jest na allowliście koncretnego originu) + konta uat-prf04@example.local — zielony przebieg: izolowany pv-server (PV_SERVER env); dokumentacja lane'a dla Phase 20 CI
 - [Phase 18]: XBR-03 = REJECT-WITH-REASON (verdict w 18-SECURITY.md + PROJECT.md Key Decisions); in-page consent panel NIE wraca bez nowych prymitywów platformy (post-v1.0)
+- [Phase ?]: [Phase 24] Plan 24-01 (tracer foundation): invite.rs calls only keys::aead_seal/aead_open, never identity::seal/unseal — the two invite-flow crypto primitives (AAD-capable symmetric wrap vs AAD-incapable asymmetric self-seal) stay textually separated per 24-CONTEXT.md Amendment 2's correction of ARCHITECTURE.md §7.1
 
 ### Pending Todos
 
@@ -219,7 +222,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-31 — Phase 23 closed out and transitioned. Both `human_needed` verification
+**Stopped at:** Completed 24-01-PLAN.md
+**Resume file:** None
+
+Last session: 2026-07-31T09:59:09.114Z
 items resolved by observed evidence rather than deferral: the Playwright half had already been
 executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
 commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run
