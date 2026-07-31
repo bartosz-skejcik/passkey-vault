@@ -592,6 +592,9 @@ export const DICTIONARY = {
   "settings.tabSessions": { pl: "Sesje i urządzenia", en: "Sessions & devices" },
   "settings.tabSecurity": { pl: "Bezpieczeństwo", en: "Security" },
   "settings.tabImportExport": { pl: "Import/Eksport", en: "Import/Export" },
+  // "Family" tab (FAM-04/05/06, Plan 24-05) — copy verbatim from
+  // 24-UI-SPEC.md's Copywriting Contract.
+  "settings.tabFamily": { pl: "Rodzina", en: "Family" },
   "settings.importExportPlaceholder": {
     pl: "Import i eksport pojawią się w kolejnej fazie.",
     en: "Import and export are coming in a later phase.",
@@ -741,6 +744,92 @@ export const DICTIONARY = {
     pl: "Ten element został usunięty na innym urządzeniu.",
     en: "This item was deleted on another device.",
   },
+
+  // Invitation flow / owner-side "Invite someone" panel (FAM-04/05/06, Plan
+  // 24-05) — copy verbatim from 24-UI-SPEC.md's Copywriting Contract (both
+  // tables). `invite.fingerprintHonesty`/`invite.honestVisibilityNote` are
+  // hard requirements — must never imply verification/loss-of-access that
+  // did not happen (see UI-SPEC's honesty constraints). `toast.copied`'s
+  // existing `{field}` interpolation is reused verbatim for the invite-link
+  // copy toast (Plan 24-07's call site supplies the literal "Link
+  // zaproszenia"/"Invite link" string) — no new dictionary key for that, and
+  // `delete.cancel` is reused verbatim for the revoke-confirm cancel button.
+  "invite.joinCta": { pl: "Dołącz do {family}", en: "Join {family}" },
+  "invite.registerAndJoinCta": { pl: "Załóż konto i dołącz", en: "Create account & join" },
+  "invite.joining": { pl: "Dołączanie…", en: "Joining…" },
+  "family.bootstrapHeading": { pl: "Załóż swoją rodzinę", en: "Set up your family" },
+  "family.bootstrapBody": {
+    pl: "Zanim zaprosisz kogoś, nadaj swojej rodzinie nazwę.",
+    en: "Before you invite anyone, give your family a name.",
+  },
+  "invite.failureMessage": {
+    pl: "To zaproszenie już nie jest ważne.",
+    en: "This invite is no longer valid.",
+  },
+  "invite.failureHint": {
+    pl: "Poproś osobę, która Cię zaprosiła, o nowy link.",
+    en: "Ask whoever sent you this link for a new one.",
+  },
+  "invite.failureCta": { pl: "Przejdź do logowania", en: "Go to sign in" },
+  "invite.joinFailedRetryable": {
+    pl: "Nie udało się dołączyć. Spróbuj ponownie.",
+    en: "Couldn't join. Try again.",
+  },
+  "invite.joinRetryCta": { pl: "Spróbuj ponownie", en: "Try again" },
+  "invite.continueToVaultCta": { pl: "Przejdź do swojego vaulta", en: "Continue to your vault" },
+  "invite.revokeConfirmTitle": { pl: "Unieważnić ten link?", en: "Revoke this invite link?" },
+  "invite.revokeConfirmBody": {
+    pl: "Nikt nie będzie mógł już dołączyć przez ten link. To nieodwracalne.",
+    en: "No one will be able to join using this link anymore. This can't be undone.",
+  },
+  "invite.revokeConfirmConfirm": { pl: "Unieważnij", en: "Revoke" },
+  "invite.loadingLabel": { pl: "Ładowanie zaproszenia…", en: "Loading invite…" },
+  "invite.joinHeading": { pl: "Dołączyć do {family}?", en: "Join {family}?" },
+  "invite.invitedBy": { pl: "Zaprasza: {inviter}", en: "Invited by {inviter}" },
+  "invite.fingerprintLabel": {
+    pl: "Odcisk tożsamości {inviter}",
+    en: "{inviter}'s identity fingerprint",
+  },
+  "invite.fingerprintHonesty": {
+    pl: "Ten odcisk pozwala zweryfikować tożsamość {inviter}, ale musisz to zrobić sam/sama — np. porównując go z {inviter} telefonicznie albo SMS-em. Samo wyświetlenie go tutaj niczego nie weryfikuje.",
+    en: "This fingerprint lets you verify {inviter}'s identity — but only if you compare it with them yourself, e.g. over a call or a text. Displaying it here doesn't verify anything on its own.",
+  },
+  "invite.fingerprintUnavailable": {
+    pl: "{inviter} nie ma jeszcze skonfigurowanego klucza tożsamości do zweryfikowania.",
+    en: "{inviter} hasn't set up a verifiable identity key yet.",
+  },
+  "invite.currentAccountNotice": { pl: "Jesteś zalogowany/a jako {email}.", en: "You're signed in as {email}." },
+  "invite.joinAsDifferentAccount": { pl: "Dołącz jako inne konto", en: "Join as a different account" },
+  "invite.alreadyMemberNotice": {
+    pl: "Jesteś już członkiem/członkinią {family}. Przenosimy Cię do vaulta.",
+    en: "You're already a member of {family}. Taking you to your vault.",
+  },
+  "family.nameLabel": { pl: "Nazwa rodziny", en: "Family name" },
+  "family.createCta": { pl: "Utwórz rodzinę", en: "Create family" },
+  "family.createFailed": {
+    pl: "Nie udało się utworzyć rodziny. Spróbuj ponownie.",
+    en: "Couldn't create the family. Try again.",
+  },
+  "invite.sectionHeading": { pl: "Zaproś kogoś", en: "Invite someone" },
+  "invite.scopeLabel": { pl: "Co udostępnić", en: "What to share" },
+  "invite.scopeWholeFamily": { pl: "Cała rodzina", en: "Whole family" },
+  "invite.scopeFolder": { pl: "Rodzina + jeden folder", en: "Family + one folder" },
+  "invite.folderPickerLabel": { pl: "Wybierz folder", en: "Choose a folder" },
+  "invite.folderPickerEmpty": {
+    pl: "Utwórz najpierw folder, aby móc go udostępnić.",
+    en: "Create a folder first so you can share it.",
+  },
+  "invite.honestVisibilityNote": {
+    pl: "Udostępnienie nie ukrywa zawartości tego folderu przed Tobą — jako właściciel/właścicielka rodziny zawsze masz do niej dostęp.",
+    en: "Sharing doesn't hide this folder's contents from you — as the family owner, you always keep full access to it.",
+  },
+  "invite.expiryLabel": { pl: "Link wygasa po", en: "Link expires after" },
+  "invite.expiry1h": { pl: "1 godzinie", en: "1 hour" },
+  "invite.expiry24h": { pl: "24 godzinach", en: "24 hours" },
+  "invite.expiry7d": { pl: "7 dniach", en: "7 days" },
+  "invite.generateCta": { pl: "Wygeneruj link", en: "Generate link" },
+  "invite.expiresAt": { pl: "Wygasa {date}", en: "Expires {date}" },
+  "invite.copyLinkAria": { pl: "Skopiuj link zaproszenia", en: "Copy invite link" },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {
