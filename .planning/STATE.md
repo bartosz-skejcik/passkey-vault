@@ -5,15 +5,15 @@ milestone_name: Family & Sharing
 current_phase: 24
 current_phase_name: Invitation Flow (No SMTP)
 status: executing
-stopped_at: Completed 24-03-PLAN.md
-last_updated: "2026-07-31T10:28:35.648Z"
+stopped_at: Completed 24-04-PLAN.md
+last_updated: "2026-07-31T10:44:48.143Z"
 last_activity: 2026-07-31
 last_activity_desc: Plan 24-01 executed (tracer foundation for the phase; waves 2-5 depend on it)
 progress:
   total_phases: 7
   completed_phases: 3
   total_plans: 24
-  completed_plans: 19
+  completed_plans: 20
   percent: 43
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 ## Current Position
 
 Phase: 24 — Invitation Flow (No SMTP)
-Plan: 3 complete (of 8) — invitations migration + pv-core invite channel + OptionalSessionUser + shared membership-write helpers
+Plan: 4 complete (of 8) — invitations migration + pv-core invite channel + OptionalSessionUser + shared membership-write helpers
 Status: Ready to execute
 Last activity: 2026-07-31 — Plan 24-01 executed (tracer foundation for the phase; waves 2-5 depend on it)
 
@@ -89,6 +89,7 @@ Last activity: 2026-07-31 — Plan 24-01 executed (tracer foundation for the pha
 | Phase 24 P01 | 25min | 2 tasks | 6 files |
 | Phase 24 P02 | 45min | 2 tasks | 6 files |
 | Phase 24 P03 | 20min | 1 tasks | 1 files |
+| Phase 24 P04 | 45min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -164,6 +165,7 @@ Recent decisions affecting current work:
 - [Phase ?]: invitations.rs never imports pv_core::invite - server hash lives in pv_server::crypto::hash_invite_proof, textually distinct from the client-side twin
 - [Phase ?]: Deliberately does not bump collections.revision in invitations::accept, matching shipped collections::add_member WR-05 wire-contract gap
 - [Phase ?]: WasmInviteChannel stores only the raw invite_secret, never a pre-derived wrap key or proof — mirrors pv_core::invite's own re-derivation design
+- [Phase ?]: Rejected original concurrency test design (common::test_pool() max_connections(1)) — rebuilt with a genuine multi-connection shared-cache pool mirroring tests/collections.rs's atomic-guard analog, proving accept's single-use guard under real SQLite write-lock contention.
 
 ### Pending Todos
 
@@ -227,10 +229,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 24-03-PLAN.md
+**Stopped at:** Completed 24-04-PLAN.md
 **Resume file:** None
 
-Last session: 2026-07-31T10:28:35.638Z
+Last session: 2026-07-31T10:44:48.133Z
 items resolved by observed evidence rather than deferral: the Playwright half had already been
 executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
 commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run

@@ -187,7 +187,7 @@ Plans:
   3. The same invite link correctly handles both a brand-new user (register, then join) and an already-logged-in existing user (join directly) — branching at redemption time on whether a session exists.
   4. An expired or already-consumed invite link is rejected, and firing two redemption attempts against the same link concurrently results in exactly one successful join.
 
-**Plans:** 3/8 plans executed
+**Plans:** 4/8 plans executed
 
 Plans:
 **Wave 1**
@@ -201,7 +201,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 24-04-PLAN.md — Genuinely concurrent single-use proof + real-WS fan-out proof + metadata-leak audit + Referrer-Policy
+- [x] 24-04-PLAN.md — Genuinely concurrent single-use proof + real-WS fan-out proof + metadata-leak audit + Referrer-Policy
 - [ ] 24-05-PLAN.md — Web lib/crypto choke-point widening + lib/invite (api+crypto) + i18n dictionary keys
 
 **Wave 4** *(blocked on Wave 3 completion)*
@@ -294,7 +294,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 21. Crypto Foundation — Asymmetric Identity & Collection Keys | v0.4 | 5/5 | Complete    | 2026-07-30 |
 | 22. Family & Collection Data Model — Server Authorization | v0.4 | 5/5 | Complete    | 2026-07-30 |
 | 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 6/6 | Complete    | 2026-07-31 |
-| 24. Invitation Flow (No SMTP) | v0.4 | 3/8 | In Progress|  |
+| 24. Invitation Flow (No SMTP) | v0.4 | 4/8 | In Progress|  |
 | 25. Member Removal, Suspension & Re-key | v0.4 | 0/TBD | Not started | - |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 0/TBD | Not started | - |
 | 27. Extension Integration — Shared Items | v0.4 | 0/TBD | Not started | - |
