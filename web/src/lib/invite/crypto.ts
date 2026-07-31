@@ -1,0 +1,190 @@
+// Invite crypto orchestration glue (Plan 24-05) — the layer between
+// lib/invite/api.ts's thin HTTP wrappers and lib/crypto's WASM bindings.
+// Owns the fragment-secret lifecycle (capture-before-zeroize, T-24-12), the
+// Amendment 2 proof-of-possession derivation, and the
+// fragment-vs-path invite_id self-consistency check that must run BEFORE
+// any network call (T-24-13).
+//
+// `fetchInviteMetadataFlow` and `redeemInviteFlow` each derive their OWN
+// `WasmInviteChannel` independently from the `secretFragment` string — cheap
+// (a few HKDF calls) rather than threading one WASM object across two
+// separate async call sites/React state. The precious value that must
+// survive the invite flow (including the inline-register round trip) is the
+// `secretFragment` STRING itself, held only in React state by the caller —
+// never persisted to localStorage/sessionStorage anywhere in this module.
+import {
+  WasmInviteChannel,
+  WasmIdentityPublicKey,
+  generateInviteSecret,
+  sealCollectionKey,
+  unsealCollectionKey,
+  type WasmUserKey,
+  type WasmCollectionKey,
+} from "@/lib/crypto";
+import { base64Encode, base64Decode } from "@/lib/auth/api";
+import { ensureOwnIdentityKeypair } from "@/lib/identity/ensure";
+import { getCollection } from "@/lib/vault/api";
+import { createInvite, fetchInvitePublicMetadata, redeemInvite } from "./api";
+import type { InvitePublicMetadata } from "./api";
+
+/**
+ * RFC 4648 §5 URL-safe transform over the STANDARD base64Encode/base64Decode
+ * helpers from lib/auth/api — used ONLY for the fragment secret. Every proof
+ * value (the creation-time hash, the redemption-time raw proof) travels in a
+ * JSON body and stays STANDARD-encoded like every other binary JSON field in
+ * this codebase; conflating the two encodings would silently corrupt
+ * whichever one used the wrong alphabet.
+ */
+export function base64UrlEncode(bytes: Uint8Array): string {
+  return base64Encode(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function base64UrlDecode(value: string): Uint8Array {
+  const standard = value.replace(/-/g, "+").replace(/_/g, "/");
+  const paddingNeeded = (4 - (standard.length % 4)) % 4;
+  return base64Decode(standard + "=".repeat(paddingNeeded));
+}
+
+export type InviteScope =
+  | { kind: "family" }
+  | { kind: "collection"; collectionId: string; accessLevel: "read" | "edit" | "hidden_password" };
+
+export type InviteExpiry = "1h" | "24h" | "7d";
+
+/**
+ * Generates a fresh invite link. Calls `ensureOwnIdentityKeypair`
+ * unconditionally first — structurally required for a collection scope
+ * (the Collection Key must be re-wrapped under the invite channel), and
+ * needed for fingerprint availability on a family-only scope too
+ * (24-UI-SPEC.md's cross-phase gap note).
+ */
+export async function generateInviteLink(
+  scope: InviteScope,
+  expiresIn: InviteExpiry,
+  uk: WasmUserKey,
+): Promise<{ url: string; expiresAt: string }> {
+  const identityKey = await ensureOwnIdentityKeypair(uk);
+  let channel: WasmInviteChannel | undefined;
+  let collectionKey: WasmCollectionKey | undefined;
+  try {
+    const secretBytes = generateInviteSecret();
+    // Captured BEFORE the next call — WasmInviteChannel.fromSecret zeroizes
+    // its input buffer (and, via wasm-bindgen's mutable-slice copy-back,
+    // this JS-side view of it too), exactly like WasmWrappingKey.fromPassword
+    // already does.
+    const secretForUrl = base64UrlEncode(secretBytes);
+    channel = WasmInviteChannel.fromSecret(secretBytes);
+    const inviteId = channel.inviteId();
+    // STANDARD encoding — this is a JSON body field, not a URL segment.
+    const proofHash = base64Encode(channel.proofHashForCreation());
+
+    let wrappedForInvite: string | null = null;
+    if (scope.kind === "collection") {
+      const collectionRecord = await getCollection(scope.collectionId);
+      if (collectionRecord.sealed_key === null) {
+        throw new Error("caller has no sealed_key for this collection — cannot create an invite for it");
+      }
+      collectionKey = unsealCollectionKey(identityKey, collectionRecord.sealed_key);
+      wrappedForInvite = channel.wrapCollectionKey(collectionKey);
+    }
+
+    const response = await createInvite({
+      id: inviteId,
+      collection_id: scope.kind === "collection" ? scope.collectionId : null,
+      access_level: scope.kind === "collection" ? scope.accessLevel : null,
+      wrapped_collection_key: scope.kind === "collection" ? wrappedForInvite : null,
+      // Amendment 2: ONLY the hash ever travels to createInvite — never the
+      // raw invite_proof (that is fetchInviteMetadataFlow/redeemInviteFlow's
+      // job, at redemption time, via a DIFFERENT channel method).
+      proof_hash: proofHash,
+      expires_in: expiresIn,
+    });
+
+    return {
+      url: `${window.location.origin}/invite/${inviteId}#${secretForUrl}`,
+      expiresAt: response.expires_at,
+    };
+  } finally {
+    collectionKey?.free?.();
+    channel?.free?.();
+    identityKey.free?.();
+  }
+}
+
+/**
+ * The orchestration entry point Plan 24-06's `InviteLandingView` calls at
+ * mount — it must NOT call the raw `fetchInvitePublicMetadata` from
+ * `lib/invite/api.ts` directly, since that function alone cannot derive
+ * `invite_proof`.
+ */
+export async function fetchInviteMetadataFlow(
+  inviteId: string,
+  secretFragment: string,
+): Promise<InvitePublicMetadata> {
+  const secretBytes = base64UrlDecode(secretFragment);
+  const channel = WasmInviteChannel.fromSecret(secretBytes);
+  try {
+    // Self-consistency check BEFORE any API call — a malformed/tampered
+    // link is caught here, not surfaced as a confusing server error.
+    if (channel.inviteId() !== inviteId) {
+      throw new Error("invite link's fragment does not correspond to its own path invite_id");
+    }
+    const inviteProof = base64Encode(channel.proofForRedemption());
+    return await fetchInvitePublicMetadata(inviteId, inviteProof);
+  } finally {
+    channel.free?.();
+  }
+}
+
+/**
+ * Redeems an invite. Checked independently from `fetchInviteMetadataFlow`'s
+ * own self-consistency check, since this function may be called on its own
+ * retry path (Plan 24-06's `joinFailedRetryable` state). Derives
+ * `invite_proof` ONCE and reuses the SAME value for both the metadata fetch
+ * and the accept call — never re-derived with a chance to drift.
+ */
+export async function redeemInviteFlow(
+  inviteId: string,
+  secretFragment: string,
+  uk: WasmUserKey,
+): Promise<{ alreadyMember: boolean; collectionId: string | null }> {
+  const secretBytes = base64UrlDecode(secretFragment);
+  const channel = WasmInviteChannel.fromSecret(secretBytes);
+  let identityKey: Awaited<ReturnType<typeof ensureOwnIdentityKeypair>> | undefined;
+  let collectionKey: WasmCollectionKey | undefined;
+  try {
+    if (channel.inviteId() !== inviteId) {
+      throw new Error("invite link's fragment does not correspond to its own path invite_id");
+    }
+    const inviteProof = base64Encode(channel.proofForRedemption());
+    const metadata = await fetchInvitePublicMetadata(inviteId, inviteProof);
+
+    identityKey = await ensureOwnIdentityKeypair(uk);
+
+    let sealedForSelf: string | undefined;
+    if (metadata.wrapped_collection_key !== null) {
+      collectionKey = channel.unwrapCollectionKey(metadata.wrapped_collection_key);
+      const myPublicKey = WasmIdentityPublicKey.fromBytes(identityKey.publicKeyBytes());
+      try {
+        // The invitee's self-seal to their OWN identity key — never the
+        // inviter's — so the resulting `sealed_for_self` blob is only ever
+        // decryptable by the account actually redeeming this invite.
+        sealedForSelf = sealCollectionKey(myPublicKey, collectionKey);
+      } finally {
+        myPublicKey.free?.();
+      }
+    }
+
+    // The SAME `inviteProof` derived above, reused, never re-derived.
+    const response = await redeemInvite(inviteId, {
+      invite_proof: inviteProof,
+      sealed_for_self: sealedForSelf,
+    });
+
+    return { alreadyMember: response.already_member, collectionId: metadata.collection_id };
+  } finally {
+    collectionKey?.free?.();
+    identityKey?.free?.();
+    channel.free?.();
+  }
+}

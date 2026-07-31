@@ -105,6 +105,24 @@ export function touchItem(id: string): Promise<{ last_used_at: string }> {
   return apiJson(`/api/vault/items/${id}/touch`, { method: "POST" });
 }
 
+/** Wire shape of `collections.rs`'s `CollectionResponse` — matches
+ * `GET /api/vault/collections/{id}` field-for-field. Added by Plan 24-05
+ * (invite crypto glue): no single-collection-fetch client existed here yet —
+ * `generateInviteLink`'s collection-scope branch needs to read the caller's
+ * own `sealed_key` for a collection before re-wrapping it under the invite
+ * channel. */
+export interface CollectionRow {
+  id: string;
+  enc_name: string;
+  created_at: string;
+  access_level: string | null;
+  sealed_key: string | null;
+}
+
+export function getCollection(id: string): Promise<CollectionRow> {
+  return apiJson(`/api/vault/collections/${id}`);
+}
+
 export function listFolders(): Promise<FolderRow[]> {
   return apiJson("/api/vault/folders");
 }
