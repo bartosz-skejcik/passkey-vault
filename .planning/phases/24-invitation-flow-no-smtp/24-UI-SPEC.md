@@ -78,7 +78,7 @@ Unchanged 60/30/10 split and exact OKLCH/hex values from `docs/UI-DESIGN.md` / `
 
 | Role | Value | Usage |
 |------|-------|-------|
-| Dominant (60%) | `#1F1F1F` base-300 dark / `#FCFBFA` base-200 light | Page canvas behind the invite landing view (reuses `AuthCard`'s `bg-base-300` wrapper — the invite view is unauthenticated-adjacent chrome, no sidebar) |
+| Dominant (60%) | base-300 — `#1F1F1F` dark / `#EDEBE9`-class light | Page canvas behind the invite landing view (reuses `AuthCard`'s `bg-base-300` wrapper — the invite view is unauthenticated-adjacent chrome, no sidebar). **The `bg-base-300` class reference is authoritative**; resolve the light hex from `tokens.css` rather than from this annotation. (`#FCFBFA` is base-200 light, not base-300 — corrected after UI-checker review.) |
 | Secondary (30%) | `#262626` base-100 dark / `#FFFFFF` base-100 light | The invite card surface itself; the "Family" tab's content area inside `SettingsPanel` (same drawer surface as every other tab) |
 | Accent (10%, coral `#E16540`) | primary | The Join CTA button, the "Załóż konto i dołącz"/"Create account & join" submit button, the "Wygeneruj link"/"Generate link" owner-side button — all reuse `btn btn-primary`, the same class every other primary action in this codebase uses. Coral stays reserved for actions/brand per `docs/UI-DESIGN.md`; it is **not** used for the fingerprint. |
 | Destructive | `#FF5861` error | "Unieważnij link"/"Revoke link" confirmation only (`btn btn-error`, mirrors `DeleteConfirmDialog`'s `AlertTriangle` + `btn-error` pattern) |
@@ -139,6 +139,7 @@ i18n PL+EN, `web/src/lib/i18n/dictionary.ts` (existing `DICTIONARY`/`interpolate
 | `invite.generateCta` | Wygeneruj link | Generate link |
 | `invite.expiresAt` (interpolates `{date}`) | Wygasa {date} | Expires {date} |
 | `toast.copied` field label for the link | `Link zaproszenia` | `Invite link` — **reuses the existing `toast.copied`/`toast.cleared` keys verbatim**, just with this new `{field}` value; no new toast copy needed (see Phase-Specific Notes on why this reuses `CopyToast`'s auto-clear machinery rather than a plain toast) |
+| `invite.copyLinkAria` | Skopiuj link zaproszenia | Copy invite link — **accessible name only**, applied as `aria-label` on the icon-only Copy button (which has no visible text). Added after UI-checker review flagged the accessible name as undefined. |
 
 **Copywriting honesty constraints (hard requirements of this phase, not polish — re-stated here for the checker):**
 
@@ -150,25 +151,93 @@ i18n PL+EN, `web/src/lib/i18n/dictionary.ts` (existing `DICTIONARY`/`interpolate
 
 ## UI Considerations
 
-Applicable state considerations resolved: 11 covered, 0 backstop, 0 unresolved, 3 dismissed.
+Runtime probe (`ui-consideration-probe`) proposed **34 applicable** state considerations across the 7
+described surfaces. This section is the authoritative resolution of all 34 — it supersedes the
+narrower 14-row table the researcher authored inline, which under-covered the per-element axis.
 
-| Category | Element(s) | Status | Resolution / Reason |
-|----------|------------|--------|---------------------|
-| loading | Invite landing, fetching public metadata | ✅ covered | Centered `Loader2` spinner + `invite.loadingLabel`, same idiom as `EnrollPasskeyDialog.tsx`'s waiting states. No skeleton — the card is too small/short-lived to justify one. |
-| loading | Join button / register-and-join submit / owner-side "Generate link" | ✅ covered | `disabled` + busy label (`invite.joining`) or existing submit-button busy pattern (`RegisterForm`/`LoginForm`'s own `submitting` state, unchanged). |
-| error | Invite metadata fetch returns expired/consumed/revoked/unknown (Surface 3) | ✅ covered | The single `invite.failureMessage` + `invite.failureHint` + `invite.failureCta`, `alert-warning` tier (see Color). No branch renders a different message for a different cause — this is the phase's core security decision, not an oversight. |
-| error | Concurrent-redemption loser (SC 4) | ✅ covered | Server returns the same 0-rows-affected outcome as the other three causes (per `24-CONTEXT.md`'s decision); the client renders the identical `invite.failureMessage` state — no separate "someone beat you to it" copy exists anywhere in the UI. |
-| error | Inline register/login succeeds but the immediately-following auto-join call fails (network blip, or the invite expired in the exact race window between landing and submit) | ✅ covered | **New, explicit resolution** (this is the one join-adjacent failure NOT covered by the unified message, because the account now genuinely exists regardless of outcome): show `invite.joinFailedRetryable` inline in the same context-header card, with `invite.joinRetryCta` (re-calls redeem only — never re-runs registration) and `invite.continueToVaultCta` as an escape hatch into the user's own (family-less) vault. If the retry's own failure reason turns out to be "invite now invalid", the view falls through to the normal unified failure state — the account is unaffected either way. |
-| empty | Owner-side Family tab, caller has no family yet | ✅ covered | `family.bootstrapHeading`/`family.bootstrapBody` + a single `family.nameLabel` input + `family.createCta` button (`input input-bordered` / `btn btn-primary`, no new visual language) — must exist because the invite affordance is meaningless without a family, and no other Phase 24 surface creates one. Detected via the existing `GET /api/families/members` returning 404 for a non-member caller. |
-| empty | Owner-side folder-scope picker, caller has zero folders | ✅ covered | `invite.scopeFolder` option is disabled with `invite.folderPickerEmpty` as its helper text when `useFolders().length === 0` (reuses the existing `useFolders()` hook from `Sidebar.tsx`) — falls back to whole-family-only invites, never a broken empty `<select>`. |
-| empty | Join screen's fingerprint block, inviter has no published identity key | ✅ covered | Renders `invite.fingerprintUnavailable` instead of the fingerprint value — never a blank space, never a fake/placeholder fingerprint. See Phase-Specific Notes for the recommended cross-phase fix (trigger identity-keypair generation at invite-creation time) that keeps this the exceptional case rather than the common one. |
-| populated | Owner-side "current invite" display after generation (link + expiry + copy + revoke) | ✅ covered | Exactly one invite shown at a time — the one just created — never a list. Matches `24-CONTEXT.md`'s explicit "do not spec a pending-invite list" boundary; Phase 26 owns the richer management view. |
-| overflow / long-text | Family name in the Join heading, inviter email throughout | ✅ covered | Heading stays at 20px (not 28px, see Typography); family name and email strings get `truncate` with a `title` attribute for the full value on hover/long-press, never forcing the 400px card wider. |
-| zero-one-many | N/A — no list-collection element exists anywhere in this phase's invitee-facing UI | dismissed | The invite landing is a single-resource state machine (loading/valid/failure), not a list. |
-| partial | Register/login forms embedded in the invite view | dismissed | Both forms are reused verbatim (`RegisterForm`/`LoginForm`) with their own existing partial-fill handling (native `required` attributes) — no new partial-state to design. |
-| media | N/A | dismissed | No media elements (avatars, favicons, images) appear anywhere in this phase's scope. |
+**Resolved: 27 covered, 7 backstop, 0 unresolved.** A `backstop` row is a real obligation, not a
+pass: it means the resolution is "prove it with a held-out UI-state test" rather than a truth
+statement the planner can lift directly. At verify time an unwired backstop routes to
+`insufficient_spec → human_needed` — that surfacing is intended, not over-flagging.
 
----
+Empty-state and error-state **copy** lives in `## Copywriting Contract`; rows below reference those
+keys rather than restating them.
+
+### E1 — Invite landing card (form · static-content · interactive-control)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| loading | ✅ covered | Centered `Loader2` + `invite.loadingLabel` while public metadata is fetched. No skeleton — the card is small and short-lived. Same idiom as `EnrollPasskeyDialog.tsx`. |
+| error | ✅ covered | Any fetch failure (expired/consumed/revoked/unknown/malformed/network) collapses into the single `invite.failureMessage` state. Indistinguishability is the phase's core security decision — see E4. |
+| empty | ⛑ backstop | The family name is required by the bootstrap form (E7) and non-null at creation, so an empty `{family}` should be unreachable. Not asserted anywhere today. **Backstop:** a test that renders the Join screen with an empty-string family name and asserts the heading does not collapse to `Join ?` or a bare verb. |
+| partial | ✅ covered | Metadata arrives as one object — there is no half-loaded render. If any required field (`family`, `inviter`) is absent the view treats the response as invalid and routes to the E4 failure state rather than rendering a partial header. |
+| overflow | ✅ covered | Card is fixed at `max-w-[400px]`; the heading stays 20px (not 28px) specifically so a long family name does not force reflow. Family name and inviter email both `truncate` with a `title` carrying the full value. |
+| long-text | ✅ covered | Same `truncate` + `title` treatment. The fingerprint block is fixed-width by construction (a hash rendering), so it cannot be the overflow source. |
+
+### E2 — Inline registration branch (form · interactive-control)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| loading | ✅ covered | `disabled` + busy label spanning **both** network calls (register, then redeem) as one continuous submit — the user must never see the button return to idle between them and think the flow stalled. |
+| error | ✅ covered | Two distinct failure classes, deliberately: registration failure surfaces `RegisterForm`'s own existing validation/error handling unchanged; a registration *success* followed by a redeem failure surfaces `invite.joinFailedRetryable` + `invite.joinRetryCta` (re-calls redeem only, never re-registers) + `invite.continueToVaultCta`. This is the one join-adjacent failure deliberately NOT folded into the unified message, because the account now genuinely exists regardless of outcome. |
+| empty | ✅ covered | Reuses `RegisterForm` verbatim, including its native `required` attributes — empty submit is blocked by the existing form, not by new code. |
+| partial | ✅ covered | Same — `RegisterForm`'s existing partial-fill handling is inherited unchanged. No new partial state is introduced. |
+| long-text | ⛑ backstop | A very long email in the confirmation/"you are joining as" line. **Backstop:** assert `truncate` + `title` on the account-identity line, same treatment as E3. |
+
+### E3 — Logged-in branch, wrong-account escape (form · static-content · interactive-control)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| loading | ✅ covered | Redeem-in-flight disables both the Join button and the "join as a different account" escape, so the session cannot be cleared mid-request. |
+| error | ✅ covered | Redeem failure routes to the unified E4 state; the session is left untouched. |
+| empty | ✅ covered | A session that resolves to no readable account identity is treated as "no session" and falls through to the E2 register/login branch rather than rendering an unnamed account. Naming the account is the whole point of this branch — an unnamed one must not render. |
+| partial | ✅ covered | The branch is chosen once, from whether a session token resolves. There is no intermediate state between the two branches. |
+| overflow | ✅ covered | `truncate` + `title` on the current-account email inside `invite.currentAccountNotice`. |
+| long-text | ✅ covered | Same. The escape CTA (`invite.joinAsDifferentAccount`) is a fixed string and cannot overflow. |
+
+### E4 — Unified failure state (static-content · interactive-control)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| overflow | ✅ covered | No interpolated values exist in this state at all — no family, no inviter, no reason. Nothing user-controlled can overflow, which is a consequence of the security decision rather than a separate layout choice. |
+| long-text | ✅ covered | Same: `invite.failureMessage` / `invite.failureHint` / `invite.failureCta` are fixed PL+EN strings. |
+
+> The indistinguishability itself is asserted in `## Copywriting Contract` rule 3 and is verified at
+> the behavioural layer, not the visual one: **all five causes** (expired, consumed, revoked,
+> concurrent-loser, malformed) must render byte-identical copy with no context header.
+
+### E5 — Owner-side "Invite someone" panel (form · list-collection · interactive-control)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| loading | ✅ covered | "Generate link" `disabled` + busy label during creation, reusing the existing submit-button busy pattern. |
+| error | ⛑ backstop | Invite-creation failure (network, or the server rejecting because the caller is no longer the owner). The spec has no copy for this. **Backstop:** assert a non-silent inline error on the panel that leaves the form's entered values intact, so the owner does not re-pick scope and expiry. |
+| empty | ✅ covered | Zero folders → the `invite.scopeFolder` option is disabled with `invite.folderPickerEmpty` as helper text, falling back to whole-family-only. Never a broken empty `<select>`. |
+| populated | ✅ covered | Exactly one invite is shown after generation — the most recent — never a list. Phase 26 owns the richer management view. |
+| partial | ✅ covered | Scope defaults to whole-family and expiry defaults to 7 days, so the form is never in an unsubmittable partial state; the only optional input is the folder, which is gated by the scope radio. |
+| zero-one-many | ⛑ backstop | The folder picker is the one genuine list-collection in this phase. Zero is covered above. **Backstop:** assert the picker renders correctly at one folder and at many (scroll/height bound), so a family with a long folder list does not blow out the panel. |
+| overflow | ⛑ backstop | A long folder name inside the `<select>`. **Backstop:** assert the option text truncates rather than widening the panel. |
+| long-text | ⛑ backstop | Same as overflow, for the selected-value display. |
+
+### E6 — Generated-invite display (static-content · interactive-control)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| overflow | ✅ covered | The link is rendered in a read-only `input input-bordered w-full font-mono` — an input scrolls its own value horizontally by construction and cannot widen its container. This is why it is an input rather than a `<code>` block. |
+| long-text | ✅ covered | Same. The link is always long (it carries a 32-byte base64url secret in the fragment) — long text is the normal case here, not an edge case, and the input handles it. |
+
+> Accessible names: the icon-only Copy button uses `invite.copyLinkAria`. The Revoke button carries a
+> visible label; if it ever ships icon-only it needs its own key on the same pattern.
+
+### E7 — Family bootstrap (form · interactive-control)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| loading | ✅ covered | `disabled` + busy label on `family.createCta` during creation. |
+| error | ⛑ backstop | Family-creation failure — notably the server's deliberate `Conflict` when a family already exists (Phase 22 enforces exactly one family per instance in v0.4). **Backstop:** assert this renders as a recoverable message that re-fetches membership and advances to the invite form, rather than as a dead end — a `Conflict` here usually means another tab already created it. |
+| empty | ✅ covered | This surface *is* the empty state for "owner has no family yet", detected from `GET /api/families/members` returning 404. `family.bootstrapHeading` / `family.bootstrapBody` / `family.nameLabel` / `family.createCta`. |
+| partial | ✅ covered | One required field; native `required` blocks an empty submit. |
+| long-text | ✅ covered | The family-name input accepts long values but the value is echoed back only through E1's already-truncated heading, so no new treatment is needed here. |
 
 ## Registry Safety
 
@@ -237,7 +306,7 @@ Tab content, top to bottom:
 3. **Scope picker** — `invite.scopeLabel` + a `select select-bordered w-full` with two options, `invite.scopeWholeFamily` and `invite.scopeFolder`. Selecting `scopeFolder` reveals a second `select` (`invite.folderPickerLabel`, populated from `useFolders()`) **and** the `invite.honestVisibilityNote` line directly beneath it (only visible in this sub-state — see the honesty constraint above). If `useFolders()` is empty, the `scopeFolder` option is disabled with `invite.folderPickerEmpty` as inline helper text.
 4. **Expiry picker** — `invite.expiryLabel` + a `select select-bordered w-full` with three options (`invite.expiry1h`/`invite.expiry24h`/`invite.expiry7d`), **`invite.expiry7d` pre-selected by default** per `24-CONTEXT.md`'s locked decision. No indefinite/never-expire option exists.
 5. **`invite.generateCta`** button (`btn btn-primary`).
-6. **After generation**, replaces the form above with: a read-only `input input-bordered w-full font-mono` showing the full link, an `invite.expiresAt` line (interpolated formatted local date/time), a `Copy` icon button labeled via `aria.copyField`-style pattern that calls `copyWithAutoClear()` from `packages/pv-ui/clipboard.ts` and surfaces the result through the **existing `CopyToast` component** (field label `"Link zaproszenia"`/`"Invite link"`) — **not** a plain non-clearing toast, because the link's fragment is a decryption-capable secret, the same security class as a vault password (see Color/Design System). A `btn btn-ghost btn-error`-styled `invite.revokeConfirmTitle`-triggering button sits alongside it, gated by a `DeleteConfirmDialog`-shaped confirmation (`AlertTriangle`, `invite.revokeConfirmBody`, `invite.revokeConfirmConfirm` as `btn-error`, reused `delete.cancel`).
+6. **After generation**, replaces the form above with: a read-only `input input-bordered w-full font-mono` showing the full link, an `invite.expiresAt` line (interpolated formatted local date/time), a `Copy` icon button whose accessible name comes from the new key `invite.copyLinkAria` (PL `Skopiuj link zaproszenia` / EN `Copy invite link`), applied as `aria-label` since the button carries no visible text, that calls `copyWithAutoClear()` from `packages/pv-ui/clipboard.ts` and surfaces the result through the **existing `CopyToast` component** (field label `"Link zaproszenia"`/`"Invite link"`) — **not** a plain non-clearing toast, because the link's fragment is a decryption-capable secret, the same security class as a vault password (see Color/Design System). A `btn btn-ghost btn-error`-styled `invite.revokeConfirmTitle`-triggering button sits alongside it — it must carry a **visible** text label (PL `Unieważnij` / EN `Revoke`, reusing `invite.revokeConfirmConfirm`); if it ever ships icon-only, it needs its own `aria-label` key on the same pattern as `invite.copyLinkAria` — gated by a `DeleteConfirmDialog`-shaped confirmation (`AlertTriangle`, `invite.revokeConfirmBody`, `invite.revokeConfirmConfirm` as `btn-error`, reused `delete.cancel`).
 7. **After revoke, or once the shown invite's own expiry passes,** the panel reverts to the create form (step 2) — no history, no list, matching the explicit "no pending-invite list/audit view" boundary. Generating a second invite is always allowed by the API; the UI simply never shows more than the most recent one.
 
 ### 3. Post-join redirect
