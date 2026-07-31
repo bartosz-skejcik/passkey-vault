@@ -37,6 +37,13 @@ use super::vault::validate_blob_len;
 use super::{collections, vault};
 use crate::{error::ApiError, AppState};
 
+/// IN-01 (24-REVIEW.md): the rate-limit ceiling was previously hardcoded as
+/// a literal `10` in two separate query strings (`fetch_metadata` and
+/// `accept`) — changing one and not the other would make the two handlers
+/// silently disagree about whether an invite is still alive. Bound as a
+/// query parameter rather than interpolated into the SQL text.
+const MAX_FAILED_ATTEMPTS: i64 = 10;
+
 #[derive(Deserialize)]
 pub struct CreateInvitationRequest {
     /// Client-computed `invite_id` (HKDF-derived from `invite_secret`,
@@ -211,9 +218,10 @@ pub async fn fetch_metadata(
          JOIN users u ON u.id = i.inviter_user_id \
          JOIN families f ON f.id = i.family_id \
          LEFT JOIN user_keypairs uk ON uk.user_id = i.inviter_user_id \
-         WHERE i.id = ? AND i.status = 'pending' AND i.expires_at > datetime('now') AND i.failed_attempts < 10",
+         WHERE i.id = ? AND i.status = 'pending' AND i.expires_at > datetime('now') AND i.failed_attempts < ?",
     )
     .bind(&id)
+    .bind(MAX_FAILED_ATTEMPTS)
     .fetch_optional(&state.db)
     .await?;
 
@@ -288,9 +296,10 @@ pub async fn accept(
 
     let row = sqlx::query(
         "SELECT family_id, collection_id, access_level, wrapped_collection_key, inviter_user_id, proof_hash \
-         FROM invitations WHERE id = ? AND status = 'pending' AND expires_at > datetime('now') AND failed_attempts < 10",
+         FROM invitations WHERE id = ? AND status = 'pending' AND expires_at > datetime('now') AND failed_attempts < ?",
     )
     .bind(&id)
+    .bind(MAX_FAILED_ATTEMPTS)
     .fetch_optional(&mut *tx)
     .await?;
 
