@@ -232,4 +232,82 @@ describe("FamilyTab", () => {
       expect(select.className).toContain("truncate");
     });
   });
+
+  describe("generated-invite display — link, copy, expiry, revoke (Task 2)", () => {
+    async function generateInvite() {
+      mockGetFamilyMembers.mockResolvedValue([{ user_id: "u1" }]);
+      mockUseFolders.mockReturnValue([]);
+      mockGenerateInviteLink.mockResolvedValue({
+        url: "https://vault.example/invite/inv-123#s3cr3t",
+        expiresAt: "2026-08-07T12:00:00Z",
+      });
+      render(<FamilyTab />);
+      await waitFor(() => expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId("invite-generate-cta"));
+      await waitFor(() => expect(screen.getByTestId("invite-generated-display")).toBeInTheDocument());
+    }
+
+    it("generated_invite_replaces_form_with_link_display", async () => {
+      await generateInvite();
+      expect(screen.queryByTestId("invite-generate-cta")).not.toBeInTheDocument();
+      expect(screen.getByTestId("invite-link-display")).toHaveValue(
+        "https://vault.example/invite/inv-123#s3cr3t",
+      );
+    });
+
+    it("copy_button_calls_copyWithAutoClear_then_showCopyToast_with_invite_link_field_label", async () => {
+      await generateInvite();
+      fireEvent.click(screen.getByTestId("invite-copy-cta"));
+
+      expect(mockCopyWithAutoClear).toHaveBeenCalledWith(
+        "https://vault.example/invite/inv-123#s3cr3t",
+        30 * 1000,
+      );
+      expect(mockShowCopyToast).toHaveBeenCalledWith("Link zaproszenia", 30 * 1000);
+      const copyOrder = mockCopyWithAutoClear.mock.invocationCallOrder[0];
+      const toastOrder = mockShowCopyToast.mock.invocationCallOrder[0];
+      expect(copyOrder).toBeLessThan(toastOrder);
+    });
+
+    it("copy_button_has_accessible_name_via_aria_label_not_visible_text", async () => {
+      await generateInvite();
+      const copyButton = screen.getByTestId("invite-copy-cta");
+      expect(copyButton).toHaveAttribute("aria-label", "invite.copyLinkAria");
+      expect(copyButton.textContent).toBe("");
+    });
+
+    it("revoke_button_always_carries_a_visible_label", async () => {
+      await generateInvite();
+      const revokeButton = screen.getByTestId("invite-revoke-cta");
+      expect(revokeButton).not.toHaveAttribute("aria-label");
+      expect(revokeButton.textContent).toBe("invite.revokeConfirmConfirm");
+    });
+
+    it("revoke_confirm_reverts_panel_to_create_form_with_no_history", async () => {
+      mockRevokeInvite.mockResolvedValue(undefined);
+      await generateInvite();
+
+      fireEvent.click(screen.getByTestId("invite-revoke-cta"));
+      expect(screen.getByTestId("invite-revoke-confirm-dialog")).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("invite-revoke-confirm-confirm"));
+
+      await waitFor(() => expect(mockRevokeInvite).toHaveBeenCalledWith("inv-123"));
+      await waitFor(() =>
+        expect(screen.queryByTestId("invite-generated-display")).not.toBeInTheDocument(),
+      );
+      expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument();
+      expect(screen.getByTestId("invite-scope-select")).toHaveValue("family");
+    });
+
+    it("a revoke failure shows a non-silent inline error and does not clear the generated link", async () => {
+      mockRevokeInvite.mockRejectedValue(new Error("boom"));
+      await generateInvite();
+
+      fireEvent.click(screen.getByTestId("invite-revoke-cta"));
+      fireEvent.click(screen.getByTestId("invite-revoke-confirm-confirm"));
+
+      await waitFor(() => expect(screen.getByTestId("invite-revoke-error")).toBeInTheDocument());
+      expect(screen.getByTestId("invite-generated-display")).toBeInTheDocument();
+    });
+  });
 });
