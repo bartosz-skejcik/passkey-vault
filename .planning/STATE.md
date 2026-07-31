@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Family & Sharing
-current_phase: 24
-current_phase_name: Invitation Flow (No SMTP)
-status: executing
+current_phase: 25
+current_phase_name: Member Removal, Suspension & Re-key
+status: planning
 stopped_at: Completed 24-08-PLAN.md
-last_updated: "2026-07-31T12:38:52.099Z"
+last_updated: "2026-07-31T13:53:23.065Z"
 last_activity: 2026-07-31
-last_activity_desc: Plan 24-01 executed (tracer foundation for the phase; waves 2-5 depend on it)
+last_activity_desc: Phase 24 complete, transitioned to Phase 25
 progress:
   total_phases: 7
   completed_phases: 4
@@ -28,16 +28,16 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 
 ## Current Position
 
-Phase: 24 — Invitation Flow (No SMTP)
-Plan: 8 complete (of 8) — invitations migration + pv-core invite channel + OptionalSessionUser + shared membership-write helpers
-Status: Ready to execute
-Last activity: 2026-07-31 — Plan 24-01 executed (tracer foundation for the phase; waves 2-5 depend on it)
+Phase: 25 — Member Removal, Suspension & Re-key
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-31 — Phase 24 complete, transitioned to Phase 25
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 86 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
+- Total plans completed: 94 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
 - Average duration: - min
 - Total execution time: 0 hours (v0.3)
 
@@ -61,6 +61,7 @@ Last activity: 2026-07-31 — Plan 24-01 executed (tracer foundation for the pha
 | 21 | 5 | - | - |
 | 22 | 5 | - | - |
 | 23 | 6 | - | - |
+| 24 | 8 | - | - |
 
 *Updated after each plan completion*
 **Per-Plan Metrics:**
@@ -203,6 +204,9 @@ None yet.
 - [Phase 23] `/api/sync/shared` is fully implemented, authorized, tested and reachable but has **no client consumer** — `sync.ts` short-circuits the call because nothing supplies `onSharedRevisions`. This is CONTEXT.md's own design (signal 2, the per-recipient `vault_revision` bump, is what shipped clients poll; Collection Key unwrap is Phase 26/27 scope). **Phase 26/27 must wire the consumer** or the per-collection cheap-check stays server-side-only.
 - [Phase 23] **Phase 26 owes a live-browser proof it inherited, not one of its own**: SC 3's browser-level conflict-attribution assertion was deliberately removed from `web/e2e/shared-sync.spec.ts` because the fixture's DUMMY sealed key makes B's write necessarily undecryptable, which correctly trips the overwrite refusal *before* any 409 can occur — the assertion was unreachable by construction. Reaching it needs the client-side identity-keypair / Collection Key unwrap that lands in Phase 26. The obligation is written into the spec file itself, beside the deferred test.
 - [Phase 23] Process gap to enforce in Phases 24–27: **none of the six SUMMARY files populated its `## Threat Flags` section**, so the security auditor had to recover threat-adjacent findings from 23-REVIEW.md instead of the declared channel.
+- [Phase 24] **Phase 26 inherits three dissolved UI-SPEC backstops.** #4 (folder-picker zero-one-many), #5 (long folder-name option truncation) and #6 (selected-folder value truncation) constrained the folder picker that Phase 24's CR-02 fix removed. Per the honest-verifier contract they are *dissolved*, not *met* — the element they constrain no longer exists, so they cannot be confirmed with evidence and must not silently pass. Whichever Phase 26 plan builds the real collections picker owes all three. Also recorded in WINDOWS.md row 2.
+- [Phase 24] **SC 1 accepted with a recorded override: collection-scoped invites ship API-complete and UI-disabled.** A user can create a whole-family invite end-to-end through real UI (live-proven, 9/9 Playwright across two independent browser contexts); a user cannot scope an invite to one folder — that option is unconditionally disabled with truthful not-yet-available copy. The server half is genuinely complete (validates the collection triple, inserts a real `collection_keys` row, re-validates inviter authority in-transaction, rolls back on conflict, fans out a real WS event). The blocker is cross-phase: personal `folders` and Phase 22 `collections` are distinct tables with unrelated id spaces, and **no client-side capability to create, list, or decrypt a `collections` resource exists anywhere in the product yet** — which is precisely Phase 26's job. Enabling it later is a UI change, not an API or crypto change.
+- [Phase 24] **The unit suite's `@/lib/crypto` mocking is a structural blind spot, now partially closed.** Wave 5's live Playwright run found four real bugs no unit test could see (three invite flows missing `await initCrypto()`; a no-fragment `/invite/{id}` falling through to the login screen; the account-escape button unclickable under `UnlockOverlay`'s modal; `Revoke` 404ing on a consumed invite). Code review then found the same mechanism had let a 100%-failure control ship green — `FamilyTab.test.tsx` mocked `@/lib/invite/crypto` wholesale. The WR-10 fix added `web/src/lib/invite/crypto.real-wasm.test.ts`, a genuine real-WASM regression test. Treat "the unit test passes" as weak evidence for anything crypto-adjacent in Phases 25-27.
 - [Phase 23] Register correction worth not re-inheriting: T-23-16's authored rationale claimed the CI Chromium download was "the identical mechanism the extension job already runs today" — **factually wrong**; the `extension` job runs no Playwright step at all, and Phase 23 introduced the first Playwright run in this repo's CI. The threat is closed on stronger independent grounds (byte-identical lockfile integrity hashes across `web/` and `extension/`, plus `npm ci` before `npx playwright install` so the pinned local binary resolves).
 - v0.4 research flags an account-deletion re-key gap (ARCHITECTURE.md §4.3): today's `ON DELETE CASCADE` on `users` drops membership rows via FK but does not itself trigger a collection re-key — FAM-10 (Phase 25) requires the deletion flow to explicitly run the same re-key path as removal before dropping the user row, not rely on the cascade alone.
 

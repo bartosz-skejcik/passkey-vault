@@ -16,7 +16,7 @@ last_updated: 2026-07-31T11:46:48.811Z
 | id | phase | kind | file | line | description | status | reason | recorded_at | resolved_at |
 |----|-------|------|------|------|-------------|--------|--------|-------------|-------------|
 | 1 | 24 | deviation | crates/pv-server/src/routes/vault.rs |  | Pre-existing clippy::explicit_auto_deref warnings (18 sites, &mut *tx -> &mut tx) block whole-crate cargo clippy -p pv-server -- -D warnings; unrelated to Plan 24-02's own files, logged in phase deferred-items.md | open |  | 2026-07-31T10:20:38.248Z |  |
-| 2 | 24 | stub | web/src/components/settings/FamilyTab.tsx |  | Collection-scope invite ('Family + one folder') sourced from useFolders(); no client-side collections create/list/decrypt capability exists, so generating a folder-scoped invite fails via the existing invite.generateFailed error path (fails loud, never silently) until a future phase builds real collection authoring. | open |  | 2026-07-31T11:46:48.811Z |  |
+| 2 | 24 | stub | web/src/components/settings/FamilyTab.tsx |  | Collection-scope invite ('Family + one folder') is UNCONDITIONALLY DISABLED in the UI (CR-02 fix): personal folders (vault_items.folder_id) and Phase 22 collections (vault_items.collection_id) are distinct tables with unrelated id spaces, and no client-side collections create/list/decrypt capability exists anywhere yet. The option renders disabled with truthful not-yet-available copy rather than failing on submit. The SERVER half is complete and tested (create validates the collection triple; accept inserts a real collection_keys row, re-validates inviter authority, rolls back on conflict, fans out a real WS event). Phase 26 owns the collections UI that unblocks this, and inherits UI-SPEC backstops #4/#5/#6 (folder-picker zero-one-many, long-option truncation, selected-value truncation), which were dissolved here when CR-02 deleted their subject. | open |  | 2026-07-31T11:46:48.811Z |  |
 
 ````json
 [
@@ -38,7 +38,7 @@ last_updated: 2026-07-31T11:46:48.811Z
     "phase": "24",
     "file": "web/src/components/settings/FamilyTab.tsx",
     "line": null,
-    "description": "Collection-scope invite ('Family + one folder') sourced from useFolders(); no client-side collections create/list/decrypt capability exists, so generating a folder-scoped invite fails via the existing invite.generateFailed error path (fails loud, never silently) until a future phase builds real collection authoring.",
+    "description": "Collection-scope invite ('Family + one folder') is UNCONDITIONALLY DISABLED in the UI (CR-02 fix): personal folders (vault_items.folder_id) and Phase 22 collections (vault_items.collection_id) are distinct tables with unrelated id spaces, and no client-side collections create/list/decrypt capability exists anywhere yet. The option renders disabled with truthful not-yet-available copy rather than failing on submit. The SERVER half is complete and tested (create validates the collection triple; accept inserts a real collection_keys row, re-validates inviter authority, rolls back on conflict, fans out a real WS event). Phase 26 owns the collections UI that unblocks this, and inherits UI-SPEC backstops #4/#5/#6 (folder-picker zero-one-many, long-option truncation, selected-value truncation), which were dissolved here when CR-02 deleted their subject.",
     "status": "open",
     "reason": "",
     "recorded_at": "2026-07-31T11:46:48.811Z",

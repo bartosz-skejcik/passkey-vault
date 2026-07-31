@@ -66,7 +66,7 @@ Delivered: 20/20 requirements, 7/7 phases verified + Nyquist-compliant + threat-
 - [x] **Phase 21: Crypto Foundation — Asymmetric Identity & Collection Keys** - X25519 identity keypairs and sealed Collection Keys land in pv-core, with the crypto_box-vs-hand-rolled decision made and documented first (completed 2026-07-30)
 - [x] **Phase 22: Family & Collection Data Model — Server Authorization** - Additive schema plus a uniformly-enforced membership-authorization extractor for every family/collection/item endpoint (completed 2026-07-30)
 - [x] **Phase 23: Sync Model Extension — Shared-Data Fan-Out** - Per-collection revision counters and emit-time WS fan-out make shared edits visible live, proven with a standing multi-session test harness (completed 2026-07-31)
-- [ ] **Phase 24: Invitation Flow (No SMTP)** - Single-use, expiring invite links/codes join new or existing users to a family or collection without SMTP
+- [x] **Phase 24: Invitation Flow (No SMTP)** - Single-use, expiring invite links/codes join new or existing users to a family or collection without SMTP (completed 2026-07-31)
 - [ ] **Phase 25: Member Removal, Suspension & Re-key** - Suspend/remove a member with atomic, cost-bounded re-key and honest "already seen ≠ undone" UX
 - [ ] **Phase 26: Web App — Sharing UI & Family Management** - Share folders/items at three access levels, with honest hidden-password disclosure and visible sharing/fingerprint indicators
 - [ ] **Phase 27: Extension Integration — Shared Items** - Shared items autofill, TOTP, and passkey-provider identically to personal ones, plus the shared-passkey signature-counter spike
@@ -187,7 +187,7 @@ Plans:
   3. The same invite link correctly handles both a brand-new user (register, then join) and an already-logged-in existing user (join directly) — branching at redemption time on whether a session exists.
   4. An expired or already-consumed invite link is rejected, and firing two redemption attempts against the same link concurrently results in exactly one successful join.
 
-**Plans:** 8/8 plans executed
+**Plans:** 8/8 plans complete
 
 Plans:
 **Wave 1**
@@ -294,7 +294,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 21. Crypto Foundation — Asymmetric Identity & Collection Keys | v0.4 | 5/5 | Complete    | 2026-07-30 |
 | 22. Family & Collection Data Model — Server Authorization | v0.4 | 5/5 | Complete    | 2026-07-30 |
 | 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 6/6 | Complete    | 2026-07-31 |
-| 24. Invitation Flow (No SMTP) | v0.4 | 8/8 | In Progress|  |
+| 24. Invitation Flow (No SMTP) | v0.4 | 8/8 | Complete    | 2026-07-31 |
 | 25. Member Removal, Suspension & Re-key | v0.4 | 0/TBD | Not started | - |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 0/TBD | Not started | - |
 | 27. Extension Integration — Shared Items | v0.4 | 0/TBD | Not started | - |
