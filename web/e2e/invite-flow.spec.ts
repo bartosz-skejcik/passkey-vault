@@ -290,6 +290,11 @@ test.describe.serial("invite flow — real two-session UI proof (Plan 24-08)", (
     const differentAccountCta = b.page.getByTestId("invite-join-as-different-account");
     await differentAccountCta.waitFor({ state: "visible" });
 
+    // CR-01 regression guard: capture the OUTGOING account's bearer token
+    // before the escape so we can prove the server-side `sessions` row is
+    // actually revoked, not merely cleared from this browser's localStorage.
+    const tokenBeforeEscape = await tokenFor(b.page);
+
     const urlBeforeEscape = b.page.url();
     await differentAccountCta.click();
 
@@ -299,6 +304,17 @@ test.describe.serial("invite flow — real two-session UI proof (Plan 24-08)", (
     await expect(b.page.getByTestId("register-email")).toBeVisible();
     await expect(b.page.getByTestId("invite-current-account")).toHaveCount(0);
     expect(b.page.url()).toBe(urlBeforeEscape);
+
+    // CR-01: a raw request carrying the pre-escape token must now be
+    // rejected -- proving `handleJoinAsDifferentAccount` actually called the
+    // server-side `logout()` leg, not just cleared local storage.
+    const staleTokenRes = await b.context.request.get("http://localhost:8620/api/vault/items", {
+      headers: { Authorization: `Bearer ${tokenBeforeEscape}` },
+    });
+    expect(
+      staleTokenRes.status(),
+      "pre-escape session token must be revoked server-side after 'join as a different account'",
+    ).toBe(401);
 
     expect(b.dialogFired()).toBe(false);
     // Deliberately does NOT redeem `link` -- it must stay `pending` for the

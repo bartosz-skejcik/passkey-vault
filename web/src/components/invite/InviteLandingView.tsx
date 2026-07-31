@@ -23,7 +23,7 @@ import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { fetchInviteMetadataFlow, redeemInviteFlow } from "@/lib/invite/crypto";
 import type { InvitePublicMetadata } from "@/lib/invite/api";
-import { me } from "@/lib/auth/api";
+import { me, logout } from "@/lib/auth/api";
 import { getSessionToken, clearSessionToken, clearStoredEmail } from "@/lib/auth/session";
 import { getUnlockedUserKey, lockVault, useIsUnlocked, type WasmUserKey } from "@/lib/crypto";
 import RegisterForm from "@/components/auth/RegisterForm";
@@ -193,10 +193,21 @@ export default function InviteLandingView({
     void handleAuthedThenRedeem(uk);
   }
 
-  function handleJoinAsDifferentAccount() {
-    // Verbatim three-call logout sequence (Sidebar.tsx), deliberately
+  async function handleJoinAsDifferentAccount() {
+    // Full four-step logout sequence (Sidebar.tsx:121-136), deliberately
     // WITHOUT window.location.reload() -- this view must stay mounted with
     // its own `inviteSecret` (React-state-only, never persisted) intact.
+    // The `await logout()` leg is not optional: skipping it only clears
+    // this browser's local copy of the token while the server-side
+    // `sessions` row stays valid until natural expiry -- exactly the
+    // shared-family-computer residual-session risk this escape hatch
+    // exists to close (CR-01).
+    try {
+      await logout();
+    } catch {
+      // Best-effort — clear local state regardless of server-side outcome
+      // (e.g. the session was already expired server-side).
+    }
     clearSessionToken();
     clearStoredEmail();
     lockVault();
@@ -378,7 +389,7 @@ export default function InviteLandingView({
                   type="button"
                   className="btn btn-ghost btn-sm relative z-[60]"
                   disabled={viewState === "joining"}
-                  onClick={handleJoinAsDifferentAccount}
+                  onClick={() => void handleJoinAsDifferentAccount()}
                   data-testid="invite-join-as-different-account"
                 >
                   {t("invite.joinAsDifferentAccount")}
