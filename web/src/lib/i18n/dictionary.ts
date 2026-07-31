@@ -869,6 +869,15 @@ export const DICTIONARY = {
     pl: "Nie udało się wygenerować linku. Spróbuj ponownie.",
     en: "Couldn't generate the link. Try again.",
   },
+  // Added for WR-09 (24-REVIEW.md): POST /api/invitations is owner-only, so
+  // a 404 on generate means the caller's ownership changed since mount
+  // (WR-02 already hides the form from non-owners in the common case) --
+  // this is a truthful, distinct message, never "Try again" for something
+  // retrying cannot fix.
+  "invite.generateNotOwner": {
+    pl: "Tylko właściciel/właścicielka rodziny może tworzyć zaproszenia.",
+    en: "Only the family owner can create invites.",
+  },
   // Added by Plan 24-07 Task 2 (Rule 2 auto-fix): a revoke failure needs its
   // own non-silent inline error, distinct from invite.generateFailed (a
   // revoke failing is a different cause than a generate failing, and

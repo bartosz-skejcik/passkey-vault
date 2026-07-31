@@ -182,10 +182,26 @@ export default function FamilyTab() {
       const scope: InviteScope = { kind: "family" };
       const result = await generateInviteLink(scope, expiry, uk);
       setInvite({ id: extractInviteId(result.url), url: result.url, expiresAt: result.expiresAt });
-    } catch {
-      // Never resets scope/expiry — the user's already-entered selections
-      // stay exactly as they left them (E5 backstop).
-      setGenerateError(t("invite.generateFailed"));
+    } catch (err) {
+      // WR-09 (24-REVIEW.md): a bare `catch {}` here previously destroyed
+      // every diagnostic -- a 404 from a since-revoked owner, a WASM init
+      // failure, and a network drop were all indistinguishable to the user
+      // AND to anyone triaging a bug report. Log for triage (dev-only, never
+      // production console noise), and distinguish the one case with a
+      // truthful, actionable message: POST /api/invitations is owner-only
+      // (WR-02), so a 404 here means the caller's ownership changed between
+      // mount and submit (WR-02 already hides this form from non-owners on
+      // mount, so this is a defensive backstop, not the common case).
+      if (process.env.NODE_ENV !== "production") {
+        console.error("invite generation failed", err);
+      }
+      if (err instanceof ApiClientError && err.status === 404) {
+        setGenerateError(t("invite.generateNotOwner"));
+      } else {
+        // Never resets scope/expiry — the user's already-entered selections
+        // stay exactly as they left them (E5 backstop).
+        setGenerateError(t("invite.generateFailed"));
+      }
     } finally {
       setGenerating(false);
     }

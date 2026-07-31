@@ -206,9 +206,11 @@ describe("FamilyTab", () => {
       );
     });
 
-    it("invite-creation failure leaves the form's expiry selection intact and shows a non-silent inline error", async () => {
+    it("invite-creation failure leaves the form's expiry selection intact, logs for triage, and shows a non-silent inline error", async () => {
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const boom = new Error("boom");
       mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
-      mockGenerateInviteLink.mockRejectedValue(new Error("boom"));
+      mockGenerateInviteLink.mockRejectedValue(boom);
       render(<FamilyTab />);
 
       await waitFor(() => expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument());
@@ -218,6 +220,25 @@ describe("FamilyTab", () => {
       await waitFor(() => expect(screen.getByTestId("invite-generate-error")).toBeInTheDocument());
       expect(screen.getByTestId("invite-expiry-select")).toHaveValue("1h");
       expect(screen.queryByTestId("invite-generated-display")).not.toBeInTheDocument();
+      // WR-09 (24-REVIEW.md): the failure must no longer be a silent bare
+      // catch -- something must be logged for triage.
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.any(String), boom);
+      expect(screen.getByTestId("invite-generate-error")).toHaveTextContent("invite.generateFailed");
+      consoleErrorSpy.mockRestore();
+    });
+
+    it("WR-09: a 404 on generate (ownership changed since mount) shows a distinct, truthful message instead of a generic 'try again'", async () => {
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
+      mockGenerateInviteLink.mockRejectedValue(new ApiClientError(404, "not found"));
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId("invite-generate-cta"));
+
+      await waitFor(() => expect(screen.getByTestId("invite-generate-error")).toBeInTheDocument());
+      expect(screen.getByTestId("invite-generate-error")).toHaveTextContent("invite.generateNotOwner");
+      consoleErrorSpy.mockRestore();
     });
   });
 
