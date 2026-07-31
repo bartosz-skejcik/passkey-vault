@@ -17,7 +17,9 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use pv_core::identity::{seal, IdentitySecretKey};
+use pv_core::invite::derive_invite_id;
 use pv_core::items::CollectionKey;
+use pv_core::keys::random_bytes;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -130,8 +132,17 @@ async fn create_collection(app: &axum::Router, owner_token: &str) -> String {
 /// owner-only create/revoke surface — so a valid-SHAPED but otherwise
 /// arbitrary 32-byte `proof_hash` is enough; nothing here ever presents the
 /// matching `invite_proof`.
+///
+/// WR-05 (24-REVIEW.md): `POST /api/invitations` now validates `id` is
+/// exactly `derive_invite_id`'s own 43-char URL-safe-base64 shape, so this
+/// fixture derives a real (if unlinked-to-any-real-secret) id the same way a
+/// genuine client would, rather than an arbitrary `"sweep-invite-{uuid}"`
+/// string the handler would now reject with 400 before ever reaching the
+/// membership check this sweep exists to prove.
 async fn create_invitation(app: &axum::Router, owner_token: &str) -> String {
-    let invite_id = format!("sweep-invite-{}", uuid::Uuid::new_v4());
+    let secret_bytes: [u8; 32] =
+        random_bytes(32).try_into().expect("random_bytes(32) must return exactly 32 bytes");
+    let invite_id = derive_invite_id(&secret_bytes);
     let proof_hash = STANDARD.encode([0x11u8; 32]);
 
     let res = req(

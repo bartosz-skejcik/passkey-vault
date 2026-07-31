@@ -104,6 +104,23 @@ pub async fn create(
     family: FamilyMembership<RequireEdit>,
     Json(req): Json<CreateInvitationRequest>,
 ) -> Result<(StatusCode, Json<CreateInvitationResponse>), ApiError> {
+    // WR-05 (24-REVIEW.md): `req.id` is written straight into the PRIMARY KEY
+    // column with no shape validation, unlike every other client-supplied
+    // blob on this handler (`proof_hash`/`wrapped_collection_key` are both
+    // validated below). A real client's `id` is always
+    // `pv_core::invite::derive_invite_id`'s own output — URL_SAFE_NO_PAD
+    // base64 of a 32-byte HKDF digest, i.e. exactly 43 characters from the
+    // URL-safe alphabet. Reject anything else BEFORE any DB work, so an
+    // unbounded string can never reach the PK column or get echoed back in
+    // the response, and a same-id collision surfaces as this 400 rather
+    // than an opaque 500 further down (IN-07 is the residual, now-narrower
+    // gap: a collision between two VALID-shaped ids).
+    if req.id.len() != 43 || !req.id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return Err(ApiError::BadRequest(
+            "id must be a 43-character URL-safe base64 invite_id".into(),
+        ));
+    }
+
     // Never interpolate the client's own string into SQL — map to one of
     // exactly three fixed `datetime()` modifier literals via an explicit
     // non-wildcard `_ => Err` arm.

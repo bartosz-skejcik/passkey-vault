@@ -247,6 +247,56 @@ async fn invitation_create_and_fetch_metadata_with_correct_proof_returns_exactly
     assert!(obj.contains_key("inviter_fingerprint"));
 }
 
+/// WR-05 (24-REVIEW.md): `create`'s `id` is written straight into the
+/// PRIMARY KEY column with no shape validation before this fix, unlike every
+/// other client-supplied blob on this handler. Proves the boundary in both
+/// directions: a real `derive_invite_id`-shaped id (43-char URL-safe
+/// base64) still succeeds, and shapes a real client would never produce
+/// (wrong length, non-URL-safe characters) are rejected with 400 before any
+/// row is written.
+#[tokio::test]
+async fn invitation_create_rejects_a_malshaped_client_chosen_id() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-owner-1b@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    async fn attempt(app: &axum::Router, owner_token: &str, id: &str) -> StatusCode {
+        req(
+            app,
+            "POST",
+            "/api/invitations",
+            Some(owner_token),
+            Some(json!({
+                "id": id,
+                "collection_id": null,
+                "access_level": null,
+                "wrapped_collection_key": null,
+                "proof_hash": STANDARD.encode([0x11u8; 32]),
+                "expires_in": "24h",
+            })),
+        )
+        .await
+        .status()
+    }
+
+    // Too short.
+    assert_eq!(attempt(&app, &owner_token, "too-short").await, StatusCode::BAD_REQUEST);
+    // Right length, but contains a character outside the URL-safe alphabet.
+    let wrong_charset = format!("{}{}", "A".repeat(42), "+");
+    assert_eq!(wrong_charset.len(), 43);
+    assert_eq!(attempt(&app, &owner_token, &wrong_charset).await, StatusCode::BAD_REQUEST);
+    // Unbounded — the exact shape `membership_route_sweep.rs` used to seed
+    // before this fix (a real client never derives an id like this).
+    let unbounded = format!("sweep-invite-{}", uuid::Uuid::new_v4());
+    assert_eq!(attempt(&app, &owner_token, &unbounded).await, StatusCode::BAD_REQUEST);
+
+    // A real, correctly-shaped id must still succeed.
+    let secrets = derive_invite_secrets();
+    assert_eq!(attempt(&app, &owner_token, &secrets.invite_id).await, StatusCode::CREATED);
+}
+
 #[tokio::test]
 async fn invitation_fetch_metadata_wrong_proof_returns_same_404_as_unknown_id() {
     let pool = test_pool().await;
