@@ -12,6 +12,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use futures_util::StreamExt;
 use pv_core::identity::{seal, IdentitySecretKey};
 use pv_core::invite::{
     derive_invite_id, derive_invite_proof, hash_invite_proof, unwrap_collection_key_for_invite,
@@ -23,7 +24,7 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use tower::ServiceExt;
 
-use common::{register_and_login, register_second_family_member, test_app, test_pool};
+use common::{register_and_login, register_second_family_member, test_app, test_pool, test_server};
 
 async fn body_json(response: axum::response::Response) -> Value {
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -146,6 +147,52 @@ async fn create_collection_scoped_invitation(
     )
     .await;
     assert_eq!(res.status(), StatusCode::CREATED, "collection-scoped invitation creation fixture must succeed");
+}
+
+/// Publishes a placeholder identity keypair for `token`'s own account —
+/// needed for `collections::add_member`'s confused-deputy guard, which
+/// requires the recipient to already hold a `user_keypairs` row. Duplicated
+/// locally per this codebase's established per-test-binary helper
+/// duplication convention (mirrors `tests/sync_shared.rs`'s/`tests/collections.rs`'s
+/// own identically-shaped helpers).
+async fn publish_keypair(app: &axum::Router, token: &str, seed: u8) {
+    let res = req(
+        app,
+        "PUT",
+        "/api/identity/keypair",
+        Some(token),
+        Some(json!({
+            "public_key": STANDARD.encode([seed; 32]),
+            "wrapped_secret_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"BBBB\"}",
+        })),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK, "publishing an identity keypair must succeed");
+}
+
+/// Extracts a Text frame's JSON body off a real WebSocket stream — duplicated
+/// locally per `tests/sync_shared.rs`'s own established per-test-binary
+/// helper duplication precedent, rather than exporting from that file.
+async fn recv_ws_json(
+    stream: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+) -> Value {
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
+        .await
+        .expect("WS frame must arrive within 2s")
+        .expect("stream must not end")
+        .expect("frame must not be a protocol error");
+    let text = match msg {
+        tokio_tungstenite::tungstenite::Message::Text(text) => text.to_string(),
+        other => panic!("expected a Text frame, got {other:?}"),
+    };
+    serde_json::from_str(&text).expect("frame must be valid JSON")
+}
+
+/// The session token is standard base64 and must be percent-encoded before
+/// landing in a WS URL query string (mirrors `tests/sync.rs`'s/`tests/sync_shared.rs`'s
+/// identical helper).
+fn url_encode_token(token: &str) -> String {
+    token.replace('+', "%2B").replace('/', "%2F").replace('=', "%3D")
 }
 
 async fn create_family_only_invitation(app: &axum::Router, owner_token: &str, secrets: &InviteSecrets) {
@@ -937,4 +984,249 @@ async fn concurrent_redemption_exactly_one_wins() {
         "{zero_wins}/{TRIALS} trials had NEITHER concurrent accept succeed — a valid, otherwise-eligible invite \
          was wrongly rejected for both racers"
     );
+}
+
+/// A collection member C who is already sharing the collection (holding a
+/// `collection_keys` row before D ever redeems anything) receives a live
+/// `EntityType::Collection` WebSocket event the instant D's `accept` commits.
+/// Uses a REAL bound server (`common::test_server`) and a real
+/// `tokio_tungstenite` connection — `tower::ServiceExt::oneshot` cannot
+/// perform a WebSocket Upgrade handshake (mirrors `tests/sync_shared.rs`'s
+/// established real-server pattern).
+#[tokio::test]
+async fn accept_fans_out_collection_event_to_existing_member_over_websocket() {
+    let pool = test_pool().await;
+    let (app, port) = test_server(pool.clone()).await;
+
+    let owner_token = register_and_login(&app, "invite-fanout-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let (collection_id, collection_key) = create_collection(&app, &owner_token).await;
+
+    // C: an EXISTING collection member, already holding `collection_keys`
+    // access before D ever redeems anything.
+    let member_c_token =
+        register_second_family_member(&app, &owner_token, "invite-fanout-member-c@example.com").await;
+    let member_c_user_id = user_id_of(&app, &member_c_token).await;
+    publish_keypair(&app, &member_c_token, 9).await;
+    let member_c_sk = IdentitySecretKey::generate();
+    let member_c_sealed = seal(&member_c_sk.public_key(), collection_key.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        Some(&owner_token),
+        Some(json!({
+            "recipient_user_id": member_c_user_id,
+            "sealed_key": serde_json::to_string(&member_c_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    let url_c = format!("ws://127.0.0.1:{}/api/sync/ws?token={}", port, url_encode_token(&member_c_token));
+    let (mut ws_stream_c, _) =
+        tokio_tungstenite::connect_async(&url_c).await.expect("C's token must upgrade the socket");
+
+    // D: a brand-new user redeeming a collection-scoped invite for the SAME
+    // collection, presenting the correct `invite_proof` at both metadata
+    // fetch and accept.
+    let secrets = derive_invite_secrets();
+    create_collection_scoped_invitation(&app, &owner_token, &secrets, &collection_id, &collection_key, "read").await;
+
+    let invitee_d_token = register_and_login(&app, "invite-fanout-invitee-d@example.com").await;
+
+    let metadata_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}", secrets.invite_id),
+        None,
+        Some(json!({ "invite_proof": secrets.invite_proof_b64 })),
+    )
+    .await;
+    assert_eq!(metadata_res.status(), StatusCode::OK);
+    let metadata_body = body_json(metadata_res).await;
+    let wrapped_json = metadata_body["wrapped_collection_key"].as_str().unwrap().to_string();
+    let wrapped: WrappedKey = serde_json::from_str(&wrapped_json).unwrap();
+    let decrypted_collection_key =
+        unwrap_collection_key_for_invite(&secrets.secret, &secrets.invite_id, &wrapped).unwrap();
+
+    let invitee_d_sk = IdentitySecretKey::generate();
+    let sealed_for_self = seal(&invitee_d_sk.public_key(), &decrypted_collection_key).unwrap();
+    let sealed_for_self_json = serde_json::to_string(&sealed_for_self).unwrap();
+
+    let accept_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}/accept", secrets.invite_id),
+        Some(&invitee_d_token),
+        Some(json!({ "invite_proof": secrets.invite_proof_b64, "sealed_for_self": sealed_for_self_json })),
+    )
+    .await;
+    assert_eq!(accept_res.status(), StatusCode::OK);
+
+    let frame = recv_ws_json(&mut ws_stream_c).await;
+    assert_eq!(frame["entity_type"], "collection", "D's join must fan out as a Collection-typed event");
+    assert_eq!(frame["id"], collection_id, "the event's id must be the collection D joined, not something else");
+    assert_eq!(frame["change_type"], "update");
+}
+
+/// **T-24-09 (proof).** The pre-redemption metadata response for a
+/// collection-scoped invite carries exactly the five documented fields and
+/// NEVER the collection's own `enc_name` value anywhere in its JSON body —
+/// an adversarial substring assertion, not just a key-presence check.
+#[tokio::test]
+async fn invitation_metadata_collection_scoped_never_leaks_collection_enc_name() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-leak-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    // A distinctive enc_name — a literal test string standing in for
+    // ciphertext (mirrors `tests/membership_route_sweep.rs::create_collection`'s
+    // own "sweep-collection-name" convention).
+    const DISTINCTIVE_ENC_NAME: &str = "leak-test-distinctive-collection-name";
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let sealed = seal(&owner_sk.public_key(), ck.expose()).expect("seal must succeed for a valid public key");
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        Some(&owner_token),
+        Some(json!({ "enc_name": DISTINCTIVE_ENC_NAME, "sealed_key": serde_json::to_string(&sealed).unwrap() })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED, "collection creation fixture must succeed");
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let secrets = derive_invite_secrets();
+    create_collection_scoped_invitation(&app, &owner_token, &secrets, &collection_id, &ck, "read").await;
+
+    let metadata_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}", secrets.invite_id),
+        None,
+        Some(json!({ "invite_proof": secrets.invite_proof_b64 })),
+    )
+    .await;
+    assert_eq!(metadata_res.status(), StatusCode::OK);
+    let body = body_json(metadata_res).await;
+    let obj = body.as_object().expect("response body must be a JSON object");
+
+    let expected_keys: std::collections::HashSet<&str> =
+        ["inviter_email", "family_name", "inviter_fingerprint", "collection_id", "wrapped_collection_key"]
+            .into_iter()
+            .collect();
+    let actual_keys: std::collections::HashSet<&str> = obj.keys().map(String::as_str).collect();
+    assert_eq!(actual_keys, expected_keys, "response must contain exactly the five documented fields, no more");
+
+    let serialized = serde_json::to_string(&body).unwrap();
+    assert!(
+        !serialized.contains(DISTINCTIVE_ENC_NAME),
+        "the collection's own enc_name must never appear anywhere in the pre-redemption metadata response, got: \
+         {serialized}"
+    );
+}
+
+/// **Amendment 2 — the adversarial test that actually closes T-24-07.**
+/// `invite_id` alone (the correct id, but NO proof, or a WRONG-but-well-formed
+/// proof, or a malformed proof) must be rejected identically to a
+/// never-existed id on BOTH `fetch_metadata` and `accept`. An outright-missing
+/// `invite_proof` JSON field is deliberately NOT one of the three variants —
+/// it fails deserialization before the handler runs at all (axum's own
+/// generic rejection), a request-shape distinction this codebase already
+/// accepts everywhere `Json<T>` is used, not a new gap this test needs to
+/// cover.
+#[tokio::test]
+async fn invitation_id_alone_without_correct_proof_is_rejected_on_metadata_and_accept() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-possess-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let secrets = derive_invite_secrets();
+    create_family_only_invitation(&app, &owner_token, &secrets).await;
+
+    // `accept` always requires SOME session — a MISSING session is already
+    // covered by `invitation_accept_with_no_authorization_header_returns_401`
+    // and correctly returns 401, a different and legitimate distinction from
+    // the invite's own validity, not something this test needs to re-prove.
+    let caller_token = register_and_login(&app, "invite-possess-caller@example.com").await;
+
+    // Reference bodies: a request against a genuinely never-existed id.
+    let unknown_metadata_res = req(
+        &app,
+        "POST",
+        "/api/invitations/random-unknown-id",
+        None,
+        Some(json!({ "invite_proof": secrets.invite_proof_b64 })),
+    )
+    .await;
+    assert_eq!(unknown_metadata_res.status(), StatusCode::NOT_FOUND);
+    let unknown_metadata_body = body_json(unknown_metadata_res).await;
+
+    let unknown_accept_res = req(
+        &app,
+        "POST",
+        "/api/invitations/random-unknown-id/accept",
+        Some(&caller_token),
+        Some(json!({ "invite_proof": secrets.invite_proof_b64 })),
+    )
+    .await;
+    assert_eq!(unknown_accept_res.status(), StatusCode::NOT_FOUND);
+    let unknown_accept_body = body_json(unknown_accept_res).await;
+
+    let wrong_but_well_formed = STANDARD.encode(random_bytes(32));
+    let variants: [(&str, &str); 3] = [
+        ("empty", ""),
+        ("wrong-well-formed", wrong_but_well_formed.as_str()),
+        ("malformed", "not-valid-base64!!!"),
+    ];
+
+    for (name, proof) in variants {
+        let metadata_res = req(
+            &app,
+            "POST",
+            &format!("/api/invitations/{}", secrets.invite_id),
+            None,
+            Some(json!({ "invite_proof": proof })),
+        )
+        .await;
+        assert_eq!(metadata_res.status(), StatusCode::NOT_FOUND, "{name}: metadata fetch must be rejected");
+        let metadata_body = body_json(metadata_res).await;
+        assert_eq!(
+            metadata_body, unknown_metadata_body,
+            "{name}: metadata fetch against the REAL id with an incorrect proof must render the same body as a \
+             never-existed id"
+        );
+
+        let accept_res = req(
+            &app,
+            "POST",
+            &format!("/api/invitations/{}/accept", secrets.invite_id),
+            Some(&caller_token),
+            Some(json!({ "invite_proof": proof })),
+        )
+        .await;
+        assert_eq!(accept_res.status(), StatusCode::NOT_FOUND, "{name}: accept must be rejected");
+        let accept_body = body_json(accept_res).await;
+        assert_eq!(
+            accept_body, unknown_accept_body,
+            "{name}: accept against the REAL id with an incorrect proof must render the same body as a \
+             never-existed id"
+        );
+    }
+
+    // None of the six rejected attempts (3 variants x 2 endpoints) may have
+    // consumed the invite — it must still be exactly `pending` underneath.
+    let status: String = sqlx::query_scalar("SELECT status FROM invitations WHERE id = ?")
+        .bind(&secrets.invite_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "pending", "none of the six rejected possession-less attempts may burn the real invite");
 }

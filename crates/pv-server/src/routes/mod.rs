@@ -132,7 +132,12 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
         .chain(membership_routes())
         .fold(api, |r, (path, mr)| r.route(path, mr))
         .with_state(state)
-        .layer(cors);
+        .layer(cors)
+        // T-24-10: applied at the SAME point `cors` is — wrapping the
+        // COMPLETE router, not just the `/api/*` sub-chain — so a served
+        // `index.html`/asset from the static-file SPA fallback below also
+        // carries the header, not only `/api/*` responses.
+        .layer(axum::middleware::from_fn(referrer_policy_middleware));
 
     match static_dir.filter(|d| d.is_dir()) {
         Some(dir) => {
@@ -512,6 +517,26 @@ async fn healthz() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
+/// T-24-10 (24-CONTEXT.md's Amendment 2 companion): sets
+/// `Referrer-Policy: strict-origin-when-cross-origin` on EVERY response this
+/// server sends. `invite_id` is a public path segment
+/// (`/invite/{invite_id}`) — without this header a browser's default
+/// `Referer` behavior could leak it to a third-party origin an outbound
+/// link/asset load on the invite landing page reaches. Applied via
+/// `axum::middleware::from_fn` at the same point `cors` wraps the router in
+/// `router_with_cors` (see that function), so it covers the static-file SPA
+/// fallback too, not only `/api/*` responses.
+async fn referrer_policy_middleware(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(axum::http::header::REFERRER_POLICY, HeaderValue::from_static("strict-origin-when-cross-origin"));
+    response
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,6 +563,29 @@ mod tests {
             .headers()
             .get("access-control-allow-origin")
             .map(|v| v.to_str().unwrap().to_string())
+    }
+
+    // --- T-24-10: Referrer-Policy on every response ---------------------
+
+    /// Mirrors `probe_router`'s minimal-router idiom above, but layers
+    /// `referrer_policy_middleware` instead of a `CorsLayer` — a plain
+    /// `GET /healthz` response must carry the exact expected header value.
+    #[tokio::test]
+    async fn healthz_response_carries_referrer_policy_header() {
+        let app = Router::new()
+            .route("/healthz", get(healthz))
+            .layer(axum::middleware::from_fn(referrer_policy_middleware));
+        let request = Request::builder().uri("/healthz").body(Body::empty()).unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::REFERRER_POLICY)
+                .map(|v| v.to_str().unwrap().to_string()),
+            Some("strict-origin-when-cross-origin".to_string()),
+            "every response — including a bare /healthz probe — must carry Referrer-Policy"
+        );
     }
 
     #[tokio::test]
