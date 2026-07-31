@@ -5,15 +5,15 @@ milestone_name: Family & Sharing
 current_phase: 24
 current_phase_name: Invitation Flow (No SMTP)
 status: executing
-stopped_at: Completed 24-06-PLAN.md
-last_updated: "2026-07-31T11:23:07.459Z"
+stopped_at: Completed 24-07-PLAN.md
+last_updated: "2026-07-31T11:47:31.435Z"
 last_activity: 2026-07-31
 last_activity_desc: Plan 24-01 executed (tracer foundation for the phase; waves 2-5 depend on it)
 progress:
   total_phases: 7
   completed_phases: 3
   total_plans: 24
-  completed_plans: 22
+  completed_plans: 23
   percent: 43
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 ## Current Position
 
 Phase: 24 — Invitation Flow (No SMTP)
-Plan: 6 complete (of 8) — invitations migration + pv-core invite channel + OptionalSessionUser + shared membership-write helpers
+Plan: 7 complete (of 8) — invitations migration + pv-core invite channel + OptionalSessionUser + shared membership-write helpers
 Status: Ready to execute
 Last activity: 2026-07-31 — Plan 24-01 executed (tracer foundation for the phase; waves 2-5 depend on it)
 
@@ -92,6 +92,7 @@ Last activity: 2026-07-31 — Plan 24-01 executed (tracer foundation for the pha
 | Phase 24 P04 | 45min | 2 tasks | 2 files |
 | Phase 24 P05 | 40min | 3 tasks | 10 files |
 | Phase 24 P06 | 40min | 2 tasks | 4 files |
+| Phase 24 P07 | ~55min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -173,6 +174,8 @@ Recent decisions affecting current work:
 - [Phase ?]: web/package.json gained a typecheck script alias (Rule 3) — the plan's own verification command had no matching script
 - [Phase ?]: page.tsx's invite state carries a setter (unlike extUnlockNonce) so a successful join can hand control back to the normal authed/vault tree
 - [Phase ?]: selectCollectionId is accepted from redeemInviteFlow but not wired into a vault filter -- VaultFilter has no collection variant; documented as a tracked gap rather than a misleading fabricated filter
+- [Phase ?]: 24-07: Added web/src/lib/families/api.ts (createFamily/getFamilyMembers) — no client existed for either families.rs endpoint despite being live since Phase 22
+- [Phase ?]: 24-07: Collection-scope invite folder-picker sourced from useFolders() per plan, but generateInviteLink's collectionId requires a genuine Phase 22 collections resource nothing in the client can create/list/decrypt yet — documented as a stub that fails loud via invite.generateFailed, not silently
 
 ### Pending Todos
 
@@ -236,10 +239,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 24-06-PLAN.md
+**Stopped at:** Completed 24-07-PLAN.md
 **Resume file:** None
 
-Last session: 2026-07-31T11:23:07.447Z
+Last session: 2026-07-31T11:47:31.424Z
 items resolved by observed evidence rather than deferral: the Playwright half had already been
 executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
 commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run
