@@ -220,6 +220,21 @@ pub async fn fetch_metadata(
         return Err(ApiError::NotFound);
     }
 
+    // WR-04: reset the ceiling on a VERIFIED proof, so only *consecutive*
+    // failures accumulate toward it. Without this, the legitimate invitee
+    // (who has already proven possession here) could still be one guess
+    // from permanently killing their own still-pending invite, and — more
+    // importantly — anyone who merely learns `invite_id` (proxy log,
+    // Referer, shoulder-glance) could kill it with ten unauthenticated
+    // wrong-proof POSTs, since this endpoint needs no session at all.
+    // Amendment 1's ceiling mechanism itself is unchanged; this only closes
+    // the gap between Amendment 2's stated "useless on its own" property and
+    // the shipped one.
+    sqlx::query("UPDATE invitations SET failed_attempts = 0 WHERE id = ? AND status = 'pending'")
+        .bind(&id)
+        .execute(&state.db)
+        .await?;
+
     let inviter_public_key: Option<Vec<u8>> = row.try_get("inviter_public_key").map_err(|_| ApiError::Internal)?;
     let inviter_fingerprint = inviter_public_key.as_deref().map(families::fingerprint_hex);
 
@@ -290,6 +305,19 @@ pub async fn accept(
         tx.commit().await?;
         return Err(ApiError::NotFound);
     }
+
+    // WR-04: same reset as `fetch_metadata` — a verified proof here means
+    // only consecutive failures should count toward the ceiling. Applied
+    // even though `status` is about to flip to 'accepted' on the success
+    // path below, because a LATER authority check in this same handler
+    // (inviter no longer owner / lost collection edit) can still leave the
+    // row `pending` — in that case this reset is what keeps the invite
+    // alive for a legitimate retry instead of counting a correct proof
+    // against the same ceiling a wrong one would.
+    sqlx::query("UPDATE invitations SET failed_attempts = 0 WHERE id = ? AND status = 'pending'")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
 
     let family_id: String = row.try_get("family_id").map_err(|_| ApiError::Internal)?;
     let collection_id: Option<String> = row.try_get("collection_id").map_err(|_| ApiError::Internal)?;

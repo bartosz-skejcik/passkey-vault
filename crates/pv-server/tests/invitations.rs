@@ -596,6 +596,116 @@ async fn invitation_rate_limit_ceiling_blocks_further_attempts_even_with_correct
     assert_eq!(status, "pending");
 }
 
+/// WR-04 (24-REVIEW.md): a verified proof must reset `failed_attempts`, so
+/// only *consecutive* failures accumulate toward the ceiling — proving
+/// Amendment 2's stated property ("`invite_id` returns to being ... useless
+/// on its own") actually holds. Without the reset, an invite the legitimate
+/// invitee already fetched metadata for could still be ONE wrong guess away
+/// from permanent death; this test seeds the counter near the ceiling, shows
+/// a correct proof both succeeds AND resets it, then shows a single
+/// subsequent wrong guess does not re-approach the ceiling.
+#[tokio::test]
+async fn invitation_metadata_fetch_with_correct_proof_resets_failed_attempts_counter() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-owner-10@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let secrets = derive_invite_secrets();
+    create_family_only_invitation(&app, &owner_token, &secrets).await;
+
+    // Simulate 9 prior wrong guesses (one away from Amendment 1's ceiling of
+    // 10) — e.g. from an attacker who only ever learned `invite_id`.
+    sqlx::query("UPDATE invitations SET failed_attempts = 9 WHERE id = ?")
+        .bind(&secrets.invite_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let metadata_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}", secrets.invite_id),
+        None,
+        Some(json!({ "invite_proof": secrets.invite_proof_b64 })),
+    )
+    .await;
+    assert_eq!(metadata_res.status(), StatusCode::OK, "the correct proof must still succeed at 9/10");
+
+    let failed_attempts: i64 = sqlx::query_scalar("SELECT failed_attempts FROM invitations WHERE id = ?")
+        .bind(&secrets.invite_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(failed_attempts, 0, "a verified proof must reset the counter, not merely fail to increment it");
+
+    // A single SUBSEQUENT wrong guess must count as 1/10, not 10/10 — proving
+    // the reset actually took effect, not just that the column reads zero.
+    let wrong_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}", secrets.invite_id),
+        None,
+        Some(json!({ "invite_proof": STANDARD.encode([0u8; 32]) })),
+    )
+    .await;
+    assert_eq!(wrong_res.status(), StatusCode::NOT_FOUND);
+
+    let retry_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}", secrets.invite_id),
+        None,
+        Some(json!({ "invite_proof": secrets.invite_proof_b64 })),
+    )
+    .await;
+    assert_eq!(
+        retry_res.status(),
+        StatusCode::OK,
+        "one wrong guess after a reset must not resurrect the pre-reset ceiling proximity"
+    );
+}
+
+/// WR-04's twin on the `accept` entry point — same reset, verified via a
+/// real join rather than a direct-SQL peek (proving the reset does not
+/// interfere with the success path it shares a statement list with).
+#[tokio::test]
+async fn invitation_accept_with_correct_proof_resets_failed_attempts_counter_before_status_flips() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-owner-11@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let secrets = derive_invite_secrets();
+    create_family_only_invitation(&app, &owner_token, &secrets).await;
+
+    sqlx::query("UPDATE invitations SET failed_attempts = 9 WHERE id = ?")
+        .bind(&secrets.invite_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let invitee_token = register_and_login(&app, "invite-invitee-11@example.com").await;
+    let accept_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}/accept", secrets.invite_id),
+        Some(&invitee_token),
+        Some(json!({ "invite_proof": secrets.invite_proof_b64 })),
+    )
+    .await;
+    assert_eq!(accept_res.status(), StatusCode::OK, "the correct proof must still succeed at 9/10");
+
+    let failed_attempts: i64 = sqlx::query_scalar("SELECT failed_attempts FROM invitations WHERE id = ?")
+        .bind(&secrets.invite_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(failed_attempts, 0, "a verified accept proof must reset the counter too");
+}
+
 #[tokio::test]
 async fn invitation_accept_rejects_when_inviters_family_ownership_no_longer_holds() {
     let pool = test_pool().await;
