@@ -187,7 +187,32 @@ Plans:
   3. The same invite link correctly handles both a brand-new user (register, then join) and an already-logged-in existing user (join directly) — branching at redemption time on whether a session exists.
   4. An expired or already-consumed invite link is rejected, and firing two redemption attempts against the same link concurrently results in exactly one successful join.
 
-**Plans**: TBD
+**Plans:** 8 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 24-01-PLAN.md — Migration 0017 (invitations table) + pv-core invite-secret channel + OptionalSessionUser + families/collections membership-write helper extraction
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 24-02-PLAN.md — invitations.rs create/get_public/accept/revoke wired end-to-end (tracer)
+- [ ] 24-03-PLAN.md — pv-wasm WasmInviteChannel + generateInviteSecret bindings
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 24-04-PLAN.md — Genuinely concurrent single-use proof + real-WS fan-out proof + metadata-leak audit + Referrer-Policy
+- [ ] 24-05-PLAN.md — Web lib/crypto choke-point widening + lib/invite (api+crypto) + i18n dictionary keys
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 24-06-PLAN.md — Invitee landing view (InviteLandingView) + page.tsx mount resolution + RegisterForm submitLabel
+- [ ] 24-07-PLAN.md — Owner-side "Invite someone" (SettingsPanel Family tab) + link display/copy/revoke
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 24-08-PLAN.md — Live two-session Playwright invite-flow proof
+
 **UI hint**: yes
 
 ### Phase 25: Member Removal, Suspension & Re-key
@@ -269,7 +294,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 21. Crypto Foundation — Asymmetric Identity & Collection Keys | v0.4 | 5/5 | Complete    | 2026-07-30 |
 | 22. Family & Collection Data Model — Server Authorization | v0.4 | 5/5 | Complete    | 2026-07-30 |
 | 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 6/6 | Complete    | 2026-07-31 |
-| 24. Invitation Flow (No SMTP) | v0.4 | 0/TBD | Not started | - |
+| 24. Invitation Flow (No SMTP) | v0.4 | 0/8 | Not started | - |
 | 25. Member Removal, Suspension & Re-key | v0.4 | 0/TBD | Not started | - |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 0/TBD | Not started | - |
 | 27. Extension Integration — Shared Items | v0.4 | 0/TBD | Not started | - |
