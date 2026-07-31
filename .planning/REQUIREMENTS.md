@@ -46,9 +46,9 @@ Blocks every other category. Today's hierarchy is entirely symmetric and cannot 
 - [x] **FAM-01**: An instance owner can create a family (single family object, flat member list — no multi-org, no nested groups).
 - [x] **FAM-02**: The owner sees a member list showing who belongs to the family and when they joined.
 - [x] **FAM-03**: The owner can see, per member, exactly what that member has access to (which collections and individually-shared items).
-- [ ] **FAM-04**: The owner can generate a **single-use, expiring** invite link or code, delivered out-of-band by the owner (no SMTP — the 1-container constraint stands).
-- [ ] **FAM-05**: An invitee sees an explicit "Join [Family]?" confirmation before membership takes effect; the invite landing page leaks no vault metadata (no folder names, no item counts) before redemption.
-- [ ] **FAM-06**: One invite link works for both cases — a brand-new user registering, and an existing account joining a family — branching at redemption time on whether a session exists.
+- [x] **FAM-04**: The owner can generate a **single-use, expiring** invite link or code, delivered out-of-band by the owner (no SMTP — the 1-container constraint stands).
+- [x] **FAM-05**: An invitee sees an explicit "Join [Family]?" confirmation before membership takes effect; the invite landing page leaks no vault metadata (no folder names, no item counts) before redemption.
+- [x] **FAM-06**: One invite link works for both cases — a brand-new user registering, and an existing account joining a family — branching at redemption time on whether a session exists.
 - [ ] **FAM-07**: The owner can **suspend** a member: reversible, immediate, no re-key.
 - [ ] **FAM-08**: The owner can **permanently remove** a member: triggers re-key (KEY-06), gated behind a second confirmation.
 - [ ] **FAM-09**: A suspended or removed member's existing sessions lose access immediately — access is not carried by an already-issued session token.
@@ -138,9 +138,9 @@ Explicitly excluded to prevent scope creep.
 | FAM-01 | Phase 22 | Complete |
 | FAM-02 | Phase 22 | Complete |
 | FAM-03 | Phase 22 | Complete |
-| FAM-04 | Phase 24 | Pending |
-| FAM-05 | Phase 24 | Pending |
-| FAM-06 | Phase 24 | Pending |
+| FAM-04 | Phase 24 | Complete |
+| FAM-05 | Phase 24 | Complete |
+| FAM-06 | Phase 24 | Complete |
 | FAM-07 | Phase 25 | Pending |
 | FAM-08 | Phase 25 | Pending |
 | FAM-09 | Phase 25 | Pending |
