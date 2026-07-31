@@ -10,15 +10,16 @@
 // Logout does NOT live here — it stays in Sidebar.tsx's account dropdown,
 // alongside "Zablokuj teraz". This panel only hosts the 4 settings tabs.
 import { useState } from "react";
-import { Download, KeyRound, Monitor, ShieldCheck, Upload, X } from "lucide-react";
+import { Download, KeyRound, Monitor, ShieldCheck, Upload, Users, X } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import PasskeysTab from "./PasskeysTab";
 import SessionsTab from "./SessionsTab";
 import SecurityTab from "./SecurityTab";
+import FamilyTab from "./FamilyTab";
 import ImportWizard from "../vault/ImportWizard";
 import ExportDialog from "../vault/ExportDialog";
 
-type SettingsTab = "passkeys" | "sessions" | "security" | "importExport";
+type SettingsTab = "passkeys" | "sessions" | "security" | "importExport" | "family";
 
 export default function SettingsPanel({ onClose }: { onClose: () => void }) {
   const { t } = useLocale();
@@ -88,12 +89,23 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
         >
           {t("settings.tabImportExport")}
         </button>
+        <button
+          type="button"
+          role="tab"
+          data-testid="settings-tab-family"
+          className={tabClass(tab === "family")}
+          onClick={() => setTab("family")}
+        >
+          <Users size={16} aria-hidden="true" />
+          {t("settings.tabFamily")}
+        </button>
       </div>
 
       <div className="flex-1">
         {tab === "passkeys" ? <PasskeysTab /> : null}
         {tab === "sessions" ? <SessionsTab /> : null}
         {tab === "security" ? <SecurityTab /> : null}
+        {tab === "family" ? <FamilyTab /> : null}
         {tab === "importExport" ? (
           <div className="flex flex-col gap-6 py-4">
             <div className="flex flex-col gap-2">

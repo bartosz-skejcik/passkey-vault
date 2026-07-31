@@ -30,6 +30,17 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
   }),
 }));
 
+// Shallow-mocked for the same reason as ImportWizard/ExportDialog below:
+// FamilyTab statically imports lib/vault/store.ts (via useFolders()), which
+// calls subscribeLockState() at module-load time — replacing "@/lib/crypto"
+// wholesale (as this file's own mock above does, for lockVault) would break
+// that unrelated import chain the moment SettingsPanel statically imports
+// FamilyTab. FamilyTab has its own exhaustive test file
+// (FamilyTab.test.tsx); this file only needs to prove the tab wiring works.
+vi.mock("./FamilyTab", () => ({
+  default: () => <div data-testid="mock-family-tab" />,
+}));
+
 // Heavy child components -- shallow-mocked so this stays a fast, focused
 // unit test of the Settings tab wiring, not a re-test of either dialog's
 // own internals (both already have their own dedicated test files).
@@ -123,5 +134,18 @@ describe("SettingsPanel", () => {
     expect(screen.getByTestId("mock-export-dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("mock-export-dialog-close"));
     expect(screen.queryByTestId("mock-export-dialog")).not.toBeInTheDocument();
+  });
+
+  it("renders a fifth Family tab that switches to FamilyTab (FAM-04)", async () => {
+    render(<SettingsPanel onClose={vi.fn()} />);
+    await waitFor(() => expect(mockListPasskeys).toHaveBeenCalledTimes(1));
+
+    expect(screen.getByTestId("settings-tab-family")).toBeInTheDocument();
+    expect(screen.queryByTestId("mock-family-tab")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("settings-tab-family"));
+
+    expect(screen.getByTestId("mock-family-tab")).toBeInTheDocument();
+    expect(screen.queryByTestId("passkeys-add-cta")).not.toBeInTheDocument();
   });
 });

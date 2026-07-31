@@ -830,6 +830,17 @@ export const DICTIONARY = {
   "invite.generateCta": { pl: "Wygeneruj link", en: "Generate link" },
   "invite.expiresAt": { pl: "Wygasa {date}", en: "Expires {date}" },
   "invite.copyLinkAria": { pl: "Skopiuj link zaproszenia", en: "Copy invite link" },
+  // Added by Plan 24-07 (Rule 2/3 auto-fix): the E5 "invite-creation failure"
+  // backstop requires a non-silent inline error message, and no existing key
+  // covers it — `invite.failureMessage` is the REDEMPTION-side unified
+  // failure copy (deliberately silent about cause, per Amendment 1); reusing
+  // it here for an owner-side create failure would be a category error.
+  // Follows the established `error.itemSaveFailed`/`family.createFailed`
+  // "Nie udało się ___. Spróbuj ponownie." pattern.
+  "invite.generateFailed": {
+    pl: "Nie udało się wygenerować linku. Spróbuj ponownie.",
+    en: "Couldn't generate the link. Try again.",
+  },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {
