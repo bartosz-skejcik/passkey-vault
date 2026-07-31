@@ -782,3 +782,159 @@ async fn invitation_flow_never_writes_identity_verifications() {
         sqlx::query_scalar("SELECT COUNT(*) FROM identity_verifications").fetch_one(&pool).await.unwrap();
     assert_eq!(count, 0, "no invitations.rs handler may ever write to identity_verifications");
 }
+
+/// **T-24-05 (proof) — the phase's sharpest deliverable.** Two brand-new
+/// users race `accept` against the SAME single-use invite, both presenting
+/// the objectively correct `invite_proof`, released at the same instant via
+/// a shared `Barrier`. Mirrors `tests/collections.rs::revoke_access_last_key_holder_guard_is_atomic_under_concurrency`
+/// EXACTLY: a fresh `file:{uuid}?mode=memory&cache=shared` pool per trial
+/// (never `common::test_pool()`, which is `max_connections(1)` and would
+/// serialize the race on POOL ACQUISITION rather than the SQLite write lock,
+/// proving nothing), `tokio::spawn` for each racer gated on a shared
+/// `Arc<Barrier>`, `tokio::join!` used ONLY to await the two already-spawned
+/// `JoinHandle`s (never raw futures directly — that polls both cooperatively
+/// from one task and cannot force genuine interleaving), 20 trials.
+///
+/// Unlike the `collections.rs` analog, this test's multi-connection pool
+/// genuinely contends on `accept`'s `BEGIN IMMEDIATE` write lock, so it also
+/// sets the SAME 5-second `busy_timeout` `pv_server::build_pool` uses in
+/// production — without it, a lock-contention loser could surface as a raw
+/// `sqlx::Error` -> `ApiError::Internal` -> `500` instead of the
+/// application's own guarded `404` rejection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_redemption_exactly_one_wins() {
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::Barrier;
+
+    const TRIALS: usize = 20;
+    let mut double_wins = 0usize;
+    let mut zero_wins = 0usize;
+
+    for i in 0..TRIALS {
+        // Unique shared-cache name per trial (and per parallel `cargo test`
+        // run of this file) so trials never collide on the same in-memory
+        // database.
+        let db_name = format!("invite_race_{}", uuid::Uuid::new_v4().simple());
+        let db_url = format!("file:{db_name}?mode=memory&cache=shared");
+        let opts = SqliteConnectOptions::from_str(&db_url)
+            .expect("valid shared-cache in-memory sqlite URI")
+            .busy_timeout(Duration::from_secs(5));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(4)
+            // Shared-cache in-memory DBs are dropped once the last connection
+            // to them closes — keep at least one idle connection alive for
+            // the pool's whole lifetime.
+            .min_connections(1)
+            .connect_with(opts)
+            .await
+            .expect("connect shared-cache in-memory sqlite pool");
+        sqlx::migrate!("./migrations").run(&pool).await.expect("run migrations");
+
+        let app = test_app(pool.clone());
+
+        let owner_token = register_and_login(&app, &format!("invite-race-owner-{i}@example.com")).await;
+        create_family(&app, &owner_token).await;
+        let owner_user_id = user_id_of(&app, &owner_token).await;
+        let family_id: String = sqlx::query_scalar("SELECT family_id FROM family_members WHERE user_id = ?")
+            .bind(&owner_user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let secrets = derive_invite_secrets();
+        create_family_only_invitation(&app, &owner_token, &secrets).await;
+
+        let token_a = register_and_login(&app, &format!("invite-race-a-{i}@example.com")).await;
+        let token_b = register_and_login(&app, &format!("invite-race-b-{i}@example.com")).await;
+        let user_id_a = user_id_of(&app, &token_a).await;
+        let user_id_b = user_id_of(&app, &token_b).await;
+
+        let barrier = Arc::new(Barrier::new(2));
+        let app_a = app.clone();
+        let app_b = app.clone();
+        let invite_id_a = secrets.invite_id.clone();
+        let invite_id_b = secrets.invite_id.clone();
+        let proof_a = secrets.invite_proof_b64.clone();
+        let proof_b = secrets.invite_proof_b64.clone();
+        let barrier_a = barrier.clone();
+        let barrier_b = barrier.clone();
+
+        let task_a = tokio::spawn(async move {
+            barrier_a.wait().await;
+            req(
+                &app_a,
+                "POST",
+                &format!("/api/invitations/{invite_id_a}/accept"),
+                Some(&token_a),
+                Some(json!({ "invite_proof": proof_a })),
+            )
+            .await
+            .status()
+        });
+        let task_b = tokio::spawn(async move {
+            barrier_b.wait().await;
+            req(
+                &app_b,
+                "POST",
+                &format!("/api/invitations/{invite_id_b}/accept"),
+                Some(&token_b),
+                Some(json!({ "invite_proof": proof_b })),
+            )
+            .await
+            .status()
+        });
+
+        // Joins the two JoinHandles (already-spawned, already-running tasks)
+        // — NOT the rejected "raw-future tokio::join!" pattern.
+        let (status_a, status_b) = tokio::join!(task_a, task_b);
+        let status_a = status_a.expect("task a must not panic");
+        let status_b = status_b.expect("task b must not panic");
+
+        let wins = usize::from(status_a == StatusCode::OK) + usize::from(status_b == StatusCode::OK);
+        assert!(wins <= 1, "trial {i}: both racers must never succeed simultaneously — got {wins}");
+        if wins == 2 {
+            double_wins += 1;
+        }
+        if wins == 0 {
+            zero_wins += 1;
+        }
+
+        if wins == 1 {
+            let loser_status = if status_a == StatusCode::OK { status_b } else { status_a };
+            assert_ne!(
+                loser_status,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "trial {i}: lock contention must be absorbed by the busy_timeout, never surfaced as a 500"
+            );
+            assert_eq!(
+                loser_status,
+                StatusCode::NOT_FOUND,
+                "trial {i}: the losing accept must render the same unified failure every other rejected \
+                 redemption does"
+            );
+        }
+
+        let member_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM family_members WHERE family_id = ? AND user_id IN (?, ?)")
+                .bind(&family_id)
+                .bind(&user_id_a)
+                .bind(&user_id_b)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(member_count, 1, "trial {i}: exactly one racer must have joined");
+    }
+
+    assert_eq!(
+        double_wins, 0,
+        "{double_wins}/{TRIALS} trials had BOTH concurrent accepts succeed — the single-use guard is broken"
+    );
+    assert_eq!(
+        zero_wins, 0,
+        "{zero_wins}/{TRIALS} trials had NEITHER concurrent accept succeed — a valid, otherwise-eligible invite \
+         was wrongly rejected for both racers"
+    );
+}
