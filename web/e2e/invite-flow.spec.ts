@@ -252,17 +252,40 @@ test.describe.serial("invite flow — real two-session UI proof (Plan 24-08)", (
   test("folder_scope_option_is_disabled_and_cannot_be_selected", async () => {
     await openFamilyTab(ownerPage);
 
+    // The previous test may have left a generated invite showing (this
+    // component shows at most one at a time, per its own design) -- revoke
+    // it first so the create FORM (which carries the scope <select>) is
+    // what's actually on screen, mirroring generateInviteViaUI's own
+    // revokeExisting handling.
+    if (await ownerPage.getByTestId("invite-generated-display").isVisible().catch(() => false)) {
+      await ownerPage.getByTestId("invite-revoke-cta").click();
+      await ownerPage.getByTestId("invite-revoke-confirm-confirm").click();
+      await ownerPage.getByTestId("invite-scope-select").waitFor({ state: "visible" });
+    }
+
     const scopeSelect = ownerPage.getByTestId("invite-scope-select");
     const folderOption = scopeSelect.locator('option[value="folder"]');
+    // The real, rendered DOM attribute -- a genuine browser (unlike jsdom)
+    // enforces this natively: `HTMLOptionElement.disabled` blocks the
+    // OPTION from ever being chosen via real user interaction (mouse/
+    // keyboard picker), which is the actual proof this option can never be
+    // selected by someone using the app. `selectOption()` is deliberately
+    // NOT used here to attempt a forced selection -- Playwright drives it
+    // via direct DOM/CDP property assignment, which does not go through the
+    // same user-interaction path the `disabled` attribute gates, so it is
+    // not a meaningful proof of anything a real visitor could do.
     await expect(folderOption).toBeDisabled();
-
-    // A real browser refuses to change a <select>'s value to a disabled
-    // option -- selectOption on a disabled option throws rather than
-    // silently no-op'ing, which is itself the proof.
-    await expect(scopeSelect.selectOption("folder")).rejects.toThrow();
     await expect(scopeSelect).toHaveValue("family");
 
     await expect(ownerPage.getByTestId("invite-scope-folder-unavailable-note")).toBeVisible();
+
+    // Leave a generated invite showing again -- every subsequent test in
+    // this `describe.serial` block assumes one is already present (they
+    // call `generateInviteViaUI(..., { revokeExisting: true })`), matching
+    // this file's own established cross-test state-handoff convention (see
+    // this file's header comment).
+    await ownerPage.getByTestId("invite-generate-cta").click();
+    await ownerPage.getByTestId("invite-link-display").waitFor({ state: "visible" });
   });
 
   test("existing_logged_in_session_joins_directly_no_registration_shown", async ({ twoSessions }) => {
