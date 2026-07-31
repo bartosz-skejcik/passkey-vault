@@ -810,6 +810,14 @@ export const DICTIONARY = {
     pl: "Nie udało się utworzyć rodziny. Spróbuj ponownie.",
     en: "Couldn't create the family. Try again.",
   },
+  // Added for WR-02 (24-REVIEW.md): GET /api/families/members is readable by
+  // every member, but POST /api/invitations is owner-only -- a non-owner
+  // member must see a truthful read-only notice instead of an invite form
+  // that would always 404 on submit.
+  "family.memberViewNotice": {
+    pl: "Tylko właściciel/właścicielka rodziny może zapraszać nowych członków.",
+    en: "Only the family owner can invite new members.",
+  },
   "invite.sectionHeading": { pl: "Zaproś kogoś", en: "Invite someone" },
   "invite.scopeLabel": { pl: "Co udostępnić", en: "What to share" },
   "invite.scopeWholeFamily": { pl: "Cała rodzina", en: "Whole family" },

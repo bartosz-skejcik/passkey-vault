@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 const {
   mockGetFamilyMembers,
   mockCreateFamily,
+  mockMe,
   mockGetUnlockedUserKey,
   mockGenerateInviteLink,
   mockRevokeInvite,
@@ -13,6 +14,7 @@ const {
 } = vi.hoisted(() => ({
   mockGetFamilyMembers: vi.fn(),
   mockCreateFamily: vi.fn(),
+  mockMe: vi.fn(),
   mockGetUnlockedUserKey: vi.fn(),
   mockGenerateInviteLink: vi.fn(),
   mockRevokeInvite: vi.fn(),
@@ -25,6 +27,15 @@ vi.mock("@/lib/families/api", () => ({
   getFamilyMembers: mockGetFamilyMembers,
   createFamily: mockCreateFamily,
 }));
+
+// WR-02 (24-REVIEW.md): FamilyTab now calls `me()` to resolve the caller's
+// own identity for owner detection -- `ApiClientError` stays the REAL class
+// (imported directly below and used in `new ApiClientError(...)`
+// rejections), only `me` itself is mocked.
+vi.mock("@/lib/auth/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/auth/api")>();
+  return { ...actual, me: mockMe };
+});
 
 vi.mock("@/lib/crypto", () => ({
   getUnlockedUserKey: mockGetUnlockedUserKey,
@@ -62,10 +73,18 @@ import { ApiClientError } from "@/lib/auth/api";
 // to the mocked generateInviteLink, never calls a method on it itself.
 const uk = { free: vi.fn() } as unknown as ReturnType<typeof mockGetUnlockedUserKey>;
 
+// WR-02 fixtures: the owning caller, by default, so every pre-existing
+// owner-side test (invite creation etc.) keeps its original meaning without
+// individually re-mocking `me()`.
+const OWNER_ACCOUNT = { user_id: "u1", email: "owner@example.test", pw_wrapped_uk: "wrapped" };
+const OWNER_MEMBER = { user_id: "u1", email: "owner@example.test", role: "owner" };
+const NON_OWNER_MEMBER = { user_id: "u2", email: "member@example.test", role: "member" };
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetUnlockedUserKey.mockReturnValue(uk);
   mockReadClipboardSeconds.mockReturnValue(30);
+  mockMe.mockResolvedValue(OWNER_ACCOUNT);
 });
 
 describe("FamilyTab", () => {
@@ -83,7 +102,7 @@ describe("FamilyTab", () => {
     it("bootstrap 409 conflict re-fetches membership and advances to the invite form, not a dead end", async () => {
       mockGetFamilyMembers
         .mockResolvedValueOnce(null) // initial mount check
-        .mockResolvedValueOnce([{ user_id: "u1" }]); // re-fetch after 409
+        .mockResolvedValueOnce([OWNER_MEMBER]); // re-fetch after 409
       mockCreateFamily.mockRejectedValue(new ApiClientError(409, "family already exists"));
       render(<FamilyTab />);
 
@@ -110,7 +129,7 @@ describe("FamilyTab", () => {
     });
 
     it("normal mode defaults to whole-family scope + 7d expiry, immediately submittable", async () => {
-      mockGetFamilyMembers.mockResolvedValue([{ user_id: "u1" }]);
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
       render(<FamilyTab />);
 
       await waitFor(() => expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument());
@@ -127,7 +146,7 @@ describe("FamilyTab", () => {
     // picker" pair, which asserted the now-removed (and never truly
     // functional) folder-scope UI.
     it("CR-02 regression guard: the folder-scope option is always disabled, with coming-soon copy and an unavailable note", async () => {
-      mockGetFamilyMembers.mockResolvedValue([{ user_id: "u1" }]);
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
       render(<FamilyTab />);
 
       await waitFor(() => expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument());
@@ -147,7 +166,7 @@ describe("FamilyTab", () => {
     });
 
     it("CR-02 regression guard: generating an invite never sends a collection scope, even though the (disabled) option exists in the DOM", async () => {
-      mockGetFamilyMembers.mockResolvedValue([{ user_id: "u1" }]);
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
       mockGenerateInviteLink.mockResolvedValue({
         url: "https://vault.example/invite/inv-999#s3cr3t",
         expiresAt: "2026-08-07T12:00:00Z",
@@ -170,7 +189,7 @@ describe("FamilyTab", () => {
     });
 
     it("invite-creation failure leaves the form's expiry selection intact and shows a non-silent inline error", async () => {
-      mockGetFamilyMembers.mockResolvedValue([{ user_id: "u1" }]);
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
       mockGenerateInviteLink.mockRejectedValue(new Error("boom"));
       render(<FamilyTab />);
 
@@ -184,9 +203,45 @@ describe("FamilyTab", () => {
     });
   });
 
+  describe("WR-02: non-owner members never see the owner-only invite form", () => {
+    it("a non-owner member sees a read-only notice, never the invite form", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      mockMe.mockResolvedValue({
+        user_id: NON_OWNER_MEMBER.user_id,
+        email: NON_OWNER_MEMBER.email,
+        pw_wrapped_uk: "wrapped",
+      });
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-member-view")).toBeInTheDocument());
+      expect(screen.getByTestId("family-member-view-notice")).toHaveTextContent(
+        "family.memberViewNotice",
+      );
+      expect(screen.queryByTestId("invite-generate-cta")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("invite-scope-select")).not.toBeInTheDocument();
+    });
+
+    it("the family owner still sees the full invite form when other members are present", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument());
+      expect(screen.queryByTestId("family-member-view")).not.toBeInTheDocument();
+    });
+
+    it("a me() failure defaults to the safe non-owner view rather than risking a form that would 404", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
+      mockMe.mockRejectedValue(new Error("network error"));
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-member-view")).toBeInTheDocument());
+      expect(screen.queryByTestId("invite-generate-cta")).not.toBeInTheDocument();
+    });
+  });
+
   describe("generated-invite display — link, copy, expiry, revoke (Task 2)", () => {
     async function generateInvite() {
-      mockGetFamilyMembers.mockResolvedValue([{ user_id: "u1" }]);
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
       mockGenerateInviteLink.mockResolvedValue({
         url: "https://vault.example/invite/inv-123#s3cr3t",
         expiresAt: "2026-08-07T12:00:00Z",

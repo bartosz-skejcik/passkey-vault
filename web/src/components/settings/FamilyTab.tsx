@@ -12,7 +12,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { AlertTriangle, Copy, UserPlus } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
-import { ApiClientError } from "@/lib/auth/api";
+import { ApiClientError, me } from "@/lib/auth/api";
 import { getUnlockedUserKey } from "@/lib/crypto";
 import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
 import { showCopyToast } from "@/lib/vault/copyToast";
@@ -52,6 +52,11 @@ export default function FamilyTab() {
   const { t, locale } = useLocale();
 
   const [mode, setMode] = useState<Mode>("checking");
+  // WR-02 (24-REVIEW.md): GET /api/families/members is RequireRead, so every
+  // family member -- owner or not -- reaches "normal" mode. Only the owner
+  // can actually create an invite (POST /api/invitations is RequireEdit),
+  // so a plain member must never see the form that always 404s for them.
+  const [isOwner, setIsOwner] = useState(false);
 
   // Bootstrap (E7) state.
   const [familyName, setFamilyName] = useState("");
@@ -73,10 +78,30 @@ export default function FamilyTab() {
   const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
   const [revoking, setRevoking] = useState(false);
 
+  // WR-02: resolves membership AND the caller's own identity together, so
+  // "normal" mode never renders before we know whether this member is the
+  // owner. `me()` failing independently of `getFamilyMembers()` must not
+  // block the mode transition -- it just leaves `isOwner` at its safe
+  // default (false), which shows the read-only member view rather than a
+  // form that might 404. Shared by mount AND the 409-recovery path below --
+  // a re-fetch after "family already exists" needs the SAME ownership
+  // check, since the winning creator of the race is not necessarily this
+  // caller.
+  async function resolveOwnership(members: Awaited<ReturnType<typeof getFamilyMembers>>) {
+    const account = await me().catch(() => null);
+    setIsOwner(
+      members !== null &&
+        account !== null &&
+        members.some((m) => m.user_id === account.user_id && m.role === "owner"),
+    );
+  }
+
   useEffect(() => {
     let cancelled = false;
     getFamilyMembers()
-      .then((members) => {
+      .then(async (members) => {
+        if (cancelled) return;
+        await resolveOwnership(members);
         if (cancelled) return;
         setMode(members === null ? "bootstrap" : "normal");
       })
@@ -91,6 +116,7 @@ export default function FamilyTab() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleCreateFamily(e: FormEvent) {
@@ -99,14 +125,21 @@ export default function FamilyTab() {
     setBootstrapError(null);
     try {
       await createFamily(familyName.trim());
+      // The caller just created the (singleton) family, so `createFamily`
+      // itself is proof of ownership (families.rs makes the creator the
+      // owner) -- no need to round-trip through getFamilyMembers()/me().
+      setIsOwner(true);
       setMode("normal");
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 409) {
         // Another tab already created the singleton family — recover by
         // re-fetching membership and advancing straight to the invite form,
-        // never a dead end requiring a page reload (E7 backstop).
+        // never a dead end requiring a page reload (E7 backstop). The
+        // WINNER of that race is not necessarily this caller, so ownership
+        // must be re-resolved here too (WR-02), not assumed true.
         const members = await getFamilyMembers().catch(() => null);
         if (members !== null) {
+          await resolveOwnership(members);
           setMode("normal");
           return;
         }
@@ -324,6 +357,25 @@ export default function FamilyTab() {
             </div>
           </div>
         ) : null}
+      </div>
+    );
+  }
+
+  if (!isOwner) {
+    // WR-02 (24-REVIEW.md): GET /api/families/members is readable by every
+    // member, but POST /api/invitations is owner-only (RequireEdit) -- a
+    // non-owner who reached this "normal" mode must see a truthful
+    // read-only notice, never the invite form that would always 404 for
+    // them on submit.
+    return (
+      <div className="flex flex-col gap-2 py-4" data-testid="family-member-view">
+        <h3 className="flex items-center gap-2 text-[20px] font-bold leading-[1.2]">
+          <UserPlus size={20} aria-hidden="true" />
+          {t("invite.sectionHeading")}
+        </h3>
+        <p className="text-sm text-base-content/70" data-testid="family-member-view-notice">
+          {t("family.memberViewNotice")}
+        </p>
       </div>
     );
   }
