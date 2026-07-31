@@ -21,7 +21,7 @@ import { generateInviteLink, type InviteExpiry, type InviteScope } from "@/lib/i
 import { revokeInvite } from "@/lib/invite/api";
 import { toIsoUtc } from "@/lib/format/relativeTime";
 
-type Mode = "checking" | "bootstrap" | "normal";
+type Mode = "checking" | "bootstrap" | "normal" | "error";
 // CR-02 (24-REVIEW.md): "folder" is intentionally unreachable from the UI --
 // personal folders (`vault_items.folder_id`) have no id overlap with the
 // server's `collections` table, so a folder-scoped invite would 100%-fail
@@ -109,28 +109,42 @@ export default function FamilyTab() {
     );
   }
 
+  // WR-11 (24-REVIEW.md): shared by mount AND the manual retry button below.
+  // `getFamilyMembers()` ALREADY converts a genuine 404 ("no family yet")
+  // into a resolved `null` (see families/api.ts) -- so reaching THIS
+  // function's `catch` means something else entirely: a transient 500, a
+  // network drop, or an expired session. Collapsing that into "bootstrap"
+  // told a real, existing family's member "Set up your family" -- a heading
+  // asserting a state that is false -- and their eventual submit then 409'd
+  // into a recovery branch that only rescues them if the SECOND
+  // getFamilyMembers() call happens to succeed. `error` mode renders a
+  // truthful, recoverable retry affordance instead.
+  async function loadFamilyState(isCancelled: () => boolean) {
+    try {
+      const members = await getFamilyMembers();
+      if (isCancelled()) return;
+      await resolveOwnership(members);
+      if (isCancelled()) return;
+      setMode(members === null ? "bootstrap" : "normal");
+    } catch {
+      if (isCancelled()) return;
+      setMode("error");
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
-    getFamilyMembers()
-      .then(async (members) => {
-        if (cancelled) return;
-        await resolveOwnership(members);
-        if (cancelled) return;
-        setMode(members === null ? "bootstrap" : "normal");
-      })
-      .catch(() => {
-        if (cancelled) return;
-        // A transient fetch failure on mount must never leave the tab stuck
-        // on an internal "checking" state with no way forward — falling
-        // through to the bootstrap form (which itself surfaces a retry via
-        // family.createFailed) is the honest, recoverable choice.
-        setMode("bootstrap");
-      });
+    void loadFamilyState(() => cancelled);
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function handleRetryLoad() {
+    setMode("checking");
+    void loadFamilyState(() => false);
+  }
 
   async function handleCreateFamily(e: FormEvent) {
     e.preventDefault();
@@ -259,6 +273,27 @@ export default function FamilyTab() {
 
   if (mode === "checking") {
     return null;
+  }
+
+  if (mode === "error") {
+    // WR-11 (24-REVIEW.md): a truthful, recoverable state -- never the false
+    // "Set up your family" claim a transient failure previously collapsed
+    // into.
+    return (
+      <div className="flex flex-col gap-3 py-4" data-testid="family-load-error">
+        <p role="alert" className="text-sm text-error">
+          {t("family.loadError")}
+        </p>
+        <button
+          type="button"
+          data-testid="family-load-retry-cta"
+          className="btn btn-ghost self-start"
+          onClick={handleRetryLoad}
+        >
+          {t("family.loadRetryCta")}
+        </button>
+      </div>
+    );
   }
 
   if (mode === "bootstrap") {

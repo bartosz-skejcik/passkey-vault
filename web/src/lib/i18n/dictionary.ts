@@ -810,6 +810,15 @@ export const DICTIONARY = {
     pl: "Nie udało się utworzyć rodziny. Spróbuj ponownie.",
     en: "Couldn't create the family. Try again.",
   },
+  // Added for WR-11 (24-REVIEW.md): a transient membership-fetch failure
+  // (500/network/expired session) must render a truthful, recoverable
+  // state -- never the false "Set up your family" claim it previously
+  // collapsed into.
+  "family.loadError": {
+    pl: "Nie udało się wczytać danych rodziny.",
+    en: "Couldn't load your family data.",
+  },
+  "family.loadRetryCta": { pl: "Spróbuj ponownie", en: "Try again" },
   // Added for WR-02 (24-REVIEW.md): GET /api/families/members is readable by
   // every member, but POST /api/invitations is owner-only -- a non-owner
   // member must see a truthful read-only notice instead of an invite form

@@ -278,6 +278,29 @@ describe("FamilyTab", () => {
     });
   });
 
+  describe("WR-11: a transient mount failure renders a truthful, recoverable state", () => {
+    it("a genuine fetch failure (not a 404) renders family-load-error, never the false 'Set up your family' bootstrap claim", async () => {
+      mockGetFamilyMembers.mockRejectedValue(new Error("500 internal server error"));
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-load-error")).toBeInTheDocument());
+      expect(screen.queryByTestId("family-bootstrap")).not.toBeInTheDocument();
+    });
+
+    it("retrying after a transient failure succeeds once the underlying call recovers", async () => {
+      mockGetFamilyMembers
+        .mockRejectedValueOnce(new Error("500 internal server error"))
+        .mockResolvedValueOnce([OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-load-error")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId("family-load-retry-cta"));
+
+      await waitFor(() => expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument());
+      expect(screen.queryByTestId("family-load-error")).not.toBeInTheDocument();
+    });
+  });
+
   describe("generated-invite display — link, copy, expiry, revoke (Task 2)", () => {
     async function generateInvite() {
       mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
