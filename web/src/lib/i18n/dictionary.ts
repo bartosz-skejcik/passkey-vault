@@ -841,6 +841,14 @@ export const DICTIONARY = {
     pl: "Nie udało się wygenerować linku. Spróbuj ponownie.",
     en: "Couldn't generate the link. Try again.",
   },
+  // Added by Plan 24-07 Task 2 (Rule 2 auto-fix): a revoke failure needs its
+  // own non-silent inline error, distinct from invite.generateFailed (a
+  // revoke failing is a different cause than a generate failing, and
+  // reusing the generate copy would misdescribe what happened).
+  "invite.revokeFailed": {
+    pl: "Nie udało się unieważnić linku. Spróbuj ponownie.",
+    en: "Couldn't revoke the invite link. Try again.",
+  },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {

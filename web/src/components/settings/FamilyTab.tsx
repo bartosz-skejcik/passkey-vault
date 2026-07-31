@@ -1,6 +1,6 @@
 "use client";
 
-// Family tab (FAM-04, 24-UI-SPEC.md's Surface 4/E5/E7) — the owner-side
+// Family tab (FAM-04, 24-UI-SPEC.md's Surface 4/E5/E6/E7) — the owner-side
 // "Invite someone" affordance. Deliberately minimal per 24-CONTEXT.md's
 // locked scope boundary: exactly one invite shown at a time (the one just
 // created), no pending-invite list/history/audit view — Phase 26 owns the
@@ -8,18 +8,18 @@
 // family yet) is detected from GET /api/families/members returning 404 —
 // this component IS the empty state for that case (E7), not a separate
 // loading screen ahead of it.
-//
-// Task 1 (this commit): bootstrap + the scope/expiry invite-creation form.
-// Task 2 (next commit): the generated-invite display/copy/revoke — the
-// `invite !== null` branch below is a placeholder until then.
 import { useEffect, useState, type FormEvent } from "react";
-import { UserPlus } from "lucide-react";
+import { AlertTriangle, Copy, UserPlus } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
+import { interpolate } from "@/lib/i18n/dictionary";
 import { ApiClientError } from "@/lib/auth/api";
 import { getUnlockedUserKey } from "@/lib/crypto";
 import { useFolders } from "@/lib/vault/store";
+import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
+import { showCopyToast } from "@/lib/vault/copyToast";
 import { createFamily, getFamilyMembers } from "@/lib/families/api";
 import { generateInviteLink, type InviteExpiry, type InviteScope } from "@/lib/invite/crypto";
+import { revokeInvite } from "@/lib/invite/api";
 
 type Mode = "checking" | "bootstrap" | "normal";
 type ScopeChoice = "family" | "folder";
@@ -29,7 +29,7 @@ const DEFAULT_EXPIRY: InviteExpiry = "7d";
 /**
  * `generateInviteLink` deliberately returns only `{ url, expiresAt }` (see
  * lib/invite/crypto.ts) — the invite id is recoverable only by parsing it
- * back out of the URL's own path segment, which Task 2's `revokeInvite(id)`
+ * back out of the URL's own path segment, which is what `revokeInvite(id)`
  * needs.
  */
 function extractInviteId(url: string): string {
@@ -37,8 +37,14 @@ function extractInviteId(url: string): string {
   return match ? match[1] : "";
 }
 
+/** Browser-native formatting only (Intl via toLocaleString) — no new date
+ * library, per 24-UI-SPEC.md's Phase-Specific Notes §2. */
+function formatExpiryDate(iso: string, locale: "pl" | "en"): string {
+  return new Date(iso).toLocaleString(locale === "pl" ? "pl-PL" : "en-US");
+}
+
 export default function FamilyTab() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const folders = useFolders();
 
   const [mode, setMode] = useState<Mode>("checking");
@@ -55,9 +61,10 @@ export default function FamilyTab() {
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
 
-  // Generated-invite (E6, Task 2) state — set here so handleGenerate's
-  // success path is meaningful, rendered fully starting Task 2.
+  // Generated-invite display (E6) state.
   const [invite, setInvite] = useState<{ id: string; url: string; expiresAt: string } | null>(null);
+  const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
+  const [revoking, setRevoking] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,6 +142,41 @@ export default function FamilyTab() {
     }
   }
 
+  function handleCopy() {
+    if (invite === null) return;
+    const seconds = readClipboardSeconds();
+    // The invite link's fragment is a decryption-capable secret — same
+    // clipboard-clear discipline as every other copyable secret in this app
+    // (T-24-18), never a plain non-clearing copy. Field label is a plain
+    // string literal at the call site, matching GeneratorDialog.tsx's exact
+    // pairing — there is deliberately no toast.copied.field.invite key.
+    copyWithAutoClear(invite.url, seconds * 1000);
+    showCopyToast(locale === "pl" ? "Link zaproszenia" : "Invite link", seconds * 1000);
+  }
+
+  function resetInviteForm() {
+    setScopeChoice("family");
+    setSelectedFolderId("");
+    setExpiry(DEFAULT_EXPIRY);
+    setGenerateError(null);
+  }
+
+  async function handleRevokeConfirm() {
+    if (invite === null) return;
+    setRevoking(true);
+    try {
+      await revokeInvite(invite.id);
+      setInvite(null);
+      setShowRevokeConfirm(false);
+      resetInviteForm();
+    } catch {
+      setShowRevokeConfirm(false);
+      setGenerateError(t("invite.revokeFailed"));
+    } finally {
+      setRevoking(false);
+    }
+  }
+
   if (mode === "checking") {
     return null;
   }
@@ -185,10 +227,87 @@ export default function FamilyTab() {
   // mode === "normal"
 
   if (invite !== null) {
-    // Task 2 replaces this placeholder with the full link/copy/expiry/revoke
-    // display — kept minimal here so Task 1's own tests never assert on its
-    // contents.
-    return <div data-testid="invite-generated-display" />;
+    return (
+      <div className="flex flex-col gap-4 py-4" data-testid="invite-generated-display">
+        <h3 className="flex items-center gap-2 text-[20px] font-bold leading-[1.2]">
+          <UserPlus size={20} aria-hidden="true" />
+          {t("invite.sectionHeading")}
+        </h3>
+        <input
+          data-testid="invite-link-display"
+          readOnly
+          className="input input-bordered w-full font-mono"
+          value={invite.url}
+        />
+        <p className="text-sm">
+          {interpolate(t("invite.expiresAt"), { date: formatExpiryDate(invite.expiresAt, locale) })}
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            data-testid="invite-copy-cta"
+            aria-label={t("invite.copyLinkAria")}
+            className="btn btn-ghost btn-square"
+            onClick={handleCopy}
+          >
+            <Copy size={16} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            data-testid="invite-revoke-cta"
+            className="btn btn-ghost btn-error"
+            onClick={() => setShowRevokeConfirm(true)}
+          >
+            {t("invite.revokeConfirmConfirm")}
+          </button>
+        </div>
+        {generateError !== null ? (
+          <p role="alert" data-testid="invite-revoke-error" className="text-sm text-error">
+            {generateError}
+          </p>
+        ) : null}
+
+        {showRevokeConfirm ? (
+          <div
+            data-testid="invite-revoke-confirm-dialog"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-base-300/70 p-4"
+            onClick={() => setShowRevokeConfirm(false)}
+          >
+            <div
+              className="flex w-full max-w-[400px] flex-col gap-4 rounded-box border border-base-300 bg-base-100 p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3">
+                <AlertTriangle size={20} className="shrink-0 text-error" aria-hidden="true" />
+                <h2 className="text-[20px] font-bold leading-[1.2]">
+                  {t("invite.revokeConfirmTitle")}
+                </h2>
+              </div>
+              <p className="text-base">{t("invite.revokeConfirmBody")}</p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  data-testid="invite-revoke-confirm-cancel"
+                  className="btn btn-ghost"
+                  onClick={() => setShowRevokeConfirm(false)}
+                >
+                  {t("delete.cancel")}
+                </button>
+                <button
+                  type="button"
+                  data-testid="invite-revoke-confirm-confirm"
+                  className="btn btn-error"
+                  disabled={revoking}
+                  onClick={() => void handleRevokeConfirm()}
+                >
+                  {t("invite.revokeConfirmConfirm")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   const foldersEmpty = folders.length === 0;
