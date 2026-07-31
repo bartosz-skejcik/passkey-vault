@@ -12,6 +12,10 @@ import init, {
   WasmWrappingKey,
   WasmUserKey,
   WasmAuthMaterial,
+  WasmIdentityKey,
+  WasmIdentityPublicKey,
+  WasmCollectionKey,
+  WasmInviteChannel,
   wrapUserKey,
   unwrapUserKey,
   encryptItem,
@@ -20,6 +24,11 @@ import init, {
   randomSalt,
   deriveAuthMaterial as wasmDeriveAuthMaterial,
   totpNow as wasmTotpNow,
+  wrapIdentitySecretKey,
+  unwrapIdentitySecretKey,
+  sealCollectionKey,
+  unsealCollectionKey,
+  generateInviteSecret,
 } from "./wasm/pv_wasm.js";
 
 export type { WasmUserKey, WasmAuthMaterial };
@@ -31,6 +40,23 @@ export type { WasmUserKey, WasmAuthMaterial };
 // not the raw wasm bindings, is what crosses this boundary.
 export { WasmWrappingKey };
 export { wrapUserKey, unwrapUserKey, encryptItem, decryptItem, randomSalt, defaultKdfParamsJson };
+
+// Phase 21/24 identity/collection/invite bindings — pure re-exports, no
+// wrapper logic (this module stays a thin WASM bridge, mirroring pv-core's
+// own "no I/O" discipline extended to this layer). `WasmIdentityKey`/
+// `WasmIdentityPublicKey`/`WasmCollectionKey`/`WasmInviteChannel` are
+// exported as VALUES (not just types) — `lib/identity/ensure.ts` and
+// `lib/invite/crypto.ts` need to call their static constructors
+// (`.generate()`, `.fromBytes()`, `.fromSecret()`) from outside this module,
+// the same way `WasmWrappingKey`'s statics are already called above.
+export { WasmIdentityKey, WasmIdentityPublicKey, WasmCollectionKey, WasmInviteChannel };
+export {
+  wrapIdentitySecretKey,
+  unwrapIdentitySecretKey,
+  sealCollectionKey,
+  unsealCollectionKey,
+  generateInviteSecret,
+};
 
 export type TotpNowResult = { code: string; secondsRemaining: number };
 
