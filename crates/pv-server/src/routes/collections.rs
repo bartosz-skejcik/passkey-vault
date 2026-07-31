@@ -204,6 +204,42 @@ pub struct AddMemberRequest {
     pub access_level: String,
 }
 
+/// Shared `INSERT INTO collection_keys` helper (24-CONTEXT.md's locked
+/// constraint #6 / 24-RESEARCH.md Pattern 2) — the ONLY place this INSERT
+/// lives. `add_member`'s own HTTP handler and Plan 24-02's
+/// `invitations::accept` both call this instead of writing a second, parallel
+/// membership-write path (24-RESEARCH.md Pitfall 3). `impl SqliteExecutor<'_>`
+/// mirrors `families::insert_family_member`'s signature shape so either
+/// caller can pass `&state.db` or `&mut *tx` against the identical function.
+/// Returns `true` if a row was inserted, `false` on conflict — never errors
+/// on conflict itself, since the caller decides whether a conflict is an
+/// error. This helper does NOT re-implement `add_member`'s confused-deputy
+/// guard (family-membership + keypair-existence checks) — that guard does
+/// NOT apply verbatim to invite-accept, which is establishing the very
+/// membership row the guard would check for in the same transaction; it
+/// stays in the HTTP handler below, and invite-accept re-derives its own
+/// equivalent from the invite row's own fields (24-RESEARCH.md Pattern 2).
+pub(crate) async fn insert_collection_key(
+    executor: impl sqlx::SqliteExecutor<'_>,
+    collection_id: &str,
+    recipient_user_id: &str,
+    sealed_key: &str,
+    access_level: &str,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query(
+        "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) \
+         VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING recipient_user_id",
+    )
+    .bind(collection_id)
+    .bind(recipient_user_id)
+    .bind(sealed_key)
+    .bind(access_level)
+    .fetch_optional(executor)
+    .await?;
+
+    Ok(result.is_some())
+}
+
 /// `POST /api/vault/collections/{id}/members` — `RequireEdit`-gated (a
 /// `read`-only member cannot grant access to others). Implements
 /// RESEARCH.md's confused-deputy guard (T-22-11): `recipient_user_id` MUST
@@ -249,18 +285,16 @@ pub async fn add_member(
     // still happens strictly AFTER `tx.commit()` succeeds.
     let mut tx = state.db.begin().await?;
 
-    let inserted = sqlx::query(
-        "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) \
-         VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING recipient_user_id",
+    let inserted = insert_collection_key(
+        &mut *tx,
+        &membership.resource_id,
+        &req.recipient_user_id,
+        &req.sealed_key,
+        &req.access_level,
     )
-    .bind(&membership.resource_id)
-    .bind(&req.recipient_user_id)
-    .bind(&req.sealed_key)
-    .bind(&req.access_level)
-    .fetch_optional(&mut *tx)
     .await?;
 
-    if inserted.is_none() {
+    if !inserted {
         return Err(ApiError::Conflict("recipient already has access to this collection".into()));
     }
 

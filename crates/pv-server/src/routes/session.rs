@@ -24,6 +24,29 @@ impl FromRequestParts<AppState> for SessionUser {
     }
 }
 
+/// Additive sibling of `SessionUser` — an invite-redemption route (Plan
+/// 24-02) must behave identically whether the caller has a session or not,
+/// without weakening `SessionUser` itself (every other authenticated route
+/// depends on it staying strictly required). Wraps `SessionUser::
+/// from_request_parts`'s own call and converts its `Err` into `Ok(None)`;
+/// never modifies `SessionUser`. Safe to extract a second time on the same
+/// request: `SessionUser::from_request_parts` only reads `parts.headers` and
+/// queries the DB, it never consumes/mutates `parts` in a way a second
+/// extraction couldn't repeat (verified against axum 0.8.9 — RESEARCH.md
+/// Pattern 3).
+pub struct OptionalSessionUser(pub Option<SessionUser>);
+
+impl FromRequestParts<AppState> for OptionalSessionUser {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        match SessionUser::from_request_parts(parts, state).await {
+            Ok(session) => Ok(OptionalSessionUser(Some(session))),
+            Err(_) => Ok(OptionalSessionUser(None)),
+        }
+    }
+}
+
 /// Hash-then-lookup-with-expiry logic shared by `SessionUser`'s REST auth
 /// path and `sync::ws_handler`'s `?token=` query-param auth path (05-02-PLAN
 /// Task 1) — exactly one place session-token validation lives, so the WS

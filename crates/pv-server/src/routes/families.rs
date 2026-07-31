@@ -168,6 +168,35 @@ pub struct AddMemberRequest {
     pub user_id: String,
 }
 
+/// Shared `INSERT INTO family_members` helper (24-CONTEXT.md's locked
+/// constraint #6 / 24-RESEARCH.md Pattern 2) — the ONLY place this INSERT
+/// lives. `add_member`'s own HTTP handler and Plan 24-02's
+/// `invitations::accept` both call this instead of writing a second, parallel
+/// membership-write path (24-RESEARCH.md Pitfall 3). `impl SqliteExecutor<'_>`
+/// (not a concrete `&SqlitePool`) lets `add_member` keep passing `&state.db`
+/// unchanged while `invitations::accept` — which needs this same insert
+/// inside its own `BEGIN IMMEDIATE` transaction — passes `&mut *tx` instead;
+/// both compile against the identical function. Returns `true` if a row was
+/// inserted, `false` on conflict — never errors on conflict itself, since the
+/// caller decides whether a conflict is an error.
+pub(crate) async fn insert_family_member(
+    executor: impl sqlx::SqliteExecutor<'_>,
+    family_id: &str,
+    user_id: &str,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query(
+        "INSERT INTO family_members (family_id, user_id, role) VALUES (?, ?, 'member') \
+         ON CONFLICT DO NOTHING \
+         RETURNING user_id",
+    )
+    .bind(family_id)
+    .bind(user_id)
+    .fetch_optional(executor)
+    .await?;
+
+    Ok(result.is_some())
+}
+
 /// `POST /api/families/members` — owner-only (`FamilyMembership<RequireEdit>`
 /// gates "owner only" per `resolve_family_role`'s role mapping). Direct
 /// owner-side add of an EXISTING registered user — no invite token, matching
@@ -185,19 +214,12 @@ pub async fn add_member(
         return Err(ApiError::NotFound);
     }
 
-    let result = sqlx::query(
-        "INSERT INTO family_members (family_id, user_id, role) VALUES (?, ?, 'member') \
-         ON CONFLICT DO NOTHING \
-         RETURNING user_id",
-    )
-    .bind(&membership.family_id)
-    .bind(&req.user_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let inserted = insert_family_member(&state.db, &membership.family_id, &req.user_id).await?;
 
-    match result {
-        Some(_) => Ok(StatusCode::CREATED),
-        None => Err(ApiError::Conflict("user is already a family member".into())),
+    if inserted {
+        Ok(StatusCode::CREATED)
+    } else {
+        Err(ApiError::Conflict("user is already a family member".into()))
     }
 }
 
