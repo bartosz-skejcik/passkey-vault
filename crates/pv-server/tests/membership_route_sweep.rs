@@ -15,6 +15,7 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
+use base64::{engine::general_purpose::STANDARD, Engine};
 use pv_core::identity::{seal, IdentitySecretKey};
 use pv_core::items::CollectionKey;
 use serde_json::{json, Value};
@@ -99,6 +100,36 @@ async fn create_collection(app: &axum::Router, owner_token: &str) -> String {
     body["id"].as_str().unwrap().to_string()
 }
 
+/// FAMILY-A's own pending invitation, seeded so `/api/invitations`/
+/// `/api/invitations/{id}` (Plan 24-02's `family_routes()` entries) have a
+/// real row to substitute a path against. This sweep never REDEEMS the
+/// invitation — it only proves an unrelated caller can't reach the
+/// owner-only create/revoke surface — so a valid-SHAPED but otherwise
+/// arbitrary 32-byte `proof_hash` is enough; nothing here ever presents the
+/// matching `invite_proof`.
+async fn create_invitation(app: &axum::Router, owner_token: &str) -> String {
+    let invite_id = format!("sweep-invite-{}", uuid::Uuid::new_v4());
+    let proof_hash = STANDARD.encode([0x11u8; 32]);
+
+    let res = req(
+        app,
+        "POST",
+        "/api/invitations",
+        owner_token,
+        Some(json!({
+            "id": invite_id,
+            "collection_id": null,
+            "access_level": null,
+            "wrapped_collection_key": null,
+            "proof_hash": proof_hash,
+            "expires_in": "24h",
+        })),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CREATED, "invitation creation fixture must succeed");
+    invite_id
+}
+
 /// FAMILY-A's personal (non-collection) item, owned by the owner — a real
 /// `vault_items` row a non-member can be tested against for the item-shaped
 /// `membership_routes()` entries.
@@ -127,6 +158,9 @@ struct TestIds {
     /// unrelated caller U before the handler body — which is what reads
     /// `{user_id}` — ever runs).
     some_user_id: String,
+    /// A real, pending FAMILY-A invitation id (Plan 24-02) — never redeemed
+    /// by this sweep.
+    invitation_id: String,
 }
 
 /// Explicit per-route id substitution — deliberately NOT a generic
@@ -159,6 +193,11 @@ fn substitute(path: &str, ids: &TestIds) -> String {
         "/api/vault/items/{id}/shares/{user_id}" => {
             format!("/api/vault/items/{}/shares/{}", ids.item_id, ids.some_user_id)
         }
+        // Plan 24-02: owner-only invite create (pathless, `family_routes()`)
+        // and owner-only invite revoke (path-`{id}`-based, added to
+        // `family_routes()` alongside its handler).
+        "/api/invitations" => path.to_string(),
+        "/api/invitations/{id}" => format!("/api/invitations/{}", ids.invitation_id),
         other => panic!(
             "membership_route_sweep: no id-substitution mapping registered for path {other:?} — \
              add one to substitute() in tests/membership_route_sweep.rs"
@@ -179,8 +218,9 @@ async fn membership_route_sweep_rejects_non_member_on_every_route() {
     let owner_user_id = user_id_of(&app, &owner_token).await;
     let collection_id = create_collection(&app, &owner_token).await;
     let item_id = create_item(&app, &owner_token).await;
+    let invitation_id = create_invitation(&app, &owner_token).await;
 
-    let ids = TestIds { collection_id, item_id, some_user_id: owner_user_id };
+    let ids = TestIds { collection_id, item_id, some_user_id: owner_user_id, invitation_id };
 
     // U: registered, logged in, belongs to NO family, has no keypair, no
     // access to anything FAMILY-A owns — the "authenticated-but-unrelated

@@ -31,6 +31,21 @@ pub fn hash_token(token: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// Re-hashes a client-submitted `invite_proof` at redemption time so it can
+/// be compared (via [`constant_time_eq`], never `==`) against the stored
+/// `invitations.proof_hash` column (24-CONTEXT.md Amendment 2). A DIFFERENT
+/// function from `pv_core::invite::hash_invite_proof` (Plan 24-01,
+/// client-side, used at CREATION time to compute the value this server
+/// stores) — this server-side twin exists so `invitations.rs` never has to
+/// import `pv_core::invite` at all, keeping the same "server has its own
+/// re-hash, never the client's derivation fn" separation `server_rehash`
+/// already establishes above for `auth_hash`.
+pub fn hash_invite_proof(invite_proof: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(invite_proof);
+    hasher.finalize().into()
+}
+
 /// Porównanie w stałym czasie dwóch buforów o stałej długości (wyjścia
 /// SHA-256). Ręcznie napisane (XOR-accumulate) zamiast dociągania cratea w
 /// stylu `subtle`: nowa zależność cargo tutaj wyzwoliłaby obowiązkowy
@@ -81,5 +96,14 @@ mod tests {
     #[test]
     fn constant_time_eq_rejects_mismatched_length() {
         assert!(!constant_time_eq(b"abc", b"abcd"));
+    }
+
+    #[test]
+    fn hash_invite_proof_is_deterministic_and_differs_for_different_inputs() {
+        let a = hash_invite_proof(b"proof-bytes-a");
+        let b = hash_invite_proof(b"proof-bytes-a");
+        let c = hash_invite_proof(b"proof-bytes-b");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
     }
 }

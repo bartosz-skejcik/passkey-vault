@@ -4,6 +4,7 @@ pub mod extension_passkeys;
 pub mod families;
 pub mod folders;
 pub mod identity;
+pub mod invitations;
 pub mod membership;
 pub mod passkeys;
 pub mod session;
@@ -103,7 +104,20 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
         // comparison scoped to the viewer's own row, not a resource the
         // viewer needs membership on (this plan's `key_links` note).
         .route("/api/identity/keypair", put(identity::upsert).get(identity::get))
-        .route("/api/identity/verify/{user_id}", post(identity::verify));
+        .route("/api/identity/verify/{user_id}", post(identity::verify))
+        // Plan 24-02 (Amendment 2): the pre-redemption metadata fetch and the
+        // redemption itself are BOTH literal `.route()` entries, never
+        // `family_routes()`/`membership_routes()` entries — neither is gated
+        // by `FamilyMembership<M>`/`Membership<R,M>` (the whole point of both
+        // is that they work with NO membership, and `accept` works with an
+        // OPTIONAL session via `OptionalSessionUser`, never `SessionUser`).
+        // `POST /api/invitations/{id}` (metadata) merges cleanly against
+        // `family_routes()`'s `DELETE /api/invitations/{id}` entry below —
+        // axum's `MethodRouter` folds per-path, per-method registrations
+        // rather than panicking, as long as the methods differ (verified
+        // against axum 0.8.9's `path_router.rs::route`).
+        .route("/api/invitations/{id}", post(invitations::fetch_metadata))
+        .route("/api/invitations/{id}/accept", post(invitations::accept));
 
     // family_routes() and membership_routes() are folded in via `.route()`
     // per entry (not a literal chain above) — this is the single source of
@@ -167,6 +181,12 @@ pub fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppStat
         // is the correct extractor, matching `POST /api/vault/collections`'s
         // own rationale above.
         ("/api/sync/shared", get(sync::pull_shared_revisions)),
+        // Plan 24-02 (FAM-04): invite creation is owner-only
+        // (`FamilyMembership<RequireEdit>`), pathless (creates a NEW row, no
+        // `{id}` segment to read) — same rationale as `POST /api/vault/collections`
+        // above. `DELETE /api/invitations/{id}` (revoke) is added by Task 2 of
+        // this same plan, alongside the handler it gates.
+        ("/api/invitations", post(invitations::create)),
     ]
 }
 
@@ -249,6 +269,8 @@ pub const LITERAL_ROUTES_NOT_MEMBERSHIP_GATED: &[&str] = &[
     "/api/families",
     "/api/identity/keypair",
     "/api/identity/verify/{user_id}",
+    "/api/invitations/{id}",
+    "/api/invitations/{id}/accept",
 ];
 
 /// Literal `.route(...)` paths registered outside `membership_routes()`/
@@ -717,7 +739,7 @@ mod tests {
         assert_eq!(membership_routes().len(), 10);
         // bump this literal AND extend tests/membership_route_sweep.rs's
         // per-route id substitution when adding a new family-gated route
-        assert_eq!(family_routes().len(), 4);
+        assert_eq!(family_routes().len(), 5);
     }
 
     // --- Plan 22-05: zero-knowledge boundary audit + literal-route allowlist audit ---
