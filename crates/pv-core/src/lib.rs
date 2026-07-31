@@ -22,6 +22,7 @@
 
 pub mod error;
 pub mod identity;
+pub mod invite;
 pub mod items;
 pub mod kdf;
 pub mod keys;
