@@ -2,42 +2,41 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Family & Sharing
-current_phase: 23
-current_phase_name: Sync Model Extension — Shared-Data Fan-Out
-status: executing
-last_updated: "2026-07-30T14:20:01.930Z"
-last_activity: 2026-07-30
-last_activity_desc: Phase 23 execution started
+current_phase: 24
+current_phase_name: Invitation Flow (No SMTP)
+status: planning
+last_updated: "2026-07-31T07:32:39.521Z"
+last_activity: 2026-07-31
+last_activity_desc: Phase 23 complete, transitioned to Phase 24
 progress:
   total_phases: 7
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 16
-  completed_plans: 10
-  percent: 29
+  completed_plans: 16
+  percent: 43
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-22)
+See: .planning/PROJECT.md (updated 2026-07-31)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 23 — Sync Model Extension — Shared-Data Fan-Out
+**Current focus:** Phase 24 — Invitation Flow (No SMTP)
 
 ## Current Position
 
-Phase: 23 (Sync Model Extension — Shared-Data Fan-Out) — EXECUTING
-Plan: 1 of 6
-Status: Executing Phase 23
-Last activity: 2026-07-30 — Phase 23 execution started
-standing web Playwright harness + live proofs + CI wiring)
+Phase: 24 — Invitation Flow (No SMTP)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-31 — Phase 23 complete (verification passed, threat-secure 17/17), transitioned to Phase 24
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 80 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
+- Total plans completed: 86 (all v0.1 — see milestones/v0.1-ROADMAP.md for per-phase breakdown)
 - Average duration: - min
 - Total execution time: 0 hours (v0.3)
 
@@ -60,6 +59,7 @@ standing web Playwright harness + live proofs + CI wiring)
 | 20 | 4 | - | - |
 | 21 | 5 | - | - |
 | 22 | 5 | - | - |
+| 23 | 6 | - | - |
 
 *Updated after each plan completion*
 **Per-Plan Metrics:**
@@ -173,7 +173,13 @@ None yet.
 - **RESOLVED 2026-07-17**: Quick task 260717-lnx's `headless: true` re-enable reproduced the historical `P12-SC1` headless hang (13-03-SUMMARY.md). Fix landed: `extension/playwright.config.ts` now splits into two projects — `chromium` (everything except Phase 12, headless) and `chromium-ceremony` (Phase 12 only, headed); `extension/e2e/fixtures.ts` picks the real `headless` flag from `workerInfo.project.name` (commit `b393f90`). A follow-up verification run then hit a SEPARATE issue — `P12-SC2` failed after 2 retries against a STALE `extension/.output/chrome-mv3` build (predating Task A's one-click-picker source change) — root-caused and fixed via a `pretest:e2e:chrome` npm script that rebuilds chrome before every e2e run (commit `ddc770f`). Whole `chromium-ceremony` project (5 SCs) now passes cleanly and repeatably (5 consecutive full-project runs, headed, zero flake); `npm test` stays 533/533 green. See `.planning/quick/260717-lnx-extension-ux-one-click-passkey-picker-no/260717-lnx-SUMMARY.md` and `.planning/phases/13-dual-browser-hardening/13-03-SUMMARY.md` for the original investigation.
 - web/.env.local's NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8620 breaks same-origin fetch() for any web/out build served/visited via http://localhost:8620 (this project's own documented convention) -- routed around this session via NEXT_PUBLIC_API_BASE_URL="" npm run build, not fixed in .env.local (out of scope, outside file-write permissions). Bartek should review/clean up this env var.
 - **RESOLVED 2026-07-20**: XBR-02 (Firefox response-direction Xray hole) closed. Plan 14-02 fixed `page-bridge-firefox.ts`'s `shapeCredential()` to re-materialize every response-direction binary field as a genuine MAIN-world ArrayBuffer, then discovered mid-verification that the original `instanceof ArrayBuffer: false` signal was itself a WebDriver/geckodriver `executeScript` measurement artifact (a genuine inline `<script>` RP fixture showed correct behavior on both pre-fix and post-fix builds) — the fix was kept anyway as harmless defense-in-depth. Plan 14-03 closed the loop with two permanent, artifact-free proofs: a deterministic jsdom regression test (`page-bridge-firefox.test.ts`) and an upgraded live-Firefox probe (`probe-request-xray.cjs`, now hard-gating every response-direction `*IsArrayBuffer` field via a genuinely inline fixture, never `driver.executeScript()`). Full gate suite green (vitest 674/674, tsc clean, both builds, mainworld-boundary audit PASS, run-core.cjs 17 PASS+1 OBSERVED, run-server-unlock.cjs 15 PASS/2 INFO, probe-request-xray.cjs all PASS, chromium-ceremony 5/5, cargo test --workspace 151 passed). Doc moved to `.planning/debug/resolved/firefox-request-xray-hole.md`; Bartek's own live github.com retest of the original request-direction fix remains open at his leisure (not claimed as done).
-- v0.4 research flags two genuinely open design decisions carried into the roadmap, not resolved by research: KEY-05 (`crypto_box` crate vs. hand-rolled X25519-ECDH — Phase 21 must decide and document before dependent code) and EXT-10 (shared-passkey WebAuthn signature-counter behavior — Phase 27 spike, zero product precedent exists anywhere).
+- **RESOLVED 2026-07-30 (KEY-05 half)**: v0.4 research flagged two genuinely open design decisions carried into the roadmap. KEY-05 landed in Phase 21 as required — `crypto_box` exact-pinned `=0.9.1` (features chacha20+alloc+rand_core), decision record committed *before* any dependent code, full rationale + the three rejected alternatives (hpke 0.14.0, rsa 0.9.10 with its open RUSTSEC-2023-0071, hand-assembled x25519-dalek) in PROJECT.md Key Decisions. Two constraints written down rather than discovered later: ChaChaBox rejects non-empty AAD (so scope-binding happens a layer lower, at item-AEAD), and `crypto_box::SecretKey` does not implement `zeroize::Zeroize` (its hand-written Drop zeroizes only the inner scalar, never the raw 32-byte array) — pv-core therefore keeps its own byte array with its own Zeroize/ZeroizeOnDrop. **Still open:** EXT-10 (shared-passkey WebAuthn signature-counter behavior — Phase 27 spike, zero product precedent exists anywhere).
+- **RESOLVED 2026-07-30 (R-20-03)**: the v0.3-era "repo has no remote, so the CI gate has never run on a real GitHub Actions runner" follow-up is closed. `origin` → github.com/bartosz-skejcik/passkey-vault; run 30584149151 is green across all 5 jobs, including Phase 23's new blocking `web-e2e` (`Running 3 tests using 1 worker` → `3 passed (2.3m)`). CI-vs-local parity is now observed, not asserted.
+- [Phase 23] Recorded, non-blocking debt carried forward (all three re-examined against the success criteria by both the verifier and the security auditor; none undermines an SC): **WR-02** — `vault.rs::move_item` resolves the event audience *before* the same-tx `item_shares` DELETE, so a just-stripped direct sharee gets one `EntityType::Item` frame carrying only an item id it already knew (no collection identity, no revision of the destination, no ciphertext, no actor); one-line fix documented in 23-REVIEW.md. **WR-07** — `revoke_access` moves no counter the revoked member can observe, so their *own authored* rows look stale locally until an unrelated bump; server-side authorization is unaffected (404 via `Collection::resolve_access`) — squarely **Phase 25** territory. **WR-01** — delete-on-move silently destroys the owner's direct shares with no signal; removes access rather than leaking it, so it is product/UX debt for human judgment.
+- [Phase 23] `/api/sync/shared` is fully implemented, authorized, tested and reachable but has **no client consumer** — `sync.ts` short-circuits the call because nothing supplies `onSharedRevisions`. This is CONTEXT.md's own design (signal 2, the per-recipient `vault_revision` bump, is what shipped clients poll; Collection Key unwrap is Phase 26/27 scope). **Phase 26/27 must wire the consumer** or the per-collection cheap-check stays server-side-only.
+- [Phase 23] **Phase 26 owes a live-browser proof it inherited, not one of its own**: SC 3's browser-level conflict-attribution assertion was deliberately removed from `web/e2e/shared-sync.spec.ts` because the fixture's DUMMY sealed key makes B's write necessarily undecryptable, which correctly trips the overwrite refusal *before* any 409 can occur — the assertion was unreachable by construction. Reaching it needs the client-side identity-keypair / Collection Key unwrap that lands in Phase 26. The obligation is written into the spec file itself, beside the deferred test.
+- [Phase 23] Process gap to enforce in Phases 24–27: **none of the six SUMMARY files populated its `## Threat Flags` section**, so the security auditor had to recover threat-adjacent findings from 23-REVIEW.md instead of the declared channel.
+- [Phase 23] Register correction worth not re-inheriting: T-23-16's authored rationale claimed the CI Chromium download was "the identical mechanism the extension job already runs today" — **factually wrong**; the `extension` job runs no Playwright step at all, and Phase 23 introduced the first Playwright run in this repo's CI. The threat is closed on stronger independent grounds (byte-identical lockfile integrity hashes across `web/` and `extension/`, plus `npm ci` before `npx playwright install` so the pinned local binary resolves).
 - v0.4 research flags an account-deletion re-key gap (ARCHITECTURE.md §4.3): today's `ON DELETE CASCADE` on `users` drops membership rows via FK but does not itself trigger a collection re-key — FAM-10 (Phase 25) requires the deletion flow to explicitly run the same re-key path as removal before dropping the user row, not rely on the cascade alone.
 
 ### Quick Tasks Completed
@@ -213,17 +219,22 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-Last session: 2026-07-30 — Phase 23 planned: 6 plans across 4 waves. Wave 1 (23-01 server fan-out
-core/tracer + 23-04 Playwright harness scaffold, parallel/independent) → Wave 2 (23-02 shared-pull
-read endpoints + 23-03 409 attribution/collection events, parallel, both depend on 23-01) → Wave 3
-(23-05 client sync engine + attribution UI, depends on 23-02/23-03) → Wave 4 (23-06 live Playwright
-proofs + CI wiring, depends on 23-04/23-05). decision-coverage-plan gate: 0 trackable D-NN decisions
-(CONTEXT.md is prose-form, same precedent as Phases 15/16/19) — resolved-by-checker-evidence at
-verify time. Next entry point: `/gsd-execute-phase 23`.
+Last session: 2026-07-31 — Phase 23 closed out and transitioned. Both `human_needed` verification
+items resolved by observed evidence rather than deferral: the Playwright half had already been
+executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
+commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run
+30584149151 — `web-e2e` fired on the `push` trigger, ran `Running 3 tests using 1 worker` →
+`3 passed (2.3m)`, and carries no `continue-on-error`, so it can genuinely redden the workflow.
+VERIFICATION promoted `human_needed` → `passed`; 23-UAT.md 2/2 passed. The outstanding `verify:post`
+security hook then ran (nyquist had already produced VALIDATION.md; ui-review skipped — no UI-SPEC):
+gsd-security-auditor returned SECURED, 17/17 threats closed, 0 open, all seven `high` threats traced
+to code and confirmed by executing the suites. 23-SECURITY.md written with 6 accepted risks whose
+premises were each re-verified against shipped code. Next entry point: `/gsd-discuss-phase 24`.
 
 ## Operator Next Steps
 
-- Run `/clear` for a fresh context window, then execute: `/gsd-execute-phase 23`
-- Two explicit open decisions land inside their own phases, not silently assumed: KEY-05 (`crypto_box` vs. hand-rolled X25519 sealed box, Phase 21) and EXT-10 (shared-passkey signature-counter spike, Phase 27)
-- Follow-up techniczny (carried from v0.3): dodaj git remote i zrób pierwszy push/PR, żeby CI gate przeszedł na realnym runnerze GitHub Actions (R-20-03)
-- Przy okazji: 2 debug-doc czekają na Twoją ludzką weryfikację (firefox-provider-corruption, signin-passkeyless-spin)
+- Autonomous run in progress — Phases 24 → 27, then milestone lifecycle (audit → complete → cleanup)
+- One explicit open decision still lands inside its own phase, not silently assumed: EXT-10 (shared-passkey signature-counter spike, Phase 27). KEY-05 closed in Phase 21
+- Phase 25 inherits two concrete obligations: the WR-07 unobservable-revocation gap, and the account-deletion re-key gap (today's `ON DELETE CASCADE` drops membership rows but does not itself trigger a collection re-key — FAM-10 needs the deletion flow to run the same re-key path as removal)
+- Phase 26 inherits Phase 23's deferred SC-3 live-browser conflict-attribution proof, plus wiring an actual consumer for `/api/sync/shared`
+- Nadal czekają na Twoją ludzką weryfikację: 2 debug-doc (firefox-provider-corruption, signin-passkeyless-spin)

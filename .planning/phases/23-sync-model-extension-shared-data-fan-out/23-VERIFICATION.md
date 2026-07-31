@@ -1,16 +1,16 @@
 ---
 phase: 23-sync-model-extension-shared-data-fan-out
 verified: 2026-07-30T21:04:17Z
-status: human_needed
+status: passed
 score: 5/5 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
-orchestrator_addendum: "2026-07-30 — the orchestrator EXECUTED the Playwright half this report left open (human_verification #1). First run: 2 passed, 1 FAILED. Root-caused, spec corrected, re-run: 3/3 passing. This changed one finding — SC 3's LIVE BROWSER proof is deferred to Phase 26; SC 3 itself remains verified at the server and client-unit layers. See '## Orchestrator addendum' below. Item #1 is resolved; item #2 (CI observation) still needs a push."
+orchestrator_addendum: "2026-07-30 — the orchestrator EXECUTED the Playwright half this report left open (human_verification #1). First run: 2 passed, 1 FAILED. Root-caused, spec corrected, re-run: 3/3 passing. This changed one finding — SC 3's LIVE BROWSER proof is deferred to Phase 26; SC 3 itself remains verified at the server and client-unit layers. See '## Orchestrator addendum' below. 2026-07-31 — item #2 (CI observation) also resolved: the closing commit was pushed and CI run 30584149151 shows web-e2e executing on the push trigger with '3 passed (2.3m)'. Status promoted human_needed -> passed."
 human_verification:
   - test: "Confirm the Playwright suite is genuinely blocking in CI by watching the next push: the `web-e2e` job in .github/workflows/ci.yml must run and must be able to fail the workflow."
     expected: "web-e2e runs on push/pull_request, has no continue-on-error and no manual gate, and a deliberate failure would redden the run."
     why_human: "Static inspection confirms no continue-on-error and no workflow_dispatch-only gate, but only an actual CI run proves the job executes on the intended triggers in this repo's runner environment. The suite itself is now confirmed green locally (3/3), so this is about trigger wiring, not test health."
-    status: "pending — requires a push"
+    status: "resolved — GitHub Actions run 30584149151 (event: push, commit 85bc866). web-e2e ran (21:37:53Z -> 21:43:19Z, conclusion success) and its log shows 'Running 3 tests using 1 worker' -> '3 passed (2.3m)'. No continue-on-error on job or step; triggers are push + pull_request. Trigger wiring proven on the real runner."
   - test: "RESOLVED by the orchestrator, recorded for audit: `cd web && npm run test:e2e`"
     expected: "3 passed"
     why_human: "Was open because the verifier did not execute the browser layer."
@@ -21,7 +21,7 @@ human_verification:
 
 **Phase Goal:** Shared collection data synchronizes correctly and securely to every current member's live session — the highest-integration-risk piece of the milestone, proven with a real multi-session harness stood up now, not deferred.
 **Verified:** 2026-07-30T21:04:17Z
-**Status:** human_needed
+**Status:** passed (promoted from `human_needed` on 2026-07-31 — both human-verification items resolved by observed evidence; see the two addenda at the end)
 **Re-verification:** No — initial verification
 
 ## What was actually executed by this verifier
@@ -258,3 +258,35 @@ A regression introduced by this phase's fix pass, caught by code review iteratio
 | `cd web && npx tsc --noEmit` | clean |
 | `cd web && npm run test:e2e` | **3/3 passed** |
 | `cd extension && npm test` / `tsc --noEmit` | 53 files, 693 tests passed / clean (cross-package regression check for the shared `packages/pv-ui` type change) |
+
+---
+
+## Orchestrator addendum 2 — the CI observation, resolved
+
+**2026-07-31.** Human verification item #2 asked for something static inspection could not
+give: proof that `web-e2e` actually *fires* on this repo's real runner, on the intended
+triggers, and is capable of reddening the workflow. That proof now exists.
+
+The commit that closed this phase (`85bc866`, "test(23): persist human verification items as
+UAT") was pushed to `origin/main` and triggered **GitHub Actions run 30584149151**
+(2026-07-30T21:37:51Z, event `push`).
+
+| Check | Observed |
+| ----- | -------- |
+| Job present in the run, not skipped | `web-e2e` — started 21:37:53Z, completed 21:43:19Z, conclusion **success** (5m26s, against the 1m29s whole-workflow runs that predate this job) |
+| Suite genuinely executed, not a no-op | log: `> playwright test` → `Running 3 tests using 1 worker` → **`3 passed (2.3m)`** |
+| Triggers | `.github/workflows/ci.yml` `on:` is `push` + `pull_request`; no `workflow_dispatch`-only gate |
+| Blocking | no `continue-on-error` on the `web-e2e` job or on its `Test (Playwright e2e)` step — a non-zero `npm run test:e2e` propagates to the job conclusion and fails the workflow |
+
+Two GitHub-side cache warnings appear in the log (`Failed to restore: Cache service responded
+with 400`; `Failed to save: ... services aren't available right now`). These are cache-service
+flakiness, not test or wiring problems — they cost wall-clock by forcing a cold
+`cargo build --release -p pv-server` (which is precisely what `webServer.timeout: 600_000` was
+sized for) and did not touch the result.
+
+This also means the Playwright suite's green-ness has now been observed **twice, on two
+different machines** — locally by the orchestrator (addendum 1) and on a clean CI runner.
+
+**Both human-verification items are resolved. Phase 23 status: `passed`.**
+
+_Resolved: 2026-07-31 — Claude (gsd-autonomous orchestrator)_

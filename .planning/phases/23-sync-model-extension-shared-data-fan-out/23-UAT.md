@@ -1,35 +1,50 @@
 ---
-status: testing
+status: passed
 phase: 23-sync-model-extension-shared-data-fan-out
 source: [23-VERIFICATION.md]
 started: 2026-07-30
-updated: 2026-07-30
+updated: 2026-07-31
 ---
 
 ## Current Test
 
-number: 1
-name: Confirm the `web-e2e` Playwright job is genuinely blocking in CI
-expected: |
-  On the next push, `.github/workflows/ci.yml`'s `web-e2e` job runs on the
-  push/pull_request trigger, has no `continue-on-error` and no manual gate,
-  and is capable of failing the workflow.
-awaiting: user response
+number: —
+name: —
+expected: —
+awaiting: nothing — all items resolved
 
 ## Tests
 
 ### 1. `web-e2e` is genuinely blocking in CI
 expected: web-e2e runs on push/pull_request, no continue-on-error, no workflow_dispatch-only gate; a deliberate failure would redden the run.
-result: [pending]
+result: PASSED — observed on GitHub Actions run 30584149151
 note: |
-  Static inspection already confirms no `continue-on-error` and no manual-only
-  gate, and the suite itself is confirmed green locally (3/3). This item is
-  about TRIGGER WIRING in this repo's runner environment, not test health —
-  only an actual CI run can prove it. It requires a push.
+  Resolved by direct observation of a real run, not by static inspection.
 
-  This is the first Playwright suite ever wired into this repo's CI (the
-  extension's own 21-SC suite has never run there), which is why observing
-  the first real run matters.
+  The commit that closed Phase 23 (`85bc866` — "test(23): persist human
+  verification items as UAT") was pushed to `origin/main` and triggered CI run
+  **30584149151** (2026-07-30T21:37:51Z, event: `push`). Evidence pulled from
+  the run itself:
+
+  - `web-e2e` appears in the run's job list — it was NOT skipped:
+    `started 21:37:53Z / completed 21:43:19Z / conclusion: success` (5m26s,
+    versus the 1m29s whole-workflow runs that predate this job).
+  - Its log shows the suite genuinely executing on the runner, not a no-op:
+    `> playwright test` → `Running 3 tests using 1 worker` → `3 passed (2.3m)`.
+  - `.github/workflows/ci.yml` triggers are `push` + `pull_request` (no
+    `workflow_dispatch`-only gate), and the `web-e2e` job carries no
+    `continue-on-error` on the job or on its `Test (Playwright e2e)` step — so
+    a non-zero `npm run test:e2e` propagates to the job conclusion and reddens
+    the workflow.
+
+  Trigger wiring is therefore proven in this repo's actual runner environment,
+  which is exactly what static inspection could not establish. This is also the
+  first Playwright suite ever to run in this repo's CI.
+
+  Two cache-service warnings appeared in the log (`Failed to restore: Cache
+  service responded with 400`, `Failed to save: ... services aren't available`)
+  — GitHub-side cache flakiness only. They cost wall-clock (cold
+  `cargo build --release`) and did not affect the test result.
 
 ## Resolved by the orchestrator (recorded for audit)
 
@@ -53,9 +68,9 @@ note: |
 ## Summary
 
 total: 2
-passed: 1
+passed: 2
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 
