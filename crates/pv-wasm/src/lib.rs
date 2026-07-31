@@ -12,11 +12,20 @@
 //! SANKCJONOWANY WYJĄTEK OD TEJ REGUŁY (CONTEXT.md D-02):
 //! `exportUserKeyForSession`/`importUserKeyFromSession` celowo przepuszczają
 //! surowe bajty `WasmUserKey` jako `Vec<u8>`/`&mut [u8]` — jedyne miejsce w
-//! całym kodzie poza `randomSalt`, gdzie tak się dzieje. Powód: rozszerzenie
-//! (MV3 service worker) traci cały stan WASM (w tym nieprzezroczyste handle)
-//! przy idle-kill, więc musi umieć zserializować User Key do
-//! `chrome.storage.session` i odtworzyć go po przebudzeniu. Patrz komentarz
-//! przy `export_user_key_for_session` poniżej.
+//! całym kodzie poza `randomSalt`, gdzie tak się dzieje (do Fazy 24 — patrz
+//! niżej). Powód: rozszerzenie (MV3 service worker) traci cały stan WASM (w
+//! tym nieprzezroczyste handle) przy idle-kill, więc musi umieć
+//! zserializować User Key do `chrome.storage.session` i odtworzyć go po
+//! przebudzeniu. Patrz komentarz przy `export_user_key_for_session` poniżej.
+//!
+//! TRZECI SANKCJONOWANY WYJĄTEK (Faza 24, `generateInviteSecret`):
+//! zwraca surowe bajty `invite_secret` jako `Vec<u8>` — sekret musi
+//! dosłownie pojawić się we fragmencie URL, który właściciel kopiuje jako
+//! link zaproszenia, więc nie da się go zachować nieprzezroczystym i nadal
+//! wyprodukować udostępnialny link. Poza tym jednym miejscem, `invite_secret`
+//! wchodzi do WASM WYŁĄCZNIE przez `WasmInviteChannel::fromSecret`, które
+//! zeruje bufor wywołującego natychmiast po użyciu — patrz komentarz przy
+//! `WasmInviteChannel` poniżej.
 
 use pv_core::{
     items::{decrypt_item as core_decrypt_item, encrypt_item as core_encrypt_item, EncryptedItem},
@@ -605,6 +614,129 @@ pub fn random_salt(len: usize) -> Vec<u8> {
     random_bytes(len)
 }
 
+/// Generuje świeży 32-bajtowy `invite_secret` — TRZECI, wąsko zakresowany
+/// wyjątek od reguły "surowe bajty klucza nigdy nie przekraczają granicy
+/// WASM/JS" (obok `randomSalt`/`exportUserKeyForSession` — patrz komentarz na
+/// górze pliku). Uzasadnienie: `invite_secret` musi dosłownie pojawić się we
+/// fragmencie URL, który właściciel kopiuje jako link zaproszenia — nie ma
+/// sposobu, by zachować go nieprzezroczystym i nadal wyprodukować
+/// udostępnialny link.
+#[wasm_bindgen(js_name = generateInviteSecret)]
+pub fn generate_invite_secret() -> Vec<u8> {
+    random_bytes(KEY_LEN)
+}
+
+/// Nieprzezroczysty handle kanału zaproszenia (Faza 24, `pv_core::invite`) —
+/// trzyma WYŁĄCZNIE surowy `invite_secret`, NIE pre-derived wrap key ani
+/// proof, bo `wrap_collection_key_for_invite`/`unwrap_collection_key_for_invite`/
+/// `derive_invite_proof`/`hash_invite_proof` same wewnętrznie na nowo
+/// derywują to, czego potrzebują z sekretu + `invite_id` — zadaniem tego
+/// handle'a jest tylko przechowywać to, czego te funkcje potrzebują, nie
+/// reimplementować ich derywacji. `invite_id` jest jawnie NIE-sekretny
+/// (`#[zeroize(skip)]` — zerowanie `String` dorzuciłoby pytanie o
+/// dependency-feature, którego to zadanie nie musi rozstrzygać), a
+/// `invite_secret` nadal zeruje się przy Drop.
+///
+/// Żadna metoda tego structu nie zwraca `invite_secret`'s bajtów wprost —
+/// wyłącznie jego jednokierunkowe derywacje (`inviteId` jako string, metody
+/// proof jako bajty) przekraczają granicę.
+#[wasm_bindgen]
+#[derive(Zeroize, ZeroizeOnDrop)]
+pub struct WasmInviteChannel {
+    #[zeroize(skip)]
+    invite_id: String,
+    invite_secret: [u8; KEY_LEN],
+}
+
+#[wasm_bindgen]
+impl WasmInviteChannel {
+    /// Buduje kanał WYŁĄCZNIE z surowych bajtów sekretu (własnego wyjścia
+    /// `generateInviteSecret`, lub fragmentu linku zaproszenia) — NIGDY z
+    /// samego `invite_id`, bo `invite_id` nie pozwala odtworzyć ani wrap
+    /// key, ani proof. Waliduje długość, kopiuje bajty do lokalnej tablicy,
+    /// derywuje `invite_id`. `secret` (bufor wywołującego) jest zerowany na
+    /// końcu bez względu na wynik — tak samo jak `from_password`.
+    #[wasm_bindgen(js_name = fromSecret)]
+    pub fn from_secret(secret: &mut [u8]) -> Result<WasmInviteChannel, JsValue> {
+        if secret.len() != KEY_LEN {
+            secret.zeroize();
+            return Err(to_js_str_err("expected 32 bytes"));
+        }
+        let mut secret_array = [0u8; KEY_LEN];
+        secret_array.copy_from_slice(secret);
+        secret.zeroize();
+        let invite_id = pv_core::invite::derive_invite_id(&secret_array);
+        Ok(WasmInviteChannel {
+            invite_id,
+            invite_secret: secret_array,
+        })
+    }
+
+    /// Jedyne pole tego handle'a, które NIE jest sekretem — bezpieczne do
+    /// zwrócenia. Deterministyczne: ten sam `invite_secret` zawsze produkuje
+    /// ten sam `invite_id`, niezależnie od tego, na którym niezależnie
+    /// skonstruowanym handle'u zostanie wywołane.
+    #[wasm_bindgen(js_name = inviteId)]
+    pub fn invite_id(&self) -> String {
+        self.invite_id.clone()
+    }
+
+    /// Wartość, którą klient ZAPRASZAJĄCEGO wysyła jako `proof_hash` przy
+    /// `POST /api/invitations` (Plan 24-02) — `SHA-256(invite_proof)`.
+    /// Warstwa web sama base64-koduje ten `Vec<u8>` (Plan 24-05), zgodnie z
+    /// istniejącą konwencją `publicKeyBytes()`/`randomSalt`'a (surowe bajty
+    /// na wyjściu, kodowanie po stronie web). NIE mylić z
+    /// `proofForRedemption` — to jest HASH (dowód, że twórca będzie mógł go
+    /// później odtworzyć), nie surowa wartość.
+    #[wasm_bindgen(js_name = proofHashForCreation)]
+    pub fn proof_hash_for_creation(&self) -> Vec<u8> {
+        let proof = pv_core::invite::derive_invite_proof(&self.invite_secret);
+        pv_core::invite::hash_invite_proof(&proof).to_vec()
+    }
+
+    /// Surowa (NIE zahaszowana) wartość, którą klient ZAPROSZONEGO wysyła
+    /// jako `invite_proof` do OBU endpointów (metadata fetch i accept, Plan
+    /// 24-02). NIGDY nie mylić z `proofHashForCreation` — ta metoda zwraca
+    /// to, co faktycznie prezentuje odbiorca, nie jego hash.
+    #[wasm_bindgen(js_name = proofForRedemption)]
+    pub fn proof_for_redemption(&self) -> Vec<u8> {
+        pv_core::invite::derive_invite_proof(&self.invite_secret).to_vec()
+    }
+
+    /// Zawija `ck` pod `invite_wrap_key` derywowanym z tego kanału,
+    /// AAD-bound do `self.invite_id`. Deleguje do
+    /// `pv_core::invite::wrap_collection_key_for_invite` — żadna nowa
+    /// logika kryptograficzna w tym pliku.
+    #[wasm_bindgen(js_name = wrapCollectionKey)]
+    pub fn wrap_collection_key(&self, ck: &WasmCollectionKey) -> Result<String, JsValue> {
+        let blob = pv_core::invite::wrap_collection_key_for_invite(
+            &self.invite_secret,
+            &self.invite_id,
+            &ck.0,
+        )
+        .map_err(to_js_err)?;
+        serde_json::to_string(&blob).map_err(|e| to_js_str_err(&e.to_string()))
+    }
+
+    /// Odwrotność `wrapCollectionKey` — odtwarza `WrappedKey` z JSON-a,
+    /// deleguje do `pv_core::invite::unwrap_collection_key_for_invite`.
+    /// Na kanale zbudowanym z INNEGO sekretu (a więc z innym `invite_id`,
+    /// więc inną AAD) to zawodzi zamknięte — dokładnie własność, na której
+    /// polega odrzucenie T-24-11/T-24-23-adjacent podszywania.
+    #[wasm_bindgen(js_name = unwrapCollectionKey)]
+    pub fn unwrap_collection_key(&self, wrapped_json: &str) -> Result<WasmCollectionKey, JsValue> {
+        let blob: WrappedKey =
+            serde_json::from_str(wrapped_json).map_err(|e| to_js_str_err(&e.to_string()))?;
+        let collection_key = pv_core::invite::unwrap_collection_key_for_invite(
+            &self.invite_secret,
+            &self.invite_id,
+            &blob,
+        )
+        .map_err(to_js_err)?;
+        Ok(WasmCollectionKey(collection_key))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1050,5 +1182,117 @@ mod tests {
         let result =
             decrypt_item_for_collection(&ck, &item_json, "collection-2", "item-1", 1);
         assert!(result.is_err());
+    }
+}
+
+// NEW, SEPARATE module from `mod tests` above (NOT merged into it) — a
+// second `mod tests` with the same name in this file would be a compile
+// error, and this distinct module name is also what makes the filtered
+// `cargo test -p pv-wasm invite_channel_tests::` command actually match
+// something (full test paths become `pv_wasm::invite_channel_tests::...`).
+#[cfg(test)]
+mod invite_channel_tests {
+    use super::*;
+
+    #[test]
+    fn invite_id_is_deterministic_for_the_same_secret() {
+        let secret = random_bytes(KEY_LEN);
+        let mut secret_a = secret.clone();
+        let mut secret_b = secret.clone();
+        let channel_a =
+            WasmInviteChannel::from_secret(&mut secret_a).expect("from_secret should succeed");
+        let channel_b =
+            WasmInviteChannel::from_secret(&mut secret_b).expect("from_secret should succeed");
+
+        assert_eq!(channel_a.invite_id(), channel_b.invite_id());
+    }
+
+    #[test]
+    fn proof_hash_for_creation_and_proof_for_redemption_are_different_but_each_is_stable_across_two_channels_built_from_the_same_secret(
+    ) {
+        let secret = random_bytes(KEY_LEN);
+        let mut secret_a = secret.clone();
+        let mut secret_b = secret.clone();
+        let channel_a =
+            WasmInviteChannel::from_secret(&mut secret_a).expect("from_secret should succeed");
+        let channel_b =
+            WasmInviteChannel::from_secret(&mut secret_b).expect("from_secret should succeed");
+
+        let hash_a = channel_a.proof_hash_for_creation();
+        let proof_a = channel_a.proof_for_redemption();
+        // The two methods on the SAME channel must return DIFFERENT bytes.
+        assert_ne!(hash_a, proof_a);
+
+        let hash_b = channel_b.proof_hash_for_creation();
+        let proof_b = channel_b.proof_for_redemption();
+        // Each of the two methods is stable across two independently
+        // constructed channels built from the identical secret.
+        assert_eq!(hash_a, hash_b);
+        assert_eq!(proof_a, proof_b);
+    }
+
+    #[test]
+    fn wrap_unwrap_roundtrip_via_two_independently_constructed_channels() {
+        // Construct TWO WasmInviteChannels from copies of the SAME secret
+        // bytes, wrap with one, unwrap with the other — proving the
+        // invitee's browser, holding only the fragment secret, can decrypt
+        // what the owner's browser wrapped.
+        let secret = random_bytes(KEY_LEN);
+        let mut secret_a = secret.clone();
+        let mut secret_b = secret.clone();
+        let owner_channel =
+            WasmInviteChannel::from_secret(&mut secret_a).expect("from_secret should succeed");
+        let invitee_channel =
+            WasmInviteChannel::from_secret(&mut secret_b).expect("from_secret should succeed");
+
+        let ck = WasmCollectionKey::generate();
+        let wrapped_json = owner_channel
+            .wrap_collection_key(&ck)
+            .expect("wrap should succeed");
+        let unwrapped = invitee_channel
+            .unwrap_collection_key(&wrapped_json)
+            .expect("unwrap should succeed");
+
+        // WasmCollectionKey exposes no raw-byte getter — prove equivalence
+        // via an encrypt/decrypt round trip, mirroring
+        // seal_unseal_collection_key_roundtrip's existing idiom above.
+        let item_json = encrypt_item_for_collection(
+            &ck,
+            "{\"type\":\"note\",\"body\":\"fixture\"}",
+            "collection-1",
+            "item-1",
+            1,
+        )
+        .expect("encrypt should succeed");
+        let plaintext =
+            decrypt_item_for_collection(&unwrapped, &item_json, "collection-1", "item-1", 1)
+                .expect("decrypt with unwrapped key should succeed");
+        assert_eq!(plaintext, "{\"type\":\"note\",\"body\":\"fixture\"}");
+    }
+
+    #[test]
+    fn unwrap_fails_across_different_secrets() {
+        let mut secret_a = random_bytes(KEY_LEN);
+        let mut secret_b = random_bytes(KEY_LEN);
+        let channel_a =
+            WasmInviteChannel::from_secret(&mut secret_a).expect("from_secret should succeed");
+        let channel_b =
+            WasmInviteChannel::from_secret(&mut secret_b).expect("from_secret should succeed");
+
+        let ck = WasmCollectionKey::generate();
+        let wrapped_json = channel_a
+            .wrap_collection_key(&ck)
+            .expect("wrap should succeed");
+        let result = channel_b.unwrap_collection_key(&wrapped_json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn generate_invite_secret_returns_32_distinct_bytes_across_two_calls() {
+        let a = generate_invite_secret();
+        let b = generate_invite_secret();
+        assert_eq!(a.len(), KEY_LEN);
+        assert_eq!(b.len(), KEY_LEN);
+        assert_ne!(a, b);
     }
 }
