@@ -388,3 +388,32 @@ pub async fn accept(
 
     Ok(Json(AcceptInvitationResponse { already_member: !newly_inserted }))
 }
+
+/// `DELETE /api/invitations/{id}` — owner-only (`FamilyMembership<RequireEdit>`).
+/// Revokes a still-pending invite. Scoped by the CALLER's OWN resolved
+/// `family_id` (never a family id read from the path) — matching every other
+/// `FamilyMembership`-gated handler's discipline. A subsequent
+/// metadata-fetch/accept against a revoked invite renders the exact same
+/// unified failure as an expired/consumed/never-existed one, even presenting
+/// the objectively correct `invite_proof` — `status <> 'pending'` alone is
+/// enough to fall out of every other handler's own `WHERE status = 'pending'`
+/// guard.
+pub async fn revoke(
+    State(state): State<AppState>,
+    membership: FamilyMembership<RequireEdit>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let result = sqlx::query(
+        "UPDATE invitations SET status = 'revoked' WHERE id = ? AND family_id = ? AND status = 'pending'",
+    )
+    .bind(&id)
+    .bind(&membership.family_id)
+    .execute(&state.db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}

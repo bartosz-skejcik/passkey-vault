@@ -184,9 +184,14 @@ pub fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppStat
         // Plan 24-02 (FAM-04): invite creation is owner-only
         // (`FamilyMembership<RequireEdit>`), pathless (creates a NEW row, no
         // `{id}` segment to read) — same rationale as `POST /api/vault/collections`
-        // above. `DELETE /api/invitations/{id}` (revoke) is added by Task 2 of
-        // this same plan, alongside the handler it gates.
+        // above.
         ("/api/invitations", post(invitations::create)),
+        // Plan 24-02 Task 2: revoke, also owner-only. Shares its path string
+        // with the literal `POST /api/invitations/{id}` (metadata fetch)
+        // registered directly in `router_with_cors` above — axum merges the
+        // two `MethodRouter`s for the same path since the HTTP methods
+        // differ (verified against axum 0.8.9's `path_router.rs::route`).
+        ("/api/invitations/{id}", delete(invitations::revoke)),
     ]
 }
 
@@ -739,7 +744,7 @@ mod tests {
         assert_eq!(membership_routes().len(), 10);
         // bump this literal AND extend tests/membership_route_sweep.rs's
         // per-route id substitution when adding a new family-gated route
-        assert_eq!(family_routes().len(), 5);
+        assert_eq!(family_routes().len(), 6);
     }
 
     // --- Plan 22-05: zero-knowledge boundary audit + literal-route allowlist audit ---

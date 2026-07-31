@@ -50,6 +50,29 @@ const SESSION_ONLY_ROUTES_NOT_SWEPT: &[&str] = &[
 /// one.
 const INSUFFICIENT_LEVEL_EXCEPTIONS: &[&str] = &[];
 
+/// "METHOD path" combinations, matching `INSUFFICIENT_LEVEL_EXCEPTIONS`'s own
+/// shape, where the substituted target URL is SHARED between a swept
+/// `family_routes()`/`membership_routes()` entry and a DIFFERENT, literal,
+/// deliberately-ungated route registered directly in `router_with_cors`
+/// (never a second entry in either swept table). Plan 24-02: `DELETE
+/// /api/invitations/{id}` (owner-only revoke, swept, asserts 404 below) and
+/// `POST /api/invitations/{id}` (the pre-redemption metadata fetch,
+/// Amendment 2 — intentionally reachable with NO session and NO membership
+/// check at all) share the exact same path string; axum merges the two
+/// `MethodRouter`s since the HTTP methods differ. This sweep's generic
+/// "every method against this URL must be 404-or-403" loop has no way to
+/// know POST here resolves to a DIFFERENT, ungated handler — sending it with
+/// no body (this sweep never sends a body) trips `Json`'s own missing-body
+/// rejection (`415`) before any application logic runs, which is neither a
+/// membership rejection nor a bug: this route's own behavior (unified 404 on
+/// a wrong/missing proof, exact-field-set 200 on a correct one) is proven
+/// directly by `tests/invitations.rs`, not by this sweep. Skipped here, not
+/// added to `SESSION_ONLY_ROUTES_NOT_SWEPT` — that constant is for a path
+/// ABSENT from both swept tables entirely, and `/api/invitations/{id}` IS
+/// present (via the `DELETE` entry), so it must stay swept for every OTHER
+/// method.
+const SHARED_PATH_METHOD_EXCEPTIONS: &[&str] = &["POST /api/invitations/{id}"];
+
 async fn body_json(response: axum::response::Response) -> Value {
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     serde_json::from_slice(&bytes).unwrap()
@@ -243,6 +266,14 @@ async fn membership_route_sweep_rejects_non_member_on_every_route() {
         let mut any_real_assertion = false;
 
         for method in ["GET", "POST", "PUT", "DELETE"] {
+            let key = format!("{method} {path}");
+            if SHARED_PATH_METHOD_EXCEPTIONS.contains(&key.as_str()) {
+                // This method+path resolves to a DIFFERENT, deliberately
+                // ungated literal route that merely shares a path string with
+                // this swept entry — see the constant's own doc comment.
+                continue;
+            }
+
             let res = req(&app, method, &target, &u_token, None).await;
             let status = res.status();
 
@@ -260,7 +291,6 @@ async fn membership_route_sweep_rejects_non_member_on_every_route() {
                 saw_mutating_method = true;
             }
 
-            let key = format!("{method} {path}");
             if INSUFFICIENT_LEVEL_EXCEPTIONS.contains(&key.as_str()) {
                 assert_eq!(
                     status,
