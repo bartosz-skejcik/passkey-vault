@@ -445,6 +445,113 @@ async fn invitation_accept_collection_scoped_produces_real_collection_keys_row()
     assert_eq!(access_level, "read", "the granted access_level must match the invite's own");
 }
 
+/// WR-03 (24-REVIEW.md): `insert_collection_key` returns `false` on a
+/// pre-existing `collection_keys` row rather than erroring (the same signal
+/// `collections::add_member` treats as a `Conflict`). Before this fix,
+/// `accept` never looked at that return value: the invite still flipped to
+/// `accepted` and the transaction still committed, telling the client the
+/// join succeeded even though the promised grant was a silent no-op. This
+/// seeds a pre-existing (lower) access_level row for the invitee, then
+/// redeems a collection-scoped invite promising a HIGHER one, and proves the
+/// invite is neither silently consumed nor left ambiguous: it rolls back
+/// entirely (status stays `pending`, no new family-membership row) so the
+/// owner can re-issue, and the pre-existing row is untouched.
+#[tokio::test]
+async fn invitation_accept_collection_scoped_does_not_silently_consume_the_invite_on_a_pre_existing_key_conflict() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-owner-6b@example.com").await;
+    create_family(&app, &owner_token).await;
+    let (collection_id, collection_key) = create_collection(&app, &owner_token).await;
+
+    let secrets = derive_invite_secrets();
+    // Invite promises "edit" — deliberately higher than the pre-existing
+    // "read" row seeded below, so a silent no-op would be a real,
+    // user-visible under-grant, not merely a redundant duplicate.
+    create_collection_scoped_invitation(&app, &owner_token, &secrets, &collection_id, &collection_key, "edit").await;
+
+    let invitee_token = register_and_login(&app, "invite-invitee-6b@example.com").await;
+    let invitee_user_id = user_id_of(&app, &invitee_token).await;
+
+    // Simulate the invitee already holding access to this exact collection
+    // (e.g. added via a separate `add_member` call before ever redeeming this
+    // invite) — a real `collection_keys` row, not a test-only shortcut.
+    sqlx::query(
+        "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) \
+         VALUES (?, ?, 'pre-existing-sealed-key', 'read')",
+    )
+    .bind(&collection_id)
+    .bind(&invitee_user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let metadata_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}", secrets.invite_id),
+        None,
+        Some(json!({ "invite_proof": secrets.invite_proof_b64 })),
+    )
+    .await;
+    assert_eq!(metadata_res.status(), StatusCode::OK);
+    let metadata_body = body_json(metadata_res).await;
+    let wrapped_json = metadata_body["wrapped_collection_key"].as_str().unwrap().to_string();
+    let wrapped: WrappedKey = serde_json::from_str(&wrapped_json).unwrap();
+    let decrypted_collection_key =
+        unwrap_collection_key_for_invite(&secrets.secret, &secrets.invite_id, &wrapped).unwrap();
+
+    let invitee_sk = IdentitySecretKey::generate();
+    let sealed_for_self = seal(&invitee_sk.public_key(), &decrypted_collection_key).unwrap();
+    let sealed_for_self_json = serde_json::to_string(&sealed_for_self).unwrap();
+
+    let accept_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}/accept", secrets.invite_id),
+        Some(&invitee_token),
+        Some(json!({ "invite_proof": secrets.invite_proof_b64, "sealed_for_self": sealed_for_self_json })),
+    )
+    .await;
+    assert_eq!(
+        accept_res.status(),
+        StatusCode::NOT_FOUND,
+        "a grant that cannot be applied as written must not report success"
+    );
+
+    // The invite must NOT be silently consumed — it stays exactly `pending`,
+    // so the owner can revoke/re-issue and the invitee can be told honestly.
+    let status: String = sqlx::query_scalar("SELECT status FROM invitations WHERE id = ?")
+        .bind(&secrets.invite_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "pending");
+
+    // The pre-existing row must be untouched (still "read", not silently
+    // upgraded, downgraded, or duplicated) -- proving the WHOLE transaction
+    // rolled back, not just the collection_keys insert in isolation.
+    let access_level: String = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(&collection_id)
+    .bind(&invitee_user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(access_level, "read");
+
+    // No family-membership row must have been created either — the rollback
+    // must be all-or-nothing across the whole accept transaction.
+    let member_row = sqlx::query("SELECT 1 FROM family_members WHERE user_id = ?")
+        .bind(&invitee_user_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(member_row.is_none(), "the family join must roll back together with the failed collection grant");
+}
+
 #[tokio::test]
 async fn invitation_accept_by_existing_family_member_is_idempotent_and_reports_already_member() {
     let pool = test_pool().await;

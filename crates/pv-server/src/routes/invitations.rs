@@ -387,8 +387,25 @@ pub async fn accept(
         validate_blob_len("sealed_for_self", sealed_for_self)?;
         let access_level_str = access_level.as_deref().ok_or(ApiError::Internal)?;
 
-        collections::insert_collection_key(&mut *tx, cid, &session.user_id, sealed_for_self, access_level_str)
-            .await?;
+        // WR-04-in-collections-terms / WR-03 (24-REVIEW.md): `insert_collection_key`
+        // is documented to return `false` on conflict rather than error, "since
+        // the caller decides whether a conflict is an error" — `add_member`
+        // treats that `false` as `ApiError::Conflict` (collections.rs:297-299);
+        // this call site must not silently ignore the identical signal. A
+        // pre-existing `collection_keys` row here means the invite's promised
+        // grant CANNOT be applied as written (the recipient's existing
+        // access_level is left untouched, possibly lower than promised) — do
+        // NOT consume the invite (which already flipped to 'accepted' earlier
+        // in THIS transaction) for a no-op. Let `tx` drop here without
+        // `commit()` (sqlx rolls back on drop), undoing the status flip AND
+        // the family-membership insert together, and report the SAME unified
+        // failure every other cause reports so the owner can re-issue.
+        let key_inserted =
+            collections::insert_collection_key(&mut *tx, cid, &session.user_id, sealed_for_self, access_level_str)
+                .await?;
+        if !key_inserted {
+            return Err(ApiError::NotFound);
+        }
 
         // Resolve fresh AFTER the insert (mirrors `collections::add_member`'s
         // own "resolve fresh AFTER the insert, publish the collection's
