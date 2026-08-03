@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 Phase: 25 — Member Removal, Suspension & Re-key
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-07-31 — Phase 24 complete, transitioned to Phase 25
+Last activity: 2026-08-03 - Completed quick task 260803-cnd: Fix passkey unlock 401 handling and AbortError misclassification
 
 ## Performance Metrics
 
@@ -218,6 +218,7 @@ None yet.
 | 260718-0qi | Popup UI fix round: theme parity, FAB/footer/top-bar restructure, hover shadow removal, label/sort sizing, Phase 9 e2e repair | 2026-07-18 | 39754b3 | [260718-0qi-popup-ui-fix-round-theme-match-web-sideb](./quick/260718-0qi-popup-ui-fix-round-theme-match-web-sideb/) |
 | 260719-sxa | Distinguish prf-unavailable terminal state from generic failed in server-origin passkey ceremony (ExtUnlockBridge + login.ts), both signin and unlock modes, with PL/EN copy and tests | 2026-07-19 | 20eaaf1 | [260719-sxa-distinguish-prf-unavailable-terminal-sta](./quick/260719-sxa-distinguish-prf-unavailable-terminal-sta/) |
 | 260720-16k | Firefox aux windows feel like popups: centering, consent-window resize/self-close, candidate-list scroll cap, autofill-flash race fix | 2026-07-20 | 40d1965 | [260720-16k-firefox-aux-windows-feel-like-popups-cen](./quick/260720-16k-firefox-aux-windows-feel-like-popups-cen/) |
+| 260803-cnd | Fix passkey unlock 401 handling and AbortError misclassification | 2026-08-03 | 231321d | [260803-cnd-passkey-unlock-401-and-aborterror](./quick/260803-cnd-passkey-unlock-401-and-aborterror/) |
 
 ## Deferred Items
 
