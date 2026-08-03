@@ -74,7 +74,9 @@ export default function UnlockOverlay() {
     try {
       // passkeyUnlock() itself silently no-ops on a NotAllowedError
       // (user-cancelled) ceremony — it never throws for that case, so this
-      // catch block only ever sees a genuine failure.
+      // catch block only ever sees a genuine failure (including a 401 below,
+      // which IS a resolved throw path via unlockStart()'s rethrow, not a
+      // no-op).
       const result = await passkeyUnlock(() => {});
       if (result.prfUnavailable) {
         setUnlockPrfUnavailable(true);
@@ -82,8 +84,25 @@ export default function UnlockOverlay() {
       // No onAuthed()-equivalent call here — useIsUnlocked()'s own
       // subscription (wired via setUnlockedUserKey inside passkeyUnlock
       // itself) is what re-renders the shell away from this overlay.
-    } catch {
-      setPasskeyError(t("unlock.passkeyFailed"));
+    } catch (err) {
+      if (err instanceof ApiClientError && err.status === 401) {
+        // Production bug 260803-cnd: `POST /api/passkeys/unlock/start`
+        // returns 401 once the fixed 7-day session TTL expires (no sliding
+        // renewal) — the passkey/PRF enrollment itself is completely
+        // healthy. Mirrors unlockFromPassword's own 401 handling below
+        // exactly: a dead session must not surface as unlock.passkeyFailed,
+        // which told Bartek his passkey was broken when it never was.
+        clearSessionToken();
+        clearStoredEmail();
+        try {
+          window.location.reload();
+        } catch {
+          // jsdom (unit tests) doesn't implement real navigation — a real
+          // browser always supports reload().
+        }
+      } else {
+        setPasskeyError(t("unlock.passkeyFailed"));
+      }
     } finally {
       setPasskeyState("idle");
     }

@@ -30,6 +30,14 @@ export default function LoginForm({
   const [passkeyError, setPasskeyError] = useState<string | null>(null);
 
   async function handlePasskeyLogin() {
+    // 260803-cnd investigation note: unlike UnlockOverlay's handlePasskeyUnlock,
+    // this catch has NO 401 branch, deliberately — verified against
+    // crates/pv-server/src/routes/auth.rs's passkey_login_start/finish: both
+    // are unauthenticated pre-session routes (no SessionUser extractor), so
+    // there is no existing session here that could expire and produce a 401.
+    // Any stale Authorization header apiFetch might attach is simply ignored
+    // server-side. A 401 in this catch would only ever come from something
+    // else, which the generic unlock.passkeyFailed branch already covers.
     if (email.trim() === "") return;
     setPasskeyState("busy");
     setPasskeyError(null);

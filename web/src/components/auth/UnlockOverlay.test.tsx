@@ -268,6 +268,34 @@ describe("UnlockOverlay", () => {
     expect(mockSetUnlockedUserKey).not.toHaveBeenCalled();
   });
 
+  // Production bug 260803-cnd (Bartek, vault.blonie.cloud): POST
+  // /api/passkeys/unlock/start returned 401 once the fixed 7-day session TTL
+  // expired -- his passkey/PRF enrollment was completely healthy the whole
+  // time, but handlePasskeyUnlock's bare catch showed unlock.passkeyFailed
+  // ("couldn't use your passkey"), telling him the wrong thing was broken.
+  // This test would genuinely fail if that fix were reverted: without the
+  // 401 branch, passkeyUnlock's rejection falls into the generic catch and
+  // renders unlock.passkeyFailed instead of clearing the dead session.
+  it("260803-cnd: a 401 from passkeyUnlock (expired session) clears the session instead of showing unlock.passkeyFailed", async () => {
+    mockUseIsUnlocked.mockReturnValue(false);
+    mockTakePendingUnlock.mockReturnValue(null);
+    const { ApiClientError } = await import("@/lib/auth/api");
+    mockPasskeyUnlock.mockRejectedValue(new ApiClientError(401, "unauthorized"));
+
+    render(<UnlockOverlay />);
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+
+    // Mirrors the existing "clears the session ... on a 401 from me()" test
+    // above (unlockFromPassword's own 401 path) — jsdom doesn't implement
+    // real navigation, so window.location.reload() is a caught no-op here
+    // (see Sidebar.test.tsx's own comment on the same jsdom behavior); the
+    // session-clearing calls are what's actually asserted.
+    await waitFor(() => expect(mockClearSessionToken).toHaveBeenCalledTimes(1));
+    expect(mockClearStoredEmail).toHaveBeenCalledTimes(1);
+    expect(mockSetUnlockedUserKey).not.toHaveBeenCalled();
+    expect(screen.queryByText("unlock.passkeyFailed")).not.toBeInTheDocument();
+  });
+
   it("shows no error text when passkeyUnlock resolves a silent cancellation", async () => {
     mockUseIsUnlocked.mockReturnValue(false);
     mockTakePendingUnlock.mockReturnValue(null);
