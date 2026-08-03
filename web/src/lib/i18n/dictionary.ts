@@ -83,6 +83,14 @@ export const DICTIONARY = {
     pl: "Nie udało się użyć passkeya. Spróbuj ponownie albo użyj hasła poniżej.",
     en: "Couldn't use your passkey. Try again — or use your password below.",
   },
+  // 260803-cnd: AbortError (GESTURE_TIMEOUT_MS fired) is its own outcome,
+  // distinct from unlock.passkeyFailed — a 60s timeout usually means the
+  // person walked away or never completed the prompt, not that the passkey
+  // itself is broken.
+  "unlock.passkeyTimedOut": {
+    pl: "Nie zdążyłeś potwierdzić passkeya na czas. Spróbuj ponownie albo użyj hasła poniżej.",
+    en: "You didn't confirm your passkey in time. Try again — or use your password below.",
+  },
 
   // Plan 13-06: ExtUnlockBridge.tsx — a small server-origin surface the
   // extension opens (`?pv-ext-unlock=<nonce>`) so a Firefox (or Chrome)

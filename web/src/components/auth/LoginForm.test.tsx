@@ -206,6 +206,28 @@ describe("LoginForm", () => {
     expect(screen.queryByText("unlock.passkeyFailed")).not.toBeInTheDocument();
   });
 
+  // 260803-cnd: a GESTURE_TIMEOUT_MS-fired ceremony resolves the SAME way a
+  // cancellation does regarding session creation (no session, cancelled:
+  // false, timedOut: true instead) -- without an explicit timedOut check,
+  // `if (!cancelled) onAuthed?.()` would wrongly call onAuthed() for a
+  // ceremony that never actually established a session. This test would
+  // genuinely fail if that check were reverted (onAuthed called with no
+  // session ever created).
+  it("260803-cnd: does NOT call onAuthed and shows unlock.passkeyTimedOut when passkeyLogin resolves { timedOut: true }", async () => {
+    const onAuthed = vi.fn();
+    mockPasskeyLogin.mockResolvedValue({ prfUnavailable: false, cancelled: false, timedOut: true });
+    render(<LoginForm onToggle={() => {}} onAuthed={onAuthed} />);
+
+    fireEvent.change(screen.getByTestId("login-email"), {
+      target: { value: "existing@example.com" },
+    });
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+
+    expect(await screen.findByText("unlock.passkeyTimedOut")).toBeInTheDocument();
+    expect(onAuthed).not.toHaveBeenCalled();
+    expect(screen.queryByText("unlock.passkeyFailed")).not.toBeInTheDocument();
+  });
+
   it("shows unlock.passkeyFailed on a genuine passkeyLogin rejection", async () => {
     const onAuthed = vi.fn();
     mockPasskeyLogin.mockRejectedValue(new Error("network error"));

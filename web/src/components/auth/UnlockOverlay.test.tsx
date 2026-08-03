@@ -296,6 +296,23 @@ describe("UnlockOverlay", () => {
     expect(screen.queryByText("unlock.passkeyFailed")).not.toBeInTheDocument();
   });
 
+  // 260803-cnd: AbortError (GESTURE_TIMEOUT_MS fired in passkeyUnlockCeremony)
+  // is its own outcome, distinct from unlock.passkeyFailed -- surfaced here
+  // as passkeyUnlock() resolving `{ timedOut: true }` (never throws for this
+  // case, mirroring the silent-cancel resolved shape).
+  it("260803-cnd: shows unlock.passkeyTimedOut (not unlock.passkeyFailed) when passkeyUnlock resolves { timedOut: true }", async () => {
+    mockUseIsUnlocked.mockReturnValue(false);
+    mockTakePendingUnlock.mockReturnValue(null);
+    mockPasskeyUnlock.mockResolvedValue({ prfUnavailable: false, cancelled: false, timedOut: true });
+
+    render(<UnlockOverlay />);
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+
+    expect(await screen.findByText("unlock.passkeyTimedOut")).toBeInTheDocument();
+    expect(screen.queryByText("unlock.passkeyFailed")).not.toBeInTheDocument();
+    expect(mockSetUnlockedUserKey).not.toHaveBeenCalled();
+  });
+
   it("shows no error text when passkeyUnlock resolves a silent cancellation", async () => {
     mockUseIsUnlocked.mockReturnValue(false);
     mockTakePendingUnlock.mockReturnValue(null);

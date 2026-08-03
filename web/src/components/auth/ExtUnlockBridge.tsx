@@ -365,6 +365,19 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
           setState("idle");
           return;
         }
+        if (result.timedOut) {
+          // 260803-cnd: GESTURE_TIMEOUT_MS fired -- passkeyLoginCeremony now
+          // resolves this instead of throwing (previously landed in the
+          // catch block below as a generic failure). Must be checked BEFORE
+          // the prfBytes/prfWrappedUk/sessionToken-undefined fallback below
+          // -- a timed-out ceremony leaves those undefined too and would
+          // otherwise be misreported as "no-passkeys" (a materially
+          // different, wrong claim). Same terminal state as before this
+          // fix, so this is a same-behavior fix, not a new outcome.
+          setState("failed");
+          postFailureNotice();
+          return;
+        }
         if (result.prfBrowserGap) {
           // Server verified the assertion and returned a PRF-capable
           // prf_wrapped_uk -- the sign-in itself worked -- but THIS
@@ -399,6 +412,16 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
         // User-cancelled -- silently back to idle, no alarming copy, first
         // attempt (and every retry) must stay possible.
         setState("idle");
+        return;
+      }
+
+      if (result.timedOut) {
+        // 260803-cnd: same fix as the signin branch above -- must be
+        // checked BEFORE the prfBytes/prfWrappedUk-undefined fallback
+        // below, which would otherwise misreport a ceremony timeout as
+        // "no-passkeys".
+        setState("failed");
+        postFailureNotice();
         return;
       }
 

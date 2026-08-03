@@ -45,10 +45,21 @@ export default function LoginForm({
       // passkeyLogin() nie rzuca przy NotAllowedError (anulowanie) — wraca
       // z cancelled: true i ŻADNA sesja wtedy nie istnieje. onAuthed tylko
       // przy prawdziwym sukcesie, inaczej page.tsx renderuje vault bez
-      // sesji (bug z UAT 04-03 krok 8).
-      const { cancelled } = await passkeyLogin(email, () => {});
-      if (!cancelled) onAuthed?.();
-    } catch {
+      // sesji (bug z UAT 04-03 krok 8). GESTURE_TIMEOUT_MS-fired ceremonies
+      // (260803-cnd) resolve the SAME way — cancelled: false but also no
+      // session (timedOut: true) — so timedOut must gate onAuthed exactly
+      // like cancelled does, or a timed-out ceremony would wrongly proceed
+      // as if it had signed in.
+      const { cancelled, timedOut } = await passkeyLogin(email, () => {});
+      if (timedOut) {
+        setPasskeyError(t("unlock.passkeyTimedOut"));
+      } else if (!cancelled) {
+        onAuthed?.();
+      }
+    } catch (err) {
+      // Non-silent logging (Phase 24 WR-09 precedent, 260803-cnd) — never
+      // the actual secret material, only the error shape.
+      console.error("passkey login: ceremony failed", err);
       setPasskeyError(t("unlock.passkeyFailed"));
     } finally {
       setPasskeyState("idle");

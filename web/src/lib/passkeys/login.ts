@@ -19,7 +19,7 @@ import { base64Decode, ApiClientError } from "@/lib/auth/api";
 import { setSessionToken, setStoredEmail } from "@/lib/auth/session";
 import { setPendingUnlock } from "@/lib/auth/pendingUnlock";
 import { setPrfUnavailableHint } from "@/lib/auth/prfUnavailable";
-import { isNotAllowedError } from "./errors";
+import { isNotAllowedError, isAbortError } from "./errors";
 import {
   passkeyLoginStart,
   passkeyLoginFinish,
@@ -27,7 +27,7 @@ import {
   unlockFinish,
 } from "./api";
 
-export type LoginStep = "start" | "ceremony" | "cancelled" | "failed" | "success";
+export type LoginStep = "start" | "ceremony" | "cancelled" | "timedOut" | "failed" | "success";
 
 /**
  * Bounded wait for the gesture itself (Bartek live-UAT bug, 13-07 signin
@@ -185,6 +185,14 @@ export interface PasskeyLoginCeremonyResult {
    */
   prfBrowserGap: boolean;
   cancelled: boolean;
+  /**
+   * True when `getAssertionWithTimeout`'s own `GESTURE_TIMEOUT_MS` bound
+   * fired (browser rejected with `AbortError`) before the gesture resolved
+   * either way — distinct from `cancelled` (a user-dismissed prompt,
+   * `NotAllowedError`). Always `false`/absent whenever `cancelled` is
+   * `true`, and vice versa; never both (260803-cnd).
+   */
+  timedOut?: boolean;
   /** Present whenever the ceremony reaches `passkeyLoginFinish` without
    * throwing/cancelling — i.e. on every outcome except `cancelled: true`
    * or a rethrown ceremony failure. */
@@ -225,6 +233,15 @@ export async function passkeyLoginCeremony(
       // (bug znaleziony w UAT 04-03 krok 8).
       onStep?.("cancelled");
       return { prfUnavailable: false, prfBrowserGap: false, cancelled: true };
+    }
+    if (isAbortError(e)) {
+      // GESTURE_TIMEOUT_MS fired — the gesture never resolved either way.
+      // Previously rethrown and misclassified as a generic hard failure
+      // (260803-cnd); a 60s timeout is closer to "the user walked away"
+      // than "the passkey is broken", so it gets its own outcome, distinct
+      // from both `cancelled` (silent) and a genuine failure (rethrown).
+      onStep?.("timedOut");
+      return { prfUnavailable: false, prfBrowserGap: false, cancelled: false, timedOut: true };
     }
     onStep?.("failed");
     throw e;
@@ -292,16 +309,23 @@ export async function passkeyLoginCeremony(
 export async function passkeyLogin(
   email: string,
   onStep?: (step: LoginStep) => void,
-): Promise<{ prfUnavailable: boolean; cancelled: boolean }> {
+): Promise<{ prfUnavailable: boolean; cancelled: boolean; timedOut?: boolean }> {
   const result = await passkeyLoginCeremony(email, onStep);
 
-  if (result.cancelled || result.sessionToken === undefined) {
+  if (result.cancelled || result.timedOut || result.sessionToken === undefined) {
     // `sessionToken === undefined` is defensive-only: passkeyLoginCeremony
-    // sets it on every non-cancelled, non-thrown path (both the PRF-success
-    // and the two-case-collapse branches) — see that function's own return
-    // sites. A cancelled ceremony never created a session, so nothing to
-    // persist either way.
-    return { prfUnavailable: result.prfUnavailable, cancelled: result.cancelled };
+    // sets it on every non-cancelled, non-timed-out, non-thrown path (both
+    // the PRF-success and the two-case-collapse branches) — see that
+    // function's own return sites. A cancelled OR timed-out ceremony never
+    // created a session, so nothing to persist either way — `timedOut` must
+    // be checked here explicitly (not just folded into `sessionToken ===
+    // undefined`) so callers get an accurate `timedOut` flag back rather
+    // than losing that distinction.
+    return {
+      prfUnavailable: result.prfUnavailable,
+      cancelled: result.cancelled,
+      timedOut: result.timedOut,
+    };
   }
 
   // Login succeeded either way — session material is stored regardless of
@@ -350,6 +374,9 @@ export interface PasskeyUnlockCeremonyResult {
    */
   prfBrowserGap: boolean;
   cancelled: boolean;
+  /** Same GESTURE_TIMEOUT_MS-fired outcome as `PasskeyLoginCeremonyResult.timedOut`
+   * above — see that field's doc comment (260803-cnd). */
+  timedOut?: boolean;
   prfBytes?: ArrayBuffer;
   prfWrappedUk?: string;
 }
@@ -395,6 +422,12 @@ export async function passkeyUnlockCeremony(
     if (isNotAllowedError(e)) {
       onStep?.("cancelled");
       return { prfUnavailable: false, prfBrowserGap: false, cancelled: true };
+    }
+    if (isAbortError(e)) {
+      // Same GESTURE_TIMEOUT_MS-fired outcome as passkeyLoginCeremony's own
+      // AbortError branch above — see that branch's comment (260803-cnd).
+      onStep?.("timedOut");
+      return { prfUnavailable: false, prfBrowserGap: false, cancelled: false, timedOut: true };
     }
     onStep?.("failed");
     throw e;
@@ -442,7 +475,7 @@ export async function passkeyUnlockCeremony(
  */
 export async function passkeyUnlock(
   onStep?: (step: LoginStep) => void,
-): Promise<{ prfUnavailable: boolean; cancelled: boolean }> {
+): Promise<{ prfUnavailable: boolean; cancelled: boolean; timedOut?: boolean }> {
   const result = await passkeyUnlockCeremony(onStep);
 
   if (result.prfBytes !== undefined && result.prfWrappedUk !== undefined) {
@@ -456,5 +489,9 @@ export async function passkeyUnlock(
     }
   }
 
-  return { prfUnavailable: result.prfUnavailable, cancelled: result.cancelled };
+  return {
+    prfUnavailable: result.prfUnavailable,
+    cancelled: result.cancelled,
+    timedOut: result.timedOut,
+  };
 }

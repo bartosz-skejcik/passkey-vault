@@ -190,6 +190,34 @@ describe("ExtUnlockBridge", () => {
     );
   });
 
+  // 260803-cnd: passkeyUnlockCeremony() now RESOLVES (never throws) on a
+  // GESTURE_TIMEOUT_MS-fired AbortError instead of rethrowing it. Without
+  // this component's own `result.timedOut` check (added alongside that
+  // fix), this resolved shape has prfBytes/prfWrappedUk both undefined --
+  // identical to the "no-passkeys" shape -- and would be wrongly reported
+  // as "your account has no PRF-capable passkeys" instead of a genuine
+  // failure. Asserts the same terminal state/copy as the still-thrown case
+  // above (a same-behavior fix, not a new outcome for this component).
+  it("a ceremony timeout (timedOut: true) shows the generic failure copy, not the no-passkeys empty-state", async () => {
+    mockPasskeyUnlockCeremony.mockResolvedValue({
+      prfUnavailable: false,
+      prfBrowserGap: false,
+      cancelled: false,
+      timedOut: true,
+    });
+    const postSpy = vi.spyOn(window, "postMessage");
+
+    render(<ExtUnlockBridge nonce="abc123" mode="unlock" />);
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+
+    expect(await screen.findByText("extUnlock.failed")).toBeInTheDocument();
+    expect(screen.queryByText("extUnlock.noPasskeys")).not.toBeInTheDocument();
+    expect(postSpy).toHaveBeenCalledWith(
+      { source: "pv-ext-unlock-bridge", nonce: "abc123", failed: true },
+      window.location.origin,
+    );
+  });
+
   it("a matching ok:true ack from content-relay shows success and attempts window.close()", async () => {
     mockPasskeyUnlockCeremony.mockResolvedValue({
       prfUnavailable: false,
@@ -619,6 +647,36 @@ describe("ExtUnlockBridge — signin mode (Plan 13-07)", () => {
     expect(await screen.findByText("extUnlock.signinFailed")).toBeInTheDocument();
     expect(screen.queryByText("extUnlock.notSignedIn")).not.toBeInTheDocument();
     expect(screen.queryByText("extUnlock.failed")).not.toBeInTheDocument();
+    expect(postSpy).toHaveBeenCalledWith(
+      { source: "pv-ext-unlock-bridge", nonce: "abc123", failed: true },
+      window.location.origin,
+    );
+  });
+
+  // 260803-cnd: signin-mode mirror of the unlock-mode timedOut test above --
+  // passkeyLoginCeremony() now resolves (never throws) on a
+  // GESTURE_TIMEOUT_MS-fired AbortError. Without this component's own
+  // `result.timedOut` check, that resolved shape has
+  // prfBytes/prfWrappedUk/sessionToken all undefined -- identical to the
+  // "no-passkeys" shape -- and would be wrongly reported as "this account
+  // has no PRF-capable passkeys" instead of a genuine ceremony failure.
+  it("a ceremony timeout (timedOut: true) shows the signin-specific failure copy, not the no-passkeys empty-state", async () => {
+    mockPasskeyLoginCeremony.mockResolvedValue({
+      prfUnavailable: false,
+      prfBrowserGap: false,
+      cancelled: false,
+      timedOut: true,
+    });
+    const postSpy = vi.spyOn(window, "postMessage");
+
+    render(<ExtUnlockBridge nonce="abc123" mode="signin" />);
+    fireEvent.change(screen.getByLabelText("extUnlock.emailLabel"), {
+      target: { value: "signin-user@example.com" },
+    });
+    fireEvent.click(screen.getByTestId("passkey-unlock-button"));
+
+    expect(await screen.findByText("extUnlock.signinFailed")).toBeInTheDocument();
+    expect(screen.queryByText("extUnlock.noPasskeys")).not.toBeInTheDocument();
     expect(postSpy).toHaveBeenCalledWith(
       { source: "pv-ext-unlock-bridge", nonce: "abc123", failed: true },
       window.location.origin,

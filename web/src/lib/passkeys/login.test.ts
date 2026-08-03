@@ -274,7 +274,13 @@ describe("passkeyLogin", () => {
   // browser that honors the AbortSignal passed via the `signal` option
   // (rejects with AbortError once aborted) -- exactly what
   // getAssertionWithTimeout (login.ts) relies on.
-  it("a gesture that never resolves is aborted after the bounded timeout, reported as a genuine failure (not cancelled)", async () => {
+  //
+  // 260803-cnd: an AbortError is now its OWN outcome (`timedOut: true`),
+  // distinct from a genuine hard failure — previously rethrown and
+  // misclassified as `failed` (this test used to assert exactly that
+  // misclassification; the assertions below are the corrected behavior, not
+  // a new one).
+  it("a gesture that never resolves is aborted after the bounded timeout, reported as timedOut: true (not a hard failure, not cancelled)", async () => {
     vi.useFakeTimers();
     (global.navigator.credentials.get as ReturnType<typeof vi.fn>).mockImplementation(
       (options: { signal?: AbortSignal }) =>
@@ -287,21 +293,17 @@ describe("passkeyLogin", () => {
 
     const onStep = vi.fn();
     const resultPromise = passkeyLogin("existing@example.com", onStep);
-    // Attach a handler immediately -- prevents a spurious "unhandled
-    // rejection" report between now and the real assertion below, since the
-    // actual rejection only fires once fake timers are advanced past the
-    // internal setTimeout.
-    const settled = resultPromise.catch((e: unknown) => e);
     // Flush the microtask queue so passkeyLoginStart's awaited mock resolves
     // and navigator.credentials.get() is actually invoked before advancing
     // fake timers past the internal setTimeout.
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(60_000);
 
-    const caught = await settled;
-    expect(caught).toMatchObject({ name: "AbortError" });
+    const result = await resultPromise;
+    expect(result).toEqual({ prfUnavailable: false, cancelled: false, timedOut: true });
     expect(mockPasskeyLoginFinish).not.toHaveBeenCalled();
-    expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "failed"]);
+    expect(mockSetSessionToken).not.toHaveBeenCalled();
+    expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "timedOut"]);
     vi.useRealTimers();
   });
 
@@ -564,7 +566,8 @@ describe("passkeyUnlock", () => {
 
   // Same bounded-timeout guard as passkeyLogin's own (see that describe
   // block's own comment) -- unlock mode shares getAssertionWithTimeout.
-  it("a gesture that never resolves is aborted after the bounded timeout, reported as a genuine failure (not cancelled)", async () => {
+  // 260803-cnd: resolves with `timedOut: true` instead of rethrowing.
+  it("a gesture that never resolves is aborted after the bounded timeout, reported as timedOut: true (not a hard failure, not cancelled)", async () => {
     vi.useFakeTimers();
     mockUnlockStart.mockResolvedValue({
       state_id: "state-2",
@@ -582,14 +585,13 @@ describe("passkeyUnlock", () => {
 
     const onStep = vi.fn();
     const resultPromise = passkeyUnlock(onStep);
-    const settled = resultPromise.catch((e: unknown) => e);
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(60_000);
 
-    const caught = await settled;
-    expect(caught).toMatchObject({ name: "AbortError" });
+    const result = await resultPromise;
+    expect(result).toEqual({ prfUnavailable: false, cancelled: false, timedOut: true });
     expect(mockUnlockFinish).not.toHaveBeenCalled();
-    expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "failed"]);
+    expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "timedOut"]);
     vi.useRealTimers();
   });
 });

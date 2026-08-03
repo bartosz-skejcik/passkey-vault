@@ -78,7 +78,14 @@ export default function UnlockOverlay() {
       // which IS a resolved throw path via unlockStart()'s rethrow, not a
       // no-op).
       const result = await passkeyUnlock(() => {});
-      if (result.prfUnavailable) {
+      if (result.timedOut) {
+        // GESTURE_TIMEOUT_MS fired (260803-cnd) — its own outcome, distinct
+        // from both a silent user-cancel and a genuine hard failure. Told
+        // explicitly rather than left silent: unlike a dismissed prompt,
+        // the user likely intended to complete this and should know to
+        // retry rather than assume the overlay is simply broken.
+        setPasskeyError(t("unlock.passkeyTimedOut"));
+      } else if (result.prfUnavailable) {
         setUnlockPrfUnavailable(true);
       }
       // No onAuthed()-equivalent call here — useIsUnlocked()'s own
@@ -101,6 +108,12 @@ export default function UnlockOverlay() {
           // browser always supports reload().
         }
       } else {
+        // Non-silent logging (Phase 24 WR-09 precedent) — never the actual
+        // secret material (session tokens/PRF output/wrapping keys/
+        // ciphertext), only the error shape, so the next occurrence is
+        // diagnosable from DevTools alone instead of requiring a production
+        // DB read (260803-cnd).
+        console.error("passkey unlock: ceremony failed", err);
         setPasskeyError(t("unlock.passkeyFailed"));
       }
     } finally {
