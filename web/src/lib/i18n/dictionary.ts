@@ -792,14 +792,30 @@ export const DICTIONARY = {
   },
   "invite.revokeConfirmConfirm": { pl: "Unieważnij", en: "Revoke" },
   "invite.loadingLabel": { pl: "Ładowanie zaproszenia…", en: "Loading invite…" },
-  "invite.joinHeading": { pl: "Dołączyć do {family}?", en: "Join {family}?" },
-  "invite.invitedBy": { pl: "Zaprasza: {inviter}", en: "Invited by {inviter}" },
-  "invite.fingerprintLabel": {
-    pl: "Odcisk tożsamości {inviter}",
-    en: "{inviter}'s identity fingerprint",
+  // Quick task 260803-inv: was "Dołączyć do {family}?" / "Join {family}?" --
+  // read wrong in Polish for a family name alone ("Join Paczesny?"). "rodziny"
+  // (family) made explicit in both locales for a natural, consistent register.
+  "invite.joinHeading": {
+    pl: "Dołączyć do rodziny {family}?",
+    en: "Join the {family} family?",
   },
+  "invite.invitedBy": { pl: "Zaprasza: {inviter}", en: "Invited by {inviter}" },
+  // Quick task 260803-inv: dropped the {inviter} interpolation -- this label
+  // sits directly beneath invite.invitedBy, which already names the inviter;
+  // repeating (and, at typical email lengths, truncating) the same address
+  // here read as a templating accident rather than a design choice.
+  "invite.fingerprintLabel": {
+    pl: "Odcisk tożsamości",
+    en: "Identity fingerprint",
+  },
+  // Quick task 260803-inv: PL's second {inviter} ("z {inviter} telefonicznie")
+  // became "z tą osobą" ("with that person") now that the same email is
+  // already named earlier in this same sentence -- matches EN's existing
+  // "them" pattern. The honesty claim itself (T-24-16/UI-SPEC Copywriting
+  // rule 1) is unchanged byte-for-byte in substance: verification requires an
+  // out-of-band comparison; displaying the fingerprint here verifies nothing.
   "invite.fingerprintHonesty": {
-    pl: "Ten odcisk pozwala zweryfikować tożsamość {inviter}, ale musisz to zrobić sam/sama — np. porównując go z {inviter} telefonicznie albo SMS-em. Samo wyświetlenie go tutaj niczego nie weryfikuje.",
+    pl: "Ten odcisk pozwala zweryfikować tożsamość {inviter}, ale musisz to zrobić sam/sama — np. porównując go z tą osobą telefonicznie albo SMS-em. Samo wyświetlenie go tutaj niczego nie weryfikuje.",
     en: "This fingerprint lets you verify {inviter}'s identity — but only if you compare it with them yourself, e.g. over a call or a text. Displaying it here doesn't verify anything on its own.",
   },
   "invite.fingerprintUnavailable": {

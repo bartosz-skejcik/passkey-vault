@@ -165,7 +165,14 @@ export default function RegisterForm({
         {mismatchError ? <p className="text-sm text-error">{mismatchError}</p> : null}
       </div>
 
-      <div role="alert" className="alert alert-warning text-sm">
+      {/* Quick task 260803-inv: solid alert-warning (#FFBE00 fill) outweighed
+          the primary CTA directly below it -- worst on the invite-landing
+          "register and join" screen, the one place the user most needs the
+          button to read as primary. `alert-soft` is daisyUI 5's own softer
+          alert treatment (8%-tint background, no drop shadow) -- same
+          --color-warning role, same legibility, lower visual weight. No new
+          colour introduced; still visible, still `role="alert"`. */}
+      <div role="alert" className="alert alert-warning alert-soft text-sm">
         {t("auth.irrecoverableWarning")}
       </div>
 

@@ -260,11 +260,12 @@ export default function InviteLandingView({
                 <div className="mt-2 flex flex-col gap-1">
                   <div className="flex items-center gap-1">
                     <Fingerprint className="h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
-                    <span className="truncate text-sm" title={metadata.inviter_email}>
-                      {interpolate(t("invite.fingerprintLabel"), {
-                        inviter: metadata.inviter_email,
-                      })}
-                    </span>
+                    {/* Quick task 260803-inv: no longer interpolates {inviter}
+                        -- invite.invitedBy directly above already names them,
+                        so this fixed-length label carries no truncation risk
+                        and drops one of the four email repetitions Bartek
+                        flagged on this card. */}
+                    <span className="text-sm">{t("invite.fingerprintLabel")}</span>
                   </div>
                   <p
                     className="break-all font-mono text-sm"
