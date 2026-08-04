@@ -571,6 +571,21 @@ mod tests {
             .expect("seed additional family_members row");
     }
 
+    /// Sibling of `seed_family_member` above, for Phase 25's suspension
+    /// tests — takes an explicit `status` (`'active'`/`'suspended'`) rather
+    /// than relying on the column's `DEFAULT 'active'`, so a test asserting
+    /// suspended-member behavior states its fixture's status explicitly
+    /// rather than depending on a migration default a future schema change
+    /// could alter.
+    async fn seed_family_member_with_status(pool: &sqlx::SqlitePool, user_id: &str, status: &str) {
+        sqlx::query("INSERT INTO family_members (family_id, user_id, role, status) VALUES ('fam1', ?, 'member', ?)")
+            .bind(user_id)
+            .bind(status)
+            .execute(pool)
+            .await
+            .expect("seed additional family_members row with explicit status");
+    }
+
     #[tokio::test]
     async fn collection_resolve_access_returns_seeded_level_and_none_otherwise() {
         let pool = seeded_pool().await;
@@ -791,6 +806,151 @@ mod tests {
             "CR-01 (iteration 2): a creator with no collection_keys row must resolve to NO access — \
              folding ownership into the collection branch makes revocation indistinguishable from \
              the stranded-creator case and defeats SC#4"
+        );
+    }
+
+    /// FAM-09 (Task 1, 25-01-PLAN.md): a caller holding a valid
+    /// `collection_keys` row whose `family_members.status` is `'suspended'`
+    /// must resolve to NO access — the `AND fm.status = 'active'` clause
+    /// added to `Collection::resolve_access`'s `family_members` join is the
+    /// ONLY mechanism this depends on, exercised here directly against the
+    /// same fresh-per-request query every other authorization decision in
+    /// this codebase uses.
+    #[tokio::test]
+    async fn collection_resolve_access_returns_none_for_suspended_member() {
+        let pool = seeded_pool().await;
+        seed_user(&pool, "owner", "owner@example.com").await;
+        seed_user(&pool, "suspended", "suspended@example.com").await;
+        let collection_id = seed_family_and_collection(&pool, "owner").await;
+        seed_family_member_with_status(&pool, "suspended", "suspended").await;
+
+        sqlx::query(
+            "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) \
+             VALUES (?, 'suspended', 'sealed', 'edit')",
+        )
+        .bind(&collection_id)
+        .execute(&pool)
+        .await
+        .expect("seed collection_keys row for the suspended member");
+
+        let access = Collection::resolve_access(&pool, "suspended", &collection_id).await.unwrap();
+        assert_eq!(
+            access, None,
+            "a suspended member's collection_keys row must resolve to NO access"
+        );
+    }
+
+    /// Regression companion to the test above: an explicitly-`'active'`
+    /// member's resolution is byte-identical to the pre-Phase-25 behavior —
+    /// the new status join must never narrow access for an active member.
+    /// Byte-identical in shape to
+    /// `collection_resolve_access_returns_seeded_level_and_none_otherwise`
+    /// above, but with an explicit `'active'` status fixture rather than
+    /// relying on the column's `DEFAULT 'active'`.
+    #[tokio::test]
+    async fn collection_resolve_access_unchanged_for_active_member() {
+        let pool = seeded_pool().await;
+        seed_user(&pool, "owner", "owner@example.com").await;
+        seed_user(&pool, "active", "active@example.com").await;
+        let collection_id = seed_family_and_collection(&pool, "owner").await;
+        seed_family_member_with_status(&pool, "active", "active").await;
+
+        sqlx::query(
+            "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) \
+             VALUES (?, 'active', 'sealed', 'read')",
+        )
+        .bind(&collection_id)
+        .execute(&pool)
+        .await
+        .expect("seed collection_keys row for the active member");
+
+        let access = Collection::resolve_access(&pool, "active", &collection_id).await.unwrap();
+        assert_eq!(
+            access,
+            Some(AccessLevel::Read),
+            "an explicitly-active member's resolution must be unchanged from pre-Phase-25 behavior"
+        );
+    }
+
+    /// FAM-09: `Item::resolve_access`'s collection-scoped branch must return
+    /// `None` for a suspended recipient regardless of a `collection_keys`
+    /// grant — the `AND fm.status = 'active'` clause on the collection_access
+    /// query's `fm` join (~line 312, pre-edit) is the mechanism.
+    #[tokio::test]
+    async fn item_resolve_access_collection_branch_returns_none_for_suspended_recipient() {
+        let pool = seeded_pool().await;
+        seed_user(&pool, "owner", "owner@example.com").await;
+        seed_user(&pool, "suspended", "suspended@example.com").await;
+        let collection_id = seed_family_and_collection(&pool, "owner").await;
+        seed_family_member_with_status(&pool, "suspended", "suspended").await;
+
+        sqlx::query(
+            "INSERT INTO vault_items (id, user_id, enc_key, enc_data, collection_id) \
+             VALUES ('item_susp1', 'owner', 'k', 'd', ?)",
+        )
+        .bind(&collection_id)
+        .execute(&pool)
+        .await
+        .expect("seed collection item");
+
+        sqlx::query(
+            "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) \
+             VALUES (?, 'suspended', 'sealed', 'edit')",
+        )
+        .bind(&collection_id)
+        .execute(&pool)
+        .await
+        .expect("seed collection_keys row for the suspended member");
+
+        let access = Item::resolve_access(&pool, "suspended", "item_susp1").await.unwrap();
+        assert_eq!(
+            access, None,
+            "a suspended recipient's collection_keys grant must resolve to NO access on Item::resolve_access"
+        );
+    }
+
+    /// FAM-09: `Item::resolve_access`'s `item_shares` branch (fm_r join) must
+    /// return `None` for a recipient whose `family_members.status` is
+    /// `'suspended'` in the item OWNER's family — exercised on a PERSONAL
+    /// item (`collection_id IS NULL`) so this is provably the item_shares
+    /// branch's own join, not the collection branch's.
+    #[tokio::test]
+    async fn item_resolve_access_item_shares_branch_returns_none_for_suspended_recipient() {
+        let pool = seeded_pool().await;
+        seed_user(&pool, "owner4", "owner4@example.com").await;
+        seed_user(&pool, "suspended4", "suspended4@example.com").await;
+        sqlx::query("INSERT INTO families (id, owner_user_id, name) VALUES ('fam4', 'owner4', 'Test Family 4')")
+            .execute(&pool)
+            .await
+            .expect("seed family");
+        sqlx::query("INSERT INTO family_members (family_id, user_id, role) VALUES ('fam4', 'owner4', 'owner')")
+            .execute(&pool)
+            .await
+            .expect("seed owner4's family_members row");
+        sqlx::query(
+            "INSERT INTO family_members (family_id, user_id, role, status) VALUES ('fam4', 'suspended4', 'member', 'suspended')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed suspended4's family_members row");
+
+        sqlx::query("INSERT INTO vault_items (id, user_id, enc_key, enc_data) VALUES ('item_susp2', 'owner4', 'k', 'd')")
+            .execute(&pool)
+            .await
+            .expect("seed personal item");
+
+        sqlx::query(
+            "INSERT INTO item_shares (item_id, recipient_user_id, sealed_key, access_level) \
+             VALUES ('item_susp2', 'suspended4', 'sealed', 'edit')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed item_shares grant for the suspended recipient");
+
+        let access = Item::resolve_access(&pool, "suspended4", "item_susp2").await.unwrap();
+        assert_eq!(
+            access, None,
+            "a suspended recipient's item_shares grant must resolve to NO access on Item::resolve_access"
         );
     }
 
