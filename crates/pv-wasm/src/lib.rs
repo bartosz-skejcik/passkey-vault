@@ -392,6 +392,33 @@ pub fn decrypt_item_for_collection(
     String::from_utf8(bytes).map_err(|e| to_js_str_err(&e.to_string()))
 }
 
+/// Rewrap-only: przenosi Cipher Key spod OLD `CollectionKey`a pod NEW,
+/// nigdy nie dotykając `enc_data` — mirroring `encryptItemForCollection`/
+/// `decryptItemForCollection`'s binding shape (construct-from-bytes,
+/// serde_json, `to_js_err`/`to_js_str_err`).
+#[wasm_bindgen(js_name = rewrapItemKeyForCollection)]
+pub fn rewrap_item_key_for_collection(
+    old_ck: &WasmCollectionKey,
+    new_ck: &WasmCollectionKey,
+    old_enc_key_json: &str,
+    collection_id: &str,
+    item_id: &str,
+) -> Result<String, JsValue> {
+    let old_collection_key = pv_core::items::CollectionKey::from_bytes(old_ck.0);
+    let new_collection_key = pv_core::items::CollectionKey::from_bytes(new_ck.0);
+    let old_enc_key: WrappedKey =
+        serde_json::from_str(old_enc_key_json).map_err(|e| to_js_str_err(&e.to_string()))?;
+    let new_enc_key = pv_core::items::rewrap_item_key_for_collection(
+        &old_collection_key,
+        &new_collection_key,
+        &old_enc_key,
+        collection_id,
+        item_id,
+    )
+    .map_err(to_js_err)?;
+    serde_json::to_string(&new_enc_key).map_err(|e| to_js_str_err(&e.to_string()))
+}
+
 /// Nieprzezroczysty wynik `wasmCreateProviderCredential` — WYŁĄCZNIE dwa
 /// pola: publiczna odpowiedź WebAuthn (`credential_response_json`) i
 /// już-zaszyfrowany vault item (`encrypted_item_json`). `pv_provider`'s
@@ -1186,6 +1213,63 @@ mod tests {
         let result =
             decrypt_item_for_collection(&ck, &item_json, "collection-2", "item-1", 1);
         assert!(result.is_err());
+    }
+
+    // --- Task 2 (25-02): rewrapItemKeyForCollection
+
+    #[test]
+    fn rewrap_item_key_for_collection_new_key_opens_old_key_does_not() {
+        let old_ck = WasmCollectionKey::generate();
+        let new_ck = WasmCollectionKey::generate();
+        let plaintext = "{\"type\":\"login\",\"username\":\"bartek\"}";
+        let item_json = encrypt_item_for_collection(
+            &old_ck,
+            plaintext,
+            "collection-1",
+            "item-1",
+            1,
+        )
+        .expect("encrypt should succeed");
+        let item: EncryptedItem =
+            serde_json::from_str(&item_json).expect("item json should parse");
+        let old_enc_key_json =
+            serde_json::to_string(&item.enc_key).expect("enc_key json should serialize");
+
+        let new_enc_key_json = rewrap_item_key_for_collection(
+            &old_ck,
+            &new_ck,
+            &old_enc_key_json,
+            "collection-1",
+            "item-1",
+        )
+        .expect("rewrap should succeed");
+
+        // enc_data left byte-for-byte untouched — only enc_key is swapped.
+        let rewrapped_item = EncryptedItem {
+            enc_key: serde_json::from_str(&new_enc_key_json).expect("new enc_key should parse"),
+            enc_data: item.enc_data.clone(),
+        };
+        let rewrapped_item_json =
+            serde_json::to_string(&rewrapped_item).expect("rewrapped item should serialize");
+
+        let decrypted_under_new = decrypt_item_for_collection(
+            &new_ck,
+            &rewrapped_item_json,
+            "collection-1",
+            "item-1",
+            1,
+        )
+        .expect("decrypt under new key should succeed");
+        assert_eq!(decrypted_under_new, plaintext);
+
+        let decrypted_under_old = decrypt_item_for_collection(
+            &old_ck,
+            &rewrapped_item_json,
+            "collection-1",
+            "item-1",
+            1,
+        );
+        assert!(decrypted_under_old.is_err());
     }
 }
 
