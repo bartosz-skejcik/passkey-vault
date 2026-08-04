@@ -51,7 +51,7 @@ created: 2026-08-04
 | _pending_ | — | — | FAM-08 | T-25-rekey | Removal triggers scoped, atomic re-key behind 2nd confirmation | integration + e2e | `cargo test -p pv-server --test family_removal -- remove_member` | ❌ W0 | ⬜ pending |
 | _pending_ | — | — | FAM-09 | T-25-session | Suspended/removed member loses access on very next request; no already-issued token carries access | integration | `cargo test -p pv-server --test family_removal -- immediate_access_loss` | ❌ W0 | ⬜ pending |
 | _pending_ | — | — | FAM-10 | T-25-fk | Account deletion runs the same re-key path before dropping the user row | integration | `cargo test -p pv-server --test account_deletion` | ❌ W0 | ⬜ pending |
-| _pending_ | — | — | KEY-06 | — | Re-key cost proportional to that collection's members+items, never the whole vault | load | `cargo test -p pv-server --test family_removal -- rekey_cost_proportional --ignored` | ❌ W0 | ⬜ pending |
+| _pending_ | — | — | KEY-06 | — | Re-key cost proportional to that collection's members+items, never the whole vault | load | `cargo test -p pv-server --test family_removal -- rekey_cost_and_scope_proportional_to_target_collection_only` | ❌ W0 | ⬜ pending |
 | _pending_ | — | — | KEY-07 | T-25-atomic | Re-key atomic under injected mid-transaction fault | integration (fault injection) | `cargo test -p pv-server --test family_removal -- rekey_atomic_under_fault` | ❌ W0 | ⬜ pending |
 | _pending_ | — | — | SEC-07 | T-25-nonce | Batch rewrap never reuses a nonce | property | `cargo test -p pv-core -- nonce_uniqueness_large_batch` | ❌ W0 | ⬜ pending |
 | _pending_ | — | — | UX-04 | — | Removal confirmation lists real item names + honesty copy | e2e (real WASM) + component | `npx playwright test remove-member-dialog` | ❌ W0 | ⬜ pending |

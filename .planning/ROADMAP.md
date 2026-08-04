@@ -244,10 +244,10 @@ Plans:
 **Wave 3** *(blocked on Wave 2 completion)*
 
 - [ ] 25-04-PLAN.md — suspend_member/reinstate_member handlers + live immediate-access-loss proof
-- [ ] 25-05-PLAN.md — KEY-07 fault-injection + SEC-07 nonce + KEY-06 cost-proportionality + FAM-08 idempotency hardening tests
 
-**Wave 4** *(blocked on Wave 3 — via Wave 2's shared helper; 25-06/25-07 touch disjoint server/web files and run in parallel)*
+**Wave 4** *(blocked on Wave 3 — 25-05 depends on 25-04's tests staying green and shares tests/family_removal.rs with it, so it cannot run in the same wave; 25-06/25-07 touch disjoint server/web files and run in parallel with 25-05)*
 
+- [ ] 25-05-PLAN.md — KEY-07 genuine mid-write fault-injection + SEC-07 nonce + KEY-06 cost-proportionality + FAM-08 idempotency hardening tests
 - [ ] 25-06-PLAN.md — Account deletion (owner-dissolution / plain-member self-delete / no-family) + GET /api/families
 - [ ] 25-07-PLAN.md — Client API additions + families/rekey.ts batch orchestration + full Phase 25 i18n dictionary pass
 
