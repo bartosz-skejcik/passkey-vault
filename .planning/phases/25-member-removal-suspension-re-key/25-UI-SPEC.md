@@ -61,7 +61,14 @@ Declared values (must be multiples of 4) — identical numeric scale to every pr
 | xl | 32px | Vertical gap between the Members section and the "Invite someone" section below it in `FamilyTab` |
 | 2xl / 3xl | 48px / 64px | Unused this phase |
 
-Exceptions: none. The access-list scroll container inside the Remove dialog uses `max-h-60` (240px, a Tailwind utility, not a new spacing token) purely as a scroll boundary — it is not part of the spacing rhythm and carries no visual weight of its own.
+**Exception — 12px (`gap-3` / `py-3`):** the member-row shell (§1) uses `gap-3`/`px-4 py-3`, an
+explicit deviation from the 8/16 scale. This is not a new invention — it is the **exact, already-
+shipped row shell** both `SessionsTab.tsx` (`session-row-*`) and `PasskeysTab.tsx` (`passkey-row-*`)
+use today in this same `SettingsPanel` drawer (`flex min-h-16 items-center gap-3 rounded-box border
+border-base-300 px-4 py-3`). Matching that exact value keeps the three row types in the same drawer
+visually identical in density; picking `gap-2`/`py-2` or `gap-4`/`py-4` instead would make the new
+member rows the only visually-inconsistent row type in the panel. No other new 12px usage exists in
+this phase — this is the sole exception.
 
 ---
 
@@ -156,6 +163,9 @@ i18n PL+EN, `web/src/lib/i18n/dictionary.ts` (existing `DICTIONARY`/`interpolate
 | `account.deleteStep2Body` | Twoje konto i wszystkie jego dane zostaną usunięte na stałe. | Your account and all its data will be permanently deleted. |
 | `account.deleting` | Usuwanie konta… | Deleting account… |
 | `account.deleteFailed` | Nie udało się usunąć konta. Spróbuj ponownie. | Couldn't delete the account. Try again. |
+| `access.readOnly` — access-level badge, Remove dialog's disclosure list (§2) | Tylko odczyt | Read-only |
+| `access.fullEdit` — access-level badge, Remove dialog's disclosure list (§2) | Pełna edycja | Full edit |
+| `access.hiddenPassword` — access-level badge, Remove dialog's disclosure list (§2) | Ukryte hasło | Hidden password |
 
 **Copywriting honesty constraints (hard requirements of this phase, re-stated here for the checker):**
 
@@ -311,10 +321,14 @@ member.removeAccessListHeading
   member.removeAccessListEmpty
 ```
 
-Access-level badges reuse whatever token Phase 26 establishes for read/edit/hidden-password (not
-yet defined — Phase 26 is the phase that ships the actual sharing UI). Until then, a plain
-`badge badge-ghost` with the raw access-level string is an acceptable placeholder; this phase does
-not need to anticipate Phase 26's visual language for a value it only displays, never sets.
+Access-level badges use `badge badge-ghost` with the mapped copy from `access.readOnly` /
+`access.fullEdit` / `access.hiddenPassword` (see Copywriting Contract) — never the raw
+`access_level` enum string (`read`/`edit`/`hidden_password`) from the API response. This is
+user-facing security copy inside a destructive-confirm dialog, not a debug value. Phase 26 owns the
+richer sharing-UI visual language (badge color-coding, iconography) for these same three levels when
+it ships the actual share-creation flow; this phase's badge is display-only (it never sets an access
+level) and may be superseded by Phase 26's styling later, but the **copy itself** is this phase's own
+contract, not a placeholder.
 
 ### 3. Two-step dialog shell (E4, E6)
 
@@ -343,15 +357,21 @@ precedent) — so the *crypto* is possible with what Phase 21 already shipped. W
 **plumbing**: an endpoint to list a collection's items and a client call site to unwrap+decrypt
 them, scoped narrowly to this one dialog's need (not the full collections browser Phase 26 builds).
 
-**Recommendation for the plan:** build the minimal fetch-and-decrypt path needed for this one
-disclosure list (reusing Phase 21's WASM primitives directly, not waiting on Phase 26), with
-`member.removeAccessItemsUnresolvedNote` as the honest, count-only fallback for any folder whose
-items cannot be resolved (network failure, a since-deleted collection, or a genuinely
-not-yet-built resolution path if the plan chooses to defer this narrowly) — never a silent omission
-of that folder from the list. This is a planning recommendation, not a UI token; the two render
-paths (resolved names vs. the unresolved-count fallback) are both specified above and the checker
-should treat either as satisfying this UI-SPEC, provided the fallback path is never silently
-substituted when resolution was actually possible.
+**Requirement for the plan — not optional, not a rendering branch to authorize:** the plan must
+build the minimal fetch-and-decrypt path needed for this one disclosure list, reusing Phase 21's
+already-shipped WASM primitives (`CollectionKey` unseal + collection-scope item decrypt) directly —
+not waiting on Phase 26. `25-CONTEXT.md`'s UX-04 decision is locked: "the confirmation lists the
+actual item names... a count cannot answer that." This phase owes real item names in the normal
+case, full stop.
+
+`member.removeAccessItemsUnresolvedNote` is scoped **exclusively to genuine runtime resolution
+failure** — a network error mid-fetch, or a collection deleted between the access-list fetch and the
+name-resolution call. It is not an authorized substitute for building the resolution path, and it
+must never be reached because the resolution path was never implemented. A plan that ships
+count-only disclosure for every folder — or that treats "not yet built" as an instance of this
+fallback — does not conform to this UI-SPEC. At verification time, the resolved-names path must be
+shown reachable in the shipped code (e.g. a test that asserts real item names render for a populated
+folder), not merely that the fallback copy exists somewhere.
 
 ### 5. Non-visual notes carried from CONTEXT.md (traceability only)
 
