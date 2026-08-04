@@ -4,15 +4,15 @@ milestone: v0.4
 milestone_name: Family & Sharing
 current_phase: 25
 current_phase_name: Member Removal, Suspension & Re-key
-status: planning
-stopped_at: Completed 24-08-PLAN.md
-last_updated: "2026-07-31T13:53:23.065Z"
-last_activity: 2026-07-31
-last_activity_desc: Phase 24 complete, transitioned to Phase 25
+status: executing
+stopped_at: Phase 25 UI-SPEC approved
+last_updated: "2026-08-04T14:58:58.756Z"
+last_activity: 2026-08-03
+last_activity_desc: "Completed quick task 260803-cnd: Fix passkey unlock 401 handling and AbortError misclassification"
 progress:
   total_phases: 7
   completed_phases: 4
-  total_plans: 24
+  total_plans: 34
   completed_plans: 24
   percent: 57
 ---
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 
 Phase: 25 — Member Removal, Suspension & Re-key
 Plan: Not started
-Status: Ready to plan
+Status: Ready to execute
 Last activity: 2026-08-03 - Completed quick task 260803-cnd: Fix passkey unlock 401 handling and AbortError misclassification
 
 ## Performance Metrics
@@ -248,10 +248,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 24-08-PLAN.md
-**Resume file:** None
+**Stopped at:** Phase 25 UI-SPEC approved
+**Resume file:** /Users/j5on/.work/projects/passkey-vault/.planning/phases/25-member-removal-suspension-re-key/25-UI-SPEC.md
 
-Last session: 2026-07-31T12:38:52.090Z
+Last session: 2026-08-04T13:19:06.389Z
 items resolved by observed evidence rather than deferral: the Playwright half had already been
 executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
 commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run
