@@ -181,7 +181,28 @@ i18n PL+EN, `web/src/lib/i18n/dictionary.ts` (existing `DICTIONARY`/`interpolate
 Shape-rooted UI *state* coverage across this phase's 6 surfaces. Empty-state and error-state **copy**
 live in `## Copywriting Contract` above; rows below reference those keys rather than restating them.
 
-**Resolved: 21 covered, 8 backstop, 0 unresolved.**
+**Resolved: 25 covered, 10 backstop, 0 unresolved.**
+
+**Proposed-and-dismissed (not applicable):** the UI-consideration probe additionally proposed
+`empty`/`populated`/`zero-one-many`/`partial` for E2, E3, and E5, plus `overflow`/`long-text` for E5
+and `partial` for E1. These are classifier over-generation on surfaces that structurally cannot
+exhibit them, not gaps:
+
+- **E2 empty/populated/zero-one-many/partial** — E2 is a static-copy confirm dialog with no list or
+  collection to be empty, populated, or partial; it has exactly one rendering per state (loading /
+  error / success), already covered above.
+- **E3 empty/populated/zero-one-many/partial** — E3 is a single icon button toggling one row's own
+  status; there is no collection for these categories to describe.
+- **E5 empty/populated/zero-one-many/partial/overflow/long-text** — E5 is a fixed-copy banner.
+  `family.suspendedBannerTitle`/`family.suspendedBannerBody` take no interpolated variables (verified
+  against the Copywriting Contract above) — there is no variable content that could overflow, wrap,
+  or be partially present.
+- **E1 partial** — already covered above as the `empty` row's twin: `GET /api/families/members`
+  returns one JSON array in one response; there is no half-loaded intermediate state between "not
+  yet fetched" and "fetched" for this endpoint.
+
+No resolution is fabricated for any of the above — they are recorded as not-applicable, not as
+covered or backstop rows.
 
 ### E1 — Member list (`FamilyTab.tsx`, new "Members" section)
 
@@ -203,6 +224,7 @@ live in `## Copywriting Contract` above; rows below reference those keys rather 
 | loading | ✅ covered | `disabled` + `loading loading-spinner loading-sm` on the confirm button during the request, same idiom as every other dialog in this codebase. |
 | error | ✅ covered | `member.suspendFailed` renders inline in the dialog (does not silently close it) — mirrors `PasskeyDeleteConfirmDialog`'s non-silent-close-on-failure precedent. |
 | success | ✅ covered | Dialog closes; the row's status badge updates to `family.statusSuspended` and its action icon flips from `PauseCircle` to `PlayCircle` — no toast (the row itself is the confirmation). |
+| overflow / long-text | ⛑ backstop | `member.suspendConfirmTitle` interpolates `{email}` once; `member.suspendConfirmBody` interpolates it **three times**, in-sentence. A dialog title and a table-row cell are not the same shape, so the row-level `truncate`+`title` idiom (E1) is the wrong tool here — truncating mid-sentence, three times, would produce unreadable fragments. Resolution: the **title** (single line, `h2`) truncates with `title` attr, matching every other dialog heading in this codebase; the **body** (`p`, `text-base`, already multi-line-capable per Typography) does **not** truncate — it wraps normally (`break-words`, the browser default for a `<p>`) and is allowed to grow the dialog's height, since a 400px-wide paragraph wrapping a long email three times is legible, whereas a truncated title or a `break-all`-mangled email is not. **Backstop:** assert the dialog does not clip or overflow its fixed-width card for a realistic long email (≥40 chars) in both title and body. |
 
 ### E3 — Reinstate action (no confirmation dialog, per `25-CONTEXT.md`)
 
@@ -222,6 +244,7 @@ live in `## Copywriting Contract` above; rows below reference those keys rather 
 | populated (access list) | ✅ covered | Two sub-sections when both are non-empty: shared folders (`member.removeAccessFolderLabel` + nested item names or the `member.removeAccessItemsUnresolvedNote` fallback — see Phase-Specific Notes §4) and individually-shared items (item name + access-level badge). Either sub-section is omitted entirely when its array is empty — never an empty heading with nothing under it. |
 | zero-one-many | ✅ covered | One folder/item and many render the same row shape; the list is capped at `max-h-60 overflow-y-auto` inside the 400px card so a large grant history never blows out the dialog. |
 | overflow / long-text | ⛑ backstop | A long folder or item name inside the list. **Backstop:** assert `truncate`+`title` on each list-row's name span, same treatment as every prior name-display surface in this codebase. |
+| partial (mixed name resolution) | ⛑ backstop | `member.removeAccessItemsUnresolvedNote` is a **per-folder** fallback (it interpolates `{count}`, scoped to that one folder — see Phase-Specific Notes §4), which makes mixed resolution a reachable, ordinary state: folder A's item names resolve while folder B falls back to the count note, both rendered in the same list in the same dialog render. This is a **different failure from the `error (access fetch)` row above and must not be handled the same way** — that row is the fail-closed, whole-list fetch failure that blocks the dialog from advancing past the loading state at all; this row is a per-folder *partial* resolution failure that happens only after the list has already successfully loaded and step 1 is already showing. Resolution: (1) folder A's resolved names and folder B's count-only fallback render adjacent, in list order, with **no visual distinction implying folder B is broken, empty, or an error** — no `alert-error`/`text-error` styling on the fallback row, no icon suggesting failure, just the plain `member.removeAccessItemsUnresolvedNote` text in the same Label-role styling as a resolved item name; (2) folder B's own folder name and access-level badge **always render** regardless of whether its nested item names resolved — only the nested item-name list is replaced by the count note, never the folder heading itself; (3) `member.removeHonestyWarning` and the `member.removeStep1Continue` button both stay **enabled** in this state — partial name resolution does not block progression, unlike the whole-list fetch error. **Backstop:** assert a list with one resolved folder and one fallback folder renders both without any error-styled element, and that Continue remains clickable. |
 | step transition | ✅ covered | Step 1 → step 2 is forward-only via `member.removeStep1Continue`; Cancel at either step closes the whole dialog and returns to the member list with no partial state retained (re-opening Remove re-fetches the access list fresh, never a stale cached one). |
 | final action | ✅ covered | Step 2's `member.removeStep2Confirm` is the only button that actually calls the removal endpoint; busy (`member.removing`), error (`member.removeFailed`, inline, dialog stays open) and success (dialog closes, row disappears from the member list) states covered. |
 
