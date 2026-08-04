@@ -229,7 +229,37 @@ Plans:
   5. Deleting an account that was a family member runs the same re-key path as explicit removal, and the remove/suspend confirmation UI lists what that member could see and recommends rotating those credentials, stating plainly that re-key cannot undo access they already had.
   6. **KEY-02 rewrap-only guarantee** (the second half of KEY-02, carried forward from Phase 21): removing a member rewraps **keys only** — every affected item's `enc_data` ciphertext is byte-identical before and after the re-key, asserted directly rather than inferred from the cost measurement in SC 2. This is the clause that makes member removal cheap; SC 2 proves the *scope* is right, SC 6 proves nothing re-encrypted payloads.
 
-**Plans**: TBD
+**Plans:** 10 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 25-01-PLAN.md — Migration 0018 (family_members.status) + resolve_access join extension + PRAGMA foreign_keys proof
+- [ ] 25-02-PLAN.md — pv-core rewrap_item_key_for_collection primitive + pv-wasm binding
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 25-03-PLAN.md — collection_items + remove_member atomic re-key endpoint (tracer) + revoke_access WR-07 retrofit
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 25-04-PLAN.md — suspend_member/reinstate_member handlers + live immediate-access-loss proof
+- [ ] 25-05-PLAN.md — KEY-07 fault-injection + SEC-07 nonce + KEY-06 cost-proportionality + FAM-08 idempotency hardening tests
+
+**Wave 4** *(blocked on Wave 3 — via Wave 2's shared helper; 25-06/25-07 touch disjoint server/web files and run in parallel)*
+
+- [ ] 25-06-PLAN.md — Account deletion (owner-dissolution / plain-member self-delete / no-family) + GET /api/families
+- [ ] 25-07-PLAN.md — Client API additions + families/rekey.ts batch orchestration + full Phase 25 i18n dictionary pass
+
+**Wave 5** *(blocked on Wave 4 completion; 25-08/25-09 touch disjoint components and run in parallel)*
+
+- [ ] 25-08-PLAN.md — FamilyTab Members section + Suspend/Reinstate + RemoveMemberDialog (real item-name disclosure)
+- [ ] 25-09-PLAN.md — SecurityTab Delete-account section + DeleteAccountDialog
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 25-10-PLAN.md — Live two-session Playwright proofs (remove-member, delete-account)
+
 **UI hint**: yes
 
 ### Phase 26: Web App — Sharing UI & Family Management
@@ -295,6 +325,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 22. Family & Collection Data Model — Server Authorization | v0.4 | 5/5 | Complete    | 2026-07-30 |
 | 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 6/6 | Complete    | 2026-07-31 |
 | 24. Invitation Flow (No SMTP) | v0.4 | 8/8 | Complete    | 2026-07-31 |
-| 25. Member Removal, Suspension & Re-key | v0.4 | 0/TBD | Not started | - |
+| 25. Member Removal, Suspension & Re-key | v0.4 | 0/10 | Not started | - |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 0/TBD | Not started | - |
 | 27. Extension Integration — Shared Items | v0.4 | 0/TBD | Not started | - |
