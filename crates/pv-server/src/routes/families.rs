@@ -290,14 +290,22 @@ pub struct MemberAccessResponse {
 /// an error; there is nothing to leak either way.
 pub async fn member_access(
     State(state): State<AppState>,
-    _membership: FamilyMembership<RequireEdit>,
+    membership: FamilyMembership<RequireEdit>,
     axum::extract::Path(target_user_id): axum::extract::Path<String>,
 ) -> Result<Json<MemberAccessResponse>, ApiError> {
+    // WR-03 (code review, Phase 25): scoped to the CALLER's own resolved
+    // `family_id`, not `recipient_user_id` alone. Two reasons: an owner must
+    // never learn about a grant in a family that is not theirs, and this set
+    // must stay byte-identical to `apply_member_removal_rekey`'s own step-1
+    // scope query — the client builds its re-key batch from this response, and
+    // any scope disagreement between the two surfaces as a KEY-06 409.
     let collection_rows = sqlx::query(
-        "SELECT collection_id, access_level FROM collection_keys \
-         WHERE recipient_user_id = ? ORDER BY collection_id ASC",
+        "SELECT ck.collection_id, ck.access_level FROM collection_keys ck \
+           JOIN collections c ON c.id = ck.collection_id \
+          WHERE ck.recipient_user_id = ? AND c.family_id = ? ORDER BY ck.collection_id ASC",
     )
     .bind(&target_user_id)
+    .bind(&membership.family_id)
     .fetch_all(&state.db)
     .await?;
 
@@ -413,8 +421,10 @@ thread_local! {
 /// (never opens or commits its own transaction) so both callers control
 /// their own transaction lifecycle around it.
 ///
-/// Order, per collection entry `i`: (1) verify the submitted collection SET
-/// matches the target's ACTUAL `collection_keys` rows exactly (KEY-06's
+/// Order, per collection entry `i`: (0) re-verify IN-TRANSACTION that the
+/// target still holds a `family_members` row in `family_id` (WR-03's TOCTOU
+/// fix — see below); (1) verify the submitted collection SET matches the
+/// target's ACTUAL `collection_keys` rows exactly (KEY-06's
 /// scope guard — any mismatch, missing or extra, is a hard 409, never a
 /// silent partial re-key); (2) per collection, verify the submitted item-id
 /// set matches that collection's ACTUAL current `vault_items` exactly, and
@@ -427,23 +437,65 @@ thread_local! {
 /// `FAULT_INJECT_AFTER_COLLECTION_INDEX`'s own doc comment above for why
 /// that shape was rejected); (4) sever EVERY `item_shares` row the target
 /// held, on ANY item, not scoped to `batch`'s collections (KEY-02's
-/// adjacency fix); (5) delete the target's `family_members` row; (6) bump
-/// the target's own `vault_revision` (WR-07's fix, applied to this new
-/// path); (7) bump every touched collection's own `revision`.
+/// adjacency fix); (5) delete the target's `family_members` row, scoped to
+/// `family_id`; (6) bump the target's own `vault_revision` (WR-07's fix,
+/// applied to this new path); (7) bump every touched collection's own
+/// `revision`.
+///
+/// WR-03 (code review, Phase 25). Two related gaps this signature closes:
+///
+/// 1. **TOCTOU.** `remove_member`'s confused-deputy check used to run on a
+///    SEPARATE pool connection before `BEGIN IMMEDIATE`, and this helper
+///    explicitly "trusted the handler passed a target already confirmed to be
+///    in the caller's own family" — true only as of that pre-transaction read.
+///    The check now lives HERE, on the transaction's own connection, so
+///    authorization and the writes it authorizes are the same atomic unit.
+///    One enforcement point, and `delete_account_as_member` inherits it too.
+///
+/// 2. **Blast radius.** Step 5 was `DELETE FROM family_members WHERE user_id = ?`
+///    with no `family_id` predicate, and step 1 resolved the target's
+///    collections by `recipient_user_id` alone. Both are correct ONLY because
+///    v0.4 enforces a singleton family — nothing in the compiler or the schema
+///    says so. Taking `family_id` explicitly makes every write scoped, so
+///    relaxing the singleton assumption later cannot silently turn this into a
+///    cross-family delete.
 pub(crate) async fn apply_member_removal_rekey(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    family_id: &str,
     target_user_id: &str,
     batch: &[CollectionRekeyBatch],
 ) -> Result<Vec<String>, ApiError> {
     use std::collections::HashSet;
 
+    // Step 0 (WR-03): the target must still hold a `family_members` row in
+    // THIS family, re-read on the transaction's own connection. A target
+    // removed by a concurrent request between the handler's own dispatch and
+    // this point is a 404, not a partially-applied second removal.
+    let still_a_member = sqlx::query("SELECT 1 FROM family_members WHERE family_id = ? AND user_id = ?")
+        .bind(family_id)
+        .bind(target_user_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    if still_a_member.is_none() {
+        return Err(ApiError::NotFound);
+    }
+
     // Step 1 (KEY-06): the submitted collection SET must exactly match the
     // target's ACTUAL reachable collections, resolved fresh inside this tx.
-    let actual_collection_rows =
-        sqlx::query("SELECT collection_id FROM collection_keys WHERE recipient_user_id = ?")
-            .bind(target_user_id)
-            .fetch_all(&mut **tx)
-            .await?;
+    // Scoped to `family_id` (WR-03) so a grant in a DIFFERENT family is
+    // neither required in the batch nor silently re-keyed by this removal —
+    // and so this set stays byte-identical to the one `member_access` (the
+    // endpoint the client built `batch` from) resolves, which is what keeps
+    // the KEY-06 guard from 409-ing on a scope disagreement.
+    let actual_collection_rows = sqlx::query(
+        "SELECT ck.collection_id FROM collection_keys ck \
+           JOIN collections c ON c.id = ck.collection_id \
+          WHERE ck.recipient_user_id = ? AND c.family_id = ?",
+    )
+    .bind(target_user_id)
+    .bind(family_id)
+    .fetch_all(&mut **tx)
+    .await?;
     let actual_collections: HashSet<String> = actual_collection_rows
         .into_iter()
         .map(|row| row.try_get("collection_id").map_err(|_| ApiError::Internal))
@@ -550,12 +602,11 @@ pub(crate) async fn apply_member_removal_rekey(
         .execute(&mut **tx)
         .await?;
 
-    // Step 5: the caller's own `family_id` scope was already proven by the
-    // `FamilyMembership<RequireEdit>` extractor and the confused-deputy
-    // check in the handler below; this helper does not re-derive `family_id`
-    // — it trusts the handler passed a target already confirmed to be in the
-    // caller's own family.
-    sqlx::query("DELETE FROM family_members WHERE user_id = ?")
+    // Step 5 (WR-03): scoped to `family_id`, not `user_id` alone. The
+    // unscoped form was a latent cross-family delete kept correct only by
+    // v0.4's singleton-family assumption, which nothing enforces.
+    sqlx::query("DELETE FROM family_members WHERE family_id = ? AND user_id = ?")
+        .bind(family_id)
         .bind(target_user_id)
         .execute(&mut **tx)
         .await?;
@@ -597,17 +648,13 @@ pub async fn remove_member(
         ));
     }
 
-    // Confused-deputy guard (T-25-06): target must hold a family_members row
-    // in the CALLER's own resolved family_id — mirrors
-    // `collections::add_member`'s identical guard shape.
-    let is_family_member = sqlx::query("SELECT 1 FROM family_members WHERE family_id = ? AND user_id = ?")
-        .bind(&membership.family_id)
-        .bind(&target_user_id)
-        .fetch_optional(&state.db)
-        .await?;
-    if is_family_member.is_none() {
-        return Err(ApiError::NotFound);
-    }
+    // WR-03 (code review, Phase 25): the confused-deputy guard (T-25-06) used
+    // to run HERE, on a separate pool connection, before the transaction
+    // opened. It now lives inside `apply_member_removal_rekey` as its step 0,
+    // on the transaction's own connection — so the membership fact the writes
+    // depend on cannot change between being checked and being acted on, and
+    // `delete_account_as_member` (the helper's other caller) inherits the same
+    // guard instead of relying on its own separate pre-read.
 
     // BEGIN IMMEDIATE: this handler's first statements (inside
     // apply_member_removal_rekey) are reads, and only the later writes
@@ -616,7 +663,8 @@ pub async fn remove_member(
     // SQLITE_BUSY_SNAPSHOT under a deferred BEGIN.
     let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
 
-    let touched_collections = apply_member_removal_rekey(&mut tx, &target_user_id, &req.collections).await?;
+    let touched_collections =
+        apply_member_removal_rekey(&mut tx, &membership.family_id, &target_user_id, &req.collections).await?;
 
     tx.commit().await?;
 

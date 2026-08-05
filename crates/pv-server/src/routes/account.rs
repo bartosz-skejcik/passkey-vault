@@ -67,8 +67,8 @@ pub async fn delete_account(
         Some((family_id, AccessLevel::Edit)) => {
             delete_account_as_owner(&state, &session.user_id, &family_id).await
         }
-        Some((_family_id, AccessLevel::Read)) => {
-            delete_account_as_member(&state, &session.user_id, &req.collections).await
+        Some((family_id, AccessLevel::Read)) => {
+            delete_account_as_member(&state, &family_id, &session.user_id, &req.collections).await
         }
         // `resolve_family_role` only ever maps `role='owner' -> Edit` /
         // `role='member' -> Read` (crates/pv-server/src/routes/membership.rs) —
@@ -199,12 +199,18 @@ async fn delete_account_as_owner(
 /// (CONTEXT.md's locked FAM-10 instruction).
 async fn delete_account_as_member(
     state: &AppState,
+    family_id: &str,
     member_user_id: &str,
     batch: &[CollectionRekeyBatch],
 ) -> Result<StatusCode, ApiError> {
     let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
 
-    let touched_collections = families::apply_member_removal_rekey(&mut tx, member_user_id, batch).await?;
+    // WR-03: `family_id` is the caller's OWN resolved family (from
+    // `resolve_family_role`, keyed on their own session), never a
+    // client-supplied value — so every write the helper performs is scoped,
+    // and the helper's in-transaction membership re-check applies here too.
+    let touched_collections =
+        families::apply_member_removal_rekey(&mut tx, family_id, member_user_id, batch).await?;
 
     // CR-01: clear every dangling `last_editor_user_id` reference before the
     // delete — the ordinary collaboration case (this member edited an item
