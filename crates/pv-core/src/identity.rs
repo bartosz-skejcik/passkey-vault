@@ -700,4 +700,23 @@ mod tests {
         let ck = unseal_collection_key(&recipient, &sealed).unwrap();
         assert_eq!(ck.expose(), &payload);
     }
+
+    /// SEC-07 (Plan 25-05, Task 2): 200 independent Collection Key seals
+    /// (each to a distinct simulated recipient) must produce 200
+    /// pairwise-distinct nonces — the SealedKey-side twin of
+    /// `items::nonce_uniqueness_large_batch_of_item_key_rewraps`.
+    #[test]
+    fn nonce_uniqueness_large_batch_of_collection_key_seals() {
+        use std::collections::HashSet;
+
+        let ck = crate::items::CollectionKey::generate();
+        let mut nonces = Vec::with_capacity(200);
+        for _ in 0..200 {
+            let recipient_sk = IdentitySecretKey::generate();
+            let sealed = seal(&recipient_sk.public_key(), ck.expose()).unwrap();
+            nonces.push(sealed.nonce);
+        }
+        let unique: HashSet<_> = nonces.iter().collect();
+        assert_eq!(unique.len(), 200, "all 200 seal nonces must be pairwise-distinct");
+    }
 }

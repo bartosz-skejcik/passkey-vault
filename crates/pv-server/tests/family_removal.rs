@@ -73,6 +73,18 @@ async fn create_family(app: &axum::Router, owner_token: &str) {
     assert_eq!(res.status(), StatusCode::CREATED, "family creation must succeed");
 }
 
+/// Generic N-th-member version of `common::register_second_family_member`/
+/// `register_third_family_member` — Task 2's cost-proportionality test needs
+/// 9 additional members, more than those two named helpers cover.
+async fn register_family_member(app: &axum::Router, owner_token: &str, email: &str) -> String {
+    let member_token = register_and_login(app, email).await;
+    let member_id = user_id_of(app, &member_token).await;
+    let add_res =
+        req(app, "POST", "/api/families/members", owner_token, Some(json!({ "user_id": member_id }))).await;
+    assert_eq!(add_res.status(), StatusCode::CREATED, "owner adding a new member must succeed");
+    member_token
+}
+
 async fn vault_revision_of(pool: &sqlx::SqlitePool, user_id: &str) -> i64 {
     sqlx::query_scalar("SELECT vault_revision FROM users WHERE id = ?").bind(user_id).fetch_one(pool).await.unwrap()
 }
@@ -864,6 +876,316 @@ async fn remove_member_rolls_back_completely_on_injected_mid_write_fault() {
         .await
         .unwrap();
     assert_eq!(member_family_row_count, 1, "M's family_members row must still exist — the DELETE never committed");
+}
+
+/// Task 2 (KEY-06's adjacency edge / SC 6's scope-vs-payload distinction): a
+/// target member is removed from a SMALL "target" collection while a
+/// SEPARATE, much LARGER "control" collection — shared with the owner and 8
+/// OTHER family members, holding 50 items, and NEVER reachable by the
+/// target — is provably untouched. Exact row-count/byte-diff assertions for
+/// the target collection's writes; byte-identical snapshots for every one
+/// of the control collection's rows.
+#[tokio::test]
+async fn rekey_cost_and_scope_proportional_to_target_collection_only() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "rmscope-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+    let owner_sk = IdentitySecretKey::generate();
+
+    // The ONE member being removed — the target collection is their SOLE
+    // reachable collection (never added to control below).
+    let target_token = common::register_second_family_member(&app, &owner_token, "rmscope-target@example.com").await;
+    let target_id = user_id_of(&app, &target_token).await;
+    let target_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &target_token, target_sk.public_key().to_bytes()).await;
+
+    // 8 control-collection-only members (owner + these 8 = the "9 rows"
+    // control's collection_keys ends up with).
+    let mut control_ids = Vec::new();
+    let mut control_sks = Vec::new();
+    for i in 0..8 {
+        let email = format!("rmscope-control-{i}@example.com");
+        let token = register_family_member(&app, &owner_token, &email).await;
+        let id = user_id_of(&app, &token).await;
+        let sk = IdentitySecretKey::generate();
+        publish_keypair(&app, &token, sk.public_key().to_bytes()).await;
+        control_ids.push(id);
+        control_sks.push(sk);
+    }
+
+    // --- Target collection: owner + target only, 2 items. ---
+    let ck_target = CollectionKey::generate();
+    let owner_sealed_target = seal(&owner_sk.public_key(), ck_target.expose()).unwrap();
+    let create_target_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "enc_name": "enc-rmscope-target", "sealed_key": serde_json::to_string(&owner_sealed_target).unwrap() })),
+    )
+    .await;
+    assert_eq!(create_target_res.status(), StatusCode::CREATED);
+    let target_collection_id = body_json(create_target_res).await["id"].as_str().unwrap().to_string();
+
+    let target_sealed = seal(&target_sk.public_key(), ck_target.expose()).unwrap();
+    let add_target_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{target_collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": target_id,
+            "sealed_key": serde_json::to_string(&target_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_target_res.status(), StatusCode::CREATED);
+
+    let mut target_item_ids = Vec::new();
+    let mut target_encrypted_items = Vec::new();
+    for i in 0..2 {
+        let item_id = uuid::Uuid::new_v4().to_string();
+        let plaintext = format!(r#"{{"type":"login","username":"target{i}"}}"#);
+        let encrypted =
+            encrypt_item_for_collection(&ck_target, plaintext.as_bytes(), &target_collection_id, &item_id, 1)
+                .unwrap();
+        let create_item_res = req(
+            &app,
+            "POST",
+            "/api/vault/items",
+            &owner_token,
+            Some(json!({
+                "id": item_id,
+                "enc_key": serde_json::to_string(&encrypted.enc_key).unwrap(),
+                "enc_data": serde_json::to_string(&encrypted.enc_data).unwrap(),
+            })),
+        )
+        .await;
+        assert_eq!(create_item_res.status(), StatusCode::CREATED);
+        sqlx::query("UPDATE vault_items SET collection_id = ? WHERE id = ?")
+            .bind(&target_collection_id)
+            .bind(&item_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        target_item_ids.push(item_id);
+        target_encrypted_items.push(encrypted);
+    }
+
+    // --- Control collection: owner + all 8 control members (NOT the
+    // target), 50 items — much larger, sharing the same database. ---
+    let ck_control = CollectionKey::generate();
+    let owner_sealed_control = seal(&owner_sk.public_key(), ck_control.expose()).unwrap();
+    let create_control_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "enc_name": "enc-rmscope-control", "sealed_key": serde_json::to_string(&owner_sealed_control).unwrap() })),
+    )
+    .await;
+    assert_eq!(create_control_res.status(), StatusCode::CREATED);
+    let control_collection_id = body_json(create_control_res).await["id"].as_str().unwrap().to_string();
+
+    for (id, sk) in control_ids.iter().zip(control_sks.iter()) {
+        let sealed = seal(&sk.public_key(), ck_control.expose()).unwrap();
+        let add_res = req(
+            &app,
+            "POST",
+            &format!("/api/vault/collections/{control_collection_id}/members"),
+            &owner_token,
+            Some(json!({
+                "recipient_user_id": id,
+                "sealed_key": serde_json::to_string(&sealed).unwrap(),
+                "access_level": "edit",
+            })),
+        )
+        .await;
+        assert_eq!(add_res.status(), StatusCode::CREATED);
+    }
+
+    for i in 0..50 {
+        let item_id = uuid::Uuid::new_v4().to_string();
+        let plaintext = format!(r#"{{"type":"login","username":"control{i}"}}"#);
+        let encrypted =
+            encrypt_item_for_collection(&ck_control, plaintext.as_bytes(), &control_collection_id, &item_id, 1)
+                .unwrap();
+        let create_item_res = req(
+            &app,
+            "POST",
+            "/api/vault/items",
+            &owner_token,
+            Some(json!({
+                "id": item_id,
+                "enc_key": serde_json::to_string(&encrypted.enc_key).unwrap(),
+                "enc_data": serde_json::to_string(&encrypted.enc_data).unwrap(),
+            })),
+        )
+        .await;
+        assert_eq!(create_item_res.status(), StatusCode::CREATED);
+        sqlx::query("UPDATE vault_items SET collection_id = ? WHERE id = ?")
+            .bind(&control_collection_id)
+            .bind(&item_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // --- Snapshot the control collection's FULL state (all 9 collection_keys
+    // rows, all 50 items' enc_key/enc_data) via direct SELECT. ---
+    let control_sealed_keys_before: std::collections::HashMap<String, String> = {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT recipient_user_id, sealed_key FROM collection_keys WHERE collection_id = ?",
+        )
+        .bind(&control_collection_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        rows.into_iter().collect()
+    };
+    assert_eq!(control_sealed_keys_before.len(), 9, "control collection must have exactly 9 collection_keys rows (owner + 8 control members)");
+
+    let control_items_before: std::collections::HashMap<String, (String, String)> = {
+        let rows: Vec<(String, String, String)> =
+            sqlx::query_as("SELECT id, enc_key, enc_data FROM vault_items WHERE collection_id = ?")
+                .bind(&control_collection_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        rows.into_iter().map(|(id, enc_key, enc_data)| (id, (enc_key, enc_data))).collect()
+    };
+    assert_eq!(control_items_before.len(), 50, "control collection must have exactly 50 items");
+
+    // --- Also snapshot the target collection's total collection_keys/item
+    // counts (pre-removal: 2 rows — owner+target — and 2 items). ---
+    let target_collection_keys_count_before: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM collection_keys WHERE collection_id = ?")
+            .bind(&target_collection_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(target_collection_keys_count_before, 2);
+
+    // --- Simulate the owner's client: rewrap only the TARGET collection's
+    // batch. ---
+    let old_ck_target = unseal_collection_key(&owner_sk, &owner_sealed_target).unwrap();
+    let new_ck_target = CollectionKey::generate();
+    let new_owner_sealed_target = seal(&owner_sk.public_key(), new_ck_target.expose()).unwrap();
+    let mut item_rewraps_json = Vec::new();
+    for (item_id, encrypted) in target_item_ids.iter().zip(target_encrypted_items.iter()) {
+        let new_enc_key = rewrap_item_key_for_collection(
+            &old_ck_target,
+            &new_ck_target,
+            &encrypted.enc_key,
+            &target_collection_id,
+            item_id,
+        )
+        .unwrap();
+        item_rewraps_json.push(json!({ "item_id": item_id, "enc_key": serde_json::to_string(&new_enc_key).unwrap() }));
+    }
+
+    let start = std::time::Instant::now();
+    let remove_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/families/members/{target_id}"),
+        &owner_token,
+        Some(json!({
+            "collections": [
+                {
+                    "collection_id": target_collection_id,
+                    "new_sealed_keys": [
+                        { "recipient_user_id": owner_id, "sealed_key": serde_json::to_string(&new_owner_sealed_target).unwrap() }
+                    ],
+                    "item_rewraps": item_rewraps_json
+                }
+            ]
+        })),
+    )
+    .await;
+    let elapsed = start.elapsed();
+    assert_eq!(remove_res.status(), StatusCode::NO_CONTENT);
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "secondary, non-blocking signal: removal should complete quickly despite the much larger control dataset sharing the database (took {elapsed:?})"
+    );
+
+    // --- Assertions: exactly the TARGET collection's rows were touched. ---
+    let target_collection_keys_count_after: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM collection_keys WHERE collection_id = ?")
+            .bind(&target_collection_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        target_collection_keys_count_after, 1,
+        "exactly 1 collection_keys row (the owner's) must remain in the target collection"
+    );
+
+    let owner_sealed_target_after: String = sqlx::query_scalar(
+        "SELECT sealed_key FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(&target_collection_id)
+    .bind(&owner_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        owner_sealed_target_after,
+        serde_json::to_string(&new_owner_sealed_target).unwrap(),
+        "the owner's sealed_key in the target collection must be the newly-sealed blob"
+    );
+
+    let target_items_after: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, enc_key FROM vault_items WHERE collection_id = ?")
+            .bind(&target_collection_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(target_items_after.len(), 2, "exactly 2 vault_items rows exist in the target collection");
+    for (id, enc_key_after) in &target_items_after {
+        let idx = target_item_ids.iter().position(|i| i == id).unwrap();
+        assert_ne!(
+            enc_key_after, &serde_json::to_string(&target_encrypted_items[idx].enc_key).unwrap(),
+            "each target item's enc_key must have been rewrapped (changed) — item {id}"
+        );
+    }
+
+    // --- Assertions: every one of the control collection's rows is
+    // byte-identical to its pre-call snapshot — cost/scope proven bound to
+    // the target collection alone. ---
+    let control_sealed_keys_after: std::collections::HashMap<String, String> = {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT recipient_user_id, sealed_key FROM collection_keys WHERE collection_id = ?",
+        )
+        .bind(&control_collection_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        rows.into_iter().collect()
+    };
+    assert_eq!(
+        control_sealed_keys_after, control_sealed_keys_before,
+        "every one of the control collection's 9 sealed_key values must be byte-identical — direct assertion, not inference"
+    );
+
+    let control_items_after: std::collections::HashMap<String, (String, String)> = {
+        let rows: Vec<(String, String, String)> =
+            sqlx::query_as("SELECT id, enc_key, enc_data FROM vault_items WHERE collection_id = ?")
+                .bind(&control_collection_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        rows.into_iter().map(|(id, enc_key, enc_data)| (id, (enc_key, enc_data))).collect()
+    };
+    assert_eq!(
+        control_items_after, control_items_before,
+        "every one of the control collection's 50 items' enc_key/enc_data must be byte-identical — direct assertion, not inference"
+    );
 }
 
 // --- Plan 25-04 (FAM-07/FAM-09): reversible suspend/reinstate ---

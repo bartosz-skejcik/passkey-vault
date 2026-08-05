@@ -495,4 +495,34 @@ mod tests {
         );
         assert!(matches!(result, Err(CryptoError::Decrypt)));
     }
+
+    /// SEC-07 (Plan 25-05, Task 2): 200 independent rewraps must produce 200
+    /// pairwise-distinct nonces — a large-batch property test giving the
+    /// collision check real statistical power, not just incidental
+    /// distinctness in a small functional test.
+    #[test]
+    fn nonce_uniqueness_large_batch_of_item_key_rewraps() {
+        use std::collections::HashSet;
+
+        let old_ck = CollectionKey::generate();
+        let new_ck = CollectionKey::generate();
+        let mut nonces = Vec::with_capacity(200);
+        for i in 0..200 {
+            let item_id = format!("item-{i}");
+            let item =
+                encrypt_item_for_collection(&old_ck, b"secret", "collection-1", &item_id, 1)
+                    .unwrap();
+            let rewrapped = rewrap_item_key_for_collection(
+                &old_ck,
+                &new_ck,
+                &item.enc_key,
+                "collection-1",
+                &item_id,
+            )
+            .unwrap();
+            nonces.push(rewrapped.nonce);
+        }
+        let unique: HashSet<_> = nonces.iter().collect();
+        assert_eq!(unique.len(), 200, "all 200 rewrap nonces must be pairwise-distinct");
+    }
 }
