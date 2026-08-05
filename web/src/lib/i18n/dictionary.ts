@@ -919,6 +919,132 @@ export const DICTIONARY = {
     pl: "Nie udało się unieważnić linku. Spróbuj ponownie.",
     en: "Couldn't revoke the invite link. Try again.",
   },
+
+  // Member removal, suspension & re-key (FAM-07..10, KEY-02, UX-04, Plan
+  // 25-07/25-08/25-09) — copy verbatim from 25-UI-SPEC.md's Copywriting
+  // Contract. Two of these keys (see their own inline comments below) are
+  // hard, non-negotiable honesty strings — see the UI-SPEC's copywriting
+  // honesty constraints (must never be omitted, softened, or relocated).
+  "family.membersHeading": { pl: "Członkowie", en: "Members" },
+  "family.roleOwner": { pl: "Właściciel/Właścicielka", en: "Owner" },
+  "family.roleMember": { pl: "Członek/Członkini", en: "Member" },
+  "family.joinedLabel": { pl: "Dołączył/a {date}", en: "Joined {date}" },
+  "family.youBadge": { pl: "Ty", en: "You" },
+  "family.statusSuspended": { pl: "Zawieszony/a", en: "Suspended" },
+  "family.membersLoadFailed": {
+    pl: "Nie udało się wczytać listy członków.",
+    en: "Couldn't load the member list.",
+  },
+  "member.suspendAria": { pl: "Zawieś dostęp {email}", en: "Suspend {email}'s access" },
+  "member.reinstateAria": { pl: "Przywróć dostęp {email}", en: "Restore {email}'s access" },
+  "member.removeAria": { pl: "Usuń {email} z rodziny", en: "Remove {email} from the family" },
+  "member.suspendFailed": {
+    pl: "Nie udało się zawiesić dostępu. Spróbuj ponownie.",
+    en: "Couldn't suspend access. Try again.",
+  },
+  "member.reinstateFailed": {
+    pl: "Nie udało się przywrócić dostępu. Spróbuj ponownie.",
+    en: "Couldn't restore access. Try again.",
+  },
+  "member.removeLoadingAccess": {
+    pl: "Sprawdzanie dostępu {email}…",
+    en: "Checking {email}'s access…",
+  },
+  "member.removeStep1Title": {
+    pl: "Usunąć {email} z rodziny?",
+    en: "Remove {email} from the family?",
+  },
+  "member.removeStep1Intro": {
+    pl: "{email} straci dostęp do wszystkiego poniżej. To uruchomi ponowne szyfrowanie kluczy tych folderów.",
+    en: "{email} will lose access to everything listed below. This triggers a re-key of these folders' keys.",
+  },
+  "member.removeAccessListHeading": {
+    pl: "{email} miał/a dostęp do:",
+    en: "{email} had access to:",
+  },
+  "member.removeAccessFolderLabel": { pl: `Folder „{folder}"`, en: `Folder "{folder}"` },
+  "member.removeAccessItemsUnresolvedNote": {
+    pl: "{count} itemów w tym folderze — nie udało się wczytać ich nazw.",
+    en: "{count} items in this folder — couldn't load their names.",
+  },
+  "member.removeStep2Title": { pl: "Na pewno usunąć {email}?", en: "Remove {email} for good?" },
+  "member.removeStep2Body": {
+    pl: "To działanie jest nieodwracalne. {email} straci dostęp natychmiast, a klucze zostaną ponownie zaszyfrowane.",
+    en: "This action is irreversible. {email} loses access immediately, and the affected keys will be re-encrypted.",
+  },
+  "member.removing": { pl: "Usuwanie…", en: "Removing…" },
+  "member.removeFailed": {
+    pl: "Nie udało się usunąć członka. Spróbuj ponownie.",
+    en: "Couldn't remove the member. Try again.",
+  },
+  "member.removeStep1Continue": { pl: "Dalej", en: "Continue" },
+  "member.removeStep2Confirm": { pl: "Usuń na stałe", en: "Remove permanently" },
+  "member.suspendConfirmConfirm": { pl: "Zawieś dostęp", en: "Suspend access" },
+  "member.suspendConfirmTitle": {
+    pl: "Zawiesić dostęp {email}?",
+    en: "Suspend {email}'s access?",
+  },
+  "member.suspendConfirmBody": {
+    pl: "{email} straci dostęp do udostępnionych folderów i itemów, ale zostanie w rodzinie. To odwracalne — możesz przywrócić dostęp w każdej chwili. Własne pliki {email} pozostają nietknięte.",
+    en: "{email} will lose access to shared folders and items, but stays in the family. This is reversible — you can restore access anytime. {email}'s own personal vault is untouched.",
+  },
+  // Hard requirement (copywriting honesty constraint 1): must never be
+  // omitted, softened, or relocated away from directly beneath the access
+  // list on Remove step 1 — must never imply the re-key undoes prior
+  // exposure.
+  "member.removeHonestyWarning": {
+    pl: "Usunięcie nie cofnie dostępu, który {email} już miał/a. Jeśli widział/a którekolwiek z poniższych haseł lub sekretów, wciąż je zna — zmiana kluczy chroni tylko przyszły dostęp. Zalecamy zmianę (rotację) tych danych logowania.",
+    en: "Removing {email} does not undo access they already had. If they saw any of the passwords or secrets below, they still know them — re-keying only protects future access. We recommend rotating those credentials.",
+  },
+  "member.removeAccessListEmpty": {
+    pl: "{email} nie miał/a dostępu do żadnych udostępnionych folderów ani itemów.",
+    en: "{email} had no access to any shared folders or items.",
+  },
+  "member.removeAccessLoadFailed": {
+    pl: "Nie udało się sprawdzić, do czego {email} miał/a dostęp. Spróbuj ponownie, zanim usuniesz to konto.",
+    en: "Couldn't check what {email} had access to. Try again before removing this account.",
+  },
+  "family.suspendedBannerTitle": {
+    pl: "Twój dostęp do udostępnionych treści jest zawieszony",
+    en: "Your access to shared content is suspended",
+  },
+  "family.suspendedBannerBody": {
+    pl: "Właściciel/Właścicielka rodziny tymczasowo wstrzymał/a Twój dostęp do udostępnionych folderów i itemów. Twoje własne hasła i notatki są bezpieczne i niezmienione.",
+    en: "The family owner has temporarily paused your access to shared folders and items. Your own passwords and notes are safe and unchanged.",
+  },
+  "account.deleteSectionHeading": { pl: "Usuń konto", en: "Delete account" },
+  "account.deleteSectionBody": {
+    pl: "To działanie jest ostateczne i nie można go cofnąć.",
+    en: "This action is final and can't be undone.",
+  },
+  "account.deleteTriggerCta": { pl: "Usuń konto", en: "Delete account" },
+  "account.deleteStep1Title": { pl: "Usunąć swoje konto?", en: "Delete your account?" },
+  "account.deleteStep1Body": {
+    pl: "To usunie na stałe Twój vault, passkeye, sesje i klucz tożsamości. Jeśli jesteś w rodzinie, stracisz dostęp do udostępnionych folderów, a ich klucze zostaną ponownie zaszyfrowane dla pozostałych członków.",
+    en: "This permanently deletes your vault, passkeys, sessions, and identity key. If you belong to a family, you'll lose access to shared folders and their keys will be re-encrypted for the remaining members.",
+  },
+  "account.deleteStep2Title": { pl: "To nieodwracalne", en: "This can't be undone" },
+  "account.deleteStep2Body": {
+    pl: "Twoje konto i wszystkie jego dane zostaną usunięte na stałe.",
+    en: "Your account and all its data will be permanently deleted.",
+  },
+  "account.deleting": { pl: "Usuwanie konta…", en: "Deleting account…" },
+  "account.deleteFailed": {
+    pl: "Nie udało się usunąć konta. Spróbuj ponownie.",
+    en: "Couldn't delete the account. Try again.",
+  },
+  "account.deleteConfirm": { pl: "Usuń konto na stałe", en: "Delete account permanently" },
+  // Hard requirement (copywriting honesty constraint 2): must render for the
+  // owner and must interpolate a real family name and a real member count —
+  // never a generic "this affects other people" without specifics. A
+  // non-owner deleting their own account never sees this string.
+  "account.deleteOwnerWarning": {
+    pl: `Jesteś właścicielem/właścicielką rodziny „{family}". Usunięcie konta zakończy tę rodzinę dla wszystkich — {count} os. straci dostęp do udostępnionych folderów. Ich własne vaulty pozostaną nietknięte.`,
+    en: `You own the "{family}" family. Deleting your account ends this family for everyone — {count} member(s) will lose access to shared folders. Their own vaults stay untouched.`,
+  },
+  "access.readOnly": { pl: "Tylko odczyt", en: "Read-only" },
+  "access.fullEdit": { pl: "Pełna edycja", en: "Full edit" },
+  "access.hiddenPassword": { pl: "Ukryte hasło", en: "Hidden password" },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {
