@@ -18,10 +18,11 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use sqlx::Row;
 
-use super::families::CollectionRekeyBatch;
+use super::families::{self, CollectionRekeyBatch};
 use super::membership::{self, AccessLevel};
 use super::session::SessionUser;
-use super::vault::bump_recipients_vault_revision;
+use super::sync::{ChangeType, EntityType, SyncEvent};
+use super::vault::{bump_recipients_vault_revision, resolve_collection_members};
 use crate::{error::ApiError, AppState};
 
 /// The client-precomputed removal batch, for the PLAIN-MEMBER self-deletion
@@ -29,10 +30,9 @@ use crate::{error::ApiError, AppState};
 /// `remove_member` (Plan 25-03) uses, never a parallel, differently-shaped
 /// struct, so the client-side orchestration (Plan 25-07) can build one wire
 /// contract for both "I removed someone" and "I'm deleting my own account".
-/// The owner/no-family branches never call `apply_member_removal_rekey` at
-/// all, so the client sends `{ "collections": [] }` for those cases —
+/// The owner/no-family branches never call the shared removal re-key helper
+/// at all, so the client sends `{ "collections": [] }` for those cases —
 /// harmless, since this field is simply ignored by both of those branches.
-/// Task 2 wires the plain-member branch that actually reads this field.
 #[derive(Deserialize)]
 pub struct DeleteAccountRequest {
     pub collections: Vec<CollectionRekeyBatch>,
@@ -42,11 +42,6 @@ pub struct DeleteAccountRequest {
 /// full rationale. The role branch (owner/member/no-family) is derived
 /// server-side from `resolve_family_role`, never trusted from a
 /// client-supplied field (T-25-15).
-///
-/// Task 1 wires the owner-dissolution and no-family branches; the
-/// plain-member self-deletion branch is `Task 2`'s own deliverable (currently
-/// returns `ApiError::Internal` as a compiling, always-erroring placeholder —
-/// no test in this task's own verification exercises that branch).
 pub async fn delete_account(
     State(state): State<AppState>,
     session: SessionUser,
@@ -69,12 +64,8 @@ pub async fn delete_account(
         Some((family_id, AccessLevel::Edit)) => {
             delete_account_as_owner(&state, &session.user_id, &family_id).await
         }
-        // Task 2 replaces this placeholder with a call to
-        // `delete_account_as_member`, which calls the SAME
-        // `apply_member_removal_rekey` helper `remove_member` uses.
         Some((_family_id, AccessLevel::Read)) => {
-            let _ = &req.collections;
-            Err(ApiError::Internal)
+            delete_account_as_member(&state, &session.user_id, &req.collections).await
         }
         // `resolve_family_role` only ever maps `role='owner' -> Edit` /
         // `role='member' -> Read` (crates/pv-server/src/routes/membership.rs) —
@@ -144,6 +135,51 @@ async fn delete_account_as_owner(
     sqlx::query("DELETE FROM users WHERE id = ?").bind(owner_user_id).execute(&mut *tx).await?;
 
     tx.commit().await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The plain-member self-deletion branch: calls the SAME shared removal
+/// re-key helper `remove_member` (Plan 25-03) uses — target = the caller's
+/// own id — before their own personal data cascades away via `DELETE FROM
+/// users`. Never a parallel, second implementation of this write sequence
+/// (CONTEXT.md's locked FAM-10 instruction).
+async fn delete_account_as_member(
+    state: &AppState,
+    member_user_id: &str,
+    batch: &[CollectionRekeyBatch],
+) -> Result<StatusCode, ApiError> {
+    let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+
+    let touched_collections = families::apply_member_removal_rekey(&mut tx, member_user_id, batch).await?;
+
+    // Cascades the caller's own remaining personal data — their
+    // `family_members` row is already gone via the helper call above.
+    sqlx::query("DELETE FROM users WHERE id = ?").bind(member_user_id).execute(&mut *tx).await?;
+
+    tx.commit().await?;
+
+    // Fan out AFTER commit, over a FRESH pool-bound connection (not the
+    // consumed `tx`) — same discipline as `remove_member`'s own post-commit
+    // fan-out: recipients resolved fresh now naturally exclude the deleted
+    // caller.
+    let mut conn = state.db.acquire().await?;
+    for collection_id in &touched_collections {
+        let recipients = resolve_collection_members(&mut conn, collection_id).await?;
+        let current_revision: i64 = sqlx::query_scalar("SELECT revision FROM collections WHERE id = ?")
+            .bind(collection_id)
+            .fetch_one(&mut *conn)
+            .await?;
+        state.sync_hub.publish_to_recipients(
+            &recipients,
+            SyncEvent {
+                entity_type: EntityType::Collection,
+                id: collection_id.clone(),
+                revision: current_revision,
+                change_type: ChangeType::Update,
+            },
+        );
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
