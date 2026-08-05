@@ -4,6 +4,8 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 const {
   mockGetFamilyMembers,
   mockCreateFamily,
+  mockSuspendMember,
+  mockReinstateMember,
   mockMe,
   mockGetUnlockedUserKey,
   mockGenerateInviteLink,
@@ -14,6 +16,8 @@ const {
 } = vi.hoisted(() => ({
   mockGetFamilyMembers: vi.fn(),
   mockCreateFamily: vi.fn(),
+  mockSuspendMember: vi.fn(),
+  mockReinstateMember: vi.fn(),
   mockMe: vi.fn(),
   mockGetUnlockedUserKey: vi.fn(),
   mockGenerateInviteLink: vi.fn(),
@@ -26,6 +30,35 @@ const {
 vi.mock("@/lib/families/api", () => ({
   getFamilyMembers: mockGetFamilyMembers,
   createFamily: mockCreateFamily,
+  suspendMember: mockSuspendMember,
+  reinstateMember: mockReinstateMember,
+}));
+
+// Plan 25-08: RemoveMemberDialog is a real, independent component (own
+// test file) -- FamilyTab only needs to mount/unmount it on
+// `removeTarget`'s presence, so a lightweight stand-in avoids pulling this
+// suite into RemoveMemberDialog's own (separately covered) WASM/API
+// surface.
+vi.mock("./RemoveMemberDialog", () => ({
+  default: ({
+    member,
+    onClose,
+    onRemoved,
+  }: {
+    member: { user_id: string; email: string };
+    onClose: () => void;
+    onRemoved: () => void;
+  }) => (
+    <div data-testid="remove-member-dialog-stub">
+      <span data-testid="remove-member-dialog-stub-email">{member.email}</span>
+      <button type="button" data-testid="remove-member-dialog-stub-close" onClick={onClose}>
+        close
+      </button>
+      <button type="button" data-testid="remove-member-dialog-stub-removed" onClick={onRemoved}>
+        removed
+      </button>
+    </div>
+  ),
 }));
 
 // WR-02 (24-REVIEW.md): FamilyTab now calls `me()` to resolve the caller's
@@ -77,8 +110,30 @@ const uk = { free: vi.fn() } as unknown as ReturnType<typeof mockGetUnlockedUser
 // owner-side test (invite creation etc.) keeps its original meaning without
 // individually re-mocking `me()`.
 const OWNER_ACCOUNT = { user_id: "u1", email: "owner@example.test", pw_wrapped_uk: "wrapped" };
-const OWNER_MEMBER = { user_id: "u1", email: "owner@example.test", role: "owner" };
-const NON_OWNER_MEMBER = { user_id: "u2", email: "member@example.test", role: "member" };
+// Plan 25-08: fixtures extended with the full `FamilyMemberRecord` shape
+// (joined_at/status/public_key/fingerprint/verified_at) -- the Members
+// section (E1) reads `joined_at`/`status` for every row, and every
+// pre-25-08 test that reaches "normal" mode now also renders that section.
+const OWNER_MEMBER = {
+  user_id: "u1",
+  email: "owner@example.test",
+  role: "owner",
+  joined_at: "2026-01-01 10:00:00",
+  status: "active",
+  public_key: null,
+  fingerprint: null,
+  verified_at: null,
+};
+const NON_OWNER_MEMBER = {
+  user_id: "u2",
+  email: "member@example.test",
+  role: "member",
+  joined_at: "2026-01-02 10:00:00",
+  status: "active",
+  public_key: null,
+  fingerprint: null,
+  verified_at: null,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -389,6 +444,276 @@ describe("FamilyTab", () => {
       );
       expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument();
       expect(screen.queryByTestId("invite-revoke-error")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Members section (E1, Task 1)", () => {
+    it("a plain member sees zero action icons on any row (read-only roster)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      mockMe.mockResolvedValue({
+        user_id: NON_OWNER_MEMBER.user_id,
+        email: NON_OWNER_MEMBER.email,
+        pw_wrapped_uk: "wrapped",
+      });
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      expect(screen.getByTestId(`member-row-${OWNER_MEMBER.user_id}`)).toBeInTheDocument();
+      expect(screen.getByTestId(`member-row-${NON_OWNER_MEMBER.user_id}`)).toBeInTheDocument();
+      expect(
+        screen.queryByTestId(`member-toggle-suspend-${OWNER_MEMBER.user_id}`),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId(`member-toggle-suspend-${NON_OWNER_MEMBER.user_id}`),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId(`member-remove-trigger-${NON_OWNER_MEMBER.user_id}`),
+      ).not.toBeInTheDocument();
+    });
+
+    it("the owner sees action icons on every row except their own (and never on the owner's own row)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      expect(
+        screen.queryByTestId(`member-toggle-suspend-${OWNER_MEMBER.user_id}`),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByTestId(`member-toggle-suspend-${NON_OWNER_MEMBER.user_id}`),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId(`member-remove-trigger-${NON_OWNER_MEMBER.user_id}`),
+      ).toBeInTheDocument();
+    });
+
+    it("a suspended member's row shows the status badge", async () => {
+      const suspended = { ...NON_OWNER_MEMBER, status: "suspended" };
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, suspended]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      expect(screen.getByTestId(`member-status-badge-${suspended.user_id}`)).toHaveTextContent(
+        "family.statusSuspended",
+      );
+    });
+
+    it("the caller's own row shows family.youBadge", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      const ownRow = screen.getByTestId(`member-row-${OWNER_MEMBER.user_id}`);
+      expect(ownRow).toHaveTextContent("family.youBadge");
+      const otherRow = screen.getByTestId(`member-row-${NON_OWNER_MEMBER.user_id}`);
+      expect(otherRow).not.toHaveTextContent("family.youBadge");
+    });
+
+    it("the member list always contains at least the caller's own row (E1 empty backstop)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      expect(screen.getByTestId(`member-row-${OWNER_MEMBER.user_id}`)).toBeInTheDocument();
+    });
+
+    it("a long email truncates with a title attribute (E1 overflow backstop)", async () => {
+      const longEmail = "a-very-long-email-address-for-overflow-testing@example.test";
+      const longMember = { ...NON_OWNER_MEMBER, email: longEmail };
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, longMember]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      const row = screen.getByTestId(`member-row-${longMember.user_id}`);
+      const emailSpan = row.querySelector(`[title="${longEmail}"]`);
+      expect(emailSpan).not.toBeNull();
+      expect(emailSpan).toHaveClass("truncate");
+    });
+  });
+
+  describe("Suspended-member banner (E5, Task 1)", () => {
+    it("renders only when the caller's own roster row is suspended", async () => {
+      const suspendedSelf = { ...NON_OWNER_MEMBER, status: "suspended" };
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, suspendedSelf]);
+      mockMe.mockResolvedValue({
+        user_id: suspendedSelf.user_id,
+        email: suspendedSelf.email,
+        pw_wrapped_uk: "wrapped",
+      });
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-suspended-banner")).toBeInTheDocument());
+      expect(screen.getByTestId("family-suspended-banner")).toHaveTextContent(
+        "family.suspendedBannerTitle",
+      );
+      expect(screen.getByTestId("family-suspended-banner")).toHaveTextContent(
+        "family.suspendedBannerBody",
+      );
+    });
+
+    it("does not render when the caller's own row is active", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      expect(screen.queryByTestId("family-suspended-banner")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Suspend/Reinstate (E2/E3, Task 2)", () => {
+    it("Suspend opens a warning-severity ConfirmDialog", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId(`member-toggle-suspend-${NON_OWNER_MEMBER.user_id}`));
+
+      const dialog = screen.getByTestId("confirm-dialog");
+      expect(dialog).toBeInTheDocument();
+      const icon = dialog.querySelector("svg");
+      expect(icon).toHaveClass("text-warning");
+      expect(screen.getByTestId("confirm-dialog-confirm")).toHaveClass("btn-warning");
+    });
+
+    it("Suspend success updates the row's status badge and flips the action icon to PlayCircle, with no full unmount", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      mockSuspendMember.mockResolvedValue(undefined);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId(`member-toggle-suspend-${NON_OWNER_MEMBER.user_id}`));
+      fireEvent.click(screen.getByTestId("confirm-dialog-confirm"));
+
+      await waitFor(() => expect(mockSuspendMember).toHaveBeenCalledWith(NON_OWNER_MEMBER.user_id));
+      await waitFor(() => expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument());
+      expect(
+        screen.getByTestId(`member-status-badge-${NON_OWNER_MEMBER.user_id}`),
+      ).toHaveTextContent("family.statusSuspended");
+      // still mounted -- the row is still present, not a full-page reload
+      expect(screen.getByTestId("family-members-section")).toBeInTheDocument();
+    });
+
+    it("Suspend failure renders member.suspendFailed inline and never silently closes the dialog", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      mockSuspendMember.mockRejectedValue(new Error("boom"));
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId(`member-toggle-suspend-${NON_OWNER_MEMBER.user_id}`));
+      fireEvent.click(screen.getByTestId("confirm-dialog-confirm"));
+
+      await waitFor(() => expect(screen.getByTestId("confirm-dialog-error")).toBeInTheDocument());
+      expect(screen.getByTestId("confirm-dialog-error")).toHaveTextContent("member.suspendFailed");
+      expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId(`member-status-badge-${NON_OWNER_MEMBER.user_id}`),
+      ).not.toBeInTheDocument();
+    });
+
+    it("Reinstate has no confirmation dialog and updates the row immediately on success", async () => {
+      const suspendedMember = { ...NON_OWNER_MEMBER, status: "suspended" };
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, suspendedMember]);
+      mockReinstateMember.mockResolvedValue(undefined);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      expect(
+        screen.getByTestId(`member-status-badge-${suspendedMember.user_id}`),
+      ).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId(`member-toggle-suspend-${suspendedMember.user_id}`));
+      expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
+
+      await waitFor(() => expect(mockReinstateMember).toHaveBeenCalledWith(suspendedMember.user_id));
+      await waitFor(() =>
+        expect(
+          screen.queryByTestId(`member-status-badge-${suspendedMember.user_id}`),
+        ).not.toBeInTheDocument(),
+      );
+    });
+
+    it("Reinstate is disabled for the duration of its request (backstop, no double-fire)", async () => {
+      const suspendedMember = { ...NON_OWNER_MEMBER, status: "suspended" };
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, suspendedMember]);
+      let resolveReinstate: (() => void) | undefined;
+      mockReinstateMember.mockReturnValue(
+        new Promise<void>((resolve) => {
+          resolveReinstate = resolve;
+        }),
+      );
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      const toggleButton = screen.getByTestId(`member-toggle-suspend-${suspendedMember.user_id}`);
+      fireEvent.click(toggleButton);
+
+      await waitFor(() => expect(toggleButton).toBeDisabled());
+      resolveReinstate?.();
+      await waitFor(() => expect(toggleButton).not.toBeDisabled());
+    });
+
+    it("Reinstate failure surfaces member.reinstateFailed without leaving the badge in a stale state", async () => {
+      const suspendedMember = { ...NON_OWNER_MEMBER, status: "suspended" };
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, suspendedMember]);
+      mockReinstateMember.mockRejectedValue(new Error("boom"));
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId(`member-toggle-suspend-${suspendedMember.user_id}`));
+
+      await waitFor(() => expect(screen.getByTestId("member-reinstate-error")).toBeInTheDocument());
+      expect(screen.getByTestId("member-reinstate-error")).toHaveTextContent(
+        "member.reinstateFailed",
+      );
+      // badge stays exactly as the (still-suspended) server state left it --
+      // never optimistically cleared on a failed request.
+      expect(
+        screen.getByTestId(`member-status-badge-${suspendedMember.user_id}`),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe("Remove-member dialog wiring (E4, Task 3)", () => {
+    it("clicking the remove trigger mounts RemoveMemberDialog for that member", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId(`member-remove-trigger-${NON_OWNER_MEMBER.user_id}`));
+
+      expect(screen.getByTestId("remove-member-dialog-stub")).toBeInTheDocument();
+      expect(screen.getByTestId("remove-member-dialog-stub-email")).toHaveTextContent(
+        NON_OWNER_MEMBER.email,
+      );
+    });
+
+    it("onRemoved removes the row from the local member list and unmounts the dialog", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId(`member-remove-trigger-${NON_OWNER_MEMBER.user_id}`));
+      fireEvent.click(screen.getByTestId("remove-member-dialog-stub-removed"));
+
+      expect(screen.queryByTestId("remove-member-dialog-stub")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId(`member-row-${NON_OWNER_MEMBER.user_id}`),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId(`member-row-${OWNER_MEMBER.user_id}`)).toBeInTheDocument();
+    });
+
+    it("onClose unmounts the dialog without removing the row", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId(`member-remove-trigger-${NON_OWNER_MEMBER.user_id}`));
+      fireEvent.click(screen.getByTestId("remove-member-dialog-stub-close"));
+
+      expect(screen.queryByTestId("remove-member-dialog-stub")).not.toBeInTheDocument();
+      expect(
+        screen.getByTestId(`member-row-${NON_OWNER_MEMBER.user_id}`),
+      ).toBeInTheDocument();
     });
   });
 });

@@ -9,17 +9,25 @@
 // this component IS the empty state for that case (E7), not a separate
 // loading screen ahead of it.
 import { useEffect, useState, type FormEvent } from "react";
-import { AlertTriangle, Copy, UserPlus } from "lucide-react";
+import { AlertTriangle, Copy, PauseCircle, PlayCircle, UserMinus, UserPlus, Users } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { ApiClientError, me } from "@/lib/auth/api";
 import { getUnlockedUserKey } from "@/lib/crypto";
 import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
 import { showCopyToast } from "@/lib/vault/copyToast";
-import { createFamily, getFamilyMembers } from "@/lib/families/api";
+import {
+  createFamily,
+  getFamilyMembers,
+  reinstateMember,
+  suspendMember,
+  type FamilyMemberRecord,
+} from "@/lib/families/api";
 import { generateInviteLink, type InviteExpiry, type InviteScope } from "@/lib/invite/crypto";
 import { revokeInvite } from "@/lib/invite/api";
 import { toIsoUtc } from "@/lib/format/relativeTime";
+import ConfirmDialog from "./ConfirmDialog";
+import RemoveMemberDialog from "./RemoveMemberDialog";
 
 type Mode = "checking" | "bootstrap" | "normal" | "error";
 // CR-02 (24-REVIEW.md): "folder" is intentionally unreachable from the UI --
@@ -71,6 +79,26 @@ export default function FamilyTab() {
   // so a plain member must never see the form that always 404s for them.
   const [isOwner, setIsOwner] = useState(false);
 
+  // Plan 25-08 (E1/E5): `resolveOwnership` already fetches BOTH `members`
+  // and the caller's own `account` -- previously both were discarded after
+  // deriving `isOwner`. Retained here so the Members section (E1) and the
+  // suspended-member banner (E5) can render from the SAME fetch
+  // `loadFamilyState` already performs, no new network call.
+  const [members, setMembers] = useState<FamilyMemberRecord[] | null>(null);
+  const [selfUserId, setSelfUserId] = useState<string | null>(null);
+
+  // Suspend (E2) dialog state.
+  const [suspendTarget, setSuspendTarget] = useState<FamilyMemberRecord | null>(null);
+  const [suspendError, setSuspendError] = useState<string | null>(null);
+
+  // Reinstate (E3) per-row state -- no confirmation dialog, per 25-CONTEXT.md.
+  const [reinstatingUserId, setReinstatingUserId] = useState<string | null>(null);
+  const [reinstateErrorUserId, setReinstateErrorUserId] = useState<string | null>(null);
+
+  // Remove (E4) two-step dialog state -- RemoveMemberDialog owns its own
+  // internal state machine; FamilyTab only tracks WHICH member is targeted.
+  const [removeTarget, setRemoveTarget] = useState<FamilyMemberRecord | null>(null);
+
   // Bootstrap (E7) state.
   const [familyName, setFamilyName] = useState("");
   const [creatingFamily, setCreatingFamily] = useState(false);
@@ -102,6 +130,8 @@ export default function FamilyTab() {
   // caller.
   async function resolveOwnership(members: Awaited<ReturnType<typeof getFamilyMembers>>) {
     const account = await me().catch(() => null);
+    setMembers(members);
+    setSelfUserId(account?.user_id ?? null);
     setIsOwner(
       members !== null &&
         account !== null &&
@@ -144,6 +174,50 @@ export default function FamilyTab() {
   function handleRetryLoad() {
     setMode("checking");
     void loadFamilyState(() => false);
+  }
+
+  // Plan 25-08 (E2): opens the warning-severity ConfirmDialog for the given
+  // row -- the confirm/failure handling itself lives in
+  // `handleSuspendConfirm` below, called as ConfirmDialog's `onConfirm`.
+  async function handleSuspendConfirm() {
+    if (suspendTarget === null) return;
+    const targetUserId = suspendTarget.user_id;
+    try {
+      await suspendMember(targetUserId);
+      setMembers((prev) =>
+        prev?.map((m) => (m.user_id === targetUserId ? { ...m, status: "suspended" } : m)) ?? prev,
+      );
+      setSuspendError(null);
+      setSuspendTarget(null);
+    } catch {
+      // Non-silent failure (E2 error, mirrors PasskeyDeleteConfirmDialog's
+      // precedent): `suspendTarget` stays non-null, so the dialog stays
+      // mounted -- `suspendError` renders inline via ConfirmDialog's `error`
+      // prop instead of unmounting.
+      setSuspendError(t("member.suspendFailed"));
+    }
+  }
+
+  function closeSuspendDialog() {
+    setSuspendTarget(null);
+    setSuspendError(null);
+  }
+
+  // Plan 25-08 (E3): no confirmation dialog, per 25-CONTEXT.md's
+  // "reversible, low-friction" framing for this specific action.
+  async function handleReinstate(member: FamilyMemberRecord) {
+    setReinstatingUserId(member.user_id);
+    setReinstateErrorUserId(null);
+    try {
+      await reinstateMember(member.user_id);
+      setMembers((prev) =>
+        prev?.map((m) => (m.user_id === member.user_id ? { ...m, status: "active" } : m)) ?? prev,
+      );
+    } catch {
+      setReinstateErrorUserId(member.user_id);
+    } finally {
+      setReinstatingUserId(null);
+    }
   }
 
   async function handleCreateFamily(e: FormEvent) {
@@ -341,6 +415,14 @@ export default function FamilyTab() {
 
   // mode === "normal"
 
+  // Plan 25-08: the pre-existing three-way branch below (generated-invite
+  // display / non-owner read-only notice / owner's invite form) is now
+  // wrapped as an IIFE rather than three top-level early returns, so the
+  // suspended-member banner (E5) and Members section (E1) below can render
+  // ABOVE it in every one of the three sub-states, per 25-UI-SPEC.md's
+  // Phase-Specific Notes -- each sub-case's own JSX is otherwise byte-
+  // identical to before this plan.
+  const invitePanel = (() => {
   if (invite !== null) {
     return (
       <div className="flex flex-col gap-4 py-4" data-testid="invite-generated-display">
@@ -511,6 +593,164 @@ export default function FamilyTab() {
           {t("invite.generateCta")}
         </button>
       </form>
+    </div>
+  );
+  })();
+
+  // Plan 25-08 (E5): the caller's own row, re-derived from the SAME
+  // `members` fetch every render -- so a page reload re-evaluates it fresh,
+  // and it disappears on the very next fetch after reinstatement (no
+  // one-time toast, no client-side timer).
+  const selfRow = members?.find((m) => m.user_id === selfUserId) ?? null;
+  const isSelfSuspended = selfRow?.status === "suspended";
+
+  return (
+    <div className="flex flex-col gap-8 py-4">
+      {isSelfSuspended ? (
+        <div
+          role="alert"
+          data-testid="family-suspended-banner"
+          className="alert alert-warning alert-soft flex-col items-start gap-1 text-sm"
+        >
+          <span className="font-bold">{t("family.suspendedBannerTitle")}</span>
+          <span>{t("family.suspendedBannerBody")}</span>
+        </div>
+      ) : null}
+
+      <div className="flex flex-col gap-3" data-testid="family-members-section">
+        <h3 className="flex items-center gap-2 text-[20px] font-bold leading-[1.2]">
+          <Users size={20} aria-hidden="true" />
+          {t("family.membersHeading")}
+        </h3>
+        {members === null ? (
+          // Defensive-only branch (E1 error backstop): under the current
+          // wiring `members` is always populated by the time `mode ===
+          // "normal"` is reached (it comes from the SAME successful fetch
+          // that transitioned mode here) -- this guards against a future
+          // refactor decoupling the two, rather than a state this UI can
+          // currently reach in practice.
+          <div className="flex flex-col gap-3" data-testid="family-members-load-error">
+            <p role="alert" className="text-sm text-error">
+              {t("family.membersLoadFailed")}
+            </p>
+            <button
+              type="button"
+              data-testid="family-members-load-retry-cta"
+              className="btn btn-ghost self-start"
+              onClick={handleRetryLoad}
+            >
+              {t("family.loadRetryCta")}
+            </button>
+          </div>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {members.map((m) => {
+              const isSuspended = m.status === "suspended";
+              const isSelf = m.user_id === selfUserId;
+              // E1 action-visibility: a plain member sees a read-only
+              // roster with no action icons on any row, including their
+              // own; the owner sees action icons on every row except their
+              // own and (there being only one) the owner's own.
+              const canAct = isOwner && !isSelf && m.role !== "owner";
+              return (
+                <li
+                  key={m.user_id}
+                  data-testid={`member-row-${m.user_id}`}
+                  className="flex min-h-16 items-center gap-3 rounded-box border border-base-300 px-4 py-3"
+                >
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate text-sm" title={m.email}>
+                        {m.email}
+                      </span>
+                      <span className="badge badge-ghost shrink-0">
+                        {t(m.role === "owner" ? "family.roleOwner" : "family.roleMember")}
+                      </span>
+                      {isSuspended ? (
+                        <span
+                          data-testid={`member-status-badge-${m.user_id}`}
+                          className="badge badge-warning badge-outline shrink-0"
+                        >
+                          {t("family.statusSuspended")}
+                        </span>
+                      ) : null}
+                      {isSelf ? (
+                        <span className="badge badge-ghost shrink-0">{t("family.youBadge")}</span>
+                      ) : null}
+                    </div>
+                    <span className="text-sm text-base-content/60">
+                      {interpolate(t("family.joinedLabel"), {
+                        date: m.joined_at ? formatExpiryDate(m.joined_at, locale) : "",
+                      })}
+                    </span>
+                  </div>
+                  {canAct ? (
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        data-testid={`member-toggle-suspend-${m.user_id}`}
+                        aria-label={interpolate(
+                          t(isSuspended ? "member.reinstateAria" : "member.suspendAria"),
+                          { email: m.email },
+                        )}
+                        className="btn btn-ghost btn-square btn-sm"
+                        disabled={reinstatingUserId === m.user_id}
+                        onClick={() => (isSuspended ? void handleReinstate(m) : setSuspendTarget(m))}
+                      >
+                        {isSuspended ? (
+                          <PlayCircle size={16} aria-hidden="true" />
+                        ) : (
+                          <PauseCircle size={16} aria-hidden="true" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`member-remove-trigger-${m.user_id}`}
+                        aria-label={interpolate(t("member.removeAria"), { email: m.email })}
+                        className="btn btn-ghost btn-square btn-sm"
+                        onClick={() => setRemoveTarget(m)}
+                      >
+                        <UserMinus size={16} aria-hidden="true" />
+                      </button>
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {reinstateErrorUserId !== null ? (
+          <p role="alert" data-testid="member-reinstate-error" className="text-sm text-error">
+            {t("member.reinstateFailed")}
+          </p>
+        ) : null}
+      </div>
+
+      {invitePanel}
+
+      {suspendTarget !== null ? (
+        <ConfirmDialog
+          title={interpolate(t("member.suspendConfirmTitle"), { email: suspendTarget.email })}
+          body={interpolate(t("member.suspendConfirmBody"), { email: suspendTarget.email })}
+          confirmLabel={t("member.suspendConfirmConfirm")}
+          severity="warning"
+          error={suspendError}
+          onConfirm={handleSuspendConfirm}
+          onClose={closeSuspendDialog}
+        />
+      ) : null}
+
+      {removeTarget !== null ? (
+        <RemoveMemberDialog
+          member={removeTarget}
+          onClose={() => setRemoveTarget(null)}
+          onRemoved={() => {
+            const removedUserId = removeTarget.user_id;
+            setMembers((prev) => prev?.filter((m) => m.user_id !== removedUserId) ?? prev);
+            setRemoveTarget(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
