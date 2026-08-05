@@ -822,15 +822,28 @@ async fn non_member_with_live_websocket_receives_zero_frames_for_collection_they
     );
 }
 
-/// CR-01 regression (code review iteration 1): the exact "revoked creator"
-/// leak path — the CREATOR of a collection-scoped item is revoked from the
-/// collection, and a FURTHER mutation inside the collection must reach them
-/// with ZERO frames and ZERO `vault_revision` bump, even though
-/// `vault_items.user_id` (the item's original creator) still names them.
-/// `resolve_recipients`'s pre-fix unconditional `owner_user_id` insert made
-/// this leak invisible to every OTHER fixture in this file, since none of
-/// them seed a non-member who is ALSO the item's own creator — this test is
-/// the one review flagged as missing.
+/// CR-01 regression (code review iteration 1), updated for Phase 25's WR-07
+/// closure (25-03-PLAN.md Task 3): the exact "revoked creator" leak path —
+/// the CREATOR of a collection-scoped item is revoked from the collection,
+/// and a FURTHER, UNRELATED mutation inside the collection (someone else's
+/// later edit) must reach them with ZERO frames and ZERO additional
+/// `vault_revision` bump, even though `vault_items.user_id` (the item's
+/// original creator) still names them. `resolve_recipients`'s pre-fix
+/// unconditional `owner_user_id` insert made this leak invisible to every
+/// OTHER fixture in this file, since none of them seed a non-member who is
+/// ALSO the item's own creator — this test is the one review flagged as
+/// missing.
+///
+/// WR-07 (25-03-PLAN.md Task 3) intentionally changed a DIFFERENT, narrower
+/// property this test used to also assert: `revoke_access` now bumps the
+/// JUST-REVOKED recipient's own `vault_revision` by exactly 1 AT THE MOMENT
+/// OF THEIR OWN REVOCATION — so their own next sync detects and locally
+/// prunes what they can no longer decrypt. That one-time, revoke-triggered
+/// bump is REQUIRED and asserted below; what this test still proves CR-01's
+/// original property for is that NO FURTHER bump reaches them for someone
+/// ELSE's later, unrelated activity inside a collection they can no longer
+/// see — the fan-out audience for ONGOING mutations still correctly
+/// excludes them, only the revocation event itself notifies them once.
 #[tokio::test]
 async fn revoked_creator_of_shared_item_receives_zero_events_and_no_vault_revision_bump() {
     let pool = test_pool().await;
@@ -926,6 +939,26 @@ async fn revoked_creator_of_shared_item_receives_zero_events_and_no_vault_revisi
     .await;
     assert_eq!(revoke_res.status(), StatusCode::NO_CONTENT);
 
+    // WR-07 (25-03-PLAN.md Task 3): the revocation ITSELF must bump the
+    // revoked member's own vault_revision by exactly 1, and their next sync
+    // (still at the PRE-revoke baseline) must be a FRESH snapshot, not the
+    // cheap up-to-date shape — proving the local-prune signal this fix exists
+    // to deliver is genuinely reachable, same property
+    // `tests/collections.rs::revoke_access_bumps_revoked_recipients_own_vault_revision_and_they_see_a_fresh_sync`
+    // proves against the unshared-item case.
+    let post_revoke_body =
+        body_json(req(&app, "GET", &format!("/api/sync?since={baseline_revision}"), &member_token, None).await).await;
+    assert!(
+        post_revoke_body.get("items").is_some(),
+        "the revoked member's next sync at their pre-revoke baseline must be a FRESH snapshot (WR-07), not up-to-date"
+    );
+    let post_revoke_revision = post_revoke_body["revision"].as_i64().expect("revision field must be present");
+    assert_eq!(
+        post_revoke_revision - baseline_revision,
+        1,
+        "the revocation itself must bump the revoked member's own vault_revision by exactly 1"
+    );
+
     // The revoked member's WS connects AFTER revocation — mirrors this
     // file's other adversarial fixtures.
     let url_member = format!("ws://127.0.0.1:{port}/api/sync/ws?token={}", url_encode_token(&member_token));
@@ -949,14 +982,20 @@ async fn revoked_creator_of_shared_item_receives_zero_events_and_no_vault_revisi
         "the revoked CREATOR of a collection-scoped item must receive ZERO frames for further mutations inside it"
     );
 
-    // The revoked member's OWN vault_revision must not have moved either —
-    // their prior baseline must still match (UpToDate), proving the
-    // vault_revision bump audience also excludes them, not just the WS fan-out.
-    let after_body = body_json(req(&app, "GET", &format!("/api/sync?since={baseline_revision}"), &member_token, None).await).await;
+    // The revoked member's OWN vault_revision must not move AGAIN as a side
+    // effect of the OWNER's later, unrelated edit — compared against
+    // `post_revoke_revision` (the value AFTER WR-07's own one-time
+    // revoke-triggered bump above), not the original pre-revoke baseline.
+    // This is CR-01's original property, preserved: the fan-out audience for
+    // ONGOING mutations inside a collection still excludes a non-member, even
+    // one who created the item being edited.
+    let after_body =
+        body_json(req(&app, "GET", &format!("/api/sync?since={post_revoke_revision}"), &member_token, None).await)
+            .await;
     assert_eq!(
         after_body,
-        json!({ "revision": baseline_revision }),
-        "the revoked creator's own vault_revision must NOT bump as a side effect of activity in a collection they can no longer see"
+        json!({ "revision": post_revoke_revision }),
+        "the revoked creator's own vault_revision must NOT bump AGAIN as a side effect of activity in a collection they can no longer see"
     );
 }
 
