@@ -237,6 +237,33 @@ pub fn decrypt_item_for_collection(
     Ok(Zeroizing::new(plaintext))
 }
 
+/// Rewrap-only: przenosi Cipher Key itemu spod OLD `CollectionKey`a pod NEW,
+/// nigdy nie dotykając `enc_data` (KEY-02/SC 6 — "removing a member rewraps
+/// keys only"). Sygnatura celowo nie przyjmuje żadnego argumentu w kształcie
+/// `enc_data` — to jest sama część dowodu SC 6: dotknięcie payloadu jest
+/// niemożliwe na poziomie typu, nie tylko dyscypliny runtime'owej.
+///
+/// Kompozycja WYŁĄCZNIE istniejących prymitywów (`aead_open`/`aead_seal`) i
+/// istniejącej stałej/helpera AAD (`AAD_COLL_ITEM_KEY_PREFIX`/
+/// `build_coll_item_aad`) — żadnej nowej konstrukcji kryptograficznej.
+pub fn rewrap_item_key_for_collection(
+    old_ck: &CollectionKey,
+    new_ck: &CollectionKey,
+    old_enc_key: &WrappedKey,
+    collection_id: &str,
+    item_id: &str,
+) -> Result<WrappedKey, CryptoError> {
+    let aad = build_coll_item_aad(AAD_COLL_ITEM_KEY_PREFIX, collection_id, item_id, 0);
+    let mut key_bytes = aead_open(old_ck.expose(), old_enc_key, &aad)?;
+    if key_bytes.len() != KEY_LEN {
+        key_bytes.zeroize();
+        return Err(CryptoError::Decrypt);
+    }
+    let new_enc_key = aead_seal(new_ck.expose(), &key_bytes, &aad)?;
+    key_bytes.zeroize();
+    Ok(new_enc_key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,5 +424,75 @@ mod tests {
         let a = build_coll_item_aad(AAD_COLL_ITEM_DATA_PREFIX, "c1", "i1", u32::MAX);
         let b = build_coll_item_aad(AAD_COLL_ITEM_DATA_PREFIX, "c1", "i1", 0);
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn rewrap_item_key_roundtrip_preserves_plaintext_under_new_key() {
+        let old_ck = CollectionKey::generate();
+        let new_ck = CollectionKey::generate();
+        let payload = br#"{"type":"login","username":"bartek","password":"s3cret"}"#;
+        let original_item =
+            encrypt_item_for_collection(&old_ck, payload, "collection-1", "item-1", 1).unwrap();
+        let original_plaintext =
+            decrypt_item_for_collection(&old_ck, &original_item, "collection-1", "item-1", 1)
+                .unwrap();
+
+        let rewrapped_enc_key = rewrap_item_key_for_collection(
+            &old_ck,
+            &new_ck,
+            &original_item.enc_key,
+            "collection-1",
+            "item-1",
+        )
+        .unwrap();
+        // enc_data moved, not re-derived — the rewrap-only guarantee this
+        // test proves.
+        let rewrapped_item = EncryptedItem {
+            enc_key: rewrapped_enc_key,
+            enc_data: original_item.enc_data.clone(),
+        };
+
+        let new_plaintext =
+            decrypt_item_for_collection(&new_ck, &rewrapped_item, "collection-1", "item-1", 1)
+                .unwrap();
+        assert_eq!(*new_plaintext, *original_plaintext);
+    }
+
+    #[test]
+    fn rewrap_item_key_for_collection_rejects_wrong_old_key() {
+        let real_old_ck = CollectionKey::generate();
+        let unrelated_ck = CollectionKey::generate();
+        let new_ck = CollectionKey::generate();
+        let item =
+            encrypt_item_for_collection(&real_old_ck, b"secret", "collection-1", "item-1", 1)
+                .unwrap();
+
+        let result = rewrap_item_key_for_collection(
+            &unrelated_ck,
+            &new_ck,
+            &item.enc_key,
+            "collection-1",
+            "item-1",
+        );
+        assert!(matches!(result, Err(CryptoError::Decrypt)));
+    }
+
+    #[test]
+    fn rewrap_item_key_for_collection_rejects_enc_data_blob_as_input() {
+        let old_ck = CollectionKey::generate();
+        let new_ck = CollectionKey::generate();
+        let item =
+            encrypt_item_for_collection(&old_ck, b"secret", "collection-1", "item-1", 1).unwrap();
+
+        // Feed enc_data where old_enc_key is expected — the key-wrap/payload
+        // AAD prefix separation must reject it.
+        let result = rewrap_item_key_for_collection(
+            &old_ck,
+            &new_ck,
+            &item.enc_data,
+            "collection-1",
+            "item-1",
+        );
+        assert!(matches!(result, Err(CryptoError::Decrypt)));
     }
 }
