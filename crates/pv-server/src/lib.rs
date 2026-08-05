@@ -113,4 +113,33 @@ mod tests {
         let _ = std::fs::remove_file(format!("{}-wal", path.display()));
         let _ = std::fs::remove_file(format!("{}-shm", path.display()));
     }
+
+    /// Closes RESEARCH.md's Assumption A1 / Common Pitfall 3
+    /// (25-RESEARCH.md): SQLite defaults foreign-key enforcement to OFF at
+    /// the C-library level, and `build_pool`'s `SqliteConnectOptions` chain
+    /// never explicitly called `.foreign_keys(...)` — this was ASSUMED to
+    /// be safe because SQLx is documented to override the default to ON,
+    /// but that claim was never empirically re-verified against THIS pool.
+    /// This is a load-bearing precondition for Plan 25-06's account-deletion
+    /// FK-ordering transaction (deleting `vault_items` before `collections`
+    /// before `families` before `users`, in that exact order) — if FK
+    /// enforcement were actually off, a wrong-order delete would silently
+    /// leave dangling rows instead of raising a loud, catchable error.
+    /// Structurally identical to `build_pool_enables_wal_journal_mode`
+    /// above (real on-disk temp file, real `build_pool` call, cleanup).
+    #[tokio::test]
+    async fn build_pool_enables_foreign_key_enforcement() {
+        let path = std::env::temp_dir().join(format!("pv-test-fk-{}.db", uuid::Uuid::new_v4()));
+        let db_url = format!("sqlite://{}", path.display());
+
+        let pool = build_pool(&db_url).await.expect("build_pool against real temp file");
+        let foreign_keys: i64 =
+            sqlx::query_scalar("PRAGMA foreign_keys").fetch_one(&pool).await.expect("PRAGMA foreign_keys");
+        assert_eq!(foreign_keys, 1, "foreign_keys must be ON against the real build_pool()-constructed pool");
+
+        drop(pool);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+    }
 }
