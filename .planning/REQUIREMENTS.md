@@ -39,8 +39,8 @@ Blocks every other category. Today's hierarchy is entirely symmetric and cannot 
 - [x] **KEY-04**: Personal and shared key derivation use distinct, versioned domain-separation constants, following the existing `b"pv:...:v1"` convention.
 - [x] **KEY-05**: The sealed-box implementation choice — `crypto_box` crate vs. hand-assembled X25519-ECDH over the existing `aead_seal`/HKDF machinery — is made and recorded as a first-class documented decision with rationale, before any dependent code is written.
 - [x] **KEY-06**: Removing a member re-keys only the collections that member could reach. Cost is provably proportional to the shared data and remaining members, never to the whole vault.
-- [ ] **KEY-07**: Re-key is atomic or safely resumable — a partial failure never leaves some recipients rewrapped and others stranded.
-  - **PARTIAL after Phase 25 (Plan 25-03).** Delivered: the real mechanism — `apply_member_removal_rekey`'s entire write sequence runs inside ONE `BEGIN IMMEDIATE` transaction, so SQLite's own transactional guarantee means any error before `tx.commit()` leaves zero rows written (no partial rewrap can ever be observed). A `pub`, `#[cfg(feature = "test-support")]`-gated fault-injection hook (`FAULT_INJECT_AFTER_COLLECTION_INDEX`) is wired for exactly this purpose. **Still outstanding:** the explicit kill-mid-batch-and-assert-full-rollback proof is Plan 25-05's own deliverable, not this plan's — do not mark Complete until that adversarial test lands and passes.
+- [x] **KEY-07**: Re-key is atomic or safely resumable — a partial failure never leaves some recipients rewrapped and others stranded.
+  - **Complete after Phase 25 (Plan 25-05).** Plan 25-03 wired the real mechanism (the single `BEGIN IMMEDIATE` transaction plus the `test-support`-gated `FAULT_INJECT_AFTER_COLLECTION_INDEX` hook). Plan 25-05 delivers the adversarial proof itself: `remove_member_rolls_back_completely_on_injected_mid_write_fault` forces the fault to fire AFTER the first collection's writes are issued and would durably persist on their own, then asserts (via a separate connection, never the request's own dropped transaction) that BOTH collections are fully unchanged and the target's rows survive — proving the transaction boundary, not just the pre-write completeness check, is load-bearing. A documented kill-and-revert (splitting the transaction into two around the same fault point) was performed this session and confirmed the test genuinely goes RED against a broken implementation before being reverted.
 
 ### FAM — Family, Membership & Invitations
 
@@ -137,7 +137,7 @@ Explicitly excluded to prevent scope creep.
 | KEY-04 | Phase 21 | Complete |
 | KEY-05 | Phase 21 | Complete |
 | KEY-06 | Phase 25 | Complete |
-| KEY-07 | Phase 25 | Partial |
+| KEY-07 | Phase 25 | Complete |
 | FAM-01 | Phase 22 | Complete |
 | FAM-02 | Phase 22 | Complete |
 | FAM-03 | Phase 22 | Complete |
