@@ -619,6 +619,19 @@ pub(crate) async fn apply_member_removal_rekey(
         .execute(&mut **tx)
         .await?;
 
+    // Step 6b (WR-04, code review Phase 25): `vault_revision` is the WRONG
+    // counter for the shares step 4 just severed. `GET /api/sync/shared/direct`
+    // and the `direct` bucket of `GET /api/sync/shared` are both keyed off
+    // `users.shared_direct_revision` (sync.rs), so without this bump the
+    // removed member's client polls `?since=<unchanged>`, gets the cheap
+    // `UpToDate` shape, and keeps every directly-shared item in its local
+    // cache indefinitely. `vault::revoke_share` already gets this right; this
+    // new path did not.
+    sqlx::query("UPDATE users SET shared_direct_revision = shared_direct_revision + 1 WHERE id = ?")
+        .bind(target_user_id)
+        .execute(&mut **tx)
+        .await?;
+
     // Step 7: every remaining recipient's own sealed_key changed and every
     // rewrapped item's enc_key changed — bump each touched collection's own
     // revision so a remaining member's cache knows to re-fetch (consuming

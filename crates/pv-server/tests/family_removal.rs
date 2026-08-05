@@ -1847,6 +1847,103 @@ async fn remove_member_batch_array_order_does_not_affect_post_state() {
 // This test drives every one of those surfaces through one suspend/reinstate
 // cycle, on the same never-reissued bearer token.
 
+/// WR-04 (code review, Phase 25): member removal severs every `item_shares`
+/// row the target held (step 4) but used to bump only `users.vault_revision`.
+/// `GET /api/sync/shared/direct` is keyed off `users.shared_direct_revision`,
+/// so without a bump there the removed member's client polls with an
+/// unchanged cursor, receives the cheap `UpToDate` shape, and never prunes the
+/// directly-shared items from its local cache. `vault::revoke_share` already
+/// got this right; the removal path did not.
+#[tokio::test]
+async fn remove_member_bumps_the_removed_members_shared_direct_revision() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "wr04-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member_token = common::register_second_family_member(&app, &owner_token, "wr04-member@example.com").await;
+    let member_id = user_id_of(&app, &member_token).await;
+
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    // The owner shares a personal item directly to the member.
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"wr04-key\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"wr04-data\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let share_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/items/{item_id}/shares"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"wr04-sealed\"}",
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(share_res.status(), StatusCode::CREATED);
+
+    // The member's client establishes its cursor: a full snapshot now, then
+    // the cheap UpToDate shape on the next poll with that same cursor.
+    let snapshot = body_json(req(&app, "GET", "/api/sync/shared/direct", &member_token, None).await).await;
+    let cursor = snapshot["revision"].as_i64().unwrap();
+    assert_eq!(snapshot["items"].as_array().unwrap().len(), 1, "precondition: the share is visible");
+
+    let cheap = body_json(
+        req(&app, "GET", &format!("/api/sync/shared/direct?since={cursor}"), &member_token, None).await,
+    )
+    .await;
+    assert!(cheap.get("items").is_none(), "precondition: an unchanged cursor yields the cheap UpToDate shape");
+
+    // The owner removes the member (no collection access, so an empty batch).
+    let remove_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/families/members/{member_id}"),
+        &owner_token,
+        Some(json!({ "collections": [] })),
+    )
+    .await;
+    assert_eq!(remove_res.status(), StatusCode::NO_CONTENT);
+
+    let revision_after: i64 = sqlx::query_scalar("SELECT shared_direct_revision FROM users WHERE id = ?")
+        .bind(&member_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        revision_after,
+        cursor + 1,
+        "WR-04: removal must bump the removed member's own shared_direct_revision, or their client never learns \
+         to prune the item_shares rows step 4 just deleted"
+    );
+
+    // The decisive behavioral consequence: polling with the pre-removal
+    // cursor must now yield a real (empty) snapshot, not the cheap shape.
+    let after = body_json(
+        req(&app, "GET", &format!("/api/sync/shared/direct?since={cursor}"), &member_token, None).await,
+    )
+    .await;
+    assert_eq!(
+        after["items"].as_array().map(|a| a.len()),
+        Some(0),
+        "the removed member's stale cursor must now produce a real, EMPTY snapshot -- the signal to prune"
+    );
+}
+
 /// The flagship CR-02 proof plus its four siblings, end to end.
 #[tokio::test]
 async fn suspension_closes_every_shared_read_path_and_every_family_write_path() {
