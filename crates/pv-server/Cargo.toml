@@ -30,9 +30,21 @@ uuid.workspace = true
 # "test-support")]`-gated pub thread_local) compile into the dev-dependency
 # graph `cargo test` builds (which every `tests/*.rs` integration-test crate
 # and this crate's own lib unit tests are part of, via the self-referential
-# `[dev-dependencies]` entry below) while staying genuinely absent from a
-# production `cargo build`/`cargo build --release`, which pulls in no
-# dev-dependencies at all. Deliberately NOT `#[cfg(test)]` — items gated that
+# `[dev-dependencies]` entry below) while staying absent from the BARE
+# `cargo build`/`cargo build --release` the Dockerfile runs, which pulls in no
+# dev-dependencies at all.
+#
+# WR-02 (code review, Phase 25): that last clause used to read "genuinely
+# absent from a production cargo build", full stop, which is false for
+# `cargo build --all-targets` — that flag DOES pull in the dev-dependency
+# graph, feature-unifying the lib with `test-support` and relinking the `bin`
+# target against it (4 `nm` matches; reproduction in `routes/families.rs`'s
+# own note above the hook). The shipped image is unaffected (`Dockerfile:85`
+# is a bare `cargo build -p pv-server --release` in a clean container), and
+# that is now enforced by a release-profile `compile_error!` next to the hook
+# rather than asserted here.
+#
+# Deliberately NOT `#[cfg(test)]` — items gated that
 # way are invisible to a SEPARATE integration-test crate (`tests/*.rs` is
 # compiled as its own crate that merely links against this crate's lib
 # target, so `cfg(test)` — only active when THIS crate itself is compiled as

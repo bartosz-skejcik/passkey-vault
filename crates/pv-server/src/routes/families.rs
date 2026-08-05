@@ -391,9 +391,31 @@ pub struct RemoveMemberRequest {
 // `[features]` doc comment for the full empirically-verified rationale (a
 // `#[cfg(test)]` item in this crate's lib target is invisible to a separate
 // `tests/*.rs` integration-test binary; `test-support` is visible to it via
-// the self-referential `[dev-dependencies]` entry, and absent from a
-// production `cargo build` because that command pulls in no
-// dev-dependencies at all).
+// the self-referential `[dev-dependencies]` entry).
+//
+// WR-02 (code review, Phase 25) — the absence claim, stated precisely.
+// The old wording ("absent from a production `cargo build`") was too broad.
+// Verified reproduction:
+//
+//     $ cargo build -p pv-server --bin pv-server
+//     $ nm target/debug/pv-server | grep -c FAULT_INJECT   # -> 0
+//     $ cargo build -p pv-server --all-targets
+//     $ nm target/debug/pv-server | grep -c FAULT_INJECT   # -> 4
+//
+// `--all-targets` pulls in the dev-dependency graph, which contains the
+// self-referential `pv-server = { path = ".", features = ["test-support"] }`
+// entry, so under workspace `resolver = "2"` the lib is feature-unified WITH
+// `test-support` and the `bin` target is relinked against it. The true
+// statement is therefore: the hook is absent unless dev-dependencies are in
+// the build graph.
+//
+// The SHIPPED artifact is unaffected — `Dockerfile:85` runs
+// `cargo build -p pv-server --release` in a clean container, with no
+// `--all-targets` and no prior test step — and that guarantee is now
+// MECHANICAL rather than documentary, via the release-profile
+// `compile_error!` below. Even when linked in, the hook is a thread-local
+// defaulting to `None` that no route can set, so it is not remotely
+// triggerable.
 //
 // This hook exists SOLELY because no real SQL-level constraint in this
 // schema can be triggered mid-batch: a sequential per-row `UPDATE` can never
@@ -409,6 +431,25 @@ pub struct RemoveMemberRequest {
 // not generate documentation for a macro invocation (`thread_local!`
 // itself), so a doc comment immediately above one is flagged by clippy as
 // dead documentation (`unused_doc_comments`).
+// WR-02: turns "the release image never carries the fault-injection hook"
+// from a claim in a comment into a compile-time invariant. A release profile
+// with `test-support` somehow enabled — the only way the hook could reach the
+// shipped binary — now fails the build loudly instead of silently linking it.
+// `debug_assertions` is the profile discriminator: on for `dev`/`test`, off
+// for `release` (this workspace does not override it).
+//
+// Known, accepted cost: `cargo test -p pv-server --release` will not compile.
+// Nothing in CI or the Dockerfile does that (`cargo test --workspace` runs on
+// the dev profile; the image runs `cargo build -p pv-server --release`), and
+// failing loudly there is the correct trade for a mechanical guarantee at the
+// boundary that actually ships.
+#[cfg(all(feature = "test-support", not(debug_assertions)))]
+compile_error!(
+    "the `test-support` feature (which compiles in FAULT_INJECT_AFTER_COLLECTION_INDEX) must never \
+     be enabled in a release build. If you are running `cargo test --release`, drop `--release` — \
+     the atomicity proof runs on the dev profile."
+);
+
 #[cfg(feature = "test-support")]
 thread_local! {
     pub static FAULT_INJECT_AFTER_COLLECTION_INDEX: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
