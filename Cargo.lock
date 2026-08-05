@@ -2046,6 +2046,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "pv-core",
+ "pv-server",
  "reqwest",
  "serde",
  "serde_json",
