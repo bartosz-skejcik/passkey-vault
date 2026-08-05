@@ -583,3 +583,98 @@ async fn suspend_reinstate_reject_self_target_and_non_member() {
         "a target with no family_members row in the caller's family must 404"
     );
 }
+
+/// Task 2 (FAM-09's suspend-side live proof — the CONTEXT.md "verify this is
+/// actually true rather than assuming it" instruction): a suspended member's
+/// STILL-VALID, never-reissued bearer token is rejected on its very next
+/// request, and reinstatement restores access on the very next request after
+/// THAT — with byte-identical `enc_key`/`sealed_key` across the whole cycle,
+/// proving nothing was ever re-wrapped.
+#[tokio::test]
+async fn suspended_member_loses_and_regains_live_access_on_next_request_with_identical_keys() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let (owner_token, member_token, _owner_id, member_id, collection_id) = seed_owner_member_and_shared_collection(
+        &app,
+        &pool,
+        "live-cycle-owner@example.com",
+        "live-cycle-member@example.com",
+    )
+    .await;
+
+    let item_id: String =
+        sqlx::query_scalar("SELECT id FROM vault_items WHERE collection_id = ?").bind(&collection_id).fetch_one(&pool).await.unwrap();
+    let enc_key_before: String =
+        sqlx::query_scalar("SELECT enc_key FROM vault_items WHERE id = ?").bind(&item_id).fetch_one(&pool).await.unwrap();
+    let sealed_key_before: String = sqlx::query_scalar(
+        "SELECT sealed_key FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(&collection_id)
+    .bind(&member_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Member can reach the collection's items BEFORE suspension.
+    let pre_suspend_res =
+        req(&app, "GET", &format!("/api/vault/collections/{collection_id}/items"), &member_token, None).await;
+    assert_eq!(pre_suspend_res.status(), StatusCode::OK, "member must have access before suspension");
+
+    // Owner suspends the member.
+    let suspend_res =
+        req(&app, "POST", &format!("/api/families/members/{member_id}/suspend"), &owner_token, None).await;
+    assert_eq!(suspend_res.status(), StatusCode::NO_CONTENT);
+
+    // The member's very next request — SAME bearer token, no re-login, no
+    // token action of any kind — is rejected exactly as a non-member's
+    // would be.
+    let items_after_suspend_res =
+        req(&app, "GET", &format!("/api/vault/collections/{collection_id}/items"), &member_token, None).await;
+    assert_eq!(
+        items_after_suspend_res.status(),
+        StatusCode::NOT_FOUND,
+        "a suspended member's live next request must be denied, on the same still-valid token"
+    );
+    let collection_after_suspend_res =
+        req(&app, "GET", &format!("/api/vault/collections/{collection_id}"), &member_token, None).await;
+    assert_eq!(
+        collection_after_suspend_res.status(),
+        StatusCode::NOT_FOUND,
+        "a suspended member's live next request to the collection itself must also be denied"
+    );
+
+    // Owner reinstates the member.
+    let reinstate_res =
+        req(&app, "POST", &format!("/api/families/members/{member_id}/reinstate"), &owner_token, None).await;
+    assert_eq!(reinstate_res.status(), StatusCode::NO_CONTENT);
+
+    // The member's very next request — SAME token, never reissued —
+    // succeeds again, with byte-identical keys to what they held before
+    // suspension.
+    let items_after_reinstate_res =
+        req(&app, "GET", &format!("/api/vault/collections/{collection_id}/items"), &member_token, None).await;
+    assert_eq!(
+        items_after_reinstate_res.status(),
+        StatusCode::OK,
+        "reinstatement must restore access on the very next request, same token"
+    );
+    let items_after_reinstate_body = body_json(items_after_reinstate_res).await;
+    let items_array = items_after_reinstate_body.as_array().unwrap();
+    let item_entry = items_array.iter().find(|i| i["id"].as_str() == Some(item_id.as_str())).unwrap();
+    assert_eq!(
+        item_entry["enc_key"].as_str().unwrap(),
+        enc_key_before,
+        "the item's enc_key after reinstatement must be byte-identical to the pre-suspension snapshot"
+    );
+
+    let collection_after_reinstate_res =
+        req(&app, "GET", &format!("/api/vault/collections/{collection_id}"), &member_token, None).await;
+    assert_eq!(collection_after_reinstate_res.status(), StatusCode::OK);
+    let collection_after_reinstate_body = body_json(collection_after_reinstate_res).await;
+    assert_eq!(
+        collection_after_reinstate_body["sealed_key"].as_str().unwrap(),
+        sealed_key_before,
+        "the collection's sealed_key after reinstatement must be byte-identical to the pre-suspension snapshot"
+    );
+}
