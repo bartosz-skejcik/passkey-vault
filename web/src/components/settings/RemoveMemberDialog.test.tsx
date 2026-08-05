@@ -584,6 +584,38 @@ describe("RemoveMemberDialog", () => {
       expect(onRemoved).not.toHaveBeenCalled();
     });
 
+    it("WR-12: a throwing onRemoved does NOT surface member.removeFailed after a successful removal", async () => {
+      mockGetMemberAccess.mockResolvedValue({ collections: [], item_shares: [] });
+      mockRemoveFamilyMember.mockResolvedValue(undefined);
+      const onRemoved = vi.fn(() => {
+        throw new Error("parent callback blew up");
+      });
+      const unhandled: unknown[] = [];
+      const onUnhandled = (e: PromiseRejectionEvent) => {
+        e.preventDefault();
+        unhandled.push(e.reason);
+      };
+      window.addEventListener("unhandledrejection", onUnhandled);
+      try {
+        render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={onRemoved} />);
+
+        await waitForStep1();
+        fireEvent.click(screen.getByTestId("remove-member-step1-continue"));
+        expect(() => fireEvent.click(screen.getByTestId("remove-member-step2-confirm"))).not.toThrow();
+
+        await waitFor(() => expect(mockRemoveFamilyMember).toHaveBeenCalled());
+        await waitFor(() => expect(onRemoved).toHaveBeenCalled());
+        // The member IS removed server-side. Telling the owner "Couldn't
+        // remove the member. Try again." would be a lie that invites a retry.
+        expect(screen.queryByTestId("remove-member-error")).not.toBeInTheDocument();
+        // ...and the throw is swallowed rather than escaping as an unhandled
+        // promise rejection (this handler is invoked as `void handleFinalConfirm()`).
+        expect(unhandled).toHaveLength(0);
+      } finally {
+        window.removeEventListener("unhandledrejection", onUnhandled);
+      }
+    });
+
     it("Cancel at step 1 closes the whole dialog", async () => {
       mockGetMemberAccess.mockResolvedValue({ collections: [], item_shares: [] });
       const onClose = vi.fn();

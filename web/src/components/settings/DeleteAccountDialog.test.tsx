@@ -261,6 +261,27 @@ describe("DeleteAccountDialog", () => {
       expect(mockLockVault).toHaveBeenCalledTimes(1);
     });
 
+    it("WR-12: a throwing local cleanup does NOT surface account.deleteFailed after the account is already gone", async () => {
+      mockGetFamilyMembers.mockResolvedValue(null);
+      mockDeleteAccount.mockResolvedValue(undefined);
+      // The account IS deleted server-side; only the local sign-out throws.
+      mockClearSessionToken.mockImplementation(() => {
+        throw new Error("localStorage unavailable");
+      });
+      render(<DeleteAccountDialog onClose={vi.fn()} />);
+
+      await waitForStep1Continue();
+      fireEvent.click(screen.getByTestId("account-delete-step1-continue"));
+      fireEvent.click(screen.getByTestId("account-delete-step2-confirm"));
+
+      await waitFor(() => expect(mockDeleteAccount).toHaveBeenCalled());
+      // "Couldn't delete the account. Try again." would be a lie that invites
+      // a retry which can only 401.
+      await waitFor(() =>
+        expect(screen.queryByTestId("account-delete-error")).not.toBeInTheDocument(),
+      );
+    });
+
     it("on failure, renders account.deleteFailed inline, dialog stays open, sign-out never called", async () => {
       mockGetFamilyMembers.mockResolvedValue(null);
       mockDeleteAccount.mockRejectedValue(new Error("boom"));

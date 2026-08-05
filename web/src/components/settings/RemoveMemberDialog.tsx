@@ -356,16 +356,35 @@ export default function RemoveMemberDialog({
   async function handleFinalConfirm() {
     setState("removing");
     setRemoveError(null);
+
+    // WR-12 (code review, Phase 25): `onRemoved()` used to sit inside this
+    // same `try`, so a throwing parent callback surfaced
+    // `member.removeFailed` ("Couldn't remove the member. Try again.") after
+    // the removal had ALREADY succeeded server-side. The `try` now covers
+    // only the network call.
     try {
       const uk = getUnlockedUserKey();
       if (uk === null) {
         throw new Error("cannot remove member while the vault is locked");
       }
       await removeFamilyMember(member.user_id, uk);
-      onRemoved();
     } catch {
       setRemoveError(t("member.removeFailed"));
       setState("step2");
+      return;
+    }
+
+    // Past this point the member IS removed. `onRemoved` gets its own
+    // catch rather than simply sitting outside the block above: leaving it
+    // bare would turn a throwing parent into an UNHANDLED promise rejection
+    // (this function is invoked as `void handleFinalConfirm()`), which is a
+    // different bug, not a fix. Swallowed deliberately — the parent's own
+    // refresh failing is not something this dialog can or should report as a
+    // removal failure.
+    try {
+      onRemoved();
+    } catch {
+      /* parent-side refresh failure; the removal itself succeeded */
     }
   }
 

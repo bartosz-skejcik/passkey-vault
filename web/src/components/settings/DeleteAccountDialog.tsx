@@ -132,6 +132,14 @@ export default function DeleteAccountDialog({ onClose }: { onClose: () => void }
   async function handleFinalConfirm() {
     setState("deleting");
     setDeleteError(null);
+
+    // WR-12 (code review, Phase 25): this `try` used to also wrap
+    // `clearSessionToken`/`clearStoredEmail`/`lockVault`. If any of those
+    // threw, the catch rendered `account.deleteFailed` ("Couldn't delete the
+    // account. Try again.") even though the account was ALREADY permanently
+    // gone server-side — inviting a retry that can only 401. The `try` now
+    // covers exactly the operations that can still leave the account intact:
+    // batch construction and the network call itself.
     try {
       const uk = getUnlockedUserKey();
       if (uk === null) {
@@ -146,27 +154,38 @@ export default function DeleteAccountDialog({ onClose }: { onClose: () => void }
         batch = await buildMemberRemovalBatch(selfUserId, uk);
       }
       await deleteAccount(batch);
-
-      // Same sign-out sequence `Sidebar.tsx`'s `handleLogout` uses after its
-      // own clears — never a bespoke second logout path. `logout()` itself
-      // is NOT called here: the account (and its session) no longer exists
-      // server-side by the time this runs.
-      clearSessionToken();
-      clearStoredEmail();
-      lockVault();
-      try {
-        window.location.reload();
-      } catch {
-        // jsdom (unit tests) doesn't implement real navigation.
-      }
     } catch {
       // Non-silent failure (matches `PasskeyDeleteConfirmDialog`'s
       // precedent): the dialog stays open at step 2, `account.deleteFailed`
-      // renders inline.
+      // renders inline. Reaching here PROVES the account still exists, so
+      // "Try again" is honest advice.
       if (mountedRef.current) {
         setDeleteError(t("account.deleteFailed"));
         setState("step2");
       }
+      return;
+    }
+
+    // Past this point the account is gone. Nothing below may resurrect the
+    // failure surface — a local-cleanup throw must not be reported as
+    // "couldn't delete the account".
+    //
+    // Same sign-out sequence `Sidebar.tsx`'s `handleLogout` uses after its
+    // own clears — never a bespoke second logout path. `logout()` itself is
+    // NOT called here: the account (and its session) no longer exists
+    // server-side by the time this runs.
+    try {
+      clearSessionToken();
+      clearStoredEmail();
+      lockVault();
+    } catch {
+      // Best-effort local cleanup. The reload below returns the app to the
+      // unauthenticated shell regardless.
+    }
+    try {
+      window.location.reload();
+    } catch {
+      // jsdom (unit tests) doesn't implement real navigation.
     }
   }
 
