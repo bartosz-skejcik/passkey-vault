@@ -457,6 +457,23 @@ pub async fn revoke_access(
         };
     }
 
+    // Phase 25 (WR-07 closure): bumps the REVOKED recipient's own
+    // `vault_revision` in the SAME transaction as the DELETE above — mirrors
+    // `vault.rs::revoke_share`'s identical own-counter-bump pattern, target
+    // `vault_revision` (not `shared_direct_revision` — that bucket is for
+    // direct `item_shares`, a different surface). Without this, a revoked
+    // recipient's next `GET /api/sync?since=<their last-known revision>`
+    // still matched their stale counter and returned the cheap `{revision}`
+    // up-to-date shape instead of a fresh snapshot, so their local cache
+    // never learned to prune the collection it can no longer decrypt.
+    // 25-03-PLAN.md Task 3 closes this inherited debt for this sibling
+    // revocation path — `families::apply_member_removal_rekey` already
+    // carries the equivalent bump on the NEW removal path.
+    sqlx::query("UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ?")
+        .bind(&target_user_id)
+        .execute(&mut *tx)
+        .await?;
+
     // SYNC-05 (Phase 23, Task 2): fan out AFTER the DELETE — recipients
     // resolved fresh now naturally EXCLUDE `target_user_id` (their
     // collection_keys row is gone), so the just-removed member's own WS

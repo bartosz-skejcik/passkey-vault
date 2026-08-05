@@ -1862,3 +1862,111 @@ async fn membership_change_events_add_then_remove_live() {
         "a just-removed collection member's socket must receive ZERO frames from a mutation after their removal"
     );
 }
+
+/// Phase 25, Plan 25-03 Task 3 (WR-07 closure): `revoke_access` must bump
+/// the REVOKED recipient's own `vault_revision` in the SAME transaction as
+/// the DELETE, so their next `GET /api/sync` (polled at their own
+/// last-known revision) detects the change and returns a FRESH snapshot —
+/// not the cheap `{revision}`-only up-to-date shape — proving the
+/// local-prune path is genuinely reachable, not merely that a counter
+/// incremented somewhere unobserved.
+#[tokio::test]
+async fn revoke_access_bumps_revoked_recipients_own_vault_revision_and_they_see_a_fresh_sync() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "wr07-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member_token = common::register_second_family_member(&app, &owner_token, "wr07-member@example.com").await;
+    let member_id = user_id_of(&app, &member_token).await;
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "enc_name": "enc-wr07-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    // The member establishes a baseline revision via a real GET /api/sync
+    // pull — a genuine "already synced once" client, not an assumed 0.
+    let baseline_res = req(&app, "GET", "/api/sync?since=0", &member_token, None).await;
+    assert_eq!(baseline_res.status(), StatusCode::OK);
+    let baseline_body = body_json(baseline_res).await;
+    let baseline_revision = baseline_body["revision"].as_i64().unwrap();
+
+    // A SECOND poll at the SAME baseline (nothing has changed yet) must be
+    // the cheap up-to-date shape — no "items"/"folders" keys — establishing
+    // the pre-revoke control this test's post-revoke assertion contrasts
+    // against.
+    let still_up_to_date_res =
+        req(&app, "GET", &format!("/api/sync?since={baseline_revision}"), &member_token, None).await;
+    assert_eq!(still_up_to_date_res.status(), StatusCode::OK);
+    let still_up_to_date_body = body_json(still_up_to_date_res).await;
+    assert!(
+        still_up_to_date_body.get("items").is_none(),
+        "a repeated poll at the same baseline, before any revoke, must stay the cheap up-to-date shape"
+    );
+
+    let revoke_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/vault/collections/{collection_id}/access/{member_id}"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(revoke_res.status(), StatusCode::NO_CONTENT);
+
+    // The revoked member polls AGAIN, at their own SAME baseline revision
+    // (still the same, still-valid bearer token — no re-login) — this must
+    // now be a FRESH snapshot (carries "items"/"folders"), not the cheap
+    // up-to-date shape, proving their next poll actually detects the change.
+    let after_revoke_res =
+        req(&app, "GET", &format!("/api/sync?since={baseline_revision}"), &member_token, None).await;
+    assert_eq!(after_revoke_res.status(), StatusCode::OK);
+    let after_revoke_body = body_json(after_revoke_res).await;
+    assert!(
+        after_revoke_body.get("items").is_some(),
+        "the revoked recipient's next sync at their own last-known revision must be a FRESH snapshot, not up-to-date"
+    );
+    let after_revoke_revision = after_revoke_body["revision"].as_i64().unwrap();
+    assert_eq!(
+        after_revoke_revision - baseline_revision,
+        1,
+        "the revoked recipient's own vault_revision must have advanced by exactly 1"
+    );
+
+    let member_vault_revision_row: i64 = sqlx::query_scalar("SELECT vault_revision FROM users WHERE id = ?")
+        .bind(&member_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        member_vault_revision_row, after_revoke_revision,
+        "the DB-stored vault_revision must match the value the sync response itself reported"
+    );
+}
