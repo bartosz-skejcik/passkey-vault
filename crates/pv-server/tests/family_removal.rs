@@ -356,3 +356,230 @@ async fn remove_member_zero_collection_access_is_a_no_op_rekey() {
         "the removed member's own vault_revision must still be bumped, even on a zero-write re-key"
     );
 }
+
+// --- Plan 25-04 (FAM-07/FAM-09): reversible suspend/reinstate ---
+
+/// Seeds owner + member + one shared collection (member as an `edit`
+/// recipient) with one real item in it, mirroring the happy-path fixture
+/// above but without any removal — this plan's suspend/reinstate tests need
+/// a member who genuinely holds `collection_keys`/`vault_items` access to
+/// snapshot and later prove untouched.
+async fn seed_owner_member_and_shared_collection(
+    app: &axum::Router,
+    pool: &sqlx::SqlitePool,
+    owner_email: &str,
+    member_email: &str,
+) -> (String, String, String, String, String) {
+    let owner_token = register_and_login(app, owner_email).await;
+    create_family(app, &owner_token).await;
+    let member_token = common::register_second_family_member(app, &owner_token, member_email).await;
+    let owner_id = user_id_of(app, &owner_token).await;
+    let member_id = user_id_of(app, &member_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair(app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "enc_name": "enc-suspend-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let plaintext = br#"{"type":"login","username":"u","password":"p"}"#;
+    let encrypted = encrypt_item_for_collection(&ck, plaintext, &collection_id, &item_id, 1).unwrap();
+    let create_item_res = req(
+        app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": serde_json::to_string(&encrypted.enc_key).unwrap(),
+            "enc_data": serde_json::to_string(&encrypted.enc_data).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+    // Deliberate test-fixture shortcut (mirrors the happy-path removal test
+    // above and `tests/collections.rs`'s own established convention): seed
+    // `collection_id` directly, bypassing the real move endpoint.
+    sqlx::query("UPDATE vault_items SET collection_id = ? WHERE id = ?")
+        .bind(&collection_id)
+        .bind(&item_id)
+        .execute(pool)
+        .await
+        .unwrap();
+
+    (owner_token, member_token, owner_id, member_id, collection_id)
+}
+
+/// Reads a member's own `status` field out of a fresh `GET
+/// /api/families/members` response — the ONLY read-side surface for
+/// suspension state.
+async fn member_status_via_list(app: &axum::Router, caller_token: &str, target_user_id: &str) -> String {
+    let res = req(app, "GET", "/api/families/members", caller_token, None).await;
+    assert_eq!(res.status(), StatusCode::OK, "GET /api/families/members must succeed");
+    let body = body_json(res).await;
+    let members = body.as_array().unwrap();
+    let entry = members
+        .iter()
+        .find(|m| m["user_id"].as_str() == Some(target_user_id))
+        .unwrap_or_else(|| panic!("target user {target_user_id} not found in members response"));
+    entry["status"].as_str().unwrap().to_string()
+}
+
+/// Task 1 (FAM-07's flagship proof, must_haves truths 2/3/6): suspending and
+/// then reinstating a member touches ONLY `family_members.status` — the
+/// member's own `collection_keys.sealed_key` and the shared item's
+/// `vault_items.enc_key` are byte-identical before, during, and after the
+/// whole cycle. `GET /api/families/members`'s `status` field reflects each
+/// transition too (the only read-side surface for suspension state).
+#[tokio::test]
+async fn suspend_then_reinstate_touches_only_family_members_status() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let (owner_token, _member_token, _owner_id, member_id, collection_id) = seed_owner_member_and_shared_collection(
+        &app,
+        &pool,
+        "suspend-owner@example.com",
+        "suspend-member@example.com",
+    )
+    .await;
+
+    let sealed_key_before: String = sqlx::query_scalar(
+        "SELECT sealed_key FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(&collection_id)
+    .bind(&member_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let item_id: String =
+        sqlx::query_scalar("SELECT id FROM vault_items WHERE collection_id = ?").bind(&collection_id).fetch_one(&pool).await.unwrap();
+    let enc_key_before: String =
+        sqlx::query_scalar("SELECT enc_key FROM vault_items WHERE id = ?").bind(&item_id).fetch_one(&pool).await.unwrap();
+
+    // --- Suspend ---
+    let suspend_res =
+        req(&app, "POST", &format!("/api/families/members/{member_id}/suspend"), &owner_token, None).await;
+    assert_eq!(suspend_res.status(), StatusCode::NO_CONTENT);
+
+    let status_after_suspend: String =
+        sqlx::query_scalar("SELECT status FROM family_members WHERE user_id = ?").bind(&member_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(status_after_suspend, "suspended");
+    assert_eq!(
+        member_status_via_list(&app, &owner_token, &member_id).await,
+        "suspended",
+        "GET /api/families/members must reflect the suspended status"
+    );
+
+    let sealed_key_after_suspend: String = sqlx::query_scalar(
+        "SELECT sealed_key FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(&collection_id)
+    .bind(&member_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(sealed_key_after_suspend, sealed_key_before, "suspend must not touch collection_keys.sealed_key");
+    let enc_key_after_suspend: String =
+        sqlx::query_scalar("SELECT enc_key FROM vault_items WHERE id = ?").bind(&item_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(enc_key_after_suspend, enc_key_before, "suspend must not touch vault_items.enc_key");
+
+    // --- Reinstate ---
+    let reinstate_res =
+        req(&app, "POST", &format!("/api/families/members/{member_id}/reinstate"), &owner_token, None).await;
+    assert_eq!(reinstate_res.status(), StatusCode::NO_CONTENT);
+
+    let status_after_reinstate: String =
+        sqlx::query_scalar("SELECT status FROM family_members WHERE user_id = ?").bind(&member_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(status_after_reinstate, "active");
+    assert_eq!(
+        member_status_via_list(&app, &owner_token, &member_id).await,
+        "active",
+        "GET /api/families/members must reflect the active status again"
+    );
+
+    let sealed_key_after_reinstate: String = sqlx::query_scalar(
+        "SELECT sealed_key FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(&collection_id)
+    .bind(&member_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        sealed_key_after_reinstate, sealed_key_before,
+        "reinstate must not touch collection_keys.sealed_key — SAME bytes across the whole cycle"
+    );
+    let enc_key_after_reinstate: String =
+        sqlx::query_scalar("SELECT enc_key FROM vault_items WHERE id = ?").bind(&item_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        enc_key_after_reinstate, enc_key_before,
+        "reinstate must not touch vault_items.enc_key — SAME bytes across the whole cycle"
+    );
+}
+
+/// Task 1 (T-25-10/T-25-11): owner attempting to suspend/reinstate
+/// THEMSELVES is rejected with 400 (server-side self-lockout guard, not
+/// merely a hidden UI affordance); an owner attempting against a random
+/// non-member user id gets 404 (confused-deputy guard).
+#[tokio::test]
+async fn suspend_reinstate_reject_self_target_and_non_member() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "susp-reject-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+
+    let self_suspend_res =
+        req(&app, "POST", &format!("/api/families/members/{owner_id}/suspend"), &owner_token, None).await;
+    assert_eq!(self_suspend_res.status(), StatusCode::BAD_REQUEST, "owner cannot suspend themselves");
+
+    let self_reinstate_res =
+        req(&app, "POST", &format!("/api/families/members/{owner_id}/reinstate"), &owner_token, None).await;
+    assert_eq!(self_reinstate_res.status(), StatusCode::BAD_REQUEST, "owner cannot reinstate themselves");
+
+    let non_member_id = uuid::Uuid::new_v4().to_string();
+    let non_member_suspend_res =
+        req(&app, "POST", &format!("/api/families/members/{non_member_id}/suspend"), &owner_token, None).await;
+    assert_eq!(
+        non_member_suspend_res.status(),
+        StatusCode::NOT_FOUND,
+        "a target with no family_members row in the caller's family must 404"
+    );
+
+    let non_member_reinstate_res =
+        req(&app, "POST", &format!("/api/families/members/{non_member_id}/reinstate"), &owner_token, None).await;
+    assert_eq!(
+        non_member_reinstate_res.status(),
+        StatusCode::NOT_FOUND,
+        "a target with no family_members row in the caller's family must 404"
+    );
+}
