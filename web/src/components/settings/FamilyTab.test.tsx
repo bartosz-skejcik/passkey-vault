@@ -593,6 +593,43 @@ describe("FamilyTab", () => {
       expect(screen.getByTestId("family-members-section")).toBeInTheDocument();
     });
 
+    it("WR-14: a backdrop click mid-request does NOT dismiss the dialog, so the failure surface survives", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      let rejectSuspend: ((err: Error) => void) | undefined;
+      mockSuspendMember.mockReturnValue(
+        new Promise((_resolve, reject) => {
+          rejectSuspend = reject;
+        }),
+      );
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId(`member-toggle-suspend-${NON_OWNER_MEMBER.user_id}`));
+      fireEvent.click(screen.getByTestId("confirm-dialog-confirm"));
+
+      // Request in flight: the backdrop must be inert. Clicking it used to
+      // call onClose unconditionally, discarding the very
+      // member.suspendFailed surface the `error` prop exists for.
+      fireEvent.click(screen.getByTestId("confirm-dialog"));
+      expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+
+      rejectSuspend?.(new Error("boom"));
+      await waitFor(() => expect(screen.getByTestId("confirm-dialog-error")).toBeInTheDocument());
+      expect(screen.getByTestId("confirm-dialog-error")).toHaveTextContent("member.suspendFailed");
+    });
+
+    it("WR-14: a backdrop click while IDLE still closes the dialog (no behavior change outside an in-flight request)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId(`member-toggle-suspend-${NON_OWNER_MEMBER.user_id}`));
+      expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("confirm-dialog"));
+      await waitFor(() => expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument());
+    });
+
     it("Suspend failure renders member.suspendFailed inline and never silently closes the dialog", async () => {
       mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
       mockSuspendMember.mockRejectedValue(new Error("boom"));

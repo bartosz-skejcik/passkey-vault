@@ -62,7 +62,13 @@ export default function ConfirmDialog({
     <div
       data-testid="confirm-dialog"
       className="fixed inset-0 z-50 flex items-center justify-center bg-base-300/70 p-4"
-      onClick={onClose}
+      // WR-14 (code review, Phase 25): the backdrop used to be
+      // unconditionally clickable, so a click mid-request dismissed the
+      // dialog and discarded the very `member.suspendFailed` surface the
+      // `error` prop above was added for. Matches both sibling dialogs
+      // (`RemoveMemberDialog`/`DeleteAccountDialog` each guard their own
+      // backdrop while their destructive request is in flight).
+      onClick={confirming ? undefined : onClose}
     >
       <div
         className="flex w-full max-w-[400px] flex-col gap-4 rounded-box border border-base-300 bg-base-100 p-6"
