@@ -1,3 +1,4 @@
+pub mod account;
 pub mod auth;
 pub mod collections;
 pub mod extension_passkeys;
@@ -59,6 +60,13 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/passkey-login/start", post(auth::passkey_login_start))
         .route("/api/auth/passkey-login/finish", post(auth::passkey_login_finish))
+        // Phase 25 (FAM-10): `SessionUser`-gated, never `Membership`/
+        // `FamilyMembership`-gated — a caller's own account is never a
+        // shared family/collection/item resource, the same category as
+        // `/api/auth/me` above. Branches on `resolve_family_role` internally
+        // (owner-dissolution / plain-member re-key / no-family simple
+        // cascade) rather than exposing three separate endpoints.
+        .route("/api/auth/account", delete(account::delete_account))
         .route("/api/vault/items", get(vault::list).post(vault::create))
         .route("/api/vault/folders", get(folders::list).post(folders::create))
         .route("/api/vault/folders/{id}", delete(folders::delete))
@@ -96,7 +104,24 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
         // already-anticipated exception (Plan 22-05's sweep test enumerates
         // it, plus the `/api/identity/*` routes Plan 22-02 adds the same way,
         // in an explicit allowlist constant, not just in this comment).
-        .route("/api/families", post(families::create))
+        //
+        // `GET /api/families` (Phase 25, `families::get`) is a genuinely
+        // NEW, `FamilyMembership<RequireRead>`-gated method merged onto this
+        // SAME literal path string — axum's `MethodRouter` folds per-path,
+        // per-method registrations rather than requiring a second `.route()`
+        // call (the same mechanism this file already relies on for
+        // `/api/invitations/{id}`'s POST/DELETE split below). This is a
+        // deliberate placement choice, not a membership-model exception for
+        // `get` itself: keeping it here (rather than adding a brand-new
+        // `("/api/families", get(families::get))` entry to `family_routes()`)
+        // keeps `family_routes().len()`'s cardinality tripwire byte-identical
+        // to Plan 25-04's own value (a new HTTP method on an EXISTING literal
+        // path, not a new table entry) — the tradeoff is that `family_routes()`'s
+        // automatic non-member-rejection sweep does not exercise `GET
+        // /api/families` the way it exercises every `family_routes()` entry;
+        // `tests/account_deletion.rs`'s `family_get_rejects_non_member_and_returns_shape_for_a_real_member`
+        // is the compensating, hand-written proof for this one route.
+        .route("/api/families", get(families::get).post(families::create))
         // `/api/identity/*` — `SessionUser` alone is the correct and
         // sufficient gate (not `Membership<R,M>`/`FamilyMembership<M>`): a
         // user's own identity keypair is not a shared family/collection/item
@@ -281,6 +306,10 @@ pub const LITERAL_ROUTES_NOT_MEMBERSHIP_GATED: &[&str] = &[
     "/api/auth/me",
     "/api/auth/passkey-login/start",
     "/api/auth/passkey-login/finish",
+    // Phase 25 (FAM-10): a caller's own account is never a shared
+    // family/collection/item resource — same category as `/api/auth/me`
+    // above. `delete_account` branches internally on `resolve_family_role`.
+    "/api/auth/account",
     "/api/sync",
     "/api/sync/ws",
     "/api/sync/shared/direct",
