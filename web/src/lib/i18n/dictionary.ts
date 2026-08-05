@@ -1038,9 +1038,31 @@ export const DICTIONARY = {
   // owner and must interpolate a real family name and a real member count —
   // never a generic "this affects other people" without specifics. A
   // non-owner deleting their own account never sees this string.
+  //
+  // WR-07 (code review, Phase 25) — DELIBERATE amendment to 25-UI-SPEC.md's
+  // literal text, because that text was factually false about the shipped
+  // behavior. `account::delete_account_as_owner` step 1 is
+  // `DELETE FROM vault_items WHERE collection_id IN (SELECT id FROM collections
+  // WHERE family_id = ?)` — scoped by collection only, so it destroys items
+  // authored by EVERY member, not just the departing owner. The old copy told
+  // the owner those members' "vaults stay untouched", which read as "they only
+  // lose access". They lose the rows.
+  //
+  // The BEHAVIOR is the correct half and was left alone: an item in a shared
+  // folder is encrypted under that folder's Collection Key with
+  // collection-scoped AAD, so "preserving" it by nulling `collection_id` would
+  // hand its author a personal item their own client provably cannot decrypt —
+  // silent corruption dressed up as rescued data. Deletion is honest; the copy
+  // now says so. `tests/account_deletion.rs::owner_dissolution_deletes_items_
+  // authored_by_other_members_as_the_copy_now_states` pins the behavior to
+  // this string so the two cannot drift apart again.
+  //
+  // "personal" is added to the final sentence to keep the genuinely-true half
+  // (items OUTSIDE the shared folders really are untouched) unambiguous now
+  // that the sentence before it admits the deletion.
   "account.deleteOwnerWarning": {
-    pl: `Jesteś właścicielem/właścicielką rodziny „{family}". Usunięcie konta zakończy tę rodzinę dla wszystkich — {count} os. straci dostęp do udostępnionych folderów. Ich własne vaulty pozostaną nietknięte.`,
-    en: `You own the "{family}" family. Deleting your account ends this family for everyone — {count} member(s) will lose access to shared folders. Their own vaults stay untouched.`,
+    pl: `Jesteś właścicielem/właścicielką rodziny „{family}". Usunięcie konta zakończy tę rodzinę dla wszystkich — {count} os. straci dostęp do udostępnionych folderów, a cała zawartość tych folderów zostanie trwale usunięta, w tym itemy utworzone tam przez innych członków. Ich własne, osobiste vaulty pozostaną nietknięte.`,
+    en: `You own the "{family}" family. Deleting your account ends this family for everyone — {count} member(s) will lose access to shared folders, and everything inside those folders will be permanently deleted, including items other members created there. Their own personal vaults stay untouched.`,
   },
   "access.readOnly": { pl: "Tylko odczyt", en: "Read-only" },
   "access.fullEdit": { pl: "Pełna edycja", en: "Full edit" },

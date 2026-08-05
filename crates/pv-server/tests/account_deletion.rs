@@ -530,6 +530,131 @@ async fn wrong_delete_order_raises_a_real_foreign_key_violation() {
     assert_eq!(families_count, 1, "the families row must still exist — the wrong-order delete never reached it");
 }
 
+/// WR-07 (code review, Phase 25): `delete_account_as_owner`'s step 1 is
+/// scoped by `collection_id` only, so it deletes items authored by EVERY
+/// member of the dissolved family, not just the departing owner's own. The
+/// shipped copy used to tell the owner those members' "vaults stay untouched",
+/// which read as "they only lose access" -- they lose the rows.
+///
+/// The behavior is the correct half and was deliberately left alone: an item
+/// inside a shared folder is encrypted under that folder's Collection Key with
+/// collection-scoped AAD, so "preserving" it by nulling `collection_id` would
+/// hand its author a personal item their own client provably cannot decrypt.
+/// `account.deleteOwnerWarning` was amended instead, and this test pins the
+/// behavior to that string so the two cannot silently drift apart again.
+#[tokio::test]
+async fn owner_dissolution_deletes_items_authored_by_other_members_as_the_copy_now_states() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "wr07-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member_token = register_second_family_member(&app, &owner_token, "wr07-member@example.com").await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+    let member_id = user_id_of(&app, &member_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "enc_name": "enc-wr07", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    // The MEMBER authors an item INSIDE the shared folder...
+    let member_shared_item_id = uuid::Uuid::new_v4().to_string();
+    let shared_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &member_token,
+        Some(json!({
+            "id": member_shared_item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"wr07-shared-key\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"wr07-shared-data\"}",
+        })),
+    )
+    .await;
+    assert_eq!(shared_res.status(), StatusCode::CREATED);
+    sqlx::query("UPDATE vault_items SET collection_id = ? WHERE id = ?")
+        .bind(&collection_id)
+        .bind(&member_shared_item_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // ...and one genuinely PERSONAL item outside it.
+    let member_personal_item_id = uuid::Uuid::new_v4().to_string();
+    let personal_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &member_token,
+        Some(json!({
+            "id": member_personal_item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"wr07-personal-key\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"wr07-personal-data\"}",
+        })),
+    )
+    .await;
+    assert_eq!(personal_res.status(), StatusCode::CREATED);
+
+    let delete_res =
+        req(&app, "DELETE", "/api/auth/account", &owner_token, Some(json!({ "collections": [] }))).await;
+    assert_eq!(delete_res.status(), StatusCode::NO_CONTENT);
+    assert!(!user_row_exists(&pool, &owner_id).await);
+
+    // The half `account.deleteOwnerWarning` now admits to: "everything inside
+    // those folders will be permanently deleted, including items other members
+    // created there."
+    let shared_item_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vault_items WHERE id = ?")
+        .bind(&member_shared_item_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        shared_item_count, 0,
+        "WR-07: an item authored by ANOTHER member inside a shared folder is destroyed by owner dissolution -- \
+         account.deleteOwnerWarning must keep saying so"
+    );
+
+    // The half it still promises: "their own personal vaults stay untouched."
+    let personal_item_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vault_items WHERE id = ?")
+        .bind(&member_personal_item_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        personal_item_count, 1,
+        "the member's genuinely PERSONAL item must survive -- this is the half of the copy that is still true"
+    );
+    assert!(user_row_exists(&pool, &member_id).await, "the member's own account must survive");
+}
+
 // --- CR-01 (code review, Phase 25): `vault_items.last_editor_user_id` is a
 // `REFERENCES users(id)` FK with NO `ON DELETE` action (migration 0015), and
 // EVERY write path sets it. The three fixtures above all make the deleting
