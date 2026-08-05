@@ -963,9 +963,44 @@ export const DICTIONARY = {
     en: "{email} had access to:",
   },
   "member.removeAccessFolderLabel": { pl: `Folder „{folder}"`, en: `Folder "{folder}"` },
+  // Per-FOLDER fallback. CR-04 (code review, Phase 25): `{count}` is now the
+  // number of items in that folder whose names genuinely failed to resolve —
+  // NOT the folder's total. The old code passed the total, so a folder with 9
+  // resolved names and 1 failure reported "10 items … couldn't load their
+  // names" AND threw away the 9 it had. It is reached only when at least one
+  // item's name failed, and it now renders BESIDE the resolved names rather
+  // than replacing them.
   "member.removeAccessItemsUnresolvedNote": {
     pl: "{count} itemów w tym folderze — nie udało się wczytać ich nazw.",
     en: "{count} items in this folder — couldn't load their names.",
+  },
+  // CR-04 (code review, Phase 25) — new key, an addition to 25-UI-SPEC.md's
+  // Copywriting Contract. A standalone `item_shares` grant is NOT in a folder,
+  // so reusing `member.removeAccessItemsUnresolvedNote` above rendered
+  // literally "1 items in this folder — couldn't load their names" for an item
+  // that is in no folder at all: factually wrong text in the phase's single
+  // most safety-critical dialog. Singular, folder-free, and still reached only
+  // on a genuine resolution failure (the dialog now attempts the caller's own
+  // personal-vault decrypt path first, which resolves the common case where
+  // the owner authored what they shared).
+  "member.removeAccessItemUnresolvedNote": {
+    pl: "Item udostępniony bezpośrednio — nie udało się wczytać jego nazwy.",
+    en: "Directly shared item — couldn't load its name.",
+  },
+  // CR-03 (code review, Phase 25) — new key. A folder whose every item turned
+  // out to be listed individually below (because each was ALSO a direct
+  // `item_shares` grant) would otherwise render as a bare heading with nothing
+  // under it, which 25-UI-SPEC.md's E4 "populated" row explicitly forbids.
+  "member.removeAccessFolderItemsListedBelow": {
+    pl: "Wszystkie itemy z tego folderu są wypisane pojedynczo poniżej.",
+    en: "All items in this folder are listed individually below.",
+  },
+  // CR-03 (code review, Phase 25) — new key. A folder that genuinely contains
+  // no items is a real, ordinary state and must say so plainly, rather than
+  // rendering an empty heading the owner reads as "this folder is safe".
+  "member.removeAccessFolderEmpty": {
+    pl: "Ten folder nie zawiera żadnych itemów.",
+    en: "This folder contains no items.",
   },
   "member.removeStep2Title": { pl: "Na pewno usunąć {email}?", en: "Remove {email} for good?" },
   "member.removeStep2Body": {
@@ -1067,6 +1102,14 @@ export const DICTIONARY = {
   "access.readOnly": { pl: "Tylko odczyt", en: "Read-only" },
   "access.fullEdit": { pl: "Pełna edycja", en: "Full edit" },
   "access.hiddenPassword": { pl: "Ukryte hasło", en: "Hidden password" },
+  // WR-13 (code review, Phase 25) — new key. An `access_level` outside
+  // `read|edit|hidden_password` used to fall back to `access.readOnly`, i.e.
+  // an unknown grant displayed as the LEAST privileged, most reassuring label,
+  // inside the dialog whose entire purpose is telling the owner how much the
+  // removed member could see. Fails closed instead, mirroring
+  // `membership.rs::parse_access_level`'s own "never silently treated as a
+  // valid access grant" discipline.
+  "access.unknown": { pl: "Nieznany poziom dostępu", en: "Unknown access level" },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {

@@ -10,6 +10,8 @@ const {
   mockInitCrypto,
   mockUnsealCollectionKey,
   mockDecryptItemForCollection,
+  mockDecryptItem,
+  mockListItems,
   mockEnsureOwnIdentityKeypair,
 } = vi.hoisted(() => ({
   mockGetMemberAccess: vi.fn(),
@@ -20,6 +22,8 @@ const {
   mockInitCrypto: vi.fn(),
   mockUnsealCollectionKey: vi.fn(),
   mockDecryptItemForCollection: vi.fn(),
+  mockDecryptItem: vi.fn(),
+  mockListItems: vi.fn(),
   mockEnsureOwnIdentityKeypair: vi.fn(),
 }));
 
@@ -36,6 +40,7 @@ vi.mock("@/lib/crypto", () => ({
   initCrypto: mockInitCrypto,
   unsealCollectionKey: mockUnsealCollectionKey,
   decryptItemForCollection: mockDecryptItemForCollection,
+  decryptItem: mockDecryptItem,
 }));
 
 vi.mock("@/lib/families/api", () => ({
@@ -49,6 +54,10 @@ vi.mock("@/lib/families/rekey", () => ({
 vi.mock("@/lib/vault/api", () => ({
   getCollection: mockGetCollection,
   getCollectionItems: mockGetCollectionItems,
+  // CR-04: the dialog now attempts to resolve a standalone item_shares
+  // grant's name through the CALLER's own personal vault before falling
+  // back to the honest per-item note.
+  listItems: mockListItems,
 }));
 
 vi.mock("@/lib/identity/ensure", () => ({
@@ -87,6 +96,7 @@ beforeEach(() => {
   mockInitCrypto.mockResolvedValue(undefined);
   mockEnsureOwnIdentityKeypair.mockResolvedValue(identityKey);
   mockUnsealCollectionKey.mockReturnValue(ck);
+  mockListItems.mockResolvedValue([]);
 });
 
 async function waitForStep1() {
@@ -165,12 +175,16 @@ describe("RemoveMemberDialog", () => {
       );
       mockGetCollectionItems.mockImplementation((id: string) => {
         if (id === "col-A") {
-          return Promise.resolve([{ id: "item-a1", enc_key: "{}", enc_data: "{}" }]);
+          // CR-04: `revision` is now part of CollectionItemRow's wire shape
+          // and is what the dialog passes to decryptItemForCollection --
+          // deliberately NOT 1 here, since the only real server path into a
+          // collection (vault::move_item) bumps it to >= 2.
+          return Promise.resolve([{ id: "item-a1", enc_key: "{}", enc_data: "{}", revision: 3 }]);
         }
         if (id === "col-B") {
           return Promise.resolve([
-            { id: "item-b1", enc_key: "{}", enc_data: "{}" },
-            { id: "item-b2", enc_key: "{}", enc_data: "{}" },
+            { id: "item-b1", enc_key: "{}", enc_data: "{}", revision: 2 },
+            { id: "item-b2", enc_key: "{}", enc_data: "{}", revision: 5 },
           ]);
         }
         return Promise.resolve([]);
@@ -234,6 +248,266 @@ describe("RemoveMemberDialog", () => {
       expect(flatRow).toHaveTextContent("Resolved item-a1");
       expect(flatRow).toHaveTextContent("access.fullEdit");
       expect(screen.queryAllByText("Resolved item-a1")).toHaveLength(1);
+    });
+  });
+
+  // --- Code review, Phase 25: the disclosure-honesty cluster
+  // (CR-03/CR-04/WR-08/WR-13/WR-15). The governing rule from 25-UI-SPEC.md
+  // §4: `member.removeAccessItemsUnresolvedNote` is scoped EXCLUSIVELY to
+  // genuine RUNTIME resolution failure, it must never become a structural
+  // always-on count-only disclosure, and a folder must never render as a
+  // heading with nothing under it. ---
+
+  describe("CR-03: whole-folder resolution failure fails CLOSED", () => {
+    beforeEach(() => {
+      mockGetMemberAccess.mockResolvedValue({
+        collections: [{ id: "col-A", access_level: "read" }],
+        item_shares: [],
+      });
+      mockGetCollection.mockResolvedValue({
+        id: "col-A",
+        enc_name: "ciphertext",
+        created_at: "2026-01-01 10:00:00",
+        access_level: null,
+        sealed_key: "sealed-col-A",
+      });
+      mockDecryptItemForCollection.mockReturnValue(JSON.stringify({ name: "Folder A" }));
+    });
+
+    it("a rejecting getCollectionItems blocks the dialog instead of rendering an EMPTY folder with Continue enabled", async () => {
+      mockGetCollectionItems.mockRejectedValue(new Error("500 from the server"));
+      render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={vi.fn()} />);
+
+      await waitFor(() => expect(screen.getByTestId("remove-member-blocked-error")).toBeInTheDocument());
+      // The old behavior: a folder heading with zero items, no note, and a
+      // live Continue button -- the owner told "this folder holds nothing"
+      // about a folder that may hold every credential in the family.
+      expect(screen.queryByTestId("remove-member-folder-col-A")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("remove-member-step1-continue")).not.toBeInTheDocument();
+      expect(screen.getByTestId("remove-member-blocked-retry")).toBeInTheDocument();
+    });
+
+    it("a rejecting getCollection blocks too", async () => {
+      mockGetCollection.mockRejectedValue(new Error("collection deleted mid-flow"));
+      mockGetCollectionItems.mockResolvedValue([]);
+      render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={vi.fn()} />);
+
+      await waitFor(() => expect(screen.getByTestId("remove-member-blocked-error")).toBeInTheDocument());
+      expect(screen.queryByTestId("remove-member-step1-continue")).not.toBeInTheDocument();
+    });
+
+    it("a folder that genuinely resolves to ZERO items says so, rather than rendering a bare heading", async () => {
+      mockGetCollectionItems.mockResolvedValue([]);
+      render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={vi.fn()} />);
+
+      await waitForStep1();
+      expect(screen.getByTestId("remove-member-folder-empty-col-A")).toHaveTextContent(
+        "member.removeAccessFolderEmpty",
+      );
+      // ...and it is NOT dressed up as a resolution failure.
+      expect(screen.queryByTestId("remove-member-folder-unresolved-col-A")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("CR-04/WR-15: the unresolved note is per-ITEM, never per-folder", () => {
+    it("renders the RESOLVED names alongside a note counting ONLY the failures", async () => {
+      mockGetMemberAccess.mockResolvedValue({
+        collections: [{ id: "col-A", access_level: "read" }],
+        item_shares: [],
+      });
+      mockGetCollection.mockResolvedValue({
+        id: "col-A",
+        enc_name: "ciphertext",
+        created_at: "2026-01-01 10:00:00",
+        access_level: null,
+        sealed_key: "sealed-col-A",
+      });
+      // Three items: two resolve, one does not.
+      mockGetCollectionItems.mockResolvedValue([
+        { id: "ok-1", enc_key: "{}", enc_data: "{}", revision: 2 },
+        { id: "bad-1", enc_key: "{}", enc_data: "{}", revision: 2 },
+        { id: "ok-2", enc_key: "{}", enc_data: "{}", revision: 4 },
+      ]);
+      mockDecryptItemForCollection.mockImplementation(
+        (_ck: unknown, _data: string, collectionId: string, itemId: string) => {
+          if (itemId === collectionId) return JSON.stringify({ name: "Folder A" });
+          if (itemId === "bad-1") throw new Error("simulated per-item decrypt failure");
+          return JSON.stringify({ name: `Resolved ${itemId}` });
+        },
+      );
+
+      render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={vi.fn()} />);
+      await waitForStep1();
+
+      const folderA = screen.getByTestId("remove-member-folder-col-A");
+      // The two successfully-resolved names are NOT thrown away by the one
+      // failing sibling -- that was the old per-folder collapse.
+      expect(folderA).toHaveTextContent("Resolved ok-1");
+      expect(folderA).toHaveTextContent("Resolved ok-2");
+      // The count rendered into the note is the number of FAILURES (1),
+      // never the folder's total (3). The mocked `t()` returns the raw key,
+      // and the real `interpolate()` appends unmatched values, so the note's
+      // text ends with the count it was actually given.
+      const note = screen.getByTestId("remove-member-folder-unresolved-col-A");
+      expect(note).toHaveTextContent("member.removeAccessItemsUnresolvedNote 1");
+      expect(note).not.toHaveTextContent("member.removeAccessItemsUnresolvedNote 3");
+    });
+
+    it("passes the item's REAL revision to decryptItemForCollection, not a hardcoded 1", async () => {
+      mockGetMemberAccess.mockResolvedValue({
+        collections: [{ id: "col-A", access_level: "read" }],
+        item_shares: [],
+      });
+      mockGetCollection.mockResolvedValue({
+        id: "col-A",
+        enc_name: "ciphertext",
+        created_at: "2026-01-01 10:00:00",
+        access_level: null,
+        sealed_key: "sealed-col-A",
+      });
+      mockGetCollectionItems.mockResolvedValue([
+        { id: "item-a1", enc_key: "{}", enc_data: "{}", revision: 7 },
+      ]);
+      mockDecryptItemForCollection.mockReturnValue(JSON.stringify({ name: "n" }));
+
+      render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={vi.fn()} />);
+      await waitForStep1();
+
+      // The only real server path into a collection (vault::move_item) bumps
+      // revision to >= 2, so the old hardcoded 1 guaranteed an AEAD failure
+      // for every item a real user could actually have.
+      expect(mockDecryptItemForCollection).toHaveBeenCalledWith(ck, expect.anything(), "col-A", "item-a1", 7);
+    });
+  });
+
+  describe("CR-04: a standalone item share gets folder-free copy and a real resolution attempt", () => {
+    beforeEach(() => {
+      mockGetMemberAccess.mockResolvedValue({
+        collections: [],
+        item_shares: [{ item_id: "personal-1", access_level: "read" }],
+      });
+    });
+
+    it("resolves the name through the CALLER's own personal vault when they authored it", async () => {
+      mockListItems.mockResolvedValue([
+        { id: "personal-1", enc_key: "{}", enc_data: "{}", revision: 4, updated_at: "", last_used_at: null },
+      ]);
+      mockDecryptItem.mockReturnValue(JSON.stringify({ name: "My Bank Login" }));
+
+      render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={vi.fn()} />);
+      await waitForStep1();
+
+      const row = screen.getByTestId("remove-member-shared-item-personal-1");
+      expect(row).toHaveTextContent("My Bank Login");
+      expect(mockDecryptItem).toHaveBeenCalledWith(uk, expect.anything(), "personal-1", 4);
+      expect(row).not.toHaveTextContent("member.removeAccessItemsUnresolvedNote");
+    });
+
+    it("falls back to the SINGULAR, folder-free key when the name genuinely cannot be resolved", async () => {
+      mockListItems.mockResolvedValue([]);
+
+      render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={vi.fn()} />);
+      await waitForStep1();
+
+      const row = screen.getByTestId("remove-member-shared-item-personal-1");
+      // The old copy read literally "1 items in this folder — couldn't load
+      // their names" for an item that is in NO folder.
+      expect(row).toHaveTextContent("member.removeAccessItemUnresolvedNote");
+      expect(row).not.toHaveTextContent("member.removeAccessItemsUnresolvedNote");
+    });
+
+    it("a failing personal-vault fetch degrades to the note WITHOUT blocking the dialog", async () => {
+      mockListItems.mockRejectedValue(new Error("network"));
+
+      render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={vi.fn()} />);
+      await waitForStep1();
+
+      expect(screen.getByTestId("remove-member-shared-item-personal-1")).toHaveTextContent(
+        "member.removeAccessItemUnresolvedNote",
+      );
+      expect(screen.getByTestId("remove-member-step1-continue")).not.toBeDisabled();
+    });
+  });
+
+  describe("WR-15: a folder emptied by the dual-path merge never renders as a bare heading", () => {
+    it("says its items are listed individually below", async () => {
+      mockGetMemberAccess.mockResolvedValue({
+        collections: [{ id: "col-A", access_level: "read" }],
+        item_shares: [{ item_id: "item-a1", access_level: "edit" }],
+      });
+      mockGetCollection.mockResolvedValue({
+        id: "col-A",
+        enc_name: "ciphertext",
+        created_at: "2026-01-01 10:00:00",
+        access_level: null,
+        sealed_key: "sealed-col-A",
+      });
+      mockGetCollectionItems.mockResolvedValue([
+        { id: "item-a1", enc_key: "{}", enc_data: "{}", revision: 2 },
+      ]);
+      mockDecryptItemForCollection.mockImplementation(
+        (_ck: unknown, _data: string, collectionId: string, itemId: string) =>
+          itemId === collectionId
+            ? JSON.stringify({ name: "Folder A" })
+            : JSON.stringify({ name: "Shared Item" }),
+      );
+
+      render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={vi.fn()} />);
+      await waitForStep1();
+
+      const folderA = screen.getByTestId("remove-member-folder-col-A");
+      expect(folderA.querySelector("li")).toBeNull();
+      expect(screen.getByTestId("remove-member-folder-listed-below-col-A")).toHaveTextContent(
+        "member.removeAccessFolderItemsListedBelow",
+      );
+      // ...and it is NOT reported as a resolution failure or as empty.
+      expect(screen.queryByTestId("remove-member-folder-unresolved-col-A")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("remove-member-folder-empty-col-A")).not.toBeInTheDocument();
+      expect(screen.getByTestId("remove-member-shared-item-item-a1")).toHaveTextContent("Shared Item");
+    });
+  });
+
+  describe("WR-13: an unrecognized access_level never displays as the LEAST privileged label", () => {
+    it("renders access.unknown, not access.readOnly", async () => {
+      mockGetMemberAccess.mockResolvedValue({
+        collections: [],
+        item_shares: [{ item_id: "weird-1", access_level: "some_future_level" }],
+      });
+      mockListItems.mockResolvedValue([]);
+
+      render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={vi.fn()} />);
+      await waitForStep1();
+
+      const row = screen.getByTestId("remove-member-shared-item-weird-1");
+      expect(row).toHaveTextContent("access.unknown");
+      expect(row).not.toHaveTextContent("access.readOnly");
+    });
+  });
+
+  describe("WR-08: member.removeAccessListHeading labels the disclosure list", () => {
+    it("renders above the list whenever the list is non-empty", async () => {
+      mockGetMemberAccess.mockResolvedValue({
+        collections: [],
+        item_shares: [{ item_id: "personal-1", access_level: "read" }],
+      });
+      mockListItems.mockResolvedValue([]);
+
+      render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={vi.fn()} />);
+      await waitForStep1();
+
+      expect(screen.getByTestId("remove-member-access-list-heading")).toHaveTextContent(
+        "member.removeAccessListHeading",
+      );
+    });
+
+    it("is absent in the empty case, where removeAccessListEmpty speaks instead", async () => {
+      mockGetMemberAccess.mockResolvedValue({ collections: [], item_shares: [] });
+
+      render(<RemoveMemberDialog member={MEMBER} onClose={vi.fn()} onRemoved={vi.fn()} />);
+      await waitForStep1();
+
+      expect(screen.queryByTestId("remove-member-access-list-heading")).not.toBeInTheDocument();
+      expect(screen.getByTestId("remove-member-access-empty")).toBeInTheDocument();
     });
   });
 

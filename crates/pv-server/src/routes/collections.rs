@@ -217,6 +217,17 @@ pub struct CollectionItemRow {
     pub id: String,
     pub enc_key: String,
     pub enc_data: String,
+    /// CR-04 (code review, Phase 25): the item's CURRENT revision. Without it
+    /// no client can decrypt `enc_data` at all, because
+    /// `pv_core::items::decrypt_item_for_collection` binds the payload's AAD
+    /// to the revision — `RemoveMemberDialog` was forced to hardcode a guess
+    /// of `1`, which is wrong for every item that has ever been edited, and
+    /// wrong for EVERY item reaching a collection through the only real
+    /// server path (`vault::move_item` bumps to >= 2). Purely additive to the
+    /// wire shape; the `enc_key` AAD is revision-independent (it pins
+    /// revision `0`), so re-key batches built from this endpoint are
+    /// unaffected.
+    pub revision: i64,
 }
 
 /// `GET /api/vault/collections/{id}/items` — `Membership<Collection,
@@ -234,10 +245,11 @@ pub async fn collection_items(
     State(state): State<AppState>,
     membership: Membership<Collection, RequireRead>,
 ) -> Result<Json<Vec<CollectionItemRow>>, ApiError> {
-    let rows = sqlx::query("SELECT id, enc_key, enc_data FROM vault_items WHERE collection_id = ? ORDER BY id ASC")
-        .bind(&membership.resource_id)
-        .fetch_all(&state.db)
-        .await?;
+    let rows =
+        sqlx::query("SELECT id, enc_key, enc_data, revision FROM vault_items WHERE collection_id = ? ORDER BY id ASC")
+            .bind(&membership.resource_id)
+            .fetch_all(&state.db)
+            .await?;
 
     let items = rows
         .into_iter()
@@ -246,6 +258,7 @@ pub async fn collection_items(
                 id: row.try_get("id").map_err(|_| ApiError::Internal)?,
                 enc_key: row.try_get("enc_key").map_err(|_| ApiError::Internal)?,
                 enc_data: row.try_get("enc_data").map_err(|_| ApiError::Internal)?,
+                revision: row.try_get("revision").map_err(|_| ApiError::Internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;

@@ -24,13 +24,15 @@ import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { getMemberAccess, type FamilyMemberRecord } from "@/lib/families/api";
 import { removeFamilyMember } from "@/lib/families/rekey";
-import { getCollection, getCollectionItems } from "@/lib/vault/api";
+import { getCollection, getCollectionItems, listItems } from "@/lib/vault/api";
 import {
   getUnlockedUserKey,
   initCrypto,
   unsealCollectionKey,
+  decryptItem,
   decryptItemForCollection,
   type WasmIdentityKey,
+  type WasmUserKey,
 } from "@/lib/crypto";
 import { ensureOwnIdentityKeypair } from "@/lib/identity/ensure";
 
@@ -46,6 +48,16 @@ const ACCESS_LEVEL_KEY: Record<string, "access.readOnly" | "access.fullEdit" | "
   edit: "access.fullEdit",
   hidden_password: "access.hiddenPassword",
 };
+
+/** WR-13 (code review, Phase 25): an unrecognized `access_level` used to fall
+ * back to `access.readOnly` -- the LEAST privileged, most reassuring label --
+ * in the one dialog whose purpose is telling the owner how much the removed
+ * member could see. Fails closed to a neutral "unknown" label instead,
+ * mirroring `membership.rs::parse_access_level`'s server-side discipline
+ * ("never silently treated as a valid access grant"). */
+function accessLevelKey(level: string): "access.readOnly" | "access.fullEdit" | "access.hiddenPassword" | "access.unknown" {
+  return ACCESS_LEVEL_KEY[level] ?? "access.unknown";
+}
 
 // Mirrors `membership.rs`'s own `combine_access` rank exactly (read=0,
 // hidden_password=1, edit=2) -- the client-side max-of-two-grants logic for
@@ -82,6 +94,14 @@ interface ResolvedFolder {
   name: string;
   accessLevel: string;
   items: ResolvedFolderItem[];
+  /** WR-15 (code review, Phase 25): how many items this folder held BEFORE
+   * dual-path entries were spliced out into the flat list. A folder whose
+   * every item is also directly shared ends up with `items: []` but a
+   * non-zero `originalItemCount` -- which is what lets the render tell
+   * "emptied by the merge, see the list below" apart from "genuinely
+   * contains nothing". Rendering a bare heading for either is what
+   * 25-UI-SPEC.md's E4 populated row forbids. */
+  originalItemCount: number;
 }
 
 interface ResolvedItem {
@@ -90,89 +110,132 @@ interface ResolvedItem {
   accessLevel: string;
 }
 
-// Every collection-scoped decrypt call in this dialog uses revision=1 --
-// mirroring `lib/vault/store.ts`'s `decryptFolderRow`'s identical
-// `decryptItem(uk, row.enc_name, row.id, 1)` precedent for a personal
-// folder's own never-revised name, and the common case for a freshly-
-// shared collection item (never edited since creation, per
-// `vault.rs::create_item`'s "always at revision 1" contract).
-// `GET /api/vault/collections/{id}/items` does not carry a per-item
-// revision (Plan 25-03's `CollectionItemRow`), so an EDITED item's true
-// revision cannot be known client-side without an additional endpoint --
-// a wrong guess here throws (AEAD auth failure), which this dialog's own
-// per-item try/catch degrades gracefully into the unresolved-note fallback
-// for that folder, rather than crashing the whole dialog.
-const ITEM_REVISION = 1;
+// A collection's own `enc_name` is decrypted at revision 1: `collections` has
+// no revision column of its own, and the name is written once at create time.
+// (WR-09 is a SEPARATE, unfixable-here problem with that same call: the AAD is
+// bound to a `collectionId` the SERVER generates after the client has already
+// encrypted `enc_name`, so no client can currently produce ciphertext that
+// decrypts. See this file's `resolveFolder` for the honest fallback and
+// 25-REVIEW-FIX.md for why it is a Phase 26 prerequisite, not a fix here.)
+const COLLECTION_NAME_REVISION = 1;
 
-/** Resolves one `access.collections` entry into real folder name + real
- * item names, degrading gracefully (never throwing past this function) on
- * any genuine runtime failure -- a network error mid-fetch, or the
- * collection having been deleted between the access-list fetch and this
- * resolution call (25-UI-SPEC.md's Phase-Specific Notes §4). */
+/** Resolves one `access.collections` entry into real folder name + real item
+ * names.
+ *
+ * CR-03 (code review, Phase 25): this function used to wrap EVERYTHING in a
+ * `catch` that returned `{ items: [] }`. A network error, a 500, a collection
+ * deleted mid-flow, or a re-locked vault therefore rendered as a folder
+ * heading with NOTHING under it -- the owner was shown "this folder contains
+ * nothing" for a folder that may hold every credential in the family, with
+ * Continue still enabled. That is a false negative in the one disclosure the
+ * owner uses to decide whether to rotate credentials.
+ *
+ * A whole-folder resolution failure now PROPAGATES, and `fetchAccess`'s own
+ * catch turns it into the `blocked` state -- exactly 25-UI-SPEC.md's E4
+ * "error (access fetch)" row, which requires this to fail closed with a retry
+ * and never advance to a list-less step 1.
+ *
+ * Two failures are deliberately still non-fatal, because both are the
+ * genuinely PARTIAL state E4's own separate "partial (mixed name resolution)"
+ * row authorizes: the folder NAME failing to decrypt (heading falls back to
+ * the raw id), and an INDIVIDUAL item's name failing (that one item is marked
+ * unresolved while its resolved siblings still render). */
 async function resolveFolder(
   collectionId: string,
   accessLevel: string,
   identityKey: WasmIdentityKey,
 ): Promise<ResolvedFolder> {
+  const collection = await getCollection(collectionId);
+  if (collection.sealed_key === null) {
+    throw new Error(`no sealed_key for collection ${collectionId}`);
+  }
+  const ck = unsealCollectionKey(identityKey, collection.sealed_key);
   try {
-    const collection = await getCollection(collectionId);
-    if (collection.sealed_key === null) {
-      throw new Error(`no sealed_key for collection ${collectionId}`);
-    }
-    const ck = unsealCollectionKey(identityKey, collection.sealed_key);
+    // Folder name: best-effort, independent of item resolution below --
+    // the folder heading + access badge must always render even when the
+    // nested item list can't (25-UI-SPEC.md's "partial" row).
+    let name = collectionId;
     try {
-      // Folder name: best-effort, independent of item resolution below --
-      // the folder heading + access badge must always render even when the
-      // nested item list can't (25-UI-SPEC.md's "partial" row).
-      let name = collectionId;
+      const plaintext = decryptItemForCollection(
+        ck,
+        collection.enc_name,
+        collectionId,
+        collectionId,
+        COLLECTION_NAME_REVISION,
+      );
+      const parsed = JSON.parse(plaintext) as { name?: string };
+      if (typeof parsed.name === "string" && parsed.name.length > 0) {
+        name = parsed.name;
+      }
+    } catch {
+      // Falls back to the raw collection id -- never blocks the rest of
+      // this folder's resolution. See WR-09.
+    }
+
+    const rows = await getCollectionItems(collectionId);
+    const items: ResolvedFolderItem[] = rows.map((row) => {
       try {
-        const plaintext = decryptItemForCollection(
-          ck,
-          collection.enc_name,
-          collectionId,
-          collectionId,
-          ITEM_REVISION,
-        );
+        const combined = recombineEncryptedItem(row.enc_key, row.enc_data);
+        // CR-04: the item's REAL revision, straight off the wire, replacing
+        // the old hardcoded `1`. The AAD binds the payload to the revision,
+        // and the only real server path that puts an item into a collection
+        // (`vault::move_item`) bumps it to >= 2 -- so the constant guaranteed
+        // an AEAD failure for every item a real user could actually have.
+        const plaintext = decryptItemForCollection(ck, combined, collectionId, row.id, row.revision);
+        const parsed = JSON.parse(plaintext) as { name?: string };
+        return {
+          id: row.id,
+          name: typeof parsed.name === "string" && parsed.name.length > 0 ? parsed.name : row.id,
+        };
+      } catch {
+        return { id: row.id, name: null };
+      }
+    });
+
+    return { id: collectionId, name, accessLevel, items, originalItemCount: items.length };
+  } finally {
+    ck.free?.();
+  }
+}
+
+/** CR-04 (code review, Phase 25): resolves the names of items reachable ONLY
+ * through a standalone `item_shares` grant.
+ *
+ * Those items are personal items (`collection_id IS NULL`), encrypted under
+ * their AUTHOR's own UserKey -- not under any Collection Key -- so the
+ * collection-scoped decrypt path above structurally cannot read them, and the
+ * dialog used to give up unconditionally and render a count-only note for
+ * every single one. But the caller here is the family OWNER, and in the common
+ * case the shared item is one the owner THEMSELVES authored, which means their
+ * own UserKey resolves it. This fetches the caller's own personal vault once
+ * and builds an id -> name map from it.
+ *
+ * Best-effort by design: a failure here means "we could not resolve THESE
+ * names", which degrades to the honest per-item note, never to a blocked
+ * dialog and never to a fabricated name. That is different from
+ * `resolveFolder`'s whole-folder failure, which hides an unknown quantity of
+ * credentials and therefore must fail closed. */
+async function resolveOwnPersonalItemNames(ownUk: WasmUserKey): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  try {
+    const rows = await listItems();
+    for (const row of rows) {
+      try {
+        const combined = recombineEncryptedItem(row.enc_key, row.enc_data);
+        const plaintext = decryptItem(ownUk, combined, row.id, row.revision);
         const parsed = JSON.parse(plaintext) as { name?: string };
         if (typeof parsed.name === "string" && parsed.name.length > 0) {
-          name = parsed.name;
+          names.set(row.id, parsed.name);
         }
       } catch {
-        // Falls back to the raw collection id -- never blocks the rest of
-        // this folder's resolution.
+        // This one item stays unresolved; siblings are unaffected.
       }
-
-      const rows = await getCollectionItems(collectionId);
-      const items: ResolvedFolderItem[] = rows.map((row) => {
-        try {
-          const combined = recombineEncryptedItem(row.enc_key, row.enc_data);
-          const plaintext = decryptItemForCollection(
-            ck,
-            combined,
-            collectionId,
-            row.id,
-            ITEM_REVISION,
-          );
-          const parsed = JSON.parse(plaintext) as { name?: string };
-          return {
-            id: row.id,
-            name: typeof parsed.name === "string" && parsed.name.length > 0 ? parsed.name : row.id,
-          };
-        } catch {
-          return { id: row.id, name: null };
-        }
-      });
-
-      return { id: collectionId, name, accessLevel, items };
-    } finally {
-      ck.free?.();
     }
   } catch {
-    // Whole-folder resolution failed (getCollection/getCollectionItems/
-    // unseal threw) -- the folder still renders (its own id as a fallback
-    // label), with zero known items rather than blocking the dialog.
-    return { id: collectionId, name: collectionId, accessLevel, items: [] };
+    // The whole personal-vault fetch failed -- every standalone share falls
+    // back to its honest per-item note.
   }
+  return names;
 }
 
 /** Resolves `access.collections` + `access.item_shares` into the merged,
@@ -185,11 +248,19 @@ async function resolveAccess(
   collections: { id: string; access_level: string }[],
   itemShares: { item_id: string; access_level: string }[],
   identityKey: WasmIdentityKey,
+  ownUk: WasmUserKey,
 ): Promise<{ folders: ResolvedFolder[]; items: ResolvedItem[] }> {
   const folders: ResolvedFolder[] = [];
   for (const entry of collections) {
+    // CR-03: deliberately NOT wrapped in a try/catch. A whole-folder
+    // resolution failure must reach `fetchAccess` and block the dialog.
     folders.push(await resolveFolder(entry.id, entry.access_level, identityKey));
   }
+
+  // CR-04: resolved ONCE, up front, and only when there is a standalone share
+  // that might need it -- an owner with no direct shares pays nothing.
+  const personalNames =
+    itemShares.length > 0 ? await resolveOwnPersonalItemNames(ownUk) : new Map<string, string>();
 
   const items: ResolvedItem[] = [];
 
@@ -214,15 +285,18 @@ async function resolveAccess(
       continue;
     }
 
-    // Not reachable via any folder this dialog resolved above. A direct
-    // `item_shares` grant on a PERSONAL (non-collection) item has no
-    // collection-scoped decrypt path this dialog can reach (that item was
-    // encrypted under its OWNER's own personal UserKey, not a shared
-    // Collection Key -- a genuinely different crypto boundary this narrow,
-    // Phase-25-scoped dialog does not cross). Rendered with the same
-    // never-fabricate-a-name, never-omit-the-row discipline as an
-    // unresolved folder item.
-    items.push({ id: share.item_id, name: null, accessLevel: share.access_level });
+    // Not reachable via any folder this dialog resolved above -- a direct
+    // grant on a PERSONAL item, encrypted under its AUTHOR's own UserKey
+    // rather than a shared Collection Key. CR-04: the dialog now ATTEMPTS
+    // that path (the caller is the owner, and in the common case authored
+    // what they shared) instead of unconditionally giving up. `null` still
+    // means genuinely unresolved -- never a fabricated name, never an
+    // omitted row.
+    items.push({
+      id: share.item_id,
+      name: personalNames.get(share.item_id) ?? null,
+      accessLevel: share.access_level,
+    });
   }
 
   return { folders, items };
@@ -255,7 +329,7 @@ export default function RemoveMemberDialog({
       const identityKey = await ensureOwnIdentityKeypair(uk);
       try {
         const access = await getMemberAccess(member.user_id);
-        const resolved = await resolveAccess(access.collections, access.item_shares, identityKey);
+        const resolved = await resolveAccess(access.collections, access.item_shares, identityKey, uk);
         if (!mountedRef.current) return;
         setFolders(resolved.folders);
         setFlatItems(resolved.items);
@@ -375,67 +449,114 @@ export default function RemoveMemberDialog({
                 {interpolate(t("member.removeAccessListEmpty"), { email: member.email })}
               </p>
             ) : (
-              <div
-                className="flex max-h-60 flex-col gap-3 overflow-y-auto"
-                data-testid="remove-member-access-list"
-              >
-                {folders.map((folder) => {
-                  const unresolved =
-                    folder.items.length > 0 && !folder.items.every((item) => item.name !== null);
-                  return (
-                    <div
-                      key={folder.id}
-                      data-testid={`remove-member-folder-${folder.id}`}
-                      className="flex flex-col gap-1"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-bold" title={folder.name}>
-                          {interpolate(t("member.removeAccessFolderLabel"), { folder: folder.name })}
-                        </span>
-                        <span className="badge badge-ghost shrink-0">
-                          {t(ACCESS_LEVEL_KEY[folder.accessLevel] ?? "access.readOnly")}
-                        </span>
+              <>
+                {/* WR-08: `member.removeAccessListHeading` is 25-UI-SPEC.md
+                    §2's label for this list. It was defined in the dictionary
+                    but rendered nowhere, so the list appeared unlabelled and
+                    the key was dead. */}
+                <p
+                  data-testid="remove-member-access-list-heading"
+                  className="text-sm font-bold"
+                >
+                  {interpolate(t("member.removeAccessListHeading"), { email: member.email })}
+                </p>
+                <div
+                  className="flex max-h-60 flex-col gap-3 overflow-y-auto"
+                  data-testid="remove-member-access-list"
+                >
+                  {folders.map((folder) => {
+                    // CR-04/WR-15: count the items that genuinely FAILED, not
+                    // the folder's total. The old predicate collapsed an
+                    // entire folder's resolved names the moment one sibling
+                    // failed, then reported the total as the failure count --
+                    // simultaneously over-stating the failure and hiding the
+                    // names it had successfully resolved.
+                    const unresolvedCount = folder.items.filter((item) => item.name === null).length;
+                    const resolvedItems = folder.items.filter((item) => item.name !== null);
+                    // WR-15: `folder.items` can be emptied by the dual-path
+                    // splice above (every item was ALSO directly shared, so
+                    // each moved to the flat list). That is NOT the same as a
+                    // genuinely empty folder, and neither may render as a bare
+                    // heading.
+                    const emptiedByMerge = folder.items.length === 0 && folder.originalItemCount > 0;
+                    return (
+                      <div
+                        key={folder.id}
+                        data-testid={`remove-member-folder-${folder.id}`}
+                        className="flex flex-col gap-1"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm font-bold" title={folder.name}>
+                            {interpolate(t("member.removeAccessFolderLabel"), { folder: folder.name })}
+                          </span>
+                          <span className="badge badge-ghost shrink-0">
+                            {t(accessLevelKey(folder.accessLevel))}
+                          </span>
+                        </div>
+                        {resolvedItems.length > 0 ? (
+                          <ul className="flex flex-col gap-1 pl-4">
+                            {resolvedItems.map((item) => (
+                              <li key={item.id} className="truncate text-sm" title={item.name ?? ""}>
+                                {item.name}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {/* Rendered BESIDE the resolved names, not instead of
+                            them, and only on genuine per-item runtime failure
+                            (25-UI-SPEC.md §4). No error styling -- E4's
+                            "partial" row forbids implying the folder is
+                            broken. */}
+                        {unresolvedCount > 0 ? (
+                          <p
+                            data-testid={`remove-member-folder-unresolved-${folder.id}`}
+                            className="pl-4 text-sm text-base-content/70"
+                          >
+                            {interpolate(t("member.removeAccessItemsUnresolvedNote"), {
+                              count: String(unresolvedCount),
+                            })}
+                          </p>
+                        ) : null}
+                        {emptiedByMerge ? (
+                          <p
+                            data-testid={`remove-member-folder-listed-below-${folder.id}`}
+                            className="pl-4 text-sm text-base-content/70"
+                          >
+                            {t("member.removeAccessFolderItemsListedBelow")}
+                          </p>
+                        ) : null}
+                        {folder.originalItemCount === 0 ? (
+                          <p
+                            data-testid={`remove-member-folder-empty-${folder.id}`}
+                            className="pl-4 text-sm text-base-content/70"
+                          >
+                            {t("member.removeAccessFolderEmpty")}
+                          </p>
+                        ) : null}
                       </div>
-                      {folder.items.length === 0 ? null : unresolved ? (
-                        <p
-                          data-testid={`remove-member-folder-unresolved-${folder.id}`}
-                          className="pl-4 text-sm text-base-content/70"
-                        >
-                          {interpolate(t("member.removeAccessItemsUnresolvedNote"), {
-                            count: String(folder.items.length),
-                          })}
-                        </p>
-                      ) : (
-                        <ul className="flex flex-col gap-1 pl-4">
-                          {folder.items.map((item) => (
-                            <li key={item.id} className="truncate text-sm" title={item.name ?? ""}>
-                              {item.name}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  );
-                })}
-                {flatItems.map((item) => (
-                  <div
-                    key={item.id}
-                    data-testid={`remove-member-shared-item-${item.id}`}
-                    className="flex items-center gap-2"
-                  >
-                    <span
-                      className="truncate text-sm"
-                      title={item.name ?? undefined}
+                    );
+                  })}
+                  {flatItems.map((item) => (
+                    <div
+                      key={item.id}
+                      data-testid={`remove-member-shared-item-${item.id}`}
+                      className="flex items-center gap-2"
                     >
-                      {item.name ??
-                        interpolate(t("member.removeAccessItemsUnresolvedNote"), { count: "1" })}
-                    </span>
-                    <span className="badge badge-ghost shrink-0">
-                      {t(ACCESS_LEVEL_KEY[item.accessLevel] ?? "access.readOnly")}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                      <span className="truncate text-sm" title={item.name ?? undefined}>
+                        {/* CR-04: a standalone share is NOT in a folder, so it
+                            gets its own singular, folder-free key -- the old
+                            code rendered "1 items in this folder — couldn't
+                            load their names" for an item in no folder at
+                            all. */}
+                        {item.name ?? t("member.removeAccessItemUnresolvedNote")}
+                      </span>
+                      <span className="badge badge-ghost shrink-0">
+                        {t(accessLevelKey(item.accessLevel))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
 
             <p data-testid="remove-member-honesty-warning" className="text-sm text-base-content/70">

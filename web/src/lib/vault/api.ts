@@ -130,6 +130,14 @@ export interface CollectionItemRow {
   id: string;
   enc_key: string;
   enc_data: string;
+  /** CR-04 (code review, Phase 25): the item's CURRENT revision, added
+   * server-side by this same fix. `decryptItemForCollection` binds the
+   * payload AAD to the revision, so without this every consumer had to guess
+   * — `RemoveMemberDialog` hardcoded `1`, which is wrong for any edited item
+   * and for every item that reached a collection through the only real server
+   * path (`vault::move_item` bumps to >= 2). Not needed for `enc_key`, whose
+   * AAD pins revision `0`. */
+  revision: number;
 }
 
 export function getCollectionItems(collectionId: string): Promise<CollectionItemRow[]> {
