@@ -33,13 +33,14 @@ Blocks every other category. Today's hierarchy is entirely symmetric and cannot 
 
 - [ ] **KEY-01**: Every account has an X25519 identity keypair — private key wrapped by the User Key, public key published to the server. Accounts created before v0.4 get one generated on upgrade **without re-encrypting their existing vault**.
   - **PARTIAL after Phase 22.** Delivered: the pv-core crypto (Phase 21) and the full server half (Phase 22) — public key published/served, wrapped private key stored as an opaque blob the server never unwraps, idempotent under concurrent double-unlock, with a byte-level proof that no vault ciphertext is re-encrypted. **Still outstanding: nothing CALLS it.** No web or extension code invokes `PUT /api/identity/keypair`, so "every account HAS a keypair, including one created before v0.4, generated on upgrade" is possible but not yet true. Caught by 22-VERIFICATION.md as an undelivered-AND-unowned clause; now assigned to **Phase 26 SC#5** (web) and **Phase 27** (extension). Do not mark Complete until a client actually triggers generation.
-- [ ] **KEY-02**: A shared collection has its own Collection Key, sealed independently to each member's public key. Adding or removing a member rewraps keys only — item ciphertext (`enc_data`) is never touched.
-  - **PARTIAL after Phase 21.** Delivered: the Collection Key type and the single-recipient `seal`/`unseal` primitive every per-member wrap is built from. **Still outstanding — both clauses are membership properties Phase 21 has no membership code for:** "sealed independently to *each member's* public key" (the per-recipient fan-out) lands in **Phase 22** with the `collection_keys` data model, and "adding or removing a member rewraps keys only — `enc_data` never touched" is provable only against the real removal path in **Phase 25**. Caught in re-verification after this row was briefly and wrongly marked Complete; do not mark Complete until both phases deliver.
+- [x] **KEY-02**: A shared collection has its own Collection Key, sealed independently to each member's public key. Adding or removing a member rewraps keys only — item ciphertext (`enc_data`) is never touched.
+  - **Complete after Phase 25.** Phase 21 built the Collection Key type and the single-recipient `seal`/`unseal` primitive; Phase 22 delivered per-recipient fan-out (`collection_keys`); Phase 25 (Plan 25-03) delivers and PROVES the final clause against the real removal path — `apply_member_removal_rekey` calls `rewrap_item_key_for_collection` (Plan 25-02) only, never a payload-shaped function, and `tests/family_removal.rs`'s happy-path test asserts the item's `enc_data` is byte-identical, via a direct `SELECT`, before and after removal.
 - [x] **KEY-03**: Item AAD binds the encryption **scope** (personal vs. specific collection), so an item cannot be silently reinterpreted after moving between scopes. This is a deliberate change to today's `prefix ‖ item_id ‖ revision` scheme, which encodes no notion of which key wrapped the item.
 - [x] **KEY-04**: Personal and shared key derivation use distinct, versioned domain-separation constants, following the existing `b"pv:...:v1"` convention.
 - [x] **KEY-05**: The sealed-box implementation choice — `crypto_box` crate vs. hand-assembled X25519-ECDH over the existing `aead_seal`/HKDF machinery — is made and recorded as a first-class documented decision with rationale, before any dependent code is written.
-- [ ] **KEY-06**: Removing a member re-keys only the collections that member could reach. Cost is provably proportional to the shared data and remaining members, never to the whole vault.
+- [x] **KEY-06**: Removing a member re-keys only the collections that member could reach. Cost is provably proportional to the shared data and remaining members, never to the whole vault.
 - [ ] **KEY-07**: Re-key is atomic or safely resumable — a partial failure never leaves some recipients rewrapped and others stranded.
+  - **PARTIAL after Phase 25 (Plan 25-03).** Delivered: the real mechanism — `apply_member_removal_rekey`'s entire write sequence runs inside ONE `BEGIN IMMEDIATE` transaction, so SQLite's own transactional guarantee means any error before `tx.commit()` leaves zero rows written (no partial rewrap can ever be observed). A `pub`, `#[cfg(feature = "test-support")]`-gated fault-injection hook (`FAULT_INJECT_AFTER_COLLECTION_INDEX`) is wired for exactly this purpose. **Still outstanding:** the explicit kill-mid-batch-and-assert-full-rollback proof is Plan 25-05's own deliverable, not this plan's — do not mark Complete until that adversarial test lands and passes.
 
 ### FAM — Family, Membership & Invitations
 
@@ -51,7 +52,9 @@ Blocks every other category. Today's hierarchy is entirely symmetric and cannot 
 - [x] **FAM-06**: One invite link works for both cases — a brand-new user registering, and an existing account joining a family — branching at redemption time on whether a session exists.
 - [ ] **FAM-07**: The owner can **suspend** a member: reversible, immediate, no re-key.
 - [ ] **FAM-08**: The owner can **permanently remove** a member: triggers re-key (KEY-06), gated behind a second confirmation.
+  - **PARTIAL after Phase 25 (Plan 25-03).** Delivered: the full server half — `DELETE /api/families/members/{user_id}`, owner-only, atomically removes the target and re-keys every collection they could reach (KEY-06). **Still outstanding:** the "gated behind a second confirmation" clause is a client-side UX gate — no web/extension UI calls this endpoint yet. Do not mark Complete until a client ships the confirmation step (Plan 25-07 or later).
 - [ ] **FAM-09**: A suspended or removed member's existing sessions lose access immediately — access is not carried by an already-issued session token.
+  - **PARTIAL after Phase 25 (Plan 25-03).** The REMOVED half is now proven end-to-end: `tests/family_removal.rs`'s happy-path test shows the removed member's very next `GET /api/vault/collections/{id}/items` (same, still-valid bearer token — no re-login) is `404`. The SUSPENDED half's enforcement mechanism (`family_members.status` gating `resolve_access`) was proven in Plan 25-01, but there is still no way to actually REACH the suspended state via the API — Plan 25-04 owns the suspend/reinstate handler. Do not mark Complete until 25-04 lands.
 - [ ] **FAM-10**: Deleting an account that was a family member triggers the same re-key path as removal (closes the gap flagged in ARCHITECTURE.md §4.3).
 
 ### SHARE — Sharing Units & Permission Levels
@@ -87,7 +90,7 @@ scalar and `SyncHub` is keyed by `user_id` — neither can express "someone else
 
 - [ ] **SEC-05**: A member can view their own and other members' identity-key fingerprints, so key authenticity can be verified out-of-band. This is the honest, v0.4-scope mitigation for the server-distributes-public-keys trust gap (TOFU posture); a "key changed" banner and a transparency log are explicitly deferred, not silently dropped.
 - [x] **SEC-06**: Every collection/item/family endpoint enforces membership authorization uniformly — no route reachable without the same check its siblings apply.
-- [ ] **SEC-07**: Batch rewrapping of many keys during share or re-key operations never reuses a nonce.
+- [x] **SEC-07**: Batch rewrapping of many keys during share or re-key operations never reuses a nonce.
 - [x] **SEC-08**: A live multi-session test harness (2+ concurrent authenticated sessions, real browser) exists and covers the sharing flows. Stood up **with the sync phase, not at the end** — this milestone's direct application of the v0.2→v0.3 lesson that green CI missed 7 bug classes only visible live.
 
 ### UX — Honest Communication
@@ -129,12 +132,12 @@ Explicitly excluded to prevent scope creep.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | KEY-01 | Phase 21 (crypto) + Phase 22 (server publish/serve) + Phase 26/27 (client trigger on first unlock) | Partial |
-| KEY-02 | Phase 21 (seal primitive) + Phase 22 (per-member fan-out) + Phase 25 (rewrap-only on removal) | Partial |
+| KEY-02 | Phase 21 (seal primitive) + Phase 22 (per-member fan-out) + Phase 25 (rewrap-only on removal) | Complete |
 | KEY-03 | Phase 21 | Complete |
 | KEY-04 | Phase 21 | Complete |
 | KEY-05 | Phase 21 | Complete |
-| KEY-06 | Phase 25 | Pending |
-| KEY-07 | Phase 25 | Pending |
+| KEY-06 | Phase 25 | Complete |
+| KEY-07 | Phase 25 | Partial |
 | FAM-01 | Phase 22 | Complete |
 | FAM-02 | Phase 22 | Complete |
 | FAM-03 | Phase 22 | Complete |
@@ -142,8 +145,8 @@ Explicitly excluded to prevent scope creep.
 | FAM-05 | Phase 24 | Complete |
 | FAM-06 | Phase 24 | Complete |
 | FAM-07 | Phase 25 | Pending |
-| FAM-08 | Phase 25 | Pending |
-| FAM-09 | Phase 25 | Pending |
+| FAM-08 | Phase 25 | Partial |
+| FAM-09 | Phase 25 | Partial |
 | FAM-10 | Phase 25 | Pending |
 | SHARE-01 | Phase 26 | Pending |
 | SHARE-02 | Phase 26 | Pending |
@@ -164,7 +167,7 @@ Explicitly excluded to prevent scope creep.
 | EXT-12 | Phase 27 | Pending |
 | SEC-05 | Phase 26 | Pending |
 | SEC-06 | Phase 22 | Complete |
-| SEC-07 | Phase 25 | Pending |
+| SEC-07 | Phase 25 | Complete |
 | SEC-08 | Phase 23 | Complete |
 | UX-03 | Phase 26 | Pending |
 | UX-04 | Phase 25 | Pending |
