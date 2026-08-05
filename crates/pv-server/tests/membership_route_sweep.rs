@@ -240,6 +240,13 @@ fn substitute(path: &str, ids: &TestIds) -> String {
         // `{user_id}` segment is a mutation TARGET, same substitution shape
         // as `/api/families/members/{user_id}/access` above.
         "/api/families/members/{user_id}" => format!("/api/families/members/{}", ids.some_user_id),
+        // Phase 25 Plan 04 (FAM-07/FAM-09): owner-only reversible
+        // suspend/reinstate — same `{user_id}`-as-mutation-target
+        // substitution shape as the two entries above.
+        "/api/families/members/{user_id}/suspend" => format!("/api/families/members/{}/suspend", ids.some_user_id),
+        "/api/families/members/{user_id}/reinstate" => {
+            format!("/api/families/members/{}/reinstate", ids.some_user_id)
+        }
         other => panic!(
             "membership_route_sweep: no id-substitution mapping registered for path {other:?} — \
              add one to substitute() in tests/membership_route_sweep.rs"

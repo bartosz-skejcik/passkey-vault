@@ -111,6 +111,12 @@ pub struct FamilyMemberRecord {
     /// never a global "verified" flag — `identity_verifications`' composite
     /// PK is `(viewer_user_id, subject_user_id)`).
     pub verified_at: Option<String>,
+    /// `family_members.status` (`'active'`|`'suspended'`) — Phase 25's ONLY
+    /// read-side surface for suspension state. Without this field,
+    /// `suspend_member`/`reinstate_member` below would be write-only from the
+    /// client's perspective; Plan 25-08's Members section/suspended-banner UI
+    /// depends on this being present on the wire.
+    pub status: String,
 }
 
 /// Computes a display fingerprint from a public key's raw bytes — SHA-256
@@ -130,7 +136,7 @@ pub async fn members(
     membership: FamilyMembership<RequireRead>,
 ) -> Result<Json<Vec<FamilyMemberRecord>>, ApiError> {
     let rows = sqlx::query(
-        "SELECT fm.user_id, u.email, fm.role, fm.joined_at, uk.public_key, iv.verified_at \
+        "SELECT fm.user_id, u.email, fm.role, fm.joined_at, fm.status, uk.public_key, iv.verified_at \
          FROM family_members fm \
          JOIN users u ON u.id = fm.user_id \
          LEFT JOIN user_keypairs uk ON uk.user_id = fm.user_id \
@@ -158,6 +164,7 @@ pub async fn members(
                 public_key,
                 fingerprint,
                 verified_at: row.try_get("verified_at").map_err(|_| ApiError::Internal)?,
+                status: row.try_get("status").map_err(|_| ApiError::Internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
@@ -606,6 +613,79 @@ pub async fn remove_member(
                 change_type: ChangeType::Update,
             },
         );
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// --- Phase 25 Plan 04 (FAM-07/FAM-09): reversible suspend/reinstate — the
+// cheap, re-key-free counterpart to remove_member above. Neither handler
+// ever touches collection_keys or vault_items; flipping family_members.status
+// alone is the entire mechanism, since Collection::resolve_access and both
+// branches of Item::resolve_access (crates/pv-server/src/routes/membership.rs,
+// Plan 25-01) already gate every RECIPIENT-side join on `fm.status = 'active'`.
+
+/// `POST /api/families/members/{user_id}/suspend` — owner-only
+/// (`FamilyMembership<RequireEdit>`). Sets `family_members.status =
+/// 'suspended'` via a single guarded `UPDATE` bound to the CALLER's own
+/// resolved `family_id` (never a client-supplied one) — no
+/// `collection_keys`/`vault_items` statement anywhere in this handler, which
+/// is FAM-07's whole point: suspension performs zero re-key writes.
+/// Idempotent — a repeat call against an already-suspended target still
+/// returns `204`, not an error, mirroring `insert_family_member`'s own
+/// conflict-is-not-an-error posture.
+pub async fn suspend_member(
+    State(state): State<AppState>,
+    membership: FamilyMembership<RequireEdit>,
+    axum::extract::Path(target_user_id): axum::extract::Path<String>,
+) -> Result<StatusCode, ApiError> {
+    // Server-side guard, not merely a hidden UI affordance — an owner cannot
+    // suspend themselves (T-25-11's DoS/self-lockout mitigation).
+    if target_user_id == membership.caller_user_id {
+        return Err(ApiError::BadRequest("cannot suspend yourself".into()));
+    }
+
+    // Confused-deputy guard (T-25-10), folded into the UPDATE's own WHERE
+    // clause rather than a separate SELECT: a target with no family_members
+    // row in the CALLER's own resolved family_id affects zero rows, which
+    // the `rows_affected() == 0` check below maps to 404 — mirrors
+    // remove_member's separate pre-check but as a single guarded statement,
+    // matching this handler's own single-UPDATE simplicity (FAM-07).
+    let result = sqlx::query("UPDATE family_members SET status = 'suspended' WHERE family_id = ? AND user_id = ?")
+        .bind(&membership.family_id)
+        .bind(&target_user_id)
+        .execute(&state.db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/families/members/{user_id}/reinstate` — owner-only twin of
+/// `suspend_member` above. Sets `family_members.status = 'active'` via the
+/// identical single-guarded-`UPDATE` shape — restores access with the SAME
+/// `collection_keys.sealed_key`/`vault_items.enc_key` bytes the member held
+/// before suspension, since neither table is ever touched by either handler.
+pub async fn reinstate_member(
+    State(state): State<AppState>,
+    membership: FamilyMembership<RequireEdit>,
+    axum::extract::Path(target_user_id): axum::extract::Path<String>,
+) -> Result<StatusCode, ApiError> {
+    if target_user_id == membership.caller_user_id {
+        return Err(ApiError::BadRequest("cannot reinstate yourself".into()));
+    }
+
+    let result = sqlx::query("UPDATE family_members SET status = 'active' WHERE family_id = ? AND user_id = ?")
+        .bind(&membership.family_id)
+        .bind(&target_user_id)
+        .execute(&state.db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound);
     }
 
     Ok(StatusCode::NO_CONTENT)

@@ -204,6 +204,12 @@ pub fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppStat
         // by the extractor itself — same rationale as
         // `families::member_access` above).
         ("/api/families/members/{user_id}", delete(families::remove_member)),
+        // Phase 25 Plan 04 (FAM-07/FAM-09): owner-only reversible
+        // suspend/reinstate — the cheap, re-key-free counterpart to
+        // remove_member above. Same pathless-of-the-AUTHORIZATION-guard
+        // rationale as remove_member/member_access.
+        ("/api/families/members/{user_id}/suspend", post(families::suspend_member)),
+        ("/api/families/members/{user_id}/reinstate", post(families::reinstate_member)),
     ]
 }
 
@@ -805,7 +811,7 @@ mod tests {
         assert_eq!(membership_routes().len(), 11);
         // bump this literal AND extend tests/membership_route_sweep.rs's
         // per-route id substitution when adding a new family-gated route
-        assert_eq!(family_routes().len(), 7);
+        assert_eq!(family_routes().len(), 9);
     }
 
     // --- Plan 22-05: zero-knowledge boundary audit + literal-route allowlist audit ---
