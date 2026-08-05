@@ -254,14 +254,18 @@ pub fn rewrap_item_key_for_collection(
     item_id: &str,
 ) -> Result<WrappedKey, CryptoError> {
     let aad = build_coll_item_aad(AAD_COLL_ITEM_KEY_PREFIX, collection_id, item_id, 0);
-    let mut key_bytes = aead_open(old_ck.expose(), old_enc_key, &aad)?;
+    // WR-01 (code review, Phase 25): `Zeroizing`, not a bare `Vec<u8>` + manual
+    // `.zeroize()` calls. The manual form wiped on the success path and on the
+    // length-check path but NOT on `aead_seal`'s `?` — an early return there
+    // left the raw, unwrapped Cipher Key sitting in the freed allocation.
+    // `Zeroizing`'s `Drop` fires on EVERY exit from this function, including
+    // the `?`, which is exactly why CLAUDE.md's security conventions name it as
+    // the tool for this job.
+    let key_bytes = Zeroizing::new(aead_open(old_ck.expose(), old_enc_key, &aad)?);
     if key_bytes.len() != KEY_LEN {
-        key_bytes.zeroize();
         return Err(CryptoError::Decrypt);
     }
-    let new_enc_key = aead_seal(new_ck.expose(), &key_bytes, &aad)?;
-    key_bytes.zeroize();
-    Ok(new_enc_key)
+    aead_seal(new_ck.expose(), &key_bytes, &aad)
 }
 
 #[cfg(test)]
