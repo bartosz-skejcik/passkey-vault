@@ -530,6 +530,404 @@ async fn wrong_delete_order_raises_a_real_foreign_key_violation() {
     assert_eq!(families_count, 1, "the families row must still exist — the wrong-order delete never reached it");
 }
 
+// --- CR-01 (code review, Phase 25): `vault_items.last_editor_user_id` is a
+// `REFERENCES users(id)` FK with NO `ON DELETE` action (migration 0015), and
+// EVERY write path sets it. The three fixtures above all make the deleting
+// user the item's own AUTHOR, so `last_editor_user_id` always equals the
+// row's own `user_id` and the dangling-reference case never fires. The three
+// tests below deliberately make the departing user the last editor of an item
+// authored by SOMEONE ELSE that SURVIVES their deletion — one per branch.
+//
+// A table rebuild adding `ON DELETE SET NULL` was rejected: `item_shares.item_id
+// REFERENCES vault_items(id) ON DELETE CASCADE` (migration 0014) means the
+// standard SQLite 12-step rebuild's `DROP TABLE vault_items` would cascade
+// away every existing direct share on a shipped, self-hosted deployment, and
+// `PRAGMA foreign_keys` is a no-op inside the transaction sqlx runs each
+// migration in — so the toggle that normally makes a rebuild safe is not
+// available. The fix is therefore an explicit in-transaction NULL-out
+// (`account::detach_last_editor_references`) before every `DELETE FROM users`.
+
+/// CR-01, plain-member branch (`account.rs`'s `delete_account_as_member`): a
+/// member who last edited an item the OWNER authored must still be able to
+/// delete their own account. Pre-fix this raised `SQLITE_CONSTRAINT_FOREIGNKEY`
+/// on `DELETE FROM users` and the whole handler 500'd, leaving the account
+/// permanently undeletable.
+#[tokio::test]
+async fn member_who_last_edited_an_item_authored_by_the_owner_can_still_delete_their_account() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "cr01-member-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member_token = register_second_family_member(&app, &owner_token, "cr01-member-member@example.com").await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+    let member_id = user_id_of(&app, &member_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "enc_name": "enc-cr01-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    // The OWNER authors the item — `vault_items.user_id = owner`.
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let encrypted =
+        encrypt_item_for_collection(&ck, br#"{"type":"login","username":"u","password":"p"}"#, &collection_id, &item_id, 1)
+            .unwrap();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": serde_json::to_string(&encrypted.enc_key).unwrap(),
+            "enc_data": serde_json::to_string(&encrypted.enc_data).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+    sqlx::query("UPDATE vault_items SET collection_id = ? WHERE id = ?")
+        .bind(&collection_id)
+        .bind(&item_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The MEMBER edits it — this is the ordinary collaboration write that
+    // sets `last_editor_user_id = member`, the FK this test exists for.
+    let edited =
+        encrypt_item_for_collection(&ck, br#"{"type":"login","username":"u","password":"edited"}"#, &collection_id, &item_id, 2)
+            .unwrap();
+    let update_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}"),
+        &member_token,
+        Some(json!({
+            "enc_key": serde_json::to_string(&edited.enc_key).unwrap(),
+            "enc_data": serde_json::to_string(&edited.enc_data).unwrap(),
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(update_res.status(), StatusCode::OK, "the member must be able to edit the owner's collection item");
+
+    let last_editor: Option<String> = sqlx::query_scalar("SELECT last_editor_user_id FROM vault_items WHERE id = ?")
+        .bind(&item_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        last_editor.as_deref(),
+        Some(member_id.as_str()),
+        "fixture precondition: the departing member must be the last editor of an item they did NOT author"
+    );
+
+    // The member self-deletes, submitting a real re-key batch.
+    let old_ck = unseal_collection_key(&member_sk, &member_sealed).unwrap();
+    let new_ck = CollectionKey::generate();
+    let new_owner_sealed = seal(&owner_sk.public_key(), new_ck.expose()).unwrap();
+    let new_enc_key =
+        rewrap_item_key_for_collection(&old_ck, &new_ck, &edited.enc_key, &collection_id, &item_id).unwrap();
+
+    let delete_res = req(
+        &app,
+        "DELETE",
+        "/api/auth/account",
+        &member_token,
+        Some(json!({
+            "collections": [
+                {
+                    "collection_id": collection_id,
+                    "new_sealed_keys": [
+                        { "recipient_user_id": owner_id, "sealed_key": serde_json::to_string(&new_owner_sealed).unwrap() }
+                    ],
+                    "item_rewraps": [
+                        { "item_id": item_id, "enc_key": serde_json::to_string(&new_enc_key).unwrap() }
+                    ]
+                }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(
+        delete_res.status(),
+        StatusCode::NO_CONTENT,
+        "CR-01: a member who last edited someone else's surviving item must still be able to delete their account"
+    );
+
+    assert!(!user_row_exists(&pool, &member_id).await, "the deleting member's own users row must be gone");
+
+    let surviving_last_editor: Option<String> =
+        sqlx::query_scalar("SELECT last_editor_user_id FROM vault_items WHERE id = ?")
+            .bind(&item_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        surviving_last_editor, None,
+        "the surviving item's dangling last_editor_user_id must be NULL, not a reference to a deleted user"
+    );
+}
+
+/// CR-01, no-family branch (`account.rs`'s `None` arm): a user who edited a
+/// shared item and was then REMOVED from the family still carries the
+/// dangling `last_editor_user_id` reference. Their deletion takes the
+/// single-`DELETE FROM users` path, which pre-fix had no transaction and no
+/// NULL-out at all.
+#[tokio::test]
+async fn removed_member_who_last_edited_a_shared_item_can_still_delete_their_account() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "cr01-nofam-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member_token = register_second_family_member(&app, &owner_token, "cr01-nofam-member@example.com").await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+    let member_id = user_id_of(&app, &member_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &owner_token, owner_sk.public_key().to_bytes()).await;
+    publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "enc_name": "enc-cr01-nofam", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let encrypted =
+        encrypt_item_for_collection(&ck, br#"{"type":"login","username":"u","password":"p"}"#, &collection_id, &item_id, 1)
+            .unwrap();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": serde_json::to_string(&encrypted.enc_key).unwrap(),
+            "enc_data": serde_json::to_string(&encrypted.enc_data).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+    sqlx::query("UPDATE vault_items SET collection_id = ? WHERE id = ?")
+        .bind(&collection_id)
+        .bind(&item_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let edited =
+        encrypt_item_for_collection(&ck, br#"{"type":"login","username":"u","password":"edited"}"#, &collection_id, &item_id, 2)
+            .unwrap();
+    let update_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}"),
+        &member_token,
+        Some(json!({
+            "enc_key": serde_json::to_string(&edited.enc_key).unwrap(),
+            "enc_data": serde_json::to_string(&edited.enc_data).unwrap(),
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(update_res.status(), StatusCode::OK);
+
+    // The OWNER removes the member from the family (re-key batch built from
+    // the owner's own sealed_key), leaving the member with no family at all.
+    let old_ck = unseal_collection_key(&owner_sk, &owner_sealed).unwrap();
+    let new_ck = CollectionKey::generate();
+    let new_owner_sealed = seal(&owner_sk.public_key(), new_ck.expose()).unwrap();
+    let new_enc_key =
+        rewrap_item_key_for_collection(&old_ck, &new_ck, &edited.enc_key, &collection_id, &item_id).unwrap();
+    let remove_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/families/members/{member_id}"),
+        &owner_token,
+        Some(json!({
+            "collections": [
+                {
+                    "collection_id": collection_id,
+                    "new_sealed_keys": [
+                        { "recipient_user_id": owner_id, "sealed_key": serde_json::to_string(&new_owner_sealed).unwrap() }
+                    ],
+                    "item_rewraps": [
+                        { "item_id": item_id, "enc_key": serde_json::to_string(&new_enc_key).unwrap() }
+                    ]
+                }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(remove_res.status(), StatusCode::NO_CONTENT, "the owner must be able to remove the member");
+
+    // The now-family-less ex-member deletes their own account.
+    let delete_res =
+        req(&app, "DELETE", "/api/auth/account", &member_token, Some(json!({ "collections": [] }))).await;
+    assert_eq!(
+        delete_res.status(),
+        StatusCode::NO_CONTENT,
+        "CR-01: the no-family branch must also clear the departing user's dangling last_editor_user_id references"
+    );
+
+    assert!(!user_row_exists(&pool, &member_id).await, "the ex-member's own users row must be gone");
+    let surviving_last_editor: Option<String> =
+        sqlx::query_scalar("SELECT last_editor_user_id FROM vault_items WHERE id = ?")
+            .bind(&item_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(surviving_last_editor, None, "the surviving item's dangling reference must be NULL");
+}
+
+/// CR-01, owner-dissolution branch (`account.rs`'s `delete_account_as_owner`):
+/// step 1 only deletes items scoped to the family's COLLECTIONS, so a plain
+/// member's PERSONAL item that the owner last edited (through an `item_shares`
+/// edit grant) survives the dissolution and still references the owner.
+#[tokio::test]
+async fn owner_who_last_edited_a_members_personal_item_can_still_delete_their_account() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "cr01-owner-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member_token = register_second_family_member(&app, &owner_token, "cr01-owner-member@example.com").await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+    let member_id = user_id_of(&app, &member_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &owner_token, owner_sk.public_key().to_bytes()).await;
+
+    // The MEMBER authors a personal item and shares it to the OWNER with edit.
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &member_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"m-key\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"m-data\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    let share_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/items/{item_id}/shares"),
+        &member_token,
+        Some(json!({
+            "recipient_user_id": owner_id,
+            "sealed_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"shared\"}",
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(share_res.status(), StatusCode::CREATED, "the member must be able to share their item to the owner");
+
+    // The OWNER edits the member's personal item -> last_editor_user_id = owner.
+    let update_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}"),
+        &owner_token,
+        Some(json!({
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"m-key-2\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"m-data-2\"}",
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(update_res.status(), StatusCode::OK, "the owner must be able to edit the item shared to them");
+
+    let last_editor: Option<String> = sqlx::query_scalar("SELECT last_editor_user_id FROM vault_items WHERE id = ?")
+        .bind(&item_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(last_editor.as_deref(), Some(owner_id.as_str()), "fixture precondition");
+
+    let delete_res =
+        req(&app, "DELETE", "/api/auth/account", &owner_token, Some(json!({ "collections": [] }))).await;
+    assert_eq!(
+        delete_res.status(),
+        StatusCode::NO_CONTENT,
+        "CR-01: owner dissolution must also clear dangling last_editor_user_id references on SURVIVING items"
+    );
+
+    assert!(!user_row_exists(&pool, &owner_id).await, "the owner's own users row must be gone");
+    assert!(user_row_exists(&pool, &member_id).await, "the member's own users row must be untouched");
+
+    let surviving_last_editor: Option<String> =
+        sqlx::query_scalar("SELECT last_editor_user_id FROM vault_items WHERE id = ?")
+            .bind(&item_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        surviving_last_editor, None,
+        "the member's surviving personal item must keep existing with a NULL last_editor_user_id"
+    );
+}
+
 /// Compensating coverage for `GET /api/families` (Phase 25, `families::get`)
 /// — registered as an extra method on the pre-existing literal `/api/families`
 /// path (see `routes/mod.rs`'s own comment on that registration) rather than
