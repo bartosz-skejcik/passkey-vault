@@ -29,6 +29,9 @@ import init, {
   sealCollectionKey,
   unsealCollectionKey,
   generateInviteSecret,
+  encryptItemForCollection,
+  decryptItemForCollection,
+  rewrapItemKeyForCollection,
 } from "./wasm/pv_wasm.js";
 
 export type { WasmUserKey, WasmAuthMaterial };
@@ -57,6 +60,17 @@ export {
   unsealCollectionKey,
   generateInviteSecret,
 };
+
+// Plan 25-07: `encryptItemForCollection`/`decryptItemForCollection` were
+// added to pv-wasm by Plan 21-05 but never re-exported through this
+// choke-point — a pre-existing gap (Rule 2 auto-fix, not this plan's own
+// new pv-wasm surface). Without them, `rekey.real-wasm.test.ts` has no way
+// to build a real collection-item fixture to rewrap, since this module is
+// the ONLY permitted importer of `./wasm/pv_wasm.js`.
+// The third export below is this plan's own new one (Plan 25-02's wasm
+// rewrap binding) — a pure pass-through, no wrapper logic, mirroring the
+// re-exports immediately above.
+export { encryptItemForCollection, decryptItemForCollection, rewrapItemKeyForCollection };
 
 export type TotpNowResult = { code: string; secondsRemaining: number };
 

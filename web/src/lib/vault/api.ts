@@ -123,6 +123,32 @@ export function getCollection(id: string): Promise<CollectionRow> {
   return apiJson(`/api/vault/collections/${id}`);
 }
 
+/** Wire shape of `collections.rs`'s `collection_items` handler (Plan 25-03)
+ * — a collection's FULL item set (every author, not just the caller's own),
+ * `Membership<Collection, RequireRead>`-gated server-side. */
+export interface CollectionItemRow {
+  id: string;
+  enc_key: string;
+  enc_data: string;
+}
+
+export function getCollectionItems(collectionId: string): Promise<CollectionItemRow[]> {
+  return apiJson(`/api/vault/collections/${collectionId}/items`);
+}
+
+/** Wire shape of `collections.rs`'s `access_list` handler (Phase 22) — every
+ * member currently holding a grant on this collection. */
+export interface CollectionAccessEntry {
+  user_id: string;
+  email: string;
+  access_level: string;
+  created_at: string;
+}
+
+export function getCollectionAccessList(collectionId: string): Promise<CollectionAccessEntry[]> {
+  return apiJson(`/api/vault/collections/${collectionId}/access`);
+}
+
 export function listFolders(): Promise<FolderRow[]> {
   return apiJson("/api/vault/folders");
 }

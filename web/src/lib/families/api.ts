@@ -23,6 +23,78 @@ export interface FamilyMemberRecord {
   public_key: string | null;
   fingerprint: string | null;
   verified_at: string | null;
+  // Plan 25-04's server-side addition (families.rs::members) — mirrored here
+  // so the client has somewhere to land the value; Plan 25-08's suspended
+  // badge/banner reads this field.
+  status: string;
+}
+
+/** One recipient's freshly-sealed Collection Key, wire shape for
+ * `DELETE /api/families/members/{user_id}`'s request body (Plan 25-03's
+ * `apply_member_removal_rekey`). */
+export interface NewSealedKeyEntry {
+  recipient_user_id: string;
+  sealed_key: string;
+}
+
+/** One item's re-wrapped Cipher Key, same wire shape's `item_rewraps` array. */
+export interface ItemRewrapEntry {
+  item_id: string;
+  enc_key: string;
+}
+
+/** One collection's full re-key batch — `families/rekey.ts`'s
+ * `buildMemberRemovalBatch` assembles one of these per collection the
+ * removed member could reach. */
+export interface CollectionRekeyBatch {
+  collection_id: string;
+  new_sealed_keys: NewSealedKeyEntry[];
+  item_rewraps: ItemRewrapEntry[];
+}
+
+/** Wire shape of `GET /api/families/members/{user_id}/access` (Phase 22,
+ * `families.rs`) — the target member's full access breakdown, the exact
+ * scope `buildMemberRemovalBatch` must re-key. */
+export interface MemberAccessResponse {
+  collections: { id: string; access_level: string }[];
+  item_shares: { item_id: string; access_level: string }[];
+}
+
+/** `POST /api/families/members/{user_id}/suspend` — owner-only, reversible;
+ * see `families.rs`'s `suspend_member` (Plan 25-04). */
+export function suspendMember(userId: string): Promise<void> {
+  return apiJson(`/api/families/members/${userId}/suspend`, { method: "POST" });
+}
+
+/** `POST /api/families/members/{user_id}/reinstate` — owner-only, undoes
+ * `suspendMember`; see `families.rs`'s `reinstate_member` (Plan 25-04). */
+export function reinstateMember(userId: string): Promise<void> {
+  return apiJson(`/api/families/members/${userId}/reinstate`, { method: "POST" });
+}
+
+/** `DELETE /api/families/members/{user_id}` — owner-only atomic member
+ * removal + re-key; `collections` is the caller-constructed batch from
+ * `families/rekey.ts`'s `buildMemberRemovalBatch` (Plan 25-03's
+ * `remove_member`/`apply_member_removal_rekey`). */
+export function removeMember(userId: string, collections: CollectionRekeyBatch[]): Promise<void> {
+  return apiJson(`/api/families/members/${userId}`, {
+    method: "DELETE",
+    body: JSON.stringify({ collections }),
+  });
+}
+
+/** `GET /api/families/members/{user_id}/access` — the target member's full
+ * access breakdown (Phase 22), consumed by both the Remove-member dialog's
+ * honesty disclosure (Plan 25-08) and `buildMemberRemovalBatch`. */
+export function getMemberAccess(userId: string): Promise<MemberAccessResponse> {
+  return apiJson(`/api/families/members/${userId}/access`);
+}
+
+/** `GET /api/families` — the caller's own family record (Phase 22's
+ * `families.rs::get`); the existing `FamilyRecord` interface above already
+ * matches this response shape field-for-field. */
+export function getFamily(): Promise<FamilyRecord> {
+  return apiJson("/api/families");
 }
 
 /** `POST /api/families` — creates the (singleton, v0.4) family and makes the
