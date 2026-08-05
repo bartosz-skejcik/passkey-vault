@@ -185,11 +185,18 @@ impl ResourceKind for Collection {
         // exists yet, so every `collection_keys` row's recipient is
         // necessarily still a member), but this is the phase that fixes the
         // resolution rule, and Phase 25 inherits it as-is.
+        //
+        // FAM-09 (25-01-PLAN.md Task 1): the status-active-only predicate
+        // added to the `fm` join below is the SOLE enforcement mechanism a
+        // suspended member's access depends on — this same fresh-per-request
+        // query, run on every request, never cached. Plan 25-04 builds the
+        // handler that flips this column; this join is what makes flipping
+        // it take effect immediately.
         let row = sqlx::query(
             "SELECT ck.access_level FROM collection_keys ck \
                JOIN collections c ON c.id = ck.collection_id \
                JOIN family_members fm ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
-              WHERE ck.collection_id = ? AND ck.recipient_user_id = ?",
+              WHERE ck.collection_id = ? AND ck.recipient_user_id = ? AND fm.status = 'active'",
         )
         .bind(resource_id)
         .bind(caller_user_id)
@@ -265,11 +272,18 @@ impl ResourceKind for Item {
         // exploitable today (no family-removal endpoint exists yet — Phase
         // 25 owns it), but this is the phase that fixes the resolution
         // rule, and Phase 25 inherits it as-is.
+        //
+        // FAM-09 (25-01-PLAN.md Task 1): the RECIPIENT-side `fm` join below
+        // gains a status-active-only predicate — `fm_o` (the item OWNER's
+        // own row) is deliberately untouched, matching
+        // `Collection::resolve_access`'s identical mechanism. A suspended
+        // recipient's item_shares grant must resolve to no access on this
+        // SAME fresh-per-request query.
         let item_share_row = sqlx::query(
             "SELECT s.access_level FROM item_shares s \
                JOIN family_members fm_o ON fm_o.user_id = ? \
-               JOIN family_members fm_r ON fm_r.family_id = fm_o.family_id AND fm_r.user_id = s.recipient_user_id \
-              WHERE s.item_id = ? AND s.recipient_user_id = ?",
+               JOIN family_members fm ON fm.family_id = fm_o.family_id AND fm.user_id = s.recipient_user_id \
+              WHERE s.item_id = ? AND s.recipient_user_id = ? AND fm.status = 'active'",
         )
         .bind(&owner_user_id)
         .bind(resource_id)
@@ -306,11 +320,16 @@ impl ResourceKind for Item {
         // to access (see `Collection::resolve_access`'s identical join for
         // the full rationale — not exploitable today, no removal endpoint
         // exists yet, but this is the phase that fixes the resolution rule).
+        //
+        // FAM-09 (25-01-PLAN.md Task 1): the status-active-only predicate
+        // added to the `fm` join below is the same enforcement mechanism as
+        // `Collection::resolve_access`'s join above; a suspended recipient's
+        // collection_keys grant must resolve to no access here too.
         let collection_row = sqlx::query(
             "SELECT ck.access_level FROM collection_keys ck \
                JOIN collections c ON c.id = ck.collection_id \
                JOIN family_members fm ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
-              WHERE ck.collection_id = ? AND ck.recipient_user_id = ?",
+              WHERE ck.collection_id = ? AND ck.recipient_user_id = ? AND fm.status = 'active'",
         )
         .bind(&collection_id)
         .bind(caller_user_id)
@@ -811,11 +830,11 @@ mod tests {
 
     /// FAM-09 (Task 1, 25-01-PLAN.md): a caller holding a valid
     /// `collection_keys` row whose `family_members.status` is `'suspended'`
-    /// must resolve to NO access — the `AND fm.status = 'active'` clause
-    /// added to `Collection::resolve_access`'s `family_members` join is the
-    /// ONLY mechanism this depends on, exercised here directly against the
-    /// same fresh-per-request query every other authorization decision in
-    /// this codebase uses.
+    /// must resolve to NO access — the status-active-only predicate added
+    /// to `Collection::resolve_access`'s `family_members` join is the ONLY
+    /// mechanism this depends on, exercised here directly against the same
+    /// fresh-per-request query every other authorization decision in this
+    /// codebase uses.
     #[tokio::test]
     async fn collection_resolve_access_returns_none_for_suspended_member() {
         let pool = seeded_pool().await;
@@ -874,7 +893,7 @@ mod tests {
 
     /// FAM-09: `Item::resolve_access`'s collection-scoped branch must return
     /// `None` for a suspended recipient regardless of a `collection_keys`
-    /// grant — the `AND fm.status = 'active'` clause on the collection_access
+    /// grant — the status-active-only predicate on the collection_access
     /// query's `fm` join (~line 312, pre-edit) is the mechanism.
     #[tokio::test]
     async fn item_resolve_access_collection_branch_returns_none_for_suspended_recipient() {
