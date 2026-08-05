@@ -5,6 +5,13 @@
 // to carry its own byte-identical copy of `apiJson` (only this one attached
 // the parsed error body as `ApiClientError.details`) — deleted in favor of
 // importing the shared, `details`-carrying implementation directly.
+//
+// WR-16 (code review, Phase 25): every `{...}` path segment below is wrapped
+// in `encodeURIComponent` — see `lib/families/api.ts`'s own note for the full
+// rationale. Not applied to `lib/passkeys/api.ts`, `lib/sessions/api.ts`, or
+// `lib/invite/api.ts`: those carry the identical pre-existing pattern but are
+// outside this phase's scope, and `invite`'s id is a 43-char URL-safe base64
+// string the server itself shape-validates.
 import { apiJson } from "@/lib/auth/api";
 
 /** Wire shape of a single item row as returned by GET /api/vault/items. */
@@ -80,7 +87,7 @@ export function updateItem(
   encData: string,
   expectedRevision: number,
 ): Promise<{ revision: number; updated_at: string }> {
-  return apiJson(`/api/vault/items/${id}`, {
+  return apiJson(`/api/vault/items/${encodeURIComponent(id)}`, {
     method: "PUT",
     body: JSON.stringify({
       enc_key: encKey,
@@ -91,7 +98,7 @@ export function updateItem(
 }
 
 export function deleteItem(id: string): Promise<void> {
-  return apiJson(`/api/vault/items/${id}`, { method: "DELETE" });
+  return apiJson(`/api/vault/items/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 /** `POST /api/vault/items/{id}/touch` — records "this item's secret was
@@ -102,7 +109,7 @@ export function deleteItem(id: string): Promise<void> {
  * call this directly from a component (single choke-point, matches every
  * other mutation in this file already going through store.ts). */
 export function touchItem(id: string): Promise<{ last_used_at: string }> {
-  return apiJson(`/api/vault/items/${id}/touch`, { method: "POST" });
+  return apiJson(`/api/vault/items/${encodeURIComponent(id)}/touch`, { method: "POST" });
 }
 
 /** Wire shape of `collections.rs`'s `CollectionResponse` — matches
@@ -120,7 +127,7 @@ export interface CollectionRow {
 }
 
 export function getCollection(id: string): Promise<CollectionRow> {
-  return apiJson(`/api/vault/collections/${id}`);
+  return apiJson(`/api/vault/collections/${encodeURIComponent(id)}`);
 }
 
 /** Wire shape of `collections.rs`'s `collection_items` handler (Plan 25-03)
@@ -141,7 +148,7 @@ export interface CollectionItemRow {
 }
 
 export function getCollectionItems(collectionId: string): Promise<CollectionItemRow[]> {
-  return apiJson(`/api/vault/collections/${collectionId}/items`);
+  return apiJson(`/api/vault/collections/${encodeURIComponent(collectionId)}/items`);
 }
 
 /** Wire shape of `collections.rs`'s `access_list` handler (Phase 22) — every
@@ -154,7 +161,7 @@ export interface CollectionAccessEntry {
 }
 
 export function getCollectionAccessList(collectionId: string): Promise<CollectionAccessEntry[]> {
-  return apiJson(`/api/vault/collections/${collectionId}/access`);
+  return apiJson(`/api/vault/collections/${encodeURIComponent(collectionId)}/access`);
 }
 
 export function listFolders(): Promise<FolderRow[]> {
@@ -169,5 +176,5 @@ export function createFolder(encName: string): Promise<{ id: string }> {
 }
 
 export function deleteFolder(id: string): Promise<void> {
-  return apiJson(`/api/vault/folders/${id}`, { method: "DELETE" });
+  return apiJson(`/api/vault/folders/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

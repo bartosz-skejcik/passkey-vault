@@ -6,6 +6,13 @@
 // needs to create the family on first use, but no client function for
 // either endpoint existed anywhere in web/src before this plan, despite
 // both endpoints being live since Phase 22's migration 0014).
+//
+// WR-16 (code review, Phase 25): every `{...}` path segment below is wrapped
+// in `encodeURIComponent`. The ids are server-generated UUIDs today, so this
+// was not exploitable — but nothing in these signatures says so, and a future
+// caller passing an email or any user-supplied identifier would otherwise get
+// path traversal / route confusion for free. Query strings and request bodies
+// are unaffected; this is strictly about the path.
 import { apiJson, ApiClientError } from "@/lib/auth/api";
 
 export interface FamilyRecord {
@@ -63,13 +70,13 @@ export interface MemberAccessResponse {
 /** `POST /api/families/members/{user_id}/suspend` — owner-only, reversible;
  * see `families.rs`'s `suspend_member` (Plan 25-04). */
 export function suspendMember(userId: string): Promise<void> {
-  return apiJson(`/api/families/members/${userId}/suspend`, { method: "POST" });
+  return apiJson(`/api/families/members/${encodeURIComponent(userId)}/suspend`, { method: "POST" });
 }
 
 /** `POST /api/families/members/{user_id}/reinstate` — owner-only, undoes
  * `suspendMember`; see `families.rs`'s `reinstate_member` (Plan 25-04). */
 export function reinstateMember(userId: string): Promise<void> {
-  return apiJson(`/api/families/members/${userId}/reinstate`, { method: "POST" });
+  return apiJson(`/api/families/members/${encodeURIComponent(userId)}/reinstate`, { method: "POST" });
 }
 
 /** `DELETE /api/families/members/{user_id}` — owner-only atomic member
@@ -77,7 +84,7 @@ export function reinstateMember(userId: string): Promise<void> {
  * `families/rekey.ts`'s `buildMemberRemovalBatch` (Plan 25-03's
  * `remove_member`/`apply_member_removal_rekey`). */
 export function removeMember(userId: string, collections: CollectionRekeyBatch[]): Promise<void> {
-  return apiJson(`/api/families/members/${userId}`, {
+  return apiJson(`/api/families/members/${encodeURIComponent(userId)}`, {
     method: "DELETE",
     body: JSON.stringify({ collections }),
   });
@@ -87,7 +94,7 @@ export function removeMember(userId: string, collections: CollectionRekeyBatch[]
  * access breakdown (Phase 22), consumed by both the Remove-member dialog's
  * honesty disclosure (Plan 25-08) and `buildMemberRemovalBatch`. */
 export function getMemberAccess(userId: string): Promise<MemberAccessResponse> {
-  return apiJson(`/api/families/members/${userId}/access`);
+  return apiJson(`/api/families/members/${encodeURIComponent(userId)}/access`);
 }
 
 /** `GET /api/families` — the caller's own family record (Phase 22's
