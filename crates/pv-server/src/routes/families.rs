@@ -92,6 +92,34 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(response)))
 }
 
+/// `GET /api/families` — the read-side mirror of `create`'s own response
+/// shape (Phase 25's own `key_links` note: Plan 25-09's owner-deletion
+/// honesty copy needs a way for a non-creating member to learn their
+/// family's name — no existing endpoint provided one). `FamilyMembership<RequireRead>`-gated:
+/// a non-member 404s before this handler body ever runs, so there is nothing
+/// this handler itself needs to re-check. Registered as an EXTRA method on
+/// the SAME literal `/api/families` path `create` (POST) already occupies in
+/// `routes/mod.rs`'s `router_with_cors` — axum's `MethodRouter` merges
+/// per-path, per-method registrations (the same mechanism already relied on
+/// for `/api/invitations/{id}`'s POST/DELETE split), so this does NOT add a
+/// new entry to `family_routes()`'s own cardinality-tracked table.
+pub async fn get(
+    State(state): State<AppState>,
+    family: FamilyMembership<RequireRead>,
+) -> Result<Json<FamilyResponse>, ApiError> {
+    let row = sqlx::query("SELECT id, name, owner_user_id, created_at FROM families WHERE id = ?")
+        .bind(&family.family_id)
+        .fetch_one(&state.db)
+        .await?;
+
+    Ok(Json(FamilyResponse {
+        id: row.try_get("id").map_err(|_| ApiError::Internal)?,
+        name: row.try_get("name").map_err(|_| ApiError::Internal)?,
+        owner_user_id: row.try_get("owner_user_id").map_err(|_| ApiError::Internal)?,
+        created_at: row.try_get("created_at").map_err(|_| ApiError::Internal)?,
+    }))
+}
+
 #[derive(Serialize)]
 pub struct FamilyMemberRecord {
     pub user_id: String,

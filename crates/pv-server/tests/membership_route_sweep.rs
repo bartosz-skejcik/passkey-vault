@@ -38,6 +38,10 @@ const SESSION_ONLY_ROUTES_NOT_SWEPT: &[&str] = &[
     "PUT /api/identity/keypair",
     "GET /api/identity/keypair",
     "POST /api/identity/verify/{user_id}",
+    // Phase 25 (FAM-10): a caller's own account is never a shared
+    // family/collection/item resource — same rationale as `POST /api/families`
+    // above. `SessionUser`-gated, branches internally on `resolve_family_role`.
+    "DELETE /api/auth/account",
 ];
 
 /// Paths (as `"METHOD /path"`, matching `SESSION_ONLY_ROUTES_NOT_SWEPT`'s own
