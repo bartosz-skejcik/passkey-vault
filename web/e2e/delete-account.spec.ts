@@ -87,6 +87,27 @@ async function apiPut(request: Session["context"]["request"], path: string, toke
   return request.put(`${BASE_URL}${path}`, { headers: authHeaders(token), data });
 }
 
+/** WR-10: reads ONE item's server-assigned `revision` back out of
+ * `GET /api/vault/collections/{id}/items` (the `revision` field added by
+ * CR-04) -- twin of `remove-member.spec.ts`'s helper of the same name, so
+ * neither spec has to guess a revision that happens to match a constant in
+ * the code under test. */
+async function collectionItemRevision(
+  context: BrowserContext,
+  token: string,
+  collectionId: string,
+  itemId: string,
+): Promise<number> {
+  const res = await apiGet(context.request, `/api/vault/collections/${collectionId}/items`, token);
+  expect(res.status()).toBe(200);
+  const rows = (await res.json()) as { id: string; revision: number }[];
+  const row = rows.find((r) => r.id === itemId);
+  if (row === undefined) {
+    throw new Error(`pv-e2e: item ${itemId} not found in collection ${collectionId}`);
+  }
+  return row.revision;
+}
+
 async function userIdFor(context: BrowserContext, token: string): Promise<string> {
   const res = await apiGet(context.request, "/api/auth/me", token);
   expect(res.status(), "GET /api/auth/me must succeed for a real, authenticated session").toBe(200);
@@ -381,18 +402,42 @@ test(
       });
       expect(createItemRes.status()).toBe(201);
 
-      const plaintext = JSON.stringify({ type: "login", name: REAL_ITEM_NAME, password: "irrelevant-e2e-pw" });
-      // Revision pinned to 1 at encrypt time -- see remove-member.spec.ts's
-      // header comment: the AAD revision is never read back from the DB.
-      const encryptedItemJson = encryptItemForCollection(ck, plaintext, collectionId, itemId, 1);
-      const { encKey, encData } = splitEncryptedItem(encryptedItemJson);
+      // WR-10 (25-REVIEW.md): this fixture carried remove-member.spec.ts's
+      // same circular shape -- it pinned revision=1 at ENCRYPT time to match
+      // the dialog's old hardcoded ITEM_REVISION = 1, so it could only pass.
+      // It now moves the item through the real path, READS BACK the revision
+      // the server assigned, and binds its ciphertext to that.
       const moveRes = await apiPut(owner.context.request, `/api/vault/items/${itemId}/collection`, ownerToken, {
         new_collection_id: collectionId,
-        enc_key: encKey,
-        enc_data: encData,
+        enc_key: DUMMY_ENC_KEY,
+        enc_data: DUMMY_ENC_DATA,
         expected_revision: 1,
       });
       expect(moveRes.status()).toBe(200);
+
+      const movedRevision = await collectionItemRevision(owner.context, ownerToken, collectionId, itemId);
+      expect(
+        movedRevision,
+        "move_item must bump the revision past 1 -- exactly why a hardcoded ITEM_REVISION = 1 could " +
+          "never decrypt a real item",
+      ).toBeGreaterThan(1);
+
+      const plaintext = JSON.stringify({ type: "login", name: REAL_ITEM_NAME, password: "irrelevant-e2e-pw" });
+      const targetRevision = movedRevision + 1;
+      const encryptedItemJson = encryptItemForCollection(ck, plaintext, collectionId, itemId, targetRevision);
+      const { encKey, encData } = splitEncryptedItem(encryptedItemJson);
+      const updateRes = await apiPut(owner.context.request, `/api/vault/items/${itemId}`, ownerToken, {
+        enc_key: encKey,
+        enc_data: encData,
+        expected_revision: movedRevision,
+      });
+      expect(updateRes.status()).toBe(200);
+
+      const storedRevision = await collectionItemRevision(owner.context, ownerToken, collectionId, itemId);
+      expect(
+        storedRevision,
+        "the stored revision must equal the revision the payload was encrypted against",
+      ).toBe(targetRevision);
     } finally {
       ck.free?.();
     }

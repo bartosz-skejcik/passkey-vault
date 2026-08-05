@@ -24,21 +24,26 @@
 // enc_name anywhere yet -- Phase 26 owns collection authoring"), and the
 // only real HTTP path that ever places an item inside a collection is
 // `PUT /api/vault/items/{id}/collection` (`vault::move_item`), which always
-// bumps `vault_items.revision` by at least 1 on top of a freshly created
-// item's revision 1 -- i.e. to at least 2. `RemoveMemberDialog.tsx` hardcodes
-// `ITEM_REVISION = 1` when decrypting (its own doc comment: "the common case
-// for a freshly-shared collection item... per vault.rs::create_item's
-// 'always at revision 1' contract" -- a contract that today's ONLY real
-// item-into-collection path, move_item, does not actually produce). This
-// spec resolves the gap WITHOUT touching product code: the item's AAD
-// revision is a value the ENCRYPTING client chooses at encrypt time (see
-// pv-core/src/items.rs::build_coll_item_aad) -- it is never read back from
-// the `vault_items.revision` DB column. Encrypting Node-side with
-// revision=1 (matching what RemoveMemberDialog will later pass to decrypt)
-// produces ciphertext that decrypts correctly regardless of the item's true
-// DB revision (which becomes 2 after the move) -- so this spec deliberately
-// pins revision=1 at encrypt time. See the `enc_name` note below for a
-// SECOND, unresolved gap this same architecture surfaces.
+// bumps `vault_items.revision`.
+//
+// WR-10 (25-REVIEW.md) -- this spec's own proof used to be CIRCULAR.
+// `RemoveMemberDialog.tsx` hardcoded `ITEM_REVISION = 1` when decrypting, and
+// this spec worked around that by pinning revision=1 at ENCRYPT time
+// Node-side, deliberately tailoring the fixture to satisfy the constant under
+// test. The item's AAD revision is chosen by the encrypting client and never
+// read back from the DB, so the assertion could only ever pass -- it could
+// not detect the very mismatch its own comment documented.
+//
+// Both halves are now fixed. CR-04 made the server return each item's real
+// `revision` from `GET /api/vault/collections/{id}/items` and the dialog use
+// it. This spec, correspondingly, no longer picks a revision at all: it moves
+// the item through the real `move_item` path, READS BACK the revision the
+// server actually assigned, and encrypts against THAT -- asserting along the
+// way that the server's value is genuinely != 1, which is the property that
+// made the old constant wrong. If the dialog ever regressed to a hardcoded
+// revision, the decrypt would fail and the real-item-name assertion would go
+// red. See the `enc_name` note below for a SECOND gap this same architecture
+// surfaces, which this spec still cannot close.
 //
 // Real crypto is computed Node-side (this file's own process, not inside a
 // browser page) using the SAME compiled wasm binary the browser loads --
@@ -222,6 +227,28 @@ function ensureNodeWasm(): Promise<void> {
 function splitEncryptedItem(combinedJson: string): { encKey: string; encData: string } {
   const combined = JSON.parse(combinedJson) as { enc_key: unknown; enc_data: unknown };
   return { encKey: JSON.stringify(combined.enc_key), encData: JSON.stringify(combined.enc_data) };
+}
+
+/** Reads ONE item's server-assigned `revision` back out of
+ * `GET /api/vault/collections/{id}/items` -- the same endpoint and the same
+ * `revision` field (added by CR-04) `RemoveMemberDialog` itself consumes.
+ * WR-10: this is what lets the fixture below bind its ciphertext to the
+ * revision the SERVER chose, instead of choosing one that happens to match a
+ * constant in the code under test. */
+async function collectionItemRevision(
+  context: BrowserContext,
+  token: string,
+  collectionId: string,
+  itemId: string,
+): Promise<number> {
+  const res = await apiGet(context.request, `/api/vault/collections/${collectionId}/items`, token);
+  expect(res.status()).toBe(200);
+  const rows = (await res.json()) as { id: string; revision: number }[];
+  const row = rows.find((r) => r.id === itemId);
+  if (row === undefined) {
+    throw new Error(`pv-e2e: item ${itemId} not found in collection ${collectionId}`);
+  }
+  return row.revision;
 }
 
 test("suspend_then_reinstate_live_cycle_with_no_rekey", async ({ twoSessions, browser }) => {
@@ -419,20 +446,57 @@ test(
       });
       expect(createItemRes.status()).toBe(201);
 
-      const plaintext = JSON.stringify({ type: "login", name: REAL_ITEM_NAME, password: "irrelevant-e2e-pw" });
-      // Revision pinned to 1 -- see this file's header comment: the AAD
-      // revision is chosen at ENCRYPT time, never read back from the DB's
-      // `vault_items.revision` column, which the move below bumps to 2.
-      const encryptedItemJson = encryptItemForCollection(ck, plaintext, collectionId, itemId, 1);
-      const { encKey, encData } = splitEncryptedItem(encryptedItemJson);
-
+      // WR-10: go through the REAL move path first, with placeholder blobs,
+      // and let the server assign whatever revision it assigns.
       const moveRes = await apiPut(owner.context.request, `/api/vault/items/${itemId}/collection`, ownerToken, {
         new_collection_id: collectionId,
-        enc_key: encKey,
-        enc_data: encData,
+        enc_key: DUMMY_ENC_KEY,
+        enc_data: DUMMY_ENC_DATA,
         expected_revision: 1,
       });
       expect(moveRes.status()).toBe(200);
+
+      // READ BACK the revision the server actually assigned -- never assumed,
+      // and never chosen by this fixture. This is the same endpoint (and the
+      // same `revision` field, added by CR-04) the dialog itself reads.
+      const movedRevision = await collectionItemRevision(
+        owner.context,
+        ownerToken,
+        collectionId,
+        itemId,
+      );
+      expect(
+        movedRevision,
+        "move_item must bump the revision past 1 -- this is exactly why the dialog's old hardcoded " +
+          "ITEM_REVISION = 1 could never have decrypted a real item",
+      ).toBeGreaterThan(1);
+
+      // The subsequent PUT bumps once more, so the payload must be bound to
+      // `movedRevision + 1`. That is an arithmetic claim about the server's
+      // own behavior, so it is ASSERTED below rather than trusted.
+      const plaintext = JSON.stringify({ type: "login", name: REAL_ITEM_NAME, password: "irrelevant-e2e-pw" });
+      const targetRevision = movedRevision + 1;
+      const encryptedItemJson = encryptItemForCollection(ck, plaintext, collectionId, itemId, targetRevision);
+      const { encKey, encData } = splitEncryptedItem(encryptedItemJson);
+
+      const updateRes = await apiPut(owner.context.request, `/api/vault/items/${itemId}`, ownerToken, {
+        enc_key: encKey,
+        enc_data: encData,
+        expected_revision: movedRevision,
+      });
+      expect(updateRes.status()).toBe(200);
+
+      const storedRevision = await collectionItemRevision(
+        owner.context,
+        ownerToken,
+        collectionId,
+        itemId,
+      );
+      expect(
+        storedRevision,
+        "the stored revision must equal the revision the payload was encrypted against -- if these " +
+          "ever diverge this fixture is lying and the name assertion below would be meaningless",
+      ).toBe(targetRevision);
     } finally {
       ck.free?.();
     }
