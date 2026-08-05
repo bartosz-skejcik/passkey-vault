@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use super::families;
-use super::membership::{self, FamilyMembership, RequireEdit};
+use super::membership::{self, active_collection_member_join, ActiveFamilyMembership, RequireEdit};
 use super::session::OptionalSessionUser;
 use super::sync::{ChangeType, EntityType, SyncEvent};
 use super::vault::validate_blob_len;
@@ -108,7 +108,7 @@ pub struct AcceptInvitationResponse {
 /// or collection-scoped grant.
 pub async fn create(
     State(state): State<AppState>,
-    family: FamilyMembership<RequireEdit>,
+    family: ActiveFamilyMembership<RequireEdit>,
     Json(req): Json<CreateInvitationRequest>,
 ) -> Result<(StatusCode, Json<CreateInvitationResponse>), ApiError> {
     // WR-05 (24-REVIEW.md): `req.id` is written straight into the PRIMARY KEY
@@ -372,12 +372,20 @@ pub async fn accept(
     }
 
     if let Some(cid) = &collection_id {
-        let inviter_still_has_edit = sqlx::query(
+        // WR-05 (code review, Phase 25): shares the one
+        // `active_collection_member_join!()` definition with every other
+        // recipient-side resolver, so a suspended inviter's stale `edit` grant
+        // can never be the basis for handing a NEW member access. Not
+        // reachable today (the inviter is necessarily the family owner, and
+        // an owner cannot be suspended — `suspend_member` rejects self-targets
+        // and only an owner holds `RequireEdit`), but the predicate is free
+        // and this is the phase that fixes the rule.
+        let inviter_still_has_edit = sqlx::query(concat!(
             "SELECT 1 FROM collection_keys ck \
-               JOIN collections c ON c.id = ck.collection_id \
-               JOIN family_members fm ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
-              WHERE ck.collection_id = ? AND ck.recipient_user_id = ? AND ck.access_level = 'edit'",
-        )
+               JOIN collections c ON c.id = ck.collection_id ",
+            active_collection_member_join!(),
+            "WHERE ck.collection_id = ? AND ck.recipient_user_id = ? AND ck.access_level = 'edit'",
+        ))
         .bind(cid)
         .bind(&inviter_user_id)
         .fetch_optional(&mut *tx)
@@ -471,7 +479,7 @@ pub async fn accept(
 /// guard.
 pub async fn revoke(
     State(state): State<AppState>,
-    membership: FamilyMembership<RequireEdit>,
+    membership: ActiveFamilyMembership<RequireEdit>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let result = sqlx::query(

@@ -45,7 +45,7 @@ use std::{
 };
 use tokio::sync::broadcast;
 
-use super::membership::{Collection, FamilyMembership, Membership, RequireRead};
+use super::membership::{active_collection_member_join, Collection, FamilyMembership, Membership, RequireRead};
 use super::session::SessionUser;
 use crate::{error::ApiError, AppState};
 
@@ -152,12 +152,18 @@ pub async fn pull_shared_revisions(
     State(state): State<AppState>,
     family: FamilyMembership<RequireRead>,
 ) -> Result<Json<SharedRevisionsResponse>, ApiError> {
-    let rows = sqlx::query(
+    // WR-05 (code review, Phase 25): this join carried no `fm.status` predicate,
+    // so a suspended member still received the id and current `revision` of
+    // every collection they hold a `collection_keys` row for — enough to
+    // observe that activity is occurring in folders they have been cut off
+    // from. Now shares `active_collection_member_join!()` with every other
+    // recipient-side resolver.
+    let rows = sqlx::query(concat!(
         "SELECT c.id, c.revision FROM collections c \
-           JOIN collection_keys ck ON ck.collection_id = c.id AND ck.recipient_user_id = ? \
-           JOIN family_members fm ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
-          ORDER BY c.id ASC",
-    )
+           JOIN collection_keys ck ON ck.collection_id = c.id AND ck.recipient_user_id = ? ",
+        active_collection_member_join!(),
+        "ORDER BY c.id ASC",
+    ))
     .bind(&family.caller_user_id)
     .fetch_all(&state.db)
     .await?;
@@ -298,11 +304,31 @@ pub async fn pull_shared_direct(
         }
     }
 
+    // CR-02 (code review, Phase 25): this query used to join `item_shares`
+    // with NO `family_members` join at all, so a SUSPENDED member kept
+    // receiving the full `enc_data` of every personal item shared to them —
+    // including edits made after suspension — which they could still decrypt
+    // with the per-item Cipher Key they necessarily already hold (that key is
+    // stable across revisions, `items.rs`). Suspension deliberately leaves
+    // `item_shares` rows intact (`families.rs::suspend_member` performs zero
+    // key writes), so the status predicate is the only thing standing between
+    // a suspended member and this payload.
+    //
+    // The join mirrors `Item::resolve_access`'s `item_shares` branch
+    // byte-for-byte in shape: pinned to the item OWNER's family via
+    // `fm_o.user_id = vault_items.user_id` (never a client-controlled value),
+    // with the RECIPIENT-side `fm` row required to be `active`. `fm_o` is
+    // deliberately NOT status-gated — a suspended OWNER's outbound shares stay
+    // readable, exactly as `resolve_access` already decides.
     let rows = sqlx::query(
         "SELECT vault_items.id, enc_key, enc_data, revision, updated_at, last_used_at, \
                 users.email AS last_editor_email \
            FROM vault_items \
            JOIN item_shares ON item_shares.item_id = vault_items.id \
+           JOIN family_members fm_o ON fm_o.user_id = vault_items.user_id \
+           JOIN family_members fm ON fm.family_id = fm_o.family_id \
+                                 AND fm.user_id = item_shares.recipient_user_id \
+                                 AND fm.status = 'active' \
            LEFT JOIN users ON users.id = vault_items.last_editor_user_id \
           WHERE item_shares.recipient_user_id = ? AND vault_items.collection_id IS NULL",
     )

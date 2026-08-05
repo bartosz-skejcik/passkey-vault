@@ -1832,3 +1832,251 @@ async fn remove_member_batch_array_order_does_not_affect_post_state() {
         "item2's enc_key must match the independently-computed forward-order expectation"
     );
 }
+
+// --- CR-02 / WR-05 / WR-06 (code review, Phase 25): the read-path and
+// write-path suspension gates ---
+//
+// Phase 25 claimed the `fm.status = 'active'` predicate on the two
+// `resolve_access` implementations was "the SOLE enforcement mechanism a
+// suspended member's access depends on". The code review disproved that: five
+// other queries carried a byte-similar `family_members` join (or, for
+// `pull_shared_direct` and `collections::list`, no join at all) and were never
+// updated, and `resolve_family_role` had no status gate at all so a suspended
+// member still satisfied `FamilyMembership<M>` on every write route.
+//
+// This test drives every one of those surfaces through one suspend/reinstate
+// cycle, on the same never-reissued bearer token.
+
+/// The flagship CR-02 proof plus its four siblings, end to end.
+#[tokio::test]
+async fn suspension_closes_every_shared_read_path_and_every_family_write_path() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let (owner_token, member_token, _owner_id, member_id, collection_id) = seed_owner_member_and_shared_collection(
+        &app,
+        &pool,
+        "susp-readpath-owner@example.com",
+        "susp-readpath-member@example.com",
+    )
+    .await;
+
+    // --- The member AUTHORS a second item inside the shared collection.
+    // `fetch_items_for`'s arm 2 (their own personal-vault list, and the
+    // `GET /api/sync` snapshot built from it) is the only path that returns
+    // this row to them.
+    let member_authored_item_id = uuid::Uuid::new_v4().to_string();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &member_token,
+        Some(json!({
+            "id": member_authored_item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"member-coll-key\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"member-coll-data\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    sqlx::query("UPDATE vault_items SET collection_id = ? WHERE id = ?")
+        .bind(&collection_id)
+        .bind(&member_authored_item_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // --- The member also keeps a genuinely PERSONAL item, which suspension
+    // must NEVER touch (`family.suspendedBannerBody`'s promise).
+    let member_personal_item_id = uuid::Uuid::new_v4().to_string();
+    let personal_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &member_token,
+        Some(json!({
+            "id": member_personal_item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"member-personal-key\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"member-personal-data\"}",
+        })),
+    )
+    .await;
+    assert_eq!(personal_res.status(), StatusCode::CREATED);
+
+    // --- The OWNER shares one of their own PERSONAL items directly to the
+    // member. This is CR-02's exact surface: suspension deliberately leaves
+    // `item_shares` rows intact, so only a status predicate on
+    // `pull_shared_direct` can stop the ciphertext flowing.
+    let direct_item_id = uuid::Uuid::new_v4().to_string();
+    let direct_create_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": direct_item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"direct-key\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"direct-data\"}",
+        })),
+    )
+    .await;
+    assert_eq!(direct_create_res.status(), StatusCode::CREATED);
+    let share_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/items/{direct_item_id}/shares"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"direct-sealed\"}",
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(share_res.status(), StatusCode::CREATED, "the owner must be able to share a personal item directly");
+
+    // Reads a helper's item-id set out of a JSON array of item objects.
+    fn item_ids(body: &Value) -> Vec<String> {
+        body.as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    // === BEFORE suspension: every surface returns the member's data. ===
+    let direct_before = body_json(req(&app, "GET", "/api/sync/shared/direct", &member_token, None).await).await;
+    assert!(
+        item_ids(&direct_before["items"]).contains(&direct_item_id),
+        "precondition: an ACTIVE member must receive the directly-shared item"
+    );
+
+    let shared_before = body_json(req(&app, "GET", "/api/sync/shared", &member_token, None).await).await;
+    assert!(
+        shared_before["collections"].as_array().unwrap().iter().any(|c| c["id"].as_str() == Some(&collection_id)),
+        "precondition: an ACTIVE member must see the collection's revision"
+    );
+
+    let list_before = body_json(req(&app, "GET", "/api/vault/collections", &member_token, None).await).await;
+    assert!(
+        list_before.as_array().unwrap().iter().any(|c| c["id"].as_str() == Some(&collection_id)),
+        "precondition: an ACTIVE member must see the collection in their folder list"
+    );
+
+    let items_before = body_json(req(&app, "GET", "/api/vault/items", &member_token, None).await).await;
+    let ids_before = item_ids(&items_before);
+    assert!(ids_before.contains(&member_authored_item_id), "precondition: their authored collection item is listed");
+    assert!(ids_before.contains(&member_personal_item_id), "precondition: their personal item is listed");
+
+    // === Suspend. ===
+    let suspend_res =
+        req(&app, "POST", &format!("/api/families/members/{member_id}/suspend"), &owner_token, None).await;
+    assert_eq!(suspend_res.status(), StatusCode::NO_CONTENT);
+
+    // CR-02: the flagship leak. `enc_data` must stop flowing entirely.
+    let direct_after = body_json(req(&app, "GET", "/api/sync/shared/direct", &member_token, None).await).await;
+    assert_eq!(
+        direct_after["items"].as_array().unwrap().len(),
+        0,
+        "CR-02: GET /api/sync/shared/direct must return ZERO rows for a suspended member — the Cipher Key sealed \
+         into item_shares is stable across revisions, so any row here is decryptable ciphertext"
+    );
+
+    // WR-05: the per-collection revision map must stop advertising activity.
+    let shared_after = body_json(req(&app, "GET", "/api/sync/shared", &member_token, None).await).await;
+    assert_eq!(
+        shared_after["collections"].as_array().unwrap().len(),
+        0,
+        "WR-05: GET /api/sync/shared must not report revisions for collections a suspended member is cut off from"
+    );
+
+    // Audit finding: the folder list must not enumerate collections whose own
+    // GET then 404s.
+    let list_after = body_json(req(&app, "GET", "/api/vault/collections", &member_token, None).await).await;
+    assert_eq!(
+        list_after.as_array().unwrap().len(),
+        0,
+        "GET /api/vault/collections must not list a collection Collection::resolve_access already denies"
+    );
+
+    // Audit finding: `fetch_items_for` arm 2 must drop the collection-scoped
+    // row while arm 1 keeps the genuinely personal one untouched.
+    let items_after = body_json(req(&app, "GET", "/api/vault/items", &member_token, None).await).await;
+    let ids_after = item_ids(&items_after);
+    assert!(
+        !ids_after.contains(&member_authored_item_id),
+        "a suspended member's own personal-vault list must not keep returning enc_data for a collection-scoped item"
+    );
+    assert!(
+        ids_after.contains(&member_personal_item_id),
+        "a suspended member's genuinely PERSONAL items must be untouched — that is exactly what the suspended-member \
+         banner copy promises"
+    );
+
+    // WR-06: the write path. A suspended member could previously create a
+    // folder inside the family they are suspended from.
+    let create_collection_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &member_token,
+        Some(json!({ "enc_name": "enc-suspended-attempt", "sealed_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"x\"}" })),
+    )
+    .await;
+    assert_eq!(
+        create_collection_res.status(),
+        StatusCode::FORBIDDEN,
+        "WR-06: a suspended member must not pass the family gate on a WRITE route (403, not 404 — the family's \
+         existence is not a secret from them, they can still read the roster)"
+    );
+
+    // The roster read MUST still work — it is what powers the suspended-member
+    // banner (25-UI-SPEC.md's E5). This is why the status gate is on
+    // ActiveFamilyMembership and not on resolve_family_role itself.
+    let roster_res = req(&app, "GET", "/api/families/members", &member_token, None).await;
+    assert_eq!(
+        roster_res.status(),
+        StatusCode::OK,
+        "a suspended member must still be able to read the roster — the E5 banner is derived from it"
+    );
+    assert_eq!(member_status_via_list(&app, &member_token, &member_id).await, "suspended");
+
+    // === Reinstate: every surface comes back, on the same never-reissued token. ===
+    let reinstate_res =
+        req(&app, "POST", &format!("/api/families/members/{member_id}/reinstate"), &owner_token, None).await;
+    assert_eq!(reinstate_res.status(), StatusCode::NO_CONTENT);
+
+    let direct_restored = body_json(req(&app, "GET", "/api/sync/shared/direct", &member_token, None).await).await;
+    assert!(
+        item_ids(&direct_restored["items"]).contains(&direct_item_id),
+        "reinstatement must restore the direct share on the very next request"
+    );
+    let shared_restored = body_json(req(&app, "GET", "/api/sync/shared", &member_token, None).await).await;
+    assert!(
+        shared_restored["collections"].as_array().unwrap().iter().any(|c| c["id"].as_str() == Some(&collection_id)),
+        "reinstatement must restore the collection revision map"
+    );
+    let list_restored = body_json(req(&app, "GET", "/api/vault/collections", &member_token, None).await).await;
+    assert!(
+        list_restored.as_array().unwrap().iter().any(|c| c["id"].as_str() == Some(&collection_id)),
+        "reinstatement must restore the folder list"
+    );
+    let items_restored = item_ids(&body_json(req(&app, "GET", "/api/vault/items", &member_token, None).await).await);
+    assert!(
+        items_restored.contains(&member_authored_item_id),
+        "reinstatement must restore their authored collection item to their own list"
+    );
+    let create_after_reinstate = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &member_token,
+        Some(json!({ "enc_name": "enc-reinstated-attempt", "sealed_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"x\"}" })),
+    )
+    .await;
+    assert_eq!(
+        create_after_reinstate.status(),
+        StatusCode::CREATED,
+        "reinstatement must restore the write path too"
+    );
+}

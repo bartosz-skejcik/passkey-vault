@@ -23,7 +23,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use super::membership::{
-    parse_access_level_from_request, Collection, FamilyMembership, Membership, RequireEdit, RequireRead,
+    active_collection_member_join, parse_access_level_from_request, ActiveFamilyMembership, Collection,
+    FamilyMembership, Membership, RequireEdit, RequireRead,
 };
 use super::sync::{ChangeType, EntityType, SyncEvent};
 use super::vault::{resolve_collection_members, validate_blob_len};
@@ -78,9 +79,15 @@ pub struct CollectionResponse {
 /// `collection_keys` row in the SAME transaction (mirrors `vault::create`'s
 /// WR-01 atomicity discipline) — this is the KEY-02 fan-out seed: a
 /// collection never exists with zero key-holders, even for an instant.
+/// WR-06 (code review, Phase 25): `ActiveFamilyMembership`, not
+/// `FamilyMembership` — `resolve_family_role` carried no status predicate, so
+/// a SUSPENDED member could create a folder inside the family they are
+/// suspended from (and then immediately 404 on reading it back, since
+/// `Collection::resolve_access` denies them). The gate lives in this
+/// signature, never as an `if` in the body.
 pub async fn create(
     State(state): State<AppState>,
-    family: FamilyMembership<RequireRead>,
+    family: ActiveFamilyMembership<RequireRead>,
     Json(req): Json<CreateCollectionRequest>,
 ) -> Result<(StatusCode, Json<CollectionResponse>), ApiError> {
     validate_blob_len("enc_name", &req.enc_name)?;
@@ -169,11 +176,22 @@ pub async fn list(
     State(state): State<AppState>,
     family: FamilyMembership<RequireRead>,
 ) -> Result<Json<Vec<CollectionResponse>>, ApiError> {
-    let rows = sqlx::query(
+    // WR-05 (code review, Phase 25) — audit finding beyond the two the review
+    // named: this query carried NO `family_members` join at all, so a
+    // suspended member's folder list still enumerated every collection they
+    // hold a `collection_keys` row for. No new secret leaks through it (the
+    // `sealed_key` returned is the caller's OWN, which they necessarily
+    // already hold), but listing a folder that `GET /api/vault/collections/{id}`
+    // then 404s on — `Collection::resolve_access` denies them — is incoherent,
+    // and it contradicts FAM-09's stated property. Now uses the same
+    // `active_collection_member_join!()` every other recipient-side resolver
+    // does, so a suspended member sees an empty list alongside their E5 banner.
+    let rows = sqlx::query(concat!(
         "SELECT c.id, c.enc_name, c.created_at, ck.access_level, ck.sealed_key \
-         FROM collections c JOIN collection_keys ck ON ck.collection_id = c.id \
-         WHERE ck.recipient_user_id = ? ORDER BY c.created_at ASC, c.id ASC",
-    )
+         FROM collections c JOIN collection_keys ck ON ck.collection_id = c.id ",
+        active_collection_member_join!(),
+        "WHERE ck.recipient_user_id = ? ORDER BY c.created_at ASC, c.id ASC",
+    ))
     .bind(&family.caller_user_id)
     .fetch_all(&state.db)
     .await?;

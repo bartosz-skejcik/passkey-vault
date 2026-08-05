@@ -39,6 +39,32 @@ use sqlx::Row;
 use super::session::SessionUser;
 use crate::{error::ApiError, AppState};
 
+/// The ONE definition of the recurring "this `collection_keys` recipient is
+/// still an ACTIVE member of the collection's owning family" join fragment.
+///
+/// WR-05 (code review, Phase 25): Phase 25 added `fm.status = 'active'` to the
+/// two `resolve_access` implementations only, while four other queries carried
+/// a byte-similar `family_members` join and were left ungated — so the phase's
+/// own FAM-09 claim ("the status predicate is the SOLE enforcement mechanism")
+/// was true of the authorization layer but not of the read layer. A single
+/// macro means a fifth copy cannot drift: every call site expands to the exact
+/// same SQL text.
+///
+/// Requires the surrounding query to alias `collections` as `c` and
+/// `collection_keys` as `ck` — every current call site already did.
+///
+/// The predicate lives in the `ON` clause rather than the `WHERE` clause; for
+/// an INNER JOIN the two are provably equivalent, and putting it here is what
+/// lets the whole fragment be one reusable literal.
+macro_rules! active_collection_member_join {
+    () => {
+        "JOIN family_members fm ON fm.family_id = c.family_id \
+             AND fm.user_id = ck.recipient_user_id \
+             AND fm.status = 'active' "
+    };
+}
+pub(crate) use active_collection_member_join;
+
 /// Deliberately does NOT derive `Ord`/`PartialOrd`. A derived `Ord` would
 /// make `HiddenPassword` compare as strictly "between" `Read` and `Edit` for
 /// every purpose — which is exactly wrong for SHARE-04's gate: a
@@ -192,12 +218,12 @@ impl ResourceKind for Collection {
         // query, run on every request, never cached. Plan 25-04 builds the
         // handler that flips this column; this join is what makes flipping
         // it take effect immediately.
-        let row = sqlx::query(
+        let row = sqlx::query(concat!(
             "SELECT ck.access_level FROM collection_keys ck \
-               JOIN collections c ON c.id = ck.collection_id \
-               JOIN family_members fm ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
-              WHERE ck.collection_id = ? AND ck.recipient_user_id = ? AND fm.status = 'active'",
-        )
+               JOIN collections c ON c.id = ck.collection_id ",
+            active_collection_member_join!(),
+            "WHERE ck.collection_id = ? AND ck.recipient_user_id = ?",
+        ))
         .bind(resource_id)
         .bind(caller_user_id)
         .fetch_optional(db)
@@ -325,12 +351,12 @@ impl ResourceKind for Item {
         // added to the `fm` join below is the same enforcement mechanism as
         // `Collection::resolve_access`'s join above; a suspended recipient's
         // collection_keys grant must resolve to no access here too.
-        let collection_row = sqlx::query(
+        let collection_row = sqlx::query(concat!(
             "SELECT ck.access_level FROM collection_keys ck \
-               JOIN collections c ON c.id = ck.collection_id \
-               JOIN family_members fm ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
-              WHERE ck.collection_id = ? AND ck.recipient_user_id = ? AND fm.status = 'active'",
-        )
+               JOIN collections c ON c.id = ck.collection_id ",
+            active_collection_member_join!(),
+            "WHERE ck.collection_id = ? AND ck.recipient_user_id = ?",
+        ))
         .bind(&collection_id)
         .bind(caller_user_id)
         .fetch_optional(db)
@@ -509,7 +535,50 @@ pub(crate) async fn resolve_family_role(
     db: &sqlx::SqlitePool,
     caller_user_id: &str,
 ) -> Result<Option<(String, AccessLevel)>, ApiError> {
-    let row = sqlx::query("SELECT family_id, role FROM family_members WHERE user_id = ?")
+    Ok(resolve_family_membership(db, caller_user_id).await?.map(|(family_id, access, _status)| (family_id, access)))
+}
+
+/// `family_members.status`, decoded. WR-06 (code review, Phase 25):
+/// `resolve_family_role` above carried NO status predicate at all, so a
+/// suspended member satisfied `FamilyMembership<M>` for every route in
+/// `family_routes()` — including `POST /api/vault/collections`, letting them
+/// create a folder inside the family they are suspended from (and then
+/// immediately 404 on reading it, since `Collection::resolve_access` denies
+/// them).
+///
+/// A blanket status gate inside `resolve_family_role` is NOT the fix: reading
+/// the roster is what powers the suspended-member banner (25-UI-SPEC.md's E5),
+/// so a suspended member must keep passing `FamilyMembership<RequireRead>` for
+/// `GET /api/families` / `GET /api/families/members`. The split is
+/// `ActiveFamilyMembership<M>` below instead — reads keep the permissive
+/// extractor, writes take the status-gated one.
+///
+/// Non-wildcard else-arm, mirroring `parse_access_level`'s discipline: an
+/// unrecognized DB value (unreachable given migration 0018's `CHECK`
+/// constraint) fails closed to `ApiError::Internal`, never silently treated as
+/// active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberStatus {
+    Active,
+    Suspended,
+}
+
+pub(crate) fn parse_member_status(s: &str) -> Result<MemberStatus, ApiError> {
+    match s {
+        "active" => Ok(MemberStatus::Active),
+        "suspended" => Ok(MemberStatus::Suspended),
+        _ => Err(ApiError::Internal),
+    }
+}
+
+/// The status-carrying resolution `resolve_family_role` above delegates to —
+/// one query, two callers, so the role mapping and the status decode can never
+/// drift apart.
+pub(crate) async fn resolve_family_membership(
+    db: &sqlx::SqlitePool,
+    caller_user_id: &str,
+) -> Result<Option<(String, AccessLevel, MemberStatus)>, ApiError> {
+    let row = sqlx::query("SELECT family_id, role, status FROM family_members WHERE user_id = ?")
         .bind(caller_user_id)
         .fetch_optional(db)
         .await?;
@@ -517,12 +586,56 @@ pub(crate) async fn resolve_family_role(
     let Some(row) = row else { return Ok(None) };
     let family_id: String = row.try_get("family_id").map_err(|_| ApiError::Internal)?;
     let role: String = row.try_get("role").map_err(|_| ApiError::Internal)?;
+    let status: String = row.try_get("status").map_err(|_| ApiError::Internal)?;
     let access = match role.as_str() {
         "owner" => AccessLevel::Edit,
         "member" => AccessLevel::Read,
         _ => return Err(ApiError::Internal),
     };
-    Ok(Some((family_id, access)))
+    Ok(Some((family_id, access, parse_member_status(&status)?)))
+}
+
+/// `FamilyMembership<M>` plus a hard `status = 'active'` requirement (WR-06).
+/// The ONE extractor every family/collection-MUTATING route must declare, so
+/// "a suspended member cannot write" is a property of the handler's own
+/// signature rather than a per-handler `if` — this module's doc comment
+/// forbids the latter, and for good reason.
+///
+/// Rejection shape: a suspended caller provably HAS family membership (the
+/// family's existence is not a secret from them — they can still read the
+/// roster), so this is `403 Forbidden`, never `404`. That is the same
+/// insufficient-level-vs-no-access distinction `gate::<M>()` already draws.
+pub struct ActiveFamilyMembership<M = RequireRead> {
+    pub family_id: String,
+    pub caller_user_id: String,
+    pub role: AccessLevel,
+    _kind: PhantomData<M>,
+}
+
+impl<M> FromRequestParts<AppState> for ActiveFamilyMembership<M>
+where
+    M: MinAccess,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        let session = SessionUser::from_request_parts(parts, state).await?;
+
+        let resolved = resolve_family_membership(&state.db, &session.user_id).await?;
+
+        // Same shared gate::<M>() the two sibling extractors use — the
+        // 404-vs-403 discipline still lives in exactly one place.
+        let role = gate::<M>(resolved.as_ref().map(|(_, role, _)| *role))?;
+
+        // Safe: gate() returning Ok proves `resolved` was `Some`.
+        let (family_id, _, status) = resolved.expect("gate::<M> returned Ok, so resolved must be Some");
+
+        if status != MemberStatus::Active {
+            return Err(ApiError::Forbidden);
+        }
+
+        Ok(ActiveFamilyMembership { family_id, caller_user_id: session.user_id, role, _kind: PhantomData })
+    }
 }
 
 #[cfg(test)]

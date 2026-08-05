@@ -16,7 +16,8 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::membership::{
-    parse_access_level_from_request, require_collection_edit, Item, Membership, RequireEdit, RequireRead,
+    active_collection_member_join, parse_access_level_from_request, require_collection_edit, Item, Membership,
+    RequireEdit, RequireRead,
 };
 use super::session::SessionUser;
 use super::sync::{ChangeType, EntityType, SyncEvent};
@@ -153,12 +154,20 @@ pub(crate) async fn resolve_collection_members(
     tx: &mut sqlx::SqliteConnection,
     collection_id: &str,
 ) -> Result<Vec<String>, ApiError> {
-    let rows = sqlx::query(
+    // WR-05 (code review, Phase 25): this is BOTH the WebSocket fan-out
+    // audience for `Collection`-typed `SyncEvent`s AND (via callers) the
+    // `bump_recipients_vault_revision` audience, so an ungated join meant a
+    // suspended member with a live WS kept receiving change notifications
+    // (entity id + revision) for collections they have been cut off from.
+    // Now shares `active_collection_member_join!()` with
+    // `Collection::resolve_access`, which the doc comment above already
+    // promises this query mirrors verbatim.
+    let rows = sqlx::query(concat!(
         "SELECT ck.recipient_user_id FROM collection_keys ck \
-           JOIN collections c ON c.id = ck.collection_id \
-           JOIN family_members fm ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
-          WHERE ck.collection_id = ?",
-    )
+           JOIN collections c ON c.id = ck.collection_id ",
+        active_collection_member_join!(),
+        "WHERE ck.collection_id = ?",
+    ))
     .bind(collection_id)
     .fetch_all(&mut *tx)
     .await?;
@@ -365,7 +374,16 @@ pub struct VaultItem {
 /// column is qualified as `vault_items.id` because `LEFT JOIN users` makes
 /// `id` ambiguous (both tables have one); no other selected column collides.
 pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> Result<Vec<VaultItem>, ApiError> {
-    let rows = sqlx::query(
+    // WR-05 (code review, Phase 25) — audit finding beyond the two the review
+    // named: arm 2's `family_members` join also carried no `fm.status`
+    // predicate, so a SUSPENDED member's own personal-vault list (and the
+    // `GET /api/sync` snapshot built from it) kept returning the full
+    // `enc_data` of every collection-scoped item they had authored, including
+    // edits made by other members after suspension. Arm 1 (`collection_id IS
+    // NULL`) is untouched — a personal item genuinely is the caller's own,
+    // and `family.suspendedBannerBody`'s promise that "your own passwords and
+    // notes are safe and unchanged" is about exactly those rows.
+    let rows = sqlx::query(concat!(
         "SELECT vault_items.id, enc_key, enc_data, revision, updated_at, last_used_at, \
                 (collection_id IS NOT NULL OR EXISTS(SELECT 1 FROM item_shares WHERE item_shares.item_id = vault_items.id)) AS is_shared, \
                 users.email AS last_editor_email \
@@ -378,11 +396,11 @@ pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> R
                 u2.email AS last_editor_email \
            FROM vault_items i \
            JOIN collection_keys ck ON ck.collection_id = i.collection_id AND ck.recipient_user_id = ? \
-           JOIN collections c      ON c.id = i.collection_id \
-           JOIN family_members fm  ON fm.family_id = c.family_id AND fm.user_id = ck.recipient_user_id \
-           LEFT JOIN users u2 ON u2.id = i.last_editor_user_id \
+           JOIN collections c      ON c.id = i.collection_id ",
+        active_collection_member_join!(),
+        "LEFT JOIN users u2 ON u2.id = i.last_editor_user_id \
           WHERE i.user_id = ?",
-    )
+    ))
     .bind(user_id)
     .bind(user_id)
     .bind(user_id)
