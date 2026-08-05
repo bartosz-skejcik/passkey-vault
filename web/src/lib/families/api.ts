@@ -125,3 +125,17 @@ export async function getFamilyMembers(): Promise<FamilyMemberRecord[] | null> {
     throw err;
   }
 }
+
+/** `DELETE /api/auth/account` (Plan 25-06's `account::delete_account`) —
+ * SessionUser-gated account deletion. `collections` is the caller-
+ * constructed re-key batch from `families/rekey.ts`'s
+ * `buildMemberRemovalBatch` for the plain-member self-deletion branch (an
+ * empty array for the owner/no-family branches, which the server ignores —
+ * see Plan 25-06's `DeleteAccountRequest`). Used by Plan 25-09's
+ * `DeleteAccountDialog`. */
+export function deleteAccount(collections: CollectionRekeyBatch[]): Promise<void> {
+  return apiJson("/api/auth/account", {
+    method: "DELETE",
+    body: JSON.stringify({ collections }),
+  });
+}
