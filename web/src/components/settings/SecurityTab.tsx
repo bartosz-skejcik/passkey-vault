@@ -23,6 +23,7 @@ import {
   DEFAULT_AUTOLOCK_MINUTES,
   readAutolockMinutes,
 } from "@/lib/idle/autolock";
+import DeleteAccountDialog from "./DeleteAccountDialog";
 
 const CLIPBOARD_SECONDS_OPTIONS = [30, 35, 40, 45, 50, 55, 60];
 
@@ -30,6 +31,11 @@ export default function SecurityTab() {
   const { t } = useLocale();
   const [autolockMinutes, setAutolockMinutes] = useState(DEFAULT_AUTOLOCK_MINUTES);
   const [clipboardSeconds, setClipboardSeconds] = useState(DEFAULT_CLIPBOARD_SECONDS);
+  // Plan 25-09 (E6): the "Delete account" section's trigger renders for
+  // EVERY account -- owner, plain member, or an account with no family at
+  // all. Only the dialog's own body branches on role; the trigger itself
+  // never branches (25-UI-SPEC.md's "trigger visibility" row).
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -115,6 +121,28 @@ export default function SecurityTab() {
         </datalist>
         <span className="text-xs text-base-content/60">{clipboardSeconds}s</span>
       </div>
+
+      {/* Plan 25-09 (E6): row-neutral trigger -- `btn btn-ghost` with no
+          error styling at the row level, matching every other row-action
+          trigger in this codebase (25-UI-SPEC.md's Color section's
+          "communicate security through calm and clarity" precedent).
+          Severity lives only inside the dialog, on its step-2 confirm. */}
+      <div className="flex flex-col gap-2">
+        <h3 className="text-[20px] font-bold leading-[1.2]">{t("account.deleteSectionHeading")}</h3>
+        <p className="text-sm text-base-content/70">{t("account.deleteSectionBody")}</p>
+        <button
+          type="button"
+          data-testid="account-delete-trigger"
+          className="btn btn-ghost self-start"
+          onClick={() => setDeleteDialogOpen(true)}
+        >
+          {t("account.deleteTriggerCta")}
+        </button>
+      </div>
+
+      {deleteDialogOpen ? (
+        <DeleteAccountDialog onClose={() => setDeleteDialogOpen(false)} />
+      ) : null}
     </div>
   );
 }
