@@ -1509,3 +1509,326 @@ async fn suspended_member_loses_and_regains_live_access_on_next_request_with_ide
         "the collection's sealed_key after reinstatement must be byte-identical to the pre-suspension snapshot"
     );
 }
+
+// --- Plan 25-05 (FAM-08 idempotency + order-insensitivity backstop) ---
+
+/// Task 3 (FAM-08 idempotency edge): calling `remove_member` a second time
+/// against an already-removed target returns `404` and writes ZERO
+/// additional `collection_keys`/`vault_items` rows — a duplicate removal
+/// never rotates a Collection Key a second time.
+#[tokio::test]
+async fn remove_member_called_twice_is_idempotent_and_never_rekeys_twice() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "rmtwice-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member_token = common::register_second_family_member(&app, &owner_token, "rmtwice-member@example.com").await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+    let member_id = user_id_of(&app, &member_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "enc_name": "enc-rmtwice-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let encrypted = encrypt_item_for_collection(&ck, b"secret", &collection_id, &item_id, 1).unwrap();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": serde_json::to_string(&encrypted.enc_key).unwrap(),
+            "enc_data": serde_json::to_string(&encrypted.enc_data).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+    sqlx::query("UPDATE vault_items SET collection_id = ? WHERE id = ?")
+        .bind(&collection_id)
+        .bind(&item_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let old_ck = unseal_collection_key(&owner_sk, &owner_sealed).unwrap();
+    let new_ck = CollectionKey::generate();
+    let new_owner_sealed = seal(&owner_sk.public_key(), new_ck.expose()).unwrap();
+    let new_enc_key =
+        rewrap_item_key_for_collection(&old_ck, &new_ck, &encrypted.enc_key, &collection_id, &item_id).unwrap();
+
+    let batch = json!({
+        "collections": [
+            {
+                "collection_id": collection_id,
+                "new_sealed_keys": [
+                    { "recipient_user_id": owner_id, "sealed_key": serde_json::to_string(&new_owner_sealed).unwrap() }
+                ],
+                "item_rewraps": [
+                    { "item_id": item_id, "enc_key": serde_json::to_string(&new_enc_key).unwrap() }
+                ]
+            }
+        ]
+    });
+
+    // --- First call: a genuine, successful removal. ---
+    let first_remove_res =
+        req(&app, "DELETE", &format!("/api/families/members/{member_id}"), &owner_token, Some(batch.clone()))
+            .await;
+    assert_eq!(first_remove_res.status(), StatusCode::NO_CONTENT);
+
+    let sealed_key_after_first: String = sqlx::query_scalar(
+        "SELECT sealed_key FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(&collection_id)
+    .bind(&owner_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let enc_key_after_first: String =
+        sqlx::query_scalar("SELECT enc_key FROM vault_items WHERE id = ?").bind(&item_id).fetch_one(&pool).await.unwrap();
+
+    // --- Second call: SAME target (now removed), SAME batch — must be a
+    // pure no-op, rejected before any write. ---
+    let second_remove_res =
+        req(&app, "DELETE", &format!("/api/families/members/{member_id}"), &owner_token, Some(batch)).await;
+    assert_eq!(
+        second_remove_res.status(),
+        StatusCode::NOT_FOUND,
+        "removing an already-removed member must 404, not silently re-apply"
+    );
+
+    let sealed_key_after_second: String = sqlx::query_scalar(
+        "SELECT sealed_key FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(&collection_id)
+    .bind(&owner_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        sealed_key_after_second, sealed_key_after_first,
+        "the Collection Key must NOT be rotated a second time — sealed_key byte-identical"
+    );
+
+    let enc_key_after_second: String =
+        sqlx::query_scalar("SELECT enc_key FROM vault_items WHERE id = ?").bind(&item_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        enc_key_after_second, enc_key_after_first,
+        "the item's enc_key must NOT be rewrapped a second time — byte-identical"
+    );
+}
+
+/// Task 3: submitting the IDENTICAL valid batch with its internal
+/// `new_sealed_keys`/`item_rewraps` arrays in REVERSED order produces the
+/// IDENTICAL post-state (byte-identical `enc_key`/`sealed_key` values) as
+/// the original order — the batch rewrap is order-insensitive.
+#[tokio::test]
+async fn remove_member_batch_array_order_does_not_affect_post_state() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "rmorder-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member_token = common::register_second_family_member(&app, &owner_token, "rmorder-member@example.com").await;
+    let bystander_token =
+        common::register_third_family_member(&app, &owner_token, "rmorder-bystander@example.com").await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+    let member_id = user_id_of(&app, &member_token).await;
+    let bystander_id = user_id_of(&app, &bystander_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let member_sk = IdentitySecretKey::generate();
+    let bystander_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+    publish_keypair(&app, &bystander_token, bystander_sk.public_key().to_bytes()).await;
+
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "enc_name": "enc-rmorder-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    let bystander_sealed = seal(&bystander_sk.public_key(), ck.expose()).unwrap();
+    let add_bystander_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": bystander_id,
+            "sealed_key": serde_json::to_string(&bystander_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_bystander_res.status(), StatusCode::CREATED);
+
+    let mut item_ids = Vec::new();
+    let mut encrypted_items = Vec::new();
+    for i in 0..2 {
+        let item_id = uuid::Uuid::new_v4().to_string();
+        let plaintext = format!(r#"{{"type":"login","username":"u{i}"}}"#);
+        let encrypted =
+            encrypt_item_for_collection(&ck, plaintext.as_bytes(), &collection_id, &item_id, 1).unwrap();
+        let create_item_res = req(
+            &app,
+            "POST",
+            "/api/vault/items",
+            &owner_token,
+            Some(json!({
+                "id": item_id,
+                "enc_key": serde_json::to_string(&encrypted.enc_key).unwrap(),
+                "enc_data": serde_json::to_string(&encrypted.enc_data).unwrap(),
+            })),
+        )
+        .await;
+        assert_eq!(create_item_res.status(), StatusCode::CREATED);
+        sqlx::query("UPDATE vault_items SET collection_id = ? WHERE id = ?")
+            .bind(&collection_id)
+            .bind(&item_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        item_ids.push(item_id);
+        encrypted_items.push(encrypted);
+    }
+
+    // --- Build the (position-independent) expected values ONCE, in the
+    // natural forward order. ---
+    let old_ck = unseal_collection_key(&owner_sk, &owner_sealed).unwrap();
+    let new_ck = CollectionKey::generate();
+    let new_owner_sealed = seal(&owner_sk.public_key(), new_ck.expose()).unwrap();
+    let new_bystander_sealed = seal(&bystander_sk.public_key(), new_ck.expose()).unwrap();
+    let new_enc_key_1 =
+        rewrap_item_key_for_collection(&old_ck, &new_ck, &encrypted_items[0].enc_key, &collection_id, &item_ids[0])
+            .unwrap();
+    let new_enc_key_2 =
+        rewrap_item_key_for_collection(&old_ck, &new_ck, &encrypted_items[1].enc_key, &collection_id, &item_ids[1])
+            .unwrap();
+
+    // --- Submit with `new_sealed_keys`/`item_rewraps` REVERSED from their
+    // natural construction order (bystander before owner; item2 before
+    // item1). ---
+    let remove_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/families/members/{member_id}"),
+        &owner_token,
+        Some(json!({
+            "collections": [
+                {
+                    "collection_id": collection_id,
+                    "new_sealed_keys": [
+                        { "recipient_user_id": bystander_id, "sealed_key": serde_json::to_string(&new_bystander_sealed).unwrap() },
+                        { "recipient_user_id": owner_id, "sealed_key": serde_json::to_string(&new_owner_sealed).unwrap() }
+                    ],
+                    "item_rewraps": [
+                        { "item_id": item_ids[1].clone(), "enc_key": serde_json::to_string(&new_enc_key_2).unwrap() },
+                        { "item_id": item_ids[0].clone(), "enc_key": serde_json::to_string(&new_enc_key_1).unwrap() }
+                    ]
+                }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(remove_res.status(), StatusCode::NO_CONTENT, "a reversed-order batch must still succeed");
+
+    // --- Assertions: the resulting DB state is IDENTICAL to the values
+    // computed once above, independently of submission order. ---
+    let owner_sealed_after: String = sqlx::query_scalar(
+        "SELECT sealed_key FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(&collection_id)
+    .bind(&owner_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        owner_sealed_after,
+        serde_json::to_string(&new_owner_sealed).unwrap(),
+        "owner's sealed_key must match the independently-computed forward-order expectation"
+    );
+
+    let bystander_sealed_after: String = sqlx::query_scalar(
+        "SELECT sealed_key FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(&collection_id)
+    .bind(&bystander_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        bystander_sealed_after,
+        serde_json::to_string(&new_bystander_sealed).unwrap(),
+        "bystander's sealed_key must match the independently-computed forward-order expectation"
+    );
+
+    let item1_enc_key_after: String =
+        sqlx::query_scalar("SELECT enc_key FROM vault_items WHERE id = ?").bind(&item_ids[0]).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        item1_enc_key_after,
+        serde_json::to_string(&new_enc_key_1).unwrap(),
+        "item1's enc_key must match the independently-computed forward-order expectation"
+    );
+
+    let item2_enc_key_after: String =
+        sqlx::query_scalar("SELECT enc_key FROM vault_items WHERE id = ?").bind(&item_ids[1]).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        item2_enc_key_after,
+        serde_json::to_string(&new_enc_key_2).unwrap(),
+        "item2's enc_key must match the independently-computed forward-order expectation"
+    );
+}
