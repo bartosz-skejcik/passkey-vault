@@ -151,6 +151,17 @@ None. The session was interrupted once by an infrastructure watchdog stall (no p
 - The `PRAGMA foreign_keys` finding (confirmed ON, no code change) is ready for Plan 25-06 to depend on as a proven fact, not an assumption — its account-deletion FK-ordering transaction can rely on a loud `SQLITE_CONSTRAINT_FOREIGNKEY` failure mode for a wrong-order delete.
 - No blockers. No stubs. No deferred items from this plan.
 
+## Self-Check: PASSED
+
+- `crates/pv-server/migrations/0018_member_suspension.sql` — FOUND
+- `crates/pv-server/src/routes/membership.rs` — FOUND
+- `crates/pv-server/src/lib.rs` — FOUND
+- `.planning/phases/25-member-removal-suspension-re-key/25-01-SUMMARY.md` — FOUND
+- Commit `bce374d` (test: RED) — FOUND in git log
+- Commit `2cf0af4` (feat: GREEN) — FOUND in git log
+- Commit `8edfea9` (test: PRAGMA foreign_keys proof) — FOUND in git log
+- Commit `1f993fb` (docs: this summary) — FOUND in git log
+
 ---
 *Phase: 25-member-removal-suspension-re-key*
 *Plan: 01*
