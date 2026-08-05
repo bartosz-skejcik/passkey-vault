@@ -216,6 +216,10 @@ fn substitute(path: &str, ids: &TestIds) -> String {
         // RequireRead>`-gated exactly like the other `/api/vault/collections/{id}/*`
         // entries above.
         "/api/vault/collections/{id}/sync" => format!("/api/vault/collections/{}/sync", ids.collection_id),
+        // Phase 25 (KEY-02/FAM-08's client-fetch prerequisite): same
+        // collection_id substitution as every other `/api/vault/collections/{id}/*`
+        // entry above.
+        "/api/vault/collections/{id}/items" => format!("/api/vault/collections/{}/items", ids.collection_id),
         // Plan 23-02: the pathless revisions-map route — no `{id}` segment
         // to substitute, same shape as `/api/vault/collections`/
         // `/api/families/members` above.
@@ -232,6 +236,10 @@ fn substitute(path: &str, ids: &TestIds) -> String {
         // `family_routes()` alongside its handler).
         "/api/invitations" => path.to_string(),
         "/api/invitations/{id}" => format!("/api/invitations/{}", ids.invitation_id),
+        // Phase 25 (FAM-08/FAM-09): owner-only atomic member removal — the
+        // `{user_id}` segment is a mutation TARGET, same substitution shape
+        // as `/api/families/members/{user_id}/access` above.
+        "/api/families/members/{user_id}" => format!("/api/families/members/{}", ids.some_user_id),
         other => panic!(
             "membership_route_sweep: no id-substitution mapping registered for path {other:?} — \
              add one to substitute() in tests/membership_route_sweep.rs"

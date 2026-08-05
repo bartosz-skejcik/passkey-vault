@@ -194,6 +194,47 @@ pub async fn list(
     Ok(Json(collections))
 }
 
+#[derive(Serialize)]
+pub struct CollectionItemRow {
+    pub id: String,
+    pub enc_key: String,
+    pub enc_data: String,
+}
+
+/// `GET /api/vault/collections/{id}/items` — `Membership<Collection,
+/// RequireRead>`-gated, returns the collection's FULL item set (id, enc_key,
+/// enc_data) from EVERY author, not just the caller's own rows. Deliberately
+/// distinct from `vault::fetch_items_for`, which structurally CANNOT answer
+/// this question — it always scopes its query to `WHERE user_id = ?`,
+/// because it serves the personal-vault-list endpoint. This handler applies
+/// no author filter at all: the `Membership` extractor already authorized
+/// the WHOLE collection, so every item in it is fair game. Read-only, no
+/// transaction needed (Phase 25, Plan 25-03's own client — and Plan 25-07's
+/// real client — calls this to build the re-key batch `remove_member`
+/// consumes).
+pub async fn collection_items(
+    State(state): State<AppState>,
+    membership: Membership<Collection, RequireRead>,
+) -> Result<Json<Vec<CollectionItemRow>>, ApiError> {
+    let rows = sqlx::query("SELECT id, enc_key, enc_data FROM vault_items WHERE collection_id = ? ORDER BY id ASC")
+        .bind(&membership.resource_id)
+        .fetch_all(&state.db)
+        .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            Ok(CollectionItemRow {
+                id: row.try_get("id").map_err(|_| ApiError::Internal)?,
+                enc_key: row.try_get("enc_key").map_err(|_| ApiError::Internal)?,
+                enc_data: row.try_get("enc_data").map_err(|_| ApiError::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    Ok(Json(items))
+}
+
 #[derive(Deserialize)]
 pub struct AddMemberRequest {
     pub recipient_user_id: String,
@@ -415,6 +456,23 @@ pub async fn revoke_access(
             None => Err(ApiError::NotFound),
         };
     }
+
+    // Phase 25 (WR-07 closure): bumps the REVOKED recipient's own
+    // `vault_revision` in the SAME transaction as the DELETE above — mirrors
+    // `vault.rs::revoke_share`'s identical own-counter-bump pattern, target
+    // `vault_revision` (not `shared_direct_revision` — that bucket is for
+    // direct `item_shares`, a different surface). Without this, a revoked
+    // recipient's next `GET /api/sync?since=<their last-known revision>`
+    // still matched their stale counter and returned the cheap `{revision}`
+    // up-to-date shape instead of a fresh snapshot, so their local cache
+    // never learned to prune the collection it can no longer decrypt.
+    // 25-03-PLAN.md Task 3 closes this inherited debt for this sibling
+    // revocation path — `families::apply_member_removal_rekey` already
+    // carries the equivalent bump on the NEW removal path.
+    sqlx::query("UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ?")
+        .bind(&target_user_id)
+        .execute(&mut *tx)
+        .await?;
 
     // SYNC-05 (Phase 23, Task 2): fan out AFTER the DELETE — recipients
     // resolved fresh now naturally EXCLUDE `target_user_id` (their

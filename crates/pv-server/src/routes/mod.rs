@@ -197,6 +197,13 @@ pub fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppStat
         // two `MethodRouter`s for the same path since the HTTP methods
         // differ (verified against axum 0.8.9's `path_router.rs::route`).
         ("/api/invitations/{id}", delete(invitations::revoke)),
+        // Phase 25 (FAM-08/FAM-09/KEY-02/KEY-06/KEY-07): owner-only atomic
+        // member removal + re-key. `FamilyMembership<RequireEdit>`-gated,
+        // pathless-of-the-AUTHORIZATION-guard (the `{user_id}` segment is a
+        // mutation TARGET, read by the handler's own `Path<String>`, never
+        // by the extractor itself — same rationale as
+        // `families::member_access` above).
+        ("/api/families/members/{user_id}", delete(families::remove_member)),
     ]
 }
 
@@ -230,6 +237,12 @@ pub fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRouter<App
         ("/api/vault/items/{id}/collection", put(vault::move_item)),
         ("/api/vault/items/{id}/shares", post(vault::create_share)),
         ("/api/vault/items/{id}/shares/{user_id}", delete(vault::revoke_share)),
+        // Phase 25 (KEY-02/FAM-08's client-fetch prerequisite): the
+        // collection's FULL item set (id, enc_key, enc_data) from EVERY
+        // author, not just the caller's own — `vault::fetch_items_for`
+        // structurally cannot answer this question. `remove_member`'s real
+        // client (Plan 25-07) calls this to build the re-key batch.
+        ("/api/vault/collections/{id}/items", get(collections::collection_items)),
     ]
 }
 
@@ -789,10 +802,10 @@ mod tests {
     fn membership_routes_table_has_expected_cardinality() {
         // bump this literal AND extend tests/membership_route_sweep.rs's
         // per-route id substitution when adding a new membership-gated route
-        assert_eq!(membership_routes().len(), 10);
+        assert_eq!(membership_routes().len(), 11);
         // bump this literal AND extend tests/membership_route_sweep.rs's
         // per-route id substitution when adding a new family-gated route
-        assert_eq!(family_routes().len(), 6);
+        assert_eq!(family_routes().len(), 7);
     }
 
     // --- Plan 22-05: zero-knowledge boundary audit + literal-route allowlist audit ---

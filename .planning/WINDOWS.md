@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 2
+open_count: 3
 waived_count: 0
 fixed_count: 0
-total_count: 2
-last_updated: 2026-07-31T11:46:48.811Z
+total_count: 3
+last_updated: 2026-08-05T08:26:19.655Z
 ---
 
 # Broken Windows Ledger
@@ -17,6 +17,7 @@ last_updated: 2026-07-31T11:46:48.811Z
 |----|-------|------|------|------|-------------|--------|--------|-------------|-------------|
 | 1 | 24 | deviation | crates/pv-server/src/routes/vault.rs |  | Pre-existing clippy::explicit_auto_deref warnings (18 sites, &mut *tx -> &mut tx) block whole-crate cargo clippy -p pv-server -- -D warnings; unrelated to Plan 24-02's own files, logged in phase deferred-items.md | open |  | 2026-07-31T10:20:38.248Z |  |
 | 2 | 24 | stub | web/src/components/settings/FamilyTab.tsx |  | Collection-scope invite ('Family + one folder') is UNCONDITIONALLY DISABLED in the UI (CR-02 fix): personal folders (vault_items.folder_id) and Phase 22 collections (vault_items.collection_id) are distinct tables with unrelated id spaces, and no client-side collections create/list/decrypt capability exists anywhere yet. The option renders disabled with truthful not-yet-available copy rather than failing on submit. The SERVER half is complete and tested (create validates the collection triple; accept inserts a real collection_keys row, re-validates inviter authority, rolls back on conflict, fans out a real WS event). Phase 26 owns the collections UI that unblocks this, and inherits UI-SPEC backstops #4/#5/#6 (folder-picker zero-one-many, long-option truncation, selected-value truncation), which were dissolved here when CR-02 deleted their subject. | open |  | 2026-07-31T11:46:48.811Z |  |
+| 3 | 25 | lint-warning | crates/pv-server/src/routes/vault.rs |  | Pre-existing clippy::explicit_auto_deref debt (18 findings) predating this plan's base commit, confirmed via git stash; not fixed here per scope-boundary rule. See 25-03 deferred-items.md. | open |  | 2026-08-05T08:26:19.655Z |  |
 
 ````json
 [
@@ -42,6 +43,18 @@ last_updated: 2026-07-31T11:46:48.811Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-07-31T11:46:48.811Z",
+    "resolved_at": null
+  },
+  {
+    "id": 3,
+    "kind": "lint-warning",
+    "phase": "25",
+    "file": "crates/pv-server/src/routes/vault.rs",
+    "line": null,
+    "description": "Pre-existing clippy::explicit_auto_deref debt (18 findings) predating this plan's base commit, confirmed via git stash; not fixed here per scope-boundary rule. See 25-03 deferred-items.md.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-05T08:26:19.655Z",
     "resolved_at": null
   }
 ]
