@@ -1,0 +1,21 @@
+-- Member suspension state (FAM-07, FAM-09) — Phase 25 groundwork. Additive
+-- only, per the milestone's locked constraint #6 (25-CONTEXT.md /
+-- 25-RESEARCH.md Assumption/Discretion #6): no existing column is renamed or
+-- repurposed, and every existing `family_members` row (as well as an
+-- instance with no family at all) keeps working byte-for-byte unchanged —
+-- `DEFAULT 'active'` means an unmigrated-in-spirit row reads exactly as it
+-- did before this column existed.
+--
+-- `status` is a second CHECK-constrained closed set, mirroring
+-- `0014_family_sharing.sql`'s `role`/`access_level` convention: exactly two
+-- values, `active`/`suspended`. `'active'` is FAM-07/FAM-09's reversible,
+-- immediate, no-re-key suspend/reinstate toggle — flipping this column is
+-- the WHOLE mechanism; there is deliberately no re-key involved in either
+-- direction. `Collection::resolve_access`/`Item::resolve_access` (Task 1 of
+-- 25-01-PLAN.md) gain `AND fm.status = 'active'` on their RECIPIENT-side
+-- `family_members` joins so a suspended member's access resolves to `None`
+-- on the SAME fresh-per-request query every other authorization decision in
+-- this codebase already uses — no new caching mechanism, no token-side
+-- change.
+
+ALTER TABLE family_members ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended'));
