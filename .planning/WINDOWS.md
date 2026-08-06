@@ -2,9 +2,9 @@
 schema_version: 1
 open_count: 7
 waived_count: 0
-fixed_count: 3
-total_count: 10
-last_updated: 2026-08-06T13:02:31.851Z
+fixed_count: 4
+total_count: 11
+last_updated: 2026-08-06T13:24:13.762Z
 ---
 
 # Broken Windows Ledger
@@ -24,7 +24,8 @@ last_updated: 2026-08-06T13:02:31.851Z
 | 7 | 26 | deviation | web/src/lib/vault/collections.ts |  | Live-run-discovered gap: no subscribeLockState/onSharedRevisions live-update wiring at all, unlike store.ts's items. A member added to a collection does not see it (or gain a usable Collection Key) until their next unlock/reload. Documented in web/e2e/sharing.spec.ts's own header comment; not fixed (out of this verification-only plan's scope). | open |  | 2026-08-06T12:25:30.857Z |  |
 | 8 | 26 | deviation | crates/pv-server/src/routes/vault.rs |  | Live-run-discovered, phase-defining gap: fetch_items_for's collection-scoped SQL arm filters WHERE i.user_id = ? bound to the CALLER, so GET /api/vault/items and GET /api/sync never return a collection-scoped item to a fellow member who does not own it -- only to its own creator. The dedicated GET /api/sync/shared/collection/{id} (pull_shared_collection) read path that would fix it has ZERO client consumers anywhere in web/src (confirmed by grep). Documented in web/e2e/sharing.spec.ts and web/e2e/shared-sync.spec.ts's own header comments; not fixed (new client-fetch-path-sized change, outside this verification-only plan's scope). | open |  | 2026-08-06T12:25:40.082Z |  |
 | 9 | 26 | deviation | web/src/lib/vault/store.ts |  | Live-run-discovered gap: no client code anywhere consumes GET /api/sync/shared/direct (the recipient-side read path for a directly-shared, non-collection personal item). The item_shares wire contract, sender-side crypto, and server-side notification pipeline are all real and correct (proven live in web/e2e/sharing.spec.ts test 3), but a recipient's own item list never surfaces a directly-shared item -- confirmed by 26-08-SUMMARY.md's own Next Phase Readiness note and by grep. Not fixed (new client-fetch-path-sized change, outside this verification-only plan's scope). | open |  | 2026-08-06T12:25:48.249Z |  |
-| 10 | 26 | deviation | web/e2e/sharing.spec.ts |  | Live-run-discovered order-dependent hang: with WR-01/WR-02's 422 fixed, delete-account.spec.ts's member_self_deletion_live_rekeys_owned_collections_transparently_for_the_owner test now runs its real server-side collection re-key path (previously never reached -- it always 422'd first). Whatever state that leaves behind causes a LATER, otherwise-unrelated test (sharing.spec.ts's WR-09 and Backstop #6 tests, both via createLoginItemViaUI) to hang for the full 120s test timeout waiting for item-form-login to detach after a real-browser item-create submit, in two brand-new never-before-seen accounts. Reproduced deterministically (bisected to this exact pairing sharing across one Playwright DB): passes standalone or paired with the OTHER delete-account test (owner_account_deletion...), fails whenever member_self_deletion_live_rekeys... runs first in the same DB. Root cause not yet isolated (candidates: SQLite WAL contention/lock left by the rekey transaction, or a client-side fetch that never resolves) -- out of this verification-only plan's scope (test-file-only remit); production code (crates/pv-server rekey path or web item-create client) was not touched. | open |  | 2026-08-06T13:02:31.851Z |  |
+| 10 | 26 | deviation | web/e2e/sharing.spec.ts |  | Live-run-discovered order-dependent hang: with WR-01/WR-02's 422 fixed, delete-account.spec.ts's member_self_deletion_live_rekeys_owned_collections_transparently_for_the_owner test now runs its real server-side collection re-key path (previously never reached -- it always 422'd first). Whatever state that leaves behind causes a LATER, otherwise-unrelated test (sharing.spec.ts's WR-09 and Backstop #6 tests, both via createLoginItemViaUI) to hang for the full 120s test timeout waiting for item-form-login to detach after a real-browser item-create submit, in two brand-new never-before-seen accounts. Reproduced deterministically (bisected to this exact pairing sharing across one Playwright DB): passes standalone or paired with the OTHER delete-account test (owner_account_deletion...), fails whenever member_self_deletion_live_rekeys... runs first in the same DB. Root cause not yet isolated (candidates: SQLite WAL contention/lock left by the rekey transaction, or a client-side fetch that never resolves) -- out of this verification-only plan's scope (test-file-only remit); production code (crates/pv-server rekey path or web item-create client) was not touched. | fixed |  | 2026-08-06T13:02:31.851Z | 2026-08-06T13:23:40.861Z |
+| 11 | 26 | deviation | web/src/lib/vault/store.ts |  | Latent ordering hazard found while root-causing WINDOWS #10 (.planning/debug/rekey-order-dependent-hang.md), deliberately NOT fixed there to keep that fix minimal and root-cause-scoped. createVaultItem (store.ts:376-391) awaits POST /api/vault/items and THEN mutates local state (items = [...items, item]; recomputeAllTags(); notifyListeners()). Any throw in that post-await bookkeeping propagates out of createVaultItem into ItemForm.tsx:401's catch, which renders 'Failed to save item. Please try again.' over a write the server ALREADY accepted with 201 -- observed live in the #10 probe transcript. The user is invited to retry into duplicate rows. updateVaultItem (529-535) and deleteVaultItem (540-545) share the identical shape. This repo already fixed one instance of exactly this class (commit 4450dc0, 'WR-12 stop reporting failure after the server mutation already succeeded'), so the pattern is known and recurring. #10's fix removes the ONE known trigger (a tags-less plaintext) but not the hazard itself. | open |  | 2026-08-06T13:24:13.762Z |  |
 
 ````json
 [
@@ -143,9 +144,21 @@ last_updated: 2026-08-06T13:02:31.851Z
     "file": "web/e2e/sharing.spec.ts",
     "line": null,
     "description": "Live-run-discovered order-dependent hang: with WR-01/WR-02's 422 fixed, delete-account.spec.ts's member_self_deletion_live_rekeys_owned_collections_transparently_for_the_owner test now runs its real server-side collection re-key path (previously never reached -- it always 422'd first). Whatever state that leaves behind causes a LATER, otherwise-unrelated test (sharing.spec.ts's WR-09 and Backstop #6 tests, both via createLoginItemViaUI) to hang for the full 120s test timeout waiting for item-form-login to detach after a real-browser item-create submit, in two brand-new never-before-seen accounts. Reproduced deterministically (bisected to this exact pairing sharing across one Playwright DB): passes standalone or paired with the OTHER delete-account test (owner_account_deletion...), fails whenever member_self_deletion_live_rekeys... runs first in the same DB. Root cause not yet isolated (candidates: SQLite WAL contention/lock left by the rekey transaction, or a client-side fetch that never resolves) -- out of this verification-only plan's scope (test-file-only remit); production code (crates/pv-server rekey path or web item-create client) was not touched.",
-    "status": "open",
+    "status": "fixed",
     "reason": "",
     "recorded_at": "2026-08-06T13:02:31.851Z",
+    "resolved_at": "2026-08-06T13:23:40.861Z"
+  },
+  {
+    "id": 11,
+    "kind": "deviation",
+    "phase": "26",
+    "file": "web/src/lib/vault/store.ts",
+    "line": null,
+    "description": "Latent ordering hazard found while root-causing WINDOWS #10 (.planning/debug/rekey-order-dependent-hang.md), deliberately NOT fixed there to keep that fix minimal and root-cause-scoped. createVaultItem (store.ts:376-391) awaits POST /api/vault/items and THEN mutates local state (items = [...items, item]; recomputeAllTags(); notifyListeners()). Any throw in that post-await bookkeeping propagates out of createVaultItem into ItemForm.tsx:401's catch, which renders 'Failed to save item. Please try again.' over a write the server ALREADY accepted with 201 -- observed live in the #10 probe transcript. The user is invited to retry into duplicate rows. updateVaultItem (529-535) and deleteVaultItem (540-545) share the identical shape. This repo already fixed one instance of exactly this class (commit 4450dc0, 'WR-12 stop reporting failure after the server mutation already succeeded'), so the pattern is known and recurring. #10's fix removes the ONE known trigger (a tags-less plaintext) but not the hazard itself.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-06T13:24:13.762Z",
     "resolved_at": null
   }
 ]
