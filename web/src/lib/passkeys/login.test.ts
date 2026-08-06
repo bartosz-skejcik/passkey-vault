@@ -8,6 +8,7 @@ const {
   mockFromPrf,
   mockUnwrapUserKey,
   mockSetUnlockedUserKey,
+  mockPublishOnUnlock,
   mockSetSessionToken,
   mockSetStoredEmail,
   mockSetPendingUnlock,
@@ -20,6 +21,7 @@ const {
   mockFromPrf: vi.fn(),
   mockUnwrapUserKey: vi.fn(),
   mockSetUnlockedUserKey: vi.fn(),
+  mockPublishOnUnlock: vi.fn(),
   mockSetSessionToken: vi.fn(),
   mockSetStoredEmail: vi.fn(),
   mockSetPendingUnlock: vi.fn(),
@@ -37,6 +39,10 @@ vi.mock("@/lib/crypto", () => ({
   WasmWrappingKey: { fromPrf: mockFromPrf },
   unwrapUserKey: mockUnwrapUserKey,
   setUnlockedUserKey: mockSetUnlockedUserKey,
+}));
+
+vi.mock("@/lib/identity/publishOnUnlock", () => ({
+  publishOnUnlock: mockPublishOnUnlock,
 }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -509,6 +515,10 @@ describe("passkeyUnlock", () => {
     });
     expect(mockUnwrapUserKey).toHaveBeenCalledWith(FAKE_WRAPPING_KEY_2, "prf-wrapped-uk-2");
     expect(mockSetUnlockedUserKey).toHaveBeenCalledWith(FAKE_USER_KEY);
+    // KEY-01 (26-02-PLAN.md): publishOnUnlock fires with the SAME uk
+    // reference setUnlockedUserKey received, immediately after it.
+    expect(mockPublishOnUnlock).toHaveBeenCalledTimes(1);
+    expect(mockPublishOnUnlock).toHaveBeenCalledWith(FAKE_USER_KEY);
     expect(mockSetPendingUnlock).not.toHaveBeenCalled();
     expect(onStep.mock.calls.map((c) => c[0])).toEqual(["start", "ceremony", "success"]);
     expect(result).toEqual({ prfUnavailable: false, cancelled: false });

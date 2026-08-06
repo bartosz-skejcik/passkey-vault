@@ -8,6 +8,7 @@ const {
   mockDefaultKdfParamsJson,
   mockWrapUserKey,
   mockSetUnlockedUserKey,
+  mockPublishOnUnlock,
   mockRegister,
   mockLogin,
   mockBase64Encode,
@@ -20,6 +21,7 @@ const {
   mockDefaultKdfParamsJson: vi.fn(),
   mockWrapUserKey: vi.fn(),
   mockSetUnlockedUserKey: vi.fn(),
+  mockPublishOnUnlock: vi.fn(),
   mockRegister: vi.fn(),
   mockLogin: vi.fn(),
   mockBase64Encode: vi.fn(),
@@ -35,6 +37,10 @@ vi.mock("@/lib/crypto", () => ({
   defaultKdfParamsJson: mockDefaultKdfParamsJson,
   wrapUserKey: mockWrapUserKey,
   setUnlockedUserKey: mockSetUnlockedUserKey,
+}));
+
+vi.mock("@/lib/identity/publishOnUnlock", () => ({
+  publishOnUnlock: mockPublishOnUnlock,
 }));
 
 vi.mock("@/lib/auth/api", async () => {
@@ -116,6 +122,10 @@ describe("RegisterForm", () => {
     expect(mockSetSessionToken).toHaveBeenCalledWith("session-token");
     expect(mockSetStoredEmail).toHaveBeenCalledWith("new@example.com");
     expect(mockSetUnlockedUserKey).toHaveBeenCalledTimes(1);
+    // KEY-01 (26-02-PLAN.md): publishOnUnlock fires with the SAME uk
+    // reference setUnlockedUserKey received, immediately after it.
+    expect(mockPublishOnUnlock).toHaveBeenCalledTimes(1);
+    expect(mockPublishOnUnlock).toHaveBeenCalledWith(mockSetUnlockedUserKey.mock.calls[0][0]);
     // Regresja z UAT: bez onAuthed page.tsx nie przełączał się na shell
     // po udanej rejestracji (pola zostawały, druga próba dawała 409).
     await waitFor(() => expect(onAuthed).toHaveBeenCalledTimes(1));
@@ -131,5 +141,6 @@ describe("RegisterForm", () => {
     expect(await screen.findByText("auth.duplicateEmail")).toBeInTheDocument();
     expect(mockLogin).not.toHaveBeenCalled();
     expect(mockSetUnlockedUserKey).not.toHaveBeenCalled();
+    expect(mockPublishOnUnlock).not.toHaveBeenCalled();
   });
 });

@@ -20,6 +20,7 @@ import {
 import { takePendingUnlock } from "@/lib/auth/pendingUnlock";
 import { takePrfUnavailableHint } from "@/lib/auth/prfUnavailable";
 import { passkeyUnlock } from "@/lib/passkeys/login";
+import { publishOnUnlock } from "@/lib/identity/publishOnUnlock";
 import PasskeyUnlockButton from "./PasskeyUnlockButton";
 
 /**
@@ -128,6 +129,7 @@ export default function UnlockOverlay() {
       await initCrypto();
       const uk = unwrapUserKey(pending.wrappingKey, pending.pwWrappedUk);
       setUnlockedUserKey(uk);
+      publishOnUnlock(uk); // KEY-01 (26-02-PLAN.md): fire-and-forget, never awaited (E9)
     } catch {
       setError(t("auth.loginFailed"));
       // WR-02: drop the consumed/about-to-be-freed pending material and fall
@@ -164,6 +166,7 @@ export default function UnlockOverlay() {
 
       const uk = unwrapUserKey(wrappingKey, account.pw_wrapped_uk);
       setUnlockedUserKey(uk);
+      publishOnUnlock(uk); // KEY-01 (26-02-PLAN.md): fire-and-forget, never awaited (E9)
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 401) {
         // Session actually expired — don't leave the user staring at a
