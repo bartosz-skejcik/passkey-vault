@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ChevronDown,
   CreditCard,
@@ -13,13 +13,16 @@ import {
   LogOut,
   Languages,
   Moon,
+  MoreVertical,
   Plus,
   Settings,
+  Share2,
   StickyNote,
   Sun,
   Tag,
   Timer,
   User,
+  Users,
   Wand2,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
@@ -28,10 +31,16 @@ import { logout } from "@/lib/auth/api";
 import { clearSessionToken, clearStoredEmail } from "@/lib/auth/session";
 import { createVaultFolder, useAllTags, useFolders } from "@/lib/vault/store";
 import { useSyncStatus } from "@/lib/vault/syncStatus";
+import { useCollections } from "@/lib/vault/collections";
+import { getCollectionAccessList } from "@/lib/vault/api";
+import type { ShareRecipient } from "@/lib/vault/shareRecipients";
 import { AUTOLOCK_CHANGED_EVENT, AUTOLOCK_MINUTES_KEY, DEFAULT_AUTOLOCK_MINUTES } from "@/lib/idle/autolock";
 import type { ItemType, VaultFilter } from "@/lib/vault/types";
 import { ITEM_TYPE_LABEL_KEY } from "@/lib/vault/itemTypeLabels";
 import GeneratorDialog from "@/components/generator/GeneratorDialog";
+import AvatarStack from "@/components/vault/AvatarStack";
+import ShareDialog, { type ShareDialogScope } from "@/components/vault/ShareDialog";
+import SharingOverviewPanel from "@/components/vault/SharingOverviewPanel";
 
 // Category buttons mirror ItemRow.tsx's own TYPE_ICON map so a login's icon
 // matches everywhere (sidebar category, list row, list badge). `passkey`
@@ -84,16 +93,64 @@ export default function Sidebar({
   const [theme, setTheme] = useState<"vault-dark" | "vault-light">("vault-dark");
   const [categoriesExpanded, setCategoriesExpanded] = useState(true);
   const [foldersExpanded, setFoldersExpanded] = useState(false);
+  const [sharedFoldersExpanded, setSharedFoldersExpanded] = useState(false);
   const [tagsExpanded, setTagsExpanded] = useState(false);
   const [toolsExpanded, setToolsExpanded] = useState(true);
   const [addingFolder, setAddingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [folderError, setFolderError] = useState<string | null>(null);
   const [showGenerator, setShowGenerator] = useState(false);
+  // ShareDialog (Plan 26-08) — one dialog, two folder-variant entry points
+  // from this file: the "+ Nowy udostępniony folder" create trigger (no
+  // seed) and an existing personal folder's own "Udostępnij ten folder"
+  // kebab action (seeded with that folder's id).
+  const [shareDialogScope, setShareDialogScope] = useState<ShareDialogScope | null>(null);
+  // SharingOverviewPanel (Plan 26-11) — opened from the account-area
+  // dropdown cluster, same mount-on-flag pattern showGenerator/GeneratorDialog
+  // already uses in this file.
+  const [showSharingOverview, setShowSharingOverview] = useState(false);
 
   const folders = useFolders();
   const allTags = useAllTags();
   const syncStatus = useSyncStatus();
+  const collections = useCollections();
+
+  // Per-collection recipient cache for the icon-only AvatarStack variant
+  // (UI-SPEC E5's narrow-column resolution) — a plain ref-backed cache
+  // (never component state directly) so the fetch effect below only
+  // depends on `collections`, not on its own previous result, avoiding an
+  // effect-depends-on-itself loop. Each collection is fetched at most once
+  // per Sidebar mount/collections-refresh, mirroring shareRecipients.ts's
+  // own "never re-fetch a cached id" discipline.
+  const sharedFolderRecipientsRef = useRef<Map<string, ShareRecipient[]>>(new Map());
+  const [, forceSharedFolderRecipientsRerender] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    collections.forEach((collection) => {
+      if (sharedFolderRecipientsRef.current.has(collection.id)) return;
+      getCollectionAccessList(collection.id)
+        .then((entries) => {
+          if (cancelled) return;
+          sharedFolderRecipientsRef.current.set(
+            collection.id,
+            entries.map((entry) => ({ email: entry.email, suspended: entry.suspended })),
+          );
+          forceSharedFolderRecipientsRerender((n) => n + 1);
+        })
+        .catch(() => {
+          // Fail-safe, not fail-crash (mirrors shareRecipients.ts's own
+          // posture) — an unresolved recipient list renders as "no visible
+          // avatar", never a thrown error inside the nav.
+          if (cancelled) return;
+          sharedFolderRecipientsRef.current.set(collection.id, []);
+          forceSharedFolderRecipientsRerender((n) => n + 1);
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [collections]);
 
   useEffect(() => {
     const current = document.documentElement.getAttribute("data-theme");
@@ -220,17 +277,55 @@ export default function Sidebar({
           {foldersExpanded ? (
             <div className="ml-6 mt-1 flex flex-col gap-1">
               {folders.map((folder) => (
-                <button
-                  key={folder.id}
-                  type="button"
-                  data-testid={`sidebar-folder-${folder.id}`}
-                  className={navItemClass(
-                    activeFilter.kind === "folder" && activeFilter.id === folder.id,
-                  )}
-                  onClick={() => selectFilter({ kind: "folder", id: folder.id })}
-                >
-                  <span className="truncate">{folder.name}</span>
-                </button>
+                <div key={folder.id} className="group flex items-center gap-1">
+                  <button
+                    type="button"
+                    data-testid={`sidebar-folder-${folder.id}`}
+                    className={`${navItemClass(
+                      activeFilter.kind === "folder" && activeFilter.id === folder.id,
+                    )} flex-1`}
+                    onClick={() => selectFilter({ kind: "folder", id: folder.id })}
+                  >
+                    <span className="truncate">{folder.name}</span>
+                  </button>
+                  {/* First-ever context menu on a personal-folder row
+                      (26-UI-SPEC.md E2) — exactly one action, "Share this
+                      folder", opening ShareDialog's folder-create variant
+                      SEEDED with this folder's id. CSS-only `.dropdown`
+                      (no React open/close state), mirroring this same
+                      file's own account-area cluster below — the
+                      dropdown-content <ul> is unconditionally in the DOM,
+                      only visually hidden until focus, matching every other
+                      dropdown already in this file. */}
+                  <div className="dropdown dropdown-end" onClick={(e) => e.stopPropagation()}>
+                    <div
+                      tabIndex={0}
+                      role="button"
+                      data-testid={`sidebar-folder-menu-trigger-${folder.id}`}
+                      aria-label={t("share.ctaFolder")}
+                      className="btn btn-ghost btn-square btn-xs shrink-0 opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100"
+                    >
+                      <MoreVertical size={14} aria-hidden="true" />
+                    </div>
+                    <ul
+                      tabIndex={0}
+                      data-testid={`sidebar-folder-menu-${folder.id}`}
+                      className="dropdown-content menu z-10 mt-1 w-48 rounded-box border border-base-300 bg-base-100 p-2 shadow"
+                    >
+                      <li>
+                        <button
+                          type="button"
+                          data-testid={`sidebar-folder-share-${folder.id}`}
+                          onClick={() =>
+                            setShareDialogScope({ kind: "folder", existingFolderId: folder.id })
+                          }
+                        >
+                          {t("share.ctaFolder")}
+                        </button>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
               ))}
               {addingFolder ? (
                 <div className="flex items-center gap-1 px-1">
@@ -268,6 +363,60 @@ export default function Sidebar({
                   <span>{t("aria.newFolder")}</span>
                 </button>
               ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        {/* "Shared folders" section (26-UI-SPEC.md E2) — sibling of
+            "Foldery" above, same navItemClass/chevron/collapse idiom
+            (default-collapsed, matching foldersExpanded's own default),
+            sourced from useCollections() instead of useFolders(). Zero
+            shared folders still renders the section shell with only the
+            "+ Nowy udostępniony folder" create trigger inside — never
+            hidden entirely, since hiding it would hide the only way to
+            create the first one. */}
+        <div>
+          <button
+            type="button"
+            data-testid="sidebar-nav-shared-folders"
+            className={navItemClass(false)}
+            onClick={() => setSharedFoldersExpanded((v) => !v)}
+          >
+            <Users size={18} aria-hidden="true" />
+            <span className="flex-1">{t("sharing.navLabel")}</span>
+            <ChevronDown
+              size={14}
+              className={
+                sharedFoldersExpanded ? "rotate-180 transition-transform" : "transition-transform"
+              }
+              aria-hidden="true"
+            />
+          </button>
+          {sharedFoldersExpanded ? (
+            <div className="ml-6 mt-1 flex flex-col gap-1">
+              {collections.map((collection) => (
+                <div
+                  key={collection.id}
+                  data-testid={`sidebar-shared-folder-${collection.id}`}
+                  className="flex items-center gap-2 rounded-field px-3 py-2 text-sm text-base-content/70"
+                >
+                  <span className="min-w-0 flex-1 truncate" title={collection.name}>
+                    {collection.name}
+                  </span>
+                  <AvatarStack
+                    variant="icon"
+                    recipients={sharedFolderRecipientsRef.current.get(collection.id) ?? []}
+                  />
+                </div>
+              ))}
+              <button
+                type="button"
+                data-testid="sidebar-new-shared-folder-button"
+                className={`${navItemClass(false)} text-primary`}
+                onClick={() => setShareDialogScope({ kind: "folder", existingFolderId: null })}
+              >
+                <span>{t("folder.pickerCreateNew")}</span>
+              </button>
             </div>
           ) : null}
         </div>
@@ -335,6 +484,18 @@ export default function Sidebar({
       </nav>
 
       {showGenerator ? <GeneratorDialog onClose={() => setShowGenerator(false)} /> : null}
+
+      {shareDialogScope !== null ? (
+        <ShareDialog
+          scope={shareDialogScope}
+          onClose={() => setShareDialogScope(null)}
+          onShared={() => setShareDialogScope(null)}
+        />
+      ) : null}
+
+      {showSharingOverview ? (
+        <SharingOverviewPanel onClose={() => setShowSharingOverview(false)} />
+      ) : null}
 
       <div className="mt-auto flex items-center gap-3 border-t border-base-300 pt-4">
         <div className="dropdown dropdown-top flex-1">
@@ -412,6 +573,17 @@ export default function Sidebar({
               >
                 <Settings size={16} aria-hidden="true" />
                 {t("settings.title")}
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                data-testid="sidebar-sharing-overview"
+                aria-label={t("sharing.navLabel")}
+                onClick={() => setShowSharingOverview(true)}
+              >
+                <Share2 size={16} aria-hidden="true" />
+                {t("sharing.navLabel")}
               </button>
             </li>
           </ul>
