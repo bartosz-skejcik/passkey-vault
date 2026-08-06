@@ -586,6 +586,21 @@ export default function ShareDialog({
     return t("share.folderDialogTitleNew");
   })();
 
+  // WR-04 (code review, Phase 26): 26-UI-SPEC.md:169's required generic
+  // fallback. The note renders as soon as hidden-password is the selected
+  // access level (honesty constraint 2: on EVERY occasion, not only after a
+  // recipient is picked), so with zero selections the previous
+  // `.map(email).join(", ")` interpolated an empty string and the phase's
+  // most load-bearing honesty string rendered subject-less. A multi-select
+  // is given the same generic subject rather than an email list, which read
+  // as "a@x, b@y still has key access" (one subject, plural referents).
+  const hiddenPasswordNoteSubject = (() => {
+    const selected = recipients.filter((r) => selectedRecipientIds.has(r.user_id));
+    return selected.length === 1
+      ? selected[0].email
+      : t("share.hiddenPasswordRecipientFallback");
+  })();
+
   const ctaKey = isFolder ? "share.ctaFolder" : "share.ctaItem";
   const submitDisabled =
     sharing ||
@@ -717,10 +732,7 @@ export default function ShareDialog({
                 {accessLevel === "hidden_password" ? (
                   <p data-testid="share-hidden-password-inline-note" className="text-sm text-base-content/70">
                     {interpolate(t("share.hiddenPasswordInlineNote"), {
-                      recipient: recipients
-                        .filter((r) => selectedRecipientIds.has(r.user_id))
-                        .map((r) => r.email)
-                        .join(", "),
+                      recipient: hiddenPasswordNoteSubject,
                     })}
                   </p>
                 ) : null}

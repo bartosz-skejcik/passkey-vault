@@ -1133,6 +1133,17 @@ export const DICTIONARY = {
     pl: "Ukryte tylko w interfejsie — {recipient} nadal ma dostęp do klucza.",
     en: "Hidden in the interface only — {recipient} still has key access.",
   },
+  // WR-04 (code review, Phase 26): 26-UI-SPEC.md:169 requires
+  // `share.hiddenPasswordInlineNote`'s `{recipient}` to interpolate "the
+  // selected member's email, or a generic PL `odbiorca`/EN `the recipient`
+  // when no single recipient is yet selected". The generic half was never
+  // implemented and this key did not exist, so the note -- rendered as soon
+  // as hidden-password is selected, BEFORE any recipient is picked --
+  // rendered subject-less: "Ukryte tylko w interfejsie —  nadal ma dostęp
+  // do klucza." Per D-2 this note is the only honesty text most users ever
+  // see after the first modal, so a malformed render is a real defect, not
+  // a typo.
+  "share.hiddenPasswordRecipientFallback": { pl: "odbiorca", en: "the recipient" },
   "identity.fingerprintMismatchWarning": {
     pl: "Jeśli słowa się nie zgadzają, klucz, który widzisz, nie należy do tej osoby — nie udostępniaj jej niczego i zgłoś to.",
     en: "If the words don't match, the key you're seeing isn't theirs — don't share anything with them, and report it.",

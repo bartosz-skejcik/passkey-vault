@@ -127,6 +127,9 @@ const HIDDEN_PASSWORD_HONESTY_KEYS = new Set([
   "share.hiddenPasswordDisclosureBody",
   "share.hiddenPasswordDisclosureAck",
   "share.hiddenPasswordInlineNote",
+  // WR-04: the inline note's generic `{recipient}` fallback is part of the
+  // same honesty string, so it renders real dictionary text here too.
+  "share.hiddenPasswordRecipientFallback",
 ]);
 
 vi.mock("@/lib/i18n/LocaleContext", async () => {
@@ -715,6 +718,35 @@ describe("ShareDialog", () => {
       expect(screen.getByTestId("share-hidden-password-ack-title").textContent).toBe(
         DICTIONARY["share.hiddenPasswordDisclosureTitle"].pl,
       );
+    });
+
+    // WR-04 (code review, Phase 26): 26-UI-SPEC.md:169's required generic
+    // `{recipient}` fallback was never implemented, so with zero selections
+    // the note rendered "Ukryte tylko w interfejsie —  nadal ma dostęp do
+    // klucza." -- the phase's most load-bearing honesty string, subject-less.
+    it("renders the generic recipient fallback -- never an empty subject -- when no single recipient is selected", async () => {
+      localStorage.setItem(`pv-hidden-password-ack:${SELF.user_id}`, "1");
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      chooseAccessLevel("hidden_password");
+
+      const fallback = DICTIONARY["share.hiddenPasswordRecipientFallback"].pl;
+      const expected = DICTIONARY["share.hiddenPasswordInlineNote"].pl.replace("{recipient}", fallback);
+
+      // Zero selected -> generic subject, never an empty one.
+      const note = await screen.findByTestId("share-hidden-password-inline-note");
+      expect(note.textContent).toBe(expected);
+
+      // Exactly one selected -> that member's email.
+      selectRecipient(MEMBER_A.user_id);
+      expect(screen.getByTestId("share-hidden-password-inline-note").textContent).toBe(
+        DICTIONARY["share.hiddenPasswordInlineNote"].pl.replace("{recipient}", MEMBER_A.email),
+      );
+
+      // More than one -> generic again, never "a@x, b@y still has ...".
+      selectRecipient(MEMBER_B.user_id);
+      expect(screen.getByTestId("share-hidden-password-inline-note").textContent).toBe(expected);
     });
   });
 
