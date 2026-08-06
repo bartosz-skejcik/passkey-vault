@@ -129,7 +129,7 @@ async fn remove_member_atomic_rekey_happy_path_touches_exactly_one_collection_an
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-rmremoval-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+        Some(json!({ "id": "e0fc8f90-55b6-4772-abf0-e233ed659535", "enc_name": "enc-rmremoval-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);
@@ -401,7 +401,7 @@ async fn remove_member_rejects_stale_batch_before_any_write_when_item_deleted_mi
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-rmrace-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+        Some(json!({ "id": "4a9f9eeb-d630-47cd-8143-69cbe5d4aa5e", "enc_name": "enc-rmrace-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);
@@ -585,7 +585,7 @@ async fn remove_member_rolls_back_completely_on_injected_mid_write_fault() {
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-rmatomic-x", "sealed_key": serde_json::to_string(&owner_sealed_x).unwrap() })),
+        Some(json!({ "id": "f2d3586c-c65a-4642-a7b9-4114ab9a7dc4", "enc_name": "enc-rmatomic-x", "sealed_key": serde_json::to_string(&owner_sealed_x).unwrap() })),
     )
     .await;
     assert_eq!(create_x_res.status(), StatusCode::CREATED);
@@ -653,7 +653,7 @@ async fn remove_member_rolls_back_completely_on_injected_mid_write_fault() {
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-rmatomic-y", "sealed_key": serde_json::to_string(&owner_sealed_y).unwrap() })),
+        Some(json!({ "id": "119a909e-337f-4bd4-b065-25557e83ad22", "enc_name": "enc-rmatomic-y", "sealed_key": serde_json::to_string(&owner_sealed_y).unwrap() })),
     )
     .await;
     assert_eq!(create_y_res.status(), StatusCode::CREATED);
@@ -924,7 +924,7 @@ async fn rekey_cost_and_scope_proportional_to_target_collection_only() {
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-rmscope-target", "sealed_key": serde_json::to_string(&owner_sealed_target).unwrap() })),
+        Some(json!({ "id": "1752a1c1-7caf-406f-9d07-f58e585568ba", "enc_name": "enc-rmscope-target", "sealed_key": serde_json::to_string(&owner_sealed_target).unwrap() })),
     )
     .await;
     assert_eq!(create_target_res.status(), StatusCode::CREATED);
@@ -985,7 +985,7 @@ async fn rekey_cost_and_scope_proportional_to_target_collection_only() {
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-rmscope-control", "sealed_key": serde_json::to_string(&owner_sealed_control).unwrap() })),
+        Some(json!({ "id": "31172f93-995b-4aa4-bc7e-bc30bd4a091e", "enc_name": "enc-rmscope-control", "sealed_key": serde_json::to_string(&owner_sealed_control).unwrap() })),
     )
     .await;
     assert_eq!(create_control_res.status(), StatusCode::CREATED);
@@ -1218,7 +1218,7 @@ async fn seed_owner_member_and_shared_collection(
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-suspend-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+        Some(json!({ "id": "d8fd0e4a-30bc-41ca-8bb6-ec9efe495623", "enc_name": "enc-suspend-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);
@@ -1538,7 +1538,7 @@ async fn remove_member_called_twice_is_idempotent_and_never_rekeys_twice() {
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-rmtwice-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+        Some(json!({ "id": "12217366-cf31-4b7a-b188-2294ca6cdebd", "enc_name": "enc-rmtwice-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);
@@ -1680,7 +1680,7 @@ async fn remove_member_batch_array_order_does_not_affect_post_state() {
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-rmorder-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+        Some(json!({ "id": "79d65d51-c012-4f96-ab42-eff0ed55fba5", "enc_name": "enc-rmorder-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);
@@ -2117,7 +2117,7 @@ async fn suspension_closes_every_shared_read_path_and_every_family_write_path() 
         "POST",
         "/api/vault/collections",
         &member_token,
-        Some(json!({ "enc_name": "enc-suspended-attempt", "sealed_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"x\"}" })),
+        Some(json!({ "id": "58294d76-1334-436c-a42d-18a3bfa10018", "enc_name": "enc-suspended-attempt", "sealed_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"x\"}" })),
     )
     .await;
     assert_eq!(
@@ -2168,7 +2168,7 @@ async fn suspension_closes_every_shared_read_path_and_every_family_write_path() 
         "POST",
         "/api/vault/collections",
         &member_token,
-        Some(json!({ "enc_name": "enc-reinstated-attempt", "sealed_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"x\"}" })),
+        Some(json!({ "id": "5eee7edb-f5a9-4867-a72f-8981f4bdde42", "enc_name": "enc-reinstated-attempt", "sealed_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"x\"}" })),
     )
     .await;
     assert_eq!(

@@ -110,7 +110,7 @@ async fn create_collection(app: &axum::Router, owner_token: &str) -> (String, Co
         "POST",
         "/api/vault/collections",
         Some(owner_token),
-        Some(json!({ "enc_name": "invite-test-collection-name", "sealed_key": sealed_key_json })),
+        Some(json!({ "id": "f822b184-7ecd-4910-b800-bcf600d3c53a", "enc_name": "invite-test-collection-name", "sealed_key": sealed_key_json })),
     )
     .await;
     assert_eq!(res.status(), StatusCode::CREATED, "collection creation fixture must succeed");
@@ -1362,7 +1362,7 @@ async fn invitation_metadata_collection_scoped_never_leaks_collection_enc_name()
         "POST",
         "/api/vault/collections",
         Some(&owner_token),
-        Some(json!({ "enc_name": DISTINCTIVE_ENC_NAME, "sealed_key": serde_json::to_string(&sealed).unwrap() })),
+        Some(json!({ "id": "cc838cac-ddf4-4c8c-8612-82ac7372626a", "enc_name": DISTINCTIVE_ENC_NAME, "sealed_key": serde_json::to_string(&sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED, "collection creation fixture must succeed");

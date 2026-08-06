@@ -338,6 +338,15 @@ pub struct VaultItem {
     /// derived from or exposing any ciphertext. Consumed by Plans 23-02/23-05
     /// for the attribution/sharing-badge read-side gap this task closes.
     pub is_shared: bool,
+    /// Phase 26, Plan 01 (A-1's `collection_id` wire-field companion): the
+    /// owning collection's id for a collection-scoped item, `None` for a
+    /// personal item. Metadata-only, additive — tells the client which key
+    /// (User Key vs. the collection's own Collection Key) to decrypt this
+    /// row with, instead of the client unconditionally guessing User Key
+    /// (`store.ts::decryptItemRow`'s prior behavior, which made every
+    /// collection-scoped row undecryptable on the read side even after A-1's
+    /// server-side fix).
+    pub collection_id: Option<String>,
     /// The email of `vault_items.last_editor_user_id`'s current holder, or
     /// `None` when the item has never been edited since that column existed
     /// (Migration 0015). Metadata-only, same rationale as `is_shared` above —
@@ -383,9 +392,16 @@ pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> R
     // NULL`) is untouched — a personal item genuinely is the caller's own,
     // and `family.suspendedBannerBody`'s promise that "your own passwords and
     // notes are safe and unchanged" is about exactly those rows.
+    // Phase 26, Plan 01: additive SELECT-list change ONLY (Task 1's own
+    // "Task 3, BLOCKER-1" precedent, see this function's doc comment above)
+    // — arm 1 selects a literal `NULL AS collection_id` (its own WHERE
+    // predicate already guarantees `collection_id IS NULL` for every row it
+    // returns), arm 2 selects the real `i.collection_id`. Neither arm's
+    // WHERE/JOIN clauses change.
     let rows = sqlx::query(concat!(
         "SELECT vault_items.id, enc_key, enc_data, revision, updated_at, last_used_at, \
                 (collection_id IS NOT NULL OR EXISTS(SELECT 1 FROM item_shares WHERE item_shares.item_id = vault_items.id)) AS is_shared, \
+                NULL AS collection_id, \
                 users.email AS last_editor_email \
            FROM vault_items \
            LEFT JOIN users ON users.id = vault_items.last_editor_user_id \
@@ -393,6 +409,7 @@ pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> R
          UNION ALL \
          SELECT i.id, i.enc_key, i.enc_data, i.revision, i.updated_at, i.last_used_at, \
                 (i.collection_id IS NOT NULL OR EXISTS(SELECT 1 FROM item_shares WHERE item_shares.item_id = i.id)) AS is_shared, \
+                i.collection_id AS collection_id, \
                 u2.email AS last_editor_email \
            FROM vault_items i \
            JOIN collection_keys ck ON ck.collection_id = i.collection_id AND ck.recipient_user_id = ? \
@@ -417,6 +434,7 @@ pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> R
                 updated_at: row.try_get("updated_at").map_err(|_| ApiError::Internal)?,
                 last_used_at: row.try_get("last_used_at").map_err(|_| ApiError::Internal)?,
                 is_shared: row.try_get("is_shared").map_err(|_| ApiError::Internal)?,
+                collection_id: row.try_get("collection_id").map_err(|_| ApiError::Internal)?,
                 last_editor_email: row.try_get("last_editor_email").map_err(|_| ApiError::Internal)?,
             })
         })

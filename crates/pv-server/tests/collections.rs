@@ -94,17 +94,25 @@ async fn collection_create_wires_creator_edit_access() {
     let sealed = seal(&owner_sk.public_key(), ck.expose()).expect("seal must succeed for a valid public key");
     let sealed_key_json = serde_json::to_string(&sealed).unwrap();
 
+    // A-1 (WR-09 fix): the client mints the id BEFORE encrypting enc_name,
+    // whose AAD is bound to it — the server must echo this EXACT id back,
+    // never mint its own.
+    let client_minted_id = "94603aa4-edb2-4268-b4da-a3486d6fb03f";
     let create_res = req(
         &app,
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-collection-name", "sealed_key": sealed_key_json })),
+        Some(json!({ "id": client_minted_id, "enc_name": "enc-collection-name", "sealed_key": sealed_key_json })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);
     let create_body = body_json(create_res).await;
     let collection_id = create_body["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        collection_id, client_minted_id,
+        "CollectionResponse.id must echo the client-minted id unchanged (WR-09 fix, A-1)"
+    );
     assert_eq!(create_body["access_level"].as_str(), Some("edit"));
     assert_eq!(create_body["sealed_key"].as_str(), Some(sealed_key_json.as_str()));
 
@@ -198,7 +206,7 @@ async fn collection_key_fan_out_three_members_each_opens_only_own_seal() {
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-fanout-collection",
+            "id": "7e53ac8a-9e07-4fd0-afee-30635e544687","enc_name": "enc-fanout-collection",
             "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
         })),
     )
@@ -317,7 +325,7 @@ async fn adding_member_creates_one_wrap_row_no_ciphertext_rewrite() {
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-norewrite-collection",
+            "id": "e23cf69b-99d1-4551-8304-bd1ae6d4030d","enc_name": "enc-norewrite-collection",
             "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
         })),
     )
@@ -421,7 +429,7 @@ async fn revoked_share_loses_access_on_next_request_same_session() {
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-revoke-collection",
+            "id": "0b53b15d-7c35-4e78-9c9d-cf50310e6fc2","enc_name": "enc-revoke-collection",
             "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
         })),
     )
@@ -506,7 +514,7 @@ async fn revoke_access_rejects_emptying_the_last_key_holder() {
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-lastkey-collection",
+            "id": "9e6ac28f-0475-4de7-8428-e1ade8282e30","enc_name": "enc-lastkey-collection",
             "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
         })),
     )
@@ -615,7 +623,7 @@ async fn revoke_access_last_key_holder_guard_is_atomic_under_concurrency() {
             "/api/vault/collections",
             &owner_token,
             Some(json!({
-                "enc_name": "enc-w1-race-collection",
+                "id": "d2e136cd-f2e8-42f0-ad96-5bb2a74f9ed4","enc_name": "enc-w1-race-collection",
                 "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
             })),
         )
@@ -734,7 +742,7 @@ async fn add_member_rejects_non_family_member() {
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-guard-collection",
+            "id": "373b03bd-787e-4730-981c-61438f926d89","enc_name": "enc-guard-collection",
             "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
         })),
     )
@@ -787,7 +795,7 @@ async fn add_member_rejects_malformed_access_level() {
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-malformed-collection",
+            "id": "28d4cbd3-d576-4729-8451-81fb2ae6f1fc","enc_name": "enc-malformed-collection",
             "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
         })),
     )
@@ -859,7 +867,7 @@ async fn hidden_password_holder_cannot_reassign_item_vaultwarden_6269_regression
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-vw6269-source-collection",
+            "id": "11b8da13-8e30-4deb-946b-221c32f2ad9b","enc_name": "enc-vw6269-source-collection",
             "sealed_key": serde_json::to_string(&owner_sealed_source).unwrap(),
         })),
     )
@@ -895,7 +903,7 @@ async fn hidden_password_holder_cannot_reassign_item_vaultwarden_6269_regression
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-vw6269-dest-collection",
+            "id": "1a3f922f-fbfa-47ae-99fa-a10dd7c07077","enc_name": "enc-vw6269-dest-collection",
             "sealed_key": serde_json::to_string(&owner_sealed_dest).unwrap(),
         })),
     )
@@ -992,7 +1000,7 @@ async fn move_item_rejected_when_caller_lacks_edit_on_destination_collection() {
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-movegate-collection-a",
+            "id": "d6b0512c-5166-4d71-b40d-511599444ee7","enc_name": "enc-movegate-collection-a",
             "sealed_key": serde_json::to_string(&owner_sealed_a).unwrap(),
         })),
     )
@@ -1024,7 +1032,7 @@ async fn move_item_rejected_when_caller_lacks_edit_on_destination_collection() {
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-movegate-collection-b",
+            "id": "55f4b7e2-7b5e-436a-9701-bc330fe3308b","enc_name": "enc-movegate-collection-b",
             "sealed_key": serde_json::to_string(&owner_sealed_b).unwrap(),
         })),
     )
@@ -1184,7 +1192,7 @@ async fn revoked_creator_loses_edit_on_their_own_created_item_next_request() {
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-cr01-revoke-collection",
+            "id": "661c117a-5965-44b1-8f7e-655761a25aec","enc_name": "enc-cr01-revoke-collection",
             "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
         })),
     )
@@ -1410,7 +1418,7 @@ async fn hidden_password_creator_cannot_reassign_own_item_vaultwarden_6269_regre
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-cr01-hp-creator-source-collection",
+            "id": "7d0cf564-a102-4807-83b5-f04ffc3ed69c","enc_name": "enc-cr01-hp-creator-source-collection",
             "sealed_key": serde_json::to_string(&owner_sealed_source).unwrap(),
         })),
     )
@@ -1443,7 +1451,7 @@ async fn hidden_password_creator_cannot_reassign_own_item_vaultwarden_6269_regre
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-cr01-hp-creator-dest-collection",
+            "id": "941c68c1-6a7e-4dee-a389-8694bf4b3225","enc_name": "enc-cr01-hp-creator-dest-collection",
             "sealed_key": serde_json::to_string(&owner_sealed_dest).unwrap(),
         })),
     )
@@ -1621,7 +1629,7 @@ async fn edit_item_share_recipient_cannot_move_owners_personal_item_cr02_regress
         "/api/vault/collections",
         &r_token,
         Some(json!({
-            "enc_name": "enc-cr02-r-collection",
+            "id": "8b570cfe-72be-4498-8cfa-ce2e31c3e62d","enc_name": "enc-cr02-r-collection",
             "sealed_key": serde_json::to_string(&r_sealed).unwrap(),
         })),
     )
@@ -1728,7 +1736,7 @@ async fn membership_change_events_add_then_remove_live() {
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "enc-memberevents-collection",
+            "id": "b5a78912-b985-4f36-9564-f59520eae771","enc_name": "enc-memberevents-collection",
             "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
         })),
     )
@@ -1890,7 +1898,7 @@ async fn revoke_access_bumps_revoked_recipients_own_vault_revision_and_they_see_
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-wr07-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+        Some(json!({ "id": "382a3acb-b071-4b5d-8690-379fef142bca", "enc_name": "enc-wr07-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);
@@ -1968,5 +1976,203 @@ async fn revoke_access_bumps_revoked_recipients_own_vault_revision_and_they_see_
     assert_eq!(
         member_vault_revision_row, after_revoke_revision,
         "the DB-stored vault_revision must match the value the sync response itself reported"
+    );
+}
+
+/// Task 1 (A-1 fix, 26-CONTEXT.md): `id` is rejected BEFORE any DB work when
+/// it does not shape-validate as UUID-v4 — mirrors `invitations.rs`'s own
+/// fail-closed-before-DB-work discipline. Covers wrong length, non-hex
+/// characters, and missing hyphens; each must be a clean 400, and a
+/// follow-up `COUNT(*)` proves no `collections` row was ever written for a
+/// rejected id.
+#[tokio::test]
+async fn create_collection_rejects_malformed_id_before_any_db_work() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "malformed-id-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let sealed_key_json = serde_json::to_string(&seal(&owner_sk.public_key(), ck.expose()).unwrap()).unwrap();
+
+    let bad_ids = [
+        "too-short",
+        // 36 chars, but no hyphens at all — every char here is a valid hex
+        // digit read as one long run, so this specifically exercises the
+        // hyphen-position check, not just length.
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        // Correct length AND correct hyphen positions, but a non-hex 'z'
+        // character — exercises the per-byte hex check independently of
+        // shape.
+        "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz",
+        // One character short of a real UUID-v4, hyphens shifted by one.
+        "c138f38b-37e1-47d0-830a-12666cd34c9",
+    ];
+
+    for bad_id in bad_ids {
+        let res = req(
+            &app,
+            "POST",
+            "/api/vault/collections",
+            &owner_token,
+            Some(json!({ "id": bad_id, "enc_name": "enc-malformed-id", "sealed_key": sealed_key_json })),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "malformed id {bad_id:?} must be rejected with 400");
+    }
+
+    let count_row: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM collections").fetch_one(&pool).await.unwrap();
+    assert_eq!(count_row, 0, "no collections row may ever be written for a shape-rejected id");
+}
+
+/// Task 1 (A-1 fix): submitting the SAME client-minted id twice returns 409
+/// Conflict on the second call — proves the `ON CONFLICT ... DO NOTHING
+/// RETURNING` + `fetch_optional` idiom is wired, never a raw
+/// `?`-propagated `sqlx::Error` falling through to a blanket 500.
+#[tokio::test]
+async fn create_collection_duplicate_id_returns_409_not_500() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "dup-id-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let sealed_key_json = serde_json::to_string(&seal(&owner_sk.public_key(), ck.expose()).unwrap()).unwrap();
+    let dup_id = "5a2f0e4c-6f2a-4a3a-8b8a-6a1f2e3d4c5b";
+
+    let first_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "id": dup_id, "enc_name": "enc-first", "sealed_key": sealed_key_json })),
+    )
+    .await;
+    assert_eq!(first_res.status(), StatusCode::CREATED);
+
+    let second_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "id": dup_id, "enc_name": "enc-second", "sealed_key": sealed_key_json })),
+    )
+    .await;
+    assert_eq!(
+        second_res.status(),
+        StatusCode::CONFLICT,
+        "a colliding client-minted id must be a clean 409, never an opaque 500"
+    );
+    let second_body = body_json(second_res).await;
+    assert!(
+        second_body.get("error").is_some(),
+        "the 409 body must carry the standard {{\"error\": ...}} shape, not an empty/panic-shaped body"
+    );
+
+    // Only ONE collections row exists for this id — the second, rejected
+    // INSERT must never have overwritten or duplicated the first.
+    let count_row: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM collections WHERE id = ?")
+        .bind(dup_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count_row, 1, "a collision must never produce a second row nor silently overwrite the first");
+
+    // The original enc_name (from the FIRST, successful create) survived
+    // untouched — the rejected second INSERT's DO NOTHING never overwrote it.
+    let enc_name_row: String = sqlx::query_scalar("SELECT enc_name FROM collections WHERE id = ?")
+        .bind(dup_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(enc_name_row, "enc-first", "a collision must never overwrite the original row's enc_name");
+}
+
+/// Task 1 (`collection_id` wire field): `GET /api/vault/items` (both UNION
+/// arms of `fetch_items_for`) returns `collection_id` — `null` for a
+/// personal item, the real collection id for a collection-scoped one. This
+/// is what lets the client dispatch to the correct decryption key instead of
+/// unconditionally guessing User Key (26-CONTEXT.md's A-1 companion fix).
+#[tokio::test]
+async fn list_items_returns_collection_id_null_for_personal_real_id_for_collection_scoped() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "collid-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+
+    // A personal item — never touches a collection.
+    let personal_item_id = uuid::Uuid::new_v4().to_string();
+    let personal_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": personal_item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"key-blob\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"data-blob\"}",
+        })),
+    )
+    .await;
+    assert_eq!(personal_item_res.status(), StatusCode::CREATED);
+
+    // A collection, and an item seeded directly into it (mirrors
+    // `vault.rs::fetch_items_for_is_shared`'s own seeding pattern — this
+    // handler's `Membership<Collection, RequireRead>` extractor is what
+    // authorizes the collection-scoped arm, not the seeding mechanism).
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let sealed_key_json = serde_json::to_string(&seal(&owner_sk.public_key(), ck.expose()).unwrap()).unwrap();
+    let create_coll_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": "d3f1c2b4-5e6a-4b7c-8d9e-0f1a2b3c4d5e",
+            "enc_name": "enc-collid-collection",
+            "sealed_key": sealed_key_json,
+        })),
+    )
+    .await;
+    assert_eq!(create_coll_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_coll_res).await["id"].as_str().unwrap().to_string();
+
+    let coll_item_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO vault_items (id, user_id, collection_id, enc_key, enc_data, revision) \
+         VALUES (?, ?, ?, '{\"nonce\":\"CCCC\",\"ciphertext\":\"key-blob\"}', \
+                 '{\"nonce\":\"DDDD\",\"ciphertext\":\"data-blob\"}', 1)",
+    )
+    .bind(&coll_item_id)
+    .bind(&owner_id)
+    .bind(&collection_id)
+    .execute(&pool)
+    .await
+    .expect("seed collection-scoped vault_items row");
+
+    let list_res = req(&app, "GET", "/api/vault/items", &owner_token, None).await;
+    assert_eq!(list_res.status(), StatusCode::OK);
+    let list_body = body_json(list_res).await;
+    let items = list_body.as_array().unwrap();
+
+    let personal_item = items.iter().find(|i| i["id"] == personal_item_id).unwrap();
+    assert_eq!(
+        personal_item["collection_id"],
+        Value::Null,
+        "a personal item's collection_id must be null, never omitted or a stray string"
+    );
+
+    let coll_item = items.iter().find(|i| i["id"] == coll_item_id).unwrap();
+    assert_eq!(
+        coll_item["collection_id"].as_str(),
+        Some(collection_id.as_str()),
+        "a collection-scoped item's collection_id must be the real owning collection's id"
     );
 }

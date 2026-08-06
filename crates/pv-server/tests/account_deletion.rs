@@ -120,7 +120,7 @@ async fn owner_account_deletion_dissolves_family_and_leaves_members_personal_dat
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-acctdel-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+        Some(json!({ "id": "b9ebcf9c-7f95-453d-9f9b-2c407041300a", "enc_name": "enc-acctdel-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);
@@ -295,7 +295,7 @@ async fn member_self_deletion_rekeys_owned_collections_and_removes_own_data() {
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-acctdel-selfdel-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+        Some(json!({ "id": "b0f36dbb-01c4-4228-a563-52bad8c9f0ef", "enc_name": "enc-acctdel-selfdel-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);
@@ -474,7 +474,7 @@ async fn wrong_delete_order_raises_a_real_foreign_key_violation() {
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-acctdel-wrongorder-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+        Some(json!({ "id": "e4122447-708d-4b02-9db9-74665eaac87b", "enc_name": "enc-acctdel-wrongorder-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);
@@ -564,7 +564,7 @@ async fn owner_dissolution_deletes_items_authored_by_other_members_as_the_copy_n
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-wr07", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+        Some(json!({ "id": "d663f37e-828b-43aa-b94e-7303e0896bd0", "enc_name": "enc-wr07", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);
@@ -699,7 +699,7 @@ async fn member_who_last_edited_an_item_authored_by_the_owner_can_still_delete_t
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-cr01-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+        Some(json!({ "id": "e99d61bc-cea9-4376-b93d-5cbcffc23288", "enc_name": "enc-cr01-collection", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);
@@ -850,7 +850,7 @@ async fn removed_member_who_last_edited_a_shared_item_can_still_delete_their_acc
         "POST",
         "/api/vault/collections",
         &owner_token,
-        Some(json!({ "enc_name": "enc-cr01-nofam", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
+        Some(json!({ "id": "baadea6f-3600-4f37-bbf2-1ec4b3f7d165", "enc_name": "enc-cr01-nofam", "sealed_key": serde_json::to_string(&owner_sealed).unwrap() })),
     )
     .await;
     assert_eq!(create_res.status(), StatusCode::CREATED);

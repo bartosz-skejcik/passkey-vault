@@ -221,7 +221,7 @@ async fn personal_sync_scope_unaffected_by_fellow_collection_members_shared_edit
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
+            "id": "2dbc4938-bb38-406d-9c30-359105cc090a","enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
             "sealed_key": "{\"nonce\":\"BBBB\",\"ciphertext\":\"sealed-coll-key-owner\"}",
         })),
     )

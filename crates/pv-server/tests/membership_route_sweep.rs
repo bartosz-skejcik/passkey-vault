@@ -121,7 +121,7 @@ async fn create_collection(app: &axum::Router, owner_token: &str) -> String {
         "POST",
         "/api/vault/collections",
         owner_token,
-        Some(json!({ "enc_name": "sweep-collection-name", "sealed_key": sealed_key_json })),
+        Some(json!({ "id": "2598a626-c6ce-4cc6-8ff9-1afff96a0735", "enc_name": "sweep-collection-name", "sealed_key": sealed_key_json })),
     )
     .await;
     assert_eq!(res.status(), StatusCode::CREATED, "collection creation fixture must succeed");

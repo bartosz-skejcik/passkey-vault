@@ -32,6 +32,13 @@ export interface ItemRow {
   // 0015 or when the item isn't shared at all.
   is_shared: boolean;
   last_editor_email: string | null;
+  // Phase 26, Plan 01 (A-1's `collection_id` wire-field companion,
+  // crates/pv-server/src/routes/vault.rs's `VaultItem::collection_id`):
+  // `null` for a personal item, the owning collection's id for a
+  // collection-scoped one. Tells the client which key to decrypt this row
+  // with (User Key vs. the collection's own Collection Key), instead of
+  // `store.ts::decryptItemRow` unconditionally guessing User Key.
+  collection_id: string | null;
 }
 
 /** Wire shape of a single folder row as returned by GET /api/vault/folders. */
@@ -162,6 +169,51 @@ export interface CollectionAccessEntry {
 
 export function getCollectionAccessList(collectionId: string): Promise<CollectionAccessEntry[]> {
   return apiJson(`/api/vault/collections/${encodeURIComponent(collectionId)}/access`);
+}
+
+/** `POST /api/vault/collections` — Phase 26, Plan 01 (A-1/WR-09 fix): the
+ * CALLER mints `id` (a fresh `crypto.randomUUID()`) and binds it into
+ * `encName`'s AAD BEFORE calling this — this wrapper does not mint or
+ * validate the id, it only carries what the caller already produced.
+ * Returns the full `CollectionResponse` shape (reuses `CollectionRow`,
+ * field-for-field identical: `id` echoes the SAME id the caller sent, never
+ * a server-minted one). */
+export function createCollection(id: string, encName: string, sealedKey: string): Promise<CollectionRow> {
+  return apiJson("/api/vault/collections", {
+    method: "POST",
+    body: JSON.stringify({ id, enc_name: encName, sealed_key: sealedKey }),
+  });
+}
+
+/** `GET /api/vault/collections` — every collection the caller currently
+ * holds a `collection_keys` row for (`collections.rs::list`). */
+export function listCollections(): Promise<CollectionRow[]> {
+  return apiJson("/api/vault/collections");
+}
+
+/** `PUT /api/vault/items/{id}/collection` — `vault.rs::move_item`'s wire
+ * contract (SHARE-04's Vaultwarden #6269 fix): moves an item into a
+ * collection (`newCollectionId` non-null) or back to personal scope
+ * (`newCollectionId` null). `encKey`/`encData` must already be re-encrypted
+ * CLIENT-SIDE under the DESTINATION scope's key/AAD before calling this —
+ * this wrapper is a thin wire pass-through, never a crypto orchestrator
+ * (that re-encrypt-under-destination-scope logic is Plan 26-08's job). */
+export function moveItemToCollection(
+  id: string,
+  newCollectionId: string | null,
+  encKey: string,
+  encData: string,
+  expectedRevision: number,
+): Promise<{ revision: number; collection_id: string | null; updated_at: string }> {
+  return apiJson(`/api/vault/items/${encodeURIComponent(id)}/collection`, {
+    method: "PUT",
+    body: JSON.stringify({
+      new_collection_id: newCollectionId,
+      enc_key: encKey,
+      enc_data: encData,
+      expected_revision: expectedRevision,
+    }),
+  });
 }
 
 export function listFolders(): Promise<FolderRow[]> {

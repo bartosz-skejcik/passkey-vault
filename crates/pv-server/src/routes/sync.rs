@@ -266,6 +266,11 @@ pub async fn pull_shared_collection(
                 // construction (Pitfall A's whole point) — unconditionally
                 // `true`, never derived from a second query.
                 is_shared: true,
+                // Phase 26, Plan 01: every row here is scoped to THIS
+                // collection by construction (the `WHERE collection_id = ?`
+                // above) — the membership extractor's own resource_id, never
+                // a second query.
+                collection_id: Some(membership.resource_id.clone()),
                 last_editor_email: row.try_get("last_editor_email").map_err(|_| ApiError::Internal)?,
             })
         })
@@ -350,6 +355,11 @@ pub async fn pull_shared_direct(
                 // construction (the `JOIN item_shares` above) — unconditionally
                 // `true`, never derived from a second query.
                 is_shared: true,
+                // Phase 26, Plan 01: this query is pinned to
+                // `vault_items.collection_id IS NULL` above — every row
+                // returned is a personal item shared directly, never
+                // collection-scoped.
+                collection_id: None,
                 last_editor_email: row.try_get("last_editor_email").map_err(|_| ApiError::Internal)?,
             })
         })
