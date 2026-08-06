@@ -615,7 +615,7 @@ async fn fetch_items_for_is_shared() {
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
+            "id": "3fd629b1-1c2f-40c9-8716-05d9b701f110","enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
             "sealed_key": "{\"nonce\":\"BBBB\",\"ciphertext\":\"sealed-coll-key-owner\"}",
         })),
     )
@@ -695,7 +695,7 @@ async fn stale_revision_conflict_attribution_on_shared_item_returns_last_editor_
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
+            "id": "9f150841-91e6-439a-b428-ed7cf9661a50","enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
             "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
         })),
     )

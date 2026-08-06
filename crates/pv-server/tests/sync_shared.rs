@@ -129,7 +129,7 @@ async fn setup_shared_fixture(pool: sqlx::SqlitePool) -> SharedFixture {
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
+            "id": "63b2bfb3-0e67-4aed-abbb-0c08e878f2ff","enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
             "sealed_key": "{\"nonce\":\"BBBB\",\"ciphertext\":\"sealed-coll-key-owner\"}",
         })),
     )
@@ -414,7 +414,7 @@ async fn setup_dual_collection_fixture(pool: sqlx::SqlitePool) -> DualCollection
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "{\"nonce\":\"OOOO\",\"ciphertext\":\"coll-a-name\"}",
+            "id": "253367ac-6c6e-4a60-a22a-15424a7f429b","enc_name": "{\"nonce\":\"OOOO\",\"ciphertext\":\"coll-a-name\"}",
             "sealed_key": "{\"nonce\":\"PPPP\",\"ciphertext\":\"sealed-coll-a-owner\"}",
         })),
     )
@@ -442,7 +442,7 @@ async fn setup_dual_collection_fixture(pool: sqlx::SqlitePool) -> DualCollection
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "{\"nonce\":\"RRRR\",\"ciphertext\":\"coll-b-name\"}",
+            "id": "56a05a74-6a03-4735-b146-c46ae0dda784","enc_name": "{\"nonce\":\"RRRR\",\"ciphertext\":\"coll-b-name\"}",
             "sealed_key": "{\"nonce\":\"SSSS\",\"ciphertext\":\"sealed-coll-b-owner\"}",
         })),
     )
@@ -864,7 +864,7 @@ async fn revoked_creator_of_shared_item_receives_zero_events_and_no_vault_revisi
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
+            "id": "b3270bfd-c942-4a3f-837c-ddcaef36bfc4","enc_name": "{\"nonce\":\"AAAA\",\"ciphertext\":\"coll-name\"}",
             "sealed_key": "{\"nonce\":\"BBBB\",\"ciphertext\":\"sealed-coll-key-owner\"}",
         })),
     )
@@ -1085,7 +1085,7 @@ async fn share_then_move_into_collection_bumps_recipients_direct_revision_and_re
         "/api/vault/collections",
         &owner_token,
         Some(json!({
-            "enc_name": "{\"nonce\":\"FFFF\",\"ciphertext\":\"coll-name\"}",
+            "id": "cef09378-ecd0-4998-8bc9-da60959e7cb7","enc_name": "{\"nonce\":\"FFFF\",\"ciphertext\":\"coll-name\"}",
             "sealed_key": "{\"nonce\":\"GGGG\",\"ciphertext\":\"sealed-coll-key-owner\"}",
         })),
     )

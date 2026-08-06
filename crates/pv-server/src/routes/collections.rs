@@ -46,12 +46,44 @@ use crate::{error::ApiError, AppState};
 
 #[derive(Deserialize)]
 pub struct CreateCollectionRequest {
+    /// A-1 (26-CONTEXT.md, WR-09 fix): client-minted UUID-v4. MUST be
+    /// generated and shape-validated client-side BEFORE `enc_name` is
+    /// encrypted, because `enc_name`'s AAD is bound to this exact id
+    /// (`encryptItemForCollection(ck, name, id, id, 1)`) — minting it
+    /// server-side (the old behavior) meant no real client could ever
+    /// produce a decryptable name, since the id the AAD was bound to did not
+    /// exist yet at encryption time. Shape-validated in `create()` below
+    /// BEFORE any DB work (mirrors `invitations.rs:114-129`'s
+    /// fail-closed-before-DB-work discipline); a collision is mapped to a
+    /// clean `ApiError::Conflict` (409), never a raw `sqlx::Error`-propagated
+    /// 500.
+    pub id: String,
     /// Symmetric blob: the collection's name encrypted client-side under a
     /// freshly-generated `CollectionKey` — never decrypted server-side.
     pub enc_name: String,
     /// The SAME fresh `CollectionKey`, `seal()`ed client-side to the
     /// CREATOR's own `IdentityPublicKey` — never unwrapped server-side.
     pub sealed_key: String,
+}
+
+/// Shape-validates a client-minted collection id as UUID-v4: exactly 36
+/// characters, hyphens at positions 8/13/18/23, hex digits everywhere else.
+/// Mirrors `invitations.rs:114-129`'s "reject before touching the PK column"
+/// discipline — called BEFORE any DB work in `create()` below, so a
+/// malformed/oversized string can never reach the INSERT or get echoed back
+/// in a response.
+fn validate_collection_id_shape(id: &str) -> Result<(), ApiError> {
+    let bytes = id.as_bytes();
+    let shape_ok = bytes.len() == 36
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(i, &b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { b.is_ascii_hexdigit() });
+    if shape_ok {
+        Ok(())
+    } else {
+        Err(ApiError::BadRequest("id must be a 36-character UUID-v4 string".into()))
+    }
 }
 
 #[derive(Serialize)]
@@ -90,19 +122,32 @@ pub async fn create(
     family: ActiveFamilyMembership<RequireRead>,
     Json(req): Json<CreateCollectionRequest>,
 ) -> Result<(StatusCode, Json<CollectionResponse>), ApiError> {
+    // A-1 (WR-09 fix): shape-validate the client-minted id BEFORE any DB
+    // work — same discipline as the blob-length checks below.
+    validate_collection_id_shape(&req.id)?;
     validate_blob_len("enc_name", &req.enc_name)?;
     validate_blob_len("sealed_key", &req.sealed_key)?;
 
     let mut tx = state.db.begin().await?;
 
-    let id = uuid::Uuid::new_v4().to_string();
+    let id = req.id;
 
-    let row = sqlx::query("INSERT INTO collections (id, family_id, enc_name) VALUES (?, ?, ?) RETURNING created_at")
-        .bind(&id)
-        .bind(&family.family_id)
-        .bind(&req.enc_name)
-        .fetch_one(&mut *tx)
-        .await?;
+    // ON CONFLICT DO NOTHING RETURNING + fetch_optional (mirrors
+    // `insert_collection_key`'s own idiom, `collections.rs:294-313`) — a
+    // colliding client-minted id must surface as a clean `ApiError::Conflict`
+    // (409), never a raw `?`-propagated `sqlx::Error` falling through
+    // `error.rs:74-79`'s blanket `From<sqlx::Error>` mapping to an
+    // undifferentiated 500.
+    let row = sqlx::query(
+        "INSERT INTO collections (id, family_id, enc_name) VALUES (?, ?, ?) \
+         ON CONFLICT(id) DO NOTHING RETURNING created_at",
+    )
+    .bind(&id)
+    .bind(&family.family_id)
+    .bind(&req.enc_name)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let row = row.ok_or_else(|| ApiError::Conflict("a collection with this id already exists".into()))?;
     let created_at: String = row.try_get("created_at").map_err(|_| ApiError::Internal)?;
 
     // access_level is a hard-coded literal 'edit' here, NEVER taken from the
