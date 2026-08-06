@@ -314,6 +314,10 @@ describe("ItemContextMenu", () => {
       <ItemContextMenu item={item} onClose={vi.fn()} onEdit={vi.fn()} onDeleteRequest={vi.fn()} />,
     );
     expect(screen.getByTestId("context-menu-share")).toBeInTheDocument();
+    // 26-12a gap fix: the entry-point label must be the dedicated
+    // `share.shareThisItem` key, not ShareDialog's own `share.ctaItem`
+    // submit CTA this button opens.
+    expect(screen.getByTestId("context-menu-share")).toHaveTextContent("share.shareThisItem");
     expect(screen.queryByTestId("mock-share-dialog")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("context-menu-share"));

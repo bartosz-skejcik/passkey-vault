@@ -688,6 +688,10 @@ describe("DetailPanel Share entry point (E1, 26-09-PLAN.md)", () => {
     const shareButton = screen.getByTestId("detail-panel-share");
     const editButton = screen.getByTestId("detail-panel-edit");
     expect(shareButton).toBeInTheDocument();
+    // 26-12a gap fix: the icon's aria-label must be the dedicated
+    // `share.shareThisItem` key, not ShareDialog's own `share.ctaItem`
+    // submit CTA this icon opens.
+    expect(shareButton).toHaveAttribute("aria-label", "share.shareThisItem");
     // Positioned BEFORE Edit in the header's icon-button row.
     expect(
       shareButton.compareDocumentPosition(editButton) & Node.DOCUMENT_POSITION_FOLLOWING,

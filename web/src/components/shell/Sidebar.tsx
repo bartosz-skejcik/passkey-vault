@@ -302,7 +302,10 @@ export default function Sidebar({
                       tabIndex={0}
                       role="button"
                       data-testid={`sidebar-folder-menu-trigger-${folder.id}`}
-                      aria-label={t("share.ctaFolder")}
+                      // 26-12a gap fix: a dedicated entry-point aria-label,
+                      // distinct from ShareDialog's own `share.ctaFolder`
+                      // submit CTA the seeded folder-create variant opens.
+                      aria-label={t("share.shareThisFolder")}
                       className="btn btn-ghost btn-square btn-xs shrink-0 opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100"
                     >
                       <MoreVertical size={14} aria-hidden="true" />
@@ -320,7 +323,10 @@ export default function Sidebar({
                             setShareDialogScope({ kind: "folder", existingFolderId: folder.id })
                           }
                         >
-                          {t("share.ctaFolder")}
+                          {/* 26-12a gap fix: matches 26-UI-SPEC.md's own E2
+                              literal for this exact action verbatim, distinct
+                              from ShareDialog's `share.ctaFolder` submit CTA. */}
+                          {t("share.shareThisFolder")}
                         </button>
                       </li>
                     </ul>

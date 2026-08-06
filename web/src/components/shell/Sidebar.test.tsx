@@ -340,6 +340,17 @@ describe("Sidebar Shared folders section (E2, Plan 26-10)", () => {
     const menu = screen.getByTestId("sidebar-folder-menu-folder-1");
     expect(within(menu).getAllByRole("button")).toHaveLength(1);
 
+    // 26-12a gap fix: both the trigger's aria-label and the menu action's
+    // text must be the dedicated `share.shareThisFolder` key, not
+    // ShareDialog's own `share.ctaFolder` submit CTA this action opens.
+    expect(screen.getByTestId("sidebar-folder-menu-trigger-folder-1")).toHaveAttribute(
+      "aria-label",
+      "share.shareThisFolder",
+    );
+    expect(within(menu).getByTestId("sidebar-folder-share-folder-1")).toHaveTextContent(
+      "share.shareThisFolder",
+    );
+
     fireEvent.click(within(menu).getByTestId("sidebar-folder-share-folder-1"));
 
     expect(screen.getByTestId("share-dialog-stub-scope")).toHaveTextContent(

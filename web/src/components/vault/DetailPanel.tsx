@@ -317,7 +317,12 @@ export default function DetailPanel({
                 <button
                   type="button"
                   data-testid="detail-panel-share"
-                  aria-label={t("share.ctaItem")}
+                  // 26-12a gap fix: a dedicated entry-point aria-label,
+                  // distinct from ShareDialog's own `share.ctaItem` submit
+                  // CTA this icon opens — a screen reader announcing "Share
+                  // item" on a button that merely OPENS the dialog would
+                  // misdescribe the action.
+                  aria-label={t("share.shareThisItem")}
                   className="btn btn-ghost btn-square btn-sm"
                   onClick={() => setShareDialogOpen(true)}
                 >

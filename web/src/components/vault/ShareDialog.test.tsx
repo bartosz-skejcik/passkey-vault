@@ -11,6 +11,7 @@ const {
   mockCreateCollection,
   mockMoveItemToCollection,
   mockListItems,
+  mockListCollections,
   mockCreateItemShare,
   mockAddCollectionMember,
   mockGetItems,
@@ -24,11 +25,16 @@ const {
   mockEnsureOwnIdentityKeypair,
   mockBase64Decode,
   mockMe,
+  mockSubscribeLockState,
+  mockIsUnlocked,
+  mockUnsealCollectionKey,
+  mockDecryptItemForCollection,
 } = vi.hoisted(() => ({
   mockGetFamilyMembers: vi.fn(),
   mockCreateCollection: vi.fn(),
   mockMoveItemToCollection: vi.fn(),
   mockListItems: vi.fn(),
+  mockListCollections: vi.fn(),
   mockCreateItemShare: vi.fn(),
   mockAddCollectionMember: vi.fn(),
   mockGetItems: vi.fn(),
@@ -42,6 +48,16 @@ const {
   mockEnsureOwnIdentityKeypair: vi.fn(),
   mockBase64Decode: vi.fn(),
   mockMe: vi.fn(),
+  // 26-12a gap fix (collections-store readback test): collections.ts's own
+  // top-level `subscribeLockState(...)` side effect runs the instant this
+  // real (unmocked) module loads -- ShareDialog.tsx now imports
+  // `refreshCollectionsNow` from it -- so this mock must exist with a safe
+  // default (no-op unsubscribe) BEFORE any test body runs, not merely
+  // inside beforeEach.
+  mockSubscribeLockState: vi.fn(() => () => {}),
+  mockIsUnlocked: vi.fn(() => true),
+  mockUnsealCollectionKey: vi.fn(),
+  mockDecryptItemForCollection: vi.fn(),
 }));
 
 class FakeWasmCollectionKey {
@@ -59,6 +75,7 @@ vi.mock("@/lib/vault/api", () => ({
   createCollection: mockCreateCollection,
   moveItemToCollection: mockMoveItemToCollection,
   listItems: mockListItems,
+  listCollections: mockListCollections,
   createItemShare: mockCreateItemShare,
   addCollectionMember: mockAddCollectionMember,
 }));
@@ -77,6 +94,15 @@ vi.mock("@/lib/crypto", () => ({
   sealItemKeyForRecipient: mockSealItemKeyForRecipient,
   WasmCollectionKey: { generate: () => new FakeWasmCollectionKey() },
   WasmIdentityPublicKey: { fromBytes: () => new FakeWasmIdentityPublicKey() },
+  // Consumed by the real (unmocked) @/lib/vault/collections.ts module,
+  // which ShareDialog.tsx now imports `refreshCollectionsNow` from
+  // (26-12a gap fix) -- collections.ts is deliberately NOT mocked in this
+  // file so the "collections store integration" test below can prove a
+  // genuine readback through its own exported getCollections().
+  subscribeLockState: mockSubscribeLockState,
+  isUnlocked: mockIsUnlocked,
+  unsealCollectionKey: mockUnsealCollectionKey,
+  decryptItemForCollection: mockDecryptItemForCollection,
 }));
 
 vi.mock("@/lib/identity/ensure", () => ({
@@ -121,6 +147,11 @@ import ShareDialog from "./ShareDialog";
 import { DICTIONARY } from "@/lib/i18n/dictionary";
 import type { FamilyMemberRecord } from "@/lib/families/api";
 import type { VaultItem, Folder } from "@/lib/vault/types";
+import type { CollectionRow } from "@/lib/vault/api";
+// Real, unmocked -- this is the module under test for the "collections
+// store integration" describe block below (proves a genuine readback, not
+// a spy on a refresh function having been called).
+import { getCollections } from "@/lib/vault/collections";
 
 const SELF = { user_id: "self-1", email: "self@example.test", pw_wrapped_uk: "x" };
 
@@ -206,6 +237,13 @@ beforeEach(() => {
   mockCreateItemShare.mockResolvedValue(undefined);
   mockAddCollectionMember.mockResolvedValue(undefined);
   mockMoveItemToCollection.mockResolvedValue({ revision: 4, collection_id: "col-1", updated_at: "" });
+  // Defaults for the real (unmocked) @/lib/vault/collections.ts module's own
+  // dependencies -- see the "@/lib/crypto" mock comment above. Individual
+  // tests in the "collections store integration" describe block below
+  // override these to prove a genuine readback.
+  mockListCollections.mockResolvedValue([]);
+  mockUnsealCollectionKey.mockReturnValue(new FakeWasmCollectionKey());
+  mockDecryptItemForCollection.mockReturnValue('{"name":"unused"}');
 });
 
 async function waitForPopulated() {
@@ -466,6 +504,121 @@ describe("ShareDialog", () => {
       // silently closing) -- onShared() is deliberately NOT called when
       // there's a seed-move failure to report, so the user actually sees it.
       expect(screen.getByTestId("share-dialog")).toBeInTheDocument();
+    });
+  });
+
+  // 26-12a gap fix: 26-12-SUMMARY.md declared that a freshly-created
+  // collection did not appear in CollectionPicker until the next unlock/
+  // sync tick, since @/lib/vault/collections.ts was never invalidated after
+  // a successful createCollection. This describe block proves the fix at
+  // the level that would actually catch a regression: reading the STORE's
+  // own exported getCollections() back after a real submit, not spying on
+  // whether some refresh function was merely CALLED (a spy would stay green
+  // even if the refresh silently failed to decrypt/unseal correctly).
+  describe("collections store integration (26-12a gap fix)", () => {
+    const SCOPE = { kind: "folder" as const, existingFolderId: null };
+
+    it("a newly-created folder is observable through getCollections() immediately after submit, without a separate unlock/sync tick", async () => {
+      let createdRow: CollectionRow | null = null;
+      mockCreateCollection.mockImplementation(
+        async (id: string, encName: string, sealedKey: string) => {
+          createdRow = {
+            id,
+            enc_name: encName,
+            created_at: "",
+            access_level: "edit",
+            sealed_key: sealedKey,
+          };
+          return createdRow;
+        },
+      );
+      mockListCollections.mockImplementation(async () => (createdRow ? [createdRow] : []));
+      // Pass-through name en/decoding (not real crypto) so the store's own
+      // decrypted `name` genuinely reflects what was typed below --
+      // proving the store's real read path returns the RIGHT collection,
+      // not merely that some entry with an arbitrary name now exists.
+      mockEncryptItemForCollection.mockImplementation(
+        (_key: unknown, plaintext: string) => plaintext,
+      );
+      mockDecryptItemForCollection.mockImplementation(
+        (_key: unknown, encName: string) => encName,
+      );
+      mockUnsealCollectionKey.mockReturnValue(new FakeWasmCollectionKey());
+
+      expect(getCollections().some((c) => c.name === "Wakacje 2026")).toBe(false);
+
+      const onShared = vi.fn();
+      render(
+        <ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />,
+      );
+      await waitForPopulated();
+      fireEvent.change(screen.getByTestId("share-folder-name-input"), {
+        target: { value: "Wakacje 2026" },
+      });
+      selectRecipient(MEMBER_A.user_id);
+      chooseAccessLevel("edit");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalledTimes(1));
+
+      // The proof: the store's OWN getter now returns the new collection --
+      // read back through the exact same code path CollectionPicker.tsx's
+      // useCollections() hook consumes.
+      await waitFor(() => {
+        expect(getCollections().some((c) => c.name === "Wakacje 2026")).toBe(true);
+      });
+    });
+
+    it("does not leak a WasmCollectionKey handle -- the refreshed collection's unwrapped key is a freshly cached one, not the dialog's own freed submit-time handle", async () => {
+      // T-26-10 (collections.ts's own lock-lifecycle discipline, see its
+      // module doc comment): the dialog's OWN `newCk` is freed in
+      // `submitFolderVariant`'s `finally` block regardless of outcome --
+      // this test proves the STORE's separately-cached handle (populated by
+      // its own unsealCollectionKey call inside refreshCollectionsNow) is a
+      // distinct object, never the dialog's already-freed one re-used.
+      let createdRow: CollectionRow | null = null;
+      mockCreateCollection.mockImplementation(
+        async (id: string, encName: string, sealedKey: string) => {
+          createdRow = {
+            id,
+            enc_name: encName,
+            created_at: "",
+            access_level: "edit",
+            sealed_key: sealedKey,
+          };
+          return createdRow;
+        },
+      );
+      mockListCollections.mockImplementation(async () => (createdRow ? [createdRow] : []));
+      mockEncryptItemForCollection.mockImplementation(
+        (_key: unknown, plaintext: string) => plaintext,
+      );
+      mockDecryptItemForCollection.mockImplementation(
+        (_key: unknown, encName: string) => encName,
+      );
+      const storeHandle = new FakeWasmCollectionKey();
+      mockUnsealCollectionKey.mockReturnValue(storeHandle);
+
+      render(
+        <ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />,
+      );
+      await waitForPopulated();
+      fireEvent.change(screen.getByTestId("share-folder-name-input"), {
+        target: { value: "Rodzina" },
+      });
+      selectRecipient(MEMBER_A.user_id);
+      chooseAccessLevel("read");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() =>
+        expect(getCollections().some((c) => c.name === "Rodzina")).toBe(true),
+      );
+
+      // The store's own cached handle (produced by ITS OWN unsealCollectionKey
+      // call) is never freed as a side effect of the dialog's own submit-time
+      // cleanup -- it stays usable for the collection-scoped decrypt dispatch
+      // store.ts::decryptItemRow performs.
+      expect(storeHandle.free).not.toHaveBeenCalled();
     });
   });
 

@@ -165,6 +165,26 @@ export function useCollections(): Collection[] {
   return useSyncExternalStore(subscribeCollections, getCollections, getEmptySnapshot);
 }
 
+/** Manually triggers the SAME re-fetch/re-decrypt every cached collection
+ * otherwise only undergoes on unlock (or A-5's `onSharedRevisions`
+ * watermark tick) — exported for `ShareDialog.tsx`'s folder-create variant
+ * to call immediately after a successful `createCollection`.
+ *
+ * 26-12a gap fix: without this, a freshly-created folder was invisible in
+ * `CollectionPicker` until one of those two unrelated external triggers
+ * happened to fire (declared, not silently shipped, as 26-12-SUMMARY.md's
+ * own `eventual-consistency-gap` threat flag — this store was outside that
+ * plan's declared `files_modified`). Shares `refreshCollections()`'s own
+ * lock-race safety (re-checked before AND after its internal `await`
+ * steps) — a no-op if the vault has since locked. Can reject (e.g. a
+ * transient network failure); callers that want this to be best-effort
+ * (never turning a successful share into a visible error) must catch at
+ * the call site — this function itself does not swallow errors, so a
+ * caller that DOES want to surface a refresh failure still can. */
+export function refreshCollectionsNow(): Promise<void> {
+  return refreshCollections();
+}
+
 // Module-level side effect (mirrors store.ts's own subscribeLockState side
 // effect): unlocking the vault triggers a refresh; locking frees every
 // cached key handle and clears the in-memory list immediately, so no stale

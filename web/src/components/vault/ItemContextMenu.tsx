@@ -210,7 +210,10 @@ export default function ItemContextMenu({
               data-testid="context-menu-share"
               onClick={() => setShareDialogOpen(true)}
             >
-              {t("share.ctaItem")}
+              {/* 26-12a gap fix: a dedicated entry-point label, distinct
+                  from ShareDialog's own `share.ctaItem` submit CTA this
+                  entry opens. */}
+              {t("share.shareThisItem")}
             </button>
           </li>
         )
