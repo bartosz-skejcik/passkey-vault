@@ -1704,6 +1704,60 @@ describe("onSharedRevisions (A-5 / Phase 23 inherited obligation, fixed by 26-14
     expect(merged?.collectionId).toBeNull();
     expect(merged?.undecryptable).toBe(false);
   });
+
+  // WR-06 (code review, Phase 26): every inner catch claimed "the next tick
+  // retries", but the OUTER watermark was reassigned unconditionally -- so
+  // the next tick saw the same payload as unchanged and returned before any
+  // per-collection watermark was consulted. A single dropped request left
+  // the recipient's shared items invisible for the rest of the session.
+  it("a failed sub-pull does NOT advance the outer watermark, so the very next identical payload retries", async () => {
+    const { callbacks } = await unlockWithTwoItems();
+    mockGetCollectionKey.mockReturnValue({});
+    mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+    mockGetCollectionSync.mockRejectedValueOnce(new Error("network drop"));
+
+    const revisions: SharedRevisions = {
+      collections: [{ id: "collection-retry", revision: 4 }],
+      direct: { revision: 0 },
+    };
+    await act(async () => {
+      await callbacks.onSharedRevisions?.(revisions);
+    });
+    expect(mockGetCollectionSync).toHaveBeenCalledTimes(1);
+
+    // The SAME payload on the next tick must still read as "changed".
+    mockGetCollectionSync.mockResolvedValueOnce({ revision: 4, items: [] });
+    await act(async () => {
+      await callbacks.onSharedRevisions?.(revisions);
+    });
+    expect(mockGetCollectionSync).toHaveBeenCalledTimes(2);
+
+    // ...and once it finally succeeds, the watermark DOES advance (no
+    // permanent re-fetch loop).
+    await act(async () => {
+      await callbacks.onSharedRevisions?.(revisions);
+    });
+    expect(mockGetCollectionSync).toHaveBeenCalledTimes(2);
+  });
+
+  it("withholding the watermark is bounded -- a permanently failing pull stops re-fetching after MAX_FAILED_MERGE_RETRIES", async () => {
+    const { callbacks } = await unlockWithTwoItems();
+    mockGetCollectionKey.mockReturnValue({});
+    mockGetCollectionSync.mockRejectedValue(new Error("permanent failure"));
+
+    const revisions: SharedRevisions = {
+      collections: [{ id: "collection-permafail", revision: 9 }],
+      direct: { revision: 0 },
+    };
+    for (let i = 0; i < 5; i++) {
+      await act(async () => {
+        await callbacks.onSharedRevisions?.(revisions);
+      });
+    }
+    // 3 attempts (the shared MAX_FAILED_MERGE_RETRIES budget), then the
+    // watermark advances and the poll loop stops hammering the server.
+    expect(mockGetCollectionSync).toHaveBeenCalledTimes(3);
+  });
 });
 
 // 26-14-PLAN.md (WINDOWS #9): a directly-shared item is now visible in

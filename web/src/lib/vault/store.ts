@@ -875,6 +875,14 @@ let sharedRevisionsWatermark: { collections: Map<string, number>; direct: number
   direct: 0,
 };
 
+// WR-06 (code review, Phase 26): CONSECUTIVE `handleSharedRevisions` passes
+// in which at least one sub-step failed. Mirrors `failedMergeAttempts`'s own
+// bounded-withholding discipline (and reuses its MAX_FAILED_MERGE_RETRIES
+// budget) so a transient failure genuinely retries while a permanent one
+// does not turn into a permanent re-fetch-every-tick loop. Reset on any
+// fully clean pass and on every unlock.
+let failedSharedRefreshAttempts = 0;
+
 /** `true` when `revisions` differs from the last-known watermark in ANY
  * field: a collection's revision changed, a collection is new (absent from
  * the watermark), or the synthetic "direct" bucket's revision changed. */
@@ -933,11 +941,23 @@ async function handleSharedRevisions(revisions: SharedRevisions): Promise<void> 
     return;
   }
 
+  // WR-06 (code review, Phase 26): every inner catch below used to claim
+  // "the next tick retries", but `sharedRevisionsWatermark` was reassigned
+  // UNCONDITIONALLY at the end -- so the next tick's
+  // `sharedRevisionsChanged()` compared the same payload against that
+  // watermark, returned false, and returned before any per-collection
+  // watermark was ever consulted. A single dropped request on the eager
+  // post-unlock `refreshSharedItemsNow()` therefore left the recipient's
+  // shared items invisible for the REST OF THE SESSION -- exactly the
+  // user-visible symptom WINDOWS #8/#9 were opened for.
+  let anyStepFailed = false;
+
   try {
     await refreshCollectionsNow();
   } catch {
     // Transient network failure -- the next revisions tick retries, same
     // self-healing rationale as every other pull in this module.
+    anyStepFailed = true;
   }
   if (getUnlockedUserKey() === null) {
     return;
@@ -971,6 +991,7 @@ async function handleSharedRevisions(revisions: SharedRevisions): Promise<void> 
     } catch {
       // Transient -- next tick retries (this collection's own watermark is
       // untouched on failure, so it stays "needs a pull" until it succeeds).
+      anyStepFailed = true;
     }
   }
 
@@ -985,15 +1006,34 @@ async function handleSharedRevisions(revisions: SharedRevisions): Promise<void> 
         }
       } catch {
         // Transient -- next tick retries.
+        anyStepFailed = true;
       }
     }
   }
 
   recomputeItems(); // covers the purge-only case above with no new merge call
-  sharedRevisionsWatermark = {
-    collections: new Map(revisions.collections.map((collection) => [collection.id, collection.revision])),
-    direct: revisions.direct.revision,
-  };
+  // WR-06: only record this payload as merged when every step actually
+  // succeeded -- otherwise the next tick must see the SAME payload as
+  // "changed" and retry. Bounded by MAX_FAILED_MERGE_RETRIES for the same
+  // reason `applySyncSnapshot` bounds its own withholding (WR-01, iteration
+  // 2): a PERMANENT failure would otherwise become a permanent
+  // re-fetch-every-tick loop with no recovery path. Reset on any fully
+  // clean pass and on every unlock.
+  if (!anyStepFailed) {
+    failedSharedRefreshAttempts = 0;
+    sharedRevisionsWatermark = {
+      collections: new Map(revisions.collections.map((collection) => [collection.id, collection.revision])),
+      direct: revisions.direct.revision,
+    };
+  } else {
+    failedSharedRefreshAttempts += 1;
+    if (failedSharedRefreshAttempts >= MAX_FAILED_MERGE_RETRIES) {
+      sharedRevisionsWatermark = {
+        collections: new Map(revisions.collections.map((collection) => [collection.id, collection.revision])),
+        direct: revisions.direct.revision,
+      };
+    }
+  }
 }
 
 /** Eager first attempt at the SAME refresh `handleSharedRevisions` performs
@@ -1038,6 +1078,7 @@ const syncCallbacks: SyncCallbacks = {
 subscribeLockState(() => {
   if (isUnlocked()) {
     sharedRevisionsWatermark = { collections: new Map(), direct: 0 };
+    failedSharedRefreshAttempts = 0;
     collectionRevisionWatermark = new Map();
     directRevisionWatermark = 0;
     void loadAndDecryptAll();
