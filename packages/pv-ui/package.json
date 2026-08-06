@@ -49,6 +49,14 @@
     "./components/*": {
       "types": "./components/*.tsx",
       "default": "./components/*.tsx"
+    },
+    "./identity/fingerprint": {
+      "types": "./identity/fingerprint.ts",
+      "default": "./identity/fingerprint.ts"
+    },
+    "./identity/fingerprintWordlist": {
+      "types": "./identity/fingerprintWordlist.ts",
+      "default": "./identity/fingerprintWordlist.ts"
     }
   },
   "peerDependencies": {
@@ -56,10 +64,14 @@
     "react-dom": "19.2.7",
     "lucide-react": "1.24.0"
   },
+  "scripts": {
+    "test": "vitest run"
+  },
   "devDependencies": {
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "lucide-react": "1.24.0",
-    "@types/react": "19.2.17"
+    "@types/react": "19.2.17",
+    "vitest": "^3.2.4"
   }
 }
