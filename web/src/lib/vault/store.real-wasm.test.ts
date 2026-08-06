@@ -18,15 +18,17 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetSyncSnapshot, mockListCollections } = vi.hoisted(() => ({
+const { mockGetSyncSnapshot, mockListCollections, mockUpdateItem } = vi.hoisted(() => ({
   mockGetSyncSnapshot: vi.fn(),
   mockListCollections: vi.fn(),
+  mockUpdateItem: vi.fn(),
 }));
 
 vi.mock("./api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api")>()),
   getSyncSnapshot: mockGetSyncSnapshot,
   listCollections: mockListCollections,
+  updateItem: mockUpdateItem,
 }));
 
 const { mockEnsureOwnIdentityKeypair } = vi.hoisted(() => ({
@@ -46,9 +48,10 @@ import {
   WasmIdentityPublicKey,
   sealCollectionKey,
   encryptItemForCollection,
+  decryptItemForCollection,
 } from "@/lib/crypto";
 import { getCollectionKey } from "@/lib/vault/collections";
-import { getItems } from "./store";
+import { getItems, updateVaultItem } from "./store";
 import type { SyncSnapshot } from "./api";
 
 beforeAll(async () => {
@@ -192,6 +195,165 @@ describe("store.ts decrypt dispatch: a real collection-scoped item decrypts and 
         folderId: null,
         tags: [],
       });
+    } finally {
+      lockVault();
+      ck.free?.();
+    }
+  });
+});
+
+// 26-05a (live data-corruption fix): mirrors the describe block above, but
+// proves the ENCRYPT side -- store.ts::updateVaultItem's own scope dispatch
+// (deferred-items.md's original finding). A test that only asserted
+// "encryptItemForCollection was called" would NOT prove the item is still
+// readable afterwards -- this test decrypts the exact ciphertext
+// updateVaultItem sent to the (mocked) server, through the real collection
+// path, and asserts the plaintext round-trips.
+describe("store.ts encrypt dispatch: updateVaultItem re-encrypts a collection-scoped item so it is STILL decryptable through the collection path (real WASM, network mocked)", () => {
+  it("a saved edit's ciphertext decrypts back to the new fields via decryptItemForCollection under the SAME collection key", async () => {
+    const identityKey = WasmIdentityKey.generate();
+    mockEnsureOwnIdentityKeypair.mockResolvedValue(identityKey);
+
+    const collectionId = "collection-encrypt-proof";
+    const ck = WasmCollectionKey.generate();
+    const identityPub = WasmIdentityPublicKey.fromBytes(identityKey.publicKeyBytes());
+    let sealedKey: string;
+    try {
+      sealedKey = sealCollectionKey(identityPub, ck);
+    } finally {
+      identityPub.free?.();
+    }
+    const collectionEncName = encryptItemForCollection(
+      ck,
+      JSON.stringify({ name: "Encrypt Proof Folder" }),
+      collectionId,
+      collectionId,
+      1,
+    );
+    mockListCollections.mockResolvedValue([
+      {
+        id: collectionId,
+        enc_name: collectionEncName,
+        created_at: "2026-08-06T00:00:00Z",
+        access_level: "edit",
+        sealed_key: sealedKey,
+      },
+    ]);
+
+    const itemId = "item-encrypt-proof";
+    const originalRevision = 1;
+    const originalPlaintext = JSON.stringify({
+      type: "note",
+      name: "Original Shared Secret",
+      body: "before the edit",
+      folderId: null,
+      tags: [],
+    });
+    const originalCombined = encryptItemForCollection(
+      ck,
+      originalPlaintext,
+      collectionId,
+      itemId,
+      originalRevision,
+    );
+    const { encKey: origEncKey, encData: origEncData } = splitEncryptedItem(originalCombined);
+
+    // Same deferred-snapshot sequencing as the decrypt-dispatch proof above:
+    // deterministically ensures the initial load merges AFTER the
+    // collection key is genuinely cached, so the item is present in
+    // getItems() (with a real collectionId) BEFORE updateVaultItem is
+    // called -- updateVaultItem's own dispatch reads that in-memory item's
+    // collectionId via its `existingBeforeSave` lookup.
+    let resolveSnapshot: (snapshot: SyncSnapshot) => void = () => {
+      throw new Error("resolveSnapshot called before assignment");
+    };
+    const snapshotPromise = new Promise<SyncSnapshot>((resolve) => {
+      resolveSnapshot = resolve;
+    });
+    mockGetSyncSnapshot.mockReturnValue(snapshotPromise);
+
+    const uk = generateUserKey();
+    try {
+      setUnlockedUserKey(uk);
+
+      await vi.waitFor(() => expect(getCollectionKey(collectionId)).toBeDefined());
+
+      resolveSnapshot({
+        revision: 1,
+        items: [
+          {
+            id: itemId,
+            enc_key: origEncKey,
+            enc_data: origEncData,
+            revision: originalRevision,
+            updated_at: "2026-08-06T00:00:00Z",
+            last_used_at: null,
+            is_shared: true,
+            collection_id: collectionId,
+            last_editor_email: null,
+          },
+        ],
+        folders: [],
+      });
+
+      await vi.waitFor(() => expect(getItems().find((item) => item.id === itemId)).toBeDefined());
+      const beforeEdit = getItems().find((item) => item.id === itemId);
+      if (beforeEdit === undefined) {
+        throw new Error("expected the collection-scoped item to be present before the edit");
+      }
+      expect(beforeEdit.collectionId).toBe(collectionId);
+
+      // Capture the exact wire args updateVaultItem sends -- this is the
+      // real proof surface, not a spy assertion on which function was
+      // called.
+      let capturedEncKey: string | undefined;
+      let capturedEncData: string | undefined;
+      mockUpdateItem.mockImplementation(
+        (_id: string, encKey: string, encData: string, _expectedRevision: number) => {
+          capturedEncKey = encKey;
+          capturedEncData = encData;
+          return Promise.resolve({ revision: 2, updated_at: "2026-08-06T00:05:00Z" });
+        },
+      );
+
+      const newFields = {
+        type: "note" as const,
+        name: "Edited Shared Secret",
+        body: "after the edit -- via a full-edit member",
+        folderId: null,
+        tags: ["family"],
+      };
+
+      const updated = await updateVaultItem(itemId, newFields, originalRevision);
+
+      // The dispatch reached the server call at all (never blocked).
+      expect(mockUpdateItem).toHaveBeenCalledTimes(1);
+      if (capturedEncKey === undefined || capturedEncData === undefined) {
+        throw new Error("updateItem was never called with wire ciphertext");
+      }
+
+      // THE central proof: decrypt the ciphertext updateVaultItem actually
+      // sent, through the REAL collection path, using the SAME collection
+      // key -- not a mock assertion, an actual successful AEAD open whose
+      // plaintext matches the new fields exactly.
+      const combinedForDecrypt = JSON.stringify({
+        enc_key: JSON.parse(capturedEncKey) as unknown,
+        enc_data: JSON.parse(capturedEncData) as unknown,
+      });
+      const roundTrippedPlaintext = decryptItemForCollection(
+        ck,
+        combinedForDecrypt,
+        collectionId,
+        itemId,
+        2, // originalRevision + 1, the AD-binding revision updateVaultItem used
+      );
+      expect(JSON.parse(roundTrippedPlaintext)).toEqual(newFields);
+
+      // The in-memory item was updated in place, still scoped to the same
+      // collection.
+      expect(updated.collectionId).toBe(collectionId);
+      expect(updated.revision).toBe(2);
+      expect(updated.fields).toEqual(newFields);
     } finally {
       lockVault();
       ck.free?.();

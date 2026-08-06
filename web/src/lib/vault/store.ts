@@ -8,6 +8,7 @@ import {
   decryptItem,
   decryptItemForCollection,
   encryptItem,
+  encryptItemForCollection,
   getUnlockedUserKey,
   isUnlocked,
   subscribeLockState,
@@ -78,6 +79,27 @@ export class UndecryptableItemError extends Error {
   constructor() {
     super("this item failed to decrypt during the last sync -- refresh before making changes");
     this.name = "UndecryptableItemError";
+  }
+}
+
+/** 26-05a (live data-corruption fix): thrown by `updateVaultItem` when a
+ * collection-scoped item's Collection Key isn't cached yet (`getCollectionKey`
+ * returns `undefined` -- collections.ts hasn't refreshed yet, or this
+ * collection's `sealed_key` never resolved, e.g. sealed to a different
+ * identity key). MUST fail the save loudly here rather than fall back to
+ * encrypting under the caller's personal User Key -- a fallback would
+ * silently re-encrypt a collection-scoped item's ciphertext under the wrong
+ * key, and on the very next sync merge it becomes permanently undecryptable
+ * via the collection path for every member, including whoever saved it (the
+ * original deferred-items.md finding this fix closes). A failed save is
+ * annoying and fully recoverable (retry once the key is cached); a silently
+ * corrupted item is neither. */
+export class CollectionKeyUnavailableError extends Error {
+  constructor(collectionId: string) {
+    super(
+      `cannot save -- the encryption key for collection ${collectionId} is not available yet; wait a moment and try again`,
+    );
+    this.name = "CollectionKeyUnavailableError";
   }
 }
 
@@ -417,7 +439,30 @@ export async function updateVaultItem(
   }
   const newRevision = currentRevision + 1;
   const plaintext = JSON.stringify(fields);
-  const combined = encryptItem(uk, plaintext, id, newRevision);
+  // 26-05a: mirrors decryptItemRow's own scope dispatch (26-05-PLAN.md) on
+  // the ENCRYPT side -- the gap deferred-items.md logged and this fix
+  // closes. `existingBeforeSave` (looked up above for the undecryptable
+  // guard) is also the only source of truth for this item's scope here: the
+  // caller-supplied `fields`/`currentRevision` carry no collection_id, and
+  // guessing "personal" for an item this client hasn't loaded yet preserves
+  // this function's pre-existing behavior for that edge case.
+  const collectionId = existingBeforeSave?.collectionId ?? null;
+  let combined: string;
+  if (collectionId === null) {
+    combined = encryptItem(uk, plaintext, id, newRevision);
+  } else {
+    // `ck` is a BORROWED reference into collections.ts's own long-lived
+    // cache (mirrors decryptItemRow's identical getCollectionKey lookup) --
+    // never freed here; collections.ts owns its lifecycle (freed on lock or
+    // on per-collection replacement, see collections.ts's own doc comment).
+    const ck = getCollectionKey(collectionId);
+    if (ck === undefined) {
+      // FAIL LOUD -- never fall back to the personal-key path below. See
+      // CollectionKeyUnavailableError's own doc comment for why.
+      throw new CollectionKeyUnavailableError(collectionId);
+    }
+    combined = encryptItemForCollection(ck, plaintext, collectionId, id, newRevision);
+  }
   const { encKey, encData } = splitCombinedEncryptedItem(combined);
   let response: { revision: number; updated_at: string };
   try {
