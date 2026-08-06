@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const {
   mockUseFolders,
@@ -10,6 +10,8 @@ const {
   mockShowCopyToast,
   mockTotpNow,
   mockUseCollections,
+  mockGetCollectionAccessList,
+  mockListItemShares,
 } = vi.hoisted(() => ({
   mockUseFolders: vi.fn(),
   mockUpdateVaultItem: vi.fn(),
@@ -19,6 +21,8 @@ const {
   mockShowCopyToast: vi.fn(),
   mockTotpNow: vi.fn(),
   mockUseCollections: vi.fn(),
+  mockGetCollectionAccessList: vi.fn(),
+  mockListItemShares: vi.fn(),
 }));
 
 vi.mock("@/lib/vault/store", () => ({
@@ -55,6 +59,16 @@ vi.mock("@/lib/vault/collections", () => ({
 // not ShareDialog's internals.
 vi.mock("./ShareDialog", () => ({
   default: () => null,
+}));
+
+// D-3/E5 (Plan 26-09, Task 2): AvatarStack is rendered for real (NOT
+// mocked) — this is the "at the real call site" re-verification the plan
+// asks for — its own data hook (useShareRecipients) is backed by
+// "@/lib/vault/api", mocked here per AvatarStack.test.tsx/
+// shareRecipients.test.ts's established convention.
+vi.mock("@/lib/vault/api", () => ({
+  getCollectionAccessList: mockGetCollectionAccessList,
+  listItemShares: mockListItemShares,
 }));
 
 vi.mock("@/lib/clipboard", () => ({
@@ -456,5 +470,66 @@ describe("ItemRow", () => {
       );
       expect(container.querySelector(".lucide-credit-card")).not.toBeNull();
     });
+  });
+});
+
+// D-3/E5 (26-UI-SPEC.md, Plan 26-09 Task 2): AvatarStack wiring at ItemRow's
+// real call site — reuses AvatarStack.tsx/useShareRecipients (Plan 26-06),
+// never a re-implementation. AvatarStack is rendered for real here (not
+// mocked); only its underlying "@/lib/vault/api" fetch is mocked.
+describe("ItemRow AvatarStack wiring (D-3/E5, Plan 26-09)", () => {
+  it("renders AvatarStack for a shared item's row", async () => {
+    mockGetCollectionAccessList.mockResolvedValue([
+      { user_id: "u1", email: "anna@example.com", access_level: "read", created_at: "t", suspended: false },
+    ]);
+    const sharedItem: VaultItem = { ...loginItem(), isShared: true, collectionId: "col-1" };
+    render(<ItemRow item={sharedItem} selected={false} onClick={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId("avatar-stack")).toBeInTheDocument());
+  });
+
+  it("renders no AvatarStack for a non-shared item's row", () => {
+    render(<ItemRow item={loginItem()} selected={false} onClick={vi.fn()} />);
+    expect(screen.queryByTestId("avatar-stack")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("avatar-stack-icon")).not.toBeInTheDocument();
+    expect(mockGetCollectionAccessList).not.toHaveBeenCalled();
+    expect(mockListItemShares).not.toHaveBeenCalled();
+  });
+
+  // E5's loading backstop, re-verified at this real call site: while the
+  // recipient fetch hasn't resolved, the row shows ZERO avatar circles —
+  // never a skeleton, never a placeholder.
+  it("renders zero avatar circles while a shared item's recipient data has not yet resolved", () => {
+    mockGetCollectionAccessList.mockReturnValue(new Promise(() => {})); // never resolves
+    const sharedItem: VaultItem = { ...loginItem(), isShared: true, collectionId: "col-loading" };
+    render(<ItemRow item={sharedItem} selected={false} onClick={vi.fn()} />);
+    expect(screen.queryByTestId("avatar-stack")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("avatar-stack-circle")).not.toBeInTheDocument();
+  });
+
+  // N+1 avoidance re-verified at the real list-row call site: a list of
+  // many items where only a FEW are shared must never trigger a fetch for
+  // the non-shared items, and items sharing the SAME collection reuse
+  // Plan 26-06's own two-tier cache (one fetch for the whole collection).
+  it("does not trigger a per-item fetch for non-shared items in a list, and reuses one fetch across items sharing a collection", async () => {
+    mockGetCollectionAccessList.mockResolvedValue([
+      { user_id: "u1", email: "anna@example.com", access_level: "read", created_at: "t", suspended: false },
+    ]);
+    const items: VaultItem[] = [
+      { ...loginItem({ name: "Shared A" }), id: "item-shared-a", isShared: true, collectionId: "col-many" },
+      { ...loginItem({ name: "Personal B" }), id: "item-personal-b" },
+      { ...loginItem({ name: "Shared C" }), id: "item-shared-c", isShared: true, collectionId: "col-many" },
+      { ...loginItem({ name: "Personal D" }), id: "item-personal-d" },
+    ];
+    render(
+      <>
+        {items.map((item) => (
+          <ItemRow key={item.id} item={item} selected={false} onClick={vi.fn()} />
+        ))}
+      </>,
+    );
+    await waitFor(() => expect(screen.getAllByTestId("avatar-stack")).toHaveLength(2));
+    expect(mockGetCollectionAccessList).toHaveBeenCalledTimes(1);
+    expect(mockGetCollectionAccessList).toHaveBeenCalledWith("col-many");
+    expect(mockListItemShares).not.toHaveBeenCalled();
   });
 });

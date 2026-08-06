@@ -28,6 +28,7 @@ import ItemForm from "./ItemForm";
 import DeleteConfirmDialog from "./DeleteConfirmDialog";
 import ShareDialog from "./ShareDialog";
 import ItemIconTile from "./ItemIconTile";
+import AvatarStack from "./AvatarStack";
 
 // Fields shaped as generic string values, rendered through a Label+value
 // loop — `folderId` and `tags` are special-cased below instead (they need
@@ -266,7 +267,7 @@ export default function DetailPanel({
     >
       <div className="flex items-start justify-between gap-2">
         {mode === "view" ? (
-          <h2 className="flex items-center gap-2 text-[20px] font-bold leading-[1.2]">
+          <h2 className="flex min-w-0 items-center gap-2 text-[20px] font-bold leading-[1.2]">
             {/* Bartek live-review round 3: favicon/card-brand tile also
                 surfaces here "for consistency" with the list row — scoped to
                 the same three types ItemRow's own tile treats specially. */}
@@ -275,7 +276,15 @@ export default function DetailPanel({
             item.fields.type === "card" ? (
               <ItemIconTile item={item} variant="header" />
             ) : null}
-            {item.fields.name}
+            <span className="truncate">{item.fields.name}</span>
+            {/* D-3/E5 (26-UI-SPEC.md): the header's metadata area — mirrors
+                ItemRow.tsx's identical AvatarStack wiring (Plan 26-06's
+                shared data source, never re-implemented). */}
+            {item.isShared === true ? (
+              <span className="shrink-0">
+                <AvatarStack item={item} />
+              </span>
+            ) : null}
           </h2>
         ) : (
           <h2 className="text-[20px] font-bold leading-[1.2]">{t("item.edit")}</h2>

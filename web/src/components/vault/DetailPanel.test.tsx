@@ -11,6 +11,8 @@ const {
   mockTotpNow,
   mockTouchVaultItem,
   mockUseCollections,
+  mockGetCollectionAccessList,
+  mockListItemShares,
   MockRevisionConflictError,
 } = vi.hoisted(() => ({
   mockUseFolders: vi.fn(),
@@ -22,6 +24,8 @@ const {
   mockTotpNow: vi.fn(),
   mockTouchVaultItem: vi.fn(),
   mockUseCollections: vi.fn(),
+  mockGetCollectionAccessList: vi.fn(),
+  mockListItemShares: vi.fn(),
   // vi.mock factories are hoisted above the rest of the file — any value
   // they reference (like this error class) must be created inside
   // vi.hoisted() too, or it's a "Cannot access before initialization" ReferenceError.
@@ -49,6 +53,15 @@ vi.mock("@/lib/vault/store", () => ({
 
 vi.mock("@/lib/vault/collections", () => ({
   useCollections: mockUseCollections,
+}));
+
+// D-3/E5 (Plan 26-09, Task 2): AvatarStack is rendered for real (NOT
+// mocked) in the header's metadata area — only its underlying
+// "@/lib/vault/api" fetch is mocked, per AvatarStack.test.tsx/
+// shareRecipients.test.ts's established convention.
+vi.mock("@/lib/vault/api", () => ({
+  getCollectionAccessList: mockGetCollectionAccessList,
+  listItemShares: mockListItemShares,
 }));
 
 // ShareDialog is a heavy, fully-covered-elsewhere component (Plan 26-08's
@@ -708,5 +721,28 @@ describe("DetailPanel Share entry point (E1, 26-09-PLAN.md)", () => {
     expect(screen.getByTestId("item-shared-on-collection-note")).toHaveTextContent(
       "share.itemSharedOnCollectionNote",
     );
+  });
+});
+
+// D-3/E5 (26-UI-SPEC.md, Plan 26-09 Task 2): AvatarStack wiring at
+// DetailPanel's real call site — reuses AvatarStack.tsx/useShareRecipients
+// (Plan 26-06), never a re-implementation. Rendered for real here (not
+// mocked); only its underlying "@/lib/vault/api" fetch is mocked.
+describe("DetailPanel AvatarStack wiring (D-3/E5, Plan 26-09)", () => {
+  it("renders AvatarStack in the header for a shared item's open detail panel", async () => {
+    mockGetCollectionAccessList.mockResolvedValue([
+      { user_id: "u1", email: "anna@example.com", access_level: "read", created_at: "t", suspended: false },
+    ]);
+    const sharedItem: VaultItem = { ...item, isShared: true, collectionId: "col-1" };
+    render(<DetailPanel item={sharedItem} onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId("avatar-stack")).toBeInTheDocument());
+  });
+
+  it("renders no AvatarStack for a non-shared item's detail panel", () => {
+    render(<DetailPanel item={item} onClose={vi.fn()} />);
+    expect(screen.queryByTestId("avatar-stack")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("avatar-stack-icon")).not.toBeInTheDocument();
+    expect(mockGetCollectionAccessList).not.toHaveBeenCalled();
+    expect(mockListItemShares).not.toHaveBeenCalled();
   });
 });
