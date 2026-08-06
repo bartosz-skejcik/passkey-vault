@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "@testing-library/react";
 import { ApiClientError } from "@/lib/auth/api";
-import type { SyncSnapshot } from "./api";
+import type { SharedRevisions, SyncSnapshot } from "./api";
 import type { SyncCallbacks } from "./sync";
 
 const {
@@ -10,6 +10,7 @@ const {
   mockSubscribeLockState,
   mockEncryptItem,
   mockDecryptItem,
+  mockDecryptItemForCollection,
   mockGetSyncSnapshot,
   mockCreateItem,
   mockCreateFolder,
@@ -19,12 +20,14 @@ const {
   mockTouchItem,
   mockStartSync,
   mockStopSync,
+  mockGetCollectionKey,
 } = vi.hoisted(() => ({
   mockGetUnlockedUserKey: vi.fn(),
   mockIsUnlocked: vi.fn(),
   mockSubscribeLockState: vi.fn(),
   mockEncryptItem: vi.fn(),
   mockDecryptItem: vi.fn(),
+  mockDecryptItemForCollection: vi.fn(),
   mockGetSyncSnapshot: vi.fn(),
   mockCreateItem: vi.fn(),
   mockCreateFolder: vi.fn(),
@@ -34,6 +37,7 @@ const {
   mockTouchItem: vi.fn(),
   mockStartSync: vi.fn(),
   mockStopSync: vi.fn(),
+  mockGetCollectionKey: vi.fn(),
 }));
 
 vi.mock("@/lib/crypto", () => ({
@@ -42,6 +46,7 @@ vi.mock("@/lib/crypto", () => ({
   subscribeLockState: mockSubscribeLockState,
   encryptItem: mockEncryptItem,
   decryptItem: mockDecryptItem,
+  decryptItemForCollection: mockDecryptItemForCollection,
 }));
 
 vi.mock("./api", () => ({
@@ -57,6 +62,21 @@ vi.mock("./api", () => ({
 vi.mock("./sync", () => ({
   startSync: mockStartSync,
   stopSync: mockStopSync,
+}));
+
+// Task 1's collections.ts store is mocked wholesale here -- store.test.ts
+// tests store.ts's own decrypt-dispatch/onSharedRevisions logic, not
+// collections.ts's own refresh behavior (that has its own real-WASM test
+// file, collections.real-wasm.test.ts). Mocking this module also sidesteps
+// a real ordering hazard: the REAL collections.ts registers its OWN
+// subscribeLockState listener at import time (store.ts imports it) -- were
+// it left unmocked, `mockSubscribeLockState.mock.calls[0]` would resolve to
+// collections.ts's listener instead of store.ts's own, silently breaking
+// `importStoreAndGetLockListener()` below. Mocking it here means store.ts's
+// own subscribeLockState call is the ONLY registration this test file ever
+// sees.
+vi.mock("@/lib/vault/collections", () => ({
+  getCollectionKey: mockGetCollectionKey,
 }));
 
 const NOTE_PLAINTEXT =
@@ -125,6 +145,7 @@ describe("recombine/split round-trip", () => {
           enc_key: JSON.stringify({ nonce: [1, 2], ciphertext: [3, 4] }),
           enc_data: JSON.stringify({ nonce: [5, 6], ciphertext: [7, 8] }),
           revision: 1,
+          collection_id: null,
         },
       ],
       folders: [],
@@ -174,7 +195,7 @@ describe("recombine/split round-trip", () => {
     const [, encKeyArg, encDataArg] = mockCreateItem.mock.calls[0];
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 1,
-      items: [{ id: "item-2", enc_key: encKeyArg, enc_data: encDataArg, revision: 1 }],
+      items: [{ id: "item-2", enc_key: encKeyArg, enc_data: encDataArg, revision: 1, collection_id: null }],
       folders: [],
     });
 
@@ -201,7 +222,7 @@ describe("lock/unlock subscription behavior", () => {
     mockGetUnlockedUserKey.mockReturnValue({});
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 1,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null }],
       folders: [],
     });
     mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
@@ -291,7 +312,7 @@ async function unlockWithTwoItems() {
     await Promise.resolve();
   });
   expect(store.getItems()).toHaveLength(2);
-  return { store, callbacks: getSyncCallbacks() };
+  return { store, callbacks: getSyncCallbacks(), lockListener };
 }
 
 describe("applySyncSnapshot (background sync merge)", () => {
@@ -670,8 +691,8 @@ describe("folder plumbing", () => {
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 1,
       items: [
-        { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 },
-        { id: "item-2", enc_key: "{}", enc_data: "{}", revision: 1 },
+        { id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null },
+        { id: "item-2", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null },
       ],
       folders: [],
     });
@@ -737,7 +758,7 @@ describe("updateVaultItem", () => {
     mockGetUnlockedUserKey.mockReturnValue({});
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 1,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null }],
       folders: [],
     });
     mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
@@ -755,7 +776,7 @@ describe("updateVaultItem", () => {
     mockGetSyncSnapshot.mockClear();
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 2,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 2 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 2, collection_id: null }],
       folders: [],
     });
 
@@ -785,7 +806,7 @@ describe("updateVaultItem", () => {
     mockGetUnlockedUserKey.mockReturnValue({});
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 1,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null }],
       folders: [],
     });
     mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
@@ -805,7 +826,7 @@ describe("updateVaultItem", () => {
     mockGetSyncSnapshot.mockClear();
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 2,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 2 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 2, collection_id: null }],
       folders: [],
     });
 
@@ -834,7 +855,7 @@ describe("updateVaultItem", () => {
     mockGetUnlockedUserKey.mockReturnValue({});
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 1,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null }],
       folders: [],
     });
     mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
@@ -856,7 +877,7 @@ describe("updateVaultItem", () => {
     mockGetSyncSnapshot.mockClear();
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 2,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 2 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 2, collection_id: null }],
       folders: [],
     });
 
@@ -887,7 +908,7 @@ describe("legacy field normalization", () => {
     mockGetUnlockedUserKey.mockReturnValue({});
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 1,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null }],
       folders: [],
     });
     mockDecryptItem.mockReturnValue(
@@ -923,7 +944,7 @@ describe("legacy field normalization", () => {
     mockGetUnlockedUserKey.mockReturnValue({});
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 1,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null }],
       folders: [],
     });
     mockDecryptItem.mockReturnValue(
@@ -956,7 +977,7 @@ describe("legacy field normalization", () => {
     mockGetUnlockedUserKey.mockReturnValue({});
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 1,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null }],
       folders: [],
     });
     mockDecryptItem.mockReturnValue(
@@ -998,7 +1019,7 @@ describe("legacy field normalization", () => {
     mockGetUnlockedUserKey.mockReturnValue({});
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 1,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null }],
       folders: [],
     });
     mockDecryptItem.mockReturnValue(
@@ -1074,7 +1095,7 @@ describe("deleteVaultItem", () => {
     mockGetUnlockedUserKey.mockReturnValue({});
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 1,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null }],
       folders: [],
     });
     mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
@@ -1099,7 +1120,7 @@ describe("deleteVaultItem", () => {
     mockGetUnlockedUserKey.mockReturnValue({});
     mockGetSyncSnapshot.mockResolvedValue({
       revision: 1,
-      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1 }],
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null }],
       folders: [],
     });
     mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
@@ -1116,5 +1137,257 @@ describe("deleteVaultItem", () => {
     await expect(store.deleteVaultItem("item-1")).rejects.toThrow("network error");
 
     expect(store.getItems()).toHaveLength(1);
+  });
+});
+
+// 26-05-PLAN.md, Task 2: decryptItemRow dispatches to decryptItemForCollection
+// for a collection-scoped row (row.collection_id !== null) instead of
+// unconditionally calling decryptItem (the personal-scope path). The genuine
+// crypto proof that a real collection-scoped item round-trips end to end is
+// store.real-wasm.test.ts's own central-proof test (never mocked crypto,
+// see this plan's "Test-tiering decision" note) — this mocked test instead
+// covers a code path the real-wasm test does not: the collections store
+// not having refreshed yet (getCollectionKey returns undefined), which must
+// fall through to the SAME CR-03 undecryptable/retained-last-known-good
+// path any other decrypt failure already uses, never a crash.
+describe("decrypt dispatch by scope (collection_id)", () => {
+  it("a collection-scoped row calls decryptItemForCollection with the row's collection_id, id, and revision -- never decryptItem", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [
+        {
+          id: "item-collection-1",
+          enc_key: "{}",
+          enc_data: "{}",
+          revision: 3,
+          updated_at: "2026-08-06T00:00:00Z",
+          last_used_at: null,
+          is_shared: true,
+          collection_id: "collection-1",
+          last_editor_email: null,
+        },
+      ],
+      folders: [],
+    });
+    mockGetCollectionKey.mockReturnValue({});
+    mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockGetCollectionKey).toHaveBeenCalledWith("collection-1");
+    expect(mockDecryptItemForCollection).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      "collection-1",
+      "item-collection-1",
+      3,
+    );
+    expect(mockDecryptItem).not.toHaveBeenCalled();
+
+    const item = store.getItems().find((i) => i.id === "item-collection-1");
+    expect(item?.collectionId).toBe("collection-1");
+    expect(item?.undecryptable).toBe(false);
+  });
+
+  it("a collection-scoped row whose key isn't cached yet falls through to the undecryptable retained-last-known-good path, never a crash", async () => {
+    const { store, callbacks } = await unlockWithTwoItems();
+
+    mockGetCollectionKey.mockReturnValue(undefined); // collections store hasn't refreshed yet
+    act(() => {
+      callbacks.onSnapshot({
+        revision: 5,
+        items: [
+          {
+            id: "item-1",
+            enc_key: "{}",
+            enc_data: "{}",
+            revision: 1,
+            updated_at: "2026-07-14 12:00:00",
+            last_used_at: null,
+            is_shared: false,
+            collection_id: null,
+            last_editor_email: null,
+          },
+          {
+            id: "item-2",
+            enc_key: "{}",
+            enc_data: "{}",
+            revision: 2,
+            updated_at: "2026-07-14 12:00:00",
+            last_used_at: null,
+            is_shared: true,
+            collection_id: "collection-not-yet-cached",
+            last_editor_email: null,
+          },
+        ],
+        folders: [],
+      });
+    });
+
+    const item1 = store.getItems().find((i) => i.id === "item-1");
+    const item2 = store.getItems().find((i) => i.id === "item-2");
+    expect(item1?.undecryptable).toBe(false);
+    expect(item2?.undecryptable).toBe(true); // retained last-known-good copy, not dropped
+    expect(mockDecryptItemForCollection).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "collection-not-yet-cached",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+});
+
+// A-5 (26-CONTEXT.md, Phase 23's inherited obligation #3): `GET
+// /api/sync/shared` shipped fully implemented, authorized and tested since
+// Phase 23 with zero client consumer -- store.ts's syncCallbacks.
+// onSharedRevisions is the first one. sync.ts (mocked in this file) is the
+// ONLY caller of this callback in production; these tests drive it directly
+// via the callbacks handle startSync received, exactly like every other
+// onSnapshot-driven test above.
+describe("onSharedRevisions (A-5 / Phase 23 inherited obligation)", () => {
+  it("is wired onto syncCallbacks as a function", async () => {
+    await unlockWithTwoItems();
+    const callbacks = getSyncCallbacks();
+    expect(callbacks.onSharedRevisions).toBeInstanceOf(Function);
+  });
+
+  it("a watermark mismatch (new collection revision) triggers a full getSyncSnapshot(0) re-pull that merges via applySyncSnapshot", async () => {
+    const { store, callbacks } = await unlockWithTwoItems();
+    const callCountBefore = mockGetSyncSnapshot.mock.calls.length;
+
+    mockGetSyncSnapshot.mockResolvedValueOnce({
+      revision: 2, // same watermark -- only the shared-collection item is new
+      items: [
+        {
+          id: "item-1",
+          enc_key: "{}",
+          enc_data: "{}",
+          revision: 1,
+          updated_at: "2026-07-14 12:00:00",
+          last_used_at: null,
+          is_shared: false,
+          collection_id: null,
+          last_editor_email: null,
+        },
+        {
+          id: "item-2",
+          enc_key: "{}",
+          enc_data: "{}",
+          revision: 1,
+          updated_at: "2026-07-14 12:00:00",
+          last_used_at: null,
+          is_shared: false,
+          collection_id: null,
+          last_editor_email: null,
+        },
+        {
+          id: "item-shared-1",
+          enc_key: "{}",
+          enc_data: "{}",
+          revision: 2,
+          updated_at: "2026-07-14 12:00:00",
+          last_used_at: null,
+          is_shared: true,
+          collection_id: "collection-1",
+          last_editor_email: null,
+        },
+      ],
+      folders: [],
+    });
+    mockGetCollectionKey.mockReturnValue({});
+    mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+
+    const revisions: SharedRevisions = {
+      collections: [{ id: "collection-1", revision: 7 }],
+      direct: { revision: 0 },
+    };
+    await act(async () => {
+      await callbacks.onSharedRevisions?.(revisions);
+    });
+
+    expect(mockGetSyncSnapshot.mock.calls.length).toBe(callCountBefore + 1);
+    // Bypasses lastKnownRevision entirely -- a shared-only change never
+    // bumps the caller's own personal vault_revision (SYNC-04).
+    expect(mockGetSyncSnapshot).toHaveBeenLastCalledWith(0);
+    expect(store.getItems().map((i) => i.id)).toContain("item-shared-1");
+  });
+
+  it("an unchanged shared-revisions payload triggers no extra pull", async () => {
+    const { callbacks } = await unlockWithTwoItems();
+    const callCountBefore = mockGetSyncSnapshot.mock.calls.length;
+
+    // Baseline watermark after unlock is empty ({ collections: [], direct: 0
+    // }) -- an equally-empty payload is, by definition, unchanged.
+    const revisions: SharedRevisions = { collections: [], direct: { revision: 0 } };
+    await act(async () => {
+      await callbacks.onSharedRevisions?.(revisions);
+    });
+
+    expect(mockGetSyncSnapshot.mock.calls.length).toBe(callCountBefore);
+  });
+
+  it("a SECOND call with the identical payload that already triggered a pull does not trigger another one", async () => {
+    const { callbacks } = await unlockWithTwoItems();
+    mockGetCollectionKey.mockReturnValue({});
+    mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+
+    const revisions: SharedRevisions = {
+      collections: [{ id: "collection-1", revision: 3 }],
+      direct: { revision: 0 },
+    };
+    await act(async () => {
+      await callbacks.onSharedRevisions?.(revisions);
+    });
+    const callCountAfterFirst = mockGetSyncSnapshot.mock.calls.length;
+
+    await act(async () => {
+      await callbacks.onSharedRevisions?.(revisions);
+    });
+
+    expect(mockGetSyncSnapshot.mock.calls.length).toBe(callCountAfterFirst);
+  });
+
+  it("the watermark resets on every unlock -- an identical payload that already triggered a pull triggers again after a lock/re-unlock cycle", async () => {
+    const { store, lockListener, callbacks } = await unlockWithTwoItems();
+    mockGetCollectionKey.mockReturnValue({});
+    mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+
+    const revisions: SharedRevisions = {
+      collections: [{ id: "collection-1", revision: 3 }],
+      direct: { revision: 0 },
+    };
+    await act(async () => {
+      await callbacks.onSharedRevisions?.(revisions);
+    });
+
+    // Lock, then re-unlock -- a fresh startSync() hands out a fresh
+    // callbacks object, per this module's own subscribeLockState wiring.
+    mockIsUnlocked.mockReturnValue(false);
+    act(() => {
+      lockListener();
+    });
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const newCallbacks = getSyncCallbacks();
+    const callCountAfterReUnlock = mockGetSyncSnapshot.mock.calls.length;
+
+    await act(async () => {
+      await newCallbacks.onSharedRevisions?.(revisions);
+    });
+
+    expect(mockGetSyncSnapshot.mock.calls.length).toBe(callCountAfterReUnlock + 1);
+    void store; // unused in this test beyond the initial unlock fixture
   });
 });
