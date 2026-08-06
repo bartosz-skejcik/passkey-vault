@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Family & Sharing
 current_phase: 25
-current_phase_name: Member Removal, Suspension & Re-key
-status: executing
+status: completed
 stopped_at: Phase 25 UI-SPEC approved
-last_updated: "2026-08-04T14:58:58.756Z"
-last_activity: 2026-08-03
-last_activity_desc: "Completed quick task 260803-cnd: Fix passkey unlock 401 handling and AbortError misclassification"
+last_updated: "2026-08-06T07:23:14.405Z"
+last_activity: 2026-08-06
+last_activity_desc: Phase 25 marked complete
 progress:
   total_phases: 7
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 34
-  completed_plans: 24
-  percent: 57
+  completed_plans: 34
+  percent: 71
+current_phase_name: Member Removal, Suspension & Re-key
 ---
 
 # Project State
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-31)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 24 — Invitation Flow (No SMTP)
+**Current focus:** Phase 25 — Member Removal, Suspension & Re-key
 
 ## Current Position
 
-Phase: 25 — Member Removal, Suspension & Re-key
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-08-03 - Completed quick task 260803-cnd: Fix passkey unlock 401 handling and AbortError misclassification
+Phase: 25 — COMPLETE
+Plan: 1 of 10
+Status: Phase 25 complete
+Last activity: 2026-08-06 — Phase 25 marked complete
 
 ## Performance Metrics
 
@@ -192,6 +192,11 @@ None yet.
 
 [Issues that affect future work]
 
+- [Phase 25] **Phase 26 inherits a confirmed wire-contract defect (WR-09), independently found twice.** `collections::create` (`crates/pv-server/src/routes/collections.rs:98`) mints the collection id server-side with `Uuid::new_v4()` AFTER the client has already encrypted `enc_name`, whose AAD binds that same id. Consequence: **no real client can produce a decryptable collection name**, so every folder in Phase 25's removal-disclosure list renders as `Folder "<uuid>"`. Live-confirmed in UAT. Phase 25's UI-SPEC "real folder name" requirement is recorded as an **open UAT gap, not a passed criterion**; Phase 26 owns the fix (client-generated id, or a two-step create) since it owns real collection authoring.
+- [Phase 25] **Latent e2e flakiness to account for in Phases 26/27.** `web/playwright.config.ts` sets `retries: 2` while the suite reuses ONE server/DB and a fixed singleton `FAMILY_OWNER_EMAIL` account, so vault items accumulate across retries — any "expect exactly N items" assertion can see N+1/N+2 on retry and pass or fail nondeterministically. The Phase 25 UAT needed `--retries=0` for a clean single-attempt DB.
+- [Phase 25] **The "resolve_access is the sole enforcement point" premise was false and cost real leaks.** Code review found `GET /api/sync/shared/direct` ungated; the fix pass then audited every `family_members` reference and found **five** holes, not three — including `vault::fetch_items_for` arm 2 (leaked `enc_data` of a suspended member's authored collection items, including others' post-suspension edits) and `collections::list` (no join at all). Lesson for Phases 26/27: when adding an authorization predicate, audit every query touching that table rather than trusting the one call site the feature was designed around.
+- [Phase 25] **Accepted, recorded scope boundary:** direct `item_shares` are revoke-only and are NOT re-keyed for other recipients on those items. The honesty copy is the stated compensating control, and it ships unconditionally (`RemoveMemberDialog.tsx` renders `member.removeHonestyWarning` outside every conditional, including the empty-access case).
+- [Phase 25] Cosmetic debt: `account.deleteOwnerWarning` renders "1 member(s)" — the i18n layer has no plural machinery. Not an honesty defect.
 - Research flags PRF browser/OS support matrix as a moving target — re-verify current-state support at Phase 12 (Passkey Provider) planning time, not from the 2026-07-14 research snapshot.
 - ARCHITECTURE.md flags `chrome.storage.session` TTL/eviction semantics (survives extension update? idle-time-only eviction?) as needing hands-on verification during Phase 8/9 planning, not assumed from docs.
 - WASM loading inside content-script bundling context specifically (vs. background/popup) is unverified per research STACK.md — validate during Phase 8's bootstrap spike if autofill (Phase 10) ends up needing `pv-core` decrypt calls close to the DOM.

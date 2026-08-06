@@ -67,7 +67,7 @@ Delivered: 20/20 requirements, 7/7 phases verified + Nyquist-compliant + threat-
 - [x] **Phase 22: Family & Collection Data Model — Server Authorization** - Additive schema plus a uniformly-enforced membership-authorization extractor for every family/collection/item endpoint (completed 2026-07-30)
 - [x] **Phase 23: Sync Model Extension — Shared-Data Fan-Out** - Per-collection revision counters and emit-time WS fan-out make shared edits visible live, proven with a standing multi-session test harness (completed 2026-07-31)
 - [x] **Phase 24: Invitation Flow (No SMTP)** - Single-use, expiring invite links/codes join new or existing users to a family or collection without SMTP (completed 2026-07-31)
-- [ ] **Phase 25: Member Removal, Suspension & Re-key** - Suspend/remove a member with atomic, cost-bounded re-key and honest "already seen ≠ undone" UX
+- [x] **Phase 25: Member Removal, Suspension & Re-key** - Suspend/remove a member with atomic, cost-bounded re-key and honest "already seen ≠ undone" UX
 - [ ] **Phase 26: Web App — Sharing UI & Family Management** - Share folders/items at three access levels, with honest hidden-password disclosure and visible sharing/fingerprint indicators
 - [ ] **Phase 27: Extension Integration — Shared Items** - Shared items autofill, TOTP, and passkey-provider identically to personal ones, plus the shared-passkey signature-counter spike
 
@@ -234,31 +234,31 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 25-01-PLAN.md — Migration 0018 (family_members.status) + resolve_access join extension + PRAGMA foreign_keys proof
-- [ ] 25-02-PLAN.md — pv-core rewrap_item_key_for_collection primitive + pv-wasm binding
+- [x] 25-01-PLAN.md — Migration 0018 (family_members.status) + resolve_access join extension + PRAGMA foreign_keys proof
+- [x] 25-02-PLAN.md — pv-core rewrap_item_key_for_collection primitive + pv-wasm binding
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 25-03-PLAN.md — collection_items + remove_member atomic re-key endpoint (tracer) + revoke_access WR-07 retrofit
+- [x] 25-03-PLAN.md — collection_items + remove_member atomic re-key endpoint (tracer) + revoke_access WR-07 retrofit
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 25-04-PLAN.md — suspend_member/reinstate_member handlers + live immediate-access-loss proof
+- [x] 25-04-PLAN.md — suspend_member/reinstate_member handlers + live immediate-access-loss proof
 
 **Wave 4** *(blocked on Wave 3 — 25-05 depends on 25-04's tests staying green and shares tests/family_removal.rs with it, so it cannot run in the same wave; 25-06/25-07 touch disjoint server/web files and run in parallel with 25-05)*
 
-- [ ] 25-05-PLAN.md — KEY-07 genuine mid-write fault-injection + SEC-07 nonce + KEY-06 cost-proportionality + FAM-08 idempotency hardening tests
-- [ ] 25-06-PLAN.md — Account deletion (owner-dissolution / plain-member self-delete / no-family) + GET /api/families
-- [ ] 25-07-PLAN.md — Client API additions + families/rekey.ts batch orchestration + full Phase 25 i18n dictionary pass
+- [x] 25-05-PLAN.md — KEY-07 genuine mid-write fault-injection + SEC-07 nonce + KEY-06 cost-proportionality + FAM-08 idempotency hardening tests
+- [x] 25-06-PLAN.md — Account deletion (owner-dissolution / plain-member self-delete / no-family) + GET /api/families
+- [x] 25-07-PLAN.md — Client API additions + families/rekey.ts batch orchestration + full Phase 25 i18n dictionary pass
 
 **Wave 5** *(blocked on Wave 4 completion; 25-08/25-09 touch disjoint components and run in parallel)*
 
-- [ ] 25-08-PLAN.md — FamilyTab Members section + Suspend/Reinstate + RemoveMemberDialog (real item-name disclosure)
-- [ ] 25-09-PLAN.md — SecurityTab Delete-account section + DeleteAccountDialog
+- [x] 25-08-PLAN.md — FamilyTab Members section + Suspend/Reinstate + RemoveMemberDialog (real item-name disclosure)
+- [x] 25-09-PLAN.md — SecurityTab Delete-account section + DeleteAccountDialog
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 25-10-PLAN.md — Live two-session Playwright proofs (remove-member, delete-account)
+- [x] 25-10-PLAN.md — Live two-session Playwright proofs (remove-member, delete-account)
 
 **UI hint**: yes
 
@@ -325,6 +325,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 22. Family & Collection Data Model — Server Authorization | v0.4 | 5/5 | Complete    | 2026-07-30 |
 | 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 6/6 | Complete    | 2026-07-31 |
 | 24. Invitation Flow (No SMTP) | v0.4 | 8/8 | Complete    | 2026-07-31 |
-| 25. Member Removal, Suspension & Re-key | v0.4 | 0/10 | Not started | - |
+| 25. Member Removal, Suspension & Re-key | v0.4 | 10/10 | Complete | 2026-08-06 |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 0/TBD | Not started | - |
 | 27. Extension Integration — Shared Items | v0.4 | 0/TBD | Not started | - |
