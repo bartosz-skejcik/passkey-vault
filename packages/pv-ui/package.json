@@ -49,6 +49,14 @@
     "./components/*": {
       "types": "./components/*.tsx",
       "default": "./components/*.tsx"
+    },
+    "./identity/fingerprint": {
+      "types": "./identity/fingerprint.ts",
+      "default": "./identity/fingerprint.ts"
+    },
+    "./identity/fingerprintWordlist": {
+      "types": "./identity/fingerprintWordlist.ts",
+      "default": "./identity/fingerprintWordlist.ts"
     }
   },
   "peerDependencies": {
