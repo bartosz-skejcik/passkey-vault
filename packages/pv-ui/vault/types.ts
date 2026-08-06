@@ -263,6 +263,41 @@ function normalizePasskeyWireFields(raw: RawPasskeyWireFields): PasskeyFields {
 }
 
 /**
+ * Enforces the ONE `CommonFields` invariant the rest of the client
+ * DEREFERENCES rather than merely reads: `tags` must be an actual array.
+ *
+ * Decrypted item plaintext is UNTRUSTED INPUT. In a zero-knowledge vault the
+ * server stores opaque blobs and validates nothing, so the shape of a
+ * decrypted plaintext is whatever SOME client wrote — which is not
+ * necessarily this one. A collection-scoped item is authored by a FELLOW
+ * FAMILY MEMBER's client (the extension today; Android/iOS per the roadmap),
+ * possibly on an older or newer version, and this file already concedes the
+ * point: `normalizePasskeyWireFields` exists precisely because pv-provider
+ * writes a plaintext with "no `type`/`name`/`folderId`/`tags` discriminant or
+ * metadata at all". That guarantee was simply never extended to the other
+ * shapes.
+ *
+ * Why this matters (debug session `.planning/debug/rekey-order-dependent-hang.md`):
+ * `store.ts`'s `recomputeAllTags()` does an unguarded `for (const tag of
+ * item.fields.tags)`, and it runs on EVERY store mutation — sync merge, item
+ * create, update, AND delete. A single `tags`-less item therefore does not
+ * merely fail to render: it throws `TypeError: fields.tags is not iterable`
+ * out of `createVaultItem` AFTER `POST /api/vault/items` has already returned
+ * 201, so the UI reports "Failed to save item" over a save that SUCCEEDED
+ * (inviting the user to retry into duplicates), and there is no UI path left
+ * to remove the offending item because delete throws too. One malformed row
+ * wedges the whole account, permanently.
+ *
+ * `folderId`/`name` are deliberately NOT defaulted here: neither is
+ * dereferenced in a way that can throw (`folderId` is only ever compared with
+ * `===`, `name` is only ever rendered), so defaulting them would be
+ * speculative rather than corrective.
+ */
+function withCommonFieldInvariants(fields: ItemFields): ItemFields {
+  return Array.isArray(fields.tags) ? fields : { ...fields, tags: [] };
+}
+
+/**
  * Normalizes a just-decrypted item's fields into the current `ItemFields`
  * shape. Two migrations currently needed:
  *  - a legacy login item's bare `url: string` becomes `urls: string[]`
@@ -270,11 +305,23 @@ function normalizePasskeyWireFields(raw: RawPasskeyWireFields): PasskeyFields {
  *  - Phase 12's raw `SerializablePasskey` wire JSON (no `type` discriminant
  *    at all) becomes a proper, discriminated `PasskeyFields` object (see
  *    `normalizePasskeyWireFields`).
+ * Every returned shape additionally passes through
+ * `withCommonFieldInvariants` — see its doc comment for why an unenforced
+ * `tags` invariant is an account-wedging defect, not a cosmetic one.
  * Called once, right after `JSON.parse`, before a decrypted item is ever
  * held in the store or rendered — no other code path re-reads either raw
- * wire shape.
+ * wire shape, which is what makes this function the single complete trust
+ * boundary for untrusted plaintext (verified: `store.ts`'s
+ * `applySyncSnapshot` flatMap is the ONLY writer of server-decrypted
+ * plaintext into the item store).
  */
 export function normalizeItemFields(
+  raw: ItemFields | RawLoginFields | RawPasskeyWireFields,
+): ItemFields {
+  return withCommonFieldInvariants(normalizeItemShape(raw));
+}
+
+function normalizeItemShape(
   raw: ItemFields | RawLoginFields | RawPasskeyWireFields,
 ): ItemFields {
   if (isRawPasskeyWireFields(raw)) {

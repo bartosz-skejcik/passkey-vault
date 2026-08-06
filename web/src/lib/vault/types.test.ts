@@ -70,6 +70,59 @@ describe("normalizeItemFields — raw passkey wire shape", () => {
     expect(normalized).toBe(alreadyNormalized);
   });
 
+  // Regression: .planning/debug/rekey-order-dependent-hang.md.
+  // Decrypted plaintext is UNTRUSTED INPUT -- a collection-scoped item is
+  // authored by a FELLOW MEMBER's client, possibly a different platform or
+  // version. A plaintext with no `tags` key used to flow through untouched,
+  // and store.ts's `recomputeAllTags()` (`for (const tag of
+  // item.fields.tags)`) then threw `TypeError: fields.tags is not iterable`
+  // on EVERY store mutation -- create, update, delete and sync merge alike --
+  // permanently wedging the account with no UI path left to remove the row.
+  describe("CommonFields.tags invariant (untrusted-plaintext hardening)", () => {
+    // Boundary neighbors around the defect's equivalence class: absent,
+    // explicitly null/undefined, and the wrong scalar type all have to land
+    // on an iterable array, not just the one shape the live bug produced.
+    it.each([
+      ["absent entirely (the shape the live e2e defect produced)", {}],
+      ["explicitly undefined", { tags: undefined }],
+      ["explicitly null", { tags: null }],
+      ["a non-array scalar", { tags: "work" }],
+    ])("defaults tags to [] when it is %s", (_label, tagsPart) => {
+      const raw = {
+        type: "login" as const,
+        name: "PV E2E Post-Rekey Real Item",
+        password: "irrelevant-e2e-pw",
+        ...tagsPart,
+      };
+
+      const normalized = normalizeItemFields(raw as never);
+
+      expect(normalized.tags).toEqual([]);
+      // The real assertion is not the value but the INVARIANT the crashing
+      // call site depends on: it must be iterable.
+      expect(() => [...normalized.tags]).not.toThrow();
+    });
+
+    it("preserves a genuine tags array rather than clobbering it", () => {
+      const raw = {
+        type: "note" as const,
+        name: "n",
+        body: "b",
+        folderId: null,
+        tags: ["work", "personal"],
+      };
+
+      expect(normalizeItemFields(raw as never).tags).toEqual(["work", "personal"]);
+    });
+
+    it("holds for every non-login item type, not just the one that regressed", () => {
+      for (const type of ["note", "card", "identity", "totp"] as const) {
+        const normalized = normalizeItemFields({ type, name: "x" } as never);
+        expect(() => [...normalized.tags], `${type} must expose an iterable tags`).not.toThrow();
+      }
+    });
+  });
+
   it("still normalizes a legacy login item's bare url alongside passkey recognition", () => {
     const legacyLogin = {
       type: "login" as const,

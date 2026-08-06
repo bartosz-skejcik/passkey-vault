@@ -1014,6 +1014,91 @@ describe("updateVaultItem", () => {
   });
 });
 
+// Regression for the defect diagnosed in
+// .planning/debug/rekey-order-dependent-hang.md. This is the STORE-level
+// proof (types.test.ts holds the unit-level invariant proof): it reproduces
+// the exact user-visible harm, which is NOT "an item renders badly" but
+// "the account can no longer save anything, while being told the save
+// failed after it actually succeeded".
+describe("untrusted decrypted plaintext — a tags-less item must not wedge the store", () => {
+  /** Byte-for-byte the plaintext a foreign client wrote in the live e2e
+   * repro (web/e2e/delete-account.spec.ts's post-rekey item): a perfectly
+   * ordinary login with no `tags` key at all. */
+  const FOREIGN_PLAINTEXT_WITHOUT_TAGS = JSON.stringify({
+    type: "login",
+    name: "PV E2E Post-Rekey Real Item",
+    password: "irrelevant-e2e-pw",
+  });
+
+  async function unlockWithOneForeignItem() {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "foreign-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null }],
+      folders: [],
+    });
+    mockDecryptItem.mockReturnValue(FOREIGN_PLAINTEXT_WITHOUT_TAGS);
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    return store;
+  }
+
+  it("admits the item to the store with an iterable tags rather than throwing during the merge", async () => {
+    const store = await unlockWithOneForeignItem();
+
+    const items = store.getItems();
+    expect(items).toHaveLength(1);
+    expect(items[0].fields.tags).toEqual([]);
+    expect(store.getAllTags()).toEqual([]);
+  });
+
+  // THE test. Without the normalizeItemFields invariant this rejects, and
+  // it rejects only AFTER mockCreateItem has already resolved — i.e. the
+  // server row exists but the UI reports "Failed to save item. Please try
+  // again.", so the user retries into duplicates and can never recover
+  // (delete throws for the same reason).
+  it("does not fail a subsequent createVaultItem AFTER its POST has already succeeded", async () => {
+    const store = await unlockWithOneForeignItem();
+
+    mockEncryptItem.mockReturnValue(
+      JSON.stringify({
+        enc_key: { nonce: [1, 2], ciphertext: [3, 4] },
+        enc_data: { nonce: [5, 6], ciphertext: [7, 8] },
+      }),
+    );
+    mockCreateItem.mockResolvedValue({ id: "new-1", revision: 1, updated_at: "2026-08-06 12:00:00" });
+
+    await expect(
+      store.createVaultItem({
+        type: "note",
+        name: "a brand-new item the user is trying to save",
+        body: "b",
+        folderId: null,
+        tags: [],
+      }),
+    ).resolves.toMatchObject({ id: expect.any(String) });
+
+    // Proves the ordering hazard is what we are guarding: the write DID
+    // reach the server, so a rejection here would have been a lie.
+    expect(mockCreateItem).toHaveBeenCalledTimes(1);
+    expect(store.getItems()).toHaveLength(2);
+  });
+
+  it("does not fail deleteVaultItem, so the offending row stays removable", async () => {
+    const store = await unlockWithOneForeignItem();
+    mockDeleteItem.mockResolvedValue(undefined);
+
+    await expect(store.deleteVaultItem("foreign-1")).resolves.toBeUndefined();
+    expect(store.getItems()).toHaveLength(0);
+  });
+});
+
 describe("legacy field normalization", () => {
   it("normalizes a legacy login item's bare `url` string into `urls: [url]` on decrypt", async () => {
     mockGetUnlockedUserKey.mockReturnValue({});
