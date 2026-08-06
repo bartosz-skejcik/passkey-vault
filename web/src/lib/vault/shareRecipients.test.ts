@@ -19,6 +19,27 @@ vi.mock("@/lib/auth/api", () => ({
   me: mockMe,
 }));
 
+// WR-12: this module now registers a lock-state listener at import time
+// (mirroring collections.ts). Mocked so this file stays a pure unit test of
+// the caching/resolution logic -- `lockListener` below is the captured
+// callback, invoked directly to simulate a lock event.
+const { mockSubscribeLockState, mockIsUnlocked, lockState } = vi.hoisted(() => {
+  const lockState = { listener: null as null | (() => void), unlocked: true };
+  return {
+    lockState,
+    mockSubscribeLockState: vi.fn((listener: () => void) => {
+      lockState.listener = listener;
+      return () => {};
+    }),
+    mockIsUnlocked: vi.fn(() => lockState.unlocked),
+  };
+});
+
+vi.mock("@/lib/crypto", () => ({
+  subscribeLockState: mockSubscribeLockState,
+  isUnlocked: mockIsUnlocked,
+}));
+
 import { useShareRecipients } from "./shareRecipients";
 
 function makeItem(overrides: Partial<VaultItem> = {}): VaultItem {
@@ -148,5 +169,30 @@ describe("useShareRecipients", () => {
     const { result } = renderHook(() => useShareRecipients(item));
     await waitFor(() => expect(result.current).not.toBeNull());
     expect(result.current).toEqual([{ email: "tomasz@example.com", suspended: false }]);
+  });
+
+  // WR-12 (code review, Phase 26): the caches hold co-recipient EMAIL
+  // ADDRESSES; nothing cleared them on lock, so a locked vault kept a
+  // roster of who shares what until the tab was closed (and served it stale
+  // to a different account on re-unlock).
+  it("clears every cached roster on lock, so the next unlock re-fetches instead of serving a stale one", async () => {
+    mockListItemShares.mockResolvedValue([
+      { user_id: "u3", email: "kasia@example.com", access_level: "read", created_at: "t", suspended: false },
+    ]);
+    const item = makeItem({ id: "item-lock-clear", collectionId: null, isShared: true });
+    const { result } = renderHook(() => useShareRecipients(item));
+    await waitFor(() => expect(result.current).not.toBeNull());
+    expect(mockListItemShares).toHaveBeenCalledTimes(1);
+
+    // A lock event fires this module's own listener.
+    expect(lockState.listener).not.toBeNull();
+    lockState.unlocked = false;
+    lockState.listener?.();
+    lockState.unlocked = true;
+
+    const { result: afterLock } = renderHook(() => useShareRecipients(item));
+    await waitFor(() => expect(afterLock.current).not.toBeNull());
+    // Re-fetched rather than served from the cache that survived the lock.
+    expect(mockListItemShares).toHaveBeenCalledTimes(2);
   });
 });

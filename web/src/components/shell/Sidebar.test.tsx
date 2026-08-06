@@ -29,6 +29,13 @@ const {
 
 vi.mock("@/lib/crypto", () => ({
   lockVault: mockLockVault,
+  // WR-12 (code review, Phase 26): lib/vault/shareRecipients.ts now
+  // registers a lock-state listener at module load (clearing its cached
+  // co-recipient rosters), and this tree reaches it transitively via
+  // AvatarStack. Both exports must exist on this mock or the module graph
+  // fails to load at all.
+  subscribeLockState: () => () => {},
+  isUnlocked: () => true,
 }));
 
 vi.mock("@/lib/auth/api", () => ({

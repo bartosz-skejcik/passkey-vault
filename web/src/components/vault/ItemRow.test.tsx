@@ -36,6 +36,10 @@ vi.mock("@/lib/vault/store", () => ({
 // vi.mock("@/lib/crypto", ...) pattern.
 vi.mock("@/lib/crypto", () => ({
   totpNow: mockTotpNow,
+  // WR-12 (code review, Phase 26): shareRecipients.ts (reached via
+  // AvatarStack) registers a lock-state listener at module load.
+  subscribeLockState: () => () => {},
+  isUnlocked: () => true,
 }));
 
 // Plan 26-09 (Rule 3 auto-fix): ItemRow transitively renders

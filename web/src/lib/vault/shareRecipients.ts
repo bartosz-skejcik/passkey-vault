@@ -21,6 +21,7 @@
 // invalidation API is added here; a future plan may add one if a stricter
 // guarantee becomes necessary.
 import { useEffect, useState } from "react";
+import { isUnlocked, subscribeLockState } from "@/lib/crypto";
 import { me } from "@/lib/auth/api";
 import { getCollectionAccessList, listItemShares } from "./api";
 import type { VaultItem } from "./types";
@@ -97,6 +98,33 @@ function fetchForItem(itemId: string): Promise<ShareRecipient[]> {
   }
   return cached;
 }
+
+/** WR-12 (code review, Phase 26): drops every cached co-recipient roster
+ * and the cached self id. `collectionCache`/`itemCache` hold co-recipient
+ * EMAIL ADDRESSES keyed by collection/item id -- metadata rather than
+ * plaintext, but exactly the metadata a locked vault should not still be
+ * holding, and stale by construction on a re-unlock as a different account
+ * (which is also why the cached self id is cleared here). Every other
+ * in-memory store in this codebase clears on lock (`store.ts`,
+ * `collections.ts`, `lib/crypto`'s key singleton) precisely so nothing
+ * survives the event; this one silently kept a roster of who shares what
+ * until the tab was closed.
+ *
+ * Exported so a test can drive it directly; production wiring is the
+ * `subscribeLockState` listener below, mirroring `collections.ts`'s own. */
+export function clearShareRecipientCaches(): void {
+  collectionCache.clear();
+  itemCache.clear();
+  selfIdPromise = null;
+}
+
+// Module-level side effect (mirrors collections.ts's own): a lock event
+// clears every cached roster immediately.
+subscribeLockState(() => {
+  if (!isUnlocked()) {
+    clearShareRecipientCaches();
+  }
+});
 
 /** `null` = not yet resolved (E5's loading backstop -- the caller must
  * render zero circles, never a skeleton/placeholder, while this is `null`).

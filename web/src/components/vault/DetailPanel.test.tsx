@@ -84,6 +84,10 @@ vi.mock("./ShareDialog", () => ({
 // established vi.mock("@/lib/crypto", ...) pattern.
 vi.mock("@/lib/crypto", () => ({
   totpNow: mockTotpNow,
+  // WR-12 (code review, Phase 26): shareRecipients.ts (reached via
+  // AvatarStack) registers a lock-state listener at module load.
+  subscribeLockState: () => () => {},
+  isUnlocked: () => true,
 }));
 
 vi.mock("@/lib/i18n/LocaleContext", () => ({
