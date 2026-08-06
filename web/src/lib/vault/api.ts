@@ -159,16 +159,42 @@ export function getCollectionItems(collectionId: string): Promise<CollectionItem
 }
 
 /** Wire shape of `collections.rs`'s `access_list` handler (Phase 22) — every
- * member currently holding a grant on this collection. */
+ * member currently holding a grant on this collection.
+ *
+ * `suspended` (Phase 26, Plan 04 — A-7): flags, never filters — a
+ * suspended co-recipient's `collection_keys` row still exists and still
+ * appears here; reinstating them restores the access `Item`/`Collection::
+ * resolve_access` currently resolves to `None` for. Field-for-field
+ * identical to `ItemShareEntry` below (same server-side `CoRecipientRecord`
+ * shape), so D-3's avatar stack and D-1's Sharing overview share one
+ * vocabulary across both share types. */
 export interface CollectionAccessEntry {
   user_id: string;
   email: string;
   access_level: string;
   created_at: string;
+  suspended: boolean;
 }
 
 export function getCollectionAccessList(collectionId: string): Promise<CollectionAccessEntry[]> {
   return apiJson(`/api/vault/collections/${encodeURIComponent(collectionId)}/access`);
+}
+
+/** Wire shape of `vault.rs`'s `list_item_shares` handler (Phase 26, Plan
+ * 04 — SHARE-02/UX-05): the direct-share recipient set for a personal
+ * item, `Membership<Item, RequireRead>`-gated server-side. Never carries
+ * `sealed_key` (T-22-16). Field-for-field identical to
+ * `CollectionAccessEntry` above — one vocabulary for both share types. */
+export interface ItemShareEntry {
+  user_id: string;
+  email: string;
+  access_level: string;
+  created_at: string;
+  suspended: boolean;
+}
+
+export function listItemShares(itemId: string): Promise<ItemShareEntry[]> {
+  return apiJson(`/api/vault/items/${encodeURIComponent(itemId)}/shares`);
 }
 
 /** `POST /api/vault/collections` — Phase 26, Plan 01 (A-1/WR-09 fix): the
