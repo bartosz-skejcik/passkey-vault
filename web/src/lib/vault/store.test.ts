@@ -12,7 +12,12 @@ const {
   mockEncryptItemForCollection,
   mockDecryptItem,
   mockDecryptItemForCollection,
+  mockDecryptItemWithSharedKey,
+  mockUnsealCollectionKey,
   mockGetSyncSnapshot,
+  mockGetSharedRevisions,
+  mockGetCollectionSync,
+  mockGetSharedDirectSync,
   mockCreateItem,
   mockCreateFolder,
   mockUpdateItem,
@@ -22,6 +27,8 @@ const {
   mockStartSync,
   mockStopSync,
   mockGetCollectionKey,
+  mockRefreshCollectionsNow,
+  mockEnsureOwnIdentityKeypair,
 } = vi.hoisted(() => ({
   mockGetUnlockedUserKey: vi.fn(),
   mockIsUnlocked: vi.fn(),
@@ -30,7 +37,12 @@ const {
   mockEncryptItemForCollection: vi.fn(),
   mockDecryptItem: vi.fn(),
   mockDecryptItemForCollection: vi.fn(),
+  mockDecryptItemWithSharedKey: vi.fn(),
+  mockUnsealCollectionKey: vi.fn(),
   mockGetSyncSnapshot: vi.fn(),
+  mockGetSharedRevisions: vi.fn(),
+  mockGetCollectionSync: vi.fn(),
+  mockGetSharedDirectSync: vi.fn(),
   mockCreateItem: vi.fn(),
   mockCreateFolder: vi.fn(),
   mockUpdateItem: vi.fn(),
@@ -40,6 +52,8 @@ const {
   mockStartSync: vi.fn(),
   mockStopSync: vi.fn(),
   mockGetCollectionKey: vi.fn(),
+  mockRefreshCollectionsNow: vi.fn(),
+  mockEnsureOwnIdentityKeypair: vi.fn(),
 }));
 
 vi.mock("@/lib/crypto", () => ({
@@ -50,10 +64,15 @@ vi.mock("@/lib/crypto", () => ({
   encryptItemForCollection: mockEncryptItemForCollection,
   decryptItem: mockDecryptItem,
   decryptItemForCollection: mockDecryptItemForCollection,
+  decryptItemWithSharedKey: mockDecryptItemWithSharedKey,
+  unsealCollectionKey: mockUnsealCollectionKey,
 }));
 
 vi.mock("./api", () => ({
   getSyncSnapshot: mockGetSyncSnapshot,
+  getSharedRevisions: mockGetSharedRevisions,
+  getCollectionSync: mockGetCollectionSync,
+  getSharedDirectSync: mockGetSharedDirectSync,
   createItem: mockCreateItem,
   createFolder: mockCreateFolder,
   updateItem: mockUpdateItem,
@@ -77,9 +96,20 @@ vi.mock("./sync", () => ({
 // collections.ts's listener instead of store.ts's own, silently breaking
 // `importStoreAndGetLockListener()` below. Mocking it here means store.ts's
 // own subscribeLockState call is the ONLY registration this test file ever
-// sees.
+// sees. `refreshCollectionsNow` (26-14-PLAN.md, WINDOWS #7's fix) is
+// store.ts's own new call into this module on a shared-revisions mismatch.
 vi.mock("@/lib/vault/collections", () => ({
   getCollectionKey: mockGetCollectionKey,
+  refreshCollectionsNow: mockRefreshCollectionsNow,
+}));
+
+// 26-14-PLAN.md (WINDOWS #9): store.ts's own new import for direct-share
+// decryption -- mocked wholesale here for the identical reason
+// `@/lib/vault/collections` is: this file tests store.ts's OWN merge/dispatch
+// logic against a mocked identity resolution, not `ensureOwnIdentityKeypair`'s
+// real network/crypto behavior (which has its own coverage elsewhere).
+vi.mock("@/lib/identity/ensure", () => ({
+  ensureOwnIdentityKeypair: mockEnsureOwnIdentityKeypair,
 }));
 
 const NOTE_PLAINTEXT =
@@ -90,6 +120,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Fresh/never-synced-user fixture: full-but-empty snapshot by default.
   mockGetSyncSnapshot.mockResolvedValue({ revision: 0, items: [], folders: [] });
+  // 26-14-PLAN.md: `refreshSharedItemsNow`'s eager unlock-time attempt calls
+  // `getSharedRevisions()` on EVERY unlock across this entire test file --
+  // default to the "no family membership at all" shape (empty/zero) so
+  // every PRE-EXISTING test in this file (none of which exercise sharing)
+  // sees the identical no-op behavior it did before this plan, without
+  // needing its own mock setup. Tests that DO exercise sharing override this
+  // per-test.
+  mockGetSharedRevisions.mockResolvedValue({ collections: [], direct: { revision: 0 } });
+  mockRefreshCollectionsNow.mockResolvedValue(undefined);
 });
 
 /** Grabs the lock-state listener the store registered at import time via
@@ -1358,49 +1397,33 @@ describe("decrypt dispatch by scope (collection_id)", () => {
   });
 });
 
-// A-5 (26-CONTEXT.md, Phase 23's inherited obligation #3): `GET
-// /api/sync/shared` shipped fully implemented, authorized and tested since
-// Phase 23 with zero client consumer -- store.ts's syncCallbacks.
-// onSharedRevisions is the first one. sync.ts (mocked in this file) is the
-// ONLY caller of this callback in production; these tests drive it directly
-// via the callbacks handle startSync received, exactly like every other
-// onSnapshot-driven test above.
-describe("onSharedRevisions (A-5 / Phase 23 inherited obligation)", () => {
+// A-5 (26-CONTEXT.md, Phase 23's inherited obligation #3) / 26-14-PLAN.md
+// (WINDOWS #7/#8/#9): `GET /api/sync/shared` shipped fully implemented,
+// authorized and tested since Phase 23; `onSharedRevisions` is its client
+// consumer, and this describe block now covers its FULL fixed behavior --
+// refreshing `collections.ts` (WINDOWS #7), pulling and merging a changed
+// collection's own item snapshot (WINDOWS #8), and pulling and merging the
+// direct-share bucket (WINDOWS #9) -- never the OLD (wrong) "force a
+// personal getSyncSnapshot(0) re-pull" behavior, which could never actually
+// fetch shared data at all (SYNC-04: a shared-only change never bumps the
+// caller's own personal vault_revision). sync.ts (mocked in this file) is
+// the ONLY caller of this callback in production; these tests drive it
+// directly via the callbacks handle startSync received, exactly like every
+// other onSnapshot-driven test above.
+describe("onSharedRevisions (A-5 / Phase 23 inherited obligation, fixed by 26-14-PLAN.md)", () => {
   it("is wired onto syncCallbacks as a function", async () => {
     await unlockWithTwoItems();
     const callbacks = getSyncCallbacks();
     expect(callbacks.onSharedRevisions).toBeInstanceOf(Function);
   });
 
-  it("a watermark mismatch (new collection revision) triggers a full getSyncSnapshot(0) re-pull that merges via applySyncSnapshot", async () => {
+  it("a watermark mismatch (new/changed collection revision) refreshes collections.ts, pulls that collection's OWN item snapshot via getCollectionSync, and merges it via the existing decrypt dispatch (WINDOWS #7 + #8)", async () => {
     const { store, callbacks } = await unlockWithTwoItems();
-    const callCountBefore = mockGetSyncSnapshot.mock.calls.length;
-
-    mockGetSyncSnapshot.mockResolvedValueOnce({
-      revision: 2, // same watermark -- only the shared-collection item is new
+    mockGetCollectionKey.mockReturnValue({});
+    mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+    mockGetCollectionSync.mockResolvedValueOnce({
+      revision: 7,
       items: [
-        {
-          id: "item-1",
-          enc_key: "{}",
-          enc_data: "{}",
-          revision: 1,
-          updated_at: "2026-07-14 12:00:00",
-          last_used_at: null,
-          is_shared: false,
-          collection_id: null,
-          last_editor_email: null,
-        },
-        {
-          id: "item-2",
-          enc_key: "{}",
-          enc_data: "{}",
-          revision: 1,
-          updated_at: "2026-07-14 12:00:00",
-          last_used_at: null,
-          is_shared: false,
-          collection_id: null,
-          last_editor_email: null,
-        },
         {
           id: "item-shared-1",
           enc_key: "{}",
@@ -1413,10 +1436,7 @@ describe("onSharedRevisions (A-5 / Phase 23 inherited obligation)", () => {
           last_editor_email: null,
         },
       ],
-      folders: [],
     });
-    mockGetCollectionKey.mockReturnValue({});
-    mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
 
     const revisions: SharedRevisions = {
       collections: [{ id: "collection-1", revision: 7 }],
@@ -1426,16 +1446,25 @@ describe("onSharedRevisions (A-5 / Phase 23 inherited obligation)", () => {
       await callbacks.onSharedRevisions?.(revisions);
     });
 
-    expect(mockGetSyncSnapshot.mock.calls.length).toBe(callCountBefore + 1);
-    // Bypasses lastKnownRevision entirely -- a shared-only change never
-    // bumps the caller's own personal vault_revision (SYNC-04).
-    expect(mockGetSyncSnapshot).toHaveBeenLastCalledWith(0);
+    // WINDOWS #7: a shared-revisions mismatch refreshes collections.ts
+    // FIRST, so a freshly-granted collection's key is cached in time.
+    expect(mockRefreshCollectionsNow).toHaveBeenCalledTimes(1);
+    // WINDOWS #8: the changed collection's OWN item snapshot is pulled --
+    // never a personal getSyncSnapshot(0) re-pull, which would never
+    // actually contain this item (its own creator, not this caller, owns
+    // it -- fetch_items_for's own arm 2 filters by the CALLER's user_id).
+    expect(mockGetCollectionSync).toHaveBeenCalledWith("collection-1");
     expect(store.getItems().map((i) => i.id)).toContain("item-shared-1");
+    const merged = store.getItems().find((i) => i.id === "item-shared-1");
+    expect(merged?.undecryptable).toBe(false);
+    expect(merged?.collectionId).toBe("collection-1");
   });
 
-  it("an unchanged shared-revisions payload triggers no extra pull", async () => {
+  it("an unchanged shared-revisions payload triggers no extra pull of any kind", async () => {
     const { callbacks } = await unlockWithTwoItems();
-    const callCountBefore = mockGetSyncSnapshot.mock.calls.length;
+    const refreshCallsBefore = mockRefreshCollectionsNow.mock.calls.length;
+    const collectionSyncCallsBefore = mockGetCollectionSync.mock.calls.length;
+    const directSyncCallsBefore = mockGetSharedDirectSync.mock.calls.length;
 
     // Baseline watermark after unlock is empty ({ collections: [], direct: 0
     // }) -- an equally-empty payload is, by definition, unchanged.
@@ -1444,13 +1473,16 @@ describe("onSharedRevisions (A-5 / Phase 23 inherited obligation)", () => {
       await callbacks.onSharedRevisions?.(revisions);
     });
 
-    expect(mockGetSyncSnapshot.mock.calls.length).toBe(callCountBefore);
+    expect(mockRefreshCollectionsNow.mock.calls.length).toBe(refreshCallsBefore);
+    expect(mockGetCollectionSync.mock.calls.length).toBe(collectionSyncCallsBefore);
+    expect(mockGetSharedDirectSync.mock.calls.length).toBe(directSyncCallsBefore);
   });
 
   it("a SECOND call with the identical payload that already triggered a pull does not trigger another one", async () => {
     const { callbacks } = await unlockWithTwoItems();
     mockGetCollectionKey.mockReturnValue({});
     mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+    mockGetCollectionSync.mockResolvedValue({ revision: 3, items: [] });
 
     const revisions: SharedRevisions = {
       collections: [{ id: "collection-1", revision: 3 }],
@@ -1459,19 +1491,20 @@ describe("onSharedRevisions (A-5 / Phase 23 inherited obligation)", () => {
     await act(async () => {
       await callbacks.onSharedRevisions?.(revisions);
     });
-    const callCountAfterFirst = mockGetSyncSnapshot.mock.calls.length;
+    const callCountAfterFirst = mockGetCollectionSync.mock.calls.length;
 
     await act(async () => {
       await callbacks.onSharedRevisions?.(revisions);
     });
 
-    expect(mockGetSyncSnapshot.mock.calls.length).toBe(callCountAfterFirst);
+    expect(mockGetCollectionSync.mock.calls.length).toBe(callCountAfterFirst);
   });
 
   it("the watermark resets on every unlock -- an identical payload that already triggered a pull triggers again after a lock/re-unlock cycle", async () => {
     const { store, lockListener, callbacks } = await unlockWithTwoItems();
     mockGetCollectionKey.mockReturnValue({});
     mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+    mockGetCollectionSync.mockResolvedValue({ revision: 3, items: [] });
 
     const revisions: SharedRevisions = {
       collections: [{ id: "collection-1", revision: 3 }],
@@ -1494,13 +1527,151 @@ describe("onSharedRevisions (A-5 / Phase 23 inherited obligation)", () => {
       await Promise.resolve();
     });
     const newCallbacks = getSyncCallbacks();
-    const callCountAfterReUnlock = mockGetSyncSnapshot.mock.calls.length;
+    const callCountAfterReUnlock = mockGetCollectionSync.mock.calls.length;
 
     await act(async () => {
       await newCallbacks.onSharedRevisions?.(revisions);
     });
 
-    expect(mockGetSyncSnapshot.mock.calls.length).toBe(callCountAfterReUnlock + 1);
+    expect(mockGetCollectionSync.mock.calls.length).toBe(callCountAfterReUnlock + 1);
     void store; // unused in this test beyond the initial unlock fixture
+  });
+
+  it("a collection the caller is no longer a member of has its previously-cached items purged (WINDOWS #8's inverse -- a revoke must not leave stale data visible)", async () => {
+    const { store, callbacks } = await unlockWithTwoItems();
+    mockGetCollectionKey.mockReturnValue({});
+    mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+    mockGetCollectionSync.mockResolvedValueOnce({
+      revision: 1,
+      items: [
+        {
+          id: "item-in-revoked-collection",
+          enc_key: "{}",
+          enc_data: "{}",
+          revision: 1,
+          updated_at: "2026-07-14 12:00:00",
+          last_used_at: null,
+          is_shared: true,
+          collection_id: "collection-revoked",
+          last_editor_email: null,
+        },
+      ],
+    });
+
+    await act(async () => {
+      await callbacks.onSharedRevisions?.({
+        collections: [{ id: "collection-revoked", revision: 1 }],
+        direct: { revision: 0 },
+      });
+    });
+    expect(store.getItems().map((i) => i.id)).toContain("item-in-revoked-collection");
+
+    // The NEXT payload no longer lists this collection at all -- membership
+    // was revoked/removed.
+    await act(async () => {
+      await callbacks.onSharedRevisions?.({ collections: [], direct: { revision: 0 } });
+    });
+
+    expect(store.getItems().map((i) => i.id)).not.toContain("item-in-revoked-collection");
+  });
+
+  it("a direct-bucket revision mismatch pulls getSharedDirectSync and merges it via unseal+decryptItemWithSharedKey, never decryptItem/decryptItemForCollection (WINDOWS #9)", async () => {
+    const { store, callbacks } = await unlockWithTwoItems();
+    const fakeIdentityKey = { free: vi.fn() };
+    mockEnsureOwnIdentityKeypair.mockResolvedValue(fakeIdentityKey);
+    const fakeUnsealed = { free: vi.fn() };
+    mockUnsealCollectionKey.mockReturnValue(fakeUnsealed);
+    mockDecryptItemWithSharedKey.mockReturnValue(NOTE_PLAINTEXT);
+    mockGetSharedDirectSync.mockResolvedValueOnce({
+      revision: 5,
+      items: [
+        {
+          id: "item-direct-1",
+          enc_data: "{}",
+          sealed_key: "{}",
+          revision: 1,
+          updated_at: "2026-07-14 12:00:00",
+          last_used_at: null,
+          is_shared: true,
+          last_editor_email: null,
+        },
+      ],
+    });
+
+    await act(async () => {
+      await callbacks.onSharedRevisions?.({ collections: [], direct: { revision: 5 } });
+    });
+
+    expect(mockGetSharedDirectSync).toHaveBeenCalledTimes(1);
+    expect(mockUnsealCollectionKey).toHaveBeenCalledWith(fakeIdentityKey, "{}");
+    expect(mockDecryptItemWithSharedKey).toHaveBeenCalledWith(fakeUnsealed, "{}", "item-direct-1", 1);
+    // The recipient-side sequence NEVER touches the personal/collection
+    // decrypt primitives -- a direct share is neither.
+    expect(mockDecryptItem).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), "item-direct-1", expect.anything());
+    expect(mockDecryptItemForCollection).not.toHaveBeenCalled();
+    // The unsealed per-item key handle is freed after use -- never a
+    // long-lived cache (unlike collections.ts's own Collection Key cache).
+    expect(fakeUnsealed.free).toHaveBeenCalledTimes(1);
+    expect(fakeIdentityKey.free).toHaveBeenCalledTimes(1);
+
+    const merged = store.getItems().find((i) => i.id === "item-direct-1");
+    expect(merged).toBeDefined();
+    expect(merged?.collectionId).toBeNull();
+    expect(merged?.undecryptable).toBe(false);
+  });
+});
+
+// 26-14-PLAN.md (WINDOWS #9): a directly-shared item is now visible in
+// `getItems()` for the first time -- this recipient has no crypto path to
+// correctly re-encrypt someone else's item, so `updateVaultItem` must fail
+// loud rather than silently corrupt it (see DirectShareNotEditableError's
+// own doc comment for the full rationale).
+describe("updateVaultItem refuses to save a directly-shared item (26-14-PLAN.md, DirectShareNotEditableError)", () => {
+  it("throws DirectShareNotEditableError and never calls encryptItem/updateItem for an item merged via mergeDirectSnapshot", async () => {
+    const store = await import("./store");
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockIsUnlocked.mockReturnValue(true);
+    const lockListener = mockSubscribeLockState.mock.calls[0][0] as () => void;
+    mockGetSyncSnapshot.mockResolvedValue({ revision: 0, items: [], folders: [] });
+    mockEnsureOwnIdentityKeypair.mockResolvedValue({ free: vi.fn() });
+    mockUnsealCollectionKey.mockReturnValue({ free: vi.fn() });
+    mockDecryptItemWithSharedKey.mockReturnValue(NOTE_PLAINTEXT);
+    mockGetSharedDirectSync.mockResolvedValueOnce({
+      revision: 1,
+      items: [
+        {
+          id: "item-direct-guard",
+          enc_data: "{}",
+          sealed_key: "{}",
+          revision: 1,
+          updated_at: "2026-07-14 12:00:00",
+          last_used_at: null,
+          is_shared: true,
+          last_editor_email: null,
+        },
+      ],
+    });
+    mockGetSharedRevisions.mockResolvedValueOnce({
+      collections: [],
+      direct: { revision: 1 },
+    });
+
+    act(() => {
+      lockListener();
+    });
+    // The direct-share merge chains several awaited round trips
+    // (getSharedRevisions -> refreshCollectionsNow -> getSharedDirectSync ->
+    // ensureOwnIdentityKeypair) -- vi.waitFor polls until the merge has
+    // genuinely completed rather than guessing a fixed microtask-tick count.
+    await vi.waitFor(() => expect(store.getItems().map((i) => i.id)).toContain("item-direct-guard"));
+
+    mockEncryptItem.mockClear();
+    mockUpdateItem.mockClear();
+
+    await expect(
+      store.updateVaultItem("item-direct-guard", JSON.parse(NOTE_PLAINTEXT), 1),
+    ).rejects.toThrow(store.DirectShareNotEditableError);
+    expect(mockEncryptItem).not.toHaveBeenCalled();
+    expect(mockUpdateItem).not.toHaveBeenCalled();
   });
 });
