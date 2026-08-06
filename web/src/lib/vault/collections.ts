@@ -191,7 +191,21 @@ export function refreshCollectionsNow(): Promise<void> {
 // unwrapped Collection Key survives a lock event.
 subscribeLockState(() => {
   if (isUnlocked()) {
-    void refreshCollections();
+    // WR-01 (code review, Phase 26): `refreshCollections` awaits
+    // `listCollections()`, which hits `collections::list` -- gated by
+    // `FamilyMembership<RequireRead>`, i.e. a 404 for any user with NO
+    // `family_members` row at all. That is this product's PRIMARY persona
+    // (the solo self-hoster), so every one of their unlocks produced an
+    // unhandled promise rejection. `refreshCollectionsNow`'s own doc comment
+    // states that this function deliberately does not swallow errors and
+    // that best-effort callers must catch at the call site -- this call site
+    // simply missed it, unlike `store.ts::refreshSharedItemsNow`, which
+    // wraps the identical "expected 404 for a single-user vault" case.
+    void refreshCollections().catch(() => {
+      // Expected for a single-user vault (no family_members row) and for
+      // any transient failure -- the next unlock / onSharedRevisions tick
+      // retries.
+    });
   } else {
     freeAllCollectionKeys();
     collections = [];
