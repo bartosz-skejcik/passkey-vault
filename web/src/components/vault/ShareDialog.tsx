@@ -750,8 +750,14 @@ export default function ShareDialog({
                   </p>
                 ) : null}
                 {seedMoveFailureCount !== null ? (
+                  // WR-05: names what actually happened (the folder WAS
+                  // shared) and how many items did not move, instead of the
+                  // "Couldn't share. Try again." copy this used to render
+                  // over a share that genuinely succeeded.
                   <p data-testid="share-seed-move-failures" className="text-sm text-base-content/70">
-                    {t("share.createFailed")}
+                    {interpolate(t("share.seedMoveFailed"), {
+                      count: String(seedMoveFailureCount),
+                    })}
                   </p>
                 ) : null}
 

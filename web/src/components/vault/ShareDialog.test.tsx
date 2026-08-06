@@ -500,6 +500,14 @@ describe("ShareDialog", () => {
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(screen.getByTestId("share-seed-move-failures")).toBeInTheDocument());
+      // WR-05 (code review, Phase 26): the inline report must name what
+      // actually happened -- the folder WAS shared, N items didn't move --
+      // not `share.createFailed` ("Couldn't share. Try again."), which
+      // described a success as a failure and invited a retry.
+      const report = screen.getByTestId("share-seed-move-failures");
+      expect(report).toHaveTextContent("share.seedMoveFailed");
+      expect(report).not.toHaveTextContent("share.createFailed");
+      expect(screen.queryByTestId("share-error")).not.toBeInTheDocument();
       // The folder + member grant calls must have gone through regardless.
       expect(mockCreateCollection).toHaveBeenCalledTimes(1);
       expect(mockAddCollectionMember).toHaveBeenCalledTimes(1);

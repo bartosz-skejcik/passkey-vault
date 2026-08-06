@@ -1199,6 +1199,18 @@ export const DICTIONARY = {
     en: "Couldn't share with: {recipients}. The other grants already went through — retrying won't duplicate them.",
   },
   "share.newFolderNameLabel": { pl: "Nazwa folderu", en: "Folder name" },
+  // WR-05 (code review, Phase 26): a seed-move partial failure used to
+  // render `share.createFailed` ("Couldn't share. Try again.") over a share
+  // that genuinely SUCCEEDED -- the folder and every member grant had
+  // committed, and only some of the seeded items failed to move. That copy
+  // both misdescribed the outcome and invited a retry, and it never showed
+  // the failure count, so the user could not tell what had not moved.
+  // "elem." (not a declined noun) sidesteps Polish plural-form agreement the
+  // same way share.seedFolderSummary's own count does.
+  "share.seedMoveFailed": {
+    pl: "Folder został udostępniony, ale {count} elem. nie udało się przenieść.",
+    en: "The folder was shared, but {count} items couldn't be moved.",
+  },
   // Plan 26-08 addition (Rule 2 auto-fix): 26-UI-SPEC.md's E3 "folder-create
   // variant — seed items" row requires "a non-editable summary line naming
   // that folder and its item count" when ShareDialog's folder-create variant
