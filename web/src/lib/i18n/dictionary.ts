@@ -1028,8 +1028,8 @@ export const DICTIONARY = {
   // list on Remove step 1 — must never imply the re-key undoes prior
   // exposure.
   "member.removeHonestyWarning": {
-    pl: "Usunięcie nie cofnie dostępu, który {email} już miał/a. Jeśli widział/a którekolwiek z poniższych haseł lub sekretów, wciąż je zna — zmiana kluczy chroni tylko przyszły dostęp. Zalecamy zmianę (rotację) tych danych logowania.",
-    en: "Removing {email} does not undo access they already had. If they saw any of the passwords or secrets below, they still know them — re-keying only protects future access. We recommend rotating those credentials.",
+    pl: "Usunięcie nie cofnie dostępu, który {email} już miał/a. Jeśli widział/a którekolwiek z powyższych haseł lub sekretów, wciąż je zna — zmiana kluczy chroni tylko przyszły dostęp. Zalecamy zmianę (rotację) tych danych logowania.",
+    en: "Removing {email} does not undo access they already had. If they saw any of the passwords or secrets above, they still know them — re-keying only protects future access. We recommend rotating those credentials.",
   },
   "member.removeAccessListEmpty": {
     pl: "{email} nie miał/a dostępu do żadnych udostępnionych folderów ani itemów.",
