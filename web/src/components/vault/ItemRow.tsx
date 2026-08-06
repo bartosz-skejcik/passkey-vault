@@ -10,6 +10,7 @@ import ItemContextMenu from "./ItemContextMenu";
 import DeleteConfirmDialog from "./DeleteConfirmDialog";
 import TotpCountdownRing from "./TotpCountdownRing";
 import ItemIconTile from "./ItemIconTile";
+import AvatarStack from "./AvatarStack";
 
 const TYPE_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
   login: "itemType.login",
@@ -133,6 +134,22 @@ export default function ItemRow({
           ) : null}
         </span>
       </button>
+
+      {/* D-3/E5 (26-UI-SPEC.md): the shared-item marker, rendered inline with
+          this row's existing metadata slot (near the relative-time/TOTP-ring
+          area). Consumes the shared AvatarStack.tsx/useShareRecipients data
+          source built in Plan 26-06 — never a re-implementation. `isShared`
+          alone covers both a collection-scoped item and a direct
+          item_shares grant (server's own is_shared column mirrors both);
+          AvatarStack's own useShareRecipients hook dispatches on
+          collectionId vs isShared internally and renders NOTHING (not a
+          skeleton) while its data hasn't resolved yet — never blocks this
+          row on a per-item fetch. */}
+      {item.isShared === true ? (
+        <span className="shrink-0">
+          <AvatarStack item={item} />
+        </span>
+      ) : null}
 
       {item.fields.type === "totp" ? (
         <TotpCountdownRing

@@ -1,9 +1,21 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { Check, Copy, Eye, EyeOff, KeyRound, Pencil, RefreshCw, Trash2, X } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Pencil,
+  RefreshCw,
+  Share2,
+  Trash2,
+  X,
+} from "lucide-react";
 import type { ItemFields, VaultItem } from "@/lib/vault/types";
 import { RevisionConflictError, touchVaultItem, useFolders } from "@/lib/vault/store";
+import { useCollections } from "@/lib/vault/collections";
 import { getStoredEmail } from "@/lib/auth/session";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
@@ -14,7 +26,9 @@ import PasskeyPlaceholderSection from "./PasskeyPlaceholderSection";
 import TotpCountdownRing from "./TotpCountdownRing";
 import ItemForm from "./ItemForm";
 import DeleteConfirmDialog from "./DeleteConfirmDialog";
+import ShareDialog from "./ShareDialog";
 import ItemIconTile from "./ItemIconTile";
+import AvatarStack from "./AvatarStack";
 
 // Fields shaped as generic string values, rendered through a Label+value
 // loop — `folderId` and `tags` are special-cased below instead (they need
@@ -92,6 +106,17 @@ export default function DetailPanel({
 }) {
   const { t, locale } = useLocale();
   const folders = useFolders();
+  const collections = useCollections();
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  // E1 (26-UI-SPEC.md), mirrors ItemContextMenu.tsx's identical logic: a
+  // collection-scoped item's Share affordance is replaced entirely by the
+  // honest `share.itemSharedOnCollectionNote` (WR-10's server-side 400 on a
+  // direct item_shares grant against a collection-scoped item would make a
+  // clickable Share button here a UI lie).
+  const sharedFolderName =
+    item.collectionId != null
+      ? (collections.find((c) => c.id === item.collectionId)?.name ?? "")
+      : null;
   const [mode, setMode] = useState<"view" | "edit">(initialMode);
   const [conflict, setConflict] = useState(false);
   // Reactive (409) conflict-attribution (Plan 23-05, SYNC-06) — set
@@ -242,7 +267,7 @@ export default function DetailPanel({
     >
       <div className="flex items-start justify-between gap-2">
         {mode === "view" ? (
-          <h2 className="flex items-center gap-2 text-[20px] font-bold leading-[1.2]">
+          <h2 className="flex min-w-0 items-center gap-2 text-[20px] font-bold leading-[1.2]">
             {/* Bartek live-review round 3: favicon/card-brand tile also
                 surfaces here "for consistency" with the list row — scoped to
                 the same three types ItemRow's own tile treats specially. */}
@@ -251,7 +276,15 @@ export default function DetailPanel({
             item.fields.type === "card" ? (
               <ItemIconTile item={item} variant="header" />
             ) : null}
-            {item.fields.name}
+            <span className="truncate">{item.fields.name}</span>
+            {/* D-3/E5 (26-UI-SPEC.md): the header's metadata area — mirrors
+                ItemRow.tsx's identical AvatarStack wiring (Plan 26-06's
+                shared data source, never re-implemented). */}
+            {item.isShared === true ? (
+              <span className="shrink-0">
+                <AvatarStack item={item} />
+              </span>
+            ) : null}
           </h2>
         ) : (
           <h2 className="text-[20px] font-bold leading-[1.2]">{t("item.edit")}</h2>
@@ -270,6 +303,27 @@ export default function DetailPanel({
                   known stale, and `updateVaultItem` itself refuses the save
                   (`UndecryptableItemError`); hiding the affordance here is
                   defense in depth, not the only guard. */}
+              {/* E1 (26-UI-SPEC.md): positioned BEFORE Edit in this same
+                  icon-button row, mirroring the precedent this row already
+                  establishes. Deliberately does NOT follow Edit's passkey
+                  suppression (SHARE-02 covers passkey items exactly like any
+                  other item type) but DOES follow the same
+                  `item.undecryptable` suppression, and is additionally
+                  suppressed for a collection-scoped item (`sharedFolderName
+                  !== null`) — that case renders the honest
+                  itemSharedOnCollectionNote below instead of a button that
+                  would 400 server-side on every click. */}
+              {item.undecryptable !== true && sharedFolderName === null ? (
+                <button
+                  type="button"
+                  data-testid="detail-panel-share"
+                  aria-label={t("share.ctaItem")}
+                  className="btn btn-ghost btn-square btn-sm"
+                  onClick={() => setShareDialogOpen(true)}
+                >
+                  <Share2 size={16} aria-hidden="true" />
+                </button>
+              ) : null}
               {item.fields.type !== "passkey" && item.undecryptable !== true ? (
                 <button
                   type="button"
@@ -316,6 +370,10 @@ export default function DetailPanel({
       {item.undecryptable === true ? (
         <div data-testid="undecryptable-item-banner" className="alert alert-warning text-sm">
           {t("sync.itemUndecryptableWarning")}
+        </div>
+      ) : sharedFolderName !== null ? (
+        <div data-testid="item-shared-on-collection-note" className="text-sm text-base-content/70">
+          {interpolate(t("share.itemSharedOnCollectionNote"), { folder: sharedFolderName })}
         </div>
       ) : null}
 
@@ -670,6 +728,14 @@ export default function DetailPanel({
             setShowDeleteDialog(false);
             onClose();
           }}
+        />
+      ) : null}
+
+      {shareDialogOpen ? (
+        <ShareDialog
+          scope={{ kind: "item", item }}
+          onClose={() => setShareDialogOpen(false)}
+          onShared={() => setShareDialogOpen(false)}
         />
       ) : null}
     </aside>
