@@ -57,6 +57,18 @@ members' so a member can read theirs aloud while looking at the other's on scree
 | A-5 | `/api/sync/shared` consumer | Wire it in this phase | Phase 23 shipped `/api/sync/shared` fully implemented, authorized and tested but with **no client consumer** — `sync.ts` short-circuits because nothing supplies `onSharedRevisions`. Phase 26 is the phase that finally has collections to sync, so it wires the consumer. |
 | A-6 | Hidden-password enforcement boundary | Client-side only, and labelled as such everywhere | It is an interface protection by construction (the recipient holds the key). No server-side pretence of enforcement, because a pretence would be a lie in a zero-knowledge product. |
 
+### Claude's discretion — resolving RESEARCH.md's three Open Questions
+
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| A-7 | Should `GET /api/vault/items/{id}/shares` filter out **suspended** recipients? | **No — return them, and mark them suspended in the payload so the UI can render them distinctly.** | A suspended member genuinely cannot read the item today (Phase 25 gated `resolve_access` on `status = 'active'`), but the share grant still exists and *reinstating them restores that access*. Hiding the row would tell the owner nobody has access when a single click would restore it — the dishonest option, and this phase's whole posture is disclosure honesty. This also mirrors the sibling `collections::access_list` (`collections.rs:539-580`), which does not filter. The UI owes a visible "suspended" treatment in the avatar stack rather than a silent omission. |
+| A-8 | Client-side aggregation vs. a new server endpoint for the Sharing overview's "By person" tab | **Client-side aggregation.** | The client already holds collections and item-share lists for the "By folder" tab; "By person" is a pure regrouping of data it has. A server endpoint would add a new authorization surface and another zero-knowledge boundary to audit for no capability gain. |
+| A-9 | Hex fingerprint → six words: bit-slicing scheme | **Parse the existing server-supplied SHA-256 hex, big-endian, slice the leading 66 bits into 6 × 11-bit indices into a vendored 2048-word list.** | RESEARCH.md's recommendation. The server already computes and serves this fingerprint (`families.rs:153-155`, typed at `web/src/lib/families/api.ts:31`), so D-4 is a **pure client-side presentation transform** — no new server field, no new hash, nothing added to the zero-knowledge boundary. Must be a total function of that hex so every client agrees. Note `packages/pv-ui/generator/wordlist.ts`'s `EFF_WORDLIST` is 7776 words (Diceware) and is the WRONG list — vendor a separate 2048-word list as a static file, following that file's vendoring pattern, not an npm dependency. |
+
+**Trap flagged by research — do not use `getMemberAccess` for the Sharing overview.** It is owner-only
+(`FamilyMembership<RequireEdit>`) and answers "what can this OTHER member reach", not "what am I
+sharing". Using it would both fail for non-owners and answer the wrong question.
+
 </decisions>
 
 <inherited_debt>
