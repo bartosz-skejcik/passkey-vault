@@ -9,6 +9,7 @@ const {
   mockIsUnlocked,
   mockSubscribeLockState,
   mockEncryptItem,
+  mockEncryptItemForCollection,
   mockDecryptItem,
   mockDecryptItemForCollection,
   mockGetSyncSnapshot,
@@ -26,6 +27,7 @@ const {
   mockIsUnlocked: vi.fn(),
   mockSubscribeLockState: vi.fn(),
   mockEncryptItem: vi.fn(),
+  mockEncryptItemForCollection: vi.fn(),
   mockDecryptItem: vi.fn(),
   mockDecryptItemForCollection: vi.fn(),
   mockGetSyncSnapshot: vi.fn(),
@@ -45,6 +47,7 @@ vi.mock("@/lib/crypto", () => ({
   isUnlocked: mockIsUnlocked,
   subscribeLockState: mockSubscribeLockState,
   encryptItem: mockEncryptItem,
+  encryptItemForCollection: mockEncryptItemForCollection,
   decryptItem: mockDecryptItem,
   decryptItemForCollection: mockDecryptItemForCollection,
 }));
@@ -900,6 +903,108 @@ describe("updateVaultItem", () => {
     expect(
       (caught as InstanceType<typeof store.RevisionConflictError>).lastEditorEmail,
     ).toBeUndefined();
+  });
+
+  // 26-05a (live data-corruption fix): mirrors decryptItemRow's own
+  // scope-dispatch tests ("decrypt dispatch by scope" describe block below)
+  // on the ENCRYPT side. Real-WASM round-trip proof lives in
+  // store.real-wasm.test.ts -- these mocked tests only prove the DISPATCH
+  // (which function gets called with which args), not that the resulting
+  // ciphertext is genuinely readable back.
+  describe("encrypt dispatch by scope (collection_id) -- 26-05a", () => {
+    /** Unlocks with a single collection-scoped item already in the store,
+     * so `updateVaultItem`'s `existingBeforeSave` lookup finds a non-null
+     * `collectionId`. */
+    async function unlockWithCollectionItem() {
+      mockGetUnlockedUserKey.mockReturnValue({});
+      mockGetSyncSnapshot.mockResolvedValue({
+        revision: 1,
+        items: [
+          {
+            id: "item-collection-1",
+            enc_key: "{}",
+            enc_data: "{}",
+            revision: 3,
+            updated_at: "2026-08-06T00:00:00Z",
+            last_used_at: null,
+            is_shared: true,
+            collection_id: "collection-1",
+            last_editor_email: null,
+          },
+        ],
+        folders: [],
+      });
+      mockGetCollectionKey.mockReturnValue({});
+      mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+
+      const { store, lockListener } = await importStoreAndGetLockListener();
+      mockIsUnlocked.mockReturnValue(true);
+      await act(async () => {
+        lockListener();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(store.getItems()).toHaveLength(1);
+      return store;
+    }
+
+    it("a collection-scoped item's save calls encryptItemForCollection with the item's collection_id, id, and new revision -- never encryptItem", async () => {
+      const store = await unlockWithCollectionItem();
+      const ckHandle = mockGetCollectionKey.mock.results[0]?.value as unknown;
+      mockEncryptItemForCollection.mockReturnValue(
+        JSON.stringify({
+          enc_key: { nonce: [1], ciphertext: [2] },
+          enc_data: { nonce: [3], ciphertext: [4] },
+        }),
+      );
+      mockUpdateItem.mockResolvedValue({ revision: 4, updated_at: "2026-08-06T00:01:00Z" });
+
+      const fields = {
+        type: "note" as const,
+        name: "updated shared secret",
+        body: "b",
+        folderId: null,
+        tags: [],
+      };
+      const result = await store.updateVaultItem("item-collection-1", fields, 3);
+
+      expect(mockGetCollectionKey).toHaveBeenCalledWith("collection-1");
+      expect(mockEncryptItemForCollection).toHaveBeenCalledWith(
+        ckHandle,
+        JSON.stringify(fields),
+        "collection-1",
+        "item-collection-1",
+        4,
+      );
+      expect(mockEncryptItem).not.toHaveBeenCalled();
+      expect(result.collectionId).toBe("collection-1");
+      expect(result.revision).toBe(4);
+    });
+
+    it("an unavailable collection key FAILS THE SAVE LOUDLY -- rejects with CollectionKeyUnavailableError, never falls back to encryptItem, and never calls updateItem", async () => {
+      const store = await unlockWithCollectionItem();
+      mockGetCollectionKey.mockReturnValue(undefined); // key not cached yet
+
+      const fields = {
+        type: "note" as const,
+        name: "updated shared secret",
+        body: "b",
+        folderId: null,
+        tags: [],
+      };
+
+      await expect(store.updateVaultItem("item-collection-1", fields, 3)).rejects.toBeInstanceOf(
+        store.CollectionKeyUnavailableError,
+      );
+
+      expect(mockEncryptItem).not.toHaveBeenCalled();
+      expect(mockEncryptItemForCollection).not.toHaveBeenCalled();
+      expect(mockUpdateItem).not.toHaveBeenCalled();
+      // The in-memory item is untouched -- no personal-key ciphertext was
+      // ever written, optimistically or otherwise.
+      const stored = store.getItems().find((i) => i.id === "item-collection-1");
+      expect(stored?.revision).toBe(3);
+    });
   });
 });
 
