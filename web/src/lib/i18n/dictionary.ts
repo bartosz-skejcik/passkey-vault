@@ -1158,6 +1158,17 @@ export const DICTIONARY = {
   // legible through to the CTA itself.
   "share.ctaFolder": { pl: "Udostępnij folder", en: "Share folder" },
   "share.ctaItem": { pl: "Udostępnij item", en: "Share item" },
+  // 26-12a gap fix: dedicated ENTRY-POINT copy, deliberately distinct from
+  // the two submit CTAs directly above. ItemContextMenu.tsx (menu text) and
+  // DetailPanel.tsx (Share2 icon aria-label) both used to reuse
+  // `share.ctaItem` here — the button that OPENS ShareDialog should not
+  // read identically to the button that SUBMITS the grant inside it.
+  // `share.shareThisFolder`'s literal matches 26-UI-SPEC.md's own E2 prose
+  // ("Udostępnij ten folder") verbatim; `share.shareThisItem` mirrors that
+  // same register for the item-level entry points (E1), which the UI-SPEC
+  // itself only described generically as "Share…" without a literal.
+  "share.shareThisItem": { pl: "Udostępnij ten item", en: "Share this item" },
+  "share.shareThisFolder": { pl: "Udostępnij ten folder", en: "Share this folder" },
   "share.sharing": { pl: "Udostępnianie…", en: "Sharing…" },
   "share.createFailed": {
     pl: "Nie udało się udostępnić. Spróbuj ponownie.",
