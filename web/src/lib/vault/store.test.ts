@@ -1740,6 +1740,49 @@ describe("onSharedRevisions (A-5 / Phase 23 inherited obligation, fixed by 26-14
     expect(mockGetCollectionSync).toHaveBeenCalledTimes(2);
   });
 
+  // WR-07 (code review, Phase 26): applySyncSnapshot withholds
+  // lastKnownRevision when any row fails to decrypt (CR-03/WR-01), but
+  // neither mergeCollectionSnapshot nor mergeDirectSnapshot carried that
+  // discipline across -- a transiently-undecryptable shared item just
+  // disappeared and was never re-fetched until that collection's revision
+  // happened to move again.
+  it("a shared-collection row that fails to decrypt withholds BOTH that collection's and the outer watermark, so the same payload re-pulls", async () => {
+    const { store, callbacks } = await unlockWithTwoItems();
+    mockGetCollectionKey.mockReturnValue({});
+    mockDecryptItemForCollection.mockImplementationOnce(() => {
+      throw new Error("transient decrypt failure");
+    });
+    const row = {
+      id: "item-flaky",
+      enc_key: "{}",
+      enc_data: "{}",
+      revision: 2,
+      updated_at: "2026-07-14 12:00:00",
+      last_used_at: null,
+      is_shared: true,
+      collection_id: "collection-flaky",
+      last_editor_email: null,
+    };
+    mockGetCollectionSync.mockResolvedValue({ revision: 11, items: [row] });
+
+    const revisions: SharedRevisions = {
+      collections: [{ id: "collection-flaky", revision: 11 }],
+      direct: { revision: 0 },
+    };
+    await act(async () => {
+      await callbacks.onSharedRevisions?.(revisions);
+    });
+    expect(mockGetCollectionSync).toHaveBeenCalledTimes(1);
+
+    // The identical payload must still read as "changed" and re-pull.
+    mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+    await act(async () => {
+      await callbacks.onSharedRevisions?.(revisions);
+    });
+    expect(mockGetCollectionSync).toHaveBeenCalledTimes(2);
+    expect(store.getItems().find((i) => i.id === "item-flaky")?.undecryptable).toBe(false);
+  });
+
   it("withholding the watermark is bounded -- a permanently failing pull stops re-fetching after MAX_FAILED_MERGE_RETRIES", async () => {
     const { callbacks } = await unlockWithTwoItems();
     mockGetCollectionKey.mockReturnValue({});

@@ -507,6 +507,19 @@ let collectionRevisionWatermark = new Map<string, number>();
 // `users.shared_direct_revision` counter). Reset to 0 on every unlock.
 let directRevisionWatermark = 0;
 
+// WR-07 (code review, Phase 26): the per-source siblings of
+// `failedMergeAttempts`. `applySyncSnapshot` deliberately withholds
+// `lastKnownRevision` when ANY row fails to decrypt (CR-03/WR-01 from
+// earlier iterations) so the next pull retries rather than believing itself
+// caught up on data it never merged; neither of the two NEW merge paths
+// carried that discipline across, so a transiently-undecryptable shared item
+// (e.g. its Collection Key was cached a moment later) silently disappeared
+// from the list and was never re-fetched until that collection's revision
+// happened to move again. Both are bounded by MAX_FAILED_MERGE_RETRIES for
+// the identical reason `applySyncSnapshot` bounds its own. Reset on unlock.
+let collectionFailedMergeAttempts = new Map<string, number>();
+let directFailedMergeAttempts = 0;
+
 /** Merges ONE collection's full item snapshot (`GET
  * /api/vault/collections/{id}/sync`, `pull_shared_collection` — WINDOWS
  * #8's fix) into `collectionSharedItems`. Every row here already carries
@@ -523,20 +536,23 @@ function mergeCollectionSnapshot(
   collectionId: string,
   response: SharedCollectionItemsResponse,
   uk: WasmUserKey,
-): void {
+): boolean {
   if (response.items === undefined) {
     collectionRevisionWatermark.set(collectionId, response.revision);
-    return;
+    collectionFailedMergeAttempts.delete(collectionId);
+    return true;
   }
   const previousById = new Map(
     collectionSharedItems
       .filter((item) => item.collectionId === collectionId)
       .map((item) => [item.id, item]),
   );
+  let anyRowFailed = false;
   const decrypted = response.items.flatMap((row): VaultItem[] => {
     try {
       return [{ ...decryptItemRow(row, uk), undecryptable: false }];
     } catch (err) {
+      anyRowFailed = true;
       console.error(
         `pv: failed to decrypt shared-collection item ${row.id} (collection ${collectionId}) during sync merge -- keeping last-known-good copy`,
         err,
@@ -552,8 +568,28 @@ function mergeCollectionSnapshot(
     ...collectionSharedItems.filter((item) => item.collectionId !== collectionId),
     ...decrypted,
   ];
-  collectionRevisionWatermark.set(collectionId, response.revision);
+  // WR-07: mirror `applySyncSnapshot` -- only record this collection as
+  // merged when EVERY row decrypted, so a transient failure is genuinely
+  // re-pulled on the next tick instead of silently dropping the row until
+  // that collection's revision happens to move again. Bounded so a
+  // permanently undecryptable row cannot become a permanent re-pull loop;
+  // affected rows stay flagged `undecryptable: true` either way.
+  if (!anyRowFailed) {
+    collectionFailedMergeAttempts.delete(collectionId);
+    collectionRevisionWatermark.set(collectionId, response.revision);
+  } else {
+    const attempts = (collectionFailedMergeAttempts.get(collectionId) ?? 0) + 1;
+    collectionFailedMergeAttempts.set(collectionId, attempts);
+    if (attempts >= MAX_FAILED_MERGE_RETRIES) {
+      collectionRevisionWatermark.set(collectionId, response.revision);
+    }
+  }
   recomputeItems();
+  // WR-07: reported to `handleSharedRevisions` so the OUTER watermark is
+  // withheld too -- withholding only this collection's watermark would be
+  // useless on its own, since `sharedRevisionsChanged()` short-circuits on
+  // the outer watermark before any per-collection one is consulted (WR-06).
+  return !anyRowFailed;
 }
 
 /** Decrypts ONE directly-shared row via the recipient-side crypto sequence
@@ -597,24 +633,30 @@ function decryptDirectSharedRow(row: DirectSharedItemRow, identityKey: WasmIdent
  * identity keypair ONCE per call (mirrors `collections.ts::refreshCollections`'s
  * identical one-resolution-per-refresh discipline), freed in `finally`
  * regardless of outcome. */
-async function mergeDirectSnapshot(response: SharedDirectSyncResponse, uk: WasmUserKey): Promise<void> {
+async function mergeDirectSnapshot(
+  response: SharedDirectSyncResponse,
+  uk: WasmUserKey,
+): Promise<boolean> {
   if (response.items === undefined) {
     directRevisionWatermark = response.revision;
-    return;
+    directFailedMergeAttempts = 0;
+    return true;
   }
   const previousById = new Map(directSharedItems.map((item) => [item.id, item]));
+  let anyRowFailed = false;
   const identityKey = await ensureOwnIdentityKeypair(uk);
   try {
     // A lock may have fired while the identity-keypair round trip was in
     // flight — never decrypt with/apply a stale handle (mirrors
     // `applySyncSnapshot`'s own re-check).
     if (getUnlockedUserKey() === null) {
-      return;
+      return false;
     }
     const decrypted = response.items.flatMap((row): VaultItem[] => {
       try {
         return [{ ...decryptDirectSharedRow(row, identityKey), undecryptable: false }];
       } catch (err) {
+        anyRowFailed = true;
         console.error(
           `pv: failed to decrypt directly-shared item ${row.id} during sync merge -- keeping last-known-good copy`,
           err,
@@ -629,8 +671,19 @@ async function mergeDirectSnapshot(response: SharedDirectSyncResponse, uk: WasmU
     // above), so a revoked share's absence from `response.items` is exactly
     // how its removal is represented.
     directSharedItems = decrypted;
-    directRevisionWatermark = response.revision;
+    // WR-07: same bounded withholding as mergeCollectionSnapshot above.
+    if (!anyRowFailed) {
+      directFailedMergeAttempts = 0;
+      directRevisionWatermark = response.revision;
+    } else {
+      directFailedMergeAttempts += 1;
+      if (directFailedMergeAttempts >= MAX_FAILED_MERGE_RETRIES) {
+        directRevisionWatermark = response.revision;
+      }
+    }
     recomputeItems();
+    // WR-07: see mergeCollectionSnapshot's identical return.
+    return !anyRowFailed;
   } finally {
     identityKey.free?.();
   }
@@ -987,7 +1040,11 @@ async function handleSharedRevisions(revisions: SharedRevisions): Promise<void> 
       if (getUnlockedUserKey() === null) {
         return;
       }
-      mergeCollectionSnapshot(collection.id, response, uk);
+      if (!mergeCollectionSnapshot(collection.id, response, uk)) {
+        // A row in this collection failed to decrypt -- WR-07 withheld its
+        // own watermark, so the outer one must be withheld too.
+        anyStepFailed = true;
+      }
     } catch {
       // Transient -- next tick retries (this collection's own watermark is
       // untouched on failure, so it stays "needs a pull" until it succeeds).
@@ -1001,8 +1058,8 @@ async function handleSharedRevisions(revisions: SharedRevisions): Promise<void> 
       try {
         const response = await getSharedDirectSync();
         const ukAfterFetch = getUnlockedUserKey();
-        if (ukAfterFetch !== null) {
-          await mergeDirectSnapshot(response, ukAfterFetch);
+        if (ukAfterFetch !== null && !(await mergeDirectSnapshot(response, ukAfterFetch))) {
+          anyStepFailed = true;
         }
       } catch {
         // Transient -- next tick retries.
@@ -1081,6 +1138,8 @@ subscribeLockState(() => {
     failedSharedRefreshAttempts = 0;
     collectionRevisionWatermark = new Map();
     directRevisionWatermark = 0;
+    collectionFailedMergeAttempts = new Map();
+    directFailedMergeAttempts = 0;
     void loadAndDecryptAll();
     void refreshSharedItemsNow();
     startSync(syncCallbacks);
@@ -1093,6 +1152,9 @@ subscribeLockState(() => {
     directSharedItems = [];
     collectionRevisionWatermark = new Map();
     directRevisionWatermark = 0;
+    collectionFailedMergeAttempts = new Map();
+    directFailedMergeAttempts = 0;
+    failedSharedRefreshAttempts = 0;
     recomputeItems();
     folders = [];
     notifyFolderListeners();
