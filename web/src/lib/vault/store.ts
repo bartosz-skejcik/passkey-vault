@@ -581,6 +581,12 @@ function decryptDirectSharedRow(row: DirectSharedItemRow, identityKey: WasmIdent
     isShared: row.is_shared,
     lastEditorEmail: row.last_editor_email ?? undefined,
     collectionId: null,
+    // CR-02 (code review, Phase 26): this read path -- and ONLY this read
+    // path -- produces items the caller does not own. See
+    // `VaultItem.sharedToMe`'s own doc comment for why the UI cannot infer
+    // this from `isShared`/`collectionId` (a row from here is shaped
+    // identically to an item the caller shares directly with others).
+    sharedToMe: true,
   };
 }
 

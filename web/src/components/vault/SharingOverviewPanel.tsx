@@ -169,8 +169,19 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
         // A personal item's direct-share recipients are only resolvable
         // for items with NO collection (WR-10 forbids a collection-scoped
         // item from also carrying a direct item_shares grant).
+        //
+        // CR-02 (code review, Phase 26): `sharedToMe !== true` is the
+        // load-bearing half. 26-14 merged items shared TO the caller into
+        // the same `items` view with `isShared: true, collectionId: null` --
+        // byte-identical to the shape of an item the caller shares directly
+        // -- so without this predicate this panel listed someone ELSE's
+        // items under "What you're sharing" and attributed their other
+        // recipients to the caller. Over-reporting exposure in the one
+        // screen D-1 exists to provide is a correctness defect: a security
+        // overview the user learns to distrust is worse than none.
         const directItems = items.filter(
           (item) =>
+            item.sharedToMe !== true &&
             item.isShared === true &&
             (item.collectionId === null || item.collectionId === undefined),
         );

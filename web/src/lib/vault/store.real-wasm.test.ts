@@ -643,6 +643,13 @@ describe("WINDOWS #9 (26-14-PLAN.md): a direct-share recipient reads the shared 
       }
       expect(item.undecryptable).toBe(false);
       expect(item.collectionId).toBeNull();
+      // CR-02 (code review, Phase 26): the ownership discriminant. This row
+      // is shaped exactly like an item the caller shares directly with
+      // others (isShared true, collectionId null) -- `sharedToMe` is the
+      // ONLY thing that tells the UI it is inbound, and the Sharing
+      // overview / avatar stack / Share affordance all depend on it.
+      expect(item.sharedToMe).toBe(true);
+      expect(item.isShared).toBe(true);
       expect(item.revision).toBe(revision);
       expect(item.fields).toEqual({
         type: "note",

@@ -159,6 +159,27 @@ export interface VaultItem {
   // decryptItemRow, reading row.collection_id directly off the wire row,
   // before this field even exists).
   collectionId?: string | null;
+  // CR-02 (code review, Phase 26): the OWNERSHIP discriminant. `true` ONLY
+  // for rows sourced from `pull_shared_direct` (`GET /api/sync/shared/direct`)
+  // — a personal item owned by SOMEONE ELSE and shared directly to this
+  // caller. Absent/`false` for every item the caller owns or reaches through
+  // a collection they belong to.
+  //
+  // Why an explicit field rather than an inference: 26-14 merged
+  // `directSharedItems` into the public `items` view, where such a row
+  // carries `isShared: true` (the server sets `is_shared` unconditionally on
+  // that read path) and `collectionId: null` — which is EXACTLY the shape
+  // "an item I share directly with others" has. Without a discriminant the
+  // Sharing overview counted items shared TO the caller as items the caller
+  // is sharing, and attributed their other recipients to the caller; the
+  // avatar stack rendered a received item identically to an outgoing share;
+  // and the Share affordance offered a grant this caller structurally cannot
+  // make. `store.ts`'s `DirectShareNotEditableError` already proved the
+  // store CAN tell these rows apart — this field is what tells the UI.
+  //
+  // Metadata only, never derived from ciphertext. Set exclusively by
+  // `lib/vault/store.ts`'s `decryptDirectSharedRow`.
+  sharedToMe?: boolean;
   // CR-03 (code review iteration 1): `true` when this item is a retained
   // last-known-good copy from a background sync merge whose server row
   // failed to decrypt (corrupted blob, a stale/foreign ciphertext, or —

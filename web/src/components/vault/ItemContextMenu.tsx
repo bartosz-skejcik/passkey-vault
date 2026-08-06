@@ -203,6 +203,21 @@ export default function ItemContextMenu({
               {interpolate(t("share.itemSharedOnCollectionNote"), { folder: sharedFolderName })}
             </span>
           </li>
+        ) : item.sharedToMe === true ? (
+          // CR-02 (code review, Phase 26): an item shared TO this caller.
+          // The Share action here ran `submitItemVariant`, whose
+          // `listItems()` lookup cannot find a row this caller does not own
+          // — it threw into the generic share.createFailed every time.
+          // Replaced by the honest note, never merely disabled, same
+          // discipline as the collection-scoped branch above.
+          <li>
+            <span
+              data-testid="context-menu-shared-with-you-note"
+              className="px-4 py-2 text-xs text-base-content/60"
+            >
+              {t("share.sharedWithYouNote")}
+            </span>
+          </li>
         ) : (
           <li>
             <button

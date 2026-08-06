@@ -379,4 +379,51 @@ describe("SharingOverviewPanel (D-1/E6)", () => {
       expect(mockListItemShares.mock.calls.length).toBe(itemCallsAfterMount);
     });
   });
+
+  // CR-02 (code review, Phase 26): 26-14 merged items shared TO the caller
+  // into the same `items` view, carrying `isShared: true, collectionId:
+  // null` -- byte-identical to an item the caller shares directly. Without
+  // the `sharedToMe` discriminant this panel listed a third party's item
+  // under "What you're sharing" and attributed that item's OTHER recipients
+  // to the caller in the By-person tab.
+  describe("CR-02 -- items shared TO the caller are never reported as items the caller shares", () => {
+    it("excludes a sharedToMe item from both tabs and never fetches its recipient list", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([]);
+      mockUseVaultItems.mockReturnValue([
+        makeItem({ id: "inbound-1", isShared: true, collectionId: null, sharedToMe: true }),
+      ]);
+      mockListCollections.mockResolvedValue([]);
+      mockGetCollectionAccessList.mockResolvedValue([]);
+      mockListItemShares.mockResolvedValue([makeShareEntry()]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      await waitFor(() =>
+        expect(screen.getByTestId("sharing-overview-empty")).toBeInTheDocument(),
+      );
+      // The other recipients of someone else's item are never resolved, so
+      // they can never be attributed to this caller in the By-person tab.
+      expect(mockListItemShares).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTestId("sharing-overview-tab-person"));
+      expect(screen.queryByTestId(`sharing-overview-person-${ANNA_ID}`)).not.toBeInTheDocument();
+    });
+
+    it("still reports an outgoing direct share (same wire shape, no sharedToMe flag)", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([]);
+      mockUseVaultItems.mockReturnValue([
+        makeItem({ id: "outbound-1", isShared: true, collectionId: null }),
+      ]);
+      mockListCollections.mockResolvedValue([]);
+      mockGetCollectionAccessList.mockResolvedValue([]);
+      mockListItemShares.mockResolvedValue([makeShareEntry()]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      fireEvent.click(await screen.findByTestId("sharing-overview-tab-person"));
+      await screen.findByTestId(`sharing-overview-person-${ANNA_ID}`);
+      expect(mockListItemShares).toHaveBeenCalledWith("outbound-1");
+    });
+  });
 });

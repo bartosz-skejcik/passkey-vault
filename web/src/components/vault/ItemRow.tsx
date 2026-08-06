@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MoreVertical } from "lucide-react";
+import { MoreVertical, Share2 } from "lucide-react";
 import type { ItemType, VaultItem } from "@/lib/vault/types";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
@@ -144,8 +144,25 @@ export default function ItemRow({
           AvatarStack's own useShareRecipients hook dispatches on
           collectionId vs isShared internally and renders NOTHING (not a
           skeleton) while its data hasn't resolved yet — never blocks this
-          row on a per-item fetch. */}
-      {item.isShared === true ? (
+          row on a per-item fetch.
+
+          CR-02 (code review, Phase 26): an item shared TO this caller
+          (`sharedToMe`) is NOT an outgoing share and must not render the
+          recipient stack — doing so told the user "you are sharing this
+          with X" about an item a third party owns, and additionally fired a
+          `listItemShares` fetch whose results were then attributed to the
+          caller. It gets a direction-naming marker instead. */}
+      {item.sharedToMe === true ? (
+        <span
+          data-testid="item-shared-with-you"
+          role="img"
+          aria-label={t("sharing.sharedWithYouLabel")}
+          title={t("sharing.sharedWithYouLabel")}
+          className="inline-flex shrink-0 items-center text-secondary"
+        >
+          <Share2 size={14} aria-hidden="true" />
+        </span>
+      ) : item.isShared === true ? (
         <span className="shrink-0">
           <AvatarStack item={item} />
         </span>

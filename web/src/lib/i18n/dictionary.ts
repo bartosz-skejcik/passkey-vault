@@ -1213,6 +1213,21 @@ export const DICTIONARY = {
     en: "Share a folder or a single item to see it here.",
   },
   "sharing.sharedWithLabel": { pl: "Udostępniono {count} os.", en: "Shared with {count}" },
+  // CR-02 (code review, Phase 26): the INBOUND-share marker. An item shared
+  // TO the caller used to render the identical outgoing recipient stack
+  // (`isShared === true` alone), telling the user they were sharing
+  // something a third party actually owns. This label names the direction
+  // explicitly instead.
+  "sharing.sharedWithYouLabel": { pl: "Udostępnione Tobie", en: "Shared with you" },
+  // CR-02: replaces the item-level Share affordance for an item the caller
+  // does not own — the same "replaced, never merely disabled" discipline
+  // `share.itemSharedOnCollectionNote` already applies to a
+  // collection-scoped item (E1), for the same reason: a clickable Share
+  // action that structurally cannot produce a grant is a UI lie.
+  "share.sharedWithYouNote": {
+    pl: "Ten item udostępniła Ci inna osoba — dostępem zarządza jego właściciel.",
+    en: "Someone else shared this item with you — its owner manages access.",
+  },
   "identity.yourFingerprintHeading": { pl: "Twój odcisk tożsamości", en: "Your identity fingerprint" },
   "identity.fingerprintRevealAria": {
     pl: "Pokaż odcisk tożsamości {email}",

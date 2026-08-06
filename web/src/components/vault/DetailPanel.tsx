@@ -279,8 +279,21 @@ export default function DetailPanel({
             <span className="truncate">{item.fields.name}</span>
             {/* D-3/E5 (26-UI-SPEC.md): the header's metadata area — mirrors
                 ItemRow.tsx's identical AvatarStack wiring (Plan 26-06's
-                shared data source, never re-implemented). */}
-            {item.isShared === true ? (
+                shared data source, never re-implemented).
+                CR-02 (code review, Phase 26): same direction split as
+                ItemRow — an item shared TO this caller is not an outgoing
+                share and never renders the recipient stack. */}
+            {item.sharedToMe === true ? (
+              <span
+                data-testid="detail-panel-shared-with-you"
+                role="img"
+                aria-label={t("sharing.sharedWithYouLabel")}
+                title={t("sharing.sharedWithYouLabel")}
+                className="inline-flex shrink-0 items-center text-secondary"
+              >
+                <Share2 size={14} aria-hidden="true" />
+              </span>
+            ) : item.isShared === true ? (
               <span className="shrink-0">
                 <AvatarStack item={item} />
               </span>
@@ -312,8 +325,16 @@ export default function DetailPanel({
                   suppressed for a collection-scoped item (`sharedFolderName
                   !== null`) — that case renders the honest
                   itemSharedOnCollectionNote below instead of a button that
-                  would 400 server-side on every click. */}
-              {item.undecryptable !== true && sharedFolderName === null ? (
+                  would 400 server-side on every click.
+                  CR-02 (code review, Phase 26): also suppressed for an item
+                  shared TO this caller (`sharedToMe`) — clicking it ran
+                  `submitItemVariant`, whose `listItems()` lookup cannot find
+                  a row this caller does not own and threw into the generic
+                  share.createFailed. `share.sharedWithYouNote` replaces it
+                  below, same "replaced, never merely disabled" discipline. */}
+              {item.undecryptable !== true &&
+              sharedFolderName === null &&
+              item.sharedToMe !== true ? (
                 <button
                   type="button"
                   data-testid="detail-panel-share"
@@ -379,6 +400,13 @@ export default function DetailPanel({
       ) : sharedFolderName !== null ? (
         <div data-testid="item-shared-on-collection-note" className="text-sm text-base-content/70">
           {interpolate(t("share.itemSharedOnCollectionNote"), { folder: sharedFolderName })}
+        </div>
+      ) : item.sharedToMe === true ? (
+        // CR-02: the honest replacement for the suppressed Share affordance
+        // above — this caller does not own the item and cannot grant access
+        // to it.
+        <div data-testid="item-shared-with-you-note" className="text-sm text-base-content/70">
+          {t("share.sharedWithYouNote")}
         </div>
       ) : null}
 
