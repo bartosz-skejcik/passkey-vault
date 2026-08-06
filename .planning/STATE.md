@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Family & Sharing
 current_phase: 25
-status: completed
+status: executing
 stopped_at: Phase 25 UI-SPEC approved
-last_updated: "2026-08-06T07:23:14.405Z"
+last_updated: "2026-08-06T08:48:02.043Z"
 last_activity: 2026-08-06
 last_activity_desc: Phase 25 marked complete
 progress:
   total_phases: 7
   completed_phases: 5
-  total_plans: 34
+  total_plans: 47
   completed_plans: 34
   percent: 71
 current_phase_name: Member Removal, Suspension & Re-key
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 
 Phase: 25 — COMPLETE
 Plan: 1 of 10
-Status: Phase 25 complete
+Status: Ready to execute
 Last activity: 2026-08-06 — Phase 25 marked complete
 
 ## Performance Metrics
