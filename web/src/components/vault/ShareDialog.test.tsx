@@ -717,4 +717,106 @@ describe("ShareDialog", () => {
       );
     });
   });
+
+  // CR-01 (code review, Phase 26): a partial multi-recipient failure used to
+  // be reported as TOTAL failure over N-1 already-committed grants, and the
+  // retry that copy invited was not idempotent (create_share/add_member 409
+  // on a duplicate, so the retry aborted on the already-granted recipient),
+  // while the folder variant minted a fresh collection id per submit and
+  // orphaned another collection on every attempt.
+  describe("CR-01: partial-failure honesty and idempotent retry", () => {
+    function conflict(): Error & { status: number } {
+      const err = new Error("already granted") as Error & { status: number };
+      err.status = 409;
+      return err;
+    }
+
+    it("item variant: a mid-loop failure reports exactly WHICH recipient missed out, not total failure", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      mockCreateItemShare.mockImplementation((_itemId: string, recipientId: string) =>
+        recipientId === MEMBER_B.user_id
+          ? Promise.reject(new Error("network drop"))
+          : Promise.resolve(undefined),
+      );
+      const onShared = vi.fn();
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      selectRecipient(MEMBER_A.user_id);
+      selectRecipient(MEMBER_B.user_id);
+      chooseAccessLevel("read");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
+      // The grant that DID land is never reported as a failure, and the
+      // dialog never claims the whole operation failed.
+      expect(screen.queryByTestId("share-error")).not.toBeInTheDocument();
+      expect(screen.getByTestId("share-partial-error")).toHaveAttribute("role", "alert");
+      expect(onShared).not.toHaveBeenCalled();
+      expect(mockCreateItemShare).toHaveBeenCalledTimes(2);
+    });
+
+    it("item variant: a retry treats the already-granted recipient's 409 as success and completes the share", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      let attempt = 0;
+      mockCreateItemShare.mockImplementation((_itemId: string, recipientId: string) => {
+        if (recipientId === MEMBER_A.user_id) {
+          attempt += 1;
+          // First submit: A succeeds. Retry: A is already granted -> 409.
+          return attempt === 1 ? Promise.resolve(undefined) : Promise.reject(conflict());
+        }
+        // B fails the first time, succeeds on the retry.
+        return mockCreateItemShare.mock.calls.filter(
+          (c: unknown[]) => c[1] === MEMBER_B.user_id,
+        ).length === 1
+          ? Promise.reject(new Error("network drop"))
+          : Promise.resolve(undefined);
+      });
+      const onShared = vi.fn();
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      selectRecipient(MEMBER_A.user_id);
+      selectRecipient(MEMBER_B.user_id);
+      chooseAccessLevel("read");
+      fireEvent.click(screen.getByTestId("share-submit"));
+      await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
+
+      // The retry the copy invites must actually reach completion.
+      fireEvent.click(screen.getByTestId("share-submit"));
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+    });
+
+    it("folder variant: a retry reuses the SAME collection id instead of orphaning another one", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      let addAttempts = 0;
+      mockAddCollectionMember.mockImplementation(() => {
+        addAttempts += 1;
+        return addAttempts === 1 ? Promise.reject(new Error("network drop")) : Promise.resolve(undefined);
+      });
+      const onShared = vi.fn();
+      render(
+        <ShareDialog
+          scope={{ kind: "folder", existingFolderId: null }}
+          onClose={vi.fn()}
+          onShared={onShared}
+        />,
+      );
+      await waitForPopulated();
+      fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Docs" } });
+      selectRecipient(MEMBER_A.user_id);
+      chooseAccessLevel("edit");
+      fireEvent.click(screen.getByTestId("share-submit"));
+      await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId("share-submit"));
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+
+      // ONE collection, ever -- the retry must not mint a second.
+      expect(mockCreateCollection).toHaveBeenCalledTimes(1);
+      const mintedId = mockCreateCollection.mock.calls[0][0] as string;
+      expect(mockAddCollectionMember).toHaveBeenCalledTimes(2);
+      for (const call of mockAddCollectionMember.mock.calls) {
+        expect(call[0]).toBe(mintedId);
+      }
+    });
+  });
 });

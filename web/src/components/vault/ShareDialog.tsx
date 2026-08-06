@@ -77,6 +77,23 @@ export type ShareDialogScope =
   | { kind: "item"; item: VaultItem }
   | { kind: "folder"; existingFolderId: string | null };
 
+/** CR-01: the honest outcome of ONE submit attempt. Both variants return
+ * this same shape so `handleSubmit` can tell "nothing committed, safe to
+ * report total failure" apart from "some grants landed, report exactly which
+ * ones didn't" without inspecting variant-specific state. */
+interface SubmitOutcome {
+  /** Labels (email, or user id when unknown) of recipients that did NOT end
+   * up holding a grant after this attempt. */
+  failedRecipients: string[];
+  /** Seed items that failed to move into the new shared folder (folder
+   * variant only; always 0 for the item variant). */
+  seedMoveFailures: number;
+  /** `true` when at least one durable server-side mutation landed during
+   * this attempt (any grant, or the collection itself). Drives the
+   * total-failure-vs-partial-failure copy split. */
+  committedAnything: boolean;
+}
+
 type DialogState = "loading-recipients" | "populated" | "hidden-password-ack" | "sharing";
 
 const ACCESS_LEVEL_VALUES = ["read", "edit", "hidden_password"] as const;
@@ -145,6 +162,21 @@ function assertRecipientsHavePublicKeys(
   }
 }
 
+/** Structural (duck-typed) 409 check — deliberately NOT an
+ * `instanceof ApiClientError`, mirroring `store.ts`'s own `isConflictError`
+ * and its module-identity rationale (this module is re-imported under a
+ * fresh module instance by `vi.resetModules()`-style tests, which would make
+ * a top-level class reference a different object than the one a mock
+ * rejection was constructed with). */
+function isConflictError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "status" in err &&
+    (err as { status: unknown }).status === 409
+  );
+}
+
 /**
  * The item-variant's real crypto composition, EXPORTED so
  * `ShareDialog.real-wasm.test.ts` calls this exact sequence rather than
@@ -155,25 +187,53 @@ function assertRecipientsHavePublicKeys(
  * `access_level` is a single value shared by every recipient in this
  * submission — 26-UI-SPEC.md's E3 gives each dialog session ONE access-level
  * radio group, not a per-recipient choice.
+ *
+ * CR-01 (code review, Phase 26) — this loop used to have NO per-recipient
+ * outcome tracking: the first throw propagated out, `handleSubmit` rendered
+ * `share.createFailed` ("Couldn't share. Try again.") over the N-1 grants
+ * that had ALREADY committed server-side, and the retry that copy invited
+ * was not idempotent — `vault.rs::create_share` 409s on a duplicate
+ * `(item_id, recipient_user_id)`, so the retry aborted on the
+ * already-granted recipient and the share could never be completed through
+ * the UI at all (no revoke/delete client wrapper exists anywhere in
+ * `web/src`, so there was no repair path either).
+ *
+ * Two changes make the state recoverable:
+ *  1. A per-recipient `try/catch` collects failures instead of aborting, so
+ *     the caller can report honestly WHICH recipients did not get access.
+ *  2. A 409 is treated as success-FOR-THAT-RECIPIENT, not as a failure — the
+ *     grant it reports genuinely exists, which is exactly the state the user
+ *     is trying to reach. That is what makes the retry idempotent.
+ *
+ * Returns the label (email, falling back to user id) of every recipient that
+ * did NOT end up with a grant. An empty array means every selected recipient
+ * now holds one.
  */
 export async function shareItemWithRecipients(
   itemId: string,
   encKeyJson: string,
-  recipients: { user_id: string; public_key: string | null }[],
+  recipients: { user_id: string; email?: string; public_key: string | null }[],
   accessLevel: string,
   uk: WasmUserKey,
-): Promise<void> {
+): Promise<string[]> {
   assertRecipientsHavePublicKeys(recipients);
+  const failed: string[] = [];
   for (const recipient of recipients) {
     let recipientPk: WasmIdentityPublicKey | undefined;
     try {
       recipientPk = WasmIdentityPublicKey.fromBytes(base64Decode(recipient.public_key as string));
       const sealedKey = sealItemKeyForRecipient(uk, encKeyJson, itemId, recipientPk);
       await createItemShare(itemId, recipient.user_id, sealedKey, accessLevel);
+    } catch (err) {
+      if (!isConflictError(err)) {
+        console.error(`pv: failed to share item ${itemId} with ${recipient.user_id}`, err);
+        failed.push(recipient.email ?? recipient.user_id);
+      }
     } finally {
       recipientPk?.free?.();
     }
   }
+  return failed;
 }
 
 export default function ShareDialog({
@@ -195,7 +255,25 @@ export default function ShareDialog({
   const [folderName, setFolderName] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [seedMoveFailureCount, setSeedMoveFailureCount] = useState<number | null>(null);
+  const [failedRecipientLabels, setFailedRecipientLabels] = useState<string[]>([]);
   const mountedRef = useRef(true);
+  // CR-01: the collection this dialog session created, minted ONCE and
+  // reused by every later submit attempt. `crypto.randomUUID()` used to be
+  // called inside `submitFolderVariant` on every submit, so each retry after
+  // a partial failure orphaned ANOTHER collection server-side (and there is
+  // no collection-delete client wrapper anywhere in `web/src` to clean them
+  // up). The unwrapped `WasmCollectionKey` is held alongside the id because a
+  // retry MUST seal the SAME key to the remaining recipients — a freshly
+  // generated one would not decrypt the collection's already-stored
+  // `enc_name` or any item already moved into it. `movedItemIds` keeps a
+  // retry from re-moving (and re-bumping the revision of) seed items that
+  // already landed. Freed on unmount, mirroring this file's existing
+  // free-every-WASM-handle discipline.
+  const createdCollectionRef = useRef<{
+    id: string;
+    ck: WasmCollectionKey;
+    movedItemIds: Set<string>;
+  } | null>(null);
 
   const isFolder = scope.kind === "folder";
   const seedFolder =
@@ -231,6 +309,11 @@ export default function ShareDialog({
     void load();
     return () => {
       mountedRef.current = false;
+      // CR-01: the session-scoped CollectionKey handle outlives individual
+      // submit attempts by design — this unmount is the ONE place it is
+      // freed (T-26-10's never-leave-WASM-key-material-to-the-GC rule).
+      createdCollectionRef.current?.ck.free?.();
+      createdCollectionRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -269,18 +352,18 @@ export default function ShareDialog({
     setState("populated");
   }
 
-  /** Returns 0 always — the item variant has no seed-items sub-step, but a
-   * uniform `Promise<number>` return contract lets `handleSubmit` decide
-   * "clean success vs. partial-failure-but-still-a-success" identically for
-   * both variants without relying on a `seedMoveFailureCount` state read
+  /** `seedMoveFailures` is always 0 — the item variant has no seed-items
+   * sub-step, but a uniform `SubmitOutcome` return contract lets
+   * `handleSubmit` decide "clean success vs. partial-failure-but-still-a-
+   * success" identically for both variants without relying on a state read
    * immediately after an `await` (React state updates are not visible in
    * the SAME closure that scheduled them — this return value is the actual
-   * source of truth, the state variable is purely for rendering). */
+   * source of truth, the state variables are purely for rendering). */
   async function submitItemVariant(
     item: VaultItem,
     selected: FamilyMemberRecord[],
     level: AccessLevelValue,
-  ): Promise<number> {
+  ): Promise<SubmitOutcome> {
     const uk = getUnlockedUserKey();
     if (uk === null) {
       throw new Error("cannot share while the vault is locked");
@@ -291,20 +374,35 @@ export default function ShareDialog({
     if (row === undefined) {
       throw new Error(`cannot share item ${item.id} — item not found in the caller's own vault listing`);
     }
-    await shareItemWithRecipients(item.id, row.enc_key, selected, level, uk);
-    return 0;
+    const failedRecipients = await shareItemWithRecipients(item.id, row.enc_key, selected, level, uk);
+    return {
+      failedRecipients,
+      seedMoveFailures: 0,
+      // Nothing durable landed only when EVERY selected recipient failed —
+      // in that case `handleSubmit` may honestly report total failure.
+      committedAnything: failedRecipients.length < selected.length,
+    };
   }
 
-  /** Returns the number of seed items that failed to move (0 when the
-   * variant is not seeded, or every seed item moved cleanly) — see
-   * `submitItemVariant`'s doc comment for why this is a return value, not a
-   * state read. */
+  /** Creates (once per dialog session) the shared folder, grants every
+   * selected recipient access, and — when seeded from an existing personal
+   * folder — bulk-moves that folder's items into it.
+   *
+   * CR-01 (code review, Phase 26): `newCollectionId`/`WasmCollectionKey.generate()`
+   * used to run on EVERY submit, so each retry after a partial failure
+   * created an ADDITIONAL orphaned collection (unremovable — no
+   * collection-delete client wrapper exists anywhere in `web/src`). They now
+   * live in `createdCollectionRef` for the dialog session's lifetime, so a
+   * retry adds the missing grants to the collection that already exists. The
+   * per-recipient loop tracks failures instead of aborting, and treats
+   * `collections::add_member`'s duplicate-409 as success-for-that-recipient
+   * so the retry is genuinely idempotent. */
   async function submitFolderVariant(
     name: string,
     selected: FamilyMemberRecord[],
     level: AccessLevelValue,
     seed: { id: string; itemCount: number } | null,
-  ): Promise<number> {
+  ): Promise<SubmitOutcome> {
     const uk = getUnlockedUserKey();
     if (uk === null) {
       throw new Error("cannot share while the vault is locked");
@@ -315,52 +413,76 @@ export default function ShareDialog({
     assertRecipientsHavePublicKeys(selected);
 
     const identityKey = await ensureOwnIdentityKeypair(uk);
-    let newCk: WasmCollectionKey | undefined;
     const recipientHandles: WasmIdentityPublicKey[] = [];
     try {
-      const newCollectionId = crypto.randomUUID();
-      newCk = WasmCollectionKey.generate();
-      const encName = encryptItemForCollection(
-        newCk,
-        JSON.stringify({ name }),
-        newCollectionId,
-        newCollectionId,
-        1,
-      );
-      const ownPublicKey = WasmIdentityPublicKey.fromBytes(identityKey.publicKeyBytes());
-      let sealedKeyForSelf: string;
-      try {
-        sealedKeyForSelf = sealCollectionKey(ownPublicKey, newCk);
-      } finally {
-        ownPublicKey.free?.();
+      let created = createdCollectionRef.current;
+      if (created === null) {
+        const newCollectionId = crypto.randomUUID();
+        const newCk = WasmCollectionKey.generate();
+        try {
+          const encName = encryptItemForCollection(
+            newCk,
+            JSON.stringify({ name }),
+            newCollectionId,
+            newCollectionId,
+            1,
+          );
+          const ownPublicKey = WasmIdentityPublicKey.fromBytes(identityKey.publicKeyBytes());
+          let sealedKeyForSelf: string;
+          try {
+            sealedKeyForSelf = sealCollectionKey(ownPublicKey, newCk);
+          } finally {
+            ownPublicKey.free?.();
+          }
+          await createCollection(newCollectionId, encName, sealedKeyForSelf);
+        } catch (err) {
+          // The collection never landed — free the key rather than parking a
+          // handle in the ref that no server-side collection corresponds to.
+          newCk.free?.();
+          throw err;
+        }
+        created = { id: newCollectionId, ck: newCk, movedItemIds: new Set<string>() };
+        createdCollectionRef.current = created;
+        // 26-12a gap fix: collections.ts's own store otherwise only refreshes
+        // on the NEXT unlock or onSharedRevisions tick — without this, the
+        // caller's own CollectionPicker doesn't show the folder they just
+        // created (26-12-SUMMARY.md's declared eventual-consistency-gap).
+        // Best-effort: placed right after the collection genuinely exists
+        // server-side (the caller already holds `sealedKeyForSelf`), so a
+        // refresh failure here never turns the folder's own successful
+        // creation into a visible error — the member grants and any seed
+        // moves below proceed regardless, and the next unlock/sync tick
+        // still catches up if this one transient call fails.
+        try {
+          await refreshCollectionsNow();
+        } catch {
+          // ignored — see comment above.
+        }
       }
-      await createCollection(newCollectionId, encName, sealedKeyForSelf);
-      // 26-12a gap fix: collections.ts's own store otherwise only refreshes
-      // on the NEXT unlock or onSharedRevisions tick — without this, the
-      // caller's own CollectionPicker doesn't show the folder they just
-      // created (26-12-SUMMARY.md's declared eventual-consistency-gap).
-      // Best-effort: placed right after the collection genuinely exists
-      // server-side (the caller already holds `sealedKeyForSelf`), so a
-      // refresh failure here never turns the folder's own successful
-      // creation into a visible error — the member grants and any seed
-      // moves below proceed regardless, and the next unlock/sync tick
-      // still catches up if this one transient call fails.
-      try {
-        await refreshCollectionsNow();
-      } catch {
-        // ignored — see comment above.
-      }
+      const { id: collectionId, ck: newCk, movedItemIds } = created;
 
+      const failedRecipients: string[] = [];
       for (const recipient of selected) {
         const recipientPk = WasmIdentityPublicKey.fromBytes(base64Decode(recipient.public_key as string));
         recipientHandles.push(recipientPk);
-        const sealedKey = sealCollectionKey(recipientPk, newCk);
-        await addCollectionMember(newCollectionId, recipient.user_id, sealedKey, level);
+        try {
+          const sealedKey = sealCollectionKey(recipientPk, newCk);
+          await addCollectionMember(collectionId, recipient.user_id, sealedKey, level);
+        } catch (err) {
+          // 409 == this recipient already holds this collection grant (a
+          // previous attempt's partial success). Not a failure to report.
+          if (!isConflictError(err)) {
+            console.error(`pv: failed to grant collection ${collectionId} to ${recipient.user_id}`, err);
+            failedRecipients.push(recipient.email);
+          }
+        }
       }
 
       let failures = 0;
       if (seed !== null) {
-        const seedItems = getItems().filter((i) => i.fields.folderId === seed.id);
+        const seedItems = getItems().filter(
+          (i) => i.fields.folderId === seed.id && !movedItemIds.has(i.id),
+        );
         const rows = await listItems();
         for (const item of seedItems) {
           try {
@@ -378,12 +500,15 @@ export default function ShareDialog({
             const reEncrypted = encryptItemForCollection(
               newCk,
               plaintext,
-              newCollectionId,
+              collectionId,
               item.id,
               row.revision + 1,
             );
             const { encKey, encData } = splitCombinedEncryptedItem(reEncrypted);
-            await moveItemToCollection(item.id, newCollectionId, encKey, encData, row.revision);
+            await moveItemToCollection(item.id, collectionId, encKey, encData, row.revision);
+            // CR-01: a retry must not re-move (and re-bump the revision of)
+            // an item that already landed in this collection.
+            movedItemIds.add(item.id);
           } catch {
             // A single seed item's move failure must not roll back the
             // folder creation or the member grants already committed above
@@ -393,10 +518,11 @@ export default function ShareDialog({
           }
         }
       }
-      return failures;
+      // The collection itself always exists by this point, so SOMETHING
+      // durable has committed regardless of how the grants/moves went.
+      return { failedRecipients, seedMoveFailures: failures, committedAnything: true };
     } finally {
       recipientHandles.forEach((pk) => pk.free?.());
-      newCk?.free?.();
       identityKey.free?.();
     }
   }
@@ -409,22 +535,35 @@ export default function ShareDialog({
     setState("sharing");
     setSubmitError(null);
     setSeedMoveFailureCount(null);
+    setFailedRecipientLabels([]);
     try {
-      const seedFailures =
+      const outcome =
         scope.kind === "item"
           ? await submitItemVariant(scope.item, selected, accessLevel)
           : await submitFolderVariant(folderName.trim(), selected, accessLevel, seedFolder);
       if (!mountedRef.current) return;
-      if (seedFailures > 0) {
-        // The folder + member grants genuinely succeeded — T-26-17's
-        // accepted risk is scoped to the seed-item bulk move only. Stay
-        // open so the inline report is actually visible, rather than
-        // calling `onShared()` and letting the dialog close/unmount before
-        // the user ever sees which items didn't move.
-        setSeedMoveFailureCount(seedFailures);
-        setState("populated");
-      } else {
+      if (outcome.failedRecipients.length === 0 && outcome.seedMoveFailures === 0) {
         onShared();
+        return;
+      }
+      // CR-01: something did not land. Stay open so the inline report is
+      // actually visible, rather than calling `onShared()` and letting the
+      // dialog close/unmount before the user ever sees it.
+      setState("populated");
+      if (outcome.seedMoveFailures > 0) {
+        // The folder + member grants genuinely succeeded — T-26-17's
+        // accepted risk is scoped to the seed-item bulk move only.
+        setSeedMoveFailureCount(outcome.seedMoveFailures);
+      }
+      if (outcome.failedRecipients.length > 0) {
+        if (outcome.committedAnything) {
+          // Partial: name exactly who missed out, and say plainly that the
+          // successful grants already exist so the retry is honest.
+          setFailedRecipientLabels(outcome.failedRecipients);
+        } else {
+          // Nothing committed at all — total failure is the honest report.
+          setSubmitError(t("share.createFailed"));
+        }
       }
     } catch {
       if (!mountedRef.current) return;
@@ -589,6 +728,13 @@ export default function ShareDialog({
                 {submitError !== null ? (
                   <p role="alert" data-testid="share-error" className="text-sm text-error">
                     {submitError}
+                  </p>
+                ) : null}
+                {failedRecipientLabels.length > 0 ? (
+                  <p role="alert" data-testid="share-partial-error" className="text-sm text-error">
+                    {interpolate(t("share.partialShareFailed"), {
+                      recipients: failedRecipientLabels.join(", "),
+                    })}
                   </p>
                 ) : null}
                 {seedMoveFailureCount !== null ? (

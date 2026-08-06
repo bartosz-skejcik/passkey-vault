@@ -1174,6 +1174,19 @@ export const DICTIONARY = {
     pl: "Nie udało się udostępnić. Spróbuj ponownie.",
     en: "Couldn't share. Try again.",
   },
+  // CR-01 (code review, Phase 26): the PARTIAL-failure report. Previously
+  // any throw anywhere in the per-recipient loop rendered
+  // `share.createFailed` ("Couldn't share. Try again.") even when N-1 grants
+  // had already committed server-side — the copy actively invited a retry
+  // that made the state worse. This key names exactly which recipients did
+  // NOT get access and states plainly that the successful ones already did,
+  // so the retry the user is being invited to make is an honest one (the
+  // per-recipient loop now treats a 409 on an already-granted recipient as
+  // success-for-that-recipient, so retrying is genuinely idempotent).
+  "share.partialShareFailed": {
+    pl: "Nie udało się udostępnić: {recipients}. Pozostałe dostępy zostały już przyznane — ponowna próba ich nie zduplikuje.",
+    en: "Couldn't share with: {recipients}. The other grants already went through — retrying won't duplicate them.",
+  },
   "share.newFolderNameLabel": { pl: "Nazwa folderu", en: "Folder name" },
   // Plan 26-08 addition (Rule 2 auto-fix): 26-UI-SPEC.md's E3 "folder-create
   // variant — seed items" row requires "a non-editable summary line naming
