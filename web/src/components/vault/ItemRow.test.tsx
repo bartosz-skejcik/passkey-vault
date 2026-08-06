@@ -9,6 +9,7 @@ const {
   mockReadClipboardSeconds,
   mockShowCopyToast,
   mockTotpNow,
+  mockUseCollections,
 } = vi.hoisted(() => ({
   mockUseFolders: vi.fn(),
   mockUpdateVaultItem: vi.fn(),
@@ -17,6 +18,7 @@ const {
   mockReadClipboardSeconds: vi.fn(() => 40),
   mockShowCopyToast: vi.fn(),
   mockTotpNow: vi.fn(),
+  mockUseCollections: vi.fn(),
 }));
 
 vi.mock("@/lib/vault/store", () => ({
@@ -30,6 +32,29 @@ vi.mock("@/lib/vault/store", () => ({
 // vi.mock("@/lib/crypto", ...) pattern.
 vi.mock("@/lib/crypto", () => ({
   totpNow: mockTotpNow,
+}));
+
+// Plan 26-09 (Rule 3 auto-fix): ItemRow transitively renders
+// ItemContextMenu, which now imports useCollections (for its own Share
+// entry point's itemSharedOnCollectionNote note) — real
+// "@/lib/vault/collections" has a module-load-time subscribeLockState(...)
+// side effect this file's minimal "@/lib/crypto" mock doesn't cover.
+// Mocking the whole module (mirrors ItemContextMenu.test.tsx/
+// DetailPanel.test.tsx's identical mock) avoids loading the real module at
+// all, matching this file's existing "mock what a transitively-rendered
+// child needs" convention.
+vi.mock("@/lib/vault/collections", () => ({
+  useCollections: mockUseCollections,
+}));
+
+// ShareDialog (opened by ItemContextMenu's new Share entry, Plan 26-09) is
+// a heavy component with its own network/crypto dependency chain, fully
+// covered elsewhere (Plan 26-08's ShareDialog.test.tsx/.real-wasm.test.ts)
+// — mocked here for the same reason ItemContextMenu.test.tsx/
+// DetailPanel.test.tsx mock it: this file tests ItemRow's own rendering,
+// not ShareDialog's internals.
+vi.mock("./ShareDialog", () => ({
+  default: () => null,
 }));
 
 vi.mock("@/lib/clipboard", () => ({
@@ -56,6 +81,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockUseFolders.mockReturnValue([]);
   mockTotpNow.mockReturnValue({ code: "123456", secondsRemaining: 20 });
+  mockUseCollections.mockReturnValue([]);
 });
 
 function loginItem(overrides: Partial<LoginFields> = {}): VaultItem {

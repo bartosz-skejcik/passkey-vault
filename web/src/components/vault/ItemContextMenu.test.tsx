@@ -16,6 +16,7 @@ const {
   mockReadClipboardSeconds,
   mockShowCopyToast,
   mockShowErrorToast,
+  mockUseCollections,
 } = vi.hoisted(() => ({
   mockUseFolders: vi.fn(),
   mockUpdateVaultItem: vi.fn(),
@@ -23,11 +24,31 @@ const {
   mockReadClipboardSeconds: vi.fn(() => 40),
   mockShowCopyToast: vi.fn(),
   mockShowErrorToast: vi.fn(),
+  mockUseCollections: vi.fn(),
 }));
 
 vi.mock("@/lib/vault/store", () => ({
   useFolders: mockUseFolders,
   updateVaultItem: mockUpdateVaultItem,
+}));
+
+vi.mock("@/lib/vault/collections", () => ({
+  useCollections: mockUseCollections,
+}));
+
+// ShareDialog is a heavy, fully-covered-elsewhere component (Plan 26-08's
+// own ShareDialog.test.tsx/.real-wasm.test.ts) — mocked here so this file
+// tests ONLY the entry-point wiring (which scope it opens with, when it's
+// suppressed/replaced), not ShareDialog's own internal behavior.
+vi.mock("./ShareDialog", () => ({
+  default: (props: { scope: unknown; onClose: () => void; onShared: () => void }) => (
+    <div data-testid="mock-share-dialog">
+      <span data-testid="mock-share-dialog-scope">{JSON.stringify(props.scope)}</span>
+      <button type="button" data-testid="mock-share-dialog-close" onClick={props.onClose}>
+        close
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock("@/lib/clipboard", () => ({
@@ -133,6 +154,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockUseFolders.mockReturnValue([]);
   mockUpdateVaultItem.mockResolvedValue(undefined);
+  mockUseCollections.mockReturnValue([]);
 });
 
 describe("ItemContextMenu", () => {
@@ -283,5 +305,60 @@ describe("ItemContextMenu", () => {
     fireEvent.click(screen.getByTestId("context-menu-delete"));
     expect(onDeleteRequest).toHaveBeenCalledTimes(1);
     expect(mockUpdateVaultItem).not.toHaveBeenCalled();
+  });
+
+  // E1 (26-UI-SPEC.md): SHARE-02's item-level entry point.
+  it("shows a Share… entry for a personal item, opening ShareDialog with scope: {kind: 'item', item}", () => {
+    const item = loginItem();
+    render(
+      <ItemContextMenu item={item} onClose={vi.fn()} onEdit={vi.fn()} onDeleteRequest={vi.fn()} />,
+    );
+    expect(screen.getByTestId("context-menu-share")).toBeInTheDocument();
+    expect(screen.queryByTestId("mock-share-dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("context-menu-share"));
+
+    expect(screen.getByTestId("mock-share-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("mock-share-dialog-scope")).toHaveTextContent(
+      JSON.stringify({ kind: "item", item }),
+    );
+  });
+
+  it("shows Share… for a passkey item exactly like a login item — no suppression (distinct from Edit's passkey suppression)", () => {
+    render(
+      <ItemContextMenu item={passkeyItem()} onClose={vi.fn()} onEdit={vi.fn()} onDeleteRequest={vi.fn()} />,
+    );
+    expect(screen.getByTestId("context-menu-share")).toBeInTheDocument();
+    // Edit is still suppressed for a passkey item — Share is not.
+    expect(screen.queryByTestId("context-menu-edit")).not.toBeInTheDocument();
+  });
+
+  it("does not show Share… (button or note) for an item flagged undecryptable", () => {
+    render(
+      <ItemContextMenu
+        item={{ ...loginItem(), undecryptable: true }}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+        onDeleteRequest={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("context-menu-share")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("context-menu-share-note")).not.toBeInTheDocument();
+  });
+
+  it("shows share.itemSharedOnCollectionNote instead of a Share button for a collection-scoped item", () => {
+    mockUseCollections.mockReturnValue([{ id: "col-1", name: "Rodzina" }]);
+    render(
+      <ItemContextMenu
+        item={{ ...loginItem(), collectionId: "col-1" }}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+        onDeleteRequest={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("context-menu-share")).not.toBeInTheDocument();
+    expect(screen.getByTestId("context-menu-share-note")).toHaveTextContent(
+      "share.itemSharedOnCollectionNote",
+    );
   });
 });

@@ -9,13 +9,17 @@
 // ever requests DeleteConfirmDialog's confirmation step (no new/parallel
 // delete path). ItemRow.tsx owns the outer `.dropdown` wrapper — this
 // component renders only the `.dropdown-content` menu itself.
+import { useState } from "react";
 import type { DICTIONARY } from "@/lib/i18n/dictionary";
+import { interpolate } from "@/lib/i18n/dictionary";
 import type { VaultItem } from "@/lib/vault/types";
 import { updateVaultItem, useFolders } from "@/lib/vault/store";
+import { useCollections } from "@/lib/vault/collections";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
 import { showCopyToast } from "@/lib/vault/copyToast";
 import { showErrorToast } from "@/lib/vault/errorToast";
+import ShareDialog from "./ShareDialog";
 
 interface CopyAction {
   testId: string;
@@ -86,7 +90,20 @@ export default function ItemContextMenu({
 }) {
   const { t } = useLocale();
   const folders = useFolders();
+  const collections = useCollections();
   const copyActions = copyActionsFor(item);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  // E1 backstop (26-UI-SPEC.md): WR-10's server-side 400 on a direct
+  // item_shares grant against a collection-scoped item makes a clickable
+  // Share action here a UI lie — replaced entirely by
+  // share.itemSharedOnCollectionNote, never merely disabled. Suppressed
+  // ENTIRELY (no button, no note) for `item.undecryptable` — same rationale
+  // as the Edit guard below: an item whose ciphertext failed integrity has
+  // nothing safe to share, sharable folder note included.
+  const sharedFolderName =
+    item.collectionId != null
+      ? (collections.find((c) => c.id === item.collectionId)?.name ?? "")
+      : null;
 
   function handleCopy(action: CopyAction) {
     const seconds = readClipboardSeconds();
@@ -113,11 +130,25 @@ export default function ItemContextMenu({
     onClose();
   }
 
+  // Deliberately does NOT call onClose() when opening ShareDialog — this
+  // component's own state owns the dialog, and onClose() unmounts this
+  // component (ItemRow.tsx only renders ItemContextMenu while its own
+  // menuOpen state is true), which would tear the dialog down before the
+  // user ever sees it (the same hazard this file's handleMove comment
+  // documents for post-close feedback). ShareDialog's own full-screen
+  // overlay (z-50, above this menu's z-20) visually replaces the menu
+  // regardless of whether the underlying dropdown DOM is still mounted.
+  function handleShareClosed() {
+    setShareDialogOpen(false);
+    onClose();
+  }
+
   return (
-    <ul
-      data-testid={`item-menu-${item.id}`}
-      className="dropdown-content menu z-20 mt-2 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow"
-    >
+    <>
+      <ul
+        data-testid={`item-menu-${item.id}`}
+        className="dropdown-content menu z-20 mt-2 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow"
+      >
       {copyActions.map((action) => (
         <li key={action.testId}>
           <button type="button" data-testid={action.testId} onClick={() => handleCopy(action)}>
@@ -154,6 +185,37 @@ export default function ItemContextMenu({
         </details>
       </li>
 
+      {/* E1 (26-UI-SPEC.md): "Share…" mirrors Move's own list position/testid
+          convention — a sibling `<li>` opening ShareDialog directly rather
+          than a nested menu. Deliberately does NOT follow Edit's passkey
+          suppression below (SHARE-02 covers passkey items exactly like any
+          other item type) but DOES follow the same `item.undecryptable`
+          suppression (nothing safe to share from a failed-integrity item).
+          A collection-scoped item (`collectionId !== null`) gets the honest
+          `share.itemSharedOnCollectionNote` INSTEAD of a button — WR-10's
+          server-side 400 on a direct item_shares grant against a
+          collection-scoped item would make a clickable action here a UI lie,
+          so it is replaced entirely, never merely disabled. */}
+      {item.undecryptable !== true ? (
+        sharedFolderName !== null ? (
+          <li>
+            <span data-testid="context-menu-share-note" className="px-4 py-2 text-xs text-base-content/60">
+              {interpolate(t("share.itemSharedOnCollectionNote"), { folder: sharedFolderName })}
+            </span>
+          </li>
+        ) : (
+          <li>
+            <button
+              type="button"
+              data-testid="context-menu-share"
+              onClick={() => setShareDialogOpen(true)}
+            >
+              {t("share.ctaItem")}
+            </button>
+          </li>
+        )
+      ) : null}
+
       {/* Phase 12 cross-client fix: no Edit affordance for passkey items —
           mirrors DetailPanel.tsx's own hidden pencil button (ItemForm has no
           passkey branch; editing would risk corrupting rawPasskeyJson).
@@ -185,5 +247,13 @@ export default function ItemContextMenu({
         </button>
       </li>
     </ul>
+    {shareDialogOpen ? (
+      <ShareDialog
+        scope={{ kind: "item", item }}
+        onClose={handleShareClosed}
+        onShared={handleShareClosed}
+      />
+    ) : null}
+    </>
   );
 }
