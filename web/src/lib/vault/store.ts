@@ -395,9 +395,20 @@ export async function createVaultFolder(name: string): Promise<Folder> {
   if (uk === null) {
     throw new Error("cannot create a folder while the vault is locked");
   }
+  // 26-13-PLAN.md live-run fix (real bug this plan's own live 2-session run
+  // discovered): `id` is minted client-side BEFORE encryption (mirrors
+  // ShareDialog.tsx's `newCollectionId` pattern exactly) and sent to the
+  // server via `createFolder`'s own `id` parameter -- the server no longer
+  // mints its own id and silently discards this one. The OLD code called
+  // `await createFolder(encName)` without ever reading its response body:
+  // the server minted a DIFFERENT id than the one this function had already
+  // encrypted `enc_name`'s AAD against, so `decryptFolderRow` (bound to the
+  // server's own `row.id`) could never decrypt a folder's name again after
+  // the optimistic in-memory copy below was replaced by any real server
+  // round trip (next unlock, new device, or a forced full re-pull).
   const id = crypto.randomUUID();
   const encName = encryptItem(uk, JSON.stringify({ name }), id, 1);
-  await createFolder(encName);
+  await createFolder(id, encName);
   const folder: Folder = { id, name };
   folders = [...folders, folder];
   notifyFolderListeners();

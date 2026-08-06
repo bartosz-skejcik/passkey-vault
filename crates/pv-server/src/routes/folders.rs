@@ -14,7 +14,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use uuid::Uuid;
 
 use super::session::SessionUser;
 use super::sync::{ChangeType, EntityType, SyncEvent};
@@ -23,6 +22,23 @@ use crate::{error::ApiError, AppState};
 
 #[derive(Deserialize)]
 pub struct CreateFolderRequest {
+    /// 26-13-PLAN.md live-run fix (WR-09-class bug this plan's own live
+    /// 2-session run discovered, not merely inherited): client-minted
+    /// UUID-v4, mirroring `collections.rs::CreateCollectionRequest`'s
+    /// already-audited fix for the IDENTICAL defect class. MUST be minted
+    /// and shape-validated client-side BEFORE `enc_name` is encrypted,
+    /// because `store.ts::decryptFolderRow` binds `enc_name`'s AAD to this
+    /// exact id (`decryptItem(uk, row.enc_name, row.id, 1)`). Server-minting
+    /// the id (the old behavior, discarded by the client's own
+    /// `createVaultFolder` which never read this endpoint's response body at
+    /// all) meant the AAD used at encrypt time could never match the id any
+    /// later full refresh would decrypt against — every folder's `enc_name`
+    /// silently failed to decrypt the moment the optimistic in-memory copy
+    /// was replaced by a real server round trip (next unlock, new device, or
+    /// `store.ts`'s own 3-failed-merge forced full re-pull). Shape-validated
+    /// below BEFORE any DB work, matching `collections.rs`'s identical
+    /// discipline; a collision maps to a clean `ApiError::Conflict` (409).
+    pub id: String,
     /// Opaque `WrappedKey`-shaped JSON, same non-parsing discipline as items.
     pub enc_name: String,
 }
@@ -32,29 +48,60 @@ pub struct CreateFolderResponse {
     pub id: String,
 }
 
+/// Shape-validates a client-minted folder id as UUID-v4 -- byte-for-byte the
+/// same check `collections.rs::validate_collection_id_shape` already carries
+/// for the identical id-provenance contract; duplicated (not imported) since
+/// `folders.rs` and `collections.rs` are independent, unrelated resource
+/// modules with no existing shared-validators file, matching this codebase's
+/// established per-module tiny-helper convention.
+fn validate_folder_id_shape(id: &str) -> Result<(), ApiError> {
+    let bytes = id.as_bytes();
+    let shape_ok = bytes.len() == 36
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(i, &b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { b.is_ascii_hexdigit() });
+    if shape_ok {
+        Ok(())
+    } else {
+        Err(ApiError::BadRequest("id must be a 36-character UUID-v4 string".into()))
+    }
+}
+
 /// `POST /api/vault/folders`
 pub async fn create(
     State(state): State<AppState>,
     session: SessionUser,
     Json(req): Json<CreateFolderRequest>,
 ) -> Result<(StatusCode, Json<CreateFolderResponse>), ApiError> {
+    // 26-13-PLAN.md live-run fix: shape-validate the client-minted id BEFORE
+    // any DB work, mirroring collections.rs::create's identical ordering.
+    validate_folder_id_shape(&req.id)?;
     // WR-06: folder rows had no equivalent guard to vault_items' 64 KiB blob
     // cap — reuse the same limit/helper so folder creation can't be used to
     // insert unbounded-size rows.
     validate_blob_len("enc_name", &req.enc_name)?;
 
-    let id = Uuid::new_v4().to_string();
+    let id = req.id;
 
     // WR-01: mutation + vault_revision bump run inside one transaction (see
     // vault.rs create()'s comment for the atomicity rationale).
     let mut tx = state.db.begin().await?;
 
-    sqlx::query("INSERT INTO folders (id, user_id, enc_name) VALUES (?, ?, ?)")
+    // ON CONFLICT DO NOTHING RETURNING + fetch_optional (mirrors
+    // collections.rs::create's identical idiom): a colliding client-minted
+    // id must surface as a clean ApiError::Conflict (409), never a raw
+    // sqlx::Error-propagated 500.
+    let inserted = sqlx::query("INSERT INTO folders (id, user_id, enc_name) VALUES (?, ?, ?) \
+         ON CONFLICT(id) DO NOTHING RETURNING id")
         .bind(&id)
         .bind(&session.user_id)
         .bind(&req.enc_name)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
+    if inserted.is_none() {
+        return Err(ApiError::Conflict("a folder with this id already exists".into()));
+    }
 
     // SYNC-01: bump the per-user global change counter in the same
     // single-statement discipline as vault.rs's item mutations

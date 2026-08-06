@@ -291,10 +291,19 @@ export function listFolders(): Promise<FolderRow[]> {
   return apiJson("/api/vault/folders");
 }
 
-export function createFolder(encName: string): Promise<{ id: string }> {
+/** `POST /api/vault/folders` — 26-13-PLAN.md live-run fix: `id` is now the
+ * CALLER's own client-minted UUID (mirrors `createCollection`'s existing
+ * `id` parameter exactly), never server-generated. The old server-minted
+ * scheme meant `store.ts::decryptFolderRow`'s AAD (bound to `row.id`, the
+ * server's own id) could never match the id `createVaultFolder` actually
+ * encrypted `enc_name` against (a discarded, different client-generated
+ * value) — every folder's name silently failed to decrypt on any full
+ * refresh after the optimistic in-memory copy was replaced. See
+ * `folders.rs::CreateFolderRequest`'s own doc comment for the full writeup. */
+export function createFolder(id: string, encName: string): Promise<{ id: string }> {
   return apiJson("/api/vault/folders", {
     method: "POST",
-    body: JSON.stringify({ enc_name: encName }),
+    body: JSON.stringify({ id, enc_name: encName }),
   });
 }
 
