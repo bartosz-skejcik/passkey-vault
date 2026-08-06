@@ -256,6 +256,11 @@ export default function ShareDialog({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [seedMoveFailureCount, setSeedMoveFailureCount] = useState<number | null>(null);
   const [failedRecipientLabels, setFailedRecipientLabels] = useState<string[]>([]);
+  // WR-14: `me()` could not be resolved -- the dialog cannot function (the
+  // caller cannot be filtered out of their own recipient list, and the
+  // hidden-password ack cannot be persisted per-account). Rendered as an
+  // error rather than the misleading `share.noOtherMembers` empty state.
+  const [accountUnavailable, setAccountUnavailable] = useState(false);
   const mountedRef = useRef(true);
   // CR-01: the collection this dialog session created, minted ONCE and
   // reused by every later submit attempt. `crypto.randomUUID()` used to be
@@ -288,13 +293,46 @@ export default function ShareDialog({
 
   useEffect(() => {
     mountedRef.current = true;
+    /** WR-14 (code review, Phase 26): `me()` used to be soft-failed with a
+     * bare `.catch(() => null)`, and the recipient list was then filtered
+     * with `m.user_id !== account?.user_id` -- comparing against `undefined`,
+     * so NOTHING was filtered out and the caller appeared in their own
+     * recipient list. The same `account === null` state also made the
+     * one-time hidden-password acknowledgment un-persistable, so the
+     * blocking modal reappeared on every selection, forever.
+     *
+     * The caller's own id is a PREREQUISITE for this dialog, not optional
+     * enrichment. Retried once, then treated as a hard failure for the
+     * dialog. */
+    async function resolveAccount(): Promise<{ user_id: string } | null> {
+      try {
+        return await me();
+      } catch {
+        try {
+          return await me();
+        } catch {
+          return null;
+        }
+      }
+    }
     async function load() {
       setState("loading-recipients");
       try {
-        const [account, members] = await Promise.all([me().catch(() => null), getFamilyMembers()]);
+        const [account, members] = await Promise.all([resolveAccount(), getFamilyMembers()]);
         if (!mountedRef.current) return;
-        setAccountId(account?.user_id ?? null);
-        const others = (members ?? []).filter((m) => m.user_id !== account?.user_id);
+        if (account === null) {
+          // Nothing selectable and an honest error, rather than a recipient
+          // list containing the caller themselves plus a
+          // never-acknowledgeable disclosure modal.
+          setAccountId(null);
+          setRecipients([]);
+          setAccountUnavailable(true);
+          setSubmitError(t("share.createFailed"));
+          setState("populated");
+          return;
+        }
+        setAccountId(account.user_id);
+        const others = (members ?? []).filter((m) => m.user_id !== account.user_id);
         setRecipients(others);
         setState("populated");
       } catch {
@@ -303,6 +341,8 @@ export default function ShareDialog({
         // disabled (never a lie about "no other members", just nothing to
         // act on).
         setRecipients([]);
+        setAccountUnavailable(true);
+        setSubmitError(t("share.createFailed"));
         setState("populated");
       }
     }
@@ -604,6 +644,7 @@ export default function ShareDialog({
   const ctaKey = isFolder ? "share.ctaFolder" : "share.ctaItem";
   const submitDisabled =
     sharing ||
+    accountUnavailable ||
     accessLevel === null ||
     selectedRecipientIds.size === 0 ||
     (isFolder && folderName.trim() === "");
@@ -686,7 +727,7 @@ export default function ShareDialog({
                 ) : null}
 
                 <p className="text-sm font-bold">{t("share.recipientsLabel")}</p>
-                {recipients.length === 0 ? (
+                {accountUnavailable ? null : recipients.length === 0 ? (
                   <p data-testid="share-no-other-members" className="text-sm text-base-content/70">
                     {t("share.noOtherMembers")}
                   </p>

@@ -758,6 +758,39 @@ describe("ShareDialog", () => {
     });
   });
 
+  // WR-14 (code review, Phase 26): me() was soft-failed with a bare
+  // `.catch(() => null)`, and the recipient filter then compared against
+  // `undefined` -- so nobody was filtered out and the caller appeared in
+  // their own recipient list. The same null state also made the one-time
+  // hidden-password ack un-persistable, so the blocking modal reappeared on
+  // every selection forever.
+  describe("WR-14: a failed me() is a hard failure for this dialog, not silent degradation", () => {
+    it("never offers the caller themselves as a recipient, and disables submit", async () => {
+      mockMe.mockRejectedValue(new Error("session hiccup"));
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, { ...MEMBER_A, user_id: SELF.user_id, email: SELF.email }]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+
+      expect(screen.queryByTestId(`share-recipient-${SELF.user_id}`)).not.toBeInTheDocument();
+      expect(screen.queryByTestId(`share-recipient-${MEMBER_A.user_id}`)).not.toBeInTheDocument();
+      // ...and it says so, rather than lying with share.noOtherMembers.
+      expect(screen.getByTestId("share-error")).toHaveTextContent("share.createFailed");
+      expect(screen.queryByTestId("share-no-other-members")).not.toBeInTheDocument();
+      expect(screen.getByTestId("share-submit")).toBeDisabled();
+    });
+
+    it("retries me() once before giving up", async () => {
+      mockMe.mockRejectedValueOnce(new Error("transient")).mockResolvedValue(SELF);
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+
+      expect(mockMe).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId(`share-recipient-${MEMBER_A.user_id}`)).toBeInTheDocument();
+      expect(screen.queryByTestId("share-error")).not.toBeInTheDocument();
+    });
+  });
+
   // CR-01 (code review, Phase 26): a partial multi-recipient failure used to
   // be reported as TOTAL failure over N-1 already-committed grants, and the
   // retry that copy invited was not idempotent (create_share/add_member 409
