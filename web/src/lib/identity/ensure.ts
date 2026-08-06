@@ -7,12 +7,41 @@
 // own documented idempotent-upsert contract).
 import {
   WasmIdentityKey,
+  getUnlockedUserKey,
   wrapIdentitySecretKey,
   unwrapIdentitySecretKey,
   type WasmUserKey,
 } from "@/lib/crypto";
 import { base64Encode } from "@/lib/auth/api";
 import { getIdentityKeypair, putIdentityKeypair } from "./api";
+
+/** WR-15 (code review, Phase 26): thrown when the vault locked (or locked
+ * AND re-unlocked) while one of this function's two network round trips was
+ * in flight, making the caller-supplied `uk` handle stale. */
+export class StaleUserKeyError extends Error {
+  constructor() {
+    super("the vault locked (or re-unlocked) mid-flight -- the User Key handle is stale");
+    this.name = "StaleUserKeyError";
+  }
+}
+
+/** WR-15: `uk` is dereferenced AFTER each await below, and `lockVault()`
+ * frees the current `WasmUserKey` handle (`lib/crypto/index.ts`). Phase 26
+ * newly calls `ensureOwnIdentityKeypair` on EVERY unlock path (via
+ * `publishOnUnlock`), so an unlock immediately followed by a lock/autolock
+ * -- or merely a slow network -- routinely dereferenced a freed handle,
+ * which wasm-bindgen turns into a thrown "null pointer passed to Rust".
+ * `publishOnUnlock`'s `.catch()` swallowed it entirely; `collections.ts`
+ * turned it into WR-01's unhandled rejection.
+ *
+ * Checking IDENTITY (`!== uk`) rather than mere nullity matters: a
+ * lock-then-unlock cycle installs a BRAND NEW handle, so a `=== null` guard
+ * passes while `uk` is still the freed one. */
+function assertUserKeyStillCurrent(uk: WasmUserKey): void {
+  if (getUnlockedUserKey() !== uk) {
+    throw new StaleUserKeyError();
+  }
+}
 
 /**
  * On an account with no published keypair: generates one, publishes it, and
@@ -24,6 +53,7 @@ import { getIdentityKeypair, putIdentityKeypair } from "./api";
  */
 export async function ensureOwnIdentityKeypair(uk: WasmUserKey): Promise<WasmIdentityKey> {
   const existing = await getIdentityKeypair();
+  assertUserKeyStillCurrent(uk); // WR-15
   if (existing !== null) {
     return unwrapIdentitySecretKey(uk, existing.wrapped_secret_key);
   }
@@ -47,6 +77,8 @@ export async function ensureOwnIdentityKeypair(uk: WasmUserKey): Promise<WasmIde
       public_key: publicKeyB64,
       wrapped_secret_key: wrapped,
     });
+
+    assertUserKeyStillCurrent(uk); // WR-15
 
     if (response.adopted_existing) {
       // A concurrent caller won the race — discard the locally-generated

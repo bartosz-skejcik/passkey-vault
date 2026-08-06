@@ -23,6 +23,8 @@ vi.mock("@/lib/identity/api", () => ({
 import {
   initCrypto,
   generateUserKey,
+  lockVault,
+  setUnlockedUserKey,
   WasmIdentityKey,
   wrapIdentitySecretKey,
   unwrapIdentitySecretKey,
@@ -68,6 +70,12 @@ describe("publishOnUnlock -- real WASM key generation/wrapping, mocked identity-
 
     const freeSpy = vi.spyOn(WasmIdentityKey.prototype, "free");
     const uk = generateUserKey();
+    // WR-15: production ALWAYS calls setUnlockedUserKey(uk) immediately
+    // before publishOnUnlock(uk) (all four call sites), and
+    // ensureOwnIdentityKeypair now verifies that `uk` is still the current
+    // handle after each await. Installing it here makes this fixture match
+    // the real unlock path rather than an arrangement that never occurs.
+    setUnlockedUserKey(uk);
     try {
       publishOnUnlock(uk);
 
@@ -96,7 +104,7 @@ describe("publishOnUnlock -- real WASM key generation/wrapping, mocked identity-
         unwrapped.free?.();
       }
     } finally {
-      uk.free?.();
+      lockVault(); // frees `uk` -- the singleton owns it now
       freeSpy.mockRestore();
     }
   });
@@ -123,6 +131,7 @@ describe("publishOnUnlock -- real WASM key generation/wrapping, mocked identity-
     });
 
     const freeSpy = vi.spyOn(WasmIdentityKey.prototype, "free");
+    setUnlockedUserKey(uk); // WR-15: see the first test's note
     try {
       expect(() => publishOnUnlock(uk)).not.toThrow();
 
@@ -137,7 +146,7 @@ describe("publishOnUnlock -- real WASM key generation/wrapping, mocked identity-
       // published.
       expect(mockPutIdentityKeypair).not.toHaveBeenCalled();
     } finally {
-      uk.free?.();
+      lockVault();
       freeSpy.mockRestore();
     }
   });
@@ -151,6 +160,7 @@ describe("publishOnUnlock -- real WASM key generation/wrapping, mocked identity-
     process.on("unhandledRejection", onUnhandledRejection);
 
     const uk = generateUserKey();
+    setUnlockedUserKey(uk); // WR-15: see the first test's note
     try {
       // publishOnUnlock is fire-and-forget (returns void, not a Promise) --
       // a synchronous call must never throw, per E9's non-blocking
@@ -162,7 +172,7 @@ describe("publishOnUnlock -- real WASM key generation/wrapping, mocked identity-
       // surface as an unhandled rejection.
       await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
-      uk.free?.();
+      lockVault();
       process.off("unhandledRejection", onUnhandledRejection);
     }
 

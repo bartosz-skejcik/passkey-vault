@@ -2,19 +2,28 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock functions via vi.hoisted() so they exist before the hoisted vi.mock()
 // factory below runs (mirrors lib/passkeys/enroll.test.ts's convention).
-const { mockGenerate, mockWrapIdentitySecretKey, mockUnwrapIdentitySecretKey } = vi.hoisted(() => ({
+const {
+  mockGenerate,
+  mockWrapIdentitySecretKey,
+  mockUnwrapIdentitySecretKey,
+  mockGetUnlockedUserKey,
+} = vi.hoisted(() => ({
   mockGenerate: vi.fn(),
   mockWrapIdentitySecretKey: vi.fn(),
   mockUnwrapIdentitySecretKey: vi.fn(),
+  // WR-15: ensureOwnIdentityKeypair re-verifies that the caller's `uk` is
+  // still the CURRENT unlocked handle after each await.
+  mockGetUnlockedUserKey: vi.fn(),
 }));
 
 vi.mock("@/lib/crypto", () => ({
   WasmIdentityKey: { generate: mockGenerate },
   wrapIdentitySecretKey: mockWrapIdentitySecretKey,
   unwrapIdentitySecretKey: mockUnwrapIdentitySecretKey,
+  getUnlockedUserKey: mockGetUnlockedUserKey,
 }));
 
-import { ensureOwnIdentityKeypair } from "./ensure";
+import { ensureOwnIdentityKeypair, StaleUserKeyError } from "./ensure";
 import type { WasmUserKey } from "@/lib/crypto";
 
 const FAKE_UK = {} as WasmUserKey;
@@ -29,6 +38,9 @@ function jsonResponse(status: number, body: unknown): Response {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal("fetch", vi.fn());
+  // Default: the vault stayed unlocked under the SAME key for the whole
+  // call, which is the normal production case.
+  mockGetUnlockedUserKey.mockReturnValue(FAKE_UK);
 });
 
 describe("ensureOwnIdentityKeypair", () => {
@@ -117,5 +129,56 @@ describe("ensureOwnIdentityKeypair", () => {
     await expect(ensureOwnIdentityKeypair(FAKE_UK)).rejects.toThrow("network drop");
 
     expect(freshIsk.free).toHaveBeenCalledTimes(1);
+  });
+
+  // WR-15 (code review, Phase 26): `uk` is dereferenced AFTER each await,
+  // and lockVault() FREES the current WasmUserKey. Phase 26 calls this on
+  // every unlock path (publishOnUnlock), so an unlock immediately followed
+  // by a lock/autolock -- or merely a slow network -- routinely dereferenced
+  // a freed handle, which wasm-bindgen turns into "null pointer passed to
+  // Rust". Checking identity rather than nullity matters: a lock-then-unlock
+  // cycle installs a BRAND NEW handle, so a `=== null` guard passes while
+  // `uk` is stale.
+  describe("WR-15: a lock (or lock+re-unlock) mid-flight is detected, never dereferenced", () => {
+    it("throws StaleUserKeyError instead of unwrapping under a freed handle after the GET", async () => {
+      (global.fetch as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        mockGetUnlockedUserKey.mockReturnValue(null); // lockVault() fired
+        return jsonResponse(200, { public_key: "AQID", wrapped_secret_key: "w" });
+      });
+
+      await expect(ensureOwnIdentityKeypair(FAKE_UK)).rejects.toThrow(StaleUserKeyError);
+      expect(mockUnwrapIdentitySecretKey).not.toHaveBeenCalled();
+    });
+
+    it("detects a lock-then-RE-UNLOCK, which a nullity-only guard would miss", async () => {
+      (global.fetch as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        // A brand-new handle is installed -- non-null, but NOT `uk`.
+        mockGetUnlockedUserKey.mockReturnValue({} as WasmUserKey);
+        return jsonResponse(200, { public_key: "AQID", wrapped_secret_key: "w" });
+      });
+
+      await expect(ensureOwnIdentityKeypair(FAKE_UK)).rejects.toThrow(StaleUserKeyError);
+      expect(mockUnwrapIdentitySecretKey).not.toHaveBeenCalled();
+    });
+
+    it("frees the freshly-generated handle when the lock lands after the PUT", async () => {
+      const freshIsk = { publicKeyBytes: () => new Uint8Array([1, 1, 1, 1]), free: vi.fn() };
+      mockGenerate.mockReturnValue(freshIsk);
+      mockWrapIdentitySecretKey.mockReturnValue("wrapped-json");
+
+      (global.fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(jsonResponse(404, { error: "not found" }))
+        .mockImplementationOnce(async () => {
+          mockGetUnlockedUserKey.mockReturnValue(null);
+          return jsonResponse(200, {
+            public_key: "AQIDBA==",
+            wrapped_secret_key: "wrapped-json",
+            adopted_existing: false,
+          });
+        });
+
+      await expect(ensureOwnIdentityKeypair(FAKE_UK)).rejects.toThrow(StaleUserKeyError);
+      expect(freshIsk.free).toHaveBeenCalledTimes(1);
+    });
   });
 });

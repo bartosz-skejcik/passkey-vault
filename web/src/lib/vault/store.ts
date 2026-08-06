@@ -658,7 +658,11 @@ async function mergeDirectSnapshot(
     // A lock may have fired while the identity-keypair round trip was in
     // flight — never decrypt with/apply a stale handle (mirrors
     // `applySyncSnapshot`'s own re-check).
-    if (getUnlockedUserKey() === null) {
+    //
+    // WR-15 (code review, Phase 26): identity, not mere nullity -- a
+    // lock-then-unlock cycle mid-flight installs a BRAND NEW WasmUserKey
+    // and frees this one, so a `=== null` guard passes while `uk` is stale.
+    if (getUnlockedUserKey() !== uk) {
       return false;
     }
     const decrypted = response.items.flatMap((row): VaultItem[] => {
@@ -1101,8 +1105,8 @@ async function doHandleSharedRevisions(revisions: SharedRevisions): Promise<void
     }
     try {
       const response = await getCollectionSync(collection.id);
-      if (getUnlockedUserKey() === null) {
-        return;
+      if (getUnlockedUserKey() !== uk) {
+        return; // WR-15: identity, not nullity -- see mergeDirectSnapshot
       }
       if (!mergeCollectionSnapshot(collection.id, response, uk)) {
         // A row in this collection failed to decrypt -- WR-07 withheld its

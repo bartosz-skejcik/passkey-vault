@@ -93,7 +93,10 @@ async function refreshCollections(): Promise<void> {
   }
 
   const rows = await listCollections();
-  if (getUnlockedUserKey() === null) {
+  // WR-15 (code review, Phase 26): identity, not mere nullity -- a
+  // lock-then-unlock cycle mid-flight installs a BRAND NEW WasmUserKey and
+  // frees this one, so a `=== null` guard passes while `uk` is stale.
+  if (getUnlockedUserKey() !== uk) {
     return;
   }
 
@@ -102,8 +105,8 @@ async function refreshCollections(): Promise<void> {
   // outcome.
   const identityKey = await ensureOwnIdentityKeypair(uk);
   try {
-    if (getUnlockedUserKey() === null) {
-      return;
+    if (getUnlockedUserKey() !== uk) {
+      return; // WR-15: see the identity check above
     }
 
     const nextCollections: Collection[] = [];
