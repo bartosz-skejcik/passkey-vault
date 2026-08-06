@@ -1050,7 +1050,7 @@ function sharedRevisionsChanged(revisions: SharedRevisions): boolean {
  * `getUnlockedUserKey()` before touching module state, mirroring
  * `applySyncSnapshot`'s own re-check-after-await discipline (a lock event
  * may fire while any of these round trips is in flight). */
-async function handleSharedRevisions(revisions: SharedRevisions): Promise<void> {
+async function doHandleSharedRevisions(revisions: SharedRevisions): Promise<void> {
   if (!sharedRevisionsChanged(revisions)) {
     return;
   }
@@ -1155,6 +1155,34 @@ async function handleSharedRevisions(revisions: SharedRevisions): Promise<void> 
       };
     }
   }
+}
+
+/** WR-11 (code review, Phase 26): the re-entrancy guard.
+ * `onSharedRevisions` is fired by BOTH the WS event path and the 30s poll,
+ * and `sync.ts::pullOnce` explicitly never awaits it -- so two invocations
+ * could overlap freely while `doHandleSharedRevisions` mutates five pieces
+ * of module-level state across a long await chain
+ * (`collectionRevisionWatermark`, `collectionSharedItems`,
+ * `directRevisionWatermark`, `directSharedItems`,
+ * `sharedRevisionsWatermark`). Run A could purge a collection between run
+ * B's fetch and its merge, both would write the outer watermark at the end
+ * (last writer wins, possibly with the OLDER payload), and a burst of WS
+ * events fanned out into duplicated `refreshCollectionsNow` + per-collection
+ * fetch storms.
+ *
+ * Serializing on a module-level in-flight promise makes each invocation see
+ * a settled state. The `.catch(() => {})` keeps one failed pass from
+ * poisoning the chain for every later one -- `doHandleSharedRevisions`
+ * already handles every internal failure itself, so there is nothing to
+ * surface here anyway. The returned promise still resolves only once THIS
+ * invocation has finished, which is what 26-14's tests await. */
+let sharedRefreshInFlight: Promise<void> = Promise.resolve();
+
+function handleSharedRevisions(revisions: SharedRevisions): Promise<void> {
+  sharedRefreshInFlight = sharedRefreshInFlight
+    .then(() => doHandleSharedRevisions(revisions))
+    .catch(() => {});
+  return sharedRefreshInFlight;
 }
 
 /** Eager first attempt at the SAME refresh `handleSharedRevisions` performs

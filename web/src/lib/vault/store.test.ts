@@ -1875,6 +1875,45 @@ describe("onSharedRevisions (A-5 / Phase 23 inherited obligation, fixed by 26-14
     expect(store.getItems().find((i) => i.id === "item-flaky")?.undecryptable).toBe(false);
   });
 
+  // WR-11 (code review, Phase 26): onSharedRevisions is fired by BOTH the
+  // WS path and the 30s poll and is never awaited by sync.ts::pullOnce, so
+  // two long await-chains mutating the same five module-level variables
+  // could interleave -- run A purging a collection between run B's fetch and
+  // its merge, both writing the outer watermark at the end (last writer
+  // wins, possibly with the OLDER payload), and a WS burst fanning out into
+  // duplicated fetch storms.
+  it("overlapping invocations are serialized, never interleaved", async () => {
+    const { callbacks } = await unlockWithTwoItems();
+    mockGetCollectionKey.mockReturnValue({});
+    mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+
+    let inFlight = 0;
+    let maxConcurrent = 0;
+    mockGetCollectionSync.mockImplementation(async () => {
+      inFlight += 1;
+      maxConcurrent = Math.max(maxConcurrent, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      inFlight -= 1;
+      return { revision: 21, items: [] };
+    });
+
+    await act(async () => {
+      // Two ticks fired back-to-back with DIFFERENT payloads, neither
+      // awaited -- exactly the WS-burst-plus-poll shape.
+      const a = callbacks.onSharedRevisions?.({
+        collections: [{ id: "collection-race-a", revision: 21 }],
+        direct: { revision: 0 },
+      });
+      const b = callbacks.onSharedRevisions?.({
+        collections: [{ id: "collection-race-b", revision: 21 }],
+        direct: { revision: 0 },
+      });
+      await Promise.all([a, b]);
+    });
+
+    expect(maxConcurrent).toBe(1);
+  });
+
   it("withholding the watermark is bounded -- a permanently failing pull stops re-fetching after MAX_FAILED_MERGE_RETRIES", async () => {
     const { callbacks } = await unlockWithTwoItems();
     mockGetCollectionKey.mockReturnValue({});
