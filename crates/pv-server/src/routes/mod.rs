@@ -266,7 +266,7 @@ pub fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRouter<App
         ("/api/vault/items/{id}", put(vault::update).delete(vault::delete)),
         ("/api/vault/items/{id}/touch", post(vault::touch)),
         ("/api/vault/items/{id}/collection", put(vault::move_item)),
-        ("/api/vault/items/{id}/shares", post(vault::create_share)),
+        ("/api/vault/items/{id}/shares", get(vault::list_item_shares).post(vault::create_share)),
         ("/api/vault/items/{id}/shares/{user_id}", delete(vault::revoke_share)),
         // Phase 25 (KEY-02/FAM-08's client-fetch prerequisite): the
         // collection's FULL item set (id, enc_key, enc_data) from EVERY
