@@ -32,6 +32,8 @@ import init, {
   encryptItemForCollection,
   decryptItemForCollection,
   rewrapItemKeyForCollection,
+  sealItemKeyForRecipient,
+  decryptItemWithSharedKey,
 } from "./wasm/pv_wasm.js";
 
 export type { WasmUserKey, WasmAuthMaterial };
@@ -71,6 +73,16 @@ export {
 // rewrap binding) — a pure pass-through, no wrapper logic, mirroring the
 // re-exports immediately above.
 export { encryptItemForCollection, decryptItemForCollection, rewrapItemKeyForCollection };
+
+// Plan 26-08 (SHARE-02): sealItemKeyForRecipient/decryptItemWithSharedKey are
+// NEW pv-wasm/pv-core primitives added by this plan (not pre-existing, see
+// its own SUMMARY.md's Deviations section) — the write/read pair for
+// directly sharing a single personal item's Cipher Key to one recipient's
+// published identity key, composed entirely from EXISTING primitives
+// (`aead_open`, `identity::seal`) with zero new cryptographic construction.
+// Pure pass-throughs, mirroring the re-export shape immediately above; this
+// module remains the sole permitted importer of `./wasm/pv_wasm.js`.
+export { sealItemKeyForRecipient, decryptItemWithSharedKey };
 
 export type TotpNowResult = { code: string; secondsRemaining: number };
 
