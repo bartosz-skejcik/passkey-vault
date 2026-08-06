@@ -1247,10 +1247,8 @@ mod tests {
         .expect("encrypt should succeed");
         let item: EncryptedItem =
             serde_json::from_str(&item_json).expect("encrypt_item output must deserialize");
-        let enc_key_json =
-            serde_json::to_string(&item.enc_key).expect("enc_key must serialize");
-        let enc_data_json =
-            serde_json::to_string(&item.enc_data).expect("enc_data must serialize");
+        let enc_key_json = serde_json::to_string(&item.enc_key).expect("enc_key must serialize");
+        let enc_data_json = serde_json::to_string(&item.enc_data).expect("enc_data must serialize");
 
         let sealed_json = seal_item_key_for_recipient(&alice_uk, &enc_key_json, "item-1", &bob_pk)
             .expect("seal should succeed");
@@ -1269,12 +1267,16 @@ mod tests {
         let bob_pk = WasmIdentityPublicKey::from_bytes(&bob.public_key_bytes())
             .expect("a real generated public key must never be small-order");
 
-        let item_json = encrypt_item(&alice_uk, "{\"type\":\"note\",\"body\":\"secret\"}", "item-1", 1)
-            .expect("encrypt should succeed");
+        let item_json = encrypt_item(
+            &alice_uk,
+            "{\"type\":\"note\",\"body\":\"secret\"}",
+            "item-1",
+            1,
+        )
+        .expect("encrypt should succeed");
         let item: EncryptedItem =
             serde_json::from_str(&item_json).expect("encrypt_item output must deserialize");
-        let enc_key_json =
-            serde_json::to_string(&item.enc_key).expect("enc_key must serialize");
+        let enc_key_json = serde_json::to_string(&item.enc_key).expect("enc_key must serialize");
 
         let result = seal_item_key_for_recipient(&mallory_uk, &enc_key_json, "item-1", &bob_pk);
         assert!(result.is_err());
@@ -1288,20 +1290,24 @@ mod tests {
         let mallory_pk = WasmIdentityPublicKey::from_bytes(&mallory.public_key_bytes())
             .expect("a real generated public key must never be small-order");
 
-        let item_json = encrypt_item(&alice_uk, "{\"type\":\"note\",\"body\":\"secret\"}", "item-1", 1)
-            .expect("encrypt should succeed");
+        let item_json = encrypt_item(
+            &alice_uk,
+            "{\"type\":\"note\",\"body\":\"secret\"}",
+            "item-1",
+            1,
+        )
+        .expect("encrypt should succeed");
         let item: EncryptedItem =
             serde_json::from_str(&item_json).expect("encrypt_item output must deserialize");
-        let enc_key_json =
-            serde_json::to_string(&item.enc_key).expect("enc_key must serialize");
-        let enc_data_json =
-            serde_json::to_string(&item.enc_data).expect("enc_data must serialize");
+        let enc_key_json = serde_json::to_string(&item.enc_key).expect("enc_key must serialize");
+        let enc_data_json = serde_json::to_string(&item.enc_data).expect("enc_data must serialize");
 
         // Alice seals to MALLORY's public key by mistake — Bob's own
         // identity key must not be able to unseal, decrypt, or otherwise
         // recover the plaintext.
-        let sealed_json = seal_item_key_for_recipient(&alice_uk, &enc_key_json, "item-1", &mallory_pk)
-            .expect("seal should succeed");
+        let sealed_json =
+            seal_item_key_for_recipient(&alice_uk, &enc_key_json, "item-1", &mallory_pk)
+                .expect("seal should succeed");
         let bob_attempt = unseal_collection_key(&bob, &sealed_json);
         assert!(bob_attempt.is_err());
 

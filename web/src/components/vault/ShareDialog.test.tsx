@@ -88,15 +88,37 @@ vi.mock("@/lib/auth/api", () => ({
   me: mockMe,
 }));
 
-vi.mock("@/lib/i18n/LocaleContext", () => ({
-  useLocale: () => ({
-    locale: "pl",
-    setLocale: vi.fn(),
-    t: (key: string) => key,
-  }),
-}));
+// D-2/UX-03's four hidden-password honesty strings render the REAL
+// dictionary text (via a genuine, unmocked dynamic import of
+// @/lib/i18n/dictionary inside this factory) rather than the literal-key
+// passthrough every other assertion in this file relies on -- this is what
+// lets the "exact byte-for-byte copy" test below catch a real reword/
+// shortening of share.hiddenPasswordDisclosureBody. Every other key stays a
+// literal-key passthrough so the rest of this file's assertions (written
+// against key names) are unaffected.
+const HIDDEN_PASSWORD_HONESTY_KEYS = new Set([
+  "share.hiddenPasswordDisclosureTitle",
+  "share.hiddenPasswordDisclosureBody",
+  "share.hiddenPasswordDisclosureAck",
+  "share.hiddenPasswordInlineNote",
+]);
+
+vi.mock("@/lib/i18n/LocaleContext", async () => {
+  const dict = await import("@/lib/i18n/dictionary");
+  return {
+    useLocale: () => ({
+      locale: "pl",
+      setLocale: vi.fn(),
+      t: (key: string) =>
+        HIDDEN_PASSWORD_HONESTY_KEYS.has(key)
+          ? (dict.DICTIONARY as Record<string, { pl: string; en: string }>)[key].pl
+          : key,
+    }),
+  };
+});
 
 import ShareDialog from "./ShareDialog";
+import { DICTIONARY } from "@/lib/i18n/dictionary";
 import type { FamilyMemberRecord } from "@/lib/families/api";
 import type { VaultItem, Folder } from "@/lib/vault/types";
 
@@ -158,6 +180,7 @@ const identityKey = { publicKeyBytes: () => new Uint8Array([1, 2, 3]), free: vi.
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   mockMe.mockResolvedValue(SELF);
   mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
   mockGetUnlockedUserKey.mockReturnValue(uk);
@@ -443,6 +466,102 @@ describe("ShareDialog", () => {
       // silently closing) -- onShared() is deliberately NOT called when
       // there's a seed-move failure to report, so the user actually sees it.
       expect(screen.getByTestId("share-dialog")).toBeInTheDocument();
+    });
+  });
+
+  describe("hidden-password disclosure (D-2/UX-03, E4)", () => {
+    async function openAndSelectRecipient() {
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      selectRecipient(MEMBER_A.user_id);
+    }
+
+    it("first selection ever blocks progression inside the SAME dialog (no second stacked overlay) until the ack is clicked", async () => {
+      await openAndSelectRecipient();
+      chooseAccessLevel("hidden_password");
+
+      await waitFor(() => expect(screen.getByTestId("share-hidden-password-ack-confirm")).toBeInTheDocument());
+      // Same dialog card, not a second overlay -- exactly one
+      // [data-testid="share-dialog"] element in the document.
+      expect(screen.getAllByTestId("share-dialog")).toHaveLength(1);
+      // The normal access-level radios are NOT rendered while the ack
+      // sub-step owns the card.
+      expect(screen.queryByTestId("share-access-level-read")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("share-hidden-password-ack-confirm"));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("share-hidden-password-inline-note")).toBeInTheDocument(),
+      );
+      const hiddenRadio = screen
+        .getByTestId("share-access-level-hidden_password")
+        .querySelector("input[type=radio]") as HTMLInputElement;
+      expect(hiddenRadio.checked).toBe(true);
+    });
+
+    it("Cancel on the ack modal returns the access-level selection to its PREVIOUS value, never leaving hidden-password selected", async () => {
+      await openAndSelectRecipient();
+      chooseAccessLevel("read");
+      chooseAccessLevel("hidden_password");
+      await waitFor(() => expect(screen.getByTestId("share-hidden-password-ack-cancel")).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId("share-hidden-password-ack-cancel"));
+
+      await waitFor(() => expect(screen.getByTestId("share-access-level-read")).toBeInTheDocument());
+      const readRadio = screen
+        .getByTestId("share-access-level-read")
+        .querySelector("input[type=radio]") as HTMLInputElement;
+      const hiddenRadio = screen
+        .getByTestId("share-access-level-hidden_password")
+        .querySelector("input[type=radio]") as HTMLInputElement;
+      expect(readRadio.checked).toBe(true);
+      expect(hiddenRadio.checked).toBe(false);
+      expect(screen.queryByTestId("share-hidden-password-inline-note")).not.toBeInTheDocument();
+    });
+
+    it("backstop: toggling away and back to hidden-password within the SAME dialog session shows only the inline note, never re-triggers the blocking modal a second time", async () => {
+      await openAndSelectRecipient();
+      chooseAccessLevel("hidden_password");
+      await waitFor(() => expect(screen.getByTestId("share-hidden-password-ack-confirm")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId("share-hidden-password-ack-confirm"));
+      await waitFor(() =>
+        expect(screen.getByTestId("share-hidden-password-inline-note")).toBeInTheDocument(),
+      );
+
+      chooseAccessLevel("read");
+      expect(screen.queryByTestId("share-hidden-password-inline-note")).not.toBeInTheDocument();
+
+      chooseAccessLevel("hidden_password");
+
+      // Never re-shows the blocking modal -- goes straight to the inline
+      // note, still inside the same populated state.
+      expect(screen.queryByTestId("share-hidden-password-ack-confirm")).not.toBeInTheDocument();
+      expect(screen.getByTestId("share-hidden-password-inline-note")).toBeInTheDocument();
+    });
+
+    it("backstop: an account whose ack flag is already set in localStorage never sees the blocking modal, even on a fresh dialog instance (simulated reload)", async () => {
+      localStorage.setItem(`pv-hidden-password-ack:${SELF.user_id}`, "1");
+      await openAndSelectRecipient();
+
+      chooseAccessLevel("hidden_password");
+
+      expect(screen.queryByTestId("share-hidden-password-ack-confirm")).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByTestId("share-hidden-password-inline-note")).toBeInTheDocument(),
+      );
+    });
+
+    it("renders share.hiddenPasswordDisclosureBody's EXACT dictionary text, zero truncation/softening", async () => {
+      await openAndSelectRecipient();
+      chooseAccessLevel("hidden_password");
+
+      await waitFor(() => expect(screen.getByTestId("share-hidden-password-ack-body")).toBeInTheDocument());
+      expect(screen.getByTestId("share-hidden-password-ack-body").textContent).toBe(
+        DICTIONARY["share.hiddenPasswordDisclosureBody"].pl,
+      );
+      expect(screen.getByTestId("share-hidden-password-ack-title").textContent).toBe(
+        DICTIONARY["share.hiddenPasswordDisclosureTitle"].pl,
+      );
     });
   });
 });
