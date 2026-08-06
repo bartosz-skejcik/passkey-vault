@@ -16,6 +16,7 @@ import {
 } from "@/lib/crypto";
 import { register, login, base64Encode, ApiClientError } from "@/lib/auth/api";
 import { setSessionToken, setStoredEmail } from "@/lib/auth/session";
+import { publishOnUnlock } from "@/lib/identity/publishOnUnlock";
 
 export default function RegisterForm({
   onToggle,
@@ -90,6 +91,11 @@ export default function RegisterForm({
       setSessionToken(session_token);
       setStoredEmail(email);
       setUnlockedUserKey(uk);
+      // KEY-01 (26-02-PLAN.md): fire-and-forget, issued while `uk` still
+      // holds a valid, non-freed reference -- the async call captures its
+      // own parameter binding, so nulling the local variable below does not
+      // affect it. Never awaited, never wrapped in try/catch here (E9).
+      publishOnUnlock(uk);
       uk = undefined; // ownership transferred to the lock-state singleton
       // Poinformuj rodzica (page.tsx), że sesja istnieje — bez tego jego
       // `authed` zostaje przy wartości z mounta i UI nigdzie nie przechodzi.

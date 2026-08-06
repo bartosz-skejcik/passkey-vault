@@ -19,6 +19,7 @@ import { base64Decode, ApiClientError } from "@/lib/auth/api";
 import { setSessionToken, setStoredEmail } from "@/lib/auth/session";
 import { setPendingUnlock } from "@/lib/auth/pendingUnlock";
 import { setPrfUnavailableHint } from "@/lib/auth/prfUnavailable";
+import { publishOnUnlock } from "@/lib/identity/publishOnUnlock";
 import { isNotAllowedError, isAbortError } from "./errors";
 import {
   passkeyLoginStart,
@@ -484,6 +485,7 @@ export async function passkeyUnlock(
     try {
       const uk = unwrapUserKey(wrappingKey, result.prfWrappedUk);
       setUnlockedUserKey(uk);
+      publishOnUnlock(uk); // KEY-01 (26-02-PLAN.md): fire-and-forget, never awaited (E9)
     } finally {
       wrappingKey.free?.();
     }

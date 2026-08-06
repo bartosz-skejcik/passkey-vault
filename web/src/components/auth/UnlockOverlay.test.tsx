@@ -16,6 +16,7 @@ const {
   mockPrelogin,
   mockBase64Decode,
   mockPasskeyUnlock,
+  mockPublishOnUnlock,
 } = vi.hoisted(() => ({
   mockUseIsUnlocked: vi.fn(),
   mockSetUnlockedUserKey: vi.fn(),
@@ -31,6 +32,7 @@ const {
   mockPrelogin: vi.fn(),
   mockBase64Decode: vi.fn(),
   mockPasskeyUnlock: vi.fn(),
+  mockPublishOnUnlock: vi.fn(),
 }));
 
 vi.mock("@/lib/crypto", () => ({
@@ -39,6 +41,10 @@ vi.mock("@/lib/crypto", () => ({
   setUnlockedUserKey: mockSetUnlockedUserKey,
   unwrapUserKey: mockUnwrapUserKey,
   deriveAuthMaterial: mockDeriveAuthMaterial,
+}));
+
+vi.mock("@/lib/identity/publishOnUnlock", () => ({
+  publishOnUnlock: mockPublishOnUnlock,
 }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -129,6 +135,10 @@ describe("UnlockOverlay", () => {
       expect.anything(),
       "wrapped-uk-json",
     );
+    // KEY-01 (26-02-PLAN.md): publishOnUnlock fires with the SAME uk
+    // reference setUnlockedUserKey received, immediately after it.
+    expect(mockPublishOnUnlock).toHaveBeenCalledTimes(1);
+    expect(mockPublishOnUnlock).toHaveBeenCalledWith(mockSetUnlockedUserKey.mock.calls[0][0]);
   });
 
   it("WR-02: on a failed pending unlock, shows the error, clears the pending material, falls back to the password form, and never re-invokes the freed wasm handle on a second click", async () => {
@@ -153,6 +163,7 @@ describe("UnlockOverlay", () => {
     expect(await screen.findByText("auth.loginFailed")).toBeInTheDocument();
     expect(freeMock).toHaveBeenCalledTimes(1);
     expect(mockSetUnlockedUserKey).not.toHaveBeenCalled();
+    expect(mockPublishOnUnlock).not.toHaveBeenCalled();
     expect(mockUnwrapUserKey).toHaveBeenCalledTimes(1);
 
     // Falls through to the password form once `pending` is cleared — the
@@ -204,6 +215,10 @@ describe("UnlockOverlay", () => {
     await waitFor(() => expect(mockSetUnlockedUserKey).toHaveBeenCalledTimes(1));
     expect(mockMe).toHaveBeenCalledTimes(1);
     expect(mockPrelogin).toHaveBeenCalledWith("existing@example.com");
+    // KEY-01 (26-02-PLAN.md): publishOnUnlock fires with the SAME uk
+    // reference setUnlockedUserKey received, immediately after it.
+    expect(mockPublishOnUnlock).toHaveBeenCalledTimes(1);
+    expect(mockPublishOnUnlock).toHaveBeenCalledWith(mockSetUnlockedUserKey.mock.calls[0][0]);
   });
 
   it("clears the session and forces a re-render into the unauthenticated state on a 401 from me()", async () => {
