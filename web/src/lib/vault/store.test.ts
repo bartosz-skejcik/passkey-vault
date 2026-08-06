@@ -684,7 +684,13 @@ describe("folder plumbing", () => {
     const { store } = await importStoreAndGetLockListener();
     const folder = await store.createVaultFolder("Praca");
 
-    expect(mockCreateFolder).toHaveBeenCalledWith("combined-folder-json");
+    // 26-13-PLAN.md live-run fix: `createFolder` now takes the client-minted
+    // `id` as its first argument (mirrors `createCollection`'s existing
+    // shape) -- the SAME id `encryptItem`'s AAD was bound to, sent to the
+    // server explicitly instead of a server-minted id being silently
+    // discarded (the real bug this fix closes, see `store.ts::
+    // createVaultFolder`'s own doc comment).
+    expect(mockCreateFolder).toHaveBeenCalledWith(folder.id, "combined-folder-json");
     expect(folder.name).toBe("Praca");
     expect(store.getFolders()).toContainEqual(folder);
   });
@@ -1167,9 +1173,11 @@ describe("deleteVaultFolder", () => {
 
     const { store } = await importStoreAndGetLockListener();
     // createVaultFolder generates its own client-side id via
-    // crypto.randomUUID() — the mocked API's returned {id} is discarded
-    // (pre-existing Plan 02-05 behavior) — so the real id must be read
-    // back off the created folder, not assumed.
+    // crypto.randomUUID() and sends it explicitly to the server (26-13-PLAN.md
+    // live-run fix -- see store.ts's own doc comment); the mocked API's
+    // returned {id} is a distinct mock value, never consulted, since the
+    // caller already knows the real id it minted -- so the real id must be
+    // read back off the created folder, not assumed.
     const folder = await store.createVaultFolder("Praca");
     expect(store.getFolders()).toHaveLength(1);
 

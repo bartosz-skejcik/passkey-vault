@@ -94,7 +94,31 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   if (response.status === 204) {
     return undefined as T;
   }
-  return (await response.json()) as T;
+  // 26-13-PLAN.md live-run fix (real bug this plan's own live 2-session run
+  // discovered, not merely inherited): several existing 2xx-non-204
+  // endpoints (`vault.rs::create_share`, `collections.rs::add_member` --
+  // both `Result<StatusCode, ApiError>` handlers that resolve with a bare
+  // `Ok(StatusCode::CREATED)` and never construct a `Json(...)` body at all)
+  // return a genuinely EMPTY body at a status other than 204. The OLD code
+  // here unconditionally called `response.json()` on any non-204 success,
+  // which throws `SyntaxError: Unexpected end of JSON input` on an empty
+  // body -- every real-browser call to `createItemShare`/`addCollectionMember`
+  // threw this, silently caught by `ShareDialog.tsx`'s own catch block and
+  // surfaced only as the generic `share.createFailed` toast, with the real
+  // cause never logged anywhere. No unit test caught this because every
+  // existing test MOCKS `createItemShare`/`addCollectionMember` to resolve
+  // successfully, never exercising a real empty-bodied HTTP response parsed
+  // by this exact function. Reading the body as text FIRST and treating an
+  // empty string as `undefined` (regardless of status code) is strictly more
+  // robust than special-casing only 204 -- it fixes this bug for these two
+  // endpoints and defends against any future endpoint with the same shape,
+  // with zero server-side wire-contract change (no existing Rust integration
+  // test's `StatusCode::CREATED` assertion needs to change).
+  const text = await response.text();
+  if (text === "") {
+    return undefined as T;
+  }
+  return JSON.parse(text) as T;
 }
 
 export type KdfParams = {

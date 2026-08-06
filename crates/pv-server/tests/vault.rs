@@ -336,8 +336,15 @@ async fn touch_requires_auth() {
 
 // --- Folders (Task 2) ---
 
+// 26-13-PLAN.md live-run fix: `POST /api/vault/folders` now requires a
+// client-minted `id` (mirrors `collections.rs`'s already-established
+// `CreateCollectionRequest.id` contract) -- see `folders.rs::
+// CreateFolderRequest`'s own doc comment for the full bug this closes.
 fn folder_body(name_ciphertext: &str) -> Value {
-    json!({ "enc_name": format!("{{\"nonce\":\"AAAA\",\"ciphertext\":\"{name_ciphertext}\"}}") })
+    json!({
+        "id": uuid::Uuid::new_v4().to_string(),
+        "enc_name": format!("{{\"nonce\":\"AAAA\",\"ciphertext\":\"{name_ciphertext}\"}}"),
+    })
 }
 
 #[tokio::test]
