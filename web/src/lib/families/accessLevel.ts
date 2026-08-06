@@ -22,9 +22,15 @@ const ACCESS_LEVEL_KEY: Record<string, AccessLevelKey> = {
  * in the one dialog whose purpose is telling the owner how much a member
  * could see. Fails closed to a neutral "unknown" label instead, mirroring
  * `membership.rs::parse_access_level`'s server-side discipline ("never
- * silently treated as a valid access grant"). An unrecognized value MUST
- * render as the LEAST privileged label, never the most -- getting this
- * backwards in a security UI tells the user an item is less exposed than it
+ * silently treated as a valid access grant").
+ *
+ * WR-10 (code review, Phase 26): this comment used to close with "An
+ * unrecognized value MUST render as the LEAST privileged label, never the
+ * most" -- which contradicted both its own opening paragraph and the code
+ * below it, and instructed a future maintainer to re-add the exact fallback
+ * this module exists to remove. Stated correctly: an unrecognized value must
+ * never render as a valid access label at all -- least of all the LEAST
+ * privileged one, which would tell the user an item is less exposed than it
  * actually is. */
 export function accessLevelKey(level: string): AccessLevelKey | "access.unknown" {
   return ACCESS_LEVEL_KEY[level] ?? "access.unknown";
