@@ -7,14 +7,18 @@ import { useSyncExternalStore } from "react";
 import {
   decryptItem,
   decryptItemForCollection,
+  decryptItemWithSharedKey,
   encryptItem,
   encryptItemForCollection,
   getUnlockedUserKey,
   isUnlocked,
   subscribeLockState,
+  unsealCollectionKey,
+  type WasmIdentityKey,
   type WasmUserKey,
 } from "@/lib/crypto";
-import { getCollectionKey } from "@/lib/vault/collections";
+import { ensureOwnIdentityKeypair } from "@/lib/identity/ensure";
+import { getCollectionKey, refreshCollectionsNow } from "@/lib/vault/collections";
 // Deliberately NOT importing ApiClientError for an `instanceof` check here:
 // this module is dynamically re-imported per-test via `vi.resetModules()` +
 // `await import("./store")` (see store.test.ts), which re-evaluates every
@@ -37,11 +41,17 @@ import {
   createItem,
   deleteFolder,
   deleteItem,
+  getCollectionSync,
+  getSharedDirectSync,
+  getSharedRevisions,
   getSyncSnapshot,
   touchItem,
   updateItem,
+  type DirectSharedItemRow,
   type FolderRow,
   type ItemRow,
+  type SharedCollectionItemsResponse,
+  type SharedDirectSyncResponse,
   type SharedRevisions,
   type SyncSnapshot,
 } from "./api";
@@ -103,6 +113,32 @@ export class CollectionKeyUnavailableError extends Error {
   }
 }
 
+/** 26-14-PLAN.md (WINDOWS #9's own read-path fix newly makes this item
+ * REACHABLE at all -- it was previously invisible in `items` entirely):
+ * thrown by `updateVaultItem` for an item that lives in `directSharedItems`
+ * — a personal item OWNED BY SOMEONE ELSE, shared directly to this caller
+ * via `item_shares`. This recipient's own crypto material (the item's raw
+ * Cipher Key, `decryptItemWithSharedKey`'s read-only unseal) has no
+ * corresponding ENCRYPT-side primitive yet — the owner's own personal User
+ * Key (what `enc_key` is wrapped under) is not something this recipient
+ * holds or can derive at all. Falling back to `encryptItem(uk, ...)` below
+ * (this caller's OWN personal key) would silently write ciphertext under
+ * the WRONG key entirely, permanently corrupting the item for its actual
+ * owner on the very next server write — a real zero-knowledge-violating
+ * data-loss bug, not merely a UX gap. Fails loud instead, mirroring
+ * `CollectionKeyUnavailableError`'s own "never fall back to the wrong key"
+ * discipline. Closing this for real (a genuine encrypt-as-recipient
+ * primitive) is new pv-core/pv-wasm crypto surface, out of this
+ * (client-store-only) plan's scope — logged as a deferred item. */
+export class DirectShareNotEditableError extends Error {
+  constructor(itemId: string) {
+    super(
+      `cannot save -- item ${itemId} was shared directly with you; editing a directly-shared item is not supported yet`,
+    );
+    this.name = "DirectShareNotEditableError";
+  }
+}
+
 /** Combined JSON shape encryptItem produces / decryptItem expects:
  * `{"enc_key": WrappedKey, "enc_data": WrappedKey}`. The server instead
  * stores these as two separate opaque-string columns — this module is the
@@ -136,11 +172,90 @@ function splitCombinedEncryptedItem(combinedJson: string): {
   };
 }
 
+// 26-14-PLAN.md (WINDOWS #8/#9): `items` (below) is a COMPUTED merge of
+// three independent sources -- every read (`getItems()`, `useVaultItems()`,
+// every `items.find`/`items.filter` lookup elsewhere in this module) sees
+// the union, so an item this caller merely has ACCESS to (not necessarily
+// created) is exactly as visible/editable as one they created. Local
+// mutations (create/update/delete/touch) write through `replaceItemInSources`/
+// `removeItemFromSources` below rather than reassigning `items` directly, so
+// a later merge of any ONE source never silently reverts another source's
+// data.
+//
+// - `personalItems`: `GET /api/sync`'s own scope (`fetch_items_for`,
+//   UNCHANGED by this plan per its own approach guidance) -- every item the
+//   CALLER owns, personal or created inside a collection they belong to.
+// - `collectionSharedItems`: `GET /api/vault/collections/{id}/sync`
+//   (`pull_shared_collection`) -- WINDOWS #8's fix. A SUPERSET of any
+//   collection's items (every author, not just the caller's own) for every
+//   collection the caller currently holds a `collection_keys` row for.
+// - `directSharedItems`: `GET /api/sync/shared/direct` (`pull_shared_direct`)
+//   -- WINDOWS #9's fix. Personal items OWNED BY SOMEONE ELSE, shared
+//   directly to this caller via `item_shares`.
+let personalItems: VaultItem[] = [];
+let collectionSharedItems: VaultItem[] = [];
+let directSharedItems: VaultItem[] = [];
 let items: VaultItem[] = [];
 const listeners = new Set<() => void>();
 
 function notifyListeners(): void {
   listeners.forEach((listener) => listener());
+}
+
+/** Rebuilds the public `items` merge from the three sources above and
+ * notifies every subscriber -- the ONE place `items` is ever reassigned.
+ * Later sources win an id collision (should not normally happen in
+ * practice: a caller-owned collection item appears in BOTH `personalItems`
+ * and `collectionSharedItems` with equivalent content once the latter has
+ * refreshed; a directly-shared item is, by construction, never the
+ * caller's own and never collection-scoped, so it never collides with
+ * either of the other two). */
+function recomputeItems(): void {
+  const byId = new Map<string, VaultItem>();
+  for (const item of personalItems) byId.set(item.id, item);
+  for (const item of collectionSharedItems) byId.set(item.id, item);
+  for (const item of directSharedItems) byId.set(item.id, item);
+  items = Array.from(byId.values());
+  recomputeAllTags();
+  notifyListeners();
+}
+
+/** Writes `updated` into whichever of the three sources currently holds
+ * `id` (all three are checked -- exactly one will actually match in
+ * practice, the others are harmless no-ops). Falls back to `personalItems`
+ * when `id` is present in none of them yet (mirrors `createVaultItem`'s own
+ * always-personal-on-creation invariant, and covers the pre-existing
+ * "unknown item saved anyway" edge case `updateVaultItem` has always
+ * tolerated). Used by `updateVaultItem`/`touchVaultItem` -- both mutate an
+ * EXISTING item found via the merged `items` view, so the source that
+ * conceptually owns it must be updated in place, never the derived `items`
+ * array directly (a later `recomputeItems()` from any one source would
+ * otherwise silently revert the change). */
+function replaceItemInSources(id: string, updated: VaultItem): void {
+  let found = false;
+  const replace = (list: VaultItem[]): VaultItem[] =>
+    list.map((item) => {
+      if (item.id !== id) return item;
+      found = true;
+      return updated;
+    });
+  personalItems = replace(personalItems);
+  collectionSharedItems = replace(collectionSharedItems);
+  directSharedItems = replace(directSharedItems);
+  if (!found) {
+    personalItems = [...personalItems, updated];
+  }
+  recomputeItems();
+}
+
+/** Removes `id` from all three sources (a failed delete never removes an
+ * item locally -- callers only invoke this after the server call already
+ * succeeded, mirroring the pre-existing `deleteVaultItem` contract). */
+function removeItemFromSources(id: string): void {
+  personalItems = personalItems.filter((item) => item.id !== id);
+  collectionSharedItems = collectionSharedItems.filter((item) => item.id !== id);
+  directSharedItems = directSharedItems.filter((item) => item.id !== id);
+  recomputeItems();
 }
 
 export function getItems(): VaultItem[] {
@@ -307,8 +422,13 @@ function applySyncSnapshot(snapshot: SyncSnapshot): void {
     // keeps a currently-open item present in the store — dropping it would
     // make `selectedItem` resolve to `undefined` and unmount the very
     // DetailPanel that needs to show the conflict banner.
-    const previousById = new Map(items.map((item) => [item.id, item]));
-    items = snapshot.items.flatMap((row): VaultItem[] => {
+    // 26-14-PLAN.md: falls back against `personalItems`'s own previous copy
+    // (this endpoint's own scope), not the merged `items` view — a
+    // collection/direct-shared item's retained-last-known-good fallback is
+    // `mergeCollectionSnapshot`/`mergeDirectSnapshot`'s own job below, each
+    // scoped to its own source array.
+    const previousById = new Map(personalItems.map((item) => [item.id, item]));
+    personalItems = snapshot.items.flatMap((row): VaultItem[] => {
       try {
         // A row that decrypts cleanly is never `undecryptable` — explicit
         // `false` (not merely omitted) covers the case where a PREVIOUS
@@ -321,8 +441,7 @@ function applySyncSnapshot(snapshot: SyncSnapshot): void {
         return previous !== undefined ? [{ ...previous, undecryptable: true }] : [];
       }
     });
-    recomputeAllTags();
-    notifyListeners();
+    recomputeItems();
   }
   if (snapshot.folders !== undefined) {
     const previousFolderById = new Map(folders.map((folder) => [folder.id, folder]));
@@ -373,6 +492,144 @@ async function loadAndDecryptAll(): Promise<void> {
   applySyncSnapshot(snapshot);
 }
 
+// 26-14-PLAN.md (WINDOWS #8): per-collection cheap-check watermark this
+// client has already merged — `pull_shared_collection`'s own `revision`
+// value, keyed by collection id (mirrors `lastKnownRevision`'s single-value
+// shape, but one entry per collection since a collection carries its own
+// independent revision counter, SYNC-04). A collection id absent from this
+// map has never been fetched. Reset to empty on every unlock (see
+// `subscribeLockState` below), matching `lastKnownRevision`'s own
+// reset-on-unlock discipline.
+let collectionRevisionWatermark = new Map<string, number>();
+
+// 26-14-PLAN.md (WINDOWS #9): the direct-share sibling of the watermark
+// above — `pull_shared_direct`'s own `revision` value (the caller's own
+// `users.shared_direct_revision` counter). Reset to 0 on every unlock.
+let directRevisionWatermark = 0;
+
+/** Merges ONE collection's full item snapshot (`GET
+ * /api/vault/collections/{id}/sync`, `pull_shared_collection` — WINDOWS
+ * #8's fix) into `collectionSharedItems`. Every row here already carries
+ * `collection_id` set to `collectionId` (server-side construction, see
+ * `sync.rs::pull_shared_collection`'s own doc comment) — `decryptItemRow`'s
+ * EXISTING scope dispatch (26-05-PLAN.md) decrypts it with zero new
+ * branching, via the SAME `getCollectionKey` cache `collections.ts`
+ * maintains. `response.items === undefined` (the cheap-check's `UpToDate`
+ * shape) is a silent no-op beyond recording the watermark — the
+ * previously-cached copy for this collection is already current. Mirrors
+ * `applySyncSnapshot`'s own retained-last-known-good-on-decrypt-failure
+ * fallback, scoped to just this collection's previously-cached rows. */
+function mergeCollectionSnapshot(
+  collectionId: string,
+  response: SharedCollectionItemsResponse,
+  uk: WasmUserKey,
+): void {
+  if (response.items === undefined) {
+    collectionRevisionWatermark.set(collectionId, response.revision);
+    return;
+  }
+  const previousById = new Map(
+    collectionSharedItems
+      .filter((item) => item.collectionId === collectionId)
+      .map((item) => [item.id, item]),
+  );
+  const decrypted = response.items.flatMap((row): VaultItem[] => {
+    try {
+      return [{ ...decryptItemRow(row, uk), undecryptable: false }];
+    } catch (err) {
+      console.error(
+        `pv: failed to decrypt shared-collection item ${row.id} (collection ${collectionId}) during sync merge -- keeping last-known-good copy`,
+        err,
+      );
+      const previous = previousById.get(row.id);
+      return previous !== undefined ? [{ ...previous, undecryptable: true }] : [];
+    }
+  });
+  // Replace EVERY previously-cached item for THIS collection id — never a
+  // partial merge, mirrors `pull_shared_collection`'s own always-full-
+  // snapshot contract (no incremental per-item diff exists server-side).
+  collectionSharedItems = [
+    ...collectionSharedItems.filter((item) => item.collectionId !== collectionId),
+    ...decrypted,
+  ];
+  collectionRevisionWatermark.set(collectionId, response.revision);
+  recomputeItems();
+}
+
+/** Decrypts ONE directly-shared row via the recipient-side crypto sequence
+ * `ShareDialog.real-wasm.test.ts` already proved: unseal `row.sealed_key`
+ * with the caller's own identity keypair to recover the item's Cipher Key,
+ * then `decryptItemWithSharedKey` — NEVER `decryptItem`/
+ * `decryptItemForCollection` (this item is neither personal nor
+ * collection-scoped from THIS recipient's own perspective; its owner's User
+ * Key/Collection Key is not something the recipient holds at all). */
+function decryptDirectSharedRow(row: DirectSharedItemRow, identityKey: WasmIdentityKey): VaultItem {
+  const unsealed = unsealCollectionKey(identityKey, row.sealed_key);
+  let plaintext: string;
+  try {
+    plaintext = decryptItemWithSharedKey(unsealed, row.enc_data, row.id, row.revision);
+  } finally {
+    unsealed.free?.();
+  }
+  const fields = normalizeItemFields(JSON.parse(plaintext) as ItemFields);
+  return {
+    id: row.id,
+    revision: row.revision,
+    fields,
+    updatedAt: row.updated_at,
+    lastUsedAt: row.last_used_at ?? undefined,
+    isShared: row.is_shared,
+    lastEditorEmail: row.last_editor_email ?? undefined,
+    collectionId: null,
+  };
+}
+
+/** Merges the caller's full directly-shared-item snapshot (`GET
+ * /api/sync/shared/direct`, `pull_shared_direct` — WINDOWS #9's fix) into
+ * `directSharedItems`. `response.items === undefined` (`UpToDate`) is a
+ * silent no-op beyond recording the watermark. Resolves the caller's own
+ * identity keypair ONCE per call (mirrors `collections.ts::refreshCollections`'s
+ * identical one-resolution-per-refresh discipline), freed in `finally`
+ * regardless of outcome. */
+async function mergeDirectSnapshot(response: SharedDirectSyncResponse, uk: WasmUserKey): Promise<void> {
+  if (response.items === undefined) {
+    directRevisionWatermark = response.revision;
+    return;
+  }
+  const previousById = new Map(directSharedItems.map((item) => [item.id, item]));
+  const identityKey = await ensureOwnIdentityKeypair(uk);
+  try {
+    // A lock may have fired while the identity-keypair round trip was in
+    // flight — never decrypt with/apply a stale handle (mirrors
+    // `applySyncSnapshot`'s own re-check).
+    if (getUnlockedUserKey() === null) {
+      return;
+    }
+    const decrypted = response.items.flatMap((row): VaultItem[] => {
+      try {
+        return [{ ...decryptDirectSharedRow(row, identityKey), undecryptable: false }];
+      } catch (err) {
+        console.error(
+          `pv: failed to decrypt directly-shared item ${row.id} during sync merge -- keeping last-known-good copy`,
+          err,
+        );
+        const previous = previousById.get(row.id);
+        return previous !== undefined ? [{ ...previous, undecryptable: true }] : [];
+      }
+    });
+    // Replace the WHOLE direct-shared set — `pull_shared_direct` always
+    // returns the caller's FULL current direct-share set on a non-UpToDate
+    // response (no incremental diff, same contract as the collection pull
+    // above), so a revoked share's absence from `response.items` is exactly
+    // how its removal is represented.
+    directSharedItems = decrypted;
+    directRevisionWatermark = response.revision;
+    recomputeItems();
+  } finally {
+    identityKey.free?.();
+  }
+}
+
 export async function createVaultItem(fields: ItemFields): Promise<VaultItem> {
   const uk = getUnlockedUserKey();
   if (uk === null) {
@@ -384,9 +641,11 @@ export async function createVaultItem(fields: ItemFields): Promise<VaultItem> {
   const { encKey, encData } = splitCombinedEncryptedItem(combined);
   const created = await createItem(id, encKey, encData);
   const item: VaultItem = { id, revision: 1, fields, updatedAt: created.updated_at };
-  items = [...items, item];
-  recomputeAllTags();
-  notifyListeners();
+  // A freshly-created item is always PERSONAL at creation time — it only
+  // becomes collection-scoped via a later `moveItemToCollection` call, never
+  // at creation (mirrors `createVaultFolder`'s own always-personal shape).
+  personalItems = [...personalItems, item];
+  recomputeItems();
   return item;
 }
 
@@ -447,6 +706,12 @@ export async function updateVaultItem(
   const existingBeforeSave = items.find((item) => item.id === id);
   if (existingBeforeSave?.undecryptable === true) {
     throw new UndecryptableItemError();
+  }
+  // See DirectShareNotEditableError's own doc comment: this recipient has
+  // no crypto path to correctly re-encrypt someone else's directly-shared
+  // item — fail loud rather than silently corrupt it under the wrong key.
+  if (directSharedItems.some((item) => item.id === id)) {
+    throw new DirectShareNotEditableError(id);
   }
   const newRevision = currentRevision + 1;
   const plaintext = JSON.stringify(fields);
@@ -526,12 +791,10 @@ export async function updateVaultItem(
     lastEditorEmail: existing?.lastEditorEmail,
     collectionId: existing?.collectionId,
   };
-  items =
-    existingIndex === -1
-      ? [...items, updated]
-      : items.map((item, index) => (index === existingIndex ? updated : item));
-  recomputeAllTags();
-  notifyListeners();
+  // 26-14-PLAN.md: writes through whichever of the three sources currently
+  // holds `id` (never reassigns the derived `items` view directly) — see
+  // `replaceItemInSources`'s own doc comment for why.
+  replaceItemInSources(id, updated);
   return updated;
 }
 
@@ -539,9 +802,7 @@ export async function updateVaultItem(
  * succeeds — a failed delete leaves the item visible (T-02-23). */
 export async function deleteVaultItem(id: string): Promise<void> {
   await deleteItem(id);
-  items = items.filter((item) => item.id !== id);
-  recomputeAllTags();
-  notifyListeners();
+  removeItemFromSources(id);
 }
 
 /**
@@ -563,12 +824,11 @@ export async function deleteVaultItem(id: string): Promise<void> {
 export function touchVaultItem(id: string): void {
   void touchItem(id)
     .then((res) => {
-      const existingIndex = items.findIndex((item) => item.id === id);
-      if (existingIndex === -1) return;
-      items = items.map((item, index) =>
-        index === existingIndex ? { ...item, lastUsedAt: res.last_used_at } : item,
-      );
-      notifyListeners();
+      const existing = items.find((item) => item.id === id);
+      if (existing === undefined) return;
+      // 26-14-PLAN.md: writes through whichever source currently holds
+      // `id`, same discipline as updateVaultItem/deleteVaultItem above.
+      replaceItemInSources(id, { ...existing, lastUsedAt: res.last_used_at });
     })
     .catch((err) => {
       // eslint-disable-next-line no-console
@@ -621,28 +881,133 @@ function sharedRevisionsChanged(revisions: SharedRevisions): boolean {
       return true;
     }
   }
+  // 26-14-PLAN.md (WINDOWS #8's inverse): a collection present in the
+  // watermark but ABSENT from the new payload means membership was
+  // revoked/removed -- also a genuine change, even though no FORWARD-
+  // looking collection revision moved. Without this, a revoke would never
+  // be detected at all (every check above only looks at collections the
+  // NEW payload still lists), and `handleSharedRevisions`'s own purge logic
+  // would never run.
+  const currentIds = new Set(revisions.collections.map((collection) => collection.id));
+  for (const knownId of sharedRevisionsWatermark.collections.keys()) {
+    if (!currentIds.has(knownId)) {
+      return true;
+    }
+  }
   return false;
 }
 
-/** On a watermark mismatch: forces a FULL snapshot re-pull via
- * `getSyncSnapshot(0)`, bypassing `lastKnownRevision` entirely -- a
+/** On a watermark mismatch: WINDOWS #7/#8/#9's fix (26-14-PLAN.md) --
+ * previously this forced a full PERSONAL snapshot re-pull via
+ * `getSyncSnapshot(0)`, which is not merely inefficient but WRONG: a
  * shared-only change (another member editing a collection this caller is
- * IN, not the caller's own personal vault) never bumps the caller's own
- * `vault_revision` (SYNC-04's per-collection-not-per-user design), so the
- * normal since-gated pull would never notice it. Merges via the SAME
- * `applySyncSnapshot` every other pull path uses -- no second merge
- * implementation. An unchanged payload is a silent no-op: never an extra
- * round trip when nothing actually changed. */
+ * IN, or a new direct share/collection grant landing) never bumps the
+ * caller's own `vault_revision` (SYNC-04's per-collection-not-per-user
+ * design) -- the personal pull would silently return the SAME data every
+ * time and the shared change would never actually be fetched at all. This
+ * now does what the mismatch actually means: (1) refresh `collections.ts`
+ * FIRST (WINDOWS #7 -- a member added to a collection previously never saw
+ * it, or gained a usable Collection Key, until their next unlock/reload;
+ * `refreshCollectionsNow()` is the SAME manual-refresh entry point
+ * `ShareDialog.tsx`'s own folder-create variant already uses, not a new
+ * mechanism), (2) for every collection whose revision actually moved, pull
+ * ITS OWN item snapshot via `getCollectionSync` and merge it (WINDOWS #8),
+ * purging any collection the caller is no longer a member of, and (3) if
+ * the direct bucket moved, pull `getSharedDirectSync` and merge it (WINDOWS
+ * #9). An unchanged payload is a silent no-op -- never an extra round trip
+ * when nothing actually changed. Every awaited step re-checks
+ * `getUnlockedUserKey()` before touching module state, mirroring
+ * `applySyncSnapshot`'s own re-check-after-await discipline (a lock event
+ * may fire while any of these round trips is in flight). */
 async function handleSharedRevisions(revisions: SharedRevisions): Promise<void> {
   if (!sharedRevisionsChanged(revisions)) {
     return;
   }
-  const snapshot = await getSyncSnapshot(0);
-  applySyncSnapshot(snapshot);
+  if (getUnlockedUserKey() === null) {
+    return;
+  }
+
+  try {
+    await refreshCollectionsNow();
+  } catch {
+    // Transient network failure -- the next revisions tick retries, same
+    // self-healing rationale as every other pull in this module.
+  }
+  if (getUnlockedUserKey() === null) {
+    return;
+  }
+
+  // Collections the caller is no longer a member of (revoked/removed):
+  // purge any previously-cached items for them -- must not leave a stale
+  // copy visible after access is genuinely gone.
+  const currentCollectionIds = new Set(revisions.collections.map((collection) => collection.id));
+  for (const knownId of Array.from(collectionRevisionWatermark.keys())) {
+    if (!currentCollectionIds.has(knownId)) {
+      collectionRevisionWatermark.delete(knownId);
+      collectionSharedItems = collectionSharedItems.filter((item) => item.collectionId !== knownId);
+    }
+  }
+
+  for (const collection of revisions.collections) {
+    if (collectionRevisionWatermark.get(collection.id) === collection.revision) {
+      continue; // this specific collection hasn't moved -- nothing to pull
+    }
+    const uk = getUnlockedUserKey();
+    if (uk === null) {
+      return;
+    }
+    try {
+      const response = await getCollectionSync(collection.id);
+      if (getUnlockedUserKey() === null) {
+        return;
+      }
+      mergeCollectionSnapshot(collection.id, response, uk);
+    } catch {
+      // Transient -- next tick retries (this collection's own watermark is
+      // untouched on failure, so it stays "needs a pull" until it succeeds).
+    }
+  }
+
+  if (directRevisionWatermark !== revisions.direct.revision) {
+    const uk = getUnlockedUserKey();
+    if (uk !== null) {
+      try {
+        const response = await getSharedDirectSync();
+        const ukAfterFetch = getUnlockedUserKey();
+        if (ukAfterFetch !== null) {
+          await mergeDirectSnapshot(response, ukAfterFetch);
+        }
+      } catch {
+        // Transient -- next tick retries.
+      }
+    }
+  }
+
+  recomputeItems(); // covers the purge-only case above with no new merge call
   sharedRevisionsWatermark = {
     collections: new Map(revisions.collections.map((collection) => [collection.id, collection.revision])),
     direct: revisions.direct.revision,
   };
+}
+
+/** Eager first attempt at the SAME refresh `handleSharedRevisions` performs
+ * on every subsequent WS/poll tick (`sync.ts::pullOnce`) -- called directly
+ * on unlock so a shared collection/direct item is visible without waiting
+ * up to `POLL_INTERVAL_MS` for the first background tick. Mirrors
+ * `sync.ts::pullOnce`'s own tolerance for a single-user vault with no
+ * `family_members` row at all (a 404 here is expected and silent, never
+ * thrown into the `subscribeLockState` listener below). */
+async function refreshSharedItemsNow(): Promise<void> {
+  try {
+    const revisions = await getSharedRevisions();
+    if (getUnlockedUserKey() === null) {
+      return;
+    }
+    await handleSharedRevisions(revisions);
+  } catch {
+    // Expected for a single-user vault (no family_members row) and for any
+    // transient network failure -- the WS/poll path self-heals regardless.
+  }
 }
 
 // Module-level side effect (mirrors lib/crypto/index.ts's own singleton
@@ -653,24 +1018,36 @@ async function handleSharedRevisions(revisions: SharedRevisions): Promise<void> 
 const syncCallbacks: SyncCallbacks = {
   getSinceRevision: () => lastKnownRevision,
   onSnapshot: applySyncSnapshot,
-  onSharedRevisions: (revisions) => {
-    void handleSharedRevisions(revisions);
-  },
+  // `SyncCallbacks.onSharedRevisions`'s own type is `(revisions) => void` --
+  // `sync.ts::pullOnce` never awaits this callback either way (its own
+  // doc comment), so returning the promise here (rather than `void`-wrapping
+  // it) changes nothing in production. It DOES let a caller that wants to
+  // await full completion do so (26-14-PLAN.md's tests are exactly that
+  // caller — `handleSharedRevisions` never throws uncaught, every internal
+  // await is already its own try/catch, so there is no unhandled-rejection
+  // risk in leaving this un-voided).
+  onSharedRevisions: handleSharedRevisions,
 };
 
 subscribeLockState(() => {
   if (isUnlocked()) {
     sharedRevisionsWatermark = { collections: new Map(), direct: 0 };
+    collectionRevisionWatermark = new Map();
+    directRevisionWatermark = 0;
     void loadAndDecryptAll();
+    void refreshSharedItemsNow();
     startSync(syncCallbacks);
   } else {
     stopSync();
     lastKnownRevision = 0;
     failedMergeAttempts = 0;
-    items = [];
+    personalItems = [];
+    collectionSharedItems = [];
+    directSharedItems = [];
+    collectionRevisionWatermark = new Map();
+    directRevisionWatermark = 0;
+    recomputeItems();
     folders = [];
-    recomputeAllTags();
-    notifyListeners();
     notifyFolderListeners();
   }
 });
