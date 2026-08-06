@@ -2176,3 +2176,88 @@ async fn list_items_returns_collection_id_null_for_personal_real_id_for_collecti
         "a collection-scoped item's collection_id must be the real owning collection's id"
     );
 }
+
+// --- suspended flag on GET /api/vault/collections/{id}/access (Plan 26-04,
+// Task 1 — extends this endpoint's existing test suite rather than
+// replacing it; mirrors vault.rs's item-scoped sibling test) ---
+
+/// An active co-recipient reports `suspended: false`; a co-recipient whose
+/// `family_members` row is suspended still appears in the listing (per A-7,
+/// `access_list` never filtered even before this field existed) but now
+/// reports `suspended: true`.
+#[tokio::test]
+async fn access_list_flags_suspended_co_recipient_without_filtering() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "access-suspend-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let active_token =
+        common::register_second_family_member(&app, &owner_token, "access-suspend-active@example.com").await;
+    let active_id = user_id_of(&app, &active_token).await;
+    let active_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &active_token, active_sk.public_key().to_bytes()).await;
+
+    let suspended_token =
+        common::register_second_family_member(&app, &owner_token, "access-suspend-target@example.com").await;
+    let suspended_id = user_id_of(&app, &suspended_token).await;
+    let suspended_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &suspended_token, suspended_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": "3f6f6b0e-7a4e-4b2a-9b7b-6a1e1c7a9f10",
+            "enc_name": "enc-access-suspend-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    for (recipient_id, sk) in [(&active_id, &active_sk), (&suspended_id, &suspended_sk)] {
+        let sealed = seal(&sk.public_key(), ck.expose()).unwrap();
+        let add_member_res = req(
+            &app,
+            "POST",
+            &format!("/api/vault/collections/{collection_id}/members"),
+            &owner_token,
+            Some(json!({
+                "recipient_user_id": recipient_id,
+                "sealed_key": serde_json::to_string(&sealed).unwrap(),
+                "access_level": "read",
+            })),
+        )
+        .await;
+        assert_eq!(add_member_res.status(), StatusCode::CREATED);
+    }
+
+    let suspend_res =
+        req(&app, "POST", &format!("/api/families/members/{suspended_id}/suspend"), &owner_token, None).await;
+    assert_eq!(suspend_res.status(), StatusCode::NO_CONTENT);
+
+    let access_res = req(&app, "GET", &format!("/api/vault/collections/{collection_id}/access"), &owner_token, None).await;
+    assert_eq!(access_res.status(), StatusCode::OK);
+    let entries = body_json(access_res).await;
+    let entries = entries.as_array().unwrap();
+    assert_eq!(
+        entries.len(),
+        3,
+        "the owner's own collection_keys row plus both co-recipients — a suspended co-recipient's row must still be listed, per A-7"
+    );
+
+    let active_entry = entries.iter().find(|e| e["user_id"] == active_id).expect("active co-recipient must be present");
+    assert_eq!(active_entry["suspended"], false);
+
+    let suspended_entry =
+        entries.iter().find(|e| e["user_id"] == suspended_id).expect("suspended co-recipient must still be present");
+    assert_eq!(suspended_entry["suspended"], true);
+}
