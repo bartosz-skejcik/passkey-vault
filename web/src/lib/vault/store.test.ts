@@ -1136,6 +1136,98 @@ describe("untrusted decrypted plaintext — a tags-less item must not wedge the 
     await expect(store.deleteVaultItem("foreign-1")).resolves.toBeUndefined();
     expect(store.getItems()).toHaveLength(0);
   });
+
+  // WR-08 / WINDOWS #11 (code review, Phase 26). WINDOWS #10's fix
+  // (`withCommonFieldInvariants`) covers only SERVER-DECRYPTED plaintext by
+  // its own admission -- `createVaultItem`/`updateVaultItem` pushed the
+  // CALLER-supplied `fields` object into the store verbatim, so the exact
+  // same account-wedging failure was reproducible from any caller that
+  // simply omitted `tags`. Without normalization at the write boundary,
+  // both cases below reject AFTER their POST/PUT has already succeeded.
+  describe("the write boundary enforces the same invariant as the decrypt boundary", () => {
+    async function unlockEmpty() {
+      mockGetUnlockedUserKey.mockReturnValue({});
+      mockGetSyncSnapshot.mockResolvedValue({ revision: 1, items: [], folders: [] });
+      const { store, lockListener } = await importStoreAndGetLockListener();
+      mockIsUnlocked.mockReturnValue(true);
+      await act(async () => {
+        lockListener();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      mockEncryptItem.mockReturnValue(
+        JSON.stringify({
+          enc_key: { nonce: [1, 2], ciphertext: [3, 4] },
+          enc_data: { nonce: [5, 6], ciphertext: [7, 8] },
+        }),
+      );
+      return store;
+    }
+
+    /** A perfectly ordinary caller-supplied login with no `tags` key at all
+     * -- the extension, a form regression, or a future item type. */
+    const CALLER_FIELDS_WITHOUT_TAGS = {
+      type: "login",
+      name: "Caller-supplied item with no tags",
+      username: "u",
+      password: "p",
+      urls: [],
+      notes: "",
+      folderId: null,
+    } as unknown as Parameters<
+      Awaited<ReturnType<typeof importStoreAndGetLockListener>>["store"]["createVaultItem"]
+    >[0];
+
+    it("createVaultItem normalizes caller-supplied fields, so a tags-less caller cannot wedge the store", async () => {
+      const store = await unlockEmpty();
+      mockCreateItem.mockResolvedValue({ id: "x", revision: 1, updated_at: "2026-08-06 12:00:00" });
+
+      const created = await store.createVaultItem(CALLER_FIELDS_WITHOUT_TAGS);
+
+      expect(mockCreateItem).toHaveBeenCalledTimes(1);
+      expect(created.fields.tags).toEqual([]);
+      expect(store.getAllTags()).toEqual([]);
+      // The normalized shape is what was encrypted, so the server row is
+      // well-formed for every other client too.
+      const encryptedPlaintext = mockEncryptItem.mock.calls.at(-1)?.[1] as string;
+      expect(JSON.parse(encryptedPlaintext).tags).toEqual([]);
+    });
+
+    it("updateVaultItem normalizes caller-supplied fields too", async () => {
+      const store = await unlockEmpty();
+      mockCreateItem.mockResolvedValue({ id: "x", revision: 1, updated_at: "2026-08-06 12:00:00" });
+      const created = await store.createVaultItem(CALLER_FIELDS_WITHOUT_TAGS);
+      mockUpdateItem.mockResolvedValue({ revision: 2, updated_at: "2026-08-06 12:01:00" });
+
+      const updated = await store.updateVaultItem(created.id, CALLER_FIELDS_WITHOUT_TAGS, 1);
+
+      expect(mockUpdateItem).toHaveBeenCalledTimes(1);
+      expect(updated.fields.tags).toEqual([]);
+      expect(store.getAllTags()).toEqual([]);
+    });
+
+    it("a throwing store listener never turns a committed server write into a reported failure", async () => {
+      const store = await unlockEmpty();
+      mockCreateItem.mockResolvedValue({ id: "x", revision: 1, updated_at: "2026-08-06 12:00:00" });
+      // A subscriber that throws stands in for ANY post-commit bookkeeping
+      // failure -- the hazard WINDOWS #11 records is the ordering, not one
+      // specific trigger.
+      store.subscribeItems(() => {
+        throw new Error("listener blew up");
+      });
+
+      await expect(
+        store.createVaultItem({
+          type: "note",
+          name: "committed server-side",
+          body: "b",
+          folderId: null,
+          tags: [],
+        }),
+      ).resolves.toMatchObject({ id: expect.any(String) });
+      expect(mockCreateItem).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe("legacy field normalization", () => {

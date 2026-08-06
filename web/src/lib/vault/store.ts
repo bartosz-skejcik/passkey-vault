@@ -296,7 +296,16 @@ let allTags: string[] = [];
 function recomputeAllTags(): void {
   const tagSet = new Set<string>();
   for (const item of items) {
-    for (const tag of item.fields.tags) {
+    // WR-08 / WINDOWS #11: `?? []` rather than a bare dereference. This
+    // function runs on EVERY store mutation -- sync merge, create, update
+    // AND delete -- so one item whose `fields.tags` is not an array threw
+    // `TypeError: fields.tags is not iterable` out of every one of them,
+    // including delete, wedging the account with no UI path left to remove
+    // the offending row (WINDOWS #10's live repro). `normalizeItemFields`
+    // now guards every writer (below), but hardening the iteration itself
+    // is the cheap half of the defense that does not depend on a single
+    // choke point staying complete forever.
+    for (const tag of item.fields.tags ?? []) {
       tagSet.add(tag);
     }
   }
@@ -689,22 +698,43 @@ async function mergeDirectSnapshot(
   }
 }
 
-export async function createVaultItem(fields: ItemFields): Promise<VaultItem> {
+export async function createVaultItem(rawFields: ItemFields): Promise<VaultItem> {
   const uk = getUnlockedUserKey();
   if (uk === null) {
     throw new Error("cannot create an item while the vault is locked");
   }
+  // WR-08 / WINDOWS #11: `withCommonFieldInvariants` closed the tags-less
+  // hazard only for SERVER-DECRYPTED plaintext (its own doc comment says
+  // so). This function pushed the CALLER-supplied `fields` object into the
+  // store verbatim, so a `tags`-less `ItemFields` from any current or future
+  // caller (the extension, a form regression, a new item type) reproduced
+  // WINDOWS #10's exact account-wedging failure. Normalizing here makes the
+  // store's invariant hold for EVERY writer, not just the decrypt path --
+  // and the normalized shape is what gets encrypted, so the server row is
+  // well-formed too.
+  const fields = normalizeItemFields(rawFields);
   const id = crypto.randomUUID();
   const plaintext = JSON.stringify(fields);
   const combined = encryptItem(uk, plaintext, id, 1);
   const { encKey, encData } = splitCombinedEncryptedItem(combined);
   const created = await createItem(id, encKey, encData);
   const item: VaultItem = { id, revision: 1, fields, updatedAt: created.updated_at };
-  // A freshly-created item is always PERSONAL at creation time — it only
-  // becomes collection-scoped via a later `moveItemToCollection` call, never
-  // at creation (mirrors `createVaultFolder`'s own always-personal shape).
-  personalItems = [...personalItems, item];
-  recomputeItems();
+  // WR-08 / WINDOWS #11: the server write has ALREADY been accepted at this
+  // point. Any throw from the local bookkeeping below used to propagate out
+  // of this function into `ItemForm`'s catch, which rendered "Failed to save
+  // item. Please try again." over a 201 -- inviting the user to retry into
+  // duplicate rows. This repo already fixed one instance of this class
+  // (commit 4450dc0, WR-12); the pattern is fixed here rather than another
+  // instance of it. Logged, never surfaced: the item IS saved.
+  try {
+    // A freshly-created item is always PERSONAL at creation time — it only
+    // becomes collection-scoped via a later `moveItemToCollection` call,
+    // never at creation (mirrors `createVaultFolder`'s own shape).
+    personalItems = [...personalItems, item];
+    recomputeItems();
+  } catch (err) {
+    console.error("pv: post-commit store bookkeeping failed after createItem", err);
+  }
   return item;
 }
 
@@ -728,8 +758,15 @@ export async function createVaultFolder(name: string): Promise<Folder> {
   const encName = encryptItem(uk, JSON.stringify({ name }), id, 1);
   await createFolder(id, encName);
   const folder: Folder = { id, name };
-  folders = [...folders, folder];
-  notifyFolderListeners();
+  // WR-08 / WINDOWS #11: same post-commit discipline as createVaultItem --
+  // the folder exists server-side, so a bookkeeping throw must never be
+  // reported as a failed creation.
+  try {
+    folders = [...folders, folder];
+    notifyFolderListeners();
+  } catch (err) {
+    console.error("pv: post-commit store bookkeeping failed after createFolder", err);
+  }
   return folder;
 }
 
@@ -737,8 +774,14 @@ export async function createVaultFolder(name: string): Promise<Folder> {
  * leaves the folder visible in `folders`/`useFolders()`. */
 export async function deleteVaultFolder(id: string): Promise<void> {
   await deleteFolder(id);
-  folders = folders.filter((folder) => folder.id !== id);
-  notifyFolderListeners();
+  // WR-08 / WINDOWS #11: the DELETE already succeeded -- never report
+  // failure over it.
+  try {
+    folders = folders.filter((folder) => folder.id !== id);
+    notifyFolderListeners();
+  } catch (err) {
+    console.error("pv: post-commit store bookkeeping failed after deleteFolder", err);
+  }
 }
 
 /**
@@ -752,13 +795,18 @@ export async function deleteVaultFolder(id: string): Promise<void> {
  */
 export async function updateVaultItem(
   id: string,
-  fields: ItemFields,
+  rawFields: ItemFields,
   currentRevision: number,
 ): Promise<VaultItem> {
   const uk = getUnlockedUserKey();
   if (uk === null) {
     throw new Error("cannot update an item while the vault is locked");
   }
+  // WR-08 / WINDOWS #11: same write-boundary normalization as
+  // `createVaultItem` -- `withCommonFieldInvariants` only ever guarded
+  // server-decrypted plaintext, and this function pushed the caller-supplied
+  // object into the store verbatim.
+  const fields = normalizeItemFields(rawFields);
   // CR-03: refuse to save over an item whose current in-memory copy is
   // known-stale (a decrypt failure during the last sync merge) — see
   // UndecryptableItemError's own doc comment.
@@ -853,7 +901,16 @@ export async function updateVaultItem(
   // 26-14-PLAN.md: writes through whichever of the three sources currently
   // holds `id` (never reassigns the derived `items` view directly) — see
   // `replaceItemInSources`'s own doc comment for why.
-  replaceItemInSources(id, updated);
+  //
+  // WR-08 / WINDOWS #11: the PUT already returned successfully, so a throw
+  // from this bookkeeping must never be reported to the caller as a failed
+  // save (`DetailPanel`'s onError would render "Failed to save item" over a
+  // write the server accepted).
+  try {
+    replaceItemInSources(id, updated);
+  } catch (err) {
+    console.error("pv: post-commit store bookkeeping failed after updateItem", err);
+  }
   return updated;
 }
 
@@ -861,7 +918,14 @@ export async function updateVaultItem(
  * succeeds — a failed delete leaves the item visible (T-02-23). */
 export async function deleteVaultItem(id: string): Promise<void> {
   await deleteItem(id);
-  removeItemFromSources(id);
+  // WR-08 / WINDOWS #11: the DELETE already succeeded. A throw here used to
+  // make the offending row un-removable through the UI entirely (WINDOWS
+  // #10's tail: delete threw for the same reason create did).
+  try {
+    removeItemFromSources(id);
+  } catch (err) {
+    console.error("pv: post-commit store bookkeeping failed after deleteItem", err);
+  }
 }
 
 /**
