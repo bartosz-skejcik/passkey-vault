@@ -9,7 +9,18 @@
 // this component IS the empty state for that case (E7), not a separate
 // loading screen ahead of it.
 import { useEffect, useState, type FormEvent } from "react";
-import { AlertTriangle, Copy, PauseCircle, PlayCircle, UserMinus, UserPlus, Users } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  PauseCircle,
+  PlayCircle,
+  UserMinus,
+  UserPlus,
+  Users,
+} from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { ApiClientError, me } from "@/lib/auth/api";
@@ -26,17 +37,27 @@ import {
 import { generateInviteLink, type InviteExpiry, type InviteScope } from "@/lib/invite/crypto";
 import { revokeInvite } from "@/lib/invite/api";
 import { toIsoUtc } from "@/lib/format/relativeTime";
+import { accessLevelKey } from "@/lib/families/accessLevel";
+import { formatFingerprintWords } from "pv-ui/identity/fingerprint";
+import CollectionPicker from "@/components/vault/CollectionPicker";
+import ShareDialog from "@/components/vault/ShareDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import RemoveMemberDialog from "./RemoveMemberDialog";
 
 type Mode = "checking" | "bootstrap" | "normal" | "error";
-// CR-02 (24-REVIEW.md): "folder" is intentionally unreachable from the UI --
-// personal folders (`vault_items.folder_id`) have no id overlap with the
-// server's `collections` table, so a folder-scoped invite would 100%-fail
-// `getCollection()` for every user, every time. The type stays a union (not
-// narrowed to a literal `"family"`) only so Phase 26 can re-wire a real
-// collections picker into the same `InviteScope` shape later.
+// Plan 26-12: "folder" is now genuinely reachable -- Phase 26 built the
+// client-side collections capability (CollectionPicker, ensureOwnIdentityKeypair,
+// sealCollectionKey/unsealCollectionKey) that CR-02 (24-REVIEW.md) was
+// waiting on. See the invite-scope-select block below for the wiring.
 type ScopeChoice = "family" | "folder";
+
+// Mirrors ShareDialog.tsx's own (non-exported) ACCESS_LEVEL_VALUES -- the
+// invite form's collection-scope branch needs the same three-value radio
+// vocabulary since InviteScope's "collection" variant carries a real
+// accessLevel field the server enforces (membership.rs::parse_access_level),
+// never a silently-hardcoded default.
+const ACCESS_LEVEL_VALUES = ["read", "edit", "hidden_password"] as const;
+type AccessLevelValue = (typeof ACCESS_LEVEL_VALUES)[number];
 
 const DEFAULT_EXPIRY: InviteExpiry = "7d";
 
@@ -104,15 +125,28 @@ export default function FamilyTab() {
   const [creatingFamily, setCreatingFamily] = useState(false);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
 
-  // Invite-creation (E5) state. `scopeChoice` can never leave "family" today
-  // -- the "folder" `<option>` is unconditionally `disabled` (CR-02) -- so
-  // there is deliberately no `selectedFolderId` state; re-adding one without
-  // also building a real collections picker would silently resurrect the
-  // 100%-failure path this fix closes.
-  const [scopeChoice] = useState<ScopeChoice>("family");
+  // Invite-creation (E5) state. Plan 26-12 re-enables "folder" -- a real
+  // `CollectionPicker` now drives `selectedCollectionId`/`collectionAccessLevel`
+  // instead of the CR-02-era permanently-disabled option.
+  const [scopeChoice, setScopeChoice] = useState<ScopeChoice>("family");
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
+  const [collectionAccessLevel, setCollectionAccessLevel] = useState<AccessLevelValue>("read");
+  const [showCreateCollectionDialog, setShowCreateCollectionDialog] = useState(false);
   const [expiry, setExpiry] = useState<InviteExpiry>(DEFAULT_EXPIRY);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+
+  // Identity fingerprint card + per-member reveal (E7, D-4/SEC-05, Task 1).
+  // `expandedFingerprintIds` tracks which OTHER members' rows currently show
+  // their word-list panel (never shown expanded by default -- keeps the
+  // roster's existing density from Phase 25); the caller's OWN fingerprint
+  // is always shown via the pinned card above the list, so it never needs an
+  // entry here. `copiedFingerprintId` mirrors DetailPanel.tsx's own
+  // Check-icon-swap-on-copy micro-interaction, keyed by "self" or a member's
+  // user_id so the self card and every member row's copy button animate
+  // independently.
+  const [expandedFingerprintIds, setExpandedFingerprintIds] = useState<Set<string>>(new Set());
+  const [copiedFingerprintId, setCopiedFingerprintId] = useState<string | null>(null);
 
   // Generated-invite display (E6) state.
   const [invite, setInvite] = useState<{ id: string; url: string; expiresAt: string } | null>(null);
@@ -203,6 +237,36 @@ export default function FamilyTab() {
     setSuspendError(null);
   }
 
+  // Identity fingerprint card + per-member reveal (E7, Task 1).
+  function toggleFingerprint(userId: string) {
+    setExpandedFingerprintIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) {
+        next.delete(userId);
+      } else {
+        next.add(userId);
+      }
+      return next;
+    });
+  }
+
+  /** UI-SPEC E7 / Phase-Specific Notes §2: a deliberate, documented deviation
+   * from `copyWithAutoClear` -- a fingerprint is a non-reversible, public
+   * derivation of an already-published public key, not a secret, and
+   * auto-clearing it would work against its own out-of-band-comparison
+   * purpose (the recipient needs it to still be on their clipboard when they
+   * paste it into a text message or call transcript, possibly minutes
+   * later). `id` is "self" for the caller's own card or a member's
+   * `user_id`, matching `copiedFingerprintId`'s keying. */
+  function handleCopyFingerprint(id: string, words: string) {
+    void navigator.clipboard.writeText(words);
+    setCopiedFingerprintId(id);
+    setTimeout(
+      () => setCopiedFingerprintId((current) => (current === id ? null : current)),
+      1500,
+    );
+  }
+
   // Plan 25-08 (E3): no confirmation dialog, per 25-CONTEXT.md's
   // "reversible, low-friction" framing for this specific action.
   async function handleReinstate(member: FamilyMemberRecord) {
@@ -259,15 +323,22 @@ export default function FamilyTab() {
       setGenerateError(t("invite.generateFailed"));
       return;
     }
+    // Defensive guard mirroring `submitDisabled` below -- a folder scope with
+    // nothing picked yet must never reach `generateInviteLink` with a
+    // `collectionId` of `null`.
+    if (scopeChoice === "folder" && selectedCollectionId === null) {
+      return;
+    }
     setGenerating(true);
     try {
-      // CR-02: the only reachable scope is "family" today -- the
-      // collection-scoped branch is disabled at the UI layer (the "folder"
-      // `<option>` is unconditionally `disabled`), so there is nothing left
-      // here to branch on. Reintroducing a `scope.kind === "collection"` path
-      // requires a real client-side collections-authoring surface (Phase 26),
-      // not just re-wiring `selectedFolderId` back in.
-      const scope: InviteScope = { kind: "family" };
+      // Plan 26-12: the collection-scoped branch is real now -- Phase 26
+      // built the client-side collections capability (CollectionPicker,
+      // ensureOwnIdentityKeypair, sealCollectionKey/unsealCollectionKey) that
+      // CR-02 (24-REVIEW.md) was blocked on.
+      const scope: InviteScope =
+        scopeChoice === "folder" && selectedCollectionId !== null
+          ? { kind: "collection", collectionId: selectedCollectionId, accessLevel: collectionAccessLevel }
+          : { kind: "family" };
       const result = await generateInviteLink(scope, expiry, uk);
       setInvite({ id: extractInviteId(result.url), url: result.url, expiresAt: result.expiresAt });
     } catch (err) {
@@ -308,7 +379,9 @@ export default function FamilyTab() {
   }
 
   function resetInviteForm() {
-    // scopeChoice has no setter (CR-02: always "family") -- nothing to reset.
+    setScopeChoice("family");
+    setSelectedCollectionId(null);
+    setCollectionAccessLevel("read");
     setExpiry(DEFAULT_EXPIRY);
     setGenerateError(null);
   }
@@ -537,27 +610,50 @@ export default function FamilyTab() {
           <label htmlFor="invite-scope-select" className="text-sm">
             {t("invite.scopeLabel")}
           </label>
-          {/* CR-02 (24-REVIEW.md): unconditionally disabled -- not gated on
-              `foldersEmpty`. The folder picker sourced from `useFolders()`
-              (personal folders) has no id overlap with the server's
-              `collections` table, so this option 100%-fails for EVERY user,
-              not just one with zero folders. Framed as "coming soon"
-              (Phase 26 ships the real collections-authoring surface), never
-              silently re-enabled by populating folders. */}
+          {/* Plan 26-12: CR-02 (24-REVIEW.md)'s block is lifted -- Phase 26
+              built the real client-side collections capability (CollectionPicker,
+              ensureOwnIdentityKeypair, sealCollectionKey/unsealCollectionKey)
+              that "coming in a later version" was waiting on. Choosing
+              "folder" mounts CollectionPicker in the exact visual position
+              the old disabled-note paragraph occupied, so this fix
+              introduces no layout shift. */}
           <select
             id="invite-scope-select"
             data-testid="invite-scope-select"
             className="select select-bordered w-full"
-            defaultValue={scopeChoice}
+            value={scopeChoice}
+            onChange={(e) => setScopeChoice(e.target.value as ScopeChoice)}
           >
             <option value="family">{t("invite.scopeWholeFamily")}</option>
-            <option value="folder" disabled>
-              {t("invite.scopeFolderComingSoon")}
-            </option>
+            <option value="folder">{t("invite.scopeFolder")}</option>
           </select>
-          <p data-testid="invite-scope-folder-unavailable-note" className="text-sm text-base-content/70">
-            {t("invite.scopeFolderUnavailableNote")}
-          </p>
+          {scopeChoice === "folder" ? (
+            <div className="flex flex-col gap-3">
+              <CollectionPicker
+                value={selectedCollectionId}
+                onSelect={setSelectedCollectionId}
+                onCreateNew={() => setShowCreateCollectionDialog(true)}
+              />
+              <div className="flex flex-col gap-1">
+                <label htmlFor="invite-folder-access-level-select" className="text-sm">
+                  {t("share.accessLevelLabel")}
+                </label>
+                <select
+                  id="invite-folder-access-level-select"
+                  data-testid="invite-folder-access-level-select"
+                  className="select select-bordered w-full"
+                  value={collectionAccessLevel}
+                  onChange={(e) => setCollectionAccessLevel(e.target.value as AccessLevelValue)}
+                >
+                  {ACCESS_LEVEL_VALUES.map((value) => (
+                    <option key={value} value={value}>
+                      {t(accessLevelKey(value))}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-1">
@@ -587,12 +683,20 @@ export default function FamilyTab() {
           type="submit"
           data-testid="invite-generate-cta"
           className="btn btn-primary self-start"
-          disabled={generating}
+          disabled={generating || (scopeChoice === "folder" && selectedCollectionId === null)}
         >
           {generating ? <span className="loading loading-spinner loading-sm" aria-hidden="true" /> : null}
           {t("invite.generateCta")}
         </button>
       </form>
+
+      {showCreateCollectionDialog ? (
+        <ShareDialog
+          scope={{ kind: "folder", existingFolderId: null }}
+          onClose={() => setShowCreateCollectionDialog(false)}
+          onShared={() => setShowCreateCollectionDialog(false)}
+        />
+      ) : null}
     </div>
   );
   })();
@@ -603,6 +707,60 @@ export default function FamilyTab() {
   // one-time toast, no client-side timer).
   const selfRow = members?.find((m) => m.user_id === selfUserId) ?? null;
   const isSelfSuspended = selfRow?.status === "suspended";
+
+  // Identity fingerprint card + per-member reveal (E7, D-4/SEC-05, Task 1).
+  // Shared by the self card and every expanded member row so the word-list +
+  // copy-button + mismatch-warning treatment is byte-identical in both
+  // places (honesty constraint 5: the mismatch warning renders beside EVERY
+  // rendered word list, never only the self card). `copyKey` keys
+  // `copiedFingerprintId` so the self card's and each row's copy-button
+  // Check-icon animate independently; `testId` generates this call site's
+  // own testid namespace.
+  function renderFingerprintPanel(
+    copyKey: string,
+    testId: (field: "words" | "unavailable" | "copy" | "mismatch-warning") => string,
+    fingerprint: string | null,
+  ) {
+    if (fingerprint === null) {
+      // Honesty constraint 3: never styled or worded as an error -- this is
+      // the honest, expected state before KEY-01's client trigger (E9) has
+      // published this member's identity keypair.
+      return (
+        <p data-testid={testId("unavailable")} className="text-sm text-base-content/70">
+          {t("identity.fingerprintUnavailable")}
+        </p>
+      );
+    }
+    const words = formatFingerprintWords(fingerprint);
+    return (
+      <>
+        <div className="flex items-center gap-2">
+          <span
+            data-testid={testId("words")}
+            className="min-w-0 flex-1 break-all font-mono text-base font-bold"
+          >
+            {words}
+          </span>
+          <button
+            type="button"
+            data-testid={testId("copy")}
+            aria-label={t("identity.fingerprintCopyAria")}
+            className="btn btn-ghost btn-square btn-sm shrink-0"
+            onClick={() => handleCopyFingerprint(copyKey, words)}
+          >
+            {copiedFingerprintId === copyKey ? (
+              <Check size={16} className="text-success" aria-hidden="true" />
+            ) : (
+              <Copy size={16} aria-hidden="true" />
+            )}
+          </button>
+        </div>
+        <p data-testid={testId("mismatch-warning")} className="text-sm text-base-content/70">
+          {t("identity.fingerprintMismatchWarning")}
+        </p>
+      </>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-8 py-4">
@@ -622,6 +780,24 @@ export default function FamilyTab() {
           <Users size={20} aria-hidden="true" />
           {t("family.membersHeading")}
         </h3>
+
+        {/* E7 (D-4/SEC-05): pinned above the Members list, inside this SAME
+            family-members-section container -- not a separate settings
+            section. "Show the user's own fingerprint alongside other
+            members'" (26-CONTEXT.md D-4 detail) -- you cannot verify
+            out-of-band without reading your own aloud. */}
+        <div
+          data-testid="identity-self-card"
+          className="flex flex-col gap-2 rounded-box border border-base-300 bg-base-200/40 px-4 py-3"
+        >
+          <h4 className="text-sm font-bold">{t("identity.yourFingerprintHeading")}</h4>
+          {renderFingerprintPanel(
+            "self",
+            (field) => `identity-self-fingerprint-${field}`,
+            selfRow?.fingerprint ?? null,
+          )}
+        </div>
+
         {members === null ? (
           // Defensive-only branch (E1 error backstop): under the current
           // wiring `members` is always populated by the time `mode ===
@@ -652,66 +828,107 @@ export default function FamilyTab() {
               // own; the owner sees action icons on every row except their
               // own and (there being only one) the owner's own.
               const canAct = isOwner && !isSelf && m.role !== "owner";
+              // E7: any member (owner or not) can reveal any OTHER member's
+              // fingerprint -- reading the roster is already RequireRead, no
+              // extra permission is needed for this. The self row never gets
+              // its own toggle -- it's always shown, unconditionally
+              // expanded, via the identity-self-card above.
+              const fingerprintExpanded = !isSelf && expandedFingerprintIds.has(m.user_id);
               return (
                 <li
                   key={m.user_id}
                   data-testid={`member-row-${m.user_id}`}
-                  className="flex min-h-16 items-center gap-3 rounded-box border border-base-300 px-4 py-3"
+                  className="flex flex-col gap-2 rounded-box border border-base-300 px-4 py-3"
                 >
-                  <div className="flex min-w-0 flex-1 flex-col gap-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate text-sm" title={m.email}>
-                        {m.email}
-                      </span>
-                      <span className="badge badge-ghost shrink-0">
-                        {t(m.role === "owner" ? "family.roleOwner" : "family.roleMember")}
-                      </span>
-                      {isSuspended ? (
-                        <span
-                          data-testid={`member-status-badge-${m.user_id}`}
-                          className="badge badge-warning badge-outline shrink-0"
-                        >
-                          {t("family.statusSuspended")}
+                  <div className="flex min-h-16 items-center gap-3">
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm" title={m.email}>
+                          {m.email}
                         </span>
-                      ) : null}
-                      {isSelf ? (
-                        <span className="badge badge-ghost shrink-0">{t("family.youBadge")}</span>
-                      ) : null}
-                    </div>
-                    <span className="text-sm text-base-content/60">
-                      {interpolate(t("family.joinedLabel"), {
-                        date: m.joined_at ? formatExpiryDate(m.joined_at, locale) : "",
-                      })}
-                    </span>
-                  </div>
-                  {canAct ? (
-                    <div className="flex shrink-0 items-center gap-2">
-                      <button
-                        type="button"
-                        data-testid={`member-toggle-suspend-${m.user_id}`}
-                        aria-label={interpolate(
-                          t(isSuspended ? "member.reinstateAria" : "member.suspendAria"),
-                          { email: m.email },
-                        )}
-                        className="btn btn-ghost btn-square btn-sm"
-                        disabled={reinstatingUserId === m.user_id}
-                        onClick={() => (isSuspended ? void handleReinstate(m) : setSuspendTarget(m))}
-                      >
+                        <span className="badge badge-ghost shrink-0">
+                          {t(m.role === "owner" ? "family.roleOwner" : "family.roleMember")}
+                        </span>
                         {isSuspended ? (
-                          <PlayCircle size={16} aria-hidden="true" />
-                        ) : (
-                          <PauseCircle size={16} aria-hidden="true" />
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        data-testid={`member-remove-trigger-${m.user_id}`}
-                        aria-label={interpolate(t("member.removeAria"), { email: m.email })}
-                        className="btn btn-ghost btn-square btn-sm"
-                        onClick={() => setRemoveTarget(m)}
-                      >
-                        <UserMinus size={16} aria-hidden="true" />
-                      </button>
+                          <span
+                            data-testid={`member-status-badge-${m.user_id}`}
+                            className="badge badge-warning badge-outline shrink-0"
+                          >
+                            {t("family.statusSuspended")}
+                          </span>
+                        ) : null}
+                        {isSelf ? (
+                          <span className="badge badge-ghost shrink-0">{t("family.youBadge")}</span>
+                        ) : null}
+                      </div>
+                      <span className="text-sm text-base-content/60">
+                        {interpolate(t("family.joinedLabel"), {
+                          date: m.joined_at ? formatExpiryDate(m.joined_at, locale) : "",
+                        })}
+                      </span>
+                    </div>
+                    {!isSelf || canAct ? (
+                      <div className="flex shrink-0 items-center gap-2">
+                        {!isSelf ? (
+                          <button
+                            type="button"
+                            data-testid={`member-fingerprint-toggle-${m.user_id}`}
+                            aria-label={interpolate(t("identity.fingerprintRevealAria"), {
+                              email: m.email,
+                            })}
+                            className="btn btn-ghost btn-square btn-sm"
+                            onClick={() => toggleFingerprint(m.user_id)}
+                          >
+                            {fingerprintExpanded ? (
+                              <ChevronDown size={16} aria-hidden="true" />
+                            ) : (
+                              <ChevronRight size={16} aria-hidden="true" />
+                            )}
+                          </button>
+                        ) : null}
+                        {canAct ? (
+                          <>
+                            <button
+                              type="button"
+                              data-testid={`member-toggle-suspend-${m.user_id}`}
+                              aria-label={interpolate(
+                                t(isSuspended ? "member.reinstateAria" : "member.suspendAria"),
+                                { email: m.email },
+                              )}
+                              className="btn btn-ghost btn-square btn-sm"
+                              disabled={reinstatingUserId === m.user_id}
+                              onClick={() => (isSuspended ? void handleReinstate(m) : setSuspendTarget(m))}
+                            >
+                              {isSuspended ? (
+                                <PlayCircle size={16} aria-hidden="true" />
+                              ) : (
+                                <PauseCircle size={16} aria-hidden="true" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`member-remove-trigger-${m.user_id}`}
+                              aria-label={interpolate(t("member.removeAria"), { email: m.email })}
+                              className="btn btn-ghost btn-square btn-sm"
+                              onClick={() => setRemoveTarget(m)}
+                            >
+                              <UserMinus size={16} aria-hidden="true" />
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                  {fingerprintExpanded ? (
+                    <div
+                      data-testid={`member-fingerprint-panel-${m.user_id}`}
+                      className="flex flex-col gap-2"
+                    >
+                      {renderFingerprintPanel(
+                        m.user_id,
+                        (field) => `member-fingerprint-${field}-${m.user_id}`,
+                        m.fingerprint,
+                      )}
                     </div>
                   ) : null}
                 </li>

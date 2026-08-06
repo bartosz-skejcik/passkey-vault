@@ -99,12 +99,70 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
   }),
 }));
 
+// Plan 26-12 (Task 2): mirrors the RemoveMemberDialog stand-in above --
+// CollectionPicker (Plan 26-07) has its own separately-covered test suite
+// (its real implementation pulls in `useCollections()`/WASM-adjacent
+// crypto), so FamilyTab's suite only needs a lightweight stub exposing the
+// exact prop surface it wires: `value`/`onSelect`/`onCreateNew`.
+vi.mock("@/components/vault/CollectionPicker", () => ({
+  default: ({
+    value,
+    onSelect,
+    onCreateNew,
+  }: {
+    value: string | null;
+    onSelect: (id: string) => void;
+    onCreateNew: () => void;
+  }) => (
+    <div data-testid="collection-picker-stub">
+      <span data-testid="collection-picker-stub-value">{value ?? ""}</span>
+      <button
+        type="button"
+        data-testid="collection-picker-stub-select"
+        onClick={() => onSelect("col-123")}
+      >
+        select
+      </button>
+      <button type="button" data-testid="collection-picker-stub-create-new" onClick={onCreateNew}>
+        create new
+      </button>
+    </div>
+  ),
+}));
+
+// Same rationale as CollectionPicker above -- ShareDialog (Plan 26-08) owns
+// its own real-WASM/API test coverage; FamilyTab only needs to prove it
+// mounts the folder-create variant and reacts to onClose/onShared.
+vi.mock("@/components/vault/ShareDialog", () => ({
+  default: ({ onClose, onShared }: { onClose: () => void; onShared: () => void }) => (
+    <div data-testid="share-dialog-stub">
+      <button type="button" data-testid="share-dialog-stub-close" onClick={onClose}>
+        close
+      </button>
+      <button type="button" data-testid="share-dialog-stub-shared" onClick={onShared}>
+        shared
+      </button>
+    </div>
+  ),
+}));
+
 import FamilyTab, { formatExpiryDate } from "./FamilyTab";
 import { ApiClientError } from "@/lib/auth/api";
+import { DICTIONARY, interpolate } from "@/lib/i18n/dictionary";
+import { formatFingerprintWords } from "pv-ui/identity/fingerprint";
 
 // A minimal fake WasmUserKey handle — FamilyTab only ever passes it through
 // to the mocked generateInviteLink, never calls a method on it itself.
 const uk = { free: vi.fn() } as unknown as ReturnType<typeof mockGetUnlockedUserKey>;
+
+// Real (not mocked) SHA-256-shaped hex fixture -- `formatFingerprintWords`
+// (Plan 26-03) is a pure, deterministic transform with no I/O, so exercising
+// the REAL function here (rather than mocking it) is what actually proves
+// FamilyTab renders a genuine six-word fingerprint, not a stand-in string.
+const FINGERPRINT_HEX_A = "a".repeat(64);
+const FINGERPRINT_HEX_B = "b".repeat(64);
+const FINGERPRINT_WORDS_A = formatFingerprintWords(FINGERPRINT_HEX_A);
+const FINGERPRINT_WORDS_B = formatFingerprintWords(FINGERPRINT_HEX_B);
 
 // WR-02 fixtures: the owning caller, by default, so every pre-existing
 // owner-side test (invite creation etc.) keeps its original meaning without
@@ -135,11 +193,19 @@ const NON_OWNER_MEMBER = {
   verified_at: null,
 };
 
+// UI-SPEC E7 / Phase-Specific Notes §2: the fingerprint copy button uses a
+// plain, non-auto-clearing `navigator.clipboard.writeText` -- mirrors
+// `clipboard.test.ts`'s own `Object.assign(navigator, { clipboard: ... })`
+// stub precedent, since jsdom provides no real Clipboard API.
+const mockClipboardWriteText = vi.fn();
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetUnlockedUserKey.mockReturnValue(uk);
   mockReadClipboardSeconds.mockReturnValue(30);
   mockMe.mockResolvedValue(OWNER_ACCOUNT);
+  mockClipboardWriteText.mockReset();
+  Object.assign(navigator, { clipboard: { writeText: mockClipboardWriteText } });
 });
 
 describe("WR-01: formatExpiryDate interprets SQLite's timezone-less timestamp as UTC", () => {
@@ -211,34 +277,45 @@ describe("FamilyTab", () => {
       expect(screen.getByTestId("invite-generate-cta")).not.toBeDisabled();
     });
 
-    // CR-02 (24-REVIEW.md): the folder-scope option is UNCONDITIONALLY
-    // disabled -- personal folders and the server's `collections` table have
-    // no id overlap, so a folder-scoped invite 100%-fails `getCollection()`
-    // for every user, not just one with zero folders. These tests replace
-    // the previous "zero folders disables / non-empty folders reveals the
-    // picker" pair, which asserted the now-removed (and never truly
-    // functional) folder-scope UI.
-    it("CR-02 regression guard: the folder-scope option is always disabled, with coming-soon copy and an unavailable note", async () => {
+    // Plan 26-12 (Task 2): CR-02 (24-REVIEW.md)'s block is lifted -- Phase 26
+    // built the real client-side collections capability CR-02 was waiting
+    // on. These tests replace the CR-02 regression guards (which asserted
+    // the now-false "always disabled" claim) with the enabled behavior.
+    it("the folder-scope option is enabled (not disabled, no coming-soon copy)", async () => {
       mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
       render(<FamilyTab />);
 
       await waitFor(() => expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument());
       const folderOption = screen.getByRole("option", {
-        name: "invite.scopeFolderComingSoon",
+        name: "invite.scopeFolder",
       }) as HTMLOptionElement;
-      expect(folderOption.disabled).toBe(true);
-      expect(screen.getByTestId("invite-scope-folder-unavailable-note")).toHaveTextContent(
-        "invite.scopeFolderUnavailableNote",
-      );
-      // Neither the folder-picker select nor the "sharing doesn't hide this
-      // from you" note (which describes an operation that cannot occur while
-      // the option above is disabled) may render in ANY state.
-      expect(screen.queryByTestId("invite-folder-select")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("invite-honest-visibility-note")).not.toBeInTheDocument();
-      expect(screen.queryByRole("option", { name: "invite.scopeFolder" })).not.toBeInTheDocument();
+      expect(folderOption.disabled).toBe(false);
+      expect(screen.queryByTestId("invite-scope-folder-unavailable-note")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("collection-picker-stub")).not.toBeInTheDocument();
     });
 
-    it("CR-02 regression guard: generating an invite never sends a collection scope, even though the (disabled) option exists in the DOM", async () => {
+    it("choosing the folder scope mounts CollectionPicker in the exact position the old disabled note occupied", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument());
+      fireEvent.change(screen.getByTestId("invite-scope-select"), { target: { value: "folder" } });
+
+      expect(screen.getByTestId("collection-picker-stub")).toBeInTheDocument();
+      // Submit is disabled until a real collection has been picked.
+      expect(screen.getByTestId("invite-generate-cta")).toBeDisabled();
+    });
+
+    it("invite.scopeFolderComingSoon / invite.scopeFolderUnavailableNote no longer exist in the dictionary", () => {
+      expect(Object.prototype.hasOwnProperty.call(DICTIONARY, "invite.scopeFolderComingSoon")).toBe(
+        false,
+      );
+      expect(
+        Object.prototype.hasOwnProperty.call(DICTIONARY, "invite.scopeFolderUnavailableNote"),
+      ).toBe(false);
+    });
+
+    it("generating an invite with a real picked collection id calls generateInviteLink with a collection scope", async () => {
       mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
       mockGenerateInviteLink.mockResolvedValue({
         url: "https://vault.example/invite/inv-999#s3cr3t",
@@ -247,18 +324,30 @@ describe("FamilyTab", () => {
       render(<FamilyTab />);
 
       await waitFor(() => expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument());
-      // A disabled native <option> cannot be selected via user interaction;
-      // this asserts the PRODUCTION behavior (the call actually made), which
-      // would fail if a future change re-wired a collection-scope branch
-      // without a real collections picker driving it.
+      fireEvent.change(screen.getByTestId("invite-scope-select"), { target: { value: "folder" } });
+      fireEvent.click(screen.getByTestId("collection-picker-stub-select"));
+      expect(screen.getByTestId("invite-generate-cta")).not.toBeDisabled();
       fireEvent.click(screen.getByTestId("invite-generate-cta"));
 
       await waitFor(() => expect(mockGenerateInviteLink).toHaveBeenCalledTimes(1));
       expect(mockGenerateInviteLink).toHaveBeenCalledWith(
-        { kind: "family" },
+        { kind: "collection", collectionId: "col-123", accessLevel: expect.any(String) },
         "7d",
         expect.anything(),
       );
+    });
+
+    it("choosing 'create new' opens ShareDialog's folder-create variant, and it closes on onShared", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("invite-generate-cta")).toBeInTheDocument());
+      fireEvent.change(screen.getByTestId("invite-scope-select"), { target: { value: "folder" } });
+      fireEvent.click(screen.getByTestId("collection-picker-stub-create-new"));
+
+      expect(screen.getByTestId("share-dialog-stub")).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("share-dialog-stub-shared"));
+      expect(screen.queryByTestId("share-dialog-stub")).not.toBeInTheDocument();
     });
 
     it("invite-creation failure leaves the form's expiry selection intact, logs for triage, and shows a non-silent inline error", async () => {
@@ -528,6 +617,143 @@ describe("FamilyTab", () => {
       const emailSpan = row.querySelector(`[title="${longEmail}"]`);
       expect(emailSpan).not.toBeNull();
       expect(emailSpan).toHaveClass("truncate");
+    });
+  });
+
+  describe("Identity fingerprint card + per-member reveal (E7, D-4/SEC-05, Task 1)", () => {
+    it("own row: renders the six-word fingerprint in font-mono, plus a mismatch warning, when available", async () => {
+      const selfWithFingerprint = { ...OWNER_MEMBER, fingerprint: FINGERPRINT_HEX_A };
+      mockGetFamilyMembers.mockResolvedValue([selfWithFingerprint, NON_OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("identity-self-card")).toBeInTheDocument());
+      expect(screen.getByTestId("identity-self-card")).toHaveTextContent(
+        "identity.yourFingerprintHeading",
+      );
+      const words = screen.getByTestId("identity-self-fingerprint-words");
+      expect(words).toHaveTextContent(FINGERPRINT_WORDS_A);
+      expect(words).toHaveClass("font-mono");
+      // Exactly six words, separated by the documented " · " (space, middot,
+      // space) — matches D-4's literal example format.
+      expect(FINGERPRINT_WORDS_A.split(" · ")).toHaveLength(6);
+      expect(screen.getByTestId("identity-self-fingerprint-mismatch-warning")).toHaveTextContent(
+        "identity.fingerprintMismatchWarning",
+      );
+      expect(
+        screen.queryByTestId("identity-self-fingerprint-unavailable"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("own row: renders identity.fingerprintUnavailable (never styled as an error) instead of a word list when fingerprint is null", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("identity-self-card")).toBeInTheDocument());
+      expect(screen.getByTestId("identity-self-fingerprint-unavailable")).toHaveTextContent(
+        "identity.fingerprintUnavailable",
+      );
+      const unavailable = screen.getByTestId("identity-self-fingerprint-unavailable");
+      expect(unavailable).not.toHaveAttribute("role", "alert");
+      expect(unavailable).not.toHaveClass("text-error");
+      expect(screen.queryByTestId("identity-self-fingerprint-words")).not.toBeInTheDocument();
+      // Honesty constraint 5's warning only makes sense beside an actual word
+      // list — never rendered for the "unavailable" state.
+      expect(
+        screen.queryByTestId("identity-self-fingerprint-mismatch-warning"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("a non-owner member also sees their own fingerprint card (E7 is not owner-gated)", async () => {
+      const selfWithFingerprint = { ...NON_OWNER_MEMBER, fingerprint: FINGERPRINT_HEX_B };
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, selfWithFingerprint]);
+      mockMe.mockResolvedValue({
+        user_id: NON_OWNER_MEMBER.user_id,
+        email: NON_OWNER_MEMBER.email,
+        pw_wrapped_uk: "wrapped",
+      });
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("identity-self-card")).toBeInTheDocument());
+      expect(screen.getByTestId("identity-self-fingerprint-words")).toHaveTextContent(
+        FINGERPRINT_WORDS_B,
+      );
+    });
+
+    it("other members: a reveal toggle (not expanded by default) shows the word list + copy + mismatch warning on expand", async () => {
+      const otherWithFingerprint = { ...NON_OWNER_MEMBER, fingerprint: FINGERPRINT_HEX_B };
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, otherWithFingerprint]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      expect(
+        screen.queryByTestId(`member-fingerprint-panel-${otherWithFingerprint.user_id}`),
+      ).not.toBeInTheDocument();
+      const toggle = screen.getByTestId(`member-fingerprint-toggle-${otherWithFingerprint.user_id}`);
+      expect(toggle).toHaveAttribute(
+        "aria-label",
+        interpolate("identity.fingerprintRevealAria", { email: otherWithFingerprint.email }),
+      );
+
+      fireEvent.click(toggle);
+
+      const panel = screen.getByTestId(`member-fingerprint-panel-${otherWithFingerprint.user_id}`);
+      expect(panel).toBeInTheDocument();
+      expect(
+        screen.getByTestId(`member-fingerprint-words-${otherWithFingerprint.user_id}`),
+      ).toHaveTextContent(FINGERPRINT_WORDS_B);
+      expect(
+        screen.getByTestId(`member-fingerprint-mismatch-warning-${otherWithFingerprint.user_id}`),
+      ).toHaveTextContent("identity.fingerprintMismatchWarning");
+
+      fireEvent.click(toggle);
+      expect(
+        screen.queryByTestId(`member-fingerprint-panel-${otherWithFingerprint.user_id}`),
+      ).not.toBeInTheDocument();
+    });
+
+    it("other members: expanding a member with no published key shows identity.fingerprintUnavailable, not hidden as if the feature didn't exist", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      // The toggle itself always renders, whether or not the fingerprint is
+      // available -- a member can always check.
+      const toggle = screen.getByTestId(`member-fingerprint-toggle-${NON_OWNER_MEMBER.user_id}`);
+      fireEvent.click(toggle);
+
+      expect(
+        screen.getByTestId(`member-fingerprint-unavailable-${NON_OWNER_MEMBER.user_id}`),
+      ).toHaveTextContent("identity.fingerprintUnavailable");
+      expect(
+        screen.queryByTestId(`member-fingerprint-words-${NON_OWNER_MEMBER.user_id}`),
+      ).not.toBeInTheDocument();
+    });
+
+    it("the caller's own roster row never gets a reveal toggle (it's always shown via the self card)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      expect(
+        screen.queryByTestId(`member-fingerprint-toggle-${OWNER_MEMBER.user_id}`),
+      ).not.toBeInTheDocument();
+    });
+
+    it("copy button: a plain, non-auto-clearing clipboard write, with a Check icon swap on success", async () => {
+      const selfWithFingerprint = { ...OWNER_MEMBER, fingerprint: FINGERPRINT_HEX_A };
+      mockGetFamilyMembers.mockResolvedValue([selfWithFingerprint]);
+      render(<FamilyTab />);
+
+      await waitFor(() => expect(screen.getByTestId("identity-self-fingerprint-copy")).toBeInTheDocument());
+      const copyButton = screen.getByTestId("identity-self-fingerprint-copy");
+      expect(copyButton).toHaveAttribute("aria-label", "identity.fingerprintCopyAria");
+
+      fireEvent.click(copyButton);
+
+      expect(mockClipboardWriteText).toHaveBeenCalledWith(FINGERPRINT_WORDS_A);
+      // Deliberate deviation from copyWithAutoClear (UI-SPEC Phase-Specific
+      // Notes §2) -- never routed through the auto-clear helper.
+      expect(mockCopyWithAutoClear).not.toHaveBeenCalled();
     });
   });
 
