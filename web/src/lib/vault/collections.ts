@@ -148,6 +148,23 @@ async function refreshCollections(): Promise<void> {
       }
       nextCollections.push({ id: row.id, name });
     }
+    // WR-02 (code review, Phase 26): evict every cached key whose collection
+    // the server no longer returns. `refreshCollections` rebuilt
+    // `collections` wholesale but only ever wrote INTO `collectionKeys`, so
+    // after a revocation (which `store.ts::handleSharedRevisions` explicitly
+    // purges `collectionSharedItems` for) the unwrapped `WasmCollectionKey`
+    // for that collection stayed in the map until lock. That is both an
+    // unfreed WASM handle holding live key material -- the exact hazard
+    // class this module's own header claims to guard, T-26-10 -- and a stale
+    // capability: `getCollectionKey(id)` kept handing out a usable key for a
+    // collection this caller no longer has access to.
+    const liveIds = new Set(rows.map((row) => row.id));
+    for (const [id, ck] of Array.from(collectionKeys.entries())) {
+      if (!liveIds.has(id)) {
+        ck.free?.();
+        collectionKeys.delete(id);
+      }
+    }
     collections = nextCollections;
     notifyListeners();
   } finally {

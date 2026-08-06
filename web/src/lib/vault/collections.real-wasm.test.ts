@@ -46,7 +46,7 @@ import {
   encryptItemForCollection,
   decryptItemForCollection,
 } from "@/lib/crypto";
-import { getCollectionKey, getCollections } from "./collections";
+import { getCollectionKey, getCollections, refreshCollectionsNow } from "./collections";
 
 const COLLECTION_NAME_REVISION = 1;
 
@@ -199,6 +199,46 @@ describe("collections.ts: list, decrypt names, cache unwrapped Collection Keys (
       expect(getCollectionKey("collection-fixture-3")).toBeUndefined();
     } finally {
       freeSpy.mockRestore();
+      ck.free?.();
+    }
+  });
+
+  // WR-02 (code review, Phase 26): refreshCollections rebuilt `collections`
+  // wholesale but only ever wrote INTO collectionKeys, so a revoked
+  // collection's unwrapped key stayed cached (and unfreed) until lock --
+  // both an unfreed WASM handle holding live key material and a stale
+  // capability, since getCollectionKey() kept returning it.
+  it("a collection the server no longer returns has its cached key freed and evicted, not merely hidden", async () => {
+    const { identityKey, ck, row } = makeFixtureCollectionRow(
+      "collection-fixture-revoked",
+      "Revoked Folder",
+    );
+    // `refreshCollections` frees the identity handle it resolves, and this
+    // test drives TWO refreshes -- hand back a fresh handle each time,
+    // exactly as the real `ensureOwnIdentityKeypair` does (returning one
+    // shared fixture handle twice would double-free it).
+    mockEnsureOwnIdentityKeypair.mockImplementationOnce(async () => identityKey);
+    mockEnsureOwnIdentityKeypair.mockImplementation(async () => WasmIdentityKey.generate());
+    mockListCollections.mockResolvedValue([row]);
+
+    const uk = generateUserKey();
+    const freeSpy = vi.spyOn(WasmCollectionKey.prototype, "free");
+    try {
+      setUnlockedUserKey(uk);
+      await vi.waitFor(() => expect(getCollectionKey("collection-fixture-revoked")).toBeDefined());
+
+      freeSpy.mockClear(); // ignore frees during setup/refresh above
+
+      // Access revoked server-side: the row simply stops being returned.
+      mockListCollections.mockResolvedValue([]);
+      await refreshCollectionsNow();
+
+      expect(getCollections()).toEqual([]);
+      expect(getCollectionKey("collection-fixture-revoked")).toBeUndefined();
+      expect(freeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      freeSpy.mockRestore();
+      lockVault();
       ck.free?.();
     }
   });
