@@ -1110,6 +1110,101 @@ export const DICTIONARY = {
   // `membership.rs::parse_access_level`'s own "never silently treated as a
   // valid access grant" discipline.
   "access.unknown": { pl: "Nieznany poziom dostępu", en: "Unknown access level" },
+
+  // Phase 26 (Plan 06) — sharing UI + family management. Copy sourced
+  // VERBATIM from 26-UI-SPEC.md's "## Copywriting Contract" table; do not
+  // retype the Polish diacritics from memory or paraphrase. The five keys
+  // immediately below (hiddenPasswordDisclosureTitle/Body/Ack,
+  // hiddenPasswordInlineNote, fingerprintMismatchWarning) are the phase's
+  // hard, non-negotiable honesty strings (D-2/UX-03, honesty constraints
+  // 1-5) — never shortened, softened, or reworded to imply the password is
+  // hidden from the recipient in any cryptographic sense, and
+  // `identity.fingerprintMismatchWarning` is a SEPARATE key from the
+  // reused `invite.fingerprintHonesty` (comparison ritual), never merged
+  // into it, since other surfaces depend on that key's exact wording.
+  "share.hiddenPasswordDisclosureTitle": {
+    pl: `O co chodzi z „ukrytym hasłem"`,
+    en: `What "hidden password" actually means`,
+  },
+  "share.hiddenPasswordDisclosureBody": {
+    pl: `To ukrywa hasło TYLKO w interfejsie — osoba z dostępem nadal posiada klucz i technicznie może je odzyskać (np. przez narzędzia deweloperskie przeglądarki albo bezpośredni odczyt zaszyfrowanych danych, jeśli ma dostęp do własnego klucza). To nie jest zabezpieczenie kryptograficzne. Wybierz ten poziom, gdy chcesz, żeby ktoś mógł używać hasła bez przypadkowego zobaczenia go na ekranie — nie jako sposób na ukrycie go PRZED tą osobą.`,
+    en: `This hides the password only in the interface — anyone with access still holds the decryption key and can technically recover it (e.g. via browser developer tools, or by reading the encrypted data directly if they have their own key). It is not a cryptographic protection. Use this level when you want someone to be able to use the password without accidentally seeing it on screen — not as a way to hide it FROM that person.`,
+  },
+  "share.hiddenPasswordDisclosureAck": {
+    pl: "Rozumiem, przyznaj dostęp",
+    en: "I understand, grant access",
+  },
+  "share.hiddenPasswordInlineNote": {
+    pl: "Ukryte tylko w interfejsie — {recipient} nadal ma dostęp do klucza.",
+    en: "Hidden in the interface only — {recipient} still has key access.",
+  },
+  "identity.fingerprintMismatchWarning": {
+    pl: "Jeśli słowa się nie zgadzają, klucz, który widzisz, nie należy do tej osoby — nie udostępniaj jej niczego i zgłoś to.",
+    en: "If the words don't match, the key you're seeing isn't theirs — don't share anything with them, and report it.",
+  },
+  "share.itemDialogTitle": {
+    pl: `Udostępnij „{name}"`,
+    en: `Share "{name}"`,
+  },
+  "share.folderDialogTitleExisting": {
+    pl: `Udostępnij folder „{name}"`,
+    en: `Share folder "{name}"`,
+  },
+  "share.folderDialogTitleNew": { pl: "Nowy udostępniony folder", en: "New shared folder" },
+  "share.recipientsLabel": { pl: "Komu udostępnić", en: "Share with" },
+  "share.noOtherMembers": {
+    pl: "W Twojej rodzinie nie ma jeszcze innych członków. Zaproś kogoś, żeby móc udostępniać.",
+    en: "There are no other members in your family yet. Invite someone before you can share.",
+  },
+  "share.accessLevelLabel": { pl: "Poziom dostępu", en: "Access level" },
+  // Deliberately not a bare "Udostępnij"/"Share" — the same submit button
+  // backs two structurally different grants across the item/folder
+  // variants, and honesty constraint 4 requires that distinction stay
+  // legible through to the CTA itself.
+  "share.ctaFolder": { pl: "Udostępnij folder", en: "Share folder" },
+  "share.ctaItem": { pl: "Udostępnij item", en: "Share item" },
+  "share.sharing": { pl: "Udostępnianie…", en: "Sharing…" },
+  "share.createFailed": {
+    pl: "Nie udało się udostępnić. Spróbuj ponownie.",
+    en: "Couldn't share. Try again.",
+  },
+  "share.newFolderNameLabel": { pl: "Nazwa folderu", en: "Folder name" },
+  "share.itemSharedOnCollectionNote": {
+    pl: `Ten item jest częścią udostępnionego folderu „{folder}" — dostęp zarządzasz na poziomie folderu.`,
+    en: `This item is part of the shared folder "{folder}" — manage access at the folder level.`,
+  },
+  "sharing.navLabel": { pl: "Udostępnione", en: "Shared" },
+  "sharing.overviewHeading": { pl: "Co udostępniasz", en: "What you're sharing" },
+  "sharing.tabByFolder": { pl: "Wg folderu", en: "By folder" },
+  "sharing.tabByPerson": { pl: "Wg osoby", en: "By person" },
+  "sharing.emptyHeading": { pl: "Nic nie udostępniasz", en: "You're not sharing anything" },
+  "sharing.emptyBody": {
+    pl: "Udostępnij folder lub pojedynczy item, żeby zobaczyć go tutaj.",
+    en: "Share a folder or a single item to see it here.",
+  },
+  "sharing.sharedWithLabel": { pl: "Udostępniono {count} os.", en: "Shared with {count}" },
+  "identity.yourFingerprintHeading": { pl: "Twój odcisk tożsamości", en: "Your identity fingerprint" },
+  "identity.fingerprintRevealAria": {
+    pl: "Pokaż odcisk tożsamości {email}",
+    en: "Show {email}'s identity fingerprint",
+  },
+  "identity.fingerprintUnavailable": {
+    pl: "Odcisk pojawi się po pierwszym odblokowaniu vaulta przez tę osobę po aktualizacji.",
+    en: "The fingerprint will appear once this person unlocks their vault for the first time after upgrading.",
+  },
+  "identity.fingerprintCopyAria": { pl: "Skopiuj odcisk tożsamości", en: "Copy identity fingerprint" },
+  "folder.pickerLabel": { pl: "Folder", en: "Folder" },
+  "folder.pickerNone": { pl: "Bez folderu", en: "No folder" },
+  "folder.pickerCreateNew": { pl: "+ Nowy udostępniony folder", en: "+ New shared folder" },
+  "folder.pickerEmpty": {
+    pl: "Nie masz jeszcze udostępnionych folderów.",
+    en: "You don't have any shared folders yet.",
+  },
+  // invite.scopeFolderComingSoon / invite.scopeFolderUnavailableNote are
+  // DELIBERATELY not retired here — Plan 26-12 removes them in the SAME
+  // task that stops referencing them in FamilyTab.tsx. Deleting them in
+  // this plan would break `npx tsc --noEmit` on 26-12's still-unmerged
+  // reference (both keys remain defined above, in the invite.* section).
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {
