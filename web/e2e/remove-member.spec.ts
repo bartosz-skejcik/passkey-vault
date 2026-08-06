@@ -285,6 +285,7 @@ test("suspend_then_reinstate_live_cycle_with_no_rekey", async ({ twoSessions, br
   // here, since this test never decrypts anything on either side; it only
   // proves access loss/restoration and that no re-key touched the blobs.
   const collRes = await apiPost(owner.context.request, "/api/vault/collections", ownerToken, {
+    id: randomUUID(),
     enc_name: DUMMY_ENC_NAME,
     sealed_key: DUMMY_SEALED_KEY,
   });
@@ -425,6 +426,7 @@ test(
       );
 
       const createCollRes = await apiPost(owner.context.request, "/api/vault/collections", ownerToken, {
+        id: randomUUID(),
         enc_name: encName,
         sealed_key: sealedForOwner,
       });

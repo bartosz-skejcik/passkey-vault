@@ -238,6 +238,7 @@ test(
     // test never decrypts collection content on either side), included to
     // mirror a realistic family with real shared state before dissolution.
     const collRes = await apiPost(owner.context.request, "/api/vault/collections", ownerToken, {
+      id: randomUUID(),
       enc_name: DUMMY_ENC_NAME,
       sealed_key: DUMMY_SEALED_KEY,
     });
@@ -381,6 +382,7 @@ test(
         1,
       );
       const createCollRes = await apiPost(owner.context.request, "/api/vault/collections", ownerToken, {
+        id: randomUUID(),
         enc_name: encName,
         sealed_key: sealedForOwner,
       });
