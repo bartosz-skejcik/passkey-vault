@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use uuid::Uuid;
 
+use super::collections::CoRecipientRecord;
 use super::membership::{
     active_collection_member_join, parse_access_level_from_request, require_collection_edit, Item, Membership,
     RequireEdit, RequireRead,
@@ -1228,6 +1229,59 @@ pub struct CreateItemShareRequest {
     /// `collections::AddMemberRequest::sealed_key`'s treatment.
     pub sealed_key: String,
     pub access_level: String,
+}
+
+/// `GET /api/vault/items/{id}/shares` — the read path `collections::access_list`
+/// already has and `item_shares` never did (26-04-PLAN.md Task 1, SHARE-02/
+/// UX-05): "who is this personal item directly shared with", D-3's avatar
+/// stack and D-1's Sharing overview data source. Mirrors `access_list`'s
+/// full shape (struct, handler, error handling) with one deliberate swap —
+/// `Membership<Item, RequireRead>`, never `Membership<Collection, _>` or
+/// `FamilyMembership<RequireEdit>` (the owner-only gate `families::
+/// member_access` uses, the wrong question for this endpoint's actual
+/// callers: any member listing shares on their OWN item or an item shared
+/// TO them). `Membership<Item, RequireRead>` — "caller has any access to
+/// this item" authorizes the listing, not "caller is the item's owner";
+/// a non-member gets `ApiError::NotFound` (404) from `Item::resolve_access`
+/// resolving to `None`, never a 403 that would confirm the item exists.
+///
+/// The `family_members` join below is scoped to the RECIPIENT's own
+/// membership row — the same shape `Item::resolve_access`'s own
+/// `item_shares` branch uses (`membership.rs`'s `fm`/`fm_o` join), but
+/// WITHOUT that branch's `fm.status = 'active'` filter: per A-7 this is a
+/// LISTING, not an authorization check, so a suspended recipient's row is
+/// flagged `suspended: true`, never omitted — the grant genuinely still
+/// exists and reinstating the member restores the access it currently
+/// resolves to `None` for.
+pub async fn list_item_shares(
+    State(state): State<AppState>,
+    membership: Membership<Item, RequireRead>,
+) -> Result<Json<Vec<CoRecipientRecord>>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT s.recipient_user_id, u.email, s.access_level, s.created_at, \
+                (fm.status = 'suspended') AS suspended \
+         FROM item_shares s JOIN users u ON u.id = s.recipient_user_id \
+         JOIN family_members fm ON fm.user_id = s.recipient_user_id \
+         WHERE s.item_id = ? ORDER BY s.created_at ASC, s.recipient_user_id ASC",
+    )
+    .bind(&membership.resource_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let records = rows
+        .into_iter()
+        .map(|row| {
+            Ok(CoRecipientRecord {
+                user_id: row.try_get("recipient_user_id").map_err(|_| ApiError::Internal)?,
+                email: row.try_get("email").map_err(|_| ApiError::Internal)?,
+                access_level: row.try_get("access_level").map_err(|_| ApiError::Internal)?,
+                created_at: row.try_get("created_at").map_err(|_| ApiError::Internal)?,
+                suspended: row.try_get("suspended").map_err(|_| ApiError::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    Ok(Json(records))
 }
 
 /// `POST /api/vault/items/{id}/shares` — SHARE-02's server half: direct

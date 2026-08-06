@@ -581,12 +581,25 @@ pub async fn revoke_access(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Shared co-recipient shape for BOTH collection-scoped access listing
+/// (`access_list`, below) and direct per-item share listing
+/// (`vault::list_item_shares`, 26-04-PLAN.md Task 1) — one vocabulary for
+/// the client, since D-3's avatar stack and D-1's Sharing overview consume
+/// both. Never includes `sealed_key` (T-22-16) — other members' sealed
+/// blobs are useless to anyone but their own recipient, but are not
+/// gratuitously exposed regardless. `suspended` (A-7, CONTEXT.md) is
+/// deliberately a flag, never a filter — a suspended recipient's grant
+/// still exists (and reinstating them restores the access it already
+/// resolves to `None` for via `Item`/`Collection::resolve_access`'s
+/// `fm.status = 'active'` predicate), so hiding the row would tell the
+/// owner nobody has access when a single click would restore it.
 #[derive(Serialize)]
 pub struct CoRecipientRecord {
     pub user_id: String,
     pub email: String,
     pub access_level: String,
     pub created_at: String,
+    pub suspended: bool,
 }
 
 /// `GET /api/vault/collections/{id}/access` — symmetric co-recipient
@@ -601,8 +614,10 @@ pub async fn access_list(
     membership: Membership<Collection, RequireRead>,
 ) -> Result<Json<Vec<CoRecipientRecord>>, ApiError> {
     let rows = sqlx::query(
-        "SELECT ck.recipient_user_id, u.email, ck.access_level, ck.created_at \
+        "SELECT ck.recipient_user_id, u.email, ck.access_level, ck.created_at, \
+                (fm.status = 'suspended') AS suspended \
          FROM collection_keys ck JOIN users u ON u.id = ck.recipient_user_id \
+         JOIN family_members fm ON fm.user_id = ck.recipient_user_id \
          WHERE ck.collection_id = ? ORDER BY ck.created_at ASC, ck.recipient_user_id ASC",
     )
     .bind(&membership.resource_id)
@@ -617,6 +632,7 @@ pub async fn access_list(
                 email: row.try_get("email").map_err(|_| ApiError::Internal)?,
                 access_level: row.try_get("access_level").map_err(|_| ApiError::Internal)?,
                 created_at: row.try_get("created_at").map_err(|_| ApiError::Internal)?,
+                suspended: row.try_get("suspended").map_err(|_| ApiError::Internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;

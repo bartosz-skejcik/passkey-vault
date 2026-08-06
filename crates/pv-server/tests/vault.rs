@@ -808,3 +808,132 @@ async fn stale_revision_conflict_attribution_on_personal_item_has_no_last_editor
     );
     assert_eq!(stale_body["error"], "stale revision");
 }
+
+// --- GET /api/vault/items/{id}/shares (Plan 26-04, Task 1 — SHARE-02/UX-05) ---
+
+/// Covers all three of Task 1's behavior bullets for the item-scoped
+/// endpoint in one round trip: an active recipient appears with
+/// `suspended: false`, a recipient whose family_members row is suspended
+/// still appears (per A-7, never omitted) with `suspended: true`, and the
+/// response body never carries a `sealed_key` key at all (T-22-16, asserted
+/// by key-absence on BOTH array entries, not merely "not checked").
+#[tokio::test]
+async fn list_item_shares_returns_active_and_flags_suspended_recipient() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "shares-list-owner@example.com").await;
+    let create_family_res =
+        req(&app, "POST", "/api/families", &owner_token, Some(json!({ "name": "Shares List Family" }))).await;
+    assert_eq!(create_family_res.status(), StatusCode::CREATED);
+
+    let active_token =
+        common::register_second_family_member(&app, &owner_token, "shares-list-active@example.com").await;
+    let active_id = body_json(req(&app, "GET", "/api/auth/me", &active_token, None).await).await["user_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let suspended_token =
+        common::register_second_family_member(&app, &owner_token, "shares-list-suspended@example.com").await;
+    let suspended_id = body_json(req(&app, "GET", "/api/auth/me", &suspended_token, None).await).await["user_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    for (token, key_byte) in [(&active_token, 1u8), (&suspended_token, 2u8)] {
+        let publish_res = req(
+            &app,
+            "PUT",
+            "/api/identity/keypair",
+            token,
+            Some(json!({
+                "public_key": STANDARD.encode([key_byte; 32]),
+                "wrapped_secret_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"BBBB\"}",
+            })),
+        )
+        .await;
+        assert_eq!(publish_res.status(), StatusCode::OK);
+    }
+
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(&app, "POST", "/api/vault/items", &owner_token, Some(item_body(&item_id))).await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    for (recipient_id, ciphertext) in [(&active_id, "sealed-active"), (&suspended_id, "sealed-suspended")] {
+        let create_share_res = req(
+            &app,
+            "POST",
+            &format!("/api/vault/items/{item_id}/shares"),
+            &owner_token,
+            Some(json!({
+                "recipient_user_id": recipient_id,
+                "sealed_key": format!("{{\"nonce\":\"CCCC\",\"ciphertext\":\"{ciphertext}\"}}"),
+                "access_level": "read",
+            })),
+        )
+        .await;
+        assert_eq!(create_share_res.status(), StatusCode::CREATED);
+    }
+
+    let suspend_res =
+        req(&app, "POST", &format!("/api/families/members/{suspended_id}/suspend"), &owner_token, None).await;
+    assert_eq!(suspend_res.status(), StatusCode::NO_CONTENT);
+
+    // The owner (has real access via Membership<Item, RequireRead> — owner
+    // ownership grant) lists the shares.
+    let list_res = req(&app, "GET", &format!("/api/vault/items/{item_id}/shares"), &owner_token, None).await;
+    assert_eq!(list_res.status(), StatusCode::OK);
+    let list_body = list_res.into_body();
+    let bytes = to_bytes(list_body, usize::MAX).await.unwrap();
+    let raw_text = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        !raw_text.contains("sealed_key") && !raw_text.contains("sealed-active") && !raw_text.contains("sealed-suspended"),
+        "GET /shares response must never carry a sealed_key field or its contents (T-22-16): {raw_text}"
+    );
+
+    let entries: Value = serde_json::from_str(&raw_text).unwrap();
+    let entries = entries.as_array().unwrap();
+    assert_eq!(entries.len(), 2, "both recipients must appear — suspension flags, never filters (A-7)");
+
+    let active_entry = entries.iter().find(|e| e["user_id"] == active_id).expect("active recipient must be present");
+    assert_eq!(active_entry["suspended"], false, "an active recipient must report suspended: false");
+
+    let suspended_entry =
+        entries.iter().find(|e| e["user_id"] == suspended_id).expect("suspended recipient must still be present, per A-7");
+    assert_eq!(
+        suspended_entry["suspended"], true,
+        "a recipient whose family_members row is suspended must be flagged, never omitted (A-7)"
+    );
+
+    for entry in entries {
+        let mut keys: Vec<&str> = entry.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["access_level", "created_at", "email", "suspended", "user_id"],
+            "each CoRecipientRecord entry must be exactly this closed field set — never sealed_key"
+        );
+    }
+}
+
+/// A caller with no relationship to the item (not the owner, no `item_shares`
+/// row) gets 404, never a data leak about who else the item is shared with.
+#[tokio::test]
+async fn list_item_shares_for_non_member_is_404() {
+    let pool = test_pool().await;
+    let app = test_app(pool);
+
+    let owner_token = register_and_login(&app, "shares-list-owner2@example.com").await;
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(&app, "POST", "/api/vault/items", &owner_token, Some(item_body(&item_id))).await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    let stranger_token = register_and_login(&app, "shares-list-stranger@example.com").await;
+    let stranger_res = req(&app, "GET", &format!("/api/vault/items/{item_id}/shares"), &stranger_token, None).await;
+    assert_eq!(
+        stranger_res.status(),
+        StatusCode::NOT_FOUND,
+        "a non-member must get 404, never confirming the item's existence or its recipient list"
+    );
+}
