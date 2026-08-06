@@ -1,0 +1,382 @@
+// D-1/E6's Sharing overview (Phase 26, Plan 11). Exercises the REAL
+// component (including the REAL AvatarStack it reuses, and the REAL
+// accessLevel.ts vocabulary) against mocked API responses shaped like real
+// server payloads (CoRecipientRecord-shaped CollectionAccessEntry/
+// ItemShareEntry, CollectionRow from Plans 26-01/26-04).
+//
+// `@/lib/families/api` is mocked SOLELY so `getMemberAccess` can be
+// spied on and asserted never called (RESEARCH.md Pitfall 2 -- the trap
+// this plan must not fall into) -- this component must never import it in
+// the first place, but the spy proves it at the render+interaction level
+// too, not just by code inspection.
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import type { VaultItem } from "@/lib/vault/types";
+import type { Collection } from "@/lib/vault/collections";
+import type { CollectionRow, CollectionAccessEntry, ItemShareEntry } from "@/lib/vault/api";
+
+const {
+  mockMe,
+  mockGetMemberAccess,
+  mockUseCollections,
+  mockUseVaultItems,
+  mockListCollections,
+  mockGetCollectionAccessList,
+  mockListItemShares,
+} = vi.hoisted(() => ({
+  mockMe: vi.fn(),
+  mockGetMemberAccess: vi.fn(),
+  mockUseCollections: vi.fn(),
+  mockUseVaultItems: vi.fn(),
+  mockListCollections: vi.fn(),
+  mockGetCollectionAccessList: vi.fn(),
+  mockListItemShares: vi.fn(),
+}));
+
+vi.mock("@/lib/i18n/LocaleContext", () => ({
+  useLocale: () => ({
+    locale: "pl",
+    setLocale: vi.fn(),
+    t: (key: string) => key,
+  }),
+}));
+
+vi.mock("@/lib/auth/api", () => ({
+  me: mockMe,
+}));
+
+// The trap this plan must not fall into (RESEARCH.md Pitfall 2): this
+// component must NEVER call getMemberAccess. Mocked here purely so the
+// spy assertion below can prove zero calls across a full render +
+// interaction cycle.
+vi.mock("@/lib/families/api", () => ({
+  getMemberAccess: mockGetMemberAccess,
+}));
+
+vi.mock("@/lib/vault/collections", () => ({
+  useCollections: mockUseCollections,
+}));
+
+vi.mock("@/lib/vault/store", () => ({
+  useVaultItems: mockUseVaultItems,
+}));
+
+vi.mock("@/lib/vault/api", () => ({
+  listCollections: mockListCollections,
+  getCollectionAccessList: mockGetCollectionAccessList,
+  listItemShares: mockListItemShares,
+}));
+
+import SharingOverviewPanel from "./SharingOverviewPanel";
+
+const SELF_ID = "self-1";
+const ANNA_ID = "anna-1";
+const TOMASZ_ID = "tomasz-1";
+
+function makeCollection(overrides: Partial<Collection> = {}): Collection {
+  return { id: "col-1", name: "Family Docs", ...overrides };
+}
+
+function makeCollectionRow(overrides: Partial<CollectionRow> = {}): CollectionRow {
+  return {
+    id: "col-1",
+    enc_name: "{}",
+    created_at: "2026-01-01T00:00:00Z",
+    access_level: "edit",
+    sealed_key: null,
+    ...overrides,
+  };
+}
+
+function makeAccessEntry(overrides: Partial<CollectionAccessEntry> = {}): CollectionAccessEntry {
+  return {
+    user_id: ANNA_ID,
+    email: "anna@example.test",
+    access_level: "read",
+    created_at: "2026-01-01T00:00:00Z",
+    suspended: false,
+    ...overrides,
+  };
+}
+
+function makeShareEntry(overrides: Partial<ItemShareEntry> = {}): ItemShareEntry {
+  return {
+    user_id: ANNA_ID,
+    email: "anna@example.test",
+    access_level: "read",
+    created_at: "2026-01-01T00:00:00Z",
+    suspended: false,
+    ...overrides,
+  };
+}
+
+function makeItem(overrides: Partial<VaultItem> = {}): VaultItem {
+  return {
+    id: "item-1",
+    revision: 1,
+    fields: { type: "note", name: "Secret Note", body: "", folderId: null, tags: [] },
+    collectionId: null,
+    isShared: false,
+    ...overrides,
+  };
+}
+
+function renderEmptyPanel() {
+  mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+  mockUseCollections.mockReturnValue([]);
+  mockUseVaultItems.mockReturnValue([]);
+  mockListCollections.mockResolvedValue([]);
+  mockGetCollectionAccessList.mockResolvedValue([]);
+  mockListItemShares.mockResolvedValue([]);
+  return render(<SharingOverviewPanel onClose={vi.fn()} />);
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("SharingOverviewPanel (D-1/E6)", () => {
+  describe("Task 1 -- tabs, aggregation, getMemberAccess avoidance", () => {
+    it("opens defaulted to the By-folder tab", async () => {
+      renderEmptyPanel();
+      await waitFor(() => expect(screen.getByTestId("sharing-overview-empty")).toBeInTheDocument());
+      expect(screen.getByTestId("sharing-overview-tab-folder")).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(screen.getByTestId("sharing-overview-tab-person")).toHaveAttribute(
+        "aria-selected",
+        "false",
+      );
+    });
+
+    it("renders a loading spinner while both groupings' data resolve", () => {
+      mockMe.mockReturnValue(new Promise(() => {}));
+      mockUseCollections.mockReturnValue([]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockReturnValue(new Promise(() => {}));
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      expect(screen.getByTestId("sharing-overview-loading")).toBeInTheDocument();
+    });
+
+    it("renders the empty state when the caller shares nothing at all", async () => {
+      renderEmptyPanel();
+      await waitFor(() => expect(screen.getByTestId("sharing-overview-empty")).toBeInTheDocument());
+      expect(screen.getByTestId("sharing-overview-empty")).toHaveTextContent("sharing.emptyHeading");
+      expect(screen.getByTestId("sharing-overview-empty")).toHaveTextContent("sharing.emptyBody");
+    });
+
+    it("By-folder tab lists one row per edit-or-owner collection with name, AvatarStack, and the sharedWithLabel count; excludes a read-only collection", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([
+        makeCollection({ id: "col-1", name: "Family Docs" }),
+        makeCollection({ id: "col-2", name: "Someone Else's Read-Only Folder" }),
+      ]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([
+        makeCollectionRow({ id: "col-1", access_level: "edit" }),
+        makeCollectionRow({ id: "col-2", access_level: "read" }),
+      ]);
+      mockGetCollectionAccessList.mockImplementation((collectionId: string) => {
+        if (collectionId === "col-1") {
+          return Promise.resolve([
+            makeAccessEntry({ user_id: SELF_ID, email: "me@example.test", access_level: "edit" }),
+            makeAccessEntry({ user_id: ANNA_ID, email: "anna@example.test", access_level: "read" }),
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+      mockListItemShares.mockResolvedValue([]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      await waitFor(() =>
+        expect(screen.getByTestId("sharing-overview-folder-col-1")).toBeInTheDocument(),
+      );
+      // Only the edit-level collection renders -- the read-only one is not
+      // something the caller is "sharing" (someone else is).
+      expect(screen.queryByTestId("sharing-overview-folder-col-2")).not.toBeInTheDocument();
+      expect(mockGetCollectionAccessList).toHaveBeenCalledWith("col-1");
+      expect(mockGetCollectionAccessList).not.toHaveBeenCalledWith("col-2");
+
+      const row = screen.getByTestId("sharing-overview-folder-col-1");
+      expect(row).toHaveTextContent("Family Docs");
+      // Self's own row is excluded from the recipient count -- only Anna.
+      expect(within(row).getByTestId("avatar-stack")).toBeInTheDocument();
+      expect(row).toHaveTextContent("sharing.sharedWithLabel 1");
+
+      // Expanding shows the per-recipient access-level badge list.
+      fireEvent.click(screen.getByTestId("sharing-overview-folder-toggle-col-1"));
+      const details = screen.getByTestId("sharing-overview-folder-details-col-1");
+      expect(details).toHaveTextContent("anna@example.test");
+      expect(details).toHaveTextContent("access.readOnly");
+      // The caller's own row never appears in the expanded breakdown either.
+      expect(details).not.toHaveTextContent("me@example.test");
+    });
+
+    it("By-person tab groups collection-access and direct item-share entries by user_id; a member reachable via two different paths appears exactly once, at the higher access level", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Family Docs" })]);
+      const directItem = makeItem({
+        id: "item-1",
+        fields: { type: "note", name: "Tax Notes", body: "", folderId: null, tags: [] },
+        isShared: true,
+        collectionId: null,
+      });
+      mockUseVaultItems.mockReturnValue([directItem]);
+      mockListCollections.mockResolvedValue([makeCollectionRow({ id: "col-1", access_level: "edit" })]);
+      mockGetCollectionAccessList.mockResolvedValue([
+        makeAccessEntry({ user_id: ANNA_ID, email: "anna@example.test", access_level: "read" }),
+      ]);
+      // Anna ALSO reaches a completely different resource (a direct item
+      // share) at a HIGHER access level -- two distinct grants, one person.
+      mockListItemShares.mockResolvedValue([
+        makeShareEntry({ user_id: ANNA_ID, email: "anna@example.test", access_level: "edit" }),
+      ]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      fireEvent.click(await screen.findByTestId("sharing-overview-tab-person"));
+
+      // Exactly ONE row for Anna, not two.
+      expect(screen.getAllByTestId(`sharing-overview-person-${ANNA_ID}`)).toHaveLength(1);
+      const row = screen.getByTestId(`sharing-overview-person-${ANNA_ID}`);
+      // The collapsed row's own summary badge is the HIGHER of her two
+      // grants (edit, from the direct item share).
+      expect(
+        within(row).getByTestId(`sharing-overview-person-highest-access-${ANNA_ID}`),
+      ).toHaveTextContent("access.fullEdit");
+
+      // Expanding reveals BOTH individual grants at their OWN level -- the
+      // summary badge never hides the breakdown.
+      fireEvent.click(screen.getByTestId(`sharing-overview-person-toggle-${ANNA_ID}`));
+      const details = screen.getByTestId(`sharing-overview-person-details-${ANNA_ID}`);
+      expect(details).toHaveTextContent("Family Docs");
+      expect(details).toHaveTextContent("Tax Notes");
+      expect(details).toHaveTextContent("access.readOnly");
+      expect(details).toHaveTextContent("access.fullEdit");
+    });
+
+    it("never calls getMemberAccess across a full render + tab-switch + expand interaction cycle", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Family Docs" })]);
+      mockUseVaultItems.mockReturnValue([
+        makeItem({ id: "item-1", isShared: true, collectionId: null }),
+      ]);
+      mockListCollections.mockResolvedValue([makeCollectionRow({ id: "col-1", access_level: "edit" })]);
+      mockGetCollectionAccessList.mockResolvedValue([makeAccessEntry()]);
+      mockListItemShares.mockResolvedValue([makeShareEntry()]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      await waitFor(() =>
+        expect(screen.getByTestId("sharing-overview-folder-col-1")).toBeInTheDocument(),
+      );
+      fireEvent.click(screen.getByTestId("sharing-overview-folder-toggle-col-1"));
+      fireEvent.click(screen.getByTestId("sharing-overview-tab-person"));
+      fireEvent.click(screen.getByTestId(`sharing-overview-person-toggle-${ANNA_ID}`));
+      fireEvent.click(screen.getByTestId("sharing-overview-tab-folder"));
+
+      expect(mockGetMemberAccess).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Task 2 -- truncation backstop, suspended treatment, no redundant refetch", () => {
+    it("a realistic long folder name, item name, and email do not overflow the row container (E6 overflow backstop)", async () => {
+      const longFolderName = "a-very-long-shared-folder-name-for-overflow-testing-purposes";
+      const longEmail = "a-very-long-email-address-for-overflow-testing@example.test";
+      const longItemName = "a-very-long-item-name-used-only-to-prove-truncation-works";
+      expect(longFolderName.length).toBeGreaterThanOrEqual(40);
+      expect(longEmail.length).toBeGreaterThanOrEqual(40);
+      expect(longItemName.length).toBeGreaterThanOrEqual(40);
+
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: longFolderName })]);
+      const directItem = makeItem({
+        id: "item-1",
+        fields: { type: "note", name: longItemName, body: "", folderId: null, tags: [] },
+        isShared: true,
+        collectionId: null,
+      });
+      mockUseVaultItems.mockReturnValue([directItem]);
+      mockListCollections.mockResolvedValue([makeCollectionRow({ id: "col-1", access_level: "edit" })]);
+      mockGetCollectionAccessList.mockResolvedValue([
+        makeAccessEntry({ email: longEmail }),
+      ]);
+      mockListItemShares.mockResolvedValue([makeShareEntry({ email: longEmail })]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      await waitFor(() =>
+        expect(screen.getByTestId("sharing-overview-folder-col-1")).toBeInTheDocument(),
+      );
+
+      const folderNameSpan = screen
+        .getByTestId("sharing-overview-folder-col-1")
+        .querySelector(`[title="${longFolderName}"]`);
+      expect(folderNameSpan).not.toBeNull();
+      expect(folderNameSpan).toHaveClass("truncate");
+
+      fireEvent.click(screen.getByTestId("sharing-overview-folder-toggle-col-1"));
+      const folderDetails = screen.getByTestId("sharing-overview-folder-details-col-1");
+      const emailSpan = folderDetails.querySelector(`[title="${longEmail}"]`);
+      expect(emailSpan).not.toBeNull();
+      expect(emailSpan).toHaveClass("truncate");
+
+      fireEvent.click(screen.getByTestId("sharing-overview-tab-person"));
+      fireEvent.click(await screen.findByTestId(`sharing-overview-person-toggle-${ANNA_ID}`));
+      const personDetails = screen.getByTestId(`sharing-overview-person-details-${ANNA_ID}`);
+      const itemLabelSpan = personDetails.querySelector(`[title="${longItemName}"]`);
+      expect(itemLabelSpan).not.toBeNull();
+      expect(itemLabelSpan).toHaveClass("truncate");
+    });
+
+    it("a suspended recipient renders with a distinct treatment in the By-person tab, never omitted", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Family Docs" })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([makeCollectionRow({ id: "col-1", access_level: "edit" })]);
+      mockGetCollectionAccessList.mockResolvedValue([
+        makeAccessEntry({ user_id: TOMASZ_ID, email: "tomasz@example.test", suspended: true }),
+      ]);
+      mockListItemShares.mockResolvedValue([]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      fireEvent.click(await screen.findByTestId("sharing-overview-tab-person"));
+
+      expect(screen.getByTestId(`sharing-overview-person-${TOMASZ_ID}`)).toBeInTheDocument();
+      expect(
+        screen.getByTestId(`sharing-overview-person-suspended-${TOMASZ_ID}`),
+      ).toHaveTextContent("family.statusSuspended");
+    });
+
+    it("switching tabs twice does not refetch data already resolved for the other tab", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Family Docs" })]);
+      mockUseVaultItems.mockReturnValue([
+        makeItem({ id: "item-1", isShared: true, collectionId: null }),
+      ]);
+      mockListCollections.mockResolvedValue([makeCollectionRow({ id: "col-1", access_level: "edit" })]);
+      mockGetCollectionAccessList.mockResolvedValue([makeAccessEntry()]);
+      mockListItemShares.mockResolvedValue([makeShareEntry()]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("sharing-overview-folder-col-1")).toBeInTheDocument(),
+      );
+
+      const callsAfterMount = mockGetCollectionAccessList.mock.calls.length;
+      const itemCallsAfterMount = mockListItemShares.mock.calls.length;
+
+      fireEvent.click(screen.getByTestId("sharing-overview-tab-person"));
+      await screen.findByTestId(`sharing-overview-person-${ANNA_ID}`);
+      fireEvent.click(screen.getByTestId("sharing-overview-tab-folder"));
+      await screen.findByTestId("sharing-overview-folder-col-1");
+
+      expect(mockGetCollectionAccessList.mock.calls.length).toBe(callsAfterMount);
+      expect(mockListItemShares.mock.calls.length).toBe(itemCallsAfterMount);
+    });
+  });
+});
