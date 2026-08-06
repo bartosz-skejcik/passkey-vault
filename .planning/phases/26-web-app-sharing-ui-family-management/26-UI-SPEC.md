@@ -82,6 +82,13 @@ shell Phase 25 already established for `SessionsTab`/`PasskeysTab`/member rows �
 adopt it, kept identical for the same reason Phase 25 gave: visual continuity across every row-shaped
 list in this codebase, not a per-phase reinvention.
 
+This is now the fourth row type, across three phases, to reuse this exact 12px value rather than the
+declared 8/16 scale — at this point it reads as this codebase's genuine canonical row-shell spacing, not
+a one-off exception being re-justified each time. Recorded here as an observation for whoever next
+revisits `docs/UI-DESIGN.md`'s own spacing section (it does not currently list a 12px token) — this
+UI-SPEC does not edit that file itself; promoting the value from "repeated exception" to "documented
+token" is a separate, standalone decision outside this phase's scope.
+
 **Avatar-stack overlap — `-space-x-2` (−8px):** a multiple of 4, not a new exception; the overlapping-
 circle idiom (D-3) needs a negative margin between siblings, and −8px is the smallest overlap that keeps
 each avatar's edge visually distinct at the 20px diameter this spec uses (see §5 below) without the
@@ -161,6 +168,7 @@ open to softening):
 | Hidden-password blocking disclosure — acknowledgment CTA (the only way past this step) | PL `Rozumiem, przyznaj dostęp` / EN `I understand, grant access` — key `share.hiddenPasswordDisclosureAck` |
 | Hidden-password persistent inline note (every use after the first) — same honesty, compressed | PL `Ukryte tylko w interfejsie — {recipient} nadal ma dostęp do klucza.` / EN `Hidden in the interface only — {recipient} still has key access.` — key `share.hiddenPasswordInlineNote`, interpolates `{recipient}` (the selected member's email, or a generic PL `odbiorca`/EN `the recipient` when no single recipient is yet selected) |
 | Fingerprint honesty note (reused verbatim from Phase 24's `invite.fingerprintHonesty` — **not a new string**) | Same key, same copy: "This fingerprint lets you verify {inviter}'s identity — but only if you compare it with them yourself... Displaying it here doesn't verify anything on its own." Rendered here with `{inviter}` generalized to the viewed member's email/`family.youBadge` label for the self-fingerprint case. |
+| **Fingerprint mismatch consequence (NEW key — a separate string from `invite.fingerprintHonesty` above, never merged into it, since other surfaces depend on that key's exact wording)** — states plainly what a mismatch MEANS and what to do, not just that comparison is the user's job | PL `Jeśli słowa się nie zgadzają, klucz, który widzisz, nie należy do tej osoby — nie udostępniaj jej niczego i zgłoś to.` / EN `If the words don't match, the key you're seeing isn't theirs — don't share anything with them, and report it.` — key `identity.fingerprintMismatchWarning` |
 
 **Additional copy this phase introduces (representative — the plan may add further straightforward
 labels/aria strings following this table's tone, but must never soften the two rows above):**
@@ -173,7 +181,8 @@ labels/aria strings following this table's tone, but must never soften the two r
 | `share.recipientsLabel` | Komu udostępnić | Share with |
 | `share.noOtherMembers` | W Twojej rodzinie nie ma jeszcze innych członków. Zaproś kogoś, żeby móc udostępniać. | There are no other members in your family yet. Invite someone before you can share. |
 | `share.accessLevelLabel` | Poziom dostępu | Access level |
-| `share.cta` | Udostępnij | Share |
+| `share.ctaFolder` — submit CTA, folder-share variant only (not a bare "Udostępnij"/"Share" — the same button submits two structurally different grants across the two variants, and Copywriting honesty constraint 4 requires the folder/item distinction stay legible through to the CTA itself) | Udostępnij folder | Share folder |
+| `share.ctaItem` — submit CTA, item-share variant only | Udostępnij item | Share item |
 | `share.sharing` | Udostępnianie… | Sharing… |
 | `share.createFailed` | Nie udało się udostępnić. Spróbuj ponownie. | Couldn't share. Try again. |
 | `share.newFolderNameLabel` | Nazwa folderu | Folder name |
@@ -207,6 +216,12 @@ labels/aria strings following this table's tone, but must never soften the two r
 4. No copy anywhere implies a folder-level share and an item-level share are the same grant — the
    Sharing overview and both dialogs must keep the "folder" vs "item" language distinct throughout
    (matches SC 1's own two-independent-mechanisms framing).
+5. `identity.fingerprintMismatchWarning` must render adjacent to **every** rendered word list (own
+   fingerprint card and every expanded member row alike) — never only on the self-card, since a member
+   comparing someone else's fingerprint is exactly the case where a mismatch matters most. It must state
+   both halves — what a mismatch implies (the published key is not genuinely theirs) and what to do
+   about it (do not share, report it) — and must not be collapsed into or confused with
+   `invite.fingerprintHonesty`, which explains the comparison *ritual*, not its failure mode.
 
 ---
 
@@ -237,6 +252,12 @@ live in `## Copywriting Contract` above; rows below reference those keys rather 
 
 ### E3 — `ShareDialog.tsx` (recipient + access-level picker, both variants)
 
+**Focal point:** the recipient checklist is the dialog's primary visual anchor — full-width rows,
+positioned directly beneath the title, the first interactive element after it. Establishing *who*
+receives access is the decision this dialog exists for; the access-level radio group and the
+hidden-password note sit below it as refinement of an already-started selection, not a co-equal choice
+competing for the same first glance.
+
 | Category | Status | Resolution |
 |----------|--------|------------|
 | loading (recipient list) | ✅ covered | Fetches the family member list (`getFamilyMembers`, already shipped) on mount; a centered spinner, same idiom as `RemoveMemberDialog`'s `loading-access` state. |
@@ -246,7 +267,7 @@ live in `## Copywriting Contract` above; rows below reference those keys rather 
 | access-level selection | ✅ covered | Three `radio` inputs, labels from `access.readOnly`/`access.fullEdit`/`access.hiddenPassword` (Phase 25's exact keys, reused verbatim — see Copywriting Contract's hard rule). Selecting hidden-password for the first time ever (tracked via a local, non-sensitive flag — see Phase-Specific Notes §3) blocks progression until `share.hiddenPasswordDisclosureAck`; every subsequent selection shows only `share.hiddenPasswordInlineNote`. |
 | folder-create variant — name field | ✅ covered | `share.newFolderNameLabel`, required, same `input input-bordered` idiom as `FamilyTab`'s existing `family-name-input`. |
 | folder-create variant — seed items | ✅ covered | When opened from an existing personal folder's "Share this folder" action (E2), the dialog shows a non-editable summary line naming that folder and its item count — no per-item selection UI in this phase's scope (matches `25-CONTEXT.md`'s precedent of keeping v0.4 sharing flows deliberately minimal; a granular "which items to move" picker is not required by SHARE-01's own wording). |
-| submit — loading/error/success | ✅ covered | `share.sharing` (busy spinner, disabled submit), `share.createFailed` (inline, dialog stays open — matches every destructive/creative dialog's non-silent-failure precedent in this codebase), success closes the dialog and the new/updated share appears immediately in the calling surface (item badge, folder row, or Sharing overview) without a separate refetch round-trip where avoidable. |
+| submit — loading/error/success | ✅ covered | The submit button's own label is `share.ctaFolder` or `share.ctaItem` depending on which variant is open (never a bare "Share" — see Copywriting Contract), swapping to `share.sharing` (busy spinner, disabled) while in flight. `share.createFailed` renders inline on failure (dialog stays open — matches every destructive/creative dialog's non-silent-failure precedent in this codebase); success closes the dialog and the new/updated share appears immediately in the calling surface (item badge, folder row, or Sharing overview) without a separate refetch round-trip where avoidable. |
 | overflow / long-text (folder name field) | ⛑ backstop | Same `truncate`+`title` treatment on the dialog's own title bar once a long folder/item name is interpolated into `share.itemDialogTitle`/`share.folderDialogTitleExisting` — **backstop:** assert no dialog-card overflow for a ≥40-char name, mirroring Phase 25's E2 precedent exactly (title truncates, body wraps). |
 
 ### E4 — Hidden-password disclosure (blocking modal + persistent note)
@@ -270,6 +291,13 @@ live in `## Copywriting Contract` above; rows below reference those keys rather 
 
 ### E6 — Sharing overview (`SharingOverviewPanel.tsx`, D-1)
 
+**Focal point:** the "By folder" / "By person" tab toggle is the panel's primary visual anchor —
+positioned directly beneath the heading, full-width, styled as an active segmented control (not a
+passive label) so it reads as the first decision the panel asks of the viewer ("which grouping do I
+want"), before the list below it. The list itself is secondary until a tab is chosen; the panel opens
+defaulted to "By folder" (D-1's own framing leads with folders), so on first open the list is
+populated, not empty, but the toggle still outranks it as the thing the eye should register first.
+
 | Category | Status | Resolution |
 |----------|--------|------------|
 | loading | ✅ covered | Centered spinner while both grouping views' underlying data resolve, same idiom as `SettingsPanel`'s own mount. |
@@ -282,6 +310,12 @@ live in `## Copywriting Contract` above; rows below reference those keys rather 
 
 ### E7 — Identity fingerprint display (`FamilyTab.tsx` extension, D-4/SC 4)
 
+**Focal point:** the six-word string itself is the card's (and each expanded row's) visual anchor — the
+only monospace text in either surface, full-width, rendered larger/heavier than the surrounding label
+text would otherwise suggest at Label scale. The card heading, the copy button, and the mismatch/honesty
+notes are secondary chrome around it: the entire point of this surface is that string being legible
+enough for someone to read aloud, so nothing else may compete with it for first-glance attention.
+
 | Category | Status | Resolution |
 |----------|--------|------------|
 | own fingerprint — available | ✅ covered | A "Twój odcisk tożsamości" card pinned above the Members list (inside the same `family-members-section`, not a separate settings section), showing the six-word string in `font-mono` + a plain (non-auto-clearing — see Phase-Specific Notes §2) copy button. |
@@ -289,6 +323,7 @@ live in `## Copywriting Contract` above; rows below reference those keys rather 
 | other members' fingerprints — available | ✅ covered | A `ChevronDown`/`ChevronRight` "reveal" toggle per member row (not shown expanded by default — keeps the roster's existing density from Phase 25), `identity.fingerprintRevealAria` labels the toggle button. Expanding shows the same word-list + copy-button treatment as the self card. |
 | other members' fingerprints — not yet published | ✅ covered | Same `identity.fingerprintUnavailable` copy, rendered in place of the word list once expanded — never hidden as if the row had no fingerprint feature at all (the toggle itself always renders, so a member can always check). |
 | word-list format | ✅ covered | Exactly six words, separated by ` · ` (space, middot, space) — `anchor · vivid · puzzle · remote · sonic · tide`, matching `26-CONTEXT.md`'s own D-4 example literally. Derivation (which bits of the public key, which fixed word source) is a crypto/architecture decision for plan-phase — this UI-SPEC's contract is the **rendered format**, not the algorithm. |
+| mismatch consequence copy | ✅ covered | `identity.fingerprintMismatchWarning` (NEW, see Copywriting Contract and honesty constraint 5) renders directly beneath every word list this section shows — the self card AND every expanded member row — stating what a mismatch means (the key is not genuinely theirs) and what to do (do not share, report it), never only the reused `invite.fingerprintHonesty` comparison-ritual copy on its own. |
 | copy action | ✅ covered | Plain `copyWithAutoClear`-**free** copy (see Phase-Specific Notes §2 — this is a deliberate, explicit deviation from every other copy-to-clipboard action in this codebase, which auto-clears). `identity.fingerprintCopyAria` labels the button; a `Check` icon swap on success mirrors `DetailPanel.tsx`'s existing field-copy micro-interaction. |
 
 ### E8 — `CollectionPicker.tsx` (new, extracted; discharges Phase 24's dissolved backstops)
