@@ -24,6 +24,7 @@ import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { getMemberAccess, type FamilyMemberRecord } from "@/lib/families/api";
 import { removeFamilyMember } from "@/lib/families/rekey";
+import { accessLevelKey, higherAccess } from "@/lib/families/accessLevel";
 import { getCollection, getCollectionItems, listItems } from "@/lib/vault/api";
 import {
   getUnlockedUserKey,
@@ -38,39 +39,13 @@ import { ensureOwnIdentityKeypair } from "@/lib/identity/ensure";
 
 type DialogState = "loading-access" | "blocked" | "step1" | "step2" | "removing";
 
-// Access-level badge copy (25-UI-SPEC.md's Copywriting Contract) -- NEVER
-// the raw wire string (`read`/`edit`/`hidden_password`) from the API
-// response, since this is user-facing security copy inside a destructive-
-// confirm dialog, not a debug value (25-UI-SPEC.md's Phase-Specific Notes
-// §2).
-const ACCESS_LEVEL_KEY: Record<string, "access.readOnly" | "access.fullEdit" | "access.hiddenPassword"> = {
-  read: "access.readOnly",
-  edit: "access.fullEdit",
-  hidden_password: "access.hiddenPassword",
-};
-
-/** WR-13 (code review, Phase 25): an unrecognized `access_level` used to fall
- * back to `access.readOnly` -- the LEAST privileged, most reassuring label --
- * in the one dialog whose purpose is telling the owner how much the removed
- * member could see. Fails closed to a neutral "unknown" label instead,
- * mirroring `membership.rs::parse_access_level`'s server-side discipline
- * ("never silently treated as a valid access grant"). */
-function accessLevelKey(level: string): "access.readOnly" | "access.fullEdit" | "access.hiddenPassword" | "access.unknown" {
-  return ACCESS_LEVEL_KEY[level] ?? "access.unknown";
-}
-
-// Mirrors `membership.rs`'s own `combine_access` rank exactly (read=0,
-// hidden_password=1, edit=2) -- the client-side max-of-two-grants logic for
-// an item reachable both via a shared folder and a direct item share.
-function accessRank(level: string): number {
-  if (level === "edit") return 2;
-  if (level === "hidden_password") return 1;
-  return 0;
-}
-
-function higherAccess(a: string, b: string): string {
-  return accessRank(a) >= accessRank(b) ? a : b;
-}
+// Access-level vocabulary (accessLevelKey/accessRank/higherAccess) moved to
+// lib/families/accessLevel.ts (Phase 26, Plan 06) so every later plan that
+// needs the read/edit/hidden_password vocabulary imports ONE shared module
+// instead of redefining it -- this file is now an IMPORTER, not the owner.
+// Behavior is unchanged: accessLevelKey still fails closed to
+// "access.unknown" for an unrecognized value (WR-13, Phase 25), never the
+// most reassuring label.
 
 /** Recombines a server row's separate enc_key/enc_data strings into the
  * single combined JSON string `decryptItemForCollection` expects -- the
