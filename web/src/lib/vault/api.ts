@@ -73,6 +73,65 @@ export function getSharedRevisions(): Promise<SharedRevisions> {
   return apiJson("/api/sync/shared");
 }
 
+/** Wire shape of `GET /api/vault/collections/{id}/sync` (`pull_shared_collection`,
+ * Plan 23-02) — Phase 26, Plan 14 (WINDOWS #8's fix): the client's first
+ * consumer of this read path. Untagged on the server (`UpToDate { revision }`
+ * | `Snapshot { revision, items }`), modeled here the same optional-`items`
+ * way `SyncSnapshot` above already does. `items` is field-for-field
+ * identical to `ItemRow` (both server structs share the exact same shape) —
+ * every row here carries `collection_id` set to the collection this fetch
+ * was scoped to (server-side, `pull_shared_collection`'s own doc comment),
+ * so `store.ts::decryptItemRow`'s EXISTING scope dispatch decrypts it with
+ * zero new branching. */
+export interface SharedCollectionItemsResponse {
+  revision: number;
+  items?: ItemRow[];
+}
+
+/** `GET /api/vault/collections/{id}/sync` — always requested WITHOUT a
+ * `since` query param (the server's own `OptionalSyncQuery` contract: an
+ * absent `since` always degrades to a full snapshot, revision compare
+ * skipped entirely). Callers gate WHETHER to call this on their own
+ * already-known watermark (`store.ts::collectionRevisionWatermark`) rather
+ * than pushing that comparison onto the server, so this wrapper stays a
+ * thin, unconditional full-fetch. */
+export function getCollectionSync(collectionId: string): Promise<SharedCollectionItemsResponse> {
+  return apiJson(`/api/vault/collections/${encodeURIComponent(collectionId)}/sync`);
+}
+
+/** Wire shape of a single row from `GET /api/sync/shared/direct`
+ * (`pull_shared_direct`, Phase 26 Plan 14 — WINDOWS #9's fix). Deliberately
+ * NOT `ItemRow`-shaped: this is the ONE read path that carries the
+ * RECIPIENT's own `item_shares.sealed_key` (the item's Cipher Key, sealed
+ * to this recipient's own published identity public key) instead of
+ * `enc_key` (the OWNER's own key, useless to this recipient — omitted
+ * server-side entirely, see `sync.rs::DirectSharedItem`'s own doc comment).
+ * Decrypted via `unsealCollectionKey` (generic unseal, reused — mirrors
+ * `ShareDialog.real-wasm.test.ts`'s own proven recipient-side sequence) then
+ * `decryptItemWithSharedKey`, never `decryptItem`/`decryptItemForCollection`. */
+export interface DirectSharedItemRow {
+  id: string;
+  enc_data: string;
+  sealed_key: string;
+  revision: number;
+  updated_at: string;
+  last_used_at: string | null;
+  is_shared: boolean;
+  last_editor_email: string | null;
+}
+
+export interface SharedDirectSyncResponse {
+  revision: number;
+  items?: DirectSharedItemRow[];
+}
+
+/** `GET /api/sync/shared/direct` — same unconditional-full-fetch contract as
+ * `getCollectionSync` above (no `since` query param; the caller's own
+ * `store.ts::directRevisionWatermark` gates WHETHER to call this at all). */
+export function getSharedDirectSync(): Promise<SharedDirectSyncResponse> {
+  return apiJson("/api/sync/shared/direct");
+}
+
 export function listItems(): Promise<ItemRow[]> {
   return apiJson("/api/vault/items");
 }

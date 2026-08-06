@@ -192,11 +192,10 @@ pub async fn pull_shared_revisions(
     Ok(Json(SharedRevisionsResponse { collections, direct: DirectBucket { revision: direct_revision } }))
 }
 
-/// Response shape for BOTH `pull_shared_collection` and `pull_shared_direct`
-/// below — same untagged `UpToDate`/`Snapshot` convention as `SyncResponse`
-/// above, but scoped to one collection's (or the direct bucket's) items
-/// only, never `folders` (folders are a personal-vault-only concept, never
-/// collection- or share-scoped).
+/// Response shape for `pull_shared_collection` below — same untagged
+/// `UpToDate`/`Snapshot` convention as `SyncResponse` above, but scoped to
+/// one collection's items only, never `folders` (folders are a
+/// personal-vault-only concept, never collection- or share-scoped).
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum SharedCollectionSyncResponse {
@@ -206,6 +205,49 @@ pub enum SharedCollectionSyncResponse {
     Snapshot {
         revision: i64,
         items: Vec<super::vault::VaultItem>,
+    },
+}
+
+/// One directly-shared item, as returned to its RECIPIENT by
+/// `pull_shared_direct` below (26-14-PLAN.md, WINDOWS #9 — this read path
+/// previously had zero client consumers). Deliberately a SEPARATE type from
+/// `super::vault::VaultItem` (the shape `pull`/`pull_shared_collection`
+/// reuse): this is the ONE snapshot shape that must carry the RECIPIENT's
+/// own `item_shares.sealed_key` (the item's Cipher Key, sealed client-side
+/// to this recipient's own published identity public key,
+/// `sealItemKeyForRecipient`) — no other read path needs it, since a
+/// collection-scoped or personal-owned item's `enc_key` is directly usable
+/// by whoever already holds the covering Collection Key/User Key, but a
+/// direct-share recipient holds neither of those for someone else's item.
+/// `enc_key` itself is deliberately OMITTED here — the OWNER's own
+/// `enc_key` (the item's key wrapped under the owner's User Key or
+/// Collection Key) is structurally useless to this recipient and would
+/// only be dead ciphertext weight on the wire.
+#[derive(Serialize)]
+pub struct DirectSharedItem {
+    pub id: String,
+    pub enc_data: String,
+    pub sealed_key: String,
+    pub revision: i64,
+    pub updated_at: String,
+    pub last_used_at: Option<String>,
+    pub is_shared: bool,
+    pub last_editor_email: Option<String>,
+}
+
+/// Response shape for `pull_shared_direct` below — same untagged
+/// `UpToDate`/`Snapshot` convention as `SharedCollectionSyncResponse`
+/// above, but carrying `DirectSharedItem` rows (with `sealed_key`) instead
+/// of `super::vault::VaultItem` rows.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum SharedDirectSyncResponse {
+    UpToDate {
+        revision: i64,
+    },
+    Snapshot {
+        revision: i64,
+        items: Vec<DirectSharedItem>,
     },
 }
 
@@ -292,7 +334,7 @@ pub async fn pull_shared_direct(
     State(state): State<AppState>,
     session: SessionUser,
     Query(q): Query<OptionalSyncQuery>,
-) -> Result<Json<SharedCollectionSyncResponse>, ApiError> {
+) -> Result<Json<SharedDirectSyncResponse>, ApiError> {
     // Keyed off the SAME `users.shared_direct_revision` counter
     // `pull_shared_revisions`'s "direct" bucket uses above (CR-02) — kept
     // independent (not extracted to a shared fn) since the two call sites'
@@ -305,7 +347,7 @@ pub async fn pull_shared_direct(
 
     if let Some(since) = q.since {
         if since == revision {
-            return Ok(Json(SharedCollectionSyncResponse::UpToDate { revision }));
+            return Ok(Json(SharedDirectSyncResponse::UpToDate { revision }));
         }
     }
 
@@ -325,8 +367,16 @@ pub async fn pull_shared_direct(
     // with the RECIPIENT-side `fm` row required to be `active`. `fm_o` is
     // deliberately NOT status-gated — a suspended OWNER's outbound shares stay
     // readable, exactly as `resolve_access` already decides.
+    //
+    // 26-14-PLAN.md (WINDOWS #9): `item_shares.sealed_key` is now selected —
+    // the row filtered by `item_shares.recipient_user_id = ?` below is, by
+    // construction, THIS caller's own sealed key for this item (never
+    // another recipient's), the one piece this read path was missing to be
+    // client-usable at all. `enc_key` (the OWNER's own key, useless to this
+    // recipient) is no longer selected — see `DirectSharedItem`'s own doc
+    // comment for why.
     let rows = sqlx::query(
-        "SELECT vault_items.id, enc_key, enc_data, revision, updated_at, last_used_at, \
+        "SELECT vault_items.id, enc_data, item_shares.sealed_key, revision, updated_at, last_used_at, \
                 users.email AS last_editor_email \
            FROM vault_items \
            JOIN item_shares ON item_shares.item_id = vault_items.id \
@@ -344,10 +394,10 @@ pub async fn pull_shared_direct(
     let items = rows
         .into_iter()
         .map(|row| {
-            Ok(super::vault::VaultItem {
+            Ok(DirectSharedItem {
                 id: row.try_get("id").map_err(|_| ApiError::Internal)?,
-                enc_key: row.try_get("enc_key").map_err(|_| ApiError::Internal)?,
                 enc_data: row.try_get("enc_data").map_err(|_| ApiError::Internal)?,
+                sealed_key: row.try_get("sealed_key").map_err(|_| ApiError::Internal)?,
                 revision: row.try_get("revision").map_err(|_| ApiError::Internal)?,
                 updated_at: row.try_get("updated_at").map_err(|_| ApiError::Internal)?,
                 last_used_at: row.try_get("last_used_at").map_err(|_| ApiError::Internal)?,
@@ -355,17 +405,12 @@ pub async fn pull_shared_direct(
                 // construction (the `JOIN item_shares` above) — unconditionally
                 // `true`, never derived from a second query.
                 is_shared: true,
-                // Phase 26, Plan 01: this query is pinned to
-                // `vault_items.collection_id IS NULL` above — every row
-                // returned is a personal item shared directly, never
-                // collection-scoped.
-                collection_id: None,
                 last_editor_email: row.try_get("last_editor_email").map_err(|_| ApiError::Internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
 
-    Ok(Json(SharedCollectionSyncResponse::Snapshot { revision, items }))
+    Ok(Json(SharedDirectSyncResponse::Snapshot { revision, items }))
 }
 
 /// Which table a `SyncEvent` refers to. `snake_case` serialization matches
