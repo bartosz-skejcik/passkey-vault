@@ -386,6 +386,47 @@ describe("SharingOverviewPanel (D-1/E6)", () => {
   // the `sharedToMe` discriminant this panel listed a third party's item
   // under "What you're sharing" and attributed that item's OTHER recipients
   // to the caller in the By-person tab.
+  // WR-13 (code review, Phase 26): the effect depended on the
+  // collections/items ARRAY IDENTITIES, and `items` is reassigned by
+  // recomputeItems() on every create/update/delete/touch. A background
+  // touchVaultItem (fired on every copy/reveal) therefore re-issued the
+  // whole N+1 aggregation AND flashed the spinner over content the user was
+  // reading.
+  describe("WR-13 -- an unrelated store mutation neither refetches nor flashes the spinner", () => {
+    it("a new items array with the same relevant contents does not re-run the aggregation", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Family Docs" })]);
+      const sharedItem = makeItem({ id: "item-1", isShared: true, collectionId: null });
+      // A personal, unshared item -- exactly what a background touch/update
+      // reassigns without changing anything this panel aggregates over.
+      mockUseVaultItems.mockReturnValue([sharedItem, makeItem({ id: "personal-1" })]);
+      mockListCollections.mockResolvedValue([makeCollectionRow({ id: "col-1", access_level: "edit" })]);
+      mockGetCollectionAccessList.mockResolvedValue([makeAccessEntry()]);
+      mockListItemShares.mockResolvedValue([makeShareEntry()]);
+
+      const { rerender } = render(<SharingOverviewPanel onClose={vi.fn()} />);
+      await screen.findByTestId("sharing-overview-folder-col-1");
+      const meCalls = mockMe.mock.calls.length;
+      const collectionCalls = mockGetCollectionAccessList.mock.calls.length;
+      const itemCalls = mockListItemShares.mock.calls.length;
+
+      // recomputeItems() hands back a BRAND NEW array with a new object for
+      // the touched item -- identical as far as this panel is concerned.
+      mockUseVaultItems.mockReturnValue([
+        { ...sharedItem },
+        makeItem({ id: "personal-1", lastUsedAt: "2026-08-06T00:00:00Z" }),
+      ]);
+      rerender(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      expect(mockMe.mock.calls.length).toBe(meCalls);
+      expect(mockGetCollectionAccessList.mock.calls.length).toBe(collectionCalls);
+      expect(mockListItemShares.mock.calls.length).toBe(itemCalls);
+      // ...and the content the user was reading is still on screen.
+      expect(screen.queryByTestId("sharing-overview-loading")).not.toBeInTheDocument();
+      expect(screen.getByTestId("sharing-overview-folder-col-1")).toBeInTheDocument();
+    });
+  });
+
   describe("CR-02 -- items shared TO the caller are never reported as items the caller shares", () => {
     it("excludes a sharedToMe item from both tabs and never fetches its recipient list", async () => {
       mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });

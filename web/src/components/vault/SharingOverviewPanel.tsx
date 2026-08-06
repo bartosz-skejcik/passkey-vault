@@ -134,12 +134,35 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [expandedPeople, setExpandedPeople] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
+  // WR-13 (code review, Phase 26): the effect below used to depend on the
+  // `collections`/`items` ARRAY IDENTITIES from useSyncExternalStore. `items`
+  // is reassigned by `recomputeItems()` on every create/update/delete/touch
+  // and on every sync merge, so a background `touchVaultItem` (fired on every
+  // copy/reveal) re-ran the whole N+1 aggregation -- me() + listCollections()
+  // + one getCollectionAccessList per editable collection + one
+  // listItemShares per shared item -- and, because `setLoading(true)` ran
+  // first, replaced the panel's content with a spinner while the user was
+  // reading it. Depend on stable derived keys instead, and show the spinner
+  // only on the FIRST load.
+  const hasLoadedOnceRef = useRef(false);
+  const collectionsKey = collections.map((c) => `${c.id}:${c.name}`).join("|");
+  const directItemsKey = items
+    .filter(
+      (item) =>
+        item.sharedToMe !== true &&
+        item.isShared === true &&
+        (item.collectionId === null || item.collectionId === undefined),
+    )
+    .map((item) => `${item.id}:${item.fields.name}`)
+    .join("|");
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
-      setLoading(true);
+      if (!hasLoadedOnceRef.current) {
+        setLoading(true);
+      }
       try {
         const [account, rawCollections] = await Promise.all([
           me().catch(() => null),
@@ -233,6 +256,7 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
           setFolderRows(nextFolderRows);
           setPersonRows(Array.from(personMap.values()));
           setLoading(false);
+          hasLoadedOnceRef.current = true;
         }
       } catch {
         // Fail-safe, not fail-crash: an unresolved aggregation renders as
@@ -241,6 +265,7 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
           setFolderRows([]);
           setPersonRows([]);
           setLoading(false);
+          hasLoadedOnceRef.current = true;
         }
       }
     }
@@ -250,7 +275,7 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collections, items]);
+  }, [collectionsKey, directItemsKey]);
 
   // E6's tab-switch row: each tab starts at the top, no shared scroll
   // state between the two groupings. The panel's OWN overflow-y-auto is
