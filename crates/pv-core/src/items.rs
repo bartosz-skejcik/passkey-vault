@@ -144,6 +144,66 @@ pub fn decrypt_item(
     Ok(Zeroizing::new(plaintext))
 }
 
+/// Odpakowuje Cipher Key POJEDYNCZEGO personalnego itemu spod `UserKey`
+/// właściciela — budulec dla bezpośredniego udostępniania pojedynczego itemu
+/// (SHARE-02, Faza 26, Plan 08): właściciel trzyma item pod własnym
+/// `UserKey`iem i musi wydobyć jego Cipher Key w postaci, którą da się
+/// zapieczętować (`identity::seal`) pod publiczny klucz KONKRETNEGO
+/// recipienta. `enc_data` (payload) pozostaje nietknięty — ta sama
+/// dyscyplina "tylko klucz, nigdy payload" co
+/// `rewrap_item_key_for_collection` (KEY-02/SC 6), rozszerzona tutaj na
+/// przypadek udostępniania personalnego (nie-kolekcyjnego) itemu wprost.
+///
+/// Zwraca `Zeroizing<[u8; KEY_LEN]>`, nie gołą tablicę — surowy materiał
+/// klucza niesie własny obowiązek wyzerowania jako część typu. Jedyny
+/// zamierzony dalszy krok to skarmienie go do `identity::seal` (patrz
+/// `pv-wasm`'s `sealItemKeyForRecipient`) — nigdy przechowanie, nigdy zwrot
+/// przez granicę WASM/JS jako gołe bajty.
+pub fn unwrap_item_key_for_sharing(
+    uk: &UserKey,
+    enc_key: &WrappedKey,
+    item_id: &str,
+) -> Result<Zeroizing<[u8; KEY_LEN]>, CryptoError> {
+    let mut key_bytes = aead_open(
+        uk.expose(),
+        enc_key,
+        &build_item_aad(AAD_ITEM_KEY_PREFIX, item_id, 0),
+    )?;
+    if key_bytes.len() != KEY_LEN {
+        key_bytes.zeroize();
+        return Err(CryptoError::Decrypt);
+    }
+    let mut k = [0u8; KEY_LEN];
+    k.copy_from_slice(&key_bytes);
+    key_bytes.zeroize();
+    Ok(Zeroizing::new(k))
+}
+
+/// Read-side odpowiednik `unwrap_item_key_for_sharing`: odszyfrowuje
+/// `enc_data` bezpośrednio udostępnionego (`item_shares`) personalnego itemu
+/// przy użyciu Cipher Key odzyskanego przez recipienta (typowo via
+/// `identity::unseal_collection_key` — ten sam nieprzezroczysty
+/// 32-bajtowy nośnik, `CollectionKey`, jest reużywany tu wyłącznie jako
+/// "surowy klucz", nazwa typu nie implikuje przynależności do kolekcji).
+/// Używa DOKŁADNIE tego samego personalnego AAD (`AAD_ITEM_DATA_PREFIX`) co
+/// `decrypt_item`'s własny krok payloadu — `enc_data` jest niedotknięte przez
+/// udostępnianie (SC 6), więc recipient musi przedstawić TEN SAM AAD, pod
+/// którym właściciel je zaszyfrował, inaczej AEAD odrzuci (nigdy cichy
+/// błędny odczyt).
+pub fn decrypt_item_payload_with_shared_key(
+    item_key_bytes: &[u8; KEY_LEN],
+    enc_data: &WrappedKey,
+    item_id: &str,
+    revision: u32,
+) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+    let plaintext = aead_open(
+        item_key_bytes,
+        enc_data,
+        &build_item_aad(AAD_ITEM_DATA_PREFIX, item_id, revision),
+    )?;
+    Ok(Zeroizing::new(plaintext))
+}
+
 /// Losowy 256-bit klucz kolekcji — analogiczny do `UserKey`, ale scope'owany
 /// do jednej kolekcji zamiast całego vaulta. Nieprzezroczysty, samodzielny
 /// typ lokalny dla `items.rs`: sealing/dystrybucja do członków kolekcji to
@@ -302,6 +362,71 @@ mod tests {
         // item_id mismatch — same revision, different item.
         let item_id_mismatch = decrypt_item(&uk, &item, "item-2", 1);
         assert!(matches!(item_id_mismatch, Err(CryptoError::Decrypt)));
+    }
+
+    /// SHARE-02 write/read pair round trip: unwrap the owner's own
+    /// personal-scope `enc_key` into raw Cipher Key bytes, then decrypt the
+    /// SAME item's `enc_data` with those bytes under the identical personal
+    /// AAD `decrypt_item` itself uses — proving the two new sharing
+    /// primitives compose to recover the exact original plaintext without
+    /// ever touching `decrypt_item` directly.
+    #[test]
+    fn unwrap_item_key_for_sharing_recovers_the_key_that_decrypts_enc_data() {
+        let uk = UserKey::generate();
+        let payload = br#"{"type":"note","body":"share fixture"}"#;
+        let item = encrypt_item(&uk, payload, "item-1", 1).unwrap();
+
+        let item_key_bytes = unwrap_item_key_for_sharing(&uk, &item.enc_key, "item-1").unwrap();
+        let plaintext =
+            decrypt_item_payload_with_shared_key(&item_key_bytes, &item.enc_data, "item-1", 1)
+                .unwrap();
+        assert_eq!(*plaintext, payload);
+    }
+
+    #[test]
+    fn unwrap_item_key_for_sharing_rejects_wrong_user_key() {
+        let uk = UserKey::generate();
+        let item = encrypt_item(&uk, b"secret", "item-1", 1).unwrap();
+        assert!(matches!(
+            unwrap_item_key_for_sharing(&UserKey::generate(), &item.enc_key, "item-1"),
+            Err(CryptoError::Decrypt)
+        ));
+    }
+
+    #[test]
+    fn unwrap_item_key_for_sharing_rejects_enc_data_blob_as_input() {
+        // Same key-wrap/payload AAD prefix separation
+        // `rewrap_item_key_for_collection_rejects_enc_data_blob_as_input`
+        // proves for the collection-scoped sibling — feeding enc_data where
+        // enc_key is expected must be rejected, not silently accepted.
+        let uk = UserKey::generate();
+        let item = encrypt_item(&uk, b"secret", "item-1", 1).unwrap();
+        assert!(matches!(
+            unwrap_item_key_for_sharing(&uk, &item.enc_data, "item-1"),
+            Err(CryptoError::Decrypt)
+        ));
+    }
+
+    #[test]
+    fn decrypt_item_payload_with_shared_key_rejects_wrong_revision() {
+        let uk = UserKey::generate();
+        let item = encrypt_item(&uk, b"secret", "item-1", 1).unwrap();
+        let item_key_bytes = unwrap_item_key_for_sharing(&uk, &item.enc_key, "item-1").unwrap();
+        assert!(matches!(
+            decrypt_item_payload_with_shared_key(&item_key_bytes, &item.enc_data, "item-1", 2),
+            Err(CryptoError::Decrypt)
+        ));
+    }
+
+    #[test]
+    fn decrypt_item_payload_with_shared_key_rejects_wrong_item_id() {
+        let uk = UserKey::generate();
+        let item = encrypt_item(&uk, b"secret", "item-1", 1).unwrap();
+        let item_key_bytes = unwrap_item_key_for_sharing(&uk, &item.enc_key, "item-1").unwrap();
+        assert!(matches!(
+            decrypt_item_payload_with_shared_key(&item_key_bytes, &item.enc_data, "item-2", 1),
+            Err(CryptoError::Decrypt)
+        ));
     }
 
     #[test]

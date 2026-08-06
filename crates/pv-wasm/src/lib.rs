@@ -335,6 +335,11 @@ pub fn seal_collection_key(
 /// Odpieczętowuje `sealed_json` pod `my_identity_key`. Deleguje do
 /// `pv_core::identity::unseal_collection_key` (WR-06) — długość plaintextu
 /// jest walidowana raz, w pv-core, zamiast być zduplikowana tutaj.
+///
+/// Reużywany też jako odpieczętowanie SHARE-02's bezpośrednio udostępnionego
+/// itemu klucza (`sealItemKeyForRecipient`'s output) — `unseal_collection_key`
+/// nie zakłada niczego o SEMANTYCE zapieczętowanych 32 bajtów, tylko ich
+/// długość, więc jeden WASM export obsługuje oba przypadki bez duplikacji.
 #[wasm_bindgen(js_name = unsealCollectionKey)]
 pub fn unseal_collection_key(
     my_identity_key: &WasmIdentityKey,
@@ -417,6 +422,54 @@ pub fn rewrap_item_key_for_collection(
     )
     .map_err(to_js_err)?;
     serde_json::to_string(&new_enc_key).map_err(|e| to_js_str_err(&e.to_string()))
+}
+
+/// SHARE-02's write-side primitive (Faza 26, Plan 08): odpakowuje `uk`iem
+/// Cipher Key POJEDYNCZEGO personalnego itemu z jego własnego `enc_key`, po
+/// czym zapieczętowuje ten Cipher Key pod `recipientPk` — `sealCollectionKey`-
+/// adjacent (identyczna kompozycja `identity::seal`), ale źródłem materiału
+/// klucza jest odpakowany personalny `enc_key`, nie
+/// `WasmCollectionKey::generate()`. `encKeyJson` to WYŁĄCZNIE
+/// `EncryptedItem.enc_key` (nigdy `enc_data`) — ta sama sygnaturowa
+/// dyscyplina co `rewrapItemKeyForCollection`, które strukturalnie nie
+/// przyjmuje payloadu jako argumentu.
+#[wasm_bindgen(js_name = sealItemKeyForRecipient)]
+pub fn seal_item_key_for_recipient(
+    uk: &WasmUserKey,
+    enc_key_json: &str,
+    item_id: &str,
+    recipient_pk: &WasmIdentityPublicKey,
+) -> Result<String, JsValue> {
+    let enc_key: WrappedKey =
+        serde_json::from_str(enc_key_json).map_err(|e| to_js_str_err(&e.to_string()))?;
+    let item_key_bytes =
+        pv_core::items::unwrap_item_key_for_sharing(&uk.0, &enc_key, item_id).map_err(to_js_err)?;
+    let sealed =
+        pv_core::identity::seal(&recipient_pk.0, item_key_bytes.as_slice()).map_err(to_js_err)?;
+    serde_json::to_string(&sealed).map_err(|e| to_js_str_err(&e.to_string()))
+}
+
+/// SHARE-02's read-side counterpart of `sealItemKeyForRecipient`:
+/// odszyfrowuje `enc_data` bezpośrednio udostępnionego (`item_shares`)
+/// personalnego itemu przy użyciu Cipher Key już odzyskanego po stronie
+/// recipienta (typowo przez `unsealCollectionKey` na jego własnym
+/// `item_shares.sealed_key`) — `ck` jest tu wyłącznie nośnikiem 32
+/// nieprzezroczystych bajtów, nazwa typu nie implikuje przynależności do
+/// kolekcji (patrz `unsealCollectionKey`'s własny komentarz o reużyciu).
+#[wasm_bindgen(js_name = decryptItemWithSharedKey)]
+pub fn decrypt_item_with_shared_key(
+    ck: &WasmCollectionKey,
+    enc_data_json: &str,
+    item_id: &str,
+    revision: u32,
+) -> Result<String, JsValue> {
+    let enc_data: WrappedKey =
+        serde_json::from_str(enc_data_json).map_err(|e| to_js_str_err(&e.to_string()))?;
+    let mut plaintext =
+        pv_core::items::decrypt_item_payload_with_shared_key(&ck.0, &enc_data, item_id, revision)
+            .map_err(to_js_err)?;
+    let bytes = std::mem::take(&mut *plaintext);
+    String::from_utf8(bytes).map_err(|e| to_js_str_err(&e.to_string()))
 }
 
 /// Nieprzezroczysty wynik `wasmCreateProviderCredential` — WYŁĄCZNIE dwa
@@ -1168,6 +1221,103 @@ mod tests {
             decrypt_item_for_collection(&unsealed, &item_json, "collection-1", "item-1", 1)
                 .expect("bob's unsealed key should decrypt what alice's ck encrypted");
         assert_eq!(plaintext, "{\"type\":\"note\",\"body\":\"cross-party fixture\"}");
+    }
+
+    /// SHARE-02 (Faza 26, Plan 08) end-to-end at the WASM boundary: Alice
+    /// encrypts a real personal item under her own real `WasmUserKey`, seals
+    /// its Cipher Key to Bob's real published public key via
+    /// `sealItemKeyForRecipient`, Bob unseals it via the reused
+    /// `unsealCollectionKey`, and `decryptItemWithSharedKey` recovers the
+    /// exact original plaintext from Alice's untouched `enc_data` — proving
+    /// the two new sharing primitives compose correctly through the real
+    /// (non-test-only) WASM bindings, not just pv-core directly.
+    #[test]
+    fn seal_and_decrypt_item_key_for_recipient_roundtrip() {
+        let alice_uk = WasmUserKey::generate();
+        let bob = WasmIdentityKey::generate();
+        let bob_pk = WasmIdentityPublicKey::from_bytes(&bob.public_key_bytes())
+            .expect("a real generated public key must never be small-order");
+
+        let item_json = encrypt_item(
+            &alice_uk,
+            "{\"type\":\"login\",\"password\":\"s3cret\"}",
+            "item-1",
+            1,
+        )
+        .expect("encrypt should succeed");
+        let item: EncryptedItem =
+            serde_json::from_str(&item_json).expect("encrypt_item output must deserialize");
+        let enc_key_json = serde_json::to_string(&item.enc_key).expect("enc_key must serialize");
+        let enc_data_json = serde_json::to_string(&item.enc_data).expect("enc_data must serialize");
+
+        let sealed_json = seal_item_key_for_recipient(&alice_uk, &enc_key_json, "item-1", &bob_pk)
+            .expect("seal should succeed");
+        let unsealed = unseal_collection_key(&bob, &sealed_json)
+            .expect("bob should be able to unseal what alice sealed to his public key");
+        let plaintext = decrypt_item_with_shared_key(&unsealed, &enc_data_json, "item-1", 1)
+            .expect("bob's unsealed key should decrypt alice's untouched enc_data");
+        assert_eq!(plaintext, "{\"type\":\"login\",\"password\":\"s3cret\"}");
+    }
+
+    #[test]
+    fn seal_item_key_for_recipient_rejects_wrong_owner_user_key() {
+        let alice_uk = WasmUserKey::generate();
+        let mallory_uk = WasmUserKey::generate();
+        let bob = WasmIdentityKey::generate();
+        let bob_pk = WasmIdentityPublicKey::from_bytes(&bob.public_key_bytes())
+            .expect("a real generated public key must never be small-order");
+
+        let item_json = encrypt_item(
+            &alice_uk,
+            "{\"type\":\"note\",\"body\":\"secret\"}",
+            "item-1",
+            1,
+        )
+        .expect("encrypt should succeed");
+        let item: EncryptedItem =
+            serde_json::from_str(&item_json).expect("encrypt_item output must deserialize");
+        let enc_key_json = serde_json::to_string(&item.enc_key).expect("enc_key must serialize");
+
+        let result = seal_item_key_for_recipient(&mallory_uk, &enc_key_json, "item-1", &bob_pk);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decrypt_item_with_shared_key_rejects_wrong_unsealed_key() {
+        let alice_uk = WasmUserKey::generate();
+        let bob = WasmIdentityKey::generate();
+        let mallory = WasmIdentityKey::generate();
+        let mallory_pk = WasmIdentityPublicKey::from_bytes(&mallory.public_key_bytes())
+            .expect("a real generated public key must never be small-order");
+
+        let item_json = encrypt_item(
+            &alice_uk,
+            "{\"type\":\"note\",\"body\":\"secret\"}",
+            "item-1",
+            1,
+        )
+        .expect("encrypt should succeed");
+        let item: EncryptedItem =
+            serde_json::from_str(&item_json).expect("encrypt_item output must deserialize");
+        let enc_key_json = serde_json::to_string(&item.enc_key).expect("enc_key must serialize");
+        let enc_data_json = serde_json::to_string(&item.enc_data).expect("enc_data must serialize");
+
+        // Alice seals to MALLORY's public key by mistake — Bob's own
+        // identity key must not be able to unseal, decrypt, or otherwise
+        // recover the plaintext.
+        let sealed_json =
+            seal_item_key_for_recipient(&alice_uk, &enc_key_json, "item-1", &mallory_pk)
+                .expect("seal should succeed");
+        let bob_attempt = unseal_collection_key(&bob, &sealed_json);
+        assert!(bob_attempt.is_err());
+
+        // Even if mallory's own unsealed key were somehow fed to bob's
+        // decrypt attempt, a wrong recipient's own real key still exists —
+        // reusing bob_pk's own generated identity key material to show a
+        // genuinely unrelated key never decrypts alice's enc_data.
+        let unrelated_ck = WasmCollectionKey::generate();
+        let result = decrypt_item_with_shared_key(&unrelated_ck, &enc_data_json, "item-1", 1);
+        assert!(result.is_err());
     }
 
     /// CR-01 regression at the WASM boundary: `WasmIdentityPublicKey::fromBytes`

@@ -1169,6 +1169,17 @@ export const DICTIONARY = {
     en: "Couldn't share. Try again.",
   },
   "share.newFolderNameLabel": { pl: "Nazwa folderu", en: "Folder name" },
+  // Plan 26-08 addition (Rule 2 auto-fix): 26-UI-SPEC.md's E3 "folder-create
+  // variant — seed items" row requires "a non-editable summary line naming
+  // that folder and its item count" when ShareDialog's folder-create variant
+  // is seeded from an existing personal folder (Sidebar's "Share this
+  // folder" action, E2) — this key was missing from Plan 26-06's otherwise-
+  // complete dictionary pass. "elem." (not a declined noun) sidesteps Polish
+  // plural-form agreement the same way sharing.sharedWithLabel's "os." does.
+  "share.seedFolderSummary": {
+    pl: `Zawartość folderu „{folder}" ({count} elem.) trafi do nowego udostępnionego folderu.`,
+    en: `The contents of "{folder}" ({count} items) will move into this new shared folder.`,
+  },
   "share.itemSharedOnCollectionNote": {
     pl: `Ten item jest częścią udostępnionego folderu „{folder}" — dostęp zarządzasz na poziomie folderu.`,
     en: `This item is part of the shared folder "{folder}" — manage access at the folder level.`,

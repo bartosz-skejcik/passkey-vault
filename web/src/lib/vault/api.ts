@@ -242,6 +242,51 @@ export function moveItemToCollection(
   });
 }
 
+/** `POST /api/vault/collections/{id}/members` — `collections.rs::add_member`'s
+ * wire contract (Phase 22, first real client caller as of Plan 26-08):
+ * `sealedKey` is the SAME `CollectionKey` the collection was created with,
+ * `seal()`ed client-side to `recipientUserId`'s own published identity
+ * public key — this wrapper is a thin wire pass-through, never a crypto
+ * orchestrator (that composition is `ShareDialog`'s job). */
+export function addCollectionMember(
+  collectionId: string,
+  recipientUserId: string,
+  sealedKey: string,
+  accessLevel: string,
+): Promise<void> {
+  return apiJson(`/api/vault/collections/${encodeURIComponent(collectionId)}/members`, {
+    method: "POST",
+    body: JSON.stringify({
+      recipient_user_id: recipientUserId,
+      sealed_key: sealedKey,
+      access_level: accessLevel,
+    }),
+  });
+}
+
+/** `POST /api/vault/items/{id}/shares` — `vault.rs::create_share`'s wire
+ * contract (SHARE-02, first real client caller as of Plan 26-08): `sealedKey`
+ * is the item's OWN Cipher Key, `seal()`ed client-side to `recipientUserId`'s
+ * own published identity public key — same thin-wrapper discipline as
+ * `addCollectionMember` above, field-for-field identical request shape
+ * (`CreateItemShareRequest`/`AddMemberRequest` are separate server structs
+ * with the same three fields). */
+export function createItemShare(
+  itemId: string,
+  recipientUserId: string,
+  sealedKey: string,
+  accessLevel: string,
+): Promise<void> {
+  return apiJson(`/api/vault/items/${encodeURIComponent(itemId)}/shares`, {
+    method: "POST",
+    body: JSON.stringify({
+      recipient_user_id: recipientUserId,
+      sealed_key: sealedKey,
+      access_level: accessLevel,
+    }),
+  });
+}
+
 export function listFolders(): Promise<FolderRow[]> {
   return apiJson("/api/vault/folders");
 }
