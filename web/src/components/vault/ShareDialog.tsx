@@ -57,6 +57,7 @@ import {
   addCollectionMember,
 } from "@/lib/vault/api";
 import { getItems, getFolders } from "@/lib/vault/store";
+import { refreshCollectionsNow } from "@/lib/vault/collections";
 import type { VaultItem } from "@/lib/vault/types";
 import {
   getUnlockedUserKey,
@@ -334,6 +335,21 @@ export default function ShareDialog({
         ownPublicKey.free?.();
       }
       await createCollection(newCollectionId, encName, sealedKeyForSelf);
+      // 26-12a gap fix: collections.ts's own store otherwise only refreshes
+      // on the NEXT unlock or onSharedRevisions tick — without this, the
+      // caller's own CollectionPicker doesn't show the folder they just
+      // created (26-12-SUMMARY.md's declared eventual-consistency-gap).
+      // Best-effort: placed right after the collection genuinely exists
+      // server-side (the caller already holds `sealedKeyForSelf`), so a
+      // refresh failure here never turns the folder's own successful
+      // creation into a visible error — the member grants and any seed
+      // moves below proceed regardless, and the next unlock/sync tick
+      // still catches up if this one transient call fails.
+      try {
+        await refreshCollectionsNow();
+      } catch {
+        // ignored — see comment above.
+      }
 
       for (const recipient of selected) {
         const recipientPk = WasmIdentityPublicKey.fromBytes(base64Decode(recipient.public_key as string));
