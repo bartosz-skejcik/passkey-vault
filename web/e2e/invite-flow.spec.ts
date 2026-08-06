@@ -8,20 +8,24 @@
 // call standing in for either side.
 //
 // Scope fence (critical_correctness_notes #3, this plan's own instruction):
-// every invite generated below is WHOLE-FAMILY (`scopeChoice==="family"`,
-// FamilyTab's only reachable value). The "Family + one folder" scope is
-// UNCONDITIONALLY disabled in the UI as of 24-REVIEW.md CR-02 -- personal
-// `folders` and Phase 22's `collections` are distinct tables with unrelated
-// id spaces, and no client-side collections-authoring surface exists yet, so
-// the option would 100%-fail `getCollection()` for every user if it could be
-// selected at all. `FamilyTab.test.tsx`'s CR-02 regression guards cover the
-// disabled state at the unit level; there is nothing left to select here.
-// Likewise, 24-06-SUMMARY.md's own
-// documented gap (no `VaultFilter` "collection" variant, so a freshly-joined
-// member is never pre-filtered to the shared collection) means this spec
-// asserts "lands in the normal vault shell", never "lands with the shared
-// collection selected" -- asserting the latter would be asserting behavior
-// the shipped code does not attempt.
+// every invite generated below OTHER than the dedicated folder-scope guard
+// test is WHOLE-FAMILY (`scopeChoice==="family"`). The "Family + one
+// folder" scope was UNCONDITIONALLY disabled in the UI as of 24-REVIEW.md
+// CR-02 -- personal `folders` and Phase 22's `collections` are distinct
+// tables with unrelated id spaces, and no client-side collections-authoring
+// surface existed yet, so the option would have 100%-failed `getCollection()`
+// for every user if it could have been selected at all. Plan 26-12
+// (26-12-SUMMARY.md) discharged that guard once the real client-side
+// collections capability (CollectionPicker, ensureOwnIdentityKeypair,
+// sealCollectionKey) existed to back it -- the option is genuinely
+// selectable now, proven by this file's own
+// `folder_scope_option_is_enabled_and_mounts_the_collections_picker` test.
+// The rest of this file still deliberately keeps every OTHER invite
+// whole-family: 24-06-SUMMARY.md's own documented gap (no `VaultFilter`
+// "collection" variant, so a freshly-joined member is never pre-filtered to
+// the shared collection) means this spec asserts "lands in the normal vault
+// shell", never "lands with the shared collection selected" -- asserting
+// the latter would be asserting behavior the shipped code does not attempt.
 //
 // SC 4 (exactly one join wins under genuinely concurrent redemption) is
 // deliberately NOT re-attempted at the browser level here -- it already has
@@ -242,14 +246,19 @@ test.describe.serial("invite flow — real two-session UI proof (Plan 24-08)", (
     expect(afterJoin).toContain(inviteeEmail);
   });
 
-  // CR-02 regression guard (24-REVIEW.md): the "Family + one folder" scope
-  // is unconditionally disabled at the UI layer -- personal folders and the
-  // server's `collections` table have no id overlap, so this option would
-  // 100%-fail `getCollection()` for every user if it were ever reachable. A
+  // Was a CR-02 regression guard (24-REVIEW.md: "Family + one folder"
+  // unconditionally disabled). Plan 26-12 (26-12-SUMMARY.md) genuinely
+  // enabled this option once the real client-side collections capability
+  // (CollectionPicker, ensureOwnIdentityKeypair, sealCollectionKey) existed
+  // to back it -- the old disabled guard and its "coming in a later
+  // version" copy are gone, so this guard now asserts the CURRENT contract:
+  // the option is selectable and selecting it mounts the real picker. A
   // real browser (unlike jsdom) actually enforces `disabled` on a native
-  // `<option>` -- selecting it here proves the option cannot be chosen, not
-  // merely that a mock never got called.
-  test("folder_scope_option_is_disabled_and_cannot_be_selected", async () => {
+  // `<option>` -- proving it is NOT disabled, and driving the selection via
+  // `selectOption()` (the same user-interaction path the old test
+  // deliberately avoided because it would have been meaningless against a
+  // disabled control), is the genuine proof a real visitor can now choose it.
+  test("folder_scope_option_is_enabled_and_mounts_the_collections_picker", async () => {
     await openFamilyTab(ownerPage);
 
     // The previous test may have left a generated invite showing (this
@@ -265,19 +274,30 @@ test.describe.serial("invite flow — real two-session UI proof (Plan 24-08)", (
 
     const scopeSelect = ownerPage.getByTestId("invite-scope-select");
     const folderOption = scopeSelect.locator('option[value="folder"]');
-    // The real, rendered DOM attribute -- a genuine browser (unlike jsdom)
-    // enforces this natively: `HTMLOptionElement.disabled` blocks the
-    // OPTION from ever being chosen via real user interaction (mouse/
-    // keyboard picker), which is the actual proof this option can never be
-    // selected by someone using the app. `selectOption()` is deliberately
-    // NOT used here to attempt a forced selection -- Playwright drives it
-    // via direct DOM/CDP property assignment, which does not go through the
-    // same user-interaction path the `disabled` attribute gates, so it is
-    // not a meaningful proof of anything a real visitor could do.
-    await expect(folderOption).toBeDisabled();
-    await expect(scopeSelect).toHaveValue("family");
+    await expect(folderOption).toBeEnabled();
 
-    await expect(ownerPage.getByTestId("invite-scope-folder-unavailable-note")).toBeVisible();
+    await scopeSelect.selectOption("folder");
+    await expect(scopeSelect).toHaveValue("folder");
+
+    // Selecting "folder" mounts CollectionPicker in the exact visual
+    // position the old disabled-note paragraph occupied (26-12-SUMMARY.md)
+    // -- either its populated or empty-state variant, depending on whether
+    // this owner account already has a collection by this point in the
+    // suite. Either is real proof the picker mounted, not a mock.
+    await Promise.race([
+      ownerPage.getByTestId("collection-picker").waitFor({ state: "visible" }),
+      ownerPage.getByTestId("collection-picker-empty-state").waitFor({ state: "visible" }),
+    ]);
+    await expect(ownerPage.getByTestId("invite-scope-folder-unavailable-note")).toHaveCount(0);
+
+    // Restore the default whole-family scope before handing off -- every
+    // subsequent test in this `describe.serial` block calls
+    // `generateInviteViaUI(..., { revokeExisting: true })` assuming that
+    // default (see this file's header comment on cross-test state-handoff);
+    // leaving "folder" selected with no collection chosen would also leave
+    // `invite-generate-cta` disabled (FamilyTab.tsx's own guard).
+    await scopeSelect.selectOption("family");
+    await expect(scopeSelect).toHaveValue("family");
 
     // Leave a generated invite showing again -- every subsequent test in
     // this `describe.serial` block assumes one is already present (they
