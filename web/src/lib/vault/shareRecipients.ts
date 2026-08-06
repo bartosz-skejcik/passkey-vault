@@ -21,6 +21,7 @@
 // invalidation API is added here; a future plan may add one if a stricter
 // guarantee becomes necessary.
 import { useEffect, useState } from "react";
+import { me } from "@/lib/auth/api";
 import { getCollectionAccessList, listItemShares } from "./api";
 import type { VaultItem } from "./types";
 
@@ -29,8 +30,39 @@ export interface ShareRecipient {
   suspended: boolean;
 }
 
-function toRecipients(entries: { email: string; suspended: boolean }[]): ShareRecipient[] {
-  return entries.map((entry) => ({ email: entry.email, suspended: entry.suspended }));
+// WR-03 (code review, Phase 26): the caller's own id, resolved ONCE and
+// cached at module level like the two recipient caches below. Both server
+// endpoints include the CALLER's own row -- the creator's `collection_keys`
+// row is hard-coded `edit` server-side, and a recipient listing an item
+// shared to them sees themselves -- so without this filter every shared item
+// rendered the caller's own initial in its avatar stack and
+// `sharing.sharedWithLabel` reported n+1. `SharingOverviewPanel` already
+// filters `entry.user_id !== selfId`, proving the filter is required; the
+// shared hook `ItemRow`/`DetailPanel` both use simply did not.
+let selfIdPromise: Promise<string | null> | null = null;
+
+function getSelfId(): Promise<string | null> {
+  if (selfIdPromise === null) {
+    selfIdPromise = me()
+      .then((account) => account.user_id)
+      .catch(() => {
+        // Never cache a failure -- and degrade to "no filter" rather than
+        // failing the whole stack: an unfilterable list is a cosmetic
+        // over-count, a thrown hook is a broken row.
+        selfIdPromise = null;
+        return null;
+      });
+  }
+  return selfIdPromise;
+}
+
+function toRecipients(
+  entries: { user_id: string; email: string; suspended: boolean }[],
+  selfId: string | null,
+): ShareRecipient[] {
+  return entries
+    .filter((entry) => entry.user_id !== selfId)
+    .map((entry) => ({ email: entry.email, suspended: entry.suspended }));
 }
 
 const collectionCache = new Map<string, Promise<ShareRecipient[]>>();
@@ -39,8 +71,8 @@ const itemCache = new Map<string, Promise<ShareRecipient[]>>();
 function fetchForCollection(collectionId: string): Promise<ShareRecipient[]> {
   let cached = collectionCache.get(collectionId);
   if (cached === undefined) {
-    cached = getCollectionAccessList(collectionId)
-      .then(toRecipients)
+    cached = Promise.all([getCollectionAccessList(collectionId), getSelfId()])
+      .then(([entries, selfId]) => toRecipients(entries, selfId))
       .catch((err: unknown) => {
         // Never cache a failure -- a transient network error should not
         // permanently poison this collection's entry for every later item.
@@ -55,8 +87,8 @@ function fetchForCollection(collectionId: string): Promise<ShareRecipient[]> {
 function fetchForItem(itemId: string): Promise<ShareRecipient[]> {
   let cached = itemCache.get(itemId);
   if (cached === undefined) {
-    cached = listItemShares(itemId)
-      .then(toRecipients)
+    cached = Promise.all([listItemShares(itemId), getSelfId()])
+      .then(([entries, selfId]) => toRecipients(entries, selfId))
       .catch((err: unknown) => {
         itemCache.delete(itemId);
         throw err;

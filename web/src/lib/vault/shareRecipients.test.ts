@@ -2,14 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { VaultItem } from "./types";
 
-const { mockGetCollectionAccessList, mockListItemShares } = vi.hoisted(() => ({
+const { mockGetCollectionAccessList, mockListItemShares, mockMe } = vi.hoisted(() => ({
   mockGetCollectionAccessList: vi.fn(),
   mockListItemShares: vi.fn(),
+  // WR-03: the caller's own id, used to drop the caller from their own
+  // avatar stack. Mocked at the wire boundary like the other two.
+  mockMe: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
   getCollectionAccessList: mockGetCollectionAccessList,
   listItemShares: mockListItemShares,
+}));
+
+vi.mock("@/lib/auth/api", () => ({
+  me: mockMe,
 }));
 
 import { useShareRecipients } from "./shareRecipients";
@@ -25,8 +32,11 @@ function makeItem(overrides: Partial<VaultItem> = {}): VaultItem {
   };
 }
 
+const SELF_ID = "self-user-id";
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.com", pw_wrapped_uk: "x" });
 });
 
 describe("useShareRecipients", () => {
@@ -111,5 +121,32 @@ describe("useShareRecipients", () => {
     const item = makeItem({ id: "item-fail", collectionId: null, isShared: true });
     const { result } = renderHook(() => useShareRecipients(item));
     await waitFor(() => expect(result.current).toEqual([]));
+  });
+
+  // WR-03 (code review, Phase 26): both endpoints include the CALLER's own
+  // row (the creator's collection_keys row is hard-coded `edit`
+  // server-side; a recipient listing an item shared to them sees
+  // themselves), so an unfiltered stack rendered the caller's own initial
+  // and reported n+1 in sharing.sharedWithLabel.
+  it("drops the caller's own entry from a collection's recipient list", async () => {
+    mockGetCollectionAccessList.mockResolvedValue([
+      { user_id: SELF_ID, email: "me@example.com", access_level: "edit", created_at: "t", suspended: false },
+      { user_id: "u1", email: "anna@example.com", access_level: "read", created_at: "t", suspended: false },
+    ]);
+    const item = makeItem({ id: "item-self-col", collectionId: "col-self-filter" });
+    const { result } = renderHook(() => useShareRecipients(item));
+    await waitFor(() => expect(result.current).not.toBeNull());
+    expect(result.current).toEqual([{ email: "anna@example.com", suspended: false }]);
+  });
+
+  it("drops the caller's own entry from a direct item share's recipient list", async () => {
+    mockListItemShares.mockResolvedValue([
+      { user_id: SELF_ID, email: "me@example.com", access_level: "read", created_at: "t", suspended: false },
+      { user_id: "u2", email: "tomasz@example.com", access_level: "read", created_at: "t", suspended: false },
+    ]);
+    const item = makeItem({ id: "item-self-direct", collectionId: null, isShared: true });
+    const { result } = renderHook(() => useShareRecipients(item));
+    await waitFor(() => expect(result.current).not.toBeNull());
+    expect(result.current).toEqual([{ email: "tomasz@example.com", suspended: false }]);
   });
 });
