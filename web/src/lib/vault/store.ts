@@ -6,12 +6,14 @@
 import { useSyncExternalStore } from "react";
 import {
   decryptItem,
+  decryptItemForCollection,
   encryptItem,
   getUnlockedUserKey,
   isUnlocked,
   subscribeLockState,
   type WasmUserKey,
 } from "@/lib/crypto";
+import { getCollectionKey } from "@/lib/vault/collections";
 // Deliberately NOT importing ApiClientError for an `instanceof` check here:
 // this module is dynamically re-imported per-test via `vi.resetModules()` +
 // `await import("./store")` (see store.test.ts), which re-evaluates every
@@ -39,6 +41,7 @@ import {
   updateItem,
   type FolderRow,
   type ItemRow,
+  type SharedRevisions,
   type SyncSnapshot,
 } from "./api";
 import { startSync, stopSync, type SyncCallbacks } from "./sync";
@@ -167,9 +170,32 @@ export function getAllTags(): string[] {
   return allTags;
 }
 
+/** Decrypts one row's `enc_key`/`enc_data` under the CORRECT key for its
+ * scope — 26-05-PLAN.md's central architecture fix: a collection-scoped row
+ * (`row.collection_id !== null`) is encrypted under that collection's own
+ * CollectionKey with a scope-bound AAD (KEY-03), NOT under the caller's
+ * personal UserKey. `getCollectionKey` (lib/vault/collections.ts, Task 1)
+ * is looked up SYNCHRONOUSLY — if the collections store hasn't refreshed
+ * yet (or this collection's sealed_key never resolved), this throws, which
+ * `applySyncSnapshot`'s existing try/catch turns into the SAME
+ * undecryptable-flagged, retained-last-known-good fallback every other
+ * decrypt failure already uses — never a crash, and never a silent
+ * wrong-key decrypt (AEAD authentication makes that structurally
+ * impossible; see this plan's threat register T-26-11). */
 function decryptItemRow(row: ItemRow, uk: WasmUserKey): VaultItem {
   const combined = recombineEncryptedItem(row.enc_key, row.enc_data);
-  const plaintext = decryptItem(uk, combined, row.id, row.revision);
+  let plaintext: string;
+  if (row.collection_id === null) {
+    plaintext = decryptItem(uk, combined, row.id, row.revision);
+  } else {
+    const ck = getCollectionKey(row.collection_id);
+    if (ck === undefined) {
+      throw new Error(
+        `no cached Collection Key for collection ${row.collection_id} -- collections store has not refreshed yet`,
+      );
+    }
+    plaintext = decryptItemForCollection(ck, combined, row.collection_id, row.id, row.revision);
+  }
   // normalizeItemFields migrates a legacy login item's bare `url: string`
   // into `urls: string[]` — the only place that legacy shape is ever read.
   const fields = normalizeItemFields(JSON.parse(plaintext) as ItemFields);
@@ -181,6 +207,7 @@ function decryptItemRow(row: ItemRow, uk: WasmUserKey): VaultItem {
     lastUsedAt: row.last_used_at ?? undefined,
     isShared: row.is_shared,
     lastEditorEmail: row.last_editor_email ?? undefined,
+    collectionId: row.collection_id,
   };
 }
 
@@ -427,6 +454,12 @@ export async function updateVaultItem(
   // together, so this silently fell back to the generic (non-attributed)
   // copy in exactly the window a shared item is most likely to conflict —
   // immediately after this same user's own save.
+  //
+  // 26-05 (this plan): `collectionId` (Task 2's own new field) gets the
+  // IDENTICAL carry-forward treatment for the identical reason — this
+  // response body has no such field either, so dropping it here would make
+  // a collection-scoped item look personal again immediately after its own
+  // save, right up until the next background snapshot repopulated it.
   const updated: VaultItem = {
     id,
     revision: newRevision,
@@ -435,6 +468,7 @@ export async function updateVaultItem(
     lastUsedAt: existing?.lastUsedAt,
     isShared: existing?.isShared,
     lastEditorEmail: existing?.lastEditorEmail,
+    collectionId: existing?.collectionId,
   };
   items =
     existingIndex === -1
@@ -504,6 +538,57 @@ export function useAllTags(): string[] {
   return useSyncExternalStore(subscribeItems, getAllTags, getEmptySnapshot);
 }
 
+// A-5 (26-CONTEXT.md, Phase 23's inherited obligation #3): `GET
+// /api/sync/shared` has shipped fully implemented, authorized and tested
+// since Phase 23 with no client consumer -- `onSharedRevisions` below is the
+// first one. Tracks the last-known per-collection/direct revision watermark
+// this client has already merged; a mismatch on ANY field means a
+// co-member's shared edit landed and this client hasn't pulled it yet. Reset
+// to empty on every startSync() (unlock) -- see the subscribeLockState
+// callback below -- mirroring sync.ts's own `sharedPullDisabled`
+// re-arm-on-unlock rationale, so a stale watermark from a PREVIOUS session
+// never suppresses the first post-unlock pull.
+let sharedRevisionsWatermark: { collections: Map<string, number>; direct: number } = {
+  collections: new Map(),
+  direct: 0,
+};
+
+/** `true` when `revisions` differs from the last-known watermark in ANY
+ * field: a collection's revision changed, a collection is new (absent from
+ * the watermark), or the synthetic "direct" bucket's revision changed. */
+function sharedRevisionsChanged(revisions: SharedRevisions): boolean {
+  if (revisions.direct.revision !== sharedRevisionsWatermark.direct) {
+    return true;
+  }
+  for (const collection of revisions.collections) {
+    if (sharedRevisionsWatermark.collections.get(collection.id) !== collection.revision) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** On a watermark mismatch: forces a FULL snapshot re-pull via
+ * `getSyncSnapshot(0)`, bypassing `lastKnownRevision` entirely -- a
+ * shared-only change (another member editing a collection this caller is
+ * IN, not the caller's own personal vault) never bumps the caller's own
+ * `vault_revision` (SYNC-04's per-collection-not-per-user design), so the
+ * normal since-gated pull would never notice it. Merges via the SAME
+ * `applySyncSnapshot` every other pull path uses -- no second merge
+ * implementation. An unchanged payload is a silent no-op: never an extra
+ * round trip when nothing actually changed. */
+async function handleSharedRevisions(revisions: SharedRevisions): Promise<void> {
+  if (!sharedRevisionsChanged(revisions)) {
+    return;
+  }
+  const snapshot = await getSyncSnapshot(0);
+  applySyncSnapshot(snapshot);
+  sharedRevisionsWatermark = {
+    collections: new Map(revisions.collections.map((collection) => [collection.id, collection.revision])),
+    direct: revisions.direct.revision,
+  };
+}
+
 // Module-level side effect (mirrors lib/crypto/index.ts's own singleton
 // shape): unlocking the vault (re-)fetches and decrypts items/folders AND
 // starts the sync transport (WS + poll); locking stops the transport FIRST
@@ -512,10 +597,14 @@ export function useAllTags(): string[] {
 const syncCallbacks: SyncCallbacks = {
   getSinceRevision: () => lastKnownRevision,
   onSnapshot: applySyncSnapshot,
+  onSharedRevisions: (revisions) => {
+    void handleSharedRevisions(revisions);
+  },
 };
 
 subscribeLockState(() => {
   if (isUnlocked()) {
+    sharedRevisionsWatermark = { collections: new Map(), direct: 0 };
     void loadAndDecryptAll();
     startSync(syncCallbacks);
   } else {

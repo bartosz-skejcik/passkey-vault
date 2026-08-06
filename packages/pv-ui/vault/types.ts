@@ -149,6 +149,16 @@ export interface VaultItem {
   // shared-looking conflict for a personal item from these two fields.
   isShared?: boolean;
   lastEditorEmail?: string;
+  // Phase 26, Plan 05 (A-1's collection_id wire-field companion, mirrors
+  // ItemRow.collection_id in lib/vault/api.ts): `null` for a personal item,
+  // the owning collection's id for a collection-scoped one. Optional for
+  // the same reason isShared/lastEditorEmail are: several existing
+  // hand-built VaultItem test fixtures construct this type without it.
+  // Metadata only -- never derived from ciphertext, and never used to
+  // decide WHICH key to decrypt with (that decision is store.ts's own
+  // decryptItemRow, reading row.collection_id directly off the wire row,
+  // before this field even exists).
+  collectionId?: string | null;
   // CR-03 (code review iteration 1): `true` when this item is a retained
   // last-known-good copy from a background sync merge whose server row
   // failed to decrypt (corrupted blob, a stale/foreign ciphertext, or —
