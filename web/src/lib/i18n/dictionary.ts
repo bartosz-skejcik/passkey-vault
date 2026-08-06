@@ -1261,6 +1261,18 @@ export const DICTIONARY = {
     en: "The fingerprint will appear once this person unlocks their vault for the first time after upgrading.",
   },
   "identity.fingerprintCopyAria": { pl: "Skopiuj odcisk tożsamości", en: "Copy identity fingerprint" },
+  // WR-09 (code review, Phase 26): deliberately a DIFFERENT string from
+  // `identity.fingerprintUnavailable`. That one describes an expected,
+  // benign ABSENCE (this member hasn't unlocked since the upgrade). A
+  // fingerprint the server returned but that isn't a well-formed SHA-256
+  // hex value is a SIGNAL, not an absence -- in a zero-knowledge product
+  // the server is explicitly untrusted -- so it must not be dressed up in
+  // the reassuring copy. Honesty constraint 3 (never word the benign state
+  // as an error) is not violated by naming a genuinely anomalous state.
+  "identity.fingerprintMalformed": {
+    pl: "Ten odcisk ma nieprawidłowy format — nie ufaj mu, nie udostępniaj tej osobie niczego i zgłoś to.",
+    en: "This fingerprint is malformed — don't trust it, don't share anything with this person, and report it.",
+  },
   "folder.pickerLabel": { pl: "Folder", en: "Folder" },
   "folder.pickerNone": { pl: "Bez folderu", en: "No folder" },
   "folder.pickerCreateNew": { pl: "+ Nowy udostępniony folder", en: "+ New shared folder" },

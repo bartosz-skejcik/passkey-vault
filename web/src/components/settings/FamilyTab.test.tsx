@@ -663,6 +663,34 @@ describe("FamilyTab", () => {
       ).not.toBeInTheDocument();
     });
 
+    // WR-09 (code review, Phase 26): formatFingerprintWords fails closed by
+    // THROWING on anything that isn't exactly 64 hex characters -- correct
+    // for the primitive, fatal when called bare inside the render path. In a
+    // zero-knowledge product the server is explicitly untrusted, so a
+    // malformed value for ANY member's fingerprint used to take down the
+    // whole FamilyTab, removal/suspension/invite UI included.
+    it.each([
+      ["an empty string (slips past the `?? null` guard)", ""],
+      ["a too-short hex value", "deadbeef"],
+      ["a 63-character hex value", "a".repeat(63)],
+      ["a non-hex value of the right length", "z".repeat(64)],
+    ])("own row: a malformed server-supplied fingerprint (%s) degrades instead of crashing the tab", async (_label, malformed) => {
+      mockGetFamilyMembers.mockResolvedValue([{ ...OWNER_MEMBER, fingerprint: malformed }]);
+      render(<FamilyTab />);
+
+      // The tab still renders at all -- that is the load-bearing assertion.
+      await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
+      expect(screen.getByTestId("identity-self-fingerprint-malformed")).toHaveTextContent(
+        "identity.fingerprintMalformed",
+      );
+      expect(screen.queryByTestId("identity-self-fingerprint-words")).not.toBeInTheDocument();
+      // A malformed value is a SIGNAL, not the benign not-yet-published
+      // absence -- it must never borrow that reassuring copy.
+      expect(
+        screen.queryByTestId("identity-self-fingerprint-unavailable"),
+      ).not.toBeInTheDocument();
+    });
+
     it("a non-owner member also sees their own fingerprint card (E7 is not owner-gated)", async () => {
       const selfWithFingerprint = { ...NON_OWNER_MEMBER, fingerprint: FINGERPRINT_HEX_B };
       mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, selfWithFingerprint]);

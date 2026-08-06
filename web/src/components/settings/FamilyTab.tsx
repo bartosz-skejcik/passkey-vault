@@ -718,7 +718,7 @@ export default function FamilyTab() {
   // own testid namespace.
   function renderFingerprintPanel(
     copyKey: string,
-    testId: (field: "words" | "unavailable" | "copy" | "mismatch-warning") => string,
+    testId: (field: "words" | "unavailable" | "copy" | "mismatch-warning" | "malformed") => string,
     fingerprint: string | null,
   ) {
     if (fingerprint === null) {
@@ -731,7 +731,35 @@ export default function FamilyTab() {
         </p>
       );
     }
-    const words = formatFingerprintWords(fingerprint);
+    // WR-09 (code review, Phase 26): `formatFingerprintWords` fails CLOSED
+    // by throwing on anything that isn't exactly 64 hex characters --
+    // correct for the primitive (Plan 26-03's contract is to fail loudly at
+    // the DERIVATION layer, never to invent a plausible-but-wrong word
+    // list). But calling it bare inside the render path meant a malicious or
+    // buggy server returning "", "deadbeef", or a 63-char value for ANY
+    // member's fingerprint threw during render and took down the whole
+    // FamilyTab -- removal, suspension and invite UI included. In a
+    // zero-knowledge product the server is explicitly untrusted, so that is
+    // a reachable input, not a hypothetical. `""` in particular slips past
+    // the `fingerprint === null` guard, since `?? null` does not normalize
+    // an empty string.
+    //
+    // A presentation transform fails SOFT: degrade to a copy that names the
+    // anomaly (never the benign not-yet-published copy -- a malformed value
+    // is a signal, not an absence).
+    let words: string | null = null;
+    try {
+      words = formatFingerprintWords(fingerprint);
+    } catch {
+      words = null;
+    }
+    if (words === null) {
+      return (
+        <p data-testid={testId("malformed")} className="text-sm text-error">
+          {t("identity.fingerprintMalformed")}
+        </p>
+      );
+    }
     return (
       <>
         <div className="flex items-center gap-2">
