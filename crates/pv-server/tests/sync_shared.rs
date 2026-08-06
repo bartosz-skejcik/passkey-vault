@@ -735,6 +735,18 @@ async fn shared_direct_pull_returns_recipients_own_directly_shared_items() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["id"], item_id);
     assert_eq!(items[0]["is_shared"], true);
+    // 26-14-PLAN.md (WINDOWS #9): this endpoint's whole point is to hand the
+    // RECIPIENT the one piece they cannot derive any other way -- their own
+    // sealed item key. Without it, this read path is wire-complete but
+    // client-unusable (no client can decrypt `enc_data` without it).
+    assert_eq!(
+        items[0]["sealed_key"], "{\"nonce\":\"3333\",\"ciphertext\":\"sealed-item-key\"}",
+        "the recipient's own item_shares.sealed_key must be present so the client can actually decrypt"
+    );
+    // The OWNER's own enc_key (wrapped under the owner's User Key) is
+    // structurally useless to this recipient -- deliberately omitted from
+    // the wire, never present here.
+    assert!(items[0].get("enc_key").is_none(), "enc_key must never appear in a direct-share recipient's own snapshot row");
 
     // Someone with NO share on this item sees nothing at all — asserted via
     // `since=0` (their own direct-bucket revision, since they have no
