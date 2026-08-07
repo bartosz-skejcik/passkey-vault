@@ -18,7 +18,11 @@ import {
   type WasmUserKey,
 } from "@/lib/crypto";
 import { ensureOwnIdentityKeypair } from "@/lib/identity/ensure";
-import { getCollectionKey, refreshCollectionsNow } from "@/lib/vault/collections";
+import {
+  getCollectionAccessLevel,
+  getCollectionKey,
+  refreshCollectionsNow,
+} from "@/lib/vault/collections";
 // Deliberately NOT importing ApiClientError for an `instanceof` check here:
 // this module is dynamically re-imported per-test via `vi.resetModules()` +
 // `await import("./store")` (see store.test.ts), which re-evaluates every
@@ -354,6 +358,21 @@ function decryptItemRow(row: ItemRow, uk: WasmUserKey): VaultItem {
     isShared: row.is_shared,
     lastEditorEmail: row.last_editor_email ?? undefined,
     collectionId: row.collection_id,
+    // 26-VERIFICATION.md gap 1. `undefined` for a personal item -- its owner
+    // holds `AccessLevel::Edit` unconditionally server-side
+    // (`Item::resolve_access`'s personal branch), so there is no level to
+    // carry. For a collection-scoped item the caller's `collection_keys`
+    // level is the WHOLE story even for an item the caller CREATED:
+    // `resolve_access` deliberately does NOT fold an ownership grant into
+    // the collection branch (CR-01 iteration 2 -- folding it in would defeat
+    // revocation), so a member holding `read`/`hidden_password` cannot edit
+    // their own item in that folder either. Set here rather than only in
+    // `mergeCollectionSnapshot` so the caller's OWN copy of such an item
+    // (which also arrives via `GET /api/sync`, in `personalItems`) carries
+    // the same level -- otherwise there is a window, before the collection
+    // pull lands, where the same item renders as freely editable.
+    accessLevel:
+      row.collection_id === null ? undefined : getCollectionAccessLevel(row.collection_id),
   };
 }
 
@@ -632,6 +651,13 @@ function decryptDirectSharedRow(row: DirectSharedItemRow, identityKey: WasmIdent
     // this from `isShared`/`collectionId` (a row from here is shaped
     // identically to an item the caller shares directly with others).
     sharedToMe: true,
+    // 26-VERIFICATION.md gap 1 (SHARE-03): the recipient's OWN grant, now
+    // carried by `pull_shared_direct` (`DirectSharedItem.access_level`).
+    // This is what makes `hidden_password` mean anything at all on a
+    // recipient surface -- before it, the level was a stored label the
+    // recipient's client never saw, and the live probe read the plaintext on
+    // the first click of the ordinary reveal toggle.
+    accessLevel: row.access_level,
   };
 }
 

@@ -118,6 +118,13 @@ export interface DirectSharedItemRow {
   last_used_at: string | null;
   is_shared: boolean;
   last_editor_email: string | null;
+  /** 26-VERIFICATION.md gap 1 (SHARE-03): THIS recipient's own
+   * `item_shares.access_level` — `read` | `edit` | `hidden_password`, or any
+   * future/unrecognized value (never normalized server-side, so
+   * `accessLevel.ts`'s fail-closed `access.unknown` discipline can see it).
+   * Without it the client had no way to honour `hidden_password`, whose
+   * requirement text is "usable but the password field is masked". */
+  access_level: string;
 }
 
 export interface SharedDirectSyncResponse {

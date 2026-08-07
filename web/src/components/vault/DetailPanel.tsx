@@ -21,6 +21,7 @@ import {
   useFolders,
 } from "@/lib/vault/store";
 import { useCollections } from "@/lib/vault/collections";
+import { canEditItem, isPasswordHidden } from "@/lib/vault/itemCapabilities";
 import { getStoredEmail } from "@/lib/auth/session";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
@@ -206,8 +207,22 @@ export default function DetailPanel({
     });
   }
 
+  // 26-VERIFICATION.md gap 1 (SHARE-03): `hidden_password` was a stored
+  // label with zero effect on any recipient surface -- live probe P4 clicked
+  // the ordinary reveal toggle once and read the plaintext, while the owner
+  // had just been shown copy promising they would not "accidentally see it
+  // on screen". See `itemCapabilities.ts` for the scope of the mask and why
+  // it is an interface predicate, never a cryptographic one.
+  const passwordHidden = isPasswordHidden(item);
+  const passwordFieldHidden = (key: string) => passwordHidden && key === "password";
+
   function displayValueFor(key: string, value: string): string {
     if (!value) return "—";
+    // Checked BEFORE the reveal-state branch below, so a field the user had
+    // already revealed on a previous item (or that a future code path
+    // pre-reveals) can never leak through: the masked value is unconditional
+    // for as long as the grant says hidden, not merely "not yet toggled".
+    if (passwordFieldHidden(key)) return MASK;
     if (MONO_FIELDS.has(key) && !REVEALABLE_FIELDS.has(key)) return MASK;
     if (REVEALABLE_FIELDS.has(key) && !isRevealed(key)) return MASK;
     return value;
@@ -376,9 +391,20 @@ export default function DetailPanel({
                   applies for the collection-scoped and shared-to-me cases.
                   The store-level guard STAYS as the data-layer backstop; the
                   `onError` mapping below is its third layer. */}
+              {/* 26-VERIFICATION.md gap 1's second consequence: `canEditItem`
+                  replaces the bare `sharedToMe` check. The same
+                  offer-an-impossible-operation shape exists for a
+                  COLLECTION-scoped item held at `read`/`hidden_password` --
+                  `Item::resolve_access` deliberately grants no ownership
+                  fallback in its collection branch, so `PUT
+                  /api/vault/items/{id}` (`Membership<Item, RequireEdit>`)
+                  403s even for an item the caller created there, and the
+                  403 surfaced as the same generic retry banner. Nothing in
+                  the client could see it until `accessLevel` reached the
+                  client for gap 1. */}
               {item.fields.type !== "passkey" &&
               item.undecryptable !== true &&
-              item.sharedToMe !== true ? (
+              canEditItem(item) ? (
                 <button
                   type="button"
                   data-testid="detail-panel-edit"
@@ -606,7 +632,15 @@ export default function DetailPanel({
                     <span className={`text-base ${MONO_FIELDS.has(key) ? "font-mono" : ""}`}>
                       {displayValueFor(key, fieldValues[key])}
                     </span>
-                    {fieldValues[key] && REVEALABLE_FIELDS.has(key) ? (
+                    {/* 26-VERIFICATION.md gap 1: the reveal affordance is
+                        SUPPRESSED, not merely defaulted to hidden, for a
+                        password held at `hidden_password`. Copy stays --
+                        SHARE-03's wording is "USABLE but the password field
+                        is masked", and a password that cannot be copied is
+                        not usable in a web app with no autofill. */}
+                    {fieldValues[key] &&
+                    REVEALABLE_FIELDS.has(key) &&
+                    !passwordFieldHidden(key) ? (
                       <button
                         type="button"
                         data-testid={`reveal-${key}`}
@@ -623,6 +657,23 @@ export default function DetailPanel({
                     ) : null}
                     {fieldValues[key] ? renderCopyButton(key, fieldValues[key]) : null}
                   </div>
+                  {/* 26-VERIFICATION.md gap 1 (UX-03's recipient half): D-2's
+                      existing disclosure copy is entirely OWNER-facing, shown
+                      at share time. A recipient opening the item saw a
+                      missing reveal toggle and no explanation, which reads as
+                      a bug rather than a disclosed level. Per
+                      docs/UI-DESIGN.md this is security UI: plain DM Sans,
+                      neutral tone, no alarm styling -- hidden-password is a
+                      normal supported level with one honestly-stated limit,
+                      not a hazard. */}
+                  {passwordFieldHidden(key) ? (
+                    <span
+                      data-testid="hidden-password-recipient-note"
+                      className="text-xs text-base-content/70"
+                    >
+                      {t("share.hiddenPasswordRecipientNote")}
+                    </span>
+                  ) : null}
                 </div>
                 {item.fields.type === "login" && key === "password" ? (
                   <div className="flex flex-col gap-1">

@@ -223,6 +223,28 @@ pub enum SharedCollectionSyncResponse {
 /// `enc_key` (the item's key wrapped under the owner's User Key or
 /// Collection Key) is structurally useless to this recipient and would
 /// only be dead ciphertext weight on the wire.
+/// 26-VERIFICATION.md gap 1 (SHARE-03): `access_level` is carried here.
+/// Until this field existed the recipient's client had NO way to know at
+/// what level an item was shared with it, so `hidden_password` — whose
+/// requirement text is literally "usable but the password field is masked"
+/// — was a stored label with zero effect on any recipient surface: the
+/// verifier's live probe P4 clicked the ordinary reveal toggle once and read
+/// the plaintext. The share-time disclosure copy simultaneously promised the
+/// owner that the recipient would not "accidentally see it on screen".
+///
+/// This is the RECIPIENT'S OWN grant, by construction: the query below
+/// filters `item_shares.recipient_user_id = session.user_id`, so the row
+/// selected is this caller's own, never another recipient's. It leaks
+/// nothing the caller does not already have — the caller could read their
+/// own level from `GET /api/vault/items/{id}/shares` today.
+///
+/// It is NOT an enforcement channel. Per 26-CONTEXT.md A-6 hidden-password
+/// is an interface protection by construction (the recipient holds the
+/// item's Cipher Key and can recover the password by other means); a
+/// modified client can ignore this field entirely. What it makes possible is
+/// the narrow, stated claim: the honest client masks the field and does not
+/// reveal it through the ordinary toggle. Any server-side pretence of
+/// enforcement would be a lie in a zero-knowledge product.
 #[derive(Serialize)]
 pub struct DirectSharedItem {
     pub id: String,
@@ -233,6 +255,7 @@ pub struct DirectSharedItem {
     pub last_used_at: Option<String>,
     pub is_shared: bool,
     pub last_editor_email: Option<String>,
+    pub access_level: String,
 }
 
 /// Response shape for `pull_shared_direct` below — same untagged
@@ -376,7 +399,12 @@ pub async fn pull_shared_direct(
     // recipient) is no longer selected — see `DirectSharedItem`'s own doc
     // comment for why.
     let rows = sqlx::query(
-        "SELECT vault_items.id, enc_data, item_shares.sealed_key, revision, updated_at, last_used_at, \
+        // 26-VERIFICATION.md gap 1: `item_shares.access_level` joins
+        // `sealed_key` as a per-recipient column selected off the SAME row
+        // the `recipient_user_id = ?` predicate below already pins to this
+        // caller — see `DirectSharedItem`'s own doc comment.
+        "SELECT vault_items.id, enc_data, item_shares.sealed_key, item_shares.access_level, \
+                revision, updated_at, last_used_at, \
                 users.email AS last_editor_email \
            FROM vault_items \
            JOIN item_shares ON item_shares.item_id = vault_items.id \
@@ -406,6 +434,16 @@ pub async fn pull_shared_direct(
                 // `true`, never derived from a second query.
                 is_shared: true,
                 last_editor_email: row.try_get("last_editor_email").map_err(|_| ApiError::Internal)?,
+                // 26-VERIFICATION.md gap 1. Echoed as the raw wire string
+                // rather than round-tripped through
+                // `parse_access_level(...).as_str()`: the column is
+                // `CHECK`-constrained, and an unrecognized value must reach
+                // the client AS an unrecognized value so
+                // `accessLevel.ts::accessLevelKey`'s fail-closed
+                // "access.unknown" discipline (WR-13/WR-10) can see it.
+                // Normalizing here would silently launder a bad value into a
+                // valid-looking one.
+                access_level: row.try_get("access_level").map_err(|_| ApiError::Internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;

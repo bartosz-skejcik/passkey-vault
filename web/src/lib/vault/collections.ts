@@ -25,6 +25,12 @@ import { listCollections } from "./api";
 export interface Collection {
   id: string;
   name: string;
+  /** 26-VERIFICATION.md gap 1: `collections::list` (collections.rs:235) has
+   * always returned the caller's own `collection_keys.access_level`; this
+   * store DROPPED it, so no collection-scoped item had an access level
+   * anywhere in the client. `null` only when the server sent null (a
+   * collection row with no resolvable grant for this caller). */
+  accessLevel: string | null;
 }
 
 // Collections carry no revision column of their own — a collection's own
@@ -66,6 +72,22 @@ export function subscribeCollections(listener: () => void): () => void {
  * scope dispatch (Task 2, 26-05-PLAN.md). */
 export function getCollectionKey(collectionId: string): WasmCollectionKey | undefined {
   return collectionKeys.get(collectionId);
+}
+
+/** 26-VERIFICATION.md gap 1: the caller's OWN `collection_keys.access_level`
+ * for a collection, or `undefined` when this store hasn't refreshed yet /
+ * the server returned no level. Consumed synchronously by
+ * `store.ts::decryptItemRow`'s collection-scoped arm, right next to its
+ * existing `getCollectionKey` lookup.
+ *
+ * The two lookups are consistent by construction, which is what keeps this
+ * from failing OPEN: a collection-scoped item only ever decrypts when
+ * `getCollectionKey` returns a key, and both values are written from the
+ * SAME `listCollections()` row in the same `refreshCollections` pass. There
+ * is no window in which an item renders decrypted while its access level is
+ * still unknown. */
+export function getCollectionAccessLevel(collectionId: string): string | undefined {
+  return collections.find((c) => c.id === collectionId)?.accessLevel ?? undefined;
 }
 
 /** Frees every cached Collection Key handle and clears the map — called on
@@ -149,7 +171,7 @@ async function refreshCollections(): Promise<void> {
           // it falls through to store.ts's undecryptable path.
         }
       }
-      nextCollections.push({ id: row.id, name });
+      nextCollections.push({ id: row.id, name, accessLevel: row.access_level });
     }
     // WR-02 (code review, Phase 26): evict every cached key whose collection
     // the server no longer returns. `refreshCollections` rebuilt

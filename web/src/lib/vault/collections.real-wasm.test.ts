@@ -46,7 +46,12 @@ import {
   encryptItemForCollection,
   decryptItemForCollection,
 } from "@/lib/crypto";
-import { getCollectionKey, getCollections, refreshCollectionsNow } from "./collections";
+import {
+  getCollectionAccessLevel,
+  getCollectionKey,
+  getCollections,
+  refreshCollectionsNow,
+} from "./collections";
 
 const COLLECTION_NAME_REVISION = 1;
 
@@ -128,8 +133,15 @@ describe("collections.ts: list, decrypt names, cache unwrapped Collection Keys (
       setUnlockedUserKey(uk); // fires this module's real subscribeLockState listener
       await vi.waitFor(() => expect(getCollections()).toHaveLength(1));
 
-      expect(getCollections()).toEqual([{ id: "collection-fixture-1", name: "Real Shared Family Folder" }]);
+      // 26-VERIFICATION.md gap 1: `access_level` is no longer DROPPED by
+      // this store — `collections::list` always returned it, and without it
+      // no collection-scoped item had an access level anywhere in the
+      // client, so `hidden_password` could not be honoured on any surface.
+      expect(getCollections()).toEqual([
+        { id: "collection-fixture-1", name: "Real Shared Family Folder", accessLevel: "edit" },
+      ]);
       expect(getCollectionKey("collection-fixture-1")).toBeDefined();
+      expect(getCollectionAccessLevel("collection-fixture-1")).toBe("edit");
     } finally {
       lockVault();
       ck.free?.();

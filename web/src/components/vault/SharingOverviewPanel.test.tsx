@@ -74,7 +74,7 @@ const ANNA_ID = "anna-1";
 const TOMASZ_ID = "tomasz-1";
 
 function makeCollection(overrides: Partial<Collection> = {}): Collection {
-  return { id: "col-1", name: "Family Docs", ...overrides };
+  return { id: "col-1", name: "Family Docs", accessLevel: "edit", ...overrides };
 }
 
 function makeCollectionRow(overrides: Partial<CollectionRow> = {}): CollectionRow {

@@ -40,6 +40,7 @@ const {
   mockStartSync,
   mockStopSync,
   mockGetCollectionKey,
+  mockGetCollectionAccessLevel,
   mockRefreshCollectionsNow,
   mockEnsureOwnIdentityKeypair,
 } = vi.hoisted(() => ({
@@ -52,6 +53,7 @@ const {
   mockStartSync: vi.fn(),
   mockStopSync: vi.fn(),
   mockGetCollectionKey: vi.fn(),
+  mockGetCollectionAccessLevel: vi.fn(),
   mockRefreshCollectionsNow: vi.fn(),
   mockEnsureOwnIdentityKeypair: vi.fn(),
 }));
@@ -88,6 +90,9 @@ vi.mock("./sync", () => ({
 
 vi.mock("@/lib/vault/collections", () => ({
   getCollectionKey: mockGetCollectionKey,
+  // 26-VERIFICATION.md gap 1: store.ts's decryptItemRow now reads the
+  // caller's own collection access level alongside the Collection Key.
+  getCollectionAccessLevel: mockGetCollectionAccessLevel,
   refreshCollectionsNow: mockRefreshCollectionsNow,
 }));
 

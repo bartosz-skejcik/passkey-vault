@@ -747,6 +747,15 @@ async fn shared_direct_pull_returns_recipients_own_directly_shared_items() {
     // structurally useless to this recipient -- deliberately omitted from
     // the wire, never present here.
     assert!(items[0].get("enc_key").is_none(), "enc_key must never appear in a direct-share recipient's own snapshot row");
+    // 26-VERIFICATION.md gap 1 (SHARE-03): without `access_level` on the
+    // wire the recipient's client cannot know at what level the item was
+    // shared with it, so `hidden_password` -- "usable but the password field
+    // is masked" -- was a stored label with zero effect on any recipient
+    // surface.
+    assert_eq!(
+        items[0]["access_level"], "edit",
+        "the recipient's own item_shares.access_level must be present so the client can honour hidden_password"
+    );
 
     // Someone with NO share on this item sees nothing at all — asserted via
     // `since=0` (their own direct-bucket revision, since they have no
@@ -756,6 +765,88 @@ async fn shared_direct_pull_returns_recipients_own_directly_shared_items() {
     let stranger_body =
         body_json(req(&app, "GET", "/api/sync/shared/direct?since=0", &stranger_token, None).await).await;
     assert_eq!(stranger_body, json!({ "revision": 0 }), "a caller with no direct shares gets UpToDate at revision 0, not an error");
+}
+
+/// 26-VERIFICATION.md gap 1 (SHARE-03), the load-bearing half of the
+/// `access_level` wire field: each recipient must receive THEIR OWN grant,
+/// never another recipient's. The same item is shared to two members at two
+/// DIFFERENT levels — a `SELECT item_shares.access_level` that ever picked
+/// the wrong row (a missing `recipient_user_id` predicate, a future JOIN
+/// widening) would show one recipient the other's level, and a
+/// `hidden_password` holder handed `"edit"` would see the reveal toggle the
+/// masking exists to suppress. A single-recipient assertion cannot see that
+/// class of bug at all.
+#[tokio::test]
+async fn shared_direct_pull_returns_each_recipients_own_access_level_never_another_recipients() {
+    let pool = test_pool().await;
+    let (app, _port) = test_server(pool.clone()).await;
+
+    let owner_token = register_and_login(&app, "sr26-fix-al-owner@example.com").await;
+    assert_eq!(
+        req(&app, "POST", "/api/families", &owner_token, Some(json!({ "name": "Access Level Family" }))).await.status(),
+        StatusCode::CREATED
+    );
+    let hidden_token = register_second_family_member(&app, &owner_token, "sr26-fix-al-hidden@example.com").await;
+    publish_keypair(&app, &hidden_token, 61).await;
+    let hidden_id = user_id_of(&app, &hidden_token).await;
+    let editor_token = register_third_family_member(&app, &owner_token, "sr26-fix-al-editor@example.com").await;
+    publish_keypair(&app, &editor_token, 62).await;
+    let editor_id = user_id_of(&app, &editor_token).await;
+
+    let item_id = uuid::Uuid::new_v4().to_string();
+    assert_eq!(
+        req(
+            &app,
+            "POST",
+            "/api/vault/items",
+            &owner_token,
+            Some(json!({
+                "id": item_id,
+                "enc_key": "{\"nonce\":\"1111\",\"ciphertext\":\"al-key\"}",
+                "enc_data": "{\"nonce\":\"2222\",\"ciphertext\":\"al-data\"}",
+            })),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+
+    for (recipient_id, level, sealed) in [
+        (&hidden_id, "hidden_password", "sealed-for-hidden"),
+        (&editor_id, "edit", "sealed-for-editor"),
+    ] {
+        let res = req(
+            &app,
+            "POST",
+            &format!("/api/vault/items/{item_id}/shares"),
+            &owner_token,
+            Some(json!({
+                "recipient_user_id": recipient_id,
+                "sealed_key": format!("{{\"nonce\":\"3333\",\"ciphertext\":\"{sealed}\"}}"),
+                "access_level": level,
+            })),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::CREATED, "share to {recipient_id} at {level}");
+    }
+
+    let hidden_body = body_json(req(&app, "GET", "/api/sync/shared/direct", &hidden_token, None).await).await;
+    let hidden_items = hidden_body["items"].as_array().expect("full snapshot");
+    assert_eq!(hidden_items.len(), 1);
+    assert_eq!(
+        hidden_items[0]["access_level"], "hidden_password",
+        "the hidden_password recipient must receive their OWN level, not the co-recipient's `edit`"
+    );
+    assert_eq!(hidden_items[0]["sealed_key"], "{\"nonce\":\"3333\",\"ciphertext\":\"sealed-for-hidden\"}");
+
+    let editor_body = body_json(req(&app, "GET", "/api/sync/shared/direct", &editor_token, None).await).await;
+    let editor_items = editor_body["items"].as_array().expect("full snapshot");
+    assert_eq!(editor_items.len(), 1);
+    assert_eq!(
+        editor_items[0]["access_level"], "edit",
+        "the edit recipient must receive their OWN level, not the co-recipient's `hidden_password`"
+    );
+    assert_eq!(editor_items[0]["sealed_key"], "{\"nonce\":\"3333\",\"ciphertext\":\"sealed-for-editor\"}");
 }
 
 /// SC 4's "even as a side effect of unrelated activity" (CONTEXT.md's

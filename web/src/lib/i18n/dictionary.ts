@@ -1266,6 +1266,24 @@ export const DICTIONARY = {
   // paraphrase of it ("this app has no key for it") would be FALSE: the
   // recipient does hold the item's Cipher Key. Same "not yet available,
   // stated plainly" pattern Phase 24 used for the collection-scoped invite.
+  // 26-VERIFICATION.md gap 1 (SHARE-03 / UX-03) — the RECIPIENT-side half of
+  // the hidden-password honesty contract. D-2's existing copy is entirely
+  // owner-facing (shown at share time); a recipient opening the item saw
+  // nothing at all explaining why the reveal toggle is missing, which would
+  // read as a bug rather than a deliberate, disclosed level.
+  //
+  // Says exactly what is true and no more. "this view masks it" is a claim
+  // about THIS surface, deliberately not the absolute "hidden in the
+  // interface" -- an export, the browser devtools, or a future client can
+  // still produce the value, and the second sentence says so in the same
+  // breath rather than leaving the reader to infer it. Same register and
+  // same honesty constraint as `share.hiddenPasswordDisclosureBody`: never
+  // reworded to imply the password is hidden FROM this reader in any
+  // security sense. They hold the key; the copy must keep saying so.
+  "share.hiddenPasswordRecipientNote": {
+    pl: "Właściciel udostępnił to hasło jako ukryte — ten widok je maskuje. Nadal możesz je skopiować i użyć, a klucz i tak jest w Twoich rękach, więc to nie jest zabezpieczenie kryptograficzne.",
+    en: "The owner shared this password as hidden — this view masks it. You can still copy and use it, and you hold the key anyway, so this is not a cryptographic protection.",
+  },
   "share.sharedWithYouNotEditable": {
     pl: "Edycja itemu udostępnionego Ci bezpośrednio nie jest jeszcze dostępna. Poproś właściciela o wprowadzenie zmiany.",
     en: "Editing isn't available yet for an item shared directly with you. Ask its owner to make the change.",

@@ -628,6 +628,11 @@ describe("WINDOWS #9 (26-14-PLAN.md): a direct-share recipient reads the shared 
             last_used_at: null,
             is_shared: true,
             last_editor_email: null,
+            // 26-VERIFICATION.md gap 1 (SHARE-03): the recipient's own
+            // grant, now on the wire. `hidden_password` deliberately -- it
+            // is the level whose entire meaning lives on the recipient's
+            // surface, and the one the live probe proved did nothing.
+            access_level: "hidden_password",
           },
         ],
       });
@@ -650,6 +655,12 @@ describe("WINDOWS #9 (26-14-PLAN.md): a direct-share recipient reads the shared 
       // overview / avatar stack / Share affordance all depend on it.
       expect(item.sharedToMe).toBe(true);
       expect(item.isShared).toBe(true);
+      // 26-VERIFICATION.md gap 1: the wire field reaches the store, so
+      // `isPasswordHidden`/`canEditItem` (and therefore DetailPanel's mask)
+      // have something real to read. Before this, `access_level` never left
+      // the server on this read path at all and the recipient's client had
+      // no way to know the grant was `hidden_password`.
+      expect(item.accessLevel).toBe("hidden_password");
       expect(item.revision).toBe(revision);
       expect(item.fields).toEqual({
         type: "note",

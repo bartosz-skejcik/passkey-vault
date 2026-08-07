@@ -15,6 +15,7 @@ import { interpolate } from "@/lib/i18n/dictionary";
 import type { VaultItem } from "@/lib/vault/types";
 import { updateVaultItem, useFolders } from "@/lib/vault/store";
 import { useCollections } from "@/lib/vault/collections";
+import { canEditItem } from "@/lib/vault/itemCapabilities";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
 import { showCopyToast } from "@/lib/vault/copyToast";
@@ -157,6 +158,13 @@ export default function ItemContextMenu({
         </li>
       ))}
 
+      {/* 26-VERIFICATION.md gap 1/3: Move writes through the SAME
+          `updateVaultItem` Edit does, so for an item this caller cannot
+          write it fails identically -- `DirectShareNotEditableError` or a
+          server 403 -- and lands as the generic `error.itemMoveFailed`
+          retry toast over an operation that can never succeed. Same
+          affordance-for-an-impossible-operation shape, same guard. */}
+      {canEditItem(item) ? (
       <li>
         <details>
           <summary data-testid="context-menu-move">{t("action.move")}</summary>
@@ -184,6 +192,7 @@ export default function ItemContextMenu({
           </ul>
         </details>
       </li>
+      ) : null}
 
       {/* E1 (26-UI-SPEC.md): "Share…" mirrors Move's own list position/testid
           convention — a sibling `<li>` opening ShareDialog directly rather
@@ -258,7 +267,7 @@ export default function ItemContextMenu({
           a second note here would just repeat it. */}
       {item.fields.type !== "passkey" &&
       item.undecryptable !== true &&
-      item.sharedToMe !== true ? (
+      canEditItem(item) ? (
         <li>
           <button type="button" data-testid="context-menu-edit" onClick={handleEdit}>
             {t("item.edit")}

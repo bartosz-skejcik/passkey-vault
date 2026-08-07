@@ -180,6 +180,32 @@ export interface VaultItem {
   // Metadata only, never derived from ciphertext. Set exclusively by
   // `lib/vault/store.ts`'s `decryptDirectSharedRow`.
   sharedToMe?: boolean;
+  // 26-VERIFICATION.md gap 1 (SHARE-03): the CALLER'S OWN effective access
+  // level for this item -- `read` | `edit` | `hidden_password`, or an
+  // unrecognized value straight off the wire (never normalized, so
+  // `lib/families/accessLevel.ts`'s fail-closed `access.unknown` discipline
+  // can see it). `undefined` means "the caller owns this item outright" --
+  // a personal item, where `Item::resolve_access` grants
+  // `AccessLevel::Edit` unconditionally -- NOT "unknown, assume the worst".
+  //
+  // Set by `lib/vault/store.ts` for exactly the two non-owning read paths:
+  // `decryptDirectSharedRow` (the recipient's own `item_shares.access_level`
+  // off `GET /api/sync/shared/direct`) and `decryptItemRow`'s
+  // collection-scoped arm (the caller's own `collection_keys.access_level`,
+  // read from the collections store -- note a collection-scoped item's
+  // creator gets NO ownership grant server-side either, deliberately, so
+  // this applies to items the caller created inside a shared folder too).
+  //
+  // Metadata only, never derived from ciphertext. It is NOT an enforcement
+  // channel -- 26-CONTEXT.md A-6: hidden-password is an interface protection
+  // by construction, because the recipient holds the item's Cipher Key and
+  // can recover the password by other means. What this field makes possible
+  // is the narrow, stated claim SHARE-03 actually makes: an honest client
+  // masks the password field and does not reveal it through the ordinary
+  // toggle. Server-side authorization (`Membership<Item, RequireEdit>`) is
+  // and remains the only thing standing between a modified client and a
+  // write.
+  accessLevel?: string;
   // CR-03 (code review iteration 1): `true` when this item is a retained
   // last-known-good copy from a background sync merge whose server row
   // failed to decrypt (corrupted blob, a stale/foreign ciphertext, or —

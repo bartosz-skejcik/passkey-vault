@@ -743,6 +743,91 @@ describe("DetailPanel Share entry point (E1, 26-09-PLAN.md)", () => {
   });
 });
 
+// 26-VERIFICATION.md gap 1 (SHARE-03, the phase's most serious defect).
+// Live probe P4: "reveal-password toggle count = 1, one click, plaintext
+// visible = true" — for a recipient granted `hidden_password`, whose
+// requirement text is literally "usable but the password field is masked",
+// and whose owner had just been shown copy promising they would not
+// "accidentally see it on screen".
+describe("DetailPanel — hidden_password actually masks the password (26-VERIFICATION gap 1)", () => {
+  const hiddenPwItem: VaultItem = {
+    ...loginItem,
+    isShared: true,
+    sharedToMe: true,
+    accessLevel: "hidden_password",
+  };
+
+  it("suppresses the reveal toggle entirely — the exact affordance probe P4 used", () => {
+    render(<DetailPanel item={hiddenPwItem} onClose={vi.fn()} />);
+
+    expect(screen.queryByTestId("reveal-password")).not.toBeInTheDocument();
+  });
+
+  it("reproduces live probe P4 — clicking whatever reveal affordance exists still shows no plaintext", () => {
+    // P4 verbatim: "reveal-password toggle count = 1, one click, plaintext
+    // visible = true". Written as "click it if it is there" rather than
+    // "assert it is not there" so this test measures the OUTCOME the probe
+    // measured (is the password on screen?) and cannot be satisfied by
+    // merely hiding the button while leaving the value revealable.
+    render(<DetailPanel item={hiddenPwItem} onClose={vi.fn()} />);
+
+    const toggle = screen.queryByTestId("reveal-password");
+    if (toggle !== null) {
+      fireEvent.click(toggle);
+    }
+
+    expect(screen.queryByText("hunter2")).not.toBeInTheDocument();
+    expect(screen.getByText("•".repeat(10))).toBeInTheDocument();
+  });
+
+  it("KEEPS the copy affordance — SHARE-03 says USABLE but masked", () => {
+    // A web app has no autofill; a password that cannot be copied is not
+    // usable, which would break the other half of the requirement.
+    render(<DetailPanel item={hiddenPwItem} onClose={vi.fn()} />);
+
+    expect(screen.getByTestId("copy-password")).toBeInTheDocument();
+  });
+
+  it("explains the level to the recipient without claiming it is cryptographic", () => {
+    render(<DetailPanel item={hiddenPwItem} onClose={vi.fn()} />);
+
+    expect(screen.getByTestId("hidden-password-recipient-note")).toHaveTextContent(
+      "share.hiddenPasswordRecipientNote",
+    );
+  });
+
+  it("leaves every OTHER item's reveal toggle exactly as it was", () => {
+    // read-level: no mask (SHARE-03 masks only at hidden_password).
+    const { unmount } = render(
+      <DetailPanel item={{ ...loginItem, sharedToMe: true, accessLevel: "read" }} onClose={vi.fn()} />,
+    );
+    expect(screen.getByTestId("reveal-password")).toBeInTheDocument();
+    expect(screen.queryByTestId("hidden-password-recipient-note")).not.toBeInTheDocument();
+    unmount();
+
+    // A personal item the caller owns: unchanged.
+    render(<DetailPanel item={loginItem} onClose={vi.fn()} />);
+    expect(screen.getByTestId("reveal-password")).toBeInTheDocument();
+  });
+
+  it("masks a COLLECTION-scoped item held at hidden_password too, not only a direct share", () => {
+    mockUseCollections.mockReturnValue([{ id: "col-1", name: "Rodzina", accessLevel: "hidden_password" }]);
+    render(
+      <DetailPanel
+        item={{ ...loginItem, isShared: true, collectionId: "col-1", accessLevel: "hidden_password" }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("reveal-password")).not.toBeInTheDocument();
+    expect(screen.getByTestId("copy-password")).toBeInTheDocument();
+    // And Edit is gone: `RequireEdit` is an exact match, so the server would
+    // 403 the save — and an edit form would render the password in a plain
+    // input, defeating the mask outright.
+    expect(screen.queryByTestId("detail-panel-edit")).not.toBeInTheDocument();
+  });
+});
+
 // 26-VERIFICATION.md gap 3 (live probe P5: "Edit button count = 1; save
 // banner = 'Failed to save item. Please try again.'"). This is the
 // WINDOWS #11 / commit `4450dc0` failure class — an affordance offered over
