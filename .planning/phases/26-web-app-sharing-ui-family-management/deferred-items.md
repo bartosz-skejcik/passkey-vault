@@ -102,3 +102,76 @@ caller is the item's own creator (the Collection Key is shared identically
 by every member), so a non-owning member with `edit` access on a shared
 collection item they can now SEE (this plan's WINDOWS #8 fix) can already
 save it correctly today — no analogous guard was needed for that case.
+
+## From 26-VERIFICATION-FIX.md (gap closure, 2026-08-07)
+
+### 1. Hidden-password masking does not extend to vault export (WINDOWS #12)
+
+Blocker 1 made SHARE-03's `hidden_password` a real interface mask in the
+item detail view: the reveal toggle is suppressed and the plaintext never
+renders. `ExportDialog.tsx` calls `getItems()` — the MERGED view, which
+since 26-14 includes items shared TO the caller — and hands it to
+`buildCsvExport`/`buildJsonExport`, both of which emit
+`fields.password` verbatim (`toCsv.ts:59`). So a recipient can still obtain
+the plaintext through Settings → Export, in two clicks.
+
+**Not fixed here, deliberately, and this is the honest reasoning — not a
+scope excuse:**
+
+- It is genuinely inside what D-2's disclosure already discloses. The
+  owner-facing copy says the recipient "still holds the decryption key and
+  can technically recover it (e.g. via browser developer tools, or by
+  reading the encrypted data directly)". An explicit whole-vault export is
+  squarely a deliberate recovery act, not "accidentally seeing it on
+  screen", which is the harm SHARE-03 and the disclosure both name.
+- The obvious fix is worse than the gap if done carelessly. Silently
+  blanking a password in a user's own vault BACKUP is data loss the user
+  will not notice until they need the backup. Doing it honestly means an
+  explicit in-file marker, which is new export-format surface and new i18n
+  in a file this pass does not otherwise touch.
+- Nothing in the shipped copy overclaims because of it. The recipient-facing
+  `share.hiddenPasswordRecipientNote` was deliberately worded "**this view**
+  masks it", not "hidden in the interface", precisely so this residual does
+  not make the copy a lie. That wording choice is the mitigation.
+
+**Whoever picks this up owns the decision** of blank-vs-marker in the export
+format, for BOTH exporters, and owes the same treatment in the extension
+(Phase 27) if it grows an export.
+
+### 2. CR-01's recovery is session-scoped; a closed dialog orphans a collection (WINDOWS #13)
+
+26-VERIFICATION.md's warning W-2, independently re-verified during this
+pass and **confirmed correct**:
+
+- `createdCollectionRef` is a component ref cleared on unmount
+  (`ShareDialog.tsx:350-357`), so retrying through the SAME open dialog is
+  genuinely idempotent — the fixer's scoped claim ("a user can complete a
+  partially-failed share by pressing the same button again") holds and is
+  tested.
+- But there is **no UI entry point anywhere that adds a member to an
+  EXISTING shared collection**. Re-verified by grep this pass: the only two
+  `ShareDialogScope` folder variants constructed anywhere are
+  `existingFolderId: <personal folder id>` (Sidebar:323) and
+  `existingFolderId: null` (Sidebar:422, FamilyTab:695) — both of which MINT
+  A NEW COLLECTION. The Sidebar's shared-folder rows (Sidebar:404-417) are
+  plain non-interactive `<div>`s: no kebab, no share action, no delete.
+- Consequence: closing the dialog after a partial failure strands the
+  half-granted collection permanently. Reopening mints a second one, and any
+  seed items already moved into the first are now collection-encrypted, so
+  they fail `decryptItem` on the re-move and count as fresh `seedMoveFailed`s.
+  The orphan then persists visibly in the "Shared folders" sidebar with no
+  delete affordance.
+
+**Not fixed here because the fix is a new UI surface, not a guard.** It
+needs a kebab on the shared-folder row, a third `ShareDialogScope` variant
+(`existingCollectionId`), and a genuinely different crypto path in
+`ShareDialog`'s submit — unseal the caller's OWN `sealed_key` for that
+collection and re-seal the recovered Collection Key to the new recipient,
+rather than `WasmCollectionKey.generate()`'s mint-a-fresh-key path. That is
+feature work with its own real-WASM proof obligation, not gap closure, and
+inventing it under a verification-fix pass is how half-built surfaces get
+shipped.
+
+**The unscoped half of CR-01's claim ("no manual DB surgery") is
+therefore recorded as NOT TRUE**, and this entry — not the fix report — is
+the durable record of that.
