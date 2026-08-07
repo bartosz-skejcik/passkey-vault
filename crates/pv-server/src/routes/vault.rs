@@ -1257,11 +1257,24 @@ pub async fn list_item_shares(
     State(state): State<AppState>,
     membership: Membership<Item, RequireRead>,
 ) -> Result<Json<Vec<CoRecipientRecord>>, ApiError> {
+    // WR-16 (code review, Phase 26): the `family_members` join is scoped
+    // through the ITEM OWNER's own family (`fm_o`), adopting the shape the
+    // sibling `sync::pull_shared_direct` query already uses. The previous
+    // unscoped `JOIN family_members fm ON fm.user_id = s.recipient_user_id`
+    // was correct ONLY because `idx_families_singleton`
+    // (0014_family_sharing.sql) enforces exactly one family per instance:
+    // `family_members`' PK is `(family_id, user_id)`, so the moment
+    // multi-family lands each recipient would produce one duplicated row per
+    // membership and `(fm.status = 'suspended')` would become
+    // non-deterministic across them.
     let rows = sqlx::query(
         "SELECT s.recipient_user_id, u.email, s.access_level, s.created_at, \
                 (fm.status = 'suspended') AS suspended \
          FROM item_shares s JOIN users u ON u.id = s.recipient_user_id \
-         JOIN family_members fm ON fm.user_id = s.recipient_user_id \
+         JOIN vault_items i ON i.id = s.item_id \
+         JOIN family_members fm_o ON fm_o.user_id = i.user_id \
+         JOIN family_members fm ON fm.family_id = fm_o.family_id \
+                               AND fm.user_id = s.recipient_user_id \
          WHERE s.item_id = ? ORDER BY s.created_at ASC, s.recipient_user_id ASC",
     )
     .bind(&membership.resource_id)

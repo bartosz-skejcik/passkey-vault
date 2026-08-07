@@ -613,11 +613,19 @@ pub async fn access_list(
     State(state): State<AppState>,
     membership: Membership<Collection, RequireRead>,
 ) -> Result<Json<Vec<CoRecipientRecord>>, ApiError> {
+    // WR-16 (code review, Phase 26): the `family_members` join is scoped
+    // through the COLLECTION's own `family_id` (collections carry it
+    // directly, unlike items). The previous unscoped join was correct ONLY
+    // because `idx_families_singleton` enforces exactly one family per
+    // instance -- see `vault::list_item_shares`'s own note for the full
+    // rationale.
     let rows = sqlx::query(
         "SELECT ck.recipient_user_id, u.email, ck.access_level, ck.created_at, \
                 (fm.status = 'suspended') AS suspended \
          FROM collection_keys ck JOIN users u ON u.id = ck.recipient_user_id \
-         JOIN family_members fm ON fm.user_id = ck.recipient_user_id \
+         JOIN collections c ON c.id = ck.collection_id \
+         JOIN family_members fm ON fm.family_id = c.family_id \
+                               AND fm.user_id = ck.recipient_user_id \
          WHERE ck.collection_id = ? ORDER BY ck.created_at ASC, ck.recipient_user_id ASC",
     )
     .bind(&membership.resource_id)
