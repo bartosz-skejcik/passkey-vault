@@ -20,48 +20,47 @@
 //      two genuinely independent, freshly-registered accounts -- not two
 //      mocked component instances.
 //
-// Real bug found while building this file (see the header comment above
-// `test 2` and this file's own SUMMARY.md "Deviations"/"Threat Flags"
-// sections for the full writeup): `web/src/lib/vault/collections.ts` has NO
-// live-update subscription at all (unlike `store.ts`'s own
-// `onSharedRevisions` wiring for items) -- a member newly added to a
-// collection does not see it in `useCollections()` (Sidebar's "Shared
-// folders" section, or `getCollectionKey()`'s decrypt dispatch) until their
-// NEXT lock/unlock cycle. This file's `reloadAndUnlock` helper below is the
-// realistic, honest way a real user's browser would eventually pick this up
-// -- not a workaround invented to make an otherwise-broken assertion pass.
+// HISTORY OF THIS FILE'S HEADER -- read this before trusting any comment
+// below it. As originally written, this header documented three real,
+// then-open gaps (WINDOWS #7/#8/#9) that Plan 26-14 subsequently CLOSED. The
+// header was never updated, and neither was test 2's assertion: it kept
+// asserting the pre-26-14 broken behaviour ("the member's item list does NOT
+// show a co-member's item") and kept PASSING, because Playwright's
+// `toHaveCount(0)` is satisfied by the first observation of zero, which
+// always precedes the shared-item merge. 26-VERIFICATION.md's probe P2
+// proved it vacuous by inserting a 5s settle: "Expected: 0 / Received: 1 /
+// 34 x locator resolved to 1 element".
 //
-// A second, larger real bug found: the RECIPIENT-side read path for a
-// directly-shared (non-collection) personal item does not exist ANYWHERE in
-// this codebase's client. `GET /api/sync/shared/direct` has shipped
-// fully-authorized since Phase 23 (this file's own "direct.revision" bonus
-// assertion in test 3 proves the SERVER half is healthy) but NO client code
-// anywhere calls it, decrypts its payload, or merges it into the vault item
-// list -- confirmed by 26-08-SUMMARY.md's own "Next Phase Readiness" note
-// ("the RECIPIENT-side read path ... is NOT built by this plan ... remains
-// open") and by a direct grep of this repo turning up zero call sites. Test
-// 3 therefore proves SHARE-02/UX-05's real crypto + real server persistence
-// (the sender's half), and explicitly does NOT attempt to assert a
-// recipient-side UI badge that cannot exist today -- see that test's own
-// header comment.
+// So the phase's flagship live proof asserted the negation of what shipped,
+// and would have stayed green through a total regression -- an absence
+// assertion cannot fail when the feature breaks. Both the assertion and this
+// header were corrected in 26-VERIFICATION-FIX.md (blocker 3).
 //
-// A third, phase-defining real bug found (test 2's own inline comment has
-// the full writeup): `crates/pv-server/src/routes/vault.rs::fetch_items_for`'s
-// collection-scoped SQL arm filters `WHERE i.user_id = ?` bound to the
-// CALLER's own id -- so `GET /api/vault/items`/`GET /api/sync` only ever
-// return a collection-scoped item to the account that OWNS it, never to a
-// fellow collection member who does not. The dedicated read path that WOULD
-// show a co-member's item (`GET /api/sync/shared/collection/{id}`,
-// `pull_shared_collection`) has zero client consumers anywhere in `web/src`
-// (confirmed by grep). This means a collection member other than an item's
-// own creator cannot see that item through this web app's real UI AT ALL
-// today -- test 2 below asserts this honestly (the member's item list is
-// asserted to STAY EMPTY of the owner's item, not merely left unchecked),
-// and shared-sync.spec.ts's own Task-2 tests route around it by putting the
-// non-owning member's conflicting write on a raw, Node-side-real-crypto
-// request rather than through that member's own (structurally unable to
-// reach the item) UI. This is a new-client-fetch-path-sized gap, well
-// outside this verification-only plan's own declared scope to fix.
+// CURRENT STATE, as asserted live by the tests below:
+//
+//   WINDOWS #7 (collections.ts had no live-update subscription) -- CLOSED by
+//   26-14's `refreshCollectionsNow()` wiring. `reloadAndUnlock` is still
+//   used below, but as the honest way a second session picks up a brand-new
+//   grant across a reload, not as a workaround for a missing subscription.
+//
+//   WINDOWS #8 (`fetch_items_for`'s collection arm filtered `WHERE
+//   i.user_id = ?` bound to the CALLER, so a co-member never saw the item) --
+//   CLOSED by 26-14 wiring `GET /api/sync/shared/collection/{id}`. Test 2
+//   now asserts the item IS visible, IS decrypted, and IS reachable through
+//   the shared folder's own filter.
+//
+//   WINDOWS #9 (no client consumer of `GET /api/sync/shared/direct`) --
+//   CLOSED by 26-14. Test 3 now asserts the recipient side for real: the
+//   item appears, carries the inbound `item-shared-with-you` marker, and
+//   -- 26-VERIFICATION-FIX.md blocker 1 -- a `hidden_password` recipient has
+//   no reveal affordance and no plaintext on screen, with a `read`-level
+//   item as the control proving the difference is the GRANT, not the
+//   direction.
+//
+// Three obligations this file originally owed (26-13-PLAN.md's own
+// <phase_context>) are unchanged and still asserted below: WR-09's real
+// folder name, Backstop #6's real browser layout, and KEY-01's client
+// trigger for two genuinely fresh accounts.
 import type { Browser, BrowserContext, Page } from "@playwright/test";
 import {
   test,
@@ -398,23 +397,43 @@ test("owner shares a real folder with a member -- closes WR-09 live with real av
     "the member's own sidebar must show the EXACT real folder name, never a raw collection id",
   ).toContainText(sharedFolderName, { timeout: 20000 });
 
-  // Second real, phase-defining bug found (this file's own header comment):
-  // `vault.rs::fetch_items_for`'s collection-scoped arm filters
-  // `WHERE i.user_id = ?` bound to the CALLER -- so `GET /api/vault/items`
-  // never returns a collection-scoped item to a member who does not own it,
-  // only to its own creator. The member's OWN item list is therefore
-  // correctly, honestly asserted to STAY EMPTY of this item -- it must
-  // never appear via a wrong/lucky path -- even though the member's sidebar
-  // above genuinely shows the real folder name (that data comes from
-  // `GET /api/vault/collections`, a completely separate, unaffected code
-  // path). This is a confirmed client-side gap (the dedicated
-  // `GET /api/sync/shared/collection/{id}` read path has zero consumers
-  // anywhere in `web/src`, confirmed by grep), not something fixable within
-  // this verification-only plan's scope -- see 26-13-SUMMARY.md.
+  // 26-VERIFICATION.md gap 4. This assertion used to read
+  // `.toHaveCount(0)` -- "confirms the known gap: the member's item list
+  // does NOT show a co-member's item today" -- describing the PRE-26-14
+  // world. WINDOWS #8 closed that gap; the assertion was never updated, and
+  // it kept passing because Playwright's `toHaveCount(0)` succeeds on the
+  // FIRST observation of zero, which always happens before the shared-item
+  // merge lands. The verifier's probe P2 inserted a 5s settle before the
+  // otherwise-verbatim assertion and it failed with
+  // "Expected: 0 / Received: 1 / 34 x locator resolved to 1 element".
+  //
+  // So the phase's own flagship live proof asserted the NEGATION of what
+  // ships, and -- being an absence assertion -- would have stayed green
+  // through a total regression of the recipient read path.
+  //
+  // Written so it cannot pass on a race in either direction. `toBeVisible`
+  // POLLS until the settled state arrives (it cannot be satisfied by a
+  // transient early observation the way an absence assertion can), and the
+  // three assertions below tighten it further: exactly one row, genuinely
+  // DECRYPTED (the real plaintext name, not a placeholder or a raw id --
+  // which is what proves the Collection Key path really ran), and reachable
+  // through the shared folder's own filter rather than only in the flat
+  // "all items" list.
+  const memberItemRow = member.page.getByTestId(`item-row-${itemId}`);
   await expect(
-    member.page.getByTestId(`item-row-${itemId}`),
-    "confirms the known gap: the member's item list does NOT show a co-member's item today",
-  ).toHaveCount(0);
+    memberItemRow,
+    "WINDOWS #8: a non-owning collection member MUST see the co-member's item in their own list",
+  ).toBeVisible({ timeout: 20000 });
+  await expect(memberItemRow).toHaveCount(1);
+  await expect(
+    memberItemRow,
+    "and it must be genuinely DECRYPTED via the Collection Key -- a raw id or placeholder would mean the merge ran but the crypto did not",
+  ).toContainText(itemName);
+  await member.page.getByTestId(`sidebar-shared-folder-${collectionId}`).click();
+  await expect(
+    memberItemRow,
+    "the item must also be reachable through the shared folder's own filter, not merely present in the flat list",
+  ).toBeVisible({ timeout: 20000 });
 
   // WR-09's own explicit "verify that" instruction (obligation #5): the
   // Remove-member disclosure list shows the REAL folder name, never
@@ -437,22 +456,19 @@ test("owner shares a real folder with a member -- closes WR-09 live with real av
   await owner.context.close();
 });
 
-// Real, confirmed architectural gap (this file's header comment, restated
-// here since it's exactly why this test's scope stops where it does): the
-// RECIPIENT-side read path for a directly-shared (non-collection) personal
-// item does not exist anywhere in this client. `GET /api/sync/shared/direct`
-// has been server-complete and authorized since Phase 23; NO code in
-// `web/src/lib` ever calls it, decrypts its payload, or merges it into the
-// vault list -- confirmed by grep and by 26-08-SUMMARY.md's own "Next Phase
-// Readiness" note. This test therefore proves the SENDER's real crypto +
-// real server persistence (SHARE-02's actual authoring surface, with a real
-// WASM seal to the recipient's real published public key, and the honest
-// hidden-password disclosure gate) end-to-end, and additionally proves the
-// server-side notification PIPELINE for the recipient is healthy (the
-// "direct.revision" bonus assertion) -- but it does NOT assert a
-// recipient-side "access.*-badged" UI, because no such UI exists yet to
-// assert on. See this plan's own SUMMARY.md for the full writeup and the
-// follow-up this unblocks.
+// Both halves of SHARE-02/SHARE-03/UX-03, end to end.
+//
+// SENDER: real crypto (a real WASM seal to the recipient's real published
+// public key), real server persistence at all three levels, and the
+// one-time hidden-password disclosure gate firing exactly once.
+//
+// RECIPIENT: added in 26-VERIFICATION-FIX.md. This test previously stopped
+// at the sender's half and said so explicitly -- correctly, at the time,
+// since no recipient read path existed (WINDOWS #9). 26-14 built it, which
+// is precisely what made SHARE-03's hidden-password claim FALSE for the
+// first time (before it, the recipient saw nothing at all, so the claim was
+// vacuously satisfied) -- and nothing here asserted it. The recipient block
+// at the end of this test is the live proof the verifier found missing.
 test("owner-of-item shares a personal item directly at all three access levels, honoring the one-time hidden-password disclosure (SHARE-02, UX-03)", async ({
   twoSessions,
   browser,
@@ -543,9 +559,73 @@ test("owner-of-item shares a personal item directly at all three access levels, 
   const sharedBody = (await sharedRes.json()) as { direct: { revision: number } };
   expect(
     sharedBody.direct.revision,
-    "the recipient's own GET /api/sync/shared 'direct' bucket must reflect all 4 real shares -- proving " +
-      "the server-side pipeline is healthy even though no client UI consumes it yet (documented gap)",
+    "the recipient's own GET /api/sync/shared 'direct' bucket must reflect all 4 real shares",
   ).toBeGreaterThanOrEqual(4);
+
+  // ------------------------------------------------------------------
+  // RECIPIENT SIDE. 26-VERIFICATION.md gaps 1, 3 and 4: this test used to
+  // stop at the sender's half and explicitly disclaim any recipient-side
+  // assertion, because before 26-14 no recipient read path existed. WINDOWS
+  // #9 closed that, which is exactly what made the two honesty defects below
+  // reachable -- and nothing asserted either of them until now.
+  // ------------------------------------------------------------------
+  await reloadAndUnlock(recipient.page, SESSION_PASSWORD);
+
+  const hiddenRow = recipient.page.getByTestId(`item-row-${hiddenFirstItemId}`);
+  await expect(
+    hiddenRow,
+    "WINDOWS #9: a direct-share recipient MUST see the item in their own list",
+  ).toBeVisible({ timeout: 20000 });
+  await expect(
+    hiddenRow.getByTestId("item-shared-with-you"),
+    "UX-05: and it must be marked as INBOUND, never as an outgoing share of the recipient's own",
+  ).toBeVisible();
+
+  await hiddenRow.click();
+  await recipient.page.getByTestId("detail-panel").waitFor({ state: "visible" });
+
+  // SHARE-03, live. This is the exact affordance verifier probe P4 used:
+  // "reveal-password toggle count = 1, one click, plaintext visible = true"
+  // for a recipient granted `hidden_password`, while the owner had just
+  // acknowledged copy promising they would not "accidentally see it on
+  // screen".
+  await expect(
+    recipient.page.getByTestId("reveal-password"),
+    "SHARE-03: a hidden_password recipient must have NO reveal affordance",
+  ).toHaveCount(0);
+  await expect(
+    recipient.page.getByTestId("detail-panel").getByText(`pw-HiddenShareFirst-${suffix}`),
+    "SHARE-03: and the plaintext password must not be on screen at all",
+  ).toHaveCount(0);
+  await expect(
+    recipient.page.getByTestId("copy-password"),
+    "SHARE-03 says USABLE but masked -- copy must survive, or the level is not usable at all",
+  ).toBeVisible();
+  await expect(
+    recipient.page.getByTestId("hidden-password-recipient-note"),
+    "UX-03's recipient half: the level is explained, never a silently missing button",
+  ).toBeVisible();
+
+  // 26-VERIFICATION.md gap 3, live (probe P5: Edit button count = 1, save
+  // banner = "Failed to save item. Please try again.").
+  await expect(
+    recipient.page.getByTestId("detail-panel-edit"),
+    "no Edit affordance over an operation that can never succeed for a direct-share recipient",
+  ).toHaveCount(0);
+  await expect(recipient.page.getByTestId("item-shared-with-you-not-editable")).toBeVisible();
+
+  // The `read`-level item is the control: same recipient, same reload, same
+  // panel -- its password IS revealable, so the assertions above are
+  // measuring the GRANT LEVEL and not merely "recipients can never reveal
+  // anything".
+  await recipient.page.getByTestId("detail-panel-close").click();
+  await recipient.page.getByTestId(`item-row-${readItemId}`).click();
+  await recipient.page.getByTestId("detail-panel").waitFor({ state: "visible" });
+  await expect(
+    recipient.page.getByTestId("reveal-password"),
+    "control: a `read`-level recipient's password stays revealable -- hidden_password is what differs",
+  ).toBeVisible();
+  await expect(recipient.page.getByTestId("hidden-password-recipient-note")).toHaveCount(0);
 
   expect(sharer.dialogFired(), "zero OS-level dialogs across the sharer session").toBe(false);
   expect(recipient.dialogFired(), "zero OS-level dialogs across the recipient session").toBe(false);
