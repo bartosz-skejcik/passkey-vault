@@ -1251,6 +1251,25 @@ export const DICTIONARY = {
     pl: "Ten item udostępniła Ci inna osoba — dostępem zarządza jego właściciel.",
     en: "Someone else shared this item with you — its owner manages access.",
   },
+  // 26-VERIFICATION.md gap 3 (WINDOWS #11 / commit 4450dc0 class, third
+  // occurrence): the Edit affordance was rendered for a directly-shared item
+  // and every save failed with `error.itemSaveFailed` -- "Failed to save
+  // item. Please try again." -- over an operation that is structurally
+  // impossible and will never succeed, inviting an infinite retry.
+  // `DirectShareNotEditableError` (store.ts) had the correct data-layer
+  // refusal and ZERO UI consumers.
+  //
+  // Says plainly that the capability does not exist yet, and names the one
+  // action that does work (ask the owner). Deliberately does NOT explain the
+  // crypto reason in user copy -- "no encrypt-as-shared-key-recipient
+  // primitive exists" is true but useless to the reader, and any shorter
+  // paraphrase of it ("this app has no key for it") would be FALSE: the
+  // recipient does hold the item's Cipher Key. Same "not yet available,
+  // stated plainly" pattern Phase 24 used for the collection-scoped invite.
+  "share.sharedWithYouNotEditable": {
+    pl: "Edycja itemu udostępnionego Ci bezpośrednio nie jest jeszcze dostępna. Poproś właściciela o wprowadzenie zmiany.",
+    en: "Editing isn't available yet for an item shared directly with you. Ask its owner to make the change.",
+  },
   "identity.yourFingerprintHeading": { pl: "Twój odcisk tożsamości", en: "Your identity fingerprint" },
   "identity.fingerprintRevealAria": {
     pl: "Pokaż odcisk tożsamości {email}",

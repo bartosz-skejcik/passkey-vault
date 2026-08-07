@@ -14,7 +14,12 @@ import {
   X,
 } from "lucide-react";
 import type { ItemFields, VaultItem } from "@/lib/vault/types";
-import { RevisionConflictError, touchVaultItem, useFolders } from "@/lib/vault/store";
+import {
+  DirectShareNotEditableError,
+  RevisionConflictError,
+  touchVaultItem,
+  useFolders,
+} from "@/lib/vault/store";
 import { useCollections } from "@/lib/vault/collections";
 import { getStoredEmail } from "@/lib/auth/session";
 import { useLocale } from "@/lib/i18n/LocaleContext";
@@ -132,7 +137,13 @@ export default function DetailPanel({
   // codebase's i18n discipline routes all user-facing copy through `t()`);
   // reuses the existing generic "itemSaveFailed" string ItemForm's own
   // create-mode path already shows for the same class of failure.
-  const [saveError, setSaveError] = useState(false);
+  //
+  // 26-VERIFICATION.md gap 3: widened from a boolean to a discriminated
+  // reason so `DirectShareNotEditableError` -- which had ZERO UI consumers
+  // anywhere -- can no longer be flattened into the generic retry-inviting
+  // copy. "generic" preserves the pre-existing behaviour byte-for-byte for
+  // every other error.
+  const [saveError, setSaveError] = useState<null | "generic" | "notEditable">(null);
   // Proactive live-edit-conflict banner (SYNC-03) — a SECOND, independently
   // controlled trigger path alongside the reactive save-time `conflict`
   // state above; never merged into one boolean. Captured only at edit-entry
@@ -167,7 +178,7 @@ export default function DetailPanel({
     setMode(initialMode);
     setConflict(false);
     setConflictEditorEmail(undefined);
-    setSaveError(false);
+    setSaveError(null);
     if (initialMode === "edit") {
       setEditBaselineRevision(item.revision);
     }
@@ -205,7 +216,7 @@ export default function DetailPanel({
   function startEditing() {
     setConflict(false);
     setConflictEditorEmail(undefined);
-    setSaveError(false);
+    setSaveError(null);
     setEditBaselineRevision(item.revision);
     setMode("edit");
   }
@@ -350,7 +361,24 @@ export default function DetailPanel({
                   <Share2 size={16} aria-hidden="true" />
                 </button>
               ) : null}
-              {item.fields.type !== "passkey" && item.undecryptable !== true ? (
+              {/* 26-VERIFICATION.md gap 3 (WINDOWS #11 / `4450dc0` class,
+                  third occurrence in this repo): `item.sharedToMe` was NOT
+                  suppressed here, unlike the Share button two guards above.
+                  A recipient of a direct share -- at ANY access level,
+                  including `edit` -- got a working-looking Edit button whose
+                  every save hit `DirectShareNotEditableError` in the store
+                  and surfaced as the generic `error.itemSaveFailed`
+                  ("Failed to save item. Please try again."), i.e. a retry
+                  invitation over an operation that can never succeed.
+                  `share.sharedWithYouNotEditable` below says plainly that
+                  the capability does not exist yet -- replaced, never merely
+                  disabled, the same discipline the Share affordance already
+                  applies for the collection-scoped and shared-to-me cases.
+                  The store-level guard STAYS as the data-layer backstop; the
+                  `onError` mapping below is its third layer. */}
+              {item.fields.type !== "passkey" &&
+              item.undecryptable !== true &&
+              item.sharedToMe !== true ? (
                 <button
                   type="button"
                   data-testid="detail-panel-edit"
@@ -405,8 +433,17 @@ export default function DetailPanel({
         // CR-02: the honest replacement for the suppressed Share affordance
         // above — this caller does not own the item and cannot grant access
         // to it.
-        <div data-testid="item-shared-with-you-note" className="text-sm text-base-content/70">
-          {t("share.sharedWithYouNote")}
+        <div data-testid="item-shared-with-you-note" className="flex flex-col gap-1 text-sm text-base-content/70">
+          <span>{t("share.sharedWithYouNote")}</span>
+          {/* 26-VERIFICATION.md gap 3: the honest replacement for the
+              suppressed Edit affordance above. Rendered for every direct
+              share regardless of granted level -- a recipient holding
+              `edit` is exactly the person who would otherwise look for the
+              pencil button and find nothing, so they are the one owed the
+              explanation. */}
+          <span data-testid="item-shared-with-you-not-editable">
+            {t("share.sharedWithYouNotEditable")}
+          </span>
         </div>
       ) : null}
 
@@ -466,9 +503,20 @@ export default function DetailPanel({
               UndecryptableItemError guard tripping on a save that raced a
               background sync flagging this same item) used to be silently
               swallowed here entirely. */}
-          {saveError ? (
+          {/* 26-VERIFICATION.md gap 3: `DirectShareNotEditableError` no
+              longer falls into the generic branch. "Failed to save item.
+              Please try again." over an operation that can NEVER succeed is
+              the WINDOWS #11 / `4450dc0` failure shape verbatim; the honest
+              copy states the capability does not exist yet and names what
+              does work. Unreachable through the UI now that the Edit
+              affordance is suppressed above -- kept as the third layer, so
+              any future surface that reaches edit mode for such an item
+              still cannot produce the retry lie. */}
+          {saveError !== null ? (
             <div data-testid="item-save-error-banner" className="alert alert-error text-sm">
-              {t("error.itemSaveFailed")}
+              {saveError === "notEditable"
+                ? t("share.sharedWithYouNotEditable")
+                : t("error.itemSaveFailed")}
             </div>
           ) : null}
           <ItemForm
@@ -481,17 +529,19 @@ export default function DetailPanel({
             onCreated={() => {
               setConflict(false);
               setConflictEditorEmail(undefined);
-              setSaveError(false);
+              setSaveError(null);
               setMode("view");
             }}
             onError={(err) => {
               if (err instanceof RevisionConflictError) {
                 setConflict(true);
                 setConflictEditorEmail(err.lastEditorEmail);
+              } else if (err instanceof DirectShareNotEditableError) {
+                setSaveError("notEditable");
               } else {
                 // Never swallow: a network failure or UndecryptableItemError
                 // (CR-03) must surface something, not just stop the spinner.
-                setSaveError(true);
+                setSaveError("generic");
               }
             }}
           />

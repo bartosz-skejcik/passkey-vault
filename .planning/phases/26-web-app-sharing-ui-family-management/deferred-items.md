@@ -51,17 +51,47 @@ Not fixed here because:
   counterpart to the existing read-only `decryptItemWithSharedKey` — plus a
   WASM rebuild and a new real-WASM proof. That is new cryptographic surface,
   well beyond this (client-store-only) plan's declared scope.
-- No UI affordance in this phase specifically offers "edit" on a directly-
-  shared item yet (`DirectSharedItemRow`/`item_shares` do carry a per-
-  recipient `access_level`, but neither `pull_shared_direct`'s wire response
-  nor `store.ts`'s `VaultItem` shape surfaces it to the client today — a
-  second, smaller gap this plan also did not close, since no UI reads it).
+**CORRECTED 2026-08-07 (26-VERIFICATION.md gap 3 / warning W-4).** The
+second bullet of this deferral originally read:
 
-Whichever later plan builds "edit a directly-shared item" UI owns both: the
-new encrypt-side WASM primitive, and surfacing `access_level` through to the
-client so the UI can hide the edit affordance for a `read`-only recipient in
-the first place (defense-in-depth: `DirectShareNotEditableError` remains the
-data-layer backstop either way).
+> No UI affordance in this phase specifically offers "edit" on a directly-
+> shared item yet (`DirectSharedItemRow`/`item_shares` do carry a per-
+> recipient `access_level`, but neither `pull_shared_direct`'s wire response
+> nor `store.ts`'s `VaultItem` shape surfaces it to the client today — a
+> second, smaller gap this plan also did not close, since no UI reads it).
+
+**That was factually wrong, and the wrong reason is why the gap survived
+both 26-14 and the code review.** The verifier's live probe P5 found
+`detail-panel-edit` rendered for a `sharedToMe` item (count = 1), the form
+opening, accepting input, and Save producing `error.itemSaveFailed` —
+"Failed to save item. Please try again." — over an operation that can never
+succeed. That is the WINDOWS #11 / commit `4450dc0` retry-invitation shape
+on a new surface, its third occurrence in this repo.
+
+The affordance was rendered because `DetailPanel.tsx`'s Edit guard listed
+only `passkey` and `undecryptable`, while the Share button two lines above
+it — in the same file, from the same code review — DID suppress
+`sharedToMe`. Suppressing the affordance never needed the crypto primitive;
+only the *editing* does. Reading the deferral's own text as "no affordance
+exists" instead of checking the file is exactly the class of error a
+deferral record is supposed to prevent.
+
+**Closed 2026-08-07 (26-VERIFICATION-FIX.md, blocker 2):** the affordance is
+suppressed in both `DetailPanel.tsx` and `ItemContextMenu.tsx`,
+`share.sharedWithYouNotEditable` states plainly that the capability is not
+available yet, and `DirectShareNotEditableError` is now mapped in
+DetailPanel's `onError` to that same honest copy instead of the generic
+retry banner — the error class had ZERO UI consumers before. All three
+layers are mutation-verified in `DetailPanel.test.tsx` /
+`ItemContextMenu.test.tsx`.
+
+**Still genuinely deferred:** the encrypt-side primitive itself. Whichever
+later plan builds "edit a directly-shared item" owns the new
+encrypt-as-shared-key-recipient WASM primitive. `access_level` IS now on the
+wire and in `VaultItem` as of 26-VERIFICATION-FIX.md blocker 1 (SHARE-03's
+hidden-password masking needed it), so that half is no longer outstanding —
+the future plan can additionally gate edit on `accessLevel === "edit"`.
+`DirectShareNotEditableError` remains the data-layer backstop either way.
 
 **Collection-shared items carry the identical write-path gap for a
 NON-OWNING member**, already logged above from Plan 26-05 — this plan does

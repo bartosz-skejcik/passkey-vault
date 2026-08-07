@@ -14,6 +14,7 @@ const {
   mockGetCollectionAccessList,
   mockListItemShares,
   MockRevisionConflictError,
+  MockDirectShareNotEditableError,
 } = vi.hoisted(() => ({
   mockUseFolders: vi.fn(),
   mockUseAllTags: vi.fn(),
@@ -38,6 +39,15 @@ const {
       this.lastEditorEmail = lastEditorEmail;
     }
   },
+  // 26-VERIFICATION.md gap 3: DetailPanel now `instanceof`-branches on this
+  // class in its edit-mode `onError`, so the store mock must export it —
+  // `err instanceof undefined` is a TypeError, not a false.
+  MockDirectShareNotEditableError: class MockDirectShareNotEditableError extends Error {
+    constructor(itemId: string) {
+      super(`cannot save -- ${itemId} was shared directly with you`);
+      this.name = "DirectShareNotEditableError";
+    }
+  },
 }));
 
 vi.mock("@/lib/vault/store", () => ({
@@ -49,6 +59,7 @@ vi.mock("@/lib/vault/store", () => ({
   deleteVaultItem: mockDeleteVaultItem,
   touchVaultItem: mockTouchVaultItem,
   RevisionConflictError: MockRevisionConflictError,
+  DirectShareNotEditableError: MockDirectShareNotEditableError,
 }));
 
 vi.mock("@/lib/vault/collections", () => ({
@@ -728,6 +739,83 @@ describe("DetailPanel Share entry point (E1, 26-09-PLAN.md)", () => {
     expect(screen.queryByTestId("detail-panel-share")).not.toBeInTheDocument();
     expect(screen.getByTestId("item-shared-on-collection-note")).toHaveTextContent(
       "share.itemSharedOnCollectionNote",
+    );
+  });
+});
+
+// 26-VERIFICATION.md gap 3 (live probe P5: "Edit button count = 1; save
+// banner = 'Failed to save item. Please try again.'"). This is the
+// WINDOWS #11 / commit `4450dc0` failure class — an affordance offered over
+// a structurally impossible operation, failing with retry-inviting copy —
+// reintroduced on the direct-share recipient surface. Its THIRD occurrence
+// in this repo, so all three layers are asserted here.
+describe("DetailPanel — a directly-shared item never offers an edit it cannot honor (26-VERIFICATION gap 3)", () => {
+  const receivedItem: VaultItem = { ...item, isShared: true, sharedToMe: true };
+
+  it("suppresses the Edit affordance for a sharedToMe item, mirroring the Share button's own suppression", () => {
+    render(<DetailPanel item={receivedItem} onClose={vi.fn()} />);
+
+    expect(screen.queryByTestId("detail-panel-edit")).not.toBeInTheDocument();
+    // The pre-existing CR-02 Share suppression is unchanged — asserted here
+    // so a future edit to one guard cannot silently drop the other.
+    expect(screen.queryByTestId("detail-panel-share")).not.toBeInTheDocument();
+    // Delete stays: a recipient removing a received item from their OWN view
+    // is not the impossible operation; editing is.
+    expect(screen.getByTestId("detail-panel-delete")).toBeInTheDocument();
+  });
+
+  it("says plainly that editing isn't available yet instead of silently omitting the button", () => {
+    render(<DetailPanel item={receivedItem} onClose={vi.fn()} />);
+
+    expect(screen.getByTestId("item-shared-with-you-not-editable")).toHaveTextContent(
+      "share.sharedWithYouNotEditable",
+    );
+  });
+
+  it("keeps Edit for an item the caller merely reaches through a shared FOLDER (that save genuinely works — live probe P6)", () => {
+    mockUseCollections.mockReturnValue([{ id: "col-1", name: "Rodzina" }]);
+    render(
+      <DetailPanel
+        item={{ ...item, isShared: true, collectionId: "col-1" }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("detail-panel-edit")).toBeInTheDocument();
+    expect(screen.queryByTestId("item-shared-with-you-not-editable")).not.toBeInTheDocument();
+  });
+
+  // Layer 3: `DirectShareNotEditableError` had ZERO UI consumers — grep found
+  // it only in store.ts and its own tests — so the data layer's correct,
+  // loud refusal arrived in the UI as the generic retry invitation.
+  it("maps DirectShareNotEditableError to the honest copy, never the generic retry banner", async () => {
+    mockUpdateVaultItem.mockRejectedValue(new MockDirectShareNotEditableError("item-1"));
+    // `initialMode="edit"` stands in for ANY future surface that reaches
+    // edit mode for such an item — the header button is gone, but the guard
+    // must not depend on that being the only route.
+    render(<DetailPanel item={receivedItem} initialMode="edit" onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("item-save-error-banner")).toBeInTheDocument(),
+    );
+    const banner = screen.getByTestId("item-save-error-banner");
+    expect(banner).toHaveTextContent("share.sharedWithYouNotEditable");
+    expect(banner).not.toHaveTextContent("error.itemSaveFailed");
+  });
+
+  it("still shows the generic banner for every OTHER edit-mode failure (unchanged)", async () => {
+    mockUpdateVaultItem.mockRejectedValue(new Error("network error"));
+    render(<DetailPanel item={item} initialMode="edit" onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("item-save-error-banner")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("item-save-error-banner")).toHaveTextContent(
+      "error.itemSaveFailed",
     );
   });
 });

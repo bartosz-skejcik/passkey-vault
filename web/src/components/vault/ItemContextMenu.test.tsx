@@ -292,6 +292,41 @@ describe("ItemContextMenu", () => {
     expect(screen.getByTestId("context-menu-delete")).toBeInTheDocument();
   });
 
+  // 26-VERIFICATION.md gap 3: the SECOND route into edit mode for a
+  // directly-shared item. DetailPanel's own pencil button was the one the
+  // live probe found (P5), but this menu's entry mounted ItemForm in edit
+  // mode just the same, and its save hit the identical
+  // `DirectShareNotEditableError` -> generic "Failed to save item. Please
+  // try again." retry lie. Suppressed here for exactly the same reason
+  // `undecryptable` and `passkey` already are.
+  it("offers no Edit entry for an item shared directly TO this caller (deletion stays available)", () => {
+    render(
+      <ItemContextMenu
+        item={{ ...loginItem(), isShared: true, sharedToMe: true }}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+        onDeleteRequest={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("context-menu-edit")).not.toBeInTheDocument();
+    // The pre-existing CR-02 note stays as the honest replacement.
+    expect(screen.getByTestId("context-menu-shared-with-you-note")).toBeInTheDocument();
+    expect(screen.getByTestId("context-menu-delete")).toBeInTheDocument();
+  });
+
+  it("keeps the Edit entry for an item reached through a shared FOLDER (that save genuinely works)", () => {
+    mockUseCollections.mockReturnValue([{ id: "col-1", name: "Rodzina" }]);
+    render(
+      <ItemContextMenu
+        item={{ ...loginItem(), isShared: true, collectionId: "col-1" }}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+        onDeleteRequest={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("context-menu-edit")).toBeInTheDocument();
+  });
+
   it("clicking Delete calls onDeleteRequest without performing a direct delete", () => {
     const onDeleteRequest = vi.fn();
     render(

@@ -247,7 +247,18 @@ export default function ItemContextMenu({
           DetailPanel's onError only handled RevisionConflictError, so the
           UndecryptableItemError was silently swallowed: the spinner just
           stopped, nothing saved, nothing said. */}
-      {item.fields.type !== "passkey" && item.undecryptable !== true ? (
+      {/* 26-VERIFICATION.md gap 3: `item.sharedToMe` joins the same
+          suppression list, mirroring DetailPanel.tsx's own Edit guard.
+          Reaching edit mode through THIS menu was the second route to the
+          same never-succeeding save (`DirectShareNotEditableError` ->
+          DetailPanel's generic `error.itemSaveFailed` retry copy). The
+          honest replacement is rendered by DetailPanel
+          (`item-shared-with-you-not-editable`); this menu already carries
+          its own `context-menu-shared-with-you-note` for the same item, so
+          a second note here would just repeat it. */}
+      {item.fields.type !== "passkey" &&
+      item.undecryptable !== true &&
+      item.sharedToMe !== true ? (
         <li>
           <button type="button" data-testid="context-menu-edit" onClick={handleEdit}>
             {t("item.edit")}
