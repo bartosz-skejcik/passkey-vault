@@ -1,116 +1,34 @@
 ---
 phase: 26-web-app-sharing-ui-family-management
-verified: 2026-08-07T10:45:00Z
-status: gaps_found
-score: 4/5 success criteria verified
+verified: 2026-08-07T12:20:00Z
+status: passed
+score: 5/5 success criteria verified
 behavior_unverified: 0
 overrides_applied: 0
 re_verification:
-  previous_status: none
-  previous_score: n/a
-  note: "Initial verification. 26-REVIEW.md / 26-REVIEW-FIX.md are a code review, not a phase verification."
-gaps:
-  - truth: "SHARE-03: each share carries one of three access levels — read-only, full edit, or hidden password (usable but the password field is masked)"
-    status: failed
-    reason: >-
-      `hidden_password` is a stored label with ZERO effect on any recipient surface in the web
-      app. Live-proven: a recipient granted `hidden_password` on a direct share opens the item and
-      the standard `reveal-password` toggle is present and reveals the plaintext password on the
-      first click, exactly as for any personal item. `access_level` is not even on the wire for
-      the recipient read path (`DirectSharedItem` in `crates/pv-server/src/routes/sync.rs:227-236`
-      carries no `access_level`), and no masking logic exists anywhere in `web/src` (grep for
-      `hidden_password` returns only the ShareDialog authoring surface, the i18n labels, and
-      `accessLevel.ts`). Before Plan 26-14 this was vacuously satisfied because a recipient could
-      not see the item at all; 26-14 made received items visible and thereby made the claim false,
-      and neither 26-14 nor the code review caught it.
-    artifacts:
-      - path: "crates/pv-server/src/routes/sync.rs:227-236"
-        issue: "DirectSharedItem carries no access_level — the recipient's client cannot know the grant level"
-      - path: "web/src/lib/vault/store.ts:611-636"
-        issue: "decryptDirectSharedRow builds a VaultItem with no access-level field"
-      - path: "web/src/components/vault/DetailPanel.tsx:562"
-        issue: "reveal-<key> toggle is rendered unconditionally; no hidden_password suppression for any item"
-      - path: "web/src/lib/vault/collections.ts:25-28"
-        issue: "Collection type drops the access_level that collections::list (collections.rs:235) already returns, so collection-scoped items have no level either"
-    missing:
-      - "Surface the caller's own access_level to the client for both read paths (pull_shared_direct wire field; keep collections::list's existing access_level in Collection)"
-      - "Mask the password field (suppress reveal + copy, or render a masked placeholder) for an item held at hidden_password"
-      - "Live e2e assertion that a hidden_password recipient cannot reveal the password through the UI"
-  - truth: >-
-      Phase goal clause: 'honestly communicates what hidden-password does and doesn't protect'
-    status: failed
-    reason: >-
-      The disclosure copy is honest about the CRYPTO caveat and dishonest about the INTERFACE
-      guarantee. `share.hiddenPasswordDisclosureBody` asserts "This hides the password only in the
-      interface … Use this level when you want someone to be able to use the password without
-      accidentally seeing it on screen", and `share.hiddenPasswordInlineNote` opens with "Hidden in
-      the interface only". Both affirmative clauses are FALSE in the shipped product (see the
-      SHARE-03 gap above — live-proven). An owner reading this copy grants access believing the
-      recipient will not casually see the password on screen; the recipient sees it on the first
-      click with zero friction. This is the exact honesty failure this phase exists to prevent,
-      inverted: the product under-delivers on the promise rather than over-claiming the crypto.
-    artifacts:
-      - path: "web/src/lib/i18n/dictionary.ts:1124-1135"
-        issue: "Copy asserts an interface protection that is not implemented on any recipient surface"
-    missing:
-      - "Either implement the masking (preferred — closes SHARE-03 too), or reword the disclosure to state that hidden-password is currently a recorded intent with no enforcement in this client"
-  - truth: >-
-      A recipient granted 'full edit' on a DIRECT share can edit the item (or is honestly told they
-      cannot)
-    status: failed
-    reason: >-
-      Live-proven: the recipient's DetailPanel renders `detail-panel-edit` for a `sharedToMe` item
-      (probe: count = 1), the form opens and accepts input, and Save produces
-      `error.itemSaveFailed` — "Failed to save item. Please try again." — over an operation that
-      is structurally impossible and will never succeed. This is precisely the
-      report-failure-and-invite-retry class that WINDOWS #11 / commit `4450dc0` / WR-08 exist to
-      eliminate, reintroduced on a new surface. 26-14 added the correct data-layer guard
-      (`DirectShareNotEditableError`, store.ts:824) but that error has ZERO UI consumers — grep
-      finds it only in store.ts and its own tests. `deferred-items.md:54-55` justifies the
-      deferral with "No UI affordance in this phase specifically offers 'edit' on a directly-shared
-      item yet", which is factually incorrect.
-    artifacts:
-      - path: "web/src/components/vault/DetailPanel.tsx:355-365"
-        issue: "Edit button gated only on `type !== passkey && !undecryptable`; no `sharedToMe` suppression (unlike the Share button two lines above, which IS suppressed)"
-      - path: "web/src/components/vault/DetailPanel.tsx:487-497"
-        issue: "onError maps DirectShareNotEditableError into the generic `saveError` → error.itemSaveFailed retry copy"
-      - path: ".planning/phases/26-web-app-sharing-ui-family-management/deferred-items.md:54-55"
-        issue: "Deferral rests on a false premise ('no UI affordance offers edit') — the affordance is rendered"
-    missing:
-      - "Suppress `detail-panel-edit` (and ItemContextMenu's edit entry) for a `sharedToMe` item, mirroring the Share-button suppression already in the same file"
-      - "Or map DirectShareNotEditableError to honest copy instead of the generic retry-inviting error"
-  - truth: >-
-      web/e2e/sharing.spec.ts is a truthful live proof of the phase's recipient-side behaviour
-    status: failed
-    reason: >-
-      The phase's flagship live-proof file still asserts the PRE-26-14 broken behaviour and passes
-      only on a timing race. `sharing.spec.ts:415-418` asserts `toHaveCount(0)` on the co-member's
-      item row with the message "confirms the known gap: the member's item list does NOT show a
-      co-member's item today". Playwright's `toHaveCount(0)` succeeds on the FIRST observation of
-      zero, so it passes before the shared-item merge lands. Verifier probe — inserting
-      `waitForTimeout(5000)` immediately before the same, otherwise-verbatim assertion makes it
-      FAIL with "Expected: 0 / Received: 1 / 34 × locator resolved to 1 element". Replacing it with
-      `toBeVisible()` passes. Consequences: (a) the live proof cited by 26-VALIDATION.md for
-      SHARE-01/UX-05 asserts the negation of what ships; (b) it is a green-over-broken guard — it
-      would stay green if the recipient path fully regressed, since asserting absence is its whole
-      purpose; (c) it is a latent CI flake that flips to red on any timing shift. The file's header
-      (lines 34-67) likewise still documents WINDOWS #7/#8/#9 as open, and test 3 explicitly
-      disclaims any recipient-side assertion for direct shares.
-    artifacts:
-      - path: "web/e2e/sharing.spec.ts:415-418"
-        issue: "Stale inverted regression guard passing on a race; must become a positive assertion"
-      - path: "web/e2e/sharing.spec.ts:34-67"
-        issue: "Header comments still declare WINDOWS #7/#8/#9 as live, unfixed gaps"
-      - path: "web/e2e/sharing.spec.ts:560-563"
-        issue: "Test 3 asserts no recipient-side UI for a direct share; the recipient side now works and is unasserted"
-    missing:
-      - "Flip test 2's assertion to `toBeVisible()` on the co-member's item row (verifier confirmed it passes)"
-      - "Add a recipient-side assertion to test 3 (verifier confirmed `item-row-{id}` + `item-shared-with-you` are both visible after reloadAndUnlock)"
-      - "Rewrite the file header so it no longer documents three closed WINDOWS as open"
+  previous_status: gaps_found
+  previous_score: 4/5
+  verified_at: 2026-08-07T10:45:00Z
+  fix_range: ee5b870..13eef90
+  gaps_closed:
+    - "SHARE-03: hidden_password is now a real interface mask — live-verified, plaintext absent from the rendered DOM entirely"
+    - "Phase goal clause 'honestly communicates what hidden-password does and doesn't protect' — the copy's affirmative claim is now true"
+    - "A direct-share recipient is no longer offered an Edit it cannot honor; DirectShareNotEditableError now has UI consumers"
+    - "web/e2e/sharing.spec.ts's vacuous inverted guard replaced with a positive, mutation-verified assertion"
+  gaps_remaining: []
+  regressions: []
+  warnings_closed:
+    - "W-1: WR-08 layer 2 (recomputeAllTags's `?? []`) is now covered — the exact mutation that previously left 785/785 green now reddens the suite"
+    - "W-3: WINDOWS #2 marked fixed"
+  warnings_converted_to_tracked_residuals:
+    - "W-2 → WINDOWS #13 (CR-01's partial-share recovery is session-scoped) — independently re-verified as accurate"
+  new_residuals_accepted:
+    - "WINDOWS #12 (vault export still emits a hidden_password recipient's plaintext) — judged adequate, see Residual Judgments"
+gaps: []
 deferred:
   - truth: "A directly-shared item can be edited by a recipient holding `edit` (requires a new encrypt-as-shared-key-recipient WASM primitive)"
     addressed_in: "Not scheduled"
-    evidence: "deferred-items.md:36-64 logs the crypto primitive as out of scope. NOTE: only the CRYPTO half is legitimately deferred — hiding the affordance and reporting honestly needs no new primitive and is listed as a gap above."
+    evidence: "deferred-items.md logs the crypto primitive as out of scope. The UI half — suppressing the affordance and reporting honestly — was the gap and is now closed."
 behavior_unverified_items: []
 human_verification: []
 ---
@@ -118,230 +36,287 @@ human_verification: []
 # Phase 26: Web App — Sharing UI & Family Management — Verification Report
 
 **Phase Goal:** The web app lets a member actually share folders and items at three access levels, honestly communicates what hidden-password does and doesn't protect, and makes sharing state and identity trust visible everywhere in the vault UI.
-**Verified:** 2026-08-07T10:45:00Z
-**Status:** gaps_found
-**Re-verification:** No — initial verification.
+**Verified:** 2026-08-07T10:45:00Z (initial) · **Re-verified:** 2026-08-07T12:20:00Z (after `ee5b870..13eef90`)
+**Status:** passed
+**Re-verification:** Yes — all four blockers and both warnings from the initial pass were re-checked against the files on disk.
+
+---
+
+# Part 2 — Re-verification (2026-08-07T12:20:00Z)
+
+Six commits (`d934e77`, `e48fb24`, `d7636bf`, `23b91f3`, `16936a2`, `13eef90`) claim to close all four
+blockers and both warnings. This pass verified them **against the working tree, not against
+`26-VERIFICATION-FIX.md`**. Every closure was independently mutation-checked or live-probed; the
+fixer's own reported evidence was not accepted as evidence for anything.
+
+### Suites (re-run by this verifier)
+
+| Suite | Observed |
+|-------|----------|
+| `cargo test --workspace` | **pass, exit 0** |
+| `cd web && npx tsc --noEmit` | **clean, exit 0** |
+| `cd web && npx vitest run` | **808 / 808, 79 files** (was 785 / 77) |
+| `cd web && npx playwright test --retries=0` | **19 / 19 (43.3s)** |
+
+### Blocker closures
+
+| # | Blocker | Verification performed | Verdict |
+|---|---------|------------------------|---------|
+| 1 | `hidden_password` had zero effect on any recipient surface | **Independent live probe (P4-redux), plus mutation** | ✓ **CLOSED** |
+| 2 | Edit offered to a direct-share recipient over an impossible save | **Live probe + mutation across three surfaces** | ✓ **CLOSED** |
+| 3 | `sharing.spec.ts`'s vacuous inverted guard | **Mutation of the production path it now guards** | ✓ **CLOSED** |
+| 4 | WR-08 layer 2 untested | **Re-ran the exact mutation from the initial pass** | ✓ **CLOSED** |
+
+**Blocker 1 — the masking is real, and it is a value-level mask, not a CSS one.**
+I re-ran my own probe P4 rather than trusting the new e2e assertion, and widened it: instead of
+checking only visible text, I dumped `page.content()` and searched the entire rendered document.
+
+```
+PROBE P4R: plaintext anywhere in rendered HTML = false
+PROBE P4R: plaintext in visible body text      = false
+PROBE P4R: reveal-password count = 0
+PROBE P4R: copy-password count   = 1
+PROBE P4R: edit count            = 0
+PROBE P4R: recipient note = "The owner shared this password as hidden — this view masks it.
+            You can still copy and use it, and you hold the key anyway, so this is not a
+            cryptographic protection."
+PROBE P4R control: read-level plaintext visible = true
+```
+
+The plaintext is not in the DOM at all — `displayValueFor` returns `MASK` before the reveal-state
+branch, so it is never rendered and cannot be recovered by unhiding an element. `copy-password`
+survives, which is correct: SHARE-03 says *"usable but masked"*, and a password that cannot be
+copied is not usable in a web app with no autofill. The **control is the decisive part**: the same
+recipient, same reload, same panel, `read`-level item → plaintext visible. So the mask is measuring
+the *grant*, not the direction of the share.
+
+The plumbing behind it checks out. `pull_shared_direct` selects `item_shares.access_level` off the
+row the pre-existing `recipient_user_id = ?` predicate already pins to the caller — no new
+authorization surface, and the caller could already read their own level from
+`GET /api/vault/items/{id}/shares`. It is echoed as the raw wire string rather than normalized, so
+`accessLevelKey`'s fail-closed `access.unknown` discipline can still see a bad value.
+`collections.ts` stops dropping the `access_level` the server has always returned.
+
+**Precision of the claim — checked, and it holds.** The new `share.hiddenPasswordRecipientNote`
+says *"this **view** masks it"* — a claim about one surface — and then disclaims the crypto in the
+same breath: *"you hold the key anyway, so this is not a cryptographic protection."* It does not
+drift toward implying cryptographic protection; if anything it is more conservative than D-2. And
+**D-2's own copy is byte-for-byte unchanged** — `share.hiddenPasswordDisclosureBody` and
+`share.hiddenPasswordInlineNote` do not appear in the dictionary diff at all, honouring
+26-UI-SPEC.md's hard rule that they must never be reworded.
+
+**Blocker 2 — closed on all three surfaces, and it did not break the case that works.**
+`canEditItem` (`web/src/lib/vault/itemCapabilities.ts`) mirrors the server faithfully. I read
+`RequireEdit::satisfied_by` (`membership.rs:123-125`): `level == AccessLevel::Edit`, an exact match
+the module's own doc comment insists must never be derived from an ordering. `canEditItem` does
+`item.accessLevel === "edit"` — same exact match, and its comment names the same Vaultwarden #6269
+rank-comparison bug class the server refuses. I confirmed `Item::resolve_access`
+(`membership.rs:325-386`) genuinely folds `owner_access` into the personal branch only and returns
+`combine_access(collection_access, item_share_access)` for the collection branch with no ownership
+fallback — so the claim that a `read`-level member cannot edit their own item in a shared folder is
+true, and the UI now matches it.
+
+Mutating `canEditItem` to `return true` reddens **7 tests across 3 files**, including the two cases
+that matter most: *"refuses `hidden_password` — never treats its middle RANK as good enough for
+edit"* and *"fails closed for an unrecognized level"*.
+
+The regression risk here was real and I checked it explicitly. A collection's creator gets a
+hard-coded `'edit'` row (`collections.rs:153-158`), so no owner loses Edit on their own shared
+folder. Live:
+
+```
+PROBE P6R  edit-level collection member: detail-panel-edit count = 1
+PROBE P6R  edit-level collection member: save error banners     = 0
+PROBE R2   read-level collection member: detail-panel-edit count = 0
+```
+
+An `edit`-level member still saves a co-member's item cleanly; a `read`-level member is not offered
+the button. That is the Rule-2 fix working in both directions.
+
+**Blocker 3 — the replacement is load-bearing, which the old guard could not be.**
+The assertion is now `toBeVisible` (which *polls* toward a settled state and cannot be satisfied by
+a transient early observation, unlike `toHaveCount(0)`), tightened with `toHaveCount(1)`,
+`toContainText(itemName)` — proving the Collection Key path genuinely ran rather than a placeholder
+rendering — and reachability through the shared folder's own filter. I proved it load-bearing by
+mutation: dropping `collectionSharedItems` from `recomputeItems()` fails it with
+*"WINDOWS #8: a non-owning collection member MUST see the co-member's item in their own list —
+element(s) not found"*. The old guard would have stayed green through that same mutation.
+
+I applied the same scepticism to the new test's own `toHaveCount(0)` assertions (reveal-affordance
+absence), since an absence assertion is exactly what went wrong before. Mutating `isPasswordHidden`
+to `return false` fails it after a full 15s retry window — *"SHARE-03: a hidden_password recipient
+must have NO reveal affordance"*. Not vacuous.
+
+The file header was also rewritten and now carries an explicit "HISTORY OF THIS FILE'S HEADER — read
+this before trusting any comment below it" section rather than quietly deleting the wrong text.
+
+**Blocker 4 — I re-ran the exact mutation, including the trap the coordinator flagged.**
+Removing `?? []` from `recomputeAllTags` now fails **2 tests**, and — the point of the original
+finding — the **full suite goes red** (`1 failed | 78 passed`), where previously it stayed
+785/785 green. The new `store.tagsGuard.test.ts` asserts on the **subscriber notification**, not
+just `getItems()`: the throw lands between `items = ...` and `notifyListeners()`, so a
+`getItems()`-only assertion sees a correct-looking store while every subscriber is stranded — the
+precise trap. The test also proves its own premise (`items[0].fields.tags` is genuinely
+`undefined`, so the guard really did iterate an undefined) and checks the guard skips only the
+offending item rather than emptying the whole tag index.
+
+### Residual Judgments (asked for explicitly)
+
+**WINDOWS #12 — export still emits a hidden-password recipient's plaintext. Judged ADEQUATE; the
+mitigation is honest, not convenient.**
+
+The residual is real and I verified its mechanism rather than accepting the description:
+`ExportDialog.tsx:24` calls `getItems()` — the post-26-14 merged view that includes items shared
+*to* the caller — and both exporters pass the plaintext straight through (`toCsv.ts:59`
+`row.password = fields.password`; `toJson.ts:23` maps raw `item.fields`). The ledger entry names
+both, which is accurate; it is not understated.
+
+It does not undermine SC 2, for three reasons:
+
+1. **D-2's copy already disclaims it, in the sentence that matters most.** The owner-facing body
+   closes with *"not as a way to hide it FROM that person"* and states the recipient *"can
+   technically recover it"*. A deliberate whole-vault export is squarely inside that disclosure, not
+   an exception to it. The operative promise the initial pass found false — *"without accidentally
+   seeing it on screen"* — is now true: an export is not accidental.
+2. **The counter-harm is real and asymmetric.** Silently blanking a password in a user's own backup
+   produces an unnoticed data loss discovered only at restore time. That is a worse failure than the
+   one it would prevent, against a threat the copy already discloses.
+3. **The copy was weakened to match the implementation, not the reverse.** The recipient note says
+   *"this view masks it"* precisely *because* of this residual. That is the correct direction and
+   the exact opposite of the original defect, where copy over-promised behaviour.
+
+Recommendation, not a gap: the honest completion is a **warning at export time** ("N hidden-password
+items will be exported in plaintext") — neither blanking nor silence. Worth attaching to whichever
+phase next touches `ExportDialog`.
+
+**WINDOWS #13 — the W-2 correction is ACCURATE.** I re-checked it from source rather than from the
+entry. `ShareDialogScope` is unchanged (`{kind:"item"} | {kind:"folder"; existingFolderId}`), and all
+five entry points still pass either an item or a *personal* folder id / `null` (`Sidebar.tsx:323`,
+`:422`, `FamilyTab.tsx:695`, `DetailPanel.tsx:870`, `ItemContextMenu.tsx:290`). No UI anywhere adds a
+member to an *existing* shared collection. So CR-01's **scoped** claim holds — retry through the same
+open dialog is genuinely idempotent and tested — and its **unscoped** claim ("no manual DB surgery")
+does not. Recording that as a correction to a prior fix report, rather than quietly leaving it,
+is the honest handling.
+
+### Minor coverage note (not a gap)
+
+The Move-entry suppression in `ItemContextMenu.tsx:161-195` is correct and typechecked, but no test
+asserts its *absence* for a non-editable item — mutating `canEditItem` reddens the Edit-entry test on
+that surface, not a Move one. The Edit suppression is covered on both surfaces; Move rides on the
+same predicate. Low risk, one assertion to close.
+
+### Re-verification verdict
+
+All four blockers are genuinely closed — each mutation-verified or live-probed independently of the
+fixer's report, and none closed by weakening a test or disabling a feature. Blocker 1 in particular
+was closed the harder way: the masking was *implemented*, with the wire field, the store plumbing,
+the UI suppression, a recipient-facing explanation, and a control-group live assertion — rather than
+by removing the hidden-password option or softening the disclosure. Both warnings are closed, W-2 is
+converted into a tracked ledger entry after independent re-confirmation, and the one new residual is
+logged openly with a defensible trade-off.
+
+No regressions found: the `edit`-level collection member's save path, which the new `canEditItem`
+predicate could plausibly have broken, was explicitly re-probed live and is clean.
+
+**Status: passed. 5/5 success criteria verified.**
+
+---
+
+# Part 1 — Initial verification (2026-08-07T10:45:00Z)
+
+> Retained verbatim for the audit trail. Its four blockers and two warnings are all closed above;
+> the frontmatter reflects the current, post-fix state.
 
 ## Method
 
-Every claim below was checked against the codebase and, where the claim is behavioural, against a
-live run. SUMMARY.md and 26-REVIEW-FIX.md assertions were treated as hypotheses, not evidence.
-Twelve load-bearing tests were **mutation-checked** (revert the fix, confirm the test goes red,
-restore). Six **live probes** were run against a real pv-server + two real browser contexts. The
-working tree was restored to `98eb88e` byte-for-byte afterwards (`git status` clean of tracked
-changes).
+Every claim was checked against the codebase and, where behavioural, against a live run.
+SUMMARY.md and 26-REVIEW-FIX.md assertions were treated as hypotheses, not evidence. Twelve
+load-bearing tests were **mutation-checked**; seven **live probes** were run against a real
+pv-server + two real browser contexts.
 
-### Baseline suites (all re-run by this verifier, not taken from SUMMARY)
+### Baseline suites at `98eb88e`
 
 | Suite | Claimed | Observed |
 |-------|---------|----------|
-| `cargo test --workspace` | 332 / 0 | **pass, exit 0** (all crates + doc-tests) |
-| `cd web && npx tsc --noEmit` | clean | **clean, exit 0** |
-| `cd web && npx vitest run` | 785 / 785 | **785 / 785, 77 files** |
-| `cd web && npx playwright test --retries=0` | 19 / 19 | **19 / 19 (38.5s)** |
+| `cargo test --workspace` | 332 / 0 | pass, exit 0 |
+| `npx tsc --noEmit` | clean | clean |
+| `npx vitest run` | 785 / 785 | 785 / 785 |
+| `npx playwright test --retries=0` | 19 / 19 | 19 / 19 |
 
-The claimed numbers are accurate. They are also, as this report shows, not sufficient.
+The claimed numbers were accurate. They were also not sufficient.
 
 ## Goal Achievement
 
 ### Observable Truths (ROADMAP Success Criteria)
 
-| # | Truth | Status | Evidence |
-|---|-------|--------|----------|
-| 1 | A member can share a folder/collection with selected members, and independently share a single item with a specific person, choosing one of three access levels | ✓ VERIFIED | Folder variant live-proven end-to-end (`sharing.spec.ts` test 2: real collection created client-minted, member sees the real folder name, owner's avatar stack shows the recipient). Item variant live-proven at all three levels with real `item_shares` rows asserted server-side (test 3). **Recipient side independently probed live and works**: a non-owning collection member sees the co-member's item (probe: `toBeVisible` passes), and a direct-share recipient sees the item with the `item-shared-with-you` marker. Caveat: the *semantics* of two of the three levels are broken for direct shares — see gaps, tracked under SHARE-03 rather than here, since SC 1's literal clause is about the authoring choice. |
-| 2 | At share time, the UI states plainly that hidden-password is an interface protection, not a cryptographic one | ✓ VERIFIED (literal clause) / ⚠ goal clause FAILED | One-time blocking modal (`ShareDialog.tsx:662-691`) and quiet inline note (`:773-779`) both present and live-exercised (test 3 asserts the modal body against the real dictionary string on first selection, and asserts it does NOT re-appear on the second). The inline note is truthful standing alone on its second clause ("{recipient} still has key access") and WR-04's `hiddenPasswordRecipientFallback` genuinely prevents the empty-subject render. **But** the copy's first clause ("Hidden in the interface only" / "hides the password only in the interface … without accidentally seeing it on screen") is false in the shipped product — see the two hidden-password gaps. |
-| 3 | Every item and collection view visually distinguishes shared items from personal ones and shows who a given shared item is shared with | ✓ VERIFIED | `ItemRow.tsx:155-169` (sharedToMe marker / AvatarStack split), `DetailPanel.tsx:286-300`, `Sidebar.tsx:404-415` (shared-folder rows with AvatarStack), `SharingOverviewPanel.tsx` (By-folder / By-person, mounted at `Sidebar.tsx:503`). Live-proven: the owner's item row renders a real avatar circle titled with the member's email; the direct recipient's row renders `item-shared-with-you`. CR-02's ownership discriminant is real (see below), not a heuristic. |
-| 4 | A member can view their own and other members' identity-key fingerprints in the member list, so key authenticity can be checked out-of-band | ✓ VERIFIED | Live probe: memberA opened Family, expanded memberB's fingerprint panel, and read `"tragic · bird · canoe · obtain · action · aisle"` — **byte-identical** to memberB's own `identity-self-fingerprint-words` in memberB's own session. That is the out-of-band comparison the feature exists for, working across two independent clients. Derivation is pure and total (`packages/pv-ui/identity/fingerprint.ts`), the vendored list is exactly 2048 unique words (verified by executing it), and WR-09's fail-soft render boundary is covered by 4 parameterised cases. |
-| 5 | KEY-01 client trigger: X25519 keypair generated client-side on first unlock with no published key, published via `PUT /api/identity/keypair`; idempotent under concurrent double-unlock — the race loser unwraps the winner's blob | ✓ VERIFIED | `publishOnUnlock` is wired at all four `setUnlockedUserKey` sites (RegisterForm:93/98, UnlockOverlay:131/132 and :168/169, passkeys/login:487/488) — grep-exhaustive, no unwired site. Race-loser adoption (`ensure.ts:83-89`) is **mutation-verified**: forcing `if (false && response.adopted_existing)` reddens `ensure.test.ts`'s "concurrent-loser path" test. Server contract is `ON CONFLICT DO NOTHING` + re-read + `adopted_existing` (`identity.rs:86-121`), rust-tested at `identity_keypair.rs:83-121`. Live-proven for two genuinely fresh accounts (`sharing.spec.ts` test 1). |
+| # | Truth | Status (initial) | Evidence |
+|---|-------|------------------|----------|
+| 1 | A member can share a folder/collection with selected members, and independently share a single item, choosing one of three access levels | ✓ VERIFIED | Folder variant live end-to-end; item variant live at all three levels with real `item_shares` rows. Recipient side independently probed and working (P1, P3). |
+| 2 | At share time, the UI states plainly that hidden-password is an interface protection, not a cryptographic one | ✓ literal / ✗ goal clause | Modal + inline note present and live-exercised; but the copy's affirmative claim was false in the shipped product. **Closed in Part 2.** |
+| 3 | Every item and collection view visually distinguishes shared items and shows who they're shared with | ✓ VERIFIED | ItemRow, DetailPanel, Sidebar, SharingOverviewPanel; live-proven both directions. |
+| 4 | A member can view their own and other members' identity-key fingerprints | ✓ VERIFIED | P7: memberA read memberB's six words, byte-identical to memberB's own. 2048 unique words, pure transform. |
+| 5 | KEY-01 client trigger, idempotent under concurrent double-unlock | ✓ VERIFIED | All 4 unlock sites wired; race path mutation-verified client-side and rust-tested server-side; live for two fresh accounts. |
 
-**Score:** 4/5 truths verified. SC 2's literal clause holds; its goal clause does not.
+### Mutation Checks (initial pass)
 
-### Mutation Checks (fix reverted → test must go red)
-
-Each row: the fix was reverted locally, the named suite re-run, the failure observed, the tree restored.
-
-| Fix under test | Mutation applied | Result | Verdict |
+| Fix under test | Mutation | Result | Verdict |
 |---|---|---|---|
-| CR-01 — 409 = success-for-that-recipient | removed the `isConflictError` branch in `shareItemWithRecipients` | 1 failed / 28 passed | ✓ load-bearing |
-| CR-01 — collection id minted once per session | forced `createdCollectionRef` to read as `null` | fails at `expect(mockCreateCollection).toHaveBeenCalledTimes(1)` | ✓ load-bearing |
-| CR-02 — `sharedToMe` discriminant | `sharedToMe: true` → `false` in `decryptDirectSharedRow` | real-WASM store test fails at `expect(item.sharedToMe).toBe(true)` | ✓ load-bearing |
-| CR-02 — panel exclusion | `item.sharedToMe !== true` → `true` in SharingOverviewPanel | 1 failed / 11 passed | ✓ load-bearing |
-| WR-02 — Collection Key eviction | deleted the `liveIds` diff loop | `collections.real-wasm.test.ts` fails at the free-count assertion | ✓ load-bearing, eviction is real |
-| WR-08 layer 1 — write-boundary `normalizeItemFields` | `normalizeItemFields(rawFields)` → `rawFields` (both writers) | 2 failed / 50 passed | ✓ load-bearing |
-| WR-08 layer 2 — `recomputeAllTags`'s `?? []` | removed the `?? []` | **785 / 785 STILL PASS** | ✗ **UNTESTED** — see Warning W-1 |
-| WR-08 layer 3 — post-commit `try/catch` | removed the try/catch in `createVaultItem` | 1 failed / 51 passed | ✓ load-bearing |
-| WINDOWS #8 — collection pull loop | `continue` as the loop's first statement | real-WASM WINDOWS #8 test fails | ✓ load-bearing (RED demo reproduced independently) |
-| WINDOWS #9 — direct pull | `if (false && directRevisionWatermark !== …)` | 4 failed / 54 passed across both store suites | ✓ load-bearing |
-| KEY-01 — race-loser adoption | `if (false && response.adopted_existing)` | 1 failed / 9 passed | ✓ load-bearing |
-| e2e test 2's "known gap" guard | inserted `waitForTimeout(5000)` before the verbatim assertion | **FAILS: Expected 0, Received 1** | ✗ **VACUOUS** — see gap 4 |
+| CR-01 — 409 = success-for-that-recipient | removed the `isConflictError` branch | 1 failed / 28 passed | ✓ |
+| CR-01 — collection id minted once | forced `createdCollectionRef` to `null` | fails `toHaveBeenCalledTimes(1)` | ✓ |
+| CR-02 — `sharedToMe` discriminant | `true` → `false` | real-WASM store test fails | ✓ |
+| CR-02 — panel exclusion | `sharedToMe !== true` → `true` | 1 failed / 11 passed | ✓ |
+| WR-02 — Collection Key eviction | deleted the `liveIds` diff | real-WASM free-count assertion fails | ✓ |
+| WR-08 layer 1 — write-boundary normalize | `normalizeItemFields(x)` → `x` | 2 failed / 50 passed | ✓ |
+| WR-08 layer 2 — `?? []` | removed the guard | **785/785 STILL PASS** | ✗ W-1 → **closed in Part 2** |
+| WR-08 layer 3 — post-commit try/catch | removed it | 1 failed / 51 passed | ✓ |
+| WINDOWS #8 — collection pull | `continue` first statement | real-WASM test fails | ✓ |
+| WINDOWS #9 — direct pull | disabled the branch | 4 failed / 54 passed | ✓ |
+| KEY-01 — race-loser adoption | disabled `adopted_existing` | 1 failed / 9 passed | ✓ |
+| e2e "known gap" guard | 5s settle before verbatim assertion | **FAILS: Expected 0, Received 1** | ✗ blocker 3 → **closed in Part 2** |
 
-### Live Probes (real pv-server, real browsers)
+### Live Probes (initial pass)
 
 | # | Probe | Result |
 |---|-------|--------|
-| P1 | Does a non-owning collection member see the co-member's item? (`toHaveCount(0)` → `toBeVisible()`) | **YES** — passes. WINDOWS #8 is genuinely closed live. |
-| P2 | Is the shipped `toHaveCount(0)` guard vacuous? (settle 5s, then re-assert verbatim) | **YES** — fails with "34 × locator resolved to 1 element". |
-| P3 | Does a direct-share recipient see the item + the "shared with you" marker? | **YES** — `item-row-{id}` and `item-shared-with-you` both visible after reload+unlock. WINDOWS #9 genuinely closed live. |
-| P4 | Can a `hidden_password` recipient reveal the password? | **YES** — `reveal-password` toggle count = 1, one click, plaintext visible = `true`. **hidden-password is not an interface protection.** |
-| P5 | Is Edit offered to a direct-share recipient, and what happens on save? | Edit button count = **1**; save banner = **"Failed to save item. Please try again."** |
-| P6 | Can a collection member holding `edit` actually save a co-member's item? | **YES** — save succeeds, zero error banners. Full-edit works for folder shares. |
-| P7 | Can memberA read memberB's fingerprint, and does it match memberB's own? | **YES**, byte-identical across the two clients. |
+| P1 | Non-owning collection member sees the co-member's item? | **YES** — WINDOWS #8 genuinely closed. |
+| P2 | Is the shipped `toHaveCount(0)` guard vacuous? | **YES** — "34 × locator resolved to 1 element". |
+| P3 | Direct-share recipient sees item + inbound marker? | **YES** — WINDOWS #9 genuinely closed. |
+| P4 | Can a `hidden_password` recipient reveal the password? | **YES** — one click, plaintext visible. → blocker 1 |
+| P5 | Edit offered to a direct-share recipient? | **YES**, count 1; save → "Failed to save item. Please try again." → blocker 2 |
+| P6 | Collection member with `edit` can save? | **YES** — full-edit works for folder shares. |
+| P7 | memberA reads memberB's fingerprint, matching? | **YES**, byte-identical. |
 
-### Key Link Verification
+### Judgment Calls (initial pass)
 
-| From | To | Via | Status |
-|------|----|-----|--------|
-| `publishOnUnlock` | `PUT /api/identity/keypair` | `ensureOwnIdentityKeypair` → `putIdentityKeypair` | ✓ WIRED (all 4 unlock sites) |
-| `store.ts::handleSharedRevisions` | `GET /api/vault/collections/{id}/sync` | `getCollectionSync` → `mergeCollectionSnapshot` | ✓ WIRED (mutation-verified) |
-| `store.ts::handleSharedRevisions` | `GET /api/sync/shared/direct` | `getSharedDirectSync` → `mergeDirectSnapshot` | ✓ WIRED (mutation-verified) |
-| `store.ts::handleSharedRevisions` | `collections.ts` | `refreshCollectionsNow()` (WINDOWS #7) | ✓ WIRED |
-| `ShareDialog` folder variant | `POST /api/vault/collections` + `add_member` | client-minted UUID + `sealCollectionKey` | ✓ WIRED, live-proven |
-| `ShareDialog` item variant | `POST /api/vault/items/{id}/shares` | `sealItemKeyForRecipient` | ✓ WIRED, live-proven |
-| `FamilyTab` | six-word fingerprint | `formatFingerprintWords(member.fingerprint)` | ✓ WIRED, live-proven cross-client |
-| **recipient client** | **`item_shares.access_level`** | — | ✗ **NOT WIRED** — no wire field, no consumer, no masking (gap 1) |
-| **`DirectShareNotEditableError`** | **any UI surface** | — | ✗ **NOT WIRED** — zero consumers outside its own tests (gap 3) |
+**WR-16 — "no test can exist".** Reasoning **holds**. `idx_families_singleton` is
+`CREATE UNIQUE INDEX … ON families ((1))` (migration `0014:44`) and `family_members` has
+`PRIMARY KEY (family_id, user_id)` (`:51`) — one family, at most one membership row per user, so the
+unscoped join cannot duplicate or cross-attribute.
 
-### Requirements Coverage
+**WR-02 — eviction real?** Yes, mutation-verified.
 
-| Requirement | Status | Evidence |
-|-------------|--------|----------|
-| SHARE-01 (share a folder/collection with selected members) | ✓ SATISFIED | Live end-to-end, both sender and recipient sides (P1, P6). |
-| SHARE-02 (share a single item with a specific person, independent of any folder) | ✓ SATISFIED | Live end-to-end at all three levels; recipient visibility independently probed (P3). |
-| SHARE-03 (three levels — hidden password **"usable but the password field is masked"**) | ✗ **BLOCKED** | The parenthetical is the requirement and it is live-disproven (P4). `edit` is also non-functional for direct-share recipients (P5). Only `read` behaves as specified. |
-| UX-03 (states plainly that hidden password is an interface protection, not a cryptographic one) | ⚠ PARTIAL | The copy exists verbatim per 26-UI-SPEC.md:166-169 and is live-exercised. But it asserts an interface protection the product does not provide, which converts an honesty requirement into a misstatement. |
-| UX-05 (visually distinguishes shared items; shows who an item is shared with) | ✓ SATISFIED | Avatar stacks, sharedToMe markers, Sharing overview; live-proven. |
-| SEC-05 (view own and others' identity-key fingerprints for out-of-band verification) | ✓ SATISFIED | P7 — cross-client agreement proven live. |
-| KEY-01 (client trigger, idempotent under concurrent double-unlock) | ✓ SATISFIED | All 4 unlock sites; race path mutation-verified client-side and rust-tested server-side; live for two fresh accounts. |
+**WR-08 — "guarded twice over, independently"?** Half true; the load-bearing half was the untested
+one. Closed in Part 2.
+
+**CR-01 — recovery real without revoke/delete wrappers?** Real, but session-scoped only.
+→ W-2 → WINDOWS #13.
+
+**The six unguarded `fields.tags`/`fields.urls` dereferences.** Audited: all render/export paths
+scoped to one item or one export. `recomputeAllTags` is the only every-mutation iteration and it is
+guarded. The fixer's claim holds.
 
 ### Inherited Obligations
 
-| Obligation | Status | Evidence |
-|---|---|---|
-| [24] Three dissolved UI-SPEC backstops (#4/#5/#6) | ✓ CLOSED | `CollectionPicker.test.tsx` (zero-one-many, `title` truncation); Backstop #6 measured in real browser layout (`sharing.spec.ts` test 4, passing). |
-| [24] Collection-scoped invite UI-disabled | ✓ CLOSED | `invite-flow.spec.ts` test 4 `folder_scope_option_is_enabled_and_mounts_the_collections_picker` passes live; obsolete dictionary keys removed (only comment references remain). **WINDOWS #2 is still marked `open` in the ledger and should be marked fixed.** |
-| [23] `/api/sync/shared` has no client consumer | ✓ CLOSED | `handleSharedRevisions` genuinely consumes it (mutation-verified both branches). |
-| [23] Deferred browser-level conflict-attribution proof | ✓ CLOSED | `shared-sync.spec.ts` tests at :634 and :715 both pass live — a stale-revision 409 and a genuinely-concurrent 409 recorded side by side, asserted on the network response. |
-| [25] WR-09 wire-contract defect (client-minted collection id) | ✓ CLOSED | Live: the member's sidebar shows the real folder name, and `RemoveMemberDialog`'s disclosure list shows the real item name with `remove-member-folder-unresolved-*` count 0. |
-
-### Judgment Calls Requested by the Task
-
-**WR-16 — "no test can exist" (forward-compatibility only).** The reasoning **holds**. Verified
-directly: `crates/pv-server/migrations/0014_family_sharing.sql:44` is
-`CREATE UNIQUE INDEX idx_families_singleton ON families ((1))` — at most one `families` row ever
-exists — and `family_members` has `PRIMARY KEY (family_id, user_id)` (`:51`). With exactly one
-family, a user has at most one `family_members` row in total, so the unscoped join cannot duplicate
-or cross-attribute rows under any state the schema permits. The buggy and fixed queries are
-genuinely observationally identical. Accept the existing-suite evidence.
-
-**WR-02 — is the Collection Key eviction real?** **Yes.** `collections.ts:164-170` diffs the cache
-against the server's live row set, frees, and deletes. Mutation-verified: deleting the loop reddens
-the real-WASM revoke test. The stale-capability half is genuinely closed —
-`getCollectionKey(revokedId)` returns `undefined` after the next refresh, not a usable key.
-
-**WR-08 / WINDOWS #11 — is the "guarded twice over, independently" claim true?** **Half true, and
-the load-bearing half is the untested one.** See Warning W-1.
-
-**CR-01 — is the recovery path real without revoke/collection-delete wrappers?** **Real, but only
-inside one dialog session.** See Warning W-2.
-
-**The six deliberately-unguarded `fields.tags`/`fields.urls` dereferences.** Audited: `toCsv.ts:54/60`
-(export of one selection), `DetailPanel.tsx:580-581/738/742` (render of one item),
-`ItemForm.tsx:490/492/589/597` (render of one form). `recomputeAllTags` is the only iteration on the
-every-mutation path and it is guarded. **The fixer's claim holds** — none of the six can produce the
-account-wide wedge.
-
-### Warnings (not blockers)
-
-**W-1 — WR-08's second defense layer is entirely untested.** The fixer named `recomputeAllTags`'s
-`?? []` "the load-bearing guard … it does not depend on a choke point staying complete forever,
-which is exactly the assumption that failed twice already." Removing it leaves **785/785 green**
-(full suite re-run under mutation). The guard exists in code and is correct; but the layer sold as
-the durable one is the layer no test would notice disappearing. Layers 1 and 3 are both properly
-covered. A single test that pushes a `tags`-less object past the normalizer and asserts
-`getAllTags()` does not throw would close this.
-
-**W-2 — CR-01's recovery is session-scoped; closing the dialog still orphans a collection.**
-`createdCollectionRef` is a component ref, cleared on unmount (`ShareDialog.tsx:350-357`). Retrying
-via the same open dialog works and is tested. But there is **no UI entry point anywhere that adds a
-member to an EXISTING shared collection** — verified by grep: `ShareDialogScope`'s folder variant
-takes only `existingFolderId`, a *personal* folder from `getFolders()` (Sidebar:323, Sidebar:422,
-FamilyTab:694). So a user who closes the dialog after a partial failure cannot reach the
-half-granted collection again; reopening mints a second one, and the seed items already moved into
-the first are now collection-encrypted and will fail `decryptItem` on the re-move, counting as fresh
-`seedMoveFailed`s. Orphans then persist visibly in the "Shared folders" sidebar with no delete
-affordance. The fixer's scoped claim ("a user can complete a partially-failed share by pressing the
-same button again") is accurate; the unscoped one ("no manual DB surgery") is optimistic.
-
-**W-3 — WINDOWS ledger is stale.** `open_count: 4`. #2 (Phase 24 collection-scope invite disabled)
-is demonstrably closed by 26-12 and live-proven by `invite-flow.spec.ts` test 4, yet still `open`.
-#11 is legitimately still open per the fixer's own honest residual. `/gsd-ship` blocks while
-`open_count > 0`.
-
-**W-4 — `deferred-items.md:54-55` contains a factual error.** "No UI affordance in this phase
-specifically offers 'edit' on a directly-shared item yet" — the affordance is rendered (P5). The
-deferral of the *crypto primitive* is legitimate; the deferral of the *affordance suppression* rests
-on a false premise and is a gap, not a deferral.
-
-### Anti-Patterns Found
-
-| File | Line | Pattern | Severity | Impact |
-|------|------|---------|----------|--------|
-| `web/e2e/sharing.spec.ts` | 415-418 | Inverted regression guard passing on a race | 🛑 Blocker | Green-over-broken; the phase's own live proof asserts the negation of what ships |
-| `web/e2e/sharing.spec.ts` | 34-67 | Header documents three closed WINDOWS as open | ⚠️ Warning | Misleads the next reader/planner about the actual state |
-| `web/src/components/vault/DetailPanel.tsx` | 355-365 | Affordance offered for a structurally impossible operation, generic retry copy on failure | 🛑 Blocker | Reintroduces the WINDOWS #11 / `4450dc0` failure class on a new surface |
-| `web/src/lib/vault/store.ts` | 133-138 | Error class with zero UI consumers | ⚠️ Warning | The guard fails loud in the data layer and silent-generic in the UI |
-| `.planning/WINDOWS.md` | #2 | Closed defect still marked open | ⚠️ Warning | Blocks ship on a stale entry |
-
-No `TBD`/`FIXME`/`XXX` debt markers were found in the phase's modified files.
-
-### Human Verification Required
-
-None. Every criterion was resolvable programmatically or by live probe; all seven probes above were
-executed and their outputs are recorded verbatim.
-
-## Gaps Summary
-
-**The phase's headline capability works.** Sharing genuinely functions end-to-end in both
-directions: a folder share reaches a non-owning member who can read *and* edit the contents, a
-direct share reaches its recipient with a correct direction-naming marker, fingerprints agree across
-two independent clients, and the KEY-01 trigger fires on every unlock path with a correct race
-resolution. Plan 26-14's closure of WINDOWS #7/#8/#9 is real — I reproduced its RED demonstration
-independently and confirmed both read paths live rather than trusting the mocked-wire tests.
-
-**Four things stop this from being a pass, and three of them share one root cause.**
-
-Plan 26-14 made received items visible for the first time — and *that is the change that broke the
-phase's honesty contract*, three ways, none of which any test or the code review noticed:
-
-1. **`hidden_password` is not an interface protection, and the UI says it is.** Nothing masks
-   anything; `access_level` never even reaches the recipient's client. Before 26-14 this was
-   vacuously fine because the recipient saw nothing at all. Now the recipient sees the password on
-   the first click, while the owner has just read copy promising the opposite. SHARE-03's
-   parenthetical — *"usable but the password field is masked"* — is the requirement, and it is
-   live-disproven. This is the single most serious finding, because it is a false security promise
-   in a security product whose stated differentiator is not making them.
-2. **`full edit` on a direct share offers an Edit button that always fails** with "Failed to save
-   item. Please try again." — the exact retry-inviting-over-an-impossible-operation shape that
-   WINDOWS #11 and commit `4450dc0` exist to eliminate. The data-layer guard 26-14 added is correct
-   and completely disconnected from the UI. Suppressing the button needs no new crypto primitive;
-   only the *editing* does.
-3. **The live proof file lies in both directions.** Test 2 asserts the co-member's item is absent —
-   it is present, and the assertion passes only because `toHaveCount(0)` matches on first
-   observation. Test 3 asserts nothing at all about the direct recipient. So the two claims 26-14
-   exists to establish have zero live coverage, and one of them has live *anti*-coverage that would
-   stay green through a full regression.
-
-The fourth is narrower: **WR-08's "guarded twice over, independently" is only singly tested.** The
-guard the fixer identified as the durable one is invisible to the entire 785-test suite.
-
-Nothing here requires re-architecting. Items 2 and 3 are small and mechanical. Item 1 is the real
-work: surface `access_level` on the recipient read path and honour it in `DetailPanel` — or, if that
-is genuinely out of scope for v0.4, change the copy so it stops promising something the product does
-not do. Shipping the current copy over the current behaviour is the one option this phase's own
-stated posture rules out.
+| Obligation | Status |
+|---|---|
+| [24] Three dissolved UI-SPEC backstops (#4/#5/#6) | ✓ CLOSED |
+| [24] Collection-scoped invite UI-disabled | ✓ CLOSED (ledger corrected in Part 2) |
+| [23] `/api/sync/shared` no client consumer | ✓ CLOSED |
+| [23] Deferred conflict-attribution proof | ✓ CLOSED |
+| [25] WR-09 client-minted collection id | ✓ CLOSED |
 
 ---
 
-_Verified: 2026-08-07T10:45:00Z_
+_Initial verification: 2026-08-07T10:45:00Z · Re-verification: 2026-08-07T12:20:00Z_
 _Verifier: Claude (gsd-verifier)_
-_Working tree restored to `98eb88e`; no source, test, or planning file was modified by this verification._
+_Working tree restored after both passes; no source, test, or planning file was modified by verification._

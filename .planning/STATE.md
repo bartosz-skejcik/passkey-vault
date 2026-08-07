@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Family & Sharing
 current_phase: 26
-current_phase_name: Web App — Sharing UI & Family Management
-status: executing
+status: completed
 stopped_at: Phase 25 UI-SPEC approved
-last_updated: "2026-08-06T08:48:11.265Z"
-last_activity: 2026-08-06
-last_activity_desc: Phase 26 execution started
+last_updated: "2026-08-07T10:16:21.493Z"
+last_activity: 2026-08-07
+last_activity_desc: Phase 26 marked complete
 progress:
   total_phases: 7
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 47
-  completed_plans: 34
-  percent: 71
+  completed_plans: 47
+  percent: 86
+current_phase_name: Web App — Sharing UI & Family Management
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 
 ## Current Position
 
-Phase: 26 (Web App — Sharing UI & Family Management) — EXECUTING
+Phase: 26 — COMPLETE
 Plan: 1 of 13
-Status: Executing Phase 26
-Last activity: 2026-08-06 — Phase 26 execution started
+Status: Phase 26 complete
+Last activity: 2026-08-07 — Phase 26 marked complete
 
 ## Performance Metrics
 
@@ -192,6 +192,11 @@ None yet.
 
 [Issues that affect future work]
 
+- [Phase 26] **Phase 27 must budget a live browser proof FROM THE START, not at the end.** Phase 26 twice declared a feature done while it did not work, and both times 700+ unit tests were green: (1) sharing worked only one-way — every recipient-side read path existed server-side with ZERO client consumers, so a user could share perfectly and the recipient saw nothing; (2) `hidden_password` protected nothing at all while the UI claimed it did — `access_level` was not even on the wire. Both were found only by a live two-session Playwright run flipping assertions. The mocked `@/lib/crypto` blind spot systematically hides exactly this class. Phase 27 inherits the same shape (extension surfaces consuming shared data) and should write its live proof early enough to steer the phase, not to audit it.
+- [Phase 26] **The post-await bookkeeping hazard has now recurred THREE times** (`4450dc0` WR-12, WINDOWS #10, WINDOWS #11). `createVaultItem`/`updateVaultItem`/`deleteVaultItem` mutate local state after the awaited API call, so any throw reports failure over a completed server mutation. Closed at pattern level in Phase 26 with three independent layers — but the durable layer is `recomputeAllTags`'s `?? []`, deliberately NOT a choke point, because assuming a choke point stays complete is what failed twice. A future field that is both unguarded-dereferenced AND on an every-mutation path would be a genuinely new instance; nothing catches that automatically.
+- [Phase 26] **WINDOWS #12 (open, accepted):** the `hidden_password` interface mask does NOT extend to vault export — `ExportDialog` → `getItems()` → `toCsv.ts:59` / `toJson.ts:23` emit `fields.password`. Accepted because a deliberate whole-vault export is inside what D-2 already discloses, and silently blanking a password in a user's own backup is unnoticed data loss. The recipient-facing copy was weakened to match ("this **view** masks it"), i.e. toward honesty. Recommended future fix: warn at export time rather than blank or stay silent.
+- [Phase 26] **WINDOWS #13 (open):** no UI entry point adds a member to an EXISTING collection — all five `ShareDialogScope` paths pass an item or a personal folder, and shared-folder sidebar rows are non-interactive. So a partially-failed share recovers only within the same dialog session; closing it orphans a collection permanently. CR-01's scoped claim holds; its unscoped "no manual DB surgery" claim is recorded as NOT true.
+- [Phase 26] **WINDOWS #1/#3 (open, pre-existing):** 18 × `clippy::explicit_auto_deref` in `vault.rs` predating Phase 24 still block whole-crate `cargo clippy -- -D warnings`. Untouched by Phases 25/26 per scope boundary; a one-line `--fix` sweep would clear it.
 - [Phase 25] **Phase 26 inherits a confirmed wire-contract defect (WR-09), independently found twice.** `collections::create` (`crates/pv-server/src/routes/collections.rs:98`) mints the collection id server-side with `Uuid::new_v4()` AFTER the client has already encrypted `enc_name`, whose AAD binds that same id. Consequence: **no real client can produce a decryptable collection name**, so every folder in Phase 25's removal-disclosure list renders as `Folder "<uuid>"`. Live-confirmed in UAT. Phase 25's UI-SPEC "real folder name" requirement is recorded as an **open UAT gap, not a passed criterion**; Phase 26 owns the fix (client-generated id, or a two-step create) since it owns real collection authoring.
 - [Phase 25] **Latent e2e flakiness to account for in Phases 26/27.** `web/playwright.config.ts` sets `retries: 2` while the suite reuses ONE server/DB and a fixed singleton `FAMILY_OWNER_EMAIL` account, so vault items accumulate across retries — any "expect exactly N items" assertion can see N+1/N+2 on retry and pass or fail nondeterministically. The Phase 25 UAT needed `--retries=0` for a clean single-attempt DB.
 - [Phase 25] **The "resolve_access is the sole enforcement point" premise was false and cost real leaks.** Code review found `GET /api/sync/shared/direct` ungated; the fix pass then audited every `family_members` reference and found **five** holes, not three — including `vault::fetch_items_for` arm 2 (leaked `enc_data` of a suspended member's authored collection items, including others' post-suspension edits) and `collections::list` (no join at all). Lesson for Phases 26/27: when adding an authorization predicate, audit every query touching that table rather than trusting the one call site the feature was designed around.

@@ -68,7 +68,7 @@ Delivered: 20/20 requirements, 7/7 phases verified + Nyquist-compliant + threat-
 - [x] **Phase 23: Sync Model Extension — Shared-Data Fan-Out** - Per-collection revision counters and emit-time WS fan-out make shared edits visible live, proven with a standing multi-session test harness (completed 2026-07-31)
 - [x] **Phase 24: Invitation Flow (No SMTP)** - Single-use, expiring invite links/codes join new or existing users to a family or collection without SMTP (completed 2026-07-31)
 - [x] **Phase 25: Member Removal, Suspension & Re-key** - Suspend/remove a member with atomic, cost-bounded re-key and honest "already seen ≠ undone" UX
-- [ ] **Phase 26: Web App — Sharing UI & Family Management** - Share folders/items at three access levels, with honest hidden-password disclosure and visible sharing/fingerprint indicators
+- [x] **Phase 26: Web App — Sharing UI & Family Management** - Share folders/items at three access levels, with honest hidden-password disclosure and visible sharing/fingerprint indicators
 - [ ] **Phase 27: Extension Integration — Shared Items** - Shared items autofill, TOTP, and passkey-provider identically to personal ones, plus the shared-passkey signature-counter spike
 
 Research: [research/v0.4/SUMMARY.md](research/v0.4/SUMMARY.md), [research/v0.4/ARCHITECTURE.md](research/v0.4/ARCHITECTURE.md), [research/v0.4/PITFALLS.md](research/v0.4/PITFALLS.md). Build order follows the research-reconciled sequence (crypto → schema/auth → sync → invitations → re-key → web UI → extension); the sync-extension phase (23) deliberately hosts the live multi-session test harness (SEC-08) early rather than at the end, per the project's own v0.2→v0.3 lesson that green CI missed 7 bug classes only visible live.
@@ -280,34 +280,34 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 26-01-PLAN.md — TRACER: WR-09/A-1 client-minted collection id fix + item collection_id wire field + real-WASM round-trip proof
-- [ ] 26-02-PLAN.md — KEY-01 client trigger wiring (publishOnUnlock, all 4 unlock call sites)
-- [ ] 26-03-PLAN.md — SEC-05 fingerprint wordlist + pure hex-to-six-words transform (A-9)
+- [x] 26-01-PLAN.md — TRACER: WR-09/A-1 client-minted collection id fix + item collection_id wire field + real-WASM round-trip proof
+- [x] 26-02-PLAN.md — KEY-01 client trigger wiring (publishOnUnlock, all 4 unlock call sites)
+- [x] 26-03-PLAN.md — SEC-05 fingerprint wordlist + pure hex-to-six-words transform (A-9)
 
 **Wave 2** *(blocked on Wave 1 — both touch files 26-01 already modified)*
 
-- [ ] 26-04-PLAN.md — GET /api/vault/items/{id}/shares endpoint + suspended flag on both share-listing endpoints (A-7)
-- [ ] 26-05-PLAN.md — Collections client store + store.ts decrypt-dispatch-by-scope + A-5 onSharedRevisions consumer
+- [x] 26-04-PLAN.md — GET /api/vault/items/{id}/shares endpoint + suspended flag on both share-listing endpoints (A-7)
+- [x] 26-05-PLAN.md — Collections client store + store.ts decrypt-dispatch-by-scope + A-5 onSharedRevisions consumer
 
 **Wave 3** *(blocked on Wave 2 — depends on 26-04's listItemShares)*
 
-- [ ] 26-06-PLAN.md — accessLevel.ts extraction + full i18n dictionary pass + AvatarStack.tsx + shareRecipients.ts
+- [x] 26-06-PLAN.md — accessLevel.ts extraction + full i18n dictionary pass + AvatarStack.tsx + shareRecipients.ts
 
 **Wave 4** *(blocked on Wave 3 completion; 26-07/26-08/26-11 touch disjoint files and run in parallel)*
 
-- [ ] 26-07-PLAN.md — CollectionPicker.tsx (discharges Phase 24's three dissolved backstops)
-- [ ] 26-08-PLAN.md — ShareDialog.tsx (both variants, hidden-password disclosure D-2/UX-03, seed-items bulk move)
-- [ ] 26-11-PLAN.md — SharingOverviewPanel.tsx (D-1, By folder / By person, client-side aggregation A-8)
+- [x] 26-07-PLAN.md — CollectionPicker.tsx (discharges Phase 24's three dissolved backstops)
+- [x] 26-08-PLAN.md — ShareDialog.tsx (both variants, hidden-password disclosure D-2/UX-03, seed-items bulk move)
+- [x] 26-11-PLAN.md — SharingOverviewPanel.tsx (D-1, By folder / By person, client-side aggregation A-8)
 
 **Wave 5** *(blocked on Wave 4; 26-09/26-10/26-12 touch disjoint files and run in parallel)*
 
-- [ ] 26-09-PLAN.md — Item-level Share entry points (ItemContextMenu/DetailPanel) + AvatarStack wiring in ItemRow
-- [ ] 26-10-PLAN.md — Sidebar "Shared folders" section + Share-this-folder kebab + Sharing-overview nav trigger
-- [ ] 26-12-PLAN.md — FamilyTab fingerprint card/reveal (E7) + enable collection-scope invite (retires Phase 24's disabled-option copy)
+- [x] 26-09-PLAN.md — Item-level Share entry points (ItemContextMenu/DetailPanel) + AvatarStack wiring in ItemRow
+- [x] 26-10-PLAN.md — Sidebar "Shared folders" section + Share-this-folder kebab + Sharing-overview nav trigger
+- [x] 26-12-PLAN.md — FamilyTab fingerprint card/reveal (E7) + enable collection-scope invite (retires Phase 24's disabled-option copy)
 
 **Wave 6** *(blocked on Wave 5 completion; phase-closing live proof)*
 
-- [ ] 26-13-PLAN.md — Live 2-session Playwright proofs (WR-09 live closure, deferred Phase 23 conflict-attribution assertion, KEY-01 live)
+- [x] 26-13-PLAN.md — Live 2-session Playwright proofs (WR-09 live closure, deferred Phase 23 conflict-attribution assertion, KEY-01 live)
 
 **UI hint**: yes
 
@@ -359,5 +359,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 23. Sync Model Extension — Shared-Data Fan-Out | v0.4 | 6/6 | Complete    | 2026-07-31 |
 | 24. Invitation Flow (No SMTP) | v0.4 | 8/8 | Complete    | 2026-07-31 |
 | 25. Member Removal, Suspension & Re-key | v0.4 | 10/10 | Complete | 2026-08-06 |
-| 26. Web App — Sharing UI & Family Management | v0.4 | 0/13 | Not started | - |
+| 26. Web App — Sharing UI & Family Management | v0.4 | 13/13 | Complete | 2026-08-06 |
 | 27. Extension Integration — Shared Items | v0.4 | 0/TBD | Not started | - |
