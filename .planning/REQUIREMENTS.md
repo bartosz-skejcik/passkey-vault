@@ -81,8 +81,8 @@ scalar and `SyncHub` is keyed by `user_id` — neither can express "someone else
 
 - [x] **EXT-07**: A shared login autofills in the extension exactly like a personal one, reusing the existing fill pipeline unchanged.
 - [x] **EXT-08**: TOTP generation works for shared items.
-- [ ] **EXT-09**: A shared passkey works through the passkey provider on third-party sites, using the same item-wrap mechanism as every other item type.
-- [ ] **EXT-10**: **Signature-counter behavior for a passkey used concurrently by multiple members is resolved by an explicit design spike** and implemented so that legitimate shared use does not trip the Phase 19 (SEC-04) sign-counter anomaly classifier. No shipped product precedent exists for this — the starting hypothesis is server-authoritative counter state with no per-device local caching, but the spike decides.
+- [x] **EXT-09**: A shared passkey works through the passkey provider on third-party sites, using the same item-wrap mechanism as every other item type.
+- [x] **EXT-10**: **Signature-counter behavior for a passkey used concurrently by multiple members is resolved by an explicit design spike** and implemented so that legitimate shared use does not trip the Phase 19 (SEC-04) sign-counter anomaly classifier. No shipped product precedent exists for this — the starting hypothesis is server-authoritative counter state with no per-device local caching, but the spike decides.
 - [x] **EXT-11**: The extension's background worker holds no newly-persisted secret types — the identity key and Collection Keys are re-derived from the already-recovered User Key on wake, rather than extending the D-02 MV3 persistence exception.
 - [ ] **EXT-12**: The popup visually distinguishes shared items from personal ones.
 
@@ -161,8 +161,8 @@ Explicitly excluded to prevent scope creep.
 | SYNC-08 | Phase 23 | Complete |
 | EXT-07 | Phase 27 | Complete |
 | EXT-08 | Phase 27 | Complete |
-| EXT-09 | Phase 27 | Pending |
-| EXT-10 | Phase 27 | Partial — decision record + in-process regression landed (27-02); SC 3's live two-extension `signCount` wire measurement still owed by 27-06 |
+| EXT-09 | Phase 27 | Complete |
+| EXT-10 | Phase 27 | Complete — decision record + in-process regression (27-02); live two-extension `signCount` wire measurement landed (27-06) |
 | EXT-11 | Phase 27 | Complete |
 | EXT-12 | Phase 27 | Pending |
 | SEC-05 | Phase 26 | Pending |

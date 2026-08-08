@@ -191,3 +191,15 @@ None - no external service configuration required. (The live e2e proof requires 
 ---
 *Phase: 27-extension-integration-shared-items*
 *Completed: 2026-08-08*
+
+## Self-Check: PASSED
+
+- FOUND: extension/entrypoints/background/provider-ceremony.ts
+- FOUND: extension/entrypoints/background/provider-ceremony.test.ts
+- FOUND: extension/entrypoints/background/provider-ceremony.real-wasm.test.ts
+- FOUND: extension/entrypoints/popup/ProviderCeremonyView.tsx
+- FOUND: extension/e2e/fixtures-account-setup.ts
+- FOUND: extension/e2e/dual-extension-ceremony.spec.ts
+- FOUND: .planning/phases/27-extension-integration-shared-items/27-06-SUMMARY.md
+- FOUND commit: 9fa3f95
+- FOUND commit: c07f964

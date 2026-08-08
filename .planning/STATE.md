@@ -5,15 +5,15 @@ milestone_name: Family & Sharing
 current_phase: 27
 current_phase_name: Extension Integration — Shared Items
 status: executing
-stopped_at: Completed 27-05-PLAN.md
-last_updated: "2026-08-08T16:40:01.847Z"
+stopped_at: Completed 27-06-PLAN.md
+last_updated: "2026-08-08T17:06:18.152Z"
 last_activity: 2026-08-08
 last_activity_desc: Phase 27 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 58
-  completed_plans: 52
+  completed_plans: 53
   percent: 86
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 ## Current Position
 
 Phase: 27 (Extension Integration — Shared Items) — EXECUTING
-Plan: 6 of 11
+Plan: 7 of 11
 Status: Ready to execute
 Last activity: 2026-08-08 — Phase 27 execution started
 
@@ -100,6 +100,7 @@ Last activity: 2026-08-08 — Phase 27 execution started
 | Phase 27 P03 | 20min | 3 tasks | 7 files |
 | Phase 27 P04 | 40min | 3 tasks | 13 files |
 | Phase 27 P05 | 35min | 2 tasks | 5 files |
+| Phase 27 P06 | 70min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -196,6 +197,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 27] 27-05: UX-3 personal-before-shared partition built as two-array-then-concat (never Array.prototype.sort) for a deterministic, by-construction stable ordering
 - [Phase ?]: [Phase 27] 27-05: live TOTP proof found a real crypto bug -- the codebase's usual mocked-unit-test secret (JBSWY3DPEHPK3PXP, 10 bytes) fails totp_rs's real RFC 4226 128-bit minimum; fixture now uses RFC 6238 Appendix B's own 20-byte secret, the same literal pv-core's own totp.rs test module uses
 - [Phase ?]: [Phase 27] 27-05: computeTotpCandidates() always computes {current, previous} 30s-time-step candidates, never a single value -- pv-core's generate_code never reads the clock itself, so a live round trip can legitimately straddle a period boundary
+- [Phase ?]: [Phase 27] 27-06: line ~711's ephemeral matchingItemJson round trip in handleCredentialsGet stays User-Key-scoped and UNCHANGED (contradicting 27-RESEARCH.md's/27-PATTERNS.md's literal suggestion) -- wasm_get_provider_assertion has no collection-key-accepting variant; the real fix belongs in persistUpdatedProviderItem's write-back dispatch instead
+- [Phase ?]: [Phase 27] 27-06: EXT-10's live-wire signCount measurement closed -- member B's real browser-returned credentials.get() assertion decodes authenticatorData bytes 33-36 to 0, joining 27-02's in-process Rust regression as the two evidence tiers the requirement's spec mandated
 
 ### Pending Todos
 
@@ -273,10 +276,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 27-05-PLAN.md
+**Stopped at:** Completed 27-06-PLAN.md
 **Resume file:** None
 
-Last session: 2026-08-08T16:40:01.834Z
+Last session: 2026-08-08T17:06:18.139Z
 items resolved by observed evidence rather than deferral: the Playwright half had already been
 executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
 commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run
