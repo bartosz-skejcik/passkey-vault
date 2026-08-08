@@ -31,7 +31,7 @@
 Blocks every other category. Today's hierarchy is entirely symmetric and cannot express
 "give this secret to another person."
 
-- [ ] **KEY-01**: Every account has an X25519 identity keypair — private key wrapped by the User Key, public key published to the server. Accounts created before v0.4 get one generated on upgrade **without re-encrypting their existing vault**.
+- [x] **KEY-01**: Every account has an X25519 identity keypair — private key wrapped by the User Key, public key published to the server. Accounts created before v0.4 get one generated on upgrade **without re-encrypting their existing vault**.
   - **PARTIAL after Phase 22.** Delivered: the pv-core crypto (Phase 21) and the full server half (Phase 22) — public key published/served, wrapped private key stored as an opaque blob the server never unwraps, idempotent under concurrent double-unlock, with a byte-level proof that no vault ciphertext is re-encrypted. **Still outstanding: nothing CALLS it.** No web or extension code invokes `PUT /api/identity/keypair`, so "every account HAS a keypair, including one created before v0.4, generated on upgrade" is possible but not yet true. Caught by 22-VERIFICATION.md as an undelivered-AND-unowned clause; now assigned to **Phase 26 SC#5** (web) and **Phase 27** (extension). Do not mark Complete until a client actually triggers generation.
 - [x] **KEY-02**: A shared collection has its own Collection Key, sealed independently to each member's public key. Adding or removing a member rewraps keys only — item ciphertext (`enc_data`) is never touched.
   - **Complete after Phase 25.** Phase 21 built the Collection Key type and the single-recipient `seal`/`unseal` primitive; Phase 22 delivered per-recipient fan-out (`collection_keys`); Phase 25 (Plan 25-03) delivers and PROVES the final clause against the real removal path — `apply_member_removal_rekey` calls `rewrap_item_key_for_collection` (Plan 25-02) only, never a payload-shaped function, and `tests/family_removal.rs`'s happy-path test asserts the item's `enc_data` is byte-identical, via a direct `SELECT`, before and after removal.
@@ -83,7 +83,7 @@ scalar and `SyncHub` is keyed by `user_id` — neither can express "someone else
 - [ ] **EXT-08**: TOTP generation works for shared items.
 - [ ] **EXT-09**: A shared passkey works through the passkey provider on third-party sites, using the same item-wrap mechanism as every other item type.
 - [ ] **EXT-10**: **Signature-counter behavior for a passkey used concurrently by multiple members is resolved by an explicit design spike** and implemented so that legitimate shared use does not trip the Phase 19 (SEC-04) sign-counter anomaly classifier. No shipped product precedent exists for this — the starting hypothesis is server-authoritative counter state with no per-device local caching, but the spike decides.
-- [ ] **EXT-11**: The extension's background worker holds no newly-persisted secret types — the identity key and Collection Keys are re-derived from the already-recovered User Key on wake, rather than extending the D-02 MV3 persistence exception.
+- [x] **EXT-11**: The extension's background worker holds no newly-persisted secret types — the identity key and Collection Keys are re-derived from the already-recovered User Key on wake, rather than extending the D-02 MV3 persistence exception.
 - [ ] **EXT-12**: The popup visually distinguishes shared items from personal ones.
 
 ### SEC — Security Posture for Multi-User
@@ -163,7 +163,7 @@ Explicitly excluded to prevent scope creep.
 | EXT-08 | Phase 27 | Pending |
 | EXT-09 | Phase 27 | Pending |
 | EXT-10 | Phase 27 | Partial — decision record + in-process regression landed (27-02); SC 3's live two-extension `signCount` wire measurement still owed by 27-06 |
-| EXT-11 | Phase 27 | Pending |
+| EXT-11 | Phase 27 | Complete |
 | EXT-12 | Phase 27 | Pending |
 | SEC-05 | Phase 26 | Pending |
 | SEC-06 | Phase 22 | Complete |

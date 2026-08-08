@@ -5,15 +5,15 @@ milestone_name: Family & Sharing
 current_phase: 27
 current_phase_name: Extension Integration — Shared Items
 status: executing
-stopped_at: Completed 27-03-PLAN.md
-last_updated: "2026-08-08T15:46:34.400Z"
+stopped_at: Completed 27-04-PLAN.md
+last_updated: "2026-08-08T16:26:28.382Z"
 last_activity: 2026-08-08
 last_activity_desc: Phase 27 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 58
-  completed_plans: 50
+  completed_plans: 51
   percent: 86
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 ## Current Position
 
 Phase: 27 (Extension Integration — Shared Items) — EXECUTING
-Plan: 4 of 11
+Plan: 5 of 11
 Status: Ready to execute
 Last activity: 2026-08-08 — Phase 27 execution started
 
@@ -98,6 +98,7 @@ Last activity: 2026-08-08 — Phase 27 execution started
 | Phase 27 P01 | 15min | 2 tasks | 2 files |
 | Phase 27 P02 | 20min | 2 tasks | 3 files |
 | Phase 27 P03 | 20min | 3 tasks | 7 files |
+| Phase 27 P04 | 40min | 3 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -189,6 +190,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 27] 27-03: implemented all 12 collection/identity WASM re-exports (crates/pv-wasm/src/lib.rs's actual list) rather than the plan prose's off-by-one count of 11
 - [Phase ?]: [Phase 27] 27-03: collections-store.ts/identity-store.ts register no subscribeSessionLockState listener of their own (27-PATTERNS.md Pitfall 4) -- both export plain free/refresh functions with a caller-must-invoke contract; 27-04 wires them into vault-store.ts's single existing handler
 - [Phase ?]: [Phase 27] 27-03: EXT-11/KEY-01 left unmarked in REQUIREMENTS.md -- this plan delivers only the crypto primitives; the client-trigger/full wake-lifecycle wiring that makes them observably correct is 27-04's job, matching this project's precedent of not marking a requirement complete until user/system-facing behavior lands
+- [Phase ?]: [Phase 27] 27-04: CollectionKeyPendingError vs. genuinely-broken decrypt failure both surface via the SAME getPendingSharedItems() array -- Task 1 is background-wiring-only, so one always-populated channel satisfies the never-silently-absent guarantee for both classifications
+- [Phase ?]: [Phase 27] 27-04: fixtures-account-setup.ts joins member B to the family via direct owner-side POST /api/families/members, not invitations.rs::accept -- that endpoint's crypto (WasmInviteChannel) is not in wasm-loader.ts's re-export list and is out of this task's scope; matches web/e2e/shared-sync.spec.ts's own established REST-only precedent
 
 ### Pending Todos
 
@@ -266,10 +269,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 27-03-PLAN.md
+**Stopped at:** Completed 27-04-PLAN.md
 **Resume file:** None
 
-Last session: 2026-08-08T15:46:34.389Z
+Last session: 2026-08-08T16:26:28.370Z
 items resolved by observed evidence rather than deferral: the Playwright half had already been
 executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
 commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run

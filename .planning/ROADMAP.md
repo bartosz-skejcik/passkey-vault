@@ -324,7 +324,7 @@ Plans:
   4. The extension's background worker holds no newly-persisted secret types — the identity key and Collection Keys are re-derived from the already-recovered User Key on every MV3 wake.
   5. The popup UI visually distinguishes shared items from personal ones.
 
-**Plans:** 3/11 plans executed
+**Plans:** 4/11 plans executed
 
 Plans:
 **Wave 1**
@@ -335,7 +335,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 — 27-04 depends on 27-01's fixtures and 27-03's foundation modules)*
 
-- [ ] 27-04-PLAN.md — TRACER: vault-store.ts full port (3-source merge, decrypt dispatch, KEY-01 trigger) + sync-client.ts + LIVE two-extension recipient-side proof
+- [x] 27-04-PLAN.md — TRACER: vault-store.ts full port (3-source merge, decrypt dispatch, KEY-01 trigger) + sync-client.ts + LIVE two-extension recipient-side proof
 
 **Wave 3** *(blocked on Wave 2; 27-05/06/07/08 touch disjoint files and run in parallel)*
 
@@ -388,4 +388,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 24. Invitation Flow (No SMTP) | v0.4 | 8/8 | Complete    | 2026-07-31 |
 | 25. Member Removal, Suspension & Re-key | v0.4 | 10/10 | Complete | 2026-08-06 |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 13/13 | Complete | 2026-08-06 |
-| 27. Extension Integration — Shared Items | v0.4 | 3/11 | In Progress|  |
+| 27. Extension Integration — Shared Items | v0.4 | 4/11 | In Progress|  |
