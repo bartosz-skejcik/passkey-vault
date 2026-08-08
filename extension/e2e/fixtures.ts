@@ -38,6 +38,16 @@ const EXTENSION_PATH = path.resolve(__dirname, "../.output/chrome-mv3");
 interface ExtWorkerFixtures {
   extContext: BrowserContext;
   extensionId: string;
+  // extContextB/extensionIdB (27-01-PLAN.md Task 2): a SECOND, independent
+  // worker-scoped persistent-context/extension-id pair, byte-identical in
+  // launch shape to extContext/extensionId above. 27-01's own
+  // two-context-spike.spec.ts proved two `launchPersistentContext("")`
+  // calls in the same worker process produce genuinely independent
+  // profiles (separate chrome.storage.local backing stores) -- later live-
+  // proof plans (27-04, 27-05, 27-06, 27-11) import this pair as their
+  // "member B" browser instance instead of re-deriving the launch logic.
+  extContextB: BrowserContext;
+  extensionIdB: string;
 }
 
 // This project's pinned @playwright/test@1.61.1 typings (under this
@@ -122,6 +132,49 @@ export const test: TestType<Record<string, never>, ExtWorkerFixtures> = (
       }
       const extensionId = new URL(worker.url()).host;
       await use(extensionId);
+    },
+    { scope: "worker" },
+  ],
+
+  // extContextB: a mirror-shaped sibling of extContext above -- deliberately
+  // NOT refactored into a shared helper with extContext (kept additive so a
+  // future reader can diff the two pairs line-for-line; a shared helper is a
+  // legitimate follow-up but out of this plan's file scope).
+  extContextB: [
+    async (
+      {}: Record<string, never>,
+      use: (r: BrowserContext) => Promise<void>,
+      workerInfo: { project: { name: string } },
+    ) => {
+      const headed = workerInfo.project.name.includes("ceremony");
+      const context = await chromium.launchPersistentContext("", {
+        channel: "chromium",
+        headless: !headed,
+        viewport: { width: 420, height: 700 },
+        args: [
+          `--disable-extensions-except=${EXTENSION_PATH}`,
+          `--load-extension=${EXTENSION_PATH}`,
+        ],
+      });
+      await use(context);
+      await context.close();
+    },
+    { scope: "worker" },
+  ],
+
+  extensionIdB: [
+    async (
+      { extContextB }: { extContextB: BrowserContext },
+      use: (r: string) => Promise<void>,
+    ) => {
+      let [worker] = extContextB
+        .serviceWorkers()
+        .filter((w: { url: () => string }) => w.url().startsWith("chrome-extension://"));
+      if (!worker) {
+        worker = await extContextB.waitForEvent("serviceworker", { timeout: 20000 });
+      }
+      const extensionIdB = new URL(worker.url()).host;
+      await use(extensionIdB);
     },
     { scope: "worker" },
   ],
