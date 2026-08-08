@@ -13,6 +13,7 @@ const hoisted = vi.hoisted(() => ({
   mockTotpNow: vi.fn(),
   mockTabsQuery: vi.fn(),
   mockTabsSendMessage: vi.fn(),
+  mockGetCollections: vi.fn(),
 }));
 
 vi.mock("wxt/browser", () => ({
@@ -42,6 +43,10 @@ vi.mock("./vault-store", () => ({
 
 vi.mock("../../lib/crypto/wasm-loader", () => ({
   totpNow: hoisted.mockTotpNow,
+}));
+
+vi.mock("./collections-store", () => ({
+  getCollections: hoisted.mockGetCollections,
 }));
 
 import { handleAutofillFill, handleAutofillMatch, handleAutofillTotpCode } from "./autofill-match";
@@ -143,6 +148,11 @@ const CONTENT_SENDER = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: no cached collections. Individual UX-3 tests override this
+  // when asserting a resolved folderName; every other pre-existing test in
+  // this file never reads it (personal-only fixtures), so an empty array
+  // here keeps them unaffected.
+  hoisted.mockGetCollections.mockReturnValue([]);
 });
 
 describe("Test 1: locked fail-closed", () => {
@@ -426,5 +436,82 @@ describe("Test 8: D-11 popup login relaxation (11-06, Bartek 2026-07-16)", () =>
     );
 
     expect(result.matches).toEqual([]);
+  });
+});
+
+describe("Test 9: UX-3 -- personal-before-shared stable partition", () => {
+  beforeEach(() => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockTabsQuery.mockResolvedValue([{ id: 1, url: "https://bank.example/login" }]);
+    hoisted.mockTabsSendMessage.mockResolvedValue({
+      detected: { login: true, totp: false, card: false, identity: false },
+    });
+  });
+
+  it("moves ALL shared-kind matches after ALL personal-kind matches while preserving each group's own relative order, even when getItems() interleaves them", async () => {
+    const shared1 = {
+      ...loginItem("shared-1", ["https://bank.example/a"], "shared1@example.com"),
+      isShared: true,
+      collectionId: "col-1",
+    };
+    const personal1 = loginItem("personal-1", ["https://bank.example/b"], "personal1@example.com");
+    const shared2 = {
+      ...loginItem("shared-2", ["https://bank.example/c"], "shared2@example.com"),
+      isShared: true,
+      collectionId: "col-1",
+    };
+    const personal2 = loginItem("personal-2", ["https://bank.example/d"], "personal2@example.com");
+    // Deliberately interleaved: getItems() yields shared BEFORE personal --
+    // a naive unchanged loop would surface them in exactly that order.
+    hoisted.mockGetItems.mockReturnValue([shared1, personal1, shared2, personal2]);
+    hoisted.mockGetCollections.mockReturnValue([{ id: "col-1", name: "Rodzina", accessLevel: "edit" }]);
+
+    const result = await handleAutofillMatch(POPUP_SENDER);
+
+    expect(result.matches.map((m) => m.itemId)).toEqual([
+      "personal-1",
+      "personal-2",
+      "shared-1",
+      "shared-2",
+    ]);
+    // Shared entries carry isShared + a resolved folderName; personal
+    // entries carry neither (toEqual ignores undefined-valued keys, so an
+    // absent key and an explicit `undefined` value are equivalent here).
+    expect(result.matches[0]).not.toHaveProperty("isShared");
+    expect(result.matches[2]).toMatchObject({ itemId: "shared-1", isShared: true, folderName: "Rodzina" });
+    expect(result.matches[3]).toMatchObject({ itemId: "shared-2", isShared: true, folderName: "Rodzina" });
+  });
+
+  it("an all-personal match set is returned unchanged -- the partition is a no-op when there is nothing to reorder", async () => {
+    const personal1 = loginItem("personal-1", ["https://bank.example/a"], "p1@example.com");
+    const personal2 = loginItem("personal-2", ["https://bank.example/b"], "p2@example.com");
+    hoisted.mockGetItems.mockReturnValue([personal1, personal2]);
+
+    const result = await handleAutofillMatch(POPUP_SENDER);
+
+    expect(result.matches.map((m) => m.itemId)).toEqual(["personal-1", "personal-2"]);
+  });
+
+  it("an all-shared match set is returned unchanged -- the partition is a no-op when there is nothing to reorder", async () => {
+    const shared1 = {
+      ...loginItem("shared-1", ["https://bank.example/a"], "s1@example.com"),
+      isShared: true,
+      collectionId: null,
+    };
+    const shared2 = {
+      ...loginItem("shared-2", ["https://bank.example/b"], "s2@example.com"),
+      isShared: true,
+      collectionId: null,
+    };
+    hoisted.mockGetItems.mockReturnValue([shared1, shared2]);
+
+    const result = await handleAutofillMatch(POPUP_SENDER);
+
+    expect(result.matches.map((m) => m.itemId)).toEqual(["shared-1", "shared-2"]);
+    // Neither collectionId is resolvable (null, e.g. a direct share) --
+    // isShared is still set, folderName stays undefined (the documented
+    // fallback), never a fabricated name.
+    expect(result.matches[0]).toMatchObject({ isShared: true });
+    expect(result.matches[0].folderName).toBeUndefined();
   });
 });
