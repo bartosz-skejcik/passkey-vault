@@ -25,7 +25,8 @@
 // match).
 import { itemMatchesOrigin } from "./frame-guard";
 import { ensureHydrated } from "./vault-session";
-import { encryptItem } from "../../lib/crypto/wasm-loader";
+import { encryptItem, encryptItemForCollection } from "../../lib/crypto/wasm-loader";
+import { getCollectionKey } from "./collections-store";
 import { createItem, updateItem } from "./vault-api";
 import {
   RevisionConflictError,
@@ -58,6 +59,38 @@ export class OwnershipMismatchError extends Error {
   constructor() {
     super("target item does not belong to the requesting origin/account");
     this.name = "OwnershipMismatchError";
+  }
+}
+
+/** T-27-18 (27-07-PLAN.md): thrown by confirmUpdateLogin when the target
+ * item is collection-scoped and the caller's own `accessLevel` is `"read"`
+ * (or an unrecognized/absent-while-scoped value -- fail closed, mirroring
+ * `web/src/lib/families/accessLevel.ts`'s own `access.unknown` discipline).
+ * Refuses the write BEFORE any encrypt call is made. This is client-side
+ * defense-in-depth/UX only -- the server's `Membership<Item, RequireEdit>`
+ * extractor (unchanged, SHARE-05) is and remains the real authorization
+ * boundary. */
+export class ReadOnlyAccessError extends Error {
+  constructor() {
+    super("cannot save -- you have read-only access to this shared item");
+    this.name = "ReadOnlyAccessError";
+  }
+}
+
+/** T-27-17 (27-07-PLAN.md): thrown by confirmUpdateLogin when the target
+ * item is collection-scoped but its Collection Key is not yet cached in
+ * collections-store.ts. Mirrors web/src/lib/vault/store.ts's own
+ * CollectionKeyUnavailableError (this file's own local class, not imported
+ * across the package boundary) -- NEVER fall back to encrypting under the
+ * personal User Key in this case; a wrong-key encrypt succeeds silently and
+ * corrupts the item for every other collection member on the very next
+ * write. */
+export class CollectionKeyUnavailableError extends Error {
+  constructor(collectionId: string) {
+    super(
+      `cannot save -- the encryption key for collection ${collectionId} is not available yet; wait a moment and try again`,
+    );
+    this.name = "CollectionKeyUnavailableError";
   }
 }
 
@@ -192,9 +225,39 @@ export async function confirmUpdateLogin(
   if (!itemMatchesOrigin(target, fields.frameOrigin) || target.fields.username !== fields.username) {
     throw new OwnershipMismatchError();
   }
+  // T-27-18: the read-only refusal gate -- must run BEFORE plaintext is
+  // built or any encrypt call is made. `target.collectionId` is the only
+  // source of truth for scope (mirrors web's updateVaultItem, 27-07-PLAN.md
+  // `key_links`); a personal item (`collectionId` absent/null) skips this
+  // gate entirely and keeps today's unconditional-write behavior. Fails
+  // closed on any accessLevel other than "edit"/"hidden_password" -- an
+  // unrecognized value is never treated as an implicit grant, mirroring
+  // accessLevel.ts's own access.unknown discipline.
+  if (
+    target.collectionId != null &&
+    target.accessLevel !== "edit" &&
+    target.accessLevel !== "hidden_password"
+  ) {
+    throw new ReadOnlyAccessError();
+  }
   const newRevision = currentRevision + 1;
   const plaintext = JSON.stringify(buildLoginFields(fields));
-  const combined = encryptItem(uk, plaintext, itemId, newRevision);
+  // T-27-17: collection-aware encrypt dispatch, ported from
+  // web/src/lib/vault/store.ts's updateVaultItem -- a personal item
+  // (`collectionId === null`) uses the existing personal-key encrypt
+  // unchanged; a collection-scoped item MUST use its own cached Collection
+  // Key, and NEVER falls back to the personal User Key when that key is not
+  // yet cached (CollectionKeyUnavailableError, fail loud).
+  let combined: string;
+  if (target.collectionId == null) {
+    combined = encryptItem(uk, plaintext, itemId, newRevision);
+  } else {
+    const ck = getCollectionKey(target.collectionId);
+    if (ck === undefined) {
+      throw new CollectionKeyUnavailableError(target.collectionId);
+    }
+    combined = encryptItemForCollection(ck, plaintext, target.collectionId, itemId, newRevision);
+  }
   const { encKey, encData } = splitCombinedEncryptedItem(combined);
   try {
     await updateItem(itemId, encKey, encData, currentRevision);

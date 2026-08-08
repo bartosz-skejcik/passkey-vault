@@ -109,6 +109,8 @@ import {
   confirmUpdateLogin,
   LockedVaultError,
   OwnershipMismatchError,
+  ReadOnlyAccessError,
+  CollectionKeyUnavailableError,
 } from "./capture-handler";
 import {
   readServerConfig,
@@ -462,6 +464,12 @@ async function handleCaptureConfirmMessage(
       return { status: "error", message: e.message };
     }
     if (e instanceof OwnershipMismatchError) {
+      return { status: "error", message: e.message };
+    }
+    if (e instanceof ReadOnlyAccessError) {
+      return { status: "error", message: e.message };
+    }
+    if (e instanceof CollectionKeyUnavailableError) {
       return { status: "error", message: e.message };
     }
     throw e;
