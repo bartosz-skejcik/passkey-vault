@@ -134,6 +134,74 @@ pub fn create_provider_credential(
     Ok(CreateProviderResult { credential_response_json, new_passkey_json })
 }
 
+/// **EXT-10 decision record (no per-item signature-counter tracking for
+/// shared provider passkeys), committed before any dependent code per the
+/// KEY-05 precedent (`.planning/PROJECT.md`'s Key Decisions table carries a
+/// matching row):**
+///
+/// EXT-10's own requirement text frames this as "no shipped product
+/// precedent exists — the starting hypothesis is server-authoritative
+/// counter state." That framing is factually incorrect. A direct code read
+/// of THIS function and `create_provider_credential` above shows the
+/// `Authenticator` is constructed with `Authenticator::new(...)` and never
+/// opts in to `make_credentials_with_signature_counter(true)` — the only way
+/// `passkey-authenticator` 0.5.0 tracks a counter at all. `counter_before`/
+/// `after_pk.counter` (both `Option<u32>`) compared just below always stay
+/// `None`, so `updated_passkey_json` is always `None` on this axis — and
+/// `crates/pv-provider/tests/response_shape.rs`'s
+/// `sign_count_is_always_zero_for_a_provider_ceremony_assertion` (EXT-10 Task
+/// 1) confirms this empirically on the RAW WIRE BYTES: it decodes the
+/// base64url `response.authenticatorData` field returned to the page and
+/// reads the fixed 4-byte big-endian counter at offset 33..37, asserting it
+/// is 0 — a stronger claim than trusting the Rust-side `Option<u32>` alone.
+/// That in-process test is the permanent fast-regression tier only; the
+/// genuine live-wire measurement against a real browser and a real RP is
+/// completed downstream by 27-06's headed dual-extension ceremony spec.
+///
+/// **Decision: no counter is added.** WebAuthn L3 §6.1.1 explicitly permits
+/// an authenticator that "does not implement a signature counter" to report
+/// a constant 0 — this is not a workaround, it is a spec-sanctioned
+/// authenticator category. Industry precedent confirms it is also the
+/// SHIPPED behavior of every major synced-passkey provider: both iCloud
+/// Keychain and Google Password Manager report a constant `signCount: 0` for
+/// synced passkeys (27-RESEARCH.md Secondary sources) — exactly the
+/// "multiple concurrently active instances of one logical credential" shape
+/// `pv-provider`'s shared provider passkeys now have (27-CONTEXT.md's
+/// pluralization-promotion, ROADMAP SC 3).
+///
+/// **Explicit anti-goal:** no per-item monotonic counter is ever introduced
+/// here to "fix" this. A passkey shared across N concurrently active member
+/// extensions has no single authoritative "last counter value" to advance
+/// from — two members' extensions would race on writing a revision-guarded
+/// row, manufacturing exactly the counter-regression false-positive EXT-10
+/// exists to prevent. Promotion (27-CONTEXT.md §A-8) is realized by NOT
+/// adding per-device state, not by adding N-way coordination for it.
+///
+/// **SEC-04 classifier-reachability finding (27-CONTEXT.md §A-8 step 3):** a
+/// provider-ceremony assertion structurally cannot reach the Phase 19 SEC-04
+/// counter-anomaly classifier
+/// (`crates/pv-server/src/routes/passkeys.rs:299-350`,
+/// `handle_finish_auth_error`). That classifier is called from exactly 3
+/// sites — `crates/pv-server/src/routes/passkeys.rs:269` (`prf_wrap`),
+/// `crates/pv-server/src/routes/passkeys.rs:552` (`unlock_finish`), and
+/// `crates/pv-server/src/routes/auth.rs:575` (`passkey_login_finish`) —
+/// every one inside pv-server's own `webauthn-rs` vault login/unlock
+/// ceremony, verified against the `passkeys` table (the vault's OWN login
+/// credentials, never a provider-issued ITEM passkey). `pv-provider`'s
+/// `Cargo.toml` has no `webauthn-rs`, `sqlx`, or `pv-server` edge in its
+/// `[dependencies]` section — this crate implements the AUTHENTICATOR side
+/// of a ceremony against THIRD-PARTY relying parties and structurally never
+/// calls any pv-server route handler. (Pre-empting the obvious grep-based
+/// objection: `webauthn-rs = "0.5"` IS present, but only under
+/// `[dev-dependencies]` at `Cargo.toml:46`, as QA-03's independent
+/// cross-vendor test verifier in `tests/real_rp_verification.rs` — a
+/// dev-dependency is not on any production code path, so this does not
+/// affect the unreachability conclusion.) The two code paths cannot meet:
+/// ROADMAP SC 3's "does not trip the Phase 19 (SEC-04) sign-counter anomaly
+/// classifier" clause is satisfied structurally, not by omission — this is
+/// proof the classifier cannot fire, not merely a record that we shipped no
+/// counter.
+///
 /// Authenticates against `request_json` (a WebAuthn
 /// `PublicKeyCredentialRequestOptions`-shaped JSON, wrapped in `{"publicKey":
 /// ...}`) from `origin`, using `existing_credentials_json` (a JSON array of

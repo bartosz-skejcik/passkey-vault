@@ -194,7 +194,7 @@ fn get_response_binary_fields_are_base64url_strings() {
 /// on the wire (never through any typed Rust wrapper that might silently
 /// normalize an absent counter to a default) and reads bytes 33..37 directly.
 #[test]
-fn get_ceremony_signcount_wire_bytes_decode_to_zero() {
+fn sign_count_is_always_zero_for_a_provider_ceremony_assertion() {
     let create_request_json = fixture_create_request("example.com", false);
     let create_result = create_provider_credential(&create_request_json, "https://example.com")
         .expect("create_provider_credential should succeed (setup for get ceremony)");
