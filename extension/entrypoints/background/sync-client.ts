@@ -32,7 +32,7 @@
 import { browser } from "wxt/browser";
 import { readServerConfig, wsUrlFromBase } from "./server-config";
 import { getSessionToken } from "./session-storage";
-import { getSyncSnapshot, type SyncSnapshot } from "./vault-api";
+import { getSharedRevisions, getSyncSnapshot, type SharedRevisions, type SyncSnapshot } from "./vault-api";
 
 // WR-06 (09-REVIEW.md): the poll fallback is backed by chrome.alarms, NOT
 // setInterval. The module header above states this fallback exists so sync
@@ -60,6 +60,12 @@ const BACKOFF_MAX_MS = 30_000;
 export interface SyncCallbacks {
   getSinceRevision: () => number;
   onSnapshot: (snapshot: SyncSnapshot) => void;
+  // 27-04 (Task 2): resolved value of GET /api/sync/shared, handed off on
+  // every pull cycle alongside the personal snapshot above -- ported from
+  // web/src/lib/vault/sync.ts's identical field. Optional -- a caller that
+  // doesn't provide it (or hasn't been wired up yet) never triggers the
+  // round trip at all (see pullOnce()'s own early-return below).
+  onSharedRevisions?: (revisions: SharedRevisions) => void;
 }
 
 let ws: WebSocket | null = null;
@@ -70,6 +76,26 @@ let activeCallbacks: SyncCallbacks | null = null;
 // (which fires asynchronously, after stopSync already ran) re-arming a
 // reconnect timer. stopSync sets this true BEFORE closing the socket.
 let intentionalStop = true;
+// 27-04 (Task 2, ported verbatim from web/src/lib/vault/sync.ts's WR-01):
+// once a getSharedRevisions() call comes back 404 (this account has no
+// family_members row at all), that is a PERMANENT condition for this
+// session, not a transient failure -- every single-user self-hosted vault
+// would otherwise 404 this endpoint on every WS-open, every WS message, and
+// every poll tick forever. Reset on every startSync() (every unlock), so a
+// user later added to a family picks the pull back up on their next unlock.
+let sharedPullDisabled = false;
+
+/** Duck-typed 404 check -- mirrors vault-store.ts's own isConflictError:
+ * NOT an `instanceof ApiClientError` check, since this module is
+ * dynamically re-imported per-test via vi.resetModules(), which would make
+ * a statically-bound class reference here a different object than the one
+ * a test's mock rejects with. Ported verbatim from web/src/lib/vault/
+ * sync.ts's isNotFoundError. */
+function isNotFoundError(err: unknown): boolean {
+  return (
+    typeof err === "object" && err !== null && "status" in err && (err as { status: unknown }).status === 404
+  );
+}
 
 async function pullOnce(): Promise<void> {
   const callbacks = activeCallbacks;
@@ -86,6 +112,27 @@ async function pullOnce(): Promise<void> {
   } catch {
     // Transient network failure -- the poll timer / next WS event retries;
     // sync is self-healing because the pull is the source of truth.
+  }
+  // 27-04 (Task 2): the shared-revisions pull runs in the SAME pull cycle as
+  // the personal snapshot above, in its OWN try/catch -- a failure here is
+  // equally silent/transient-retry, never blocks/breaks the personal pull
+  // above (which already ran, in its own try block), and vice versa. Skipped
+  // entirely once sharedPullDisabled has latched, or when no caller has
+  // wired up onSharedRevisions at all -- costs nothing and shrinks request
+  // volume for the (today, only) real caller shape.
+  if (sharedPullDisabled || callbacks.onSharedRevisions === undefined) {
+    return;
+  }
+  try {
+    const revisions = await getSharedRevisions();
+    if (activeCallbacks === callbacks) {
+      callbacks.onSharedRevisions?.(revisions);
+    }
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      sharedPullDisabled = true;
+    }
+    // Any other failure is transient -- same self-healing rationale above.
   }
 }
 
@@ -162,6 +209,7 @@ export function startSync(callbacks: SyncCallbacks): void {
   activeCallbacks = callbacks;
   intentionalStop = false;
   backoffMs = BACKOFF_START_MS;
+  sharedPullDisabled = false; // 27-04: re-arm on every unlock, see its own comment above
   void connectWs();
   // Unconditional poll fallback, regardless of WS state (locked v0.1
   // decision, carried over unchanged) -- now alarm-backed so it survives
