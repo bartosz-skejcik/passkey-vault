@@ -135,3 +135,49 @@ export interface CollectionRow {
 export function listCollections(): Promise<CollectionRow[]> {
   return apiJson("/api/vault/collections");
 }
+
+// Plan 27-03 (Task 3): identity keypair endpoints -- ported verbatim from
+// web/src/lib/identity/api.ts, wire-identical to identity.rs's
+// KeypairRequest/KeypairResponse, reusing this file's own apiJson (never a
+// duplicated fetch wrapper).
+
+/** Wire shape of `identity.rs`'s `KeypairResponse` -- matches
+ * `KeypairRequest`/`KeypairResponse` field-for-field. */
+export interface KeypairRow {
+  public_key: string;
+  wrapped_secret_key: string;
+  adopted_existing: boolean;
+}
+
+/**
+ * `GET /api/identity/keypair` -- returns `null` on a 404 (no keypair
+ * published yet), which is an expected, non-error outcome here, not a
+ * thrown `ApiClientError`.
+ */
+export async function getIdentityKeypair(): Promise<{
+  public_key: string;
+  wrapped_secret_key: string;
+} | null> {
+  try {
+    return await apiJson<{ public_key: string; wrapped_secret_key: string }>(
+      "/api/identity/keypair",
+    );
+  } catch (e) {
+    if (e instanceof ApiClientError && e.status === 404) {
+      return null;
+    }
+    throw e;
+  }
+}
+
+/** `PUT /api/identity/keypair` -- idempotent upsert (see `identity.rs`'s
+ * own doc comment for the two-devices-racing resolution this powers). */
+export function putIdentityKeypair(body: {
+  public_key: string;
+  wrapped_secret_key: string;
+}): Promise<KeypairRow> {
+  return apiJson("/api/identity/keypair", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
