@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Family & Sharing
-current_phase: 26
-status: completed
-stopped_at: Phase 27 planned — 11 plans, 5 waves, checker VERIFICATION PASSED
-last_updated: "2026-08-08T15:21:40.399Z"
-last_activity: 2026-08-07
-last_activity_desc: Phase 26 marked complete
+current_phase: 27
+current_phase_name: Extension Integration — Shared Items
+status: executing
+stopped_at: Completed 27-01-PLAN.md
+last_updated: "2026-08-08T15:28:23.252Z"
+last_activity: 2026-08-08
+last_activity_desc: Phase 27 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 58
-  completed_plans: 47
-  percent: 81
-current_phase_name: Web App — Sharing UI & Family Management
+  completed_plans: 48
+  percent: 83
 ---
 
 # Project State
@@ -24,14 +24,14 @@ current_phase_name: Web App — Sharing UI & Family Management
 See: .planning/PROJECT.md (updated 2026-07-31)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 26 — Web App — Sharing UI & Family Management
+**Current focus:** Phase 27 — Extension Integration — Shared Items
 
 ## Current Position
 
-Phase: 26 — COMPLETE
-Plan: 1 of 13
-Status: Phase 26 complete
-Last activity: 2026-08-07 — Phase 26 marked complete
+Phase: 27 (Extension Integration — Shared Items) — EXECUTING
+Plan: 2 of 11
+Status: Ready to execute
+Last activity: 2026-08-08 — Phase 27 execution started
 
 ## Performance Metrics
 
@@ -95,6 +95,7 @@ Last activity: 2026-08-07 — Phase 26 marked complete
 | Phase 24 P06 | 40min | 2 tasks | 4 files |
 | Phase 24 P07 | ~55min | 2 tasks | 6 files |
 | Phase 24 P08 | ~100min | 2 tasks | 9 files |
+| Phase 27 P01 | 15min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -181,6 +182,7 @@ Recent decisions affecting current work:
 - [Phase ?]: Introduced fixtures.ts's ensureFamilyOwnerSession as a shared, real, register-or-login-idempotent family-owner identity so invite-flow.spec.ts and shared-sync.spec.ts resolve to the same owner regardless of file run order (v0.4 singleton family constraint).
 - [Phase ?]: Fixed three real-browser-only bugs found by this plan's own e2e run: missing initCrypto() await race in lib/invite/crypto.ts, page.tsx's no-fragment invite-link detection gap, and InviteLandingView's escape button being unclickable behind UnlockOverlay's modal.
 - [Phase ?]: FamilyTab's Revoke now treats a 404 (invite already accepted/expired) as already-resolved rather than a failure, closing a gap where the owner could never generate a second invite after the first was accepted.
+- [Phase ?]: 27-01: unpacked-extension ids are deterministic-by-path in Chromium (not per-profile) — storage isolation, not extension-id difference, is the valid proof of independent persistent-context profiles
 
 ### Pending Todos
 
@@ -258,10 +260,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Phase 27 planned — 11 plans, 5 waves, checker VERIFICATION PASSED
-**Resume file:** .planning/phases/27-extension-integration-shared-items/27-01-PLAN.md
+**Stopped at:** Completed 27-01-PLAN.md
+**Resume file:** None
 
-Last session: 2026-08-08T15:21:40.375Z
+Last session: 2026-08-08T15:28:23.241Z
 items resolved by observed evidence rather than deferral: the Playwright half had already been
 executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
 commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run

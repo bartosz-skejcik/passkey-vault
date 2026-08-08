@@ -79,7 +79,7 @@ scalar and `SyncHub` is keyed by `user_id` — neither can express "someone else
 
 ### EXT — Shared Items in the Browser Extension
 
-- [ ] **EXT-07**: A shared login autofills in the extension exactly like a personal one, reusing the existing fill pipeline unchanged.
+- [x] **EXT-07**: A shared login autofills in the extension exactly like a personal one, reusing the existing fill pipeline unchanged.
 - [ ] **EXT-08**: TOTP generation works for shared items.
 - [ ] **EXT-09**: A shared passkey works through the passkey provider on third-party sites, using the same item-wrap mechanism as every other item type.
 - [ ] **EXT-10**: **Signature-counter behavior for a passkey used concurrently by multiple members is resolved by an explicit design spike** and implemented so that legitimate shared use does not trip the Phase 19 (SEC-04) sign-counter anomaly classifier. No shipped product precedent exists for this — the starting hypothesis is server-authoritative counter state with no per-device local caching, but the spike decides.
@@ -159,7 +159,7 @@ Explicitly excluded to prevent scope creep.
 | SYNC-06 | Phase 23 | Complete |
 | SYNC-07 | Phase 23 | Complete |
 | SYNC-08 | Phase 23 | Complete |
-| EXT-07 | Phase 27 | Pending |
+| EXT-07 | Phase 27 | Complete |
 | EXT-08 | Phase 27 | Pending |
 | EXT-09 | Phase 27 | Pending |
 | EXT-10 | Phase 27 | Pending |
