@@ -324,7 +324,35 @@ Plans:
   4. The extension's background worker holds no newly-persisted secret types — the identity key and Collection Keys are re-derived from the already-recovered User Key on every MV3 wake.
   5. The popup UI visually distinguishes shared items from personal ones.
 
-**Plans**: TBD
+**Plans:** 11 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 27-01-PLAN.md — Two-extension Playwright harness spike (throwaway-shaped, kept permanent) + extContextB/extensionIdB fixtures
+- [ ] 27-02-PLAN.md — EXT-10 spike: live signCount wire measurement + decision record + companion invariant test
+- [ ] 27-03-PLAN.md — Foundation port: wasm-loader re-exports + collections-store.ts + identity-store.ts
+
+**Wave 2** *(blocked on Wave 1 — 27-04 depends on 27-01's fixtures and 27-03's foundation modules)*
+
+- [ ] 27-04-PLAN.md — TRACER: vault-store.ts full port (3-source merge, decrypt dispatch, KEY-01 trigger) + sync-client.ts + LIVE two-extension recipient-side proof
+
+**Wave 3** *(blocked on Wave 2; 27-05/06/07/08 touch disjoint files and run in parallel)*
+
+- [ ] 27-05-PLAN.md — EXT-08 TOTP live proof + UX-3 autofill ordering
+- [ ] 27-06-PLAN.md — EXT-09/EXT-10 provider-ceremony write-back fix + LIVE headed ceremony proof
+- [ ] 27-07-PLAN.md — capture-handler.ts A-5 write routing + access-level gate
+- [ ] 27-08-PLAN.md — Popup: ItemListView.tsx (E1/E2) + ItemDetailView.tsx (E3) + SharedBadge + i18n pass
+
+**Wave 4** *(blocked on Wave 3; 27-09/27-10 touch disjoint files and run in parallel)*
+
+- [ ] 27-09-PLAN.md — Popup: AutofillItemRow.tsx/TotpFillRow.tsx badge wrapper
+- [ ] 27-10-PLAN.md — Popup: ProviderCeremonyView.tsx badge/note (E4)
+
+**Wave 5** *(blocked on Wave 4 — phase-closing live proof)*
+
+- [ ] 27-11-PLAN.md — EXT-11 chrome.storage.session audit + LIVE post-revocation staleness proof
+
 **UI hint**: yes
 
 ## Progress
@@ -360,4 +388,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 24. Invitation Flow (No SMTP) | v0.4 | 8/8 | Complete    | 2026-07-31 |
 | 25. Member Removal, Suspension & Re-key | v0.4 | 10/10 | Complete | 2026-08-06 |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 13/13 | Complete | 2026-08-06 |
-| 27. Extension Integration — Shared Items | v0.4 | 0/TBD | Not started | - |
+| 27. Extension Integration — Shared Items | v0.4 | 0/11 | Not started | - |
