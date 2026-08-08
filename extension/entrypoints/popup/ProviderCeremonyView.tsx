@@ -41,6 +41,19 @@ import { interpolate, t, type Locale } from "../../lib/i18n/dictionary";
 export interface ProviderCredentialCandidate {
   itemId: string;
   label: string;
+  /** 27-06 (UI-SPEC data-contract prerequisite): set only for a genuinely
+   * shared candidate (mirrors `VaultItem.isShared`/`AutofillMatch.isShared`,
+   * 27-05's identical precedent) -- never explicit `false` for a personal
+   * one. Wiring this into the multi-match row UI (badge/folder label) is
+   * 27-10's job, not this plan's -- this type extension is the prerequisite
+   * only. */
+  isShared?: boolean;
+  /** The owning collection's decrypted name, when already resolvable
+   * (`collections-store.ts`'s synchronous `getCollections()` cache) --
+   * `undefined`, never fabricated, when unresolved or the item is personal/
+   * direct-shared. Same never-fabricating discipline as
+   * `autofill-match.ts`'s own `folderNameFor()` (27-05). */
+  folderName?: string;
 }
 
 export type ProviderCeremonyStatus = "idle" | "busy" | "failed";

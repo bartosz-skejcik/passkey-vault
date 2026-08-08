@@ -96,7 +96,7 @@ import { ensureHydrated, subscribeSessionLockState } from "./vault-session";
 import { getItems, splitCombinedEncryptedItem, touchVaultItem } from "./vault-store";
 import { createItem, updateItem } from "./vault-api";
 import { findMatchingPasskeyItems } from "./credential-store";
-import { getCollectionKey } from "./collections-store";
+import { getCollectionKey, getCollections } from "./collections-store";
 import { CEREMONY_ABANDON_TIMEOUT_MS } from "../../lib/messaging/ceremony-timeouts";
 import { readServerConfig } from "./server-config";
 import {
@@ -492,6 +492,18 @@ function extractGetRpId(publicKeyRequest: unknown, senderOrigin: string): string
   return extractRpId(publicKeyRequest) || deriveOriginHost(senderOrigin);
 }
 
+/** 27-06 (UI-SPEC data-contract prerequisite): synchronous, never-
+ * fabricating owning-collection-name lookup -- mirrors
+ * `autofill-match.ts`'s own `folderNameFor()` (27-05) exactly. `undefined`
+ * (never a placeholder) when `collectionId` is null/undefined (personal or
+ * direct-shared) or not yet cached. */
+function folderNameFor(collectionId: string | null | undefined): string | undefined {
+  if (collectionId == null) {
+    return undefined;
+  }
+  return getCollections().find((collection) => collection.id === collectionId)?.name;
+}
+
 /** `create()`'s RP id lives at `rp.id` (spec-optional there too, same
  * default-to-origin rule as `get()`'s top-level `rpId`, CR-02) -- never at
  * `publicKeyRequest.rpId` (a `get()`-only field). */
@@ -534,6 +546,15 @@ function extractAccountLabel(publicKeyRequest: unknown): string | undefined {
 export interface PendingCeremonyCandidate {
   itemId: string;
   label: string;
+  /** 27-06 (UI-SPEC data-contract prerequisite): mirrors
+   * `ProviderCredentialCandidate.isShared`/`folderName`
+   * (ProviderCeremonyView.tsx) -- set only for a genuinely shared candidate/
+   * a resolvable owning-collection name, from the corresponding `VaultItem`'s
+   * own `isShared`/`collectionId` fields, exactly like Task 1's dispatch
+   * reads `collectionId`. Wiring these into the popup's candidate row UI is
+   * 27-10's job, not this plan's. */
+  isShared?: boolean;
+  folderName?: string;
 }
 
 /** The ONE payload shape `awaitCeremonyConsent` ever writes to
@@ -748,10 +769,20 @@ export async function handleCredentialsGet(
       // handleCredentialsCreate (D-16's capability signal is a property of
       // the CREATED credential, not something a get() ceremony reports).
       prfRequested: false,
-      candidates: candidates.map((c) => ({
-        itemId: c.item.id,
-        label: c.fields.username ?? c.fields.rpId,
-      })),
+      candidates: candidates.map((c) => {
+        const candidate: PendingCeremonyCandidate = {
+          itemId: c.item.id,
+          label: c.fields.username ?? c.fields.rpId,
+        };
+        if (c.item.isShared === true) {
+          candidate.isShared = true;
+        }
+        const folderName = folderNameFor(c.item.collectionId);
+        if (folderName !== undefined) {
+          candidate.folderName = folderName;
+        }
+        return candidate;
+      }),
     });
     if (chosenItemId === null) {
       return { fallthrough: true };

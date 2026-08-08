@@ -22,6 +22,7 @@ const hoisted = vi.hoisted(() => ({
   mockDecryptItem: vi.fn(),
   mockEncryptItemForCollection: vi.fn(),
   mockGetCollectionKey: vi.fn(),
+  mockGetCollections: vi.fn(),
   mockWasmCreateProviderCredential: vi.fn(),
   mockWasmGetProviderAssertion: vi.fn(),
   mockOpenPopup: vi.fn(),
@@ -84,6 +85,7 @@ vi.mock("./vault-api", () => ({
 
 vi.mock("./collections-store", () => ({
   getCollectionKey: hoisted.mockGetCollectionKey,
+  getCollections: hoisted.mockGetCollections,
 }));
 
 vi.mock("../../lib/crypto/wasm-loader", () => ({
@@ -176,6 +178,7 @@ beforeEach(() => {
   hoisted.mockDecryptItem.mockReturnValue('{"type":"passkey"}');
   hoisted.mockEncryptItemForCollection.mockReturnValue(combinedEncryptedItemJson());
   hoisted.mockGetCollectionKey.mockReturnValue(undefined);
+  hoisted.mockGetCollections.mockReturnValue([]);
   hoisted.mockSubscribeSessionLockState.mockReturnValue(() => {});
   hoisted.mockReadServerConfig.mockResolvedValue(null);
   hoisted.mockWindowsGetLastFocused.mockResolvedValue({ left: 100, top: 50, width: 1200, height: 800 });

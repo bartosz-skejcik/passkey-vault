@@ -575,6 +575,170 @@ export async function setupSharedFixture(): Promise<SharedFixtureResult> {
   }
 }
 
+/** The result `setupSharedPasskeyCollectionFixture` hands to
+ * `dual-extension-ceremony.spec.ts` (27-06-PLAN.md Task 2). Unlike
+ * `setupSharedFixture` above, this fixture creates NO item itself --
+ * EXT-09's own headline proof requires the passkey item to be created via a
+ * REAL browser-side `credentials.create()` provider ceremony (member A's
+ * REAL extension, driven by Playwright), never this file's own Node-side
+ * WASM `encryptItem` call. `moveItemIntoCollection` is the ONE piece of
+ * REST-level plumbing the spec still needs afterward: re-encrypting that
+ * browser-created item's plaintext under this fixture's Collection Key and
+ * PUTting it server-side, mirroring `setupSharedFixture`'s own
+ * create-personal-then-move pattern, generalized to a caller-supplied
+ * plaintext/id/revision since the ORIGINAL ciphertext came from a genuine
+ * browser ceremony, not this file's own Node-side encrypt call. */
+export interface SharedPasskeyCollectionFixture {
+  memberAEmail: string;
+  memberAPassword: string;
+  memberBEmail: string;
+  memberBPassword: string;
+  /** The shared collection member B already has `edit` access to -- a
+   * FRESH collection per call (own `randomUUID()`), never reused across
+   * fixture calls, so repeated runs never collide with a stale collection
+   * membership from a prior run. */
+  collectionId: string;
+  /** Re-encrypts `itemPlaintextJson` (the item's REAL decrypted plaintext,
+   * read back from member A's own vault via `vault.list` after the real
+   * ceremony created it) under this fixture's Collection Key and PUTs the
+   * result to `/api/vault/items/{itemId}/collection` -- the SAME
+   * create-personal-then-move REST shape `setupSharedFixture` already
+   * established above, using member A's OWN captured session token (no
+   * token crosses back out of this closure). */
+  moveItemIntoCollection: (
+    itemId: string,
+    itemPlaintextJson: string,
+    currentRevision: number,
+  ) => Promise<void>;
+}
+
+/**
+ * Provisions the accounts/family/identity-keypair scaffolding
+ * `setupSharedFixture` already establishes (idempotent -- safe to call
+ * alongside that function within the same or a different spec file/run),
+ * plus a FRESH collection shared to member B at `edit` access. Returns
+ * `moveItemIntoCollection` instead of creating any item itself -- see this
+ * function's own return type doc comment for why.
+ */
+export async function setupSharedPasskeyCollectionFixture(): Promise<SharedPasskeyCollectionFixture> {
+  const wasm = await ensureNodeWasm();
+
+  const owner = await ensureAccount(FAMILY_OWNER_EMAIL, FAMILY_OWNER_PASSWORD);
+  const a = await ensureAccount(MEMBER_A_EMAIL, MEMBER_A_PASSWORD);
+  const b = await ensureAccount(MEMBER_B_EMAIL, MEMBER_B_PASSWORD);
+
+  try {
+    const familyRes = await fetch(`${SERVER}/api/families`, {
+      method: "POST",
+      headers: jsonAuthHeaders(owner.token),
+      body: JSON.stringify({ name: "pv-e2e-dual-extension-family" }),
+    });
+    if (familyRes.status !== 201 && familyRes.status !== 409) {
+      throw new Error(`pv-e2e: unexpected status ${familyRes.status} creating the singleton family`);
+    }
+
+    await ensureFamilyMember(owner.token, a.userId);
+    await ensureFamilyMember(owner.token, b.userId);
+
+    const aPublicKeyB64 = await ensurePublishedIdentityKeypair(a.token, a.uk);
+    const bPublicKeyB64 = await ensurePublishedIdentityKeypair(b.token, b.uk);
+
+    const collectionId = randomUUID();
+    const ck = wasm.WasmCollectionKey.generate();
+    const encName = wasm.encryptItemForCollection(
+      ck,
+      JSON.stringify({ name: `PV E2E Ceremony Shared Passkey Folder ${Date.now()}` }),
+      collectionId,
+      collectionId,
+      1,
+    );
+    const ownPublicKey = wasm.WasmIdentityPublicKey.fromBytes(base64Decode(aPublicKeyB64));
+    let sealedKeyForSelf: string;
+    try {
+      sealedKeyForSelf = wasm.sealCollectionKey(ownPublicKey, ck);
+    } finally {
+      ownPublicKey.free?.();
+    }
+
+    const createCollectionRes = await fetch(`${SERVER}/api/vault/collections`, {
+      method: "POST",
+      headers: jsonAuthHeaders(a.token),
+      body: JSON.stringify({ id: collectionId, enc_name: encName, sealed_key: sealedKeyForSelf }),
+    });
+    if (createCollectionRes.status !== 201) {
+      throw new Error(`pv-e2e: ceremony collection create failed (${createCollectionRes.status})`);
+    }
+
+    const recipientPublicKey = wasm.WasmIdentityPublicKey.fromBytes(base64Decode(bPublicKeyB64));
+    let sealedKeyForRecipient: string;
+    try {
+      sealedKeyForRecipient = wasm.sealCollectionKey(recipientPublicKey, ck);
+    } finally {
+      recipientPublicKey.free?.();
+    }
+
+    const addMemberRes = await fetch(`${SERVER}/api/vault/collections/${collectionId}/members`, {
+      method: "POST",
+      headers: jsonAuthHeaders(a.token),
+      body: JSON.stringify({
+        recipient_user_id: b.userId,
+        sealed_key: sealedKeyForRecipient,
+        access_level: "edit",
+      }),
+    });
+    if (addMemberRes.status !== 201) {
+      throw new Error(`pv-e2e: ceremony add collection member failed (${addMemberRes.status})`);
+    }
+
+    return {
+      memberAEmail: MEMBER_A_EMAIL,
+      memberAPassword: MEMBER_A_PASSWORD,
+      memberBEmail: MEMBER_B_EMAIL,
+      memberBPassword: MEMBER_B_PASSWORD,
+      collectionId,
+      moveItemIntoCollection: async (
+        itemId: string,
+        itemPlaintextJson: string,
+        currentRevision: number,
+      ) => {
+        const collectionCombined = wasm.encryptItemForCollection(
+          ck,
+          itemPlaintextJson,
+          collectionId,
+          itemId,
+          currentRevision + 1,
+        );
+        const { encKey, encData } = splitCombinedEncryptedItem(collectionCombined);
+        const moveRes = await fetch(`${SERVER}/api/vault/items/${itemId}/collection`, {
+          method: "PUT",
+          headers: jsonAuthHeaders(a.token),
+          body: JSON.stringify({
+            new_collection_id: collectionId,
+            enc_key: encKey,
+            enc_data: encData,
+            expected_revision: currentRevision,
+          }),
+        });
+        if (!moveRes.ok) {
+          throw new Error(`pv-e2e: move ceremony passkey item into collection failed (${moveRes.status})`);
+        }
+      },
+      // ck is intentionally NOT freed here -- moveItemIntoCollection's
+      // closure needs it alive for the caller's later move call, which
+      // happens after this function has already returned. Freed implicitly
+      // when this test file's single Node process exits at the end of its
+      // run (this fixture is test-scoped, not a long-lived module-level
+      // singleton -- mirrors this file's own established WASM-handle
+      // lifecycle discipline: real crypto, but never pretending to be a
+      // production long-running process).
+    };
+  } finally {
+    owner.uk.free?.();
+    a.uk.free?.();
+    b.uk.free?.();
+  }
+}
+
 /**
  * 27-05 Task 2: independently computes the {current, previous} 30-second-
  * time-step TOTP candidates from a KNOWN secret, using the SAME Node-side

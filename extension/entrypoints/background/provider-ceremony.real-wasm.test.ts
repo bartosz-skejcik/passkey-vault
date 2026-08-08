@@ -50,6 +50,7 @@ const hoisted = vi.hoisted(() => ({
   mockCreateItem: vi.fn(),
   mockUpdateItem: vi.fn(),
   mockGetCollectionKey: vi.fn(),
+  mockGetCollections: vi.fn(),
   mockWasmCreateProviderCredential: vi.fn(),
   mockWasmGetProviderAssertion: vi.fn(),
   mockOpenPopup: vi.fn(),
@@ -108,6 +109,7 @@ vi.mock("./vault-api", () => ({
 
 vi.mock("./collections-store", () => ({
   getCollectionKey: hoisted.mockGetCollectionKey,
+  getCollections: hoisted.mockGetCollections,
 }));
 
 vi.mock("./server-config", () => ({
@@ -201,6 +203,7 @@ beforeEach(() => {
   hoisted.mockStorageRemove.mockResolvedValue(undefined);
   hoisted.mockReadServerConfig.mockResolvedValue(null);
   hoisted.mockUpdateItem.mockResolvedValue({ revision: 2, updated_at: "now" });
+  hoisted.mockGetCollections.mockReturnValue([]);
   hoisted.mockSubscribeSessionLockState.mockReturnValue(() => {});
 });
 
