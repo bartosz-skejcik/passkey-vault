@@ -28,12 +28,23 @@ export type DetectedFields = Record<FillKind, boolean>;
 
 /** Metadata-only match result surfaced to the popup -- no field values, no
  * derived secrets. `maskedHint` is e.g. "••••1234" or "j***@example.com",
- * never a live credential value. */
+ * never a live credential value.
+ *
+ * `isShared`/`folderName` (27-05, UX-3): mirror the corresponding
+ * `VaultItem.isShared`/collection-name lookup so the popup's "Na tej
+ * stronie" suggestions can render a shared badge and partition shared
+ * matches after personal ones. `folderName` is set only when the owning
+ * collection's decrypted name is already cached (collections-store.ts's
+ * synchronous getter) -- never fabricated when unresolved; a shared item
+ * with no resolvable folder name simply omits it (matches the UI-SPEC's
+ * documented fallback). */
 export interface AutofillMatch {
   itemId: string;
   kind: FillKind;
   label: string;
   maskedHint: string;
+  isShared?: boolean;
+  folderName?: string;
 }
 
 /** An explicitly-addressed fill destination -- always a concrete frameId,

@@ -34,6 +34,7 @@ import { browser } from "wxt/browser";
 import { itemMatchesOrigin, resolveFillTarget, type MessageSender } from "./frame-guard";
 import { ensureHydrated } from "./vault-session";
 import { getItems, touchVaultItem } from "./vault-store";
+import { getCollections } from "./collections-store";
 import { totpNow } from "../../lib/crypto/wasm-loader";
 import type {
   AutofillMatch,
@@ -99,6 +100,19 @@ function maskCardNumber(number: string): string {
   const digits = number.replace(/\D/g, "");
   const last4 = digits.slice(-4);
   return last4.length === 4 ? `••••${last4}` : "••••";
+}
+
+/** Synchronous lookup of a shared item's owning collection's already-cached
+ * decrypted name (collections-store.ts's own `getCollections()` getter) --
+ * never fabricated. Returns undefined when `collectionId` is null (a direct
+ * share has no collection) or when the collections cache hasn't resolved
+ * that id yet; callers must treat that as "omit the field", matching the
+ * UI-SPEC's documented fallback (27-05, UX-3). */
+function folderNameFor(collectionId: string | null | undefined): string | undefined {
+  if (collectionId == null) {
+    return undefined;
+  }
+  return getCollections().find((collection) => collection.id === collectionId)?.name;
 }
 
 export function maskedHintFor(item: VaultItem): string {
@@ -201,7 +215,15 @@ export async function handleAutofillMatch(
     return { pageState: "unreachable", origin: target.origin, detected: EMPTY_DETECTED, matches: [] };
   }
 
-  const matches: AutofillMatch[] = [];
+  // UX-3 (27-05, locked decision): personal matches sort before shared
+  // matches in "Na tej stronie", each group keeping its own existing
+  // relative order -- a stable partition, never a resort of the whole
+  // array (which would silently reorder items WITHIN either group). Built
+  // as two separate arrays, populated in `getItems()`'s own iteration
+  // order, then concatenated once at the end -- deterministic by
+  // construction, unlike an Array.prototype.sort comparator.
+  const personalMatches: AutofillMatch[] = [];
+  const sharedMatches: AutofillMatch[] = [];
   for (const item of getItems()) {
     const kind = asFillKind(item.fields.type);
     if (kind === null) {
@@ -227,8 +249,24 @@ export async function handleAutofillMatch(
     if (!itemMatchesOrigin(item, target.origin)) {
       continue;
     }
-    matches.push({ itemId: item.id, kind, label: item.fields.name, maskedHint: maskedHintFor(item) });
+    const match: AutofillMatch = {
+      itemId: item.id,
+      kind,
+      label: item.fields.name,
+      maskedHint: maskedHintFor(item),
+    };
+    if (item.isShared === true) {
+      match.isShared = true;
+      const folderName = folderNameFor(item.collectionId);
+      if (folderName !== undefined) {
+        match.folderName = folderName;
+      }
+      sharedMatches.push(match);
+    } else {
+      personalMatches.push(match);
+    }
   }
+  const matches = [...personalMatches, ...sharedMatches];
 
   return { pageState: "ok", origin: target.origin, detected: detectResponse.detected, matches };
 }
