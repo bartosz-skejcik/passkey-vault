@@ -26,6 +26,18 @@ import init, {
   wasmGetProviderAssertion,
   WasmCreateProviderResult,
   WasmGetProviderResult,
+  WasmIdentityKey,
+  WasmIdentityPublicKey,
+  WasmCollectionKey,
+  wrapIdentitySecretKey,
+  unwrapIdentitySecretKey,
+  sealCollectionKey,
+  unsealCollectionKey,
+  encryptItemForCollection,
+  decryptItemForCollection,
+  rewrapItemKeyForCollection,
+  sealItemKeyForRecipient,
+  decryptItemWithSharedKey,
 } from "./wasm/pv_wasm.js";
 
 // Both WasmWrappingKey and WasmUserKey are re-exported as VALUES (not just
@@ -77,6 +89,31 @@ export { encryptItem };
 // credentialResponseJson/updatedEncryptedItemJson) without a separate import.
 export { wasmCreateProviderCredential, wasmGetProviderAssertion };
 export { WasmCreateProviderResult, WasmGetProviderResult };
+
+// Plan 27-03's collections-store.ts/identity-store.ts need the
+// collection/identity crypto surface (27-RESEARCH.md's literal "first task
+// of Wave 1 -- nothing else in this phase compiles without it", per
+// 27-PATTERNS.md's "Pattern 1"). WasmIdentityKey/WasmIdentityPublicKey/
+// WasmCollectionKey are re-exported as VALUES (not just types) -- same
+// rationale as WasmWrappingKey/WasmUserKey above: callers need their
+// static factories (`WasmIdentityKey.generate()`,
+// `WasmIdentityPublicKey.fromBytes()`, `WasmCollectionKey.generate()`)
+// directly, not merely as a type annotation. The nine functions are plain
+// named re-exports, mirroring encryptItem/decryptItem's own shape above --
+// only ciphertext/plaintext/sealed-blob JSON strings and opaque key
+// handles cross this choke-point, never raw key bytes.
+export { WasmIdentityKey, WasmIdentityPublicKey, WasmCollectionKey };
+export {
+  wrapIdentitySecretKey,
+  unwrapIdentitySecretKey,
+  sealCollectionKey,
+  unsealCollectionKey,
+  encryptItemForCollection,
+  decryptItemForCollection,
+  rewrapItemKeyForCollection,
+  sealItemKeyForRecipient,
+  decryptItemWithSharedKey,
+};
 
 // Plan 10-04's autofill-match.ts needs the live TOTP derivation entry
 // point -- mirrors web/src/lib/crypto/index.ts's own totpNow wrapper
