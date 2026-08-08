@@ -524,4 +524,147 @@ describe("ItemListView", () => {
     expect(within(footer).queryByRole("button", { name: "Full screen" })).toBeNull();
     expect(screen.getByRole("button", { name: "Full screen" })).toBeInTheDocument();
   });
+
+  // 27-08 (Task 2) -- E1 badge/subtitle, E2 pending-decrypt skeleton, E1-error
+  // degraded row. All four assertions share one fixture per the plan's own
+  // acceptance criteria wording.
+  describe("27-08: shared-item badge, folder subtitle, pending row, degraded row", () => {
+    function sharedItem(id: string, name: string, collectionId: string): VaultItem {
+      return {
+        id,
+        revision: 1,
+        fields: { type: "login", name, folderId: null, tags: [], username: "u", password: "p", urls: [], notes: "" },
+        isShared: true,
+        collectionId,
+      };
+    }
+
+    it("Test 15: a personal row's DOM is unchanged (no badge)", async () => {
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "vault.list") {
+          return {
+            items: [loginItem("personal-1", "GitHub", "octo")],
+            folders: [],
+            pending: [],
+            collections: [],
+          };
+        }
+        if (message.kind === "session.status") {
+          return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
+        }
+        if (message.kind === "autofill.match") return autofillMatchRestricted();
+        throw new Error(`unexpected: ${message.kind}`);
+      });
+
+      render(<ItemListView locale="en" onSelectItem={vi.fn()} />);
+      await waitFor(() => expect(screen.getByText("GitHub")).toBeInTheDocument());
+
+      expect(screen.queryByRole("img", { name: /shared item/i })).not.toBeInTheDocument();
+      expect(screen.getByText("octo")).toBeInTheDocument();
+    });
+
+    it("Test 16: a shared row shows the badge (correct aria-label) and the resolved folder name as its subtitle", async () => {
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "vault.list") {
+          return {
+            items: [sharedItem("shared-1", "Family Netflix", "col-1")],
+            folders: [],
+            pending: [],
+            collections: [{ id: "col-1", name: "Rodzina", accessLevel: "edit" }],
+          };
+        }
+        if (message.kind === "session.status") {
+          return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
+        }
+        if (message.kind === "autofill.match") return autofillMatchRestricted();
+        throw new Error(`unexpected: ${message.kind}`);
+      });
+
+      render(<ItemListView locale="en" onSelectItem={vi.fn()} />);
+      await waitFor(() => expect(screen.getByText("Family Netflix")).toBeInTheDocument());
+
+      expect(screen.getByRole("img", { name: "Shared item" })).toBeInTheDocument();
+      expect(screen.getByText("Rodzina")).toBeInTheDocument();
+    });
+
+    it("Test 17: a pending row renders role=status, is non-interactive (no onSelectItem fires), and sorts after every resolved row", async () => {
+      const onSelectItem = vi.fn();
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "vault.list") {
+          return {
+            items: [loginItem("resolved-1", "GitHub", "octo")],
+            folders: [],
+            pending: [{ id: "pending-1", collectionId: "col-1" }],
+            collections: [],
+          };
+        }
+        if (message.kind === "session.status") {
+          return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
+        }
+        if (message.kind === "autofill.match") return autofillMatchRestricted();
+        throw new Error(`unexpected: ${message.kind}`);
+      });
+
+      render(<ItemListView locale="en" onSelectItem={onSelectItem} />);
+      await waitFor(() => expect(screen.getByText("GitHub")).toBeInTheDocument());
+
+      const pendingRow = screen.getByRole("status", { name: /loading shared item/i });
+      expect(pendingRow.tagName).toBe("DIV");
+      fireEvent.click(pendingRow);
+      expect(onSelectItem).not.toHaveBeenCalled();
+
+      // Order: the resolved "GitHub" row's button precedes the pending row
+      // in document order (DOCUMENT_POSITION_FOLLOWING = 4).
+      const resolvedRow = screen.getByText("GitHub").closest("button")!;
+      expect(resolvedRow.compareDocumentPosition(pendingRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("Test 18: pending rows are hidden entirely while a search query is active", async () => {
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "vault.list") {
+          return {
+            items: [loginItem("resolved-1", "GitHub", "octo")],
+            folders: [],
+            pending: [{ id: "pending-1", collectionId: "col-1" }],
+            collections: [],
+          };
+        }
+        if (message.kind === "session.status") {
+          return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
+        }
+        if (message.kind === "autofill.match") return autofillMatchRestricted();
+        throw new Error(`unexpected: ${message.kind}`);
+      });
+
+      render(<ItemListView locale="en" onSelectItem={vi.fn()} />);
+      await waitFor(() => expect(screen.getByRole("status", { name: /loading shared item/i })).toBeInTheDocument());
+
+      fireEvent.change(screen.getByPlaceholderText(/search|szukaj/i), { target: { value: "git" } });
+      expect(screen.queryByRole("status", { name: /loading shared item/i })).not.toBeInTheDocument();
+    });
+
+    it("Test 19: a retained-undecryptable:true row shows the degraded treatment, not the healthy badge", async () => {
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "vault.list") {
+          return {
+            items: [{ ...sharedItem("broken-1", "Broken Shared Item", "col-1"), undecryptable: true }],
+            folders: [],
+            pending: [],
+            collections: [{ id: "col-1", name: "Rodzina", accessLevel: "edit" }],
+          };
+        }
+        if (message.kind === "session.status") {
+          return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
+        }
+        if (message.kind === "autofill.match") return autofillMatchRestricted();
+        throw new Error(`unexpected: ${message.kind}`);
+      });
+
+      render(<ItemListView locale="en" onSelectItem={vi.fn()} />);
+      await waitFor(() => expect(screen.getByText("Broken Shared Item")).toBeInTheDocument());
+
+      expect(screen.queryByRole("img", { name: "Shared item" })).not.toBeInTheDocument();
+      expect(screen.getByRole("img", { name: /failed to decrypt/i })).toBeInTheDocument();
+    });
+  });
 });

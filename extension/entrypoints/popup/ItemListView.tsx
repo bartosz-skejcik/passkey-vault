@@ -36,8 +36,10 @@ import {
   StickyNote,
   Timer,
   KeyRound,
+  AlertTriangle,
 } from "lucide-react";
 import { sendMessage } from "../../lib/messaging/ext-protocol";
+import type { MessageResponseMap } from "../../lib/messaging/ext-protocol";
 import { searchItems, filterItems } from "../../lib/vault/search";
 import {
   DEFAULT_SORT,
@@ -49,6 +51,14 @@ import {
 import type { VaultItem, ItemType } from "../../lib/vault/types";
 import { t, interpolate, type Locale } from "../../lib/i18n/dictionary";
 import ItemIconTile from "./ItemIconTile";
+import SharedBadge from "./SharedBadge";
+
+// 27-04's `vault.list` response shape is this popup's ONLY route to a
+// pending-decrypt stub or a decrypted collection name (D-05 -- never a
+// direct background/WASM import) -- derived from MessageResponseMap rather
+// than importing collections-store.ts's own `Collection` type directly.
+type PendingSharedEntry = MessageResponseMap["vault.list"]["pending"][number];
+type CollectionSummary = MessageResponseMap["vault.list"]["collections"][number];
 // Phase 10 (Plan 10-06): the "On this page" autofill section -- the ONE
 // visible surface Phase 10 adds, mounted here per 10-UI-SPEC.md's Scope
 // Note ("every surface is a new section inside the existing popup shell").
@@ -114,6 +124,14 @@ export default function ItemListView({
   onSelectItem: (item: VaultItem) => void;
 }) {
   const [items, setItems] = useState<VaultItem[]>([]);
+  // 27-08 (Task 2): sibling state alongside `items`, set together in
+  // refetchItems() -- `pending` is the E2 skeleton-row source (a shared row
+  // this caller has access to but couldn't decrypt yet/at all this pass,
+  // 27-04's getPendingSharedItems()); `collections` is the E1 folder-name
+  // lookup source. `?? []` defaults guard every pre-27-08 test fixture and
+  // mock response that doesn't (yet) return these two fields.
+  const [pending, setPending] = useState<PendingSharedEntry[]>([]);
+  const [collections, setCollections] = useState<CollectionSummary[]>([]);
   const [query, setQuery] = useState("");
   const [autoLockMinutes, setAutoLockMinutes] = useState<number>(15);
   const [typeMenuOpen, setTypeMenuOpen] = useState(false);
@@ -140,6 +158,8 @@ export default function ItemListView({
   async function refetchItems() {
     const result = await sendMessage({ kind: "vault.list" });
     setItems(result.items);
+    setPending(result.pending ?? []);
+    setCollections(result.collections ?? []);
   }
 
   useEffect(() => {
@@ -319,7 +339,14 @@ export default function ItemListView({
           "bottom sheet over a dark header" silhouette. Owns this popup's
           ONE overflow-y-auto region inside it (D-14, unchanged). */}
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden rounded-t-2xl bg-base-100 px-4 pb-2 pt-3">
-        {items.length === 0 ? (
+        {/* 27-08 (E1 "empty" backstop, T-27-21): also checks `pending` --
+            a fresh MV3 wake with an empty personal vault but a pending
+            shared item must still render that pending row, never the
+            vault-empty state (which would be exactly the silent omission
+            the threat register forbids). Zero shared items (both `items`
+            and `pending` empty) still renders unchanged (no shared-specific
+            empty state, per must_haves.truths). */}
+        {items.length === 0 && pending.length === 0 ? (
           <div
             className="flex min-h-[320px] flex-col items-center justify-center gap-1 px-4 py-8 text-center"
             data-testid="vault-empty-state"
@@ -355,8 +382,10 @@ export default function ItemListView({
                   heading (Bartek: the bold header "nie pasuje tutaj").
                   Hidden when there is nothing left to show and no active
                   query, so it never renders an orphan header over an empty
-                  list. */}
-              {restResults.length > 0 || trimmedQuery !== "" ? (
+                  list. 27-08: also shown for a query-free pending-only list
+                  (see the `items.length === 0 && pending.length === 0` gate
+                  above's own comment). */}
+              {restResults.length > 0 || trimmedQuery !== "" || (trimmedQuery === "" && pending.length > 0) ? (
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center justify-between gap-2">
                     <h2 className="text-sm font-medium text-base-content/60 whitespace-nowrap">
@@ -383,14 +412,43 @@ export default function ItemListView({
                         {interpolate(t(locale, "search.emptyResults"), { query: trimmedQuery })}
                       </p>
                     ) : (
+                      // 27-08 (E1-error backstop, T-27-21): a shared row
+                      // that has NEVER once successfully decrypted (no
+                      // retained copy, no plaintext to anchor a visible row
+                      // to) is deliberately NOT rendered by this loop at
+                      // all -- there is nothing here to iterate over for it.
+                      // That row exists only in `pending` (below, the E2
+                      // skeleton) or, once genuinely broken per
+                      // hasRefreshedThisSession(), stays recorded there too
+                      // (27-04's vault-store.ts never retains a
+                      // last-known-good VaultItem for the extension, unlike
+                      // web) -- an explicit, stated decision, not an
+                      // inherited silent drop. The `item.undecryptable`
+                      // branch immediately below is this loop's OWN
+                      // defense-in-depth for the shape that DOES carry a
+                      // retained VaultItem (the shared `VaultItem` type's
+                      // general contract, ported from web) -- currently
+                      // dead in production given 27-04's drop discipline,
+                      // wired here so it is never a silent gap if that
+                      // discipline ever changes.
                       restResults.map((item) => {
                         const typeLabel = t(locale, TYPE_LABEL_KEY[item.fields.type]);
+                        const isDegraded = item.undecryptable === true;
+                        const folderName =
+                          item.isShared === true && item.collectionId != null
+                            ? collections.find((c) => c.id === item.collectionId)?.name
+                            : undefined;
+                        // E1 "partial": a shared row whose folder name isn't
+                        // resolved yet falls back to the ordinary per-type
+                        // subtitle -- never a blank string, never the raw
+                        // collectionId UUID.
                         const subtitle =
-                          item.fields.type === "login"
+                          folderName ??
+                          (item.fields.type === "login"
                             ? item.fields.username
                             : item.fields.type === "totp"
                               ? item.fields.issuer || typeLabel
-                              : typeLabel;
+                              : typeLabel);
                         return (
                           <button
                             key={item.id}
@@ -404,7 +462,28 @@ export default function ItemListView({
                             className="flex min-h-[48px] items-center gap-2 rounded-field px-1 py-2 text-left pv-row-hover"
                             onClick={() => onSelectItem(item)}
                           >
-                            <ItemIconTile item={item} />
+                            <span className="relative inline-flex">
+                              <ItemIconTile item={item} />
+                              {isDegraded ? (
+                                // E1-error: a retained, genuinely-broken
+                                // shared row -- distinguishable degraded
+                                // treatment INSTEAD of the healthy badge,
+                                // never rendered identically to a healthy
+                                // row (must_haves.prohibitions). The row
+                                // stays clickable -- navigating into it shows
+                                // the E3 undecryptable banner.
+                                <span
+                                  className="absolute -bottom-1 -right-1 flex h-3 w-3 items-center justify-center rounded-full bg-base-100 ring-1 ring-base-100"
+                                  role="img"
+                                  aria-label={t(locale, "sync.itemUndecryptableWarning")}
+                                  title={t(locale, "sync.itemUndecryptableWarning")}
+                                >
+                                  <AlertTriangle size={8} className="text-warning" aria-hidden="true" />
+                                </span>
+                              ) : item.isShared === true ? (
+                                <SharedBadge locale={locale} />
+                              ) : null}
+                            </span>
                             <span className="flex min-w-0 flex-col">
                               <span className="truncate text-base">{item.fields.name}</span>
                               <span className="truncate text-sm text-base-content/60">{subtitle}</span>
@@ -413,6 +492,41 @@ export default function ItemListView({
                         );
                       })
                     )}
+                    {/* E2: pending-decrypt skeleton rows -- sorted to the
+                        END, never interleaved with resolved rows, so the
+                        resolved portion never visually reflows as pending
+                        rows resolve one at a time. Hidden entirely while a
+                        search is active (Claude's-discretion, not
+                        UI-SPEC-mandated -- an active search cannot
+                        meaningfully match an item whose plaintext isn't
+                        known yet; pending rows that resolved while
+                        searching simply reappear via the existing
+                        vault.updated -> refetchItems() cycle once the query
+                        is cleared). Non-interactive `<div>` (never a
+                        `<button>`), `role="status"` carries the sole
+                        screen-reader announcement, no visible text --
+                        neutral shimmer only, NEVER alert-warning/error
+                        styling (Copywriting honesty constraint 2: this is a
+                        transient, expected state, not a fault). */}
+                    {trimmedQuery === ""
+                      ? pending.map((p) => (
+                          <div
+                            key={`pending-${p.id}`}
+                            role="status"
+                            aria-label={t(locale, "sharing.sharedItemLoadingAria")}
+                            className="flex min-h-[48px] items-center gap-2 rounded-field px-1 py-2"
+                          >
+                            <span className="relative inline-flex">
+                              <span className="skeleton h-8 w-8 rounded-[8px]" aria-hidden="true" />
+                              <SharedBadge locale={locale} />
+                            </span>
+                            <span className="flex min-w-0 flex-1 flex-col gap-1" aria-hidden="true">
+                              <span className="skeleton h-3 w-3/4" />
+                              <span className="skeleton h-3 w-1/2" />
+                            </span>
+                          </div>
+                        ))
+                      : null}
                   </div>
                 </div>
               ) : null}
