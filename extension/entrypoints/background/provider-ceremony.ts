@@ -96,10 +96,13 @@ import { ensureHydrated, subscribeSessionLockState } from "./vault-session";
 import { getItems, splitCombinedEncryptedItem, touchVaultItem } from "./vault-store";
 import { createItem, updateItem } from "./vault-api";
 import { findMatchingPasskeyItems } from "./credential-store";
+import { getCollectionKey } from "./collections-store";
 import { CEREMONY_ABANDON_TIMEOUT_MS } from "../../lib/messaging/ceremony-timeouts";
 import { readServerConfig } from "./server-config";
 import {
   encryptItem,
+  decryptItem,
+  encryptItemForCollection,
   wasmCreateProviderCredential,
   wasmGetProviderAssertion,
   type WasmUserKey,
@@ -220,14 +223,65 @@ async function persistPendingProviderItem(itemId: string, encryptedItemJson: str
  * capture-handler.ts's `confirmUpdateLogin`'s `currentRevision`/
  * `newRevision = currentRevision + 1` discipline. Best-effort: a failure
  * here only means a stale sign counter server-side, never a broken
- * ceremony (the response already went to the page by the time this runs).*/
+ * ceremony (the response already went to the page by the time this runs).
+ *
+ * 27-06 (T-27-14) COLLECTION-AWARE DISPATCH: `updatedEncryptedItemJson` is
+ * ALWAYS produced by `wasm_get_provider_assertion`'s own internal
+ * `core_encrypt_item(&uk.0, updated_json, item_id, revision + 1)` call
+ * (crates/pv-wasm/src/lib.rs) -- that WASM binding has NO collection-key
+ * accepting variant, so the ciphertext it hands back is unconditionally
+ * User-Key-scoped regardless of the item's real storage scope. Persisting
+ * it verbatim for a collection-scoped (shared) item would silently corrupt
+ * that row for every other member the next time they try to decrypt it.
+ * `collectionId === null` (personal item): persist `updatedEncryptedItemJson`
+ * exactly as before this fix -- byte-identical behavior, zero change.
+ * `collectionId !== null`: decrypt with the SAME `uk`/`itemId`/`revision+1`
+ * the WASM binding used to PRODUCE this ciphertext (see
+ * `wasm_get_provider_assertion`'s own math above), then re-encrypt the
+ * recovered plaintext under the item's cached Collection Key via
+ * `encryptItemForCollection` before ever calling `updateItem`. If the
+ * Collection Key is not cached, log and return WITHOUT persisting -- fail
+ * loud, never fall back to writing the wrong-scoped ciphertext.
+ *
+ * Per the EXT-10 spike (27-02): `updatedEncryptedItemJson` is `None`/dormant
+ * for EVERY ceremony today (no signature counter is ever set) -- this
+ * dispatch is defense-in-depth for ANY future field-mutation write-back,
+ * not currently exercised by any live ceremony, and must NOT be read as
+ * license to add per-item counter tracking (27-02's explicit anti-goal). */
 async function persistUpdatedProviderItem(
+  uk: WasmUserKey,
   itemId: string,
   expectedRevision: number,
   updatedEncryptedItemJson: string,
+  collectionId: string | null,
 ): Promise<void> {
   try {
-    const { encKey, encData } = splitCombinedEncryptedItem(updatedEncryptedItemJson);
+    if (collectionId === null) {
+      const { encKey, encData } = splitCombinedEncryptedItem(updatedEncryptedItemJson);
+      await updateItem(itemId, encKey, encData, expectedRevision);
+      return;
+    }
+
+    const newRevision = expectedRevision + 1;
+    const plaintext = decryptItem(uk, updatedEncryptedItemJson, itemId, newRevision);
+
+    const collectionKey = getCollectionKey(collectionId);
+    if (collectionKey === undefined) {
+      console.error(
+        "[passkey-vault] cannot persist collection-scoped provider write-back: Collection Key not cached (never falling back to the wrong-scoped ciphertext)",
+        { itemId, collectionId },
+      );
+      return;
+    }
+
+    const recipheredJson = encryptItemForCollection(
+      collectionKey,
+      plaintext,
+      collectionId,
+      itemId,
+      newRevision,
+    );
+    const { encKey, encData } = splitCombinedEncryptedItem(recipheredJson);
     await updateItem(itemId, encKey, encData, expectedRevision);
   } catch (e) {
     console.error("[passkey-vault] failed to persist updated provider credential", e);
@@ -727,7 +781,16 @@ export async function handleCredentialsGet(
     if (updatedEncryptedItemJson !== undefined && updatedEncryptedItemJson !== null) {
       // Sign-counter (or similar) mutation -- persist the re-encrypted item
       // best-effort, same fire-and-forget discipline as the create path.
-      void persistUpdatedProviderItem(chosen.item.id, chosen.item.revision, updatedEncryptedItemJson);
+      // collectionId threaded through so persistUpdatedProviderItem can
+      // dispatch to the correct (personal vs. collection-scoped) re-encrypt
+      // path -- see that function's own header comment (T-27-14).
+      void persistUpdatedProviderItem(
+        uk,
+        chosen.item.id,
+        chosen.item.revision,
+        updatedEncryptedItemJson,
+        chosen.item.collectionId ?? null,
+      );
     }
 
     // NordPass-style last-used tracking (quick-260717): a successful

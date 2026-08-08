@@ -19,6 +19,9 @@ const hoisted = vi.hoisted(() => ({
   mockCreateItem: vi.fn(),
   mockUpdateItem: vi.fn(),
   mockEncryptItem: vi.fn(),
+  mockDecryptItem: vi.fn(),
+  mockEncryptItemForCollection: vi.fn(),
+  mockGetCollectionKey: vi.fn(),
   mockWasmCreateProviderCredential: vi.fn(),
   mockWasmGetProviderAssertion: vi.fn(),
   mockOpenPopup: vi.fn(),
@@ -79,8 +82,14 @@ vi.mock("./vault-api", () => ({
   updateItem: hoisted.mockUpdateItem,
 }));
 
+vi.mock("./collections-store", () => ({
+  getCollectionKey: hoisted.mockGetCollectionKey,
+}));
+
 vi.mock("../../lib/crypto/wasm-loader", () => ({
   encryptItem: hoisted.mockEncryptItem,
+  decryptItem: hoisted.mockDecryptItem,
+  encryptItemForCollection: hoisted.mockEncryptItemForCollection,
   wasmCreateProviderCredential: hoisted.mockWasmCreateProviderCredential,
   wasmGetProviderAssertion: hoisted.mockWasmGetProviderAssertion,
 }));
@@ -114,10 +123,11 @@ interface CapturedConsentPayload {
   candidates: { itemId: string; label: string }[];
 }
 
-function passkeyItem(id: string, rpId: string, username: string): VaultItem {
+function passkeyItem(id: string, rpId: string, username: string, collectionId?: string): VaultItem {
   return {
     id,
     revision: 1,
+    collectionId: collectionId ?? null,
     fields: {
       type: "passkey",
       name: username,
@@ -163,6 +173,9 @@ beforeEach(() => {
   hoisted.mockCreateItem.mockResolvedValue({ id: "new-id", revision: 1, updated_at: "now" });
   hoisted.mockUpdateItem.mockResolvedValue({ revision: 2, updated_at: "now" });
   hoisted.mockEncryptItem.mockReturnValue(combinedEncryptedItemJson());
+  hoisted.mockDecryptItem.mockReturnValue('{"type":"passkey"}');
+  hoisted.mockEncryptItemForCollection.mockReturnValue(combinedEncryptedItemJson());
+  hoisted.mockGetCollectionKey.mockReturnValue(undefined);
   hoisted.mockSubscribeSessionLockState.mockReturnValue(() => {});
   hoisted.mockReadServerConfig.mockResolvedValue(null);
   hoisted.mockWindowsGetLastFocused.mockResolvedValue({ left: 100, top: 50, width: 1200, height: 800 });
@@ -569,6 +582,85 @@ describe("Decision A (12-05-PLAN.md): credentials.get single-match is consent-ga
       expect.any(String),
       1,
     );
+  });
+});
+
+// Task 1 (27-06-PLAN.md, T-27-14): persistUpdatedProviderItem's
+// collection-aware write-back dispatch -- see that function's own header
+// comment in provider-ceremony.ts for the full crypto-boundary rationale
+// (why line ~711's ephemeral matchingItemJson round trip is UNCHANGED and
+// this dispatch fix belongs here instead). Behaviors 1 and 3 below are pure
+// control-flow branching (personal-path byte-identical passthrough, and the
+// no-cached-key fail-loud guard) -- mocked crypto is admissible evidence
+// for both; the genuine collection-scoped re-encrypt round trip (behavior
+// 2) is proven with REAL WASM crypto in provider-ceremony.real-wasm.test.ts.
+describe("Task 1 (27-06): persistUpdatedProviderItem collection-aware dispatch", () => {
+  it("behavior 1: a PERSONAL item (collectionId null) persists updatedEncryptedItemJson VERBATIM -- no decrypt/re-encrypt round trip added", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockGetItems.mockReturnValue([passkeyItem("pk-1", "example.com", "alice")]);
+    hoisted.mockWasmGetProviderAssertion.mockReturnValue({
+      credentialResponseJson: () => '{"id":"cred-pk-1"}',
+      updatedEncryptedItemJson: () => combinedEncryptedItemJson(),
+    });
+
+    const resultPromise = handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+    const payload = await awaitPendingCeremonyPayload();
+    resolveProviderCredentialChoice(payload.requestId, "pk-1");
+    await resultPromise;
+
+    await vi.waitFor(() => {
+      expect(hoisted.mockUpdateItem).toHaveBeenCalled();
+    });
+
+    // No decrypt/re-encrypt round trip for a personal item.
+    expect(hoisted.mockDecryptItem).not.toHaveBeenCalled();
+    expect(hoisted.mockEncryptItemForCollection).not.toHaveBeenCalled();
+    expect(hoisted.mockGetCollectionKey).not.toHaveBeenCalled();
+    // The persisted ciphertext is updatedEncryptedItemJson VERBATIM (split,
+    // never re-encrypted) -- byte-identical to this file's existing
+    // personal-path test above.
+    expect(hoisted.mockUpdateItem).toHaveBeenCalledWith(
+      "pk-1",
+      JSON.stringify((JSON.parse(combinedEncryptedItemJson()) as { enc_key: unknown }).enc_key),
+      JSON.stringify((JSON.parse(combinedEncryptedItemJson()) as { enc_data: unknown }).enc_data),
+      1,
+    );
+  });
+
+  it("behavior 3: a COLLECTION-scoped item with NO cached Collection Key logs and returns WITHOUT persisting -- never falls back to the wrong-scoped ciphertext", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockGetItems.mockReturnValue([
+      passkeyItem("pk-shared-1", "example.com", "alice", "collection-1"),
+    ]);
+    hoisted.mockWasmGetProviderAssertion.mockReturnValue({
+      credentialResponseJson: () => '{"id":"cred-pk-shared-1"}',
+      updatedEncryptedItemJson: () => combinedEncryptedItemJson(),
+    });
+    hoisted.mockGetCollectionKey.mockReturnValue(undefined);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const resultPromise = handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+    const payload = await awaitPendingCeremonyPayload();
+    resolveProviderCredentialChoice(payload.requestId, "pk-shared-1");
+    const result = await resultPromise;
+
+    // The ceremony's own response to the page is unaffected -- only the
+    // best-effort fire-and-forget persist is skipped.
+    expect(result).toEqual({ fallthrough: false, credentialResponseJson: '{"id":"cred-pk-shared-1"}' });
+
+    await vi.waitFor(() => {
+      expect(hoisted.mockGetCollectionKey).toHaveBeenCalledWith("collection-1");
+    });
+
+    expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
+    expect(hoisted.mockEncryptItemForCollection).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
   });
 });
 
