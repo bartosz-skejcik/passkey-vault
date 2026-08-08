@@ -14,6 +14,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const hoisted = vi.hoisted(() => ({
   mockEnsureHydrated: vi.fn(),
   mockEncryptItem: vi.fn(),
+  mockEncryptItemForCollection: vi.fn(),
+  mockGetCollectionKey: vi.fn(),
   mockCreateItem: vi.fn(),
   mockUpdateItem: vi.fn(),
   mockGetItems: vi.fn(),
@@ -34,6 +36,11 @@ vi.mock("./vault-session", () => ({
 
 vi.mock("../../lib/crypto/wasm-loader", () => ({
   encryptItem: hoisted.mockEncryptItem,
+  encryptItemForCollection: hoisted.mockEncryptItemForCollection,
+}));
+
+vi.mock("./collections-store", () => ({
+  getCollectionKey: hoisted.mockGetCollectionKey,
 }));
 
 vi.mock("./vault-api", () => ({
@@ -78,11 +85,19 @@ import {
   confirmUpdateLogin,
   LockedVaultError,
   OwnershipMismatchError,
+  ReadOnlyAccessError,
+  CollectionKeyUnavailableError,
 } from "./capture-handler";
 import { RevisionConflictError } from "./vault-store";
 import type { VaultItem } from "../../lib/vault/types";
 
-function loginItem(id: string, urls: string[], username: string, password: string): VaultItem {
+function loginItem(
+  id: string,
+  urls: string[],
+  username: string,
+  password: string,
+  scope?: { collectionId: string | null; accessLevel?: string },
+): VaultItem {
   return {
     id,
     revision: 1,
@@ -96,6 +111,9 @@ function loginItem(id: string, urls: string[], username: string, password: strin
       urls,
       notes: "",
     },
+    ...(scope !== undefined
+      ? { collectionId: scope.collectionId, accessLevel: scope.accessLevel }
+      : {}),
   };
 }
 
@@ -371,6 +389,150 @@ describe("confirmUpdateLogin", () => {
         2,
       ),
     ).rejects.toThrow(OwnershipMismatchError);
+    expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
+  });
+
+  // 27-07-PLAN.md Task 1: collection-aware encrypt dispatch + read-only
+  // refusal gate.
+  it("updating a PERSONAL item (collectionId absent/null) is byte-identical to today's behavior -- encryptItem unchanged", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw"),
+    ]);
+    hoisted.mockEncryptItem.mockReturnValue(
+      JSON.stringify({ enc_key: { a: 1 }, enc_data: { b: 2 } }),
+    );
+    hoisted.mockUpdateItem.mockResolvedValue({ revision: 3, updated_at: "2026-01-01T00:00:00Z" });
+
+    const result = await confirmUpdateLogin(
+      "item-1",
+      { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+      2,
+    );
+
+    expect(result.revision).toBe(3);
+    expect(hoisted.mockEncryptItem).toHaveBeenCalledTimes(1);
+    expect(hoisted.mockEncryptItemForCollection).not.toHaveBeenCalled();
+    expect(hoisted.mockGetCollectionKey).not.toHaveBeenCalled();
+  });
+
+  it("updating a COLLECTION-scoped item with 'edit' access encrypts via encryptItemForCollection using the cached Collection Key, never encryptItem", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw", {
+        collectionId: "col-1",
+        accessLevel: "edit",
+      }),
+    ]);
+    hoisted.mockGetCollectionKey.mockReturnValue("fake-collection-key");
+    hoisted.mockEncryptItemForCollection.mockReturnValue(
+      JSON.stringify({ enc_key: { a: 1 }, enc_data: { b: 2 } }),
+    );
+    hoisted.mockUpdateItem.mockResolvedValue({ revision: 3, updated_at: "2026-01-01T00:00:00Z" });
+
+    const result = await confirmUpdateLogin(
+      "item-1",
+      { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+      2,
+    );
+
+    expect(result.revision).toBe(3);
+    expect(hoisted.mockGetCollectionKey).toHaveBeenCalledWith("col-1");
+    expect(hoisted.mockEncryptItemForCollection).toHaveBeenCalledWith(
+      "fake-collection-key",
+      expect.any(String),
+      "col-1",
+      "item-1",
+      3,
+    );
+    expect(hoisted.mockEncryptItem).not.toHaveBeenCalled();
+  });
+
+  it("updating a COLLECTION-scoped item with 'hidden_password' access also encrypts via encryptItemForCollection", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw", {
+        collectionId: "col-1",
+        accessLevel: "hidden_password",
+      }),
+    ]);
+    hoisted.mockGetCollectionKey.mockReturnValue("fake-collection-key");
+    hoisted.mockEncryptItemForCollection.mockReturnValue(
+      JSON.stringify({ enc_key: { a: 1 }, enc_data: { b: 2 } }),
+    );
+    hoisted.mockUpdateItem.mockResolvedValue({ revision: 3, updated_at: "2026-01-01T00:00:00Z" });
+
+    const result = await confirmUpdateLogin(
+      "item-1",
+      { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+      2,
+    );
+
+    expect(result.revision).toBe(3);
+    expect(hoisted.mockEncryptItemForCollection).toHaveBeenCalledTimes(1);
+    expect(hoisted.mockEncryptItem).not.toHaveBeenCalled();
+  });
+
+  it("updating a COLLECTION-scoped item with 'read' access throws ReadOnlyAccessError BEFORE any encrypt call", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw", {
+        collectionId: "col-1",
+        accessLevel: "read",
+      }),
+    ]);
+
+    await expect(
+      confirmUpdateLogin(
+        "item-1",
+        { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+        2,
+      ),
+    ).rejects.toThrow(ReadOnlyAccessError);
+    expect(hoisted.mockEncryptItem).not.toHaveBeenCalled();
+    expect(hoisted.mockEncryptItemForCollection).not.toHaveBeenCalled();
+    expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
+  });
+
+  it("updating a COLLECTION-scoped item with an unrecognized accessLevel fails closed, throwing ReadOnlyAccessError before any encrypt call", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw", {
+        collectionId: "col-1",
+        accessLevel: "something-unrecognized",
+      }),
+    ]);
+
+    await expect(
+      confirmUpdateLogin(
+        "item-1",
+        { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+        2,
+      ),
+    ).rejects.toThrow(ReadOnlyAccessError);
+    expect(hoisted.mockEncryptItem).not.toHaveBeenCalled();
+    expect(hoisted.mockEncryptItemForCollection).not.toHaveBeenCalled();
+  });
+
+  it("updating a COLLECTION-scoped item whose Collection Key is not yet cached throws CollectionKeyUnavailableError, never falling back to encryptItem", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw", {
+        collectionId: "col-1",
+        accessLevel: "edit",
+      }),
+    ]);
+    hoisted.mockGetCollectionKey.mockReturnValue(undefined);
+
+    await expect(
+      confirmUpdateLogin(
+        "item-1",
+        { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+        2,
+      ),
+    ).rejects.toThrow(CollectionKeyUnavailableError);
+    expect(hoisted.mockEncryptItem).not.toHaveBeenCalled();
+    expect(hoisted.mockEncryptItemForCollection).not.toHaveBeenCalled();
     expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
   });
 });
