@@ -115,3 +115,23 @@ export function updateItem(
 export function touchItem(id: string): Promise<{ last_used_at: string }> {
   return apiJson(`/api/vault/items/${id}/touch`, { method: "POST" });
 }
+
+// Plan 27-03 (Task 2): collections-store.ts's own listCollections() client
+// -- ported verbatim from web/src/lib/vault/api.ts's CollectionRow/
+// listCollections (field-for-field identical wire shape, same apiJson reuse
+// relationship as every other client in this file). No client for
+// GET /api/vault/collections existed anywhere in the extension before this
+// plan; the module cannot function without it.
+export interface CollectionRow {
+  id: string;
+  enc_name: string;
+  created_at: string;
+  access_level: string | null;
+  sealed_key: string | null;
+}
+
+/** `GET /api/vault/collections` -- every collection the caller currently
+ * holds a `collection_keys` row for (`collections.rs::list`). */
+export function listCollections(): Promise<CollectionRow[]> {
+  return apiJson("/api/vault/collections");
+}
