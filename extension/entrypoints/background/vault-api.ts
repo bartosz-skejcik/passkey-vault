@@ -29,6 +29,16 @@ export interface ItemRow {
   // used at least once (server column is nullable), set via
   // POST /api/vault/items/{id}/touch below.
   last_used_at: string | null;
+  // 27-04 (Task 1): server-sourced sharing metadata, ported verbatim from
+  // web/src/lib/vault/api.ts's ItemRow -- never client-computed. is_shared
+  // is true for a collection-scoped item or one with an item_shares grant;
+  // last_editor_email is the current last_editor_user_id's email, null when
+  // never edited or the item isn't shared at all. collection_id is null for
+  // a personal item, the owning collection's id for a collection-scoped one
+  // -- tells vault-store.ts's decryptItemRow which key to decrypt with.
+  is_shared: boolean;
+  last_editor_email: string | null;
+  collection_id: string | null;
 }
 
 /** Wire shape of a single folder row as returned by GET /api/vault/folders. */
@@ -74,6 +84,78 @@ export interface SyncSnapshot {
 
 export function getSyncSnapshot(since: number): Promise<SyncSnapshot> {
   return apiJson(`/api/sync?since=${since}`);
+}
+
+// 27-04 (Task 1): the three shared-read wire clients this plan's
+// vault-store.ts port needs, ported verbatim from web/src/lib/vault/api.ts
+// -- field-for-field identical wire shapes, same apiJson reuse relationship
+// as every other client in this file.
+
+/** Wire shape of GET /api/sync/shared -- the per-collection revision map plus
+ * a synthetic "direct" bucket (`pull_shared_revisions`). Never a MAX/SUM fold
+ * across collections -- one entry per collection the caller is a member of. */
+export interface SharedRevisions {
+  collections: { id: string; revision: number }[];
+  direct: { revision: number };
+}
+
+export function getSharedRevisions(): Promise<SharedRevisions> {
+  return apiJson("/api/sync/shared");
+}
+
+/** Wire shape of `GET /api/vault/collections/{id}/sync` (`pull_shared_collection`).
+ * Untagged on the server (`UpToDate { revision }` | `Snapshot { revision, items }`),
+ * modeled the same optional-`items` way `SyncSnapshot` above already does.
+ * `items` is field-for-field identical to `ItemRow` -- every row here
+ * carries `collection_id` set to the collection this fetch was scoped to
+ * (server-side), so vault-store.ts's existing scope-dispatching
+ * `decryptItemRow` decrypts it with zero new branching. */
+export interface SharedCollectionItemsResponse {
+  revision: number;
+  items?: ItemRow[];
+}
+
+/** `GET /api/vault/collections/{id}/sync` -- always requested WITHOUT a
+ * `since` query param (the server's own `OptionalSyncQuery` contract: an
+ * absent `since` always degrades to a full snapshot). Callers gate WHETHER
+ * to call this on their own already-known watermark, so this wrapper stays a
+ * thin, unconditional full-fetch. */
+export function getCollectionSync(collectionId: string): Promise<SharedCollectionItemsResponse> {
+  return apiJson(`/api/vault/collections/${encodeURIComponent(collectionId)}/sync`);
+}
+
+/** Wire shape of a single row from `GET /api/sync/shared/direct`
+ * (`pull_shared_direct`). Deliberately NOT `ItemRow`-shaped: this is the ONE
+ * read path that carries the RECIPIENT's own `item_shares.sealed_key` (the
+ * item's Cipher Key, sealed to this recipient's own published identity
+ * public key) instead of `enc_key` (the OWNER's own key, useless to this
+ * recipient -- omitted server-side entirely). Decrypted via
+ * `unsealCollectionKey` then `decryptItemWithSharedKey`, never
+ * `decryptItem`/`decryptItemForCollection`. */
+export interface DirectSharedItemRow {
+  id: string;
+  enc_data: string;
+  sealed_key: string;
+  revision: number;
+  updated_at: string;
+  last_used_at: string | null;
+  is_shared: boolean;
+  last_editor_email: string | null;
+  /** THIS recipient's own `item_shares.access_level` -- `read` | `edit` |
+   * `hidden_password`, or any future/unrecognized value (never normalized
+   * server-side). */
+  access_level: string;
+}
+
+export interface SharedDirectSyncResponse {
+  revision: number;
+  items?: DirectSharedItemRow[];
+}
+
+/** `GET /api/sync/shared/direct` -- same unconditional-full-fetch contract as
+ * `getCollectionSync` above (no `since` query param). */
+export function getSharedDirectSync(): Promise<SharedDirectSyncResponse> {
+  return apiJson("/api/sync/shared/direct");
 }
 
 // Plan 11-03: ported verbatim from web/src/lib/vault/api.ts's

@@ -29,6 +29,15 @@ import {
 } from "./session-storage";
 import { armAutoLock, DEFAULT_AUTOLOCK_MINUTES } from "./autolock";
 import { logout } from "./auth-api";
+// 27-04 (Task 1, A-4/KEY-01): identity-store.ts is this extension's SINGLE
+// unlock choke point's KEY-01 trigger wiring target. NOTE: identity-store.ts
+// itself imports `ensureHydrated`/`getUnlockedUserKey` FROM this module --
+// this is a deliberate circular import (mirrors collections-store.ts's own
+// import of identity-store.ts). Safe here because every use on both sides is
+// inside a function body, never at module-evaluation time, so neither
+// module's top-level code ever observes the other's not-yet-initialized
+// exports.
+import { freeIdentityKey, publishOnUnlock } from "./identity-store";
 
 // Module-level in-memory fast path -- NOT the source of truth. A fresh SW
 // instance woken after an idle-kill starts with this at `null`;
@@ -162,6 +171,14 @@ export async function ensureHydrated(): Promise<WasmUserKey | null> {
  *
  * WR-05: arms the auto-lock alarm ITSELF, at the moment of the actual
  * lock->unlock state transition -- see the call at the end of the body.
+ *
+ * 27-04 (Task 1, A-4/KEY-01): this is the ONE choke point every unlock path
+ * in this extension already converges through -- `freeIdentityKey()` runs
+ * FIRST (mirrors the unconditional `currentUserKey?.free?.()` immediately
+ * below: a re-unlock must never leave a stale identity-key handle cached
+ * from a prior session), and `publishOnUnlock(uk)` fires immediately after
+ * `currentUserKey = uk` is assigned -- fire-and-forget, never awaited (see
+ * that function's own doc comment for why).
  */
 export async function setUnlockedUserKey(
   uk: WasmUserKey,
@@ -169,8 +186,10 @@ export async function setUnlockedUserKey(
   sessionToken: string,
   idleTimeoutMinutes: number,
 ): Promise<void> {
+  freeIdentityKey();
   currentUserKey?.free?.();
   currentUserKey = uk;
+  publishOnUnlock(uk);
 
   await writeSessionMeta({
     sessionToken,

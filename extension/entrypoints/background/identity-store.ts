@@ -132,3 +132,35 @@ export function freeIdentityKey(): void {
   cachedIdentityKey?.free?.();
   cachedIdentityKey = null;
 }
+
+/**
+ * 27-04 (Task 1, A-4/KEY-01): fire-and-forget wrapper ported verbatim from
+ * web/src/lib/identity/publishOnUnlock.ts -- publishes this account's
+ * identity keypair if none is published yet (idempotent no-op, per
+ * `ensureOwnIdentityKeypair`'s own contract, otherwise). Never throws
+ * synchronously and never surfaces a rejection to its caller -- callers must
+ * NOT `await` this or wrap it in `try/catch`; both would reintroduce the
+ * network round trip into the unlock critical path this function exists to
+ * keep off of. Web wires this at 4 separate `setUnlockedUserKey` call sites;
+ * this extension has exactly ONE choke point
+ * (`vault-session.ts::setUnlockedUserKey`), so it is wired there once.
+ *
+ * WASM handle discipline (mirrors web's own doc comment): this call site has
+ * no further use for the returned `WasmIdentityKey` beyond the publish side
+ * effect, so it is ALWAYS freed on the success/adopt resolution path via
+ * `.then`. On a rejected inner call, `ensureOwnIdentityKeypair` has already
+ * freed its own locally-generated handle before rethrowing (its own
+ * `finally` block) -- no handle ever reaches this module's `.catch()`, so
+ * there is nothing left to free there.
+ */
+export function publishOnUnlock(uk: WasmUserKey): void {
+  void ensureOwnIdentityKeypair(uk)
+    .then((isk) => {
+      isk.free?.();
+    })
+    .catch(() => {
+      // Silent per KEY-01's E9 requirement -- self-heals on the next
+      // unlock. This call site has no further use for the returned handle
+      // even on success, so there is nothing else to do here on failure.
+    });
+}

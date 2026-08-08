@@ -90,9 +90,11 @@ import {
   getItems,
   getFolders,
   ensureItemsHydrated,
+  getPendingSharedItems,
   RevisionConflictError,
   touchVaultItem,
 } from "./vault-store";
+import { getCollections } from "./collections-store";
 import { handleAutofillFill, handleAutofillMatch, handleAutofillTotpCode } from "./autofill-match";
 import { handleFillFrame, handleMatchFrame, assertContentSender } from "./autofill-frame";
 import { handleGenerateRequest } from "./generate-handler";
@@ -540,7 +542,16 @@ async function handle(message: Message, sender: MessageSender): Promise<unknown>
       // outcome. No separate fill(0) needed here.
       return handleUnlockPassword(b64ToBytes(message.passwordB64));
     case "vault.list":
-      return { items: getItems(), folders: getFolders() };
+      // 27-04 (Task 1): `pending`/`collections` are this plan's own new
+      // wire-shape additions -- 27-08 (popup) consumes them for the
+      // pending-decrypt stub row and folder-name lookups; this task is the
+      // sole owner of the vault.list response shape this phase adds.
+      return {
+        items: getItems(),
+        folders: getFolders(),
+        pending: getPendingSharedItems(),
+        collections: getCollections(),
+      };
     case "config.get":
       return handleConfigGet();
     case "config.set":

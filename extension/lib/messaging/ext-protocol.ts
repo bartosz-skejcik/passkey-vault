@@ -101,6 +101,11 @@ import type { UnlockResult } from "../../entrypoints/background/unlock";
 import type { CreateRpcResponse, GetRpcResponse } from "../../entrypoints/background/provider-ceremony";
 import type { Folder, VaultItem } from "../vault/types";
 import type { AutofillMatch, DetectedFields, FillKind } from "../autofill/types";
+// 27-04 (Task 1): the popup's SOLE, message-based route to a decrypted
+// collection name (D-05's boundary -- the popup never imports a background/
+// WASM-adjacent module itself). Type-only import, mirrors this file's
+// existing UnlockResult/CreateRpcResponse precedent.
+import type { Collection } from "../../entrypoints/background/collections-store";
 
 export type SessionStatus =
   | { kind: "no-session" }
@@ -371,7 +376,18 @@ export interface MessageResponseMap {
   "session.status": SessionStatus;
   "session.setAutoLockMinutes": { ok: true };
   "unlock.password": UnlockResult;
-  "vault.list": { items: VaultItem[]; folders: Folder[] };
+  // 27-04 (Task 1): `pending` is vault-store.ts's getPendingSharedItems()
+  // stub list (a shared row this caller has access to but could not be
+  // decrypted yet/at all this pass -- never simply absent with no trace,
+  // see that function's own doc comment); `collections` is
+  // collections-store.ts's getCollections() -- the popup's sole route to a
+  // decrypted collection name for a given collectionId (D-05).
+  "vault.list": {
+    items: VaultItem[];
+    folders: Folder[];
+    pending: { id: string; collectionId: string }[];
+    collections: Collection[];
+  };
   "vault.updated": void;
   "session.locked": void;
   "config.get": { baseUrl: string } | null;

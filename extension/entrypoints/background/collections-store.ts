@@ -60,6 +60,19 @@ const COLLECTION_NAME_REVISION = 1;
 let collections: Collection[] = [];
 const listeners = new Set<() => void>();
 
+// 27-04 (Task 1): true once refreshCollections() has completed at least once
+// since the last lock -- reset to false alongside freeAllCollectionKeys()
+// below. This is the signal vault-store.ts's decryptItemRow dispatch needs
+// to distinguish "key not cached YET, collections store simply hasn't
+// refreshed this session" (pending -- CollectionKeyPendingError) from "key
+// genuinely unresolvable even after a refresh" (broken).
+let hasRefreshedSession = false;
+
+/** See `hasRefreshedSession`'s own doc comment above. */
+export function hasRefreshedThisSession(): boolean {
+  return hasRefreshedSession;
+}
+
 // Module-private cache of unwrapped Collection Key handles, keyed by
 // collection id -- LONG-LIVED (freed on lock via freeAllCollectionKeys(),
 // called by 27-04's wiring, or on replacement inside refreshCollections()
@@ -114,6 +127,10 @@ export function freeAllCollectionKeys(): void {
     ck.free?.();
   });
   collectionKeys.clear();
+  // 27-04 (Task 1): re-arm the pending/broken distinction for the NEXT
+  // unlock -- a fresh session must start "not yet refreshed" again, exactly
+  // like `ensureVaultSyncStarted()`'s own `syncStarted` guard resets on lock.
+  hasRefreshedSession = false;
 }
 
 /** Re-fetches and re-decrypts every collection the caller currently holds a
@@ -202,6 +219,11 @@ async function refreshCollections(): Promise<void> {
       }
     }
     collections = nextCollections;
+    // 27-04 (Task 1): mark this session as having completed at least one
+    // refresh -- flips vault-store.ts's decryptItemRow dispatch from
+    // "pending" to "broken" for any collection whose key still fails to
+    // resolve after this point.
+    hasRefreshedSession = true;
     notifyListeners();
   } finally {
     identityKey.free?.();
