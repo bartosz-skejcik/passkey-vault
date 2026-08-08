@@ -863,7 +863,17 @@ export function ensureVaultSyncStarted(): void {
     return;
   }
   syncStarted = true;
-  startSync({ getSinceRevision: () => lastKnownRevision, onSnapshot: applySyncSnapshot });
+  // 27-04 (Task 2's own wiring point -- deviation, see this plan's SUMMARY:
+  // Task 2's file list only names sync-client.ts, but without this line its
+  // new onSharedRevisions extension is unreachable in production, since
+  // sync-client.ts's SyncCallbacks type did not exist yet when Task 1 wrote
+  // this call): every WS/poll tick now ALSO re-pulls shared revisions, not
+  // only the eager one-shot call below.
+  startSync({
+    getSinceRevision: () => lastKnownRevision,
+    onSnapshot: applySyncSnapshot,
+    onSharedRevisions: handleSharedRevisions,
+  });
   // The `.catch` below still swallows the rejection (so the initial pull's
   // own failure never becomes an unhandled promise rejection in the
   // service worker -- unchanged behavior), but now converts it into a
