@@ -4,16 +4,16 @@ milestone: v0.4
 milestone_name: Family & Sharing
 current_phase: 26
 status: completed
-stopped_at: Phase 25 UI-SPEC approved
-last_updated: "2026-08-07T10:16:21.493Z"
+stopped_at: Phase 27 planned — 11 plans, 5 waves, checker VERIFICATION PASSED
+last_updated: "2026-08-08T15:21:40.399Z"
 last_activity: 2026-08-07
 last_activity_desc: Phase 26 marked complete
 progress:
   total_phases: 7
   completed_phases: 6
-  total_plans: 47
+  total_plans: 58
   completed_plans: 47
-  percent: 86
+  percent: 81
 current_phase_name: Web App — Sharing UI & Family Management
 ---
 
@@ -258,10 +258,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Phase 25 UI-SPEC approved
-**Resume file:** /Users/j5on/.work/projects/passkey-vault/.planning/phases/25-member-removal-suspension-re-key/25-UI-SPEC.md
+**Stopped at:** Phase 27 planned — 11 plans, 5 waves, checker VERIFICATION PASSED
+**Resume file:** .planning/phases/27-extension-integration-shared-items/27-01-PLAN.md
 
-Last session: 2026-08-04T13:19:06.389Z
+Last session: 2026-08-08T15:21:40.375Z
 items resolved by observed evidence rather than deferral: the Playwright half had already been
 executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
 commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run
