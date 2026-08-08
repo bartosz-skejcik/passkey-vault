@@ -179,3 +179,79 @@ fn get_response_binary_fields_are_base64url_strings() {
     // `response.userHandle` is Option<Bytes> -- assert shape only if present.
     assert_optional_base64url_string_field(&response, "response.userHandle");
 }
+
+/// EXT-10 Task 1: a full create-then-get ceremony's `signCount` measured off
+/// the RAW WIRE BYTES of `authenticatorData` -- not `updated_passkey_json`'s
+/// `Option<u32>` (a weaker, code-read-only claim already known from
+/// `ceremony.rs`'s doc comments). Per the WebAuthn spec (§6.1
+/// `authenticatorData`), the structure is:
+///   - bytes 0..32:  rpIdHash (32 bytes)
+///   - byte  32:     flags (1 byte)
+///   - bytes 33..37: signCount, 4-byte big-endian u32
+///   - bytes 37..:   attestedCredentialData / extensions (variable, get
+///     ceremonies never carry this)
+/// This test decodes `response.authenticatorData` from the base64url string
+/// on the wire (never through any typed Rust wrapper that might silently
+/// normalize an absent counter to a default) and reads bytes 33..37 directly.
+#[test]
+fn get_ceremony_signcount_wire_bytes_decode_to_zero() {
+    let create_request_json = fixture_create_request("example.com", false);
+    let create_result = create_provider_credential(&create_request_json, "https://example.com")
+        .expect("create_provider_credential should succeed (setup for get ceremony)");
+
+    let existing_credentials_json = format!("[{}]", create_result.new_passkey_json);
+    let get_request_json = fixture_get_request("example.com");
+
+    let get_result = get_provider_assertion(
+        &get_request_json,
+        "https://example.com",
+        &existing_credentials_json,
+    )
+    .expect("get_provider_assertion should succeed");
+
+    let response: Value = serde_json::from_str(&get_result.credential_response_json)
+        .expect("credential_response_json must parse as JSON");
+
+    let auth_data_b64 = get_required(&response, "response.authenticatorData")
+        .as_str()
+        .expect("response.authenticatorData must be a base64url string (QA-04 wire contract)");
+    let auth_data_bytes = passkey_types::encoding::try_from_base64url(auth_data_b64)
+        .expect("response.authenticatorData must decode as valid base64url");
+
+    assert!(
+        auth_data_bytes.len() >= 37,
+        "authenticatorData must be at least 37 bytes (32 rpIdHash + 1 flags + 4 signCount), \
+         got {} bytes -- cannot locate the signCount field",
+        auth_data_bytes.len()
+    );
+
+    // WebAuthn §6.1: signCount is a 4-byte big-endian u32 at offset 33..37,
+    // immediately after the 32-byte rpIdHash and the 1-byte flags.
+    let sign_count = u32::from_be_bytes([
+        auth_data_bytes[33],
+        auth_data_bytes[34],
+        auth_data_bytes[35],
+        auth_data_bytes[36],
+    ]);
+
+    assert_eq!(
+        sign_count, 0,
+        "EXT-10: a provider-ceremony assertion's raw wire-level signCount \
+         (authenticatorData bytes 33..37, decoded from the actual base64url \
+         response field -- not inferred from `updated_passkey_json` or any \
+         other Rust-side Option<u32>) must be 0. `pv-provider`'s \
+         `Authenticator` is never configured with \
+         `make_credentials_with_signature_counter(true)` (see ceremony.rs), \
+         matching WebAuthn L3 §6.1.1's permitted \"authenticator does not \
+         implement a counter\" case and the observed behavior of iCloud \
+         Keychain / Google Password Manager for synced passkeys. This is the \
+         permanent fast in-process regression tier only -- the genuine live \
+         wire measurement against a real browser is 27-06's job."
+    );
+    assert!(
+        get_result.updated_passkey_json.is_none(),
+        "companion check: no authenticator-side mutation should have \
+         occurred either (weaker claim, already known from the code read, \
+         but should stay consistent with the wire-level measurement above)"
+    );
+}
