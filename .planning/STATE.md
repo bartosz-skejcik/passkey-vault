@@ -5,16 +5,16 @@ milestone_name: Family & Sharing
 current_phase: 27
 current_phase_name: Extension Integration — Shared Items
 status: executing
-stopped_at: Completed 27-01-PLAN.md
-last_updated: "2026-08-08T15:28:23.252Z"
+stopped_at: Completed 27-02-PLAN.md
+last_updated: "2026-08-08T15:33:49.233Z"
 last_activity: 2026-08-08
 last_activity_desc: Phase 27 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 58
-  completed_plans: 48
-  percent: 83
+  completed_plans: 49
+  percent: 84
 ---
 
 # Project State
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 ## Current Position
 
 Phase: 27 (Extension Integration — Shared Items) — EXECUTING
-Plan: 2 of 11
+Plan: 3 of 11
 Status: Ready to execute
 Last activity: 2026-08-08 — Phase 27 execution started
 
@@ -96,6 +96,7 @@ Last activity: 2026-08-08 — Phase 27 execution started
 | Phase 24 P07 | ~55min | 2 tasks | 6 files |
 | Phase 24 P08 | ~100min | 2 tasks | 9 files |
 | Phase 27 P01 | 15min | 2 tasks | 2 files |
+| Phase 27 P02 | 20min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -183,6 +184,7 @@ Recent decisions affecting current work:
 - [Phase ?]: Fixed three real-browser-only bugs found by this plan's own e2e run: missing initCrypto() await race in lib/invite/crypto.ts, page.tsx's no-fragment invite-link detection gap, and InviteLandingView's escape button being unclickable behind UnlockOverlay's modal.
 - [Phase ?]: FamilyTab's Revoke now treats a 404 (invite already accepted/expired) as already-resolved rather than a failure, closing a gap where the owner could never generate a second invite after the first was accepted.
 - [Phase ?]: 27-01: unpacked-extension ids are deterministic-by-path in Chromium (not per-profile) — storage isolation, not extension-id difference, is the valid proof of independent persistent-context profiles
+- [Phase ?]: [Phase 27] 27-02: EXT-10 no per-item signature-counter tracking for shared provider passkeys — requirement's own premise (no shipped precedent) was factually wrong; pv-provider already reports signCount 0 (confirmed by raw wire-byte decode), matching iCloud Keychain/Google Password Manager; SEC-04 classifier structurally unreachable from provider-ceremony assertions (file:line-traced).
 
 ### Pending Todos
 
@@ -260,10 +262,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 27-01-PLAN.md
+**Stopped at:** Completed 27-02-PLAN.md
 **Resume file:** None
 
-Last session: 2026-08-08T15:28:23.241Z
+Last session: 2026-08-08T15:33:49.222Z
 items resolved by observed evidence rather than deferral: the Playwright half had already been
 executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
 commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run
