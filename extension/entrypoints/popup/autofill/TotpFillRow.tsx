@@ -24,6 +24,7 @@
 // converges to the true period within one full period of mounting.
 import { useEffect, useState } from "react";
 import { Clipboard, CornerDownLeft, Timer } from "lucide-react";
+import SharedBadge from "../SharedBadge";
 import { t, type Locale } from "../../../lib/i18n/autofill-dictionary";
 import type { AutofillMatch, FillKind } from "../../../lib/autofill/types";
 import type { MessageResponseMap } from "../../../lib/messaging/ext-protocol";
@@ -129,8 +130,15 @@ export default function TotpFillRow({
 
   return (
     <div className="flex min-h-[48px] items-center gap-2 px-1 py-1" data-testid={`autofill-row-${match.itemId}`}>
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-base-200 text-base-content/70">
-        <Timer size={18} aria-hidden="true" />
+      <span className="relative inline-flex shrink-0">
+        <span className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-base-200 text-base-content/70">
+          <Timer size={18} aria-hidden="true" />
+        </span>
+        {/* 27-09: SAME SharedBadge (27-08) ItemListView.tsx's "Wszystkie"
+            rows use -- reused, never re-derived. Personal rows
+            (match.isShared !== true) render byte-identical to before this
+            wrapper was added. */}
+        {match.isShared === true ? <SharedBadge locale={locale} /> : null}
       </span>
       <span className="flex min-w-0 flex-1 flex-col items-start">
         <span className="truncate text-base">{match.label}</span>
