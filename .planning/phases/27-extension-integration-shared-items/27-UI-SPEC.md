@@ -1,7 +1,7 @@
 ---
 phase: 27
 slug: extension-integration-shared-items
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-08-08
@@ -106,7 +106,7 @@ in Phases 9–13:
 |------|------|--------|-------------|
 | Body | 16px | 400 | 1.5 |
 | Label | 14px | 400 | 1.4 |
-| Heading | 20px | 600–700 | 1.2 |
+| Heading | 20px | 700 for the `ItemListView` popup title; 600 for the `ItemDetailView` item-name heading | 1.2 |
 | Display | not used | — | — |
 
 - **Body (16px)** → item name / row primary text (`ItemListView` rows, `ItemDetailView` field values) — unchanged, shared items render at the identical weight/size as personal ones (the badge, not typography, is the differentiator).
@@ -192,7 +192,7 @@ inherited from Phase 26 D-2/A-6 — not polish, not open to softening):**
 
 **Copywriting honesty constraints (hard requirements, re-stated for the checker):**
 
-1. `share.hiddenPasswordExtensionNote` must never be shortened to drop either of its two claims — that copy is suppressed *and* autofill still works *and* the recipient holds the key regardless. Dropping any one of the three makes the remaining two misleading (dropping the third makes it sound cryptographically enforced; dropping the second makes UX-4's own rationale for the level invisible; dropping the first would be simply false once reveal/copy are actually suppressed).
+1. `share.hiddenPasswordExtensionNote` must never be shortened to drop any of its three claims — that copy is suppressed *and* autofill still works *and* the recipient holds the key regardless. Dropping any one of the three makes the remaining two misleading (dropping the third makes it sound cryptographically enforced; dropping the second makes UX-4's own rationale for the level invisible; dropping the first would be simply false once reveal/copy are actually suppressed).
 2. The pending-decrypt row must never render `alert-warning`/error styling or copy implying a fault — see Color.
 3. `sync.itemUndecryptableWarning` is reserved for a genuine, non-transient decrypt failure; it must never fire for the ordinary MV3-wake pending-decrypt window (see Phase-Specific Notes §4 for how the two are told apart).
 4. `sharing.sharedItemLabel` stays direction-neutral ("Shared item," never "Shared by you"/"Shared with you") — the popup has no data path this phase to reliably tell those apart for every row cheaply, and a wrong direction claim would repeat the exact CR-02-class lie Phase 26 already found and fixed once (see Phase-Specific Notes §5).
@@ -201,48 +201,66 @@ inherited from Phase 26 D-2/A-6 — not polish, not open to softening):**
 
 ## UI Considerations
 
-Shape-rooted UI *state* coverage across this phase's 4 surfaces. Empty-state and error-state **copy**
-live in `## Copywriting Contract` above; rows below reference those keys rather than restating them.
+Shape-rooted UI *state* coverage across this phase's 4 surfaces, computed by the
+ui-consideration-probe engine (32 applicable considerations raised across E1–E4) and resolved
+row-by-row below. Empty-state and error-state **copy** lives in `## Copywriting Contract` above;
+rows here reference those keys rather than restating them.
 
-**Resolved: 12 covered, 5 backstop, 0 unresolved.**
+**Resolved: 24 covered, 4 backstop, 4 dismissed, 0 unresolved.**
 
 ### E1 — Shared-item badge + folder subtitle (`ItemListView.tsx`'s "Wszystkie" rows, `AutofillItemRow.tsx`/`TotpFillRow.tsx`'s "Na tej stronie" rows)
 
 | Category | Status | Resolution |
 |----------|--------|------------|
-| populated — mixed personal + shared rows | ✅ covered | Identical row height/background/hover treatment for personal and shared rows (`pv-row-hover` unchanged) — the 12px corner badge and the subtitle swap are the *only* differentiators, per UX-1's own "width-independent, reuses the tile component already in every row" framing. No divider, no sub-heading, no different row color between personal and shared rows within "Wszystkie" (UX-2: mixed inline, one list). |
-| zero-one-many (shared items specifically) | ✅ covered | Zero shared items → list renders exactly as it does today (no shared-specific empty state; the existing `vault.emptyHeading`/`vault.emptyBody` only fires when the WHOLE vault, personal+shared, is empty). One or many shared items interleave with personal rows under the existing sort control (UX-2), no count badge, no shared-items subheading anywhere. |
-| overflow / long-text (folder-name subtitle) | ✅ covered | Reuses the row's existing `truncate` class on the subtitle `<span>` — no new CSS. A folder name too long for the row's remaining width truncates exactly like a personal item's username/issuer subtitle already does. |
-| ordering — "Na tej stronie" personal-vs-shared (UX-3) | ✅ covered | Personal matches sort before shared matches within `OnThisPageSection`'s match list, each group keeping its own existing intra-group order (per UX-3) — scoped to that section only. **"Wszystkie"'s own sort control (lastUsed/name) is unaffected by ownership** — UX-2 mixes shared and personal by the existing sort key alone, with no personal-first bias; the two lists deliberately use different ordering rules for different reasons (a suggestion list vs. a browse-everything list), and this is not a contradiction to reconcile. |
-| folder-name unresolved for a genuinely decrypted item (folder name lags item content) | ✅ covered | Falls back to the item's existing per-type subtitle (username/issuer/type label) — the exact same fallback a personal item already uses — never a blank string, never a raw collection UUID (the WR-09 lesson this milestone already paid for once in the web app). |
+| empty | ✅ covered | Zero shared items → the list renders exactly as it does today. **No shared-specific empty state is added.** The existing `vault.emptyHeading`/`vault.emptyBody` fires only when the WHOLE vault (personal + shared) is empty. |
+| loading | ✅ covered | E2's pending-decrypt skeleton row IS this list's loading state, per-row. No list-level spinner or full-list skeleton is introduced — the already-decryptable rows stay interactive while shared rows resolve. |
+| error | 🧪 backstop | **The one consideration the prose draft missed, and it is a real gap.** `vault-store.ts`'s `applySyncSnapshot` (per-row try/catch, BUG-3) currently *drops* an undecryptable row from the list entirely, counting it into a single `console.warn`. For a shared row that is precisely the "silent omission" this phase's own degraded-state obligation forbids — the user sees a shorter list and no reason. **Backstop:** the plan must decide explicitly, and wire evidence for, what a permanently-undecryptable SHARED row does at list level: render it with a visible degraded treatment carrying `sync.itemUndecryptableWarning`'s meaning, or keep the current silent drop. Keeping the drop is a permissible answer only if it is stated as a decision, not inherited by default. |
+| populated | ✅ covered | Identical row height / background / hover (`pv-row-hover` unchanged) for personal and shared rows — the 12px corner badge and the subtitle swap are the *only* differentiators (UX-1). No divider, no sub-heading, no different row color between personal and shared rows inside "Wszystkie" (UX-2: mixed inline, one list). |
+| partial | ✅ covered | Item decrypted but folder name not yet resolved → falls back to the item's existing per-type subtitle (username/issuer/type label), the exact fallback a personal item already uses. Never a blank string, **never a raw collection UUID** — the WR-09 lesson this milestone already paid for once in the web app. |
+| overflow | ✅ covered | Reuses the row's existing `truncate` on the subtitle `<span>`; no new CSS, no new scroll region. The D-14 single-scroll-region invariant is untouched — shared rows live in the same scroll container as personal ones. |
+| zero-one-many | ✅ covered | Zero/one/many shared rows all interleave under the existing sort control with no count badge, no "Shared" subheading, and no singular/plural copy anywhere (`dictionary.ts` has no plural machinery — this phase adds none). |
+| long-text | ✅ covered | A folder name longer than the remaining row width truncates identically to a personal item's username/issuer subtitle. Same slot, same size, same `text-sm text-base-content/60`. |
 
 ### E2 — Pending-decrypt row (Collection Key not yet re-derived this MV3 wake)
 
 | Category | Status | Resolution |
 |----------|--------|------------|
-| loading | ✅ covered | The row's icon-frame area renders a `skeleton h-8 w-8 rounded-[8px]` box (identical footprint to `ItemIconTile`'s row frame, so no layout jump on resolve) still carrying the shared badge (item metadata — including `isShared`/`collectionId` — is already known pre-decrypt, only the plaintext name/folder isn't); the name/subtitle area renders two stacked `skeleton` bars in place of text. The row is a plain non-interactive element (no `onClick`, not a `<button>`) — nothing to click on content that doesn't exist yet. `role="status"` + `sharing.sharedItemLoadingAria` carries the one screen-reader announcement; no visible text (matches `OnThisPageSection`'s own text-free skeleton precedent). |
-| ordering | ✅ covered | Pending rows sort to the **end** of "Wszistkie" under either sort mode (no known `lastUsedAt` or `name` to compare — mirrors the existing documented convention for `lastUsedAt: undefined`, "sinks to the bottom of a last-used-desc sort," extended here to the name-sort case too) — so the rest of the (already-decryptable) list never visually reflows as pending rows resolve one at a time. |
-| resolution | ✅ covered | Once the background wake finishes re-deriving the Collection Key, the pending row is replaced in place by its real E1 row content (same list position it sorted to under "unknown" — it moves to its true sorted position only once real data exists, a normal re-sort, not a special transition). |
-| this state persisting beyond a normal wake (never resolving) | 🧪 backstop | Expected to be sub-second in the ordinary case (an in-memory HKDF re-derivation from an already-recovered User Key, no network round trip) — this UI-SPEC does not invent a manual retry affordance for it (would be inventing a ceremony for a state that should self-heal). **Backstop:** the plan/executor must confirm there is no code path where a pending row can persist indefinitely without eventually either resolving or explicitly degrading to E3's genuine-failure banner — an infinite, silent skeleton would itself be the "silent omission" this state exists to avoid. |
+| empty | ⊘ dismissed | **Reason:** a pending row exists only because a specific known row is awaiting plaintext — "no data" is not a state it can occupy. Zero pending rows is simply the absence of this row shape, which is E1's ordinary populated case. |
+| loading | ✅ covered | Icon slot renders `skeleton h-8 w-8 rounded-[8px]` (identical footprint to `ItemIconTile`'s row frame, so no layout jump on resolve) still carrying the shared badge; name/subtitle render two stacked `skeleton` bars. Non-interactive (no `onClick`, not a `<button>`). `role="status"` + `sharing.sharedItemLoadingAria` carries the single screen-reader announcement; no visible text (matching `OnThisPageSection`'s own text-free skeleton precedent). Neutral shimmer only — **never** `alert-warning` (Copywriting honesty constraint 2). |
+| error | 🧪 backstop | **Backstop:** the plan/executor must confirm there is no code path where a pending row shimmers indefinitely. It must eventually either resolve to real content or degrade explicitly into the genuine-failure treatment (E1-error / E3-error). An infinite silent skeleton is itself the silent omission this state exists to prevent. The distinguishing condition is architectural, not visual — see Phase-Specific Notes §4. |
+| populated | ✅ covered | On resolve the pending row is replaced in place by its real E1 row content, then moves to its true sorted position — an ordinary re-sort, not a special transition. |
+| partial | ✅ covered | This IS the partial state, and it is specified rather than incidental: `isShared`/`collectionId` are known **pre**-decrypt, so the badge renders immediately and only the plaintext name/subtitle are skeletons. The row is never fully blank. |
+| overflow | ⊘ dismissed | **Reason:** skeleton bars are fixed-width/fixed-height boxes carrying no variable content — overflow is impossible by construction. |
+| zero-one-many | ✅ covered | Pending rows sort to the **end** of "Wszystkie" under either sort mode (no known `lastUsedAt` or `name` to compare — extends the existing documented `lastUsedAt: undefined` "sinks to the bottom" convention to the name-sort case), so the resolved portion of the list never visually reflows as pending rows resolve one at a time, however many there are. |
+| long-text | ⊘ dismissed | **Reason:** the row renders no user text at all. Its only string is the fixed `sharing.sharedItemLoadingAria` screen-reader label, which is an authored i18n constant, not variable content. |
 
 ### E3 — `ItemDetailView.tsx` for a shared item (hidden-password masking, folder note, genuine decrypt failure)
 
 | Category | Status | Resolution |
 |----------|--------|------------|
-| access-level differentiation — read-only vs. full-edit | ✅ covered | **Nothing differs.** `ItemDetailView.tsx` has no edit/write affordance for *any* item today, personal or shared (09-CONTEXT.md's picker-only scope, still true) — so there is no affordance to suppress between read-only and full-edit access. The additional-context question is answered honestly here rather than by inventing a suppressed control that doesn't exist in the popup at all. |
-| access-level differentiation — hidden-password | ✅ covered | The password field's reveal (`Eye`/`EyeOff`) button **and** its copy button are both omitted entirely (not merely disabled) for a `hidden_password`-access item — mirrors the exact `passwordFieldHidden`-gated suppression `web/`'s `DetailPanel.tsx` already established, applied here to both affordances instead of just reveal (UX-4's own scope: "reveal AND copy are suppressed in the popup"). The field still renders the existing 10-dot `MASK` string, unchanged. `share.hiddenPasswordExtensionNote` renders directly beneath it (`text-xs`, see Typography) on every render, not just the first. |
-| shared-folder identity | ✅ covered | A collection-scoped shared item shows `share.itemSharedOnCollectionNote` (interpolating the resolved folder name) directly beneath the item-name heading — same slot, same one-line treatment as the badge's row-level subtitle, ported verbatim from web. A directly-shared item (no `collectionId`) shows nothing in this slot — there is no folder to name, and the header badge already signals "shared" (no invented placeholder text for the no-folder case). |
-| genuine decrypt failure (post Collection-Key-resolution, ciphertext still fails integrity) | 🧪 backstop | Reuses the exact `alert alert-warning` shape + `sync.itemUndecryptableWarning` copy web already ships for this — **backstop:** no live code path renders this in the extension today (the pending-decrypt row is non-clickable, so a user cannot navigate into a mid-resolution item); the plan must still wire this banner as defense-in-depth for the case a Collection Key resolves but the row's `enc_data` itself is corrupted/tampered, the same class of integrity failure CR-03 already handles on the web side. |
-| overflow / long-text (folder name in the note) | ✅ covered | `share.itemSharedOnCollectionNote`'s interpolated folder name sits in ordinary wrapping body text (no `truncate`), matching web's own treatment of the same string — a very long folder name wraps to a second line rather than clipping, since this is a one-line note, not a fixed-width row. |
+| empty | ✅ covered | A shared item whose optional fields are unpopulated renders exactly as a personal one does today — existing per-field empty handling, unchanged. This phase adds no new empty state to the detail view. |
+| loading | ✅ covered | There is deliberately **no in-panel load state**: the popup can only navigate into an already-decrypted row, because E2's pending rows are non-interactive by construction. Stated explicitly so its absence is not read as an oversight. |
+| error | 🧪 backstop | Reuses the exact `alert alert-warning` shape + `sync.itemUndecryptableWarning` copy web already ships. **Backstop:** no live path renders this in the extension today (see `loading` above), so the plan must still wire it as defense-in-depth for the case where a Collection Key resolves but the row's own `enc_data` fails its integrity check — the same class of failure web's `undecryptable-item-banner` handles. Must never fire for the ordinary pending window (Copywriting honesty constraint 3). |
+| populated | ✅ covered | Hidden-password field: reveal (`Eye`/`EyeOff`) **and** copy are omitted entirely (not merely disabled), the existing 10-dot `MASK` still renders, and `share.hiddenPasswordExtensionNote` renders directly beneath it on every render, not just the first. Read-only vs. full-edit differ in **nothing**, honestly: `ItemDetailView.tsx` has no edit affordance for any item, personal or shared, so there is no control to suppress. |
+| partial | ✅ covered | A directly-shared item (no `collectionId`) renders **nothing** in the folder-note slot — no invented placeholder, no "Shared directly" filler. The header badge already carries the "shared" fact. |
+| overflow | ✅ covered | `share.itemSharedOnCollectionNote` sits in ordinary wrapping body text (no `truncate`), matching web's treatment of the same string; the panel's own scroll behavior is unchanged. |
+| zero-one-many | ⊘ dismissed | **Reason:** the detail view renders exactly one item by construction — there is no collection of things whose count could vary. |
+| long-text | ✅ covered | A very long folder name wraps to a second line inside the note rather than clipping — correct for a one-line explanatory note as opposed to a fixed-width row. |
 
 ### E4 — `ProviderCeremonyView.tsx` shared-passkey distinguishability
 
 | Category | Status | Resolution |
 |----------|--------|------------|
-| multi-match candidate list, mixed personal + shared passkeys | ✅ covered | Each shared candidate's `KeyRound` icon frame (`h-8 w-8`) gains the identical corner badge E1 defines (same 12px/`Users`/secondary treatment) — no new icon vocabulary. The row's single-line label becomes two lines for a shared candidate (label on top, unchanged; a new muted subtitle line beneath carrying the resolved folder name, or `provider.sharedPasskeyNote` for a directly-shared passkey with no folder) — mirrors the label/subtitle two-line idiom every other row in this popup already uses (E1, `ItemListView` rows). A personal candidate's row is completely unchanged (single line, no badge). |
-| ordering — personal-vs-shared in the candidate list | ✅ covered | Claude's-discretion **consistent extension** of UX-3's own rationale ("your own credential is the usual intent, the shared one is the fallback") — personal candidates sort before shared ones, mirroring the autofill list's rule exactly. **Flagged explicitly: this is not itself one of CONTEXT.md's four locked UX decisions** (UX-3 names "autofill" specifically) — the planner should treat it as a reasoned extension, not a re-litigation, and may correct it if it disagrees. |
-| single-match ceremony, the one credential is shared | ✅ covered | The single-match layout has no candidate icon row at all today (title/body/CTA only) — a one-line note (`provider.sharedPasskeyFolderNote` or `provider.sharedPasskeyNote`, same choice as the multi-match subtitle) renders directly beneath the existing `provider.accountLabel` line, in the same `text-sm text-base-content/70` treatment that line already uses. No badge is invented for a row that doesn't exist in this layout. |
-| overflow / long-text (candidate subtitle, folder-note line) | ✅ covered | The candidate subtitle reuses the row's existing `truncate` treatment (matching the label directly above it); the single-match note wraps like the rest of this view's body copy (no `truncate`), same precedent as E3's folder note. |
+| empty | 🧪 backstop | Zero candidates is expected never to reach this view — the ceremony falls through before a picker renders. **Backstop:** that claim is inferred from `provider-ceremony.ts`'s existing fallthrough returns, not measured, and the shared-candidate path is new. The plan must confirm that a ceremony whose only would-be candidates are shared-but-undecryptable still falls through cleanly rather than rendering an empty picker. |
+| loading | ✅ covered | Candidates are resolved in the background before this view renders; no in-view load state exists today and this phase adds none. Shared candidates must be resolved on the same pre-render path, not fetched lazily inside the view — a lazy fetch would introduce a loading state into a security ceremony, which this spec does not permit. |
+| error | ✅ covered | Unchanged: an assertion failure still routes through the existing `credentials.get failed → { failed: true }` path. This phase adds no new error surface to the ceremony, and the EXT-10 spike adds none either (Phase-Specific Notes §6). |
+| populated | ✅ covered | Each shared candidate's `h-8 w-8` `KeyRound` frame gains the identical corner badge E1 defines; the row grows a second muted subtitle line carrying the resolved folder name (or `provider.sharedPasskeyNote` when there is no folder). A personal candidate's row is completely unchanged — single line, no badge. |
+| partial | ✅ covered | Shared candidate whose folder name is unavailable → `provider.sharedPasskeyNote` (the folder-free variant) instead of the folder string. Never a raw UUID, never a blank subtitle line that changes row height for nothing. |
+| overflow | ✅ covered | The candidate subtitle reuses the existing `truncate` treatment already applied to the label directly above it. |
+| zero-one-many | ✅ covered | One candidate → the single-match layout (no candidate row at all; the note renders beneath the existing `provider.accountLabel` line in that line's own `text-sm text-base-content/70` treatment). Many → the multi-match list, personal candidates sorted before shared ones. Zero → see `empty` above. |
+| long-text | ✅ covered | Multi-match subtitle truncates (see `overflow`); the single-match note wraps like the rest of that view's body copy, same precedent as E3's folder note. |
+
+**Ordering caveat carried from the draft (unchanged, still Claude's discretion):** personal-before-shared in the E4 candidate list is a reasoned *extension* of UX-3, whose literal wording names autofill only. The planner may correct it; it is not one of CONTEXT.md's four locked UX decisions.
 
 ---
 
@@ -352,11 +370,25 @@ personal). This is the correct, honest absence, not an oversight — mirroring P
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: FLAG (non-blocking) — the UX-4 honesty obligation was checked and met, not merely style-passed. The one concrete finding (the honesty clause said "two claims" while enumerating three) is **fixed** above.
+- [x] Dimension 2 Visuals: PASS — one cosmetic typo ("Wszistkie") **fixed** above.
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: FLAG (non-blocking) — 4 sizes in play, at the limit not over it. The unresolved `600–700` heading weight is **fixed** above (700 for the `ItemListView` title, 600 for the `ItemDetailView` item-name heading).
+- [x] Dimension 5 Spacing: PASS
+- [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** APPROVED (gsd-ui-checker, 2026-08-08) — 6/6 dimensions, 2 non-blocking FLAGs, all three concrete recommendations applied.
+
+**Post-approval probe (step 9.5).** The `## UI Considerations` section above was re-derived by the
+ui-consideration-probe engine over E1–E4 (32 applicable considerations) and resolved row-by-row,
+replacing the researcher's hand-written draft. Net change: **24 covered, 4 backstop, 4 dismissed,
+0 unresolved** — and one consideration the draft had missed entirely was surfaced:
+
+> **E1-error (backstop).** `vault-store.ts`'s `applySyncSnapshot` per-row try/catch (BUG-3) silently
+> *drops* an undecryptable row from the list. Applied to a SHARED row that is the exact silent
+> omission this phase forbids — the user sees a shorter list and no reason. The plan must decide it
+> explicitly and wire evidence, rather than inherit the drop by default.
+
+The four backstops (E1-error, E2-error, E3-error, E4-empty) lift into `must_haves.truths` and, at
+verify time, are confirmed only by wired evidence or route to `insufficient_spec → human_needed`.
+None of them may pass silently.
