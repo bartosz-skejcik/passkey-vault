@@ -11,6 +11,7 @@ const {
   mockGetSessionToken,
   mockReadServerConfig,
   mockGetSyncSnapshot,
+  mockGetSharedRevisions,
   mockAlarmsCreate,
   mockAlarmsClear,
   alarmListeners,
@@ -18,6 +19,11 @@ const {
   mockGetSessionToken: vi.fn(),
   mockReadServerConfig: vi.fn(),
   mockGetSyncSnapshot: vi.fn(),
+  // 27-04 (Task 2): the shared-revisions pull sync-client.ts's own pullOnce()
+  // attempts alongside the personal snapshot -- mocked separately so its own
+  // independent try/catch/404-latch behavior can be exercised without
+  // touching the personal pull's mock.
+  mockGetSharedRevisions: vi.fn(),
   // WR-06: the poll fallback is chrome.alarms-backed, so the alarm surface
   // is mocked with a recorded listener array (a test can fire it directly,
   // simulating a real browser.alarms.onAlarm dispatch on a fresh SW wake)
@@ -55,6 +61,7 @@ vi.mock("./server-config", () => ({
 
 vi.mock("./vault-api", () => ({
   getSyncSnapshot: mockGetSyncSnapshot,
+  getSharedRevisions: mockGetSharedRevisions,
 }));
 
 /** Minimal mock WebSocket -- records every constructed instance so tests can
@@ -102,6 +109,7 @@ beforeEach(() => {
   mockGetSessionToken.mockResolvedValue("session-token");
   mockReadServerConfig.mockResolvedValue({ baseUrl: "http://localhost:8620" });
   mockGetSyncSnapshot.mockResolvedValue({ revision: 0 });
+  mockGetSharedRevisions.mockResolvedValue({ collections: [], direct: { revision: 0 } });
 });
 
 afterEach(() => {
@@ -252,6 +260,114 @@ describe("WR-06: poll fallback is chrome.alarms-backed, not setInterval", () => 
     alarmListeners[0]?.({ name: "pv-sync-poll" });
     await vi.advanceTimersByTimeAsync(0);
     expect(mockGetSyncSnapshot).not.toHaveBeenCalled();
+  });
+});
+
+describe("27-04 (Task 2): onSharedRevisions fires alongside every personal pull", () => {
+  it("activeCallbacks.onSharedRevisions is called on every pullOnce() that also calls onSnapshot, in the SAME pull cycle, with its own independent try/catch", async () => {
+    const onSnapshot = vi.fn();
+    const onSharedRevisions = vi.fn();
+    const revisions = { collections: [{ id: "c1", revision: 1 }], direct: { revision: 0 } };
+    mockGetSharedRevisions.mockResolvedValue(revisions);
+    const { startSync } = await import("./sync-client");
+
+    startSync({ getSinceRevision: () => 0, onSnapshot, onSharedRevisions });
+    await vi.advanceTimersByTimeAsync(0);
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockGetSyncSnapshot).toHaveBeenCalledTimes(1);
+    expect(onSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+    expect(onSharedRevisions).toHaveBeenCalledWith(revisions);
+  });
+
+  it("a personal-pull failure does not prevent the shared pull from being attempted", async () => {
+    mockGetSyncSnapshot.mockRejectedValue(new Error("personal pull failed"));
+    const onSharedRevisions = vi.fn();
+    const revisions = { collections: [], direct: { revision: 1 } };
+    mockGetSharedRevisions.mockResolvedValue(revisions);
+    const { startSync } = await import("./sync-client");
+
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions });
+    await vi.advanceTimersByTimeAsync(0);
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onSharedRevisions).toHaveBeenCalledWith(revisions);
+  });
+
+  it("a shared-pull failure does not prevent (or undo) the personal onSnapshot call", async () => {
+    const onSnapshot = vi.fn();
+    mockGetSharedRevisions.mockRejectedValue(new Error("shared pull failed"));
+    const { startSync } = await import("./sync-client");
+
+    startSync({ getSinceRevision: () => 0, onSnapshot, onSharedRevisions: vi.fn() });
+    await vi.advanceTimersByTimeAsync(0);
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("with no onSharedRevisions callback provided, the shared pull is never attempted at all", async () => {
+    const { startSync } = await import("./sync-client");
+
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() });
+    await vi.advanceTimersByTimeAsync(0);
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockGetSharedRevisions).not.toHaveBeenCalled();
+  });
+
+  it("once the shared pull rejects with a 404, sharedPullDisabled latches true and no further shared-pull round trip is attempted until the next startSync() call", async () => {
+    const onSharedRevisions = vi.fn();
+    mockGetSharedRevisions.mockRejectedValue({ status: 404 });
+    const { startSync, registerSyncPollAlarmListener } = await import("./sync-client");
+    registerSyncPollAlarmListener();
+
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions });
+    await vi.advanceTimersByTimeAsync(0);
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+
+    // A later poll tick must NOT retry the shared pull -- the 404 latch is
+    // permanent for this session.
+    mockGetSharedRevisions.mockClear();
+    alarmListeners[0]?.({ name: "pv-sync-poll" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetSharedRevisions).not.toHaveBeenCalled();
+
+    // A NEW startSync() (the next unlock) re-arms the latch.
+    mockGetSharedRevisions.mockResolvedValue({ collections: [], direct: { revision: 0 } });
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions });
+    await vi.advanceTimersByTimeAsync(0);
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+  });
+
+  it("a non-404 shared-pull failure does NOT latch sharedPullDisabled -- the next tick retries", async () => {
+    const onSharedRevisions = vi.fn();
+    mockGetSharedRevisions.mockRejectedValueOnce(new Error("transient network error"));
+    const { startSync, registerSyncPollAlarmListener } = await import("./sync-client");
+    registerSyncPollAlarmListener();
+
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions });
+    await vi.advanceTimersByTimeAsync(0);
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+
+    mockGetSharedRevisions.mockResolvedValue({ collections: [], direct: { revision: 0 } });
+    alarmListeners[0]?.({ name: "pv-sync-poll" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(2);
   });
 });
 
