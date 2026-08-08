@@ -80,3 +80,102 @@ describe("ItemDetailView last-used touch wiring", () => {
     expect(() => fireEvent.click(copyButtons[0])).not.toThrow();
   });
 });
+
+// 27-08 (Task 3) -- E3 hidden-password mask + honesty note, shared-folder
+// note, header badge, undecryptable banner.
+describe("27-08: shared-item E3 treatment", () => {
+  function hiddenPasswordItem(id: string): VaultItem {
+    return {
+      id,
+      revision: 1,
+      fields: {
+        type: "login",
+        name: "Family Netflix",
+        folderId: null,
+        tags: [],
+        username: "octocat",
+        password: "hunter2",
+        urls: [],
+        notes: "",
+      },
+      isShared: true,
+      collectionId: "col-1",
+      accessLevel: "hidden_password",
+    };
+  }
+
+  it("Test 1: a hidden_password-access item's password row shows the mask, no Eye/EyeOff, no copy, and the exact honesty note (EN)", async () => {
+    const item = hiddenPasswordItem("item-hp-en");
+    render(<ItemDetailView locale="en" item={item} onBack={vi.fn()} />);
+
+    expect(screen.getByText("•".repeat(10))).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /show password|hide password/i })).not.toBeInTheDocument();
+    // Only the username field's copy button remains -- the password field's
+    // copy affordance is omitted entirely.
+    expect(screen.getAllByRole("button", { name: /copy/i })).toHaveLength(1);
+    expect(
+      screen.getByText(
+        "The owner shared this password as hidden — this popup masks it and won't let you copy it. Autofill on the page still works. This is an interface protection only — you hold the key either way, so it isn't a cryptographic one.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("Test 1b: the exact honesty note renders in PL too", async () => {
+    const item = hiddenPasswordItem("item-hp-pl");
+    render(<ItemDetailView locale="pl" item={item} onBack={vi.fn()} />);
+
+    expect(
+      screen.getByText(
+        "Właściciel udostępnił to hasło jako ukryte — to okno je maskuje i nie pozwala go skopiować. Automatyczne wypełnianie na stronie nadal działa. To tylko zabezpieczenie interfejsu — klucz i tak jest w rękach odbiorcy, więc to nie jest ochrona kryptograficzna.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("Test 2: a personal item (accessLevel undefined) shows the same reveal/copy affordances as today -- zero behavior change", async () => {
+    const item = loginItem("item-personal");
+    render(<ItemDetailView locale="en" item={item} onBack={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: /show password/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /copy/i })).toHaveLength(2); // username + password
+    expect(screen.queryByTestId("hidden-password-extension-note")).not.toBeInTheDocument();
+  });
+
+  it("Test 3: a collection-scoped item shows share.itemSharedOnCollectionNote interpolated with the real folder name", async () => {
+    mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+      if (message.kind === "vault.list") {
+        return {
+          items: [],
+          folders: [],
+          pending: [],
+          collections: [{ id: "col-1", name: "Rodzina", accessLevel: "edit" }],
+        };
+      }
+      return { ok: true };
+    });
+    const item: VaultItem = { ...loginItem("item-collection"), isShared: true, collectionId: "col-1" };
+    render(<ItemDetailView locale="en" item={item} onBack={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/This item is part of the shared folder "Rodzina"/i),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("Test 4: a direct-shared item (collectionId null, isShared true) shows nothing in the folder-note slot", async () => {
+    const item: VaultItem = { ...loginItem("item-direct"), isShared: true, collectionId: null };
+    render(<ItemDetailView locale="en" item={item} onBack={vi.fn()} />);
+
+    expect(screen.queryByTestId("item-shared-on-collection-note")).not.toBeInTheDocument();
+    // But the header badge still carries the "shared" fact.
+    expect(screen.getByRole("img", { name: "Shared item" })).toBeInTheDocument();
+  });
+
+  it("Test 5: an undecryptable:true item shows the warning banner", async () => {
+    const item: VaultItem = { ...loginItem("item-broken"), undecryptable: true };
+    render(<ItemDetailView locale="en" item={item} onBack={vi.fn()} />);
+
+    expect(screen.getByTestId("undecryptable-item-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("undecryptable-item-banner")).toHaveTextContent(/failed to decrypt/i);
+  });
+});
