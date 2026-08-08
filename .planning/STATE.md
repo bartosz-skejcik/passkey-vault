@@ -5,15 +5,15 @@ milestone_name: Family & Sharing
 current_phase: 27
 current_phase_name: Extension Integration — Shared Items
 status: executing
-stopped_at: Completed 27-08-PLAN.md
-last_updated: "2026-08-08T17:23:47.867Z"
+stopped_at: Completed 27-09-PLAN.md
+last_updated: "2026-08-08T17:27:12.207Z"
 last_activity: 2026-08-08
 last_activity_desc: Phase 27 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 58
-  completed_plans: 55
+  completed_plans: 56
   percent: 86
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 ## Current Position
 
 Phase: 27 (Extension Integration — Shared Items) — EXECUTING
-Plan: 9 of 11
+Plan: 10 of 11
 Status: Ready to execute
 Last activity: 2026-08-08 — Phase 27 execution started
 
@@ -103,6 +103,7 @@ Last activity: 2026-08-08 — Phase 27 execution started
 | Phase 27 P06 | 70min | 2 tasks | 6 files |
 | Phase 27 P07 | 10min | 1 tasks | 3 files |
 | Phase 27 P08 | ~35min | 3 tasks | 6 files |
+| Phase 27 P09 | 15min | 1 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -203,6 +204,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 27] 27-06: EXT-10's live-wire signCount measurement closed -- member B's real browser-returned credentials.get() assertion decodes authenticatorData bytes 33-36 to 0, joining 27-02's in-process Rust regression as the two evidence tiers the requirement's spec mandated
 - [Phase ?]: 27-07: CollectionKeyUnavailableError is capture-handler.ts's own local class (mirrors web's, not cross-imported); read-only gate checks accessLevel !== 'edit' && !== 'hidden_password' directly rather than importing accessLevel.ts's accessRank
 - [Phase ?]: 27-08: SharedBadge.tsx is the one badge-markup owner for the whole phase; ItemDetailView.tsx fetches vault.list itself (gated on collectionId) rather than taking a collections prop; E1-error/E3-error item.undecryptable backstops wired as documented dead-code defense-in-depth since 27-04 never sets that field for the extension.
+- [Phase ?]: 27-09: extended the SharedBadge wrapper convention to AutofillItemRow.tsx/TotpFillRow.tsx's own icon frames — same relative inline-flex host pattern, no badge JSX re-derived.
 
 ### Pending Todos
 
@@ -280,10 +282,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 27-08-PLAN.md
+**Stopped at:** Completed 27-09-PLAN.md
 **Resume file:** None
 
-Last session: 2026-08-08T17:23:47.855Z
+Last session: 2026-08-08T17:27:12.195Z
 items resolved by observed evidence rather than deferral: the Playwright half had already been
 executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
 commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run
