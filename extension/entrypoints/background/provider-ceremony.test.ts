@@ -125,11 +125,18 @@ interface CapturedConsentPayload {
   candidates: { itemId: string; label: string }[];
 }
 
-function passkeyItem(id: string, rpId: string, username: string, collectionId?: string): VaultItem {
+function passkeyItem(
+  id: string,
+  rpId: string,
+  username: string,
+  collectionId?: string,
+  undecryptable?: boolean,
+): VaultItem {
   return {
     id,
     revision: 1,
     collectionId: collectionId ?? null,
+    ...(undecryptable === true ? { undecryptable: true } : {}),
     fields: {
       type: "passkey",
       name: username,
@@ -411,6 +418,54 @@ describe("credentials.get: no matching credential", () => {
     // Zero matches means nothing to ask consent for -- no popup, no
     // storage write at all.
     expect(hoisted.mockOpenPopup).not.toHaveBeenCalled();
+  });
+
+  // 27-10 Task 2: confirms the empty-candidates fallthrough claim against
+  // real code for a shared-but-undecryptable would-be candidate, rather
+  // than leaving it as an inference. vault-store.ts never actually sets
+  // `undecryptable: true` on any VaultItem it produces for the extension
+  // (every decrypt failure is dropped from getItems() entirely, recorded
+  // only via getPendingSharedItems()) -- this test exercises the DEFENSIVE
+  // filter at handleCredentialsGet's call site regardless, so the
+  // ceremony's own behavior is pinned even if a future change starts
+  // retaining stale items the way web's store does.
+  it("a stale-but-otherwise-matching item.undecryptable:true candidate is excluded from the ceremony -- falls through cleanly instead of rendering it", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockGetItems.mockReturnValue([
+      passkeyItem("pk-stale", "example.com", "alice", undefined, true),
+    ]);
+
+    const result = await handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+
+    expect(result).toEqual({ fallthrough: true });
+    expect(hoisted.mockWasmGetProviderAssertion).not.toHaveBeenCalled();
+    expect(hoisted.mockOpenPopup).not.toHaveBeenCalled();
+  });
+
+  it("an undecryptable candidate is excluded even when a healthy candidate also matches -- the healthy one alone reaches the picker", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockGetItems.mockReturnValue([
+      passkeyItem("pk-stale", "example.com", "alice", undefined, true),
+      passkeyItem("pk-healthy", "example.com", "bob"),
+    ]);
+    hoisted.mockWasmGetProviderAssertion.mockReturnValue({
+      credentialResponseJson: () => '{"id":"cred-pk-healthy"}',
+      updatedEncryptedItemJson: () => undefined,
+    });
+
+    const resultPromise = handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+    const payload = await awaitPendingCeremonyPayload();
+    expect(payload.candidates).toEqual([{ itemId: "pk-healthy", label: "bob" }]);
+
+    resolveProviderCredentialChoice(payload.requestId, "pk-healthy");
+    const result = await resultPromise;
+    expect(result).toEqual({ fallthrough: false, credentialResponseJson: '{"id":"cred-pk-healthy"}' });
   });
 });
 

@@ -753,7 +753,29 @@ export async function handleCredentialsGet(
     }
 
     const rpId = extractGetRpId(req.publicKey, senderOrigin);
-    const candidates = findMatchingPasskeyItems(getItems(), rpId);
+    // 27-10 Task 2 (confirmed against real code, not merely inferred):
+    // `findMatchingPasskeyItems` filters the ALREADY-DECRYPTED cache
+    // (vault-store.ts's `getItems()`), and a shared-but-undecryptable item
+    // -- whether still pending (Collection Key not yet re-derived this MV3
+    // wake) or genuinely broken (key resolved, AEAD integrity check still
+    // failed) -- is recorded ONLY via `markPending`/`getPendingSharedItems()`
+    // and is NEVER pushed into the decrypted array `getItems()` returns
+    // (confirmed by direct read of `applySyncSnapshot`/`mergeCollectionSnapshot`
+    // in vault-store.ts: every per-row catch branch either `continue`s past
+    // the push or never reaches it). Unlike web's store, this extension
+    // never retains a last-known-good `VaultItem` with `undecryptable: true`
+    // set -- so today this filter is unreachable dead code. It is still
+    // wired as defense-in-depth (T-27-23, same "wire it anyway" discipline
+    // 27-08 applied to the E1-error/E3-error backstops): presenting a
+    // candidate this popup elsewhere flags with an integrity warning inside
+    // a SECURITY ceremony would be confusing even though it is
+    // cryptographically safe (a stale-but-still-valid `rawPasskeyJson`
+    // signs a perfectly valid assertion) -- so a future architecture change
+    // that starts retaining stale items (mirroring web) inherits a ceremony
+    // that already excludes them, rather than a silent gap.
+    const candidates = findMatchingPasskeyItems(getItems(), rpId).filter(
+      (c) => c.item.undecryptable !== true,
+    );
 
     if (candidates.length === 0) {
       return { fallthrough: true };
