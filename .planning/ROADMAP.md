@@ -324,7 +324,7 @@ Plans:
   4. The extension's background worker holds no newly-persisted secret types — the identity key and Collection Keys are re-derived from the already-recovered User Key on every MV3 wake.
   5. The popup UI visually distinguishes shared items from personal ones.
 
-**Plans:** 7/11 plans executed
+**Plans:** 8/11 plans executed
 
 Plans:
 **Wave 1**
@@ -342,7 +342,7 @@ Plans:
 - [x] 27-05-PLAN.md — EXT-08 TOTP live proof + UX-3 autofill ordering
 - [x] 27-06-PLAN.md — EXT-09/EXT-10 provider-ceremony write-back fix + LIVE headed ceremony proof
 - [x] 27-07-PLAN.md — capture-handler.ts A-5 write routing + access-level gate
-- [ ] 27-08-PLAN.md — Popup: ItemListView.tsx (E1/E2) + ItemDetailView.tsx (E3) + SharedBadge + i18n pass
+- [x] 27-08-PLAN.md — Popup: ItemListView.tsx (E1/E2) + ItemDetailView.tsx (E3) + SharedBadge + i18n pass
 
 **Wave 4** *(blocked on Wave 3; 27-09/27-10 touch disjoint files and run in parallel)*
 
@@ -388,4 +388,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 24. Invitation Flow (No SMTP) | v0.4 | 8/8 | Complete    | 2026-07-31 |
 | 25. Member Removal, Suspension & Re-key | v0.4 | 10/10 | Complete | 2026-08-06 |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 13/13 | Complete | 2026-08-06 |
-| 27. Extension Integration — Shared Items | v0.4 | 7/11 | In Progress|  |
+| 27. Extension Integration — Shared Items | v0.4 | 8/11 | In Progress|  |
