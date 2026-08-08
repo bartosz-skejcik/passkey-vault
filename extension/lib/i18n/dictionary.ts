@@ -238,6 +238,64 @@ export const DICTIONARY = {
     pl: "Zamknij i użyj innej metody",
     en: "Close and use something else",
   },
+
+  // --- Phase 27 (27-08-PLAN.md Task 1) — shared-item badge/list/detail
+  // copy, per 27-UI-SPEC.md's Copywriting Contract table. Two keys are
+  // ported byte-identical PL/EN from web/src/lib/i18n/dictionary.ts (never
+  // paraphrased); the rest are extension-only additions. -------------------
+  // The badge's aria-label/title (SharedBadge.tsx) -- deliberately
+  // DIRECTION-NEUTRAL ("Shared item," never "Shared by you"/"Shared with
+  // you"). The popup has no per-row recipient-list fetch this phase, so it
+  // cannot back a direction claim with real data -- a wrong claim would
+  // repeat the exact CR-02-class lie Phase 26 already found and fixed once
+  // (see UI-SPEC Phase-Specific Notes §5). Honesty constraint 4.
+  "sharing.sharedItemLabel": { pl: "Udostępniony item", en: "Shared item" },
+  // ItemListView.tsx's pending-decrypt skeleton row's role="status" label
+  // (screen-reader only -- the row itself renders no visible text, mirroring
+  // OnThisPageSection.tsx's own text-free skeleton precedent).
+  "sharing.sharedItemLoadingAria": {
+    pl: "Ładowanie udostępnionego itemu…",
+    en: "Loading shared item…",
+  },
+  // Ported verbatim, byte-identical PL/EN, from web/src/lib/i18n/
+  // dictionary.ts's "share.itemSharedOnCollectionNote" -- interpolates
+  // {folder}. Never truncate this string (renders in ordinary wrapping body
+  // text, matching web's own treatment).
+  "share.itemSharedOnCollectionNote": {
+    pl: `Ten item jest częścią udostępnionego folderu „{folder}" — dostęp zarządzasz na poziomie folderu.`,
+    en: `This item is part of the shared folder "{folder}" — manage access at the folder level.`,
+  },
+  // Ported verbatim, byte-identical PL/EN, from web/src/lib/i18n/
+  // dictionary.ts's "sync.itemUndecryptableWarning" -- for the genuine
+  // (non-transient) decrypt-failure case only. Copywriting honesty
+  // constraint 3: must never fire for the ordinary MV3-wake pending window.
+  "sync.itemUndecryptableWarning": {
+    pl: "Ten element nie mógł zostać odszyfrowany podczas ostatniej synchronizacji. Wyświetlana jest ostatnia znana wersja — edycja jest zablokowana. Może to oznaczać uszkodzone lub sfałszowane dane; jeśli się powtarza, skontaktuj się z administratorem serwera.",
+    en: "This item failed to decrypt during the last sync. Showing the last known version -- editing is disabled. This can indicate corrupted or tampered data; if it persists, contact your server operator.",
+  },
+  // Ceremony view (27-09/27-10), shared passkey inside a collection.
+  "provider.sharedPasskeyFolderNote": {
+    pl: `Ten passkey pochodzi z udostępnionego folderu „{folder}".`,
+    en: `This passkey comes from the shared folder "{folder}".`,
+  },
+  // Ceremony view (27-09/27-10), directly-shared passkey (no folder).
+  "provider.sharedPasskeyNote": {
+    pl: "Ten passkey jest z Tobą udostępniony.",
+    en: "This passkey is shared with you.",
+  },
+  // ItemDetailView.tsx's hidden-password field: the ONE hard,
+  // non-negotiable honesty string this phase introduces (UX-4's honesty
+  // obligation, inherited from Phase 26 D-2/A-6 -- not polish, not open to
+  // softening). Deliberately NOT a verbatim reuse of web's
+  // "share.hiddenPasswordRecipientNote" -- that string says "you can still
+  // copy and use it," which is false here (this popup suppresses copy too,
+  // unlike web -- UX-4). Must carry all three claims: copy is suppressed,
+  // autofill still works, the recipient holds the key regardless (honesty
+  // constraint 1) -- never shortened.
+  "share.hiddenPasswordExtensionNote": {
+    pl: "Właściciel udostępnił to hasło jako ukryte — to okno je maskuje i nie pozwala go skopiować. Automatyczne wypełnianie na stronie nadal działa. To tylko zabezpieczenie interfejsu — klucz i tak jest w rękach odbiorcy, więc to nie jest ochrona kryptograficzna.",
+    en: "The owner shared this password as hidden — this popup masks it and won't let you copy it. Autofill on the page still works. This is an interface protection only — you hold the key either way, so it isn't a cryptographic one.",
+  },
 } satisfies Record<string, { pl: string; en: string }>;
 
 export function t(locale: Locale, key: keyof typeof DICTIONARY): string {
