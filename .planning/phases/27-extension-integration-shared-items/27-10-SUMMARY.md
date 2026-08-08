@@ -151,3 +151,15 @@ None - no external service configuration required.
 ---
 *Phase: 27-extension-integration-shared-items*
 *Completed: 2026-08-08*
+
+## Self-Check: PASSED
+
+- FOUND: extension/entrypoints/popup/ProviderCeremonyView.tsx
+- FOUND: extension/entrypoints/popup/ProviderCeremonyView.test.tsx
+- FOUND: extension/entrypoints/popup/App.tsx
+- FOUND: extension/entrypoints/background/provider-ceremony.ts
+- FOUND: extension/entrypoints/background/provider-ceremony.test.ts
+- FOUND: .planning/phases/27-extension-integration-shared-items/27-10-SUMMARY.md
+- FOUND commit: e0a4609
+- FOUND commit: 6f7112d
+- FOUND commit: ccab23d
