@@ -24,7 +24,7 @@
 // the password-sign-in branch of the server-origin ceremony window), so this
 // spec runs in the `chromium` project (not `chromium-ceremony`).
 import { expect, test } from "./fixtures";
-import { setupSharedFixture, SERVER } from "./fixtures-account-setup";
+import { setupSharedFixture, computeTotpCandidates, SERVER } from "./fixtures-account-setup";
 import type { Page } from "@playwright/test";
 
 // This spec's own tsconfig program has no @types/chrome (same precedent as
@@ -121,4 +121,65 @@ test("member B's extension displays the exact plaintext name of the item member 
   await expect(popupB.getByText(fixture.sharedItemName, { exact: true })).toBeVisible({
     timeout: 30000,
   });
+
+  // 27-05 Task 2 (EXT-08): the SECOND shared item -- a real `type: "totp"`
+  // item with a fixed, known secret -- must ALSO have landed by now (same
+  // shared-revisions pull as the login item above; a positive, present,
+  // populated assertion on its own exact plaintext name).
+  await expect(popupB.getByText(fixture.sharedTotpItemName, { exact: true })).toBeVisible({
+    timeout: 30000,
+  });
+
+  // THE byte-equality proof (A-6/EXT-08): member B's extension is asked to
+  // generate a TOTP code for the SHARED item via the exact same message the
+  // real "Na tej stronie" TOTP fill row (`TotpFillRow.tsx`'s `onPeekTotp`)
+  // and the popup-driven autofill channel both dispatch --
+  // `autofill.totpCode` -- proving the Collection-Key decrypt path
+  // (`decryptItemForCollection`/`decryptDirectSharedRow`) yields
+  // byte-identical secret material to the personal User-Key path, since
+  // `handleAutofillTotpCode` (autofill-match.ts) is UNCHANGED by this
+  // plan -- it reads `getItems()` with zero type-narrowing on
+  // `collectionId`/`accessLevel` (27-RESEARCH.md's own "already
+  // scope-agnostic" finding). Dispatched directly against the background
+  // (rather than driving the "Na tej stronie" UI) for a deterministic,
+  // single fixed-time-step round trip: no page-origin/issuer-match
+  // dependency to also set up.
+  const totpResult = (await popupB.evaluate(
+    (itemId) => chrome.runtime.sendMessage({ kind: "autofill.totpCode", itemId }),
+    fixture.sharedTotpItemId,
+  )) as { ok: true; code: string; secondsRemaining: number } | { ok: false; reason: string };
+  expect(totpResult.ok).toBe(true);
+  const returnedCode = (totpResult as { ok: true; code: string }).code;
+
+  // {current, previous} candidates, computed from the SAME known secret
+  // INDEPENDENTLY of the extension under test, immediately after reading
+  // its own returned code -- a bounded 2-candidate window, never an
+  // unbounded pass, since `pv-core/src/totp.rs`'s `generate_code` never
+  // reads the clock itself and this live round trip can legitimately
+  // straddle a 30-second period boundary between the background's own
+  // `now` read and this one (27-05-PLAN.md Task 2's own instruction --
+  // "not cosmetic").
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const candidates = await computeTotpCandidates(
+    fixture.sharedTotpSecret,
+    fixture.sharedTotpAlgorithm,
+    fixture.sharedTotpDigits,
+    fixture.sharedTotpPeriod,
+    nowSeconds,
+  );
+  expect(candidates).toContain(returnedCode);
+
+  // "No TOTP secret -> no TOTP affordance" truth: the ORIGINAL shared login
+  // item (`fixture.sharedItemName`) carries no `totp` field at all --
+  // opening its detail view must render no "Secret (base32)" row, exactly
+  // like a personal login item (ItemDetailView.tsx's `FIELD_ORDER.login`
+  // has no `secret` entry; this asserts that holds for a REAL shared item
+  // too, not merely by type-system construction). A positive, present
+  // assertion the OPPOSITE way round from the headline proof above: proving
+  // an affordance's ABSENCE by first proving the item's own name IS visible
+  // (so this is never a vacuous "nothing rendered because nothing loaded"
+  // pass, 27-RESEARCH.md's vacuous-assertion-trap warning).
+  await popupB.getByText(fixture.sharedItemName, { exact: true }).click();
+  await expect(popupB.getByText("Password", { exact: false })).toBeVisible({ timeout: 10000 });
+  await expect(popupB.getByText("Secret (base32)")).toHaveCount(0);
 });

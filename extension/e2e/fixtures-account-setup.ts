@@ -98,8 +98,19 @@ export interface SharedFixtureResult {
    * unique per call (a timestamp suffix) so repeated runs never collide with
    * a stale item from a previous run, and the spec's own assertion is a
    * positive, present, populated string match (never a count), per
-   * 27-RESEARCH.md's vacuous-assertion-trap warning. */
+   * 27-RESEARCH.md's vacuous-assertion-trap warning. This item deliberately
+   * carries NO totp field -- also the fixture for 27-05 Task 2's
+   * "no TOTP secret -> no TOTP affordance" truth. */
   sharedItemName: string;
+  /** 27-05 Task 2: a SECOND item in the SAME shared collection, this one a
+   * `type: "totp"` item with a fixed, known secret -- proves TOTP byte-
+   * equality for a shared item (EXT-08). */
+  sharedTotpItemId: string;
+  sharedTotpItemName: string;
+  sharedTotpSecret: string;
+  sharedTotpAlgorithm: string;
+  sharedTotpDigits: number;
+  sharedTotpPeriod: number;
 }
 
 // --- Node-side real WASM ----------------------------------------------
@@ -472,20 +483,120 @@ export async function setupSharedFixture(): Promise<SharedFixtureResult> {
       if (!moveRes.ok) {
         throw new Error(`pv-e2e: move item to collection failed (${moveRes.status})`);
       }
+
+      // 27-05 Task 2: a SECOND item, `type: "totp"`, with a FIXED known
+      // secret (not random -- the spec independently recomputes the
+      // expected code from this exact literal) -- same
+      // create-personal-then-move-into-collection pattern as the login item
+      // above, so it lands in the SAME collection member B already has
+      // `edit` access to.
+      const sharedTotpItemId = randomUUID();
+      const sharedTotpItemName = `PV E2E Dual-Extension Shared TOTP ${Date.now()}`;
+      // RFC 6238 Appendix B's own SHA1 test secret -- base32 of the 20-byte
+      // (160-bit) ASCII "12345678901234567890", the SAME literal
+      // `crates/pv-core/src/totp.rs`'s own test module uses as `SHA1_SECRET`.
+      // Deliberately NOT the commonly-seen 10-byte demo secret
+      // ("JBSWY3DPEHPK3PXP", used elsewhere in this codebase's MOCKED unit
+      // tests only) -- `totp_rs::TOTP::new` enforces RFC 4226's 128-bit
+      // minimum secret length and genuinely rejects anything shorter with
+      // `CryptoError::InvalidInput("invalid TOTP parameters")`; a mocked
+      // `totpNow()` never exercises that real validation, which is exactly
+      // why this LIVE proof caught it and a unit test never could.
+      const sharedTotpSecret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+      const sharedTotpAlgorithm = "SHA1";
+      const sharedTotpDigits = 6;
+      const sharedTotpPeriod = 30;
+      const totpPlaintext = JSON.stringify({
+        type: "totp",
+        name: sharedTotpItemName,
+        folderId: null,
+        tags: [],
+        secret: sharedTotpSecret,
+        issuer: "PV E2E TOTP",
+        algorithm: sharedTotpAlgorithm,
+        digits: sharedTotpDigits,
+        period: sharedTotpPeriod,
+        notes: "",
+      });
+      const totpPersonalCombined = wasm.encryptItem(a.uk, totpPlaintext, sharedTotpItemId, 1);
+      const { encKey: totpPersonalEncKey, encData: totpPersonalEncData } =
+        splitCombinedEncryptedItem(totpPersonalCombined);
+      const createTotpItemRes = await fetch(`${SERVER}/api/vault/items`, {
+        method: "POST",
+        headers: jsonAuthHeaders(a.token),
+        body: JSON.stringify({ id: sharedTotpItemId, enc_key: totpPersonalEncKey, enc_data: totpPersonalEncData }),
+      });
+      if (createTotpItemRes.status !== 201) {
+        throw new Error(`pv-e2e: totp item create failed (${createTotpItemRes.status})`);
+      }
+
+      const totpCollectionCombined = wasm.encryptItemForCollection(
+        ck,
+        totpPlaintext,
+        collectionId,
+        sharedTotpItemId,
+        2,
+      );
+      const { encKey: totpCollEncKey, encData: totpCollEncData } = splitCombinedEncryptedItem(totpCollectionCombined);
+      const moveTotpRes = await fetch(`${SERVER}/api/vault/items/${sharedTotpItemId}/collection`, {
+        method: "PUT",
+        headers: jsonAuthHeaders(a.token),
+        body: JSON.stringify({
+          new_collection_id: collectionId,
+          enc_key: totpCollEncKey,
+          enc_data: totpCollEncData,
+          expected_revision: 1,
+        }),
+      });
+      if (!moveTotpRes.ok) {
+        throw new Error(`pv-e2e: move totp item to collection failed (${moveTotpRes.status})`);
+      }
+
+      return {
+        memberAEmail: MEMBER_A_EMAIL,
+        memberAPassword: MEMBER_A_PASSWORD,
+        memberBEmail: MEMBER_B_EMAIL,
+        memberBPassword: MEMBER_B_PASSWORD,
+        sharedItemName,
+        sharedTotpItemId,
+        sharedTotpItemName,
+        sharedTotpSecret,
+        sharedTotpAlgorithm,
+        sharedTotpDigits,
+        sharedTotpPeriod,
+      };
     } finally {
       ck.free?.();
     }
-
-    return {
-      memberAEmail: MEMBER_A_EMAIL,
-      memberAPassword: MEMBER_A_PASSWORD,
-      memberBEmail: MEMBER_B_EMAIL,
-      memberBPassword: MEMBER_B_PASSWORD,
-      sharedItemName,
-    };
   } finally {
     owner.uk.free?.();
     a.uk.free?.();
     b.uk.free?.();
   }
+}
+
+/**
+ * 27-05 Task 2: independently computes the {current, previous} 30-second-
+ * time-step TOTP candidates from a KNOWN secret, using the SAME Node-side
+ * real-WASM `totpNow()` choke point this file's other crypto calls already
+ * go through -- never a hand-rolled TOTP reimplementation. Two candidates,
+ * not one: `pv-core/src/totp.rs`'s `generate_code` never reads the clock
+ * itself (the caller supplies `unixTimeSeconds` explicitly), so a live
+ * Playwright round trip (dispatch -> background computes its own `now` ->
+ * response -> this function computes ITS OWN `now`) can legitimately
+ * straddle a period boundary between the two independent "now" reads. A
+ * single-candidate assertion here would be flaky by construction, not
+ * merely unlucky (27-05-PLAN.md Task 2's own instruction).
+ */
+export async function computeTotpCandidates(
+  secretB32: string,
+  algorithm: string,
+  digits: number,
+  period: number,
+  nowSeconds: number,
+): Promise<[string, string]> {
+  const wasm = await ensureNodeWasm();
+  const current = wasm.totpNow(secretB32, algorithm, digits, period, nowSeconds).code;
+  const previous = wasm.totpNow(secretB32, algorithm, digits, period, nowSeconds - period).code;
+  return [current, previous];
 }
