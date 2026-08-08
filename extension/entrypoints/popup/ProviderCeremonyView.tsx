@@ -37,6 +37,7 @@
 import { useEffect, useRef } from "react";
 import { Fingerprint, Globe, KeyRound, Loader2 } from "lucide-react";
 import { interpolate, t, type Locale } from "../../lib/i18n/dictionary";
+import SharedBadge from "./SharedBadge";
 
 export interface ProviderCredentialCandidate {
   itemId: string;
@@ -92,6 +93,44 @@ export interface ProviderCeremonyViewProps {
 
 function isMultiMatch(kind: "create" | "get", matches?: ProviderCredentialCandidate[]): boolean {
   return kind === "get" && Array.isArray(matches) && matches.length > 1;
+}
+
+/** 27-UI-SPEC.md E4 "Ordering caveat": personal candidates sort before
+ * shared ones in the multi-match list, each group keeping its own existing
+ * relative order -- a stable partition (never a resort of the whole array),
+ * mirroring `autofill-match.ts`'s identical UX-3 precedent (27-05). Built
+ * locally rather than imported: this is a background-message-response
+ * array already resolved by the time this component renders, not a live
+ * `getItems()` consumer autofill-match.ts's helper is shaped for. */
+function orderCandidatesPersonalFirst(
+  matches: ProviderCredentialCandidate[],
+): ProviderCredentialCandidate[] {
+  const personal: ProviderCredentialCandidate[] = [];
+  const shared: ProviderCredentialCandidate[] = [];
+  for (const candidate of matches) {
+    if (candidate.isShared === true) {
+      shared.push(candidate);
+    } else {
+      personal.push(candidate);
+    }
+  }
+  return [...personal, ...shared];
+}
+
+/** E4 populated/partial: the folder-name note when resolvable, the
+ * folder-free note otherwise -- `null` for a personal candidate (no note at
+ * all). Never a raw collection id, never fabricated. Shared by both the
+ * multi-match subtitle line and the single-match note beneath
+ * `provider.accountLabel`. */
+function sharedNoteKeyFor(
+  candidate: ProviderCredentialCandidate,
+): "provider.sharedPasskeyFolderNote" | "provider.sharedPasskeyNote" | null {
+  if (candidate.isShared !== true) {
+    return null;
+  }
+  return candidate.folderName !== undefined
+    ? "provider.sharedPasskeyFolderNote"
+    : "provider.sharedPasskeyNote";
 }
 
 /** D-16: the ONLY inputs this function ever consults are the props passed
@@ -158,6 +197,16 @@ export default function ProviderCeremonyView({
   }, []);
 
   const multiMatch = isMultiMatch(kind, matches);
+  const orderedMatches = multiMatch ? orderCandidatesPersonalFirst(matches ?? []) : (matches ?? []);
+  // E4 single-match: `matches` carries exactly the ONE candidate this
+  // ceremony pre-selected (App.tsx passes the same `candidates` array
+  // regardless of length -- `isMultiMatch` above is what actually gates the
+  // picker list). `create` never has a `matches` array at all, so this is
+  // `undefined` there (no shared note on a create ceremony -- there is no
+  // existing credential to be shared).
+  const singleCandidate =
+    !multiMatch && matches !== undefined && matches.length === 1 ? matches[0] : undefined;
+  const singleShareNoteKey = singleCandidate !== undefined ? sharedNoteKeyFor(singleCandidate) : null;
 
   const title = t(locale, kind === "create" ? "provider.createTitle" : "provider.signinTitle");
   const body =
@@ -212,6 +261,20 @@ export default function ProviderCeremonyView({
             {interpolate(t(locale, "provider.accountLabel"), { account })}
           </p>
         ) : null}
+        {/* E4 single-match populated/partial: the ceremony's sole candidate
+            is shared -- no candidate row exists in this layout at all (see
+            below), so this note alone carries the "shared" signal, in the
+            SAME text-sm text-base-content/70 treatment provider.accountLabel
+            already uses directly above. */}
+        {singleShareNoteKey !== null && singleCandidate !== undefined ? (
+          <p className="text-sm text-base-content/70" data-testid="provider-shared-passkey-note">
+            {singleShareNoteKey === "provider.sharedPasskeyFolderNote"
+              ? interpolate(t(locale, singleShareNoteKey), {
+                  folder: singleCandidate.folderName ?? "",
+                })
+              : t(locale, singleShareNoteKey)}
+          </p>
+        ) : null}
       </div>
 
       {multiMatch ? (
@@ -219,23 +282,50 @@ export default function ProviderCeremonyView({
           className="flex max-h-52 flex-col gap-2 overflow-y-auto"
           data-testid="provider-candidate-list"
         >
-          {(matches ?? []).map((candidate) => (
-            <button
-              key={candidate.itemId}
-              type="button"
-              data-testid={`provider-credential-row-${candidate.itemId}`}
-              onClick={() => handleRowClick(candidate.itemId)}
-              disabled={busy}
-              className={`flex h-14 w-full items-center gap-2 rounded-field px-3 text-left pv-row-hover${
-                busy ? " cursor-not-allowed opacity-50" : ""
-              }`}
-            >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center">
-                <KeyRound size={20} className="text-accent" aria-hidden="true" />
-              </span>
-              <span className="flex-1 truncate text-sm">{candidate.label}</span>
-            </button>
-          ))}
+          {orderedMatches.map((candidate) => {
+            const shareNoteKey = sharedNoteKeyFor(candidate);
+            const shared = candidate.isShared === true;
+            return (
+              <button
+                key={candidate.itemId}
+                type="button"
+                data-testid={`provider-credential-row-${candidate.itemId}`}
+                onClick={() => handleRowClick(candidate.itemId)}
+                disabled={busy}
+                className={`flex h-14 w-full items-center gap-2 rounded-field px-3 text-left pv-row-hover${
+                  busy ? " cursor-not-allowed opacity-50" : ""
+                }`}
+              >
+                {shared ? (
+                  <span className="relative flex h-8 w-8 shrink-0 items-center justify-center">
+                    <KeyRound size={20} className="text-accent" aria-hidden="true" />
+                    <SharedBadge locale={locale} />
+                  </span>
+                ) : (
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center">
+                    <KeyRound size={20} className="text-accent" aria-hidden="true" />
+                  </span>
+                )}
+                {shared && shareNoteKey !== null ? (
+                  <span className="flex min-w-0 flex-1 flex-col items-start">
+                    <span className="w-full truncate text-sm">{candidate.label}</span>
+                    <span
+                      className="w-full truncate text-sm text-base-content/70"
+                      data-testid={`provider-credential-shared-note-${candidate.itemId}`}
+                    >
+                      {shareNoteKey === "provider.sharedPasskeyFolderNote"
+                        ? interpolate(t(locale, shareNoteKey), {
+                            folder: candidate.folderName ?? "",
+                          })
+                        : t(locale, shareNoteKey)}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="flex-1 truncate text-sm">{candidate.label}</span>
+                )}
+              </button>
+            );
+          })}
         </div>
       ) : null}
 

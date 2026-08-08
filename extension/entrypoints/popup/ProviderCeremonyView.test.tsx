@@ -271,6 +271,188 @@ describe("ProviderCeremonyView", () => {
     });
   });
 
+  describe("Task 1 (27-10): E4 shared-passkey badge/note on both candidate presentations", () => {
+    it("single-match, personal candidate: layout renders exactly as before -- no shared note, no badge anywhere", () => {
+      render(
+        <ProviderCeremonyView
+          locale="en"
+          kind="get"
+          site={SITE}
+          account="alice"
+          matches={[{ itemId: "item-1", label: "alice" }]}
+          prfRequested={false}
+          status="idle"
+          onConfirm={vi.fn()}
+          onDecline={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText(`Sign in to ${SITE} as alice.`)).toBeInTheDocument();
+      expect(screen.queryByTestId("provider-shared-passkey-note")).not.toBeInTheDocument();
+      expect(screen.queryByRole("img", { name: "Shared item" })).not.toBeInTheDocument();
+    });
+
+    it("single-match, shared candidate with a resolved folder: renders sharedPasskeyFolderNote beneath provider.accountLabel's own treatment, no candidate row", () => {
+      render(
+        <ProviderCeremonyView
+          locale="en"
+          kind="get"
+          site={SITE}
+          account="alice"
+          matches={[{ itemId: "item-1", label: "alice", isShared: true, folderName: "Family" }]}
+          prfRequested={false}
+          status="idle"
+          onConfirm={vi.fn()}
+          onDecline={vi.fn()}
+        />,
+      );
+
+      const note = screen.getByTestId("provider-shared-passkey-note");
+      expect(note).toHaveTextContent('This passkey comes from the shared folder "Family".');
+      expect(note.className).toContain("text-sm");
+      expect(note.className).toContain("text-base-content/70");
+      expect(screen.queryByTestId("provider-candidate-list")).not.toBeInTheDocument();
+    });
+
+    it("single-match, shared candidate with NO resolved folder: renders the folder-free sharedPasskeyNote, never a raw id or blank line", () => {
+      render(
+        <ProviderCeremonyView
+          locale="en"
+          kind="get"
+          site={SITE}
+          account="alice"
+          matches={[{ itemId: "item-1", label: "alice", isShared: true }]}
+          prfRequested={false}
+          status="idle"
+          onConfirm={vi.fn()}
+          onDecline={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByTestId("provider-shared-passkey-note")).toHaveTextContent(
+        "This passkey is shared with you.",
+      );
+    });
+
+    it("multi-match: orders personal candidates before shared ones, badges only the shared rows, and shows the correct subtitle for each -- personal rows are single-line with no badge", () => {
+      const matches: ProviderCredentialCandidate[] = [
+        { itemId: "shared-1", label: "carol", isShared: true, folderName: "Family" },
+        { itemId: "personal-1", label: "alice" },
+        { itemId: "shared-2", label: "dave", isShared: true },
+        { itemId: "personal-2", label: "bob" },
+      ];
+      render(
+        <ProviderCeremonyView
+          locale="en"
+          kind="get"
+          site={SITE}
+          matches={matches}
+          prfRequested={false}
+          status="idle"
+          onConfirm={vi.fn()}
+          onDecline={vi.fn()}
+        />,
+      );
+
+      const list = screen.getByTestId("provider-candidate-list");
+      const rows = Array.from(list.children);
+      // Personal-before-shared, each group keeping its own relative order.
+      expect(rows.map((row) => row.getAttribute("data-testid"))).toEqual([
+        "provider-credential-row-personal-1",
+        "provider-credential-row-personal-2",
+        "provider-credential-row-shared-1",
+        "provider-credential-row-shared-2",
+      ]);
+
+      // Personal rows: single line, no badge.
+      const personalRow1 = screen.getByTestId("provider-credential-row-personal-1");
+      expect(personalRow1).toHaveTextContent("alice");
+      expect(personalRow1.querySelector('[role="img"]')).toBeNull();
+      expect(
+        screen.queryByTestId("provider-credential-shared-note-personal-1"),
+      ).not.toBeInTheDocument();
+
+      // Shared row with a resolved folder: badge + folder subtitle.
+      const sharedRow1 = screen.getByTestId("provider-credential-row-shared-1");
+      expect(sharedRow1.querySelector('[role="img"]')).not.toBeNull();
+      expect(screen.getByTestId("provider-credential-shared-note-shared-1")).toHaveTextContent(
+        'This passkey comes from the shared folder "Family".',
+      );
+
+      // Shared row with NO resolved folder: badge + folder-free subtitle.
+      const sharedRow2 = screen.getByTestId("provider-credential-row-shared-2");
+      expect(sharedRow2.querySelector('[role="img"]')).not.toBeNull();
+      expect(screen.getByTestId("provider-credential-shared-note-shared-2")).toHaveTextContent(
+        "This passkey is shared with you.",
+      );
+    });
+
+    it("multi-match subtitle line reuses the label's truncate treatment", () => {
+      const matches: ProviderCredentialCandidate[] = [
+        { itemId: "personal-1", label: "alice" },
+        { itemId: "shared-1", label: "carol", isShared: true, folderName: "Family" },
+      ];
+      render(
+        <ProviderCeremonyView
+          locale="en"
+          kind="get"
+          site={SITE}
+          matches={matches}
+          prfRequested={false}
+          status="idle"
+          onConfirm={vi.fn()}
+          onDecline={vi.fn()}
+        />,
+      );
+
+      const row = screen.getByTestId("provider-credential-row-shared-1");
+      const label = row.querySelector("span.w-full.truncate.text-sm");
+      const note = screen.getByTestId("provider-credential-shared-note-shared-1");
+      expect(label).not.toBeNull();
+      expect(note.className).toContain("truncate");
+    });
+
+    it("clicking a shared candidate row still confirms with its itemId (badge/note are purely informational)", () => {
+      const onConfirm = vi.fn();
+      const matches: ProviderCredentialCandidate[] = [
+        { itemId: "personal-1", label: "alice" },
+        { itemId: "shared-1", label: "carol", isShared: true, folderName: "Family" },
+      ];
+      render(
+        <ProviderCeremonyView
+          locale="en"
+          kind="get"
+          site={SITE}
+          matches={matches}
+          prfRequested={false}
+          status="idle"
+          onConfirm={onConfirm}
+          onDecline={vi.fn()}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("provider-credential-row-shared-1"));
+      expect(onConfirm).toHaveBeenCalledWith("shared-1");
+    });
+
+    it("create ceremony (no matches at all) never renders a shared-passkey note", () => {
+      render(
+        <ProviderCeremonyView
+          locale="en"
+          kind="create"
+          site={SITE}
+          account="alice@example.com"
+          prfRequested={false}
+          status="idle"
+          onConfirm={vi.fn()}
+          onDecline={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByTestId("provider-shared-passkey-note")).not.toBeInTheDocument();
+    });
+  });
+
   describe("Task 2: PRF notes (D-16)", () => {
     const matrix: Array<{
       kind: "create" | "get";

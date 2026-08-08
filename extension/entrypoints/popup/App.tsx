@@ -407,7 +407,13 @@ export default function App() {
         kind={view.ceremonyKind}
         site={view.site}
         account={isCreate ? view.account : singleMatch?.label}
-        matches={!isCreate && view.candidates.length > 1 ? view.candidates : undefined}
+        // 27-10 (E4): pass ALL of `get`'s candidates through, not only when
+        // there are 2+ -- ProviderCeremonyView's own `isMultiMatch` is what
+        // gates the picker list (`matches.length > 1`); a single-length
+        // array is how the sole candidate's `isShared`/`folderName` reach
+        // the single-match shared-passkey note. `create` never carries
+        // candidates at all (no existing credential to share).
+        matches={!isCreate ? view.candidates : undefined}
         // D-16: the REAL capability signal (provider-ceremony.ts's
         // derivePrfCapability) is only known AFTER a create() ceremony
         // actually runs (post-confirm) -- this payload's `prfRequested`
