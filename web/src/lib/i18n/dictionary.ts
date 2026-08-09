@@ -998,9 +998,19 @@ export const DICTIONARY = {
     en: "This folder contains no items.",
   },
   "member.removeStep2Title": { pl: "Na pewno usunąć {email}?", en: "Remove {email} for good?" },
+  // 28-04 gap fix (FAM-09 copy honesty): "natychmiast"/"immediately" used
+  // to claim a literal, sub-second cutoff on the removed member's OWN
+  // device. The bound this phase actually proved (28-03-SUMMARY.md,
+  // dual-extension-removal.spec.ts/remove-member.spec.ts) is the next
+  // COMPLETED sync cycle -- server-side denial is immediate (the DELETE's
+  // own transaction), but the removed member's client only discovers and
+  // purges its cached copy on its next poll: up to ~1 min on the extension
+  // (chrome.alarms floor) or ~30s on web (setInterval). Reworded to state
+  // that honest bound without being alarming -- same discipline
+  // `member.removeHonestyWarning` already applies to its own claim.
   "member.removeStep2Body": {
-    pl: "To działanie jest nieodwracalne. {email} straci dostęp natychmiast, a klucze zostaną ponownie zaszyfrowane.",
-    en: "This action is irreversible. {email} loses access immediately, and the affected keys will be re-encrypted.",
+    pl: "To działanie jest nieodwracalne. {email} traci dostęp po stronie serwera od razu, a klucze zostaną ponownie zaszyfrowane. Ich urządzenie usunie lokalną kopię danych przy najbliższej synchronizacji, zwykle w ciągu około minuty.",
+    en: "This action is irreversible. {email} loses server-side access right away, and the affected keys will be re-encrypted. Their device purges its own cached copy on its next sync, usually within about a minute.",
   },
   "member.removing": { pl: "Usuwanie…", en: "Removing…" },
   "member.removeFailed": {
