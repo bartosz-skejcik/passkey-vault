@@ -287,3 +287,87 @@ exists to eliminate, so it is not counted as verified on presence.
 
 _Verified: 2026-08-09T16:25:27Z_
 _Verifier: Claude (gsd-verifier)_
+
+---
+
+## 28-04 Gap Closure — Addendum
+
+**Closed 2026-08-09.** A focused fix pass (Plan 28-04, direct commits on `main`, no new
+PLAN.md) closed both `gaps` entries and one `behavior_unverified_items` entry above. This
+addendum records the results; the rest of this report (Method note, Goal Achievement tables,
+Requirements Coverage, Prohibitions, etc.) is left as originally verified and is NOT rewritten.
+
+### Gap 1 — REQUIREMENTS.md self-contradiction — CLOSED
+
+`.planning/REQUIREMENTS.md` reconciled: FAM-07/08/09's stale "PARTIAL … Do not mark Complete
+until …" sub-bullets replaced with Complete notes attributing the client half to Phase 28
+(matching the SHARE-06 precedent); FAM-09's note states the honest sync-bound (next completed
+cycle, ~1 min extension / ~30s web) rather than an instantaneous claim; KEY-06 attributed to
+include Phase 28's client-side purge-scope invariant. SHARE-01/UX-03/UX-05/SEC-05 checkboxes
+flipped `[ ]`→`[x]`, attributed to Phase 26 — independently confirmed against `26-VERIFICATION.md`
+(`status: passed`, `5/5`) and Phase 26's own plan SUMMARYs (`grep` confirmed each of the four IDs
+genuinely listed under `requirements-completed` across 2–6 plans apiece). Traceability table
+updated to match every checkbox/sub-bullet — no more `[x]` sitting above `Partial`/`Pending`.
+UX-04 and FAM-10 deliberately left untouched (genuinely unimplemented, out of this pass's scope).
+Commit: `3bfe80a`.
+
+### Gap 2 — Falsified truth: already-revoked 404 folded into `share.revokeFailed` — CLOSED
+
+`RevokeShareDialog.tsx`'s `handleConfirm` now branches a `404` (already-revoked — both
+`collections::revoke_access` and `vault::revoke_share` return 404 when the grant is already gone)
+into the SAME success path a genuine 204 takes (`onRevoked()`, row splice), distinct from the
+existing 409 (last-key-holder) and generic-failure branches. A owner whose revoke actually
+succeeded — or was already in effect via a race/double-submit — is now told the truth (the row
+disappears, no error copy), never `share.revokeFailed`. Unit test added
+(`SharingOverviewPanel.test.tsx`, mocked 404) covering the path distinctly from 409/generic.
+Web unit suite: 821/821 (was 820; +1 new test). Commit: `c1692b5`.
+
+### Behavior-unverified item — SHARE-06 item-share revoke — CLOSED, live-proven
+
+`web/e2e/sharing.spec.ts` extended with a new live test: owner creates and directly shares an
+item, recipient's access is positively anchored BEFORE revoke (own raw `GET
+/api/sync/shared/direct` request AND the real UI both show the item), owner revokes through the
+real Sharing overview's By-person tab, then the recipient's own raw request no longer includes the
+item — never an absence-only assertion. Run against an isolated server + throwaway DB
+(`lsof -i :8620` confirmed empty first; `data/pv.db` held 48 users / 12 `pv-e2e-*` before and
+after — unchanged). Full-file re-run: **6 passed (23.8s)**, `CI=1 --retries=0`. Commit: `ee19672`.
+
+Roadmap Success Criterion 1 and Requirement SHARE-06 are now genuinely `✓ VERIFIED` (both the
+collection and item legs live-proven), not `⚠️ PRESENT_BEHAVIOR_UNVERIFIED`. Score moves from
+4/5 (1 present, behavior-unverified) to **5/5 verified**.
+
+### FAM-09 copy honesty — CLOSED
+
+`web/src/lib/i18n/dictionary.ts`'s `member.removeStep2Body` (both `pl`/`en`) reworded: no longer
+claims a literal, sub-second/"natychmiast" cutoff on the removed member's own device. States the
+honest split instead — server-side access denial is immediate, the removed member's own device
+purges its cached copy on its next completed sync (up to ~1 min extension / ~30s web), matching
+the bound this phase already proved live. No test asserted the old exact string, so no test
+required rewriting; web unit suite unaffected by the copy change beyond the new 404 test above.
+Commit: `1757ad7`.
+
+### Environment hazards — recorded, not fixed (as instructed)
+
+Both hazards from the Standing-hazard section above are now also recorded in `STATE.md`'s
+Blockers/Concerns (per-hazard entries tagged `[Phase 28]`), so they survive independent of this
+report: the `web/playwright.config.ts` `reuseExistingServer` stray-server-adoption hazard, and
+`extension/e2e`'s undocumented `PV_STATIC_DIR` requirement. Neither was changed — both are
+config/documentation debt for a future session. Commit: `ff8613a`.
+
+### Baseline held
+
+`extension` unit: 786/786 (unchanged — no extension files touched this pass). `web` unit:
+821/821 (was 820; +1 from the 404 regression test). `npx tsc --noEmit` clean on both. `cargo test
+--workspace`: all green (66 route tests + every other suite, 0 failed). Live web e2e
+(`sharing.spec.ts`, full file, `CI=1 --retries=0`): 6/6 passed. `data/pv.db`: 48 users / 12
+`pv-e2e-*` before and after this pass's own live runs — unchanged, confirmed twice.
+
+### Remaining, unchanged (correctly abstaining, per this pass's own constraints)
+
+The 6 `verification: backstop` truths listed in `human_verification` above (blocked-write toast
+clipping, RevokeShareDialog long-name overflow, and the four concurrent-mutation backstop items)
+were explicitly out of scope for this pass and remain abstaining — they are honest, not broken,
+per the original brief. UX-04 and FAM-10 remain genuinely unimplemented and unchanged.
+
+_Addendum recorded: 2026-08-09_
+_Executor: Claude (gsd-execute-phase / 28-04 gap-closure pass)_
