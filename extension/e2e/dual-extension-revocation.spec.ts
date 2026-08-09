@@ -76,7 +76,37 @@ async function signInWithPassword(popup: Page, email: string, password: string):
   ]);
 }
 
-async function signInAndUnlock(popup: Page, email: string, password: string): Promise<void> {
+/** 27-14 Task 2 (Gap 5 fix): ported verbatim from
+ * dual-extension-sharing.spec.ts's own identically-named helper -- this
+ * file did not define it before, and `signInAndUnlock` below now needs it
+ * as the same service-worker-readiness barrier that closes the diagnosed
+ * cold-MV3-wake race (27-VERIFICATION.md's own Gap 5, observed against
+ * this spec's sibling file, applied here identically since the race
+ * applies equally to both). */
+async function getServiceWorker(
+  context: import("@playwright/test").BrowserContext,
+): Promise<import("@playwright/test").Worker> {
+  let [worker] = context.serviceWorkers().filter((w) => w.url().startsWith("chrome-extension://"));
+  if (!worker) {
+    worker = await context.waitForEvent("serviceworker", { timeout: 20000 });
+  }
+  return worker;
+}
+
+/** 27-14 Task 2 (Gap 5 fix): the verifier's own diagnosed cause of
+ * 27-VERIFICATION.md's Gap 5 -- 2 of 6 attempts failed, always at THIS
+ * function's own first `waitForSelector`, a cold MV3 service-worker wake
+ * racing the popup's own first `chrome.runtime.sendMessage` call. Awaiting
+ * `getServiceWorker(context)` as the very first line closes that race by
+ * ensuring the background is genuinely resolvable before any message is
+ * sent to it. */
+async function signInAndUnlock(
+  context: import("@playwright/test").BrowserContext,
+  popup: Page,
+  email: string,
+  password: string,
+): Promise<void> {
+  await getServiceWorker(context);
   const cfg = await popup.evaluate(() => chrome.runtime.sendMessage({ kind: "config.get" }));
   if (cfg === null) {
     await ensureServerConfigured(popup);
@@ -108,7 +138,7 @@ test("a member revoked mid-session, with no lock/unlock cycle, loses visibility 
 
   const popupB = await extContextB.newPage();
   await popupB.goto(`chrome-extension://${extensionIdB}/popup.html`);
-  await signInAndUnlock(popupB, fixture.memberBEmail, fixture.memberBPassword);
+  await signInAndUnlock(extContextB, popupB, fixture.memberBEmail, fixture.memberBPassword);
 
   // PRESENCE first (Pitfall 2's discipline, applied to a negative
   // assertion this plan's own acceptance criteria names explicitly): a

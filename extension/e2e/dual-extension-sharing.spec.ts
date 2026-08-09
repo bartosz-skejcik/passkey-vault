@@ -209,8 +209,22 @@ async function signInWithPassword(popup: Page, email: string, password: string):
  * this spec's only reachable path in practice; the locked/already-unlocked
  * branches are kept for the same defensive resilience
  * `ensureVaultReady`/`signInWithPassword` already established in
- * dual-browser.spec.ts). */
-async function signInAndUnlock(popup: Page, email: string, password: string): Promise<void> {
+ * dual-browser.spec.ts).
+ *
+ * 27-14 Task 2 (Gap 5 fix): the verifier's own diagnosed cause of
+ * 27-VERIFICATION.md's Gap 5 -- 2 of 6 attempts failed, always at THIS
+ * function's own first `waitForSelector`, a cold MV3 service-worker wake
+ * racing the popup's own first `chrome.runtime.sendMessage` call. Awaiting
+ * `getServiceWorker(context)` as the very first line closes that race by
+ * ensuring the background is genuinely resolvable before any message is
+ * sent to it. */
+async function signInAndUnlock(
+  context: import("@playwright/test").BrowserContext,
+  popup: Page,
+  email: string,
+  password: string,
+): Promise<void> {
+  await getServiceWorker(context);
   const cfg = await popup.evaluate(() => chrome.runtime.sendMessage({ kind: "config.get" }));
   if (cfg === null) {
     await ensureServerConfigured(popup);
@@ -244,11 +258,11 @@ test("member B's extension displays the exact plaintext name of the item member 
 
   const popupA = await extContext.newPage();
   await popupA.goto(`chrome-extension://${extensionId}/popup.html`);
-  await signInAndUnlock(popupA, fixture.memberAEmail, fixture.memberAPassword);
+  await signInAndUnlock(extContext, popupA, fixture.memberAEmail, fixture.memberAPassword);
 
-  const popupB = await extContextB.newPage();
+  let popupB = await extContextB.newPage();
   await popupB.goto(`chrome-extension://${extensionIdB}/popup.html`);
-  await signInAndUnlock(popupB, fixture.memberBEmail, fixture.memberBPassword);
+  await signInAndUnlock(extContextB, popupB, fixture.memberBEmail, fixture.memberBPassword);
 
   // THE headline assertion of this phase (27-CONTEXT.md's own framing):
   // member B's extension, which authored nothing and only received a share,
@@ -307,6 +321,59 @@ test("member B's extension displays the exact plaintext name of the item member 
     nowSeconds,
   );
   expect(candidates).toContain(returnedCode);
+
+  // 27-14 Task 2 (Gap 4 -- EXT-07's fill EVENT itself, not merely the
+  // item's own display): drives a REAL autofill fill of
+  // fixture.sharedItemName's own item (now reachable at CAPTURE_FORM_ORIGIN
+  // per 27-14 Task 1's fixture change) through the popup's own "Na tej
+  // stronie" UI, mirroring dual-browser.spec.ts's P10-SC1 pattern exactly:
+  // a fresh page navigated to and focused on the fill target's own origin,
+  // a popup reload so its active-tab resolution picks up the newly-focused
+  // page, then a real click on the fill button and a positive, present,
+  // populated field-value match against the fixture's own known plaintext
+  // -- closing the specific evidence gap 27-VERIFICATION.md names for
+  // EXT-07 (fill-dom.ts is absent; handleAutofillFill does zero
+  // collectionId/accessLevel narrowing -- but no live proof had ever
+  // exercised the DOM fill event itself until now).
+  const fillTargetPage = await extContextB.newPage();
+  await fillTargetPage.goto(`${CAPTURE_FORM_ORIGIN}/`);
+  await fillTargetPage.bringToFront();
+  await popupB.reload();
+  await popupB.waitForSelector("select", { timeout: 20000 });
+  await popupB.waitForTimeout(1500);
+
+  const fillBtn = popupB.locator(`[data-testid="autofill-fill-${fixture.sharedItemId}"]`);
+  await expect(fillBtn).toBeVisible({ timeout: 10000 });
+  await fillBtn.click();
+  await fillTargetPage.waitForFunction(
+    () => (document.getElementById("u") as HTMLInputElement)?.value !== "",
+    { timeout: 10000 },
+  );
+  const filledValues = await fillTargetPage.evaluate(() => ({
+    u: (document.getElementById("u") as HTMLInputElement).value,
+    p: (document.getElementById("p") as HTMLInputElement).value,
+  }));
+  expect(filledValues.u).toBe(fixture.sharedItemUsername);
+  expect(filledValues.p).toBe(fixture.sharedItemPassword);
+  await fillTargetPage.close();
+
+  // Deviation (Rule 1 -- test-authoring bug, found live): AutofillItemRow.tsx's
+  // doFill() calls window.close() on the POPUP itself after a CONFIRMED
+  // successful login fill (real, intentional production UX -- the user's
+  // job is done, the SAME behavior dual-browser.spec.ts's own
+  // ensureVaultReady doc comment documents: "A successful UI-driven 'Fill'
+  // gesture ... closes the popup window on success"). The plan's own action
+  // text assumed popupB stays open across this block, which does not hold
+  // for a login fill specifically -- reopen a fresh popup document for the
+  // rest of this test; the background session stays unlocked across a
+  // popup document close/reopen (only the document, never the
+  // vault-store/session singleton, is torn down), so this needs no
+  // re-sign-in, only a fresh navigation.
+  if (popupB.isClosed()) {
+    popupB = await extContextB.newPage();
+    await popupB.goto(`chrome-extension://${extensionIdB}/popup.html`);
+    await popupB.waitForSelector("select", { timeout: 20000 });
+  }
 
   // "No TOTP secret -> no TOTP affordance" truth: the ORIGINAL shared login
   // item (`fixture.sharedItemName`) carries no `totp` field at all --
