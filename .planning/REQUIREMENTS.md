@@ -113,34 +113,34 @@ Phases 29–33 (`ROADMAP.md`). Every v0.5 requirement is mapped to exactly one p
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FSH-01 | Phase 29 — The Living Group | Pending |
-| FSH-02 | Phase 29 — The Living Group | Pending |
-| FSH-03 | Phase 29 — The Living Group | Pending |
-| FSH-04 | Phase 29 — The Living Group | Pending |
-| FSH-05 | Phase 29 — The Living Group | Pending |
-| FAM-10 | Phase 29 — The Living Group | Pending |
-| MOD-01 | Phase 30 — The Share Dialog | Pending |
-| MOD-02 | Phase 30 — The Share Dialog | Pending |
-| MOD-03 | Phase 30 — The Share Dialog | Pending |
-| ORG-03 | Phase 30 — The Share Dialog | Pending |
-| ORG-01 | Phase 31 — Putting Things Into Shared Folders | Pending |
-| ORG-02 | Phase 31 — Putting Things Into Shared Folders | Pending |
-| ORG-04 | Phase 31 — Putting Things Into Shared Folders | Pending |
-| DEBT-04 | Phase 31 — Putting Things Into Shared Folders | Pending |
-| SET-01 | Phase 32 — A Real Settings Page | Pending |
-| SET-02 | Phase 32 — A Real Settings Page | Pending |
-| SET-03 | Phase 32 — A Real Settings Page | Pending |
-| SET-04 | Phase 32 — A Real Settings Page | Pending |
-| DEBT-01 | Phase 32 — A Real Settings Page | Pending |
-| DEBT-02 | Phase 32 — A Real Settings Page | Pending |
-| UX-04 | Phase 32 — A Real Settings Page | Pending |
-| VIS-01 | Phase 33 — Knowing What You Are Sharing | Pending |
-| VIS-02 | Phase 33 — Knowing What You Are Sharing | Pending |
-| VIS-03 | Phase 33 — Knowing What You Are Sharing | Pending |
-| VIS-04 | Phase 33 — Knowing What You Are Sharing | Pending |
-| VIS-05 | Phase 33 — Knowing What You Are Sharing | Pending |
-| VIS-06 | Phase 33 — Knowing What You Are Sharing | Pending |
-| DEBT-03 | Phase 33 — Knowing What You Are Sharing | Pending |
+| FSH-01 | Phase 30 | Pending |
+| FSH-02 | Phase 30 | Pending |
+| FSH-03 | Phase 30 | Pending |
+| FSH-04 | Phase 30 | Pending |
+| FSH-05 | Phase 30 | Pending |
+| FAM-10 | Phase 30 | Pending |
+| MOD-01 | Phase 31 | Pending |
+| MOD-02 | Phase 31 | Pending |
+| MOD-03 | Phase 31 | Pending |
+| ORG-03 | Phase 31 | Pending |
+| ORG-01 | Phase 32 | Pending |
+| ORG-02 | Phase 32 | Pending |
+| ORG-04 | Phase 32 | Pending |
+| DEBT-04 | Phase 32 | Pending |
+| SET-01 | Phase 29 | Pending |
+| SET-02 | Phase 29 | Pending |
+| SET-03 | Phase 33 | Pending |
+| SET-04 | Phase 29 | Pending |
+| DEBT-01 | Phase 33 | Pending |
+| DEBT-02 | Phase 29 | Pending |
+| UX-04 | Phase 33 | Pending |
+| VIS-01 | Phase 34 | Pending |
+| VIS-02 | Phase 34 | Pending |
+| VIS-03 | Phase 34 | Pending |
+| VIS-04 | Phase 34 | Pending |
+| VIS-05 | Phase 34 | Pending |
+| VIS-06 | Phase 34 | Pending |
+| DEBT-03 | Phase 34 | Pending |
 
 ### Mapping notes
 

@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Sharing That Makes Sense
 current_phase: 29
-current_phase_name: The Living Group — Family-Wide Sharing
-status: roadmap-ready
-stopped_at: v0.5 roadmap created (phases 29-33), awaiting phase 29 planning
+current_phase_name: A Real Settings Page — Shell & Migration
+status: planning
+stopped_at: v0.5 roadmap defined (phases 29-34); settings shell split out to Phase 29 per product-owner decision
 last_updated: "2026-08-09T00:00:00.000Z"
 last_activity: 2026-08-09
 last_activity_desc: v0.5 roadmap written — 5 phases (29-33), 28/28 requirements mapped
@@ -120,6 +120,12 @@ Previous milestone: Phase 28 closed v0.4's three audit blockers; v0.4 shipped/ar
 ## Accumulated Context
 
 ### Roadmap Evolution
+
+- v0.5 2026-08-09: settings work SPLIT on the product owner's call — SET-01/02/04 (the
+  `/settings` shell + migration) became **Phase 29**, first in the milestone, because it is
+  structurally independent of the sharing work and was his most visible ask; SET-03 (the Family &
+  Sharing **redesign**) stayed late as **Phase 33** so it is designed around a sharing model that has
+  stopped moving. Cost: a sixth phase. Milestone is 29–34, not 29–33.
 
 - v0.5 roadmap created 2026-08-09: **5 phases (29–33), standard granularity, 28/28 requirements mapped.**
   Sequence: 29 The Living Group (FSH-01..05 + FAM-10 — the FSH-02 client-only key-delivery mechanism is
