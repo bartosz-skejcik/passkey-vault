@@ -504,28 +504,63 @@ export default function ItemListView({
                         vault.updated -> refetchItems() cycle once the query
                         is cleared). Non-interactive `<div>` (never a
                         `<button>`), `role="status"` carries the sole
-                        screen-reader announcement, no visible text --
-                        neutral shimmer only, NEVER alert-warning/error
-                        styling (Copywriting honesty constraint 2: this is a
-                        transient, expected state, not a fault). */}
+                        screen-reader announcement. For a `status: "pending"`
+                        entry: no visible text, neutral shimmer only, NEVER
+                        alert-warning/error styling (Copywriting honesty
+                        constraint 2: this is a transient, expected state,
+                        not a fault) -- see the E2-error addendum
+                        immediately below for the terminal `"broken"` case. */}
+                    {/* 27-12 (Blocker 1 gap closure, UI-SPEC E2-error
+                        backstop): a "broken" entry (Collection Key
+                        resolved, decrypt still failed) degrades to a
+                        terminal, non-interactive warning row instead of
+                        shimmering forever -- there is no code path back to
+                        the neutral "pending" sub-branch below once an
+                        entry's status is "broken" (getPendingSharedItems()
+                        never regresses an entry from "broken" back to
+                        "pending"). Still `role="status"`, still a `<div>`
+                        (never a `<button>`) -- only the inner content and
+                        aria-label differ from the ordinary pending row. */}
                     {trimmedQuery === ""
-                      ? pending.map((p) => (
-                          <div
-                            key={`pending-${p.id}`}
-                            role="status"
-                            aria-label={t(locale, "sharing.sharedItemLoadingAria")}
-                            className="flex min-h-[48px] items-center gap-2 rounded-field px-1 py-2"
-                          >
-                            <span className="relative inline-flex">
-                              <span className="skeleton h-8 w-8 rounded-[8px]" aria-hidden="true" />
-                              <SharedBadge locale={locale} />
-                            </span>
-                            <span className="flex min-w-0 flex-1 flex-col gap-1" aria-hidden="true">
-                              <span className="skeleton h-3 w-3/4" />
-                              <span className="skeleton h-3 w-1/2" />
-                            </span>
-                          </div>
-                        ))
+                      ? pending.map((p) => {
+                          const isBroken = p.status === "broken";
+                          return (
+                            <div
+                              key={`pending-${p.id}`}
+                              role="status"
+                              aria-label={t(
+                                locale,
+                                isBroken ? "sync.itemUndecryptableWarning" : "sharing.sharedItemLoadingAria",
+                              )}
+                              className="flex min-h-[48px] items-center gap-2 rounded-field px-1 py-2"
+                            >
+                              {isBroken ? (
+                                <>
+                                  <span className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-base-200">
+                                    <AlertTriangle size={16} className="text-warning" aria-hidden="true" />
+                                  </span>
+                                  <span
+                                    className="min-w-0 flex-1 truncate text-sm text-warning"
+                                    title={t(locale, "sync.itemUndecryptableWarning")}
+                                  >
+                                    {t(locale, "sharing.sharedItemBrokenLabel")}
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="relative inline-flex">
+                                    <span className="skeleton h-8 w-8 rounded-[8px]" aria-hidden="true" />
+                                    <SharedBadge locale={locale} />
+                                  </span>
+                                  <span className="flex min-w-0 flex-1 flex-col gap-1" aria-hidden="true">
+                                    <span className="skeleton h-3 w-3/4" />
+                                    <span className="skeleton h-3 w-1/2" />
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })
                       : null}
                   </div>
                 </div>
