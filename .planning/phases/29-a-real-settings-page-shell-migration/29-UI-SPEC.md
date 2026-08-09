@@ -22,7 +22,7 @@ created: 2026-08-09
 | Tool | none — shadcn was never adopted (`components.json` absent, confirmed) and is **not** introduced by this phase. The project has its own mature design system. |
 | Preset | not applicable |
 | Component library | DaisyUI 5 primitives (`btn`, `tabs`, `alert`, `dropdown`, `join`, `badge`, `card`-adjacent `rounded-box border` row treatment) + `packages/pv-ui` (i18n engine `t`/`interpolate`, `ItemIconTile`, fingerprint display) |
-| Icon library | `lucide-react` (already the sole icon source in `Sidebar.tsx`, `SettingsPanel.tsx`, all `*Tab.tsx`) |
+| Icon library | `lucide-react` (already the sole icon source in `web/src/components/shell/Sidebar.tsx`, `SettingsPanel.tsx`, all `*Tab.tsx`) |
 | Font | DM Sans (`--font-sans`) for all page chrome, headings and body. **Fuzzy Bubbles and emoji are explicitly forbidden anywhere on `/settings`** — UI-DESIGN.md's "security UI zawsze czytelne" rule already excludes them from settings-adjacent dialogs; this phase extends that exclusion to the whole page now that settings is a first-class surface, not just a panel. |
 
 Reuse discipline: this phase must not invent new OKLCH values, radii, or component primitives.
@@ -34,16 +34,16 @@ in-codebase Tailwind utility pattern (cited by file:line where one exists).
 ## Spacing Scale
 
 Declared values (must be multiples of 4), reused from the project's existing informal 4px scale
-(`gap-1`…`gap-16`, `p-4`/`p-6` throughout `Sidebar.tsx`/`SettingsPanel.tsx`):
+(`gap-1`…`gap-16`, `p-4`/`p-6` throughout `web/src/components/shell/Sidebar.tsx`/`SettingsPanel.tsx`):
 
 | Token | Value | Usage |
 |-------|-------|-------|
 | xs | 4px | Icon-to-label gaps (back-link icon, jump-nav pill icon if any) |
 | sm | 8px | Compact row spacing inside migrated tab content (unchanged, e.g. `gap-2` list rows) |
 | md | 16px | Group heading → description → content gap; page horizontal padding on mobile (`px-4`) |
-| lg | 24px | Page horizontal padding on desktop (`px-6`/`px-12`); jump-nav rail ↔ content gap |
+| lg | 24px | Page horizontal padding on desktop (`px-6`); jump-nav rail ↔ content gap |
 | xl | 32px | Header ↔ first group gap |
-| 2xl | 48px | Group-to-group gap on mobile (`<768px`) |
+| 2xl | 48px | Group-to-group gap on mobile (`<768px`); page horizontal padding at the widest desktop breakpoint (`px-12`) |
 | 3xl | 64px | Group-to-group gap on desktop (`≥768px`) — deliberately larger than the 2xl default to make SET-04's "predict where a setting lives" test read clearly on a full page, where the old 400px panel had no room to breathe between tabs |
 
 Exceptions:
@@ -57,9 +57,12 @@ Exceptions:
 
 ## Typography
 
-Four roles, reusing three of the four sizes already established in shipped code
-(`SettingsPanel.tsx:40`, `ExportDialog.tsx:45` = `text-[20px] font-bold leading-[1.2]`;
-`text-base`/`text-sm` throughout) plus one new size for the page title.
+Four roles: two reused, two new. `Body` (16px) and `Label` (14px) reuse the codebase's existing
+`text-base`/`text-sm` usage throughout `SettingsPanel.tsx`/`*Tab.tsx`. `Display` (28px) and
+`Heading` (24px) are both **new** — neither exists in shipped code today; the closest existing
+size is the 20px dialog/sub-heading tier (`SettingsPanel.tsx:40`, `ExportDialog.tsx:45` =
+`text-[20px] font-bold leading-[1.2]`), which this phase does not reuse for either role (see the
+hierarchy note below for why, and for where that 20px tier ends up instead).
 
 | Role | Size | Weight | Line Height |
 |------|------|--------|-------------|
@@ -89,16 +92,32 @@ carried across verbatim, protecting the Phase 33 boundary) and exactly one edit 
 `SecurityTab.tsx` (see Migration Mapping — its delete-account sub-heading moves to a different
 group, not a different size).
 
+**This 20px tier is inherited, not declared.** It is not one of this phase's four typography
+roles and is not part of its size budget — it survives on the page purely because 29-CONTEXT.md
+locks the migrated components (`FamilyTab.tsx` especially) as verbatim carry-across, and this
+phase has no mandate to touch their internal headings. A later reader of this contract should not
+count `28 / 24 / 20 / 16` as "four declared sizes plus a stray fifth" — it is `28 / 24 / 16 / 14`
+declared (Display / Heading / Body / Label), with a pre-existing, out-of-budget 20px tier
+inherited from carried-across content and positioned correctly underneath the new Heading role.
+
 ---
 
 ## Color
 
 | Role | Value | Usage |
 |------|-------|-------|
-| Dominant (60%) | `base-300` (`#1F1F1F` dark / cream `#FCFBFA`-adjacent light per `tokens.css`) | Page background — matches the existing vault main-column background so `/settings` reads as the same app, not a foreign surface |
+| Dominant (60%) | `base-300` (dark/light theme token, see `packages/pv-ui/tokens.css` — no hex cited here; see note below) | Page background — set explicitly by this new route, not inherited from a precedent that doesn't exist. `web/src/app/page.tsx` never applies a background to its main column (it relies on the DaisyUI body default, `base-100`); its only `base-300` usage is the transient `bg-base-300/40` click-outside scrim at `page.tsx:396`, not a page fill. `/settings` implements UI-DESIGN.md's own documented role for this token — "tło strony" (page background) — for the first time on a real standalone page |
 | Secondary (30%) | `base-100` + 1px `border-base-300` | Row/list-item surfaces inside each group (`rounded-box border border-base-300`, the exact pattern already at `SessionsTab.tsx:113`/`PasskeysTab.tsx:110`) and the page header bar |
-| Accent (10%) | `primary` (koral `#E16540`) | Reserved for: the active state of the jump-nav's current-in-view link (background `bg-primary/[0.08]` + `text-primary`, the identical `navItemClass` pattern already in `Sidebar.tsx:67-73` — reused verbatim, not reinvented); primary-action buttons already inside migrated content (`Zaimportuj hasła` / `Eksportuj vault` CTAs, `settings-import-cta`/`settings-export-cta`, unchanged); focus rings |
+| Accent (10%) | `primary` (koral `#E16540`) | Reserved for: the active state of the jump-nav's current-in-view link (background `bg-primary/[0.08]` + `text-primary`, the identical `navItemClass` pattern already in `web/src/components/shell/Sidebar.tsx:67-73` — reused verbatim, not reinvented); primary-action buttons already inside migrated content (`Zaimportuj hasła` / `Eksportuj vault` CTAs, `settings-import-cta`/`settings-export-cta`, unchanged); focus rings |
 | Destructive | `error` (`#FF5861`) | Delete-account confirm button (unchanged, `DeleteAccountDialog`), passkey-delete confirm, session-revoke confirm, remove-member confirm — all pre-existing, none introduced by this phase |
+
+Note on hexes: `base-100`/`base-300` are cited by token name only, not hex — their actual OKLCH
+values differ by theme (`--color-base-300: oklch(23.93% 0 0)` dark / `oklch(93% 0.004 67.80)`
+light per `packages/pv-ui/tokens.css:42,60`) and a single hex annotation would misrepresent
+whichever theme it wasn't computed from. `primary`/`error` above keep their hex annotations
+because those are theme-invariant per UI-DESIGN.md's Color section (same OKLCH hue/chroma in both
+themes, confirmed by `tokens.css`'s own comment that non-`base-*` tokens are declared once on
+`:root` and never overridden per-theme).
 
 Accent is explicitly **not** used for: group headings, jump-nav inactive items, back-to-vault
 link, or any icon that isn't inside an active/primary state. Passkey-teal (`#00CDB7`) inside the
@@ -136,6 +155,13 @@ below for why the new disclosure sentence does **not** get its own color treatme
 
 ## Page Layout Contract
 
+**Visual focal point.** The `<h1>` + header bar is the page's primary visual anchor — it is the
+largest text on the page (Display, 28px/700), sits fixed at the top on every scroll position
+(`sticky top-0`), and is the first thing rendered. The jump-nav's active pill/link is the **only**
+other accent-bearing (`primary`-colored) element ever in view at once — with the header
+established as the anchor and the jump-nav's single active item as the sole secondary point of
+color, an executor does not have to infer where the eye should land first.
+
 **Route & chrome.** `/settings` is a full-width standalone page: the vault `Sidebar` is not
 rendered on this route (own layout branch, not `Sidebar` conditionally hidden via CSS — a hidden-
 but-mounted sidebar would still cost a render and contradicts "you have left the vault"). The page
@@ -144,7 +170,7 @@ supplies its own `<header>`.
 **Header** (`sticky top-0 z-10 border-b border-base-300 bg-base-100`):
 1. Back-to-vault link, `<a href="/" data-testid="settings-back-to-vault">`: `ArrowLeft` (lucide,
    16px) + `settings.backToVault` label, `text-sm text-base-content/70`, hover
-   `text-base-content` — same understated treatment as `Sidebar.tsx`'s dropdown items, deliberately
+   `text-base-content` — same understated treatment as `web/src/components/shell/Sidebar.tsx`'s dropdown items, deliberately
    not accent-colored (it is navigation, not a primary action).
 2. `<h1>` `settings.title`, Display role (28px/700/1.2), directly below the back-link.
 Mobile (`<768px`): back-link and `<h1>` stack in a `flex-col`; header never truncates or wraps
@@ -157,7 +183,7 @@ fragment-safe).
   positioned left of the content column inside a `grid grid-cols-[200px_1fr] gap-6 max-w-5xl
   mx-auto` page grid. Active item (the group currently in viewport, via `IntersectionObserver`
   scroll-spy) uses the **exact** `navItemClass` active pattern already shipped in
-  `Sidebar.tsx:67-73` (`bg-primary/[0.08] text-primary`) — reused, not reinvented.
+  `web/src/components/shell/Sidebar.tsx:67-73` (`bg-primary/[0.08] text-primary`) — reused, not reinvented.
 - **Mobile (`<768px`):** the vertical rail does **not** survive a 375px viewport (explicitly
   called out as a risk — this is the concrete resolution). It becomes a horizontal,
   `overflow-x-auto`, `sticky top-[header height]` row of pill-shaped links (`rounded-selector`,
@@ -286,7 +312,7 @@ new colored alert, not a second `alert-warning`/`alert-info` element:
   aria-labelledby="...">` (each group) — a navigation-and-landmark model, not a
   selection/disclosure (tab) model, because content is never hidden behind a tab click on this
   page (SC3's literal requirement).
-- **Sidebar gear → link:** `Sidebar.tsx:576-583`'s `sidebar-open-settings` element changes from
+- **Sidebar gear → link:** `web/src/components/shell/Sidebar.tsx:576-583`'s `sidebar-open-settings` element changes from
   `<button onClick={() => onOpenSettings?.()}>` to `<a href="/settings"
   data-testid="sidebar-open-settings">`, keeping its existing `aria-label={t("aria.openSettings")}`
   and icon. Tests asserting `getByRole("button", ...)` on this element must change to
