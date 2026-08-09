@@ -5,15 +5,15 @@ milestone_name: Family & Sharing
 current_phase: 27
 current_phase_name: Extension Integration — Shared Items
 status: verifying
-stopped_at: Completed 27-12-PLAN.md (gap closure, Blocker 1 closed)
-last_updated: "2026-08-09T09:58:44.290Z"
+stopped_at: Completed 27-14-PLAN.md (gap closure, access-level live coverage + EXT-07 fill + flake fix)
+last_updated: "2026-08-09T10:18:14.842Z"
 last_activity: 2026-08-09
-last_activity_desc: 27-12-PLAN.md executed
+last_activity_desc: 27-14-PLAN.md executed
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 61
-  completed_plans: 59
+  completed_plans: 60
   percent: 86
 ---
 
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 ## Current Position
 
 Phase: 27 (Extension Integration — Shared Items) — GAP CLOSURE
-Plan: 12 of 14 (gap-closure plans 12-14, from 27-VERIFICATION.md's gaps_found)
-Status: 27-12 complete (Blocker 1 closed) — 27-13/27-14 remaining
-Last activity: 2026-08-09 — 27-12-PLAN.md executed
+Plan: 14 of 14 (gap-closure plans 12-14, from 27-VERIFICATION.md's gaps_found)
+Status: 27-12 complete (Blocker 1 closed); 27-14 complete (Gaps 3/4/5 closed) — 27-13 remaining (independent, depends_on: [])
+Last activity: 2026-08-09 — 27-14-PLAN.md executed
 
 ## Performance Metrics
 
@@ -107,6 +107,7 @@ Last activity: 2026-08-09 — 27-12-PLAN.md executed
 | Phase 27 P10 | ~20min | 2 tasks | 5 files |
 | Phase 27 P11 | ~2h | 3 tasks | 3 files |
 | Phase 27 P12 | 30min | 3 tasks | 8 files |
+| Phase 27 P14 | ~40min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -213,6 +214,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 27] 27-11: Found live (not fixed, out of scope) -- capture-handler.ts's buildLoginFields() always derives an item's name from the submitting page's hostname on every capture-confirm save, new AND update alike, discarding a shared item's custom name; the write-path proof's own locator was adjusted to search by unique username instead of the now-renamed item name
 - [Phase ?]: [Phase 27] 27-11: closed the phase's three whole-phase-only obligations with live evidence -- EXT-11 chrome.storage.session audit, post-revocation staleness (T-27-24) with a genuine ~1-minute alarm-backed poll wait, and the phase's only real-crypto write-path proof (T-27-25)
 - [Phase ?]: 27-12: pendingSharedItems entries now carry a pending-vs-broken status discriminant (upsert on reattempt), and ItemListView.tsx degrades a broken shared row to a terminal honest warning instead of an indefinite skeleton -- closes 27-VERIFICATION.md Blocker 1 (UI-SPEC E2-error backstop)
+- [Phase 27] 27-14: closed 27-VERIFICATION.md Gaps 3/4/5 -- setupAccessLevelFixture() (real hidden_password direct share + real read-access collection); dual-extension-access-levels.spec.ts proves hidden_password autofill-without-reveal/copy AND read-only write-refusal (ReadOnlyAccessError) live for the first time; a live DOM-fill assertion closes EXT-07's fill-event gap; signInAndUnlock's service-worker-readiness fix (3/3 green --retries=0) closes the diagnosed cold-MV3-wake flake; KEY-01 reconciled to Complete in REQUIREMENTS.md
 
 ### Pending Todos
 
@@ -291,20 +293,18 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 27-12-PLAN.md (gap closure, Blocker 1 closed)
+**Stopped at:** Completed 27-14-PLAN.md (gap closure, access-level live coverage + EXT-07 fill + flake fix)
 **Resume file:** None
 
-Last session: 2026-08-09T09:58:44.279Z
-items resolved by observed evidence rather than deferral: the Playwright half had already been
-executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
-commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run
-30584149151 — `web-e2e` fired on the `push` trigger, ran `Running 3 tests using 1 worker` →
-`3 passed (2.3m)`, and carries no `continue-on-error`, so it can genuinely redden the workflow.
-VERIFICATION promoted `human_needed` → `passed`; 23-UAT.md 2/2 passed. The outstanding `verify:post`
-security hook then ran (nyquist had already produced VALIDATION.md; ui-review skipped — no UI-SPEC):
-gsd-security-auditor returned SECURED, 17/17 threats closed, 0 open, all seven `high` threats traced
-to code and confirmed by executing the suites. 23-SECURITY.md written with 6 accepted risks whose
-premises were each re-verified against shipped code. Next entry point: `/gsd-discuss-phase 24`.
+Last session: 2026-08-09T10:18:14.830Z
+27-14-PLAN.md (gap closure) executed: setupAccessLevelFixture() (real hidden_password direct
+share + real read-access collection); dual-extension-access-levels.spec.ts proves both
+hidden_password autofill-without-reveal/copy and read-only write-refusal (ReadOnlyAccessError)
+live for the first time in this phase; dual-extension-sharing.spec.ts gained a live DOM-fill
+assertion closing EXT-07's fill-event gap; signInAndUnlock's service-worker-readiness fix (3/3
+consecutive green --retries=0 runs) closes the diagnosed cold-MV3-wake flake (27-VERIFICATION.md
+Gap 5); REQUIREMENTS.md's KEY-01 row reconciled from Partial to Complete. Next entry point:
+27-13-PLAN.md (independent gap-closure plan, not yet executed) or `/gsd-verify-phase 27`.
 
 ## Operator Next Steps
 
