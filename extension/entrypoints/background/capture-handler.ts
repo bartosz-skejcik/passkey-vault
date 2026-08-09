@@ -63,17 +63,44 @@ export class OwnershipMismatchError extends Error {
 }
 
 /** T-27-18 (27-07-PLAN.md): thrown by confirmUpdateLogin when the target
- * item is collection-scoped and the caller's own `accessLevel` is `"read"`
- * (or an unrecognized/absent-while-scoped value -- fail closed, mirroring
- * `web/src/lib/families/accessLevel.ts`'s own `access.unknown` discipline).
- * Refuses the write BEFORE any encrypt call is made. This is client-side
- * defense-in-depth/UX only -- the server's `Membership<Item, RequireEdit>`
- * extractor (unchanged, SHARE-05) is and remains the real authorization
- * boundary. */
+ * item is collection-scoped and the caller's own `accessLevel` is not an
+ * exact match on `"edit"` (or is unrecognized/absent-while-scoped -- fail
+ * closed, mirroring `web/src/lib/families/accessLevel.ts`'s own
+ * `access.unknown` discipline). `hidden_password` is NOT an exception (B-10,
+ * 28-01-PLAN.md Task 1/2) -- the server's `RequireEdit::satisfied_by` is an
+ * exact match on `Edit` and structurally excludes it, and this exact-match
+ * discipline is deliberate: `hidden_password` must never be treated as
+ * "close enough to edit" via a rank comparison (`membership.rs`'s own doc
+ * comment on why `AccessLevel` does not derive `Ord`). Refuses the write
+ * BEFORE any encrypt call is made. This is client-side defense-in-depth/UX
+ * only -- the server's `Membership<Item, RequireEdit>` extractor (unchanged,
+ * SHARE-05) is and remains the real authorization boundary. */
 export class ReadOnlyAccessError extends Error {
   constructor() {
     super("cannot save -- you have read-only access to this shared item");
     this.name = "ReadOnlyAccessError";
+  }
+}
+
+/** 28-01-PLAN.md Task 1 (B-4/B-5, closes v0.4 audit Blocker 2): thrown by
+ * confirmUpdateLogin when the target item is a DIRECT share
+ * (`target.sharedToMe === true`) -- mirrors web's own
+ * `DirectShareNotEditableError` (web/src/lib/vault/store.ts) name/message
+ * shape exactly, same class of fix for the same underlying reason: there is
+ * no encrypt-as-shared-key-recipient primitive, so a direct-share write MUST
+ * refuse rather than silently re-encrypt the owner's item under the
+ * recipient's own User Key (permanent, silent data corruption for the
+ * owner). Checked and thrown BEFORE the existing collection-scoped gate and
+ * BEFORE any encrypt call, at the same gate site 27-07's ReadOnlyAccessError
+ * already occupies (B-5) -- a wrong-key encrypt succeeds silently, which is
+ * why the refusal must precede encryption rather than follow a failed
+ * write. */
+export class DirectShareNotEditableError extends Error {
+  constructor(itemId: string) {
+    super(
+      `cannot save -- item ${itemId} was shared directly with you; editing a directly-shared item is not supported yet`,
+    );
+    this.name = "DirectShareNotEditableError";
   }
 }
 
@@ -137,6 +164,20 @@ export function classifySubmit(
     return { action: "no-op", frameOrigin, topOrigin: senderTopOrigin, mismatch };
   }
 
+  // 28-01-PLAN.md Task 1 (B-4/B-10): the SAME two conditions
+  // confirmUpdateLogin's gate enforces below, computed here purely for the
+  // toast's proactive announcement -- this stays a pure predicate (no
+  // `await`, no encrypt call) against `match`, never a re-derivation of a
+  // different rule. `sharedToMe` is checked first and wins over the
+  // collection-scoped check, mirroring confirmUpdateLogin's own check
+  // order.
+  const blockedReason: "direct-share" | "no-edit-access" | undefined =
+    match.sharedToMe === true
+      ? "direct-share"
+      : match.collectionId != null && match.accessLevel !== "edit"
+        ? "no-edit-access"
+        : undefined;
+
   return {
     action: "update",
     itemId: match.id,
@@ -144,6 +185,7 @@ export function classifySubmit(
     frameOrigin,
     topOrigin: senderTopOrigin,
     mismatch,
+    blockedReason,
   };
 }
 
@@ -225,19 +267,33 @@ export async function confirmUpdateLogin(
   if (!itemMatchesOrigin(target, fields.frameOrigin) || target.fields.username !== fields.username) {
     throw new OwnershipMismatchError();
   }
-  // T-27-18: the read-only refusal gate -- must run BEFORE plaintext is
-  // built or any encrypt call is made. `target.collectionId` is the only
-  // source of truth for scope (mirrors web's updateVaultItem, 27-07-PLAN.md
-  // `key_links`); a personal item (`collectionId` absent/null) skips this
-  // gate entirely and keeps today's unconditional-write behavior. Fails
-  // closed on any accessLevel other than "edit"/"hidden_password" -- an
-  // unrecognized value is never treated as an implicit grant, mirroring
-  // accessLevel.ts's own access.unknown discipline.
-  if (
-    target.collectionId != null &&
-    target.accessLevel !== "edit" &&
-    target.accessLevel !== "hidden_password"
-  ) {
+  // 28-01-PLAN.md Task 1 (B-4/B-5): the direct-share refusal gate -- MUST
+  // run before the collection-scoped gate below and before any encrypt
+  // call. `target.collectionId == null` never implied "personal item you
+  // may always write" -- it only means "not collection-scoped"; it says
+  // nothing about `sharedToMe`, which is the exact root cause of Blocker 2
+  // (a wrong-key encrypt under the recipient's own User Key, permanently
+  // corrupting the owner's item). Mirrors web's
+  // itemCapabilities.ts::canEditItem's `sharedToMe === true` check exactly
+  // -- refuses unconditionally, at ANY accessLevel.
+  if (target.sharedToMe === true) {
+    throw new DirectShareNotEditableError(itemId);
+  }
+  // T-27-18 (B-10, 28-01-PLAN.md Task 1): the read-only refusal gate -- must
+  // run BEFORE plaintext is built or any encrypt call is made.
+  // `target.collectionId` is the only source of truth for scope (mirrors
+  // web's updateVaultItem, 27-07-PLAN.md `key_links`); a personal item
+  // (`collectionId` absent/null) skips this gate entirely and keeps today's
+  // unconditional-write behavior. Exact match on "edit" only -- the
+  // `hidden_password` exception is deliberately REMOVED (B-10): the
+  // server's `RequireEdit::satisfied_by` is an exact match on `Edit` and
+  // structurally excludes `hidden_password`, and treating it as
+  // edit-sufficient here is exactly the "rank comparison" failure class the
+  // server's own `AccessLevel` deliberately avoids by not deriving `Ord`.
+  // Fails closed on any accessLevel other than "edit" -- an unrecognized
+  // value is never treated as an implicit grant, mirroring accessLevel.ts's
+  // own access.unknown discipline.
+  if (target.collectionId != null && target.accessLevel !== "edit") {
     throw new ReadOnlyAccessError();
   }
   const newRevision = currentRevision + 1;

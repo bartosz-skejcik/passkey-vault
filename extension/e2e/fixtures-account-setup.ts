@@ -204,6 +204,23 @@ export interface AccessLevelFixtureResult {
   readOnlyItemName: string;
   readOnlyItemUsername: string;
   readOnlyItemOldPassword: string;
+  /** 28-01-PLAN.md Task 1 (deviation, Rule 3 -- blocking): the live proof
+   * that a direct-share write refusal is genuinely load-bearing (Blocker 2)
+   * needs a way to confirm member A's owned `hiddenPasswordItemId` is
+   * byte-unchanged after member B's refused capture-update, WITHOUT going
+   * back through a second full popup-unlock round trip (the existing
+   * "read-only, load-bearing proof" section's own approach) for every
+   * assertion in this file. Mirrors `revokeMemberBAccess`'s own established
+   * pattern exactly: captures member A's OWN session token (`a.token`)
+   * inside this closure, never returning the raw token itself -- a plain
+   * `GET /api/vault/items` (member A's own personal list) read, checking
+   * the item's server-side `revision` never moved past its create-time
+   * value of `1`. A successful (wrongly-keyed) write would have bumped this
+   * to `2` via a real server PUT -- this is the same positive,
+   * server-truthful signal `readOnlyItemOldPassword`'s own popup-based
+   * check proves for the read-only case, just without a second decrypt
+   * round trip. */
+  getHiddenPasswordItemRevision: () => Promise<number>;
 }
 
 // --- Node-side real WASM ----------------------------------------------
@@ -982,6 +999,21 @@ export async function setupAccessLevelFixture(): Promise<AccessLevelFixtureResul
         readOnlyItemName,
         readOnlyItemUsername,
         readOnlyItemOldPassword,
+        getHiddenPasswordItemRevision: async () => {
+          const res = await fetch(`${SERVER}/api/vault/items`, {
+            method: "GET",
+            headers: jsonAuthHeaders(a.token),
+          });
+          if (!res.ok) {
+            throw new Error(`pv-e2e: GET /api/vault/items failed (${res.status}) for member A`);
+          }
+          const items = (await res.json()) as Array<{ id: string; revision: number }>;
+          const item = items.find((it) => it.id === hiddenPasswordItemId);
+          if (item === undefined) {
+            throw new Error(`pv-e2e: member A's own item ${hiddenPasswordItemId} vanished from GET /api/vault/items`);
+          }
+          return item.revision;
+        },
       };
     } finally {
       readOnlyCk.free?.();

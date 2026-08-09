@@ -139,6 +139,23 @@ export const AUTOFILL_DICTIONARY = {
     pl: "Ten login zmienił się na innym urządzeniu. Odśwież i spróbuj ponownie.",
     en: "This login changed on another device. Refresh and try again.",
   },
+
+  // --- Blocked-write toast states (Phase 28, Plan 01, Task 1, B-4/B-10 --
+  // closes v0.4 audit Blocker 2/Warning 1). Verbatim from 28-UI-SPEC.md's
+  // Copywriting Contract section B. Neither body string may claim the
+  // write "failed" (it was never attempted, per B-5's
+  // before-any-encrypt-call gate) nor invite a retry -- save.retry's label
+  // must never render for either state.
+  "update.blockedTitle": { pl: "Nie można zaktualizować", en: "Can't update" },
+  "update.blockedDirectShareBody": {
+    pl: "Ten item jest udostępniony Ci bezpośrednio — edycja nie jest tu jeszcze dostępna. Poproś właściciela o wprowadzenie zmiany.",
+    en: "This item is shared directly with you — editing isn't available here yet. Ask its owner to make the change.",
+  },
+  "update.blockedNoEditAccessBody": {
+    pl: "Nie masz uprawnień do edycji tego udostępnionego folderu — nie możesz zapisać tej zmiany. Poproś kogoś z pełną edycją.",
+    en: "You don't have edit access to this shared folder — you can't save this change. Ask someone with full edit access.",
+  },
+
   "toast.closeAria": { pl: "Zamknij powiadomienie", en: "Close notification" },
 
   // --- Origin-mismatch escalation modal (Phase 11, Plan 11-05, Surface 3,

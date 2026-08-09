@@ -101,6 +101,10 @@ test.afterAll(async () => {
 async function cdpSession(page: Page) {
   const client = await page.context().newCDPSession(page);
   await client.send("DOM.enable");
+  // 28-01-PLAN.md Task 1: Runtime.enable is required for
+  // Runtime.callFunctionOn (cdpText below) to resolve against a live
+  // execution context -- DOM.enable alone is not sufficient.
+  await client.send("Runtime.enable");
   return client;
 }
 type CdpNode = {
@@ -151,6 +155,54 @@ async function cdpClickAttr(client: Awaited<ReturnType<typeof cdpSession>>, attr
   if (!nodes.length) return false;
   await cdpClick(client, nodes[Math.min(idx, nodes.length - 1)].node);
   return true;
+}
+
+/** 28-01-PLAN.md Task 1: reads `.textContent` off a real DOM node found via
+ * `cdpQuery`'s closed-shadow-root-piercing walk, via `DOM.resolveNode` +
+ * `Runtime.callFunctionOn` -- the standard CDP idiom for reading a live
+ * property off a node CDP itself found, since `page.evaluate()` cannot
+ * reach into a CLOSED shadow root (the whole reason this file's CDP helpers
+ * exist at all, per this file's own header comment). */
+async function cdpText(
+  client: Awaited<ReturnType<typeof cdpSession>>,
+  node: CdpNode,
+): Promise<string | null> {
+  const { object } = await client.send("DOM.resolveNode", { nodeId: node.nodeId });
+  const objectId = (object as { objectId?: string }).objectId;
+  if (!objectId) return null;
+  const { result } = await client.send("Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: "function () { return this.textContent; }",
+    returnByValue: true,
+  });
+  return (result.value as string | undefined) ?? null;
+}
+
+/** Finds the FIRST node whose `class` attribute matches exactly, and
+ * returns its `.textContent` -- used to read the toast's title/message
+ * copy, neither of which carries its own `data-pv-toast-*` attribute
+ * (only interactive/structural elements do), so class-name matching is the
+ * correct predicate here. */
+async function cdpTextByClass(
+  client: Awaited<ReturnType<typeof cdpSession>>,
+  className: string,
+): Promise<string | null> {
+  const nodes = await cdpQuery(client, (_n, a) => a.class === className);
+  if (!nodes.length) return null;
+  return cdpText(client, nodes[0].node);
+}
+
+/** True when the FIRST node whose `class` attribute matches exactly also
+ * carries the `hidden` attribute -- the toast's own `[hidden] { display:
+ * none !important }` rule, so this is a genuine visibility check, not
+ * merely "the element exists somewhere in the DOM". */
+async function cdpClassIsHidden(
+  client: Awaited<ReturnType<typeof cdpSession>>,
+  className: string,
+): Promise<boolean> {
+  const nodes = await cdpQuery(client, (_n, a) => a.class === className);
+  if (!nodes.length) return false;
+  return hasAttr(nodes[0].attrs, "hidden");
 }
 async function waitForCdp<T>(fn: () => Promise<T | null>, timeout = 9000, interval = 300): Promise<T | null> {
   const start = Date.now();
@@ -301,7 +353,14 @@ test("hidden_password autofills without reveal/copy, and read-only writes are re
   // in dual-extension-sharing.spec.ts, which still had further popupB
   // assertions afterward).
 
-  // --- 5. read-only, write refusal ----------------------------------------
+  // --- 5. read-only (collection-scoped, non-edit), PROACTIVE write refusal
+  // (28-01-PLAN.md Task 1, B-10/Warning 1: `update.blockedNoEditAccessBody`
+  // covers BOTH plain read-only and hidden_password collection-scoped
+  // access, since they now route through the identical gate). Before this
+  // plan the toast opened in the ordinary "Update?" state and only
+  // surfaced a generic error AFTER a confirm click was attempted; now it
+  // must open DIRECTLY in the blocked state -- there is no Update button to
+  // click at all (28-UI-SPEC.md E2, "suppressed, not failed").
   const readOnlyFormPage = await extContextB.newPage();
   await readOnlyFormPage.goto(`${ACCESS_LEVELS_FORM_ORIGIN}/`);
   await readOnlyFormPage.bringToFront();
@@ -324,23 +383,28 @@ test("hidden_password autofills without reveal/copy, and read-only writes are re
     return t.length ? t : null;
   });
   expect(toast).toBeTruthy();
-  const confirmed = await cdpClickAttr(readOnlyClient, "data-pv-toast-confirm");
-  expect(confirmed).toBe(true);
-  // THE positive observation that the write was refused (capture-handler.ts's
-  // ReadOnlyAccessError, mapped to {status:"error"} by router.ts's
-  // handleCaptureConfirmMessage, surfaced by save-update-toast.ts's
-  // showError()): the message element becomes genuinely VISIBLE (its
-  // `hidden` attribute is removed), never a mere "the message element
-  // exists in the DOM" check -- the element is present in the toast's
-  // markup from creation, so presence alone would be vacuous.
-  const errorSignal = await waitForCdp(async () => {
+  // THE positive observation that the write was PROACTIVELY refused --
+  // the message element is genuinely VISIBLE on first render (its `hidden`
+  // attribute never applied), never a mere "the message element exists in
+  // the DOM" check.
+  const blockedSignal = await waitForCdp(async () => {
     const nodes = await cdpQuery(
       readOnlyClient,
       (_n, a) => hasAttr(a, "data-pv-toast-message") && !hasAttr(a, "hidden"),
     );
     return nodes.length ? nodes : null;
   });
-  expect(errorSignal).toBeTruthy();
+  expect(blockedSignal).toBeTruthy();
+  const readOnlyBlockedTitle = await cdpTextByClass(readOnlyClient, "pv-toast-title");
+  expect(readOnlyBlockedTitle).toMatch(/Can't update|Nie można zaktualizować/);
+  const readOnlyBlockedBody = await cdpTextByClass(readOnlyClient, "pv-toast-message");
+  expect(readOnlyBlockedBody).toMatch(/edit access to this shared folder|uprawnień do edycji tego udostępnionego folderu/);
+  // No password preview, no Update/Retry/Dismiss button -- genuine absence,
+  // not merely disabled (28-01-PLAN.md acceptance criteria).
+  expect(await cdpClassIsHidden(readOnlyClient, "pv-toast-preview-row")).toBe(true);
+  expect(await cdpClassIsHidden(readOnlyClient, "pv-toast-actions")).toBe(true);
+  const readOnlyConfirmNodes = await cdpQuery(readOnlyClient, (_n, a) => hasAttr(a, "data-pv-toast-confirm"));
+  expect(readOnlyConfirmNodes).toHaveLength(0);
   await readOnlyFormPage.close();
 
   // --- 6. read-only, load-bearing proof -----------------------------------
@@ -362,4 +426,98 @@ test("hidden_password autofills without reveal/copy, and read-only writes are re
   await expect(popupA.getByText(fixture.readOnlyItemOldPassword, { exact: true })).toBeVisible({
     timeout: 10000,
   });
+});
+
+// 28-01-PLAN.md Task 1 (B-4/B-5, closes v0.4 audit Blocker 2): the live
+// proof that a DIRECT share's write refusal genuinely stops a wrong-key
+// encrypt before it happens -- capture-handler.ts's own unit suite mocks
+// lib/crypto/wasm-loader and can only assert control flow, never that a
+// real crypto write was refused. No Save/Update button is ever clicked in
+// this test -- there is none to click (the toast opens directly in the
+// blocked state), which is what makes this a genuine proactive-blocked
+// proof, not a reactive one.
+test("direct share (hidden_password) write is refused BEFORE any encrypt call, owner's item stays byte-unchanged", async ({
+  extContextB,
+  extensionIdB,
+}) => {
+  // Real Argon2id KDF (register, twice) + two real password-unlock
+  // ceremonies + a bounded wait for the eager shared-revisions pull, plus a
+  // real capture-confirm round trip -- generous but bounded, mirrors this
+  // file's own sibling test's per-test timeout rationale.
+  test.setTimeout(180_000);
+
+  const fixture = await setupAccessLevelFixture();
+
+  const popupB = await extContextB.newPage();
+  await popupB.goto(`chrome-extension://${extensionIdB}/popup.html`);
+  await signInAndUnlock(extContextB, popupB, fixture.memberBEmail, fixture.memberBPassword);
+
+  // Anchored (27-RESEARCH.md's own vacuous-assertion-trap discipline): the
+  // direct share's own item name is asserted present FIRST -- this is what
+  // actually gates the wait on the eager shared-revisions pull completing
+  // (never a bare `waitForTimeout` guess), before the capture-submit gesture
+  // below can possibly resolve the item as an 'update' against B's own
+  // decrypted cache.
+  await expect(popupB.getByText(fixture.hiddenPasswordItemName, { exact: true })).toBeVisible({
+    timeout: 30000,
+  });
+
+  // --- direct share, PROACTIVE write refusal ------------------------------
+  const directShareFormPage = await extContextB.newPage();
+  await directShareFormPage.goto(`${ACCESS_LEVELS_FORM_ORIGIN}/`);
+  await directShareFormPage.bringToFront();
+  // Let content-relay's submit watcher attach (document_idle) before the
+  // gesture below -- mirrors this file's own sibling test's established
+  // wait.
+  await directShareFormPage.waitForTimeout(1000);
+
+  const directShareClient = await cdpSession(directShareFormPage);
+  const attemptedNewPassword = `pv-e2e-access-level-direct-share-attempt-${Date.now()}`;
+  await directShareFormPage.fill("#u", fixture.hiddenPasswordItemUsername);
+  await directShareFormPage.fill("#p", attemptedNewPassword);
+  // A real Enter-key submit dispatches a genuine `submit` event for
+  // submit-capture.ts's watcher to detect -- mirrors 27-11's own
+  // established precedent, sidestepping any coordinate-based click overlap
+  // with the extension's own in-page overlay.
+  await directShareFormPage.locator("#p").press("Enter");
+
+  const toast = await waitForCdp(async () => {
+    const t = await cdpQuery(directShareClient, (_n, a) => hasAttr(a, "data-pv-toast"));
+    return t.length ? t : null;
+  });
+  expect(toast).toBeTruthy();
+  // THE positive observation that the write was PROACTIVELY refused -- the
+  // message element is genuinely VISIBLE on first render (its `hidden`
+  // attribute never applied), never a mere "the message element exists in
+  // the DOM" check.
+  const blockedSignal = await waitForCdp(async () => {
+    const nodes = await cdpQuery(
+      directShareClient,
+      (_n, a) => hasAttr(a, "data-pv-toast-message") && !hasAttr(a, "hidden"),
+    );
+    return nodes.length ? nodes : null;
+  });
+  expect(blockedSignal).toBeTruthy();
+
+  const blockedTitle = await cdpTextByClass(directShareClient, "pv-toast-title");
+  expect(blockedTitle).toMatch(/Can't update|Nie można zaktualizować/);
+  const blockedBody = await cdpTextByClass(directShareClient, "pv-toast-message");
+  expect(blockedBody).toMatch(/shared directly with you|udostępniony Ci bezpośrednio/);
+
+  // No password preview, no Update/Retry/Dismiss button -- genuine
+  // absence, not merely disabled (28-01-PLAN.md acceptance criteria).
+  expect(await cdpClassIsHidden(directShareClient, "pv-toast-preview-row")).toBe(true);
+  expect(await cdpClassIsHidden(directShareClient, "pv-toast-actions")).toBe(true);
+  const confirmNodes = await cdpQuery(directShareClient, (_n, a) => hasAttr(a, "data-pv-toast-confirm"));
+  expect(confirmNodes).toHaveLength(0);
+  await directShareFormPage.close();
+
+  // --- load-bearing proof (Blocker 2) -------------------------------------
+  // Member A's own item never moved past its create-time revision -- a
+  // successful (wrongly-keyed) write would have bumped it to 2 via a real
+  // server PUT. A raw authenticated request as member A (see
+  // getHiddenPasswordItemRevision's own doc comment in
+  // fixtures-account-setup.ts), not a second popup-unlock round trip.
+  const revisionAfter = await fixture.getHiddenPasswordItemRevision();
+  expect(revisionAfter).toBe(1);
 });

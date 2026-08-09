@@ -435,6 +435,13 @@ export interface MessageResponseMap {
     frameOrigin: string;
     topOrigin: string;
     mismatch: boolean;
+    // 28-01-PLAN.md Task 1 (B-4/B-10, closes v0.4 audit Blocker 2/Warning
+    // 1): set only for `action:"update"`, computed by classifySubmit's
+    // SAME predicate confirmUpdateLogin's gate enforces -- announces a
+    // write that WILL be refused BEFORE the toast ever offers an Update
+    // button, rather than surfacing a generic post-confirm failure
+    // (28-UI-SPEC.md's "suppressed, not failed").
+    blockedReason?: "direct-share" | "no-edit-access";
   };
   "capture.confirm": {
     status: "ok" | "conflict" | "error";

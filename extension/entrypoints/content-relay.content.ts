@@ -328,6 +328,10 @@ async function initSubmitCapture(): Promise<void> {
               frameOrigin: response.frameOrigin,
               username,
               password,
+              // 28-01-PLAN.md Task 1: only ever set for action:"update" --
+              // routes the toast directly into its blocked-write render
+              // branch, before an Update button is ever offered.
+              blockedReason: response.blockedReason,
             });
           }
         })
