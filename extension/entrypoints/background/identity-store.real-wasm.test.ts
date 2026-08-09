@@ -151,6 +151,89 @@ describe("identity-store.ts: ensureOwnIdentityKeypair (real WASM, network mocked
       uk.free?.();
     }
   });
+
+  // 27-VERIFICATION.md human-verification item #3 (KEY-01 A-3/A-4): the
+  // `adopted_existing` branch (identity-store.ts:89-95) is the whole
+  // race-resolution mechanism for a genuinely concurrent first unlock, and
+  // every OTHER fixture in this file returns `adopted_existing: false` --
+  // this branch was executed by no test before this one. Simulates the
+  // server already holding a published keypair by the time this client's
+  // PUT lands (a concurrent second client won the race between this
+  // client's GET and PUT) and asserts the loser ADOPTS the winner's blob:
+  // the resulting usable identity key is the one already published, not a
+  // freshly generated replacement, and the discarded local candidate is
+  // freed exactly once (`freeOnError` stays `true` on this path).
+  it("concurrent first-unlock race: adopts the server's already-published keypair instead of overwriting it", async () => {
+    const uk = WasmUserKey.generate();
+    try {
+      // The "winner" -- a keypair the server already holds published by
+      // the time our PUT lands. Nothing in production ever calls `.free()`
+      // on this handle directly (only its wrapped/public wire values cross
+      // the mocked network boundary), so no `deferRealFree` sharing is
+      // needed here -- it is freed exactly once, by this test, at the end.
+      const winnerIsk = WasmIdentityKey.generate();
+      let winnerWrapped: string;
+      let winnerPubB64: string;
+      try {
+        winnerWrapped = wrapIdentitySecretKey(uk, winnerIsk);
+        winnerPubB64 = base64Encode(winnerIsk.publicKeyBytes());
+
+        hoisted.mockGetUnlockedUserKey.mockReturnValue(uk);
+        // GET returns null -- THIS client believes no keypair is published
+        // yet (the race window: another client published between our GET
+        // and our PUT).
+        hoisted.mockGetIdentityKeypair.mockResolvedValue(null);
+        // PUT reports adopted_existing: true and hands back the WINNER's
+        // blob -- the publish is conditional; the server never accepts
+        // this client's candidate.
+        hoisted.mockPutIdentityKeypair.mockImplementation(
+          async (_body: { public_key: string; wrapped_secret_key: string }) => ({
+            public_key: winnerPubB64,
+            wrapped_secret_key: winnerWrapped,
+            adopted_existing: true,
+          }),
+        );
+
+        const freeSpy = vi.spyOn(WasmIdentityKey.prototype, "free");
+
+        const isk = await ensureOwnIdentityKeypair(uk);
+        try {
+          // The discriminant this client actually attempted to publish was
+          // genuinely its OWN locally-generated candidate, not the
+          // winner's -- proves the adopt path is real, not a no-op.
+          const sentBody = hoisted.mockPutIdentityKeypair.mock.calls[0][0] as {
+            public_key: string;
+            wrapped_secret_key: string;
+          };
+          expect(sentBody.public_key).not.toBe(winnerPubB64);
+
+          // The resulting usable identity key IS the one already
+          // published -- not a freshly generated replacement. Byte-
+          // identical before (winnerPubB64, captured pre-race) and after
+          // (what this losing client ends up holding).
+          expect(base64Encode(isk.publicKeyBytes())).toBe(winnerPubB64);
+
+          // Exactly one keypair is ever published for real: this client's
+          // own attempt is the only `putIdentityKeypair` call. No second
+          // publish happens on the adopted_existing path.
+          expect(hoisted.mockPutIdentityKeypair).toHaveBeenCalledTimes(1);
+
+          // The discarded local candidate (this client lost the race) is
+          // freed exactly once -- `freeOnError` stays `true` on the
+          // adopted_existing branch, so the `finally` in
+          // ensureOwnIdentityKeypair IS the free, not a double-free guard.
+          expect(freeSpy).toHaveBeenCalledTimes(1);
+        } finally {
+          isk.free?.();
+          freeSpy.mockRestore();
+        }
+      } finally {
+        winnerIsk.free?.();
+      }
+    } finally {
+      uk.free?.();
+    }
+  });
 });
 
 describe("identity-store.ts: ensureIdentityKeypairHydrated / freeIdentityKey (real WASM, network mocked)", () => {
