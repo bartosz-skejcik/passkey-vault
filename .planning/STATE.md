@@ -5,16 +5,16 @@ milestone_name: Family & Sharing
 current_phase: 27
 current_phase_name: Extension Integration — Shared Items
 status: verifying
-stopped_at: Completed 27-11-PLAN.md (phase-closing plan)
-last_updated: "2026-08-09T09:05:41.167Z"
-last_activity: 2026-08-08
-last_activity_desc: Phase 27 execution started
+stopped_at: Completed 27-12-PLAN.md (gap closure, Blocker 1 closed)
+last_updated: "2026-08-09T09:58:44.290Z"
+last_activity: 2026-08-09
+last_activity_desc: 27-12-PLAN.md executed
 progress:
   total_phases: 7
-  completed_phases: 7
-  total_plans: 58
-  completed_plans: 58
-  percent: 100
+  completed_phases: 6
+  total_plans: 61
+  completed_plans: 59
+  percent: 86
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 
 ## Current Position
 
-Phase: 27 (Extension Integration — Shared Items) — EXECUTING
-Plan: 11 of 11
-Status: Phase complete — ready for verification
-Last activity: 2026-08-08 — Phase 27 execution started
+Phase: 27 (Extension Integration — Shared Items) — GAP CLOSURE
+Plan: 12 of 14 (gap-closure plans 12-14, from 27-VERIFICATION.md's gaps_found)
+Status: 27-12 complete (Blocker 1 closed) — 27-13/27-14 remaining
+Last activity: 2026-08-09 — 27-12-PLAN.md executed
 
 ## Performance Metrics
 
@@ -106,6 +106,7 @@ Last activity: 2026-08-08 — Phase 27 execution started
 | Phase 27 P09 | 15min | 1 tasks | 4 files |
 | Phase 27 P10 | ~20min | 2 tasks | 5 files |
 | Phase 27 P11 | ~2h | 3 tasks | 3 files |
+| Phase 27 P12 | 30min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -211,6 +212,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 27-10: confirmed a shared-but-undecryptable item can never reach the provider ceremony's candidate list (vault-store.ts never retains it in getItems()); wired a defensive filter anyway as dead-code defense-in-depth
 - [Phase ?]: [Phase 27] 27-11: Found live (not fixed, out of scope) -- capture-handler.ts's buildLoginFields() always derives an item's name from the submitting page's hostname on every capture-confirm save, new AND update alike, discarding a shared item's custom name; the write-path proof's own locator was adjusted to search by unique username instead of the now-renamed item name
 - [Phase ?]: [Phase 27] 27-11: closed the phase's three whole-phase-only obligations with live evidence -- EXT-11 chrome.storage.session audit, post-revocation staleness (T-27-24) with a genuine ~1-minute alarm-backed poll wait, and the phase's only real-crypto write-path proof (T-27-25)
+- [Phase ?]: 27-12: pendingSharedItems entries now carry a pending-vs-broken status discriminant (upsert on reattempt), and ItemListView.tsx degrades a broken shared row to a terminal honest warning instead of an indefinite skeleton -- closes 27-VERIFICATION.md Blocker 1 (UI-SPEC E2-error backstop)
 
 ### Pending Todos
 
@@ -288,10 +290,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 27-11-PLAN.md (phase-closing plan)
+**Stopped at:** Completed 27-12-PLAN.md (gap closure, Blocker 1 closed)
 **Resume file:** None
 
-Last session: 2026-08-09T09:05:41.156Z
+Last session: 2026-08-09T09:58:44.279Z
 items resolved by observed evidence rather than deferral: the Playwright half had already been
 executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
 commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run
