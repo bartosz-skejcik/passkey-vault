@@ -111,6 +111,21 @@ export interface SharedFixtureResult {
   sharedTotpAlgorithm: string;
   sharedTotpDigits: number;
   sharedTotpPeriod: number;
+  /** 27-11 Task 1/2 (deviation, Rule 3): the shared collection id and member
+   * B's own user id, needed by `dual-extension-revocation.spec.ts` to call
+   * the revoke endpoint directly, and by the storage-audit assertion for
+   * context. Never a raw key handle or token -- those stay inside this
+   * file's own closures. */
+  collectionId: string;
+  memberBUserId: string;
+  /** 27-11 Task 2 (deviation, Rule 3): revokes member B's OWN access grant on
+   * the shared collection via a direct `DELETE
+   * /api/vault/collections/{id}/access/{user_id}` call, using member A's
+   * (the collection creator's, `edit`-capable) session token captured
+   * inside this closure -- mirrors `moveItemIntoCollection`'s own
+   * "no token crosses back out of this closure" discipline
+   * (`setupSharedPasskeyCollectionFixture`, 27-06). */
+  revokeMemberBAccess: () => Promise<void>;
 }
 
 // --- Node-side real WASM ----------------------------------------------
@@ -564,6 +579,20 @@ export async function setupSharedFixture(): Promise<SharedFixtureResult> {
         sharedTotpAlgorithm,
         sharedTotpDigits,
         sharedTotpPeriod,
+        collectionId,
+        memberBUserId: b.userId,
+        // 27-11 Task 2 (deviation, Rule 3): captures a.token, NOT the
+        // caller-visible return value -- mirrors moveItemIntoCollection's
+        // own "no token crosses back out of this closure" discipline.
+        revokeMemberBAccess: async () => {
+          const res = await fetch(`${SERVER}/api/vault/collections/${collectionId}/access/${b.userId}`, {
+            method: "DELETE",
+            headers: jsonAuthHeaders(a.token),
+          });
+          if (res.status !== 204) {
+            throw new Error(`pv-e2e: revoke member B access failed (${res.status})`);
+          }
+        },
       };
     } finally {
       ck.free?.();
