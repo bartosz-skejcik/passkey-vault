@@ -343,3 +343,74 @@ describe("shared-revisions pull is skipped when no consumer is wired up (WR-07)"
     expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
   });
 });
+
+// 28-03 (Task 4): mirrors extension/entrypoints/background/sync-client.test.ts's
+// "hasEverConfirmedFamilyMembership discriminant" describe block byte-for-
+// byte (WS-open/onmessage trigger shape substituted for the extension's
+// alarm listener, per this file's own transport).
+describe("28-03 (Task 4): hasEverConfirmedFamilyMembership discriminant -- the plan-review blocker fix", () => {
+  it("markFamilyMembershipConfirmed() called by a caller OTHER than pullOnce (simulating store.ts's refreshSharedItemsNow()'s eager call site) still causes the next 404 to invoke onRemovedFromFamily and still latches sharedPullDisabled afterward", async () => {
+    const onRemovedFromFamily = vi.fn();
+    const onSharedRevisions = vi.fn();
+    mockGetSharedRevisions.mockRejectedValue({ status: 404 });
+    const { startSync, markFamilyMembershipConfirmed } = await import("./sync");
+
+    // startSync() itself resets the flag to false (re-arming on every
+    // unlock) -- so the eager caller's success must land AFTER startSync(),
+    // mirroring the real ordering: the subscribeLockState unlock branch
+    // calls refreshSharedItemsNow() THEN startSync() synchronously, but the
+    // synchronous flag-reset inside startSync() always completes before the
+    // network-bound refreshSharedItemsNow() call resolves.
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions, onRemovedFromFamily });
+    markFamilyMembershipConfirmed();
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onRemovedFromFamily).toHaveBeenCalledTimes(1);
+
+    // sharedPullDisabled still latches afterward (Pitfall 4) -- a later tick
+    // never retries the now-permanently-gone endpoint.
+    mockGetSharedRevisions.mockClear();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mockGetSharedRevisions).not.toHaveBeenCalled();
+  });
+
+  it("regression control: with markFamilyMembershipConfirmed() never called, pullOnce()'s OWN first shared 404 does NOT invoke onRemovedFromFamily -- the genuine 'no family' case, byte-identical to today", async () => {
+    const onRemovedFromFamily = vi.fn();
+    mockGetSharedRevisions.mockRejectedValue({ status: 404 });
+    const { startSync } = await import("./sync");
+
+    startSync({
+      getSinceRevision: () => 0,
+      onSnapshot: vi.fn(),
+      onSharedRevisions: vi.fn(),
+      onRemovedFromFamily,
+    });
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onRemovedFromFamily).not.toHaveBeenCalled();
+  });
+
+  it("pullOnce()'s own successful getSharedRevisions() call arms the flag too, proven by a subsequent 404 on the NEXT tick invoking onRemovedFromFamily", async () => {
+    const onRemovedFromFamily = vi.fn();
+    mockGetSharedRevisions.mockResolvedValueOnce({ collections: [], direct: { revision: 0 } });
+    const { startSync } = await import("./sync");
+
+    startSync({
+      getSinceRevision: () => 0,
+      onSnapshot: vi.fn(),
+      onSharedRevisions: vi.fn(),
+      onRemovedFromFamily,
+    });
+    lastSocket().onopen?.(); // first tick: succeeds, arms the flag internally
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onRemovedFromFamily).not.toHaveBeenCalled();
+
+    mockGetSharedRevisions.mockRejectedValue({ status: 404 });
+    await vi.advanceTimersByTimeAsync(30_000); // next tick: 404s
+
+    expect(onRemovedFromFamily).toHaveBeenCalledTimes(1);
+  });
+});

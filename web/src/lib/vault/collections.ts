@@ -92,12 +92,31 @@ export function getCollectionAccessLevel(collectionId: string): string | undefin
 
 /** Frees every cached Collection Key handle and clears the map — called on
  * lock (T-26-10: never leave WASM-held key material to a non-deterministic
- * FinalizationRegistry across a long-lived session). */
-function freeAllCollectionKeys(): void {
+ * FinalizationRegistry across a long-lived session).
+ *
+ * 28-03 (Task 4): exported (was module-private) so store.ts's own
+ * `purgeSharedStateOnRemoval` can reuse it via `clearCollectionsOnRemoval`
+ * below, mirroring the extension's `collections-store.ts::freeAllCollectionKeys`,
+ * which was already exported for the identical reason. */
+export function freeAllCollectionKeys(): void {
   collectionKeys.forEach((ck) => {
     ck.free?.();
   });
   collectionKeys.clear();
+}
+
+/** 28-03 (Task 4): the removal/suspension purge's own collections-side
+ * counterpart — runs the IDENTICAL `freeAllCollectionKeys(); collections =
+ * []; notifyListeners();` sequence the lock branch below already runs,
+ * wrapped in its own named function so `store.ts`'s new purge routine calls
+ * this instead of inlining the sequence a second time. Never touches
+ * `personalItems`/`folders` (this module owns none of those) — KEY-06
+ * adjacency by construction, since this module's own state IS the shared
+ * scope. */
+export function clearCollectionsOnRemoval(): void {
+  freeAllCollectionKeys();
+  collections = [];
+  notifyListeners();
 }
 
 /** Re-fetches and re-decrypts every collection the caller currently holds a
@@ -249,8 +268,9 @@ subscribeLockState(() => {
       // retries.
     });
   } else {
-    freeAllCollectionKeys();
-    collections = [];
-    notifyListeners();
+    // 28-03 (Task 4): now routed through the named clearCollectionsOnRemoval()
+    // helper — identical sequence, single implementation for both the lock
+    // path and store.ts's own removal purge.
+    clearCollectionsOnRemoval();
   }
 });

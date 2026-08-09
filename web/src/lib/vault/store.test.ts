@@ -30,6 +30,8 @@ const {
   mockGetCollectionAccessLevel,
   mockRefreshCollectionsNow,
   mockEnsureOwnIdentityKeypair,
+  mockMarkFamilyMembershipConfirmed,
+  mockClearCollectionsOnRemoval,
 } = vi.hoisted(() => ({
   mockGetUnlockedUserKey: vi.fn(),
   mockIsUnlocked: vi.fn(),
@@ -56,6 +58,8 @@ const {
   mockGetCollectionAccessLevel: vi.fn(),
   mockRefreshCollectionsNow: vi.fn(),
   mockEnsureOwnIdentityKeypair: vi.fn(),
+  mockMarkFamilyMembershipConfirmed: vi.fn(),
+  mockClearCollectionsOnRemoval: vi.fn(),
 }));
 
 vi.mock("@/lib/crypto", () => ({
@@ -86,6 +90,13 @@ vi.mock("./api", () => ({
 vi.mock("./sync", () => ({
   startSync: mockStartSync,
   stopSync: mockStopSync,
+  // 28-03 (Task 4): sync.ts's THIRD named export -- store.ts's
+  // refreshSharedItemsNow() must call this on every successful
+  // getSharedRevisions() resolution (the hoisted, two-call-site discriminant
+  // fix). Without stubbing it here, store.ts's real (unmocked) import of a
+  // nonexistent mock export throws "undefined is not a function" in every
+  // existing test in this file.
+  markFamilyMembershipConfirmed: mockMarkFamilyMembershipConfirmed,
 }));
 
 // Task 1's collections.ts store is mocked wholesale here -- store.test.ts
@@ -106,6 +117,8 @@ vi.mock("@/lib/vault/collections", () => ({
   // caller's own collection access level alongside the Collection Key.
   getCollectionAccessLevel: mockGetCollectionAccessLevel,
   refreshCollectionsNow: mockRefreshCollectionsNow,
+  // 28-03 (Task 4): purgeSharedStateOnRemoval's own call into collections.ts.
+  clearCollectionsOnRemoval: mockClearCollectionsOnRemoval,
 }));
 
 // 26-14-PLAN.md (WINDOWS #9): store.ts's own new import for direct-share
@@ -1991,5 +2004,89 @@ describe("updateVaultItem refuses to save a directly-shared item (26-14-PLAN.md,
     ).rejects.toThrow(store.DirectShareNotEditableError);
     expect(mockEncryptItem).not.toHaveBeenCalled();
     expect(mockUpdateItem).not.toHaveBeenCalled();
+  });
+});
+
+// 28-03 (Task 4): mirrors extension/entrypoints/background/vault-store.test.ts's
+// "markFamilyMembershipConfirmed wiring + purgeSharedStateOnRemoval" describe
+// block, adapted for web's array set (no pendingSharedItems -- confirmed
+// absent, never invented here).
+describe("28-03 (Task 4): markFamilyMembershipConfirmed wiring + purgeSharedStateOnRemoval", () => {
+  it("refreshSharedItemsNow()'s (the eager, unlock-time) successful getSharedRevisions() resolution calls the imported markFamilyMembershipConfirmed mock exactly once", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockGetSyncSnapshot.mockResolvedValue({ revision: 0, items: [], folders: [] });
+    mockGetSharedRevisions.mockResolvedValue({ collections: [], direct: { revision: 0 } });
+
+    const { lockListener } = await importStoreAndGetLockListener();
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener(); // unlock transition -> refreshSharedItemsNow()
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockMarkFamilyMembershipConfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it("the unlock branch wires purgeSharedStateOnRemoval as sync.ts's onRemovedFromFamily callback", async () => {
+    const { store } = await unlockWithTwoItems();
+    const callbacks = getSyncCallbacks();
+    expect(callbacks.onRemovedFromFamily).toBe(store.purgeSharedStateOnRemoval);
+  });
+
+  it("purgeSharedStateOnRemoval() clears collectionSharedItems/directSharedItems/both watermarks/both failed-attempt counters and calls collections.ts's clearCollectionsOnRemoval, while leaving personalItems/folders byte-identical (KEY-06 adjacency, the unit-level companion to the live extension proof)", async () => {
+    const { store, callbacks } = await unlockWithTwoItems();
+    mockGetCollectionKey.mockReturnValue({});
+    mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+    mockGetCollectionSync.mockResolvedValueOnce({
+      revision: 7,
+      items: [
+        {
+          id: "item-shared-1",
+          enc_key: "{}",
+          enc_data: "{}",
+          revision: 2,
+          updated_at: "2026-07-14 12:00:00",
+          last_used_at: null,
+          is_shared: true,
+          collection_id: "collection-1",
+          last_editor_email: null,
+        },
+      ],
+    });
+    await act(async () => {
+      await callbacks.onSharedRevisions?.({
+        collections: [{ id: "collection-1", revision: 7 }],
+        direct: { revision: 0 },
+      });
+    });
+    expect(store.getItems().map((i) => i.id).sort()).toEqual(["item-1", "item-2", "item-shared-1"]);
+    const foldersBefore = store.getFolders();
+
+    await act(async () => {
+      await store.purgeSharedStateOnRemoval();
+    });
+
+    expect(mockClearCollectionsOnRemoval).toHaveBeenCalledTimes(1);
+    const remaining = store.getItems();
+    // The shared item is gone; the two personal items survive byte-identical
+    // -- the purge never touched personalItems.
+    expect(remaining.map((i) => i.id).sort()).toEqual(["item-1", "item-2"]);
+    // folders are never referenced by the purge routine at all.
+    expect(store.getFolders()).toBe(foldersBefore);
+
+    // A subsequent identical shared-revisions payload re-fetches from
+    // scratch (both watermarks were reset to empty by the purge) rather than
+    // being treated as unchanged.
+    mockGetCollectionSync.mockClear();
+    mockGetCollectionSync.mockResolvedValueOnce({ revision: 7, items: [] });
+    await act(async () => {
+      await callbacks.onSharedRevisions?.({
+        collections: [{ id: "collection-1", revision: 7 }],
+        direct: { revision: 0 },
+      });
+    });
+    expect(mockGetCollectionSync).toHaveBeenCalledTimes(1);
   });
 });

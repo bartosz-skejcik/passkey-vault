@@ -28,6 +28,16 @@ export interface SyncCallbacks {
   // consumer wires this up yet beyond what Plan 23-06's Playwright spec
   // observes over the network; store.ts may leave it unimplemented.
   onSharedRevisions?: (revisions: SharedRevisions) => void;
+  // 28-03 (Task 4, mirrors extension/entrypoints/background/sync-client.ts's
+  // Task 1 fix byte-for-byte): invoked when a 404 arrives AFTER this session
+  // has ever confirmed family membership (via EITHER this module's own
+  // pullOnce() success OR store.ts's earlier, independent
+  // refreshSharedItemsNow() call, through the exported
+  // markFamilyMembershipConfirmed() setter below) -- the genuine "you were
+  // removed mid-session" case, as opposed to "this account never had a
+  // family." Always invoked BEFORE sharedPullDisabled latches, so the purge
+  // it triggers can still see the (about-to-be-cleared) in-flight chain.
+  onRemovedFromFamily?: () => void | Promise<void>;
 }
 
 let ws: WebSocket | null = null;
@@ -50,6 +60,28 @@ let intentionalStop = true;
 // a user who is later added to a family picks the pull back up on their
 // next unlock rather than staying disabled for the lifetime of the tab.
 let sharedPullDisabled = false;
+// 28-03 (Task 4, mirrors sync-client.ts's Task 1 fix byte-for-byte): "has
+// ANY getSharedRevisions() call succeeded this unlock session" -- set by
+// BOTH this module's own pullOnce() success path AND store.ts's
+// independent, EARLIER refreshSharedItemsNow() call (via the exported
+// markFamilyMembershipConfirmed() setter below), never only the former.
+// Reset alongside sharedPullDisabled in startSync(). This is the
+// discriminant that turns a bare 404 into "you were removed" (flag was
+// true) vs. "this account never had a family" (flag was false) -- see
+// onRemovedFromFamily's own doc comment above.
+let hasEverConfirmedFamilyMembership = false;
+
+/** Exported so store.ts's refreshSharedItemsNow() -- a SECOND, EARLIER
+ * caller of getSharedRevisions() that runs on every unlock, before
+ * pullOnce()'s own call ever fires -- can arm the SAME discriminant
+ * pullOnce() itself arms on success below. Without this hoist, a member
+ * removed after the eager refresh already cached shared plaintext, but
+ * before pullOnce()'s own first shared round trip, would be misread as
+ * "never had a family" and skip the purge entirely -- the exact
+ * two-call-site race the plan-review blocker identified. */
+export function markFamilyMembershipConfirmed(): void {
+  hasEverConfirmedFamilyMembership = true;
+}
 
 /** Duck-typed 404 check (mirrors `lib/vault/store.ts`'s own
  * `isConflictError` — see that function's comment for why this is NOT an
@@ -95,11 +127,28 @@ async function pullOnce(): Promise<void> {
     // error path, and never blocks/breaks the personal pull above (which
     // already ran, in its own try block).
     const revisions = await getSharedRevisions();
+    // 28-03 (Task 4): arm the discriminant on THIS call site's own success
+    // too -- reads as "call the same setter refreshSharedItemsNow() calls,"
+    // not a private in-module assignment, so both call sites stay in sync
+    // by construction.
+    markFamilyMembershipConfirmed();
     if (activeCallbacks === callbacks) {
       callbacks.onSharedRevisions?.(revisions);
     }
   } catch (err) {
     if (isNotFoundError(err)) {
+      // 28-03 (Task 4): a genuine removal-mid-session is only distinguishable
+      // from "never had a family" by hasEverConfirmedFamilyMembership. A
+      // user removed before EITHER call site's first success has, by
+      // construction, cached nothing this session either -- the `false`
+      // branch below correctly stays silent, byte-identical to today. A
+      // user removed AFTER either succeeded is correctly caught here,
+      // regardless of which call site armed the flag (Pitfall 4: the purge
+      // callback always runs BEFORE the unconditional latch below, never
+      // instead of it).
+      if (hasEverConfirmedFamilyMembership) {
+        await callbacks.onRemovedFromFamily?.();
+      }
       sharedPullDisabled = true;
     }
     // Any other failure is transient — same self-healing rationale as above.
@@ -173,6 +222,7 @@ export function startSync(callbacks: SyncCallbacks): void {
   intentionalStop = false;
   backoffMs = BACKOFF_START_MS;
   sharedPullDisabled = false; // WR-01: re-arm on every unlock, see its own comment above
+  hasEverConfirmedFamilyMembership = false; // 28-03: re-arm alongside sharedPullDisabled, see its own comment above
   connectWs();
   // Unconditional poll fallback, regardless of WS state (locked decision).
   pollTimer = setInterval(() => {

@@ -76,7 +76,14 @@ import type { Browser, BrowserContext, Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { test, expect, newBareContext, ensureFamilyOwnerSession, type Session } from "./fixtures";
+import {
+  test,
+  expect,
+  newBareContext,
+  ensureFamilyOwnerSession,
+  SESSION_PASSWORD,
+  type Session,
+} from "./fixtures";
 import {
   initCrypto,
   WasmCollectionKey,
@@ -251,6 +258,61 @@ async function collectionItemRevision(
   return row.revision;
 }
 
+/** 28-03 (Task 4): polls `GET /api/identity/keypair` (as the given token)
+ * until it returns `200`, returning the real published public key. Needed
+ * after `reloadAndUnlock` -- the eager unlock-time
+ * `refreshCollectionsNow()`/`ensureOwnIdentityKeypair()` chain that
+ * publishes it is fire-and-forget, not something `new-item-button` becoming
+ * visible waits on. Bounded (15s), matching this file's own generous-but-
+ * bounded budget elsewhere. */
+async function waitForPublishedKeypair(context: BrowserContext, token: string): Promise<string> {
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    const res = await apiGet(context.request, "/api/identity/keypair", token);
+    if (res.status() === 200) {
+      return ((await res.json()) as { public_key: string }).public_key;
+    }
+    if (Date.now() > deadline) {
+      throw new Error("pv-e2e: identity keypair was never published within the timeout");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+/** 28-03 (Task 4): a full page reload + real password unlock -- ported
+ * verbatim from `sharing.spec.ts`'s own identically-named helper (deliberately
+ * duplicated, not extracted into a shared module, matching this codebase's
+ * established per-file-owns-its-own-tiny-helper convention). Used ONCE,
+ * EARLY (before the presence assertion, never between removal and the
+ * absence assertion later in the test -- that gap is deliberately reload-free,
+ * proving the live session self-heals without requiring lock/unlock): B's
+ * page already unlocked once during `twoSessions` fixture setup, BEFORE B
+ * ever joined the family below, so `sync.ts`'s own `sharedPullDisabled` WR-01
+ * latch already permanently disabled B's shared-revisions pull for that
+ * session. Re-unlocking AFTER B joins the family/collection re-arms it
+ * (`startSync()`'s own reset), the same real-world action a genuine user
+ * takes when told "you were just added to a family" (re-open the app). */
+async function reloadAndUnlock(page: Page, password: string): Promise<void> {
+  await page.reload();
+  await page.getByTestId("unlock-password").waitFor({ state: "visible" });
+  await page.getByTestId("unlock-password").fill(password);
+  await page.getByTestId("unlock-submit").click();
+  await page.getByTestId("new-item-button").waitFor({ state: "visible" });
+}
+
+/** 28-03 (Task 4): creates one login item through the real TypePicker ->
+ * ItemForm -> Save flow -- ported verbatim from `sharing.spec.ts`'s own
+ * identically-named helper (same duplication rationale as
+ * `reloadAndUnlock` above). */
+async function createLoginItemViaUI(page: Page, name: string, password: string): Promise<void> {
+  await page.getByTestId("new-item-button").click();
+  await page.getByTestId("type-tile-login").click();
+  await page.getByTestId("item-name").fill(name);
+  await page.getByTestId("item-password").fill(password);
+  await page.getByTestId("item-form-submit").click();
+  await page.getByTestId("item-form-login").waitFor({ state: "detached" });
+}
+
 test("suspend_then_reinstate_live_cycle_with_no_rekey", async ({ twoSessions, browser }) => {
   const [, b] = twoSessions;
   const bToken = await tokenFor(b.page);
@@ -363,17 +425,16 @@ test("suspend_then_reinstate_live_cycle_with_no_rekey", async ({ twoSessions, br
 test(
   "remove_member_live_shows_real_item_names_and_honesty_copy_then_cuts_off_the_members_session",
   async ({ twoSessions, browser }) => {
+    // 28-03 (Task 4): B's own page must genuinely decrypt the shared item --
+    // the eager unlock-time refresh + poll/WS round trips need real time,
+    // and B's page does one real reload+unlock cycle below (to re-arm
+    // sync.ts's WR-01 latch after joining the family, see
+    // `reloadAndUnlock`'s own doc comment) -- generous but bounded.
+    test.setTimeout(240_000);
+
     const [, b] = twoSessions;
     const bToken = await tokenFor(b.page);
     const bUserId = await userIdFor(b.context, bToken);
-    // `collections::add_member`'s `has_keypair` check requires B to have
-    // published SOME identity keypair -- a dummy one is sufficient, since B
-    // never decrypts anything in this test (only the OWNER's own real
-    // identity key is used for real decryption below).
-    await apiPut(b.context.request, "/api/identity/keypair", bToken, {
-      public_key: dummyPublicKeyB64(12),
-      wrapped_secret_key: DUMMY_WRAPPED_SECRET_KEY,
-    });
 
     const owner = await newBareContext(browser);
     await ensureFamilyOwnerSession(owner.page);
@@ -388,6 +449,21 @@ test(
       user_id: bUserId,
     });
     expect(addBRes.status(), "adding a fresh member must succeed").toBe(201);
+
+    // 28-03 (Task 4): B's page ALREADY unlocked once during `twoSessions`
+    // fixture setup, BEFORE B just joined the family above -- that first
+    // unlock's own eager shared-revisions pull 404'd (no family yet) and
+    // permanently latched `sharedPullDisabled` for the rest of that session
+    // (sync.ts's own WR-01 discipline). Re-unlocking NOW, AFTER joining the
+    // family, re-arms it -- the real action a genuine user takes when told
+    // "you were just added to a family". This ALSO publishes B's own REAL
+    // identity keypair as a side effect (collections.ts's refreshCollections()
+    // calls ensureOwnIdentityKeypair() once listCollections() stops 404ing),
+    // which the collection-membership grant below needs -- unlike this
+    // test's OLD dummy-keypair shortcut ("B never decrypts anything in this
+    // test"), Task 4's own live proof requires B to genuinely decrypt.
+    await reloadAndUnlock(b.page, SESSION_PASSWORD);
+    const bPublicKeyB64 = await waitForPublishedKeypair(b.context, bToken);
 
     // Publish the owner's REAL identity keypair as a side effect of opening
     // RemoveMemberDialog once while B still has zero access -- fetchAccess()
@@ -433,11 +509,20 @@ test(
       expect(createCollRes.status()).toBe(201);
       collectionId = ((await createCollRes.json()) as { id: string }).id;
 
+      // 28-03 (Task 4): a REAL sealed key, sealed to B's own REAL published
+      // public key (fetched above via `waitForPublishedKeypair`) -- NOT
+      // `DUMMY_SEALED_KEY`. B's own page must genuinely unseal this
+      // Collection Key to decrypt the shared item live, unlike this test's
+      // old "B never decrypts anything" framing.
+      const bPk = WasmIdentityPublicKey.fromBytes(base64Decode(bPublicKeyB64));
+      const sealedForB = sealCollectionKey(bPk, ck);
+      bPk.free?.();
+
       const addCollMemberRes = await apiPost(
         owner.context.request,
         `/api/vault/collections/${collectionId}/members`,
         ownerToken,
-        { recipient_user_id: bUserId, sealed_key: DUMMY_SEALED_KEY, access_level: "read" },
+        { recipient_user_id: bUserId, sealed_key: sealedForB, access_level: "read" },
       );
       expect(addCollMemberRes.status()).toBe(201);
 
@@ -503,6 +588,26 @@ test(
       ck.free?.();
     }
 
+    // 28-03 (Task 4): B's own KEY-06 adjacency proof -- ONE login item owned
+    // OUTRIGHT by B (never shared, never collection-scoped), created via the
+    // REAL TypePicker -> ItemForm -> Save flow on B's ALREADY-OPEN page. The
+    // purge under test must NEVER touch this.
+    const PERSONAL_ITEM_NAME = `PV E2E Member B Personal Item ${Date.now()}`;
+    await createLoginItemViaUI(b.page, PERSONAL_ITEM_NAME, "pv-e2e-member-b-personal-password-v1");
+
+    // PRESENCE first (this codebase's own established discipline for a
+    // negative assertion later -- see sharing.spec.ts's/dual-extension-
+    // revocation.spec.ts's own header comments): before removal, B's OWN
+    // page genuinely renders the REAL decrypted shared item -- proving B's
+    // real Collection Key unseal/decrypt succeeded live, not merely that the
+    // owner's side can decrypt it.
+    await expect(
+      b.page.getByText(REAL_ITEM_NAME, { exact: true }),
+      "B's own page must render the real shared item BEFORE removal -- otherwise the absence " +
+        "assertion below would be vacuous (never having been visible in the first place)",
+    ).toBeVisible({ timeout: 30000 });
+    await expect(b.page.getByText(PERSONAL_ITEM_NAME, { exact: true })).toBeVisible();
+
     // Re-open RemoveMemberDialog for B -- this time B has REAL, resolvable
     // access, and the owner's own real WASM decrypts the real item name.
     await owner.page.getByTestId(`member-remove-trigger-${bUserId}`).click();
@@ -536,6 +641,23 @@ test(
       postRemoveRes.status(),
       "the removed member's own live request must lose access on its next request",
     ).toBe(404);
+
+    // 28-03 (Task 4): B's own ALREADY-OPEN page purges the shared item --
+    // NO reload, no lock/unlock -- proving the client-side purge fix
+    // (store.ts's purgeSharedStateOnRemoval, wired to sync.ts's
+    // onRemovedFromFamily) genuinely closes the gap the raw-request check
+    // above only proves server-side. Bounded to allow the real 30s poll
+    // fallback (this file's own WS/poll transport, `sync.ts`'s
+    // POLL_INTERVAL_MS) to fire and land the purge.
+    await expect(
+      b.page.getByText(REAL_ITEM_NAME, { exact: true }),
+      "the shared item must genuinely disappear from B's own rendered vault, no reload, within the poll interval",
+    ).toHaveCount(0, { timeout: 60000 });
+
+    // KEY-06 adjacency, in the SAME test run: B's OWN personal item is STILL
+    // present and unchanged -- the purge must never over-reach into personal
+    // data, which would be a worse defect than the one being fixed.
+    await expect(b.page.getByText(PERSONAL_ITEM_NAME, { exact: true })).toBeVisible();
 
     expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
     expect(b.dialogFired(), "zero OS-level dialogs across B's session").toBe(false);

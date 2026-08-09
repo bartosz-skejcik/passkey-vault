@@ -19,6 +19,7 @@ import {
 } from "@/lib/crypto";
 import { ensureOwnIdentityKeypair } from "@/lib/identity/ensure";
 import {
+  clearCollectionsOnRemoval,
   getCollectionAccessLevel,
   getCollectionKey,
   refreshCollectionsNow,
@@ -59,7 +60,7 @@ import {
   type SharedRevisions,
   type SyncSnapshot,
 } from "./api";
-import { startSync, stopSync, type SyncCallbacks } from "./sync";
+import { markFamilyMembershipConfirmed, startSync, stopSync, type SyncCallbacks } from "./sync";
 import { normalizeItemFields, type Folder, type ItemFields, type VaultItem } from "./types";
 
 /** Distinguishable error type for a stale-revision (409) PUT — lets the UI
@@ -1215,6 +1216,43 @@ function handleSharedRevisions(revisions: SharedRevisions): Promise<void> {
   return sharedRefreshInFlight;
 }
 
+/** 28-03 (Task 4): drops the FULL decrypted shared cache (both collection-
+ * and direct-share halves) plus both watermarks and failed-attempt
+ * counters, and frees every cached Collection Key (via `collections.ts`'s
+ * `clearCollectionsOnRemoval()`) -- the "you were genuinely removed
+ * mid-session" purge, wired to `sync.ts`'s `onRemovedFromFamily` callback
+ * below. Mirrors `extension/entrypoints/background/vault-store.ts`'s
+ * `purgeSharedStateOnRemoval` byte-for-byte, minus `pendingSharedItems`
+ * (web's own array set never had one -- confirmed absent, never invented
+ * here).
+ *
+ * Routed through the SAME `sharedRefreshInFlight` chain
+ * `handleSharedRevisions` uses (WR-11's re-entrancy guard) rather than
+ * mutating module state directly -- so this purge can never race a
+ * concurrently in-flight merge.
+ *
+ * KEY-06 adjacency (this plan's single most important boundary): touches
+ * ONLY `collectionSharedItems`/`directSharedItems`/`collections.ts`'s own
+ * Collection-Key cache and their watermarks -- NEVER `personalItems`,
+ * `folders`, or any other part of `items` beyond what `recomputeItems()`
+ * naturally recomputes from the now-empty shared arrays. */
+export function purgeSharedStateOnRemoval(): Promise<void> {
+  sharedRefreshInFlight = sharedRefreshInFlight
+    .then(() => {
+      clearCollectionsOnRemoval();
+      collectionSharedItems = [];
+      directSharedItems = [];
+      collectionRevisionWatermark = new Map();
+      directRevisionWatermark = 0;
+      sharedRevisionsWatermark = { collections: new Map(), direct: 0 };
+      collectionFailedMergeAttempts = new Map();
+      directFailedMergeAttempts = 0;
+      recomputeItems();
+    })
+    .catch(() => {});
+  return sharedRefreshInFlight;
+}
+
 /** Eager first attempt at the SAME refresh `handleSharedRevisions` performs
  * on every subsequent WS/poll tick (`sync.ts::pullOnce`) -- called directly
  * on unlock so a shared collection/direct item is visible without waiting
@@ -1225,6 +1263,18 @@ function handleSharedRevisions(revisions: SharedRevisions): Promise<void> {
 async function refreshSharedItemsNow(): Promise<void> {
   try {
     const revisions = await getSharedRevisions();
+    // 28-03 (Task 4, plan-review blocker fix): this is the SECOND, EARLIER
+    // call site to getSharedRevisions() -- called from the subscribeLockState
+    // unlock branch below, immediately BEFORE startSync(syncCallbacks) (the
+    // synchronous flag-reset inside startSync() always completes first
+    // regardless of this call order, since getSharedRevisions() is a genuine
+    // network await -- confirmed by reading both call sites together). Arm
+    // sync.ts's discriminant HERE too, via the same exported setter
+    // pullOnce() itself calls on success -- without this line, a member
+    // removed after this eager refresh already cached shared plaintext would
+    // have pullOnce()'s first shared 404 misread as "never had a family"
+    // (flag still false) and skip the purge.
+    markFamilyMembershipConfirmed();
     if (getUnlockedUserKey() === null) {
       return;
     }
@@ -1252,6 +1302,11 @@ const syncCallbacks: SyncCallbacks = {
   // await is already its own try/catch, so there is no unhandled-rejection
   // risk in leaving this un-voided).
   onSharedRevisions: handleSharedRevisions,
+  // 28-03 (Task 4): a 404 arriving after this session has ever confirmed
+  // family membership (from either call site -- see sync.ts's own doc
+  // comment) is a genuine mid-session removal, not "no family" -- purge the
+  // shared cache instead of leaving stale plaintext latched in.
+  onRemovedFromFamily: purgeSharedStateOnRemoval,
 };
 
 subscribeLockState(() => {
