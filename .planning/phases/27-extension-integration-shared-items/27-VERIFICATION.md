@@ -1,65 +1,146 @@
 ---
 phase: 27-extension-integration-shared-items
-verified: 2026-08-09T09:30:00Z
-status: gaps_found
-score: 10/14 must-haves verified
-behavior_unverified: 2
+verified: 2026-08-09T11:43:25Z
+status: human_needed
+score: 14/15 must-haves verified (1 present-but-behavior-unverified)
+behavior_unverified: 1
 overrides_applied: 0
-gaps:
-  - truth: "UI-SPEC E2-error backstop: there is no code path where a pending shared row shimmers indefinitely — it must eventually resolve to real content or degrade explicitly into the genuine-failure treatment"
-    status: failed
-    reason: "Affirmatively disconfirmed against real code, not merely unverified. vault-store.ts never sets `undecryptable: true` on any VaultItem. Every collection-scoped decrypt failure — transient (CollectionKeyPendingError) AND genuinely broken (Collection Key resolved, AEAD integrity check failed after hasRefreshedThisSession()) — is dropped from `items` and recorded in the SAME untyped `pendingSharedItems` array. getPendingSharedItems() returns `{id, collectionId}` with no pending-vs-broken discriminant, and no `hasRefreshedThisSession()` signal reaches the popup. ItemListView.tsx renders every `pending` entry as a neutral skeleton with no exit condition. A permanently-undecryptable shared row therefore shimmers forever — precisely the 'infinite silent skeleton is itself the silent omission this state exists to avoid' the backstop forbids. The E1-error degraded-row branch (ItemListView.tsx:436) and the E3-error banner (ItemDetailView.tsx:214) that would render the honest treatment are both gated on `item.undecryptable === true` and are dead code in production — the code comments say so explicitly."
-    artifacts:
-      - path: "extension/entrypoints/background/vault-store.ts"
-        issue: "markPending() (lines 265-269) records pending and broken into one array with no classification; `undecryptable: true` is never set anywhere in the module (decryptItemRow returns no such field, and no retain-last-known-good copy exists)"
-      - path: "extension/lib/messaging/ext-protocol.ts"
-        issue: "vault.list's `pending: { id: string; collectionId: string }[]` carries no pending-vs-broken discriminant across the popup boundary"
-      - path: "extension/entrypoints/popup/ItemListView.tsx"
-        issue: "lines 511-529 render every `pending` entry as an unbounded skeleton; lines 415-433's own comment concedes the degraded branch is 'currently dead in production'"
-    missing:
-      - "A pending-vs-broken discriminant on getPendingSharedItems()'s entries (hasRefreshedThisSession() is already the architectural signal UI-SPEC §4 names) plumbed through vault.list"
-      - "ItemListView must route a 'broken' entry to the E1-error degraded treatment instead of the E2 skeleton — OR vault-store must retain a last-known-good VaultItem with undecryptable:true (web's shape), which would also make the already-wired E1-error/E3-error branches live"
-      - "Corrected copy for sync.itemUndecryptableWarning if the drop discipline is kept: it currently claims 'Showing the last known version', which is false in the extension (no copy is retained)"
-  - truth: "27-06 backstop: a provider ceremony triggered during the MV3-wake window, before Collection Keys have resolved, must not present a partial candidate list that silently omits eligible shared passkeys — it either awaits resolution or falls through, never shows an incomplete picker as if complete"
-    status: failed
-    reason: "Unaddressed in code, in tests, and in every SUMMARY. handleCredentialsGet (provider-ceremony.ts:747) awaits only ensureHydrated() — which resolves the User Key from chrome.storage.session and nothing more. It never awaits ensureItemsHydrated() (that gate exists and is used, but only by router.ts:412's capture.propose path) and never consults hasRefreshedThisSession() or getPendingSharedItems(). It then snapshots `findMatchingPasskeyItems(getItems(), rpId)` at t=0 of the wake, BEFORE awaitCeremonyConsent. On a cold MV3 wake where a personal passkey matches the RP but a shared one for the same RP is still pending its Collection Key, the picker renders the personal candidate alone as if the list were complete — the exact shape the backstop forbids. The zero-candidate case falls through (acceptable); the PARTIAL case does not. 27-06-SUMMARY.md's coverage block (D1-D5) does not mention this truth at all."
-    artifacts:
-      - path: "extension/entrypoints/background/provider-ceremony.ts"
-        issue: "handleCredentialsGet (lines 736-782) gates on ensureHydrated() only; candidate snapshot at line 776 has no shared-resolution barrier"
-    missing:
-      - "A resolution barrier before the candidate snapshot — await ensureItemsHydrated() plus a hasRefreshedThisSession() check (or a bounded wait on refreshCollectionsNow()), then either present the complete list or fall through"
-      - "A regression test for the partial case: personal candidate present + shared candidate pending -> must not render the picker as complete"
+re_verification:
+  previous_status: gaps_found
+  previous_score: 13/14
+  gaps_closed:
+    - "27-04 prohibition, DIRECT-share path: mergeDirectSnapshot's per-row catch now calls markPending(row.id, null, \"broken\") — falsification-tested twice this pass (un-corrupting the payload turns the test RED; deleting the production markPending line turns BOTH the real-WASM test and Test 22 RED)"
+  gaps_remaining: []
+  regressions: []
+  newly_found: []
+deferred: []
 behavior_unverified_items:
-  - truth: "ROADMAP SC 1 (first clause): a shared login autofills in the extension exactly like a personal one through the existing fill pipeline unchanged"
-    test: "In a live two-extension run, navigate member B to a page whose origin matches the shared login, open the popup's 'Na tej stronie' section, click Fill on the SHARED row, and read the page's own input values"
-    expected: "The page's username/password inputs carry member A's shared plaintext — an observed DOM fill, not merely a popup row rendering"
-    why_human: "27-04-PLAN.md flagged this as an unresolved probe edge and refused to treat it as closed. The structural chain is strong and independently confirmed here (fill-dom.ts is absent from the phase diff; handleAutofillFill does getItems().find() with zero collectionId/accessLevel narrowing; the live spec proves shared items are present in getItems()), but no live proof exercises the fill event itself. dual-extension-sharing.spec.ts's TOTP proof dispatches autofill.totpCode directly rather than driving a fill, and 27-11's write proof drives capture, not fill."
   - truth: "27-03 backstop: a genuinely concurrent first unlock from the web app and the extension results in exactly ONE published identity keypair — the publish is conditional and the race loser re-reads and unwraps the winner's blob rather than overwriting it"
     test: "Trigger a genuine concurrent first unlock (web app and extension, account with no published identity keypair) and compare the published public key before/after both settle"
     expected: "Exactly one keypair published; both clients end up holding the same secret key; no Collection Key sealed to the loser's discarded public half"
-    why_human: "identity-store.ts's `adopted_existing` branch (line 89) is the whole race-resolution mechanism, and all three identity-store.real-wasm.test.ts fixtures return `adopted_existing: false` — the branch is never executed by any test. The extension is, by this phase's own framing, the second concurrent device that makes this race real for the first time. Presence + code-read only."
+    why_human: "Unchanged across all three passes — nothing in 27-12/27-13/27-14/27-15 touched identity-store.ts. `identity-store.ts:89`'s `adopted_existing` branch is the whole race-resolution mechanism, and every identity-store.real-wasm.test.ts fixture returns `adopted_existing: false`, so that branch is executed by no test. Presence + code-read only; the invariant is a state transition grep cannot see."
 human_verification:
   - test: "Open the popup on an account with a mix of shared and personal items; inspect the shared badge on the 'Wszystkie' rows, the 'Na tej stronie' rows, the detail header, and a provider ceremony candidate row"
     expected: "The people-glyph badge reads as a shared marker at popup width without crowding the icon tile, and personal rows look untouched (ROADMAP SC 5 is a visual claim)"
     why_human: "Visual/taste judgment; component tests assert markup, not legibility"
-  - test: "Live two-extension run where member A grants member B `hidden_password` (not `edit`) on a shared login; open that item in B's popup detail view, then autofill it on a matching page"
-    expected: "Password renders as the 10-dot mask with no reveal and no copy affordance, the three-claim honesty note renders beneath it, and autofill on the page still fills the real password"
-    why_human: "Zero live coverage exists: both e2e fixtures (fixtures-account-setup.ts:471, :809) grant `access_level: \"edit\"` only, and no e2e file mentions hidden_password. UX-4's mask is proven only by ItemDetailView.test.tsx, which hand-supplies accessLevel. This is the exact shape of Phase 26's second shipped-but-broken feature (hidden_password protected nothing while the UI claimed it did). Partially mitigated: the live write proof implicitly confirms getCollectionAccessLevel() returns the server's exact `\"edit\"` string, so the vocabulary plumbing is live-correct for at least one level."
-  - test: "Live run where member B holds `read` access on a shared login, then submits a changed password on that origin and confirms the save toast"
-    expected: "The write is refused with an honest message before any encrypt call (ReadOnlyAccessError), and member A's copy is unchanged"
-    why_human: "Same fixture gap — 27-07's read-only refusal is proven only by capture-handler.test.ts, which vi.mock()s lib/crypto/wasm-loader and can assert control flow only"
+    evidence: "extension/.playwright-mcp/uat-27/shared-badge.png — captured 2026-08-09 by 27-16, live two-extension popup at 380px width, filtered to a run showing badged shared rows directly beside unbadged personal rows. NOT self-approved — awaiting Bartek's taste call."
+  - test: "Open the popup on a vault containing a genuinely broken shared row (force a wrong-key collection item, or a corrupted directly-shared item — both paths now produce this row) and read the degraded row"
+    expected: "A static AlertTriangle row reading 'Failed to decrypt shared item', non-clickable, no shimmer — and its tooltip/aria text no longer claims a last known version is being shown"
+    why_human: "The row's legibility and the corrected PL/EN copy are taste/wording calls; ItemListView.test.tsx Test 20 asserts markup and non-interactivity, not readability"
+    evidence: "extension/.playwright-mcp/uat-27/broken-row.png — captured 2026-08-09 by 27-16, live: a real shared TOTP item's enc_data corrupted directly in data/pv.db (one AEAD ciphertext byte, same technique as vault-store.real-wasm.test.ts's corruptEncData), DB restored and verified byte-identical afterward (git diff / DB content unaffected). NOT self-approved — awaiting Bartek's taste call. A third, optional pending-skeleton screenshot (neutral, non-broken contrast) was attempted live but the real Collection-Key resolution window on this local single-machine harness proved too narrow (sub-~1s even under CDP network throttling) to reliably capture without fabricating a state — skipped rather than faked, per this task's own instruction."
 ---
 
 # Phase 27: Extension Integration — Shared Items — Verification Report
 
 **Phase Goal:** Shared items work identically to personal ones across autofill, TOTP, and the passkey provider in the extension, with the concurrent-shared-passkey signature-counter question resolved by an explicit design spike rather than assumed.
-**Verified:** 2026-08-09
-**Status:** gaps_found
-**Re-verification:** No — initial verification
+**Verified:** 2026-08-09T11:43:25Z
+**Status:** human_needed
+**Re-verification:** Yes — third pass, after 27-15's direct-share fix. Previous: gaps_found, 13/14.
+
+## Verdict, stated plainly
+
+**The phase goal is achieved. The one remaining blocker — the direct-share silent drop I raised in pass 2 — is genuinely closed, and I proved it two independent ways rather than reading the SUMMARY.** Every enumerated must-have is now VERIFIED. The status is `human_needed`, not `passed`, for one reason only: three items require a human (two taste/legibility calls and one race branch no test executes). None of the three is a code defect.
+
+### Score accounting — read this before comparing to the previous pass
+
+Previous passes scored `13/14`, keeping the 27-03 concurrent-identity race *outside* the truth list as a separate "behavior-unverified" note. That understated the denominator. This pass counts it as truth #15, marked ⚠️ PRESENT_BEHAVIOR_UNVERIFIED, which is where the presence-vs-behavior rule says it belongs. So:
+
+- `14/14` of the enumerated must-haves are VERIFIED (up from 13/14).
+- `14/15` counting the 27-03 backstop as the truth it is.
+
+This is a bookkeeping correction, not a regression. A clean `15/15` is not claimable, and I am not claiming it.
 
 ## Method note
 
-Per 27-VALIDATION.md's non-negotiable evidence rule, no green unit result was accepted as evidence for a crypto-adjacent claim. Every live proof below was **executed by the verifier in this session** against the already-running `pv-server` on `127.0.0.1:8620` and the already-built `.output/chrome-mv3` — SUMMARY-reported pass status was not taken on trust.
+Third pass, same doctrine, applied to the new fix. No 27-15-SUMMARY.md claim was accepted on trust. Every load-bearing assertion in the summary was independently re-derived from source, and both new tests were falsified — twice, from two different directions.
+
+### Falsification probes run in-session (all reverted; `git diff` on `extension/` empty afterward)
+
+| # | Probe | Change made | Result |
+|---|---|---|---|
+| 1 | Is the direct-share "broken" classification a REAL AEAD failure, or a malformed fixture / mocked rejection? | `buildRealDirectSharedRow(..., true)` → `..., false)` in the *corrupted* test (i.e. feed it the UNCORRUPTED payload) | Test went **RED** — `expected [ {…(10)} ] to deeply equal []`, the full decrypted `VaultItem` (`sharedToMe: true`, `isShared: true`, `revision: 1`, real `updatedAt`) materialized in `getItems()`. The row genuinely decrypts when un-tampered. The failure is corruption-dependent. |
+| 2 | Does the test guard the PRODUCTION line, or just the fixture? | Deleted `markPending(row.id, null, "broken");` from `mergeDirectSnapshot`'s catch | **BOTH** guards went RED — the real-WASM corrupted test and `vault-store.test.ts` Test 22, `2 failed | 31 passed`. Genuine regression guards on the exact production statement. |
+
+Probe 1 is the summary's own claimed falsification, reproduced independently. Probe 2 is mine, and it is the one that actually matters: probe 1 alone would pass even if the test asserted against a fixture rather than the fix.
+
+The real-WASM failure message is Rust-side, not a JS throw: `[passkey-vault] failed to decrypt directly-shared item item-real-wasm-direct-1 decryption failed (wrong key or corrupted data)` — i.e. the WASM AEAD integrity check itself, exactly as claimed. `vault-store.real-wasm.test.ts` carries no `vi.mock` of `wasm-loader` (confirmed by reading the mock list at lines 51-95, and the file's own comment at line 95 says so deliberately).
+
+## Task 1 — Is the direct-share fix real?
+
+**Yes, on all three sub-checks.**
+
+**(a) `markPending` is on the actual failure path.** `vault-store.ts:693-728`: the per-row `for (const row of response.items)` loop wraps `decryptDirectSharedRow(row, identityKey)` in its own `try`. The `catch` at 697 sets `anyRowFailed = true`, logs, and calls `markPending(row.id, null, "broken")` at **line 726** — inside the catch, before the loop continues. The success branch calls `clearPending(row.id)` at line 696. Both are on the real paths, not adjacent to them.
+
+**(b) The real-WASM test genuinely corrupts ciphertext.** `corruptEncData` (lines 278-283) parses wasm-bindgen's own `{nonce: number[], ciphertext: number[]}` wire shape and mutates `ciphertext[0] = (ciphertext[0] + 1) % 256` — one byte, ciphertext only, nonce and JSON shape untouched. `buildRealDirectSharedRow` (293-313) uses real `WasmUserKey.generate()`, real `WasmIdentityKey.generate()`, real `encryptItem`, real `sealItemKeyForRecipient` against a real `WasmIdentityPublicKey.fromBytes(bob.publicKeyBytes())`, and corrupts **after** sealing — so the seal/unseal handshake is genuine even in the failing case, and only the payload is bad. `hoisted.mockDecryptItemWithSharedKey` is *not* used in this describe block; the production crypto runs. Probe 1 confirms the corruption is what causes the failure.
+
+**(c) The stated discriminant reasoning is TRUE of the code.** This was the premise most worth attacking, because if it is false the "always broken, never pending" classification is wrong. It holds:
+
+- `const identityKey = await ensureOwnIdentityKeypair(uk);` is at **line 684**. The per-row loop opens at **line 693**. The `await` genuinely precedes the loop, unconditionally, once per call, for every row in the pull. Not inside a branch, not lazily.
+- The contrast with the collection path is accurate. `getCollectionKey()` is a *synchronous* read of a cache whose first refresh may not have completed, which is exactly why `CollectionKeyPendingError` exists and why `applySyncSnapshot` (line 511) and `mergeCollectionSnapshot` (line 607) compute a `pending` vs `broken` split gated on `hasRefreshedThisSession()`. There is no such lazily-populated cache on the direct path.
+- Therefore a failure reaching the direct-share catch was already attempted with a fully-resolved identity key in hand — either a `sealed_key` that does not unseal under this recipient's key, or an `enc_data` whose AEAD check fails. Both terminal. Classifying `"broken"` immediately is correct, and classifying `"pending"` would be *wrong* (it would shimmer forever — the very UI-SPEC E2-error bug 27-12 fixed). I checked the inverse failure mode too: if `ensureOwnIdentityKeypair` itself rejects, the rejection propagates out of `mergeDirectSnapshot` to `doHandleSharedRevisions`'s `catch` at line 851, which sets `anyStepFailed = true` and withholds the watermark for retry — the transient case is handled at the correct level, above the loop, not misclassified inside it.
+
+**(d) Widened type is coherent end-to-end.** `PendingSharedItemEntry.collectionId: string | null` (line 208). The single consumer that reads `collectionId` is `doHandleSharedRevisions`'s revoked-collection purge at line 817, `pendingSharedItems.filter((p) => p.collectionId !== knownId)` — `null !== knownId` is always true for a real collection id, so a direct-share stub is correctly never purged by collection revocation. Verified by reading the line, not the summary's claim about it. `ItemListView.tsx:524-560` renders the broken branch from `p.status` and `p.id` only (`key`, `role`, `aria-label`, icon, label) — no `collectionId` read anywhere in that branch, so the summary's "no popup change needed" is true rather than convenient. `npx tsc --noEmit` exits 0, so the widening did not silently break a consumer.
+
+## Task 2 — Did `deferRealFree()` mask a production lifetime bug?
+
+**No. It is a genuine test-cleanup collision. I checked the production ownership contract directly rather than taking the summary's word.**
+
+`ensureOwnIdentityKeypair` (`identity-store.ts:65-104`) returns a **fresh, caller-owned handle on every path**:
+
+- existing keypair → `unwrapIdentitySecretKey(uk, existing.wrapped_secret_key)` — new handle;
+- `adopted_existing` race → `unwrapIdentitySecretKey(uk, response.wrapped_secret_key)` — new handle, and `freeOnError` deliberately stays `true` so the discarded local `isk` *is* freed by the `finally` (the comment at 92-94 states this, and the logic matches);
+- fresh publish → `isk`, with `freeOnError = false` transferring ownership.
+
+Every production consumer frees exactly one handle it owns:
+
+| Consumer | Handle discipline | Verdict |
+|---|---|---|
+| `vault-store.ts:684` (`mergeDirectSnapshot`) | `finally { identityKey.free?.(); }` at 746 | ✓ frees its own fresh handle once |
+| `collections-store.ts:161` | `finally` free, one resolution per refresh | ✓ same shape |
+| `identity-store.ts:157` (`publishOnUnlock`) | `.then((isk) => isk.free?.())`; on rejection the inner `finally` already freed | ✓ documented and correct |
+| `ensureIdentityKeypairHydrated` / `freeIdentityKey` | caches one handle, freed on lock | ✓ and it has **no production caller** today (grep across `extension/` excluding tests returns only its own definition), so it cannot collide with anything |
+
+The double-free arose only because the *test's* mock (`mockEnsureOwnIdentityKeypair.mockResolvedValue(bob)`) returns the **same** `WasmIdentityKey` instance on every call — violating production's fresh-handle-per-call contract — so production's legitimate `free()` deallocated the handle the test's own `finally` then freed again. `deferRealFree` (lines 261-271) makes production's call a no-op and defers the single real free to a test-owned `.dispose()`. That is the correct fix for a fixture that shares one real handle across two owners, and it is the identical helper `web/src/lib/vault/store.real-wasm.test.ts` already uses at four call sites for the same shape — a pre-existing, documented pattern, not an invention to make a red test go green. Production's `finally { identityKey.free?.(); }` is correct and stays.
+
+## Task 3 — Defect-class sweep
+
+I enumerated **every** failure branch in `vault-store.ts` that handles a decrypt, plus the sibling merge/decrypt sites in `collections-store.ts` and `provider-ceremony.ts`. **No third instance.** Both shared read paths now record; the two remaining silent drops are non-shared surfaces with a stated reason.
+
+| # | Site | What happens on failure | Records the row? | Verdict |
+|---|---|---|---|---|
+| 1 | `applySyncSnapshot` items catch, `CollectionKeyPendingError` branch (511-518) | `markPending(row.id, row.collection_id, "pending")` | ✓ | ✓ recorded |
+| 2 | `applySyncSnapshot` items catch, generic branch (520-534) | `markPending(..., "broken")` **when `collection_id !== null`**; a personal row is dropped with a counted `console.warn` | ✓ for shared; ✗ for personal | ✓ **stated reason, and out of scope.** The prohibition names *shared* items. I confirmed the scope claim against the server rather than assuming: `fetch_items_for` (`vault.rs:402-421`) is `WHERE user_id = ?` on both UNION arms, so `/api/sync` returns only the caller's OWN items — a directly-shared-to-me row can never arrive here. The un-recorded drop is therefore genuinely personal-only, and the code says so in-comment (529-530). |
+| 3 | `applySyncSnapshot` folders catch (547-551) | `skipped += 1`, console.warn, no stub | ✗ | ℹ️ Out of scope — folders are personal-only (`decryptFolderRow` takes `uk` only; there are no shared folders in this model). No inline reason given, unlike the item branch. Noted, not a gap. |
+| 4 | `mergeCollectionSnapshot` catch (591-609) | `markPending(row.id, collectionId, pending\|broken)` | ✓ | ✓ recorded (27-12) |
+| 5 | `mergeDirectSnapshot` catch (697-727) | `markPending(row.id, null, "broken")` | ✓ | ✓ recorded (27-15 — this pass's subject) |
+| 6 | `collections-store.ts:200` — `sealed_key` fails to unseal | Collection Key stays unresolved; every item in that collection falls through to sites 1/4 above | ✓ indirectly | ✓ stated reason in-comment; the items are recorded downstream |
+| 7 | `collections-store.ts:195` — collection NAME fails to decrypt | Falls back to the raw collection id | n/a — nothing is dropped | ✓ honest fallback, still visible |
+| 8 | `doHandleSharedRevisions` step catches (801, 837, 851) | `anyStepFailed = true` → watermark withheld, bounded retry | n/a — no per-row drop | ✓ correct level for a transient failure |
+| 9 | `provider-ceremony.ts:797-799` | Filters `undecryptable !== true` off the already-decrypted cache | n/a — does not decrypt | ✓ no drop of its own |
+
+**Conclusion: no third instance.** Both shared-item read paths — collection-scoped (27-12) and direct (27-15) — now honor 27-04's prohibition identically.
+
+## Task 4 — Regression pass
+
+Every command run by me in this session, on a tree byte-identical to `HEAD` (`8c29be3`) after probe reverts.
+
+| Check | Command | Result | Status |
+|---|---|---|---|
+| Typecheck | `npx tsc --noEmit` | exit 0, no output | ✓ PASS |
+| Full unit suite (run **once**) | `npm test` | **60 files, 767 tests passed** (was 764) | ✓ PASS |
+| Real-WASM tier | `npx vitest run entrypoints/background/vault-store.real-wasm.test.ts` | 4 passed (was 2) | ✓ PASS |
+| Rust workspace | `cargo test --workspace` | **0 failed** across all binaries (33/66/59/24/20/19/17/12/10/… + 4 doc-test targets) | ✓ PASS |
+| Falsification probe 1 (fixture) | un-corrupt the payload | RED for the right reason | ✓ PASS |
+| Falsification probe 2 (production) | delete `markPending` from the catch | 2 tests RED | ✓ PASS |
+| Live: recipient read + TOTP + storage audit + write + fill event | `playwright --project=chromium e2e/dual-extension-sharing.spec.ts --retries=0` ×2 | 2/2 passed (9.6s, 9.4s) | ✓ PASS |
+| Live: hidden_password + read-only | `playwright --project=chromium e2e/dual-extension-access-levels.spec.ts --retries=0` | 1 passed (6.9s) | ✓ PASS |
+| Live: post-revocation staleness | `playwright ... e2e/dual-extension-revocation.spec.ts --retries=0` | 1 passed (55.2s) | ✓ PASS |
+| Live headed shared-passkey ceremony | `playwright --project=chromium-ceremony e2e/dual-extension-ceremony.spec.ts --retries=0` | 1 passed (4.2s) | ✓ PASS |
+| Tree clean after probes | `git diff --stat -- extension/` | empty | ✓ PASS |
+
+Nothing from the earlier passes regressed. The Gap-5 flake did not reappear (2/2 this session on top of the previous pass's 8/8, so 10/10 cumulative at `--retries=0`).
+
+*(Note: `--project=chromium-ceremony` without a file argument also picks up `e2e/store-screenshots.spec.ts`, which hard-throws unless `PV_DEMO_PASSWORD` is set. Not a phase defect — a publishing-asset spec — but worth knowing before someone runs the project bare and reads it as a failure.)*
 
 ## Goal Achievement
 
@@ -67,133 +148,120 @@ Per 27-VALIDATION.md's non-negotiable evidence rule, no green unit result was ac
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | **SC 1** — a shared login autofills exactly like a personal one through the existing fill pipeline unchanged, and TOTP codes generate correctly for shared items | ⚠️ PRESENT_BEHAVIOR_UNVERIFIED | **TOTP half VERIFIED live** (verifier-run): `dual-extension-sharing.spec.ts` dispatches `autofill.totpCode` for member B's *shared* TOTP item and asserts the returned code is in an independently-computed bounded `{current, previous}` window — `expect(candidates).toContain(returnedCode)`, a positive byte-equality assertion, not an absence guard. **Autofill half not observed:** `fill-dom.ts` is confirmed absent from the phase diff and `handleAutofillFill` (autofill-match.ts:299) does `getItems().find()` with zero scope narrowing, but no live proof exercises an actual DOM fill of a shared item. 27-04-PLAN.md flagged exactly this as an unresolved probe edge. |
-| 2 | **SC 2** — a shared passkey works through the passkey provider on third-party sites using the same item-wrap mechanism as any other item type | ✓ VERIFIED | `dual-extension-ceremony.spec.ts` **run by verifier, headed, 2/2 green** (`--retries=0`). Member A creates a passkey via a real `credentials.create()`; it is moved into a collection member B has access to; member B — who never registered it — completes a real `credentials.get()` and `expect(getResult.id).toBe(createdCredentialId)`. Corroborated independently: `data/pv.db` `vault_items` gained collection-scoped rows at 09:14:32 and 09:15:08 UTC matching the two runs, so the ceremony genuinely created and moved a real item. |
-| 3 | **SC 3** — signature-counter handling resolved by a documented spike, implemented so concurrent shared use does not trip SEC-04 — verified live with two members' extensions | ✓ VERIFIED | Three independent tiers, all confirmed by the verifier: (a) **decision record** — `crates/pv-provider/src/ceremony.rs:137-200` + a Key Decisions row in `.planning/PROJECT.md:150`, committed at `8f5a228` *before* any dependent code; (b) **permanent regression** — `cargo test -p pv-provider --test response_shape` → `sign_count_is_always_zero_for_a_provider_ceremony_assertion ... ok` (3/3 in file); (c) **live wire measurement** — the headed spec decodes `authenticatorData` bytes 33-36 big-endian off member B's *real* browser-returned assertion and asserts `signCount === 0`. Anti-goal honored: no per-item counter anywhere in the phase diff. |
-| 4 | **SC 3 sub-claim** — a provider assertion structurally cannot reach the Phase 19 SEC-04 classifier (`verification: backstop`) | ✓ VERIFIED | **Independently confirmed, not accepted from the record.** `grep -rn handle_finish_auth_error crates/` returns exactly 3 call sites — `passkeys.rs:269`, `passkeys.rs:552`, `auth.rs:575` — all inside pv-server's own vault login/unlock ceremonies against the `passkeys` table. `crates/pv-provider/Cargo.toml` `[dependencies]` contains no `webauthn-rs`, `sqlx`, or `pv-server`; `webauthn-rs = "0.5"` appears only under `[dev-dependencies]`. The paths cannot meet. |
-| 5 | **SC 4** — the background worker holds no newly-persisted secret types; identity key and Collection Keys are re-derived from the User Key on every MV3 wake | ✓ VERIFIED | **Live enumeration**, not inference: the sharing spec dumps member B's real `chrome.storage.session.get(null)` from inside the service worker *after* identity unwrap, Collection Key unseal, shared merge and a reveal, and asserts the observed key set contains nothing outside the pre-Phase-27 allow-list and nothing matching `/identity\|collection\|sealed/i`. Corroborated structurally: `collections-store.ts:82` (`Map` in module scope) and `identity-store.ts:109` (`cachedIdentityKey`) are memory-only with no `chrome.storage.*` write anywhere; `vault-store.test.ts` Test 4 asserts the literal call order `["stopSync", "freeAllCollectionKeys", "freeIdentityKey"]`, closing A-3/Pitfall 4. |
-| 6 | **SC 5** — the popup visually distinguishes shared items from personal ones | ✓ VERIFIED | One `SharedBadge.tsx` (47 lines, real geometry per UI-SPEC) consumed at all five surfaces without re-derivation: `ItemListView.tsx:484`, `ItemListView.tsx:521`, `ItemDetailView.tsx:196`, `AutofillItemRow.tsx:92`, `TotpFillRow.tsx:141`, `ProviderCeremonyView.tsx:302`. Shared rows also carry the folder-name subtitle with an honest per-type fallback (never a raw UUID, never blank). Visual quality routed to human verification. |
-| 7 | **27-04 prohibition** — a shared item the user has access to is never silently dropped with no trace | ✓ VERIFIED | Every collection-scoped decrypt failure calls `markPending()` (`vault-store.ts:468, 482, 549`), `getPendingSharedItems()` is exposed through `router.ts:560` into `vault.list`, and `ItemListView.tsx:133/349/511` consumes it — including widening the empty-state gate so a pending-only vault does not render "empty". *(The row is surfaced; that it can never leave the skeleton state is gap #1, tracked separately.)* |
-| 8 | **27-07 prohibition** — capture-handler never falls back to the personal User Key for a collection-scoped write | ✓ VERIFIED | `capture-handler.ts:246-256`: `collectionId == null` → `encryptItem(uk, ...)`; otherwise `getCollectionKey()` and a hard `throw new CollectionKeyUnavailableError(...)` on `undefined` — no fallback branch exists. The read-only gate (`:233-239`) runs *before* plaintext is built, fails closed on any level other than `edit`/`hidden_password`. |
-| 9 | **27-11 truth** — a member revoked mid-session loses the shared items on the NEXT sync poll, not on the next lock/unlock | ✓ VERIFIED | `dual-extension-revocation.spec.ts` **run by verifier: 1 passed (1.1m)**, first attempt, no retry. Presence asserted first (both shared item names visible), then revocation via the real `DELETE .../access/{user_id}`, then absence — the correct presence-then-absence discipline, not a vacuous absence-only guard. Mechanism confirmed in code: `collections-store.ts:214-220` (WR-02 eviction) + `vault-store.ts:725-732` (watermark/item/pending purge). |
-| 10 | **27-11 truth** — member B's capture-confirmed write is collection-scoped, and member A reads back the exact new plaintext with zero read-side changes | ✓ VERIFIED | The phase's only real-crypto WRITE-path evidence, and it is a positive assertion: the live spec drives the genuine content-script capture → toast-confirm → `confirmUpdateLogin` path, then reopens member A's popup and asserts `getByText(newCapturePassword, { exact: true })` is visible. Real `encryptItemForCollection` → real `decryptItemForCollection` across two independent browser profiles. |
-| 11 | **UI-SPEC E1-error backstop** — the retain-vs-drop decision for a shared row that never decrypted is made explicitly, not inherited | ✓ VERIFIED | Stated, not defaulted: `vault-store.ts:279-304` (`getPendingSharedItems()`'s doc comment) and `ItemListView.tsx:415-433` both record the decision and its reasoning in place. The backstop's own wording permits keeping the drop provided it is a stated decision. |
-| 12 | **UI-SPEC E2 backstop** — pending row shape: fixed-footprint skeleton, badge retained, non-interactive, `role="status"`, neutral shimmer never alert styling | ✓ VERIFIED | `ItemListView.tsx:511-529` matches the spec exactly — non-interactive `<div>` (never a `<button>`), `role="status"` with `sharing.sharedItemLoadingAria`, `skeleton h-8 w-8` icon + two stacked bars, `SharedBadge` retained, sorted last, no warning classes. Pinned by `ItemListView.test.tsx`. |
-| 13 | **UI-SPEC E2-error backstop** — no code path where a pending row shimmers indefinitely | ✗ FAILED | See gap #1. Disconfirmed against real code. |
-| 14 | **27-06 backstop** — an MV3-wake ceremony must not present a partial candidate list as complete | ✗ FAILED | See gap #2. Unaddressed in code and evidence. |
+| 1 | **SC 1** — a shared login autofills exactly like a personal one through the existing fill pipeline unchanged, and TOTP codes generate correctly for shared items | ✓ VERIFIED | Re-run this session, 2/2 `--retries=0`. Positive byte-equality of the real DOM fill against fixture plaintext (`filledValues.u`/`.p`), plus `expect(candidates).toContain(returnedCode)` for TOTP. |
+| 2 | **SC 2** — a shared passkey works through the passkey provider using the same item-wrap mechanism as any other item type | ✓ VERIFIED | Re-run this session: headed real `credentials.create()` + `credentials.get()` across two profiles, 1 passed (4.2s). |
+| 3 | **SC 3** — signature-counter handling resolved by a documented spike, implemented so concurrent shared use does not trip SEC-04 | ✓ VERIFIED | `cargo test --workspace` re-run, 0 failed, incl. `pv-provider`'s wire-byte `signCount` regression; the live spec decodes `authenticatorData[33..37]` off a real assertion and asserts 0. |
+| 4 | **SC 3 sub-claim** — a provider assertion structurally cannot reach the Phase 19 SEC-04 classifier (`verification: backstop`) | ✓ VERIFIED | Carried from pass 2's independent re-derivation (3 `handle_finish_auth_error` call sites, all pv-server vault ceremonies; `pv-provider` depends on neither `webauthn-rs` nor `sqlx` nor `pv-server`). Unchanged by 27-15 — no Rust touched. |
+| 5 | **SC 4** — the background worker holds no newly-persisted secret types | ✓ VERIFIED | The live in-worker `chrome.storage.session.get(null)` enumeration passed again this session. |
+| 6 | **SC 5** — the popup visually distinguishes shared items from personal ones | ✓ VERIFIED (visual quality → human) | One `SharedBadge.tsx` at 6 call sites. The broken row correctly *replaces* the badge with the AlertTriangle treatment rather than inventing a second visual language. |
+| 7 | **27-04 prohibition** — a shared item the user has access to is never silently dropped with no trace | ✓ VERIFIED (was ✗ FAILED) | **Closed on the last remaining path, and falsification-tested from both directions.** `mergeDirectSnapshot`'s catch calls `markPending(row.id, null, "broken")` (line 726) with `clearPending` on success (696). Deleting that one line turns two independent tests RED. The classification reasoning is verified true of the code (`await` at 684 genuinely precedes the loop at 693), not merely asserted. Sweep of all 9 decrypt/merge failure branches finds no third instance. |
+| 8 | **27-07 prohibition** — capture-handler never falls back to the personal User Key for a collection-scoped write | ✓ VERIFIED | Code unchanged; re-run live this session — member B's write on a `read`-level item is refused and member A's old password is still byte-identical. |
+| 9 | **27-11 truth** — a member revoked mid-session loses shared items on the NEXT sync poll | ✓ VERIFIED | Re-run this session, `--retries=0`, first attempt (55.2s). |
+| 10 | **27-11 truth** — member B's capture-confirmed write is collection-scoped and member A reads back the exact new plaintext | ✓ VERIFIED | Re-run 2/2 as part of the sharing spec. |
+| 11 | **UI-SPEC E1-error backstop** — the retain-vs-drop decision is made explicitly, not inherited | ✓ VERIFIED | The decision is restated and now extended a third time in place (`getPendingSharedItems()` doc comment, 310-353, incl. the new 27-15 paragraph). |
+| 12 | **UI-SPEC E2 backstop** — pending row shape unchanged for a genuinely pending entry | ✓ VERIFIED | The `status !== "broken"` sub-branch (ItemListView.tsx:549-559) is byte-identical to the previously-verified markup — skeleton, `SharedBadge` retained, `role="status"`, no alert styling. |
+| 13 | **UI-SPEC E2-error backstop** — no code path where a pending row shimmers indefinitely | ✓ VERIFIED | Carried from pass 2 (upsert `markPending`, discriminant crosses the boundary via `ext-protocol.ts:396`, terminal AlertTriangle render, false "last known version" copy removed PL+EN) — and now **strengthened**: the direct path can no longer produce a shimmering-forever row either, because it never emits `"pending"` at all. |
+| 14 | **27-06 backstop** — an MV3-wake ceremony must not present a partial candidate list as complete | ✓ VERIFIED | Carried from pass 2, falsification-tested there (deleting the two awaits turned both guards RED). Untouched by 27-15; `provider-ceremony.ts:773-774` re-read this session, unchanged. |
+| 15 | **27-03 backstop** — a genuinely concurrent first unlock yields exactly ONE published identity keypair; the race loser adopts the winner's blob | ⚠️ PRESENT_BEHAVIOR_UNVERIFIED | Present and wired — `identity-store.ts:89`'s `adopted_existing` branch exists, correctly re-unwraps the server's canonical blob, and its `freeOnError`-stays-true comment is accurate (I re-read it this pass while checking the free contract, so this is a fresh read, not a carry-forward). But it is a **state-transition invariant executed by no test**: all three `identity-store.real-wasm.test.ts` fixtures return `adopted_existing: false`. Presence is not behavior. → human verification. |
 
-**Score:** 10/14 truths verified (2 present, behavior-unverified; 2 failed)
+**Score:** 14/15 truths verified (0 failed, 1 present-but-behavior-unverified). Of the 14 enumerated must-haves, 14/14.
 
 ### Deferred Items
 
-None. Phase 27 is the final phase of the v0.4 milestone (ROADMAP.md ends at Phase 27), so no later phase can absorb these gaps.
+None. Phase 27 is the final phase of the v0.4 milestone — there is no later phase to defer to, which is precisely why the direct-share gap had to be closed rather than scheduled.
 
 ### Required Artifacts
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `extension/entrypoints/background/collections-store.ts` | Collection Key cache, WR-02 eviction, memory-only | ✓ VERIFIED | 253 lines, real port; no lock listener of its own (Pitfall 4 honored) |
-| `extension/entrypoints/background/identity-store.ts` | Idempotent KEY-01 primitive + MV3 wake cache | ✓ VERIFIED | 166 lines; wired at the single choke point `vault-session.ts:192` |
-| `extension/entrypoints/background/vault-store.ts` | 3-source merge + scope dispatch | ✓ VERIFIED | 358 → 988 lines; `recomputeItems()` merges all three sources; `decryptItemRow` dispatches on `collection_id` and fails loud |
-| `extension/entrypoints/background/vault-api.ts` | Shared-fetch wire types/functions | ✓ VERIFIED | +148 lines; `getCollectionSync` / `getSharedDirectSync` / `getSharedRevisions` / identity keypair endpoints |
-| `extension/entrypoints/popup/SharedBadge.tsx` | Single badge component | ✓ VERIFIED | 47 lines, 6 call sites, zero re-derivation |
-| `crates/pv-provider/src/ceremony.rs` (EXT-10 record) | Doc-comment decision record | ✓ VERIFIED | Lines 137-200, committed before dependent code |
-| `crates/pv-provider/tests/response_shape.rs` | Permanent signCount invariant test | ✓ VERIFIED | Runs green; decodes raw wire bytes, not the Rust `Option<u32>` |
-| `extension/e2e/two-context-spike.spec.ts` | Two-profile isolation proof | ✓ VERIFIED | Verifier-run: 1 passed (2.0s) |
-| `extension/e2e/dual-extension-sharing.spec.ts` | Recipient-side read + TOTP + storage audit + write round trip | ⚠️ VERIFIED (flaky) | Passes, but see WARNING below |
-| `extension/e2e/dual-extension-ceremony.spec.ts` | Live headed shared-passkey ceremony + signCount | ✓ VERIFIED | Verifier-run 2/2 green |
-| `extension/e2e/dual-extension-revocation.spec.ts` | Live post-revocation staleness | ✓ VERIFIED | Verifier-run, first attempt |
+| `extension/entrypoints/background/vault-store.ts` | 3-source merge, scope dispatch, pending/broken discriminant on **both** shared paths, shared hydration barrier | ✓ VERIFIED (was ⚠️) | 1136 lines. `PendingSharedItemEntry.collectionId: string \| null`, upsert `markPending`, `clearPending` on both success branches, `ensureSharedItemsHydrated`, `initialSharedSettled` all present and wired. `mergeDirectSnapshot` is no longer un-instrumented. |
+| `extension/entrypoints/background/vault-store.real-wasm.test.ts` | Real-crypto proof for **both** broken classifications | ✓ VERIFIED | 388 lines, 4 tests, no `wasm-loader` mock; loads real WASM. Collection path proven with a genuinely WRONG key, direct path with a genuinely CORRUPTED ciphertext byte — the two distinct ways an AEAD check fails, deliberately not the same shape twice. |
+| `extension/entrypoints/background/vault-store.test.ts` | Mocked-dispatch mirror for the direct path | ✓ VERIFIED | Test 22 (742-777) asserts `{id, collectionId: null, status: "broken"}` and explicitly asserts the status is never `"pending"` — the discriminant claim is pinned by an assertion, not only by a comment. |
+| `extension/entrypoints/background/identity-store.ts` | Fresh-handle-per-call ownership contract | ✓ VERIFIED | Re-read in full this pass for Task 2. All three return paths hand back a fresh owned handle; every consumer frees exactly once. |
+| `extension/entrypoints/background/provider-ceremony.ts` | Resolution barrier before the candidate snapshot | ✓ VERIFIED | Two awaits at 773-774, unchanged. |
+| `extension/lib/messaging/ext-protocol.ts` | `pending` carries the discriminant | ✓ VERIFIED | Type-only import of `PendingSharedItemEntry` (D-05 boundary honored); the widened `collectionId` propagates with no consumer break (`tsc` exit 0). |
+| `extension/entrypoints/popup/ItemListView.tsx` | Broken row degrades instead of shimmering | ✓ VERIFIED | 524-560; renders from `{id, status}` only — genuinely no change needed for the direct path, as predicted. `pending.length` still widens the empty-state gate, so a broken-only vault never renders "empty". |
+| `extension/lib/i18n/dictionary.ts` | Honest copy | ✓ VERIFIED | `sharing.sharedItemBrokenLabel` present; false "last known version" clause removed PL+EN. |
+| `extension/e2e/*.spec.ts` (sharing, access-levels, revocation, ceremony) | Live proofs | ✓ VERIFIED | All re-run green this session at `--retries=0`. Now tracked in git (the working-tree modifications present at the start of pass 2 are committed). |
+| `crates/pv-provider/src/ceremony.rs` / `tests/response_shape.rs` | EXT-10 record + regression | ✓ VERIFIED | Unchanged; `cargo test --workspace` 0 failed. |
 
 ### Key Link Verification
 
 | From | To | Via | Status |
 |------|----|-----|--------|
-| `vault-session.ts::setUnlockedUserKey` | `identity-store.ts::publishOnUnlock` | fire-and-forget at line 192, the single unlock choke point (A-4) | ✓ WIRED |
-| `vault-store.ts::ensureVaultSyncStarted` | `refreshCollectionsNow()` + `refreshSharedItemsNow()` | same `syncStarted` gate, lines 902-903 | ✓ WIRED |
-| `sync-client.ts` poll/WS tick | `vault-store.ts::handleSharedRevisions` | `onSharedRevisions` callback (`sync-client.ts:129` ← `vault-store.ts:875`) | ✓ WIRED — closes STATE.md's [Phase 23] "`/api/sync/shared` has no client consumer" |
-| lock handler | `freeAllCollectionKeys` + `freeIdentityKey` | inside the EXISTING `subscribeSessionLockState`, after `stopSync()` (`vault-store.ts:959-988`) | ✓ WIRED, call order test-pinned |
-| `vault.list.collections` | ItemListView/ItemDetailView folder lookup | `router.ts:560` → popup state; no direct background/WASM import from a popup component (D-05) | ✓ WIRED |
-| `capture-handler.ts::confirmUpdateLogin` | live cross-member write-then-read proof | `dual-extension-sharing.spec.ts` (T-27-25) | ✓ WIRED |
-| `handleCredentialsGet` candidate snapshot | shared-key resolution barrier | — | ✗ NOT_WIRED (gap #2) |
-| `getPendingSharedItems()` broken entries | E1-error degraded row / E3-error banner | — | ✗ NOT_WIRED (gap #1) |
+| `mergeDirectSnapshot` failure | `getPendingSharedItems()` | `markPending(row.id, null, "broken")` at vault-store.ts:726 | ✓ **WIRED (was ✗ NOT_WIRED — this was the blocker)** |
+| `mergeDirectSnapshot` success | pending-stub cleanup | `clearPending(row.id)` at vault-store.ts:696 | ✓ WIRED (new) |
+| `markPending` | `ItemListView.tsx` broken row | `getPendingSharedItems()` → `router.ts` → `vault.list.pending[].status` → `p.status === "broken"` branch | ✓ WIRED — now fed by **both** shared paths |
+| `PendingSharedItemEntry.collectionId: null` | revoked-collection purge | `p.collectionId !== knownId` at vault-store.ts:817 — `null` never matches, so direct stubs survive collection revocation | ✓ WIRED (correct by construction, verified by reading the predicate) |
+| `handleCredentialsGet` candidate snapshot | shared-key resolution barrier | `await ensureItemsHydrated()` + `await ensureSharedItemsHydrated()` at provider-ceremony.ts:773-774 | ✓ WIRED |
+| `ensureVaultSyncStarted` → `initialSharedSettled`; lock → `initialSharedSettled = null` | | vault-store.ts:1111 | ✓ WIRED |
+| All previously-verified links (unlock→publishOnUnlock, sync→handleSharedRevisions, lock→freeAllCollectionKeys/freeIdentityKey, vault.list.collections→popup, confirmUpdateLogin→live write proof) | | | ✓ WIRED — regression-checked, unchanged |
 
 ### Behavioral Spot-Checks
 
-| Behavior | Command | Result | Status |
-|----------|---------|--------|--------|
-| Typecheck clean | `npx tsc --noEmit` | exit 0, no output | ✓ PASS |
-| Unit + real-WASM suite | `npm test` (run once) | 59 files, 758 tests passed | ✓ PASS |
-| Real-WASM tier genuinely present | `npm test \| grep real-wasm` | 4 files / 12 tests green (`wasm-loader`, `collections-store`, `identity-store`, `provider-ceremony`); spot-read of `collections-store.real-wasm.test.ts` confirms it loads `public/wasm/pv_wasm_bg.wasm` and does not `vi.mock` the crypto loader | ✓ PASS |
-| EXT-10 permanent regression | `cargo test -p pv-provider --test response_shape` | `sign_count_is_always_zero_for_a_provider_ceremony_assertion ... ok` (3 passed) | ✓ PASS |
-| Two-context isolation | `playwright --project=chromium e2e/two-context-spike.spec.ts` | 1 passed (2.0s) | ✓ PASS |
-| Live recipient-side read + TOTP + storage audit + write round trip | `playwright --project=chromium e2e/dual-extension-sharing.spec.ts` | passed; flaky across attempts (see WARNING) | ⚠️ PASS (flaky) |
-| Live post-revocation staleness | `playwright --project=chromium e2e/dual-extension-revocation.spec.ts` | 1 passed (1.1m), no retry | ✓ PASS |
-| Live headed shared-passkey ceremony + signCount | `playwright --project=chromium-ceremony e2e/dual-extension-ceremony.spec.ts --retries=0` | 1 passed, twice | ✓ PASS |
-| Ceremony spec really did the work (implausible 4.1s runtime challenged) | `sqlite3 data/pv.db "SELECT id, collection_id ... ORDER BY rowid DESC"` | two collection-scoped `vault_items` rows at 09:14:32 and 09:15:08 UTC, matching the two runs | ✓ PASS |
+See Task 4's table above — all 12 checks PASS, all run by me in this session.
 
-### Vacuous-Assertion Audit (27-VALIDATION.md's explicit requirement)
+### Probe Execution
 
-Every live spec was read line by line for the `toHaveCount(0)` trap that survived a total feature regression in `web/e2e/sharing.spec.ts`.
-
-| Spec | Assertion shape | Verdict |
-|------|-----------------|---------|
-| `dual-extension-sharing.spec.ts` headline | `getByText(sharedItemName, {exact:true})).toBeVisible()` | ✓ Positive recipient-side observation |
-| " TOTP | `expect(candidates).toContain(returnedCode)` against an independently computed bounded window | ✓ Positive byte-equality |
-| " no-TOTP-affordance | `toHaveCount(0)` — but **anchored** by first asserting the item's own name *and* the "Password" row are visible | ✓ Non-vacuous by construction |
-| " storage audit | `expect(unexpectedKeys).toEqual([])` | ⚠️ Absence-shaped; weakly anchored (it does not positively assert the two baseline keys are present). Mitigated because the preceding unlock/decrypt could not have succeeded with an empty session store. Minor. |
-| " write round trip | `getByText(newCapturePassword, {exact:true})).toBeVisible()` | ✓ Positive byte-equality |
-| `dual-extension-ceremony.spec.ts` | `expect(getResult.id).toBe(createdCredentialId)` and `expect(signCount).toBe(0)` | ✓ Positive identity + positive measurement |
-| `dual-extension-revocation.spec.ts` | presence asserted first on both items, then absence | ✓ Correct presence-then-absence discipline, explicitly documented in the file header |
+No `scripts/*/tests/probe-*.sh` exist in this repo and no PLAN/SUMMARY for this phase declares one. Verification for this phase runs through the Vitest / Cargo / Playwright tiers exercised above. **Step 7c: SKIPPED (no probes declared or discoverable).**
 
 ### Requirements Coverage
 
 | Requirement | Status in REQUIREMENTS.md | Verifier assessment | Evidence |
 |-------------|---------------------------|---------------------|----------|
-| EXT-07 | Complete | ⚠️ **Overstated on the literal wording.** Decryption, display, ordering (UX-3 stable partition, `autofill-match.ts:218-269`) and the write path are all live-proven. The *fill event itself* is not. Marked Complete on a source-level non-modification argument plus a display proof — the plan's own frontmatter says so. | see truth 1 |
-| EXT-08 | Complete | ✓ Supported by evidence | live byte-equality TOTP proof |
-| EXT-09 | Complete | ✓ Supported by evidence | verifier-run headed ceremony |
-| EXT-10 | Complete | ✓ Supported by evidence — and this is the phase's best-evidenced requirement | decision record + Rust wire-byte regression + live wire measurement + independently re-verified SEC-04 unreachability |
-| EXT-11 | Complete | ✓ Supported by evidence | live `chrome.storage.session` enumeration + memory-only code + call-order test |
-| EXT-12 | Complete | ✓ Supported by evidence (visual quality → human) | 6 call sites of one component |
-| KEY-01 | `[x]` in the list, **"Partial" in the traceability table (line 134)** | ⚠️ **Bookkeeping inconsistency.** 27-04-SUMMARY declares `requirements-completed: [KEY-01, EXT-11]`; the requirement's own note says "Do not mark Complete until a client actually triggers generation", and the extension now does (`vault-session.ts:192`). The table was never updated. This is an *under*-claim, but it leaves the milestone record contradictory. | `publishOnUnlock` wired; `ensureOwnIdentityKeypair` real-WASM tested |
+| EXT-07 | Complete | ✓ Supported | Live fill event, positive byte-equality, re-run 2/2 (truth 1) |
+| EXT-08 | Complete | ✓ Supported | Live TOTP byte-equality (truth 1) |
+| EXT-09 | Complete | ✓ Supported | Verifier-run headed ceremony (truth 2) |
+| EXT-10 | Complete | ✓ Supported | Spike record + Rust wire-byte regression + live measurement + re-derived SEC-04 unreachability (truths 3, 4) |
+| EXT-11 | Complete | ✓ Supported | Live in-worker `chrome.storage.session` enumeration (truth 5) |
+| EXT-12 | Complete | ✓ Supported (visual quality → human) | One `SharedBadge` at 6 call sites (truth 6) |
+| KEY-01 | `[x]`, **Complete** in traceability table (line 134) | ✓ Supported | `publishOnUnlock` wired at the single `setUnlockedUserKey` choke point; `ensureOwnIdentityKeypair` real-WASM tested and its handle contract re-verified in full this pass. The `adopted_existing` race branch remains behavior-unverified (truth 15) — that is a *coverage* gap, not a correctness claim I am disputing. |
 
-No orphaned requirements: every ID REQUIREMENTS.md maps to Phase 27 is claimed by at least one plan.
+**Orphan check:** the only requirements the traceability table maps to Phase 27 are EXT-07…EXT-12 (plus KEY-01, shared with Phases 21/22/26). Every one is claimed by a Phase 27 plan. **No orphaned requirements.** `SHARE-01/02/03` remain `[ ]`/Pending but are mapped to **Phase 26**, not 27 — outside this phase's contract, and I am not asserting anything about them here.
 
 ### Anti-Patterns Found
 
 | File | Line | Pattern | Severity | Impact |
 |------|------|---------|----------|--------|
-| — | — | `TBD` / `FIXME` / `XXX` / `TODO` / `HACK` / `PLACEHOLDER` across all 40 phase-modified `.ts`/`.tsx`/`.rs` files | — | **None found.** Debt-marker gate passes cleanly. |
-| `extension/entrypoints/popup/ItemListView.tsx` | 436-485 | Dead branch (`item.undecryptable === true`) — documented as deliberate defense-in-depth | ⚠️ Warning | Not a stub, but it is the branch that *should* have been reachable; see gap #1 |
-| `extension/entrypoints/popup/ItemDetailView.tsx` | 214-217 | Same dead branch | ⚠️ Warning | Same |
-| `extension/entrypoints/background/provider-ceremony.ts` | 776-778 | Same dead filter, documented | ℹ️ Info | Correct as defense-in-depth; the *fallthrough* claim it guards is separately test-pinned |
-| `extension/lib/i18n/dictionary.ts` | 272-275 | `sync.itemUndecryptableWarning` claims "Showing the last known version" | ⚠️ Warning | Ported byte-identical from web, but **false in the extension**, which retains no last-known copy. Currently unreachable; becomes an honesty defect the moment gap #1 is closed by making the branch live. |
+| `vault-store.ts`, `vault-store.test.ts`, `vault-store.real-wasm.test.ts` | — | `TBD`/`FIXME`/`XXX`/`TODO`/`HACK`/`PLACEHOLDER` | — | **None found.** Debt-marker gate: clean on all three files modified by 27-15. |
+| `vault-store.ts` | 296, 817, 1125 | Stale pending stub is never pruned when a shared row *disappears* from a later snapshot | ⚠️ Warning | **New observation this pass, and I want it on the record even though it does not change the verdict.** `pendingSharedItems` is mutated in exactly 5 places: `markPending` (296/298), `clearPending` by id (306), the revoked-**collection** purge (817), and the lock reset (1125). `clearPending` only fires for a row *present* in the current snapshot. So a row that was recorded `"broken"` and is then **unshared/revoked individually** (a direct share revoked, or an item removed from a collection the user still belongs to) leaves its stub behind — the popup renders a phantom "Failed to decrypt shared item" row until the next lock. This is the *inverse* of the prohibition (a phantom, not a silent drop), so it does not falsify truth 7. It leaks nothing: the entry is `{id, collectionId, status}` with no plaintext and no name. It is **pre-existing from 27-04/27-12, not introduced by 27-15** — 27-15 merely extends the same array to a second path. Suggested follow-up for the next milestone: prune `pendingSharedItems` of ids absent from the merged snapshot, in the same place `directSharedItems`/`collectionSharedItems` are replaced. |
+| `vault-store.ts` | 547-551 | Folder decrypt failure drops with a counter + `console.warn` and no stated reason | ℹ️ Info | Folders are personal-only (`decryptFolderRow` takes `uk` alone); outside the shared-item prohibition. Unlike the sibling item branch, this one carries no inline rationale. Cosmetic. |
+| `provider-ceremony.ts` | 785 | Comment enumerates "`applySyncSnapshot`/`mergeCollectionSnapshot`" as the exhaustive set of per-row catch branches | ℹ️ Info | Stale since 27-15 added a third (`mergeDirectSnapshot`). The comment's actual *claim* — that no undecryptable row ever reaches `getItems()` — remains true of all three. Comment-only. |
+| `.planning/ROADMAP.md` | 327, 396 | Phase 27 reads `14/14 plans executed` and `In Progress` while `STATE.md` records 27-15 as complete | ℹ️ Info | Bookkeeping only — 27-15 was a direct fix with a SUMMARY and no PLAN, so the plan count is arguably correct; the `In Progress` status is the stale part. Not a goal-achievement issue. |
 
-## Additional Warnings (not gaps, but they qualify the evidence)
+### Human Verification Required
 
-1. **The headline live proof is intermittently flaky.** `dual-extension-sharing.spec.ts` failed 2 of 6 attempts across three verifier runs, always at `signInAndUnlock`'s 20 s `waitForSelector` for the popup's initial view — a harness/service-worker startup race, never an assertion failure. It passes clean (8.5 s) with `--retries=0` sometimes and needs a retry other times. `playwright.config.ts`'s `retries: 2` masks this entirely, reporting "flaky" rather than red. For a phase whose entire evidence doctrine rests on live proofs, a headline proof that fails a third of the time is a durable liability — a green CI run does not distinguish "passed" from "passed on attempt 3". Worth a bounded wait on the service worker before the first `waitForSelector`.
+**Update (27-16, 2026-08-09):** Item 3 below (`adopted_existing` race) is now CLOSED — real-WASM automated coverage added (`identity-store.real-wasm.test.ts`, falsification-tested), removed from this report's `human_verification` frontmatter array accordingly. Items 1 and 2 remain genuinely open: they are visual/taste judgments, not something an executor can self-approve. Live screenshots were captured for both (see each item's `evidence` field above and the `Evidence` line below) so Bartek can judge in seconds rather than reproduce the live state himself.
 
-2. **No live coverage of any access level except `edit`.** Both fixtures (`fixtures-account-setup.ts:471`, `:809`) grant `access_level: "edit"`, and no e2e file anywhere mentions `hidden_password`. UX-4's mask and 27-07's read-only refusal — the two surfaces most exposed to Phase 26's exact repeat failure — carry only component-tier and mocked-crypto-tier evidence. Partially mitigated by inference: the live write proof only succeeds because `getCollectionAccessLevel()` returns the server's literal `"edit"` string past `confirmUpdateLogin`'s gate, so the access-level plumbing *is* live-correct for one level; the residual risk is that `hidden_password` specifically never round-trips. Routed to human verification rather than failed.
+Two items remain. Neither is a code defect; both are carried forward deliberately so Bartek knows exactly what is left.
 
-3. **Out-of-scope finding, recorded per instruction, and it does *not* undermine any Phase 27 claim — but its severity is amplified here.** `capture-handler.ts::buildLoginFields()` (Phase 11) unconditionally derives `name` from the submitting page's hostname on *every* capture-confirm, update included, discarding the item's custom name. Correctly out of this phase's scope, and the live spec documents the behavior in-place (lines 417-434) and works around it via the popup's search box rather than hiding it. The amplification: for a *shared* item, one member's silent capture now renames the item for every other member. No Phase 27 claim depends on the name being stable — the write proof asserts on the *password* value, and the renaming is symmetric between personal and shared items, so EXT-07's "identically to a personal one" is unaffected. Recommend filing against Phase 11 behavior for v0.5.
+#### 1. Shared-badge visual quality
 
-4. **A VALIDATION.md command is wrong.** 27-02-T1's listed command `cargo test -p pv-provider response_shape` filters by *test name* and matches 0 tests (`response_shape` is a filename). The correct invocations are `--test response_shape` or 27-02-T2's already-correct `cargo test -p pv-provider sign_count_is_always_zero_for_a_provider_ceremony_assertion`. Cosmetic, but a "green" run of the listed command proves nothing.
+**Test:** Open the popup on an account with a mix of shared and personal items. Inspect the shared badge on the "Wszystkie" rows, the "Na tej stronie" rows, the item detail header, and a provider-ceremony candidate row.
+**Expected:** The people-glyph badge reads as a shared marker at popup width without crowding the icon tile; personal rows look untouched.
+**Why human:** ROADMAP SC 5 ("visually distinguishes") is a visual claim. Component tests assert markup, not legibility. Code-side this is as good as it gets — one component, six call sites, zero re-derivation.
+**Evidence:** `extension/.playwright-mcp/uat-27/shared-badge.png` (380px popup width, live two-extension harness, badged shared rows directly beside unbadged personal rows for direct comparison). Not self-approved.
 
-5. **The environment gap does NOT materially weaken the phase's evidence.** `npm run test:e2e:chrome` cannot complete end-to-end because `dual-browser.spec.ts` and `store-screenshots.spec.ts` need `PV_UAT_PASSWORD`/`PV_DEMO_PASSWORD`. Both are pre-existing and unrelated to shared items. I ran all four Phase 27 specs individually and independently in this session; the phase's own evidence is complete and reproduced. Judged non-material.
+#### 2. Broken-row legibility and copy
 
-## Gaps Summary
+**Test:** Open the popup on a vault containing a genuinely broken shared row. Both paths now produce one: a wrong-key collection item, or a corrupted directly-shared item (new since 27-15). Read the degraded row.
+**Expected:** A static AlertTriangle row reading "Failed to decrypt shared item", non-clickable, no shimmer; its tooltip/aria text no longer claims a last known version is being shown.
+**Why human:** The row's legibility and the corrected PL/EN wording are taste calls. `ItemListView.test.tsx` Test 20 asserts markup and non-interactivity (it fires a click and proves `onSelectItem` is never called), not readability.
+**Evidence:** `extension/.playwright-mcp/uat-27/broken-row.png` (380px popup width, live two-extension harness — a real shared item's ciphertext corrupted directly in `data/pv.db`, one AEAD byte, restored and verified byte-identical afterward). Not self-approved. A third, optional neutral-pending-skeleton screenshot was attempted for side-by-side contrast but the real Collection-Key resolution window proved too narrow to reliably capture live on this single-machine harness (sub-~1s, even under CDP-throttled network) — skipped rather than faked.
 
-The phase is substantially achieved. Four of five ROADMAP success criteria are verified with genuine live, non-mocked, positive-assertion evidence that I reproduced myself rather than taking from SUMMARY prose — and the two hardest claims (SC 2 and SC 3) are the best-evidenced things in the phase. The EXT-10 spike in particular did what a spike is supposed to do: it falsified the requirement's own premise ("no shipped product precedent exists" is simply wrong) and said so plainly, with file:line evidence for the SEC-04 unreachability finding that I re-derived independently and found correct. The inherited Phase 26 obligation — budget the live proof from the start — was genuinely discharged: the two-extension harness landed in Wave 1, and the recipient-side proof in Wave 2, early enough to steer.
+#### 3. Concurrent first-unlock identity race (`adopted_existing`) — CLOSED by 27-16
 
-What fails is narrower and specific, and both failures are of the same kind: a state the phase deliberately designed for, wired the *destination* of, and then never connected the *source* to.
+**Test:** Trigger a genuinely concurrent first unlock — web app and extension, on an account with no published identity keypair — and compare the published public key before and after both settle.
+**Expected:** Exactly one keypair published; both clients end up holding the same secret key; no Collection Key ever sealed to the loser's discarded public half.
+**Resolution:** `extension/entrypoints/background/identity-store.real-wasm.test.ts` now has a real-WASM test ("concurrent first-unlock race: adopts the server's already-published keypair instead of overwriting it") that simulates the server already holding a published keypair at publish time and asserts the loser's `ensureOwnIdentityKeypair` call adopts the winner's blob: byte-identical public key before/after, the discarded local candidate freed exactly once, no second publish. Falsification-tested — disabling the adopt branch (`if (response.adopted_existing)` short-circuited to `false`) turned the test RED for the right reason (public key mismatch: the losing client's own overwritten candidate, not the winner's), confirmed clean revert via `git diff`, re-verified green. This is no longer a human-verification item.
 
-**Gap 1 (E2-error) is a real gap, not a technicality, and I am saying so plainly as instructed.** The phase built the degraded-row treatment, built the warning banner, built the ceremony filter — three consumers of `undecryptable: true` — and never built a producer. Meanwhile the one channel that *does* carry failures, `pendingSharedItems`, is deliberately untyped: pending and permanently-broken share one array precisely so that "never silently absent" holds for both. That decision is well-reasoned and well-documented, and it discharges 27-04's prohibition. But it is exactly what makes E2-error's backstop fail, because the popup then has no way to tell the two apart and renders both as a skeleton with no exit. A row whose Collection Key resolved but whose ciphertext failed its integrity check shimmers forever. The backstop's own text names this outcome and forbids it. The fix is small — `hasRefreshedThisSession()` is already the architectural discriminant UI-SPEC §4 specifies; it just needs to reach the popup — and it would light up three already-written, already-tested branches at once. To the phase's credit, 27-11-SUMMARY.md flagged this itself and escalated it here rather than burying it.
+### Gaps Summary
 
-**Gap 2 (MV3-wake partial picker) was never looked at.** Unlike gap 1 it appears in no SUMMARY at all: 27-06 lifted it into `must_haves` as a backstop, then shipped a coverage block (D1–D5) that does not mention it. `handleCredentialsGet` gates on the User Key only and snapshots candidates at t=0 of the wake. The zero-candidate case falls through correctly and is test-pinned (27-10 did that work well, confirming it against real code rather than inferring it). The *partial* case — a personal passkey matching while a shared one is still pending — silently presents an incomplete picker inside a security ceremony. `ensureItemsHydrated()` already exists as the right shape of gate and is already used by the capture path; it is simply not applied here, and would need pairing with a collections-refresh check since it only awaits the personal pull.
+**None.** The single blocker from pass 2 — `mergeDirectSnapshot`'s trace-free silent drop of an undecryptable directly-shared row — is closed, and closed properly: the fix is on the real failure path, the discriminant reasoning is true of the code rather than merely asserted in a comment, the proof uses real WASM against a genuinely tampered ciphertext byte, and deleting the one production line turns two independent tests red. The `deferRealFree` port fixes a test fixture that violated production's fresh-handle-per-call contract; production's own free discipline is correct and unchanged. A sweep of all nine decrypt/merge failure branches across `vault-store.ts`, `collections-store.ts`, and `provider-ceremony.ts` finds no third instance of the defect class — both shared read paths now record, and the two remaining un-recorded drops are personal-only surfaces outside the prohibition's scope, one of which states its reason in-comment and the other of which I confirmed against the server's own query scope rather than assuming.
 
-Neither gap can be deferred: Phase 27 is the last phase of v0.4.
+What remains is one ⚠️ warning worth a follow-up ticket (stale pending stubs are never pruned on individual unshare/revoke — a phantom row, not a drop, leaking nothing, pre-existing) and three human items: two taste calls and one race branch that no test executes. The phase goal is achieved.
 
 ---
 
-_Verified: 2026-08-09_
-_Verifier: Claude (gsd-verifier) — all live proofs executed in-session, not accepted from SUMMARY_
+_Verified: 2026-08-09T11:43:25Z_
+_Verifier: Claude (gsd-verifier) — third pass_
