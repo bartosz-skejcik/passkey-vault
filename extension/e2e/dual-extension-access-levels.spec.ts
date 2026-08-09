@@ -192,17 +192,18 @@ async function cdpTextByClass(
   return cdpText(client, nodes[0].node);
 }
 
-/** True when the FIRST node whose `class` attribute matches exactly also
- * carries the `hidden` attribute -- the toast's own `[hidden] { display:
- * none !important }` rule, so this is a genuine visibility check, not
- * merely "the element exists somewhere in the DOM". */
-async function cdpClassIsHidden(
+/** True when NO node with this exact `class` attribute exists anywhere in
+ * the pierced DOM tree -- save-update-toast.ts's blocked-render branch
+ * never CONSTRUCTS the preview/actions elements at all for a blocked
+ * proposal (28-01-PLAN.md Task 2 refinement: genuine DOM absence, not
+ * merely a `hidden` attribute on an element that still holds the
+ * submitted plaintext password in its `value`). */
+async function cdpClassIsAbsent(
   client: Awaited<ReturnType<typeof cdpSession>>,
   className: string,
 ): Promise<boolean> {
   const nodes = await cdpQuery(client, (_n, a) => a.class === className);
-  if (!nodes.length) return false;
-  return hasAttr(nodes[0].attrs, "hidden");
+  return nodes.length === 0;
 }
 async function waitForCdp<T>(fn: () => Promise<T | null>, timeout = 9000, interval = 300): Promise<T | null> {
   const start = Date.now();
@@ -401,8 +402,8 @@ test("hidden_password autofills without reveal/copy, and read-only writes are re
   expect(readOnlyBlockedBody).toMatch(/edit access to this shared folder|uprawnień do edycji tego udostępnionego folderu/);
   // No password preview, no Update/Retry/Dismiss button -- genuine absence,
   // not merely disabled (28-01-PLAN.md acceptance criteria).
-  expect(await cdpClassIsHidden(readOnlyClient, "pv-toast-preview-row")).toBe(true);
-  expect(await cdpClassIsHidden(readOnlyClient, "pv-toast-actions")).toBe(true);
+  expect(await cdpClassIsAbsent(readOnlyClient, "pv-toast-preview-row")).toBe(true);
+  expect(await cdpClassIsAbsent(readOnlyClient, "pv-toast-actions")).toBe(true);
   const readOnlyConfirmNodes = await cdpQuery(readOnlyClient, (_n, a) => hasAttr(a, "data-pv-toast-confirm"));
   expect(readOnlyConfirmNodes).toHaveLength(0);
   await readOnlyFormPage.close();
@@ -506,8 +507,8 @@ test("direct share (hidden_password) write is refused BEFORE any encrypt call, o
 
   // No password preview, no Update/Retry/Dismiss button -- genuine
   // absence, not merely disabled (28-01-PLAN.md acceptance criteria).
-  expect(await cdpClassIsHidden(directShareClient, "pv-toast-preview-row")).toBe(true);
-  expect(await cdpClassIsHidden(directShareClient, "pv-toast-actions")).toBe(true);
+  expect(await cdpClassIsAbsent(directShareClient, "pv-toast-preview-row")).toBe(true);
+  expect(await cdpClassIsAbsent(directShareClient, "pv-toast-actions")).toBe(true);
   const confirmNodes = await cdpQuery(directShareClient, (_n, a) => hasAttr(a, "data-pv-toast-confirm"));
   expect(confirmNodes).toHaveLength(0);
   await directShareFormPage.close();
@@ -520,4 +521,80 @@ test("direct share (hidden_password) write is refused BEFORE any encrypt call, o
   // fixtures-account-setup.ts), not a second popup-unlock round trip.
   const revisionAfter = await fixture.getHiddenPasswordItemRevision();
   expect(revisionAfter).toBe(1);
+});
+
+// 28-01-PLAN.md Task 2 (B-10, closes v0.4 audit Warning 1): the COLLECTION-
+// scoped half of the same rule -- a `hidden_password` COLLECTION share must
+// refuse identically to the DIRECT-share case above, but via the OTHER new
+// blocked-write body (`update.blockedNoEditAccessBody`, never
+// `update.blockedDirectShareBody` -- this is a different reason, the same
+// gate B-5/B-10 route both through).
+test("hidden_password COLLECTION share write is refused BEFORE any encrypt call, with the no-edit-access body (not the direct-share body)", async ({
+  extContextB,
+  extensionIdB,
+}) => {
+  test.setTimeout(180_000);
+
+  const fixture = await setupAccessLevelFixture();
+
+  const popupB = await extContextB.newPage();
+  await popupB.goto(`chrome-extension://${extensionIdB}/popup.html`);
+  await signInAndUnlock(extContextB, popupB, fixture.memberBEmail, fixture.memberBPassword);
+
+  // Anchored (27-RESEARCH.md's own vacuous-assertion-trap discipline): the
+  // collection item's own name is asserted present FIRST.
+  await expect(popupB.getByText(fixture.hiddenPasswordCollectionItemName, { exact: true })).toBeVisible({
+    timeout: 30000,
+  });
+
+  const hpCollectionFormPage = await extContextB.newPage();
+  await hpCollectionFormPage.goto(`${ACCESS_LEVELS_FORM_ORIGIN}/`);
+  await hpCollectionFormPage.bringToFront();
+  await hpCollectionFormPage.waitForTimeout(1000);
+
+  const hpCollectionClient = await cdpSession(hpCollectionFormPage);
+  const attemptedNewPassword = `pv-e2e-access-level-hp-collection-attempt-${Date.now()}`;
+  await hpCollectionFormPage.fill("#u", fixture.hiddenPasswordCollectionItemUsername);
+  await hpCollectionFormPage.fill("#p", attemptedNewPassword);
+  await hpCollectionFormPage.locator("#p").press("Enter");
+
+  const toast = await waitForCdp(async () => {
+    const t = await cdpQuery(hpCollectionClient, (_n, a) => hasAttr(a, "data-pv-toast"));
+    return t.length ? t : null;
+  });
+  expect(toast).toBeTruthy();
+  const blockedSignal = await waitForCdp(async () => {
+    const nodes = await cdpQuery(
+      hpCollectionClient,
+      (_n, a) => hasAttr(a, "data-pv-toast-message") && !hasAttr(a, "hidden"),
+    );
+    return nodes.length ? nodes : null;
+  });
+  expect(blockedSignal).toBeTruthy();
+
+  const blockedTitle = await cdpTextByClass(hpCollectionClient, "pv-toast-title");
+  expect(blockedTitle).toMatch(/Can't update|Nie można zaktualizować/);
+  const blockedBody = await cdpTextByClass(hpCollectionClient, "pv-toast-message");
+  // THE distinguishing assertion: the no-edit-access body, NOT the
+  // direct-share body -- proves classifySubmit's blockedReason predicate
+  // correctly distinguishes the two cases, not merely "some blocked copy
+  // renders".
+  expect(blockedBody).toMatch(/edit access to this shared folder|uprawnień do edycji tego udostępnionego folderu/);
+  expect(blockedBody).not.toMatch(/shared directly with you|udostępniony Ci bezpośrednio/);
+
+  expect(await cdpClassIsAbsent(hpCollectionClient, "pv-toast-preview-row")).toBe(true);
+  expect(await cdpClassIsAbsent(hpCollectionClient, "pv-toast-actions")).toBe(true);
+  const confirmNodes = await cdpQuery(hpCollectionClient, (_n, a) => hasAttr(a, "data-pv-toast-confirm"));
+  expect(confirmNodes).toHaveLength(0);
+  await hpCollectionFormPage.close();
+
+  // --- load-bearing proof (Warning 1's write-safety half) -----------------
+  // Create-time revision is 2, not 1, for this item -- unlike the DIRECT
+  // share above (created once, never moved), this item is created at
+  // revision 1 then immediately moved into its collection (a second
+  // server-side revision bump, mirrored by readOnlyItemId's own
+  // construction above) BEFORE the fixture ever hands it to this test. A
+  // successful (wrongly-keyed) write would have bumped it to 3.
+  const revisionAfter = await fixture.getHiddenPasswordCollectionItemRevision();
+  expect(revisionAfter).toBe(2);
 });

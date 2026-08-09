@@ -80,6 +80,35 @@ vi.mock("./capture-handler", () => ({
       this.name = "OwnershipMismatchError";
     }
   },
+  // 28-01-PLAN.md Task 2: real re-implementations of router.ts's remaining
+  // `instanceof`-checked error classes, mirroring OwnershipMismatchError's
+  // own shape above -- without these, router.ts's `instanceof
+  // ReadOnlyAccessError`/`CollectionKeyUnavailableError`/
+  // `DirectShareNotEditableError` checks would evaluate against `undefined`
+  // (this mock's absence of those exports), which throws a TypeError the
+  // moment execution reaches past the OwnershipMismatchError check.
+  ReadOnlyAccessError: class ReadOnlyAccessError extends Error {
+    constructor() {
+      super("cannot save -- you have read-only access to this shared item");
+      this.name = "ReadOnlyAccessError";
+    }
+  },
+  CollectionKeyUnavailableError: class CollectionKeyUnavailableError extends Error {
+    constructor(collectionId: string) {
+      super(
+        `cannot save -- the encryption key for collection ${collectionId} is not available yet; wait a moment and try again`,
+      );
+      this.name = "CollectionKeyUnavailableError";
+    }
+  },
+  DirectShareNotEditableError: class DirectShareNotEditableError extends Error {
+    constructor(itemId: string) {
+      super(
+        `cannot save -- item ${itemId} was shared directly with you; editing a directly-shared item is not supported yet`,
+      );
+      this.name = "DirectShareNotEditableError";
+    }
+  },
 }));
 
 vi.mock("./generate-handler", () => ({
@@ -360,6 +389,38 @@ describe("capture.confirm", () => {
     expect(response).toEqual({
       status: "error",
       message: "target item does not belong to the requesting origin/account",
+    });
+  });
+
+  // 28-01-PLAN.md Task 2 (B-4/B-5, closes v0.4 audit Blocker 2): the
+  // reactive backstop's own mapping -- router.ts's catch chain now has 5
+  // distinct mapped error branches for capture.confirm (LockedVaultError,
+  // OwnershipMismatchError, DirectShareNotEditableError, ReadOnlyAccessError,
+  // CollectionKeyUnavailableError), not 4.
+  it("maps a DirectShareNotEditableError from confirmUpdateLogin to {status:'error'} instead of leaking/throwing", async () => {
+    hoisted.mockAssertContentSender.mockReturnValue({
+      ok: true,
+      origin: "https://trusted.example",
+      tabId: 7,
+      frameId: 0,
+    });
+    const { DirectShareNotEditableError } = await import("./capture-handler");
+    hoisted.mockConfirmUpdateLogin.mockRejectedValue(new DirectShareNotEditableError("item-1"));
+
+    const response = await send({
+      kind: "capture.confirm",
+      action: "update",
+      frameOrigin: "https://trusted.example",
+      username: "user@example.com",
+      password: "pw1",
+      itemId: "item-1",
+      currentRevision: 2,
+    });
+
+    expect(response).toEqual({
+      status: "error",
+      message:
+        "cannot save -- item item-1 was shared directly with you; editing a directly-shared item is not supported yet",
     });
   });
 

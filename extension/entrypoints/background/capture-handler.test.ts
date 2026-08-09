@@ -87,6 +87,7 @@ import {
   OwnershipMismatchError,
   ReadOnlyAccessError,
   CollectionKeyUnavailableError,
+  DirectShareNotEditableError,
 } from "./capture-handler";
 import { RevisionConflictError } from "./vault-store";
 import type { VaultItem } from "../../lib/vault/types";
@@ -96,7 +97,11 @@ function loginItem(
   urls: string[],
   username: string,
   password: string,
-  scope?: { collectionId: string | null; accessLevel?: string },
+  // 28-01-PLAN.md Task 2: `sharedToMe` added alongside the existing
+  // `collectionId`/`accessLevel` optional fields, same pattern
+  // provider-ceremony.test.ts's own `passkeyItem()` helper follows for its
+  // sibling addition (Task 3).
+  scope?: { collectionId: string | null; accessLevel?: string; sharedToMe?: boolean },
 ): VaultItem {
   return {
     id,
@@ -112,7 +117,7 @@ function loginItem(
       notes: "",
     },
     ...(scope !== undefined
-      ? { collectionId: scope.collectionId, accessLevel: scope.accessLevel }
+      ? { collectionId: scope.collectionId, accessLevel: scope.accessLevel, sharedToMe: scope.sharedToMe }
       : {}),
   };
 }
@@ -229,6 +234,91 @@ describe("classifySubmit", () => {
     );
 
     expect(result.action).toBe("new");
+  });
+
+  // 28-01-PLAN.md Task 1/2 (B-4/B-10): blockedReason -- the SAME two
+  // conditions confirmUpdateLogin's gate enforces, computed here purely for
+  // the toast's proactive announcement.
+  it("sets blockedReason:'direct-share' on the 'update' branch for a sharedToMe match, regardless of accessLevel", () => {
+    const item = loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw", {
+      collectionId: null,
+      sharedToMe: true,
+    });
+    const result = classifySubmit(
+      { frameOrigin: "https://a.example", username: "user@example.com", password: "new-pw" },
+      [item],
+      "https://a.example",
+    );
+
+    expect(result.action).toBe("update");
+    if (result.action === "update") {
+      expect(result.blockedReason).toBe("direct-share");
+    }
+  });
+
+  it("sets blockedReason:'no-edit-access' on the 'update' branch for a collection-scoped match with accessLevel 'read'", () => {
+    const item = loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw", {
+      collectionId: "col-1",
+      accessLevel: "read",
+    });
+    const result = classifySubmit(
+      { frameOrigin: "https://a.example", username: "user@example.com", password: "new-pw" },
+      [item],
+      "https://a.example",
+    );
+
+    expect(result.action).toBe("update");
+    if (result.action === "update") {
+      expect(result.blockedReason).toBe("no-edit-access");
+    }
+  });
+
+  it("sets blockedReason:'no-edit-access' on the 'update' branch for a collection-scoped match with accessLevel 'hidden_password' (B-10 -- no exception)", () => {
+    const item = loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw", {
+      collectionId: "col-1",
+      accessLevel: "hidden_password",
+    });
+    const result = classifySubmit(
+      { frameOrigin: "https://a.example", username: "user@example.com", password: "new-pw" },
+      [item],
+      "https://a.example",
+    );
+
+    expect(result.action).toBe("update");
+    if (result.action === "update") {
+      expect(result.blockedReason).toBe("no-edit-access");
+    }
+  });
+
+  it("leaves blockedReason undefined on the 'update' branch for a personal match (collectionId absent)", () => {
+    const item = loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw");
+    const result = classifySubmit(
+      { frameOrigin: "https://a.example", username: "user@example.com", password: "new-pw" },
+      [item],
+      "https://a.example",
+    );
+
+    expect(result.action).toBe("update");
+    if (result.action === "update") {
+      expect(result.blockedReason).toBeUndefined();
+    }
+  });
+
+  it("leaves blockedReason undefined on the 'update' branch for a collection-scoped match with accessLevel 'edit'", () => {
+    const item = loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw", {
+      collectionId: "col-1",
+      accessLevel: "edit",
+    });
+    const result = classifySubmit(
+      { frameOrigin: "https://a.example", username: "user@example.com", password: "new-pw" },
+      [item],
+      "https://a.example",
+    );
+
+    expect(result.action).toBe("update");
+    if (result.action === "update") {
+      expect(result.blockedReason).toBeUndefined();
+    }
   });
 });
 
@@ -448,7 +538,11 @@ describe("confirmUpdateLogin", () => {
     expect(hoisted.mockEncryptItem).not.toHaveBeenCalled();
   });
 
-  it("updating a COLLECTION-scoped item with 'hidden_password' access also encrypts via encryptItemForCollection", async () => {
+  // 28-01-PLAN.md Task 2 (B-10): REPLACES the pre-28-01 test that asserted
+  // this case succeeds -- the server's RequireEdit::satisfied_by is an
+  // exact match on Edit and structurally excludes hidden_password, so the
+  // extension must refuse here too, mirroring web's own canEditItem.
+  it("updating a COLLECTION-scoped item with 'hidden_password' access throws ReadOnlyAccessError BEFORE any encrypt call (B-10 -- no exception)", async () => {
     hoisted.mockEnsureHydrated.mockResolvedValue({});
     hoisted.mockGetItems.mockReturnValue([
       loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw", {
@@ -456,21 +550,68 @@ describe("confirmUpdateLogin", () => {
         accessLevel: "hidden_password",
       }),
     ]);
-    hoisted.mockGetCollectionKey.mockReturnValue("fake-collection-key");
-    hoisted.mockEncryptItemForCollection.mockReturnValue(
-      JSON.stringify({ enc_key: { a: 1 }, enc_data: { b: 2 } }),
-    );
-    hoisted.mockUpdateItem.mockResolvedValue({ revision: 3, updated_at: "2026-01-01T00:00:00Z" });
 
-    const result = await confirmUpdateLogin(
-      "item-1",
-      { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
-      2,
-    );
-
-    expect(result.revision).toBe(3);
-    expect(hoisted.mockEncryptItemForCollection).toHaveBeenCalledTimes(1);
+    await expect(
+      confirmUpdateLogin(
+        "item-1",
+        { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+        2,
+      ),
+    ).rejects.toThrow(ReadOnlyAccessError);
     expect(hoisted.mockEncryptItem).not.toHaveBeenCalled();
+    expect(hoisted.mockEncryptItemForCollection).not.toHaveBeenCalled();
+    expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
+  });
+
+  // 28-01-PLAN.md Task 1/2 (B-4/B-5, closes v0.4 audit Blocker 2): the
+  // control proving `sharedToMe` refuses unconditionally, even at
+  // `hidden_password` -- a direct share is never eligible for a write,
+  // regardless of accessLevel, since there is no encrypt-as-recipient
+  // primitive.
+  it("updating a DIRECT-shared item (sharedToMe:true) at 'hidden_password' throws DirectShareNotEditableError BEFORE any encrypt call", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw", {
+        collectionId: null,
+        accessLevel: "hidden_password",
+        sharedToMe: true,
+      }),
+    ]);
+
+    await expect(
+      confirmUpdateLogin(
+        "item-1",
+        { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+        2,
+      ),
+    ).rejects.toThrow(DirectShareNotEditableError);
+    expect(hoisted.mockEncryptItem).not.toHaveBeenCalled();
+    expect(hoisted.mockEncryptItemForCollection).not.toHaveBeenCalled();
+    expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
+  });
+
+  // The sharedToMe gate must win even when accessLevel:"edit" is also set
+  // (a direct share carries no accessLevel from the server today, but the
+  // gate must not rely on that -- sharedToMe alone is authoritative).
+  it("updating a DIRECT-shared item (sharedToMe:true) refuses even when accessLevel is 'edit'", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    hoisted.mockGetItems.mockReturnValue([
+      loginItem("item-1", ["https://a.example/login"], "user@example.com", "old-pw", {
+        collectionId: null,
+        accessLevel: "edit",
+        sharedToMe: true,
+      }),
+    ]);
+
+    await expect(
+      confirmUpdateLogin(
+        "item-1",
+        { frameOrigin: "https://a.example", username: "user@example.com", password: "pw2" },
+        2,
+      ),
+    ).rejects.toThrow(DirectShareNotEditableError);
+    expect(hoisted.mockEncryptItem).not.toHaveBeenCalled();
+    expect(hoisted.mockEncryptItemForCollection).not.toHaveBeenCalled();
   });
 
   it("updating a COLLECTION-scoped item with 'read' access throws ReadOnlyAccessError BEFORE any encrypt call", async () => {

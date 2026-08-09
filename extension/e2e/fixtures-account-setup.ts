@@ -221,6 +221,23 @@ export interface AccessLevelFixtureResult {
    * check proves for the read-only case, just without a second decrypt
    * round trip. */
   getHiddenPasswordItemRevision: () => Promise<number>;
+  /** 28-01-PLAN.md Task 2 (B-10, closes v0.4 audit Warning 1): a FRESH
+   * `hidden_password`-level COLLECTION membership -- distinct from
+   * `readOnlyCollectionId` above and from `hiddenPasswordItemId`'s DIRECT
+   * share -- the shape `confirmUpdateLogin`'s post-28-01 gate actually
+   * requires to prove the collection-scoped half of B-10 (a `hidden_password`
+   * DIRECT share and a `hidden_password` COLLECTION share are different code
+   * paths that must both now correctly refuse). Own login item, own form
+   * origin reuse of `ACCESS_LEVELS_FORM_ORIGIN`, mirroring
+   * `readOnlyCollectionId`'s own construction exactly. */
+  hiddenPasswordCollectionId: string;
+  hiddenPasswordCollectionItemId: string;
+  hiddenPasswordCollectionItemName: string;
+  hiddenPasswordCollectionItemUsername: string;
+  hiddenPasswordCollectionItemOldPassword: string;
+  /** Mirrors `getHiddenPasswordItemRevision`'s own doc comment, scoped to
+   * this COLLECTION-scoped item instead of the direct share. */
+  getHiddenPasswordCollectionItemRevision: () => Promise<number>;
 }
 
 // --- Node-side real WASM ----------------------------------------------
@@ -985,36 +1002,186 @@ export async function setupAccessLevelFixture(): Promise<AccessLevelFixtureResul
         throw new Error(`pv-e2e: move read-only item to collection failed (${moveReadOnlyRes.status})`);
       }
 
-      return {
-        memberAEmail: MEMBER_A_EMAIL,
-        memberAPassword: MEMBER_A_PASSWORD,
-        memberBEmail: MEMBER_B_EMAIL,
-        memberBPassword: MEMBER_B_PASSWORD,
-        hiddenPasswordItemId,
-        hiddenPasswordItemName,
-        hiddenPasswordItemUsername,
-        hiddenPasswordItemPassword,
-        readOnlyCollectionId,
-        readOnlyItemId,
-        readOnlyItemName,
-        readOnlyItemUsername,
-        readOnlyItemOldPassword,
-        getHiddenPasswordItemRevision: async () => {
-          const res = await fetch(`${SERVER}/api/vault/items`, {
-            method: "GET",
+      // --- Step 4 (28-01-PLAN.md Task 2, B-10): hidden_password (a FRESH
+      // collection, member B joins at "hidden_password") -- distinct
+      // collection from `readOnlyCollectionId` above, following the
+      // identical collection-membership construction pattern, own login
+      // item at this same dedicated form origin. Proves the
+      // COLLECTION-scoped half of B-10 (a hidden_password DIRECT share and
+      // a hidden_password COLLECTION share are different code paths that
+      // must both now correctly refuse a write).
+      const hiddenPasswordCollectionId = randomUUID();
+      const hiddenPasswordCk = wasm.WasmCollectionKey.generate();
+      try {
+        const hpEncName = wasm.encryptItemForCollection(
+          hiddenPasswordCk,
+          JSON.stringify({ name: "PV E2E Access-Level Hidden-Password Folder" }),
+          hiddenPasswordCollectionId,
+          hiddenPasswordCollectionId,
+          1,
+        );
+        const ownPublicKeyForHp = wasm.WasmIdentityPublicKey.fromBytes(base64Decode(aPublicKeyB64));
+        let sealedKeyForSelfHp: string;
+        try {
+          sealedKeyForSelfHp = wasm.sealCollectionKey(ownPublicKeyForHp, hiddenPasswordCk);
+        } finally {
+          ownPublicKeyForHp.free?.();
+        }
+
+        const createHpCollectionRes = await fetch(`${SERVER}/api/vault/collections`, {
+          method: "POST",
+          headers: jsonAuthHeaders(a.token),
+          body: JSON.stringify({
+            id: hiddenPasswordCollectionId,
+            enc_name: hpEncName,
+            sealed_key: sealedKeyForSelfHp,
+          }),
+        });
+        if (createHpCollectionRes.status !== 201) {
+          throw new Error(`pv-e2e: hidden_password collection create failed (${createHpCollectionRes.status})`);
+        }
+
+        const recipientPublicKeyForHp = wasm.WasmIdentityPublicKey.fromBytes(base64Decode(bPublicKeyB64));
+        let sealedKeyForRecipientHp: string;
+        try {
+          sealedKeyForRecipientHp = wasm.sealCollectionKey(recipientPublicKeyForHp, hiddenPasswordCk);
+        } finally {
+          recipientPublicKeyForHp.free?.();
+        }
+
+        // The ONE change from the read-only collection block above:
+        // access_level is "hidden_password", not "read".
+        const addHpMemberRes = await fetch(
+          `${SERVER}/api/vault/collections/${hiddenPasswordCollectionId}/members`,
+          {
+            method: "POST",
             headers: jsonAuthHeaders(a.token),
-          });
-          if (!res.ok) {
-            throw new Error(`pv-e2e: GET /api/vault/items failed (${res.status}) for member A`);
-          }
-          const items = (await res.json()) as Array<{ id: string; revision: number }>;
-          const item = items.find((it) => it.id === hiddenPasswordItemId);
-          if (item === undefined) {
-            throw new Error(`pv-e2e: member A's own item ${hiddenPasswordItemId} vanished from GET /api/vault/items`);
-          }
-          return item.revision;
-        },
-      };
+            body: JSON.stringify({
+              recipient_user_id: b.userId,
+              sealed_key: sealedKeyForRecipientHp,
+              access_level: "hidden_password",
+            }),
+          },
+        );
+        if (addHpMemberRes.status !== 201) {
+          throw new Error(`pv-e2e: hidden_password add collection member failed (${addHpMemberRes.status})`);
+        }
+
+        const hiddenPasswordCollectionItemId = randomUUID();
+        const hiddenPasswordCollectionItemName = `PV E2E Access-Level Hidden-Password Collection Item ${Date.now()}`;
+        const hiddenPasswordCollectionItemUsername = `pv-e2e-hidden-password-collection-username-${Date.now()}`;
+        const hiddenPasswordCollectionItemOldPassword = "pv-e2e-hidden-password-collection-password-v1";
+        const hiddenPasswordCollectionPlaintext = JSON.stringify({
+          type: "login",
+          name: hiddenPasswordCollectionItemName,
+          folderId: null,
+          tags: [],
+          username: hiddenPasswordCollectionItemUsername,
+          password: hiddenPasswordCollectionItemOldPassword,
+          urls: [ACCESS_LEVELS_FORM_ORIGIN],
+          notes: "",
+        });
+        const hpPersonalCombined = wasm.encryptItem(
+          a.uk,
+          hiddenPasswordCollectionPlaintext,
+          hiddenPasswordCollectionItemId,
+          1,
+        );
+        const { encKey: hpPersonalEncKey, encData: hpPersonalEncData } =
+          splitCombinedEncryptedItem(hpPersonalCombined);
+        const createHpItemRes = await fetch(`${SERVER}/api/vault/items`, {
+          method: "POST",
+          headers: jsonAuthHeaders(a.token),
+          body: JSON.stringify({
+            id: hiddenPasswordCollectionItemId,
+            enc_key: hpPersonalEncKey,
+            enc_data: hpPersonalEncData,
+          }),
+        });
+        if (createHpItemRes.status !== 201) {
+          throw new Error(`pv-e2e: hidden_password collection item create failed (${createHpItemRes.status})`);
+        }
+
+        const hpCollectionCombined = wasm.encryptItemForCollection(
+          hiddenPasswordCk,
+          hiddenPasswordCollectionPlaintext,
+          hiddenPasswordCollectionId,
+          hiddenPasswordCollectionItemId,
+          2,
+        );
+        const { encKey: hpCollEncKey, encData: hpCollEncData } =
+          splitCombinedEncryptedItem(hpCollectionCombined);
+        const moveHpRes = await fetch(`${SERVER}/api/vault/items/${hiddenPasswordCollectionItemId}/collection`, {
+          method: "PUT",
+          headers: jsonAuthHeaders(a.token),
+          body: JSON.stringify({
+            new_collection_id: hiddenPasswordCollectionId,
+            enc_key: hpCollEncKey,
+            enc_data: hpCollEncData,
+            expected_revision: 1,
+          }),
+        });
+        if (!moveHpRes.ok) {
+          throw new Error(`pv-e2e: move hidden_password collection item to collection failed (${moveHpRes.status})`);
+        }
+
+        return {
+          memberAEmail: MEMBER_A_EMAIL,
+          memberAPassword: MEMBER_A_PASSWORD,
+          memberBEmail: MEMBER_B_EMAIL,
+          memberBPassword: MEMBER_B_PASSWORD,
+          hiddenPasswordItemId,
+          hiddenPasswordItemName,
+          hiddenPasswordItemUsername,
+          hiddenPasswordItemPassword,
+          readOnlyCollectionId,
+          readOnlyItemId,
+          readOnlyItemName,
+          readOnlyItemUsername,
+          readOnlyItemOldPassword,
+          getHiddenPasswordItemRevision: async () => {
+            const res = await fetch(`${SERVER}/api/vault/items`, {
+              method: "GET",
+              headers: jsonAuthHeaders(a.token),
+            });
+            if (!res.ok) {
+              throw new Error(`pv-e2e: GET /api/vault/items failed (${res.status}) for member A`);
+            }
+            const items = (await res.json()) as Array<{ id: string; revision: number }>;
+            const item = items.find((it) => it.id === hiddenPasswordItemId);
+            if (item === undefined) {
+              throw new Error(
+                `pv-e2e: member A's own item ${hiddenPasswordItemId} vanished from GET /api/vault/items`,
+              );
+            }
+            return item.revision;
+          },
+          hiddenPasswordCollectionId,
+          hiddenPasswordCollectionItemId,
+          hiddenPasswordCollectionItemName,
+          hiddenPasswordCollectionItemUsername,
+          hiddenPasswordCollectionItemOldPassword,
+          getHiddenPasswordCollectionItemRevision: async () => {
+            const res = await fetch(`${SERVER}/api/vault/items`, {
+              method: "GET",
+              headers: jsonAuthHeaders(a.token),
+            });
+            if (!res.ok) {
+              throw new Error(`pv-e2e: GET /api/vault/items failed (${res.status}) for member A`);
+            }
+            const items = (await res.json()) as Array<{ id: string; revision: number }>;
+            const item = items.find((it) => it.id === hiddenPasswordCollectionItemId);
+            if (item === undefined) {
+              throw new Error(
+                `pv-e2e: member A's own item ${hiddenPasswordCollectionItemId} vanished from GET /api/vault/items`,
+              );
+            }
+            return item.revision;
+          },
+        };
+      } finally {
+        hiddenPasswordCk.free?.();
+      }
     } finally {
       readOnlyCk.free?.();
     }

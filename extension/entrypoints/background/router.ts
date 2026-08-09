@@ -111,6 +111,7 @@ import {
   OwnershipMismatchError,
   ReadOnlyAccessError,
   CollectionKeyUnavailableError,
+  DirectShareNotEditableError,
 } from "./capture-handler";
 import {
   readServerConfig,
@@ -464,6 +465,17 @@ async function handleCaptureConfirmMessage(
       return { status: "error", message: e.message };
     }
     if (e instanceof OwnershipMismatchError) {
+      return { status: "error", message: e.message };
+    }
+    // 28-01-PLAN.md Task 2 (B-4/B-5, closes v0.4 audit Blocker 2): the
+    // reactive backstop for a direct-share write refusal -- the proactive
+    // toast (save-update-toast.ts's blocked-render branch) already
+    // suppresses this in the normal flow, so this branch exists purely as
+    // defense-in-depth for any confirm that reaches the background without
+    // having gone through the proactive classification first (mirrors
+    // web's own two-layer canEditItem/DirectShareNotEditableError
+    // precedent, 28-RESEARCH.md §B).
+    if (e instanceof DirectShareNotEditableError) {
       return { status: "error", message: e.message };
     }
     if (e instanceof ReadOnlyAccessError) {

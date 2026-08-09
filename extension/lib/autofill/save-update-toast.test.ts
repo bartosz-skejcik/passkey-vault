@@ -242,6 +242,78 @@ describe("showSaveUpdateToast", () => {
     expect(shadow.querySelector("[data-pv-toast]")).toBeNull();
   });
 
+  // 28-01-PLAN.md Task 1/2 (B-4/B-10, closes v0.4 audit Blocker 2/Warning 1):
+  // both blocked-write states render directly on FIRST render -- no
+  // password preview, no Update/Retry/Dismiss button, no error color, and
+  // `confirmCapture()` (hence `sendMessage`) is NEVER called for either.
+  it("action:'update' with blockedReason:'direct-share' opens directly in the blocked state -- no preview, no actions, non-error tone", () => {
+    showSaveUpdateToast({
+      action: "update",
+      itemId: "item-1",
+      currentRevision: 3,
+      frameOrigin: "https://a.example",
+      username: "alice",
+      password: "new-pw",
+      blockedReason: "direct-share",
+    });
+
+    const shadow = shadowOf();
+    const toast = shadow.querySelector("[data-pv-toast]");
+    expect(toast).not.toBeNull();
+    expect(toast!.textContent).toContain("Can't update");
+
+    const message = shadow.querySelector<HTMLElement>("[data-pv-toast-message]")!;
+    expect(message.hidden).toBe(false);
+    expect(message.className).toBe("pv-toast-message");
+    expect(message.textContent).toMatch(/shared directly with you/i);
+
+    expect(shadow.querySelector("[data-pv-toast-preview]")).toBeNull();
+    expect(shadow.querySelector("[data-pv-toast-confirm]")).toBeNull();
+    expect(shadow.querySelector("[data-pv-toast-dismiss]")).toBeNull();
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("action:'update' with blockedReason:'no-edit-access' opens directly in the blocked state with the matching body copy", () => {
+    showSaveUpdateToast({
+      action: "update",
+      itemId: "item-1",
+      currentRevision: 3,
+      frameOrigin: "https://a.example",
+      username: "alice",
+      password: "new-pw",
+      blockedReason: "no-edit-access",
+    });
+
+    const shadow = shadowOf();
+    const message = shadow.querySelector<HTMLElement>("[data-pv-toast-message]")!;
+    expect(message.hidden).toBe(false);
+    expect(message.className).toBe("pv-toast-message");
+    expect(message.textContent).toMatch(/edit access to this shared folder/i);
+
+    expect(shadow.querySelector("[data-pv-toast-preview]")).toBeNull();
+    expect(shadow.querySelector("[data-pv-toast-confirm]")).toBeNull();
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("action:'new' never routes into the blocked state, even if blockedReason were somehow set (blockedReason only narrows for 'update')", () => {
+    showSaveUpdateToast({
+      action: "new",
+      frameOrigin: "https://a.example",
+      username: "alice",
+      password: "hunter2",
+      // classifySubmit never attaches blockedReason to a 'new' proposal in
+      // production -- this asserts the runtime narrowing defends against a
+      // caller that did anyway (SaveUpdateProposal's own flat shape does
+      // not forbid it at the type level).
+      blockedReason: "direct-share",
+    });
+
+    const shadow = shadowOf();
+    const confirmBtn = shadow.querySelector<HTMLButtonElement>("[data-pv-toast-confirm]")!;
+    expect(confirmBtn).not.toBeNull();
+    expect(confirmBtn.textContent).toMatch(/save|zapisz/i);
+  });
+
   it("mounting a second toast tears down the first (at most one mounted at a time)", () => {
     showSaveUpdateToast({
       action: "new",

@@ -313,6 +313,33 @@ export function showSaveUpdateToast(proposal: SaveUpdateProposal, opts?: { doc?:
 
   header.append(icon, titleEl, closeBtn);
 
+  if (blockedReason !== undefined) {
+    // 28-01-PLAN.md Task 1/2 (B-4/B-10, closes v0.4 audit Blocker 2/Warning
+    // 1): the toast opens DIRECTLY in the blocked state -- the ordinary
+    // propose-then-fail round trip (submit -> see "Update?" -> click
+    // Update -> generic save.failed) must never occur here (28-UI-SPEC.md
+    // E2, "suppressed, not failed"). No password preview is ever
+    // CONSTRUCTED at all (not merely hidden -- the submitted plaintext
+    // never enters the DOM for a write that will never be confirmed), no
+    // Update/Retry/Dismiss button (nothing to retry -- the block is
+    // structural, not transient) -- the header's own close button, already
+    // wired above, is the only dismissal. `.pv-toast-message` WITHOUT the
+    // `-error` modifier: an honest capability boundary, not a fault
+    // (28-UI-SPEC.md Color section).
+    const messageEl = doc.createElement("div");
+    messageEl.className = "pv-toast-message";
+    messageEl.setAttribute("data-pv-toast-message", "");
+    messageEl.textContent = t(
+      locale,
+      blockedReason === "direct-share" ? "update.blockedDirectShareBody" : "update.blockedNoEditAccessBody",
+    );
+
+    panel.append(header, messageEl);
+    container.appendChild(panel);
+    toastEl = panel;
+    return;
+  }
+
   const bodyEl = doc.createElement("div");
   bodyEl.className = "pv-toast-body";
   bodyEl.textContent = interpolate(t(locale, action === "new" ? "save.body" : "update.body"), {
@@ -350,35 +377,6 @@ export function showSaveUpdateToast(proposal: SaveUpdateProposal, opts?: { doc?:
   const actionsRow = doc.createElement("div");
   actionsRow.className = "pv-toast-actions";
   actionsRow.setAttribute("data-pv-toast-actions", "");
-
-  if (blockedReason !== undefined) {
-    // 28-01-PLAN.md Task 1 (B-4/B-10, closes v0.4 audit Blocker 2/Warning
-    // 1): the toast opens DIRECTLY in the blocked state -- the ordinary
-    // propose-then-fail round trip (submit -> see "Update?" -> click
-    // Update -> generic save.failed) must never occur here (28-UI-SPEC.md
-    // E2, "suppressed, not failed"). No password preview (nothing is being
-    // confirmed, per B-5's before-any-encrypt-call gate), no
-    // Update/Retry/Dismiss button (nothing to retry -- the block is
-    // structural, not transient) -- the header's own close button, already
-    // wired above, is the only dismissal. `.pv-toast-message` WITHOUT the
-    // `-error` modifier: an honest capability boundary, not a fault
-    // (28-UI-SPEC.md Color section). Does not build the
-    // preview-reveal/confirm-button machinery below at all.
-    bodyEl.hidden = true;
-    previewRow.hidden = true;
-    messageEl.hidden = false;
-    messageEl.className = "pv-toast-message";
-    messageEl.textContent = t(
-      locale,
-      blockedReason === "direct-share" ? "update.blockedDirectShareBody" : "update.blockedNoEditAccessBody",
-    );
-    actionsRow.hidden = true;
-
-    panel.append(header, bodyEl, previewRow, messageEl, actionsRow);
-    container.appendChild(panel);
-    toastEl = panel;
-    return;
-  }
 
   const dismissBtn = doc.createElement("button");
   dismissBtn.type = "button";
