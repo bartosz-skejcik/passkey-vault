@@ -884,6 +884,16 @@ let syncStarted = false;
 // pull -- never a stale promise from a previous session (T-09-19).
 let initialPullSettled: Promise<{ ok: true } | { ok: false; error: unknown }> | null = null;
 
+// 27-13 (Blocker 2 gap closure): the shared-side counterpart to
+// `initialPullSettled` above -- tracks the CURRENT unlock session's combined
+// `refreshCollectionsNow()`/`refreshSharedItemsNow()` settlement so
+// `ensureSharedItemsHydrated()` below can actually AWAIT it, mirroring
+// `initialPullSettled`'s own WR-03 shape for the shared/Collection-Key side
+// of the cache. Reset to `null` on every lock (same position as
+// `initialPullSettled`) so a re-unlock always awaits a NEW settlement, never
+// a stale promise from a previous session (T-09-19 discipline).
+let initialSharedSettled: Promise<{ ok: true }> | null = null;
+
 /**
  * Idempotent. Starts the sync transport + the initial getSyncSnapshot(0)
  * pull IF the session is unlocked and sync isn't already running; a no-op
@@ -940,8 +950,18 @@ export function ensureVaultSyncStarted(): void {
   // collection-scoped row can be classified correctly). Both calls are
   // fire-and-forget / self-healing -- 404-tolerant for a single-user vault
   // with no `family_members` row, same discipline as every other pull here.
-  void refreshCollectionsNow().catch(() => {});
-  void refreshSharedItemsNow();
+  // 27-13 (Blocker 2 gap closure): identical calls to the two lines this
+  // replaces (refreshCollectionsNow() / refreshSharedItemsNow(), each called
+  // EXACTLY ONCE, same as before -- refreshSharedItemsNow() still races
+  // refreshCollectionsNow() exactly as it did, since doHandleSharedRevisions
+  // already awaits its own internal refreshCollectionsNow() call before
+  // pulling any collection) -- this only ADDS an awaitable handle on their
+  // combined settlement via Promise.allSettled (never rejects, matching this
+  // pair's existing best-effort/self-healing contract) so
+  // ensureSharedItemsHydrated() below has something to await.
+  initialSharedSettled = Promise.allSettled([refreshCollectionsNow(), refreshSharedItemsNow()]).then(
+    () => ({ ok: true as const }),
+  );
 }
 
 /**
@@ -985,6 +1005,45 @@ export function ensureItemsHydrated(): Promise<{ ok: true } | { ok: false; error
   return initialPullSettled;
 }
 
+/**
+ * 27-13 (Blocker 2 gap closure): the shared-side counterpart to
+ * `ensureItemsHydrated()` above -- awaits the CURRENT unlock session's
+ * combined `refreshCollectionsNow()`/`refreshSharedItemsNow()` settlement
+ * (the eager shared-item/Collection-Key resolution `ensureVaultSyncStarted()`
+ * already kicks off on every unlock/wake) instead of the personal
+ * `getSyncSnapshot(0)` pull `ensureItemsHydrated()` tracks.
+ *
+ * Kicks off `ensureVaultSyncStarted()` (idempotent, safe to call every time)
+ * and returns a promise that resolves `{ ok: true }` once BOTH calls have
+ * settled -- success or failure, since `Promise.allSettled` never rejects,
+ * matching this pair's existing best-effort/self-healing contract (a
+ * transient network failure here self-heals on the next poll/WS tick, same
+ * as `refreshCollectionsNow()`/`refreshSharedItemsNow()`'s own individual
+ * `.catch()` discipline before this function existed).
+ *
+ * IMPORTANT: this is a BEST-EFFORT barrier -- "the background did its best
+ * to resolve shared state before you read `getItems()`" -- never a
+ * guarantee that every shared item definitely landed (a slow/offline network
+ * can still leave a row in `getPendingSharedItems()`'s pending/broken state
+ * after this resolves). A caller's own existing empty/zero-candidate
+ * handling still applies to whatever `getItems()` returns once this
+ * settles.
+ *
+ * Single-flight and idempotent, mirroring `ensureItemsHydrated()`'s own
+ * shape: every caller this session shares the SAME `initialSharedSettled`
+ * promise. If the session is not unlocked (`ensureVaultSyncStarted()`
+ * no-ops and `initialSharedSettled` is still `null`), resolves `{ ok: true
+ * }` vacuously -- there is nothing to hydrate, mirroring
+ * `ensureItemsHydrated()`'s own "nothing to hydrate while locked" branch.
+ */
+export function ensureSharedItemsHydrated(): Promise<{ ok: true }> {
+  ensureVaultSyncStarted();
+  if (initialSharedSettled === null) {
+    return Promise.resolve({ ok: true });
+  }
+  return initialSharedSettled;
+}
+
 // Module-level side effect (mirrors web/src/lib/vault/store.ts's own
 // subscribeLockState side effect): unlocking the vault starts the sync
 // transport AND triggers an immediate getSyncSnapshot(0) pull (instant
@@ -1003,6 +1062,7 @@ subscribeSessionLockState(() => {
   } else {
     syncStarted = false; // re-arm the guard for the NEXT unlock
     initialPullSettled = null; // WR-03 (iteration 2): a re-unlock must await a NEW pull
+    initialSharedSettled = null; // 27-13: same reasoning, shared/Collection-Key side
     stopSync(); // MUST run before the array-clear below
     // 27-04 (A-3/T-09-18): the new identity/Collection-Key caches clear
     // HERE, in the SAME position as every other clear this handler already
