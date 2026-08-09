@@ -1,5 +1,38 @@
 # Milestones
 
+## v0.4 Family & Sharing (Shipped: 2026-08-09)
+
+Phases 21–28 · 64 plans · 548 commits · 611 files, +113,497/−509
+
+Made the instance multi-user without giving up zero-knowledge. The server still never sees a private
+key, a Collection Key, or any plaintext, and deployment is unchanged: 1 container, SQLite.
+
+- **Asymmetric sharing layer in `pv-core`** — X25519 identity keypairs, sealed-box Collection Keys and
+  scope-bound AAD, with the `crypto_box`-vs-hand-rolled decision recorded *before* any dependent code.
+  Adding or removing a member rewraps keys only; a byte-level `SELECT` proves `enc_data` is untouched.
+- **Family/collection model behind one uniformly-enforced membership check**, plus live shared-data
+  fan-out over the existing WS channel and per-collection revision counters.
+- **Invitations with no SMTP** — single-use, expiring links/codes that work for both a brand-new
+  registration and an existing account, branching at redemption on whether a session exists.
+- **Three access levels** (read-only / full-edit / hidden-password), with hidden-password stated
+  honestly as an interface protection rather than a cryptographic one.
+- **Atomic, cost-bounded re-key** on suspension and removal — proven by fault injection *and* a
+  documented kill-and-revert confirming the test goes red against a broken implementation.
+- **Shared items identical in web and extension** — autofill, TOTP, and real `credentials.get()`
+  passkey ceremonies on third-party sites through the same item-wrap mechanism as any other item.
+- **The EXT-10 spike falsified its own requirement's premise:** provider passkeys set no signature
+  counter at all, iCloud Keychain and Google Password Manager both report `signCount: 0` as WebAuthn L3
+  permits, and the SEC-04 anomaly classifier is structurally unreachable from a provider ceremony.
+
+**The lesson worth carrying:** all seven original phases verified `passed`, and the cross-phase audit
+then found three defects every one of them missed — each the same shape, *a server capability no client
+reaches*. Phase 28 existed solely to close them. Per-phase verification cannot see a gap that lives
+between phases.
+
+Audit: `milestones/v0.4-MILESTONE-AUDIT.md` · Full details: `milestones/v0.4-ROADMAP.md`
+Debt into v0.5: 5 items (orphaned `identity/verify`, export mask, add-to-existing-collection,
+`pendingSharedItems` pruning, clippy ×19). Unimplemented: UX-04, FAM-10.
+
 ## v0.3 Polish & Hardening (Shipped: 2026-07-22)
 
 **Phases completed:** 7 phases (14–20), 29 plans
