@@ -326,18 +326,36 @@ new colored alert, not a second `alert-warning`/`alert-info` element:
 
 Applicable state considerations resolved: 4 covered, 1 backstop, 0 unresolved.
 
+Probed surfaces: **E1** page shell · **E2** jump-nav · **E3** settings section group · **E4**
+back-to-vault link · **E5** DEBT-02 export disclosure · **E6** sidebar settings entry.
+40 applicable considerations across the 8-category taxonomy: **37 covered, 3 backstop, 0 unresolved.**
+
 | Category | Element(s) | Status | Resolution / Reason |
 |----------|------------|--------|----------------------|
-| overflow | jump-nav | ✅ covered | Mobile (`<768px`) switches from a sticky vertical rail to a horizontal `overflow-x-auto` sticky pill row — a concrete layout change, not an assumption, per Page Layout Contract. |
-| overflow | page header | ✅ covered | Back-link + `<h1>` stack vertically (`flex-col`) below `md:`; verified not to clip or truncate at 375px width. |
-| empty / loading / error | Konto (passkeys, sessions lists), Rodzina i udostępnianie (members, invites, bootstrap-empty state) | ✅ covered | Carried-across content from shipped `PasskeysTab`/`SessionsTab`/`FamilyTab` — their existing empty/loading/error states and the tests that assert them are unaffected by the container migration; SC2's 821-test-baseline-green bar is the verification, not a fresh design. |
-| zero-one-many | DEBT-02 export disclosure — render/no-render | ✅ covered | `n === 0` → sentence entirely absent; `n ≥ 1` → sentence renders with the interpolated count. This *is* the DEBT-02 resolution itself, verified against real export file bytes per SC4. |
-| zero-one-many | DEBT-02 export disclosure — Polish grammar at `n === 1` | 🧪 backstop | "1 wpisów" is not grammatically perfect Polish, but matches this codebase's existing, accepted no-plural-machinery convention (same shape as the recorded cosmetic debt on `account.deleteOwnerWarning`'s "1 member(s)"). Needs a held-out test asserting the exact interpolated string at `n=1` rather than an assumption that it "reads fine." |
+| loading, error | E1 page shell | ✅ covered | The shell fetches **nothing** — it renders synchronously. Acceptance: `/settings` renders the header, the jump-nav and all four `<h2>` group headings before any data resolves. A migrated component that fails shows its own existing error state *inside* its section; the section heading stays rendered either way, so the IA never collapses on a failed fetch. |
+| overflow, long-text | E1 page shell | ✅ covered | Page scrolls vertically with header + jump-nav pinned (`sticky`); content column capped at `max-w-2xl`. The body never scrolls horizontally at any viewport. Headings/descriptions are fixed translator-owned strings that wrap, never truncate. |
+| empty, loading, populated, zero-one-many | E2 jump-nav | ✅ covered | The four groups are **static** — the nav has no data source, cannot be empty, has no loading state, and always renders exactly four links. No singular/plural copy exists to get wrong. |
+| error, partial | E2 jump-nav | ✅ covered | Scroll-spy is a **progressive enhancement**. Acceptance: with `IntersectionObserver` unavailable or stubbed out, all four links still navigate via native anchor behaviour — only the active highlight is lost. Exactly one link is active at a time; at scroll-top that is `Konto`. |
+| overflow | E2 jump-nav | ✅ covered | Mobile (`<768px`) switches from a sticky vertical rail to a horizontal `overflow-x-auto` sticky pill row — a concrete layout change, not an assumption, per the Page Layout Contract. |
+| long-text | E2 jump-nav | 🧪 backstop | **Polish group names are materially longer than English** — `Rodzina i udostępnianie` is 23 characters against `Family & sharing`'s 16. That is the real pressure on both the 200px desktop rail and the 375px mobile pill row, and neither width was chosen with the PL string in hand. Needs a held-out check that all four PL labels render without clipping at 375px **and** in the 200px rail — not an assumption that they fit. |
+| empty, loading, error, populated, partial, zero-one-many, long-text | E3 settings section group | ✅ covered | All seven are **carried across unchanged** from shipped `PasskeysTab` / `SessionsTab` / `SecurityTab` / `FamilyTab`, each of which already owns its empty, loading, error and volume states along with the tests asserting them. The container migration does not touch them. SC2's "821 baseline green against the new location, no test deleted or weakened" **is** the verification here — not a freshly designed state. |
+| overflow | E3 settings section group | ✅ covered | Content column is `max-w-2xl` (672px) — migrated markup tuned for a 400px drawer is deliberately **not** stretched to a 1000px+ column. The page's extra width goes to margin and the jump-nav rail. |
+| empty, loading, error, partial | E4 back-to-vault link · E6 sidebar settings entry | ✅ covered | Both are **static navigation elements with no data source** — there is no state in which either is empty, loading, failed, or partial. E6 is icon-only with an `aria-label`, so it has no text to overflow either. |
+| populated, overflow, long-text | E4 back-to-vault link | ✅ covered | `ArrowLeft` + label at `text-sm text-base-content/70`, deliberately not accent-coloured. Below 768px the header stacks `flex-col`, so the link and `<h1>` never compete for one line at 375px. Label is a fixed translator string. |
+| populated | E6 sidebar settings entry | ✅ covered | Unchanged gear icon and `aria-label={t("aria.openSettings")}`; only the element changes, `<button onClick>` → `<a href="/settings">`. |
+| empty, zero-one-many | E5 DEBT-02 export disclosure | ✅ covered | `n === 0` → the sentence is **entirely absent** (not "0 wpisów"); `n ≥ 1` → it renders with the interpolated count. This *is* the DEBT-02 resolution, and SC4 verifies it against the bytes of a real generated export file, not against the rendered string. |
+| populated, overflow, long-text | E5 DEBT-02 export disclosure | ✅ covered | Rendered as a second `<p>` **inside** the existing `export-warning-banner` alert — never a competing second alert box. Fixed sentence plus a number; wraps inside the alert at every width. |
+| loading, partial, error | E5 DEBT-02 export disclosure | 🧪 backstop | **The honesty risk this phase exists to close, re-entering through the back door.** The count is derived from vault item state via `isPasswordHidden`. If the export dialog can be opened while items are still hydrating — or over a partially-hydrated set — the count is an **undercount**, and at zero it renders as *no sentence at all*: the UI would silently claim nothing is exposed while the file about to be written contains exactly those passwords. That is the same class of lie DEBT-02 is fixing, so "it will probably be hydrated by then" is not an acceptable resolution. Needs an explicit rule — the disclosure is computed only from a fully-hydrated item set, and the export action is unavailable until then — plus a falsification test that opens the dialog against an unhydrated/partial store and asserts the flow does **not** present a zero-count (absent) disclosure. |
+| zero-one-many | E5 DEBT-02 export disclosure — Polish grammar at `n === 1` | 🧪 backstop | "1 wpisów" is not grammatically correct Polish, but matches this codebase's existing, accepted no-plural-machinery convention (same shape as the recorded cosmetic debt on `account.deleteOwnerWarning`'s "1 member(s)"). Needs a held-out test asserting the exact interpolated string at `n = 1` rather than an assumption that it "reads fine." |
 
-Dismissed (no further action, reason recorded, not a table row per template's 3-status shape):
-long-text on the group description lines (fixed, short, translator-owned, no user input); a
-page-shell-level loading state (the shell itself fetches nothing — every data fetch belongs to an
-already-existing migrated component with its own established loading state).
+**Planner note — the three backstops are not decoration.** Each one is a stated verification obligation
+with no wired evidence yet, so at verify time each routes to `insufficient_spec → human_needed` unless
+the plan wires it. The E5 loading/partial backstop in particular is a **correctness** obligation, not a
+polish item: it is the one place in this phase where a plausible implementation would reintroduce the
+exact dishonesty DEBT-02 removes.
+
+Dismissed (reason recorded, not a table row per the template's 3-status shape): long-text on the four
+group description lines — fixed, short, translator-owned, no user input can lengthen them.
 
 ---
 
