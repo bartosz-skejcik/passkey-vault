@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { ApiClientError } from "@/lib/auth/api";
 import type { SharedRevisions, SyncSnapshot } from "./api";
 import type { SyncCallbacks } from "./sync";
@@ -325,6 +325,94 @@ describe("lock/unlock subscription behavior", () => {
     });
     expect(mockStartSync).toHaveBeenCalledTimes(1);
     expect(mockStopSync).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 29-02: `hydrated` distinguishes "getItems() confirmed post-unlock" from
+// "don't know yet" -- the DEBT-02 export disclosure (ExportDialog.tsx) reads
+// this via `useItemsHydrated()` to avoid ever presenting a confirmed-zero
+// hidden-password count against an unhydrated store. Mirrors
+// `lib/crypto/index.test.ts`'s own `useIsUnlocked()` renderHook coverage.
+describe("hydration signal (isItemsHydrated/useItemsHydrated)", () => {
+  it("isItemsHydrated() is false before any unlock event fires", async () => {
+    const { store } = await importStoreAndGetLockListener();
+    expect(store.isItemsHydrated()).toBe(false);
+  });
+
+  it("isItemsHydrated() is still false immediately after the unlock listener fires, before loadAndDecryptAll resolves", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+
+    mockIsUnlocked.mockReturnValue(true);
+    act(() => {
+      lockListener();
+    });
+    expect(store.isItemsHydrated()).toBe(false);
+  });
+
+  it("isItemsHydrated() becomes true once loadAndDecryptAll's promise resolves post-unlock", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(store.isItemsHydrated()).toBe(true);
+  });
+
+  it("a lock event resets isItemsHydrated() back to false", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(store.isItemsHydrated()).toBe(true);
+
+    mockIsUnlocked.mockReturnValue(false);
+    act(() => {
+      lockListener();
+    });
+    expect(store.isItemsHydrated()).toBe(false);
+  });
+
+  it("useItemsHydrated() re-renders a subscribed component through the same unlock -> hydrated -> lock transitions", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+    const { result } = renderHook(() => store.useItemsHydrated());
+    expect(result.current).toBe(false);
+
+    mockIsUnlocked.mockReturnValue(true);
+    act(() => {
+      lockListener();
+    });
+    expect(result.current).toBe(false);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current).toBe(true);
+
+    mockIsUnlocked.mockReturnValue(false);
+    act(() => {
+      lockListener();
+    });
+    expect(result.current).toBe(false);
   });
 });
 

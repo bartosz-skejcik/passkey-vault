@@ -274,6 +274,40 @@ export function subscribeItems(listener: () => void): () => void {
   };
 }
 
+// Mirrors `lib/crypto/index.ts`'s `isUnlocked`/`subscribeLockState`/
+// `useIsUnlocked` three-part singleton shape exactly (module-level `let` +
+// listener `Set` + `useSyncExternalStore`). `hydrated` distinguishes
+// "getItems() confirmed empty/populated post-unlock" from "don't know yet"
+// -- the fire-and-forget `void loadAndDecryptAll()` call below leaves a real
+// window right after unlock where `getItems()` can still return `[]`/stale
+// data while the app renders as unlocked. Without this signal a consumer
+// (e.g. ExportDialog's DEBT-02 disclosure) cannot tell a confirmed-zero
+// count from an unconfirmed one.
+let hydrated = false;
+const hydrationListeners = new Set<() => void>();
+
+function setHydrated(v: boolean): void {
+  hydrated = v;
+  hydrationListeners.forEach((listener) => listener());
+}
+
+export function isItemsHydrated(): boolean {
+  return hydrated;
+}
+
+export function useItemsHydrated(): boolean {
+  return useSyncExternalStore(
+    (listener) => {
+      hydrationListeners.add(listener);
+      return () => {
+        hydrationListeners.delete(listener);
+      };
+    },
+    isItemsHydrated,
+    () => false,
+  );
+}
+
 let folders: Folder[] = [];
 const folderListeners = new Set<() => void>();
 
@@ -1311,13 +1345,17 @@ const syncCallbacks: SyncCallbacks = {
 
 subscribeLockState(() => {
   if (isUnlocked()) {
+    // Arm "not yet known" FIRST, before any async work starts -- every
+    // unlock re-opens the hydration window even if a previous unlock had
+    // already resolved it.
+    setHydrated(false);
     sharedRevisionsWatermark = { collections: new Map(), direct: 0 };
     failedSharedRefreshAttempts = 0;
     collectionRevisionWatermark = new Map();
     directRevisionWatermark = 0;
     collectionFailedMergeAttempts = new Map();
     directFailedMergeAttempts = 0;
-    void loadAndDecryptAll();
+    void loadAndDecryptAll().then(() => setHydrated(true));
     void refreshSharedItemsNow();
     startSync(syncCallbacks);
   } else {
@@ -1335,5 +1373,6 @@ subscribeLockState(() => {
     recomputeItems();
     folders = [];
     notifyFolderListeners();
+    setHydrated(false);
   }
 });
