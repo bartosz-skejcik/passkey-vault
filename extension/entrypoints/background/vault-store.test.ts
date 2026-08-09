@@ -270,7 +270,7 @@ describe("applySyncSnapshot", () => {
     });
 
     expect(getItems()).toEqual([]);
-    expect(getPendingSharedItems()).toEqual([{ id: "i1", collectionId: "c1" }]);
+    expect(getPendingSharedItems()).toEqual([{ id: "i1", collectionId: "c1", status: "pending" }]);
   });
 
   it("Test 15 (27-04, must_haves.prohibitions): a collection-scoped row that is genuinely BROKEN (key resolved, decrypt still fails) is ALSO recorded via getPendingSharedItems(), never simply absent with no trace", async () => {
@@ -288,7 +288,7 @@ describe("applySyncSnapshot", () => {
     });
 
     expect(getItems()).toEqual([]);
-    expect(getPendingSharedItems()).toEqual([{ id: "i1", collectionId: "c1" }]);
+    expect(getPendingSharedItems()).toEqual([{ id: "i1", collectionId: "c1", status: "broken" }]);
   });
 
   it("Test 16 (27-04): a row that later resolves clears its own pending entry", async () => {
@@ -298,7 +298,7 @@ describe("applySyncSnapshot", () => {
     const { applySyncSnapshot, getPendingSharedItems } = await import("./vault-store");
 
     applySyncSnapshot({ revision: 1, items: [itemRow("i1", { collection_id: "c1", is_shared: true })] });
-    expect(getPendingSharedItems()).toEqual([{ id: "i1", collectionId: "c1" }]);
+    expect(getPendingSharedItems()).toEqual([{ id: "i1", collectionId: "c1", status: "pending" }]);
 
     hoisted.mockGetCollectionKey.mockReturnValue({ tag: "ck" });
     hoisted.mockGetCollectionAccessLevel.mockReturnValue("edit");
@@ -321,6 +321,31 @@ describe("applySyncSnapshot", () => {
 
     expect(getItems()).toEqual([]);
     expect(getPendingSharedItems()).toEqual([]);
+  });
+
+  it("Test 17b (27-12, Blocker 1): markPending's reattempt UPSERTS the status for the SAME row id rather than ignoring the second call -- a row classified 'pending' on the first attempt is upgraded to 'broken' once hasRefreshedThisSession() flips true and the key still doesn't resolve", async () => {
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockGetCollectionKey.mockReturnValue(undefined);
+    hoisted.mockHasRefreshedThisSession.mockReturnValue(false);
+    const { applySyncSnapshot, getPendingSharedItems } = await import("./vault-store");
+
+    // First attempt: collections store hasn't refreshed this session yet --
+    // classified "pending".
+    applySyncSnapshot({
+      revision: 1,
+      items: [itemRow("i1", { collection_id: "c1", is_shared: true })],
+    });
+    expect(getPendingSharedItems()).toEqual([{ id: "i1", collectionId: "c1", status: "pending" }]);
+
+    // Second attempt for the SAME row id: the refresh has now completed, but
+    // the key is STILL unresolvable -- must upgrade to "broken" in place,
+    // never append a second entry for the same id.
+    hoisted.mockHasRefreshedThisSession.mockReturnValue(true);
+    applySyncSnapshot({
+      revision: 2,
+      items: [itemRow("i1", { collection_id: "c1", is_shared: true })],
+    });
+    expect(getPendingSharedItems()).toEqual([{ id: "i1", collectionId: "c1", status: "broken" }]);
   });
 });
 
@@ -418,7 +443,7 @@ describe("lock-state subscription", () => {
       revision: 1,
       items: [itemRow("i1", { collection_id: "c1", is_shared: true })],
     });
-    expect(vaultStore.getPendingSharedItems()).toEqual([{ id: "i1", collectionId: "c1" }]);
+    expect(vaultStore.getPendingSharedItems()).toEqual([{ id: "i1", collectionId: "c1", status: "pending" }]);
 
     hoisted.mockIsSessionUnlocked.mockReturnValue(false);
     lockStateListener();

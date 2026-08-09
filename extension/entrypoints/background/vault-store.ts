@@ -182,13 +182,22 @@ let directSharedItems: VaultItem[] = [];
 let items: VaultItem[] = [];
 let folders: Folder[] = [];
 
-// 27-04 (Task 1): a row this caller has access to but could not be decrypted
-// this pass -- either "pending" (CollectionKeyPendingError, transient) or
-// "broken" (any other decrypt failure on a collection-scoped row, e.g. the
-// Collection Key resolved but the ciphertext's own integrity check failed).
-// Both classifications land in this SAME array -- see
-// `getPendingSharedItems()`'s own doc comment for the explicit reasoning.
-let pendingSharedItems: { id: string; collectionId: string }[] = [];
+// 27-12 (Blocker 1 gap closure): a row this caller has access to but could
+// not be decrypted this pass -- either "pending" (CollectionKeyPendingError,
+// transient) or "broken" (any other decrypt failure on a collection-scoped
+// row, e.g. the Collection Key resolved but the ciphertext's own integrity
+// check failed). Both classifications land in this SAME array/shape (27-04's
+// original decision, preserved) -- but each entry NOW carries an explicit
+// `status` discriminant so the popup (ItemListView.tsx) can finally tell the
+// two apart and render a "broken" row as a terminal, honest warning instead
+// of an indefinite skeleton (UI-SPEC's E2-error backstop). See
+// `getPendingSharedItems()`'s own doc comment for the full reasoning.
+export interface PendingSharedItemEntry {
+  id: string;
+  collectionId: string;
+  status: "pending" | "broken";
+}
+let pendingSharedItems: PendingSharedItemEntry[] = [];
 
 // Last vault_revision this client has merged -- the `since` watermark for
 // every catch-up/poll pull. Reset to 0 on lock so a re-unlock always pulls
@@ -260,11 +269,22 @@ function replaceItemInSources(id: string, updated: VaultItem): void {
   recomputeItems();
 }
 
-/** Records `id` as pending/broken (deduped) -- a no-op if already recorded.
- * See `getPendingSharedItems()`'s own doc comment. */
-function markPending(id: string, collectionId: string): void {
-  if (!pendingSharedItems.some((p) => p.id === id)) {
-    pendingSharedItems = [...pendingSharedItems, { id, collectionId }];
+/** Records/updates `id`'s pending-vs-broken classification -- an UPSERT, not
+ * merely an insert (27-12, Blocker 1 gap closure): a row already recorded
+ * (e.g. classified "pending" on an earlier attempt, before its Collection
+ * Key had resolved) has its `status` REPLACED in place by a later call
+ * rather than being ignored, since the SAME row can classify differently on
+ * a later attempt once `hasRefreshedThisSession()` flips true (see
+ * `decryptItemRow`'s own doc comment for the discriminant). Never appends a
+ * duplicate entry for an `id` already present -- at most one entry per id,
+ * always. See `getPendingSharedItems()`'s own doc comment for the full
+ * retain-vs-drop rationale. */
+function markPending(id: string, collectionId: string, status: "pending" | "broken"): void {
+  const existingIndex = pendingSharedItems.findIndex((p) => p.id === id);
+  if (existingIndex === -1) {
+    pendingSharedItems = [...pendingSharedItems, { id, collectionId, status }];
+  } else if (pendingSharedItems[existingIndex].status !== status) {
+    pendingSharedItems = pendingSharedItems.map((p, i) => (i === existingIndex ? { ...p, status } : p));
   }
 }
 
@@ -292,17 +312,28 @@ function clearPending(id: string): void {
  * store has completed its first refresh this session -- e.g. the key
  * resolved but the ciphertext's own AEAD integrity check failed). Both
  * classifications share this ONE array/shape rather than a second "broken"
- * list: Task 1 is background-wiring-only (no popup UI lands until later
- * plans), and a single, always-populated channel is what makes the
- * "never simply absent, never a trace-free silent drop" guarantee hold for
- * BOTH cases without a popup consumer having to know which classification
- * produced a given entry. A future plan's UI layer MAY render the two
- * differently (e.g. by re-deriving "still pending" from
- * `hasRefreshedThisSession()` at render time), but the underlying data
- * contract this function exposes treats "not yet visible in `items`" as one
- * concern: always surfaced, never silently missing.
+ * list: a single, always-populated channel is what makes the "never simply
+ * absent, never a trace-free silent drop" guarantee hold for BOTH cases
+ * without a popup consumer having to know which classification produced a
+ * given entry.
+ *
+ * 27-12 (Blocker 1 gap closure): each entry now ALSO carries an explicit
+ * `status: "pending" | "broken"` discriminant, computed by the SAME
+ * `CollectionKeyPendingError`-vs-generic-failure signal `decryptItemRow`
+ * already derives internally (itself gated on `hasRefreshedThisSession()`).
+ * `markPending()` UPSERTS this field on every reattempt -- a row first
+ * observed "pending" (personal-sync raced ahead of the collections refresh)
+ * is re-attempted on the very next `doHandleSharedRevisions` pass for its
+ * own collection (every collection is pulled unconditionally on the FIRST
+ * such pass each session, since `collectionRevisionWatermark` starts empty);
+ * if it STILL fails once `hasRefreshedThisSession()` is true,
+ * `mergeCollectionSnapshot`'s catch correctly upgrades it to "broken" via
+ * that same upsert, rather than leaving the FIRST classification
+ * permanently stuck. This is what makes UI-SPEC's E2-error backstop
+ * dischargeable: `ItemListView.tsx` can now render a "broken" entry as a
+ * terminal, honest warning instead of an indefinite skeleton.
  */
-export function getPendingSharedItems(): { id: string; collectionId: string }[] {
+export function getPendingSharedItems(): PendingSharedItemEntry[] {
   return pendingSharedItems;
 }
 
@@ -465,21 +496,23 @@ export function applySyncSnapshot(snapshot: SyncSnapshot): void {
           // of counting toward the `skipped` bookkeeping below: this row
           // WILL resolve once refreshCollectionsNow() completes, it is not
           // "broken."
-          markPending(row.id, row.collection_id);
+          markPending(row.id, row.collection_id, "pending");
           continue;
         }
         // Generic failure -- a personal row's own decrypt error, OR a
         // collection-scoped row whose Collection Key resolved but the
-        // decrypt/AEAD integrity check still failed ("genuinely broken").
-        // BUG-3: never abort the whole merge. A collection-scoped row here
-        // is STILL recorded into pendingSharedItems (same array/shape as
-        // the pending case) so it is never simply absent with no trace --
-        // see getPendingSharedItems()'s own doc comment for why both
-        // classifications share one channel. A personal row has no such
-        // stub path and is dropped exactly as before.
+        // decrypt/AEAD integrity check still failed ("genuinely broken",
+        // status: "broken" -- the UI-SPEC E2-error case this discriminant
+        // exists for). BUG-3: never abort the whole merge. A
+        // collection-scoped row here is STILL recorded into
+        // pendingSharedItems (same array/shape as the pending case) so it is
+        // never simply absent with no trace -- see getPendingSharedItems()'s
+        // own doc comment for why both classifications share one channel. A
+        // personal row has no such stub path and is dropped exactly as
+        // before.
         skipped += 1;
         if (row.collection_id !== null) {
-          markPending(row.id, row.collection_id);
+          markPending(row.id, row.collection_id, "broken");
         }
       }
     }
@@ -543,10 +576,18 @@ function mergeCollectionSnapshot(
         `[passkey-vault] failed to decrypt shared-collection item ${row.id} (collection ${collectionId})`,
         err,
       );
-      // Same explicit decision as applySyncSnapshot: pending AND broken
-      // both surface via getPendingSharedItems() -- see that function's own
-      // doc comment.
-      markPending(row.id, collectionId);
+      // Same explicit decision as applySyncSnapshot: pending AND broken both
+      // surface via getPendingSharedItems() -- see that function's own doc
+      // comment. This loop runs strictly AFTER doHandleSharedRevisions has
+      // already awaited refreshCollectionsNow(), so hasRefreshedThisSession()
+      // is normally already true by the time this catch fires (making
+      // CollectionKeyPendingError here rare but not impossible -- e.g. that
+      // refresh itself failed) -- 27-12 (Blocker 1): compute the SAME
+      // discriminant applySyncSnapshot's catch does, so a row first marked
+      // "pending" by a personal-sync race is correctly upgraded to "broken"
+      // here if it still fails once the key has genuinely resolved.
+      const status = err instanceof CollectionKeyPendingError ? "pending" : "broken";
+      markPending(row.id, collectionId, status);
     }
   }
   // Replace EVERY previously-cached item for THIS collection id -- never a
