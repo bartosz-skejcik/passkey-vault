@@ -69,7 +69,7 @@ Delivered: 20/20 requirements, 7/7 phases verified + Nyquist-compliant + threat-
 - [x] **Phase 24: Invitation Flow (No SMTP)** - Single-use, expiring invite links/codes join new or existing users to a family or collection without SMTP (completed 2026-07-31)
 - [x] **Phase 25: Member Removal, Suspension & Re-key** - Suspend/remove a member with atomic, cost-bounded re-key and honest "already seen ≠ undone" UX
 - [x] **Phase 26: Web App — Sharing UI & Family Management** - Share folders/items at three access levels, with honest hidden-password disclosure and visible sharing/fingerprint indicators
-- [ ] **Phase 27: Extension Integration — Shared Items** - Shared items autofill, TOTP, and passkey-provider identically to personal ones, plus the shared-passkey signature-counter spike
+- [x] **Phase 27: Extension Integration — Shared Items** - Shared items autofill, TOTP, and passkey-provider identically to personal ones, plus the shared-passkey signature-counter spike (all 15 plans executed, goal achieved per 27-VERIFICATION.md; 2 visual-taste items awaiting Bartek's review, evidenced by 27-16's screenshots — completed 2026-08-09)
 
 Research: [research/v0.4/SUMMARY.md](research/v0.4/SUMMARY.md), [research/v0.4/ARCHITECTURE.md](research/v0.4/ARCHITECTURE.md), [research/v0.4/PITFALLS.md](research/v0.4/PITFALLS.md). Build order follows the research-reconciled sequence (crypto → schema/auth → sync → invitations → re-key → web UI → extension); the sync-extension phase (23) deliberately hosts the live multi-session test harness (SEC-08) early rather than at the end, per the project's own v0.2→v0.3 lesson that green CI missed 7 bug classes only visible live.
 
@@ -393,4 +393,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 24. Invitation Flow (No SMTP) | v0.4 | 8/8 | Complete    | 2026-07-31 |
 | 25. Member Removal, Suspension & Re-key | v0.4 | 10/10 | Complete | 2026-08-06 |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 13/13 | Complete | 2026-08-06 |
-| 27. Extension Integration — Shared Items | v0.4 | 14/14 | In Progress|  |
+| 27. Extension Integration — Shared Items | v0.4 | 14/14 | Complete    | 2026-08-09 |

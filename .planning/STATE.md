@@ -5,10 +5,10 @@ milestone_name: Family & Sharing
 current_phase: 27
 current_phase_name: Extension Integration — Shared Items
 status: verifying
-stopped_at: Completed 27-15 (direct-share silent-drop fix, closing 27-VERIFICATION.md's last blocker)
-last_updated: "2026-08-09T11:35:21.350Z"
+stopped_at: Completed 27-16 (closed adopted_existing real-WASM test gap; captured shared-badge/broken-row UAT screenshots for Bartek; reconciled ROADMAP.md/STATE.md housekeeping) — 2 visual-taste human_verification items remain, awaiting Bartek
+last_updated: "2026-08-09T14:10:00.000Z"
 last_activity: 2026-08-09
-last_activity_desc: 27-13-PLAN.md executed
+last_activity_desc: 27-16 quick task executed (functional gap closure + UAT screenshots + housekeeping)
 progress:
   total_phases: 7
   completed_phases: 7
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 
 ## Current Position
 
-Phase: 27 (Extension Integration — Shared Items) — GAP CLOSURE COMPLETE
-Plan: 15 of 15 (gap-closure plans 12-14, from 27-VERIFICATION.md's gaps_found, plus 27-15's direct-share re-verification blocker fix)
-Status: 27-12 complete (Blocker 1 closed); 27-13 complete (Blocker 2 closed); 27-14 complete (Gaps 3/4/5 closed); 27-15 complete (re-verification's direct-share silent-drop blocker closed) — all four gap-closure items landed
-Last activity: 2026-08-09 — 27-15 (direct-share silent-drop fix) executed
+Phase: 27 (Extension Integration — Shared Items) — GAP CLOSURE COMPLETE, verification human-items 2/3 remain
+Plan: 16 of 16 (gap-closure plans 12-14 + 27-15's direct-share fix + 27-16 quick-task closure of the last human-verification item)
+Status: 27-12 complete (Blocker 1 closed); 27-13 complete (Blocker 2 closed); 27-14 complete (Gaps 3/4/5 closed); 27-15 complete (re-verification's direct-share silent-drop blocker closed); 27-16 complete (27-03's `adopted_existing` race now real-WASM tested and falsification-proven — CLOSED; live UAT screenshots captured for the 2 remaining visual-taste items, evidence attached to 27-VERIFICATION.md, awaiting Bartek's judgment, NOT self-approved)
+Last activity: 2026-08-09 — 27-16 (functional gap closure + UAT screenshots + housekeeping) executed
 
 ## Performance Metrics
 
@@ -258,6 +258,7 @@ None yet.
 - [Phase 23] Register correction worth not re-inheriting: T-23-16's authored rationale claimed the CI Chromium download was "the identical mechanism the extension job already runs today" — **factually wrong**; the `extension` job runs no Playwright step at all, and Phase 23 introduced the first Playwright run in this repo's CI. The threat is closed on stronger independent grounds (byte-identical lockfile integrity hashes across `web/` and `extension/`, plus `npm ci` before `npx playwright install` so the pinned local binary resolves).
 - v0.4 research flags an account-deletion re-key gap (ARCHITECTURE.md §4.3): today's `ON DELETE CASCADE` on `users` drops membership rows via FK but does not itself trigger a collection re-key — FAM-10 (Phase 25) requires the deletion flow to explicitly run the same re-key path as removal before dropping the user row, not rely on the cascade alone.
 - [Phase 27] **Accepted, out-of-scope finding, recorded per 27-14-PLAN.md's own instruction:** `capture-handler.ts`'s `buildLoginFields()` (Phase 11) unconditionally derives an item's `name` from the submitting page's hostname on every capture-confirm save, new AND update alike — first confirmed live by 27-11's own write-path proof, recorded again here for visibility. For a SHARED item this means one member's capture write silently renames the item for every other member too. Not a Phase 27 regression (pre-existing Phase 11 behavior, untouched by 27-07/27-11/27-14). Recommend a future fix that preserves an existing item's custom name on an `'update'` capture-confirm, deriving a hostname-based name only for a brand-new `'new'` capture.
+- [Phase 27] **Open, recorded by 27-VERIFICATION.md's third pass, carried forward by 27-16:** `extension/entrypoints/background/vault-store.ts`'s `pendingSharedItems` array is never pruned when a shared row *disappears* from a later snapshot (only mutated by `markPending`, `clearPending`-by-id, the revoked-**collection** purge, and the lock reset — 5 sites total, lines 296/298/306/817/1125). A row recorded `"broken"` that is subsequently unshared/revoked **individually** (a direct share revoked, or an item removed from a collection the user still belongs to) leaves a phantom "Failed to decrypt shared item" row in the popup until the next lock. This is the *inverse* of the 27-04 prohibition (a phantom row, not a silent drop) and leaks nothing (`{id, collectionId, status}` only, no plaintext/name). Pre-existing from 27-04/27-12, extended by 27-15/27-16 (this fix widened the SAME array to the direct-share path, not a new hazard). Fix location for a future phase: prune `pendingSharedItems` of ids absent from the merged snapshot, in the same place `directSharedItems`/`collectionSharedItems` are replaced.
 
 ### Quick Tasks Completed
 
