@@ -72,6 +72,24 @@ export const SERVER = "http://localhost:8620";
 export const CAPTURE_FORM_PORT = 8897;
 export const CAPTURE_FORM_ORIGIN = `http://localhost:${CAPTURE_FORM_PORT}`;
 
+/** 27-14 Task 1/3 (deviation, Rule 1 -- found live during Task 3 authoring):
+ * `dual-extension-access-levels.spec.ts` stands up its OWN dedicated form
+ * server (27-14-PLAN.md Task 3's own explicit rationale: 8620/8791/8792/
+ * 8895/8896/8897/8899 are all already claimed by sibling spec files, so it
+ * needs a fresh port) -- so `hiddenPasswordItemId`'s and `readOnlyItemId`'s
+ * own `urls` fields below MUST point at THIS origin, not
+ * `CAPTURE_FORM_ORIGIN` (8897, `dual-extension-sharing.spec.ts`'s own
+ * dedicated server). The plan's Task 1 action text literally named
+ * `CAPTURE_FORM_ORIGIN` for both new fixture items, which would have left
+ * them origin-mismatched against Task 3's own new port-8898 server --
+ * `itemMatchesOrigin()` requires an exact match, so a mismatch would have
+ * silently broken both the hidden_password autofill-still-works proof and
+ * the read-only write-refusal proof's own item resolution (a capture
+ * submitted at the wrong origin resolves as a NEW item, not an update to
+ * the fixture's existing one, defeating the whole point of the test). */
+export const ACCESS_LEVELS_FORM_PORT = 8898;
+export const ACCESS_LEVELS_FORM_ORIGIN = `http://localhost:${ACCESS_LEVELS_FORM_PORT}`;
+
 /** Fixed, deterministic email+password for the ONE real "family owner"
  * identity every e2e suite in this project's ecosystem (web AND extension)
  * resolves to -- `families.rs::create`'s singleton constraint means
@@ -793,7 +811,7 @@ export async function setupAccessLevelFixture(): Promise<AccessLevelFixtureResul
       tags: [],
       username: hiddenPasswordItemUsername,
       password: hiddenPasswordItemPassword,
-      urls: [CAPTURE_FORM_ORIGIN],
+      urls: [ACCESS_LEVELS_FORM_ORIGIN],
       notes: "",
     });
     const hiddenPasswordCombined = wasm.encryptItem(a.uk, hiddenPasswordPlaintext, hiddenPasswordItemId, 1);
@@ -908,7 +926,7 @@ export async function setupAccessLevelFixture(): Promise<AccessLevelFixtureResul
         tags: [],
         username: readOnlyItemUsername,
         password: readOnlyItemOldPassword,
-        urls: [CAPTURE_FORM_ORIGIN],
+        urls: [ACCESS_LEVELS_FORM_ORIGIN],
         notes: "",
       });
       const readOnlyPersonalCombined = wasm.encryptItem(a.uk, readOnlyPlaintext, readOnlyItemId, 1);

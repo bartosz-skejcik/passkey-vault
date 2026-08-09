@@ -32,7 +32,7 @@ Blocks every other category. Today's hierarchy is entirely symmetric and cannot 
 "give this secret to another person."
 
 - [x] **KEY-01**: Every account has an X25519 identity keypair — private key wrapped by the User Key, public key published to the server. Accounts created before v0.4 get one generated on upgrade **without re-encrypting their existing vault**.
-  - **PARTIAL after Phase 22.** Delivered: the pv-core crypto (Phase 21) and the full server half (Phase 22) — public key published/served, wrapped private key stored as an opaque blob the server never unwraps, idempotent under concurrent double-unlock, with a byte-level proof that no vault ciphertext is re-encrypted. **Still outstanding: nothing CALLS it.** No web or extension code invokes `PUT /api/identity/keypair`, so "every account HAS a keypair, including one created before v0.4, generated on upgrade" is possible but not yet true. Caught by 22-VERIFICATION.md as an undelivered-AND-unowned clause; now assigned to **Phase 26 SC#5** (web) and **Phase 27** (extension). Do not mark Complete until a client actually triggers generation.
+  - **Complete.** Delivered: the pv-core crypto (Phase 21), the full server half (Phase 22) — public key published/served, wrapped private key stored as an opaque blob the server never unwraps, idempotent under concurrent double-unlock, with a byte-level proof that no vault ciphertext is re-encrypted — the web client trigger (Phase 26), and the extension client trigger (Phase 27, `vault-session.ts`'s `setUnlockedUserKey` calling `identity-store.ts`'s `publishOnUnlock(uk)` at the extension's single unlock choke point, proved live by `dual-extension-sharing.spec.ts`'s real two-account identity-keypair unwrap/publish round trip). "Every account HAS a keypair, generated on upgrade" is now true for both shipped clients, not merely possible.
 - [x] **KEY-02**: A shared collection has its own Collection Key, sealed independently to each member's public key. Adding or removing a member rewraps keys only — item ciphertext (`enc_data`) is never touched.
   - **Complete after Phase 25.** Phase 21 built the Collection Key type and the single-recipient `seal`/`unseal` primitive; Phase 22 delivered per-recipient fan-out (`collection_keys`); Phase 25 (Plan 25-03) delivers and PROVES the final clause against the real removal path — `apply_member_removal_rekey` calls `rewrap_item_key_for_collection` (Plan 25-02) only, never a payload-shaped function, and `tests/family_removal.rs`'s happy-path test asserts the item's `enc_data` is byte-identical, via a direct `SELECT`, before and after removal.
 - [x] **KEY-03**: Item AAD binds the encryption **scope** (personal vs. specific collection), so an item cannot be silently reinterpreted after moving between scopes. This is a deliberate change to today's `prefix ‖ item_id ‖ revision` scheme, which encodes no notion of which key wrapped the item.
@@ -131,7 +131,7 @@ Explicitly excluded to prevent scope creep.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| KEY-01 | Phase 21 (crypto) + Phase 22 (server publish/serve) + Phase 26/27 (client trigger on first unlock) | Partial |
+| KEY-01 | Phase 21 (crypto) + Phase 22 (server publish/serve) + Phase 26/27 (client trigger on first unlock) | Complete |
 | KEY-02 | Phase 21 (seal primitive) + Phase 22 (per-member fan-out) + Phase 25 (rewrap-only on removal) | Complete |
 | KEY-03 | Phase 21 | Complete |
 | KEY-04 | Phase 21 | Complete |
