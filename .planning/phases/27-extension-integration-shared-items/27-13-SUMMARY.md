@@ -152,3 +152,14 @@ None - no external service configuration required. (The live regression e2e run 
 ---
 *Phase: 27-extension-integration-shared-items*
 *Completed: 2026-08-09*
+
+## Self-Check: PASSED
+
+- FOUND: extension/entrypoints/background/vault-store.ts
+- FOUND: extension/entrypoints/background/provider-ceremony.ts
+- FOUND: extension/entrypoints/background/provider-ceremony.test.ts
+- FOUND: extension/entrypoints/background/provider-ceremony.real-wasm.test.ts
+- FOUND: .planning/phases/27-extension-integration-shared-items/27-13-SUMMARY.md
+- FOUND commit: a6ced57
+- FOUND commit: 1115797
+- FOUND commit: 01085ae
