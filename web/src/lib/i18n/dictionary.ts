@@ -620,6 +620,34 @@ export const DICTIONARY = {
     en: "Download a copy of your vault as JSON or CSV.",
   },
 
+  // `/settings` page shell (Phase 29, SET-01/02/04, 29-UI-SPEC.md's
+  // Copywriting Contract) — the real route replacing the SettingsPanel
+  // drawer above. `settings.title`/`settings.tabFamily` above stay
+  // unchanged (the former is promoted to page-title use, the latter
+  // retires with the tab mechanism it labeled).
+  "settings.backToVault": { pl: "Wróć do sejfu", en: "Back to vault" },
+  "settings.jumpNavLabel": { pl: "Nawigacja ustawień", en: "Settings navigation" },
+  "settings.groupAccount": { pl: "Konto", en: "Account" },
+  "settings.groupAccountDescription": {
+    pl: "Passkeys, sesje i urządzenia, usuwanie konta.",
+    en: "Passkeys, sessions and devices, account deletion.",
+  },
+  "settings.groupSecurity": { pl: "Bezpieczeństwo", en: "Security" },
+  "settings.groupSecurityDescription": {
+    pl: "Automatyczne blokowanie i czyszczenie schowka.",
+    en: "Auto-lock and clipboard clearing.",
+  },
+  "settings.groupData": { pl: "Dane", en: "Data" },
+  "settings.groupDataDescription": {
+    pl: "Import i eksport całego vaulta.",
+    en: "Import and export your whole vault.",
+  },
+  "settings.groupFamily": { pl: "Rodzina i udostępnianie", en: "Family & sharing" },
+  "settings.groupFamilyDescription": {
+    pl: "Zarządzaj rodziną i zaproszeniami.",
+    en: "Manage your family and invitations.",
+  },
+
   "passkeys.emptyState": {
     pl: "Nie masz jeszcze żadnego passkeya. Dodaj go, żeby móc odblokować vault jednym gestem.",
     en: "You don't have any passkeys yet. Add one to unlock your vault with a single gesture.",
