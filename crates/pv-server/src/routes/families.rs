@@ -791,6 +791,21 @@ pub async fn suspend_member(
         return Err(ApiError::NotFound);
     }
 
+    // B-8 fix (Phase 28 Plan 03): suspension's COLLECTIONS half already
+    // self-heals via the existing active_collection_member_join!() filter —
+    // but the DIRECT-share bucket (`GET /api/sync/shared`'s `direct` field /
+    // `pull_shared_direct`) is keyed off `users.shared_direct_revision`
+    // alone, and nothing here has ever moved that counter. Bump it, mirroring
+    // the three existing call sites that already do this for the identical
+    // reason (vault.rs::create_share/revoke_share,
+    // apply_member_removal_rekey step 6b above) — a cheap-check signal, never
+    // a re-key: no `collection_keys`/`vault_items` statement anywhere in this
+    // handler, preserving FAM-07's "no re-key" invariant by construction.
+    sqlx::query("UPDATE users SET shared_direct_revision = shared_direct_revision + 1 WHERE id = ?")
+        .bind(&target_user_id)
+        .execute(&state.db)
+        .await?;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -817,6 +832,15 @@ pub async fn reinstate_member(
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound);
     }
+
+    // B-8 fix, symmetric to suspend_member above (Pitfall 3: BOTH directions
+    // need their own bump). Without this, a client's watermark already
+    // matches the post-suspend counter value and never re-fetches to
+    // discover the direct share is visible again on reinstate.
+    sqlx::query("UPDATE users SET shared_direct_revision = shared_direct_revision + 1 WHERE id = ?")
+        .bind(&target_user_id)
+        .execute(&state.db)
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

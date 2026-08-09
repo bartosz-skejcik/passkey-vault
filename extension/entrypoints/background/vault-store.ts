@@ -56,7 +56,7 @@ import {
   type WasmUserKey,
 } from "../../lib/crypto/wasm-loader";
 import { getUnlockedUserKey, isSessionUnlocked, subscribeSessionLockState } from "./vault-session";
-import { startSync, stopSync } from "./sync-client";
+import { markFamilyMembershipConfirmed, startSync, stopSync } from "./sync-client";
 import {
   getCollectionSync,
   getSharedDirectSync,
@@ -888,6 +888,46 @@ export function handleSharedRevisions(revisions: SharedRevisions): Promise<void>
   return sharedRefreshInFlight;
 }
 
+/** Drops the FULL decrypted shared cache (both collection- and direct-share
+ * halves) plus every pending/broken stub and both watermarks, and frees
+ * every cached Collection Key -- the "you were genuinely removed mid-session"
+ * purge, wired to sync-client.ts's `onRemovedFromFamily` callback below.
+ * Generalizes `doHandleSharedRevisions`'s existing per-collection purge loop
+ * (lines ~809-819 above) to "purge everything", per B-9 -- reuses the SAME
+ * mechanism, never rebuilt from scratch.
+ *
+ * Routed through the SAME `sharedRefreshInFlight` chain `handleSharedRevisions`
+ * uses (WR-11's re-entrancy guard) rather than mutating module state
+ * directly -- so this purge can never race a concurrently in-flight merge:
+ * either it runs before a pending merge (which then finds nothing to merge
+ * against a fresh empty cache) or after one (which it then correctly
+ * clears).
+ *
+ * KEY-06 adjacency (this plan's single most important boundary): touches
+ * ONLY collectionSharedItems/directSharedItems/pendingSharedItems/Collection-
+ * Key caches and their watermarks -- NEVER personalItems, folders, or any
+ * other part of `items` beyond what recomputeItems() naturally recomputes
+ * from the now-empty shared arrays. A purge that over-reaches into the
+ * member's own personal vault would be a worse defect than the one being
+ * fixed. */
+export function purgeSharedStateOnRemoval(): Promise<void> {
+  sharedRefreshInFlight = sharedRefreshInFlight
+    .then(() => {
+      freeAllCollectionKeys();
+      collectionSharedItems = [];
+      directSharedItems = [];
+      pendingSharedItems = [];
+      collectionRevisionWatermark = new Map();
+      directRevisionWatermark = 0;
+      sharedRevisionsWatermark = { collections: new Map(), direct: 0 };
+      collectionFailedMergeAttempts = new Map();
+      directFailedMergeAttempts = 0;
+      recomputeItems();
+    })
+    .catch(() => {});
+  return sharedRefreshInFlight;
+}
+
 /** Eager first attempt at the SAME refresh `handleSharedRevisions` performs
  * on every subsequent WS/poll tick -- called directly on unlock (from
  * `ensureVaultSyncStarted()` below) so a shared collection/direct item is
@@ -898,6 +938,15 @@ export function handleSharedRevisions(revisions: SharedRevisions): Promise<void>
 async function refreshSharedItemsNow(): Promise<void> {
   try {
     const revisions = await getSharedRevisions();
+    // 28-03 (Task 1, plan-review blocker fix): this is the SECOND, EARLIER
+    // call site to getSharedRevisions() -- called from ensureVaultSyncStarted()
+    // on every unlock AND every MV3 cold wake, before pullOnce()'s own first
+    // shared round trip ever fires. Arm sync-client.ts's discriminant HERE
+    // too, via the same exported setter pullOnce() itself calls on success --
+    // without this line, a member removed after this eager refresh already
+    // cached shared plaintext would have pullOnce()'s first shared 404
+    // misread as "never had a family" (flag still false) and skip the purge.
+    markFamilyMembershipConfirmed();
     if (getUnlockedUserKey() === null) {
       return;
     }
@@ -970,6 +1019,11 @@ export function ensureVaultSyncStarted(): void {
     getSinceRevision: () => lastKnownRevision,
     onSnapshot: applySyncSnapshot,
     onSharedRevisions: handleSharedRevisions,
+    // 28-03 (Task 1): a 404 arriving after this session has ever confirmed
+    // family membership (from either call site -- see sync-client.ts's own
+    // doc comment) is a genuine mid-session removal, not "no family" --
+    // purge the shared cache instead of leaving stale plaintext latched in.
+    onRemovedFromFamily: purgeSharedStateOnRemoval,
   });
   // The `.catch` below still swallows the rejection (so the initial pull's
   // own failure never becomes an unhandled promise rejection in the

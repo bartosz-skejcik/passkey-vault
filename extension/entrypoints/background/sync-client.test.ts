@@ -371,6 +371,83 @@ describe("27-04 (Task 2): onSharedRevisions fires alongside every personal pull"
   });
 });
 
+describe("28-03 (Task 1): hasEverConfirmedFamilyMembership discriminant -- the plan-review blocker fix", () => {
+  it("markFamilyMembershipConfirmed() called by a caller OTHER than pullOnce (simulating refreshSharedItemsNow()'s eager call site) still causes the next 404 to invoke onRemovedFromFamily and still latches sharedPullDisabled afterward", async () => {
+    const onRemovedFromFamily = vi.fn();
+    const onSharedRevisions = vi.fn();
+    mockGetSharedRevisions.mockRejectedValue({ status: 404 });
+    const { startSync, markFamilyMembershipConfirmed, registerSyncPollAlarmListener } = await import(
+      "./sync-client"
+    );
+    registerSyncPollAlarmListener();
+
+    // startSync() itself resets the flag to false (re-arming on every
+    // unlock) -- so the eager caller's success must land AFTER startSync(),
+    // mirroring the real ordering: ensureVaultSyncStarted() calls
+    // startSync() synchronously, THEN kicks off refreshSharedItemsNow(),
+    // which resolves later and arms the flag then. This simulates
+    // vault-store.ts's refreshSharedItemsNow() having already succeeded THIS
+    // session, before pullOnce()'s own first shared round trip ever fires --
+    // the exact two-call-site race the plan-review blocker identified.
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onSharedRevisions, onRemovedFromFamily });
+    markFamilyMembershipConfirmed();
+    await vi.advanceTimersByTimeAsync(0);
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onRemovedFromFamily).toHaveBeenCalledTimes(1);
+
+    // sharedPullDisabled still latches afterward (Pitfall 4) -- a later tick
+    // never retries the now-permanently-gone endpoint.
+    mockGetSharedRevisions.mockClear();
+    alarmListeners[0]?.({ name: "pv-sync-poll" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetSharedRevisions).not.toHaveBeenCalled();
+  });
+
+  it("regression control: with markFamilyMembershipConfirmed() never called, pullOnce()'s OWN first shared 404 does NOT invoke onRemovedFromFamily -- the genuine 'no family' case, byte-identical to today", async () => {
+    const onRemovedFromFamily = vi.fn();
+    mockGetSharedRevisions.mockRejectedValue({ status: 404 });
+    const { startSync } = await import("./sync-client");
+
+    startSync({
+      getSinceRevision: () => 0,
+      onSnapshot: vi.fn(),
+      onSharedRevisions: vi.fn(),
+      onRemovedFromFamily,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onRemovedFromFamily).not.toHaveBeenCalled();
+  });
+
+  it("pullOnce()'s own successful getSharedRevisions() call arms the flag too, proven by a subsequent 404 on the NEXT tick invoking onRemovedFromFamily", async () => {
+    const onRemovedFromFamily = vi.fn();
+    mockGetSharedRevisions.mockResolvedValueOnce({ collections: [], direct: { revision: 0 } });
+    const { startSync, registerSyncPollAlarmListener } = await import("./sync-client");
+    registerSyncPollAlarmListener();
+
+    startSync({
+      getSinceRevision: () => 0,
+      onSnapshot: vi.fn(),
+      onSharedRevisions: vi.fn(),
+      onRemovedFromFamily,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    lastSocket().onopen?.(); // first tick: succeeds, arms the flag internally
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onRemovedFromFamily).not.toHaveBeenCalled();
+
+    mockGetSharedRevisions.mockRejectedValue({ status: 404 });
+    alarmListeners[0]?.({ name: "pv-sync-poll" }); // next tick: 404s
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onRemovedFromFamily).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("no server configured yet (NEW behavior beyond the ported set)", () => {
   it("connectWs() resolves with readServerConfig() returning null -- no throw, no socket constructed", async () => {
     mockReadServerConfig.mockResolvedValue(null);

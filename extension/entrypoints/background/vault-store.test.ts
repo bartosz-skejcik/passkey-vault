@@ -19,6 +19,13 @@ const hoisted = vi.hoisted(() => ({
   mockSubscribeSessionLockState: vi.fn(),
   mockStartSync: vi.fn(),
   mockStopSync: vi.fn(),
+  // 28-03 (Task 1): sync-client.ts's THIRD named export -- vault-store.ts's
+  // refreshSharedItemsNow() must call this on every successful
+  // getSharedRevisions() resolution (the hoisted, two-call-site discriminant
+  // fix). Without stubbing it here, vault-store.ts's real (unmocked) import
+  // of a nonexistent mock export throws "undefined is not a function" in
+  // every existing test in this file.
+  mockMarkFamilyMembershipConfirmed: vi.fn(),
   mockGetSyncSnapshot: vi.fn(),
   mockTouchItem: vi.fn(),
   mockGetSharedRevisions: vi.fn(),
@@ -50,6 +57,7 @@ vi.mock("./vault-session", () => ({
 vi.mock("./sync-client", () => ({
   startSync: hoisted.mockStartSync,
   stopSync: hoisted.mockStopSync,
+  markFamilyMembershipConfirmed: hoisted.mockMarkFamilyMembershipConfirmed,
 }));
 
 vi.mock("./vault-api", () => ({
@@ -774,6 +782,95 @@ describe("shared-revisions merge (27-04, A-1's mergeCollectionSnapshot/mergeDire
     // own catch comment: identityKey is already fully resolved before this
     // loop runs, so there is no "not cached yet" transient window here.
     expect(getPendingSharedItems()[0]?.status).not.toBe("pending");
+  });
+});
+
+describe("28-03 (Task 1): markFamilyMembershipConfirmed wiring + purgeSharedStateOnRemoval", () => {
+  it("Test 23: refreshSharedItemsNow()'s (the eager, unlock-time) successful getSharedRevisions() resolution calls the imported markFamilyMembershipConfirmed mock exactly once", async () => {
+    await import("./vault-store");
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockGetSharedRevisions.mockResolvedValue({ collections: [], direct: { revision: 0 } });
+
+    lockStateListener(); // unlock transition -> ensureVaultSyncStarted() -> refreshSharedItemsNow()
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(hoisted.mockMarkFamilyMembershipConfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it("Test 24: ensureVaultSyncStarted() wires purgeSharedStateOnRemoval as sync-client.ts's onRemovedFromFamily callback", async () => {
+    const vaultStore = await import("./vault-store");
+    hoisted.mockIsSessionUnlocked.mockReturnValue(true);
+
+    lockStateListener();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(hoisted.mockStartSync).toHaveBeenCalledTimes(1);
+    const passedCallbacks = hoisted.mockStartSync.mock.calls[0][0];
+    expect(passedCallbacks.onRemovedFromFamily).toBe(vaultStore.purgeSharedStateOnRemoval);
+  });
+
+  it("Test 25 (KEY-06 adjacency, the unit-level companion to Task 3's live proof): purgeSharedStateOnRemoval() clears collectionSharedItems/directSharedItems/pendingSharedItems/both watermarks/both failed-attempt counters and calls freeAllCollectionKeys(), while leaving personalItems/folders byte-identical", async () => {
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    hoisted.mockGetCollectionKey.mockReturnValue({ tag: "ck" });
+    hoisted.mockGetCollectionAccessLevel.mockReturnValue("edit");
+    hoisted.mockDecryptItem.mockReturnValue(
+      JSON.stringify({ type: "note", name: "Personal", body: "b", folderId: null, tags: [] }),
+    );
+    hoisted.mockDecryptItemForCollection.mockReturnValue(
+      JSON.stringify({ type: "note", name: "Shared", body: "b", folderId: null, tags: [] }),
+    );
+    hoisted.mockGetCollectionSync.mockResolvedValue({
+      revision: 1,
+      items: [itemRow("i-shared", { collection_id: "c1", is_shared: true })],
+    });
+
+    const { applySyncSnapshot, handleSharedRevisions, purgeSharedStateOnRemoval, getItems, getFolders } =
+      await import("./vault-store");
+
+    // Seed personal data AND shared-collection data in the SAME session.
+    applySyncSnapshot({
+      revision: 1,
+      items: [itemRow("i-personal")],
+      folders: [folderRow("f1")],
+    });
+    await handleSharedRevisions({ collections: [{ id: "c1", revision: 1 }], direct: { revision: 0 } });
+
+    expect(getItems().map((i) => i.id).sort()).toEqual(["i-personal", "i-shared"]);
+    expect(getFolders()).toHaveLength(1);
+
+    await purgeSharedStateOnRemoval();
+
+    // The shared item is gone, freeAllCollectionKeys() ran once (the lock
+    // path already called it 0 times this test -- no lock event fired).
+    expect(hoisted.mockFreeAllCollectionKeys).toHaveBeenCalledTimes(1);
+    const remaining = getItems();
+    expect(remaining.map((i) => i.id)).toEqual(["i-personal"]);
+
+    // KEY-06 adjacency: the personal item's own fields are byte-identical --
+    // the purge never touched personalItems.
+    expect(remaining[0]).toEqual({
+      id: "i-personal",
+      revision: 1,
+      fields: { type: "note", name: "Personal", body: "b", folderId: null, tags: [] },
+      updatedAt: "2026-01-01",
+      isShared: false,
+      lastEditorEmail: undefined,
+      collectionId: null,
+      accessLevel: undefined,
+    });
+    // folders are never referenced by the purge routine at all.
+    expect(getFolders()).toHaveLength(1);
+
+    // A subsequent identical shared-revisions payload re-fetches from
+    // scratch (both watermarks were reset to empty by the purge) rather than
+    // being treated as unchanged.
+    hoisted.mockGetCollectionSync.mockClear();
+    await handleSharedRevisions({ collections: [{ id: "c1", revision: 1 }], direct: { revision: 0 } });
+    expect(hoisted.mockGetCollectionSync).toHaveBeenCalledTimes(1);
   });
 });
 
