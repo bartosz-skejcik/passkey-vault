@@ -220,7 +220,13 @@ write toast) plus the one explicitly-no-UI item (`persistUpdatedProviderItem`, W
 state and error-state **copy** live in `## Copywriting Contract` above; rows below reference those
 keys rather than restating them.
 
-**Resolved: 12 covered, 2 backstop, 0 unresolved.**
+**Resolved: 15 covered, 2 backstop, 0 unresolved (17 rows total).**
+
+> Tally corrected 2026-08-09. The original header read "11 covered, 3 backstop"; a first correction
+> to "12 covered, 2 backstop" was ALSO wrong — both undercounted the actual tables. The planner
+> re-counted during the lift and found 17 rows (15 ✅ + 2 🧪), and lifted all 17 rather than dropping
+> three real considerations to match a miscounted summary. That was the right call: the tables are
+> authoritative, not this header.
 
 ### E1 — Web: revoke row action + confirmation dialog (`SharingOverviewPanel.tsx`, SHARE-06)
 
