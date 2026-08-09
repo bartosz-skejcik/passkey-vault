@@ -50,10 +50,10 @@ Blocks every other category. Today's hierarchy is entirely symmetric and cannot 
 - [x] **FAM-04**: The owner can generate a **single-use, expiring** invite link or code, delivered out-of-band by the owner (no SMTP — the 1-container constraint stands).
 - [x] **FAM-05**: An invitee sees an explicit "Join [Family]?" confirmation before membership takes effect; the invite landing page leaks no vault metadata (no folder names, no item counts) before redemption.
 - [x] **FAM-06**: One invite link works for both cases — a brand-new user registering, and an existing account joining a family — branching at redemption time on whether a session exists.
-- [ ] **FAM-07**: The owner can **suspend** a member: reversible, immediate, no re-key.
-- [ ] **FAM-08**: The owner can **permanently remove** a member: triggers re-key (KEY-06), gated behind a second confirmation.
+- [x] **FAM-07**: The owner can **suspend** a member: reversible, immediate, no re-key.
+- [x] **FAM-08**: The owner can **permanently remove** a member: triggers re-key (KEY-06), gated behind a second confirmation.
   - **PARTIAL after Phase 25 (Plan 25-03).** Delivered: the full server half — `DELETE /api/families/members/{user_id}`, owner-only, atomically removes the target and re-keys every collection they could reach (KEY-06). **Still outstanding:** the "gated behind a second confirmation" clause is a client-side UX gate — no web/extension UI calls this endpoint yet. Do not mark Complete until a client ships the confirmation step (Plan 25-07 or later).
-- [ ] **FAM-09**: A suspended or removed member's existing sessions lose access immediately — access is not carried by an already-issued session token.
+- [x] **FAM-09**: A suspended or removed member's existing sessions lose access immediately — access is not carried by an already-issued session token.
   - **PARTIAL after Phase 25 (Plan 25-03).** The REMOVED half is now proven end-to-end: `tests/family_removal.rs`'s happy-path test shows the removed member's very next `GET /api/vault/collections/{id}/items` (same, still-valid bearer token — no re-login) is `404`. The SUSPENDED half's enforcement mechanism (`family_members.status` gating `resolve_access`) was proven in Plan 25-01, but there is still no way to actually REACH the suspended state via the API — Plan 25-04 owns the suspend/reinstate handler. Do not mark Complete until 25-04 lands.
 - [ ] **FAM-10**: Deleting an account that was a family member triggers the same re-key path as removal (closes the gap flagged in ARCHITECTURE.md §4.3).
 
@@ -144,7 +144,7 @@ Explicitly excluded to prevent scope creep.
 | FAM-04 | Phase 24 | Complete |
 | FAM-05 | Phase 24 | Complete |
 | FAM-06 | Phase 24 | Complete |
-| FAM-07 | Phase 25 | Pending |
+| FAM-07 | Phase 25 | Complete |
 | FAM-08 | Phase 25 | Partial |
 | FAM-09 | Phase 25 | Partial |
 | FAM-10 | Phase 25 | Pending |

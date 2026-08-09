@@ -411,10 +411,10 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 **Note:** these are three instances of ONE seam — client-side consumption of server-side sharing state — which is why they are a single phase rather than three. The milestone's signature failure mode is a server capability no client reaches; this phase exists to close the last three instances of it.
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans executed
 
 Plans:
 
 - [x] 28-01-PLAN.md — Direct-share + hidden_password write refusal (extension), dormant provider-ceremony twin
 - [x] 28-02-PLAN.md — SHARE-06 revoke wrappers, dialog, and row wiring (web)
-- [ ] 28-03-PLAN.md — 404-discriminant purge + suspend/reinstate revision-bump (server + both clients)
+- [x] 28-03-PLAN.md — 404-discriminant purge + suspend/reinstate revision-bump (server + both clients)

@@ -5,16 +5,16 @@ milestone_name: Family & Sharing
 current_phase: 28
 current_phase_name: Close v0.4 audit gaps — client-side consumption of sharing state
 status: executing
-stopped_at: Completed 28-02-PLAN.md
-last_updated: "2026-08-09T15:02:28.998Z"
+stopped_at: Completed 28-03-PLAN.md
+last_updated: "2026-08-09T15:56:44.922Z"
 last_activity: 2026-08-09
 last_activity_desc: Phase 28 execution started
 progress:
   total_phases: 8
-  completed_phases: 7
+  completed_phases: 8
   total_plans: 64
-  completed_plans: 63
-  percent: 88
+  completed_plans: 64
+  percent: 100
 ---
 
 # Project State
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 ## Current Position
 
 Phase: 28 (Close v0.4 audit gaps — client-side consumption of sharing state) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-08-09 — Phase 28 execution started
 
@@ -112,6 +112,7 @@ Last activity: 2026-08-09 — Phase 28 execution started
 | Phase 27 P15 | ~35min | 1 tasks | 3 files |
 | Phase 28 P01 | 45min | 3 tasks | 13 files |
 | Phase 28 P02 | 24min | 2 tasks | 6 files |
+| Phase 28 P03 | ~110min | 5 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -236,6 +237,9 @@ Recent decisions affecting current work:
 - [Phase ?]: save-update-toast.ts's blocked-render branch never constructs the preview/confirm-button DOM elements at all for a blocked proposal -- genuine absence, not a hidden password-bearing input
 - [Phase ?]: SHARE-06 revoke: both real recipients added to the same collection in ONE ShareDialog multi-select submission, avoiding WINDOWS #13's out-of-scope add-to-existing-collection crypto composition.
 - [Phase ?]: Stray local pv-server on :8620 (real data/pv.db) was reused by Playwright's webServer before being caught; stopped, and the suite re-run against its own isolated instance.
+- [Phase ?]: 28-03: families.rs::suspend_member/reinstate_member bump the target's own shared_direct_revision (B-8) -- suspension's direct-share bucket now has a genuine, bidirectional signal, no re-key writes
+- [Phase ?]: 28-03: sync-client.ts's/sync.ts's hasEverConfirmedFamilyMembership discriminant is armed by BOTH pullOnce()'s own success AND vault-store.ts's/store.ts's earlier refreshSharedItemsNow() via an exported markFamilyMembershipConfirmed() setter -- closes the plan-review two-call-site race blocker
+- [Phase ?]: 28-03: extension's family-removal e2e fixture uses a FRESH single-purpose target identity per call (never the shared MEMBER_B fixture sibling specs reuse), with the OWNER (not member A) creating the fixture's own collection, since the account submitting a real removal/suspend/reinstate batch must hold its own collection_keys row for every collection it acts on
 
 ### Pending Todos
 
@@ -315,10 +319,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 28-02-PLAN.md
+**Stopped at:** Completed 28-03-PLAN.md
 **Resume file:** None
 
-Last session: 2026-08-09T15:02:23.137Z
+Last session: 2026-08-09T15:56:44.910Z
 27-13-PLAN.md (gap closure) executed: vault-store.ts::ensureSharedItemsHydrated() (the
 shared-side counterpart to the existing ensureItemsHydrated()) is now awaited by
 handleCredentialsGet, alongside ensureItemsHydrated(), before its candidate snapshot -- closing
