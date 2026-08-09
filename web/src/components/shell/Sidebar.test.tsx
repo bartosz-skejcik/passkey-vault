@@ -162,11 +162,16 @@ describe("Sidebar settings dropdown", () => {
     expect(mockSetLocale).toHaveBeenCalledWith("en");
   });
 
-  it("calls onOpenSettings when 'Ustawienia' is clicked in the account dropdown", () => {
-    const onOpenSettings = vi.fn();
-    render(<Sidebar onOpenSettings={onOpenSettings} />);
-    fireEvent.click(screen.getByTestId("sidebar-open-settings"));
-    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  // Plan 29-03: the gear entry became a real <a href="/settings"> (SET-01's
+  // own point applied to the entry point users actually click) — replaces
+  // the old callback-invocation test with a stronger real-link-semantics
+  // assertion, matching this same file's own "every nav item... is a real
+  // interactive button" pattern below.
+  it("renders the settings entry as a real link to /settings, not a callback-driven button", () => {
+    render(<Sidebar />);
+    const settingsLink = screen.getByTestId("sidebar-open-settings");
+    expect(settingsLink.tagName).toBe("A");
+    expect(settingsLink.getAttribute("href")).toBe("/settings");
   });
 });
 
