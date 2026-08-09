@@ -5,16 +5,16 @@ milestone_name: Family & Sharing
 current_phase: 27
 current_phase_name: Extension Integration — Shared Items
 status: verifying
-stopped_at: Completed 27-14-PLAN.md (gap closure, access-level live coverage + EXT-07 fill + flake fix)
-last_updated: "2026-08-09T10:18:14.842Z"
+stopped_at: Completed 27-13-PLAN.md (gap closure, Blocker 2 -- handleCredentialsGet resolution barrier)
+last_updated: "2026-08-09T10:26:32.243Z"
 last_activity: 2026-08-09
-last_activity_desc: 27-14-PLAN.md executed
+last_activity_desc: 27-13-PLAN.md executed (gap closure, Blocker 2 closed -- all three gap-closure plans now complete)
 progress:
   total_phases: 7
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 61
-  completed_plans: 60
-  percent: 86
+  completed_plans: 61
+  percent: 100
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 
 ## Current Position
 
-Phase: 27 (Extension Integration — Shared Items) — GAP CLOSURE
+Phase: 27 (Extension Integration — Shared Items) — GAP CLOSURE COMPLETE
 Plan: 14 of 14 (gap-closure plans 12-14, from 27-VERIFICATION.md's gaps_found)
-Status: 27-12 complete (Blocker 1 closed); 27-14 complete (Gaps 3/4/5 closed) — 27-13 remaining (independent, depends_on: [])
-Last activity: 2026-08-09 — 27-14-PLAN.md executed
+Status: 27-12 complete (Blocker 1 closed); 27-13 complete (Blocker 2 closed); 27-14 complete (Gaps 3/4/5 closed) — all three gap-closure plans landed
+Last activity: 2026-08-09 — 27-13-PLAN.md executed
 
 ## Performance Metrics
 
@@ -108,6 +108,7 @@ Last activity: 2026-08-09 — 27-14-PLAN.md executed
 | Phase 27 P11 | ~2h | 3 tasks | 3 files |
 | Phase 27 P12 | 30min | 3 tasks | 8 files |
 | Phase 27 P14 | ~40min | 3 tasks | 5 files |
+| Phase 27 P13 | ~25min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -215,6 +216,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 27] 27-11: closed the phase's three whole-phase-only obligations with live evidence -- EXT-11 chrome.storage.session audit, post-revocation staleness (T-27-24) with a genuine ~1-minute alarm-backed poll wait, and the phase's only real-crypto write-path proof (T-27-25)
 - [Phase ?]: 27-12: pendingSharedItems entries now carry a pending-vs-broken status discriminant (upsert on reattempt), and ItemListView.tsx degrades a broken shared row to a terminal honest warning instead of an indefinite skeleton -- closes 27-VERIFICATION.md Blocker 1 (UI-SPEC E2-error backstop)
 - [Phase 27] 27-14: closed 27-VERIFICATION.md Gaps 3/4/5 -- setupAccessLevelFixture() (real hidden_password direct share + real read-access collection); dual-extension-access-levels.spec.ts proves hidden_password autofill-without-reveal/copy AND read-only write-refusal (ReadOnlyAccessError) live for the first time; a live DOM-fill assertion closes EXT-07's fill-event gap; signInAndUnlock's service-worker-readiness fix (3/3 green --retries=0) closes the diagnosed cold-MV3-wake flake; KEY-01 reconciled to Complete in REQUIREMENTS.md
+- [Phase ?]: [Phase 27] 27-13: closed 27-VERIFICATION.md Blocker 2 -- vault-store.ts::ensureSharedItemsHydrated() (shared-side counterpart to ensureItemsHydrated()) is awaited by handleCredentialsGet before its candidate snapshot, so a cold MV3-wake ceremony can no longer present a personal-only picker as complete while a shared passkey for the same RP is still resolving its Collection Key; regression tests prove both the await order and the actual closure (a mid-wake shared candidate lands in payload.candidates); live dual-extension-ceremony.spec.ts re-verified 2/2 green
 
 ### Pending Todos
 
@@ -293,18 +295,19 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 27-14-PLAN.md (gap closure, access-level live coverage + EXT-07 fill + flake fix)
+**Stopped at:** Completed 27-13-PLAN.md (gap closure, Blocker 2 -- handleCredentialsGet resolution barrier)
 **Resume file:** None
 
-Last session: 2026-08-09T10:18:14.830Z
-27-14-PLAN.md (gap closure) executed: setupAccessLevelFixture() (real hidden_password direct
-share + real read-access collection); dual-extension-access-levels.spec.ts proves both
-hidden_password autofill-without-reveal/copy and read-only write-refusal (ReadOnlyAccessError)
-live for the first time in this phase; dual-extension-sharing.spec.ts gained a live DOM-fill
-assertion closing EXT-07's fill-event gap; signInAndUnlock's service-worker-readiness fix (3/3
-consecutive green --retries=0 runs) closes the diagnosed cold-MV3-wake flake (27-VERIFICATION.md
-Gap 5); REQUIREMENTS.md's KEY-01 row reconciled from Partial to Complete. Next entry point:
-27-13-PLAN.md (independent gap-closure plan, not yet executed) or `/gsd-verify-phase 27`.
+Last session: 2026-08-09T10:26:27.117Z
+27-13-PLAN.md (gap closure) executed: vault-store.ts::ensureSharedItemsHydrated() (the
+shared-side counterpart to the existing ensureItemsHydrated()) is now awaited by
+handleCredentialsGet, alongside ensureItemsHydrated(), before its candidate snapshot -- closing
+27-VERIFICATION.md's Blocker 2 (a cold MV3-wake ceremony could present a personal-only picker as
+complete while a shared passkey for the same RP was still resolving its Collection Key). Two new
+regression tests prove the await order and the actual race closure. Live
+dual-extension-ceremony.spec.ts re-verified 2/2 green headed runs. All three gap-closure plans
+(27-12 Blocker 1, 27-13 Blocker 2, 27-14 Gaps 3/4/5) are now complete. Next entry point:
+`/gsd-verify-phase 27` (re-verification against 27-VERIFICATION.md's two prior failures).
 
 ## Operator Next Steps
 
