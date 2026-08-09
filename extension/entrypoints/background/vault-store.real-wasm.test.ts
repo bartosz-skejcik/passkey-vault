@@ -95,9 +95,25 @@ vi.mock("wxt/browser", () => ({
 // NOTE: deliberately NO `vi.mock("../../lib/crypto/wasm-loader", ...)` --
 // this is the real module, real wasm-bindgen bindings, for both the
 // fixture-building calls below AND vault-store.ts's own internal
-// decryptItemForCollection call.
-import { initCrypto, WasmCollectionKey, encryptItemForCollection } from "../../lib/crypto/wasm-loader";
-import { applySyncSnapshot, getItems, getPendingSharedItems, splitCombinedEncryptedItem } from "./vault-store";
+// decryptItemForCollection/unsealCollectionKey/decryptItemWithSharedKey
+// calls (27-15: the direct-share describe block below).
+import {
+  initCrypto,
+  WasmCollectionKey,
+  WasmUserKey,
+  WasmIdentityKey,
+  WasmIdentityPublicKey,
+  encryptItemForCollection,
+  encryptItem,
+  sealItemKeyForRecipient,
+} from "../../lib/crypto/wasm-loader";
+import {
+  applySyncSnapshot,
+  getItems,
+  getPendingSharedItems,
+  handleSharedRevisions,
+  splitCombinedEncryptedItem,
+} from "./vault-store";
 
 const COLLECTION_ID = "collection-real-wasm-1";
 const ITEM_ID = "item-real-wasm-1";
@@ -210,6 +226,162 @@ describe("vault-store.ts: pending-vs-broken decrypt classification (27-12, Block
       ]);
     } finally {
       correctKey.free?.();
+    }
+  });
+});
+
+// 27-15 (27-VERIFICATION.md's direct-share silent-drop gap, sibling of
+// Blocker 1 -- 27-12's describe block above closed the SAME violation on the
+// collection-scoped path): mergeDirectSnapshot's own catch, not
+// decryptItemRow's. Per the Nyquist evidence rule (27-VALIDATION.md), a
+// mocked wasm-loader can only prove "decryptItemWithSharedKey was called and
+// threw," never that a real, correctly-sealed-and-unsealed item key
+// genuinely fails its OWN AEAD integrity check against tampered ciphertext
+// -- so, mirroring the describe block above, neither `unsealCollectionKey`
+// nor `decryptItemWithSharedKey` is mocked here. Unlike the collection-
+// scoped "broken" case above (which uses a genuinely WRONG key), this one
+// uses the CORRECT key/seal and a genuinely CORRUPTED payload instead -- the
+// two ways an AEAD integrity check can fail for real, and the specific one
+// this plan's own instructions named ("real ciphertext, real key, corrupted
+// payload").
+const DIRECT_ITEM_ID = "item-real-wasm-direct-1";
+
+/** mergeDirectSnapshot's own `finally { identityKey.free?.(); }` already
+ * frees the identity keypair handle it receives from `ensureOwnIdentityKeypair`
+ * after every real call in production. Since this test's mock hands back the
+ * SAME locally-generated `WasmIdentityKey` instance both fixture-building
+ * (sealing under `bob`'s public half) and vault-store.ts's own production
+ * call need, a second explicit `.free()` in this test's own `finally` block
+ * would double-free an already-deallocated wasm pointer. Ported from
+ * web/src/lib/vault/store.real-wasm.test.ts's identical `deferRealFree`
+ * helper (same rationale, same doc comment there): makes the FIRST
+ * (production) `.free()` call a no-op, deferring the one real free to an
+ * explicit `.dispose()` this test calls itself, once, after
+ * `handleSharedRevisions` has fully settled. */
+function deferRealFree(key: WasmIdentityKey): { dispose: () => void } {
+  const originalFree = key.free.bind(key);
+  key.free = () => {
+    // Production's `identityKey.free?.()` call becomes a no-op here -- see
+    // this function's own doc comment for why a simple reference count is
+    // not sufficient (this test file has only ONE real identity keypair
+    // handle to share between the fixture-building code and the production
+    // call, unlike production's own always-fresh-handle-per-call contract).
+  };
+  return { dispose: () => originalFree() };
+}
+
+/** Corrupts one byte of the AEAD ciphertext inside a combined-item's
+ * enc_data JSON -- wasm-bindgen's own wire shape is `{nonce: number[],
+ * ciphertext: number[]}`, not a base64 string, so a single element mutation
+ * is enough to make decryptItemWithSharedKey's own integrity check fail for
+ * real, without touching the nonce or the JSON's own shape. */
+function corruptEncData(encDataJson: string): string {
+  const parsed = JSON.parse(encDataJson) as { nonce: number[]; ciphertext: number[] };
+  const corruptedCiphertext = [...parsed.ciphertext];
+  corruptedCiphertext[0] = (corruptedCiphertext[0] + 1) % 256;
+  return JSON.stringify({ ...parsed, ciphertext: corruptedCiphertext });
+}
+
+/** Builds one real directly-shared row -- Alice's personal item, genuinely
+ * encrypted under Alice's own real `WasmUserKey`, its item key genuinely
+ * re-sealed for `recipientPub` via `sealItemKeyForRecipient` (the SAME
+ * recipient-side wire shape `decryptDirectSharedRow` expects:
+ * `{enc_data, sealed_key}`, no `enc_key` on this path -- the item key
+ * travels via `sealed_key` instead). `corrupt` optionally tampers the
+ * ciphertext AFTER sealing, so the seal/unseal handshake itself is always
+ * genuine even in the "broken" case below -- only the payload is corrupted. */
+function buildRealDirectSharedRow(
+  aliceUk: WasmUserKey,
+  recipientPub: WasmIdentityPublicKey,
+  plaintext: string,
+  corrupt: boolean,
+) {
+  const combined = encryptItem(aliceUk, plaintext, DIRECT_ITEM_ID, 1);
+  const { encKey, encData } = splitCombinedEncryptedItem(combined);
+  const sealedKey = sealItemKeyForRecipient(aliceUk, encKey, DIRECT_ITEM_ID, recipientPub);
+  return {
+    id: DIRECT_ITEM_ID,
+    enc_data: corrupt ? corruptEncData(encData) : encData,
+    sealed_key: sealedKey,
+    revision: 1,
+    updated_at: "2026-08-09T00:00:00Z",
+    last_used_at: null,
+    is_shared: true,
+    last_editor_email: null,
+    access_level: "read" as const,
+  };
+}
+
+describe("vault-store.ts: direct-share decrypt failure classifies as 'broken' immediately, never 'pending' (27-15, real WASM, corrupted payload not a mocked throw)", () => {
+  it("an UNCORRUPTED directly-shared row decrypts correctly and is never recorded via getPendingSharedItems() -- the falsification counterpart proving the corrupted case below fails for the RIGHT reason (a real AEAD integrity check on tampered bytes, not e.g. a malformed fixture)", async () => {
+    const aliceUk = WasmUserKey.generate();
+    const bob = WasmIdentityKey.generate();
+    const bobHandle = deferRealFree(bob);
+    let bobPub: WasmIdentityPublicKey | undefined;
+    try {
+      bobPub = WasmIdentityPublicKey.fromBytes(bob.publicKeyBytes());
+      const plaintext = JSON.stringify({
+        type: "note",
+        name: "Real Direct Share Fixture",
+        body: "b",
+        folderId: null,
+        tags: [],
+      });
+      const row = buildRealDirectSharedRow(aliceUk, bobPub, plaintext, false);
+
+      hoisted.mockGetUnlockedUserKey.mockReturnValue({});
+      hoisted.mockEnsureOwnIdentityKeypair.mockResolvedValue(bob);
+      hoisted.mockGetSharedDirectSync.mockResolvedValue({ revision: 1, items: [row] });
+
+      await handleSharedRevisions({ collections: [], direct: { revision: 1 } });
+
+      expect(getPendingSharedItems()).toEqual([]);
+      const item = getItems().find((i) => i.id === DIRECT_ITEM_ID);
+      expect(item).toBeDefined();
+      expect(item?.fields).toEqual({
+        type: "note",
+        name: "Real Direct Share Fixture",
+        body: "b",
+        folderId: null,
+        tags: [],
+      });
+    } finally {
+      aliceUk.free?.();
+      bobHandle.dispose();
+      bobPub?.free?.();
+    }
+  });
+
+  it("a directly-shared row with a genuinely corrupted ciphertext (real identity keypair, real seal/unseal, tampered AEAD payload) is recorded via getPendingSharedItems() as {status: 'broken', collectionId: null} -- never simply absent, and never 'pending'", async () => {
+    const aliceUk = WasmUserKey.generate();
+    const bob = WasmIdentityKey.generate();
+    const bobHandle = deferRealFree(bob);
+    let bobPub: WasmIdentityPublicKey | undefined;
+    try {
+      bobPub = WasmIdentityPublicKey.fromBytes(bob.publicKeyBytes());
+      const plaintext = JSON.stringify({
+        type: "note",
+        name: "Real Direct Share Fixture (corrupted)",
+        body: "b",
+        folderId: null,
+        tags: [],
+      });
+      const row = buildRealDirectSharedRow(aliceUk, bobPub, plaintext, true);
+
+      hoisted.mockGetUnlockedUserKey.mockReturnValue({});
+      hoisted.mockEnsureOwnIdentityKeypair.mockResolvedValue(bob);
+      hoisted.mockGetSharedDirectSync.mockResolvedValue({ revision: 1, items: [row] });
+
+      await handleSharedRevisions({ collections: [], direct: { revision: 1 } });
+
+      expect(getItems()).toEqual([]);
+      expect(getPendingSharedItems()).toEqual([
+        { id: DIRECT_ITEM_ID, collectionId: null, status: "broken" },
+      ]);
+    } finally {
+      aliceUk.free?.();
+      bobHandle.dispose();
+      bobPub?.free?.();
     }
   });
 });

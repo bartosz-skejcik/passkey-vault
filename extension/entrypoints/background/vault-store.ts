@@ -192,9 +192,20 @@ let folders: Folder[] = [];
 // two apart and render a "broken" row as a terminal, honest warning instead
 // of an indefinite skeleton (UI-SPEC's E2-error backstop). See
 // `getPendingSharedItems()`'s own doc comment for the full reasoning.
+//
+// 27-15 (27-VERIFICATION.md's direct-share silent-drop gap, sibling of
+// Blocker 1): `collectionId` is now `string | null` -- a directly-shared
+// row (`mergeDirectSnapshot`'s catch, below) has no collection at all, so it
+// records `null` here. The ONE consumer that reads `collectionId` on this
+// array (`doHandleSharedRevisions`'s revoked-collection purge, `p.collectionId
+// !== knownId`) already treats a non-matching value as "leave this entry
+// alone" -- `null !== knownId` is always true for a real collection id, so a
+// direct-share entry is correctly never touched by that purge. The popup
+// (`ItemListView.tsx`) needs no change at all: its broken-row branch renders
+// from `{id, status}` only.
 export interface PendingSharedItemEntry {
   id: string;
-  collectionId: string;
+  collectionId: string | null;
   status: "pending" | "broken";
 }
 let pendingSharedItems: PendingSharedItemEntry[] = [];
@@ -279,7 +290,7 @@ function replaceItemInSources(id: string, updated: VaultItem): void {
  * duplicate entry for an `id` already present -- at most one entry per id,
  * always. See `getPendingSharedItems()`'s own doc comment for the full
  * retain-vs-drop rationale. */
-function markPending(id: string, collectionId: string, status: "pending" | "broken"): void {
+function markPending(id: string, collectionId: string | null, status: "pending" | "broken"): void {
   const existingIndex = pendingSharedItems.findIndex((p) => p.id === id);
   if (existingIndex === -1) {
     pendingSharedItems = [...pendingSharedItems, { id, collectionId, status }];
@@ -332,6 +343,13 @@ function clearPending(id: string): void {
  * permanently stuck. This is what makes UI-SPEC's E2-error backstop
  * dischargeable: `ItemListView.tsx` can now render a "broken" entry as a
  * terminal, honest warning instead of an indefinite skeleton.
+ *
+ * 27-15 (27-VERIFICATION.md's direct-share silent-drop gap, sibling of
+ * Blocker 1): `mergeDirectSnapshot`'s catch (below) now records a failed
+ * directly-shared row here too, with `collectionId: null` (a direct share
+ * has none). Its discriminant is ALWAYS "broken", never "pending" -- see
+ * `mergeDirectSnapshot`'s own catch comment for why the collection-scoped
+ * "not cached YET" transient state has no analogue on this path.
  */
 export function getPendingSharedItems(): PendingSharedItemEntry[] {
   return pendingSharedItems;
@@ -675,9 +693,37 @@ async function mergeDirectSnapshot(
     for (const row of response.items) {
       try {
         decrypted.push(decryptDirectSharedRow(row, identityKey));
+        clearPending(row.id);
       } catch (err) {
         anyRowFailed = true;
         console.warn(`[passkey-vault] failed to decrypt directly-shared item ${row.id}`, err);
+        // 27-15 (27-VERIFICATION.md's direct-share silent-drop gap, sibling
+        // of Blocker 1 -- 27-12 closed the SAME violation on the
+        // collection-scoped path via mergeCollectionSnapshot's catch, this
+        // one was missed): record the row via getPendingSharedItems()
+        // instead of letting it vanish with only a console.warn -- the SAME
+        // "never simply absent, never a trace-free silent drop" guarantee
+        // applySyncSnapshot/mergeCollectionSnapshot already give every
+        // collection-scoped row.
+        //
+        // Discriminant reasoning (this plan's own instruction: reason about
+        // the correct pending-vs-broken split HERE rather than copying the
+        // collection-scoped logic verbatim): the collection path's
+        // "pending" state exists because `getCollectionKey()` is a
+        // SYNCHRONOUS read of a cache that may not have finished its FIRST
+        // refresh yet (`hasRefreshedThisSession()` gates that window). This
+        // path has no such window -- `identityKey` above is already fully
+        // resolved, AWAITED, before this loop ever starts, unconditionally,
+        // for every row in this pull. So a failure reaching this catch was
+        // attempted with a fully-resolved identity key already in hand: it
+        // is either a `sealed_key` that genuinely does not unseal under
+        // THIS recipient's own identity key, or an `enc_data` whose AEAD
+        // integrity check genuinely fails -- both terminal, neither
+        // "haven't looked yet." There is nothing left for a later reattempt
+        // to resolve that this attempt did not already try, fully. This
+        // path therefore classifies "broken" immediately -- it never
+        // produces a "pending" entry, unlike the collection-scoped path.
+        markPending(row.id, null, "broken");
       }
     }
     // Replace the WHOLE direct-shared set -- pull_shared_direct always

@@ -738,6 +738,43 @@ describe("shared-revisions merge (27-04, A-1's mergeCollectionSnapshot/mergeDire
 
     expect(getItems()).toEqual([]);
   });
+
+  it("Test 22 (27-15, direct-share silent-drop gap -- mirrors Test 15's mocked-dispatch shape for the collection path): a directly-shared row that fails to decrypt is ALSO recorded via getPendingSharedItems(), with collectionId: null and status: 'broken' immediately, never simply absent with no trace", async () => {
+    hoisted.mockGetUnlockedUserKey.mockReturnValue({ tag: "uk" });
+    const fakeIdentityKey = { free: vi.fn() };
+    hoisted.mockEnsureOwnIdentityKeypair.mockResolvedValue(fakeIdentityKey);
+    hoisted.mockUnsealCollectionKey.mockReturnValue({ tag: "unsealed-item-key", free: vi.fn() });
+    hoisted.mockDecryptItemWithSharedKey.mockImplementation(() => {
+      throw new Error("AEAD integrity check failed");
+    });
+    hoisted.mockGetSharedDirectSync.mockResolvedValue({
+      revision: 1,
+      items: [
+        {
+          id: "i1",
+          enc_data: "{}",
+          sealed_key: "sealed-blob",
+          revision: 1,
+          updated_at: "2026-01-01",
+          last_used_at: null,
+          is_shared: true,
+          last_editor_email: null,
+          access_level: "read",
+        },
+      ],
+    });
+
+    const { handleSharedRevisions, getItems, getPendingSharedItems } = await import("./vault-store");
+
+    await handleSharedRevisions({ collections: [], direct: { revision: 1 } });
+
+    expect(getItems()).toEqual([]);
+    expect(getPendingSharedItems()).toEqual([{ id: "i1", collectionId: null, status: "broken" }]);
+    // Never "pending" -- the discriminant reasoning in mergeDirectSnapshot's
+    // own catch comment: identityKey is already fully resolved before this
+    // loop runs, so there is no "not cached yet" transient window here.
+    expect(getPendingSharedItems()[0]?.status).not.toBe("pending");
+  });
 });
 
 // NordPass-style last-used tracking (quick-260717): the single fire-and-
