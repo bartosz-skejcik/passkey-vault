@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Family & Sharing
-current_phase: 27
-current_phase_name: Extension Integration — Shared Items
-status: verifying
+current_phase: 28
+current_phase_name: Close v0.4 audit gaps — client-side consumption of sharing state
+status: executing
 stopped_at: Completed 28-01-PLAN.md (direct-share + hidden_password write refusal, blocked-toast rendering, persistUpdatedProviderItem dormant fix)
-last_updated: "2026-08-09T14:36:17.008Z"
+last_updated: "2026-08-09T14:37:14.513Z"
 last_activity: 2026-08-09
-last_activity_desc: 27-16 (functional gap closure + UAT screenshots + housekeeping) executed
+last_activity_desc: Phase 28 execution started
 progress:
   total_phases: 8
   completed_phases: 7
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-31)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 27 — Extension Integration — Shared Items
+**Current focus:** Phase 28 — Close v0.4 audit gaps — client-side consumption of sharing state
 
 ## Current Position
 
-Phase: 27 (Extension Integration — Shared Items) — GAP CLOSURE COMPLETE, verification human-items 2/3 remain
-Plan: 16 of 16 (gap-closure plans 12-14 + 27-15's direct-share fix + 27-16 quick-task closure of the last human-verification item)
-Status: 27-12 complete (Blocker 1 closed); 27-13 complete (Blocker 2 closed); 27-14 complete (Gaps 3/4/5 closed); 27-15 complete (re-verification's direct-share silent-drop blocker closed); 27-16 complete (27-03's `adopted_existing` race now real-WASM tested and falsification-proven — CLOSED; live UAT screenshots captured for the 2 remaining visual-taste items, evidence attached to 27-VERIFICATION.md, awaiting Bartek's judgment, NOT self-approved)
-Last activity: 2026-08-09 — 27-16 (functional gap closure + UAT screenshots + housekeeping) executed
+Phase: 28 (Close v0.4 audit gaps — client-side consumption of sharing state) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 28
+Last activity: 2026-08-09 — Phase 28 execution started
 
 ## Performance Metrics
 
