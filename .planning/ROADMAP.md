@@ -76,7 +76,7 @@ Delivered: 20/20 requirements, 7/7 phases verified + Nyquist-compliant + threat-
 Delivered: 38/40 requirements end-to-end, 8/8 phases executed, integration 11/12 flows, 0 blockers.
 The milestone audit found three defects seven green phase verifications missed — all three were a server
 capability no client reached — and Phase 28 closed each with live proof rather than static wiring.
-Audit: [v0.4-MILESTONE-AUDIT.md](v0.4-MILESTONE-AUDIT.md). Full details:
+Audit: [milestones/v0.4-MILESTONE-AUDIT.md](milestones/v0.4-MILESTONE-AUDIT.md). Full details:
 [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md). Debt carried into v0.5: 5 items, listed in the archive.
 
 </details>

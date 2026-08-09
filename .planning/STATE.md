@@ -120,7 +120,7 @@ Last activity: 2026-08-09 — 28-04 gap-closure pass complete (falsified-truth f
 ### Roadmap Evolution
 
 - Phase 28 added 2026-08-09: **Close v0.4 audit gaps — client-side consumption of sharing state.**
-  Added after `.planning/v0.4-MILESTONE-AUDIT.md` returned `gaps_found` with three blockers, all
+  Added after `.planning/milestones/v0.4-MILESTONE-AUDIT.md` returned `gaps_found` with three blockers, all
   instances of one seam (a server capability no client reaches): SHARE-06 revoke has no client caller
   at all; the extension's `confirmUpdateLogin` mis-encrypts a directly-shared item under the
   recipient's User Key because it gates on `collectionId != null` and a direct share has
