@@ -33,6 +33,21 @@ import type { Page } from "@playwright/test";
 // context where `chrome` truly is a global at runtime.
 declare const chrome: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
+/** 27-11 Task 1: resolves the real background service-worker Page object for
+ * a worker-scoped extension context -- mirrors fixtures.ts's own
+ * extensionId resolution (same `serviceWorkers()`-then-`waitForEvent`
+ * fallback), generalized to hand back the worker itself rather than just its
+ * URL, since the storage audit needs to `evaluate()` INSIDE that context. */
+async function getServiceWorker(
+  context: import("@playwright/test").BrowserContext,
+): Promise<import("@playwright/test").Worker> {
+  let [worker] = context.serviceWorkers().filter((w) => w.url().startsWith("chrome-extension://"));
+  if (!worker) {
+    worker = await context.waitForEvent("serviceworker", { timeout: 20000 });
+  }
+  return worker;
+}
+
 async function ensureServerConfigured(popup: Page): Promise<void> {
   const urlInput = popup.locator("input#pv-server-url");
   if (await urlInput.count()) {
@@ -99,7 +114,7 @@ test("member B's extension displays the exact plaintext name of the item member 
   // ceremonies + a bounded wait for the eager shared-revisions pull --
   // generous but bounded, mirrors dual-browser.spec.ts's own per-test
   // timeout rationale for real-crypto-bound flows.
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
 
   const fixture = await setupSharedFixture();
 
@@ -182,4 +197,43 @@ test("member B's extension displays the exact plaintext name of the item member 
   await popupB.getByText(fixture.sharedItemName, { exact: true }).click();
   await expect(popupB.getByText("Password", { exact: false })).toBeVisible({ timeout: 10000 });
   await expect(popupB.getByText("Secret (base32)")).toHaveCount(0);
+
+  // 27-11 Task 1 (EXT-11's whole-phase chrome.storage.session audit): run
+  // AFTER every crypto path this test exercises has actually executed
+  // (identity-keypair unwrap, Collection Key unseal/decrypt, the
+  // shared-revisions merge, the reveal above) -- a live enumeration of
+  // member B's OWN service-worker chrome.storage.session key set, never an
+  // inference from reading collections-store.ts's/identity-store.ts's own
+  // header comments. Allowed set is this codebase's pre-Phase-27 baseline
+  // (session-storage.ts) plus provider-ceremony.ts's/server-unlock.ts's own
+  // pre-existing transient records (none of which ran in this spec, so in
+  // practice only the two session-storage.ts keys are expected -- the wider
+  // allow-list is deliberate belt-and-suspenders, not a loosened bar: EVERY
+  // entry in it predates this phase).
+  const ALLOWED_SESSION_STORAGE_KEYS = new Set([
+    "pv-session-meta", // session-storage.ts's SessionMeta record
+    "pv-uk-envelope", // session-storage.ts's KeyEnvelope record
+    "pv-pending-provider-ceremony", // provider-ceremony.ts -- mid-ceremony only, none ran here
+    "pv-pending-provider-items", // provider-ceremony.ts's own sibling record
+    "pv-server-unlock-pending", // server-unlock.ts's single-use nonce, cleared on every resolution path
+  ]);
+  const workerB = await getServiceWorker(extContextB);
+  const sessionStorageDump = (await workerB.evaluate(() =>
+    chrome.storage.session.get(null),
+  )) as Record<string, unknown>;
+  const observedKeys = Object.keys(sessionStorageDump);
+  const unexpectedKeys = observedKeys.filter((k) => !ALLOWED_SESSION_STORAGE_KEYS.has(k));
+  expect(
+    unexpectedKeys,
+    `chrome.storage.session gained an unexpected key -- full observed key set: ${JSON.stringify(observedKeys)}`,
+  ).toEqual([]);
+  // T-27-05/EXT-11's own explicit prohibition, checked directly on the
+  // ACTUAL live key names (never inferred from source): no key ever carries
+  // "identity"/"collection"/"sealed" -- the identity secret key and every
+  // Collection Key stay module-memory-only, re-derived per MV3 wake.
+  const forbiddenSubstringKeys = observedKeys.filter((k) => /identity|collection|sealed/i.test(k));
+  expect(
+    forbiddenSubstringKeys,
+    `chrome.storage.session leaked identity/collection/sealed key material -- full observed key set: ${JSON.stringify(observedKeys)}`,
+  ).toEqual([]);
 });
