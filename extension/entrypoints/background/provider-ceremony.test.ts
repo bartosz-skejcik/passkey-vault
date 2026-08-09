@@ -16,6 +16,8 @@ const hoisted = vi.hoisted(() => ({
   mockSubscribeSessionLockState: vi.fn(),
   mockGetItems: vi.fn(),
   mockTouchVaultItem: vi.fn(),
+  mockEnsureItemsHydrated: vi.fn(),
+  mockEnsureSharedItemsHydrated: vi.fn(),
   mockCreateItem: vi.fn(),
   mockUpdateItem: vi.fn(),
   mockEncryptItem: vi.fn(),
@@ -69,6 +71,8 @@ vi.mock("./vault-session", () => ({
 vi.mock("./vault-store", () => ({
   getItems: hoisted.mockGetItems,
   touchVaultItem: hoisted.mockTouchVaultItem,
+  ensureItemsHydrated: hoisted.mockEnsureItemsHydrated,
+  ensureSharedItemsHydrated: hoisted.mockEnsureSharedItemsHydrated,
   splitCombinedEncryptedItem: (combinedJson: string) => {
     const combined = JSON.parse(combinedJson) as { enc_key: unknown; enc_data: unknown };
     return {
@@ -179,6 +183,8 @@ beforeEach(() => {
   hoisted.mockStorageSet.mockResolvedValue(undefined);
   hoisted.mockStorageRemove.mockResolvedValue(undefined);
   hoisted.mockGetItems.mockReturnValue([]);
+  hoisted.mockEnsureItemsHydrated.mockResolvedValue({ ok: true });
+  hoisted.mockEnsureSharedItemsHydrated.mockResolvedValue({ ok: true });
   hoisted.mockCreateItem.mockResolvedValue({ id: "new-id", revision: 1, updated_at: "now" });
   hoisted.mockUpdateItem.mockResolvedValue({ revision: 2, updated_at: "now" });
   hoisted.mockEncryptItem.mockReturnValue(combinedEncryptedItemJson());
@@ -466,6 +472,88 @@ describe("credentials.get: no matching credential", () => {
     resolveProviderCredentialChoice(payload.requestId, "pk-healthy");
     const result = await resultPromise;
     expect(result).toEqual({ fallthrough: false, credentialResponseJson: '{"id":"cred-pk-healthy"}' });
+  });
+});
+
+// 27-13 (Blocker 2 gap closure, 27-VERIFICATION.md): handleCredentialsGet
+// previously snapshotted getItems() immediately after resolving the User
+// Key, with no barrier on the shared-item/Collection-Key caches also having
+// settled this MV3 wake -- so a cold wake where a personal passkey matches
+// the RP while a shared one for the SAME RP is still resolving could render
+// an incomplete picker as if it were complete. Both tests below prove this
+// against real control flow (an await-ordering claim, not a crypto claim --
+// this suite mocks ../../lib/crypto/wasm-loader, so mocked-crypto evidence
+// is inadmissible for a crypto claim, but IS admissible here since neither
+// test asserts anything about ciphertext).
+describe("27-13 (Blocker 2 gap closure): handleCredentialsGet's resolution barrier before the candidate snapshot", () => {
+  it("awaits ensureItemsHydrated() then ensureSharedItemsHydrated(), in that order, BEFORE getItems() is ever called", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    const callOrder: string[] = [];
+    hoisted.mockEnsureItemsHydrated.mockImplementation(async () => {
+      callOrder.push("ensureItemsHydrated");
+      return { ok: true };
+    });
+    hoisted.mockEnsureSharedItemsHydrated.mockImplementation(async () => {
+      callOrder.push("ensureSharedItemsHydrated");
+      return { ok: true };
+    });
+    hoisted.mockGetItems.mockImplementation(() => {
+      callOrder.push("getItems");
+      return [passkeyItem("pk-1", "example.com", "alice")];
+    });
+    hoisted.mockWasmGetProviderAssertion.mockReturnValue({
+      credentialResponseJson: () => '{"id":"cred-pk-1"}',
+      updatedEncryptedItemJson: () => undefined,
+    });
+
+    const resultPromise = handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+    const payload = await awaitPendingCeremonyPayload();
+    resolveProviderCredentialChoice(payload.requestId, "pk-1");
+    await resultPromise;
+
+    expect(callOrder).toEqual(["ensureItemsHydrated", "ensureSharedItemsHydrated", "getItems"]);
+  });
+
+  it("a shared candidate whose Collection Key resolves DURING ensureSharedItemsHydrated()'s await window is included in the resulting picker -- not silently omitted", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    // Seeds getItems() with ONLY the personal candidate to start -- the
+    // exact shape of the race this plan closes: a personal match for the RP
+    // is already decrypted, but a shared match for the SAME rpId has not
+    // landed yet.
+    let currentItems: VaultItem[] = [passkeyItem("pk-personal", "example.com", "alice")];
+    hoisted.mockGetItems.mockImplementation(() => currentItems);
+    hoisted.mockEnsureItemsHydrated.mockResolvedValue({ ok: true });
+    // Simulates the shared-revisions merge landing DURING this exact await
+    // window -- mutates what getItems() will subsequently return to also
+    // include a second, shared passkey candidate for the same rpId, exactly
+    // as a real ensureSharedItemsHydrated() resolving would (its side
+    // effect is vault-store.ts's own internal state, read back via
+    // getItems() afterward).
+    hoisted.mockEnsureSharedItemsHydrated.mockImplementation(async () => {
+      currentItems = [
+        ...currentItems,
+        passkeyItem("pk-shared", "example.com", "bob", "collection-1"),
+      ];
+      return { ok: true };
+    });
+
+    const resultPromise = handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+    const payload = await awaitPendingCeremonyPayload();
+
+    // Without the ensureSharedItemsHydrated() await, getItems() would be
+    // read immediately after ensureItemsHydrated() resolves -- BEFORE this
+    // mutation lands -- and payload.candidates would contain only
+    // "pk-personal". A genuine regression guard, not a vacuous pass.
+    expect(payload.candidates.map((c) => c.itemId).sort()).toEqual(["pk-personal", "pk-shared"]);
+
+    resolveProviderCredentialChoice(payload.requestId, "pk-personal");
+    await resultPromise;
   });
 });
 

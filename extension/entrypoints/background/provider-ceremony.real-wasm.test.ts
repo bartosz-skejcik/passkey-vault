@@ -47,6 +47,8 @@ const hoisted = vi.hoisted(() => ({
   mockSubscribeSessionLockState: vi.fn(),
   mockGetItems: vi.fn(),
   mockTouchVaultItem: vi.fn(),
+  mockEnsureItemsHydrated: vi.fn(),
+  mockEnsureSharedItemsHydrated: vi.fn(),
   mockCreateItem: vi.fn(),
   mockUpdateItem: vi.fn(),
   mockGetCollectionKey: vi.fn(),
@@ -93,6 +95,8 @@ vi.mock("./vault-session", () => ({
 vi.mock("./vault-store", () => ({
   getItems: hoisted.mockGetItems,
   touchVaultItem: hoisted.mockTouchVaultItem,
+  ensureItemsHydrated: hoisted.mockEnsureItemsHydrated,
+  ensureSharedItemsHydrated: hoisted.mockEnsureSharedItemsHydrated,
   splitCombinedEncryptedItem: (combinedJson: string) => {
     const combined = JSON.parse(combinedJson) as { enc_key: unknown; enc_data: unknown };
     return {
@@ -202,6 +206,8 @@ beforeEach(() => {
   hoisted.mockStorageSet.mockResolvedValue(undefined);
   hoisted.mockStorageRemove.mockResolvedValue(undefined);
   hoisted.mockReadServerConfig.mockResolvedValue(null);
+  hoisted.mockEnsureItemsHydrated.mockResolvedValue({ ok: true });
+  hoisted.mockEnsureSharedItemsHydrated.mockResolvedValue({ ok: true });
   hoisted.mockUpdateItem.mockResolvedValue({ revision: 2, updated_at: "now" });
   hoisted.mockGetCollections.mockReturnValue([]);
   hoisted.mockSubscribeSessionLockState.mockReturnValue(() => {});

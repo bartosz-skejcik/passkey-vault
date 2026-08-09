@@ -93,7 +93,13 @@
 // discipline applied to this write path).
 import { browser } from "wxt/browser";
 import { ensureHydrated, subscribeSessionLockState } from "./vault-session";
-import { getItems, splitCombinedEncryptedItem, touchVaultItem } from "./vault-store";
+import {
+  ensureItemsHydrated,
+  ensureSharedItemsHydrated,
+  getItems,
+  splitCombinedEncryptedItem,
+  touchVaultItem,
+} from "./vault-store";
 import { createItem, updateItem } from "./vault-api";
 import { findMatchingPasskeyItems } from "./credential-store";
 import { getCollectionKey, getCollections } from "./collections-store";
@@ -751,6 +757,21 @@ export async function handleCredentialsGet(
         return { fallthrough: true };
       }
     }
+
+    // 27-13 (Blocker 2 gap closure): a resolution barrier before the
+    // candidate snapshot below. A cold MV3 wake reaching this point before
+    // EITHER cache has completed its first refresh this session can present
+    // a PARTIAL candidate list -- a personal match rendered as if it were
+    // the complete list, while a shared match for the same rpId is still
+    // resolving its Collection Key. Both awaits are best-effort barriers
+    // (see each function's own doc comment): the caller's own existing
+    // zero-candidate fallthrough further down is untouched and still applies
+    // to whatever getItems() returns once these two resolve. No new
+    // artificial timeout is added -- the page-side
+    // EXTENSION_AUTHORITY_TIMEOUT_MS (300s) backstop already bounds the
+    // whole ceremony end-to-end (T-27-29).
+    await ensureItemsHydrated();
+    await ensureSharedItemsHydrated();
 
     const rpId = extractGetRpId(req.publicKey, senderOrigin);
     // 27-10 Task 2 (confirmed against real code, not merely inferred):
