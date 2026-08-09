@@ -2,18 +2,26 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
-const { mockGetSessionToken, mockIsOnboardingComplete, mockUseIsUnlocked } = vi.hoisted(() => ({
-  mockGetSessionToken: vi.fn(),
-  mockIsOnboardingComplete: vi.fn(),
-  // Plan 09-06: mutable (not a fixed `() => true`) so the
-  // panel=settings/action=new-item deep-link tests below can simulate
-  // "locked at load, applies once after unlock" without a second mock
-  // module for the same target.
-  mockUseIsUnlocked: vi.fn(() => true),
-}));
+const { mockGetSessionToken, mockIsOnboardingComplete, mockUseIsUnlocked, mockRouterReplace } =
+  vi.hoisted(() => ({
+    mockGetSessionToken: vi.fn(),
+    mockIsOnboardingComplete: vi.fn(),
+    // Plan 09-06: mutable (not a fixed `() => true`) so the
+    // panel=settings/action=new-item deep-link tests below can simulate
+    // "locked at load, applies once after unlock" without a second mock
+    // module for the same target.
+    mockUseIsUnlocked: vi.fn(() => true),
+    // Plan 29-03: the `?panel=settings` deep link now navigates via
+    // `useRouter().replace(...)` instead of opening a same-page drawer.
+    mockRouterReplace: vi.fn(),
+  }));
 
 vi.mock("@/lib/auth/session", () => ({
   getSessionToken: mockGetSessionToken,
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: mockRouterReplace, push: vi.fn() }),
 }));
 
 vi.mock("@/lib/onboarding/flag", () => ({
@@ -74,9 +82,6 @@ vi.mock("@/components/vault/ItemForm", () => ({
 }));
 vi.mock("@/components/vault/CopyToast", () => ({ default: () => null }));
 vi.mock("@/components/vault/ErrorToast", () => ({ default: () => null }));
-vi.mock("@/components/settings/SettingsPanel", () => ({
-  default: () => <div data-testid="mock-settings-panel" />,
-}));
 vi.mock("@/components/auth/UnlockOverlay", () => ({ default: () => null }));
 
 vi.mock("@/components/auth/LoginForm", () => ({
@@ -178,14 +183,13 @@ describe("Home (page.tsx) onboarding wiring", () => {
 // `${baseUrl}/?action=new-item`) -- without this, those deep-links land
 // on a bare vault root.
 describe("Home (page.tsx) — panel=settings / action=new-item query params (Plan 09-06)", () => {
-  it("opens the Settings panel on mount when the URL has panel=settings and the vault is already unlocked, then strips the param", async () => {
+  it("navigates to /settings on mount when the URL has panel=settings and the vault is already unlocked (Plan 29-03: real route navigation, not a drawer)", async () => {
     mockGetSessionToken.mockReturnValue("token");
     window.history.pushState({}, "", "/?panel=settings");
 
     render(<Home />);
 
-    await waitFor(() => expect(screen.getByTestId("mock-settings-panel")).toBeInTheDocument());
-    await waitFor(() => expect(window.location.search).toBe(""));
+    await waitFor(() => expect(mockRouterReplace).toHaveBeenCalledWith("/settings"));
   });
 
   it("opens the new-item flow on mount when the URL has action=new-item and the vault is already unlocked, then strips the param", async () => {
@@ -198,19 +202,20 @@ describe("Home (page.tsx) — panel=settings / action=new-item query params (Pla
     await waitFor(() => expect(window.location.search).toBe(""));
   });
 
-  it("waits for unlock before applying a pending panel=settings param, then applies it once unlock completes", async () => {
+  // Plan 29-03: unlike the `action=new-item` redirect above (which waits for
+  // `unlocked` since it opens an in-app drawer over live vault data), the
+  // `panel=settings` redirect now navigates to a real route that owns its
+  // own auth/unlock gating (AuthGate + UnlockOverlay on /settings) -- so it
+  // must fire immediately regardless of lock state, never waiting for
+  // `unlocked` to become true first.
+  it("navigates to /settings immediately even while the vault is still locked, without waiting for unlock", async () => {
     mockGetSessionToken.mockReturnValue("token");
     mockUseIsUnlocked.mockReturnValue(false);
     window.history.pushState({}, "", "/?panel=settings");
 
-    const { rerender } = render(<Home />);
+    render(<Home />);
 
-    expect(screen.queryByTestId("mock-settings-panel")).not.toBeInTheDocument();
-
-    mockUseIsUnlocked.mockReturnValue(true);
-    rerender(<Home />);
-
-    await waitFor(() => expect(screen.getByTestId("mock-settings-panel")).toBeInTheDocument());
+    await waitFor(() => expect(mockRouterReplace).toHaveBeenCalledWith("/settings"));
   });
 
   it("does nothing when neither query param is present", async () => {
