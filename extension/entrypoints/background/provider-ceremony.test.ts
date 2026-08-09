@@ -135,12 +135,16 @@ function passkeyItem(
   username: string,
   collectionId?: string,
   undecryptable?: boolean,
+  // 28-01-PLAN.md Task 3 (B-6): same optional-parameter pattern as
+  // `collectionId`/`undecryptable` above.
+  sharedToMe?: boolean,
 ): VaultItem {
   return {
     id,
     revision: 1,
     collectionId: collectionId ?? null,
     ...(undecryptable === true ? { undecryptable: true } : {}),
+    ...(sharedToMe === true ? { sharedToMe: true } : {}),
     fields: {
       type: "passkey",
       name: username,
@@ -806,6 +810,55 @@ describe("Task 1 (27-06): persistUpdatedProviderItem collection-aware dispatch",
 
     expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
     expect(hoisted.mockEncryptItemForCollection).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+
+  // 28-01-PLAN.md Task 3 (B-6, closes v0.4 audit Warning 3): the dormant
+  // twin of Blocker 2's own gate -- `sharedToMe` must be checked FIRST,
+  // before the `collectionId === null` dispatch, since a DIRECTLY-shared
+  // item ALSO has `collectionId: null` and would otherwise fall into the
+  // personal-path branch above (behavior 1) and persist under the wrong
+  // key. `updatedEncryptedItemJson` is always `None` in production today
+  // (27-02's EXT-10 spike), so this cannot fire yet -- fixed now while the
+  // shape is fresh (B-6's explicit instruction).
+  it("behavior 4: a DIRECTLY-shared item (sharedToMe:true) never calls updateItem/encryptItemForCollection/decryptItem, and logs via console.error", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue(FAKE_UK);
+    hoisted.mockGetItems.mockReturnValue([
+      // collectionId is explicitly absent/null here, same as behavior 1's
+      // personal item -- sharedToMe is the ONLY thing distinguishing this
+      // candidate, mirroring the real wire shape (decryptDirectSharedRow
+      // sets `collectionId: null, sharedToMe: true` unconditionally).
+      passkeyItem("pk-shared-direct-1", "example.com", "alice", undefined, false, true),
+    ]);
+    hoisted.mockWasmGetProviderAssertion.mockReturnValue({
+      credentialResponseJson: () => '{"id":"cred-pk-shared-direct-1"}',
+      updatedEncryptedItemJson: () => combinedEncryptedItemJson(),
+    });
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const resultPromise = handleCredentialsGet(
+      { publicKey: { rpId: "example.com" } },
+      "https://example.com",
+    );
+    const payload = await awaitPendingCeremonyPayload();
+    resolveProviderCredentialChoice(payload.requestId, "pk-shared-direct-1");
+    const result = await resultPromise;
+
+    // The ceremony's own response to the page is unaffected -- only the
+    // best-effort fire-and-forget persist is skipped, same shape as
+    // behavior 3's no-cached-key case.
+    expect(result).toEqual({
+      fallthrough: false,
+      credentialResponseJson: '{"id":"cred-pk-shared-direct-1"}',
+    });
+
+    await vi.waitFor(() => {
+      expect(consoleErrorSpy).toHaveBeenCalled();
+    });
+
+    expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
+    expect(hoisted.mockEncryptItemForCollection).not.toHaveBeenCalled();
+    expect(hoisted.mockDecryptItem).not.toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
   });
 });

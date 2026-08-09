@@ -253,15 +253,39 @@ async function persistPendingProviderItem(itemId: string, encryptedItemJson: str
  * for EVERY ceremony today (no signature counter is ever set) -- this
  * dispatch is defense-in-depth for ANY future field-mutation write-back,
  * not currently exercised by any live ceremony, and must NOT be read as
- * license to add per-item counter tracking (27-02's explicit anti-goal). */
+ * license to add per-item counter tracking (27-02's explicit anti-goal).
+ *
+ * 28-01-PLAN.md Task 3 (B-6, closes v0.4 audit Warning 3): `sharedToMe` is
+ * checked FIRST, before the `collectionId === null` dispatch below -- the
+ * IDENTICAL `collectionId === null` blind spot as Blocker 2
+ * (capture-handler.ts's `confirmUpdateLogin`): a DIRECTLY-shared item also
+ * has `collectionId: null`, so without this check it would silently fall
+ * into the "personal item" branch and re-encrypt under the RECIPIENT's own
+ * User Key -- permanently corrupting the owner's item, the exact failure
+ * this phase exists to close. Fixed now while the shape is fresh, even
+ * though `updatedEncryptedItemJson` is always `None` today (dormant, per
+ * the EXT-10 spike above) -- a dormant wrong-key write is still a
+ * landmine. */
 async function persistUpdatedProviderItem(
   uk: WasmUserKey,
   itemId: string,
   expectedRevision: number,
   updatedEncryptedItemJson: string,
   collectionId: string | null,
+  sharedToMe: boolean,
 ): Promise<void> {
   try {
+    if (sharedToMe === true) {
+      // Same "fail loud via log, never write" discipline the
+      // CollectionKeyUnavailable branch below already uses -- there is no
+      // encrypt-as-recipient primitive, so this MUST refuse rather than
+      // silently corrupt the owner's item under the wrong key.
+      console.error(
+        "[passkey-vault] refusing to persist provider write-back for a directly-shared item (no encrypt-as-recipient primitive)",
+        { itemId },
+      );
+      return;
+    }
     if (collectionId === null) {
       const { encKey, encData } = splitCombinedEncryptedItem(updatedEncryptedItemJson);
       await updateItem(itemId, encKey, encData, expectedRevision);
@@ -858,12 +882,16 @@ export async function handleCredentialsGet(
       // collectionId threaded through so persistUpdatedProviderItem can
       // dispatch to the correct (personal vs. collection-scoped) re-encrypt
       // path -- see that function's own header comment (T-27-14).
+      // sharedToMe threaded through too (28-01-PLAN.md Task 3, B-6) so the
+      // function's own FIRST check can refuse a directly-shared item before
+      // ever reaching that dispatch.
       void persistUpdatedProviderItem(
         uk,
         chosen.item.id,
         chosen.item.revision,
         updatedEncryptedItemJson,
         chosen.item.collectionId ?? null,
+        chosen.item.sharedToMe === true,
       );
     }
 
