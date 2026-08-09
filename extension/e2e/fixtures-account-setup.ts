@@ -1377,6 +1377,18 @@ export interface FamilyRemovalFixtureResult {
   itemName: string;
   itemUsername: string;
   itemPassword: string;
+  /** Task 3's own KEY-06 adjacency proof: ONE login item owned OUTRIGHT by
+   * the TARGET (never shared, never collection-scoped, encrypted under the
+   * target's OWN personal User Key) -- the purge under test must NEVER
+   * touch this. Provisioned here (not by the spec driving the popup's own
+   * UI) because this extension has no in-popup "create item" form at all
+   * (D-05's own established decision: the popup's `new-item-button` is a
+   * `browser.tabs.create` open of the full web app, never an in-popup
+   * form) -- mirrors this file's own "never drives the web app's UI"
+   * header-comment discipline. */
+  personalItemName: string;
+  personalItemUsername: string;
+  personalItemPassword: string;
   /** Node-side mirror of `web/src/lib/families/rekey.ts`'s
    * `buildMemberRemovalBatch`/`removeFamilyMember`: fetches the target's
    * CURRENT access breakdown fresh (never assumed), builds a REAL,
@@ -1544,6 +1556,37 @@ export async function setupFamilyRemovalFixture(): Promise<FamilyRemovalFixtureR
         throw new Error(`pv-e2e: removal-fixture move item to collection failed (${moveRes.status})`);
       }
 
+      // Task 3's own KEY-06 adjacency proof: a SECOND item, owned OUTRIGHT
+      // by the TARGET (encrypted under the target's own personal User Key,
+      // never moved into any collection, never shared) -- the purge under
+      // test must never touch this. Created here, Node-side, before
+      // target.uk is freed in this function's own outer `finally`.
+      const personalItemId = randomUUID();
+      const personalItemName = `PV E2E Family Removal Target Personal Item ${Date.now()}`;
+      const personalItemUsername = `pv-e2e-removal-target-personal-username-${Date.now()}`;
+      const personalItemPassword = "pv-e2e-removal-target-personal-password-v1";
+      const personalPlaintext = JSON.stringify({
+        type: "login",
+        name: personalItemName,
+        folderId: null,
+        tags: [],
+        username: personalItemUsername,
+        password: personalItemPassword,
+        urls: [],
+        notes: "",
+      });
+      const targetPersonalCombined = wasm.encryptItem(target.uk, personalPlaintext, personalItemId, 1);
+      const { encKey: targetPersonalEncKey, encData: targetPersonalEncData } =
+        splitCombinedEncryptedItem(targetPersonalCombined);
+      const createPersonalItemRes = await fetch(`${SERVER}/api/vault/items`, {
+        method: "POST",
+        headers: jsonAuthHeaders(target.token),
+        body: JSON.stringify({ id: personalItemId, enc_key: targetPersonalEncKey, enc_data: targetPersonalEncData }),
+      });
+      if (createPersonalItemRes.status !== 201) {
+        throw new Error(`pv-e2e: removal-fixture target personal item create failed (${createPersonalItemRes.status})`);
+      }
+
       return {
         targetEmail,
         targetPassword: REMOVAL_TARGET_PASSWORD,
@@ -1553,6 +1596,9 @@ export async function setupFamilyRemovalFixture(): Promise<FamilyRemovalFixtureR
         itemName,
         itemUsername,
         itemPassword,
+        personalItemName,
+        personalItemUsername,
+        personalItemPassword,
         removeTargetMember: async () => {
           const accessRes = await fetch(`${SERVER}/api/families/members/${target.userId}/access`, {
             headers: { Authorization: `Bearer ${owner.token}` },
