@@ -132,7 +132,7 @@ export function resolveFillTarget(input: {
  * permissive search-feature match. An access-control gate must never treat
  * "couldn't parse" as a match.
  */
-function originEquals(storedUrl: string, frameOrigin: string): boolean {
+export function originEquals(storedUrl: string, frameOrigin: string): boolean {
   try {
     return new URL(storedUrl).origin === frameOrigin;
   } catch {

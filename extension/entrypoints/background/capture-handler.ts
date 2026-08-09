@@ -23,7 +23,7 @@
 // resolved answer to CONTEXT.md's fuzzy-vs-exact discretion call: exact
 // origin + exact username is the safer default for a security-sensitive
 // match).
-import { itemMatchesOrigin } from "./frame-guard";
+import { itemMatchesOrigin, originEquals } from "./frame-guard";
 import { ensureHydrated } from "./vault-session";
 import { encryptItem, encryptItemForCollection } from "../../lib/crypto/wasm-loader";
 import { getCollectionKey } from "./collections-store";
@@ -189,9 +189,12 @@ export function classifySubmit(
   };
 }
 
-/** Builds the LoginFields object persisted for a captured/updated login —
- * the array form of `urls`, never the legacy singular `url`. `frameOrigin`
- * here must always be the TRUSTED value the caller derived from
+/** Builds the LoginFields object persisted for a BRAND-NEW captured login
+ * (confirmNewLogin only — see `buildUpdatedLoginFields` for the UPDATE
+ * path, which must not go through this function). A genuinely new item has
+ * nothing to preserve, so a fresh object with the array form of `urls`
+ * (never the legacy singular `url`) is correct here. `frameOrigin` here
+ * must always be the TRUSTED value the caller derived from
  * assertContentSender, never the raw payload field (D-06). */
 function buildLoginFields(fields: CaptureSubmitFields): ItemFields {
   let name = fields.frameOrigin;
@@ -209,6 +212,43 @@ function buildLoginFields(fields: CaptureSubmitFields): ItemFields {
     name,
     folderId: null,
     tags: [],
+  };
+}
+
+/** Adds `frameOrigin` to `existingUrls` unless an existing entry already
+ * ORIGIN-matches it (via `originEquals` — the exact scheme+host+port
+ * primitive `itemMatchesOrigin` itself is built on, reused here rather than
+ * re-deriving a second equality check, per this file's own D-06
+ * discipline). Order is preserved; a match is never de-duplicated to the
+ * frame's bare origin string in place of the fuller URL already stored. */
+function mergeLoginUrls(existingUrls: string[], frameOrigin: string): string[] {
+  const alreadyCovered = existingUrls.some((url) => originEquals(url, frameOrigin));
+  return alreadyCovered ? existingUrls : [...existingUrls, frameOrigin];
+}
+
+/** quick/280809-blf-capture-update-field-clobber: the UPDATE-path
+ * counterpart to `buildLoginFields`, deliberately a SEPARATE function
+ * rather than a mode flag threaded through the CREATE builder — the two
+ * have almost nothing in common (CREATE has no prior state to preserve;
+ * UPDATE has nothing else to decide) and folding them into one function
+ * with a boolean would just reintroduce the risk of one branch silently
+ * inheriting behavior meant for the other, exactly the shape of bug this
+ * fixes.
+ *
+ * The capture flow's actual UPDATE intent is narrow — change the password,
+ * and the username if it changed — so every OTHER field (`name`, `notes`,
+ * `tags`, `folderId`) is carried over from `existing` UNCHANGED via the
+ * spread; `buildLoginFields`'s from-scratch reconstruction (which reset all
+ * of them, plus truncated `urls` to just the submitting origin) was v0.4
+ * audit debt #1, the only carried item that silently destroyed user data —
+ * for a collection-scoped shared item, for every member. `urls` is MERGED
+ * via `mergeLoginUrls`, never replaced. */
+function buildUpdatedLoginFields(existing: LoginFields, fields: CaptureSubmitFields): ItemFields {
+  return {
+    ...existing,
+    username: fields.username,
+    password: fields.password,
+    urls: mergeLoginUrls(existing.urls, fields.frameOrigin),
   };
 }
 
@@ -297,7 +337,11 @@ export async function confirmUpdateLogin(
     throw new ReadOnlyAccessError();
   }
   const newRevision = currentRevision + 1;
-  const plaintext = JSON.stringify(buildLoginFields(fields));
+  // quick/280809-blf-capture-update-field-clobber: buildUpdatedLoginFields
+  // (NOT buildLoginFields) — preserves notes/tags/folderId/name and MERGES
+  // urls, rather than resetting them. `target.fields` is narrowed to
+  // LoginFields by the `target.fields.type !== "login"` check above.
+  const plaintext = JSON.stringify(buildUpdatedLoginFields(target.fields, fields));
   // T-27-17: collection-aware encrypt dispatch, ported from
   // web/src/lib/vault/store.ts's updateVaultItem -- a personal item
   // (`collectionId === null`) uses the existing personal-key encrypt
