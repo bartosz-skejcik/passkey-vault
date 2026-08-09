@@ -90,7 +90,7 @@ import {
   DirectShareNotEditableError,
 } from "./capture-handler";
 import { RevisionConflictError } from "./vault-store";
-import type { VaultItem } from "../../lib/vault/types";
+import type { LoginFields, VaultItem } from "../../lib/vault/types";
 
 function loginItem(
   id: string,
@@ -675,5 +675,95 @@ describe("confirmUpdateLogin", () => {
     expect(hoisted.mockEncryptItem).not.toHaveBeenCalled();
     expect(hoisted.mockEncryptItemForCollection).not.toHaveBeenCalled();
     expect(hoisted.mockUpdateItem).not.toHaveBeenCalled();
+  });
+
+  // quick/280809-blf-capture-update-field-clobber: buildLoginFields() used to
+  // rebuild a fresh ItemFields object on EVERY confirmUpdateLogin call,
+  // silently resetting notes/tags/folderId and truncating urls to just the
+  // submitting origin -- v0.4 audit debt #1, the only carried item that
+  // silently destroys user data. The capture flow's actual intent on an
+  // UPDATE is narrow (change the password, and the username if it changed);
+  // everything else on the existing item must survive unchanged.
+  it("preserves notes/tags/folderId/name and MERGES (never replaces) urls on a capture-update, changing only username+password", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    const existingItem: VaultItem = {
+      id: "item-1",
+      revision: 1,
+      fields: {
+        type: "login",
+        name: "My Bank Login",
+        folderId: "folder-1",
+        tags: ["work", "important"],
+        username: "user@example.com",
+        password: "old-pw",
+        urls: ["https://other.example/login"],
+        notes: "some private note the user wrote",
+      },
+    };
+    hoisted.mockGetItems.mockReturnValue([existingItem]);
+    let capturedPlaintext: string | undefined;
+    hoisted.mockEncryptItem.mockImplementation((_uk: unknown, plaintext: string) => {
+      capturedPlaintext = plaintext;
+      return JSON.stringify({ enc_key: { a: 1 }, enc_data: { b: 2 } });
+    });
+    hoisted.mockUpdateItem.mockResolvedValue({ revision: 2, updated_at: "2026-01-01T00:00:00Z" });
+
+    // NOTE: `existingItem`'s urls don't origin-match "https://a.example"
+    // (itemMatchesOrigin would refuse this as an ownership mismatch), so we
+    // route this call through a second URL that DOES origin-match, then
+    // assert the ORIGINAL url survives too -- proving merge, not overwrite.
+    (existingItem.fields as LoginFields).urls.push("https://a.example/login");
+
+    await confirmUpdateLogin(
+      "item-1",
+      { frameOrigin: "https://a.example", username: "user@example.com", password: "new-pw" },
+      1,
+    );
+
+    expect(capturedPlaintext).toBeDefined();
+    const persisted = JSON.parse(capturedPlaintext as string) as LoginFields;
+    expect(persisted.notes).toBe("some private note the user wrote");
+    expect(persisted.tags).toEqual(["work", "important"]);
+    expect(persisted.folderId).toBe("folder-1");
+    expect(persisted.name).toBe("My Bank Login");
+    expect(persisted.urls).toEqual(["https://other.example/login", "https://a.example/login"]);
+    expect(persisted.username).toBe("user@example.com");
+    expect(persisted.password).toBe("new-pw");
+  });
+
+  it("appends the submitting frameOrigin to urls when no existing URL origin-matches it, without dropping or reordering existing ones", async () => {
+    hoisted.mockEnsureHydrated.mockResolvedValue({});
+    const existingItem: VaultItem = {
+      id: "item-1",
+      revision: 1,
+      fields: {
+        type: "login",
+        name: "Multi-site Login",
+        folderId: null,
+        tags: [],
+        username: "user@example.com",
+        password: "old-pw",
+        urls: ["https://site-a.example/login", "https://a.example/login"],
+        notes: "",
+      },
+    };
+    hoisted.mockGetItems.mockReturnValue([existingItem]);
+    let capturedPlaintext: string | undefined;
+    hoisted.mockEncryptItem.mockImplementation((_uk: unknown, plaintext: string) => {
+      capturedPlaintext = plaintext;
+      return JSON.stringify({ enc_key: { a: 1 }, enc_data: { b: 2 } });
+    });
+    hoisted.mockUpdateItem.mockResolvedValue({ revision: 2, updated_at: "2026-01-01T00:00:00Z" });
+
+    await confirmUpdateLogin(
+      "item-1",
+      { frameOrigin: "https://a.example", username: "user@example.com", password: "new-pw" },
+      1,
+    );
+
+    const persisted = JSON.parse(capturedPlaintext as string) as LoginFields;
+    // Already origin-matched by "https://a.example/login" -- no duplicate
+    // entry should be appended for the same origin.
+    expect(persisted.urls).toEqual(["https://site-a.example/login", "https://a.example/login"]);
   });
 });
