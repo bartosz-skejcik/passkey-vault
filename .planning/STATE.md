@@ -4,17 +4,17 @@ milestone: v0.4
 milestone_name: Family & Sharing
 current_phase: 27
 current_phase_name: Extension Integration — Shared Items
-status: executing
-stopped_at: Completed 27-10-PLAN.md
-last_updated: "2026-08-08T17:37:33.689Z"
+status: verifying
+stopped_at: Completed 27-11-PLAN.md (phase-closing plan)
+last_updated: "2026-08-09T09:05:41.167Z"
 last_activity: 2026-08-08
 last_activity_desc: Phase 27 execution started
 progress:
   total_phases: 7
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 58
-  completed_plans: 57
-  percent: 86
+  completed_plans: 58
+  percent: 100
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 
 Phase: 27 (Extension Integration — Shared Items) — EXECUTING
 Plan: 11 of 11
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-08-08 — Phase 27 execution started
 
 ## Performance Metrics
@@ -105,6 +105,7 @@ Last activity: 2026-08-08 — Phase 27 execution started
 | Phase 27 P08 | ~35min | 3 tasks | 6 files |
 | Phase 27 P09 | 15min | 1 tasks | 4 files |
 | Phase 27 P10 | ~20min | 2 tasks | 5 files |
+| Phase 27 P11 | ~2h | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -208,6 +209,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 27-09: extended the SharedBadge wrapper convention to AutofillItemRow.tsx/TotpFillRow.tsx's own icon frames — same relative inline-flex host pattern, no badge JSX re-derived.
 - [Phase ?]: 27-10: App.tsx widened to pass ProviderCeremonyView's matches prop for every get() ceremony (not only multi-match) so the single-match shared-passkey note has isShared/folderName data to render from
 - [Phase ?]: 27-10: confirmed a shared-but-undecryptable item can never reach the provider ceremony's candidate list (vault-store.ts never retains it in getItems()); wired a defensive filter anyway as dead-code defense-in-depth
+- [Phase ?]: [Phase 27] 27-11: Found live (not fixed, out of scope) -- capture-handler.ts's buildLoginFields() always derives an item's name from the submitting page's hostname on every capture-confirm save, new AND update alike, discarding a shared item's custom name; the write-path proof's own locator was adjusted to search by unique username instead of the now-renamed item name
+- [Phase ?]: [Phase 27] 27-11: closed the phase's three whole-phase-only obligations with live evidence -- EXT-11 chrome.storage.session audit, post-revocation staleness (T-27-24) with a genuine ~1-minute alarm-backed poll wait, and the phase's only real-crypto write-path proof (T-27-25)
 
 ### Pending Todos
 
@@ -285,10 +288,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 27-10-PLAN.md
+**Stopped at:** Completed 27-11-PLAN.md (phase-closing plan)
 **Resume file:** None
 
-Last session: 2026-08-08T17:37:33.678Z
+Last session: 2026-08-09T09:05:41.156Z
 items resolved by observed evidence rather than deferral: the Playwright half had already been
 executed by the previous session's orchestrator (3/3 after a real failure was found and fixed,
 commit `ce34bed`), and the CI-trigger item was resolved this session from GitHub Actions run
