@@ -23,6 +23,8 @@ const {
   mockListCollections,
   mockGetCollectionAccessList,
   mockListItemShares,
+  mockRevokeCollectionAccess,
+  mockRevokeItemShare,
 } = vi.hoisted(() => ({
   mockMe: vi.fn(),
   mockGetMemberAccess: vi.fn(),
@@ -31,6 +33,8 @@ const {
   mockListCollections: vi.fn(),
   mockGetCollectionAccessList: vi.fn(),
   mockListItemShares: vi.fn(),
+  mockRevokeCollectionAccess: vi.fn(),
+  mockRevokeItemShare: vi.fn(),
 }));
 
 vi.mock("@/lib/i18n/LocaleContext", () => ({
@@ -41,9 +45,14 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
   }),
 }));
 
-vi.mock("@/lib/auth/api", () => ({
-  me: mockMe,
-}));
+// `ApiClientError` stays the REAL class (Task 2, Phase 28 Plan 02 --
+// `RevokeShareDialog`'s `err instanceof ApiClientError` 409-vs-generic
+// branch needs a real, constructible class, not a mock) -- only `me` itself
+// is mocked, mirroring `FamilyTab.test.tsx`'s own established pattern.
+vi.mock("@/lib/auth/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/auth/api")>();
+  return { ...actual, me: mockMe };
+});
 
 // The trap this plan must not fall into (RESEARCH.md Pitfall 2): this
 // component must NEVER call getMemberAccess. Mocked here purely so the
@@ -65,8 +74,11 @@ vi.mock("@/lib/vault/api", () => ({
   listCollections: mockListCollections,
   getCollectionAccessList: mockGetCollectionAccessList,
   listItemShares: mockListItemShares,
+  revokeCollectionAccess: mockRevokeCollectionAccess,
+  revokeItemShare: mockRevokeItemShare,
 }));
 
+import { ApiClientError } from "@/lib/auth/api";
 import SharingOverviewPanel from "./SharingOverviewPanel";
 
 const SELF_ID = "self-1";
@@ -465,6 +477,185 @@ describe("SharingOverviewPanel (D-1/E6)", () => {
       fireEvent.click(await screen.findByTestId("sharing-overview-tab-person"));
       await screen.findByTestId(`sharing-overview-person-${ANNA_ID}`);
       expect(mockListItemShares).toHaveBeenCalledWith("outbound-1");
+    });
+  });
+
+  // Phase 28, Plan 02 (SHARE-06 -- closes v0.4 audit Blocker 1): the
+  // production code under test here landed in this SAME plan's Task 1
+  // (RevokeShareDialog.tsx + SharingOverviewPanel.tsx's row wiring) --
+  // this describe block is the dedicated coverage pass Task 2 owns: both
+  // revoke paths (collection and item), both error branches (409
+  // last-key-holder vs. generic), and the zero-one-many row-removal
+  // behavior. 28-RESEARCH.md §A: SHARE-06's own last-key-holder guard is
+  // unreachable through this panel's actual UI (the caller's own row is
+  // always excluded from the rendered list), so mocked-API 409 coverage is
+  // the legitimate, sufficient evidence here -- this is a plain HTTP-status
+  // branch, not a crypto-adjacent claim.
+  describe("Task 2 (Phase 28, Plan 02) -- SHARE-06 revoke wiring", () => {
+    async function openRevokeDialogFromFolderRow(folderId: string, userId: string): Promise<void> {
+      fireEvent.click(await screen.findByTestId(`sharing-overview-folder-toggle-${folderId}`));
+      fireEvent.click(await screen.findByTestId(`sharing-overview-revoke-folder-${folderId}-${userId}`));
+      await screen.findByTestId("revoke-share-dialog");
+    }
+
+    async function openRevokeDialogFromPersonRow(
+      userId: string,
+      entryKey: string,
+    ): Promise<void> {
+      fireEvent.click(await screen.findByTestId("sharing-overview-tab-person"));
+      fireEvent.click(await screen.findByTestId(`sharing-overview-person-toggle-${userId}`));
+      fireEvent.click(await screen.findByTestId(`sharing-overview-revoke-person-${userId}-${entryKey}`));
+      await screen.findByTestId("revoke-share-dialog");
+    }
+
+    it("the By-person tab's item-share row renders a revoke button that calls revokeItemShare with the correct item/user ids on confirm", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Family Docs" })]);
+      const directItem = makeItem({
+        id: "item-1",
+        fields: { type: "note", name: "Tax Notes", body: "", folderId: null, tags: [] },
+        isShared: true,
+        collectionId: null,
+      });
+      mockUseVaultItems.mockReturnValue([directItem]);
+      mockListCollections.mockResolvedValue([makeCollectionRow({ id: "col-1", access_level: "edit" })]);
+      // Anna has TWO entries (a folder grant and a direct item share) so this
+      // test's revoke leaves her row rendered -- it asserts the CALL, not
+      // removal (removal is its own dedicated test below).
+      mockGetCollectionAccessList.mockResolvedValue([
+        makeAccessEntry({ user_id: ANNA_ID, email: "anna@example.test", access_level: "read" }),
+      ]);
+      mockListItemShares.mockResolvedValue([
+        makeShareEntry({ user_id: ANNA_ID, email: "anna@example.test", access_level: "edit" }),
+      ]);
+      mockRevokeItemShare.mockResolvedValue(undefined);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+      await openRevokeDialogFromPersonRow(ANNA_ID, "item:item-1");
+      fireEvent.click(screen.getByTestId("revoke-share-confirm"));
+
+      await waitFor(() => expect(mockRevokeItemShare).toHaveBeenCalledWith("item-1", ANNA_ID));
+      await waitFor(() =>
+        expect(screen.queryByTestId("revoke-share-dialog")).not.toBeInTheDocument(),
+      );
+    });
+
+    it("a suspended entry's row still renders the revoke button (suspended is never a filter)", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Family Docs" })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([makeCollectionRow({ id: "col-1", access_level: "edit" })]);
+      mockGetCollectionAccessList.mockResolvedValue([
+        makeAccessEntry({ user_id: TOMASZ_ID, email: "tomasz@example.test", suspended: true }),
+      ]);
+      mockListItemShares.mockResolvedValue([]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+      fireEvent.click(await screen.findByTestId("sharing-overview-folder-toggle-col-1"));
+
+      expect(
+        screen.getByTestId(`sharing-overview-revoke-folder-col-1-${TOMASZ_ID}`),
+      ).toBeInTheDocument();
+    });
+
+    it("a mocked 409 response renders share.revokeLastKeyHolder inline; the dialog stays open and the entry is NOT removed", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Family Docs" })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([makeCollectionRow({ id: "col-1", access_level: "edit" })]);
+      mockGetCollectionAccessList.mockResolvedValue([
+        makeAccessEntry({ user_id: ANNA_ID, email: "anna@example.test" }),
+      ]);
+      mockListItemShares.mockResolvedValue([]);
+      mockRevokeCollectionAccess.mockRejectedValue(
+        new ApiClientError(409, "cannot revoke the last key-holder"),
+      );
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+      await openRevokeDialogFromFolderRow("col-1", ANNA_ID);
+      fireEvent.click(screen.getByTestId("revoke-share-confirm"));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("revoke-share-error")).toHaveTextContent(
+          "share.revokeLastKeyHolder",
+        ),
+      );
+      expect(screen.getByTestId("revoke-share-dialog")).toBeInTheDocument();
+      expect(
+        screen.getByTestId(`sharing-overview-folder-details-col-1`),
+      ).toHaveTextContent("anna@example.test");
+    });
+
+    it("a mocked generic-error response renders share.revokeFailed inline; the dialog stays open and the entry is NOT removed", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Family Docs" })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([makeCollectionRow({ id: "col-1", access_level: "edit" })]);
+      mockGetCollectionAccessList.mockResolvedValue([
+        makeAccessEntry({ user_id: ANNA_ID, email: "anna@example.test" }),
+      ]);
+      mockListItemShares.mockResolvedValue([]);
+      mockRevokeCollectionAccess.mockRejectedValue(new Error("network error"));
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+      await openRevokeDialogFromFolderRow("col-1", ANNA_ID);
+      fireEvent.click(screen.getByTestId("revoke-share-confirm"));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("revoke-share-error")).toHaveTextContent("share.revokeFailed"),
+      );
+      expect(screen.getByTestId("revoke-share-dialog")).toBeInTheDocument();
+      expect(
+        screen.getByTestId(`sharing-overview-folder-details-col-1`),
+      ).toHaveTextContent("anna@example.test");
+    });
+
+    it("revoking a folder's last-remaining recipient removes the WHOLE folder row, not merely the recipient's <li>", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Family Docs" })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([makeCollectionRow({ id: "col-1", access_level: "edit" })]);
+      mockGetCollectionAccessList.mockResolvedValue([
+        makeAccessEntry({ user_id: ANNA_ID, email: "anna@example.test" }),
+      ]);
+      mockListItemShares.mockResolvedValue([]);
+      mockRevokeCollectionAccess.mockResolvedValue(undefined);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+      await openRevokeDialogFromFolderRow("col-1", ANNA_ID);
+      fireEvent.click(screen.getByTestId("revoke-share-confirm"));
+
+      await waitFor(() =>
+        expect(screen.queryByTestId("revoke-share-dialog")).not.toBeInTheDocument(),
+      );
+      expect(screen.queryByTestId("sharing-overview-folder-col-1")).not.toBeInTheDocument();
+    });
+
+    it("revoking a person's last-remaining entry removes the WHOLE person row", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([]);
+      const directItem = makeItem({
+        id: "item-1",
+        fields: { type: "note", name: "Tax Notes", body: "", folderId: null, tags: [] },
+        isShared: true,
+        collectionId: null,
+      });
+      mockUseVaultItems.mockReturnValue([directItem]);
+      mockListCollections.mockResolvedValue([]);
+      mockGetCollectionAccessList.mockResolvedValue([]);
+      mockListItemShares.mockResolvedValue([
+        makeShareEntry({ user_id: ANNA_ID, email: "anna@example.test", access_level: "edit" }),
+      ]);
+      mockRevokeItemShare.mockResolvedValue(undefined);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+      await openRevokeDialogFromPersonRow(ANNA_ID, "item:item-1");
+      fireEvent.click(screen.getByTestId("revoke-share-confirm"));
+
+      await waitFor(() =>
+        expect(screen.queryByTestId("revoke-share-dialog")).not.toBeInTheDocument(),
+      );
+      expect(screen.queryByTestId(`sharing-overview-person-${ANNA_ID}`)).not.toBeInTheDocument();
     });
   });
 });
