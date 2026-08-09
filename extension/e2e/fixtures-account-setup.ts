@@ -148,6 +148,44 @@ export interface SharedFixtureResult {
   sharedCaptureItemName: string;
   sharedCaptureUsername: string;
   sharedCaptureOldPassword: string;
+  /** 27-14 Task 1: `sharedItemName`'s own item id, and the exact
+   * username/password plaintext it was created with -- previously never
+   * returned (the local `itemId` variable existed but was discarded), and
+   * needed by 27-14 Task 2's live fill-event assertion, which must locate
+   * the item's own autofill row (`autofill-fill-${sharedItemId}`) and
+   * verify the filled DOM values match these exact literals. */
+  sharedItemId: string;
+  sharedItemUsername: string;
+  sharedItemPassword: string;
+}
+
+/** 27-14 Task 1: the result `setupAccessLevelFixture` hands to
+ * `dual-extension-access-levels.spec.ts` -- a real `hidden_password` DIRECT
+ * item share (no collection) and a real `read`-access COLLECTION
+ * membership, both provisioned via genuine crypto and real REST calls,
+ * mirroring `SharedFixtureResult`'s own four-field owner/member identity
+ * shape. */
+export interface AccessLevelFixtureResult {
+  memberAEmail: string;
+  memberAPassword: string;
+  memberBEmail: string;
+  memberBPassword: string;
+  /** hidden_password: a direct `item_shares` grant, `collectionId` always
+   * null (`decryptDirectSharedRow`) -- so `capture-handler.ts`'s
+   * `ReadOnlyAccessError` gate (collection-scoped only) never applies to
+   * this item; it exists purely for the mask/autofill-still-works proof. */
+  hiddenPasswordItemId: string;
+  hiddenPasswordItemName: string;
+  hiddenPasswordItemUsername: string;
+  hiddenPasswordItemPassword: string;
+  /** read: a FRESH collection member B joins at `access_level: "read"` --
+   * the shape `confirmUpdateLogin`'s `ReadOnlyAccessError` gate actually
+   * requires (`target.collectionId != null`), unlike a direct share. */
+  readOnlyCollectionId: string;
+  readOnlyItemId: string;
+  readOnlyItemName: string;
+  readOnlyItemUsername: string;
+  readOnlyItemOldPassword: string;
 }
 
 // --- Node-side real WASM ----------------------------------------------
@@ -484,14 +522,21 @@ export async function setupSharedFixture(): Promise<SharedFixtureResult> {
       // the server = the CURRENT, pre-move revision -- mirrors
       // ShareDialog.tsx's own encrypt-then-expected-revision split).
       const itemId = randomUUID();
+      // 27-14 Task 1: was `[]` -- widened to CAPTURE_FORM_ORIGIN (the SAME
+      // fixed page this file's own capture-form server already serves) so
+      // 27-14 Task 2's live fill-event assertion can origin-match this item
+      // via `itemMatchesOrigin()`, exactly like `sharedCaptureItemName`
+      // above already does for the capture-confirm write proof.
+      const sharedItemUsername = "pv-e2e-shared-username";
+      const sharedItemPassword = "pv-e2e-shared-password";
       const itemPlaintext = JSON.stringify({
         type: "login",
         name: sharedItemName,
         folderId: null,
         tags: [],
-        username: "pv-e2e-shared-username",
-        password: "pv-e2e-shared-password",
-        urls: [],
+        username: sharedItemUsername,
+        password: sharedItemPassword,
+        urls: [CAPTURE_FORM_ORIGIN],
         notes: "",
       });
       const personalCombined = wasm.encryptItem(a.uk, itemPlaintext, itemId, 1);
@@ -687,9 +732,241 @@ export async function setupSharedFixture(): Promise<SharedFixtureResult> {
         sharedCaptureItemName,
         sharedCaptureUsername,
         sharedCaptureOldPassword,
+        sharedItemId: itemId,
+        sharedItemUsername,
+        sharedItemPassword,
       };
     } finally {
       ck.free?.();
+    }
+  } finally {
+    owner.uk.free?.();
+    a.uk.free?.();
+    b.uk.free?.();
+  }
+}
+
+/**
+ * 27-14 Task 1: provisions a real `hidden_password` DIRECT item share (no
+ * collection) and a real `read`-access COLLECTION membership -- the two
+ * access levels whose entire purpose is RESTRICTING behavior, and the exact
+ * gap 27-VERIFICATION.md named (both existing fixtures above grant `edit`
+ * only). Mirrors `setupSharedFixture`'s own idempotent account/family
+ * bring-up and create-personal-then-move-into-collection patterns; every
+ * crypto operation is REAL, never a dummy/opaque placeholder blob.
+ */
+export async function setupAccessLevelFixture(): Promise<AccessLevelFixtureResult> {
+  const wasm = await ensureNodeWasm();
+
+  const owner = await ensureAccount(FAMILY_OWNER_EMAIL, FAMILY_OWNER_PASSWORD);
+  const a = await ensureAccount(MEMBER_A_EMAIL, MEMBER_A_PASSWORD);
+  const b = await ensureAccount(MEMBER_B_EMAIL, MEMBER_B_PASSWORD);
+
+  try {
+    const familyRes = await fetch(`${SERVER}/api/families`, {
+      method: "POST",
+      headers: jsonAuthHeaders(owner.token),
+      body: JSON.stringify({ name: "pv-e2e-dual-extension-family" }),
+    });
+    if (familyRes.status !== 201 && familyRes.status !== 409) {
+      throw new Error(`pv-e2e: unexpected status ${familyRes.status} creating the singleton family`);
+    }
+
+    await ensureFamilyMember(owner.token, a.userId);
+    await ensureFamilyMember(owner.token, b.userId);
+
+    // Step 1: publish B's identity keypair (needed by both sub-fixtures
+    // below -- the direct share's sealItemKeyForRecipient call and the
+    // collection member-add's sealCollectionKey call both seal to B's REAL
+    // published public key).
+    const bPublicKeyB64 = await ensurePublishedIdentityKeypair(b.token, b.uk);
+
+    // --- Step 2: hidden_password (a DIRECT item share, no collection) ----
+    const hiddenPasswordItemId = randomUUID();
+    const hiddenPasswordItemName = `PV E2E Access-Level Hidden-Password ${Date.now()}`;
+    const hiddenPasswordItemUsername = `pv-e2e-hidden-password-username-${Date.now()}`;
+    const hiddenPasswordItemPassword = "pv-e2e-hidden-password-password-v1";
+    const hiddenPasswordPlaintext = JSON.stringify({
+      type: "login",
+      name: hiddenPasswordItemName,
+      folderId: null,
+      tags: [],
+      username: hiddenPasswordItemUsername,
+      password: hiddenPasswordItemPassword,
+      urls: [CAPTURE_FORM_ORIGIN],
+      notes: "",
+    });
+    const hiddenPasswordCombined = wasm.encryptItem(a.uk, hiddenPasswordPlaintext, hiddenPasswordItemId, 1);
+    const { encKey: hiddenPasswordEncKey, encData: hiddenPasswordEncData } =
+      splitCombinedEncryptedItem(hiddenPasswordCombined);
+    const createHiddenPasswordItemRes = await fetch(`${SERVER}/api/vault/items`, {
+      method: "POST",
+      headers: jsonAuthHeaders(a.token),
+      body: JSON.stringify({
+        id: hiddenPasswordItemId,
+        enc_key: hiddenPasswordEncKey,
+        enc_data: hiddenPasswordEncData,
+      }),
+    });
+    if (createHiddenPasswordItemRes.status !== 201) {
+      throw new Error(`pv-e2e: hidden_password item create failed (${createHiddenPasswordItemRes.status})`);
+    }
+
+    // Seal that item's own `enc_key` (the STRING form) to B's public key --
+    // `sealItemKeyForRecipient`'s own signature, mirroring
+    // web/src/lib/vault/store.real-wasm.test.ts's proven usage.
+    const bPublicKeyForItem = wasm.WasmIdentityPublicKey.fromBytes(base64Decode(bPublicKeyB64));
+    let sealedItemKeyForRecipient: string;
+    try {
+      sealedItemKeyForRecipient = wasm.sealItemKeyForRecipient(
+        a.uk,
+        hiddenPasswordEncKey,
+        hiddenPasswordItemId,
+        bPublicKeyForItem,
+      );
+    } finally {
+      bPublicKeyForItem.free?.();
+    }
+
+    const createShareRes = await fetch(`${SERVER}/api/vault/items/${hiddenPasswordItemId}/shares`, {
+      method: "POST",
+      headers: jsonAuthHeaders(a.token),
+      body: JSON.stringify({
+        recipient_user_id: b.userId,
+        sealed_key: sealedItemKeyForRecipient,
+        access_level: "hidden_password",
+      }),
+    });
+    if (createShareRes.status !== 201) {
+      throw new Error(`pv-e2e: hidden_password direct share create failed (${createShareRes.status})`);
+    }
+
+    // --- Step 3: read (a FRESH collection, member B joins at "read") -----
+    // Publish A's own identity keypair too (needed to seal the Collection
+    // Key to A's own public key, exactly like setupSharedFixture already
+    // does).
+    const aPublicKeyB64 = await ensurePublishedIdentityKeypair(a.token, a.uk);
+
+    const readOnlyCollectionId = randomUUID();
+    const readOnlyCk = wasm.WasmCollectionKey.generate();
+    try {
+      const encName = wasm.encryptItemForCollection(
+        readOnlyCk,
+        JSON.stringify({ name: "PV E2E Access-Level Read-Only Folder" }),
+        readOnlyCollectionId,
+        readOnlyCollectionId,
+        1,
+      );
+      const ownPublicKey = wasm.WasmIdentityPublicKey.fromBytes(base64Decode(aPublicKeyB64));
+      let sealedKeyForSelf: string;
+      try {
+        sealedKeyForSelf = wasm.sealCollectionKey(ownPublicKey, readOnlyCk);
+      } finally {
+        ownPublicKey.free?.();
+      }
+
+      const createCollectionRes = await fetch(`${SERVER}/api/vault/collections`, {
+        method: "POST",
+        headers: jsonAuthHeaders(a.token),
+        body: JSON.stringify({ id: readOnlyCollectionId, enc_name: encName, sealed_key: sealedKeyForSelf }),
+      });
+      if (createCollectionRes.status !== 201) {
+        throw new Error(`pv-e2e: read-only collection create failed (${createCollectionRes.status})`);
+      }
+
+      const recipientPublicKey = wasm.WasmIdentityPublicKey.fromBytes(base64Decode(bPublicKeyB64));
+      let sealedKeyForRecipient: string;
+      try {
+        sealedKeyForRecipient = wasm.sealCollectionKey(recipientPublicKey, readOnlyCk);
+      } finally {
+        recipientPublicKey.free?.();
+      }
+
+      // The ONE change from setupSharedFixture's own collection-creation
+      // block: access_level is "read", not "edit".
+      const addMemberRes = await fetch(`${SERVER}/api/vault/collections/${readOnlyCollectionId}/members`, {
+        method: "POST",
+        headers: jsonAuthHeaders(a.token),
+        body: JSON.stringify({
+          recipient_user_id: b.userId,
+          sealed_key: sealedKeyForRecipient,
+          access_level: "read",
+        }),
+      });
+      if (addMemberRes.status !== 201) {
+        throw new Error(`pv-e2e: read-only add collection member failed (${addMemberRes.status})`);
+      }
+
+      const readOnlyItemId = randomUUID();
+      const readOnlyItemName = `PV E2E Access-Level Read-Only Item ${Date.now()}`;
+      const readOnlyItemUsername = `pv-e2e-read-only-username-${Date.now()}`;
+      const readOnlyItemOldPassword = "pv-e2e-read-only-password-v1";
+      const readOnlyPlaintext = JSON.stringify({
+        type: "login",
+        name: readOnlyItemName,
+        folderId: null,
+        tags: [],
+        username: readOnlyItemUsername,
+        password: readOnlyItemOldPassword,
+        urls: [CAPTURE_FORM_ORIGIN],
+        notes: "",
+      });
+      const readOnlyPersonalCombined = wasm.encryptItem(a.uk, readOnlyPlaintext, readOnlyItemId, 1);
+      const { encKey: readOnlyPersonalEncKey, encData: readOnlyPersonalEncData } =
+        splitCombinedEncryptedItem(readOnlyPersonalCombined);
+      const createReadOnlyItemRes = await fetch(`${SERVER}/api/vault/items`, {
+        method: "POST",
+        headers: jsonAuthHeaders(a.token),
+        body: JSON.stringify({
+          id: readOnlyItemId,
+          enc_key: readOnlyPersonalEncKey,
+          enc_data: readOnlyPersonalEncData,
+        }),
+      });
+      if (createReadOnlyItemRes.status !== 201) {
+        throw new Error(`pv-e2e: read-only item create failed (${createReadOnlyItemRes.status})`);
+      }
+
+      const readOnlyCollectionCombined = wasm.encryptItemForCollection(
+        readOnlyCk,
+        readOnlyPlaintext,
+        readOnlyCollectionId,
+        readOnlyItemId,
+        2,
+      );
+      const { encKey: readOnlyCollEncKey, encData: readOnlyCollEncData } =
+        splitCombinedEncryptedItem(readOnlyCollectionCombined);
+      const moveReadOnlyRes = await fetch(`${SERVER}/api/vault/items/${readOnlyItemId}/collection`, {
+        method: "PUT",
+        headers: jsonAuthHeaders(a.token),
+        body: JSON.stringify({
+          new_collection_id: readOnlyCollectionId,
+          enc_key: readOnlyCollEncKey,
+          enc_data: readOnlyCollEncData,
+          expected_revision: 1,
+        }),
+      });
+      if (!moveReadOnlyRes.ok) {
+        throw new Error(`pv-e2e: move read-only item to collection failed (${moveReadOnlyRes.status})`);
+      }
+
+      return {
+        memberAEmail: MEMBER_A_EMAIL,
+        memberAPassword: MEMBER_A_PASSWORD,
+        memberBEmail: MEMBER_B_EMAIL,
+        memberBPassword: MEMBER_B_PASSWORD,
+        hiddenPasswordItemId,
+        hiddenPasswordItemName,
+        hiddenPasswordItemUsername,
+        hiddenPasswordItemPassword,
+        readOnlyCollectionId,
+        readOnlyItemId,
+        readOnlyItemName,
+        readOnlyItemUsername,
+        readOnlyItemOldPassword,
+      };
+    } finally {
+      readOnlyCk.free?.();
     }
   } finally {
     owner.uk.free?.();
