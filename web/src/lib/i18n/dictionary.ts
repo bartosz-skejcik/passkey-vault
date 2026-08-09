@@ -380,6 +380,14 @@ export const DICTIONARY = {
   "export.cancel": { pl: "Anuluj", en: "Cancel" },
   "export.formatJson": { pl: "JSON", en: "JSON" },
   "export.formatCsv": { pl: "CSV", en: "CSV" },
+  // DEBT-02 (Plan 29-02) — disclose, never mask: states plainly that the
+  // export file contains the passwords for items shared to this user at
+  // `hidden_password` access level. Literal copy from 29-UI-SPEC.md's
+  // Copywriting Contract. Renders only when n > 0 (ExportDialog.tsx).
+  "export.hiddenPasswordDisclosure": {
+    pl: "Ten eksport zawiera hasła {n} wpisów udostępnionych Ci z ukrytym hasłem — to maskowanie działa tylko w interfejsie, nigdy kryptograficznie.",
+    en: "This export includes the passwords for {n} items shared to you with a hidden password — that mask is an interface-only protection, never a cryptographic one.",
+  },
 
   "aria.chooseFileToImport": { pl: "Wybierz plik do importu", en: "Choose a file to import" },
   "aria.closePanel": { pl: "Zamknij panel", en: "Close panel" },

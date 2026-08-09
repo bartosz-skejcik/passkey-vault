@@ -9,7 +9,9 @@
 import { useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
-import { getFolders, getItems } from "@/lib/vault/store";
+import { interpolate } from "@/lib/i18n/dictionary";
+import { getFolders, getItems, useItemsHydrated } from "@/lib/vault/store";
+import { isPasswordHidden } from "@/lib/vault/itemCapabilities";
 import { buildCsvExport } from "@/lib/vault/exporters/toCsv";
 import { buildJsonExport } from "@/lib/vault/exporters/toJson";
 import { downloadFile } from "@/lib/vault/exporters/download";
@@ -19,6 +21,15 @@ type ExportFormat = "json" | "csv";
 export default function ExportDialog({ onClose }: { onClose: () => void }) {
   const { t } = useLocale();
   const [format, setFormat] = useState<ExportFormat>("json");
+  // DEBT-02 (Plan 29-02): `hydrated` distinguishes "getItems() confirmed
+  // post-unlock" from "don't know yet" -- computing this count against an
+  // unhydrated store could silently understate real exposure (n=0 renders
+  // as "nothing exposed" while the file about to be written contains
+  // exactly those passwords). `hiddenPasswordCount` stays `null` (never 0)
+  // until hydration is confirmed; export-confirm is disabled meanwhile so a
+  // confirm can never fire against an unconfirmed count.
+  const hydrated = useItemsHydrated();
+  const hiddenPasswordCount = hydrated ? getItems().filter(isPasswordHidden).length : null;
 
   function handleConfirm() {
     const items = getItems();
@@ -65,7 +76,16 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="alert alert-warning" data-testid="export-warning-banner">
-          <span>{t("export.warningBody")}</span>
+          <div className="flex flex-col gap-1">
+            <span>{t("export.warningBody")}</span>
+            {hiddenPasswordCount !== null && hiddenPasswordCount > 0 ? (
+              <p data-testid="export-hidden-password-disclosure">
+                {interpolate(t("export.hiddenPasswordDisclosure"), {
+                  n: String(hiddenPasswordCount),
+                })}
+              </p>
+            ) : null}
+          </div>
         </div>
 
         <div className="flex justify-end gap-2">
@@ -81,6 +101,7 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
             type="button"
             data-testid="export-confirm"
             className="btn btn-warning"
+            disabled={hiddenPasswordCount === null}
             onClick={handleConfirm}
           >
             {t("export.confirm")}
