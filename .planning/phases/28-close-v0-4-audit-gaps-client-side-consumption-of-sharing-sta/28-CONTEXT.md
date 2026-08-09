@@ -50,17 +50,19 @@ which is why this is a single phase and not three.
 | B-5 | Where the refusal goes | **At the same gate as the read-only refusal (27-07's `ReadOnlyAccessError`), before any encrypt call.** | A wrong-key encrypt succeeds silently; that asymmetry is the whole reason 27-07 refuses before encrypting rather than after. Put this one in the same place for the same reason. |
 | B-6 | `persistUpdatedProviderItem` (Warning 3) | **Same refusal, applied now while the shape is fresh** — even though it is dormant. | `updatedEncryptedItemJson` is always `None` today (proven by 27-02's EXT-10 spike), so this cannot fire yet. But it is the identical `collectionId === null` blind spot, and the moment any future phase enables counter tracking it becomes live silent corruption. A dormant wrong-key write is still a landmine. |
 | B-7 | Blocker 3 — the 404 discriminant | **Distinguish "this account has no family" from "you were removed from your family" at the transport layer, and purge on the latter.** Do not latch on the removal case. | The defect is that one status code carries two meanings and the clients picked the wrong one. The fix is to stop overloading it — whether by a distinguishable server response or a client-side check against known-membership state is a planning decision, but the *semantic* split is the requirement. |
-| B-8 | Blocker 3 — suspension | **Must produce a signal at all.** | Suspension's gate currently rejects with a non-404 that both clients treat as transient, so they retry forever with the cache intact — strictly worse than removal, which at least latches. Whatever mechanism B-7 lands must cover suspension, not just removal. |
+| B-8 | Blocker 3 — suspension | **Must produce a signal at all.** | ~~Suspension's gate currently rejects with a non-404 that both clients treat as transient, so they retry forever with the cache intact — strictly worse than removal.~~ **CORRECTED 2026-08-09 by 28-RESEARCH.md, which traced the actual code rather than the audit's summary:** the *collections* half of suspension already works today via Phase 27's existing purge logic. Only the **direct-share** half is genuinely broken, and the fix is a 2-line, no-re-key `shared_direct_revision` bump on `suspend_member` and `reinstate_member`, mirroring three existing precedents in the codebase. The requirement (suspension must produce a signal) stands; the mechanism is far smaller than this row originally assumed. Trust the research over this row. |
 | B-9 | What "purge" means | **Drop the decrypted in-memory shared cache AND the pending entries, on both clients, on the same lock-ordering discipline already established.** | `doHandleSharedRevisions`'s revoked-collection purge (`vault-store.ts:809-819`) is the existing implementation of exactly this; the bug is that it never runs, not that it is wrong. Reuse it. Respect T-09-18/Pitfall 4 ordering — stop sync before clearing, never the reverse. |
 | B-10 | `hidden_password` edit semantics (Warning 1) | **The extension conforms to the server**, which is the authority: `RequireEdit::satisfied_by` is an exact match on `Edit` and structurally excludes `hidden_password` (`membership.rs:117-126`). Web already agrees (`canEditItem`). | Three surfaces currently disagree and only the extension is wrong. The server holds, so this is not a security hole — but today it surfaces as a 403 rendered as a generic capture failure, i.e. the user is offered something that cannot work. Suppress the affordance instead of failing the action. |
 
 ### Deliberately NOT decided here
 
-**How B-7's discriminant is implemented** (server response change vs. client-side membership check) is
-left to planning, because it depends on facts worth establishing first: whether the server can
-cheaply distinguish the two cases without leaking family existence to a non-member, and whether a
-client-side check can be made race-free against the very membership state being revoked. Research
-should settle it; do not assume the server change is available.
+**How B-7's discriminant is implemented** (server response change vs. client-side membership check) was
+left to planning. **28-RESEARCH.md has now settled it:** removal *hard-deletes* the `family_members`
+row, so the server genuinely cannot distinguish "removed" from "never had a family" after the fact
+without a tombstone/schema change — disproportionate here. But the client already holds the
+discriminant race-free: **whether `GET /api/sync/shared` ever succeeded this unlock session.** A 404
+after a prior success means removal; a 404 with no prior success means no family. Recommended
+approach: a client-side boolean, no server change. Take it unless planning finds a concrete flaw.
 </decisions>
 
 <inherited_debt>
