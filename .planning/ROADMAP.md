@@ -394,3 +394,25 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 25. Member Removal, Suspension & Re-key | v0.4 | 10/10 | Complete | 2026-08-06 |
 | 26. Web App — Sharing UI & Family Management | v0.4 | 13/13 | Complete | 2026-08-06 |
 | 27. Extension Integration — Shared Items | v0.4 | 14/14 | Complete    | 2026-08-09 |
+
+### Phase 28: Close v0.4 audit gaps — client-side consumption of sharing state
+
+**Goal:** Every sharing capability the server already enforces is actually reachable and actually honored by both clients — a share can be revoked from the UI, a recipient can never write a shared item under the wrong key, and losing access genuinely ends access on the device rather than only on the server.
+**Depends on:** Phase 27
+**Requirements**: SHARE-06, SHARE-02, SHARE-03, EXT-07, FAM-07, FAM-08, FAM-09, KEY-06 (client half)
+**Source:** `.planning/v0.4-MILESTONE-AUDIT.md` — Blockers 1–3 and Warnings 1 and 3
+**Success Criteria** (what must be TRUE):
+
+  1. A user can revoke a single share — one member's access to one collection, and one member's access to one directly-shared item — from the web UI, without removing that person from the family. SHARE-06 stops being a server capability with no caller.
+  2. A recipient's capture-update on a **directly**-shared item is refused rather than encrypted under the recipient's personal User Key. The owner can never lose the ability to decrypt their own item. `persistUpdatedProviderItem` gets the same refusal before EXT-10's counter path can ever make it live.
+  3. A removed or suspended member's client — web and extension — purges its decrypted shared cache on discovering the loss, rather than latching shared-sync off and continuing to serve (and autofill) the cached plaintext until lock. FAM-09's "existing sessions lose access immediately" becomes true of the client, not just the server.
+  4. The three surfaces agree on what `hidden_password` permits: the extension stops treating it as write-permitted when the server's `RequireEdit` structurally excludes it.
+  5. Each of the three blockers is proven closed by live evidence, not by a mocked unit test — the two-extension harness built in Phase 27 already provisions these exact scenarios.
+
+**Note:** these are three instances of ONE seam — client-side consumption of server-side sharing state — which is why they are a single phase rather than three. The milestone's signature failure mode is a server capability no client reaches; this phase exists to close the last three instances of it.
+
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 28 to break down)

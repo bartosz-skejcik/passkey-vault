@@ -113,6 +113,17 @@ Last activity: 2026-08-09 — 27-16 (functional gap closure + UAT screenshots + 
 
 ## Accumulated Context
 
+### Roadmap Evolution
+
+- Phase 28 added 2026-08-09: **Close v0.4 audit gaps — client-side consumption of sharing state.**
+  Added after `.planning/v0.4-MILESTONE-AUDIT.md` returned `gaps_found` with three blockers, all
+  instances of one seam (a server capability no client reaches): SHARE-06 revoke has no client caller
+  at all; the extension's `confirmUpdateLogin` mis-encrypts a directly-shared item under the
+  recipient's User Key because it gates on `collectionId != null` and a direct share has
+  `collectionId: null`; and neither client purges its decrypted shared cache on removal/suspension
+  because the 404 that proves the server severed access is the same 404 both clients read as "no
+  family" and latch on. v0.4 does NOT complete until this closes.
+
 ### Decisions
 
 Decisions are logged in PROJECT.md Key Decisions table.
