@@ -5,15 +5,15 @@ milestone_name: Family & Sharing
 current_phase: 28
 current_phase_name: Close v0.4 audit gaps — client-side consumption of sharing state
 status: executing
-stopped_at: Completed 28-01-PLAN.md (direct-share + hidden_password write refusal, blocked-toast rendering, persistUpdatedProviderItem dormant fix)
-last_updated: "2026-08-09T14:37:14.513Z"
+stopped_at: Completed 28-02-PLAN.md
+last_updated: "2026-08-09T15:02:28.998Z"
 last_activity: 2026-08-09
 last_activity_desc: Phase 28 execution started
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 64
-  completed_plans: 62
+  completed_plans: 63
   percent: 88
 ---
 
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 ## Current Position
 
 Phase: 28 (Close v0.4 audit gaps — client-side consumption of sharing state) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 28
+Plan: 2 of 3
+Status: Ready to execute
 Last activity: 2026-08-09 — Phase 28 execution started
 
 ## Performance Metrics
@@ -111,6 +111,7 @@ Last activity: 2026-08-09 — Phase 28 execution started
 | Phase 27 P13 | ~25min | 2 tasks | 4 files |
 | Phase 27 P15 | ~35min | 1 tasks | 3 files |
 | Phase 28 P01 | 45min | 3 tasks | 13 files |
+| Phase 28 P02 | 24min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -233,6 +234,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 27] 27-15: closed 27-VERIFICATION.md's last remaining blocker -- mergeDirectSnapshot's catch now calls markPending(row.id, null, "broken") on an undecryptable directly-shared row (previously a console.warn-only silent drop), mirroring 27-12's collection-scoped fix on the sibling direct-share path; classification is always 'broken', never 'pending', since identityKey is fully resolved before the per-row loop starts (no analogous 'not cached yet' window). Real-AEAD falsification-tested.
 - [Phase ?]: capture-handler.ts's write gate refuses sharedToMe unconditionally (any accessLevel) before the collection-scoped exact-match-on-edit check, mirroring web's itemCapabilities.ts::canEditItem -- closes v0.4 Blocker 2/Warning 1
 - [Phase ?]: save-update-toast.ts's blocked-render branch never constructs the preview/confirm-button DOM elements at all for a blocked proposal -- genuine absence, not a hidden password-bearing input
+- [Phase ?]: SHARE-06 revoke: both real recipients added to the same collection in ONE ShareDialog multi-select submission, avoiding WINDOWS #13's out-of-scope add-to-existing-collection crypto composition.
+- [Phase ?]: Stray local pv-server on :8620 (real data/pv.db) was reused by Playwright's webServer before being caught; stopped, and the suite re-run against its own isolated instance.
 
 ### Pending Todos
 
@@ -312,10 +315,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 28-01-PLAN.md (direct-share + hidden_password write refusal, blocked-toast rendering, persistUpdatedProviderItem dormant fix)
+**Stopped at:** Completed 28-02-PLAN.md
 **Resume file:** None
 
-Last session: 2026-08-09T14:36:16.994Z
+Last session: 2026-08-09T15:02:23.137Z
 27-13-PLAN.md (gap closure) executed: vault-store.ts::ensureSharedItemsHydrated() (the
 shared-side counterpart to the existing ensureItemsHydrated()) is now awaited by
 handleCredentialsGet, alongside ensureItemsHydrated(), before its candidate snapshot -- closing

@@ -153,7 +153,7 @@ Explicitly excluded to prevent scope creep.
 | SHARE-03 | Phase 26 | Complete |
 | SHARE-04 | Phase 22 | Complete |
 | SHARE-05 | Phase 22 | Complete |
-| SHARE-06 | Phase 22 | Complete |
+| SHARE-06 | Phase 28 | Complete |
 | SYNC-04 | Phase 23 | Complete |
 | SYNC-05 | Phase 23 | Complete |
 | SYNC-06 | Phase 23 | Complete |
