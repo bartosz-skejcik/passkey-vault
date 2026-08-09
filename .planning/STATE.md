@@ -5,8 +5,8 @@ milestone_name: Family & Sharing
 current_phase: 28
 current_phase_name: Close v0.4 audit gaps — client-side consumption of sharing state
 status: executing
-stopped_at: Completed 28-03-PLAN.md
-last_updated: "2026-08-09T15:56:44.922Z"
+stopped_at: Completed 28-04 gap-closure pass (28-VERIFICATION.md addendum)
+last_updated: "2026-08-09T16:42:31.632Z"
 last_activity: 2026-08-09
 last_activity_desc: Phase 28 execution started
 progress:
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-31)
 
 ## Current Position
 
-Phase: 28 (Close v0.4 audit gaps — client-side consumption of sharing state) — EXECUTING
-Plan: 3 of 3
-Status: Ready to execute
-Last activity: 2026-08-09 — Phase 28 execution started
+Phase: 28 (Close v0.4 audit gaps — client-side consumption of sharing state) — GAP-CLOSURE COMPLETE
+Plan: 3 of 3 (+ 28-04 gap-closure pass, direct fix — no new PLAN.md)
+Status: 28-VERIFICATION.md addendum recorded — score moved from 4/5 (1 present, behavior-unverified) to 5/5 verified
+Last activity: 2026-08-09 — 28-04 gap-closure pass complete (falsified-truth fix, SHARE-06 item-leg live proof, FAM-09 copy honesty, REQUIREMENTS.md reconciliation)
 
 ## Performance Metrics
 
@@ -113,6 +113,7 @@ Last activity: 2026-08-09 — Phase 28 execution started
 | Phase 28 P01 | 45min | 3 tasks | 13 files |
 | Phase 28 P02 | 24min | 2 tasks | 6 files |
 | Phase 28 P03 | ~110min | 5 tasks | 13 files |
+| Phase 28 P04 | 18min | 5 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -321,10 +322,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 28-03-PLAN.md
+**Stopped at:** Completed 28-04 gap-closure pass (28-VERIFICATION.md addendum)
 **Resume file:** None
 
-Last session: 2026-08-09T15:56:44.910Z
+Last session: 2026-08-09T16:42:28.926Z
 27-13-PLAN.md (gap closure) executed: vault-store.ts::ensureSharedItemsHydrated() (the
 shared-side counterpart to the existing ensureItemsHydrated()) is now awaited by
 handleCredentialsGet, alongside ensureItemsHydrated(), before its candidate snapshot -- closing
