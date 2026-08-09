@@ -5,12 +5,12 @@ milestone_name: Sharing That Makes Sense
 current_phase: 29
 current_phase_name: A Real Settings Page — Shell & Migration
 status: planning
-stopped_at: v0.5 roadmap defined (phases 29-34); settings shell split out to Phase 29 per product-owner decision
-last_updated: "2026-08-09T00:00:00.000Z"
+stopped_at: Phase 29 UI-SPEC approved
+last_updated: "2026-08-09T21:33:31.341Z"
 last_activity: 2026-08-09
-last_activity_desc: v0.5 roadmap written — 5 phases (29-33), 28/28 requirements mapped
+last_activity_desc: v0.5 roadmap written (ROADMAP.md phases 29–33 + REQUIREMENTS.md traceability)
 progress:
-  total_phases: 5
+  total_phases: 6
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -345,10 +345,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 28-04 gap-closure pass (28-VERIFICATION.md addendum)
-**Resume file:** None
+**Stopped at:** Phase 29 UI-SPEC approved
+**Resume file:** .planning/phases/29-a-real-settings-page-shell-migration/29-UI-SPEC.md
 
-Last session: 2026-08-09T16:42:28.926Z
+Last session: 2026-08-09T21:33:31.331Z
 27-13-PLAN.md (gap closure) executed: vault-store.ts::ensureSharedItemsHydrated() (the
 shared-side counterpart to the existing ensureItemsHydrated()) is now awaited by
 handleCredentialsGet, alongside ensureItemsHydrated(), before its candidate snapshot -- closing

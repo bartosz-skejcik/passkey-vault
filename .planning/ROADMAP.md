@@ -130,7 +130,14 @@ require a **proven** client consumer, not a wired one.
   4. Exporting the vault no longer silently contradicts the hidden-password mask on either surface: whichever resolution is chosen (mask consistently, or disclose at export time), the export flow states it and the bytes of a real generated export file match that statement (DEBT-02).
   5. The Family & Sharing surface is **carried across unchanged** in this phase and explicitly marked as awaiting its redesign in Phase 33 — this phase moves the container, it does not pretend to fix the family UX. Shipping a lift-and-shift *as if* it satisfied SET-03 is the failure mode this split exists to prevent.
 
-**Plans**: TBD
+**Plans**: 0/5 plans executed
+
+- [ ] 29-01-PLAN.md
+- [ ] 29-02-PLAN.md
+- [ ] 29-03-PLAN.md
+- [ ] 29-04-PLAN.md
+- [ ] 29-05-PLAN.md
+
 **UI hint**: yes
 
 ### Phase 30: The Living Group — Family-Wide Sharing
@@ -248,7 +255,7 @@ Phases execute in numeric order: 1 → … → 20 (v0.1–v0.3, archived) → 21
 | 26. Web App — Sharing UI & Family Management | v0.4 | 13/13 | Complete | 2026-08-06 |
 | 27. Extension Integration — Shared Items | v0.4 | 14/14 | Complete    | 2026-08-09 |
 | 28. Close v0.4 audit gaps — client-side consumption of sharing state | v0.4 | 3/3 | Complete | 2026-08-09 |
-| 29. A Real Settings Page — Shell & Migration | v0.5 | TBD | Not started | - |
+| 29. A Real Settings Page — Shell & Migration | v0.5 | 0/5 | Planned    |  |
 | 30. The Living Group — Family-Wide Sharing | v0.5 | TBD | Not started | - |
 | 31. The Share Dialog — Per-Person Access, Existing Destinations | v0.5 | TBD | Not started | - |
 | 32. Putting Things Into Shared Folders | v0.5 | TBD | Not started | - |
