@@ -1356,6 +1356,326 @@ export async function setupSharedPasskeyCollectionFixture(): Promise<SharedPassk
   }
 }
 
+// --- Family removal fixture (28-03-PLAN.md Task 2) -----------------------
+
+/** Fixed, deterministic-per-run-but-unique-per-call password for the
+ * removal target below -- mirrors MEMBER_A_PASSWORD/MEMBER_B_PASSWORD's own
+ * literal shape; the email is what makes each call's target unique, not the
+ * password. */
+const REMOVAL_TARGET_PASSWORD = "correct horse battery staple removal target 42!";
+
+/** The result `setupFamilyRemovalFixture` hands to `dual-extension-removal.spec.ts`
+ * (28-03-PLAN.md Task 2). */
+export interface FamilyRemovalFixtureResult {
+  targetEmail: string;
+  targetPassword: string;
+  targetUserId: string;
+  /** A FRESH collection (owner-created, `edit` access for the target) --
+   * the one shared collection this fixture's own removal batch re-keys. */
+  collectionId: string;
+  itemId: string;
+  itemName: string;
+  itemUsername: string;
+  itemPassword: string;
+  /** Node-side mirror of `web/src/lib/families/rekey.ts`'s
+   * `buildMemberRemovalBatch`/`removeFamilyMember`: fetches the target's
+   * CURRENT access breakdown fresh (never assumed), builds a REAL,
+   * exact-set-matching re-key batch (Pitfall 2 -- never a bare/empty
+   * `{collections: []}`), and submits `DELETE /api/families/members/{target}`.
+   * Deliberately a separate closure from fixture SETUP (not run eagerly) so
+   * callers (Task 3's live UI proof) can unlock the target's REAL extension
+   * and confirm the shared item is visible BEFORE triggering removal. */
+  removeTargetMember: () => Promise<void>;
+  /** Task 2's own fixture-validation smoke test needs a raw authenticated
+   * request AS THE TARGET (proving THEIR OWN session, still holding its
+   * original token, genuinely loses access) -- unlike every other closure in
+   * this file, exposing the target's token here is deliberate: this
+   * fixture's whole purpose (unlike `setupSharedFixture`'s member accounts,
+   * which always sign in through the REAL extension popup) is a UI-free
+   * proof. Captures `target.token` inside this closure rather than returning
+   * the raw string, mirroring `revokeMemberBAccess`'s own discipline for
+   * every OTHER token in this file. */
+  fetchAsTarget: (path: string) => Promise<Response>;
+}
+
+/**
+ * Provisions a family-removal fixture: the SAME singleton family-owner
+ * identity every sibling fixture in this file reuses, plus a FRESH,
+ * single-purpose "removal target" member (own unique email per call --
+ * deliberately NOT the shared MEMBER_B identity `setupSharedFixture`/
+ * `setupAccessLevelFixture` reuse, since those accumulate collection
+ * memberships across sibling spec files that the OWNER holds no
+ * `sealed_key` for; reusing MEMBER_B here would make the real re-key batch
+ * this fixture builds below throw on a collection this fixture never
+ * created -- see `removeTargetMember`'s own doc comment). The OWNER --not
+ * member A-- creates the shared collection, mirroring
+ * `web/e2e/remove-member.spec.ts`'s own `remove_member_live_...` test: the
+ * account that later SUBMITS the removal batch must hold its OWN
+ * `collection_keys` row for every collection being re-keyed
+ * (`buildMemberRemovalBatch`'s "unseal the caller's own sealed_key" step).
+ */
+export async function setupFamilyRemovalFixture(): Promise<FamilyRemovalFixtureResult> {
+  const wasm = await ensureNodeWasm();
+
+  const owner = await ensureAccount(FAMILY_OWNER_EMAIL, FAMILY_OWNER_PASSWORD);
+  const targetEmail = `pv-e2e-family-removal-target-${Date.now()}-${randomUUID()}@example.test`;
+  const target = await ensureAccount(targetEmail, REMOVAL_TARGET_PASSWORD);
+
+  try {
+    const familyRes = await fetch(`${SERVER}/api/families`, {
+      method: "POST",
+      headers: jsonAuthHeaders(owner.token),
+      body: JSON.stringify({ name: "pv-e2e-dual-extension-family" }),
+    });
+    if (familyRes.status !== 201 && familyRes.status !== 409) {
+      throw new Error(`pv-e2e: unexpected status ${familyRes.status} creating the singleton family`);
+    }
+
+    await ensureFamilyMember(owner.token, target.userId);
+
+    const ownerPublicKeyB64 = await ensurePublishedIdentityKeypair(owner.token, owner.uk);
+    const targetPublicKeyB64 = await ensurePublishedIdentityKeypair(target.token, target.uk);
+
+    // Unwrap the OWNER's own identity key ONCE, upfront -- kept alive for
+    // the `removeTargetMember` closure below (called AFTER this function
+    // returns, once owner.uk itself has already been freed in this
+    // function's own outer `finally`), mirroring
+    // `setupSharedPasskeyCollectionFixture`'s own "kept alive for a
+    // caller-invoked-later closure" precedent for `ck`.
+    const ownerKeypairRes = await fetch(`${SERVER}/api/identity/keypair`, {
+      headers: { Authorization: `Bearer ${owner.token}` },
+    });
+    if (!ownerKeypairRes.ok) {
+      throw new Error(`pv-e2e: fetching owner's own identity keypair failed (${ownerKeypairRes.status})`);
+    }
+    const ownerKeypairBody = (await ownerKeypairRes.json()) as { wrapped_secret_key: string };
+    const ownerIdentityKey = wasm.unwrapIdentitySecretKey(owner.uk, ownerKeypairBody.wrapped_secret_key);
+
+    const collectionId = randomUUID();
+    const ck = wasm.WasmCollectionKey.generate();
+    try {
+      const encName = wasm.encryptItemForCollection(
+        ck,
+        JSON.stringify({ name: `PV E2E Family Removal Folder ${Date.now()}` }),
+        collectionId,
+        collectionId,
+        1,
+      );
+      const ownerPublicKey = wasm.WasmIdentityPublicKey.fromBytes(base64Decode(ownerPublicKeyB64));
+      let sealedKeyForOwner: string;
+      try {
+        sealedKeyForOwner = wasm.sealCollectionKey(ownerPublicKey, ck);
+      } finally {
+        ownerPublicKey.free?.();
+      }
+
+      const createCollectionRes = await fetch(`${SERVER}/api/vault/collections`, {
+        method: "POST",
+        headers: jsonAuthHeaders(owner.token),
+        body: JSON.stringify({ id: collectionId, enc_name: encName, sealed_key: sealedKeyForOwner }),
+      });
+      if (createCollectionRes.status !== 201) {
+        throw new Error(`pv-e2e: removal-fixture collection create failed (${createCollectionRes.status})`);
+      }
+
+      const targetPublicKey = wasm.WasmIdentityPublicKey.fromBytes(base64Decode(targetPublicKeyB64));
+      let sealedKeyForTarget: string;
+      try {
+        sealedKeyForTarget = wasm.sealCollectionKey(targetPublicKey, ck);
+      } finally {
+        targetPublicKey.free?.();
+      }
+
+      const addMemberRes = await fetch(`${SERVER}/api/vault/collections/${collectionId}/members`, {
+        method: "POST",
+        headers: jsonAuthHeaders(owner.token),
+        body: JSON.stringify({
+          recipient_user_id: target.userId,
+          sealed_key: sealedKeyForTarget,
+          access_level: "edit",
+        }),
+      });
+      if (addMemberRes.status !== 201) {
+        throw new Error(`pv-e2e: removal-fixture add collection member failed (${addMemberRes.status})`);
+      }
+
+      // One login item, created personal (owner's own) then moved into the
+      // collection -- setupSharedFixture's own established
+      // create-personal-then-move REST shape (vault.rs::create has no
+      // collection-scoping parameter).
+      const itemId = randomUUID();
+      const itemName = `PV E2E Family Removal Item ${Date.now()}`;
+      const itemUsername = `pv-e2e-removal-username-${Date.now()}`;
+      const itemPassword = "pv-e2e-removal-password-v1";
+      const itemPlaintext = JSON.stringify({
+        type: "login",
+        name: itemName,
+        folderId: null,
+        tags: [],
+        username: itemUsername,
+        password: itemPassword,
+        urls: [],
+        notes: "",
+      });
+      const personalCombined = wasm.encryptItem(owner.uk, itemPlaintext, itemId, 1);
+      const { encKey: personalEncKey, encData: personalEncData } = splitCombinedEncryptedItem(personalCombined);
+      const createItemRes = await fetch(`${SERVER}/api/vault/items`, {
+        method: "POST",
+        headers: jsonAuthHeaders(owner.token),
+        body: JSON.stringify({ id: itemId, enc_key: personalEncKey, enc_data: personalEncData }),
+      });
+      if (createItemRes.status !== 201) {
+        throw new Error(`pv-e2e: removal-fixture item create failed (${createItemRes.status})`);
+      }
+
+      const collectionCombined = wasm.encryptItemForCollection(ck, itemPlaintext, collectionId, itemId, 2);
+      const { encKey: collEncKey, encData: collEncData } = splitCombinedEncryptedItem(collectionCombined);
+      const moveRes = await fetch(`${SERVER}/api/vault/items/${itemId}/collection`, {
+        method: "PUT",
+        headers: jsonAuthHeaders(owner.token),
+        body: JSON.stringify({
+          new_collection_id: collectionId,
+          enc_key: collEncKey,
+          enc_data: collEncData,
+          expected_revision: 1,
+        }),
+      });
+      if (!moveRes.ok) {
+        throw new Error(`pv-e2e: removal-fixture move item to collection failed (${moveRes.status})`);
+      }
+
+      return {
+        targetEmail,
+        targetPassword: REMOVAL_TARGET_PASSWORD,
+        targetUserId: target.userId,
+        collectionId,
+        itemId,
+        itemName,
+        itemUsername,
+        itemPassword,
+        removeTargetMember: async () => {
+          const accessRes = await fetch(`${SERVER}/api/families/members/${target.userId}/access`, {
+            headers: { Authorization: `Bearer ${owner.token}` },
+          });
+          if (!accessRes.ok) {
+            throw new Error(`pv-e2e: fetching member access failed (${accessRes.status})`);
+          }
+          const access = (await accessRes.json()) as {
+            collections: { id: string; access_level: string }[];
+            item_shares: { item_id: string; access_level: string }[];
+          };
+
+          const collections: Array<{
+            collection_id: string;
+            new_sealed_keys: { recipient_user_id: string; sealed_key: string }[];
+            item_rewraps: { item_id: string; enc_key: string }[];
+          }> = [];
+
+          // Pitfall 2: never a bare/empty batch -- one real entry per
+          // collection the target's OWN, freshly-fetched access breakdown
+          // actually names, mirroring `buildMemberRemovalBatch`'s exact
+          // sequence (fetch -> unseal caller's own old key -> generate a
+          // fresh key -> reseal to every REMAINING recipient -> rewrap every
+          // item -> submit).
+          for (const { id: batchCollectionId } of access.collections) {
+            const collectionRes = await fetch(`${SERVER}/api/vault/collections/${batchCollectionId}`, {
+              headers: { Authorization: `Bearer ${owner.token}` },
+            });
+            if (!collectionRes.ok) {
+              throw new Error(
+                `pv-e2e: fetching collection ${batchCollectionId} failed (${collectionRes.status})`,
+              );
+            }
+            const collectionBody = (await collectionRes.json()) as { sealed_key: string | null };
+            if (collectionBody.sealed_key === null) {
+              // T-25-16-equivalent guard, caller side: never silently skip a
+              // collection the caller (owner) cannot re-key.
+              throw new Error(
+                `pv-e2e: caller (owner) has no sealed_key for collection ${batchCollectionId}`,
+              );
+            }
+
+            const oldCk = wasm.unsealCollectionKey(ownerIdentityKey, collectionBody.sealed_key);
+            const newCk = wasm.WasmCollectionKey.generate();
+            try {
+              const accessListRes = await fetch(`${SERVER}/api/vault/collections/${batchCollectionId}/access`, {
+                headers: { Authorization: `Bearer ${owner.token}` },
+              });
+              if (!accessListRes.ok) {
+                throw new Error(`pv-e2e: fetching collection access list failed (${accessListRes.status})`);
+              }
+              const accessList = (await accessListRes.json()) as { user_id: string }[];
+              const remaining = accessList.filter((entry) => entry.user_id !== target.userId);
+
+              const newSealedKeys = remaining.map((recipient) => {
+                // T-25-16: never silently drop a remaining recipient with no
+                // published public key -- this fixture's own collection has
+                // exactly two real members (owner + target), so the only
+                // possible remaining recipient is the owner themselves.
+                if (recipient.user_id !== owner.userId) {
+                  throw new Error(
+                    `pv-e2e: unexpected remaining recipient ${recipient.user_id} in a fixture-owned ` +
+                      `collection meant to hold only owner+target`,
+                  );
+                }
+                const recipientPk = wasm.WasmIdentityPublicKey.fromBytes(base64Decode(ownerPublicKeyB64));
+                try {
+                  return {
+                    recipient_user_id: recipient.user_id,
+                    sealed_key: wasm.sealCollectionKey(recipientPk, newCk),
+                  };
+                } finally {
+                  recipientPk.free?.();
+                }
+              });
+
+              const itemsRes = await fetch(`${SERVER}/api/vault/collections/${batchCollectionId}/items`, {
+                headers: { Authorization: `Bearer ${owner.token}` },
+              });
+              if (!itemsRes.ok) {
+                throw new Error(`pv-e2e: fetching collection items failed (${itemsRes.status})`);
+              }
+              const items = (await itemsRes.json()) as { id: string; enc_key: string }[];
+              const itemRewraps = items.map((item) => ({
+                item_id: item.id,
+                enc_key: wasm.rewrapItemKeyForCollection(oldCk, newCk, item.enc_key, batchCollectionId, item.id),
+              }));
+
+              collections.push({
+                collection_id: batchCollectionId,
+                new_sealed_keys: newSealedKeys,
+                item_rewraps: itemRewraps,
+              });
+            } finally {
+              newCk.free?.();
+              oldCk.free?.();
+            }
+          }
+
+          const removeRes = await fetch(`${SERVER}/api/families/members/${target.userId}`, {
+            method: "DELETE",
+            headers: jsonAuthHeaders(owner.token),
+            body: JSON.stringify({ collections }),
+          });
+          if (removeRes.status !== 204) {
+            throw new Error(`pv-e2e: removeTargetMember failed (${removeRes.status})`);
+          }
+        },
+        fetchAsTarget: (path: string) => fetch(`${SERVER}${path}`, { headers: { Authorization: `Bearer ${target.token}` } }),
+      };
+    } finally {
+      ck.free?.();
+    }
+  } finally {
+    // ownerIdentityKey is intentionally NOT freed here -- removeTargetMember's
+    // closure needs it alive after this function has already returned (same
+    // "kept alive for a caller-invoked-later closure" precedent
+    // setupSharedPasskeyCollectionFixture's own `ck` comment documents).
+    owner.uk.free?.();
+    target.uk.free?.();
+  }
+}
+
 /**
  * 27-05 Task 2: independently computes the {current, previous} 30-second-
  * time-step TOTP candidates from a KNOWN secret, using the SAME Node-side
