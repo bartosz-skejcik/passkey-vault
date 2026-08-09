@@ -70,7 +70,7 @@ import {
   SESSION_PASSWORD,
   type Session,
 } from "./fixtures";
-import { t } from "@/lib/i18n/dictionary";
+import { t, interpolate } from "@/lib/i18n/dictionary";
 
 const BASE_URL = "http://localhost:8620";
 
@@ -267,6 +267,72 @@ async function shareExistingFolderWithMember(
   await page.getByTestId(`share-access-level-${accessLevel}`).click();
   await page.getByTestId("share-submit").click();
   await page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+}
+
+/** SHARE-06 revoke live proof (Phase 28, Plan 02): same flow as
+ * `shareExistingFolderWithMember` above, but selects EVERY id in
+ * `recipientUserIds` in ONE ShareDialog submission (`selectedRecipientIds`
+ * is a real multi-select `Set<string>`, ShareDialog.tsx:251) -- this is how
+ * a real second recipient gets added to the SAME brand-new collection
+ * without needing WINDOWS #13's out-of-scope "add a member to an EXISTING
+ * collection" primitive: both grants are created together, at collection
+ * CREATION time, which already works. */
+async function shareExistingFolderWithMembers(
+  page: Page,
+  folderId: string,
+  recipientUserIds: string[],
+  accessLevel: "read" | "edit" | "hidden_password",
+  newCollectionName: string,
+): Promise<void> {
+  await page.getByTestId(`sidebar-folder-menu-trigger-${folderId}`).click();
+  await page.getByTestId(`sidebar-folder-share-${folderId}`).click();
+  await page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await page.getByTestId("share-folder-name-input").fill(newCollectionName);
+  for (const recipientUserId of recipientUserIds) {
+    await page.getByTestId(`share-recipient-${recipientUserId}`).click();
+  }
+  await page.getByTestId(`share-access-level-${accessLevel}`).click();
+  await page.getByTestId("share-submit").click();
+  await page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+}
+
+/** Registers a brand-new, uniquely-emailed account through the real
+ * RegisterForm UI flow -- mirrors `remove-member.spec.ts`'s own
+ * `registerFreshSession` (duplicated here per this codebase's established
+ * per-file-owns-its-own-tiny-helper convention): `twoSessions` only ever
+ * provisions TWO accounts, and Task 1's revoke proof needs a real THIRD
+ * (owner + two independent recipients) to assert one recipient's access is
+ * genuinely revoked while the OTHER recipient's is untouched. */
+async function registerFreshSession(browser: Browser): Promise<Session> {
+  const { context, page, dialogFired } = await newBareContext(browser);
+  const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const email = `pv-e2e-sharing-third-${unique}@example.test`;
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "No account yet? Sign up" }).click();
+  await page.getByTestId("register-email").fill(email);
+  await page.getByTestId("register-password").fill(SESSION_PASSWORD);
+  await page.getByTestId("register-confirm-password").fill(SESSION_PASSWORD);
+  await page.getByTestId("register-submit").click();
+  await page.getByTestId("new-item-button").waitFor({ state: "visible" });
+
+  return { context, page, email, dialogFired };
+}
+
+/** Opens the Sharing overview drawer (D-1/E6, 26-UI-SPEC.md/26-11-PLAN.md) --
+ * mirrors `openFamilyTab`'s own "open the Account menu, click the item"
+ * shape for the sibling drawer this file has not needed until this plan's
+ * revoke proof. `sidebar-sharing-overview` lives in the same Account
+ * dropdown as `sidebar-open-settings`. */
+async function openSharingOverview(page: Page): Promise<void> {
+  const panelAlreadyOpen = await page
+    .getByTestId("sharing-overview-panel")
+    .isVisible()
+    .catch(() => false);
+  if (panelAlreadyOpen) return;
+  await page.getByRole("button", { name: "Account" }).click();
+  await page.getByTestId("sidebar-sharing-overview").click();
+  await page.getByTestId("sharing-overview-panel").waitFor({ state: "visible" });
 }
 
 /** A full navigation reload + real UnlockOverlay re-entry -- the honest way
@@ -700,4 +766,137 @@ test("Backstop #6: a real, long shared-folder name does not overflow CollectionP
   expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
   expect(member.dialogFired(), "zero OS-level dialogs across the member session").toBe(false);
   await owner.context.close();
+});
+
+// SHARE-06's revoke wiring, live (Phase 28, Plan 02 -- closes v0.4 audit
+// Blocker 1). `collections::revoke_access` was server-complete, authorized,
+// and tested -- but had ZERO client callers anywhere outside a raw test
+// fixture (28-RESEARCH.md §A). This is the first live proof that an owner
+// can genuinely revoke ONE recipient's access to a shared folder from the
+// Sharing overview while a SECOND, independent recipient's access is
+// completely untouched -- the "adjacency" must_have this plan's own
+// PLAN.md states explicitly.
+test("owner revokes one collection recipient's access from the Sharing overview while the other recipient keeps theirs, live (SHARE-06)", async ({
+  twoSessions,
+  browser,
+}) => {
+  const [, memberA] = twoSessions;
+  const memberB = await registerFreshSession(browser);
+
+  const aToken = await tokenFor(memberA.page);
+  const bToken = await tokenFor(memberB.page);
+  const aUserId = await userIdFor(memberA.context, aToken);
+  const bUserId = await userIdFor(memberB.context, bToken);
+
+  await ensureFamilyMembership(browser, [aUserId, bUserId]);
+  await waitForIdentityKeyPublished(memberA.context, aToken);
+  await waitForIdentityKeyPublished(memberB.context, bToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+
+  const suffix = uniqueSuffix();
+  const itemName = `PV E2E Revoke Item ${suffix}`;
+  const personalFolderName = `PV E2E Revoke Seed Folder ${suffix}`;
+  const sharedFolderName = `PV E2E Revoke Shared Folder ${suffix}`;
+
+  const itemsBefore = await listItemIds(owner.context, ownerToken);
+  await createLoginItemViaUI(owner.page, itemName, "pw-revoke-proof");
+  const itemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+  const foldersBefore = await listFolderIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-folders").click();
+  await createFolderViaUI(owner.page, personalFolderName);
+  const folderId = await newIdAfter(foldersBefore, () => listFolderIds(owner.context, ownerToken));
+
+  await moveItemToFolder(owner.page, itemId, folderId);
+
+  // Both real recipients are granted access to the SAME new collection in
+  // ONE ShareDialog submission (multi-select at collection CREATION time --
+  // never WINDOWS #13's out-of-scope "add a member to an EXISTING
+  // collection" primitive, which this phase does not build).
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+  await shareExistingFolderWithMembers(
+    owner.page,
+    folderId,
+    [aUserId, bUserId],
+    "edit",
+    sharedFolderName,
+  );
+  const collectionId = await newIdAfter(collectionsBefore, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // Both recipients genuinely hold the grant BEFORE revoke -- a real,
+  // server-round-trip request each, not merely an assumption from the
+  // ShareDialog submission having succeeded.
+  await expect
+    .poll(async () =>
+      (
+        await apiGet(memberA.context.request, `/api/vault/collections/${collectionId}/sync`, aToken)
+      ).status(),
+    )
+    .toBe(200);
+  await expect
+    .poll(async () =>
+      (
+        await apiGet(memberB.context.request, `/api/vault/collections/${collectionId}/sync`, bToken)
+      ).status(),
+    )
+    .toBe(200);
+
+  // Owner opens the Sharing overview, revokes ONLY member A's access.
+  await openSharingOverview(owner.page);
+  await owner.page.getByTestId("sharing-overview-tab-folder").click();
+  await owner.page.getByTestId(`sharing-overview-folder-toggle-${collectionId}`).click();
+  const folderDetails = owner.page.getByTestId(`sharing-overview-folder-details-${collectionId}`);
+  await expect(folderDetails).toContainText(memberA.email);
+  await expect(folderDetails).toContainText(memberB.email);
+
+  await owner.page.getByTestId(`sharing-overview-revoke-folder-${collectionId}-${aUserId}`).click();
+  await owner.page.getByTestId("revoke-share-dialog").waitFor({ state: "visible" });
+
+  // The confirm button must never appear pre-labeled "Revoking access..." --
+  // only after a real click.
+  await expect(owner.page.getByTestId("revoke-share-confirm")).toHaveText(
+    t("en", "share.revokeConfirm"),
+  );
+
+  await owner.page.getByTestId("revoke-share-confirm").click();
+  await owner.page.getByTestId("revoke-share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  // The row's own recipient count/details update with no page reload --
+  // exactly one recipient remains (member B), member A is gone.
+  await expect(
+    owner.page.getByTestId(`sharing-overview-folder-${collectionId}`),
+  ).toContainText(interpolate(t("en", "sharing.sharedWithLabel"), { count: "1" }));
+  await expect(folderDetails).not.toContainText(memberA.email);
+  await expect(folderDetails).toContainText(memberB.email);
+
+  // Member A's OWN raw authenticated request now 404s -- genuine
+  // server-side access loss, not merely a UI-side hide.
+  await expect
+    .poll(async () =>
+      (
+        await apiGet(memberA.context.request, `/api/vault/collections/${collectionId}/sync`, aToken)
+      ).status(),
+    )
+    .toBe(404);
+
+  // Member B's OWN raw authenticated request still succeeds, completely
+  // untouched by the revoke targeting member A (this plan's own SHARE-06
+  // adjacency must_have).
+  const bAfter = await apiGet(
+    memberB.context.request,
+    `/api/vault/collections/${collectionId}/sync`,
+    bToken,
+  );
+  expect(bAfter.status()).toBe(200);
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(memberA.dialogFired(), "zero OS-level dialogs across member A's session").toBe(false);
+  expect(memberB.dialogFired(), "zero OS-level dialogs across member B's session").toBe(false);
+  await owner.context.close();
+  await memberB.context.close();
 });

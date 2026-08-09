@@ -40,7 +40,7 @@
 // member's grant still exists and a single reinstate click restores it --
 // hiding it would tell the caller nobody has access when that isn't true.
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Folder, Share2, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, Share2, UserMinus, X } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { me } from "@/lib/auth/api";
@@ -56,6 +56,7 @@ import { useCollections } from "@/lib/vault/collections";
 import { useVaultItems } from "@/lib/vault/store";
 import type { ShareRecipient } from "@/lib/vault/shareRecipients";
 import AvatarStack from "./AvatarStack";
+import RevokeShareDialog, { type RevokeShareKind } from "./RevokeShareDialog";
 
 type SharingTab = "folder" | "person";
 
@@ -120,6 +121,62 @@ function addPersonEntry(
   existing.entries = mergePersonEntry(existing.entries, entry);
 }
 
+/** SHARE-06 revoke (Phase 28, Plan 02): the pending confirmation's full
+ * target, carrying everything `RevokeShareDialog` and the post-revoke splice
+ * below need -- resolved once, at click time, from whichever tab's row the
+ * revoke button was on (28-UI-SPEC.md E1: the button lives on BOTH tabs'
+ * rows, dispatching to the same dialog). */
+interface RevokeTarget {
+  kind: RevokeShareKind;
+  targetId: string;
+  recipientUserId: string;
+  recipientEmail: string;
+  targetName: string;
+}
+
+/** 28-UI-SPEC.md E1 "zero-one-many": splices ONE recipient out of ONE
+ * folder's entries; if that empties the folder to zero recipients, the
+ * WHOLE row is dropped (never a rendered `AvatarStack` next to a
+ * meaningless "Shared with 0" label). Never a forced re-fetch -- this is
+ * the panel's own already-held local state, per Open Question 1's
+ * resolution (28-RESEARCH.md). */
+function removeFolderRecipient(rows: FolderRow[], folderId: string, userId: string): FolderRow[] {
+  const next: FolderRow[] = [];
+  for (const folder of rows) {
+    if (folder.id !== folderId) {
+      next.push(folder);
+      continue;
+    }
+    const entries = folder.entries.filter((entry) => entry.user_id !== userId);
+    if (entries.length === 0) continue;
+    next.push({
+      ...folder,
+      entries,
+      recipients: entries.map((entry) => ({ email: entry.email, suspended: entry.suspended })),
+    });
+  }
+  return next;
+}
+
+/** Same zero-one-many discipline as `removeFolderRecipient` above, for the
+ * By-person grouping: splices ONE grant (`entryKey`, the same
+ * `${kind}:${resourceId}` dedup key `mergePersonEntry` uses) out of ONE
+ * person's entries; if that empties the person to zero grants, the WHOLE
+ * row is dropped. */
+function removePersonEntry(rows: PersonRow[], userId: string, entryKey: string): PersonRow[] {
+  const next: PersonRow[] = [];
+  for (const person of rows) {
+    if (person.userId !== userId) {
+      next.push(person);
+      continue;
+    }
+    const entries = person.entries.filter((entry) => entry.key !== entryKey);
+    if (entries.length === 0) continue;
+    next.push({ ...person, entries });
+  }
+  return next;
+}
+
 export default function SharingOverviewPanel({ onClose }: { onClose: () => void }) {
   const { t } = useLocale();
   const collections = useCollections();
@@ -133,6 +190,9 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
   const [personRows, setPersonRows] = useState<PersonRow[]>([]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [expandedPeople, setExpandedPeople] = useState<Set<string>>(new Set());
+  // SHARE-06 revoke (Phase 28, Plan 02): the pending confirmation, or null
+  // when no revoke is in flight -- drives whether `RevokeShareDialog` mounts.
+  const [revokeTarget, setRevokeTarget] = useState<RevokeTarget | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // WR-13 (code review, Phase 26): the effect below used to depend on the
   // `collections`/`items` ARRAY IDENTITIES from useSyncExternalStore. `items`
@@ -311,6 +371,25 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
     });
   }
 
+  // SHARE-06 revoke (Phase 28, Plan 02): fires ONLY after
+  // `RevokeShareDialog`'s DELETE genuinely resolves (204) -- never
+  // optimistically ahead of it (T-28-11). Splices BOTH aggregations at
+  // once, regardless of which tab the click originated on, since a folder
+  // revoke's entry is reachable from both `folderRows` (by folder+user_id)
+  // and `personRows` (by user_id + the `folder:{id}` dedup key) -- an item
+  // revoke only ever appears in `personRows`.
+  function handleRevoked(): void {
+    if (revokeTarget === null) return;
+    const { kind, targetId, recipientUserId } = revokeTarget;
+    if (kind === "folder") {
+      setFolderRows((prev) => removeFolderRecipient(prev, targetId, recipientUserId));
+      setPersonRows((prev) => removePersonEntry(prev, recipientUserId, `folder:${targetId}`));
+    } else {
+      setPersonRows((prev) => removePersonEntry(prev, recipientUserId, `item:${targetId}`));
+    }
+    setRevokeTarget(null);
+  }
+
   const isEmpty = folderRows.length === 0 && personRows.length === 0;
 
   return (
@@ -429,6 +508,30 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
                             {t("family.statusSuspended")}
                           </span>
                         ) : null}
+                        {/* SHARE-06 (28-UI-SPEC.md E1): revoking a suspended
+                            row's grant is a distinct, legitimate action from
+                            suspend/reinstate -- renders identically here
+                            regardless of `entry.suspended`. */}
+                        <button
+                          type="button"
+                          data-testid={`sharing-overview-revoke-folder-${folder.id}-${entry.user_id}`}
+                          aria-label={interpolate(t("share.revokeAriaFolder"), {
+                            email: entry.email,
+                            folder: folder.name,
+                          })}
+                          className="btn btn-ghost btn-square btn-sm shrink-0"
+                          onClick={() =>
+                            setRevokeTarget({
+                              kind: "folder",
+                              targetId: folder.id,
+                              recipientUserId: entry.user_id,
+                              recipientEmail: entry.email,
+                              targetName: folder.name,
+                            })
+                          }
+                        >
+                          <UserMinus size={16} aria-hidden="true" />
+                        </button>
                       </li>
                     ))}
                   </ul>
@@ -512,6 +615,35 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
                         <span className="badge badge-ghost shrink-0">
                           {t(accessLevelKey(entry.accessLevel))}
                         </span>
+                        {/* SHARE-06 (28-UI-SPEC.md E1): the SAME trailing
+                            revoke affordance as the By-folder tab, on the
+                            row that already names the person -- dispatches
+                            to `revokeCollectionAccess`/`revokeItemShare` by
+                            `entry.kind`, resolving the resource id back out
+                            of the `${kind}:${resourceId}` dedup key
+                            `mergePersonEntry` already uses. */}
+                        <button
+                          type="button"
+                          data-testid={`sharing-overview-revoke-person-${person.userId}-${entry.key}`}
+                          aria-label={interpolate(
+                            t(entry.kind === "folder" ? "share.revokeAriaFolder" : "share.revokeAriaItem"),
+                            entry.kind === "folder"
+                              ? { email: person.email, folder: entry.label }
+                              : { email: person.email, item: entry.label },
+                          )}
+                          className="btn btn-ghost btn-square btn-sm shrink-0"
+                          onClick={() =>
+                            setRevokeTarget({
+                              kind: entry.kind,
+                              targetId: entry.key.slice(entry.kind.length + 1),
+                              recipientUserId: person.userId,
+                              recipientEmail: person.email,
+                              targetName: entry.label,
+                            })
+                          }
+                        >
+                          <UserMinus size={16} aria-hidden="true" />
+                        </button>
                       </li>
                     ))}
                   </ul>
@@ -521,6 +653,17 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
           })}
         </div>
       )}
+      {revokeTarget !== null ? (
+        <RevokeShareDialog
+          kind={revokeTarget.kind}
+          targetId={revokeTarget.targetId}
+          recipientUserId={revokeTarget.recipientUserId}
+          recipientEmail={revokeTarget.recipientEmail}
+          targetName={revokeTarget.targetName}
+          onClose={() => setRevokeTarget(null)}
+          onRevoked={handleRevoked}
+        />
+      ) : null}
     </aside>
   );
 }

@@ -1288,6 +1288,47 @@ export const DICTIONARY = {
     pl: "Edycja itemu udostępnionego Ci bezpośrednio nie jest jeszcze dostępna. Poproś właściciela o wprowadzenie zmiany.",
     en: "Editing isn't available yet for an item shared directly with you. Ask its owner to make the change.",
   },
+  // SHARE-06 revoke (Phase 28, Plan 02) -- 28-UI-SPEC.md's Copywriting
+  // Contract §A, verbatim. `share.revokeBody` is the hard, non-negotiable
+  // honesty string this row exists to deliver, same class of requirement as
+  // `member.removeHonestyWarning` above -- must never be shortened or
+  // reworded to imply revoking access retroactively protects a
+  // password/secret the recipient already saw. `delete.cancel` is reused
+  // verbatim for the revoke dialog's Cancel button -- no new key.
+  "share.revokeFolderTitle": {
+    pl: `Cofnąć dostęp „{email}" do folderu „{folder}"?`,
+    en: `Revoke {email}'s access to "{folder}"?`,
+  },
+  "share.revokeItemTitle": {
+    pl: `Cofnąć dostęp „{email}" do „{item}"?`,
+    en: `Revoke {email}'s access to "{item}"?`,
+  },
+  "share.revokeBody": {
+    pl: "{email} straci dostęp od teraz. Jeśli już widział/a hasło lub inne dane w środku, nadal je zna — cofnięcie dostępu nie cofa tego, co już zobaczył/a.",
+    en: "{email} loses access from now on. If they already saw the password or other contents, they still know it — revoking access does not undo what they've already seen.",
+  },
+  "share.revokeConfirm": { pl: "Cofnij dostęp", en: "Revoke access" },
+  "share.revoking": { pl: "Cofanie dostępu…", en: "Revoking access…" },
+  "share.revokeFailed": {
+    pl: "Nie udało się cofnąć dostępu. Spróbuj ponownie.",
+    en: "Couldn't revoke access. Try again.",
+  },
+  // Collection-only 409 (28-RESEARCH.md §A's "last-key-holder guard") --
+  // item revoke never returns this. A DISTINCT, expected response the
+  // caller must be told about specifically, never folded into
+  // `share.revokeFailed`'s generic copy.
+  "share.revokeLastKeyHolder": {
+    pl: "Nie można cofnąć dostępu — to jedyna osoba, która ma klucz do tego folderu. Zawartość stałaby się nieczytelna na zawsze.",
+    en: "Can't revoke access — this is the only person holding the key to this folder. Its contents would become permanently unreadable.",
+  },
+  "share.revokeAriaFolder": {
+    pl: `Cofnij dostęp {email} do folderu „{folder}"`,
+    en: `Revoke {email}'s access to "{folder}"`,
+  },
+  "share.revokeAriaItem": {
+    pl: `Cofnij dostęp {email} do „{item}"`,
+    en: `Revoke {email}'s access to "{item}"`,
+  },
   "identity.yourFingerprintHeading": { pl: "Twój odcisk tożsamości", en: "Your identity fingerprint" },
   "identity.fingerprintRevealAria": {
     pl: "Pokaż odcisk tożsamości {email}",

@@ -263,6 +263,34 @@ export function listItemShares(itemId: string): Promise<ItemShareEntry[]> {
   return apiJson(`/api/vault/items/${encodeURIComponent(itemId)}/shares`);
 }
 
+/** `DELETE /api/vault/collections/{id}/access/{user_id}` (`collections.rs::
+ * revoke_access`, SHARE-06/Phase 28 Plan 02) — mirrors `deleteItem`'s exact
+ * thin-wrapper shape. `204` on success; a `409` means the server's
+ * last-key-holder guard blocked the delete (revoking the LAST remaining
+ * recipient would permanently orphan the collection) -- callers MUST
+ * distinguish this from any other failure via `ApiClientError.status`
+ * (`lib/auth/api.ts`), never fold it into a generic error message
+ * (28-RESEARCH.md §A). No re-key: only the `collection_keys` row is
+ * deleted, item ciphertext is untouched. */
+export function revokeCollectionAccess(collectionId: string, userId: string): Promise<void> {
+  return apiJson(
+    `/api/vault/collections/${encodeURIComponent(collectionId)}/access/${encodeURIComponent(userId)}`,
+    { method: "DELETE" },
+  );
+}
+
+/** `DELETE /api/vault/items/{id}/shares/{user_id}` (`vault.rs::revoke_share`,
+ * SHARE-06/Phase 28 Plan 02) — same shape as `revokeCollectionAccess` above.
+ * `204` on success; unlike the collection endpoint, this one has NO
+ * last-key-holder guard (an item can always lose its only direct-share
+ * recipient; the owner's own access is untouched) -- 28-RESEARCH.md §A. */
+export function revokeItemShare(itemId: string, userId: string): Promise<void> {
+  return apiJson(
+    `/api/vault/items/${encodeURIComponent(itemId)}/shares/${encodeURIComponent(userId)}`,
+    { method: "DELETE" },
+  );
+}
+
 /** `POST /api/vault/collections` — Phase 26, Plan 01 (A-1/WR-09 fix): the
  * CALLER mints `id` (a fresh `crypto.randomUUID()`) and binds it into
  * `encName`'s AAD BEFORE calling this — this wrapper does not mint or
