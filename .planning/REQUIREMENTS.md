@@ -60,8 +60,8 @@ Blocks every other category. Today's hierarchy is entirely symmetric and cannot 
 ### SHARE — Sharing Units & Permission Levels
 
 - [ ] **SHARE-01**: A member can share a folder/collection with selected family members.
-- [ ] **SHARE-02**: A member can share a single item with a specific person, independent of any folder.
-- [ ] **SHARE-03**: Each share carries one of three access levels: **read-only**, **full edit**, or **hidden password** (usable but the password field is masked).
+- [x] **SHARE-02**: A member can share a single item with a specific person, independent of any folder.
+- [x] **SHARE-03**: Each share carries one of three access levels: **read-only**, **full edit**, or **hidden password** (usable but the password field is masked).
 - [x] **SHARE-04**: A member holding "hidden password" access **cannot reassign the item to another collection**. This closes the exact bypass confirmed in Vaultwarden issue #6269 (upstream Bitwarden fixed it in 2025.2.0) — we implement the fix from day one rather than rediscovering the bug.
 - [x] **SHARE-05**: Every permission is enforced **server-side** on every endpoint through a shared membership-authorization extractor — never client-side only, and never inconsistently between routes.
 - [x] **SHARE-06**: The owner of a share can revoke that single share without removing the person from the family.
@@ -149,8 +149,8 @@ Explicitly excluded to prevent scope creep.
 | FAM-09 | Phase 25 | Partial |
 | FAM-10 | Phase 25 | Pending |
 | SHARE-01 | Phase 26 | Pending |
-| SHARE-02 | Phase 26 | Pending |
-| SHARE-03 | Phase 26 | Pending |
+| SHARE-02 | Phase 26 | Complete |
+| SHARE-03 | Phase 26 | Complete |
 | SHARE-04 | Phase 22 | Complete |
 | SHARE-05 | Phase 22 | Complete |
 | SHARE-06 | Phase 22 | Complete |

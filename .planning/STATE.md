@@ -5,16 +5,16 @@ milestone_name: Family & Sharing
 current_phase: 27
 current_phase_name: Extension Integration — Shared Items
 status: verifying
-stopped_at: Completed 27-16 (closed adopted_existing real-WASM test gap; captured shared-badge/broken-row UAT screenshots for Bartek; reconciled ROADMAP.md/STATE.md housekeeping) — 2 visual-taste human_verification items remain, awaiting Bartek
-last_updated: "2026-08-09T14:10:00.000Z"
+stopped_at: Completed 28-01-PLAN.md (direct-share + hidden_password write refusal, blocked-toast rendering, persistUpdatedProviderItem dormant fix)
+last_updated: "2026-08-09T14:36:17.008Z"
 last_activity: 2026-08-09
-last_activity_desc: 27-16 quick task executed (functional gap closure + UAT screenshots + housekeeping)
+last_activity_desc: 27-16 (functional gap closure + UAT screenshots + housekeeping) executed
 progress:
-  total_phases: 7
+  total_phases: 8
   completed_phases: 7
-  total_plans: 61
-  completed_plans: 61
-  percent: 100
+  total_plans: 64
+  completed_plans: 62
+  percent: 88
 ---
 
 # Project State
@@ -110,6 +110,7 @@ Last activity: 2026-08-09 — 27-16 (functional gap closure + UAT screenshots + 
 | Phase 27 P14 | ~40min | 3 tasks | 5 files |
 | Phase 27 P13 | ~25min | 2 tasks | 4 files |
 | Phase 27 P15 | ~35min | 1 tasks | 3 files |
+| Phase 28 P01 | 45min | 3 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -230,6 +231,8 @@ Recent decisions affecting current work:
 - [Phase 27] 27-14: closed 27-VERIFICATION.md Gaps 3/4/5 -- setupAccessLevelFixture() (real hidden_password direct share + real read-access collection); dual-extension-access-levels.spec.ts proves hidden_password autofill-without-reveal/copy AND read-only write-refusal (ReadOnlyAccessError) live for the first time; a live DOM-fill assertion closes EXT-07's fill-event gap; signInAndUnlock's service-worker-readiness fix (3/3 green --retries=0) closes the diagnosed cold-MV3-wake flake; KEY-01 reconciled to Complete in REQUIREMENTS.md
 - [Phase ?]: [Phase 27] 27-13: closed 27-VERIFICATION.md Blocker 2 -- vault-store.ts::ensureSharedItemsHydrated() (shared-side counterpart to ensureItemsHydrated()) is awaited by handleCredentialsGet before its candidate snapshot, so a cold MV3-wake ceremony can no longer present a personal-only picker as complete while a shared passkey for the same RP is still resolving its Collection Key; regression tests prove both the await order and the actual closure (a mid-wake shared candidate lands in payload.candidates); live dual-extension-ceremony.spec.ts re-verified 2/2 green
 - [Phase ?]: [Phase 27] 27-15: closed 27-VERIFICATION.md's last remaining blocker -- mergeDirectSnapshot's catch now calls markPending(row.id, null, "broken") on an undecryptable directly-shared row (previously a console.warn-only silent drop), mirroring 27-12's collection-scoped fix on the sibling direct-share path; classification is always 'broken', never 'pending', since identityKey is fully resolved before the per-row loop starts (no analogous 'not cached yet' window). Real-AEAD falsification-tested.
+- [Phase ?]: capture-handler.ts's write gate refuses sharedToMe unconditionally (any accessLevel) before the collection-scoped exact-match-on-edit check, mirroring web's itemCapabilities.ts::canEditItem -- closes v0.4 Blocker 2/Warning 1
+- [Phase ?]: save-update-toast.ts's blocked-render branch never constructs the preview/confirm-button DOM elements at all for a blocked proposal -- genuine absence, not a hidden password-bearing input
 
 ### Pending Todos
 
@@ -309,10 +312,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 27-15 (direct-share silent-drop fix, closing 27-VERIFICATION.md's last blocker)
+**Stopped at:** Completed 28-01-PLAN.md (direct-share + hidden_password write refusal, blocked-toast rendering, persistUpdatedProviderItem dormant fix)
 **Resume file:** None
 
-Last session: 2026-08-09T11:35:18.050Z
+Last session: 2026-08-09T14:36:16.994Z
 27-13-PLAN.md (gap closure) executed: vault-store.ts::ensureSharedItemsHydrated() (the
 shared-side counterpart to the existing ensureItemsHydrated()) is now awaited by
 handleCredentialsGet, alongside ensureItemsHydrated(), before its candidate snapshot -- closing
