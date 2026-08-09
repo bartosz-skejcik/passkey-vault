@@ -106,6 +106,10 @@ import type { AutofillMatch, DetectedFields, FillKind } from "../autofill/types"
 // WASM-adjacent module itself). Type-only import, mirrors this file's
 // existing UnlockResult/CreateRpcResponse precedent.
 import type { Collection } from "../../entrypoints/background/collections-store";
+// 27-12 (Blocker 1 gap closure): same D-05 boundary rationale as the
+// Collection import above -- the popup never imports a background/WASM-
+// adjacent module for its VALUE, only its type.
+import type { PendingSharedItemEntry } from "../../entrypoints/background/vault-store";
 
 export type SessionStatus =
   | { kind: "no-session" }
@@ -382,10 +386,14 @@ export interface MessageResponseMap {
   // see that function's own doc comment); `collections` is
   // collections-store.ts's getCollections() -- the popup's sole route to a
   // decrypted collection name for a given collectionId (D-05).
+  // 27-12 (Blocker 1 gap closure): `pending`'s entries now carry
+  // PendingSharedItemEntry's `status: "pending" | "broken"` discriminant --
+  // the popup's route to distinguishing a transient MV3-wake race from a
+  // genuinely broken shared row (UI-SPEC E2-error backstop).
   "vault.list": {
     items: VaultItem[];
     folders: Folder[];
-    pending: { id: string; collectionId: string }[];
+    pending: PendingSharedItemEntry[];
     collections: Collection[];
   };
   "vault.updated": void;

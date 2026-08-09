@@ -154,7 +154,7 @@ const RESPONSE_FIXTURES: ResponseFixtureMap = {
     // 27-04 (Task 1): pending/collections are this plan's own new vault.list
     // response fields -- exercised here for the same JSON-round-trip
     // serialization-safety reason every other field on this map is.
-    pending: [{ id: "i1", collectionId: "c1" }],
+    pending: [{ id: "i1", collectionId: "c1", status: "pending" }],
     collections: [{ id: "c1", name: "Shared Folder", accessLevel: "edit" }],
   },
   "vault.updated": undefined,
