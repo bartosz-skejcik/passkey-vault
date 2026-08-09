@@ -59,6 +59,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * (dual-browser.spec.ts's own `SERVER` constant, ported verbatim). */
 export const SERVER = "http://localhost:8620";
 
+/** 27-11 Task 3 (deviation -- this file is not in that task's own `<files>`
+ * list, but the write-path proof is unreachable without it, Rule 3): the
+ * fixed origin of the tiny form server `dual-extension-sharing.spec.ts`'s
+ * own Task 3 stands up. `sharedCaptureItemName`'s `urls` field below is set
+ * to this EXACT literal so `itemMatchesOrigin()` (frame-guard.ts) --
+ * `confirmUpdateLogin`'s WR-04 ownership re-check -- can genuinely match a
+ * real browser-submitted form at this origin. Own port, distinct from every
+ * other e2e fixture server in this suite (pv-server :8620,
+ * dual-browser.spec.ts :8895, dual-extension-ceremony.spec.ts :8896,
+ * store-screenshots.spec.ts :8899, adversarial-iframe :8791/:8792). */
+export const CAPTURE_FORM_PORT = 8897;
+export const CAPTURE_FORM_ORIGIN = `http://localhost:${CAPTURE_FORM_PORT}`;
+
 /** Fixed, deterministic email+password for the ONE real "family owner"
  * identity every e2e suite in this project's ecosystem (web AND extension)
  * resolves to -- `families.rs::create`'s singleton constraint means
@@ -126,6 +139,15 @@ export interface SharedFixtureResult {
    * "no token crosses back out of this closure" discipline
    * (`setupSharedPasskeyCollectionFixture`, 27-06). */
   revokeMemberBAccess: () => Promise<void>;
+  /** 27-11 Task 3 (deviation, Rule 3): a THIRD shared item, purpose-built
+   * for this phase's ONLY real-crypto write-path proof -- unlike
+   * `sharedItemName`/`sharedTotpItemId` above (both `urls: []`, unusable
+   * for a capture-confirm ownership re-check), this login item's `urls`
+   * field is `[CAPTURE_FORM_ORIGIN]` so a REAL browser form submission at
+   * that exact origin matches it via `itemMatchesOrigin()`. */
+  sharedCaptureItemName: string;
+  sharedCaptureUsername: string;
+  sharedCaptureOldPassword: string;
 }
 
 // --- Node-side real WASM ----------------------------------------------
@@ -567,6 +589,75 @@ export async function setupSharedFixture(): Promise<SharedFixtureResult> {
         throw new Error(`pv-e2e: move totp item to collection failed (${moveTotpRes.status})`);
       }
 
+      // 27-11 Task 3 (deviation, Rule 3 -- see CAPTURE_FORM_ORIGIN's own doc
+      // comment above): a THIRD item in the SAME shared collection, this one
+      // carrying a REAL `urls` entry (unlike sharedItemName/sharedTotpItemId
+      // above, both `urls: []`) so a real browser form submission at
+      // CAPTURE_FORM_ORIGIN origin-matches it via `itemMatchesOrigin()` --
+      // the precondition `confirmUpdateLogin`'s WR-04 ownership re-check
+      // requires before it will route ANY write, real or test-driven.
+      const sharedCaptureItemId = randomUUID();
+      const sharedCaptureItemName = `PV E2E Dual-Extension Capture Login ${Date.now()}`;
+      // Unique PER CALL (not a fixed literal): both member A and member B are
+      // fixed, idempotent accounts reused across every run of this suite, so
+      // their accumulated item caches carry every PRIOR run's capture item
+      // too. A fixed username here would make classifySubmit's
+      // origin+username match ambiguous -- `.find()` could resolve to a
+      // STALE item from an earlier run instead of the one THIS run just
+      // created, silently updating the wrong row while the toast still
+      // reports success (found live: the wrong-item write left this run's
+      // own item at its pre-write revision forever, with no error anywhere).
+      const sharedCaptureUsername = `pv-e2e-capture-username-${Date.now()}`;
+      const sharedCaptureOldPassword = "pv-e2e-capture-password-v1";
+      const capturePlaintext = JSON.stringify({
+        type: "login",
+        name: sharedCaptureItemName,
+        folderId: null,
+        tags: [],
+        username: sharedCaptureUsername,
+        password: sharedCaptureOldPassword,
+        urls: [CAPTURE_FORM_ORIGIN],
+        notes: "",
+      });
+      const capturePersonalCombined = wasm.encryptItem(a.uk, capturePlaintext, sharedCaptureItemId, 1);
+      const { encKey: capturePersonalEncKey, encData: capturePersonalEncData } =
+        splitCombinedEncryptedItem(capturePersonalCombined);
+      const createCaptureItemRes = await fetch(`${SERVER}/api/vault/items`, {
+        method: "POST",
+        headers: jsonAuthHeaders(a.token),
+        body: JSON.stringify({
+          id: sharedCaptureItemId,
+          enc_key: capturePersonalEncKey,
+          enc_data: capturePersonalEncData,
+        }),
+      });
+      if (createCaptureItemRes.status !== 201) {
+        throw new Error(`pv-e2e: capture item create failed (${createCaptureItemRes.status})`);
+      }
+
+      const captureCollectionCombined = wasm.encryptItemForCollection(
+        ck,
+        capturePlaintext,
+        collectionId,
+        sharedCaptureItemId,
+        2,
+      );
+      const { encKey: captureCollEncKey, encData: captureCollEncData } =
+        splitCombinedEncryptedItem(captureCollectionCombined);
+      const moveCaptureRes = await fetch(`${SERVER}/api/vault/items/${sharedCaptureItemId}/collection`, {
+        method: "PUT",
+        headers: jsonAuthHeaders(a.token),
+        body: JSON.stringify({
+          new_collection_id: collectionId,
+          enc_key: captureCollEncKey,
+          enc_data: captureCollEncData,
+          expected_revision: 1,
+        }),
+      });
+      if (!moveCaptureRes.ok) {
+        throw new Error(`pv-e2e: move capture item to collection failed (${moveCaptureRes.status})`);
+      }
+
       return {
         memberAEmail: MEMBER_A_EMAIL,
         memberAPassword: MEMBER_A_PASSWORD,
@@ -593,6 +684,9 @@ export async function setupSharedFixture(): Promise<SharedFixtureResult> {
             throw new Error(`pv-e2e: revoke member B access failed (${res.status})`);
           }
         },
+        sharedCaptureItemName,
+        sharedCaptureUsername,
+        sharedCaptureOldPassword,
       };
     } finally {
       ck.free?.();

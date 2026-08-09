@@ -24,14 +24,138 @@
 // the password-sign-in branch of the server-origin ceremony window), so this
 // spec runs in the `chromium` project (not `chromium-ceremony`).
 import { expect, test } from "./fixtures";
-import { setupSharedFixture, computeTotpCandidates, SERVER } from "./fixtures-account-setup";
+import {
+  setupSharedFixture,
+  computeTotpCandidates,
+  SERVER,
+  CAPTURE_FORM_PORT,
+  CAPTURE_FORM_ORIGIN,
+} from "./fixtures-account-setup";
 import type { Page } from "@playwright/test";
+import http from "node:http";
 
 // This spec's own tsconfig program has no @types/chrome (same precedent as
 // dual-browser.spec.ts) -- every use of `chrome.*` below runs INSIDE
 // `popup.evaluate()` callbacks, i.e. in the real extension popup-document
 // context where `chrome` truly is a global at runtime.
 declare const chrome: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+// 27-11 Task 3: a tiny dependency-free form server for the phase's ONLY
+// real-crypto shared-item WRITE proof -- own port (CAPTURE_FORM_PORT,
+// fixtures-account-setup.ts), distinct from every other e2e fixture server
+// in this suite. Mirrors dual-browser.spec.ts's own `loginPage()` shape
+// (a minimal username/password form whose submit handler removes itself
+// from the DOM, the DOM-removal success signal submit-capture.ts's
+// attachSubmitWatcher listens for) -- ported, not re-derived.
+function captureLoginPage(): string {
+  return `<!doctype html><html><body>
+<h1>27-11 capture login</h1>
+<form id="f" autocomplete="on">
+  <input id="u" type="text" name="username" autocomplete="username">
+  <input id="p" type="password" name="password" autocomplete="current-password">
+  <button id="s" type="submit">Sign in</button>
+</form>
+<script>
+  document.getElementById('f').addEventListener('submit', (e) => {
+    e.preventDefault();
+    setTimeout(() => {
+      const f = document.getElementById('f');
+      if (f) f.remove();
+      const d = document.createElement('p'); d.textContent = 'Welcome back!'; document.body.appendChild(d);
+    }, 60);
+  });
+</script>
+</body></html>`;
+}
+
+let captureFormServer: http.Server;
+
+test.beforeAll(async () => {
+  captureFormServer = http.createServer((_req, res) => {
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    res.end(captureLoginPage());
+  });
+  await new Promise<void>((resolve) => captureFormServer.listen(CAPTURE_FORM_PORT, resolve));
+});
+
+test.afterAll(async () => {
+  // http.Server#close()'s callback only fires once every existing
+  // connection has ended -- Chromium keeps HTTP/1.1 keep-alive sockets to
+  // this fixture server open well past this test's own assertions, which
+  // otherwise stalls this hook past its own timeout (27-06-SUMMARY.md's
+  // own documented fix, ported verbatim).
+  captureFormServer?.closeAllConnections?.();
+  await new Promise<void>((resolve) => captureFormServer?.close(() => resolve()));
+});
+
+// CDP closed-shadow-root helpers (Phase 11's generate/capture UI mounts
+// inside a closed shadow root) -- ported verbatim from dual-browser.spec.ts's
+// own proven pattern (itself ported from probe-phase11-capture.js), not
+// re-derived, so this spec's own capture.confirm dispatch drives the SAME
+// real save/update toast production code every other capture proof does.
+async function cdpSession(page: Page) {
+  const client = await page.context().newCDPSession(page);
+  await client.send("DOM.enable");
+  return client;
+}
+type CdpNode = {
+  nodeId: number;
+  attributes?: string[];
+  nodeType: number;
+  nodeValue?: string;
+  children?: CdpNode[];
+  shadowRoots?: CdpNode[];
+  contentDocument?: CdpNode;
+};
+async function cdpQuery(
+  client: Awaited<ReturnType<typeof cdpSession>>,
+  predicate: (node: CdpNode, attrs: Record<string, string>) => boolean,
+) {
+  const { root } = await client.send("DOM.getDocument", { depth: -1, pierce: true });
+  const out: Array<{ node: CdpNode; attrs: Record<string, string> }> = [];
+  function attrsOf(node: CdpNode): Record<string, string> {
+    const m: Record<string, string> = {};
+    if (node.attributes) {
+      for (let i = 0; i < node.attributes.length; i += 2) m[node.attributes[i]] = node.attributes[i + 1];
+    }
+    return m;
+  }
+  function walk(node: CdpNode) {
+    const attrs = attrsOf(node);
+    if (predicate(node, attrs)) out.push({ node, attrs });
+    if (node.children) for (const c of node.children) walk(c);
+    if (node.shadowRoots) for (const sr of node.shadowRoots) walk(sr);
+    if (node.contentDocument) walk(node.contentDocument);
+  }
+  walk(root as CdpNode);
+  return out;
+}
+function hasAttr(a: Record<string, string>, n: string) {
+  return Object.prototype.hasOwnProperty.call(a, n);
+}
+async function cdpClick(client: Awaited<ReturnType<typeof cdpSession>>, node: CdpNode) {
+  const { model } = await client.send("DOM.getBoxModel", { nodeId: node.nodeId });
+  const cx = (model.content[0] + model.content[4]) / 2;
+  const cy = (model.content[1] + model.content[5]) / 2;
+  await client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: cx, y: cy });
+  await client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: cx, y: cy, button: "left", clickCount: 1 });
+  await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: cx, y: cy, button: "left", clickCount: 1 });
+}
+async function cdpClickAttr(client: Awaited<ReturnType<typeof cdpSession>>, attrName: string, idx = 0) {
+  const nodes = await cdpQuery(client, (_n, a) => hasAttr(a, attrName));
+  if (!nodes.length) return false;
+  await cdpClick(client, nodes[Math.min(idx, nodes.length - 1)].node);
+  return true;
+}
+async function waitForCdp<T>(fn: () => Promise<T | null>, timeout = 9000, interval = 300): Promise<T | null> {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const v = await fn();
+    if (v) return v;
+    await new Promise((r) => setTimeout(r, interval));
+  }
+  return null;
+}
 
 /** 27-11 Task 1: resolves the real background service-worker Page object for
  * a worker-scoped extension context -- mirrors fixtures.ts's own
@@ -236,4 +360,91 @@ test("member B's extension displays the exact plaintext name of the item member 
     forbiddenSubstringKeys,
     `chrome.storage.session leaked identity/collection/sealed key material -- full observed key set: ${JSON.stringify(observedKeys)}`,
   ).toEqual([]);
+
+  // 27-11 Task 3 (T-27-25 -- the phase's ONLY real-crypto evidence for the
+  // shared-item WRITE path, since 27-07's own capture-handler.test.ts mocks
+  // encryptItemForCollection entirely): member B captures a genuine
+  // password-change save on the shared login item CAPTURE_FORM_ORIGIN
+  // origin-matches, via the REAL production save/update-toast flow
+  // (content-relay.content.ts's attachSubmitWatcher -> capture.propose ->
+  // the toast's data-pv-toast-confirm -> capture.confirm ->
+  // confirmUpdateLogin's encryptItemForCollection dispatch, 27-07) -- never
+  // a directly-forged sendMessage call, since capture.confirm is
+  // content-frame-gated (assertContentSender requires a genuine tab
+  // sender, which a popup-page-origin sendMessage would also technically
+  // satisfy in this harness, but driving the REAL content-script flow is
+  // what actually proves the production write path end-to-end, not just
+  // that the message shape is accepted).
+  const newCapturePassword = `pv-e2e-capture-password-v2-${Date.now()}`;
+  const captureLogin = await extContextB.newPage();
+  await captureLogin.goto(`${CAPTURE_FORM_ORIGIN}/`);
+  await captureLogin.bringToFront();
+  await captureLogin.waitForTimeout(1000); // let content-relay's submit watcher attach (document_idle) before the gesture below
+
+  const captureClient = await cdpSession(captureLogin);
+  await captureLogin.fill("#u", fixture.sharedCaptureUsername);
+  await captureLogin.fill("#p", newCapturePassword);
+  // A real Enter-key submit dispatches a genuine `submit` event for
+  // submit-capture.ts's watcher to detect -- mirrors P11-SC2/SC3's own
+  // established precedent (dual-browser.spec.ts), sidestepping any
+  // coordinate-based click overlap with the extension's own in-page overlay.
+  await captureLogin.locator("#p").press("Enter");
+  const toast = await waitForCdp(async () => {
+    const t = await cdpQuery(captureClient, (_n, a) => hasAttr(a, "data-pv-toast"));
+    return t.length ? t : null;
+  });
+  expect(toast).toBeTruthy();
+  const confirmed = await cdpClickAttr(captureClient, "data-pv-toast-confirm");
+  expect(confirmed).toBe(true);
+  // The toast's own confirm handler awaits confirmUpdateLogin's real
+  // round trip (router.ts's capture.confirm dispatch) before dismissing --
+  // give it a moment to settle before moving to the next real page.
+  await captureLogin.waitForTimeout(2000);
+  await captureLogin.close();
+
+  // Member A's extension authored NOTHING in this write -- it must read
+  // back the NEW value purely through its own next sync poll (a real WS
+  // push, since A remains a live collection member) + decryptItemForCollection,
+  // with ZERO code changes on the read side (27-04's already-proven read
+  // path). A FRESH popup tab in the SAME context reads vault.list on its
+  // own mount, independent of whether popupA's own long-lived
+  // vault.updated listener already fired -- mirrors 27-06-SUMMARY.md's own
+  // "reopen, don't assume a stale-tab listener fired" precedent.
+  const popupA2 = await extContext.newPage();
+  await popupA2.goto(`chrome-extension://${extensionId}/popup.html`);
+  await popupA2.waitForSelector("select", { timeout: 20000 });
+
+  // Found live (real product behavior, not a defect and not this plan's
+  // scope): `buildLoginFields()` (capture-handler.ts, Phase 11) ALWAYS
+  // derives an item's `name` from the submitting page's hostname on every
+  // capture-confirm save -- new AND update alike -- discarding whatever
+  // custom name the item carried before. So the item member B just wrote
+  // to now displays as "localhost" (CAPTURE_FORM_ORIGIN's hostname) in
+  // BOTH member A's and member B's popups, not `sharedCaptureItemName`
+  // anymore -- confirmed live via a direct chrome.storage-free
+  // `vault.list` read during test authoring (the decrypted row's
+  // `username`/`password` were exactly right; only `name` changed).
+  // Locating the row by that renamed, COLLISION-PRONE "localhost" text
+  // alone would violate Playwright strict-mode (this fixed test account
+  // has accumulated several same-named "localhost" rows from prior runs'
+  // own captures) -- so this test disambiguates via the popup's own
+  // search box on `sharedCaptureUsername` (unique per run, unmodified by
+  // buildLoginFields, matched by pv-ui/vault/search.ts's own
+  // username-substring rule), the same real-UI search input
+  // dual-browser.spec.ts's own P9 precedent already uses.
+  const searchBoxA2 = popupA2
+    .locator('input[type="search"], input[placeholder*="zukaj"], input[placeholder*="earch"]')
+    .first();
+  await searchBoxA2.fill(fixture.sharedCaptureUsername);
+  const captureRow = popupA2.getByText("localhost", { exact: true });
+  await expect(captureRow).toHaveCount(1, { timeout: 60000 });
+  await captureRow.click();
+  await popupA2.getByRole("button", { name: /show password/i }).click();
+  // THE positive byte-equality assertion (T-27-25): member A's extension
+  // displays the EXACT new plaintext password value member B wrote -- real,
+  // non-mocked ciphertext round-tripped through encryptItemForCollection
+  // (B's write) then decryptItemForCollection (A's read). Run twice
+  // consecutively at verification time to rule out flake (this plan's own
+  // acceptance criteria) -- this assertion itself is deterministic per run.
+  await expect(popupA2.getByText(newCapturePassword, { exact: true })).toBeVisible({ timeout: 10000 });
 });
