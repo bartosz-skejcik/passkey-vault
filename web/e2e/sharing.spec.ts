@@ -900,3 +900,101 @@ test("owner revokes one collection recipient's access from the Sharing overview 
   await owner.context.close();
   await memberB.context.close();
 });
+
+// 28-VERIFICATION.md gap: SHARE-06's ITEM leg (as opposed to the collection
+// leg proven above) had never executed end-to-end -- its only prior
+// coverage was `SharingOverviewPanel.test.tsx`, which mocks `@/lib/vault/api`
+// entirely, so `revokeItemShare` never actually issued a DELETE. Wiring was
+// statically correct (`api.ts:287` <-> `routes/mod.rs:270`, the identical
+// `apiJson(..., {method:"DELETE"})` mechanism the collection case above
+// already live-proves) -- but "a server endpoint whose client caller has
+// never actually run" is the exact failure mode this phase exists to
+// eliminate, so presence was not admissible. This test closes that gap:
+// positively anchors that the recipient CAN reach the item (both via their
+// own raw request and the real UI) BEFORE revoking, then proves they no
+// longer can -- never an absence-only assertion.
+test("owner revokes a directly-shared ITEM's access via the Sharing overview's By-person tab, live (SHARE-06 item leg, 28-04 gap fix)", async ({
+  twoSessions,
+  browser,
+}) => {
+  const [owner, recipient] = twoSessions;
+  const ownerToken = await tokenFor(owner.page);
+  const recipientToken = await tokenFor(recipient.page);
+  const ownerUserId = await userIdFor(owner.context, ownerToken);
+  const recipientUserId = await userIdFor(recipient.context, recipientToken);
+
+  await ensureFamilyMembership(browser, [ownerUserId, recipientUserId]);
+  await waitForIdentityKeyPublished(owner.context, ownerToken);
+  await waitForIdentityKeyPublished(recipient.context, recipientToken);
+
+  const suffix = uniqueSuffix();
+  const itemName = `PV E2E Item Revoke ${suffix}`;
+
+  const itemsBefore = await listItemIds(owner.context, ownerToken);
+  await createLoginItemViaUI(owner.page, itemName, `pw-item-revoke-${suffix}`);
+  const itemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+  await owner.page.getByTestId(`item-menu-trigger-${itemId}`).click();
+  await owner.page.getByTestId("context-menu-share").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId(`share-recipient-${recipientUserId}`).click();
+  await owner.page.getByTestId("share-access-level-edit").click();
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  async function recipientDirectItemIds(): Promise<string[]> {
+    const res = await apiGet(recipient.context.request, "/api/sync/shared/direct", recipientToken);
+    expect(res.status(), "GET /api/sync/shared/direct must succeed for the recipient's own token").toBe(200);
+    const body = (await res.json()) as { items?: { id: string }[] };
+    return (body.items ?? []).map((i) => i.id);
+  }
+
+  // POSITIVE anchor #1 (raw): the recipient's own authenticated request
+  // genuinely includes the item BEFORE any revoke.
+  await expect.poll(async () => (await recipientDirectItemIds()).includes(itemId)).toBe(true);
+
+  // POSITIVE anchor #2 (real UI): the recipient genuinely SEES the item in
+  // their own vault, not merely a server-side row nobody's client reads.
+  await reloadAndUnlock(recipient.page, SESSION_PASSWORD);
+  await expect(
+    recipient.page.getByTestId(`item-row-${itemId}`),
+    "the recipient must genuinely see the directly-shared item before any revoke",
+  ).toBeVisible({ timeout: 20000 });
+
+  // The owner's OWN item list must pick up `is_shared: true` (server-
+  // computed via `EXISTS(... item_shares ...)`, vault.rs::fetch_items_for)
+  // before the Sharing overview's By-person tab has anything to render for
+  // it -- unlike the collection leg above, `create_share` publishes NO sync
+  // event to the OWNER (only to the recipient, vault.rs:1416-1420), so the
+  // owner's local store needs a fresh full snapshot rather than a WS-driven
+  // catch-up pull. A reload+unlock is the same honest mechanism this file's
+  // header already documents for the analogous collection-membership gap.
+  await reloadAndUnlock(owner.page, SESSION_PASSWORD);
+
+  await openSharingOverview(owner.page);
+  await owner.page.getByTestId("sharing-overview-tab-person").click();
+  await owner.page.getByTestId(`sharing-overview-person-toggle-${recipientUserId}`).click();
+  const personDetails = owner.page.getByTestId(`sharing-overview-person-details-${recipientUserId}`);
+  await expect(personDetails).toContainText(itemName);
+
+  await owner.page
+    .getByTestId(`sharing-overview-revoke-person-${recipientUserId}-item:${itemId}`)
+    .click();
+  await owner.page.getByTestId("revoke-share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("revoke-share-confirm").click();
+  await owner.page.getByTestId("revoke-share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  // This item share was the recipient's ONLY grant -- the whole person row
+  // must be spliced (zero-one-many, 28-UI-SPEC.md E1), not merely the <li>.
+  await expect(
+    owner.page.getByTestId(`sharing-overview-person-${recipientUserId}`),
+  ).toHaveCount(0);
+
+  // NEGATIVE anchor, live: the recipient's OWN raw authenticated request no
+  // longer includes the item -- genuine server-side access loss, not merely
+  // a UI-side hide.
+  await expect.poll(async () => (await recipientDirectItemIds()).includes(itemId)).toBe(false);
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(recipient.dialogFired(), "zero OS-level dialogs across the recipient session").toBe(false);
+});
