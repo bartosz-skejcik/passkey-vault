@@ -12,17 +12,48 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 
 ## Current State
 
-**✅ v0.3 Polish & Hardening SHIPPED 2026-07-22** (fazy 14–20, 29 planów). Trzy milestone'y dowiezione: v0.1 MVP (serwer + web app + PRF unlock + Docker), v0.2 Browser Extension (autofill + passkey provider, Chrome+Firefox), v0.3 Polish & Hardening (jeden model logowania Vaultwarden-style, design system w `packages/pv-ui`, oba Critical risks zamknięte, server/supply-chain hardening, pełny CI gate).
+**✅ v0.4 Family & Sharing SHIPPED 2026-08-09** (fazy 21–28, 64 plany, 548 commitów od v0.3). Cztery
+milestone'y dowiezione: v0.1 MVP, v0.2 Browser Extension, v0.3 Polish & Hardening, v0.4 Family & Sharing.
+Instancja jest teraz multi-user: warstwa asymetryczna (X25519 identity keypair + sealed Collection Keys)
+w `pv-core`, model rodziny/kolekcji z jednym jednolicie egzekwowanym sprawdzeniem członkostwa, live
+fan-out współdzielonych danych, zaproszenia jednorazowym linkiem/kodem bez SMTP, trzy poziomy dostępu,
+atomowy re-key ograniczony kosztowo przy zawieszeniu/usunięciu członka, oraz współdzielone wpisy
+działające identycznie w web app i we wtyczce (autofill, TOTP, passkey provider). Zero-knowledge trzyma:
+serwer nigdy nie widzi klucza prywatnego, Collection Key ani plaintextu. Deployment 1 kontener/SQLite bez zmian.
 
-**Stack żywy:** Rust workspace (pv-core / pv-server / pv-provider / pv-wasm), Next.js 16 static-export web app, WXT MV3/MV2 extension, `packages/pv-ui` jako design-system home. Gate: cargo workspace + 481 web vitest + 693 ext vitest + oba tsc + oba buildy + web-ext lint + MAIN-world audit + supply-chain — lokalnie zielony i odwzorowany 1:1 w `.github/workflows/ci.yml`.
+**Stack żywy:** Rust workspace (pv-core / pv-server / pv-provider / pv-wasm), Next.js static-export web app,
+WXT MV3/MV2 extension, `packages/pv-ui` jako design-system home. Gate: cargo workspace + 821 web vitest +
+788 ext vitest + oba tsc + oba buildy + web-ext lint + MAIN-world audit + supply-chain + live Playwright
+(web e2e oraz dwuwtyczkowy harness dwóch członków).
 
-**Znane follow-upy:** ~~pierwszy push/PR na realny runner GitHub Actions (repo bez remote)~~ — **ZAMKNIĘTE 2026-07-30**: repo ma remote (`origin` → github.com/bartosz-skejcik/passkey-vault), CI biega na realnym runnerze, R-20-03 spełnione (run 30584149151: 5/5 jobów zielonych, w tym nowy blokujący `web-e2e`). Zostają: 2 debug-doc czekają na ludzką weryfikację Bartka; drobne todo (UI-review v0.1, stale :3000 origin default) — patrz STATE.md Deferred Items.
+**Nauczka v0.4, warta przeniesienia dalej:** zielony unit suite NIE jest dowodem dla twierdzenia dotykającego
+krypto — oba suite'y mockują `@/lib/crypto`. Faza 24 znalazła live 4 realne bugi, faza 25 defekt kontraktu
+wire, faza 26 dwa (w tym feature działający tylko w jedną stronę przy 700+ zielonych testach), faza 27 kolejne,
+a audyt milestone'u jeszcze trzy — wszystkie tej samej postaci: **zdolność serwera, do której nie sięga żaden
+klient**. Standard, który z tego wyrósł (testy real-WASM albo live Playwright, twierdzenia pozytywne po
+stronie odbiorcy zamiast asercji nieobecności, falsyfikacja każdego nowego guardu) jest najbardziej
+przenośnym wynikiem tego milestone'u.
 
-**Next Milestone:** v0.4 Family & Sharing — rozpoczęty 2026-07-29, fazy 21–23/7 zweryfikowane (sekcja poniżej).
+**Dług przeniesiony do v0.5 (5 pozycji, pełna lista w `.planning/milestones/v0.4-ROADMAP.md`):**
+osierocony `POST /api/identity/verify/{user_id}` (ostatnia instancja sygnaturowego trybu awarii v0.4),
+WINDOWS #12 (export ignoruje maskę hidden-password, oba klienty), WINDOWS #13 (brak UI dodającego członka do
+ISTNIEJĄCEJ kolekcji), brak przycinania `pendingSharedItems` per wiersz, clippy `explicit_auto_deref` ×19.
+Niezaimplementowane świadomie: **UX-04** i **FAM-10**.
 
-**Key context (historyczny):** v0.2 zapieczętowane 2026-07-20 po brutalnym live-debugu na realnym Firefox/Zen + github.com — 7 klas bugów niewidocznych dla zielonego CI. v0.3 zamieniło tę nauczkę w rygor (real-RP testy, byte-shape gates, inline-fixture probes, CI). Research: `.planning/research/v0.3/`.
+**Czeka na ocenę Bartka:** kontrast plakietki shared-item w popupie wtyczki oraz czytelność copy wiersza
+broken/dialogu usuwania (screenshoty: `.playwright-mcp/uat-27/`). Dodatkowo `data/pv.db` zawiera 12 kont
+`pv-e2e-*` (incydent `reuseExistingServer` w 28-02) — zostawione, to dane Bartka.
 
-## Current Milestone: v0.4 Family & Sharing
+**Next Milestone:** nieokreślony — uruchom `/gsd-new-milestone` (questioning → research → requirements → roadmap).
+
+**Key context (historyczny):** v0.2 zapieczętowane 2026-07-20 po brutalnym live-debugu na realnym Firefox/Zen
++ github.com — 7 klas bugów niewidocznych dla zielonego CI. v0.3 zamieniło tę nauczkę w rygor. v0.4 pokazało,
+że rygor trzeba stosować także *między* fazami, nie tylko wewnątrz nich.
+
+<details>
+<summary>📦 v0.4 Family & Sharing — SHIPPED 2026-08-09 (archiwum)</summary>
+
+### Current Milestone: v0.4 Family & Sharing (jak zdefiniowany na starcie)
 
 **Goal:** Instancja obsługuje wielu użytkowników w ramach rodziny — wpisy i foldery można współdzielić z zachowaniem zero-knowledge, a współdzielone dane działają tak samo w web app jak w autofillu i passkey providerze wtyczki.
 
@@ -41,6 +72,8 @@ Dla self-hosterów (społeczność Vaultwarden/homelab), którzy chcą passkeys 
 - Usunięcie członka = re-key współdzielonego zasobu + re-wrap dla pozostałych; projekt musi unikać kosztu O(cały vault).
 - **Ukryte hasło jest zabezpieczeniem UI, nie kryptograficznym** — członek z dostępem posiada klucz i technicznie odczyta hasło (to samo ograniczenie ma Bitwarden). UI musi to komunikować uczciwie.
 - Serwer nadal nie widzi żadnego klucza ani plaintextu — twarda granica całego modelu sharingu.
+
+</details>
 
 ## Requirements
 

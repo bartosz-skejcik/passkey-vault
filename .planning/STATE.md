@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Family & Sharing
-current_phase: 28
-current_phase_name: Close v0.4 audit gaps — client-side consumption of sharing state
-status: executing
-stopped_at: Completed 28-04 gap-closure pass (28-VERIFICATION.md addendum)
+current_phase: none
+current_phase_name: v0.4 shipped — next milestone not yet defined
+status: milestone-complete
+stopped_at: v0.4 milestone archived and tagged
 last_updated: "2026-08-09T16:42:31.632Z"
 last_activity: 2026-08-09
-last_activity_desc: Phase 28 execution started
+last_activity_desc: v0.4 Family & Sharing archived, tagged, requirements rolled
 progress:
   total_phases: 8
   completed_phases: 8
@@ -24,7 +24,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-31)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** Phase 28 — Close v0.4 audit gaps — client-side consumption of sharing state
+**Current focus:** none — v0.4 shipped 2026-08-09. Run `/gsd-new-milestone` to define v0.5.
 
 ## Current Position
 
