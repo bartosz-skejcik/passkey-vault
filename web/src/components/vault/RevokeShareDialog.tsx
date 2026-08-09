@@ -70,10 +70,29 @@ export default function RevokeShareDialog({
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 409) {
         setErrorKey("revokeLastKeyHolder");
+        setRevoking(false);
+      } else if (err instanceof ApiClientError && err.status === 404) {
+        // Gap fix (28-04, falsified-truth item 1): both `revoke_access`
+        // (collections.rs) and `revoke_share` (vault.rs) return 404 when the
+        // grant is already gone -- which is indistinguishable, from the
+        // client's side, from "someone else already revoked this exact
+        // grant a moment ago" (a double-submit, a second owner tab, or a
+        // race with another admin). The end state the caller wanted --
+        // this recipient no longer holds the grant -- is EXACTLY the end
+        // state a 404 confirms. Treating it as a failure told an owner
+        // whose revoke had actually succeeded that it had not, which is a
+        // false claim about a security-relevant outcome (the class of
+        // defect this whole phase exists to eliminate). A genuine failure
+        // (network error, 500, a 409 last-key-holder) still surfaces its
+        // own distinct copy above/below -- only "the grant is already
+        // gone" is folded into the same success path a first-time revoke
+        // takes, splicing the row exactly as if the DELETE had returned
+        // 204.
+        onRevoked();
       } else {
         setErrorKey("revokeFailed");
+        setRevoking(false);
       }
-      setRevoking(false);
     }
   }
 

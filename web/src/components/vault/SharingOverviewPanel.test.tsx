@@ -610,6 +610,35 @@ describe("SharingOverviewPanel (D-1/E6)", () => {
       ).toHaveTextContent("anna@example.test");
     });
 
+    it("a mocked 404 (already-revoked) resolves the SAME as a genuine 204 -- dialog closes, row is spliced, no error copy (28-04 gap fix)", async () => {
+      // Both `revoke_access` and `revoke_share` return 404 when the grant
+      // is already gone (a double-submit, a second tab, a race with
+      // another admin) -- the end state the caller wanted (this recipient
+      // no longer holds the grant) IS the end state a 404 confirms. This
+      // must NOT surface `share.revokeFailed` (that told an owner a
+      // successful revoke had failed -- a false claim about a
+      // security-relevant outcome).
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Family Docs" })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([makeCollectionRow({ id: "col-1", access_level: "edit" })]);
+      mockGetCollectionAccessList.mockResolvedValue([
+        makeAccessEntry({ user_id: ANNA_ID, email: "anna@example.test" }),
+      ]);
+      mockListItemShares.mockResolvedValue([]);
+      mockRevokeCollectionAccess.mockRejectedValue(new ApiClientError(404, "not found"));
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+      await openRevokeDialogFromFolderRow("col-1", ANNA_ID);
+      fireEvent.click(screen.getByTestId("revoke-share-confirm"));
+
+      await waitFor(() =>
+        expect(screen.queryByTestId("revoke-share-dialog")).not.toBeInTheDocument(),
+      );
+      expect(screen.queryByTestId("revoke-share-error")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("sharing-overview-folder-col-1")).not.toBeInTheDocument();
+    });
+
     it("revoking a folder's last-remaining recipient removes the WHOLE folder row, not merely the recipient's <li>", async () => {
       mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
       mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Family Docs" })]);
