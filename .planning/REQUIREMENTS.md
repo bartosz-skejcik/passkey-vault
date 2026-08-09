@@ -39,6 +39,7 @@ Blocks every other category. Today's hierarchy is entirely symmetric and cannot 
 - [x] **KEY-04**: Personal and shared key derivation use distinct, versioned domain-separation constants, following the existing `b"pv:...:v1"` convention.
 - [x] **KEY-05**: The sealed-box implementation choice — `crypto_box` crate vs. hand-assembled X25519-ECDH over the existing `aead_seal`/HKDF machinery — is made and recorded as a first-class documented decision with rationale, before any dependent code is written.
 - [x] **KEY-06**: Removing a member re-keys only the collections that member could reach. Cost is provably proportional to the shared data and remaining members, never to the whole vault.
+  - **Complete.** Phase 25 delivered and proved the re-key mechanism itself (proportional cost, atomic/resumable — see KEY-07). Phase 28 (Plan 28-03) adds the client-side half of this invariant's blast radius: the removal/suspension purge on both clients drops ONLY shared state (`collectionSharedItems`/`directSharedItems`/watermarks/Collection-Key cache), never `personalItems`/`folders` — the **prohibition** this requirement implies on the client side, positively asserted (a personal item stays visible before AND after removal in the same live run) by `dual-extension-removal.spec.ts` and `remove-member.spec.ts`.
 - [x] **KEY-07**: Re-key is atomic or safely resumable — a partial failure never leaves some recipients rewrapped and others stranded.
   - **Complete after Phase 25 (Plan 25-05).** Plan 25-03 wired the real mechanism (the single `BEGIN IMMEDIATE` transaction plus the `test-support`-gated `FAULT_INJECT_AFTER_COLLECTION_INDEX` hook). Plan 25-05 delivers the adversarial proof itself: `remove_member_rolls_back_completely_on_injected_mid_write_fault` forces the fault to fire AFTER the first collection's writes are issued and would durably persist on their own, then asserts (via a separate connection, never the request's own dropped transaction) that BOTH collections are fully unchanged and the target's rows survive — proving the transaction boundary, not just the pre-write completeness check, is load-bearing. A documented kill-and-revert (splitting the transaction into two around the same fault point) was performed this session and confirmed the test genuinely goes RED against a broken implementation before being reverted.
 
@@ -51,15 +52,17 @@ Blocks every other category. Today's hierarchy is entirely symmetric and cannot 
 - [x] **FAM-05**: An invitee sees an explicit "Join [Family]?" confirmation before membership takes effect; the invite landing page leaks no vault metadata (no folder names, no item counts) before redemption.
 - [x] **FAM-06**: One invite link works for both cases — a brand-new user registering, and an existing account joining a family — branching at redemption time on whether a session exists.
 - [x] **FAM-07**: The owner can **suspend** a member: reversible, immediate, no re-key.
+  - **Complete.** Phase 25 delivered the server-side suspend/reinstate handlers and `family_members.status`-gated enforcement. Phase 28 (Plan 28-03) delivers and live-proves the client-visible half: `suspend_member`/`reinstate_member` bump the target's `shared_direct_revision` on BOTH transitions with no re-key, and `dual-extension-removal.spec.ts` proves the full bidirectional cycle (present → suspend → absent → reinstate → present) on both the collection-scoped and directly-shared item, on both clients.
 - [x] **FAM-08**: The owner can **permanently remove** a member: triggers re-key (KEY-06), gated behind a second confirmation.
-  - **PARTIAL after Phase 25 (Plan 25-03).** Delivered: the full server half — `DELETE /api/families/members/{user_id}`, owner-only, atomically removes the target and re-keys every collection they could reach (KEY-06). **Still outstanding:** the "gated behind a second confirmation" clause is a client-side UX gate — no web/extension UI calls this endpoint yet. Do not mark Complete until a client ships the confirmation step (Plan 25-07 or later).
+  - **Complete.** Phase 25 (Plan 25-03) delivered the full server half — `DELETE /api/families/members/{user_id}`, owner-only, atomically removes the target and re-keys every collection they could reach (KEY-06). Phase 28 (Plan 28-03) closes the previously-outstanding client half: `RemoveMemberDialog.tsx`'s genuine two-step confirmation UI calls the endpoint, and the client's discovery-and-purge path (the 404→purge discriminant, hoisted to both call sites on both clients) is live-proven end-to-end by `web/e2e/remove-member.spec.ts` and `extension/e2e/dual-extension-removal.spec.ts`.
 - [x] **FAM-09**: A suspended or removed member's existing sessions lose access immediately — access is not carried by an already-issued session token.
-  - **PARTIAL after Phase 25 (Plan 25-03).** The REMOVED half is now proven end-to-end: `tests/family_removal.rs`'s happy-path test shows the removed member's very next `GET /api/vault/collections/{id}/items` (same, still-valid bearer token — no re-login) is `404`. The SUSPENDED half's enforcement mechanism (`family_members.status` gating `resolve_access`) was proven in Plan 25-01, but there is still no way to actually REACH the suspended state via the API — Plan 25-04 owns the suspend/reinstate handler. Do not mark Complete until 25-04 lands.
+  - **Complete, with an honest bound.** The REMOVED half was proven end-to-end in Phase 25: `tests/family_removal.rs`'s happy-path test shows the removed member's very next `GET /api/vault/collections/{id}/items` (same, still-valid bearer token — no re-login) is `404` — server-side denial is genuinely immediate, at the moment of the DELETE. Phase 28 (Plan 28-03) closes the client half and states the honest bound for it: the removed/suspended member's OWN client only discovers and purges its cached copy on its next **completed sync cycle** — up to ~1 min on the extension (`chrome.alarms` floor) or ~30s on web (`setInterval`), never instantaneous on the device. Both bounds are live-proven (`dual-extension-removal.spec.ts`, `remove-member.spec.ts`), and Plan 28-04 corrected the one shipped string (`member.removeStep2Body`) that still claimed a literal instant device-side cutoff.
 - [ ] **FAM-10**: Deleting an account that was a family member triggers the same re-key path as removal (closes the gap flagged in ARCHITECTURE.md §4.3).
 
 ### SHARE — Sharing Units & Permission Levels
 
-- [ ] **SHARE-01**: A member can share a folder/collection with selected family members.
+- [x] **SHARE-01**: A member can share a folder/collection with selected family members.
+  - **Complete.** Phase 26 shipped `ShareDialog.tsx`'s folder-sharing variant; `26-VERIFICATION.md` verified `passed` at 5/5 success criteria, and 6 of Phase 26's own plan SUMMARYs list `SHARE-01` under `requirements-completed`. This checkbox was left unresolved by an earlier bookkeeping pass (28-CONTEXT.md inherited_debt #2) — reconciled here (28-04) as drift, not missing scope.
 - [x] **SHARE-02**: A member can share a single item with a specific person, independent of any folder.
 - [x] **SHARE-03**: Each share carries one of three access levels: **read-only**, **full edit**, or **hidden password** (usable but the password field is masked).
 - [x] **SHARE-04**: A member holding "hidden password" access **cannot reassign the item to another collection**. This closes the exact bypass confirmed in Vaultwarden issue #6269 (upstream Bitwarden fixed it in 2025.2.0) — we implement the fix from day one rather than rediscovering the bug.
@@ -88,7 +91,8 @@ scalar and `SyncHub` is keyed by `user_id` — neither can express "someone else
 
 ### SEC — Security Posture for Multi-User
 
-- [ ] **SEC-05**: A member can view their own and other members' identity-key fingerprints, so key authenticity can be verified out-of-band. This is the honest, v0.4-scope mitigation for the server-distributes-public-keys trust gap (TOFU posture); a "key changed" banner and a transparency log are explicitly deferred, not silently dropped.
+- [x] **SEC-05**: A member can view their own and other members' identity-key fingerprints, so key authenticity can be verified out-of-band. This is the honest, v0.4-scope mitigation for the server-distributes-public-keys trust gap (TOFU posture); a "key changed" banner and a transparency log are explicitly deferred, not silently dropped.
+  - **Complete.** Phase 26 shipped `FamilyTab.tsx`'s fingerprint card + per-member reveal (E7/D-4), covering both the caller's own and every other member's fingerprint; `26-VERIFICATION.md` verified `passed` at 5/5, and 2 of Phase 26's own plan SUMMARYs list `SEC-05` under `requirements-completed`. Reconciled here (28-04) as bookkeeping drift, not missing scope — the "verify out-of-band" *action* is inherently manual by this requirement's own text (a human comparing words across a separate channel), not a missing client caller; the fingerprint the client must display is the part in scope, and it is shipped.
 - [x] **SEC-06**: Every collection/item/family endpoint enforces membership authorization uniformly — no route reachable without the same check its siblings apply.
 - [x] **SEC-07**: Batch rewrapping of many keys during share or re-key operations never reuses a nonce.
 - [x] **SEC-08**: A live multi-session test harness (2+ concurrent authenticated sessions, real browser) exists and covers the sharing flows. Stood up **with the sync phase, not at the end** — this milestone's direct application of the v0.2→v0.3 lesson that green CI missed 7 bug classes only visible live.
@@ -97,9 +101,11 @@ scalar and `SyncHub` is keyed by `user_id` — neither can express "someone else
 
 The differentiator block. Cheap to build, and the whole positioning against Bitwarden rests on it.
 
-- [ ] **UX-03**: At share time, the UI states plainly that **hidden password is an interface protection, not a cryptographic one** — a member with access holds the key and can technically recover the password. Every competitor studied obscures this; the target audience (self-hosters who read Bitwarden's issue tracker) already knows it, so hiding it would read as dishonest.
+- [x] **UX-03**: At share time, the UI states plainly that **hidden password is an interface protection, not a cryptographic one** — a member with access holds the key and can technically recover the password. Every competitor studied obscures this; the target audience (self-hosters who read Bitwarden's issue tracker) already knows it, so hiding it would read as dishonest.
+  - **Complete.** Phase 26 shipped `ShareDialog.tsx`'s hidden-password disclosure modal (`share.hiddenPasswordDisclosureBody`) plus the recipient-side note; `26-VERIFICATION.md` verified `passed` at 5/5, and 2 of Phase 26's own plan SUMMARYs list `UX-03` under `requirements-completed`. Live-proven in `web/e2e/sharing.spec.ts`'s SHARE-02/UX-03 test (first-selection acknowledgment gate, no re-trigger on later selections in the same session). Reconciled here (28-04) as bookkeeping drift, not missing scope.
 - [ ] **UX-04**: When removing a member, the UI lists the items that member could see and recommends rotating those credentials — because re-key cannot retroactively protect what they already decrypted. The data for this list already exists in the share records.
-- [ ] **UX-05**: The web app visually distinguishes shared items from personal ones, and shows who a given item is shared with.
+- [x] **UX-05**: The web app visually distinguishes shared items from personal ones, and shows who a given item is shared with.
+  - **Complete.** Phase 26 shipped the shared-item badges/avatar stacks across the item list and `SharingOverviewPanel.tsx`; `26-VERIFICATION.md` verified `passed` at 5/5, and 6 of Phase 26's own plan SUMMARYs list `UX-05` under `requirements-completed`. Live-proven in `web/e2e/sharing.spec.ts` (WR-09's real folder-name/avatar-stack proof) and again by Phase 28's own revoke live proofs. Reconciled here (28-04) as bookkeeping drift, not missing scope.
 
 ## Future Requirements
 
@@ -136,7 +142,7 @@ Explicitly excluded to prevent scope creep.
 | KEY-03 | Phase 21 | Complete |
 | KEY-04 | Phase 21 | Complete |
 | KEY-05 | Phase 21 | Complete |
-| KEY-06 | Phase 25 | Complete |
+| KEY-06 | Phase 25 (server re-key) + Phase 28 (client-side purge-scope invariant, live-proven) | Complete |
 | KEY-07 | Phase 25 | Complete |
 | FAM-01 | Phase 22 | Complete |
 | FAM-02 | Phase 22 | Complete |
@@ -144,11 +150,11 @@ Explicitly excluded to prevent scope creep.
 | FAM-04 | Phase 24 | Complete |
 | FAM-05 | Phase 24 | Complete |
 | FAM-06 | Phase 24 | Complete |
-| FAM-07 | Phase 25 | Complete |
-| FAM-08 | Phase 25 | Partial |
-| FAM-09 | Phase 25 | Partial |
+| FAM-07 | Phase 25 (server suspend/reinstate) + Phase 28 (client-visible bidirectional revision bump, live-proven both clients) | Complete |
+| FAM-08 | Phase 25 (server re-key + endpoint) + Phase 28 (client two-step confirmation UI + purge, live-proven both clients) | Complete |
+| FAM-09 | Phase 25 (server-side immediate denial) + Phase 28 (client cache purge on next completed sync cycle — honest bound, live-proven; 28-04 corrected the one shipped string still claiming instant device cutoff) | Complete |
 | FAM-10 | Phase 25 | Pending |
-| SHARE-01 | Phase 26 | Pending |
+| SHARE-01 | Phase 26 | Complete |
 | SHARE-02 | Phase 26 | Complete |
 | SHARE-03 | Phase 26 | Complete |
 | SHARE-04 | Phase 22 | Complete |
@@ -165,12 +171,12 @@ Explicitly excluded to prevent scope creep.
 | EXT-10 | Phase 27 | Complete — decision record + in-process regression (27-02); live two-extension `signCount` wire measurement landed (27-06) |
 | EXT-11 | Phase 27 | Complete |
 | EXT-12 | Phase 27 | Complete |
-| SEC-05 | Phase 26 | Pending |
+| SEC-05 | Phase 26 | Complete |
 | SEC-06 | Phase 22 | Complete |
 | SEC-07 | Phase 25 | Complete |
 | SEC-08 | Phase 23 | Complete |
-| UX-03 | Phase 26 | Pending |
+| UX-03 | Phase 26 | Complete |
 | UX-04 | Phase 25 | Pending |
-| UX-05 | Phase 26 | Pending |
+| UX-05 | Phase 26 | Complete |
 
 **Coverage:** 41/41 v0.4 requirements mapped — no orphans, no duplicates. Phase order: 21 Crypto Foundation → 22 Family & Collection Data Model/Server Authorization → 23 Sync Model Extension → 24 Invitation Flow → 25 Member Removal & Re-key → 26 Web App Sharing UI → 27 Extension Integration.
