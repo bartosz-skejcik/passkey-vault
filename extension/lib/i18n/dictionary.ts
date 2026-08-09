@@ -257,6 +257,14 @@ export const DICTIONARY = {
     pl: "Ładowanie udostępnionego itemu…",
     en: "Loading shared item…",
   },
+  // 27-12 (Blocker 1 gap closure): ItemListView.tsx's E2-error terminal
+  // treatment -- a "broken" pending entry's visible text (never rendered
+  // for the ordinary "pending" skeleton, which stays text-free per
+  // sharing.sharedItemLoadingAria above).
+  "sharing.sharedItemBrokenLabel": {
+    pl: "Nie udało się odszyfrować udostępnionego elementu",
+    en: "Failed to decrypt shared item",
+  },
   // Ported verbatim, byte-identical PL/EN, from web/src/lib/i18n/
   // dictionary.ts's "share.itemSharedOnCollectionNote" -- interpolates
   // {folder}. Never truncate this string (renders in ordinary wrapping body
@@ -265,13 +273,21 @@ export const DICTIONARY = {
     pl: `Ten item jest częścią udostępnionego folderu „{folder}" — dostęp zarządzasz na poziomie folderu.`,
     en: `This item is part of the shared folder "{folder}" — manage access at the folder level.`,
   },
-  // Ported verbatim, byte-identical PL/EN, from web/src/lib/i18n/
-  // dictionary.ts's "sync.itemUndecryptableWarning" -- for the genuine
-  // (non-transient) decrypt-failure case only. Copywriting honesty
-  // constraint 3: must never fire for the ordinary MV3-wake pending window.
+  // Originally ported verbatim from web/src/lib/i18n/dictionary.ts's
+  // "sync.itemUndecryptableWarning" -- for the genuine (non-transient)
+  // decrypt-failure case only. Copywriting honesty constraint 3: must never
+  // fire for the ordinary MV3-wake pending window.
+  //
+  // 27-12 (Blocker 1 gap closure): the middle sentence claiming a retained
+  // "last known version" is shown is now REMOVED for this extension --
+  // unlike web, this extension keeps 27-04's drop discipline (no VaultItem
+  // is EVER retained for a broken shared row; the row simply never enters
+  // `items`). That claim was false here and, now that this string actually
+  // reaches production (ItemListView.tsx's broken-row treatment), an
+  // honesty defect. Security UI is honest before it is reassuring.
   "sync.itemUndecryptableWarning": {
-    pl: "Ten element nie mógł zostać odszyfrowany podczas ostatniej synchronizacji. Wyświetlana jest ostatnia znana wersja — edycja jest zablokowana. Może to oznaczać uszkodzone lub sfałszowane dane; jeśli się powtarza, skontaktuj się z administratorem serwera.",
-    en: "This item failed to decrypt during the last sync. Showing the last known version -- editing is disabled. This can indicate corrupted or tampered data; if it persists, contact your server operator.",
+    pl: "Ten element nie mógł zostać odszyfrowany podczas ostatniej synchronizacji. Może to oznaczać uszkodzone lub sfałszowane dane; jeśli się powtarza, skontaktuj się z administratorem serwera.",
+    en: "This item failed to decrypt during the last sync. This can indicate corrupted or tampered data; if it persists, contact your server operator.",
   },
   // Ceremony view (27-09/27-10), shared passkey inside a collection.
   "provider.sharedPasskeyFolderNote": {

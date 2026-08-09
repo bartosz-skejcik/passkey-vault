@@ -594,7 +594,7 @@ describe("ItemListView", () => {
           return {
             items: [loginItem("resolved-1", "GitHub", "octo")],
             folders: [],
-            pending: [{ id: "pending-1", collectionId: "col-1" }],
+            pending: [{ id: "pending-1", collectionId: "col-1", status: "pending" }],
             collections: [],
           };
         }
@@ -625,7 +625,7 @@ describe("ItemListView", () => {
           return {
             items: [loginItem("resolved-1", "GitHub", "octo")],
             folders: [],
-            pending: [{ id: "pending-1", collectionId: "col-1" }],
+            pending: [{ id: "pending-1", collectionId: "col-1", status: "pending" }],
             collections: [],
           };
         }
@@ -665,6 +665,35 @@ describe("ItemListView", () => {
 
       expect(screen.queryByRole("img", { name: "Shared item" })).not.toBeInTheDocument();
       expect(screen.getByRole("img", { name: /failed to decrypt/i })).toBeInTheDocument();
+    });
+
+    it("Test 20 (27-12, Blocker 1): a pending entry with status 'broken' degrades to a terminal, non-interactive warning row -- never the neutral skeleton, never clickable", async () => {
+      const onSelectItem = vi.fn();
+      mockSendMessage.mockImplementation(async (message: { kind: string }) => {
+        if (message.kind === "vault.list") {
+          return {
+            items: [],
+            folders: [],
+            pending: [{ id: "broken-1", collectionId: "col-1", status: "broken" }],
+            collections: [],
+          };
+        }
+        if (message.kind === "session.status") {
+          return { kind: "unlocked", autoLockMinutes: 15, accountEmail: "a@example.com", extPasskeyEnrolled: false, extPasskeyPromptSuppressed: false };
+        }
+        if (message.kind === "autofill.match") return autofillMatchRestricted();
+        throw new Error(`unexpected: ${message.kind}`);
+      });
+
+      render(<ItemListView locale="en" onSelectItem={onSelectItem} />);
+
+      const brokenRow = await screen.findByRole("status", { name: /failed to decrypt/i });
+      expect(brokenRow.tagName).toBe("DIV");
+      expect(brokenRow).toHaveTextContent(/failed to decrypt shared item/i);
+      expect(brokenRow.querySelector(".skeleton")).toBeNull();
+
+      fireEvent.click(brokenRow);
+      expect(onSelectItem).not.toHaveBeenCalled();
     });
   });
 });
