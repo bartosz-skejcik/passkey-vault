@@ -210,3 +210,61 @@ test("Task 3: a genuinely removed member's extension purges its shared cache -- 
   // personal data, which would be a worse defect than the one being fixed.
   await expect(popupB.getByText(fixture.personalItemName, { exact: true })).toBeVisible();
 });
+
+test("Task 5: suspension produces a genuine, bidirectional signal for BOTH the direct-shared item (B-8's own fix) and the collection-scoped item (the already-working self-heal, confirmed not rebuilt)", async ({
+  extContextB,
+  extensionIdB,
+}) => {
+  // TWO real ~1-minute alarm-backed poll waits (suspend's absence half,
+  // reinstate's presence half) -- generous but bounded.
+  test.setTimeout(300_000);
+
+  const fixture = await setupFamilyRemovalFixture();
+
+  const popupB = await extContextB.newPage();
+  await popupB.goto(`chrome-extension://${extensionIdB}/popup.html`);
+  // Rule 1 (deviation, found live running this task's own verify): Task 3's
+  // own test already left the extension's background SIGNED IN as its own
+  // (by-then-removed) target identity -- `extContextB`'s background session
+  // persists across every test in this file (single worker, one persistent
+  // extension instance, this suite's own established "cumulative state"
+  // design). `signInAndUnlock` sees an already-unlocked vault and never
+  // re-authenticates, so a FRESH per-fixture-call target identity (this
+  // file's own deliberate choice, see `setupFamilyRemovalFixture`'s own doc
+  // comment) needs an explicit sign-out first, unlike every sibling spec
+  // file that reuses ONE fixed identity for its whole file and never hits
+  // this. Unconditional and harmless if already signed out.
+  await popupB.evaluate(() => chrome.runtime.sendMessage({ kind: "session.signOut" }));
+  // The popup's own React state was already mounted showing the PRIOR
+  // (now-signed-out) session -- a message to the background alone does not
+  // retroactively re-render an already-open popup document. Re-navigating
+  // picks up the fresh (signed-out) initial state, same as a real user
+  // reopening the popup after a sign-out.
+  await popupB.goto(`chrome-extension://${extensionIdB}/popup.html`);
+  await signInAndUnlock(extContextB, popupB, fixture.targetEmail, fixture.targetPassword);
+
+  // PRESENCE first, on BOTH the collection-scoped item AND the direct-shared
+  // item -- a bare absence check after suspend could otherwise pass
+  // trivially before either item was ever visible at all.
+  await expect(popupB.getByText(fixture.itemName, { exact: true })).toBeVisible({ timeout: 30000 });
+  await expect(popupB.getByText(fixture.directItemName, { exact: true })).toBeVisible({ timeout: 30000 });
+
+  await fixture.suspendTargetMember();
+
+  // ABSENCE after suspend, on BOTH items -- the collection half via the
+  // already-working `active_collection_member_join!()`-filtered empty-array
+  // self-heal (Pitfall 1: not touched or re-tested here, only OBSERVED to
+  // still work), the direct half via B-8's own NEW `shared_direct_revision`
+  // bump (families.rs::suspend_member).
+  await expect(popupB.getByText(fixture.itemName, { exact: true })).toHaveCount(0, { timeout: 100000 });
+  await expect(popupB.getByText(fixture.directItemName, { exact: true })).toHaveCount(0, { timeout: 100000 });
+
+  await fixture.reinstateTargetMember();
+
+  // REAPPEARANCE after reinstate, on BOTH items -- Pitfall 3's own failure
+  // mode: a live proof that only asserted disappearance would miss a broken
+  // reinstate (the reinstate-side revision bump, families.rs::reinstate_member,
+  // is what makes the direct-share watermark mismatch again and re-fetch).
+  await expect(popupB.getByText(fixture.itemName, { exact: true })).toBeVisible({ timeout: 100000 });
+  await expect(popupB.getByText(fixture.directItemName, { exact: true })).toBeVisible({ timeout: 100000 });
+});

@@ -1389,6 +1389,21 @@ export interface FamilyRemovalFixtureResult {
   personalItemName: string;
   personalItemUsername: string;
   personalItemPassword: string;
+  /** Task 5's own suspension-direct-bucket proof: a real DIRECT `item_shares`
+   * grant, owner -> target, on the owner's own login item (never
+   * collection-scoped). B-8's fix (families.rs's `shared_direct_revision`
+   * bump on suspend/reinstate) is the ONLY signal covering this half of
+   * suspension -- the collections half already self-heals via existing
+   * Phase 27 code (Pitfall 1: never touched or re-tested here). */
+  directItemName: string;
+  /** Owner-driven `POST /api/families/members/{target}/suspend` -- target
+   * stays a family member throughout (unlike `removeTargetMember`), so this
+   * can be followed by `reinstateTargetMember` in the same test. */
+  suspendTargetMember: () => Promise<void>;
+  /** Owner-driven `POST /api/families/members/{target}/reinstate` -- the
+   * symmetric twin (Pitfall 3: both directions need their own live proof,
+   * not only suspend). */
+  reinstateTargetMember: () => Promise<void>;
   /** Node-side mirror of `web/src/lib/families/rekey.ts`'s
    * `buildMemberRemovalBatch`/`removeFamilyMember`: fetches the target's
    * CURRENT access breakdown fresh (never assumed), builds a REAL,
@@ -1587,6 +1602,58 @@ export async function setupFamilyRemovalFixture(): Promise<FamilyRemovalFixtureR
         throw new Error(`pv-e2e: removal-fixture target personal item create failed (${createPersonalItemRes.status})`);
       }
 
+      // Task 5 (28-03-PLAN.md): a real DIRECT item_shares grant (owner's own
+      // login item, shared to the target) -- the shape B-8's fix (families.rs's
+      // shared_direct_revision bump on suspend/reinstate) needs a live signal
+      // for. The specific access level is irrelevant to this signal (B-8 is a
+      // plain revision-counter bump, not access-level logic) -- "edit"
+      // mirrors setupAccessLevelFixture's own hidden_password direct-share
+      // construction pattern, minus the hidden_password-specific masking.
+      const directItemId = randomUUID();
+      const directItemName = `PV E2E Family Removal Direct Share ${Date.now()}`;
+      const directItemUsername = `pv-e2e-removal-direct-username-${Date.now()}`;
+      const directItemPassword = "pv-e2e-removal-direct-password-v1";
+      const directPlaintext = JSON.stringify({
+        type: "login",
+        name: directItemName,
+        folderId: null,
+        tags: [],
+        username: directItemUsername,
+        password: directItemPassword,
+        urls: [],
+        notes: "",
+      });
+      const directCombined = wasm.encryptItem(owner.uk, directPlaintext, directItemId, 1);
+      const { encKey: directEncKey, encData: directEncData } = splitCombinedEncryptedItem(directCombined);
+      const createDirectItemRes = await fetch(`${SERVER}/api/vault/items`, {
+        method: "POST",
+        headers: jsonAuthHeaders(owner.token),
+        body: JSON.stringify({ id: directItemId, enc_key: directEncKey, enc_data: directEncData }),
+      });
+      if (createDirectItemRes.status !== 201) {
+        throw new Error(`pv-e2e: removal-fixture direct item create failed (${createDirectItemRes.status})`);
+      }
+
+      const targetPkForItem = wasm.WasmIdentityPublicKey.fromBytes(base64Decode(targetPublicKeyB64));
+      let sealedItemKeyForTarget: string;
+      try {
+        sealedItemKeyForTarget = wasm.sealItemKeyForRecipient(owner.uk, directEncKey, directItemId, targetPkForItem);
+      } finally {
+        targetPkForItem.free?.();
+      }
+      const createDirectShareRes = await fetch(`${SERVER}/api/vault/items/${directItemId}/shares`, {
+        method: "POST",
+        headers: jsonAuthHeaders(owner.token),
+        body: JSON.stringify({
+          recipient_user_id: target.userId,
+          sealed_key: sealedItemKeyForTarget,
+          access_level: "edit",
+        }),
+      });
+      if (createDirectShareRes.status !== 201) {
+        throw new Error(`pv-e2e: removal-fixture direct share create failed (${createDirectShareRes.status})`);
+      }
+
       return {
         targetEmail,
         targetPassword: REMOVAL_TARGET_PASSWORD,
@@ -1599,6 +1666,25 @@ export async function setupFamilyRemovalFixture(): Promise<FamilyRemovalFixtureR
         personalItemName,
         personalItemUsername,
         personalItemPassword,
+        directItemName,
+        suspendTargetMember: async () => {
+          const res = await fetch(`${SERVER}/api/families/members/${target.userId}/suspend`, {
+            method: "POST",
+            headers: jsonAuthHeaders(owner.token),
+          });
+          if (res.status !== 204) {
+            throw new Error(`pv-e2e: suspendTargetMember failed (${res.status})`);
+          }
+        },
+        reinstateTargetMember: async () => {
+          const res = await fetch(`${SERVER}/api/families/members/${target.userId}/reinstate`, {
+            method: "POST",
+            headers: jsonAuthHeaders(owner.token),
+          });
+          if (res.status !== 204) {
+            throw new Error(`pv-e2e: reinstateTargetMember failed (${res.status})`);
+          }
+        },
         removeTargetMember: async () => {
           const accessRes = await fetch(`${SERVER}/api/families/members/${target.userId}/access`, {
             headers: { Authorization: `Bearer ${owner.token}` },

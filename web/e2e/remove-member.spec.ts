@@ -82,37 +82,36 @@ import {
   newBareContext,
   ensureFamilyOwnerSession,
   SESSION_PASSWORD,
+  FAMILY_OWNER_EMAIL,
+  FAMILY_OWNER_PASSWORD,
   type Session,
 } from "./fixtures";
 import {
   initCrypto,
   WasmCollectionKey,
   WasmIdentityPublicKey,
+  encryptItem,
   encryptItemForCollection,
   sealCollectionKey,
+  sealItemKeyForRecipient,
+  deriveAuthMaterial,
+  unwrapUserKey,
+  type WasmUserKey,
 } from "@/lib/crypto";
 import { base64Decode } from "@/lib/auth/api";
 import { t, interpolate } from "@/lib/i18n/dictionary";
 
 const BASE_URL = "http://localhost:8620";
 
-const DUMMY_WRAPPED_SECRET_KEY = JSON.stringify({ nonce: "AAAA", ciphertext: "BBBB" });
+// DUMMY_ENC_KEY/DUMMY_ENC_DATA: still used as PLACEHOLDER content for the
+// required-shape `move_item` call before the real content overwrite (WR-10's
+// own established pattern -- the server assigns the real revision, THEN
+// real content is encrypted against it). DUMMY_SEALED_KEY, DUMMY_WRAPPED_SECRET_KEY,
+// DUMMY_ENC_NAME, and dummyPublicKeyB64 were 28-03 (Task 4/Task 5)'s own
+// removed shortcuts -- both tests now provision B with genuinely real,
+// decryptable crypto throughout (B's own page must decrypt live).
 const DUMMY_ENC_KEY = JSON.stringify({ nonce: "CCCC", ciphertext: "DDDD" });
 const DUMMY_ENC_DATA = JSON.stringify({ nonce: "EEEE", ciphertext: "FFFF" });
-const DUMMY_SEALED_KEY = JSON.stringify({ sealed: "GGGG" });
-const DUMMY_ENC_NAME = JSON.stringify({
-  enc_key: { nonce: "HHHH", ciphertext: "IIII" },
-  enc_data: { nonce: "JJJJ", ciphertext: "KKKK" },
-});
-
-/** A fixed, non-zero 32-byte X25519 public key -- mirrors
- * `shared-sync.spec.ts`'s own `dummyPublicKeyB64` helper (and, underneath,
- * `sync_shared.rs`'s `publish_keypair([seed; 32])`): accepted by
- * `IdentityPublicKey::from_bytes`'s small-order/all-zero rejection, never
- * validated for real crypto provenance server-side. */
-function dummyPublicKeyB64(seed: number): string {
-  return Buffer.from(new Uint8Array(32).fill(seed)).toString("base64");
-}
 
 async function tokenFor(page: Page): Promise<string> {
   const token = await page.evaluate(() => window.localStorage.getItem("pv-session-token"));
@@ -236,6 +235,41 @@ function splitEncryptedItem(combinedJson: string): { encKey: string; encData: st
   return { encKey: JSON.stringify(combined.enc_key), encData: JSON.stringify(combined.enc_data) };
 }
 
+/** 28-03 (Task 5): Node-side equivalent of `UnlockOverlay.tsx`'s real
+ * password-unlock flow (`deriveAuthMaterial` -> `takeWrappingKey` ->
+ * `unwrapUserKey`) -- ported verbatim from `shared-sync.spec.ts`'s own
+ * identically-named helper (same duplication rationale as this file's other
+ * ported helpers). Needed for the OWNER's own personal UserKey: a real
+ * DIRECT `item_shares` grant requires encrypting a genuinely personal item
+ * under the OWNER's own key and sealing ITS `enc_key` via
+ * `sealItemKeyForRecipient`, neither of which the Collection-Key-only
+ * crypto this file already had is sufficient for. */
+async function deriveUserKeyForSession(
+  context: BrowserContext,
+  token: string,
+  email: string,
+  password: string,
+): Promise<WasmUserKey> {
+  await ensureNodeWasm();
+  const meRes = await apiGet(context.request, "/api/auth/me", token);
+  expect(meRes.status()).toBe(200);
+  const account = (await meRes.json()) as { pw_wrapped_uk: string };
+
+  const preloginRes = await context.request.post(`${BASE_URL}/api/auth/prelogin`, { data: { email } });
+  expect(preloginRes.status()).toBe(200);
+  const prelogin = (await preloginRes.json()) as { kdf: unknown; salt: string };
+
+  const passwordBytes = new TextEncoder().encode(password);
+  const salt = base64Decode(prelogin.salt);
+  const material = deriveAuthMaterial(passwordBytes, salt, JSON.stringify(prelogin.kdf));
+  const wrappingKey = material.takeWrappingKey();
+  try {
+    return unwrapUserKey(wrappingKey, account.pw_wrapped_uk);
+  } finally {
+    wrappingKey.free?.();
+  }
+}
+
 /** Reads ONE item's server-assigned `revision` back out of
  * `GET /api/vault/collections/{id}/items` -- the same endpoint and the same
  * `revision` field (added by CR-04) `RemoveMemberDialog` itself consumes.
@@ -314,17 +348,15 @@ async function createLoginItemViaUI(page: Page, name: string, password: string):
 }
 
 test("suspend_then_reinstate_live_cycle_with_no_rekey", async ({ twoSessions, browser }) => {
+  // 28-03 (Task 5): B's own page must genuinely decrypt BOTH a collection-
+  // scoped AND a direct-shared item live, and toggle visibility across a
+  // real suspend->reinstate cycle -- generous but bounded (mirrors the
+  // sibling remove test's own budget).
+  test.setTimeout(240_000);
+
   const [, b] = twoSessions;
   const bToken = await tokenFor(b.page);
   const bUserId = await userIdFor(b.context, bToken);
-  // `collections::add_member`'s `has_keypair` check requires B to have
-  // published SOME identity keypair before it can hold a `collection_keys`
-  // row at all -- a dummy one is sufficient, since B never decrypts
-  // anything in this test.
-  await apiPut(b.context.request, "/api/identity/keypair", bToken, {
-    public_key: dummyPublicKeyB64(11),
-    wrapped_secret_key: DUMMY_WRAPPED_SECRET_KEY,
-  });
 
   const owner = await newBareContext(browser);
   await ensureFamilyOwnerSession(owner.page);
@@ -343,43 +375,158 @@ test("suspend_then_reinstate_live_cycle_with_no_rekey", async ({ twoSessions, br
   });
   expect(addBRes.status(), "adding a fresh member must succeed").toBe(201);
 
-  // A real collection + real item row -- dummy blob CONTENT is sufficient
-  // here, since this test never decrypts anything on either side; it only
-  // proves access loss/restoration and that no re-key touched the blobs.
-  const collRes = await apiPost(owner.context.request, "/api/vault/collections", ownerToken, {
-    id: randomUUID(),
-    enc_name: DUMMY_ENC_NAME,
-    sealed_key: DUMMY_SEALED_KEY,
-  });
-  expect(collRes.status()).toBe(201);
-  const collectionId = ((await collRes.json()) as { id: string }).id;
+  // 28-03 (Task 5): B's page ALREADY unlocked once during `twoSessions`
+  // fixture setup, BEFORE B just joined the family above -- re-arm sync.ts's
+  // WR-01 latch AND publish B's own REAL identity keypair as a side effect
+  // (mirrors the sibling remove test's own identical rationale, see
+  // `reloadAndUnlock`'s own doc comment).
+  await reloadAndUnlock(b.page, SESSION_PASSWORD);
+  const bPublicKeyB64 = await waitForPublishedKeypair(b.context, bToken);
 
-  const addCollMemberRes = await apiPost(
-    owner.context.request,
-    `/api/vault/collections/${collectionId}/members`,
-    ownerToken,
-    { recipient_user_id: bUserId, sealed_key: DUMMY_SEALED_KEY, access_level: "read" },
-  );
-  expect(addCollMemberRes.status()).toBe(201);
+  // Publish the owner's REAL identity keypair as a side effect of opening
+  // RemoveMemberDialog once while B still has zero access (harmless -- this
+  // test never confirms a removal) -- mirrors the sibling remove test's own
+  // established trick.
+  await openFamilyTab(owner.page);
+  await owner.page.getByTestId(`member-remove-trigger-${bUserId}`).click();
+  await owner.page.getByTestId("remove-member-access-empty").waitFor({ state: "visible" });
+  await owner.page.getByTestId("remove-member-step1-cancel").click();
 
-  const itemId = randomUUID();
-  const createItemRes = await apiPost(owner.context.request, "/api/vault/items", ownerToken, {
-    id: itemId,
-    enc_key: DUMMY_ENC_KEY,
-    enc_data: DUMMY_ENC_DATA,
-  });
-  expect(createItemRes.status()).toBe(201);
-  const moveRes = await apiPut(owner.context.request, `/api/vault/items/${itemId}/collection`, ownerToken, {
-    new_collection_id: collectionId,
-    enc_key: DUMMY_ENC_KEY,
-    enc_data: DUMMY_ENC_DATA,
-    expected_revision: 1,
-  });
-  expect(moveRes.status()).toBe(200);
+  const ownerKeypairRes = await apiGet(owner.context.request, "/api/identity/keypair", ownerToken);
+  expect(ownerKeypairRes.status()).toBe(200);
+  const ownerPublicKeyB64 = ((await ownerKeypairRes.json()) as { public_key: string }).public_key;
 
-  // B genuinely has live access BEFORE suspension.
+  await ensureNodeWasm();
+  const ownerUk = await deriveUserKeyForSession(owner.context, ownerToken, FAMILY_OWNER_EMAIL, FAMILY_OWNER_PASSWORD);
+
+  const ck = WasmCollectionKey.generate();
+  let collectionId = "";
+  let sealedForOwner = "";
+  let sealedForB = "";
+  let collectionEncKey = "";
+  let collectionEncData = "";
+  const COLLECTION_ITEM_NAME = `PV E2E Suspend Collection Item ${Date.now()}`;
+  const DIRECT_ITEM_NAME = `PV E2E Suspend Direct Item ${Date.now()}`;
+  try {
+    const ownerPk = WasmIdentityPublicKey.fromBytes(base64Decode(ownerPublicKeyB64));
+    sealedForOwner = sealCollectionKey(ownerPk, ck);
+    ownerPk.free?.();
+
+    // See the sibling remove test's own header comment on the `enc_name`
+    // gap: the true collection id doesn't exist yet, so this deliberately
+    // encrypts against a placeholder id.
+    const encName = encryptItemForCollection(
+      ck,
+      JSON.stringify({ name: "placeholder" }),
+      "placeholder-id",
+      "placeholder-id",
+      1,
+    );
+
+    const collRes = await apiPost(owner.context.request, "/api/vault/collections", ownerToken, {
+      id: randomUUID(),
+      enc_name: encName,
+      sealed_key: sealedForOwner,
+    });
+    expect(collRes.status()).toBe(201);
+    collectionId = ((await collRes.json()) as { id: string }).id;
+
+    // 28-03 (Task 5): a REAL sealed key, sealed to B's own REAL published
+    // public key -- NOT `DUMMY_SEALED_KEY`. B's own page must genuinely
+    // unseal this Collection Key to decrypt the shared item live.
+    const bPk = WasmIdentityPublicKey.fromBytes(base64Decode(bPublicKeyB64));
+    sealedForB = sealCollectionKey(bPk, ck);
+    bPk.free?.();
+
+    const addCollMemberRes = await apiPost(
+      owner.context.request,
+      `/api/vault/collections/${collectionId}/members`,
+      ownerToken,
+      { recipient_user_id: bUserId, sealed_key: sealedForB, access_level: "read" },
+    );
+    expect(addCollMemberRes.status()).toBe(201);
+
+    // WR-10 (mirrors the sibling remove test): go through the REAL move
+    // path first with placeholder blobs, let the server assign whatever
+    // revision it assigns, then READ IT BACK before encrypting the real
+    // content against it.
+    const itemId = randomUUID();
+    const createItemRes = await apiPost(owner.context.request, "/api/vault/items", ownerToken, {
+      id: itemId,
+      enc_key: DUMMY_ENC_KEY,
+      enc_data: DUMMY_ENC_DATA,
+    });
+    expect(createItemRes.status()).toBe(201);
+    const moveRes = await apiPut(owner.context.request, `/api/vault/items/${itemId}/collection`, ownerToken, {
+      new_collection_id: collectionId,
+      enc_key: DUMMY_ENC_KEY,
+      enc_data: DUMMY_ENC_DATA,
+      expected_revision: 1,
+    });
+    expect(moveRes.status()).toBe(200);
+
+    const movedRevision = await collectionItemRevision(owner.context, ownerToken, collectionId, itemId);
+    const collectionPlaintext = JSON.stringify({
+      type: "login",
+      name: COLLECTION_ITEM_NAME,
+      password: "irrelevant-e2e-pw",
+    });
+    const targetRevision = movedRevision + 1;
+    const collectionEncrypted = encryptItemForCollection(ck, collectionPlaintext, collectionId, itemId, targetRevision);
+    ({ encKey: collectionEncKey, encData: collectionEncData } = splitEncryptedItem(collectionEncrypted));
+    const updateRes = await apiPut(owner.context.request, `/api/vault/items/${itemId}`, ownerToken, {
+      enc_key: collectionEncKey,
+      enc_data: collectionEncData,
+      expected_revision: movedRevision,
+    });
+    expect(updateRes.status()).toBe(200);
+
+    // 28-03 (Task 5): a real DIRECT `item_shares` grant, owner -> B, on the
+    // owner's own personal login item -- B-8's own fix (families.rs's
+    // `shared_direct_revision` bump on suspend/reinstate) needs a live
+    // signal for exactly this shape.
+    const directItemId = randomUUID();
+    const directPlaintext = JSON.stringify({
+      type: "login",
+      name: DIRECT_ITEM_NAME,
+      password: "irrelevant-e2e-pw-direct",
+    });
+    const directCombined = encryptItem(ownerUk, directPlaintext, directItemId, 1);
+    const { encKey: directEncKey, encData: directEncData } = splitEncryptedItem(directCombined);
+    const createDirectItemRes = await apiPost(owner.context.request, "/api/vault/items", ownerToken, {
+      id: directItemId,
+      enc_key: directEncKey,
+      enc_data: directEncData,
+    });
+    expect(createDirectItemRes.status()).toBe(201);
+
+    const bPkForItem = WasmIdentityPublicKey.fromBytes(base64Decode(bPublicKeyB64));
+    let sealedItemKeyForB: string;
+    try {
+      sealedItemKeyForB = sealItemKeyForRecipient(ownerUk, directEncKey, directItemId, bPkForItem);
+    } finally {
+      bPkForItem.free?.();
+    }
+    const createDirectShareRes = await apiPost(
+      owner.context.request,
+      `/api/vault/items/${directItemId}/shares`,
+      ownerToken,
+      { recipient_user_id: bUserId, sealed_key: sealedItemKeyForB, access_level: "edit" },
+    );
+    expect(createDirectShareRes.status()).toBe(201);
+  } finally {
+    ck.free?.();
+    ownerUk.free?.();
+  }
+
+  // B genuinely has live access BEFORE suspension -- both the raw request
+  // (existing SC 1 proof) AND B's OWN rendered page (Task 5's new proof;
+  // PRESENCE first, mirroring this file's/this codebase's own established
+  // discipline for a negative assertion below).
   const preSuspendRes = await apiGet(b.context.request, `/api/vault/collections/${collectionId}/items`, bToken);
   expect(preSuspendRes.status()).toBe(200);
+  await expect(b.page.getByText(COLLECTION_ITEM_NAME, { exact: true })).toBeVisible({ timeout: 30000 });
+  await expect(b.page.getByText(DIRECT_ITEM_NAME, { exact: true })).toBeVisible({ timeout: 30000 });
 
   await openFamilyTab(owner.page);
   await owner.page.getByTestId(`member-toggle-suspend-${bUserId}`).click();
@@ -394,6 +541,15 @@ test("suspend_then_reinstate_live_cycle_with_no_rekey", async ({ twoSessions, br
     "a suspended member's own live request must lose access on its next request",
   ).toBe(404);
 
+  // 28-03 (Task 5): B's OWN page (no reload) loses BOTH items -- the
+  // collection half via the already-working `active_collection_member_join!()`-
+  // filtered empty-array self-heal (Pitfall 1: not touched or re-tested
+  // here, only OBSERVED to still work), the direct half via B-8's own NEW
+  // `shared_direct_revision` bump (families.rs::suspend_member). Bounded to
+  // allow the real 30s poll fallback (`sync.ts`'s `POLL_INTERVAL_MS`).
+  await expect(b.page.getByText(COLLECTION_ITEM_NAME, { exact: true })).toHaveCount(0, { timeout: 60000 });
+  await expect(b.page.getByText(DIRECT_ITEM_NAME, { exact: true })).toHaveCount(0, { timeout: 60000 });
+
   // Reinstate: no confirmation dialog (per 25-CONTEXT.md's "reversible,
   // low-friction" framing) -- the SAME toggle button now reinstates.
   await owner.page.getByTestId(`member-toggle-suspend-${bUserId}`).click();
@@ -405,17 +561,24 @@ test("suspend_then_reinstate_live_cycle_with_no_rekey", async ({ twoSessions, br
   expect(postReinstateItems).toHaveLength(1);
   expect(
     postReinstateItems[0].enc_key,
-    "no re-key occurred: enc_key must be the SAME dummy value seeded originally",
-  ).toBe(DUMMY_ENC_KEY);
-  expect(postReinstateItems[0].enc_data).toBe(DUMMY_ENC_DATA);
+    "no re-key occurred: enc_key must be the SAME real value written originally",
+  ).toBe(collectionEncKey);
+  expect(postReinstateItems[0].enc_data).toBe(collectionEncData);
 
   const postReinstateCollRes = await apiGet(b.context.request, `/api/vault/collections/${collectionId}`, bToken);
   expect(postReinstateCollRes.status()).toBe(200);
   const postReinstateColl = (await postReinstateCollRes.json()) as { sealed_key: string | null };
   expect(
     postReinstateColl.sealed_key,
-    "no re-key occurred: sealed_key must be the SAME dummy value seeded originally",
-  ).toBe(DUMMY_SEALED_KEY);
+    "no re-key occurred: sealed_key must be the SAME real value written originally",
+  ).toBe(sealedForB);
+
+  // 28-03 (Task 5, Pitfall 3): REAPPEARANCE after reinstate, on BOTH items --
+  // a live proof that only asserted disappearance would miss a broken
+  // reinstate (the reinstate-side revision bump, families.rs::reinstate_member,
+  // is what makes the direct-share watermark mismatch again and re-fetch).
+  await expect(b.page.getByText(COLLECTION_ITEM_NAME, { exact: true })).toBeVisible({ timeout: 60000 });
+  await expect(b.page.getByText(DIRECT_ITEM_NAME, { exact: true })).toBeVisible({ timeout: 60000 });
 
   expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
   expect(b.dialogFired(), "zero OS-level dialogs across B's session").toBe(false);
