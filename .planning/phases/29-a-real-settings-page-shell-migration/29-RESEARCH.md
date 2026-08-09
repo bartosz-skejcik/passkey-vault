@@ -567,17 +567,19 @@ for (const name of hiddenPasswordItemNames) {
 
 **If this table is empty:** N/A — see above; all three entries are implementation-detail risks, not open factual claims about the domain.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should the shared auth-gate extraction (Pitfall 1) be scoped inside this phase, or is it big enough to warrant its own plan/wave?**
+1. **Should the shared auth-gate extraction (Pitfall 1) be scoped inside this phase, or is it big enough to warrant its own plan/wave?** (RESOLVED at planning time, 29-01)
    - What we know: it is required for SC1's "linkable from a cold browser" to mean something real, and it touches `page.tsx` (a 452-line file this phase already touches for the `?panel=settings` redirect and the `handleOpenSettings`/`settingsOpen` state removal).
    - What's unclear: whether extracting it cleanly is a small refactor (move ~20 lines into a component, both call sites use it) or reveals coupling with `initCrypto()`/`useIdleTimer()`/`OnboardingWizard` state that also currently lives inline in `page.tsx`'s render body.
    - Recommendation: scope it as its own task within this phase's plan (not deferred), sized after a direct read of `page.tsx`'s full render tree at plan time — this research already read the whole file (452 lines) and found no obvious blocking coupling, but plan-time is the right place to size it precisely.
+   - **Resolution:** scoped inside this phase, not deferred — `29-01-PLAN.md` Task 1 creates `web/src/lib/auth/AuthGate.tsx` (`{ children, onRegistered }` contract) as its own dedicated deliverable within the tracer task. No blocking coupling with `initCrypto()`/`useIdleTimer()`/`OnboardingWizard` was found: those stay page.tsx's own concern, threaded through only via the optional `onRegistered` callback. `29-03-PLAN.md` Task 1 wires `page.tsx` to consume `AuthGate` unmodified (no new prop), including tracing `handleInviteDone`'s now-dead `setAuthed(true)` call to its removal.
 
-2. **Does the Dane group's content (currently inline `SettingsPanel.tsx:109-136`, no dedicated component) get its own file, or stay inline in the page shell?**
+2. **Does the Dane group's content (currently inline `SettingsPanel.tsx:109-136`, no dedicated component) get its own file, or stay inline in the page shell?** (RESOLVED at planning time, 29-01)
    - What we know: CONTEXT.md explicitly defers this ("whether they land in a new `DataTab.tsx` or stay inline is left to planner/executor").
    - What's unclear: nothing blocking — this is a pure style choice.
    - Recommendation: give it a dedicated component anyway (`SettingsSectionData.tsx` or similar) purely for symmetry with the other three groups, each of which needs its own `<section id aria-labelledby>` wrapper regardless.
+   - **Resolution:** dedicated component, per the recommendation — `29-01-PLAN.md` Task 1 creates `web/src/components/settings/SettingsSectionData.tsx`, moving the exact JSX from `SettingsPanel.tsx:109-136` verbatim, symmetric with `SettingsSectionAccount.tsx`/`SettingsSectionSecurity.tsx`/`SettingsSectionFamily.tsx`.
 
 ## Environment Availability
 
