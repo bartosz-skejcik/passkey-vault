@@ -50,6 +50,36 @@ broken/dialogu usuwania (screenshoty: `.playwright-mcp/uat-27/`). Dodatkowo `dat
 + github.com — 7 klas bugów niewidocznych dla zielonego CI. v0.3 zamieniło tę nauczkę w rygor. v0.4 pokazało,
 że rygor trzeba stosować także *między* fazami, nie tylko wewnątrz nich.
 
+## Current Milestone: v0.5 Sharing That Makes Sense
+
+**Goal:** v0.4 zbudowało maszynerię współdzielenia; v0.5 sprawia, że da się jej używać. Krypto,
+autoryzacja, re-key, fan-out i integracja z wtyczką działają i są live-proven — brakuje tego, żeby
+człowiek mógł **znaleźć, zrozumieć i uporządkować** to, co udostępnia.
+
+**Target features:**
+- Prawdziwa strona `/settings` (dziś: fixed-right overlay panel), z przeprojektowaną sekcją Family & Sharing
+- Wrzucanie itemów do ISTNIEJĄCEGO udostępnionego folderu — dziś niemożliwe
+- Udostępnianie **całej rodzinie** jako żywa grupa: kto dołączy później, dostaje dostęp automatycznie
+- Rzetelne oznaczenie shared w liście itemów + rozróżnienie „ja udostępniam" vs „mnie udostępniono"
+- Sharing overview pokazujący ITEMY, nie tylko foldery; filtry shared-by-me / shared-with-me
+- Modal udostępniania: wiersz na osobę + select poziomu dostępu po prawej (projekt Bartka)
+
+**Trzy zweryfikowane defekty funkcjonalne** (sprawdzone w kodzie przed napisaniem requirements, nie
+przyjęte na słowo): `ItemForm.tsx` w ogóle nie zna `collectionId`; `AvatarStack.tsx:100` zwraca `null`
+przy pustym zbiorze odbiorców, więc udostępniony item potrafi wyglądać na prywatny; a
+`SharingOverviewPanel` buduje wiersze wyłącznie z `editableCollections`, więc pojedynczo udostępnione
+itemy nie pojawiają się nigdzie.
+
+**Centralne ryzyko techniczne — FSH-02.** „Kto dołączy później, dostaje dostęp automatycznie" wymaga,
+by Collection Key trafił do nowego członka ścieżką **wyłącznie kliencką** — serwer nigdy go nie ma i
+mieć nie będzie. Mechanizm jest jawnym spike'em decyzyjnym, udokumentowanym PRZED zależnym kodem
+(precedens KEY-05 i EXT-10). Konsekwencja do zakomunikowania uczciwie w UI: „automatycznie" nie
+znaczy „natychmiast", jeśli catch-up zależy od tego, aż inny członek otworzy aplikację.
+
+**Rationale kolejności:** użyteczność sharingu przed platformami mobilnymi — dokładanie drugiego
+providera do UX, który sam autor nazywa „bardzo niejasny", oznaczałoby przeniesienie zamieszania na
+kolejną powierzchnię.
+
 <details>
 <summary>📦 v0.4 Family & Sharing — SHIPPED 2026-08-09 (archiwum)</summary>
 

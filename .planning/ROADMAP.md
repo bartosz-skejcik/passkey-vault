@@ -6,6 +6,7 @@
 - ✅ **v0.2 Browser Extension** — Phases 8–13 (complete 2026-07-20; phase dirs archived at v0.3 close → [milestones/v0.2-phases/](milestones/v0.2-phases/), requirements → [milestones/v0.2-REQUIREMENTS.md](milestones/v0.2-REQUIREMENTS.md)) — WXT MV3 Chrome + Firefox extension that is a full passkey provider on third-party sites (`credentials.create`/`credentials.get`) AND a complete autofill companion for the whole vault (login/TOTP/card/identity), reusing `pv-core`/`pv-wasm` via WASM, zero-knowledge preserved.
 - ✅ **v0.3 Polish & Hardening** — Phases 14–20 (shipped 2026-07-22) — consolidated v0.2: one login model (Vaultwarden-style), one design-system source of truth (`packages/pv-ui`), in-page visual consistency, both Critical risks closed, server/supply-chain + CI/test-rigor hardening. Full details: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 - ✅ **v0.4 Family & Sharing** — Phases 21–28 (shipped 2026-08-09) — multi-user family sharing: X25519 identity keypairs + per-collection sealed keys in `pv-core`, single-use invite links/codes (no SMTP), shared folders and per-item shares at three access levels, cost-bounded atomic re-key on suspension/removal, and shared items working identically in the web app and the extension (autofill/TOTP/passkey provider). Zero-knowledge and the one-container/SQLite deployment unchanged. Full details: [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md)
+- 🚧 **v0.5 Sharing That Makes Sense** — Phases 29–33 (in progress, started 2026-08-09) — v0.4 built the sharing machinery and proved it works; v0.5 makes it usable. A family-wide share that behaves as a **living group** (someone who joins later gains access, by a client-only key path the server can never take), items that can actually be put into an **existing** shared folder, a share dialog that is one row per person and can target a folder that already exists, an item list and sharing overview that never misrepresent what is exposed, and a real `/settings` route whose Family & Sharing surface is redesigned rather than relocated. Three of the product owner's complaints were verified against the code before scope was written and are functional gaps, not perception. Zero-knowledge and the one-container/SQLite deployment are unchanged. Requirements: [REQUIREMENTS.md](REQUIREMENTS.md).
 
 ## Phases
 
@@ -13,7 +14,7 @@
 
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
-- Numbering is continuous across milestones — v0.2 continued from v0.1's last phase (7), starting at Phase 8; v0.3 continues from v0.2's last phase (13), starting at Phase 14; v0.4 continues from v0.3's last phase (20), starting at Phase 21.
+- Numbering is continuous across milestones — v0.2 continued from v0.1's last phase (7), starting at Phase 8; v0.3 continues from v0.2's last phase (13), starting at Phase 14; v0.4 continues from v0.3's last phase (20), starting at Phase 21; v0.5 continues from v0.4's last phase (28), starting at Phase 29.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
@@ -81,10 +82,136 @@ Audit: [milestones/v0.4-MILESTONE-AUDIT.md](milestones/v0.4-MILESTONE-AUDIT.md).
 
 </details>
 
+### 🚧 v0.5 Sharing That Makes Sense (Phases 29–33) — IN PROGRESS, started 2026-08-09
+
+- [ ] **Phase 29: The Living Group — Family-Wide Sharing** - Share with the whole family in one action, and someone who joins later gains access by a client-only key path decided and documented before any dependent code
+- [ ] **Phase 30: The Share Dialog — Per-Person Access, Existing Destinations** - One row per person with their own access level, able to target a shared folder that already exists instead of minting another one
+- [ ] **Phase 31: Putting Things Into Shared Folders** - An item can be created in, moved into, and taken back out of an existing shared folder, always re-encrypted under the destination scope or refused
+- [ ] **Phase 32: A Real Settings Page** - Settings becomes a linkable `/settings` route with headed sections and a redesigned (not relocated) Family & Sharing surface
+- [ ] **Phase 33: Knowing What You Are Sharing** - The item list, the sharing overview and the extension popup answer "what am I exposing, to whom, in which direction" without ever misrepresenting it
+
+**Build order rationale.** FSH-02 is the milestone's central technical risk and is spiked first, on the
+KEY-05 / EXT-10 precedent — the mechanism by which a Collection Key reaches a member who was not present
+when the share was made is decided and written down *before* any code depends on it, because the server
+never holds a Collection Key and never will. Phase 29 also builds the "unwrap my own sealed Collection
+Key, reseal it to a new recipient" composition that exists nowhere client-side today (this is why v0.4
+deliberately excluded WINDOWS #13 from Phase 28); Phase 30's ORG-03 is its second consumer. The UI work
+is then grouped by **surface ownership**, not by requirement letter, so no two phases own the same
+component: Phase 30 owns `ShareDialog`, Phase 31 owns `ItemForm` and the scope-move path, Phase 32 owns
+the settings route and the family-management surface, Phase 33 owns the item list, the sharing overview
+and the popup marker. Phase 29 necessarily touches `ShareDialog` to introduce the family-wide target;
+Phase 30 runs immediately after and owns the dialog's final shape, keeping that target. Phase 32 is
+deliberately late even though `/settings` is structurally independent of the crypto work: SET-03 asks for
+a Family & Sharing surface *redesigned around the sharing model*, which only exists once family-wide
+shares, editable membership and scope moves do.
+
+**Verification standard carried in from v0.4, binding on every phase.** A green unit suite is not
+evidence — both suites mock `@/lib/crypto`. Any crypto-adjacent success criterion is closed by a
+real-WASM test or a live Playwright run. Assertions are **positive and recipient-side**; absence-only
+assertions are forbidden (a `toHaveCount(0)` guard once survived a total feature regression). Every new
+guard is falsification-tested. **Live proof lands early enough to steer a phase, not to audit it** —
+v0.4 learned this expensively in three separate phases. And the cross-phase lesson: v0.4's seven phases
+each verified `passed`, after which the milestone audit found three defects every one of them missed,
+all the same shape — *a server capability no client reaches*. Where a phase delivers a server capability,
+its success criteria require a **proven client consumer**, not a wired one. Baselines to hold: web 821,
+extension 788, `cargo test --workspace` green, both `tsc` clean, static export intact.
+
+**Environment hazards** (from v0.4's audit, unchanged): `web/playwright.config.ts:128`'s
+`reuseExistingServer: !process.env.CI` silently adopts a stray local `pv-server` — always check
+`lsof -i :8620` before a live web e2e run and never point one at `data/pv.db`. `extension/e2e` needs an
+externally-started server with `PV_STATIC_DIR=web/out` and `PV_EXTENSION_ORIGINS` set, or it fails
+obscurely at `chrome-error://chromewebdata`.
+
+## Phase Details
+
+### Phase 29: The Living Group — Family-Wide Sharing
+
+**Goal**: A person can share with the whole family in one action, and the family behaves as a living group — someone who joins later reads that share without the sharer acting again — via a client-only key-delivery mechanism decided and written down before any code depends on it, with zero-knowledge untouched.
+**Depends on**: Nothing new (first phase of v0.5; builds directly on the shipped v0.4 sharing stack)
+**Requirements**: FSH-01, FSH-02, FSH-03, FSH-04, FSH-05, FAM-10
+**Success Criteria** (what must be TRUE):
+
+  1. A committed decision record names the chosen family-wide key-delivery mechanism, names the alternatives rejected (at minimum: wrapping keys into the invite using the invite code as the shared secret, and lazy reseal by the next member whose client comes online), and states each option's user-visible caveat — including whether "automatically" can mean "instantly". It lands in the repo **before the first line of code that depends on it**, verifiable by commit order, on the KEY-05 / EXT-10 precedent.
+  2. A user can share a folder or an item with the whole family in one action, without ticking each person, and every current member's own client opens and reads the actual content — asserted positively and recipient-side in a live multi-session run, never by absence.
+  3. An account that joins the family **after** that share was created reads its content with no further action by the sharer — proven live with a third real account joining through the shipped invite flow, its own client decrypting real ciphertext; the assertion is on decrypted content, not on the presence of a row.
+  4. Nothing the server persists or receives anywhere on that path is a Collection Key, a private key, or plaintext — proven by an adversarial test that inspects every row written and every request body sent during the newcomer's grant, plus a real-WASM (not `@/lib/crypto`-mocked) test of the mechanism itself. If the chosen mechanism cannot hold this, the phase's recorded outcome is a **renegotiated FSH-02** — never a weakened invariant.
+  5. Wherever a family-wide share is created or listed, the UI states that "the whole family" includes people who have not joined yet, and states the timing bound the mechanism actually delivers rather than an unqualified "instantly" — the copy and the measured behaviour agree, checked against the measurement, not against the intent.
+  6. Leaving the family, being removed from it, and deleting an account each revoke family-wide access through the same correctly-scoped, atomic re-key path v0.4 established, and the ex-member's client drops the decrypted family-wide plaintext on the next completed sync (the bound v0.4 proved, not lock/unlock) — live-proven with a positive "was readable" anchor before the revocation and the same read failing after.
+
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 30: The Share Dialog — Per-Person Access, Existing Destinations
+
+**Goal**: The share dialog becomes the product owner's design — one row per selected person with that person's access level chosen in place — can target a shared folder that already exists instead of minting another one, and states honestly what each access level does.
+**Depends on**: Phase 29 (the reseal-to-a-new-recipient composition Phase 29 builds is what makes an existing folder a legal share destination; Phase 29 also introduces the family-wide target into the dialog, and this phase owns the dialog's final shape)
+**Requirements**: MOD-01, MOD-02, MOD-03, ORG-03
+**Success Criteria** (what must be TRUE):
+
+  1. The dialog renders one row per selected person with that person's access-level control on the right of their own row, and a single submission naming two people at two different levels results in each recipient's server-stored access level matching their own row — asserted per recipient against real server state, live.
+  2. A share submitted against an **existing** shared folder adds the recipients to that folder and creates no new collection: the collection count is equal before and after, and the resulting membership rows carry the chosen folder's id. (Today every `ShareDialogScope` path calls `createCollection`, so this is falsifiable against current code.)
+  3. A person added to an existing shared folder decrypts the items **already in it** — recipient-side positive proof through real crypto (live run or real-WASM test), never a mocked seal. This is v0.4's WINDOWS #13, carried in deliberately (ORG-03).
+  4. Each access level is described in the dialog using the shipped `access.readOnly` / `access.fullEdit` / `access.hiddenPassword` vocabulary, and the hidden-password description states in that same view that it is an interface protection and never a cryptographic one — visible without a hover, a tooltip, or a second click.
+  5. A share that cannot complete — destination key unavailable, or a recipient with no published identity key — is refused with an honest message and leaves no partial membership behind; the failure branch is driven deliberately and the resulting server state is asserted unchanged, so the refusal is proven to fire rather than assumed.
+
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 31: Putting Things Into Shared Folders
+
+**Goal**: An item can be created in, moved into, and taken back out of an existing shared folder from the item editor, always re-encrypted under the destination scope's key or refused outright — closing the gap that makes shared folders feel broken.
+**Depends on**: Phase 29 (a family-wide share is one of the destinations the picker must be able to name). Independent of Phase 30 — the item editor is a different surface from the share dialog.
+**Requirements**: ORG-01, ORG-02, ORG-04, DEBT-04
+**Success Criteria** (what must be TRUE):
+
+  1. In the item editor, a shared folder is a selectable destination using the same control and mental model as choosing a personal folder, on both create and edit, and the chosen destination survives save, reload, and a sync round trip. (`ItemForm.tsx` has no `collectionId` concept at all today — the verified gap this criterion closes.)
+  2. An item moved from personal into shared scope is stored encrypted under the destination collection's key with AAD bound to that collection, and a different real account with access reads the moved item's actual field values — positive recipient-side assertion in a live run.
+  3. A move whose destination key is unavailable is refused: the user sees an honest error, and the item's stored ciphertext and revision are byte-identical to before the attempt. A move never produces a row nobody can decrypt. The unavailable-key branch is driven deliberately, so the refusal is proven to fire.
+  4. An item taken out of a shared folder is re-encrypted under the owner's personal key, and a member who could read it before demonstrably cannot after — anchored positively on both sides: that member's own client reads the content before the move, and the same read fails after the next completed sync.
+  5. `cargo clippy --workspace --all-targets -- -D warnings` exits 0 (DEBT-04 — the 19 `explicit_auto_deref` in `vault.rs`, which this phase edits anyway).
+
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 32: A Real Settings Page
+
+**Goal**: Settings becomes a real, linkable `/settings` route with a predictable information architecture, every existing setting survives the move unchanged, and Family & Sharing is redesigned rather than relocated.
+**Depends on**: Phase 29, Phase 30, Phase 31 (a Family & Sharing surface can only be designed *around the sharing model* once family-wide shares, editable membership and scope moves exist). Scope boundary: this phase owns the settings-resident family surface — members, invitations, identity verification, account-level controls — and does **not** absorb the "what am I exposing" inventory, which is Phase 33's (VIS-03/VIS-05) wherever that panel ends up living.
+**Requirements**: SET-01, SET-02, SET-03, SET-04, DEBT-01, DEBT-02, UX-04
+**Success Criteria** (what must be TRUE):
+
+  1. `/settings` is a real route: linkable from a cold browser, it survives a reload, and the back button returns to the vault. `npm run build` still emits a fully static export with no server-rendered route — proven from the built `web/out` output, not from configuration intent.
+  2. Every action reachable from the old overlay — passkeys, sessions, security, import/export — is reachable on the new page, with the existing web suite (821 baseline) green against the new location and no test deleted or weakened to get there.
+  3. The page presents named, headed sections that are visible without interaction; no setting is reachable only by discovering a tab, and a reviewer can point at the heading that owns any given setting.
+  4. The Family & Sharing surface is structurally different from v0.4's `FamilyTab` — members, invitations and identity verification read as distinct labelled regions of one screen, not the same content in a new container. A lift-and-shift does not satisfy this. Closure requires explicit product-owner acceptance; this is a human-judgment criterion and no automated check satisfies it.
+  5. A user can mark another member's identity fingerprint verified out of band from a real product path, and the resulting `verified_at` is read and rendered by production code for the viewer who set it — proven live end-to-end, not by the existence of an API-client wrapper. (DEBT-01: `POST /api/identity/verify/{user_id}` is the last surviving instance of v0.4's signature failure mode.)
+  6. Exporting the vault no longer silently contradicts the hidden-password mask on either surface: whichever resolution is chosen (mask consistently, or disclose at export time), the export flow states it and the bytes of a real generated export file match that statement (DEBT-02).
+  7. The removal-disclosure copy is re-checked against what removal actually does *after* Phase 29 changed it, by a human with the rendered copy in front of them, and the check is recorded as performed (UX-04 — a declared manual-only criterion carried from v0.4; verifying it before this phase's redesign would invalidate it).
+
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 33: Knowing What You Are Sharing
+
+**Goal**: Every surface answers "what am I exposing, to whom, and in which direction" honestly — the item list never misrepresents privacy in either direction, the sharing overview is complete, and the extension popup's marker reads at popup width.
+**Depends on**: Phase 29, Phase 30, Phase 31, Phase 32
+**Requirements**: VIS-01, VIS-02, VIS-03, VIS-04, VIS-05, VIS-06, DEBT-03
+**Success Criteria** (what must be TRUE):
+
+  1. The item list never misrepresents sharing state in **either** direction: a shared item shows a shared marker while its recipients are still loading, when they fail to resolve, and when the resolved set comes back empty; and a row that has stopped being shared stops rendering as shared/pending/broken on the next completed sync rather than at the next lock. Both directions are falsification-tested — each test fails against today's `AvatarStack.tsx:100` early-`null` and today's never-pruned `pendingSharedItems` respectively (VIS-01, DEBT-03).
+  2. Shared-by-me and shared-with-me are distinguishable at a glance in the item list on both web and the extension popup, driven by per-row data the client genuinely holds — the same item renders the by-me form in the owner's list and the with-me form in the recipient's, observed live from both sides in one run. Changing copy alone does not satisfy this; the extension's direction-neutral label exists because it had no reliable per-row data (VIS-02).
+  3. The sharing overview answers "what am I exposing right now" completely: an item shared directly to one person, in no folder, appears there alongside shared folders — proven by a live run that creates exactly that share and then finds it. (Rows are built from `editableCollections` only today, so individually-shared items appear nowhere — VIS-03.)
+  4. The vault can be filtered to shared-by-me and shared-with-me as scannable lists, and each filter's contents match the actual share state of a real two-account fixture **by identity**, not merely by being non-empty (VIS-04).
+  5. For any shared item, who it is shared with is readable from the surface the user is already on, without opening a second surface (VIS-05).
+  6. The extension popup's shared marker is legible at real popup width in both themes — screenshots captured at true popup dimensions and accepted by the product owner. This carries v0.4's open human-judgment item and is explicitly not satisfied by spec conformance, which the current badge already has while the folder-name subtitle does the signalling work (VIS-06).
+
+**Plans**: TBD
+**UI hint**: yes
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → … → 20 (v0.1–v0.3, archived) → 21 → 22 → 23 → 24 → 25 → 26 → 27 → 28 (v0.4, shipped)
+Phases execute in numeric order: 1 → … → 20 (v0.1–v0.3, archived) → 21 → … → 28 (v0.4, shipped) → 29 → 30 → 31 → 32 → 33 (v0.5, in progress)
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -116,3 +243,8 @@ Phases execute in numeric order: 1 → … → 20 (v0.1–v0.3, archived) → 21
 | 26. Web App — Sharing UI & Family Management | v0.4 | 13/13 | Complete | 2026-08-06 |
 | 27. Extension Integration — Shared Items | v0.4 | 14/14 | Complete    | 2026-08-09 |
 | 28. Close v0.4 audit gaps — client-side consumption of sharing state | v0.4 | 3/3 | Complete | 2026-08-09 |
+| 29. The Living Group — Family-Wide Sharing | v0.5 | TBD | Not started | - |
+| 30. The Share Dialog — Per-Person Access, Existing Destinations | v0.5 | TBD | Not started | - |
+| 31. Putting Things Into Shared Folders | v0.5 | TBD | Not started | - |
+| 32. A Real Settings Page | v0.5 | TBD | Not started | - |
+| 33. Knowing What You Are Sharing | v0.5 | TBD | Not started | - |

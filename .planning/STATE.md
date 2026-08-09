@@ -1,20 +1,20 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.4
-milestone_name: Family & Sharing
-current_phase: none
-current_phase_name: v0.4 shipped — next milestone not yet defined
-status: milestone-complete
-stopped_at: v0.4 milestone archived and tagged
-last_updated: "2026-08-09T16:42:31.632Z"
+milestone: v0.5
+milestone_name: Sharing That Makes Sense
+current_phase: 29
+current_phase_name: The Living Group — Family-Wide Sharing
+status: roadmap-ready
+stopped_at: v0.5 roadmap created (phases 29-33), awaiting phase 29 planning
+last_updated: "2026-08-09T00:00:00.000Z"
 last_activity: 2026-08-09
-last_activity_desc: v0.4 Family & Sharing archived, tagged, requirements rolled
+last_activity_desc: v0.5 roadmap written — 5 phases (29-33), 28/28 requirements mapped
 progress:
-  total_phases: 8
-  completed_phases: 8
-  total_plans: 64
-  completed_plans: 64
-  percent: 100
+  total_phases: 5
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -24,14 +24,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-31)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** none — v0.4 shipped 2026-08-09. Run `/gsd-new-milestone` to define v0.5.
+**Current focus:** v0.5 Sharing That Makes Sense — Phase 29 (The Living Group — Family-Wide Sharing). Next: `/gsd-plan-phase 29`.
 
 ## Current Position
 
-Phase: 28 (Close v0.4 audit gaps — client-side consumption of sharing state) — GAP-CLOSURE COMPLETE
-Plan: 3 of 3 (+ 28-04 gap-closure pass, direct fix — no new PLAN.md)
-Status: 28-VERIFICATION.md addendum recorded — score moved from 4/5 (1 present, behavior-unverified) to 5/5 verified
-Last activity: 2026-08-09 — 28-04 gap-closure pass complete (falsified-truth fix, SHARE-06 item-leg live proof, FAM-09 copy honesty, REQUIREMENTS.md reconciliation)
+Phase: 29 (The Living Group — Family-Wide Sharing) — NOT STARTED
+Plan: none yet — run `/gsd-plan-phase 29`
+Status: v0.5 roadmap created; 28/28 requirements mapped across phases 29–33, no orphans
+Last activity: 2026-08-09 — v0.5 roadmap written (ROADMAP.md phases 29–33 + REQUIREMENTS.md traceability)
+
+Previous milestone: Phase 28 closed v0.4's three audit blockers; v0.4 shipped/archived/tagged 2026-08-09.
 
 ## Performance Metrics
 
@@ -118,6 +120,19 @@ Last activity: 2026-08-09 — 28-04 gap-closure pass complete (falsified-truth f
 ## Accumulated Context
 
 ### Roadmap Evolution
+
+- v0.5 roadmap created 2026-08-09: **5 phases (29–33), standard granularity, 28/28 requirements mapped.**
+  Sequence: 29 The Living Group (FSH-01..05 + FAM-10 — the FSH-02 client-only key-delivery mechanism is
+  decided and committed BEFORE any dependent code, on the KEY-05/EXT-10 precedent, and Phase 29 also
+  builds the unwrap-own-sealed-key/reseal composition that exists nowhere client-side today) → 30 The
+  Share Dialog (MOD-01..03 + ORG-03, the second consumer of that composition) → 31 Putting Things Into
+  Shared Folders (ORG-01/02/04 + DEBT-04) → 32 A Real Settings Page (SET-01..04 + DEBT-01/02 + UX-04) →
+  33 Knowing What You Are Sharing (VIS-01..06 + DEBT-03). Phases are grouped by **surface ownership**,
+  not requirement letter, so no two phases own the same component (30 owns ShareDialog, 31 owns ItemForm,
+  32 owns the settings route + family surface, 33 owns the item list/overview/popup marker). Phase 32 is
+  deliberately late despite `/settings` being structurally independent: SET-03 asks for a family surface
+  redesigned *around the sharing model*, which only exists after 29–31. UX-04's manual copy check sits in
+  32 because Phase 29 changes what removal does — verifying it earlier would invalidate it.
 
 - Phase 28 added 2026-08-09: **Close v0.4 audit gaps — client-side consumption of sharing state.**
   Added after `.planning/milestones/v0.4-MILESTONE-AUDIT.md` returned `gaps_found` with three blockers, all
