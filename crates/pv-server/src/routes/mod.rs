@@ -156,15 +156,25 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
         .into_iter()
         .chain(membership_routes())
         .fold(api, |r, (path, mr)| r.route(path, mr))
-        .with_state(state)
-        .layer(cors)
-        // T-24-10: applied at the SAME point `cors` is — wrapping the
-        // COMPLETE router, not just the `/api/*` sub-chain — so a served
-        // `index.html`/asset from the static-file SPA fallback below also
-        // carries the header, not only `/api/*` responses.
-        .layer(axum::middleware::from_fn(referrer_policy_middleware));
+        .with_state(state);
 
-    match static_dir.filter(|d| d.is_dir()) {
+    // CR-03 (code review, Phase 29): the fallback service MUST be attached
+    // BEFORE `.layer(cors).layer(referrer_policy_middleware)` runs, not
+    // after. axum 0.8's `Router::layer` (`routing/mod.rs`) wraps
+    // `path_router`/`fallback_router`/`catch_all_fallback` AS THEY EXIST AT
+    // CALL TIME; `Router::fallback_service` then REPLACES both fallback
+    // slots with the raw, unlayered service passed to it — discarding
+    // whatever wrapping a PRIOR `.layer()` call had already applied. The
+    // previous ordering here (`.layer(cors).layer(referrer_policy_middleware)`
+    // THEN `.fallback_service(static_service)`) meant neither layer ever
+    // reached a static-file response: reproduced against real axum 0.8,
+    // `/healthz` carried `Referrer-Policy` while `/settings` (and every
+    // other static asset, INCLUDING the `/invite/{invite_id}` landing page
+    // T-24-10's own doc comment names as the threat this header defends)
+    // did not. Attaching the fallback FIRST, then layering ONCE over the
+    // combined router, makes both layers wrap the complete router — API
+    // routes AND the static fallback — genuinely, not just in a comment.
+    let base = match static_dir.filter(|d| d.is_dir()) {
         Some(dir) => {
             // NOTE: deliberately `.fallback(...)`, not `.not_found_service(...)` —
             // `not_found_service` unconditionally rewrites the response status to
@@ -198,7 +208,13 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
             tracing::warn!("PV_STATIC_DIR not set or not a directory — serving API only");
             api
         }
-    }
+    };
+
+    // T-24-10: applied LAST, over the COMPLETE router (API routes AND the
+    // static fallback attached above) — see the doc comment above for why
+    // this ordering is load-bearing, not cosmetic.
+    base.layer(cors)
+        .layer(axum::middleware::from_fn(referrer_policy_middleware))
 }
 
 /// See the doc comment at this function's one call site (`router_with_cors`'s
@@ -212,7 +228,18 @@ async fn rewrite_nested_static_route(
     mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    if req.method() == axum::http::Method::GET {
+    // WR-03 (code review, Phase 29): `29-05-SUMMARY.md` recorded, as a
+    // decision, that this middleware already carried an internal
+    // `!path.starts_with("/api/")` guard making an unmatched `/api/*` path
+    // safe regardless — no such guard actually existed. This middleware is
+    // the STATIC fallback's own layer, reached for ANY unmatched path
+    // (`/api/*` included, since an unregistered API path falls through to
+    // the same fallback), and was harmless only by the unstated coincidence
+    // that no `out/api/*.html` file exists in a real Next.js export — an
+    // implicit dependency on the export's file layout, not a guard. This is
+    // the guard the SUMMARY claimed; now it is genuinely present, so a
+    // typo'd/future API route can never be shadowed by this rewrite.
+    if req.method() == axum::http::Method::GET && !req.uri().path().starts_with("/api/") {
         let path = req.uri().path();
         let trimmed = path.trim_matches('/');
         // Bare `/`, any request that already names a real file
