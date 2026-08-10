@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 5
+open_count: 7
 waived_count: 0
 fixed_count: 9
-total_count: 14
-last_updated: 2026-08-10T11:45:31.000Z
+total_count: 16
+last_updated: 2026-08-10T23:03:57.952Z
 ---
 
 # Broken Windows Ledger
@@ -29,6 +29,8 @@ last_updated: 2026-08-10T11:45:31.000Z
 | 12 | 26 | stub | web/src/components/vault/ExportDialog.tsx |  | Hidden-password masking (SHARE-03, closed in 26-VERIFICATION-FIX blocker 1) does not extend to vault export: ExportDialog calls getItems() -- the merged view, which since 26-14 includes items shared TO the caller -- and buildCsvExport/buildJsonExport emit fields.password verbatim (toCsv.ts:59). A hidden_password recipient can still obtain the plaintext via Settings -> Export in two clicks. Deliberately not fixed: it is inside what D-2's disclosure already discloses (an explicit whole-vault export is a deliberate recovery act, not 'accidentally seeing it on screen'), and silently blanking a password in a user's own BACKUP is unnoticed data loss -- an honest fix needs an explicit in-file marker, i.e. new export-format surface plus i18n. share.hiddenPasswordRecipientNote was worded 'this view masks it' rather than 'hidden in the interface' precisely so no shipped copy overclaims because of this. Owner of the follow-up decides blank-vs-marker for BOTH exporters, and owes the same in the extension (Phase 27). See 26 deferred-items.md. | open |  | 2026-08-07T09:54:44.142Z |  |
 | 13 | 26 | stub | web/src/components/vault/ShareDialog.tsx |  | CR-01's partial-share recovery is SESSION-SCOPED only (26-VERIFICATION.md W-2, independently re-verified 2026-08-07 and confirmed correct). Retrying through the SAME open dialog is genuinely idempotent (createdCollectionRef, tested). But NO UI entry point anywhere adds a member to an EXISTING shared collection: the only ShareDialogScope folder variants constructed are existingFolderId=<personal folder id> (Sidebar:323) and null (Sidebar:422, FamilyTab:695), both of which MINT A NEW COLLECTION, and the Sidebar's shared-folder rows (Sidebar:404-417) are plain non-interactive divs with no kebab/share/delete. So closing the dialog after a partial failure strands the half-granted collection permanently; reopening mints a second one and seed items already moved into the first now fail decryptItem on the re-move as fresh seedMoveFailed. The orphan persists visibly in the Shared folders sidebar with no delete affordance. Not fixed in the verification-fix pass because the fix is a NEW UI SURFACE, not a guard: a kebab on the shared-folder row, a third ShareDialogScope variant (existingCollectionId), and a different crypto path in submit (unseal the caller's own sealed_key and re-seal the RECOVERED Collection Key, not WasmCollectionKey.generate()) -- feature work with its own real-WASM proof obligation. CR-01's unscoped claim 'no manual DB surgery' is recorded as NOT TRUE. See 26 deferred-items.md. | open |  | 2026-08-07T09:54:53.167Z |  |
 | 14 | 30 | stub | web/src/app/page.tsx |  | FamilyRekeyNotice built and tested but not mounted -- outside 30-05's files_modified/wave file-disjointness boundary; needs a one-line <FamilyRekeyNotice /> mount next to CopyToast/ErrorToast | fixed |  | 2026-08-10T11:38:54.812Z | 2026-08-10T11:45:31.000Z |
+| 15 | 30 | skipped-test | web/e2e/family-wide-sharing.spec.ts |  | test.skip: 'a member LEAVES the family (self-deletion)' -- the intended test (E is the ORIGINAL CREATOR of a family-wide collection, then self-deletes) is blocked by a genuine data-loss bug (see the paired 'deviation' entry); left intact and skipped, not weakened, so it can be un-skipped once the underlying fix lands | open |  | 2026-08-10T23:03:49.320Z |  |
+| 16 | 30 | deviation | crates/pv-server/migrations/0001_init.sql |  | CRITICAL, found live (30-17): vault_items.user_id REFERENCES users(id) ON DELETE CASCADE is unconditional -- applies to a collection-scoped item exactly like a personal one. delete_account_as_member (account.rs) correctly re-keys every collection the departing member could reach, but never detaches/reassigns user_id on items inside a SURVIVING collection before DELETE FROM users cascades -- so a family-wide-shared item the departing member originally created is destroyed the instant their account is deleted, even though the collection itself survives with a freshly re-keyed sealed_key for every remaining member (proven live: GET /api/vault/collections/{id} -> 200 valid sealed_key, GET .../items -> 200 empty array). This is the exact inverse of 30-CONTEXT.md's locked decision ("leaving is not deletion... you keep your own originals"). delete_account_as_owner already has a deliberate, different precedent for the whole-family-dissolves case (its own Step 1 pre-deletes every collection-scoped item on purpose); delete_account_as_member needs an analogous, deliberate decision -- e.g. detaching a collection-scoped item's user_id before the cascade, mirroring last_editor_user_id's own CR-01 precedent -- which is a schema/ownership call outside 30-17's file scope. See family-wide-sharing.spec.ts's skipped 'a member LEAVES the family' test for the full live reproduction. | open |  | 2026-08-10T23:03:57.952Z |  |
 
 ````json
 [
@@ -199,6 +201,30 @@ last_updated: 2026-08-10T11:45:31.000Z
     "reason": "",
     "recorded_at": "2026-08-10T11:38:54.812Z",
     "resolved_at": "2026-08-10T11:45:31.000Z"
+  },
+  {
+    "id": 15,
+    "kind": "skipped-test",
+    "phase": "30",
+    "file": "web/e2e/family-wide-sharing.spec.ts",
+    "line": null,
+    "description": "test.skip: 'a member LEAVES the family (self-deletion)' -- the intended test (E is the ORIGINAL CREATOR of a family-wide collection, then self-deletes) is blocked by a genuine data-loss bug (see the paired 'deviation' entry); left intact and skipped, not weakened, so it can be un-skipped once the underlying fix lands",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-10T23:03:49.320Z",
+    "resolved_at": null
+  },
+  {
+    "id": 16,
+    "kind": "deviation",
+    "phase": "30",
+    "file": "crates/pv-server/migrations/0001_init.sql",
+    "line": null,
+    "description": "CRITICAL, found live (30-17): vault_items.user_id REFERENCES users(id) ON DELETE CASCADE is unconditional -- applies to a collection-scoped item exactly like a personal one. delete_account_as_member (account.rs) correctly re-keys every collection the departing member could reach, but never detaches/reassigns user_id on items inside a SURVIVING collection before DELETE FROM users cascades -- so a family-wide-shared item the departing member originally created is destroyed the instant their account is deleted, even though the collection itself survives with a freshly re-keyed sealed_key for every remaining member (proven live: GET /api/vault/collections/{id} -> 200 valid sealed_key, GET .../items -> 200 empty array). This is the exact inverse of 30-CONTEXT.md's locked decision (\"leaving is not deletion... you keep your own originals\"). delete_account_as_owner already has a deliberate, different precedent for the whole-family-dissolves case (its own Step 1 pre-deletes every collection-scoped item on purpose); delete_account_as_member needs an analogous, deliberate decision -- e.g. detaching a collection-scoped item's user_id before the cascade, mirroring last_editor_user_id's own CR-01 precedent -- which is a schema/ownership call outside 30-17's file scope. See family-wide-sharing.spec.ts's skipped 'a member LEAVES the family' test for the full live reproduction.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-10T23:03:57.952Z",
+    "resolved_at": null
   }
 ]
 ````
