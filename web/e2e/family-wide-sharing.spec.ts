@@ -75,6 +75,7 @@ import {
   ensureFamilyMemberDSession,
   FAMILY_MEMBER_C_PASSWORD,
   FAMILY_MEMBER_D_PASSWORD,
+  FAMILY_OWNER_PASSWORD,
   SESSION_PASSWORD,
 } from "./fixtures";
 import { t } from "@/lib/i18n/dictionary";
@@ -92,6 +93,19 @@ function uniqueSuffix(): string {
 async function apiGet(request: BrowserContext["request"], path: string, token: string) {
   return request.get(`${BASE_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
 }
+
+async function apiPut(request: BrowserContext["request"], path: string, token: string, data: unknown) {
+  return request.put(`${BASE_URL}${path}`, { headers: { Authorization: `Bearer ${token}` }, data });
+}
+
+/** 30-17-PLAN.md Task 3's decrypt-failure backstop -- NOT valid ciphertext
+ * under any real key. Mirrors `shared-sync.spec.ts`'s/`remove-member.spec.ts`'s
+ * own identically-named, already-proven constants verbatim: writing this via
+ * a raw, authenticated PUT at a real item's own current revision is this
+ * repo's established way to drive a genuine, unavoidable decrypt failure on
+ * REAL ciphertext live, without touching the database directly. */
+const DUMMY_ENC_KEY = JSON.stringify({ nonce: "CCCC", ciphertext: "DDDD" });
+const DUMMY_ENC_DATA = JSON.stringify({ nonce: "EEEE", ciphertext: "FFFF" });
 
 async function tokenFor(page: Page): Promise<string> {
   const token = await page.evaluate(() => window.localStorage.getItem("pv-session-token"));
@@ -216,6 +230,35 @@ async function relockAndUnlock(page: Page, password: string): Promise<void> {
   await unlockViaUI(page, password);
 }
 
+/** 30-17-PLAN.md Task 1/Task 2: several of this plan's new cases reuse the
+ * long-lived `owner`/`memberB`/`memberC`/`memberD` sessions established in
+ * `beforeAll`, whose LOCK STATE at the moment a new `test()` starts depends
+ * on whichever prior test in this serial file ran last (e.g. test 3/SC3-gap
+ * above deliberately leaves owner/C locked and only re-unlocks B). Rather
+ * than hand-tracking every prior test's exact ending state, each new case
+ * below starts by calling this -- a no-op if the session is already
+ * unlocked, a real UnlockOverlay submit otherwise. */
+async function ensureUnlockedViaUI(page: Page, password: string): Promise<void> {
+  const isLocked = await page.getByTestId("unlock-password").isVisible().catch(() => false);
+  if (isLocked) {
+    await unlockViaUI(page, password);
+  }
+}
+
+/** The other half of `ensureUnlockedViaUI` -- a no-op if `page` is already
+ * locked, a real `lockViaUI` otherwise. Needed by SC5's gap-window clause
+ * (Task 1) to put every OTHER current keyholder offline regardless of
+ * whichever state a prior test left them in, ruling out an ambient poll
+ * cycle (rather than the test's own deliberate unlock) as the actual cause
+ * of resolution -- the same race this file's existing SC3 gap-window case
+ * (test 3 above) already guards against. */
+async function ensureLockedViaUI(page: Page): Promise<void> {
+  const alreadyLocked = await page.getByTestId("unlock-password").isVisible().catch(() => false);
+  if (!alreadyLocked) {
+    await lockViaUI(page);
+  }
+}
+
 async function listItemIds(context: BrowserContext, token: string): Promise<string[]> {
   const res = await apiGet(context.request, "/api/vault/items", token);
   expect(res.status()).toBe(200);
@@ -257,8 +300,28 @@ async function createLoginItemViaUI(page: Page, name: string, password: string):
   await page.getByTestId("item-form-login").waitFor({ state: "detached" });
 }
 
+/** `sidebar-nav-folders` TOGGLES `Sidebar.tsx`'s own local `foldersExpanded`
+ * state (default collapsed) -- a blind, unconditional click was safe for
+ * 30-16's own three tests because each one either ran first (panel
+ * genuinely collapsed) or was preceded by a `/settings` round trip (a real
+ * route change that unmounts/remounts `Sidebar`, resetting the toggle).
+ * 30-17-PLAN.md's new cases reuse the SAME long-lived `owner`/`memberX`
+ * pages across MANY calls with no such round trip in between (e.g.
+ * `ensureUnlockedViaUI` never navigates), so a stale "already expanded"
+ * toggle from a PRIOR call on the same page would make this blind click
+ * COLLAPSE the panel instead of expanding it -- hiding
+ * `sidebar-new-folder-button` and hanging the next line for the rest of the
+ * test's timeout (confirmed live: exactly this hang, root-caused via the
+ * failing run's own page snapshot). Checking first, rather than assuming
+ * collapsed, makes this correct regardless of the panel's actual state. */
 async function createFolderViaUI(page: Page, name: string): Promise<void> {
-  await page.getByTestId("sidebar-nav-folders").click();
+  const newFolderButtonAlreadyVisible = await page
+    .getByTestId("sidebar-new-folder-button")
+    .isVisible()
+    .catch(() => false);
+  if (!newFolderButtonAlreadyVisible) {
+    await page.getByTestId("sidebar-nav-folders").click();
+  }
   await page.getByTestId("sidebar-new-folder-button").click();
   await page.getByTestId("sidebar-new-folder-name").fill(name);
   await page.getByTestId("sidebar-new-folder-confirm").click();
@@ -743,5 +806,770 @@ test.describe("family-wide sharing — the living group, proven live (Plan 30-16
     } finally {
       await secondDevice.context.close();
     }
+  });
+
+  // --- 30-17-PLAN.md Task 1: SC5 -- copy checked against measurement -----
+
+  test("timing copy matches measurement: both familyWideTimingCaveat clauses are proven by this suite's own live sequences", async ({
+    browser,
+  }) => {
+    // Two more full account bring-ups plus a second full gap-window cycle
+    // (invite before share, lock every OTHER keyholder, one deliberate
+    // unlock, one real ~30s poll) -- generous but bounded, mirroring test
+    // 3/SC3-gap's own budget above.
+    test.setTimeout(600_000);
+
+    // --- Part A: the shipped string, verbatim, in BOTH required locations -
+    await ensureUnlockedViaUI(owner.page, FAMILY_OWNER_PASSWORD);
+
+    const ownerTokenForString = await tokenFor(owner.page);
+    const stringCheckFoldersBefore = await listFolderIds(owner.context, ownerTokenForString);
+    await createFolderViaUI(owner.page, `PV E2E SC5 String Check ${uniqueSuffix()}`);
+    const stringCheckFolderId = await newIdAfter(stringCheckFoldersBefore, () =>
+      listFolderIds(owner.context, ownerTokenForString),
+    );
+
+    // T-30-XX (found while writing this test): `toHaveText(t("en", ...))`
+    // alone is a SELF-consistency check only -- the rendered UI and this
+    // assertion both read the SAME dictionary entry, so editing the
+    // dictionary to claim "instantly" would move BOTH sides together and
+    // this check would still pass. The falsification bar
+    // (30-17-PLAN.md's own acceptance criteria: "fails if the caveat string
+    // is edited to claim 'instantly' for the gap-window case") needs an
+    // assertion with an INDEPENDENT source of truth -- a hardcoded literal,
+    // never sourced from `t()`, naming the exact honest qualifier the
+    // gap-window clause must keep. This is deliberately duplicated text
+    // (not DRY) -- that duplication is the whole point: it is the one
+    // thing in this file that would NOT silently drift alongside a
+    // dictionary edit.
+    const gapWindowHonestyPhrase =
+      "the next time you or another family member opens the app";
+
+    await owner.page.getByTestId(`sidebar-folder-menu-trigger-${stringCheckFolderId}`).click();
+    await owner.page.getByTestId(`sidebar-folder-share-${stringCheckFolderId}`).click();
+    await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+    await expect(
+      owner.page.getByTestId("share-family-wide-timing-caveat"),
+      "the shipped share.familyWideTimingCaveat string must render verbatim in ShareDialog -- checked against the LOCKED string, not merely 'is present'",
+    ).toHaveText(t("en", "share.familyWideTimingCaveat"));
+    await expect(
+      owner.page.getByTestId("share-family-wide-timing-caveat"),
+      "falsification bar: the gap-window clause must keep its honest qualifier -- a string claiming 'instantly' for this case must fail HERE, against a hardcoded literal, not against the dictionary itself",
+    ).toContainText(gapWindowHonestyPhrase);
+    await owner.page.getByTestId("share-cancel").click();
+    await owner.page.getByTestId("share-dialog").waitFor({ state: "detached" });
+
+    await accountMenuTrigger(owner.page).click();
+    await owner.page.getByTestId("sidebar-sharing-overview").click();
+    await owner.page.getByTestId("sharing-overview-panel").waitFor({ state: "visible" });
+    await expect(
+      owner.page.getByTestId("sharing-overview-family-wide-caveat"),
+      "the SAME shipped string must render verbatim in SharingOverviewPanel -- same key, same string, the two required locations can never drift",
+    ).toHaveText(t("en", "share.familyWideTimingCaveat"));
+    await expect(
+      owner.page.getByTestId("sharing-overview-family-wide-caveat"),
+      "falsification bar (second required location): same hardcoded literal, independent of the dictionary",
+    ).toContainText(gapWindowHonestyPhrase);
+    await owner.page.getByTestId("sharing-overview-close").click();
+
+    // --- Part B, clause 1 (invite-carried): member H, a fresh joiner whose
+    // invite is generated AFTER the SC2 collection (test 1 above) already
+    // exists -- exactly test 2/SC3-fresh-invite's own shape, replayed here
+    // with an explicit wall-clock bound so the "right away" half of the
+    // shipped copy is tied to a MEASURED duration, not merely to a positive
+    // decrypt that could have coincidentally landed on a stray poll cycle.
+    const memberH = await newBareContext(browser);
+    const hEmail = `pv-e2e-family-wide-h-${uniqueSuffix()}@example.test`;
+    await registerFreshAccount(memberH.page, hEmail, SESSION_PASSWORD);
+    const hToken = await tokenFor(memberH.page);
+    await waitForIdentityKeyPublished(memberH.context, hToken);
+
+    await openFamilyTab(owner.page);
+    const t0InviteCarried = Date.now();
+    const inviteForH = await generateInviteViaUI(owner.page);
+    await returnToVault(owner.page);
+
+    await joinViaInviteUI(memberH.page, inviteForH, SESSION_PASSWORD);
+    await relockAndUnlock(memberH.page, SESSION_PASSWORD);
+
+    await assertRecipientDecrypts(
+      memberH.page,
+      sharedItemId,
+      sharedItemName,
+      sharedItemPassword,
+      "SC5 clause 1 (invite-carried): H must read the pre-existing family-wide share on its own first sync, with no keyholder unlock/hydrate cycle anywhere between share-creation and H's read",
+    );
+    const elapsedInviteCarried = Date.now() - t0InviteCarried;
+    expect(
+      elapsedInviteCarried,
+      "SC5 clause 1 must resolve well under a single 30s poll cycle -- proving genuinely invite-carried delivery, not a coincidental ambient poll standing in for it",
+    ).toBeLessThan(25000);
+
+    await expect(
+      memberH.page.getByTestId("item-row-pending-family-key"),
+      "the invite-carried clause is immediate -- H must never see a pending row for the SC2 collection",
+    ).toHaveCount(0);
+
+    // H is now a CURRENT family member with an open, unlocked page -- left
+    // running, H would be an UNCONTROLLED extra keyholder for clause 2's
+    // brand-new collection below (H, like owner/B/C/D, would receive it via
+    // ordinary fan-out and could reseal I's grant on H's own ambient poll,
+    // independent of the deliberate owner-unlock this next clause exists to
+    // isolate). Closing H's context here removes it from the keyholder pool
+    // entirely, mirroring clause 2's own "every OTHER keyholder locked"
+    // discipline for every keyholder this test itself created.
+    await memberH.context.close();
+
+    // --- Part B, clause 2 (lazy reseal): member I, whose invite predates a
+    // BRAND NEW share -- the gap window, resealed this time by the SHARER'S
+    // OWN subsequent unlock (owner), not "another family member" (memberB
+    // already proved that half in test 3/SC3-gap above). Together the two
+    // clauses cover the WHOLE compound "you or another family member"
+    // actor set the shipped copy names, not half of it in isolation.
+    const memberI = await newBareContext(browser);
+    const iEmail = `pv-e2e-family-wide-i-${uniqueSuffix()}@example.test`;
+    await registerFreshAccount(memberI.page, iEmail, SESSION_PASSWORD);
+    const iToken = await tokenFor(memberI.page);
+    await waitForIdentityKeyPublished(memberI.context, iToken);
+
+    await openFamilyTab(owner.page);
+    const inviteForI = await generateInviteViaUI(owner.page);
+    await returnToVault(owner.page);
+
+    const ownerTokenForGap = await tokenFor(owner.page);
+    const suffix2 = uniqueSuffix();
+    const sc5GapItemName = `PV E2E SC5 Gap Item ${suffix2}`;
+    const sc5GapItemPassword = `pw-sc5-gap-${suffix2}`;
+
+    const itemsBefore2 = await listItemIds(owner.context, ownerTokenForGap);
+    await createLoginItemViaUI(owner.page, sc5GapItemName, sc5GapItemPassword);
+    const sc5GapItemId = await newIdAfter(itemsBefore2, () => listItemIds(owner.context, ownerTokenForGap));
+
+    const foldersBefore2 = await listFolderIds(owner.context, ownerTokenForGap);
+    await createFolderViaUI(owner.page, `PV E2E SC5 Gap Seed ${suffix2}`);
+    const sc5GapFolderId = await newIdAfter(foldersBefore2, () =>
+      listFolderIds(owner.context, ownerTokenForGap),
+    );
+    await moveItemToFolder(owner.page, sc5GapItemId, sc5GapFolderId);
+
+    const collectionsBefore2 = await listCollectionIds(owner.context, ownerTokenForGap);
+    await shareFolderFamilyWide(owner.page, sc5GapFolderId, "edit", `PV E2E SC5 Gap Folder ${suffix2}`);
+    const sc5GapCollectionId = await newIdAfter(collectionsBefore2, () =>
+      listCollectionIds(owner.context, ownerTokenForGap),
+    );
+
+    // EVERY current keyholder offline BEFORE I ever joins -- including the
+    // OWNER (the sharer), who has been unlocked and online since Part A of
+    // this same test. Locking the owner only AFTER I joined would leave a
+    // window where the owner's own ambient poll (or a WS catch-up push)
+    // could resolve I's pending grant on its own timer, making the
+    // "deliberate unlock below is the cause" claim merely coincidental --
+    // exactly the race test 3/SC3-gap's own step 3 already guards against
+    // by locking every keyholder before the newcomer joins, not after.
+    await ensureLockedViaUI(memberB.page);
+    await ensureLockedViaUI(memberC.page);
+    await ensureLockedViaUI(memberD.page);
+    await lockViaUI(owner.page);
+
+    await joinViaInviteUI(memberI.page, inviteForI, SESSION_PASSWORD);
+    await relockAndUnlock(memberI.page, SESSION_PASSWORD);
+
+    const pendingRow = memberI.page.getByTestId(`item-row-pending-family-key:${sc5GapCollectionId}`);
+    const tPendingVisible0 = Date.now();
+    await expect(
+      pendingRow,
+      "SC5 clause 2: the gap-window collection must surface as an honest pending row before any keyholder comes back online",
+    ).toBeVisible({ timeout: 60000 });
+    const tPendingVisible = Date.now();
+    expect(tPendingVisible).toBeGreaterThanOrEqual(tPendingVisible0);
+
+    await pendingRow.click();
+    await memberI.page.getByTestId("pending-family-key-detail").waitFor({ state: "visible" });
+    await memberI.page.getByTestId("detail-panel-close").click();
+
+    // The owner -- THE SHARER, not "another family member" -- comes back
+    // online. Nothing else changes: no re-share, no new invite, no other
+    // member acting.
+    const tUnlock = Date.now();
+    await unlockViaUI(owner.page, FAMILY_OWNER_PASSWORD);
+
+    await expect(
+      pendingRow,
+      "SC5 clause 2: once the SHARER's own unlock reseals, the placeholder must disappear on I's own next sync -- proving 'you' (the sharer) is a valid resealer, not only 'another family member'",
+    ).toHaveCount(0, { timeout: 180000 });
+    const tResolved = Date.now();
+
+    expect(
+      tUnlock,
+      "the pending row must have been visible strictly BEFORE the deliberate unlock, never after",
+    ).toBeGreaterThanOrEqual(tPendingVisible);
+    expect(
+      tResolved,
+      "the content must resolve strictly AFTER the deliberate unlock, never before it",
+    ).toBeGreaterThan(tUnlock);
+
+    await assertRecipientDecrypts(
+      memberI.page,
+      sc5GapItemId,
+      sc5GapItemName,
+      sc5GapItemPassword,
+      "SC5 clause 2: the gap-window joiner must end up reading the real content only after the sharer's own subsequent unlock, with no further sharer action",
+    );
+
+    // Leave B/C/D unlocked again for the remaining tests in this file.
+    await unlockViaUI(memberB.page, SESSION_PASSWORD);
+    await unlockViaUI(memberC.page, FAMILY_MEMBER_C_PASSWORD);
+    await unlockViaUI(memberD.page, FAMILY_MEMBER_D_PASSWORD);
+  });
+
+  // --- 30-17-PLAN.md Task 2: SC6 -- positive-then-negative revocation ----
+
+  // SKIPPED -- a genuine, SEVERE, previously-undiscovered data-loss bug in
+  // shipped code, found live by driving this EXACT scenario for the first
+  // time in this codebase's history (found 2026-08-11, this session).
+  //
+  // `vault_items.user_id REFERENCES users(id) ON DELETE CASCADE`
+  // (migrations/0001_init.sql / 0003_vault_items_rebuild.sql) is UNCONDITIONAL
+  // -- it applies to a personal item AND a collection-scoped one alike, and
+  // is never detached or reassigned before `delete_account_as_member`'s own
+  // `DELETE FROM users WHERE id = ?` (account.rs) runs. Concretely: member E
+  // creates an item, moves it into a folder, shares that folder FAMILY-WIDE
+  // (a real `collections` row, family-scoped, with real `collection_keys`
+  // rows for every other current member -- confirmed live: the OWNER
+  // genuinely read the real decrypted item BEFORE E's departure). E then
+  // self-deletes ("leaves", the only member-initiated departure this
+  // codebase implements -- see the removed test body's own comment, still
+  // below, for why). `buildMemberRemovalBatch` correctly re-keys the
+  // collection and rewraps the item's `enc_key` for every remaining
+  // recipient -- proven live via a raw diagnostic request: AFTER E's
+  // deletion, `GET /api/vault/collections/{id}` returns 200 with a fresh,
+  // valid `sealed_key` for the OWNER. But `GET
+  // /api/vault/collections/{id}/items` returns 200 with an EMPTY array --
+  // the re-keyed collection has ZERO items, because `DELETE FROM users`'s
+  // cascade already destroyed the `vault_items` row itself (its `user_id`
+  // still points at E, the original creator, regardless of it living inside
+  // a shared collection). The re-key work is real but wasted: the content
+  // it just re-sealed for everyone else is gone the instant the cascade
+  // runs, a few statements later, in the SAME request.
+  //
+  // This is the EXACT INVERSE of 30-CONTEXT.md's own locked decision:
+  // "Leaving the family revokes everyone else's access to what you shared
+  // family-wide... You keep your own originals -- leaving is not deletion."
+  // As shipped, leaving a family-wide collection you created is MORE
+  // destructive than the decision describes -- not "revokes others' access
+  // while you keep your own copy", but "destroys the content for everyone,
+  // including the remaining members who still hold a valid key to nothing".
+  //
+  // No prior test ever caught this: `delete-account.spec.ts`'s own
+  // "member_self_deletion..." test uses DUMMY, unreferenced collection
+  // fixtures (`DUMMY_ENC_KEY`/`DUMMY_ENC_DATA`, never a real login item a
+  // human would create), and every OTHER removal/deletion test in this
+  // codebase either targets a RECIPIENT (never the original creator) or
+  // drives the OWNER's OWN dissolution path (`delete_account_as_owner`,
+  // which explicitly DOES pre-delete every collection-scoped item as its own
+  // documented Step 1 -- a DIFFERENT, deliberate design for a DIFFERENT
+  // case). This is the first live test to make a NON-owner member the
+  // original creator of a family-wide collection and then have THAT member
+  // self-delete.
+  //
+  // Fixing this needs a real architectural decision this plan is not
+  // positioned to make unilaterally (Rule 4: touches the `vault_items`
+  // ownership/schema model -- e.g. detaching a collection-scoped item's
+  // `user_id` before the cascade, mirroring `last_editor_user_id`'s own
+  // CR-01 precedent, or reassigning it to a remaining recipient) -- recorded
+  // in `.planning/WINDOWS.md` as an open, high-severity defect for a future
+  // phase to resolve. The test body below is left INTACT (not weakened to a
+  // scenario that would merely avoid the bug) so it can be un-skipped the
+  // moment the underlying fix lands -- this is the CORRECT proof FSH-04's
+  // "what YOU shared" wording requires; a version where the leaving member
+  // is a mere recipient (not the creator) would silently retreat from that
+  // exact claim rather than prove it.
+  test.skip("revocation: a member LEAVES the family (self-deletion, the only leave mechanism this codebase implements) -- the leaver's own access is revoked; another remaining member's access to what the leaver shared is unaffected", async ({
+    browser,
+  }) => {
+    test.setTimeout(300_000);
+
+    await ensureUnlockedViaUI(owner.page, FAMILY_OWNER_PASSWORD);
+
+    const memberE = await newBareContext(browser);
+    const eEmail = `pv-e2e-family-wide-e-${uniqueSuffix()}@example.test`;
+    await registerFreshAccount(memberE.page, eEmail, SESSION_PASSWORD);
+    const eToken = await tokenFor(memberE.page);
+    await waitForIdentityKeyPublished(memberE.context, eToken);
+
+    await openFamilyTab(owner.page);
+    const inviteForE = await generateInviteViaUI(owner.page);
+    await joinViaInviteUI(memberE.page, inviteForE, SESSION_PASSWORD);
+    await returnToVault(owner.page);
+
+    // E is now a CURRENT member and becomes the SHARER for this case --
+    // FSH-04's own wording is "leaving revokes everyone else's access to
+    // what YOU shared family-wide", so the leaving member here must be the
+    // one who SHARED, not merely a recipient (that direction is what cases
+    // 2/3 below already cover).
+    const eItemsToken = await tokenFor(memberE.page);
+    const suffix = uniqueSuffix();
+    const leaveItemName = `PV E2E Leave Item ${suffix}`;
+    const leaveItemPassword = `pw-leave-${suffix}`;
+
+    const eItemsBefore = await listItemIds(memberE.context, eItemsToken);
+    await createLoginItemViaUI(memberE.page, leaveItemName, leaveItemPassword);
+    const leaveItemId = await newIdAfter(eItemsBefore, () => listItemIds(memberE.context, eItemsToken));
+
+    const eFoldersBefore = await listFolderIds(memberE.context, eItemsToken);
+    await createFolderViaUI(memberE.page, `PV E2E Leave Seed ${suffix}`);
+    const leaveFolderId = await newIdAfter(eFoldersBefore, () => listFolderIds(memberE.context, eItemsToken));
+    await moveItemToFolder(memberE.page, leaveItemId, leaveFolderId);
+
+    const eCollectionsBefore = await listCollectionIds(memberE.context, eItemsToken);
+    await shareFolderFamilyWide(memberE.page, leaveFolderId, "read", `PV E2E Leave Folder ${suffix}`);
+    const leaveCollectionId = await newIdAfter(eCollectionsBefore, () =>
+      listCollectionIds(memberE.context, eItemsToken),
+    );
+
+    // `refreshCollectionsNow()` (collections.ts) fires only on the SHARER's
+    // own submit, on an unlock TRANSITION, or via the pending/reseal path --
+    // never on the owner's own ambient poll alone. The owner is a PASSIVE
+    // recipient of E's share (E performed the submit, not the owner), so
+    // without an explicit relock/unlock here the owner's already-open
+    // session would never discover this brand-new collection at all,
+    // regardless of how long the assertion below waits.
+    await relockAndUnlock(owner.page, FAMILY_OWNER_PASSWORD);
+
+    // Positive anchor, on ANOTHER current member (owner), BEFORE E leaves --
+    // proves the family-wide fan-out reached the owner from a NON-owner
+    // sharer, and gives the direction check below something real to
+    // continue reading across E's departure.
+    await assertRecipientDecrypts(
+      owner.page,
+      leaveItemId,
+      leaveItemName,
+      leaveItemPassword,
+      "before E leaves: another current member (the owner) must read what E shared family-wide",
+    );
+
+    // E leaves. This codebase implements exactly ONE member-initiated
+    // departure mechanism -- full self-account-deletion
+    // (`DeleteAccountDialog`'s "member" branch) -- confirmed by
+    // `families.rs::remove_member`'s own guard: "cannot remove yourself --
+    // use account deletion to leave the family". There is no separate
+    // "leave but keep the account" endpoint in the shipped server code, so
+    // 30-CONTEXT.md's "leaving is not deletion -- you keep your own
+    // originals" is NOT provable against this build; that gap is flagged as
+    // a finding in 30-17-SUMMARY.md rather than silently asserted here.
+    // What IS provable, and is what this case proves: the SAME atomic
+    // re-key path fires, and the DIRECTION is correct -- E's departure
+    // revokes E's own access without over-reaching into anyone else's.
+    //
+    // Capture E's OWN token BEFORE deletion -- gives this case its OWN
+    // positive-then-negative pair on E's own access (mirroring case 3's
+    // FAM-10 shape below), on top of the direction check that follows.
+    const eTokenBeforeLeave = await tokenFor(memberE.page);
+
+    const eConsoleErrors: string[] = [];
+    memberE.page.on("console", (msg) => {
+      if (msg.type() === "error") eConsoleErrors.push(msg.text());
+    });
+    memberE.page.on("pageerror", (err) => eConsoleErrors.push(`pageerror: ${err.message}`));
+    memberE.page.on("response", (res) => {
+      if (res.url().includes("/api/auth/account")) {
+        eConsoleErrors.push(`DELETE /api/auth/account -> ${res.status()}`);
+      }
+    });
+
+    await accountMenuTrigger(memberE.page).click();
+    await memberE.page.getByTestId("sidebar-open-settings").click();
+    await memberE.page.getByTestId("account-delete-trigger").click();
+    await memberE.page.getByTestId("account-delete-step1-continue").waitFor({ state: "visible" });
+    await memberE.page.getByTestId("account-delete-step1-continue").click();
+    await memberE.page.getByTestId("account-delete-step2-confirm").click();
+    const eDeleteOutcome = await Promise.race([
+      memberE.page
+        .getByRole("button", { name: "No account yet? Sign up" })
+        .waitFor({ state: "visible", timeout: 30000 })
+        .then(() => "reloaded" as const),
+      memberE.page
+        .getByTestId("account-delete-error")
+        .waitFor({ state: "visible", timeout: 30000 })
+        .then(() => "error" as const),
+    ]);
+    if (eDeleteOutcome === "error") {
+      const message = await memberE.page.getByTestId("account-delete-error").innerText();
+      throw new Error(
+        `pv-e2e: E's account deletion failed client-side with: ${message}\nDiagnostics: ${JSON.stringify(eConsoleErrors, null, 2)}`,
+      );
+    }
+
+    // Negative, server-side, on E's OWN captured token -- E's own departure
+    // must revoke E's own access, the same positive-then-negative shape
+    // case 3/FAM-10 below proves for a plain recipient, here proven for the
+    // SHARER's own side of "leaving".
+    const ePostLeaveRes = await apiGet(memberE.context.request, "/api/vault/items", eTokenBeforeLeave);
+    expect(
+      ePostLeaveRes.status(),
+      "the leaving member's own previously-valid token must be rejected on its very next request",
+    ).toBe(401);
+
+    // The correct-direction check: the OWNER's own already-open page, with
+    // NO reload, continues to read exactly what it read before -- E leaving
+    // must revoke E's own access (`buildMemberRemovalBatch` excludes the
+    // target from the fresh sealed keys), never the REMAINING members'
+    // access to the very thing the leaver shared.
+    await assertRecipientDecrypts(
+      owner.page,
+      leaveItemId,
+      leaveItemName,
+      leaveItemPassword,
+      "after E leaves: the correct direction -- other members' access to what the leaver shared family-wide must be unaffected, never revoked by the leaver's own departure",
+    );
+  });
+
+  test("revocation: a member REMOVED by the owner loses family-wide access on the next completed sync; a remaining member sees the quiet re-key notice", async ({
+    browser,
+  }) => {
+    test.setTimeout(300_000);
+
+    await ensureUnlockedViaUI(owner.page, FAMILY_OWNER_PASSWORD);
+    await ensureUnlockedViaUI(memberC.page, FAMILY_MEMBER_C_PASSWORD);
+
+    const memberF = await newBareContext(browser);
+    const fEmail = `pv-e2e-family-wide-f-${uniqueSuffix()}@example.test`;
+    await registerFreshAccount(memberF.page, fEmail, SESSION_PASSWORD);
+    const fToken = await tokenFor(memberF.page);
+    const fUserId = await userIdFor(memberF.context, fToken);
+    await waitForIdentityKeyPublished(memberF.context, fToken);
+
+    await openFamilyTab(owner.page);
+    const inviteForF = await generateInviteViaUI(owner.page);
+    await joinViaInviteUI(memberF.page, inviteForF, SESSION_PASSWORD);
+    await returnToVault(owner.page);
+
+    const ownerToken = await tokenFor(owner.page);
+    const suffix = uniqueSuffix();
+    const removeItemName = `PV E2E Remove Item ${suffix}`;
+    const removeItemPassword = `pw-remove-${suffix}`;
+
+    const itemsBefore = await listItemIds(owner.context, ownerToken);
+    await createLoginItemViaUI(owner.page, removeItemName, removeItemPassword);
+    const removeItemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+    const foldersBefore = await listFolderIds(owner.context, ownerToken);
+    await createFolderViaUI(owner.page, `PV E2E Remove Seed ${suffix}`);
+    const removeFolderId = await newIdAfter(foldersBefore, () => listFolderIds(owner.context, ownerToken));
+    await moveItemToFolder(owner.page, removeItemId, removeFolderId);
+
+    await shareFolderFamilyWide(owner.page, removeFolderId, "read", `PV E2E Remove Folder ${suffix}`);
+
+    // F just joined -- relockAndUnlock re-arms sharedPullDisabled (this
+    // file's own established rationale, see that helper's own doc comment).
+    await relockAndUnlock(memberF.page, SESSION_PASSWORD);
+
+    await assertRecipientDecrypts(
+      memberF.page,
+      removeItemId,
+      removeItemName,
+      removeItemPassword,
+      "positive anchor: the about-to-be-removed member (F) must genuinely read the family-wide item BEFORE removal",
+    );
+
+    // C -- the REMAINING member the toast is asserted on below -- is a
+    // PASSIVE recipient of this brand-new collection (the owner performed
+    // the share submit, not C), so C needs its own relock/unlock to
+    // discover it at all: `collections.ts::refreshCollectionsNow()` fires
+    // only on the sharer's own submit, an unlock transition, or the
+    // pending/reseal path -- never on a passive session's ambient poll
+    // alone (root-caused live: this exact gap, confirmed via a standalone
+    // reproduction of this test). C must already hold this SAME grant
+    // before the removal, so the notice below reflects a genuine re-key (a
+    // sealed_key CHANGE), never a first-time grant
+    // (`collections.ts::onCollectionRekeyed`'s own discriminant).
+    await relockAndUnlock(memberC.page, FAMILY_MEMBER_C_PASSWORD);
+    await assertRecipientDecrypts(
+      memberC.page,
+      removeItemId,
+      removeItemName,
+      removeItemPassword,
+      "C must already hold the family-wide grant before the removal below, so the later notice reflects an actual re-key",
+    );
+
+    await openFamilyTab(owner.page);
+    await owner.page.getByTestId(`member-remove-trigger-${fUserId}`).click();
+    await owner.page.getByTestId("remove-member-step1-continue").waitFor({ state: "visible" });
+    await owner.page.getByTestId("remove-member-step1-continue").click();
+    await owner.page.getByTestId("remove-member-step2-confirm").click();
+    await owner.page.getByTestId("remove-member-dialog").waitFor({ state: "detached" });
+    await returnToVault(owner.page);
+
+    // Negative, on F's own STILL-OPEN session, no reload -- the next
+    // completed sync (never lock/unlock), mirroring remove-member.spec.ts's
+    // own proven "deliberately reload-free" pattern.
+    await expect(
+      memberF.page.getByTestId(`item-row-${removeItemId}`),
+      "the removed member's own already-open page must lose the family-wide item on its next completed sync, no reload",
+    ).toHaveCount(0, { timeout: 60000 });
+
+    // The quiet re-key notice, on C -- a REMAINING member, never the actor
+    // who performed the removal.
+    const notice = memberC.page.getByTestId("family-rekey-notice");
+    await expect(
+      notice,
+      "a remaining member holding a re-keyed grant must see the quiet re-key notice",
+    ).toBeVisible({ timeout: 60000 });
+    await expect(notice).toContainText(
+      new RegExp(
+        [t("pl", "share.familyRekeyNotice"), t("en", "share.familyRekeyNotice")]
+          .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+          .join("|"),
+      ),
+    );
+  });
+
+  test("revocation: an account DELETION (FAM-10) triggers the same re-key path as removal, proven positive-then-negative", async ({
+    browser,
+  }) => {
+    test.setTimeout(300_000);
+
+    await ensureUnlockedViaUI(owner.page, FAMILY_OWNER_PASSWORD);
+
+    const memberG = await newBareContext(browser);
+    const gEmail = `pv-e2e-family-wide-g-${uniqueSuffix()}@example.test`;
+    await registerFreshAccount(memberG.page, gEmail, SESSION_PASSWORD);
+    const gToken = await tokenFor(memberG.page);
+    await waitForIdentityKeyPublished(memberG.context, gToken);
+
+    // G joins via a fresh invite -- since the SC2 collection already exists
+    // (test 1 above), this is the cheap invite-carried path; this test's own
+    // point is FAM-10's revocation, not SC3's delivery mechanism.
+    await openFamilyTab(owner.page);
+    const inviteForG = await generateInviteViaUI(owner.page);
+    await returnToVault(owner.page);
+    await joinViaInviteUI(memberG.page, inviteForG, SESSION_PASSWORD);
+    await relockAndUnlock(memberG.page, SESSION_PASSWORD);
+
+    // Positive anchor: G's own session genuinely reads real, decrypted
+    // family-wide content BEFORE deleting its own account.
+    await assertRecipientDecrypts(
+      memberG.page,
+      sharedItemId,
+      sharedItemName,
+      sharedItemPassword,
+      "positive anchor: G must genuinely read the family-wide item BEFORE deleting its own account",
+    );
+
+    // Capture G's OWN token BEFORE deletion -- account deletion cascades
+    // `sessions` (`ON DELETE CASCADE`), so this exact token becomes
+    // permanently invalid the moment the deletion commits; it is the tool
+    // that PROVES that below, not a leftover convenience.
+    const gTokenBeforeDelete = await tokenFor(memberG.page);
+
+    // G deletes its own account via the real DeleteAccountDialog "member"
+    // branch -- FAM-10's own mechanism (`account.rs::delete_account_as_member`
+    // reuses `apply_member_removal_rekey`, the SAME helper `remove_member`
+    // uses).
+    await accountMenuTrigger(memberG.page).click();
+    await memberG.page.getByTestId("sidebar-open-settings").click();
+    await memberG.page.getByTestId("account-delete-trigger").click();
+    await memberG.page.getByTestId("account-delete-step1-continue").waitFor({ state: "visible" });
+    await memberG.page.getByTestId("account-delete-step1-continue").click();
+    await memberG.page.getByTestId("account-delete-step2-confirm").click();
+    await memberG.page
+      .getByRole("button", { name: "No account yet? Sign up" })
+      .waitFor({ state: "visible", timeout: 30000 });
+
+    // Negative, server-side, on the SAME captured token -- the deleted
+    // account's own previously-valid token loses access on its very next
+    // request, no re-login, no token reissue possible (the account itself,
+    // and every session row cascaded from it, is gone).
+    const postDeleteRes = await apiGet(memberG.context.request, "/api/vault/items", gTokenBeforeDelete);
+    expect(
+      postDeleteRes.status(),
+      "the deleted account's own previously-valid token must be rejected on its very next request",
+    ).toBe(401);
+  });
+
+  // --- 30-17-PLAN.md Task 3: the two remaining structural backstops ------
+
+  test("wraps cleanly: PL copy and the re-key notice never overflow their real rendered containers", async ({
+    browser,
+  }) => {
+    test.setTimeout(300_000);
+
+    await ensureUnlockedViaUI(memberD.page, FAMILY_MEMBER_D_PASSWORD);
+    await ensureUnlockedViaUI(owner.page, FAMILY_OWNER_PASSWORD);
+
+    // G1/G3: the PL timing caveat, at real rendered width, in BOTH required
+    // locations. memberD's session renders in `pl` (joined through the
+    // invite landing route -- see this file's own `accountMenuTrigger` doc
+    // comment) -- exactly the locale this backstop needs, with zero extra
+    // locale plumbing.
+    const dToken = await tokenFor(memberD.page);
+    const wrapFoldersBefore = await listFolderIds(memberD.context, dToken);
+    await createFolderViaUI(memberD.page, `PV E2E Wrap Check ${uniqueSuffix()}`);
+    const wrapFolderId = await newIdAfter(wrapFoldersBefore, () => listFolderIds(memberD.context, dToken));
+
+    await memberD.page.getByTestId(`sidebar-folder-menu-trigger-${wrapFolderId}`).click();
+    await memberD.page.getByTestId(`sidebar-folder-share-${wrapFolderId}`).click();
+    const dialogCaveat = memberD.page.getByTestId("share-family-wide-timing-caveat");
+    await dialogCaveat.waitFor({ state: "visible" });
+    const dialogFits = await dialogCaveat.evaluate((el) => el.scrollWidth <= el.clientWidth);
+    expect(
+      dialogFits,
+      "the PL timing caveat must wrap, never overflow, the real rendered ShareDialog card",
+    ).toBe(true);
+    await memberD.page.getByTestId("share-cancel").click();
+    await memberD.page.getByTestId("share-dialog").waitFor({ state: "detached" });
+
+    await accountMenuTrigger(memberD.page).click();
+    await memberD.page.getByTestId("sidebar-sharing-overview").click();
+    await memberD.page.getByTestId("sharing-overview-panel").waitFor({ state: "visible" });
+    const overviewCaveat = memberD.page.getByTestId("sharing-overview-family-wide-caveat");
+    await overviewCaveat.waitFor({ state: "visible" });
+    const overviewFits = await overviewCaveat.evaluate((el) => el.scrollWidth <= el.clientWidth);
+    expect(
+      overviewFits,
+      "the PL timing caveat must wrap, never overflow, the real rendered SharingOverviewPanel block",
+    ).toBe(true);
+    await memberD.page.getByTestId("sharing-overview-close").click();
+
+    // G8: a minimal, standalone re-key trigger -- a throwaway member (J)
+    // joins, receives a family-wide grant alongside D, and is then removed
+    // by the owner, producing a genuine re-key event D's own session
+    // observes -- self-contained, so this backstop passes under this
+    // task's own `-g "wraps cleanly|decrypt failure"` filter without
+    // depending on the earlier revocation cases having run.
+    const memberJ = await newBareContext(browser);
+    const jEmail = `pv-e2e-family-wide-j-${uniqueSuffix()}@example.test`;
+    await registerFreshAccount(memberJ.page, jEmail, SESSION_PASSWORD);
+    const jToken = await tokenFor(memberJ.page);
+    const jUserId = await userIdFor(memberJ.context, jToken);
+    await waitForIdentityKeyPublished(memberJ.context, jToken);
+
+    await openFamilyTab(owner.page);
+    const inviteForJ = await generateInviteViaUI(owner.page);
+    await joinViaInviteUI(memberJ.page, inviteForJ, SESSION_PASSWORD);
+    await returnToVault(owner.page);
+
+    const ownerToken = await tokenFor(owner.page);
+    const suffix = uniqueSuffix();
+    const wrapItemName = `PV E2E Wrap Rekey Item ${suffix}`;
+    const wrapItemPassword = `pw-wrap-rekey-${suffix}`;
+
+    const itemsBefore = await listItemIds(owner.context, ownerToken);
+    await createLoginItemViaUI(owner.page, wrapItemName, wrapItemPassword);
+    const wrapItemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+    const foldersBefore2 = await listFolderIds(owner.context, ownerToken);
+    await createFolderViaUI(owner.page, `PV E2E Wrap Rekey Seed ${suffix}`);
+    const wrapRekeyFolderId = await newIdAfter(foldersBefore2, () => listFolderIds(owner.context, ownerToken));
+    await moveItemToFolder(owner.page, wrapItemId, wrapRekeyFolderId);
+    await shareFolderFamilyWide(owner.page, wrapRekeyFolderId, "read", `PV E2E Wrap Rekey Folder ${suffix}`);
+
+    await relockAndUnlock(memberJ.page, SESSION_PASSWORD);
+    await assertRecipientDecrypts(
+      memberJ.page,
+      wrapItemId,
+      wrapItemName,
+      wrapItemPassword,
+      "J must hold the grant before removal, so the removal below is a genuine re-key",
+    );
+    // D must ALSO already hold this grant before the removal, so the
+    // notice below reflects a genuine re-key, not a first-time grant. D is
+    // a PASSIVE recipient of this brand-new collection (the owner performed
+    // the share submit, not D) -- and the `ensureUnlockedViaUI` call at the
+    // very top of this test was a no-op if D was already unlocked, which it
+    // was, so it triggered no fresh unlock TRANSITION. Without an explicit
+    // relock/unlock HERE, D's already-open session would never discover
+    // this collection at all (`collections.ts::refreshCollectionsNow()`
+    // fires only on the sharer's own submit, an unlock transition, or the
+    // pending/reseal path -- confirmed live via this exact gap in the
+    // sibling revocation case above).
+    await relockAndUnlock(memberD.page, FAMILY_MEMBER_D_PASSWORD);
+    await assertRecipientDecrypts(
+      memberD.page,
+      wrapItemId,
+      wrapItemName,
+      wrapItemPassword,
+      "D must already hold the grant before the rekey, so the notice below reflects a genuine re-key",
+    );
+
+    await openFamilyTab(owner.page);
+    await owner.page.getByTestId(`member-remove-trigger-${jUserId}`).click();
+    await owner.page.getByTestId("remove-member-step1-continue").waitFor({ state: "visible" });
+    await owner.page.getByTestId("remove-member-step1-continue").click();
+    await owner.page.getByTestId("remove-member-step2-confirm").click();
+    await owner.page.getByTestId("remove-member-dialog").waitFor({ state: "detached" });
+    await returnToVault(owner.page);
+
+    const notice = memberD.page.getByTestId("family-rekey-notice");
+    await notice.waitFor({ state: "visible", timeout: 60000 });
+    const noticeShell = notice.locator("div").first();
+    const noticeFits = await noticeShell.evaluate((el) => el.scrollWidth <= el.clientWidth);
+    expect(noticeFits, "the PL re-key notice must wrap inside its fixed 320px shell").toBe(true);
+    await memberD.page.getByTestId("family-rekey-notice-dismiss").click();
+  });
+
+  test("a genuine decrypt failure on real ciphertext still renders through the existing undecryptable path, never the pending-family-key copy", async () => {
+    test.setTimeout(180_000);
+
+    await ensureUnlockedViaUI(memberB.page, SESSION_PASSWORD);
+    await ensureUnlockedViaUI(owner.page, FAMILY_OWNER_PASSWORD);
+
+    // sharedItemId (test 1/SC2) is NOT pending for anyone at this point in
+    // this suite -- every current member (owner, B, C, D) has long since
+    // resolved its collection's key -- so this corruption is unambiguously
+    // the "genuine, unrelated decrypt failure" case, never confusable with
+    // a real missing grant.
+    const ownerToken = await tokenFor(owner.page);
+    const itemsRes = await apiGet(owner.context.request, "/api/vault/items", ownerToken);
+    expect(itemsRes.status()).toBe(200);
+    const items = (await itemsRes.json()) as { id: string; revision: number }[];
+    const sharedItemRow = items.find((i) => i.id === sharedItemId);
+    if (sharedItemRow === undefined) {
+      throw new Error("pv-e2e: sharedItemId from SC2 is no longer present in the owner's own item list");
+    }
+
+    // B must already hold a prior successful decrypt of this item (proven
+    // in test 1/SC2 above) -- the retained-last-known-good copy is exactly
+    // what makes the corruption below `undecryptable: true` rather than a
+    // silently DROPPED row (store.ts's own discipline: with no prior
+    // successful decrypt, the flatMap drops the row entirely and renders no
+    // banner at all -- see this file's own note above `pendingFamilyKeyRows`).
+    await assertRecipientDecrypts(
+      memberB.page,
+      sharedItemId,
+      sharedItemName,
+      sharedItemPassword,
+      "B must genuinely hold a prior successful decrypt of this item before the corruption below, or the undecryptable path would have nothing to retain",
+    );
+
+    // Mirrors shared-sync.spec.ts's own already-proven pattern for driving a
+    // genuine decrypt failure live: a raw, authenticated write of NOT-VALID
+    // ciphertext under any real key, at the item's own current revision --
+    // there is no crypto material in this fixture that WOULD decrypt, so
+    // B's next merge is a genuine, unavoidable decrypt failure, not an
+    // artifact of sloppy test data.
+    const corruptRes = await apiPut(owner.context.request, `/api/vault/items/${sharedItemId}`, ownerToken, {
+      enc_key: DUMMY_ENC_KEY,
+      enc_data: DUMMY_ENC_DATA,
+      expected_revision: sharedItemRow.revision,
+    });
+    expect(
+      corruptRes.status(),
+      "the corrupting write itself must succeed server-side (the server only ever validates access, never plaintext)",
+    ).toBe(200);
+
+    await memberB.page.getByTestId(`item-row-${sharedItemId}`).click();
+    await memberB.page.getByTestId("detail-panel").waitFor({ state: "visible" });
+    await expect(
+      memberB.page.getByTestId("undecryptable-item-banner"),
+      "a genuine decrypt failure on real, already-family-wide-resolved ciphertext must render through the EXISTING undecryptable path",
+    ).toBeVisible({ timeout: 60000 });
+
+    await expect(
+      memberB.page.getByTestId("item-row-pending-family-key"),
+      "a genuine decrypt failure must NEVER be mistaken for a pending grant -- 30-UI-SPEC.md's single most important honesty risk in this contract",
+    ).toHaveCount(0);
+    await expect(memberB.page.getByTestId("pending-family-key-detail")).toHaveCount(0);
+    await memberB.page.getByTestId("detail-panel-close").click();
   });
 });
