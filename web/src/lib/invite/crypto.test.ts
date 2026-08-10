@@ -108,8 +108,11 @@ const { mockEnsureOwnIdentityKeypair } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/identity/ensure", () => ({ ensureOwnIdentityKeypair: mockEnsureOwnIdentityKeypair }));
 
-const { mockGetCollection } = vi.hoisted(() => ({ mockGetCollection: vi.fn() }));
-vi.mock("@/lib/vault/api", () => ({ getCollection: mockGetCollection }));
+const { mockGetCollection, mockListCollections } = vi.hoisted(() => ({
+  mockGetCollection: vi.fn(),
+  mockListCollections: vi.fn(),
+}));
+vi.mock("@/lib/vault/api", () => ({ getCollection: mockGetCollection, listCollections: mockListCollections }));
 
 import {
   generateInviteLink,
@@ -138,6 +141,10 @@ beforeEach(() => {
     publicKeyBytes: () => new Uint8Array([7, 7, 7, 7]),
     free: vi.fn(),
   });
+  // Zero family-wide collections by default — every pre-existing test below
+  // (which predates 30-07) exercises the byte-identical-to-today path
+  // without needing to know this mock exists.
+  mockListCollections.mockResolvedValue([]);
 });
 
 describe("generateInviteLink", () => {
@@ -209,6 +216,130 @@ describe("generateInviteLink", () => {
     const channel = FakeInviteChannel.fromSecret(fragmentSecret);
     const unwrapped = channel.unwrapCollectionKey(createBody.wrapped_collection_key);
     expect(Array.from(unwrapped.bytes)).toEqual(Array.from(originalBytes));
+  });
+
+  it("family-only invite folds in every current family-wide collection's key, additively (30-07)", async () => {
+    const secret = fixedSecret(11);
+    mockGenerateInviteSecret.mockReturnValue(secret);
+    mockListCollections.mockResolvedValue([
+      {
+        id: "col-folder",
+        enc_name: "n",
+        created_at: "t",
+        access_level: "edit",
+        sealed_key: "sealed-folder",
+        family_wide_kind: "folder",
+      },
+      {
+        id: "col-bucket",
+        enc_name: "n",
+        created_at: "t",
+        access_level: "read",
+        sealed_key: "sealed-bucket",
+        family_wide_kind: "item_bucket",
+      },
+      // An ordinary, non-family-wide collection the caller also holds a key
+      // for — must be filtered out entirely.
+      {
+        id: "col-personal",
+        enc_name: "n",
+        created_at: "t",
+        access_level: "edit",
+        sealed_key: "sealed-personal",
+        family_wide_kind: null,
+      },
+    ]);
+    mockUnsealCollectionKey.mockImplementation((_identity: unknown, sealed: string) => {
+      if (sealed === "sealed-folder") return new FakeCollectionKey(new Uint8Array([1, 1, 1]));
+      if (sealed === "sealed-bucket") return new FakeCollectionKey(new Uint8Array([2, 2, 2]));
+      throw new Error(`unexpected sealed_key in test: ${sealed}`);
+    });
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      jsonResponse(201, { id: deriveInviteId(fixedSecret(11)), expires_at: "2026-08-07T00:00:00Z" }),
+    );
+
+    const result = await generateInviteLink({ kind: "family" }, "7d", FAKE_UK);
+
+    const createCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const createBody = JSON.parse(createCall[1].body as string) as {
+      collection_id: string | null;
+      family_wide_keys: Array<{ collection_id: string; access_level: string; wrapped_collection_key: string }>;
+    };
+    expect(createBody.collection_id).toBeNull();
+    expect(createBody.family_wide_keys).toHaveLength(2);
+    const byId = Object.fromEntries(createBody.family_wide_keys.map((e) => [e.collection_id, e]));
+    // access_level is the collection's OWN caller-held level, never
+    // hardcoded to "read" — the folder entry proves this (it's "edit").
+    expect(byId["col-folder"].access_level).toBe("edit");
+    expect(byId["col-bucket"].access_level).toBe("read");
+    expect(byId["col-personal"]).toBeUndefined();
+
+    // wrapped_collection_key is a REAL channel.wrapCollectionKey output —
+    // round-trips via the same channel reconstructed from the url fragment.
+    const url = new URL(result.url);
+    const fragmentSecret = base64UrlDecode(url.hash.slice(1));
+    const channel = FakeInviteChannel.fromSecret(fragmentSecret);
+    const unwrappedFolder = channel.unwrapCollectionKey(byId["col-folder"].wrapped_collection_key);
+    expect(Array.from(unwrappedFolder.bytes)).toEqual([1, 1, 1]);
+    const unwrappedBucket = channel.unwrapCollectionKey(byId["col-bucket"].wrapped_collection_key);
+    expect(Array.from(unwrappedBucket.bytes)).toEqual([2, 2, 2]);
+  });
+
+  it("zero family-wide collections: family_wide_keys is [] -- byte-identical to pre-30-07 behavior (30-07)", async () => {
+    const secret = fixedSecret(13);
+    mockGenerateInviteSecret.mockReturnValue(secret);
+    mockListCollections.mockResolvedValue([]);
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      jsonResponse(201, { id: deriveInviteId(fixedSecret(13)), expires_at: "2026-08-07T00:00:00Z" }),
+    );
+
+    await generateInviteLink({ kind: "family" }, "7d", FAKE_UK);
+
+    const createCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const createBody = JSON.parse(createCall[1].body as string) as { family_wide_keys: unknown[] };
+    expect(createBody.family_wide_keys).toEqual([]);
+  });
+
+  it("collection-scoped invite ALSO folds in family-wide keys when the caller holds them -- additive, never mutually exclusive (30-07)", async () => {
+    const secret = fixedSecret(17);
+    mockGenerateInviteSecret.mockReturnValue(secret);
+    const explicitBytes = new Uint8Array([4, 5, 6]);
+    mockGetCollection.mockResolvedValue({ sealed_key: "sealed-explicit" });
+    mockListCollections.mockResolvedValue([
+      {
+        id: "col-fw",
+        enc_name: "n",
+        created_at: "t",
+        access_level: "edit",
+        sealed_key: "sealed-fw",
+        family_wide_kind: "folder",
+      },
+    ]);
+    mockUnsealCollectionKey.mockImplementation((_identity: unknown, sealed: string) => {
+      if (sealed === "sealed-explicit") return new FakeCollectionKey(explicitBytes);
+      if (sealed === "sealed-fw") return new FakeCollectionKey(new Uint8Array([9, 9, 9]));
+      throw new Error(`unexpected sealed_key in test: ${sealed}`);
+    });
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      jsonResponse(201, { id: deriveInviteId(fixedSecret(17)), expires_at: "2026-08-07T00:00:00Z" }),
+    );
+
+    await generateInviteLink(
+      { kind: "collection", collectionId: "col-explicit", accessLevel: "edit" },
+      "1h",
+      FAKE_UK,
+    );
+
+    const createCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const createBody = JSON.parse(createCall[1].body as string) as {
+      collection_id: string;
+      wrapped_collection_key: string;
+      family_wide_keys: Array<{ collection_id: string }>;
+    };
+    expect(createBody.collection_id).toBe("col-explicit");
+    expect(createBody.wrapped_collection_key).toBeTruthy();
+    expect(createBody.family_wide_keys).toHaveLength(1);
+    expect(createBody.family_wide_keys[0].collection_id).toBe("col-fw");
   });
 });
 
