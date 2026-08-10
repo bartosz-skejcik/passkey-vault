@@ -6,15 +6,17 @@
 // getter that 30-12's reseal-trigger and 30-13's pending-row UI will both
 // read from, with `refreshFamilyWidePending()` as the ONLY caller of
 // `getFamilyWidePending()` (exactly one fetch per pull cycle).
+//
+// Single mock boundary for the whole file: `@/lib/auth/api`'s `apiJson` is
+// swapped for a controllable mock (mirrors rekey.test.ts's own
+// `importOriginal`-spread shape, so `ApiClientError`/`base64Encode`/etc. stay
+// real). Both describe blocks below drive `getFamilyWidePending()`'s
+// behavior through THIS one mock -- deliberately not also mocking `./api`
+// itself, since `vi.mock` calls are hoisted file-wide and a second mock of
+// the very module the first describe block imports directly would silently
+// shadow it for the whole file, not just its own describe.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// --- getFamilyWidePending() (families/api.ts) ---------------------------
-//
-// Mirrors rekey.test.ts's own mocking shape: `@/lib/auth/api` is mocked with
-// `importOriginal` spread so `ApiClientError`/`base64Encode`/etc. stay real,
-// with only `apiJson` swapped for a controllable mock -- this lets the test
-// drive the exact 200 / thrown-error behavior `getFamilyWidePending()` must
-// handle without hitting a real network call.
 const { mockApiJson } = vi.hoisted(() => ({
   mockApiJson: vi.fn(),
 }));
@@ -23,11 +25,12 @@ vi.mock("@/lib/auth/api", async (importOriginal) => ({
   apiJson: mockApiJson,
 }));
 
-describe("getFamilyWidePending() (families/api.ts)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+beforeEach(() => {
+  vi.resetModules();
+  vi.clearAllMocks();
+});
 
+describe("getFamilyWidePending() (families/api.ts)", () => {
   it("resolves to the typed {missing, resealable} shape on a 200", async () => {
     const response = {
       missing: [{ collection_id: "col-1", kind: "folder" }],
@@ -66,46 +69,32 @@ describe("getFamilyWidePending() (families/api.ts)", () => {
   });
 });
 
-// --- familyWidePending.ts's module-singleton store -----------------------
 describe("familyWidePending.ts store", () => {
-  const { mockGetFamilyWidePending } = vi.hoisted(() => ({
-    mockGetFamilyWidePending: vi.fn(),
-  }));
-  vi.mock("./api", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("./api")>()),
-    getFamilyWidePending: mockGetFamilyWidePending,
-  }));
-
-  beforeEach(() => {
-    vi.resetModules();
-    vi.clearAllMocks();
-  });
-
   it("getFamilyWidePendingSnapshot() returns the empty default synchronously, with zero prior awaits", async () => {
     const { getFamilyWidePendingSnapshot } = await import("./familyWidePending");
 
     expect(getFamilyWidePendingSnapshot()).toEqual({ missing: [], resealable: [] });
-    expect(mockGetFamilyWidePending).not.toHaveBeenCalled();
+    expect(mockApiJson).not.toHaveBeenCalled();
   });
 
-  it("refreshFamilyWidePending() calls getFamilyWidePending() exactly once and stores the result", async () => {
+  it("refreshFamilyWidePending() fetches exactly once per invocation and stores the result", async () => {
     const response = {
       missing: [{ collection_id: "col-1", kind: "item_bucket" }],
       resealable: [],
     };
-    mockGetFamilyWidePending.mockResolvedValue(response);
+    mockApiJson.mockResolvedValue(response);
 
     const { refreshFamilyWidePending, getFamilyWidePendingSnapshot } = await import(
       "./familyWidePending"
     );
     await refreshFamilyWidePending();
 
-    expect(mockGetFamilyWidePending).toHaveBeenCalledTimes(1);
+    expect(mockApiJson).toHaveBeenCalledTimes(1);
     expect(getFamilyWidePendingSnapshot()).toEqual(response);
   });
 
   it("refreshFamilyWidePending() notifies every subscribed listener", async () => {
-    mockGetFamilyWidePending.mockResolvedValue({ missing: [], resealable: [] });
+    mockApiJson.mockResolvedValue({ missing: [], resealable: [] });
 
     const { refreshFamilyWidePending, subscribeFamilyWidePending } = await import(
       "./familyWidePending"
@@ -118,7 +107,7 @@ describe("familyWidePending.ts store", () => {
   });
 
   it("an unsubscribed listener is never notified by a later refresh", async () => {
-    mockGetFamilyWidePending.mockResolvedValue({ missing: [], resealable: [] });
+    mockApiJson.mockResolvedValue({ missing: [], resealable: [] });
 
     const { refreshFamilyWidePending, subscribeFamilyWidePending } = await import(
       "./familyWidePending"
@@ -129,5 +118,15 @@ describe("familyWidePending.ts store", () => {
     await refreshFamilyWidePending();
 
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("a failing fetch resolves to the empty-arrays fallback (getFamilyWidePending's own fail-safe), never crashes the refresh", async () => {
+    mockApiJson.mockRejectedValue(new Error("network failure"));
+
+    const { refreshFamilyWidePending, getFamilyWidePendingSnapshot } = await import(
+      "./familyWidePending"
+    );
+    await expect(refreshFamilyWidePending()).resolves.toBeUndefined();
+    expect(getFamilyWidePendingSnapshot()).toEqual({ missing: [], resealable: [] });
   });
 });

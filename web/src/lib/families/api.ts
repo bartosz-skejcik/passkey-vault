@@ -133,6 +133,50 @@ export async function getFamilyMembers(): Promise<FamilyMemberRecord[] | null> {
   }
 }
 
+/** Wire shape of `GET /api/families/family-wide-pending`'s `missing` array
+ * entries -- a family-wide collection the caller lacks a `collection_keys`
+ * row for. Mirrors `families.rs`'s `PendingGrant` field-for-field (30-02):
+ * ids/kind only, no field capable of carrying `enc_name`/`sealed_key`. */
+export interface PendingGrant {
+  collection_id: string;
+  kind: string;
+}
+
+/** Wire shape of the same response's `resealable` array entries -- an
+ * (already-keyholder caller, active member lacking a key) pairing the
+ * caller could reseal. Mirrors `families.rs`'s `ResealableGrant`
+ * field-for-field (30-02): ids only. */
+export interface ResealableGrant {
+  collection_id: string;
+  recipient_user_id: string;
+}
+
+/** Mirrors `families.rs`'s `FamilyWidePendingResponse` field-for-field. */
+export interface FamilyWidePendingResponse {
+  missing: PendingGrant[];
+  resealable: ResealableGrant[];
+}
+
+/** `GET /api/families/family-wide-pending` -- FSH-02/FSH-05's narrow,
+ * additive discovery endpoint (30-02, 30-DECISION-FSH-02.md). Fail-safe by
+ * design: this is background sync data (30-06-PLAN.md's own behavior
+ * contract, consumed from `sync.ts`'s pull cycle), so ANY thrown error --
+ * network failure, 403 for a suspended member, 404 for a no-family account
+ * -- resolves to the empty-arrays shape instead of rejecting, matching this
+ * codebase's fail-safe-never-crash discipline for background sync data
+ * (mirrors how a single-user vault's `getSharedRevisions()` 404 is handled
+ * one layer up, in `sync.ts`, rather than swallowed here -- this function's
+ * OWN contract is simply "never throw", independent of that latch). */
+export async function getFamilyWidePending(): Promise<FamilyWidePendingResponse> {
+  try {
+    return await apiJson<FamilyWidePendingResponse>("/api/families/family-wide-pending", {
+      method: "GET",
+    });
+  } catch {
+    return { missing: [], resealable: [] };
+  }
+}
+
 /** `DELETE /api/auth/account` (Plan 25-06's `account::delete_account`) —
  * SessionUser-gated account deletion. `collections` is the caller-
  * constructed re-key batch from `families/rekey.ts`'s
