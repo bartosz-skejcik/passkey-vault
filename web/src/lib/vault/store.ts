@@ -18,6 +18,15 @@ import {
   type WasmUserKey,
 } from "@/lib/crypto";
 import { ensureOwnIdentityKeypair } from "@/lib/identity/ensure";
+// 30-13 (FSH-02): the lazy-reseal trigger's ONLY wiring point. It hangs off
+// the same syncCallbacks object every other cross-session signal already
+// flows through, so a family-wide grant pending for a newcomer is delivered
+// on the very next pull cycle of ANY current keyholder -- the sharer's own
+// session included (30-DECISION-FSH-02.md's refinement).
+import {
+  runFamilyWideResealTrigger,
+  resetFamilyWideResealAttempts,
+} from "@/lib/families/resealTrigger";
 import {
   clearCollectionsOnRemoval,
   getCollectionAccessLevel,
@@ -1427,6 +1436,19 @@ const syncCallbacks: SyncCallbacks = {
   // comment) is a genuine mid-session removal, not "no family" -- purge the
   // shared cache instead of leaving stale plaintext latched in.
   onRemovedFromFamily: purgeSharedStateOnRemoval,
+  // 30-13 (FSH-02): fire-and-forget, mirroring `onSharedRevisions`'s own
+  // "never awaited by pullOnce" contract -- a slow reseal (a WASM unwrap
+  // plus one POST per pending recipient) must never block the sync loop.
+  // `runFamilyWideResealTrigger` never rejects, so the `void` here discards
+  // nothing that could become an unhandled rejection. Locked sessions are
+  // skipped outright: the trigger needs a live User Key to unwrap the
+  // caller's own sealed_key with.
+  onFamilyWidePending: () => {
+    const uk = getUnlockedUserKey();
+    if (uk !== null) {
+      void runFamilyWideResealTrigger(uk);
+    }
+  },
 };
 
 subscribeLockState(() => {
@@ -1443,6 +1465,15 @@ subscribeLockState(() => {
     directRevisionWatermark = 0;
     collectionFailedMergeAttempts = new Map();
     directFailedMergeAttempts = 0;
+    // 30-13 (FSH-02): a new unlock is a new session for the reseal trigger
+    // too -- clear the attempted-pair set alongside the latches above, so a
+    // pair whose attempt failed transiently last session is re-attempted
+    // against this session's fresh snapshot rather than staying stranded.
+    // 30-13 (FSH-02): a new unlock is a new session for the reseal trigger
+    // too -- clear the attempted-pair set alongside the latches above, so a
+    // pair whose attempt failed transiently last session is re-attempted
+    // against this session's fresh snapshot rather than staying stranded.
+    resetFamilyWideResealAttempts();
     // CR-01 (code review, Phase 29): these used to be two independent,
     // unawaited fire-and-forget calls, with ONLY the first one (personal
     // items) ever setting `hydrated`. That let `hydrated === true` while

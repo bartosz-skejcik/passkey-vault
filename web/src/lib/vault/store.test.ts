@@ -32,6 +32,8 @@ const {
   mockEnsureOwnIdentityKeypair,
   mockMarkFamilyMembershipConfirmed,
   mockClearCollectionsOnRemoval,
+  mockRunFamilyWideResealTrigger,
+  mockResetFamilyWideResealAttempts,
 } = vi.hoisted(() => ({
   mockGetUnlockedUserKey: vi.fn(),
   mockIsUnlocked: vi.fn(),
@@ -60,6 +62,18 @@ const {
   mockEnsureOwnIdentityKeypair: vi.fn(),
   mockMarkFamilyMembershipConfirmed: vi.fn(),
   mockClearCollectionsOnRemoval: vi.fn(),
+  mockRunFamilyWideResealTrigger: vi.fn(),
+  mockResetFamilyWideResealAttempts: vi.fn(),
+}));
+
+// 30-13 (FSH-02): store.ts's new import. Mocked wholesale for the same
+// reason `@/lib/vault/collections` is -- this file tests store.ts's OWN
+// wiring (does the trigger hang off syncCallbacks, is it skipped while
+// locked, is its per-session set reset on unlock), not the trigger's
+// scheduling/dedup logic, which has its own file (families/resealTrigger.test.ts).
+vi.mock("@/lib/families/resealTrigger", () => ({
+  runFamilyWideResealTrigger: mockRunFamilyWideResealTrigger,
+  resetFamilyWideResealAttempts: mockResetFamilyWideResealAttempts,
 }));
 
 vi.mock("@/lib/crypto", () => ({
@@ -147,6 +161,8 @@ beforeEach(() => {
   // per-test.
   mockGetSharedRevisions.mockResolvedValue({ collections: [], direct: { revision: 0 } });
   mockRefreshCollectionsNow.mockResolvedValue(undefined);
+  // 30-13: the trigger is fire-and-forget in production — never rejects.
+  mockRunFamilyWideResealTrigger.mockResolvedValue(undefined);
 });
 
 /** Grabs the lock-state listener the store registered at import time via
@@ -2226,5 +2242,82 @@ describe("28-03 (Task 4): markFamilyMembershipConfirmed wiring + purgeSharedStat
       });
     });
     expect(mockGetCollectionSync).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 30-13 (FSH-02): the lazy-reseal trigger's wiring. Without these three,
+// `runFamilyWideResealTrigger` would be a tested capability nothing ever
+// reaches -- this project's signature defect shape (v0.4's cross-phase
+// audit, and this very phase's FamilyRekeyNotice).
+describe("30-13 (FSH-02): onFamilyWidePending wiring + per-unlock attempt reset", () => {
+  it("the unlock branch wires an onFamilyWidePending callback into the SAME syncCallbacks object onSharedRevisions/onRemovedFromFamily live in", async () => {
+    await unlockWithTwoItems();
+    const callbacks = getSyncCallbacks();
+
+    expect(callbacks.onFamilyWidePending).toBeTypeOf("function");
+    // The one object, not a second startSync call with its own callbacks.
+    expect(callbacks.onSharedRevisions).toBeTypeOf("function");
+    expect(callbacks.onRemovedFromFamily).toBeTypeOf("function");
+  });
+
+  it("invoking onFamilyWidePending while unlocked runs the reseal trigger with the CURRENT unlocked User Key", async () => {
+    const uk = {};
+    mockGetUnlockedUserKey.mockReturnValue(uk);
+    const { callbacks } = await unlockWithTwoItems();
+    mockGetUnlockedUserKey.mockReturnValue(uk);
+    mockRunFamilyWideResealTrigger.mockClear();
+
+    await act(async () => {
+      callbacks.onFamilyWidePending?.();
+      await Promise.resolve();
+    });
+
+    expect(mockRunFamilyWideResealTrigger).toHaveBeenCalledTimes(1);
+    expect(mockRunFamilyWideResealTrigger).toHaveBeenCalledWith(uk);
+  });
+
+  it("invoking onFamilyWidePending while LOCKED (no User Key) never runs the trigger", async () => {
+    const { callbacks } = await unlockWithTwoItems();
+    mockRunFamilyWideResealTrigger.mockClear();
+    // A lock landed between the pull's discovery round trip and this
+    // callback firing — there is no key to unwrap the caller's own
+    // sealed_key with.
+    mockGetUnlockedUserKey.mockReturnValue(null);
+
+    await act(async () => {
+      callbacks.onFamilyWidePending?.();
+      await Promise.resolve();
+    });
+
+    expect(mockRunFamilyWideResealTrigger).not.toHaveBeenCalled();
+  });
+
+  it("every unlock transition clears the trigger's per-session attempted-pair set", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    const { lockListener } = await importStoreAndGetLockListener();
+
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mockResetFamilyWideResealAttempts).toHaveBeenCalledTimes(1);
+
+    mockIsUnlocked.mockReturnValue(false);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+    });
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // A second unlock re-arms it — a pair whose reseal failed transiently
+    // last session is retried against this session's fresh snapshot.
+    expect(mockResetFamilyWideResealAttempts).toHaveBeenCalledTimes(2);
   });
 });
