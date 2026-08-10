@@ -1384,6 +1384,14 @@ export const DICTIONARY = {
     pl: `Cofnij dostęp {email} do „{item}"`,
     en: `Revoke {email}'s access to "{item}"`,
   },
+  // 30-05-PLAN.md Task 2 (FSH-04/FAM-10 "the sharer is told, quietly") --
+  // 30-UI-SPEC.md's Re-Key Notice Contract, verbatim. Deliberately generic
+  // (names no specific item/folder): a re-key batch may touch several items
+  // at once, and naming one out of the batch would misrepresent its scope.
+  "share.familyRekeyNotice": {
+    pl: "Jedna z Twoich udostępnionych pozycji została ponownie zaszyfrowana, bo skład rodziny się zmienił.",
+    en: "One of your shared items was re-encrypted because your family's membership changed.",
+  },
   "identity.yourFingerprintHeading": { pl: "Twój odcisk tożsamości", en: "Your identity fingerprint" },
   "identity.fingerprintRevealAria": {
     pl: "Pokaż odcisk tożsamości {email}",

@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 use uuid::Uuid;
 
-use super::membership::{FamilyMembership, RequireEdit, RequireRead};
+use super::membership::{ActiveFamilyMembership, FamilyMembership, RequireEdit, RequireRead};
 use super::session::SessionUser;
 use super::sync::{ChangeType, EntityType, SyncEvent};
 use super::vault::{bump_collection_revision, resolve_collection_members};
@@ -338,6 +338,104 @@ pub async fn member_access(
         .collect::<Result<Vec<_>, ApiError>>()?;
 
     Ok(Json(MemberAccessResponse { collections, item_shares }))
+}
+
+// --- Phase 30 Plan 02 (FSH-02/FSH-03): the narrow, additive family-wide-grant
+// discovery endpoint. This checkpoint:decision (30-02-PLAN.md Task 1)
+// selected `narrow-discovery-endpoint` over widening `Collection`/
+// `Item::resolve_access` (`membership.rs`) -- those two functions are this
+// codebase's sole, heavily-tested enforcement point for every revocation
+// guarantee shipped since Phase 22/25, and are NOT touched by this endpoint.
+
+/// One family-wide collection the CALLER lacks a `collection_keys` row for.
+/// Deliberately ids/kind only -- no `enc_name`, no `sealed_key`, no
+/// ciphertext field exists on this type to leak, on any path including the
+/// empty-result case (T-30-04).
+#[derive(Serialize)]
+pub struct PendingGrant {
+    pub collection_id: String,
+    pub kind: String,
+}
+
+/// One (family-wide collection, active member) pairing where the CALLER
+/// already holds a key and the named member does not -- i.e. a grant the
+/// caller COULD reseal. Deliberately ids only -- same T-30-04 discipline as
+/// `PendingGrant` above.
+#[derive(Serialize)]
+pub struct ResealableGrant {
+    pub collection_id: String,
+    pub recipient_user_id: String,
+}
+
+#[derive(Serialize)]
+pub struct FamilyWidePendingResponse {
+    pub missing: Vec<PendingGrant>,
+    pub resealable: Vec<ResealableGrant>,
+}
+
+/// `GET /api/families/family-wide-pending` -- FSH-02's narrow, additive
+/// discovery endpoint (30-DECISION-FSH-02.md; confirmed by this plan's
+/// checkpoint:decision, Task 1). Answers two questions `Collection`/
+/// `Item::resolve_access` were never designed to answer ("can I decrypt this
+/// resource right now") -- `missing`: which family-wide grants exist that the
+/// CALLER doesn't hold a key for; `resealable`, inverted: which active
+/// members lack a key for a family-wide collection the CALLER already holds
+/// one for, i.e. a grant the caller could reseal. `ActiveFamilyMembership<RequireRead>`-gated
+/// (T-30-03) -- a suspended/removed caller gets 403/404 before either query
+/// runs, exactly like every other family-scoped read. Both queries scope
+/// `family_id = ?` to the CALLER's own resolved `family_id` (T-30-05), never
+/// a client-supplied one, matching `member_access`'s own WR-03 discipline
+/// above.
+pub async fn family_wide_pending(
+    State(state): State<AppState>,
+    membership: ActiveFamilyMembership<RequireRead>,
+) -> Result<Json<FamilyWidePendingResponse>, ApiError> {
+    let missing_rows = sqlx::query(
+        "SELECT c.id, c.family_wide_kind FROM collections c \
+          WHERE c.family_id = ? AND c.family_wide_kind IS NOT NULL \
+            AND NOT EXISTS (SELECT 1 FROM collection_keys ck \
+                             WHERE ck.collection_id = c.id AND ck.recipient_user_id = ?)",
+    )
+    .bind(&membership.family_id)
+    .bind(&membership.caller_user_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let missing = missing_rows
+        .into_iter()
+        .map(|row| {
+            Ok(PendingGrant {
+                collection_id: row.try_get("id").map_err(|_| ApiError::Internal)?,
+                kind: row.try_get("family_wide_kind").map_err(|_| ApiError::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    let resealable_rows = sqlx::query(
+        "SELECT c.id AS collection_id, fm.user_id AS recipient_user_id \
+           FROM collections c JOIN family_members fm ON fm.family_id = c.family_id \
+          WHERE c.family_id = ? AND c.family_wide_kind IS NOT NULL AND fm.status = 'active' \
+            AND EXISTS (SELECT 1 FROM collection_keys ck \
+                        WHERE ck.collection_id = c.id AND ck.recipient_user_id = ?) \
+            AND NOT EXISTS (SELECT 1 FROM collection_keys ck2 \
+                             WHERE ck2.collection_id = c.id AND ck2.recipient_user_id = fm.user_id)",
+    )
+    .bind(&membership.family_id)
+    .bind(&membership.caller_user_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let resealable = resealable_rows
+        .into_iter()
+        .map(|row| {
+            Ok(ResealableGrant {
+                collection_id: row.try_get("collection_id").map_err(|_| ApiError::Internal)?,
+                recipient_user_id: row.try_get("recipient_user_id").map_err(|_| ApiError::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    Ok(Json(FamilyWidePendingResponse { missing, resealable }))
 }
 
 // --- Phase 25 (FAM-08/FAM-09/KEY-02/KEY-06/KEY-07): atomic member removal + re-key ---

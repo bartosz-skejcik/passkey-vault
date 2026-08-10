@@ -55,6 +55,36 @@ function notifyListeners(): void {
   listeners.forEach((listener) => listener());
 }
 
+// 30-05-PLAN.md Task 2 (FSH-04/FAM-10 "the sharer is told, quietly") -- a
+// SEPARATE listener registry from `listeners` above (which fires on every
+// refresh, changed or not). This one fires ONLY when an already-known
+// collection's raw `sealed_key` blob differs from what this module last saw
+// for that same id -- a sign a re-key just ran (the caller's own key was
+// unwrapped and re-sealed by another keyholder, per `rekey.ts`'s rotation).
+// Never fires for a collection id appearing for the first time (a brand-new
+// grant is not a re-key) -- see `lastSealedKeys` below.
+export type CollectionRekeyedListener = (collectionId: string) => void;
+const rekeyListeners = new Set<CollectionRekeyedListener>();
+
+export function onCollectionRekeyed(listener: CollectionRekeyedListener): () => void {
+  rekeyListeners.add(listener);
+  return () => {
+    rekeyListeners.delete(listener);
+  };
+}
+
+function notifyRekeyListeners(collectionId: string): void {
+  rekeyListeners.forEach((listener) => listener(collectionId));
+}
+
+// Module-private snapshot of each collection's RAW `sealed_key` blob, as of
+// the last completed refresh -- persists across refreshes (unlike `rows`,
+// which is re-fetched every call), since `collections` itself (the `Collection`
+// interface above) does not carry the raw sealed_key at all. This is the
+// only place that value survives between two calls, which is what makes a
+// diff against the PREVIOUS refresh possible.
+let lastSealedKeys = new Map<string, string>();
+
 export function getCollections(): Collection[] {
   return collections;
 }
@@ -209,6 +239,26 @@ async function refreshCollections(): Promise<void> {
         collectionKeys.delete(id);
       }
     }
+
+    // 30-05-PLAN.md Task 2: diff the PREVIOUS `sealed_key` snapshot against
+    // the freshly-fetched `rows`, BEFORE reassigning `collections` below.
+    // Fires the rekey-notice callback only for an id that was ALREADY in
+    // `lastSealedKeys` (an already-known collection) whose sealed_key value
+    // genuinely differs -- never for an id absent from the old map (a
+    // brand-new grant is not a re-key).
+    const previousSealedKeys = lastSealedKeys;
+    const nextSealedKeys = new Map<string, string>();
+    for (const row of rows) {
+      if (row.sealed_key !== null) {
+        nextSealedKeys.set(row.id, row.sealed_key);
+        const prior = previousSealedKeys.get(row.id);
+        if (prior !== undefined && prior !== row.sealed_key) {
+          notifyRekeyListeners(row.id);
+        }
+      }
+    }
+    lastSealedKeys = nextSealedKeys;
+
     collections = nextCollections;
     notifyListeners();
   } finally {

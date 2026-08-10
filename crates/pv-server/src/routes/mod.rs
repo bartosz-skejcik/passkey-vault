@@ -381,6 +381,14 @@ pub fn family_routes() -> Vec<(&'static str, axum::routing::MethodRouter<AppStat
         // rationale as remove_member/member_access.
         ("/api/families/members/{user_id}/suspend", post(families::suspend_member)),
         ("/api/families/members/{user_id}/reinstate", post(families::reinstate_member)),
+        // Phase 30 Plan 02 (FSH-02/FSH-03): the narrow, additive
+        // family-wide-grant discovery endpoint (30-DECISION-FSH-02.md,
+        // confirmed by this plan's checkpoint:decision, Task 1). Pathless
+        // (no `{id}` segment -- answers a question scoped to the CALLER's
+        // own resolved family), `ActiveFamilyMembership<RequireRead>`-gated
+        // -- same rationale as every other pathless family-scoped read
+        // above.
+        ("/api/families/family-wide-pending", get(families::family_wide_pending)),
     ]
 }
 
@@ -986,7 +994,7 @@ mod tests {
         assert_eq!(membership_routes().len(), 11);
         // bump this literal AND extend tests/membership_route_sweep.rs's
         // per-route id substitution when adding a new family-gated route
-        assert_eq!(family_routes().len(), 9);
+        assert_eq!(family_routes().len(), 10);
     }
 
     // --- Plan 22-05: zero-knowledge boundary audit + literal-route allowlist audit ---
