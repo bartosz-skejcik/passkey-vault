@@ -1706,3 +1706,427 @@ async fn invitation_create_with_family_wide_collection_caller_lacks_edit_on_reje
     let after_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invitations").fetch_one(&pool).await.unwrap();
     assert_eq!(before_count, after_count, "a not-held-edit-on entry must write zero invitations rows");
 }
+
+// --- 30-03-PLAN.md Task 2: accept() threads N self-seals into the SAME transaction ---
+
+/// `accept()` for an invite carrying BOTH the existing single-collection
+/// scope AND two family-wide keys grants all three atomically, inside one
+/// transaction: one `collection_keys` row per collection (matching each
+/// invite-promised `access_level`), plus the family-membership row —
+/// combined, not just the family-wide loop in isolation, proving Task 2's
+/// "SAME transaction as the existing single-collection grant" requirement.
+#[tokio::test]
+async fn invitation_accept_grants_single_collection_and_two_family_wide_collections_atomically() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-fw2-owner-1@example.com").await;
+    create_family(&app, &owner_token).await;
+    let (collection_single, collection_single_key) = create_collection(&app, &owner_token).await;
+    let (collection_fw1, _fw1_ck) =
+        create_collection_with_id(&app, &owner_token, "cccccccc-0000-4000-8000-000000000001").await;
+    let (collection_fw2, _fw2_ck) =
+        create_collection_with_id(&app, &owner_token, "cccccccc-0000-4000-8000-000000000002").await;
+
+    let secrets = derive_invite_secrets();
+    let wrapped = wrap_collection_key_for_invite(&secrets.secret, &secrets.invite_id, collection_single_key.expose())
+        .expect("wrap_collection_key_for_invite must succeed");
+    let wrapped_json = serde_json::to_string(&wrapped).unwrap();
+
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/invitations",
+        Some(&owner_token),
+        Some(json!({
+            "id": secrets.invite_id,
+            "collection_id": collection_single,
+            "access_level": "read",
+            "wrapped_collection_key": wrapped_json,
+            "proof_hash": secrets.proof_hash_b64,
+            "expires_in": "24h",
+            "family_wide_keys": [
+                { "collection_id": collection_fw1, "access_level": "edit", "wrapped_collection_key": "fake-fw1" },
+                { "collection_id": collection_fw2, "access_level": "read", "wrapped_collection_key": "fake-fw2" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+
+    let invitee_token = register_and_login(&app, "invite-fw2-invitee-1@example.com").await;
+    let invitee_user_id = user_id_of(&app, &invitee_token).await;
+
+    let metadata_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}", secrets.invite_id),
+        None,
+        Some(json!({ "invite_proof": secrets.invite_proof_b64 })),
+    )
+    .await;
+    assert_eq!(metadata_res.status(), StatusCode::OK);
+    let metadata_body = body_json(metadata_res).await;
+    let wrapped_json = metadata_body["wrapped_collection_key"].as_str().unwrap().to_string();
+    let wrapped: WrappedKey = serde_json::from_str(&wrapped_json).unwrap();
+    let decrypted_collection_key =
+        unwrap_collection_key_for_invite(&secrets.secret, &secrets.invite_id, &wrapped).unwrap();
+
+    let invitee_sk = IdentitySecretKey::generate();
+    let sealed_for_self = seal(&invitee_sk.public_key(), &decrypted_collection_key).unwrap();
+    let sealed_for_self_json = serde_json::to_string(&sealed_for_self).unwrap();
+
+    let accept_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}/accept", secrets.invite_id),
+        Some(&invitee_token),
+        Some(json!({
+            "invite_proof": secrets.invite_proof_b64,
+            "sealed_for_self": sealed_for_self_json,
+            "family_wide_sealed_keys": [
+                { "collection_id": collection_fw1, "sealed_for_self": "invitee-self-seal-fw1" },
+                { "collection_id": collection_fw2, "sealed_for_self": "invitee-self-seal-fw2" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(accept_res.status(), StatusCode::OK);
+
+    for (cid, expected_level) in
+        [(&collection_single, "read"), (&collection_fw1, "edit"), (&collection_fw2, "read")]
+    {
+        let row = sqlx::query(
+            "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+        )
+        .bind(cid)
+        .bind(&invitee_user_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        let row = row.unwrap_or_else(|| panic!("invitee must hold a collection_keys row for {cid}"));
+        let access_level: String = row.try_get("access_level").unwrap();
+        assert_eq!(access_level, expected_level, "collection {cid} must be granted its own promised access_level");
+    }
+
+    let member_row = sqlx::query("SELECT role FROM family_members WHERE user_id = ?")
+        .bind(&invitee_user_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(member_row.is_some(), "the family-membership insert must have landed in the same transaction");
+}
+
+/// A `family_wide_sealed_keys` entry with no matching `invitation_family_wide_keys`
+/// row for this invitation is silently ignored, not an error — the invitee
+/// only self-sealed what `fetch_metadata()` actually told them existed; a
+/// mismatched/forged `collection_id` cannot manufacture access to an
+/// unrelated collection (T-30-07). The REST of accept() still succeeds.
+#[tokio::test]
+async fn invitation_accept_ignores_family_wide_sealed_key_entry_with_no_matching_invitation_row() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-fw2-owner-2@example.com").await;
+    create_family(&app, &owner_token).await;
+    let (collection_named, _named_ck) =
+        create_collection_with_id(&app, &owner_token, "dddddddd-0000-4000-8000-000000000001").await;
+    // A collection the invitation NEVER named as family-wide — the caller
+    // still holds real edit on it (via ordinary ownership), but this
+    // invitation's own invitation_family_wide_keys rows never mention it.
+    let (collection_unrelated, _unrelated_ck) =
+        create_collection_with_id(&app, &owner_token, "dddddddd-0000-4000-8000-000000000002").await;
+
+    let secrets = derive_invite_secrets();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/invitations",
+        Some(&owner_token),
+        Some(json!({
+            "id": secrets.invite_id,
+            "collection_id": null,
+            "access_level": null,
+            "wrapped_collection_key": null,
+            "proof_hash": secrets.proof_hash_b64,
+            "expires_in": "24h",
+            "family_wide_keys": [
+                { "collection_id": collection_named, "access_level": "read", "wrapped_collection_key": "fake-named" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+
+    let invitee_token = register_and_login(&app, "invite-fw2-invitee-2@example.com").await;
+    let invitee_user_id = user_id_of(&app, &invitee_token).await;
+
+    let accept_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}/accept", secrets.invite_id),
+        Some(&invitee_token),
+        Some(json!({
+            "invite_proof": secrets.invite_proof_b64,
+            "family_wide_sealed_keys": [
+                { "collection_id": collection_named, "sealed_for_self": "invitee-self-seal-named" },
+                { "collection_id": collection_unrelated, "sealed_for_self": "invitee-self-seal-unrelated" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(accept_res.status(), StatusCode::OK, "a mismatched entry must never fail the whole accept() call");
+
+    let named_row = sqlx::query("SELECT 1 FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+        .bind(&collection_named)
+        .bind(&invitee_user_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(named_row.is_some(), "the entry the invitation DID name must still be granted");
+
+    let unrelated_row =
+        sqlx::query("SELECT 1 FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+            .bind(&collection_unrelated)
+            .bind(&invitee_user_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert!(
+        unrelated_row.is_none(),
+        "a collection_id this invitation never named as family-wide must never be granted, even if submitted"
+    );
+}
+
+/// One `family_wide_sealed_keys` entry referencing a `collection_id` with a
+/// PRE-EXISTING `collection_keys` row for this invitee (a race/retry): that
+/// ONE entry's insert returns a conflict and the WHOLE accept() call fails
+/// closed — an invite is never partially consumed. The family membership
+/// insert and any OTHER (non-conflicting) family-wide grant in the SAME
+/// request must roll back together with it.
+#[tokio::test]
+async fn invitation_accept_family_wide_conflict_on_one_entry_fails_the_whole_call_and_rolls_back() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-fw2-owner-3@example.com").await;
+    create_family(&app, &owner_token).await;
+    let (collection_ok, _ok_ck) =
+        create_collection_with_id(&app, &owner_token, "eeeeeeee-0000-4000-8000-000000000001").await;
+    let (collection_conflict, _conflict_ck) =
+        create_collection_with_id(&app, &owner_token, "eeeeeeee-0000-4000-8000-000000000002").await;
+
+    let secrets = derive_invite_secrets();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/invitations",
+        Some(&owner_token),
+        Some(json!({
+            "id": secrets.invite_id,
+            "collection_id": null,
+            "access_level": null,
+            "wrapped_collection_key": null,
+            "proof_hash": secrets.proof_hash_b64,
+            "expires_in": "24h",
+            "family_wide_keys": [
+                { "collection_id": collection_ok, "access_level": "read", "wrapped_collection_key": "fake-ok" },
+                { "collection_id": collection_conflict, "access_level": "read", "wrapped_collection_key": "fake-conflict" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+
+    let invitee_token = register_and_login(&app, "invite-fw2-invitee-3@example.com").await;
+    let invitee_user_id = user_id_of(&app, &invitee_token).await;
+
+    // Simulate the invitee already holding a key for `collection_conflict`
+    // (e.g. added separately before ever redeeming this invite).
+    sqlx::query(
+        "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) \
+         VALUES (?, ?, 'pre-existing-sealed-key', 'read')",
+    )
+    .bind(&collection_conflict)
+    .bind(&invitee_user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let accept_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}/accept", secrets.invite_id),
+        Some(&invitee_token),
+        Some(json!({
+            "invite_proof": secrets.invite_proof_b64,
+            "family_wide_sealed_keys": [
+                { "collection_id": collection_ok, "sealed_for_self": "invitee-self-seal-ok" },
+                { "collection_id": collection_conflict, "sealed_for_self": "invitee-self-seal-conflict" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(
+        accept_res.status(),
+        StatusCode::NOT_FOUND,
+        "a conflicting family-wide entry must fail the WHOLE accept() call"
+    );
+
+    let status: String = sqlx::query_scalar("SELECT status FROM invitations WHERE id = ?")
+        .bind(&secrets.invite_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "pending", "the invite must not be consumed by a failed accept()");
+
+    let ok_row = sqlx::query("SELECT 1 FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+        .bind(&collection_ok)
+        .bind(&invitee_user_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(ok_row.is_none(), "the NON-conflicting entry must roll back together with the conflicting one");
+
+    let member_row = sqlx::query("SELECT 1 FROM family_members WHERE user_id = ?")
+        .bind(&invitee_user_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(member_row.is_none(), "the family join must roll back together with the failed family-wide grant");
+}
+
+/// `accept()` with `family_wide_sealed_keys: []` (or the field entirely
+/// absent) behaves byte-identically to today: no `collection_keys` row is
+/// created beyond whatever the existing single-collection-scope grant (if
+/// any) already produces — this test uses a family-only invite, so ZERO
+/// `collection_keys` rows must exist afterward.
+#[tokio::test]
+async fn invitation_accept_with_no_family_wide_sealed_keys_matches_pre_existing_behavior() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-fw2-owner-4@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let secrets = derive_invite_secrets();
+    create_family_only_invitation(&app, &owner_token, &secrets).await;
+
+    let invitee_token = register_and_login(&app, "invite-fw2-invitee-4@example.com").await;
+    let invitee_user_id = user_id_of(&app, &invitee_token).await;
+
+    let accept_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}/accept", secrets.invite_id),
+        Some(&invitee_token),
+        Some(json!({ "invite_proof": secrets.invite_proof_b64 })),
+    )
+    .await;
+    assert_eq!(accept_res.status(), StatusCode::OK);
+
+    let key_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM collection_keys WHERE recipient_user_id = ?")
+        .bind(&invitee_user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(key_count, 0, "a family-only invite with no family_wide_sealed_keys must grant zero collection_keys rows");
+}
+
+/// Redeeming an invite carrying two family-wide keys fans out an
+/// `EntityType::Collection` `SyncEvent` for EACH newly-granted collection —
+/// not only the existing single-collection-scope one — to an existing member
+/// of both collections, over a real WebSocket connection.
+#[tokio::test]
+async fn accept_fans_out_a_collection_event_per_family_wide_collection_over_websocket() {
+    let pool = test_pool().await;
+    let (app, port) = test_server(pool.clone()).await;
+
+    let owner_token = register_and_login(&app, "invite-fw2-fanout-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let (collection_fw1, collection_fw1_key) =
+        create_collection_with_id(&app, &owner_token, "ffffffff-0000-4000-8000-000000000001").await;
+    let (collection_fw2, collection_fw2_key) =
+        create_collection_with_id(&app, &owner_token, "ffffffff-0000-4000-8000-000000000002").await;
+
+    // C: an existing member of BOTH family-wide collections, already holding
+    // `collection_keys` access before D ever redeems anything.
+    let member_c_token =
+        register_second_family_member(&app, &owner_token, "invite-fw2-fanout-member-c@example.com").await;
+    let member_c_user_id = user_id_of(&app, &member_c_token).await;
+    publish_keypair(&app, &member_c_token, 21).await;
+    let member_c_sk = IdentitySecretKey::generate();
+    for (cid, ck) in [(&collection_fw1, &collection_fw1_key), (&collection_fw2, &collection_fw2_key)] {
+        let member_c_sealed = seal(&member_c_sk.public_key(), ck.expose()).unwrap();
+        let add_member_res = req(
+            &app,
+            "POST",
+            &format!("/api/vault/collections/{cid}/members"),
+            Some(&owner_token),
+            Some(json!({
+                "recipient_user_id": member_c_user_id,
+                "sealed_key": serde_json::to_string(&member_c_sealed).unwrap(),
+                "access_level": "edit",
+            })),
+        )
+        .await;
+        assert_eq!(add_member_res.status(), StatusCode::CREATED);
+    }
+
+    let url_c = format!("ws://127.0.0.1:{}/api/sync/ws?token={}", port, url_encode_token(&member_c_token));
+    let (mut ws_stream_c, _) =
+        tokio_tungstenite::connect_async(&url_c).await.expect("C's token must upgrade the socket");
+
+    let secrets = derive_invite_secrets();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/invitations",
+        Some(&owner_token),
+        Some(json!({
+            "id": secrets.invite_id,
+            "collection_id": null,
+            "access_level": null,
+            "wrapped_collection_key": null,
+            "proof_hash": secrets.proof_hash_b64,
+            "expires_in": "24h",
+            "family_wide_keys": [
+                { "collection_id": collection_fw1, "access_level": "read", "wrapped_collection_key": "fake-fw1" },
+                { "collection_id": collection_fw2, "access_level": "read", "wrapped_collection_key": "fake-fw2" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+
+    let invitee_d_token = register_and_login(&app, "invite-fw2-fanout-invitee-d@example.com").await;
+
+    let accept_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}/accept", secrets.invite_id),
+        Some(&invitee_d_token),
+        Some(json!({
+            "invite_proof": secrets.invite_proof_b64,
+            "family_wide_sealed_keys": [
+                { "collection_id": collection_fw1, "sealed_for_self": "invitee-d-self-seal-fw1" },
+                { "collection_id": collection_fw2, "sealed_for_self": "invitee-d-self-seal-fw2" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(accept_res.status(), StatusCode::OK);
+
+    let frame_1 = recv_ws_json(&mut ws_stream_c).await;
+    let frame_2 = recv_ws_json(&mut ws_stream_c).await;
+    let mut seen_ids: Vec<String> =
+        vec![frame_1["id"].as_str().unwrap().to_string(), frame_2["id"].as_str().unwrap().to_string()];
+    seen_ids.sort();
+    let mut expected_ids: Vec<String> = vec![collection_fw1.clone(), collection_fw2.clone()];
+    expected_ids.sort();
+    assert_eq!(seen_ids, expected_ids, "C must receive exactly one Collection event per newly-granted collection");
+    assert_eq!(frame_1["entity_type"], "collection");
+    assert_eq!(frame_1["change_type"], "update");
+    assert_eq!(frame_2["entity_type"], "collection");
+    assert_eq!(frame_2["change_type"], "update");
+}

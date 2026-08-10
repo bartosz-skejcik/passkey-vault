@@ -125,6 +125,25 @@ pub struct AcceptInvitationRequest {
     /// (CONTEXT.md's locked constraint #2; the stored `invitations` row is
     /// the sole source of authority for everything else).
     pub sealed_for_self: Option<String>,
+    /// Additive sibling of `sealed_for_self` above (30-DECISION-FSH-02.md) —
+    /// the invitee's own self-sealed blob for every family-wide collection
+    /// key this invite carried. Filtered inside `accept()`'s own transaction
+    /// to only entries whose `collection_id` appears in THIS invitation's own
+    /// `invitation_family_wide_keys` rows (never trusted blindly from the
+    /// request) — an entry for a `collection_id` this invitation never named
+    /// is silently dropped, not an error.
+    #[serde(default)]
+    pub family_wide_sealed_keys: Vec<FamilyWideSealedKeyEntry>,
+}
+
+/// One family-wide collection's self-seal, submitted at accept-time.
+/// `access_level` is deliberately NOT part of this struct — the granted
+/// access_level is always read from the matching `invitation_family_wide_keys`
+/// row inside the transaction, never trusted from the request body.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FamilyWideSealedKeyEntry {
+    pub collection_id: String,
+    pub sealed_for_self: String,
 }
 
 #[derive(Serialize)]
@@ -496,7 +515,12 @@ pub async fn accept(
 
     let newly_inserted = families::insert_family_member(&mut *tx, &family_id, &session.user_id).await?;
 
-    let mut fanout: Option<(String, Vec<String>, i64)> = None;
+    // Every fan-out this accept() produces — the existing single-collection
+    // grant below (at most one) PLUS the family-wide loop further down (zero
+    // or more) — published together, AFTER commit, so a newly-added member's
+    // own SyncEvent never precedes the commit that actually granted it.
+    let mut fanouts: Vec<(String, Vec<String>, i64)> = Vec::new();
+
     if let Some(cid) = &collection_id {
         let sealed_for_self = req
             .sealed_for_self
@@ -537,12 +561,67 @@ pub async fn accept(
             .bind(cid)
             .fetch_one(&mut *tx)
             .await?;
-        fanout = Some((cid.clone(), members, revision));
+        fanouts.push((cid.clone(), members, revision));
+    }
+
+    // Family-wide loop (30-DECISION-FSH-02.md, 30-03-PLAN.md Task 2) — lives
+    // INSIDE this SAME transaction, never a second one. Fetch this
+    // invitation's OWN `invitation_family_wide_keys` set fresh, inside the
+    // transaction, and use it as the ONLY source of truth for both which
+    // `collection_id`s are legitimate (T-30-07: a client-submitted
+    // `collection_id` never trusted blindly) and which `access_level` to
+    // grant (never read from the request).
+    let family_wide_rows = sqlx::query(
+        "SELECT collection_id, access_level FROM invitation_family_wide_keys WHERE invitation_id = ?",
+    )
+    .bind(&id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut family_wide_access_by_collection: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for row in family_wide_rows {
+        let cid: String = row.try_get("collection_id").map_err(|_| ApiError::Internal)?;
+        let level: String = row.try_get("access_level").map_err(|_| ApiError::Internal)?;
+        family_wide_access_by_collection.insert(cid, level);
+    }
+
+    for entry in &req.family_wide_sealed_keys {
+        // Silently drop any entry whose collection_id is not one THIS
+        // invitation itself carried a family-wide wrap for — never an error,
+        // matching the behavior spec exactly (a mismatched/forged entry
+        // cannot manufacture access to an unrelated collection).
+        let Some(access_level_str) = family_wide_access_by_collection.get(&entry.collection_id) else {
+            continue;
+        };
+
+        validate_blob_len("sealed_for_self", &entry.sealed_for_self)?;
+
+        // Same conflict discipline as the existing single-collection branch
+        // above: on conflict, fail the WHOLE call (never partially consume
+        // the invite) — let `tx` drop uncommitted.
+        let key_inserted = collections::insert_collection_key(
+            &mut *tx,
+            &entry.collection_id,
+            &session.user_id,
+            &entry.sealed_for_self,
+            access_level_str,
+        )
+        .await?;
+        if !key_inserted {
+            return Err(ApiError::NotFound);
+        }
+
+        let members = vault::resolve_collection_members(&mut tx, &entry.collection_id).await?;
+        let revision: i64 = sqlx::query_scalar("SELECT revision FROM collections WHERE id = ?")
+            .bind(&entry.collection_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        fanouts.push((entry.collection_id.clone(), members, revision));
     }
 
     tx.commit().await?;
 
-    if let Some((cid, members, revision)) = fanout {
+    for (cid, members, revision) in fanouts {
         state.sync_hub.publish_to_recipients(
             &members,
             SyncEvent { entity_type: EntityType::Collection, id: cid, revision, change_type: ChangeType::Update },
