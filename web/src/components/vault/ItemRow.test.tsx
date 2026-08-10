@@ -664,3 +664,65 @@ describe("ItemRow family badge (30-11, FSH-01)", () => {
     expect(mockUseCollections).toHaveBeenCalled();
   });
 });
+
+// 30-15 (FSH-02): the pending-newcomer row. Built from the ids-only
+// discovery response alone -- there is no name, no type, no timestamp to
+// show, because the item's plaintext is (correctly) still unreachable for a
+// member who holds no Collection Key.
+describe("ItemRow pending-family-key state (30-15, FSH-02)", () => {
+  function pendingItem(): VaultItem {
+    return {
+      id: "pending-family-key:c9",
+      revision: 0,
+      pendingFamilyKey: true,
+      fields: { type: "note", name: "", body: "", folderId: null, tags: [] },
+    };
+  }
+
+  it("renders the generic pending anatomy -- placeholder name, explanation, and a neutral clock tile", () => {
+    render(<ItemRow item={pendingItem()} selected={false} onClick={vi.fn()} />);
+
+    const row = screen.getByTestId("item-row-pending-family-key");
+    expect(row).toBeInTheDocument();
+    // The locale mock returns the key itself: this asserts WHICH copy keys
+    // are used, so the strings can never be hardcoded past the i18n engine.
+    expect(screen.getByText("vault.pendingFamilyKeyItemName")).toBeInTheDocument();
+    expect(screen.getByText("vault.pendingFamilyKeyRow")).toBeInTheDocument();
+    expect(row.querySelector(".lucide-clock")).not.toBeNull();
+  });
+
+  it("shows no item-type icon tile, no sharing marker, no trailing metadata and no kebab -- there is no real item to describe or act on yet", () => {
+    mockIsFamilyWideCollection.mockReturnValue(true);
+    const item = { ...pendingItem(), updatedAt: "2026-07-14 12:00:00" };
+    const { container } = render(<ItemRow item={item} selected={false} onClick={vi.fn()} />);
+
+    // ItemIconTile's type glyphs (a note item would render a StickyNote).
+    expect(container.querySelector(".lucide-sticky-note")).toBeNull();
+    expect(screen.queryByTestId("item-row-family-badge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("avatar-stack")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("item-shared-with-you")).not.toBeInTheDocument();
+    // The trailing metadata slot is omitted ENTIRELY -- never populated with
+    // a stale or fake value. `updatedAt` above would otherwise render a
+    // relative time here.
+    expect(screen.queryByTestId(`item-menu-trigger-${item.id}`)).not.toBeInTheDocument();
+    expect(container.querySelector(".dropdown")).toBeNull();
+  });
+
+  it("is still selectable, so the detail panel's pending explanation is reachable", () => {
+    const onClick = vi.fn();
+    render(<ItemRow item={pendingItem()} selected={false} onClick={onClick} />);
+
+    fireEvent.click(screen.getByTestId("item-row-select-pending-family-key:c9"));
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("a genuinely undecryptable REAL item never renders the pending anatomy -- a decrypt failure is not dressed up as a calm wait", () => {
+    const broken: VaultItem = { ...loginItem(), undecryptable: true };
+    render(<ItemRow item={broken} selected={false} onClick={vi.fn()} />);
+
+    expect(screen.queryByTestId("item-row-pending-family-key")).not.toBeInTheDocument();
+    expect(screen.queryByText("vault.pendingFamilyKeyItemName")).not.toBeInTheDocument();
+    // Its existing retained-last-known-good rendering is untouched.
+    expect(screen.getByText("GitHub")).toBeInTheDocument();
+  });
+});

@@ -34,6 +34,8 @@ const {
   mockClearCollectionsOnRemoval,
   mockRunFamilyWideResealTrigger,
   mockResetFamilyWideResealAttempts,
+  mockGetFamilyWidePendingSnapshot,
+  mockSubscribeFamilyWidePending,
 } = vi.hoisted(() => ({
   mockGetUnlockedUserKey: vi.fn(),
   mockIsUnlocked: vi.fn(),
@@ -64,6 +66,19 @@ const {
   mockClearCollectionsOnRemoval: vi.fn(),
   mockRunFamilyWideResealTrigger: vi.fn(),
   mockResetFamilyWideResealAttempts: vi.fn(),
+  mockGetFamilyWidePendingSnapshot: vi.fn(),
+  mockSubscribeFamilyWidePending: vi.fn(),
+}));
+
+// 30-15 (FSH-02): store.ts's new read of the ids-only discovery snapshot.
+// Mocked wholesale for the same reason `@/lib/families/resealTrigger` is --
+// this file tests store.ts's OWN merge behavior (does a `missing` entry
+// become a synthetic row, does it disappear again, does a genuine
+// `undecryptable` item stay untouched), not the discovery store's own
+// fetch/notify logic (30-06's familyWidePending.test.ts owns that).
+vi.mock("@/lib/families/familyWidePending", () => ({
+  getFamilyWidePendingSnapshot: mockGetFamilyWidePendingSnapshot,
+  subscribeFamilyWidePending: mockSubscribeFamilyWidePending,
 }));
 
 // 30-13 (FSH-02): store.ts's new import. Mocked wholesale for the same
@@ -163,7 +178,23 @@ beforeEach(() => {
   mockRefreshCollectionsNow.mockResolvedValue(undefined);
   // 30-13: the trigger is fire-and-forget in production — never rejects.
   mockRunFamilyWideResealTrigger.mockResolvedValue(undefined);
+  // 30-15: the "no family-wide grant is pending anywhere" default -- every
+  // PRE-EXISTING test in this file sees the exact item list it did before
+  // synthetic pending rows existed.
+  mockGetFamilyWidePendingSnapshot.mockReturnValue({ missing: [], resealable: [] });
+  mockSubscribeFamilyWidePending.mockReturnValue(() => {});
 });
+
+/** 30-15: the listener store.ts registered on the discovery store at import
+ * time — the handle tests use to simulate "a pull cycle just refreshed the
+ * family-wide-pending snapshot". */
+function getFamilyWidePendingListener(): () => void {
+  const listener = mockSubscribeFamilyWidePending.mock.calls[0]?.[0] as (() => void) | undefined;
+  if (!listener) {
+    throw new Error("store.ts never subscribed to the family-wide-pending store");
+  }
+  return listener;
+}
 
 /** Grabs the lock-state listener the store registered at import time via
  * subscribeLockState — used to simulate unlock/lock events in tests. */
@@ -2319,5 +2350,189 @@ describe("30-13 (FSH-02): onFamilyWidePending wiring + per-unlock attempt reset"
     // A second unlock re-arms it — a pair whose reseal failed transiently
     // last session is retried against this session's fresh snapshot.
     expect(mockResetFamilyWideResealAttempts).toHaveBeenCalledTimes(2);
+  });
+});
+
+// 30-15 (FSH-02): the recipient-side half of the honesty contract. A
+// newcomer holds no Collection Key, so `Collection::resolve_access` 404s
+// every listing for that collection -- the ONLY thing this client knows
+// about the grant is the ids-only `missing` list from the discovery
+// endpoint. These rows are therefore built from ids alone, and are a
+// SEPARATE, independently-checked condition from `undecryptable` (which
+// means "a prior successful decrypt exists"), never a second meaning
+// bolted onto that flag.
+describe("30-15 (FSH-02): synthetic pending-family-key rows in the merged item list", () => {
+  it("merges one synthetic pending row per missing grant, with a collision-proof id and no fabricated metadata", async () => {
+    const { store } = await unlockWithTwoItems();
+
+    mockGetFamilyWidePendingSnapshot.mockReturnValue({
+      missing: [{ collection_id: "c9", kind: "folder" }],
+      resealable: [],
+    });
+    act(() => {
+      getFamilyWidePendingListener()();
+    });
+
+    const pending = store.getItems().filter((i) => i.pendingFamilyKey === true);
+    expect(pending).toHaveLength(1);
+    expect(pending[0].id).toBe("pending-family-key:c9");
+    // Never derived from any real data: the item's real name lives inside
+    // still-undecryptable `enc_data`, and the ids-only discovery response
+    // carries no `updated_at`/`last_used_at` to show in the trailing slot.
+    expect(pending[0].fields.name).toBe("");
+    expect(pending[0].updatedAt).toBeUndefined();
+    expect(pending[0].lastUsedAt).toBeUndefined();
+    // Distinct from a decrypt failure, in the data as well as the UI.
+    expect(pending[0].undecryptable).toBeUndefined();
+    // Injected into the SAME array real rows live in, not a parallel list.
+    expect(store.getItems()).toHaveLength(3);
+    expect(store.getItems().map((i) => i.id)).toContain("item-1");
+  });
+
+  it("drops the synthetic row on the SAME merge pass its backing missing entry disappears (the key arrived)", async () => {
+    const { store } = await unlockWithTwoItems();
+
+    mockGetFamilyWidePendingSnapshot.mockReturnValue({
+      missing: [{ collection_id: "c9", kind: "folder" }],
+      resealable: [],
+    });
+    act(() => {
+      getFamilyWidePendingListener()();
+    });
+    expect(store.getItems().some((i) => i.id === "pending-family-key:c9")).toBe(true);
+
+    mockGetFamilyWidePendingSnapshot.mockReturnValue({ missing: [], resealable: [] });
+    act(() => {
+      getFamilyWidePendingListener()();
+    });
+
+    expect(store.getItems().some((i) => i.pendingFamilyKey === true)).toBe(false);
+    expect(store.getItems()).toHaveLength(2);
+  });
+
+  it("a genuinely undecryptable REAL item is completely unaffected -- it keeps the existing retained-last-known-good path and never gains the pending discriminant", async () => {
+    const { store, callbacks } = await unlockWithTwoItems();
+
+    mockDecryptItem.mockImplementation((_uk: unknown, _combined: string, id: string) => {
+      if (id === "item-2") {
+        throw new Error("AEAD authentication failed");
+      }
+      return NOTE_PLAINTEXT;
+    });
+    act(() => {
+      callbacks.onSnapshot({
+        revision: 5,
+        items: [
+          {
+            id: "item-1",
+            enc_key: "{}",
+            enc_data: "{}",
+            revision: 1,
+            updated_at: "2026-07-14 12:00:00",
+            last_used_at: null,
+            is_shared: false,
+            collection_id: null,
+            last_editor_email: null,
+          },
+          {
+            id: "item-2",
+            enc_key: "{}",
+            enc_data: "{}",
+            revision: 2,
+            updated_at: "2026-07-14 12:00:00",
+            last_used_at: null,
+            is_shared: false,
+            collection_id: null,
+            last_editor_email: null,
+          },
+        ],
+        folders: [],
+      });
+    });
+    // A pending grant exists at the same time -- the two conditions must not
+    // contaminate each other in either direction.
+    mockGetFamilyWidePendingSnapshot.mockReturnValue({
+      missing: [{ collection_id: "c9", kind: "folder" }],
+      resealable: [],
+    });
+    act(() => {
+      getFamilyWidePendingListener()();
+    });
+
+    const broken = store.getItems().find((i) => i.id === "item-2");
+    expect(broken?.undecryptable).toBe(true);
+    expect(broken?.pendingFamilyKey).toBeUndefined();
+    const pending = store.getItems().find((i) => i.id === "pending-family-key:c9");
+    expect(pending?.pendingFamilyKey).toBe(true);
+    expect(pending?.undecryptable).toBeUndefined();
+  });
+
+  it("FSH-02 empty (edge-probe): a newcomer joining a family with ZERO family-wide shares gets no synthetic row at all", async () => {
+    const { store } = await unlockWithTwoItems();
+
+    mockGetFamilyWidePendingSnapshot.mockReturnValue({ missing: [], resealable: [] });
+    act(() => {
+      getFamilyWidePendingListener()();
+    });
+
+    expect(store.getItems().some((i) => i.pendingFamilyKey === true)).toBe(false);
+    expect(store.getItems()).toHaveLength(2);
+  });
+
+  it("suppresses the synthetic row for a collection that ALREADY has a real decrypted row (a momentarily stale discovery snapshot never doubles an item up)", async () => {
+    const { store, callbacks } = await unlockWithTwoItems();
+
+    mockGetCollectionKey.mockReturnValue({});
+    mockDecryptItemForCollection.mockReturnValue(NOTE_PLAINTEXT);
+    act(() => {
+      callbacks.onSnapshot({
+        revision: 6,
+        items: [
+          {
+            id: "item-in-c9",
+            enc_key: "{}",
+            enc_data: "{}",
+            revision: 1,
+            updated_at: "2026-07-14 12:00:00",
+            last_used_at: null,
+            is_shared: true,
+            collection_id: "c9",
+            last_editor_email: null,
+          },
+        ],
+        folders: [],
+      });
+    });
+    mockGetFamilyWidePendingSnapshot.mockReturnValue({
+      missing: [{ collection_id: "c9", kind: "folder" }],
+      resealable: [],
+    });
+    act(() => {
+      getFamilyWidePendingListener()();
+    });
+
+    expect(store.getItems().some((i) => i.pendingFamilyKey === true)).toBe(false);
+    expect(store.getItems().map((i) => i.id)).toEqual(["item-in-c9"]);
+  });
+
+  it("clears synthetic pending rows on lock, exactly like every real item source", async () => {
+    const { store, lockListener } = await unlockWithTwoItems();
+
+    mockGetFamilyWidePendingSnapshot.mockReturnValue({
+      missing: [{ collection_id: "c9", kind: "folder" }],
+      resealable: [],
+    });
+    act(() => {
+      getFamilyWidePendingListener()();
+    });
+    expect(store.getItems().some((i) => i.pendingFamilyKey === true)).toBe(true);
+
+    mockIsUnlocked.mockReturnValue(false);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+    });
+
+    expect(store.getItems()).toEqual([]);
   });
 });
