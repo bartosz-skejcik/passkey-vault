@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MoreVertical, Share2 } from "lucide-react";
+import { MoreVertical, Share2, Users } from "lucide-react";
 import type { ItemType, VaultItem } from "@/lib/vault/types";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
@@ -11,6 +11,7 @@ import DeleteConfirmDialog from "./DeleteConfirmDialog";
 import TotpCountdownRing from "./TotpCountdownRing";
 import ItemIconTile from "./ItemIconTile";
 import AvatarStack from "./AvatarStack";
+import { isFamilyWideCollection, useCollections } from "@/lib/vault/collections";
 
 const TYPE_LABEL_KEY: Record<ItemType, keyof typeof DICTIONARY> = {
   login: "itemType.login",
@@ -49,6 +50,18 @@ export default function ItemRow({
   onEditRequest?: (item: VaultItem) => void;
 }) {
   const { t, locale } = useLocale();
+  // 30-11 (FSH-01): subscribes this row to the collections store WITHOUT
+  // reading its value — `isFamilyWideCollection` below reads the same store
+  // synchronously, so the array itself is never needed here. The subscription
+  // is what keeps the badge from being merely "correct once": `collections`
+  // is populated by an async refresh that can land AFTER the item list has
+  // already painted (items and collections are two independent unlock-time
+  // fetches with no ordering between them), and a plain module-function read
+  // in the render body does not re-run on its own. Without this, a family-wide
+  // item could render badge-less until some unrelated state change forced a
+  // re-render — true in a test that renders after the store is primed, false
+  // in the running app.
+  useCollections();
   const typeLabel = t(TYPE_LABEL_KEY[item.fields.type]);
   // Proton Pass-inspired passkey row (Bartek live-review): the site (rpId)
   // is the primary text, the account (username, falling back to the
@@ -151,7 +164,21 @@ export default function ItemRow({
           recipient stack — doing so told the user "you are sharing this
           with X" about an item a third party owns, and additionally fired a
           `listItemShares` fetch whose results were then attributed to the
-          caller. It gets a direction-naming marker instead. */}
+          caller. It gets a direction-naming marker instead.
+
+          30-11 (FSH-01): a THIRD branch sits between those two — an item in a
+          family-wide collection gets a single `Users` badge INSTEAD OF
+          AvatarStack, never alongside it. The locked decision (30-CONTEXT.md):
+          "a five-person family rendered as five avatars is indistinguishable
+          from five separate per-person shares," so the family case must be one
+          marker with its own shape, not N circles. Placed AFTER the
+          `sharedToMe` branch on purpose — that recipient-side marker is
+          untouched by this phase (VIS-02 leaves the recipient view to Phase
+          34), so a family-wide item shared TO this caller still renders exactly
+          today's `item-shared-with-you` marker; being inside this chain's
+          `else` is itself the "owner side only" guard. Its input is a
+          synchronous store lookup, never `useShareRecipients` — the badge has
+          no fetch of its own and so no loading or error state to get wrong. */}
       {item.sharedToMe === true ? (
         <span
           data-testid="item-shared-with-you"
@@ -161,6 +188,16 @@ export default function ItemRow({
           className="inline-flex shrink-0 items-center text-secondary"
         >
           <Share2 size={14} aria-hidden="true" />
+        </span>
+      ) : isFamilyWideCollection(item.collectionId) ? (
+        <span
+          data-testid="item-row-family-badge"
+          role="img"
+          aria-label={t("vault.familyBadgeAria")}
+          title={t("vault.familyBadgeAria")}
+          className="inline-flex shrink-0 items-center text-secondary"
+        >
+          <Users size={14} aria-hidden="true" />
         </span>
       ) : item.isShared === true ? (
         <span className="shrink-0">

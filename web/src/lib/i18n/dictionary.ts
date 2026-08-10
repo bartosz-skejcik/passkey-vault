@@ -215,6 +215,16 @@ export const DICTIONARY = {
   // dedicated template key.
   "vault.tagFilterHeading": { pl: "Tag: {tag}", en: "Tag: {tag}" },
 
+  // 30-UI-SPEC.md (FSH-01): accessible name for the item-list family badge —
+  // the `Users` marker that REPLACES AvatarStack on an owner-side family-wide
+  // item. Carries no count and no interpolation at all: the whole point of the
+  // badge is that "the whole family" is one fact, not N people, so there is no
+  // number here to govern a declined noun.
+  "vault.familyBadgeAria": {
+    pl: "Udostępnione całej rodzinie",
+    en: "Shared with the whole family",
+  },
+
   // Per-item last-used tracking sort control (quick-260717, NordPass-style)
   // — sits in the header area next to the dynamic heading above.
 

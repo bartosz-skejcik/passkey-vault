@@ -10,6 +10,7 @@ const {
   mockShowCopyToast,
   mockTotpNow,
   mockUseCollections,
+  mockIsFamilyWideCollection,
   mockGetCollectionAccessList,
   mockListItemShares,
 } = vi.hoisted(() => ({
@@ -21,6 +22,7 @@ const {
   mockShowCopyToast: vi.fn(),
   mockTotpNow: vi.fn(),
   mockUseCollections: vi.fn(),
+  mockIsFamilyWideCollection: vi.fn(),
   mockGetCollectionAccessList: vi.fn(),
   mockListItemShares: vi.fn(),
 }));
@@ -51,8 +53,12 @@ vi.mock("@/lib/crypto", () => ({
 // DetailPanel.test.tsx's identical mock) avoids loading the real module at
 // all, matching this file's existing "mock what a transitively-rendered
 // child needs" convention.
+// 30-11 (FSH-01): ItemRow now also reads `isFamilyWideCollection` from this
+// same module (the family badge's synchronous, zero-fetch input) — mocked
+// here alongside `useCollections` because this module is mocked WHOLESALE.
 vi.mock("@/lib/vault/collections", () => ({
   useCollections: mockUseCollections,
+  isFamilyWideCollection: mockIsFamilyWideCollection,
 }));
 
 // ShareDialog (opened by ItemContextMenu's new Share entry, Plan 26-09) is
@@ -100,6 +106,9 @@ beforeEach(() => {
   mockUseFolders.mockReturnValue([]);
   mockTotpNow.mockReturnValue({ code: "123456", secondsRemaining: 20 });
   mockUseCollections.mockReturnValue([]);
+  // Default: nothing is family-wide, so every pre-existing expectation in this
+  // file describes the exact behavior it did before the badge existed.
+  mockIsFamilyWideCollection.mockReturnValue(false);
 });
 
 function loginItem(overrides: Partial<LoginFields> = {}): VaultItem {
@@ -535,5 +544,123 @@ describe("ItemRow AvatarStack wiring (D-3/E5, Plan 26-09)", () => {
     expect(mockGetCollectionAccessList).toHaveBeenCalledTimes(1);
     expect(mockGetCollectionAccessList).toHaveBeenCalledWith("col-many");
     expect(mockListItemShares).not.toHaveBeenCalled();
+  });
+});
+
+// 30-11-PLAN.md Task 2 (FSH-01, 30-UI-SPEC.md "Family badge"): an owner-side
+// item in a family-wide collection gets ONE `Users` badge INSTEAD OF
+// AvatarStack -- never alongside it, and never N avatars. AvatarStack is
+// rendered for real in this file (only its underlying "@/lib/vault/api" fetch
+// is mocked), so "AvatarStack is absent" here is a genuine absence, not a
+// mocked-away one; and because AvatarStack's own recipient fetch is what these
+// tests assert never fires, the badge's "no fetch by construction" claim is
+// checked at the real call site rather than asserted in prose.
+describe("ItemRow family badge (30-11, FSH-01)", () => {
+  const FAMILY_COLLECTION = "col-family-wide";
+
+  beforeEach(() => {
+    // A real implementation, not a blanket `true`: only THIS collection is
+    // family-wide, so a test that renders an item in another collection (or in
+    // none at all) exercises the false path for real.
+    mockIsFamilyWideCollection.mockImplementation((id: unknown) => id === FAMILY_COLLECTION);
+  });
+
+  it("renders the family badge, and NOT AvatarStack, for an owner-side item in a family-wide collection", async () => {
+    mockGetCollectionAccessList.mockResolvedValue([
+      { user_id: "u1", email: "anna@example.com", access_level: "read", created_at: "t", suspended: false },
+    ]);
+    const familyItem: VaultItem = {
+      ...loginItem(),
+      isShared: true,
+      collectionId: FAMILY_COLLECTION,
+    };
+    render(<ItemRow item={familyItem} selected={false} onClick={vi.fn()} />);
+
+    expect(screen.getByTestId("item-row-family-badge")).toBeInTheDocument();
+    expect(screen.queryByTestId("avatar-stack")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("avatar-stack-circle")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("avatar-stack-icon")).not.toBeInTheDocument();
+    // The "not N avatars" decision is not merely a rendering choice -- nothing
+    // asynchronous may resolve into avatars a moment later either.
+    await waitFor(() => expect(screen.getByTestId("item-row-family-badge")).toBeInTheDocument());
+    expect(screen.queryByTestId("avatar-stack")).not.toBeInTheDocument();
+  });
+
+  it("the family badge fires no recipient fetch of its own -- it has no loading or error state to get wrong", () => {
+    mockGetCollectionAccessList.mockReturnValue(new Promise(() => {})); // never resolves
+    const familyItem: VaultItem = {
+      ...loginItem(),
+      isShared: true,
+      collectionId: FAMILY_COLLECTION,
+    };
+    render(<ItemRow item={familyItem} selected={false} onClick={vi.fn()} />);
+
+    // Rendered fully on first paint despite a recipient fetch that would never
+    // resolve -- because no such fetch was ever issued.
+    expect(screen.getByTestId("item-row-family-badge")).toBeInTheDocument();
+    expect(mockGetCollectionAccessList).not.toHaveBeenCalled();
+    expect(mockListItemShares).not.toHaveBeenCalled();
+  });
+
+  it("an item shared with specific people (not family-wide) still renders AvatarStack and no family badge", async () => {
+    mockGetCollectionAccessList.mockResolvedValue([
+      { user_id: "u1", email: "anna@example.com", access_level: "read", created_at: "t", suspended: false },
+    ]);
+    const sharedItem: VaultItem = { ...loginItem(), isShared: true, collectionId: "col-ordinary" };
+    render(<ItemRow item={sharedItem} selected={false} onClick={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByTestId("avatar-stack")).toBeInTheDocument());
+    expect(screen.queryByTestId("item-row-family-badge")).not.toBeInTheDocument();
+  });
+
+  it("a personal item in no collection renders neither the family badge nor AvatarStack", () => {
+    render(<ItemRow item={loginItem()} selected={false} onClick={vi.fn()} />);
+
+    expect(screen.queryByTestId("item-row-family-badge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("avatar-stack")).not.toBeInTheDocument();
+  });
+
+  // VIS-02: the recipient side is Phase 34's job and is untouched here. A
+  // family-wide item shared TO this caller keeps today's marker exactly.
+  it("a sharedToMe item keeps the shared-with-you marker and never shows the family badge, even when its collection IS family-wide", () => {
+    const receivedItem: VaultItem = {
+      ...loginItem(),
+      sharedToMe: true,
+      isShared: true,
+      collectionId: FAMILY_COLLECTION,
+    };
+    render(<ItemRow item={receivedItem} selected={false} onClick={vi.fn()} />);
+
+    expect(screen.getByTestId("item-shared-with-you")).toBeInTheDocument();
+    expect(screen.queryByTestId("item-row-family-badge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("avatar-stack")).not.toBeInTheDocument();
+  });
+
+  it("the family badge is keyed on the item's OWN collectionId and carries the vault.familyBadgeAria accessible name", () => {
+    const familyItem: VaultItem = {
+      ...loginItem(),
+      isShared: true,
+      collectionId: FAMILY_COLLECTION,
+    };
+    render(<ItemRow item={familyItem} selected={false} onClick={vi.fn()} />);
+
+    expect(mockIsFamilyWideCollection).toHaveBeenCalledWith(FAMILY_COLLECTION);
+    const badge = screen.getByTestId("item-row-family-badge");
+    expect(badge).toHaveAttribute("role", "img");
+    // The locale mock returns the key itself, so this asserts WHICH key is
+    // used -- the aria-label is never a hardcoded string.
+    expect(badge).toHaveAttribute("aria-label", "vault.familyBadgeAria");
+    expect(badge).toHaveAttribute("title", "vault.familyBadgeAria");
+  });
+
+  // The badge's input is a plain synchronous module lookup, which does not
+  // re-run on its own when the collections store later refreshes. The row must
+  // therefore SUBSCRIBE to that store, or a family-wide item whose collection
+  // metadata lands after the list paints would stay badge-less in the running
+  // app while every test that primes the store first still passed.
+  it("the family badge's row subscribes to the collections store, so late-arriving metadata is not missed", () => {
+    render(<ItemRow item={loginItem()} selected={false} onClick={vi.fn()} />);
+
+    expect(mockUseCollections).toHaveBeenCalled();
   });
 });

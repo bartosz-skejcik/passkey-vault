@@ -137,8 +137,18 @@ describe("collections.ts: list, decrypt names, cache unwrapped Collection Keys (
       // this store — `collections::list` always returned it, and without it
       // no collection-scoped item had an access level anywhere in the
       // client, so `hidden_password` could not be honoured on any surface.
+      // 30-11 Task 1: `familyWideKind` is asserted here as `null` rather than
+      // the assertion being loosened to `objectContaining` — this fixture row
+      // carries no `family_wide_kind` at all, and the store's contract is that
+      // an ABSENT wire field normalizes to `null`, not `undefined`. A
+      // whole-object `toEqual` is what makes that normalization observable.
       expect(getCollections()).toEqual([
-        { id: "collection-fixture-1", name: "Real Shared Family Folder", accessLevel: "edit" },
+        {
+          id: "collection-fixture-1",
+          name: "Real Shared Family Folder",
+          accessLevel: "edit",
+          familyWideKind: null,
+        },
       ]);
       expect(getCollectionKey("collection-fixture-1")).toBeDefined();
       expect(getCollectionAccessLevel("collection-fixture-1")).toBe("edit");
