@@ -333,7 +333,25 @@ describe("lock/unlock subscription behavior", () => {
 // this via `useItemsHydrated()` to avoid ever presenting a confirmed-zero
 // hidden-password count against an unhydrated store. Mirrors
 // `lib/crypto/index.test.ts`'s own `useIsUnlocked()` renderHook coverage.
+//
+// CR-01 (code review, Phase 29): `hydrated` now waits on BOTH the personal
+// (`loadAndDecryptAll`) AND shared (`refreshSharedItemsNow`/
+// `getSharedRevisions`) pipelines, not personal alone -- their combined
+// `Promise.allSettled(...)` chain is one microtask hop deeper than the old
+// single-`.then()` implementation, so these tests flush a GENEROUS number of
+// microtask ticks (`flushHydration()`) rather than a hand-counted exact
+// depth, which would silently go stale the next time either pipeline's own
+// internal chain length changes.
 describe("hydration signal (isItemsHydrated/useItemsHydrated)", () => {
+  /** Drains the microtask queue far enough to settle CR-01's two-pipeline
+   * unlock-branch chain. Deliberately generous (12 hops) rather than a
+   * hand-counted exact depth. */
+  async function flushHydration(): Promise<void> {
+    for (let i = 0; i < 12; i += 1) {
+      await Promise.resolve();
+    }
+  }
+
   it("isItemsHydrated() is false before any unlock event fires", async () => {
     const { store } = await importStoreAndGetLockListener();
     expect(store.isItemsHydrated()).toBe(false);
@@ -361,10 +379,44 @@ describe("hydration signal (isItemsHydrated/useItemsHydrated)", () => {
     mockIsUnlocked.mockReturnValue(true);
     await act(async () => {
       lockListener();
-      await Promise.resolve();
-      await Promise.resolve();
+      await flushHydration();
     });
     expect(store.isItemsHydrated()).toBe(true);
+  });
+
+  // CR-01 (code review, Phase 29): the falsification test that would have
+  // failed against the PRE-FIX code. Under the old implementation,
+  // `hydrated` flipped true from `loadAndDecryptAll()` ALONE -- this test
+  // resolves the personal snapshot but leaves `getSharedRevisions()` (the
+  // ENTRY POINT of the shared pipeline, the only source of
+  // `collectionSharedItems`/`directSharedItems`, i.e. the only place
+  // `accessLevel === "hidden_password"` items can live) permanently
+  // pending, and asserts `isItemsHydrated()` stays `false` no matter how
+  // long the personal side has had to settle. Confirmed to fail against the
+  // pre-fix `void loadAndDecryptAll().then(() => setHydrated(true))` +
+  // `void refreshSharedItemsNow();` shape, which set `hydrated = true` from
+  // the personal promise alone, wholly independent of whether
+  // `getSharedRevisions()` had resolved.
+  it("CR-01 falsification: personal snapshot resolves but getSharedRevisions() never settles -- isItemsHydrated() stays false, never a false confirmed-zero", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
+    mockGetSyncSnapshot.mockResolvedValue({ revision: 1, items: [], folders: [] });
+    // A promise that intentionally never resolves -- simulates the shared
+    // pipeline's network round trip stalling indefinitely (a slow/loaded
+    // server, a dropped connection retried by nothing yet).
+    mockGetSharedRevisions.mockReturnValue(new Promise<SharedRevisions>(() => {}));
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await flushHydration();
+    });
+
+    expect(mockGetSyncSnapshot).toHaveBeenCalled();
+    expect(mockGetSharedRevisions).toHaveBeenCalled();
+    expect(store.isItemsHydrated()).toBe(false);
   });
 
   it("a lock event resets isItemsHydrated() back to false", async () => {
@@ -376,8 +428,7 @@ describe("hydration signal (isItemsHydrated/useItemsHydrated)", () => {
     mockIsUnlocked.mockReturnValue(true);
     await act(async () => {
       lockListener();
-      await Promise.resolve();
-      await Promise.resolve();
+      await flushHydration();
     });
     expect(store.isItemsHydrated()).toBe(true);
 
@@ -403,8 +454,7 @@ describe("hydration signal (isItemsHydrated/useItemsHydrated)", () => {
     expect(result.current).toBe(false);
 
     await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
+      await flushHydration();
     });
     expect(result.current).toBe(true);
 

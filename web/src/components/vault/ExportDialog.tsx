@@ -10,7 +10,7 @@ import { useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
-import { getFolders, getItems, useItemsHydrated } from "@/lib/vault/store";
+import { useFolders, useItemsHydrated, useVaultItems } from "@/lib/vault/store";
 import { isPasswordHidden } from "@/lib/vault/itemCapabilities";
 import { buildCsvExport } from "@/lib/vault/exporters/toCsv";
 import { buildJsonExport } from "@/lib/vault/exporters/toJson";
@@ -28,13 +28,30 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
   // exactly those passwords). `hiddenPasswordCount` stays `null` (never 0)
   // until hydration is confirmed; export-confirm is disabled meanwhile so a
   // confirm can never fire against an unconfirmed count.
+  //
+  // CR-02 (code review, Phase 29): this dialog used to subscribe to
+  // `useItemsHydrated()` only and read `getItems()` as a plain, NON-reactive
+  // snapshot -- background sync merges landing while the dialog was open
+  // (a WS event, the 30s poll) never re-rendered it, so the disclosed count
+  // could go permanently stale relative to what `handleConfirm()` (which
+  // re-read `getItems()` fresh) actually wrote to disk. `useVaultItems()`/
+  // `useFolders()` are the same `useSyncExternalStore` subscriptions the
+  // rest of the app already uses for this exact reactivity, and
+  // `handleConfirm()` below now exports the SAME `allItems`/`allFolders`
+  // array the disclosure was computed from -- one read, not two independent
+  // ones (WR-06).
   const hydrated = useItemsHydrated();
-  const hiddenPasswordCount = hydrated ? getItems().filter(isPasswordHidden).length : null;
+  const allItems = useVaultItems();
+  const allFolders = useFolders();
+  const hiddenPasswordItems = hydrated ? allItems.filter(isPasswordHidden) : null;
+  const hiddenPasswordCount = hiddenPasswordItems?.length ?? null;
 
   function handleConfirm() {
-    const items = getItems();
-    const folders = getFolders();
-    const content = format === "json" ? buildJsonExport(items, folders) : buildCsvExport(items, folders);
+    if (hiddenPasswordCount === null) {
+      return; // defence in depth -- confirm is already disabled meanwhile
+    }
+    const content =
+      format === "json" ? buildJsonExport(allItems, allFolders) : buildCsvExport(allItems, allFolders);
     const mimeType = format === "json" ? "application/json" : "text/csv";
     const date = new Date().toISOString().slice(0, 10);
     downloadFile(content, `passkey-vault-export-${date}.${format}`, mimeType);

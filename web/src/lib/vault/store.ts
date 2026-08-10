@@ -41,6 +41,21 @@ function isConflictError(err: unknown): boolean {
     (err as { status: unknown }).status === 409
   );
 }
+
+// CR-01/WR-05 (code review, Phase 29): same duck-typed rationale as
+// `isConflictError` above -- used by `refreshSharedItemsNow()` to
+// distinguish the EXPECTED "no family_members row" 404 (a definitive,
+// confirmable "this account has no shared items" answer) from a genuine
+// transient failure (which must NOT be read as a confirmed empty shared set
+// -- see `refreshSharedItemsNow`'s own comment).
+function isNotFoundError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "status" in err &&
+    (err as { status: unknown }).status === 404
+  );
+}
 import {
   createFolder,
   createItem,
@@ -283,12 +298,35 @@ export function subscribeItems(listener: () => void): () => void {
 // data while the app renders as unlocked. Without this signal a consumer
 // (e.g. ExportDialog's DEBT-02 disclosure) cannot tell a confirmed-zero
 // count from an unconfirmed one.
+//
+// CR-01 (code review, Phase 29): `hydrated` used to flip true the moment
+// `loadAndDecryptAll()` alone resolved -- but that call populates
+// `personalItems` ONLY. `collectionSharedItems`/`directSharedItems` (the
+// arrays that can actually carry `accessLevel === "hidden_password"`) are
+// populated by the separate `refreshSharedItemsNow()` pipeline below, which
+// is strictly slower. `personalConfirmed`/`sharedConfirmed` now track each
+// pipeline's own "at least one genuine attempt has landed" state
+// independently; `hydrated` only ever flips true once BOTH are true
+// (`maybeMarkHydrated()`), which is the actual invariant ExportDialog needs.
 let hydrated = false;
+let personalConfirmed = false;
+let sharedConfirmed = false;
 const hydrationListeners = new Set<() => void>();
 
 function setHydrated(v: boolean): void {
   hydrated = v;
   hydrationListeners.forEach((listener) => listener());
+}
+
+/** Only ever raises `hydrated` -- never called with intent to lower it (the
+ * unlock/lock branches of `subscribeLockState` below own lowering it
+ * directly via `setHydrated(false)`). Called from every place that just
+ * confirmed ONE of the two pipelines (personal or shared) has completed a
+ * genuine attempt; only flips `hydrated` true once both have. */
+function maybeMarkHydrated(): void {
+  if (personalConfirmed && sharedConfirmed) {
+    setHydrated(true);
+  }
 }
 
 export function isItemsHydrated(): boolean {
@@ -545,6 +583,15 @@ function applySyncSnapshot(snapshot: SyncSnapshot): void {
       lastKnownRevision = snapshot.revision;
     }
   }
+  // CR-01/WR-05: a merge that reaches this point (the early `uk === null`
+  // guard above did NOT fire) is a genuine, applied attempt at the personal
+  // snapshot -- true on the very first post-unlock call (`loadAndDecryptAll`,
+  // `since=0`, always carries `items`) AND on every later background poll
+  // that calls this via `onSnapshot`, so a rejected initial attempt (WR-05)
+  // still recovers hydration on the next successful poll rather than
+  // latching `hydrated` false for the rest of the session.
+  personalConfirmed = true;
+  maybeMarkHydrated();
 }
 
 async function loadAndDecryptAll(): Promise<void> {
@@ -1117,9 +1164,17 @@ function sharedRevisionsChanged(revisions: SharedRevisions): boolean {
  * may fire while any of these round trips is in flight). */
 async function doHandleSharedRevisions(revisions: SharedRevisions): Promise<void> {
   if (!sharedRevisionsChanged(revisions)) {
+    // CR-01: an unchanged payload against a FRESH (just-reset-on-unlock)
+    // watermark means "genuinely nothing shared, confirmed" -- not "we
+    // don't know yet". Confirm the pipeline here too, not only on the
+    // "did work" path below, so a single-collection/no-family account still
+    // reaches `hydrated === true`.
+    sharedConfirmed = true;
+    maybeMarkHydrated();
     return;
   }
   if (getUnlockedUserKey() === null) {
+    // Lock raced this call -- state is indeterminate, do NOT confirm.
     return;
   }
 
@@ -1220,6 +1275,23 @@ async function doHandleSharedRevisions(revisions: SharedRevisions): Promise<void
       };
     }
   }
+  // CR-01: unlike `applySyncSnapshot` (whose `anyRowFailed` is ONLY ever a
+  // post-fetch decrypt failure -- the network round trip itself already
+  // succeeded by the time that function runs at all), `anyStepFailed` here
+  // also covers a genuine FETCH failure (`getCollectionSync`/
+  // `getSharedDirectSync`/`refreshCollectionsNow` throwing) -- a collection
+  // whose items were never actually retrieved this pass keeps whatever
+  // (possibly nothing) `collectionSharedItems` already held for it. Only a
+  // FULLY clean pass confirms the shared set is now genuinely known; a
+  // partially-failed one leaves `sharedConfirmed` exactly as it was (the
+  // per-collection/direct watermark above stays un-advanced too, so the
+  // NEXT tick retries the same collections and gets another chance to
+  // confirm cleanly -- WR-05's "not permanently" without pretending
+  // fetch-failed data is confirmed).
+  if (!anyStepFailed) {
+    sharedConfirmed = true;
+    maybeMarkHydrated();
+  }
 }
 
 /** WR-11 (code review, Phase 26): the re-entrancy guard.
@@ -1313,9 +1385,23 @@ async function refreshSharedItemsNow(): Promise<void> {
       return;
     }
     await handleSharedRevisions(revisions);
-  } catch {
-    // Expected for a single-user vault (no family_members row) and for any
-    // transient network failure -- the WS/poll path self-heals regardless.
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      // Expected for a single-user vault (no family_members row) -- a
+      // DEFINITIVE "no shared items exist" answer, not an unknown, so the
+      // shared pipeline is genuinely confirmed here too (CR-01).
+      sharedConfirmed = true;
+      maybeMarkHydrated();
+      return;
+    }
+    // CR-01/WR-05: any OTHER failure (transient network, etc.) must NOT be
+    // read as "shared items confirmed empty" -- leave `sharedConfirmed`
+    // false so `hydrated` stays withheld, and let the rejection surface to
+    // the caller (the unlock branch below) rather than silently swallowing
+    // it. The WS/poll path in sync.ts is still self-healing regardless: its
+    // own `onSharedRevisions` callback (`handleSharedRevisions`) will
+    // eventually succeed on a later tick and confirm the pipeline then.
+    throw err;
   }
 }
 
@@ -1349,14 +1435,37 @@ subscribeLockState(() => {
     // unlock re-opens the hydration window even if a previous unlock had
     // already resolved it.
     setHydrated(false);
+    personalConfirmed = false;
+    sharedConfirmed = false;
     sharedRevisionsWatermark = { collections: new Map(), direct: 0 };
     failedSharedRefreshAttempts = 0;
     collectionRevisionWatermark = new Map();
     directRevisionWatermark = 0;
     collectionFailedMergeAttempts = new Map();
     directFailedMergeAttempts = 0;
-    void loadAndDecryptAll().then(() => setHydrated(true));
-    void refreshSharedItemsNow();
+    // CR-01 (code review, Phase 29): these used to be two independent,
+    // unawaited fire-and-forget calls, with ONLY the first one (personal
+    // items) ever setting `hydrated`. That let `hydrated === true` while
+    // the shared pipeline (the ONLY source of `accessLevel ===
+    // "hidden_password"` collection/direct items) was still genuinely
+    // unknown -- exactly the gap ExportDialog's DEBT-02 disclosure exists to
+    // prevent. `hydrated` itself is now armed from INSIDE each pipeline
+    // (`applySyncSnapshot`'s `personalConfirmed`, `doHandleSharedRevisions`'/
+    // `refreshSharedItemsNow`'s `sharedConfirmed`, via `maybeMarkHydrated()`)
+    // once BOTH have completed a genuine attempt -- this `.then()` only logs
+    // a rejected leg (WR-05), it never sets `hydrated` directly, so a later
+    // successful background poll can still recover a session whose initial
+    // attempt failed.
+    void Promise.allSettled([loadAndDecryptAll(), refreshSharedItemsNow()]).then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") {
+          console.error(
+            "pv: initial vault load failed -- item hydration unresolved, retrying via background sync",
+            result.reason,
+          );
+        }
+      }
+    });
     startSync(syncCallbacks);
   } else {
     stopSync();
@@ -1374,5 +1483,7 @@ subscribeLockState(() => {
     folders = [];
     notifyFolderListeners();
     setHydrated(false);
+    personalConfirmed = false;
+    sharedConfirmed = false;
   }
 });

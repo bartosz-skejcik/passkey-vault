@@ -9,15 +9,21 @@ import type { VaultItem } from "@/lib/vault/types";
 import { interpolate as realInterpolate, t as realT } from "@/lib/i18n/dictionary";
 
 const {
-  mockGetItems,
-  mockGetFolders,
+  mockUseVaultItems,
+  mockUseFolders,
   mockUseItemsHydrated,
   mockBuildJsonExport,
   mockBuildCsvExport,
   mockDownloadFile,
 } = vi.hoisted(() => ({
-  mockGetItems: vi.fn((): VaultItem[] => []),
-  mockGetFolders: vi.fn(() => []),
+  // CR-02 (code review, Phase 29): ExportDialog now subscribes via
+  // `useVaultItems()`/`useFolders()` (reactive `useSyncExternalStore` hooks)
+  // instead of reading `getItems()`/`getFolders()` as a plain, non-reactive
+  // snapshot -- mocked here as plain hooks (no actual store subscription
+  // needed in these component-level tests; each test just sets the return
+  // value directly, same shape as the old getItems()/getFolders() mocks).
+  mockUseVaultItems: vi.fn((): VaultItem[] => []),
+  mockUseFolders: vi.fn(() => []),
   // 29-02: defaults to `true` so the 4 pre-existing tests (none of which
   // exercise hydration) see the same "confirm always enabled" behavior they
   // did before this plan, without needing their own mock setup.
@@ -28,8 +34,8 @@ const {
 }));
 
 vi.mock("@/lib/vault/store", () => ({
-  getItems: mockGetItems,
-  getFolders: mockGetFolders,
+  useVaultItems: mockUseVaultItems,
+  useFolders: mockUseFolders,
   useItemsHydrated: mockUseItemsHydrated,
 }));
 
@@ -75,8 +81,8 @@ function makeHiddenPasswordItem(id: string): VaultItem {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetItems.mockReturnValue([]);
-  mockGetFolders.mockReturnValue([]);
+  mockUseVaultItems.mockReturnValue([]);
+  mockUseFolders.mockReturnValue([]);
   mockUseItemsHydrated.mockReturnValue(true);
 });
 
@@ -133,14 +139,14 @@ describe("ExportDialog", () => {
 describe("ExportDialog — DEBT-02 hidden-password disclosure", () => {
   it("n===0 (hydrated, zero hidden_password items): the disclosure is absent from the DOM entirely, never a rendered '0'", () => {
     mockUseItemsHydrated.mockReturnValue(true);
-    mockGetItems.mockReturnValue([]);
+    mockUseVaultItems.mockReturnValue([]);
     render(<ExportDialog onClose={vi.fn()} />);
     expect(screen.queryByTestId("export-hidden-password-disclosure")).not.toBeInTheDocument();
   });
 
   it("n===1 (hydrated): the disclosure renders the exact interpolated string for n=1", () => {
     mockUseItemsHydrated.mockReturnValue(true);
-    mockGetItems.mockReturnValue([makeHiddenPasswordItem("item-1")]);
+    mockUseVaultItems.mockReturnValue([makeHiddenPasswordItem("item-1")]);
     render(<ExportDialog onClose={vi.fn()} />);
     expect(screen.getByTestId("export-hidden-password-disclosure")).toHaveTextContent(
       "export.hiddenPasswordDisclosure 1",
@@ -149,7 +155,7 @@ describe("ExportDialog — DEBT-02 hidden-password disclosure", () => {
 
   it("n===3 (hydrated): the disclosure renders with n=3", () => {
     mockUseItemsHydrated.mockReturnValue(true);
-    mockGetItems.mockReturnValue([
+    mockUseVaultItems.mockReturnValue([
       makeHiddenPasswordItem("item-1"),
       makeHiddenPasswordItem("item-2"),
       makeHiddenPasswordItem("item-3"),
@@ -170,11 +176,46 @@ describe("ExportDialog — DEBT-02 hidden-password disclosure", () => {
     mockUseItemsHydrated.mockReturnValue(false);
     // Even if getItems() happens to return hidden-password items mid-refresh,
     // the component must not read them while hydrated is false.
-    mockGetItems.mockReturnValue([makeHiddenPasswordItem("item-1")]);
+    mockUseVaultItems.mockReturnValue([makeHiddenPasswordItem("item-1")]);
     render(<ExportDialog onClose={vi.fn()} />);
 
     expect(screen.getByTestId("export-confirm")).toBeDisabled();
     expect(screen.queryByTestId("export-hidden-password-disclosure")).not.toBeInTheDocument();
+  });
+
+  // CR-02 (code review, Phase 29): the dialog used to read `getItems()` as a
+  // plain, non-reactive snapshot -- a background sync merge landing while
+  // the dialog was already open never updated the disclosed count.
+  // `useVaultItems()`/`useFolders()` are real `useSyncExternalStore` hooks
+  // in production; this component-level test proves the render OUTPUT
+  // recomputes from whatever the hooks currently return on every render
+  // (the actual store-triggered re-render itself is exercised by
+  // `store.test.ts`'s own `useVaultItems`/`subscribeItems` coverage) --
+  // together they cover both halves of "a live sync merge updates the open
+  // dialog". Also proves `handleConfirm` builds the export from the SAME
+  // `allItems` array the disclosure was computed from (WR-06): the JSON
+  // exporter mock is asserted against post-mutation state, not the stale
+  // pre-mutation snapshot.
+  it("a mutation of the subscribed item set updates the disclosure count (and enables the confirm click to export the NEW set) without closing/reopening the dialog", () => {
+    mockUseItemsHydrated.mockReturnValue(true);
+    mockUseVaultItems.mockReturnValue([]);
+    const { rerender } = render(<ExportDialog onClose={vi.fn()} />);
+
+    expect(screen.queryByTestId("export-hidden-password-disclosure")).not.toBeInTheDocument();
+
+    // A background sync merge lands a hidden-password item while the dialog
+    // is already open -- the store's real `notifyListeners()` would trigger
+    // exactly this re-render via `useSyncExternalStore`.
+    mockUseVaultItems.mockReturnValue([makeHiddenPasswordItem("item-1")]);
+    rerender(<ExportDialog onClose={vi.fn()} />);
+
+    expect(screen.getByTestId("export-hidden-password-disclosure")).toHaveTextContent(
+      "export.hiddenPasswordDisclosure 1",
+    );
+
+    fireEvent.click(screen.getByTestId("export-confirm"));
+    expect(mockBuildJsonExport).toHaveBeenCalledTimes(1);
+    expect(mockBuildJsonExport).toHaveBeenCalledWith([makeHiddenPasswordItem("item-1")], []);
   });
 });
 
