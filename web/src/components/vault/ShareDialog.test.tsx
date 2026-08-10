@@ -1006,4 +1006,93 @@ describe("ShareDialog", () => {
       expect(screen.getByTestId("share-submit")).toBeDisabled();
     });
   });
+
+  // 30-08-PLAN.md Task 2 -- `submitFolderVariant`'s family-wide branch.
+  describe("family-wide folder share (FSH-01 submitFolderVariant)", () => {
+    const SCOPE = { kind: "folder" as const, existingFolderId: null };
+    const MEMBER_C: FamilyMemberRecord = { ...MEMBER_A, user_id: "member-c", email: "c@example.test" };
+
+    function checkFamilyWide() {
+      const familyWideCheckbox = screen
+        .getByTestId("share-recipient-family-wide")
+        .querySelector("input[type=checkbox]") as HTMLInputElement;
+      fireEvent.click(familyWideCheckbox);
+    }
+
+    it("grants every CURRENT active family member (never selectedRecipientIds, which stays empty) and creates the collection with family_wide_kind: 'folder'", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B, MEMBER_C]);
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Family Docs" } });
+      chooseAccessLevel("edit");
+      checkFamilyWide();
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      expect(mockCreateCollection).toHaveBeenCalledTimes(1);
+      expect(mockCreateCollection).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        "folder",
+      );
+      expect(mockAddCollectionMember).toHaveBeenCalledTimes(3);
+      const grantedIds = (mockAddCollectionMember.mock.calls as unknown[][]).map((c) => c[1]);
+      expect(grantedIds.sort()).toEqual(
+        [MEMBER_A.user_id, MEMBER_B.user_id, MEMBER_C.user_id].sort(),
+      );
+    });
+
+    it("omits a keyless member from the creation-time grant WITHOUT throwing or aborting the share -- the other members still get granted", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B, MEMBER_NO_KEY, MEMBER_C]);
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Family Docs" } });
+      chooseAccessLevel("read");
+      checkFamilyWide();
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      expect(mockCreateCollection).toHaveBeenCalledTimes(1);
+      expect(mockAddCollectionMember).toHaveBeenCalledTimes(3);
+      const grantedIds = (mockAddCollectionMember.mock.calls as unknown[][]).map((c) => c[1]);
+      expect(grantedIds).not.toContain(MEMBER_NO_KEY.user_id);
+      expect(screen.queryByTestId("share-error")).not.toBeInTheDocument();
+    });
+
+    it("individual-recipient path (isFamilyWideSelected === false) stays byte-identical: family_wide_kind omitted, T-25-16 throw unchanged", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Docs" } });
+      selectRecipient(MEMBER_A.user_id);
+      chooseAccessLevel("read");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      expect(mockCreateCollection).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        undefined,
+      );
+    });
+
+    it("individual-recipient path still throws before any network call on a keyless SELECTED recipient (T-25-16 unchanged)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_NO_KEY]);
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Docs" } });
+      selectRecipient(MEMBER_NO_KEY.user_id);
+      chooseAccessLevel("read");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(screen.getByTestId("share-error")).toBeInTheDocument());
+      expect(mockCreateCollection).not.toHaveBeenCalled();
+      expect(mockAddCollectionMember).not.toHaveBeenCalled();
+    });
+  });
 });
