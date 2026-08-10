@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
-const { mockGetSessionToken, mockIsOnboardingComplete, mockUseIsUnlocked, mockRouterReplace } =
+const { mockGetSessionToken, mockIsOnboardingComplete, mockUseIsUnlocked, mockRouterReplace, mockRouterPush } =
   vi.hoisted(() => ({
     mockGetSessionToken: vi.fn(),
     mockIsOnboardingComplete: vi.fn(),
@@ -14,6 +14,13 @@ const { mockGetSessionToken, mockIsOnboardingComplete, mockUseIsUnlocked, mockRo
     // Plan 29-03: the `?panel=settings` deep link now navigates via
     // `useRouter().replace(...)` instead of opening a same-page drawer.
     mockRouterReplace: vi.fn(),
+    // WR-09 (code review, Phase 29): named (not an anonymous inline
+    // `vi.fn()`) so the panel=settings test below can assert `push` was
+    // NEVER called -- `next/navigation` is fully mocked here, so nothing
+    // else in this suite proves `router.replace` (not `router.push`) is
+    // what performs this redirect, or that it never regresses to a method
+    // that would leave `?panel=settings` in the URL history.
+    mockRouterPush: vi.fn(),
   }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -21,7 +28,7 @@ vi.mock("@/lib/auth/session", () => ({
 }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: mockRouterReplace, push: vi.fn() }),
+  useRouter: () => ({ replace: mockRouterReplace, push: mockRouterPush }),
 }));
 
 vi.mock("@/lib/onboarding/flag", () => ({
@@ -190,6 +197,19 @@ describe("Home (page.tsx) — panel=settings / action=new-item query params (Pla
     render(<Home />);
 
     await waitFor(() => expect(mockRouterReplace).toHaveBeenCalledWith("/settings"));
+    // WR-09 (code review, Phase 29): the old version of this test asserted
+    // BOTH the effect AND `window.location.search === ""` (impossible to
+    // keep verbatim now that the redirect is a real route navigation rather
+    // than an in-page state change `next/navigation` is fully mocked here,
+    // so nothing in THIS suite can observe the URL actually changing --
+    // `settings-route.spec.ts`'s own live e2e assertion below is what
+    // proves that). What this unit test CAN still assert precisely: the
+    // redirect is `router.replace` (history entry replaced, matching the
+    // shipped-0.4.0-extension's `?panel=settings` deep link contract) and
+    // NEVER `router.push` (which would leave a stray back-button entry
+    // carrying the stale query string).
+    expect(mockRouterReplace).toHaveBeenCalledTimes(1);
+    expect(mockRouterPush).not.toHaveBeenCalled();
   });
 
   it("opens the new-item flow on mount when the URL has action=new-item and the vault is already unlocked, then strips the param", async () => {

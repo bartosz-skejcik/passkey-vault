@@ -126,3 +126,42 @@ test("cold /settings entry, reload survival, and browser-back all behave as SC1 
 
   await context.close();
 });
+
+// WR-09 (code review, Phase 29): `page.test.tsx`'s own `panel=settings`
+// redirect test is fully mocked (`next/navigation`'s `useRouter` is a
+// vitest mock), so nothing in that unit suite proves the URL actually stops
+// carrying `?panel=settings` after the redirect -- the shipped-0.4.0-
+// extension contract this whole phase exists to protect. This is the live
+// proof: a real browser navigation to `/?panel=settings`, asserting
+// `page.url()` lands on `/settings` with NO query string.
+test("navigating to /?panel=settings live strips the query string -- page.url() ends in /settings with none left over (WR-09)", async ({
+  browser,
+}) => {
+  const { context, page, dialogFired } = await newBareContext(browser);
+  const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const email = `pv-e2e-settings-panel-query-${unique}@example.test`;
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "No account yet? Sign up" }).click();
+  await page.getByTestId("register-email").fill(email);
+  await page.getByTestId("register-password").fill(SESSION_PASSWORD);
+  await page.getByTestId("register-confirm-password").fill(SESSION_PASSWORD);
+  await page.getByTestId("register-submit").click();
+  await page.getByTestId("new-item-button").waitFor({ state: "visible" });
+
+  await page.goto("/?panel=settings");
+  await page.getByTestId("unlock-password").waitFor({ state: "visible" });
+  await page.getByTestId("unlock-password").fill(SESSION_PASSWORD);
+  await page.getByTestId("unlock-submit").click();
+  await page.getByTestId("settings-section-konto").waitFor({ state: "visible" });
+
+  const url = new URL(page.url());
+  expect(url.pathname, "must land on the real /settings route").toBe("/settings");
+  expect(url.search, "must carry NO leftover query string -- ?panel=settings must not survive the redirect").toBe(
+    "",
+  );
+
+  expect(dialogFired(), "zero OS-level dialogs across this session").toBe(false);
+
+  await context.close();
+});
