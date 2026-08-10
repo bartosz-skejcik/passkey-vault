@@ -1,13 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import Sidebar from "@/components/shell/Sidebar";
 import TopBar from "@/components/shell/TopBar";
 import MainColumn from "@/components/shell/MainColumn";
-import AuthCard from "@/components/auth/AuthCard";
-import RegisterForm from "@/components/auth/RegisterForm";
-import LoginForm from "@/components/auth/LoginForm";
 import UnlockOverlay from "@/components/auth/UnlockOverlay";
 import ExtUnlockBridge from "@/components/auth/ExtUnlockBridge";
 import InviteLandingView from "@/components/invite/InviteLandingView";
@@ -17,11 +15,10 @@ import TypePicker from "@/components/vault/TypePicker";
 import ItemForm from "@/components/vault/ItemForm";
 import CopyToast from "@/components/vault/CopyToast";
 import ErrorToast from "@/components/vault/ErrorToast";
-import SettingsPanel from "@/components/settings/SettingsPanel";
 import OnboardingWizard from "@/components/onboarding/OnboardingWizard";
+import AuthGate from "@/lib/auth/AuthGate";
 import { isOnboardingComplete } from "@/lib/onboarding/flag";
 import { useLocale } from "@/lib/i18n/LocaleContext";
-import { getSessionToken } from "@/lib/auth/session";
 import { initCrypto, lockVault, useIsUnlocked } from "@/lib/crypto";
 import { useIdleTimer } from "@/lib/idle/useIdleTimer";
 import {
@@ -42,18 +39,16 @@ import type { ItemType, VaultFilter, VaultItem } from "@/lib/vault/types";
 const VALID_ITEM_TYPES: ItemType[] = ["login", "card", "identity", "note", "totp"];
 
 /** Popup deep-link intent, resolved once at mount from the URL's query
- * params (Plan 09-06's `panel=settings` / `action=new-item`, extended
- * post-UAT with `action=new-item`'s optional `type=<id>`). */
-type PendingUrlAction = { kind: "settings" } | { kind: "new-item"; type: ItemType | null } | null;
+ * params (Plan 09-06's `action=new-item`, extended post-UAT with its
+ * optional `type=<id>`). `panel=settings` is handled separately (Plan
+ * 29-03) via a plain `router.replace("/settings")` redirect, since it is no
+ * longer a same-page drawer-open action. */
+type PendingUrlAction = { kind: "new-item"; type: ItemType | null } | null;
 
 export default function Home() {
   const { t } = useLocale();
+  const router = useRouter();
   const unlocked = useIsUnlocked();
-  // `null` = not yet resolved (avoids a flash of the wrong screen before
-  // this mount effect runs); `true`/`false` after resolving the stored
-  // session token.
-  const [authed, setAuthed] = useState<boolean | null>(null);
-  const [mode, setMode] = useState<"login" | "register">("login");
   // UI-04: shown only immediately after a successful RegisterForm submit
   // (never after LoginForm's), gated by the per-browser
   // pv-onboarding-complete localStorage flag. See RegisterForm's onAuthed
@@ -84,21 +79,18 @@ export default function Home() {
     setSortBy(next);
     writeSortPreference(next);
   }
-  // Settings (UI-05) shares the same z-40 drawer + z-30 scrim slot as the
-  // vault item panels below — they're mutually exclusive, not stacked.
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  // Plan 09-06: receiving end of the popup's header-gear/"+" redirects
-  // (`?panel=settings` / `?action=new-item`). Read ONCE at mount (a
-  // second read would always see the already-stripped URL) — captured via
-  // `window.location.search` directly rather than next/navigation's
-  // `useSearchParams` (this app is `output: "export"`/client-rendered
-  // throughout with no existing use of that hook, and a plain
-  // `URLSearchParams` read avoids that hook's Suspense-boundary
-  // requirement for no functional gain here).
+  // Plan 09-06: receiving end of the popup's "+" redirect
+  // (`?action=new-item`). Read ONCE at mount (a second read would always
+  // see the already-stripped URL) — captured via `window.location.search`
+  // directly rather than next/navigation's `useSearchParams` (this app is
+  // `output: "export"`/client-rendered throughout with no existing use of
+  // that hook, and a plain `URLSearchParams` read avoids that hook's
+  // Suspense-boundary requirement for no functional gain here). The sibling
+  // `?panel=settings` redirect (Plan 29-03) is handled by its own separate
+  // mount effect below, since it no longer opens a same-page drawer.
   const [pendingUrlAction, setPendingUrlAction] = useState<PendingUrlAction>(() => {
     if (typeof window === "undefined") return null;
     const params = new URLSearchParams(window.location.search);
-    if (params.get("panel") === "settings") return { kind: "settings" };
     if (params.get("action") === "new-item") {
       const rawType = params.get("type");
       const type = VALID_ITEM_TYPES.includes(rawType as ItemType) ? (rawType as ItemType) : null;
@@ -160,14 +152,13 @@ export default function Home() {
   const items = useVaultItems();
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
   // Any side panel being open means the overlay drawer + scrim render.
-  const sidePanelOpen = selectedItem !== null || creating || settingsOpen;
+  const sidePanelOpen = selectedItem !== null || creating;
 
   function handleNewItem(presetType: ItemType | null = null) {
     setSelectedItemId(null);
     setOpenInEditMode(false);
     setCreating(true);
     setCreatingType(presetType);
-    setSettingsOpen(false);
   }
 
   function handleCreated() {
@@ -180,7 +171,6 @@ export default function Home() {
     setOpenInEditMode(false);
     setCreating(false);
     setCreatingType(null);
-    setSettingsOpen(false);
   }
 
   function handleSelectItem(item: VaultItem) {
@@ -188,7 +178,6 @@ export default function Home() {
     setCreatingType(null);
     setOpenInEditMode(false);
     setSelectedItemId(item.id);
-    setSettingsOpen(false);
   }
 
   function handleEditRequest(item: VaultItem) {
@@ -196,26 +185,15 @@ export default function Home() {
     setCreatingType(null);
     setOpenInEditMode(true);
     setSelectedItemId(item.id);
-    setSettingsOpen(false);
-  }
-
-  function handleOpenSettings() {
-    // Settings and the vault item drawer share the same z-40 slot — close
-    // any open item panel first so they're never stacked.
-    setSelectedItemId(null);
-    setOpenInEditMode(false);
-    setCreating(false);
-    setCreatingType(null);
-    setSettingsOpen(true);
   }
 
   // Plan 24-06: InviteLandingView's own onDone -- called only after a
   // genuinely successful (new-or-already-member) redemption, so a session
   // necessarily exists by this point (either pre-existing, or created by the
-  // invite view's own inline register/login sub-flow). `setAuthed(true)`
-  // is required here because this component's `authed` state was resolved
-  // ONCE at mount (before any inline registration could have happened) and
-  // is never re-read from storage afterwards.
+  // invite view's own inline register/login sub-flow). See the in-function
+  // comment below (Plan 29-03) for why no `setAuthed` call is needed here
+  // anymore -- `<AuthGate>` resolves its own `authed` state independently
+  // once it mounts.
   //
   // Known gap (documented, not silently dropped -- also tracked outside this
   // comment per WR-06 (24-REVIEW.md) in
@@ -240,7 +218,16 @@ export default function Home() {
   }: {
     selectCollectionId: string | null;
   }) {
-    setAuthed(true);
+    // Plan 29-03: no `setAuthed(true)` here anymore — `<AuthGate>` (below,
+    // in the main return) is only reached AFTER this `invite !== null`
+    // early return clears, so its own internal `authed` state has never
+    // resolved yet while the invite view is showing. The moment
+    // `setInvite(null)` below fires, the next render mounts `<AuthGate>`
+    // fresh and its own mount effect reads `getSessionToken()` for the
+    // first time — correctly resolving `authed=true` on its own, since
+    // invite redemption already completed its own inline register/login
+    // and a valid session token now exists. Do not reintroduce a
+    // `setAuthed` call here; this component no longer owns that state.
     // Hash hygiene (24-UI-SPEC.md §0): only safe to strip the invite's own
     // path+fragment down to the bare origin AFTER a successful-or-already-
     // consumed redemption, never before -- the secret must survive the
@@ -259,7 +246,6 @@ export default function Home() {
     // krypto i tak awaituje initCrypto() (memoizowany singleton), więc błąd
     // instancjacji ujawni się tam, nie tutaj.
     void initCrypto().catch(() => {});
-    setAuthed(getSessionToken() !== null);
     setAutolockMinutes(readAutolockMinutes());
 
     function onAutolockChanged() {
@@ -269,19 +255,30 @@ export default function Home() {
     return () => window.removeEventListener(AUTOLOCK_CHANGED_EVENT, onAutolockChanged);
   }, []);
 
-  // Plan 09-06: applies the popup's pending deep-link action once the
-  // vault is unlocked (immediately, if already unlocked at mount; on the
-  // render after unlock completes, otherwise), then strips the query
+  // Plan 29-03: the popup's `?panel=settings` deep link (formerly a
+  // same-page drawer-open) now navigates straight to the real `/settings`
+  // route. Fires once at mount, independent of the `unlocked` gate below —
+  // the destination route handles its own auth/unlock gating via AuthGate +
+  // UnlockOverlay, so this redirect does not need to wait for anything.
+  // `ExtUnlockBridge.tsx`'s literal `href="/?panel=settings"` needs zero
+  // code change for this to keep working (verified, not templated).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("panel") === "settings") {
+      router.replace("/settings");
+    }
+  }, [router]);
+
+  // Plan 09-06: applies the popup's pending new-item deep-link action once
+  // the vault is unlocked (immediately, if already unlocked at mount; on
+  // the render after unlock completes, otherwise), then strips the query
   // param via history.replaceState so a refresh doesn't re-trigger it.
   useEffect(() => {
     if (pendingUrlAction === null || !unlocked) {
       return;
     }
-    if (pendingUrlAction.kind === "settings") {
-      handleOpenSettings();
-    } else {
-      handleNewItem(pendingUrlAction.type);
-    }
+    handleNewItem(pendingUrlAction.type);
     setPendingUrlAction(null);
     try {
       const url = new URL(window.location.href);
@@ -329,37 +326,19 @@ export default function Home() {
     return <ExtUnlockBridge nonce={extUnlockNonce} mode={extUnlockMode} />;
   }
 
-  if (authed === null) {
-    return null;
-  }
-
-  if (!authed) {
-    return mode === "login" ? (
-      <AuthCard heading={t("auth.loginSubmit")}>
-        <LoginForm onToggle={() => setMode("register")} onAuthed={() => setAuthed(true)} />
-      </AuthCard>
-    ) : (
-      <AuthCard heading={t("auth.registerSubmit")}>
-        <RegisterForm
-          onToggle={() => setMode("login")}
-          onAuthed={() => {
-            setAuthed(true);
-            if (!isOnboardingComplete()) setShowOnboarding(true);
-          }}
-        />
-      </AuthCard>
-    );
-  }
-
   return (
-    <>
+    <AuthGate
+      onRegistered={() => {
+        if (!isOnboardingComplete()) setShowOnboarding(true);
+      }}
+    >
       {/* Hard requirement, not cosmetic-only (T-02-14): MainColumn's
           data-bearing children are only mounted while unlocked. blur-md
           is cosmetic reinforcement on top of that — the real protection
           is "no data in the render tree" below. */}
       <div className={!unlocked ? "blur-md" : undefined}>
         <div className="flex h-screen flex-col md:flex-row">
-          <Sidebar activeFilter={filter} onFilterChange={setFilter} onOpenSettings={handleOpenSettings} />
+          <Sidebar activeFilter={filter} onFilterChange={setFilter} />
           <div className="flex flex-1 flex-col">
             <TopBar
               searchQuery={searchQuery}
@@ -438,7 +417,6 @@ export default function Home() {
                   <ItemForm type={creatingType} onCreated={handleCreated} />
                 </aside>
               ) : null}
-              {settingsOpen ? <SettingsPanel onClose={() => setSettingsOpen(false)} /> : null}
             </div>
           </div>
         </div>
@@ -447,6 +425,6 @@ export default function Home() {
       <ErrorToast />
       <UnlockOverlay />
       {showOnboarding ? <OnboardingWizard onFinish={() => setShowOnboarding(false)} /> : null}
-    </>
+    </AuthGate>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   ChevronDown,
   CreditCard,
@@ -75,15 +76,9 @@ function navItemClass(active: boolean): string {
 export default function Sidebar({
   activeFilter = { kind: "all" },
   onFilterChange,
-  onOpenSettings,
 }: {
   activeFilter?: VaultFilter;
   onFilterChange?: (filter: VaultFilter) => void;
-  // Opens the Settings drawer (UI-05) — called from the "Ustawienia" entry
-  // in this footer's account dropdown, per binding resolution #1
-  // (03-UI-SPEC.md's "Resolutions" section): the account row itself keeps
-  // opening the Phase 2 dropdown, it does NOT open Settings directly.
-  onOpenSettings?: () => void;
 } = {}) {
   const { locale, setLocale, t } = useLocale();
   // Mirrors — does not duplicate — layout.tsx's inline pre-hydration
@@ -571,15 +566,20 @@ export default function Sidebar({
               </button>
             </li>
             <li>
-              <button
-                type="button"
+              {/* Plan 29-03: real link, not a onClick-driven button — a real
+                  <a href> in the DOM for middle-click/open-in-new-tab, but a
+                  client-side transition on a plain click that preserves the
+                  in-memory unlock singleton instead of forcing a re-unlock
+                  on every settings visit (same next/link rationale as Plan
+                  29-01's back-to-vault link, 29-PATTERNS.md). */}
+              <Link
+                href="/settings"
                 data-testid="sidebar-open-settings"
                 aria-label={t("aria.openSettings")}
-                onClick={() => onOpenSettings?.()}
               >
                 <Settings size={16} aria-hidden="true" />
                 {t("settings.title")}
-              </button>
+              </Link>
             </li>
             <li>
               <button
