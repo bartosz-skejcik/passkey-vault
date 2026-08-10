@@ -177,6 +177,43 @@ async fn percent_encoded_traversal_attempts_never_escape_the_static_root() {
     let _ = std::fs::remove_file(&secret_path);
 }
 
+// WR-07 (code review, Phase 29): the existence-probe failure path used to
+// collapse `unwrap_or(false)` -- a REAL I/O error (ENOTDIR here, but the
+// same collapse covered permissions/a broken volume mount in the Docker
+// deployment this project ships as its core value) was silently treated as
+// "route doesn't exist" with nothing logged. This test forces a genuine
+// `Err` (not `Ok(false)`) out of `tokio::fs::try_exists` by making a path
+// SEGMENT a plain file rather than a directory (`blocked` is a file;
+// `blocked/inner.html` cannot exist beneath a non-directory -- confirmed
+// empirically to return `Err(NotADirectory)`, not `Ok(false)`, on this
+// platform) and asserts the request still resolves safely to the ordinary
+// SPA fallback -- never a panic, a hang, or (the old defect this whole
+// middleware exists to fix) a silently wrong response. The `tracing::warn!`
+// this path now emits is not independently captured by this test (this
+// crate has no tracing-capture test harness yet); the fail-SAFE behavior it
+// protects is what's asserted here.
+#[tokio::test]
+async fn existence_probe_io_error_falls_through_safely_never_panics() {
+    let dir = fixture_static_dir();
+    std::fs::write(dir.join("blocked"), "im a file, not a directory").expect("write blocking file fixture");
+    let pool = common::test_pool().await;
+    let app = common::test_app_with_static_dir(pool, dir.clone());
+
+    let res = app
+        .oneshot(Request::builder().uri("/blocked/inner").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK, "must fail through to the SPA fallback, never panic or error out");
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(
+        bytes,
+        "<!doctype html><title>pv index fixture</title>".as_bytes(),
+        "the ENOTDIR probe failure must resolve to the ordinary index.html SPA fallback"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test]
 async fn missing_static_dir_degrades_to_api_only_without_panic() {
     let missing_dir = std::env::temp_dir().join(format!("pv-static-missing-{}", uuid::Uuid::new_v4()));

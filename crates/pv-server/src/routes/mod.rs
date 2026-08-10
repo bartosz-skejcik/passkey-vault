@@ -277,14 +277,50 @@ async fn rewrite_nested_static_route(
         });
         if is_valid_candidate_segment {
             let candidate = dir.join(format!("{trimmed}.html"));
-            if tokio::fs::try_exists(&candidate).await.unwrap_or(false) {
+            // WR-07 (code review, Phase 29): `unwrap_or(false)` used to
+            // collapse a REAL I/O error (permissions, ENOTDIR, a broken
+            // volume mount in the Docker deployment this project ships as
+            // its core value) into "route does not exist" -- silently
+            // falling through to the SPA fallback with nothing in the log
+            // to correlate. That reproduces the exact defect this
+            // middleware exists to fix (silently serving the wrong page,
+            // no error signal), just relocated one level down. Log the
+            // distinction: `Ok(false)` (route genuinely doesn't exist) stays
+            // silent -- that is the ordinary, expected case for most
+            // requests -- but an `Err` is now visible.
+            let candidate_exists = match tokio::fs::try_exists(&candidate).await {
+                Ok(exists) => exists,
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        path = %candidate.display(),
+                        "static-route existence probe failed -- falling through to the SPA fallback"
+                    );
+                    false
+                }
+            };
+            if candidate_exists {
                 let mut new_path = format!("/{trimmed}.html");
                 if let Some(query) = req.uri().query() {
                     new_path.push('?');
                     new_path.push_str(query);
                 }
-                if let Ok(new_uri) = new_path.parse() {
-                    *req.uri_mut() = new_uri;
+                // WR-07: same rationale as the `try_exists` branch above --
+                // a parse failure here used to be dropped silently (`if let
+                // Ok`). `new_path` is built from `trimmed` (`req.uri().path()`
+                // with slashes trimmed) plus a literal `.html`/`?query` --
+                // a failure here would mean the ORIGINAL incoming URI was
+                // already malformed in a way `http::Uri` cannot re-parse,
+                // which is worth knowing about, not silently discarding.
+                match new_path.parse() {
+                    Ok(new_uri) => *req.uri_mut() = new_uri,
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            %new_path,
+                            "rewritten static-route URI failed to parse -- falling through to the SPA fallback"
+                        );
+                    }
                 }
             }
         }
