@@ -459,21 +459,44 @@ export default function ShareDialog({
    * retry adds the missing grants to the collection that already exists. The
    * per-recipient loop tracks failures instead of aborting, and treats
    * `collections::add_member`'s duplicate-409 as success-for-that-recipient
-   * so the retry is genuinely idempotent. */
+   * so the retry is genuinely idempotent.
+   *
+   * `isFamilyWide` (30-08, FSH-01): when `true`, `selected` is the FULL
+   * current active family roster (minus the caller), not whatever happens
+   * to be in `selectedRecipientIds` (which is always empty in this mode —
+   * the checkbox selects a MODE, not a recipient list). T-25-16's
+   * throw-before-network discipline stays UNCHANGED for the individual-
+   * recipient path (`isFamilyWide === false`) — it exists because that
+   * recipient set was explicitly picked, and a silent drop would defeat an
+   * explicit user choice. A family-wide set is never explicitly picked
+   * per-person, so a keyless member here is structurally the same shape as
+   * a not-yet-joined member: OMITTED from this creation-time grant rather
+   * than aborting the whole share, and picked up later by the SAME
+   * lazy-reseal trigger (30-13) a gap-window invitee already uses once they
+   * publish a key. */
   async function submitFolderVariant(
     name: string,
     selected: FamilyMemberRecord[],
     level: AccessLevelValue,
     seed: { id: string; itemCount: number } | null,
+    isFamilyWide: boolean = false,
   ): Promise<SubmitOutcome> {
     const uk = getUnlockedUserKey();
     if (uk === null) {
       throw new Error("cannot share while the vault is locked");
     }
     await initCrypto();
-    // T-25-16, applied identically to the folder variant — before ANY
-    // network call, including `createCollection`.
-    assertRecipientsHavePublicKeys(selected);
+    // T-25-16 applies to the individual-recipient path only — see the
+    // `isFamilyWide` doc comment above for why the family-wide path
+    // deliberately diverges (omits rather than throws).
+    if (!isFamilyWide) {
+      assertRecipientsHavePublicKeys(selected);
+    }
+    const grantRecipients = isFamilyWide
+      ? selected.filter(
+          (r) => r.public_key !== null && r.public_key !== undefined && r.public_key !== "",
+        )
+      : selected;
 
     const identityKey = await ensureOwnIdentityKeypair(uk);
     const recipientHandles: WasmIdentityPublicKey[] = [];
@@ -497,7 +520,17 @@ export default function ShareDialog({
           } finally {
             ownPublicKey.free?.();
           }
-          await createCollection(newCollectionId, encName, sealedKeyForSelf);
+          // `family_wide_kind` threaded in ONLY on this branch — an
+          // ordinary (non-family-wide) creation keeps omitting the field
+          // entirely, per 30-02's additive contract (`createCollection`
+          // leaves the key OUT of the POSTed body whenever the 4th arg is
+          // `undefined`).
+          await createCollection(
+            newCollectionId,
+            encName,
+            sealedKeyForSelf,
+            isFamilyWide ? "folder" : undefined,
+          );
         } catch (err) {
           // The collection never landed — free the key rather than parking a
           // handle in the ref that no server-side collection corresponds to.
@@ -525,7 +558,7 @@ export default function ShareDialog({
       const { id: collectionId, ck: newCk, movedItemIds } = created;
 
       const failedRecipients: string[] = [];
-      for (const recipient of selected) {
+      for (const recipient of grantRecipients) {
         const recipientPk = WasmIdentityPublicKey.fromBytes(base64Decode(recipient.public_key as string));
         recipientHandles.push(recipientPk);
         try {
@@ -592,7 +625,14 @@ export default function ShareDialog({
 
   async function handleSubmit() {
     const selected = recipients.filter((r) => selectedRecipientIds.has(r.user_id));
-    if (accessLevel === null || selected.length === 0) return;
+    // Family-wide mode is a folder-only submit path in this plan (30-08) —
+    // the item variant's family-wide handling is 30-11's job. `isFolder &&
+    // isFamilyWideSelected` below (`submitDisabled`) keeps the item variant's
+    // submit button disabled while family-wide is checked there, so this
+    // guard only ever sees the folder case for the family-wide branch.
+    const familyWideSubmit = isFamilyWideSelected && isFolder;
+    if (accessLevel === null) return;
+    if (!familyWideSubmit && selected.length === 0) return;
     if (isFolder && folderName.trim() === "") return;
 
     setState("sharing");
@@ -600,10 +640,28 @@ export default function ShareDialog({
     setSeedMoveFailureCount(null);
     setFailedRecipientLabels([]);
     try {
-      const outcome =
-        scope.kind === "item"
-          ? await submitItemVariant(scope.item, selected, accessLevel)
-          : await submitFolderVariant(folderName.trim(), selected, accessLevel, seedFolder);
+      let outcome: SubmitOutcome;
+      if (scope.kind === "item") {
+        outcome = await submitItemVariant(scope.item, selected, accessLevel);
+      } else if (familyWideSubmit) {
+        // Live current-member roster at SUBMIT time (not the dialog's
+        // mount-time `recipients` snapshot) — the checkbox selects a MODE,
+        // not a recipient list, so this branch always grants every CURRENT
+        // active family member, never `selectedRecipientIds` (which is
+        // always empty in this mode).
+        const allMembers = (await getFamilyMembers()) ?? [];
+        const familyRecipients =
+          accountId === null ? [] : allMembers.filter((m) => m.user_id !== accountId);
+        outcome = await submitFolderVariant(
+          folderName.trim(),
+          familyRecipients,
+          accessLevel,
+          seedFolder,
+          true,
+        );
+      } else {
+        outcome = await submitFolderVariant(folderName.trim(), selected, accessLevel, seedFolder, false);
+      }
       if (!mountedRef.current) return;
       if (outcome.failedRecipients.length === 0 && outcome.seedMoveFailures === 0) {
         onShared();
