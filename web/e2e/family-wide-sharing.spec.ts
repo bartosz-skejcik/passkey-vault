@@ -74,8 +74,10 @@ import {
   ensureFamilyMemberCSession,
   ensureFamilyMemberDSession,
   FAMILY_MEMBER_C_PASSWORD,
+  FAMILY_MEMBER_D_PASSWORD,
   SESSION_PASSWORD,
 } from "./fixtures";
+import { t } from "@/lib/i18n/dictionary";
 
 const BASE_URL = "http://localhost:8620";
 const FAMILY_NAME = "PV E2E Family-Wide Family";
@@ -554,5 +556,192 @@ test.describe("family-wide sharing — the living group, proven live (Plan 30-16
       memberC.page.getByTestId("item-row-pending-family-key"),
       "the invite-carried path is immediate -- a newcomer served by it must never see a 'waiting for your key' row",
     ).toHaveCount(0);
+  });
+
+  // --- Task 4: the gap window — invite BEFORE the share, lazy reseal after -
+
+  test("SC3 gap window: a late joiner whose invite predates the share waits, then resolves by lazy reseal", async ({
+    browser,
+  }) => {
+    // Two full sync cycles are structurally required in this test (a
+    // keyholder's, then the newcomer's own), each bounded by sync.ts's real
+    // 30s `POLL_INTERVAL_MS`, plus a fifth account bring-up at the end.
+    test.setTimeout(600_000);
+
+    const dToken = await tokenFor(memberD.page);
+    await waitForIdentityKeyPublished(memberD.context, dToken);
+
+    // (1) The invite is generated FIRST, while only the SC2 collection
+    // exists. `generateInviteLink` fixes this invite's family-wide payload
+    // right here, at INSERT time, and `invitations.rs::create` never
+    // recomputes it -- so the collection created in step (2) is structurally
+    // invisible to this invite for the whole of its remaining life
+    // (30-DECISION-FSH-02.md's rejected alternative #1). That is the gap
+    // window, and it is why the invite-carried path alone cannot satisfy
+    // FSH-02.
+    await openFamilyTab(owner.page);
+    const inviteForD = await generateInviteViaUI(owner.page);
+    await returnToVault(owner.page);
+
+    // (2) ONLY NOW does the second family-wide share come into existence.
+    // Every CURRENT member (owner, B, C) is granted a key by the fan-out; D
+    // is not a member yet and gets nothing.
+    const ownerToken = await tokenFor(owner.page);
+    const suffix = uniqueSuffix();
+    const gapItemName = `PV E2E Gap-Window Item ${suffix}`;
+    const gapItemPassword = `pw-gap-window-${suffix}`;
+
+    const itemsBefore = await listItemIds(owner.context, ownerToken);
+    await createLoginItemViaUI(owner.page, gapItemName, gapItemPassword);
+    const gapItemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+    const foldersBefore = await listFolderIds(owner.context, ownerToken);
+    await createFolderViaUI(owner.page, `PV E2E Gap-Window Seed ${suffix}`);
+    const gapFolderId = await newIdAfter(foldersBefore, () =>
+      listFolderIds(owner.context, ownerToken),
+    );
+    await moveItemToFolder(owner.page, gapItemId, gapFolderId);
+
+    const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+    await shareFolderFamilyWide(
+      owner.page,
+      gapFolderId,
+      "edit",
+      `PV E2E Gap-Window Folder ${suffix}`,
+    );
+    const gapCollectionId = await newIdAfter(collectionsBefore, () =>
+      listCollectionIds(owner.context, ownerToken),
+    );
+
+    // (3) Take every keyholder offline. Without this the test would be
+    // measuring a race rather than a mechanism: the reseal trigger fires on
+    // ANY current keyholder's own sync cycle, deliberately including the
+    // sharer (30-DECISION-FSH-02.md's one refinement over the starting
+    // hypothesis), and the owner's own idle page polls every 30s -- so an
+    // owner left unlocked would silently resolve D before D could ever be
+    // observed waiting. Locking is a real lock: `stopSync()` runs and the
+    // User Key leaves memory, so these sessions genuinely cannot reseal.
+    for (const keyholder of [owner, memberB, memberC]) {
+      await lockViaUI(keyholder.page);
+    }
+
+    // (4) D redeems the invite generated in step (1).
+    await joinViaInviteUI(memberD.page, inviteForD, FAMILY_MEMBER_D_PASSWORD);
+    await relockAndUnlock(memberD.page, FAMILY_MEMBER_D_PASSWORD);
+
+    // D's invite DID carry the SC2 collection's key (that share already
+    // existed when the invite was generated), so the invite-carried half
+    // still works here. Asserted first, positively, on real decrypted
+    // content -- this is what makes the pending state below specific to the
+    // gap-window collection rather than "D has no access to anything yet".
+    await assertRecipientDecrypts(
+      memberD.page,
+      sharedItemId,
+      sharedItemName,
+      sharedItemPassword,
+      "the gap-window joiner must still receive every family-wide key that DID exist when its invite was generated",
+    );
+
+    // (5) The pending state, observed BEFORE any keyholder comes back
+    // online. This is a POSITIVE assertion about a rendered row, not an
+    // absence check: 30-15's placeholder is built from the discovery
+    // endpoint's own ids-only `missing` list, so its presence is direct
+    // evidence that the server agrees D is a family member with no key for
+    // this collection -- honest waiting, never a 404 D cannot distinguish
+    // from a stranger's.
+    const pendingRow = memberD.page.getByTestId(`item-row-pending-family-key:${gapCollectionId}`);
+    await expect(
+      pendingRow,
+      "the gap-window collection must surface as an honest pending row on the newcomer's own list",
+    ).toBeVisible({ timeout: 60000 });
+    await expect(
+      pendingRow.getByTestId("item-row-pending-family-key"),
+      "and it must be the calm pending row, not a generic one",
+    ).toBeVisible();
+    // Locale-tolerant on purpose: D's session reached the vault through the
+    // invite landing and therefore renders in `pl` (see `accountMenuTrigger`'s
+    // own note), while a session that came in via "/" renders `en`. The copy
+    // itself is what matters -- that it is the pending wording from the
+    // dictionary and not an invented string.
+    await expect(pendingRow).toContainText(
+      new RegExp(
+        [
+          t("pl", "vault.pendingFamilyKeyItemName"),
+          t("en", "vault.pendingFamilyKeyItemName"),
+        ]
+          .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+          .join("|"),
+      ),
+    );
+
+    // The pending row's own detail panel explains the wait rather than
+    // reporting a failure. `undecryptable-item-banner` is the shape a
+    // genuine decrypt failure takes; a newcomer who simply has no key yet
+    // must never be shown it (30-UI-SPEC.md's pending-newcomer contract).
+    await pendingRow.click();
+    await memberD.page.getByTestId("pending-family-key-detail").waitFor({ state: "visible" });
+    await expect(
+      memberD.page.getByTestId("undecryptable-item-banner"),
+      "waiting for a key is not a decrypt failure and must never be reported as one",
+    ).toHaveCount(0);
+    await memberD.page.getByTestId("detail-panel-close").click();
+
+    // Paired with the visible pending row above, so this cannot pass on an
+    // early observation: the store drops the placeholder in the same pass
+    // that first sees a real row for that collection, so "pending row
+    // visible" and "real row absent" are two readings of one state.
+    await expect(
+      memberD.page.getByTestId(`item-row-${gapItemId}`),
+      "the gap-window item must NOT be readable before any keyholder has come back online",
+    ).toHaveCount(0);
+
+    // (6) One keyholder comes back online -- nothing else. No re-share, no
+    // owner action, no new invite. B unlocks its already-open session
+    // through the real UnlockOverlay, which re-enters
+    // `subscribeLockState`'s unlock branch, restarts sync, and lets
+    // `pullOnce` reach `onFamilyWidePending` -> `runFamilyWideResealTrigger`.
+    await unlockViaUI(memberB.page, SESSION_PASSWORD);
+
+    // (7) D's OWN session resolves it. NOTHING is done to D's page here --
+    // no reload, no navigation, no lock/unlock, not even a click. The only
+    // thing that advances is sync.ts's real 30s poll on a page that has been
+    // sitting open since step (5). Two cycles are in play (B's, then D's),
+    // hence the generous bound.
+    await expect(
+      pendingRow,
+      "once a keyholder reseals, the placeholder must disappear on the newcomer's own next sync -- self-resolving, not sticky",
+    ).toHaveCount(0, { timeout: 180000 });
+
+    await assertRecipientDecrypts(
+      memberD.page,
+      gapItemId,
+      gapItemName,
+      gapItemPassword,
+      "FSH-02's lazy reseal: the gap-window joiner must end up reading the real content, with no further sharer action",
+    );
+
+    // (8) A completely fresh client for the same account -- a second device
+    // that never observed the pending state and never held any in-memory
+    // carry-over from it -- reads the same content. This also exercises
+    // `ensureFamilyMemberDSession`'s register-or-login idempotency for real:
+    // the account already exists by now, so this call takes the login +
+    // UnlockOverlay branch rather than the register one.
+    const secondDevice = await newBareContext(browser);
+    try {
+      await ensureFamilyMemberDSession(secondDevice.page);
+      await assertRecipientDecrypts(
+        secondDevice.page,
+        gapItemId,
+        gapItemName,
+        gapItemPassword,
+        "the resealed key is genuinely persisted, not an artifact of the session that observed the wait",
+      );
+      expect(
+        secondDevice.dialogFired(),
+        "the second-device session must trigger zero OS-level dialogs",
+      ).toBe(false);
+    } finally {
+      await secondDevice.context.close();
+    }
   });
 });
