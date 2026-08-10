@@ -100,6 +100,14 @@ fn derive_invite_secrets() -> InviteSecrets {
 /// `CollectionKey::generate()`, `seal()`ed to their own freshly-generated
 /// identity pubkey) — mirrors `membership_route_sweep.rs::create_collection`.
 async fn create_collection(app: &axum::Router, owner_token: &str) -> (String, CollectionKey) {
+    create_collection_with_id(app, owner_token, "f822b184-7ecd-4910-b800-bcf600d3c53a").await
+}
+
+/// Same as `create_collection` but with a caller-chosen id — needed by the
+/// family-wide-keys tests (30-03-PLAN.md Task 1), which create MULTIPLE
+/// collections per test and so cannot all share `create_collection`'s one
+/// hardcoded id.
+async fn create_collection_with_id(app: &axum::Router, owner_token: &str, id: &str) -> (String, CollectionKey) {
     let owner_sk = IdentitySecretKey::generate();
     let ck = CollectionKey::generate();
     let sealed = seal(&owner_sk.public_key(), ck.expose()).expect("seal must succeed for a valid public key");
@@ -110,7 +118,7 @@ async fn create_collection(app: &axum::Router, owner_token: &str) -> (String, Co
         "POST",
         "/api/vault/collections",
         Some(owner_token),
-        Some(json!({ "id": "f822b184-7ecd-4910-b800-bcf600d3c53a", "enc_name": "invite-test-collection-name", "sealed_key": sealed_key_json })),
+        Some(json!({ "id": id, "enc_name": "invite-test-collection-name", "sealed_key": sealed_key_json })),
     )
     .await;
     assert_eq!(res.status(), StatusCode::CREATED, "collection creation fixture must succeed");
@@ -236,7 +244,7 @@ async fn invitation_create_and_fetch_metadata_with_correct_proof_returns_exactly
     assert_eq!(res.status(), StatusCode::OK);
     let body = body_json(res).await;
     let obj = body.as_object().expect("response body must be a JSON object");
-    assert_eq!(obj.len(), 5, "must contain exactly the five documented fields, no more: {obj:?}");
+    assert_eq!(obj.len(), 6, "must contain exactly the six documented fields, no more: {obj:?}");
     assert_eq!(obj.get("inviter_email").and_then(Value::as_str), Some("invite-owner-1@example.com"));
     assert_eq!(obj.get("family_name").and_then(Value::as_str), Some("Invite Test Family"));
     assert!(obj.get("collection_id").unwrap().is_null(), "family-only invite must have a null collection_id");
@@ -245,6 +253,11 @@ async fn invitation_create_and_fetch_metadata_with_correct_proof_returns_exactly
         "family-only invite must have a null wrapped_collection_key"
     );
     assert!(obj.contains_key("inviter_fingerprint"));
+    assert_eq!(
+        obj.get("family_wide_keys").unwrap(),
+        &json!([]),
+        "an invite carrying zero family-wide keys must render an empty array, not null or an absent key"
+    );
 }
 
 /// WR-05 (24-REVIEW.md): `create`'s `id` is written straight into the
@@ -1383,12 +1396,18 @@ async fn invitation_metadata_collection_scoped_never_leaks_collection_enc_name()
     let body = body_json(metadata_res).await;
     let obj = body.as_object().expect("response body must be a JSON object");
 
-    let expected_keys: std::collections::HashSet<&str> =
-        ["inviter_email", "family_name", "inviter_fingerprint", "collection_id", "wrapped_collection_key"]
-            .into_iter()
-            .collect();
+    let expected_keys: std::collections::HashSet<&str> = [
+        "inviter_email",
+        "family_name",
+        "inviter_fingerprint",
+        "collection_id",
+        "wrapped_collection_key",
+        "family_wide_keys",
+    ]
+    .into_iter()
+    .collect();
     let actual_keys: std::collections::HashSet<&str> = obj.keys().map(String::as_str).collect();
-    assert_eq!(actual_keys, expected_keys, "response must contain exactly the five documented fields, no more");
+    assert_eq!(actual_keys, expected_keys, "response must contain exactly the six documented fields, no more");
 
     let serialized = serde_json::to_string(&body).unwrap();
     assert!(
@@ -1496,4 +1515,194 @@ async fn invitation_id_alone_without_correct_proof_is_rejected_on_metadata_and_a
         .await
         .unwrap();
     assert_eq!(status, "pending", "none of the six rejected possession-less attempts may burn the real invite");
+}
+
+// --- 30-03-PLAN.md Task 1: create()/fetch_metadata() carry family-wide wraps ---
+
+/// `create()` with two `family_wide_keys` entries inserts one
+/// `invitation_family_wide_keys` row per entry, both referencing the same new
+/// `invitations.id`, and `fetch_metadata()` returns both alongside the
+/// existing (here null) singular `collection_id`/`wrapped_collection_key`
+/// fields.
+#[tokio::test]
+async fn invitation_create_with_two_family_wide_keys_inserts_both_rows_and_fetch_metadata_returns_both() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-fw-owner-1@example.com").await;
+    create_family(&app, &owner_token).await;
+    let (collection_a, _ck_a) =
+        create_collection_with_id(&app, &owner_token, "aaaaaaaa-0000-4000-8000-000000000001").await;
+    let (collection_b, _ck_b) =
+        create_collection_with_id(&app, &owner_token, "aaaaaaaa-0000-4000-8000-000000000002").await;
+
+    let secrets = derive_invite_secrets();
+    let res = req(
+        &app,
+        "POST",
+        "/api/invitations",
+        Some(&owner_token),
+        Some(json!({
+            "id": secrets.invite_id,
+            "collection_id": null,
+            "access_level": null,
+            "wrapped_collection_key": null,
+            "proof_hash": secrets.proof_hash_b64,
+            "expires_in": "24h",
+            "family_wide_keys": [
+                { "collection_id": collection_a, "access_level": "edit", "wrapped_collection_key": "fake-wrapped-a" },
+                { "collection_id": collection_b, "access_level": "read", "wrapped_collection_key": "fake-wrapped-b" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CREATED, "create with two family_wide_keys entries must succeed");
+
+    let row_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM invitation_family_wide_keys WHERE invitation_id = ?",
+    )
+    .bind(&secrets.invite_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row_count, 2, "exactly one invitation_family_wide_keys row per entry must be written");
+
+    let metadata_res = req(
+        &app,
+        "POST",
+        &format!("/api/invitations/{}", secrets.invite_id),
+        None,
+        Some(json!({ "invite_proof": secrets.invite_proof_b64 })),
+    )
+    .await;
+    assert_eq!(metadata_res.status(), StatusCode::OK);
+    let metadata_body = body_json(metadata_res).await;
+    assert!(metadata_body["collection_id"].is_null(), "the existing singular collection_id must stay null");
+    assert!(
+        metadata_body["wrapped_collection_key"].is_null(),
+        "the existing singular wrapped_collection_key must stay null"
+    );
+    let family_wide_keys = metadata_body["family_wide_keys"].as_array().expect("family_wide_keys must be an array");
+    assert_eq!(family_wide_keys.len(), 2, "fetch_metadata must return both family-wide entries");
+    let mut seen: Vec<(String, String, String)> = family_wide_keys
+        .iter()
+        .map(|entry| {
+            (
+                entry["collection_id"].as_str().unwrap().to_string(),
+                entry["access_level"].as_str().unwrap().to_string(),
+                entry["wrapped_collection_key"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    seen.sort();
+    let mut expected = vec![
+        (collection_a.clone(), "edit".to_string(), "fake-wrapped-a".to_string()),
+        (collection_b.clone(), "read".to_string(), "fake-wrapped-b".to_string()),
+    ];
+    expected.sort();
+    assert_eq!(seen, expected, "each entry must carry exactly its own collection_id/access_level/wrapped_collection_key");
+}
+
+/// `create()` with an entry whose `access_level` is not one of
+/// `read`/`edit`/`hidden_password` is rejected `400`, and writes zero rows
+/// anywhere — not even the `invitations` row itself (the whole request is
+/// validated before any DB work).
+#[tokio::test]
+async fn invitation_create_with_invalid_family_wide_access_level_rejects_and_writes_nothing() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-fw-owner-2@example.com").await;
+    create_family(&app, &owner_token).await;
+    let (collection_id, _ck) = create_collection(&app, &owner_token).await;
+
+    let before_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invitations").fetch_one(&pool).await.unwrap();
+
+    let secrets = derive_invite_secrets();
+    let res = req(
+        &app,
+        "POST",
+        "/api/invitations",
+        Some(&owner_token),
+        Some(json!({
+            "id": secrets.invite_id,
+            "collection_id": null,
+            "access_level": null,
+            "wrapped_collection_key": null,
+            "proof_hash": secrets.proof_hash_b64,
+            "expires_in": "24h",
+            "family_wide_keys": [
+                { "collection_id": collection_id, "access_level": "not_a_real_level", "wrapped_collection_key": "fake" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    let after_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invitations").fetch_one(&pool).await.unwrap();
+    assert_eq!(before_count, after_count, "an invalid access_level entry must write zero invitations rows");
+
+    let fw_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM invitation_family_wide_keys").fetch_one(&pool).await.unwrap();
+    assert_eq!(fw_count, 0, "an invalid access_level entry must write zero invitation_family_wide_keys rows");
+}
+
+/// `create()` with an entry whose `collection_id` the caller does NOT
+/// currently hold `edit` on is rejected (mirrors the existing
+/// single-collection-scope `require_collection_edit` check, applied
+/// per-entry — same `gate::<RequireEdit>(None) -> ApiError::NotFound` this
+/// codebase's every other no-access-at-all case renders, e.g.
+/// `Membership<R, M>`'s own extractor).
+#[tokio::test]
+async fn invitation_create_with_family_wide_collection_caller_lacks_edit_on_rejects() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-fw-owner-3@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    // A fellow family member's OWN real collection, created without ever
+    // granting the owner a `collection_keys` row on it — v0.4 has exactly one
+    // family (FAM-01), so "the caller lacks edit" must be proven via a
+    // same-family collection the caller was simply never given a key for, not
+    // a different family entirely.
+    let member_token =
+        register_second_family_member(&app, &owner_token, "invite-fw-member-3@example.com").await;
+    let (member_collection_id, _member_ck) = create_collection_with_id(
+        &app,
+        &member_token,
+        "bbbbbbbb-0000-4000-8000-000000000001",
+    )
+    .await;
+
+    let before_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invitations").fetch_one(&pool).await.unwrap();
+
+    let secrets = derive_invite_secrets();
+    let res = req(
+        &app,
+        "POST",
+        "/api/invitations",
+        Some(&owner_token),
+        Some(json!({
+            "id": secrets.invite_id,
+            "collection_id": null,
+            "access_level": null,
+            "wrapped_collection_key": null,
+            "proof_hash": secrets.proof_hash_b64,
+            "expires_in": "24h",
+            "family_wide_keys": [
+                { "collection_id": member_collection_id, "access_level": "read", "wrapped_collection_key": "fake" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(
+        res.status(),
+        StatusCode::NOT_FOUND,
+        "a collection the caller holds no key for at all must render the same NotFound every other \
+         no-access-at-all check in this codebase renders"
+    );
+
+    let after_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invitations").fetch_one(&pool).await.unwrap();
+    assert_eq!(before_count, after_count, "a not-held-edit-on entry must write zero invitations rows");
 }
