@@ -116,14 +116,16 @@ async function userIdFor(context: BrowserContext, token: string): Promise<string
 
 /** Duplicated from `remove-member.spec.ts` per this codebase's own
  * per-file-owns-its-own-tiny-helper convention (neither file exports
- * anything to the other). */
+ * anything to the other). Navigates to the real `/settings` route's Family
+ * section -- the retired drawer+tab click mechanism is gone: the family
+ * section already renders unconditionally once `/settings` is reached, so
+ * there is nothing further to select once the route loads. */
 async function openFamilyTab(page: Page): Promise<void> {
-  const panelAlreadyOpen = await page.getByTestId("settings-panel").isVisible().catch(() => false);
-  if (!panelAlreadyOpen) {
+  const alreadyOnSettings = page.url().includes("/settings");
+  if (!alreadyOnSettings) {
     await page.getByRole("button", { name: "Account" }).click();
     await page.getByTestId("sidebar-open-settings").click();
   }
-  await page.getByTestId("settings-tab-family").click();
 
   await Promise.race([
     page.getByTestId("family-bootstrap").waitFor({ state: "visible" }),
@@ -137,25 +139,29 @@ async function openFamilyTab(page: Page): Promise<void> {
   }
 }
 
-/** `SettingsPanel` is conditionally MOUNTED (`settingsOpen ? <SettingsPanel
- * .../> : null` in `page.tsx`) -- closing it fully unmounts `FamilyTab`, so
- * the next `openFamilyTab` call is a genuine fresh mount with a fresh
- * `loadFamilyState` fetch. Needed after any raw API mutation (e.g. adding a
- * member) that an already-mounted `FamilyTab` has no reason to know about. */
-async function closeSettings(page: Page): Promise<void> {
-  await page.getByTestId("settings-close").click();
-  await page.getByTestId("settings-panel").waitFor({ state: "detached" });
+/** Navigates back to the vault shell -- the `/settings` route (and
+ * everything mounted inside it, including `FamilyTab`) fully unmounts on
+ * this navigation, so the next `openFamilyTab` call is a genuine fresh
+ * mount with a fresh `loadFamilyState` fetch. Needed after any raw API
+ * mutation (e.g. adding a member) that an already-mounted `FamilyTab` has
+ * no reason to know about. Waits for a real vault-only marker to reappear,
+ * matching this codebase's own `reloadAndUnlock` helper's post-navigation
+ * wait target. */
+async function returnToVault(page: Page): Promise<void> {
+  await page.getByTestId("settings-back-to-vault").click();
+  await page.getByTestId("new-item-button").waitFor({ state: "visible" });
 }
 
-/** Opens the Settings drawer's Security tab -- home of the "Delete account"
- * trigger (Plan 25-09's `SecurityTab.tsx`). */
-async function openSecurityTab(page: Page): Promise<void> {
-  const panelAlreadyOpen = await page.getByTestId("settings-panel").isVisible().catch(() => false);
-  if (!panelAlreadyOpen) {
+/** Navigates to the real `/settings` route's Konto section -- home of the
+ * "Delete account" trigger since Plan 29-01 relocated it there from its
+ * original Security-group home (Plan 25-09's `SecurityTab.tsx`). The
+ * trigger's own testid is unchanged; only its container moved. */
+async function openAccountSection(page: Page): Promise<void> {
+  const alreadyOnSettings = page.url().includes("/settings");
+  if (!alreadyOnSettings) {
     await page.getByRole("button", { name: "Account" }).click();
     await page.getByTestId("sidebar-open-settings").click();
   }
-  await page.getByTestId("settings-tab-security").click();
   await page.getByTestId("account-delete-trigger").waitFor({ state: "visible" });
 }
 
@@ -227,7 +233,7 @@ test(
     // `FamilyMembership<RequireEdit>`-gated and 404s for a caller with no
     // family yet.
     await openFamilyTab(owner.page);
-    await closeSettings(owner.page);
+    await returnToVault(owner.page);
 
     const addBRes = await apiPost(owner.context.request, "/api/families/members", ownerToken, {
       user_id: bUserId,
@@ -271,7 +277,7 @@ test(
     expect(membersRes.status()).toBe(200);
     const memberCount = ((await membersRes.json()) as unknown[]).length;
 
-    await openSecurityTab(owner.page);
+    await openAccountSection(owner.page);
     await owner.page.getByTestId("account-delete-trigger").click();
     await owner.page.getByTestId("account-delete-owner-warning").waitFor({ state: "visible" });
     const warningText = await owner.page.getByTestId("account-delete-owner-warning").innerText();
@@ -343,7 +349,7 @@ test(
     // family-scoped call below -- closed again immediately so the next
     // `openFamilyTab` is a fresh mount that actually sees B's roster row.
     await openFamilyTab(owner.page);
-    await closeSettings(owner.page);
+    await returnToVault(owner.page);
 
     const addBRes = await apiPost(owner.context.request, "/api/families/members", ownerToken, {
       user_id: bUserId,
@@ -490,7 +496,7 @@ test(
       // FamilyTab only fetches its roster on mount -- C was added via a raw
       // call to an ALREADY-mounted FamilyTab, so a fresh mount is needed to
       // see C's row at all before targeting it.
-      await closeSettings(owner.page);
+      await returnToVault(owner.page);
       await openFamilyTab(owner.page);
 
       await owner.page.getByTestId(`member-remove-trigger-${cUserId}`).click();
