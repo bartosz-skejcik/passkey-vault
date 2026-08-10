@@ -13,6 +13,7 @@
 // singleton; lifecycle (startSync on unlock, stopSync on lock) is wired by
 // store.ts's existing subscribeLockState side effect.
 import { getSessionToken } from "@/lib/auth/session";
+import { refreshFamilyWidePending } from "@/lib/families/familyWidePending";
 import { getSharedRevisions, getSyncSnapshot, type SharedRevisions, type SyncSnapshot } from "./api";
 import { setSyncStatus } from "./syncStatus";
 
@@ -38,6 +39,15 @@ export interface SyncCallbacks {
   // family." Always invoked BEFORE sharedPullDisabled latches, so the purge
   // it triggers can still see the (about-to-be-cleared) in-flight chain.
   onRemovedFromFamily?: () => void | Promise<void>;
+  // 30-06-PLAN.md Task 2 (FSH-02/FSH-05): fires with no payload -- consumers
+  // (30-12's reseal-trigger, 30-13's pending-row UI) read the fresh
+  // {missing, resealable} state via familyWidePending.ts's own synchronous
+  // getFamilyWidePendingSnapshot(), never a value handed off directly here,
+  // since two independent consumers each read their own slice. Optional and
+  // gated by the SAME sharedPullDisabled no-family latch onSharedRevisions
+  // already uses -- a no-family account structurally has nothing family-wide
+  // pending either.
+  onFamilyWidePending?: () => void;
 }
 
 let ws: WebSocket | null = null;
@@ -117,41 +127,68 @@ async function pullOnce(): Promise<void> {
   // WS message, and every 30s poll. Skipping the call entirely when nobody
   // will consume its result costs nothing and shrinks request volume back
   // down for the (today, only) real caller shape.
-  if (sharedPullDisabled || callbacks.onSharedRevisions === undefined) {
-    return;
-  }
-  try {
-    // Plan 23-05: the shared-revisions pull runs in the SAME pull cycle as
-    // the personal snapshot above, in its OWN try/catch — a failure here is
-    // equally silent/transient-retry, never a separate differently-shaped
-    // error path, and never blocks/breaks the personal pull above (which
-    // already ran, in its own try block).
-    const revisions = await getSharedRevisions();
-    // 28-03 (Task 4): arm the discriminant on THIS call site's own success
-    // too -- reads as "call the same setter refreshSharedItemsNow() calls,"
-    // not a private in-module assignment, so both call sites stay in sync
-    // by construction.
-    markFamilyMembershipConfirmed();
-    if (activeCallbacks === callbacks) {
-      callbacks.onSharedRevisions?.(revisions);
-    }
-  } catch (err) {
-    if (isNotFoundError(err)) {
-      // 28-03 (Task 4): a genuine removal-mid-session is only distinguishable
-      // from "never had a family" by hasEverConfirmedFamilyMembership. A
-      // user removed before EITHER call site's first success has, by
-      // construction, cached nothing this session either -- the `false`
-      // branch below correctly stays silent, byte-identical to today. A
-      // user removed AFTER either succeeded is correctly caught here,
-      // regardless of which call site armed the flag (Pitfall 4: the purge
-      // callback always runs BEFORE the unconditional latch below, never
-      // instead of it).
-      if (hasEverConfirmedFamilyMembership) {
-        await callbacks.onRemovedFromFamily?.();
+  // WR-07's early return became an `if` guard (30-06-PLAN.md Task 2): the
+  // family-wide-pending block below must still run when onSharedRevisions is
+  // undefined but onFamilyWidePending IS wired -- an independent opt-in, not
+  // nested inside this one's own early exit.
+  if (!(sharedPullDisabled || callbacks.onSharedRevisions === undefined)) {
+    try {
+      // Plan 23-05: the shared-revisions pull runs in the SAME pull cycle as
+      // the personal snapshot above, in its OWN try/catch — a failure here is
+      // equally silent/transient-retry, never a separate differently-shaped
+      // error path, and never blocks/breaks the personal pull above (which
+      // already ran, in its own try block).
+      const revisions = await getSharedRevisions();
+      // 28-03 (Task 4): arm the discriminant on THIS call site's own success
+      // too -- reads as "call the same setter refreshSharedItemsNow() calls,"
+      // not a private in-module assignment, so both call sites stay in sync
+      // by construction.
+      markFamilyMembershipConfirmed();
+      if (activeCallbacks === callbacks) {
+        callbacks.onSharedRevisions?.(revisions);
       }
-      sharedPullDisabled = true;
+    } catch (err) {
+      if (isNotFoundError(err)) {
+        // 28-03 (Task 4): a genuine removal-mid-session is only distinguishable
+        // from "never had a family" by hasEverConfirmedFamilyMembership. A
+        // user removed before EITHER call site's first success has, by
+        // construction, cached nothing this session either -- the `false`
+        // branch below correctly stays silent, byte-identical to today. A
+        // user removed AFTER either succeeded is correctly caught here,
+        // regardless of which call site armed the flag (Pitfall 4: the purge
+        // callback always runs BEFORE the unconditional latch below, never
+        // instead of it).
+        if (hasEverConfirmedFamilyMembership) {
+          await callbacks.onRemovedFromFamily?.();
+        }
+        sharedPullDisabled = true;
+      }
+      // Any other failure is transient — same self-healing rationale as above.
     }
-    // Any other failure is transient — same self-healing rationale as above.
+  }
+
+  // 30-06-PLAN.md Task 2 (FSH-02/FSH-05): the discovery endpoint's pull,
+  // gated by the SAME sharedPullDisabled latch above (T-30-13: a no-family
+  // account structurally has nothing family-wide pending either, so this
+  // reuses that latch rather than inventing a second independent one) plus
+  // its own callbacks.onFamilyWidePending === undefined guard -- zero added
+  // network calls for any caller that doesn't opt in, and independent of
+  // whether onSharedRevisions is also wired.
+  if (!sharedPullDisabled && callbacks.onFamilyWidePending !== undefined) {
+    try {
+      // In its own try/catch (mirrors the shared-revisions block above): a
+      // failure here never blocks or breaks the personal/shared-revisions
+      // pulls that already ran earlier in this same cycle. In practice
+      // refreshFamilyWidePending() never rejects (getFamilyWidePending() is
+      // fail-safe by construction, families/api.ts) -- this catch is
+      // defense-in-depth, not a load-bearing path.
+      await refreshFamilyWidePending();
+      if (activeCallbacks === callbacks) {
+        callbacks.onFamilyWidePending?.();
+      }
+    } catch {
+      // Transient failure — self-healing, same rationale as above.
+    }
   }
 }
 
