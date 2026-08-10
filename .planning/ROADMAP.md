@@ -154,7 +154,26 @@ require a **proven** client consumer, not a wired one.
   5. Wherever a family-wide share is created or listed, the UI states that "the whole family" includes people who have not joined yet, and states the timing bound the mechanism actually delivers rather than an unqualified "instantly" — the copy and the measured behaviour agree, checked against the measurement, not against the intent.
   6. Leaving the family, being removed from it, and deleting an account each revoke family-wide access through the same correctly-scoped, atomic re-key path v0.4 established, and the ex-member's client drops the decrypted family-wide plaintext on the next completed sync (the bound v0.4 proved, not lock/unlock) — live-proven with a positive "was readable" anchor before the revocation and the same read failing after.
 
-**Plans**: TBD
+**Plans**: 0/17 plans executed
+
+- [ ] 30-01-PLAN.md — FSH-02 decision record (own commit) + additive schema (family_wide_kind, invitation_family_wide_keys)
+- [ ] 30-02-PLAN.md — Server: family_wide_kind on collection create/get/list + GET /api/families/family-wide-pending discovery endpoint
+- [ ] 30-03-PLAN.md — Server: invite wire-contract widening (create/fetch_metadata/accept carry N family-wide wraps)
+- [ ] 30-04-PLAN.md — Client: reshareCollectionToNewMember (unwrap-own-key, reseal-to-one-recipient) + real-WASM proof
+- [ ] 30-05-PLAN.md — FAM-10 regression (family-wide flows through buildMemberRemovalBatch) + quiet FamilyRekeyNotice toast
+- [ ] 30-06-PLAN.md — Client: discovery client + familyWidePending.ts store wired into sync.ts's pull cycle
+- [ ] 30-07-PLAN.md — Client: invite/crypto.ts folds family-wide collection wraps into generateInviteLink/redeemInviteFlow
+- [ ] 30-08-PLAN.md — Client: ShareDialog "Cała rodzina" row + folder-variant family-wide submit
+- [ ] 30-09-PLAN.md — Client: CollectionRow/createCollection wire-type mirror (family_wide_kind)
+- [ ] 30-10-PLAN.md — Client: SharingOverviewPanel pinned family-wide block
+- [ ] 30-11-PLAN.md — Client: ItemRow family badge (owner-side) + collections.ts familyWideKind exposure
+- [ ] 30-12-PLAN.md — Client: ShareDialog family-wide ITEM variant (auto-created item_bucket collection)
+- [ ] 30-13-PLAN.md — Client: lazy-reseal trigger wired into store.ts's unlock/sync cycle
+- [ ] 30-14-PLAN.md — Server: adversarial test inspecting every row/request body for leaked key material (SC4)
+- [ ] 30-15-PLAN.md — Client: pending-newcomer item-row + detail-panel state
+- [ ] 30-16-PLAN.md — e2e: SC2 (current members read) + SC3 (fresh-invite and gap-window late joiners)
+- [ ] 30-17-PLAN.md — e2e: SC5 (measured timing copy) + SC6 (revocation) + long-text/decrypt-failure backstops
+
 **UI hint**: yes
 
 ### Phase 31: The Share Dialog — Per-Person Access, Existing Destinations
@@ -256,7 +275,7 @@ Phases execute in numeric order: 1 → … → 20 (v0.1–v0.3, archived) → 21
 | 27. Extension Integration — Shared Items | v0.4 | 14/14 | Complete    | 2026-08-09 |
 | 28. Close v0.4 audit gaps — client-side consumption of sharing state | v0.4 | 3/3 | Complete | 2026-08-09 |
 | 29. A Real Settings Page — Shell & Migration | v0.5 | 0/5 | Planned    |  |
-| 30. The Living Group — Family-Wide Sharing | v0.5 | TBD | Not started | - |
+| 30. The Living Group — Family-Wide Sharing | v0.5 | 0/17 | Planned | - |
 | 31. The Share Dialog — Per-Person Access, Existing Destinations | v0.5 | TBD | Not started | - |
 | 32. Putting Things Into Shared Folders | v0.5 | TBD | Not started | - |
 | 33. The Family & Sharing Surface | v0.5 | TBD | Not started | - |
