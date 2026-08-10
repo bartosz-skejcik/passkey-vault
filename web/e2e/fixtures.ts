@@ -176,11 +176,39 @@ export const FAMILY_OWNER_PASSWORD = "correct horse battery staple owner 42!";
  * caller below goes through `newBareContext`, which does).
  */
 export async function ensureFamilyOwnerSession(page: Page): Promise<void> {
+  await ensureNamedFamilySession(page, FAMILY_OWNER_EMAIL, FAMILY_OWNER_PASSWORD);
+}
+
+/**
+ * The generalized register-or-login-or-unlock body `ensureFamilyOwnerSession`
+ * above delegates to (Plan 30-16, Task 2), extracted verbatim rather than
+ * copied: Phase 30's family-wide live proof needs THREE more stable,
+ * reconstructible identities beyond the owner (`twoSessions`' own accounts
+ * are deliberately unique-per-call, so they cannot be named across `test()`
+ * blocks), and a second hand-maintained copy of this exact five-step dance
+ * would be free to drift from the one the owner path uses.
+ *
+ * Establishes an authenticated, UNLOCKED session for `email` and nothing
+ * more -- deliberately NOT a family member. Family joining for these
+ * identities happens through the real `/invite/{id}#{secret}` UI in the spec
+ * body that needs it (30-16-PLAN.md, Task 2's own scope fence), because WHEN
+ * an invite was generated relative to a family-wide share is the entire
+ * variable under test and must never be hidden inside a fixture.
+ *
+ * Idempotent by the same mechanism the owner path already relied on: a
+ * second call in the same run finds the account registered and falls through
+ * to the real login + UnlockOverlay path.
+ */
+export async function ensureNamedFamilySession(
+  page: Page,
+  email: string,
+  password: string,
+): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: "No account yet? Sign up" }).click();
-  await page.getByTestId("register-email").fill(FAMILY_OWNER_EMAIL);
-  await page.getByTestId("register-password").fill(FAMILY_OWNER_PASSWORD);
-  await page.getByTestId("register-confirm-password").fill(FAMILY_OWNER_PASSWORD);
+  await page.getByTestId("register-email").fill(email);
+  await page.getByTestId("register-password").fill(password);
+  await page.getByTestId("register-confirm-password").fill(password);
   await page.getByTestId("register-submit").click();
 
   const outcome = await Promise.race([
@@ -202,12 +230,47 @@ export async function ensureFamilyOwnerSession(page: Page): Promise<void> {
   // spec file entirely, registered it first) -- fall back to a real login +
   // unlock, the same two-step dance any returning user goes through.
   await page.getByRole("button", { name: "Already have an account? Log in" }).click();
-  await page.getByTestId("login-email").fill(FAMILY_OWNER_EMAIL);
-  await page.getByTestId("login-password").fill(FAMILY_OWNER_PASSWORD);
+  await page.getByTestId("login-email").fill(email);
+  await page.getByTestId("login-password").fill(password);
   await page.getByTestId("login-submit").click();
   await page.getByTestId("unlock-submit").waitFor({ state: "visible" });
   await page.getByTestId("unlock-submit").click();
   await page.getByTestId("new-item-button").waitFor({ state: "visible" });
+}
+
+/**
+ * Fixed, reconstructible identities for Phase 30's family-wide live proof
+ * (30-16-PLAN.md), mirroring `FAMILY_OWNER_EMAIL`'s naming convention and
+ * its "any spec file's turn can re-establish this exact account" property.
+ *
+ * Member C is the FRESH-INVITE late joiner (SC3's invite-carried path: its
+ * invite is generated AFTER a family-wide share already exists, so the key
+ * travels inside the invite and arrives in the same transaction as the
+ * join). Member D is the GAP-WINDOW late joiner (FSH-02's lazy-reseal path:
+ * its invite is generated BEFORE the family-wide share it will eventually
+ * read, so that invite's fixed-at-INSERT payload structurally cannot carry
+ * the key -- 30-DECISION-FSH-02.md's rejected-alternative #1).
+ *
+ * They are distinct fixed accounts rather than one reused identity because
+ * the two delivery paths must be observable side by side in one run: C
+ * proves invite-carried delivery is genuinely instant, D proves lazy reseal
+ * closes the window C's path structurally cannot.
+ */
+export const FAMILY_MEMBER_C_EMAIL = "pv-e2e-family-member-c@example.test";
+export const FAMILY_MEMBER_C_PASSWORD = "correct horse battery staple member c 42!";
+export const FAMILY_MEMBER_D_EMAIL = "pv-e2e-family-member-d@example.test";
+export const FAMILY_MEMBER_D_PASSWORD = "correct horse battery staple member d 42!";
+
+/** Authenticated + unlocked `FAMILY_MEMBER_C_EMAIL`, not yet a family
+ * member -- see `ensureNamedFamilySession`'s own doc comment. */
+export async function ensureFamilyMemberCSession(page: Page): Promise<void> {
+  await ensureNamedFamilySession(page, FAMILY_MEMBER_C_EMAIL, FAMILY_MEMBER_C_PASSWORD);
+}
+
+/** Authenticated + unlocked `FAMILY_MEMBER_D_EMAIL`, not yet a family
+ * member -- see `ensureNamedFamilySession`'s own doc comment. */
+export async function ensureFamilyMemberDSession(page: Page): Promise<void> {
+  await ensureNamedFamilySession(page, FAMILY_MEMBER_D_EMAIL, FAMILY_MEMBER_D_PASSWORD);
 }
 
 export const test = base.extend<TwoSessionsFixtures>({
