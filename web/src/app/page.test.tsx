@@ -89,6 +89,12 @@ vi.mock("@/components/vault/ItemForm", () => ({
 }));
 vi.mock("@/components/vault/CopyToast", () => ({ default: () => null }));
 vi.mock("@/components/vault/ErrorToast", () => ({ default: () => null }));
+// FamilyRekeyNotice's own mount is covered by page.family-rekey-notice.test.tsx
+// (WINDOWS.md #14) against the REAL `@/lib/vault/collections` registry -- this
+// suite shallow-mocks it like every other heavy child, matching its own scope
+// note above (only page.tsx's authed/mode/showOnboarding wiring is exercised
+// here).
+vi.mock("@/components/vault/FamilyRekeyNotice", () => ({ default: () => null }));
 vi.mock("@/components/auth/UnlockOverlay", () => ({ default: () => null }));
 
 vi.mock("@/components/auth/LoginForm", () => ({

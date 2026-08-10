@@ -15,6 +15,7 @@ import TypePicker from "@/components/vault/TypePicker";
 import ItemForm from "@/components/vault/ItemForm";
 import CopyToast from "@/components/vault/CopyToast";
 import ErrorToast from "@/components/vault/ErrorToast";
+import FamilyRekeyNotice from "@/components/vault/FamilyRekeyNotice";
 import OnboardingWizard from "@/components/onboarding/OnboardingWizard";
 import AuthGate from "@/lib/auth/AuthGate";
 import { isOnboardingComplete } from "@/lib/onboarding/flag";
@@ -423,6 +424,7 @@ export default function Home() {
       </div>
       <CopyToast />
       <ErrorToast />
+      <FamilyRekeyNotice />
       <UnlockOverlay />
       {showOnboarding ? <OnboardingWizard onFinish={() => setShowOnboarding(false)} /> : null}
     </AuthGate>
