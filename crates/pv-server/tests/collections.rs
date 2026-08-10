@@ -2261,3 +2261,206 @@ async fn access_list_flags_suspended_co_recipient_without_filtering() {
         entries.iter().find(|e| e["user_id"] == suspended_id).expect("suspended co-recipient must still be present");
     assert_eq!(suspended_entry["suspended"], true);
 }
+
+// --- Phase 30 Plan 02 (FSH-01): family_wide_kind on collection create/get/list ---
+
+/// A collection created with NO `family_wide_kind` field at all in the
+/// request body behaves identically to every existing fixture in this file —
+/// `create`/`get`/`list` all echo `family_wide_kind: null`.
+#[tokio::test]
+async fn family_wide_kind_absent_defaults_to_null_and_round_trips_as_null() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "fwk-absent-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let sealed_key_json = serde_json::to_string(&seal(&owner_sk.public_key(), ck.expose()).unwrap()).unwrap();
+    let id = "aaaaaaaa-1111-4111-8111-111111111111";
+
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "id": id, "enc_name": "enc-ordinary", "sealed_key": sealed_key_json })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let create_body = body_json(create_res).await;
+    assert_eq!(create_body["family_wide_kind"], Value::Null, "absent field must default to null on create");
+
+    let get_res = req(&app, "GET", &format!("/api/vault/collections/{id}"), &owner_token, None).await;
+    assert_eq!(get_res.status(), StatusCode::OK);
+    let get_body = body_json(get_res).await;
+    assert_eq!(get_body["family_wide_kind"], Value::Null, "GET must echo null for an ordinary collection");
+
+    let list_res = req(&app, "GET", "/api/vault/collections", &owner_token, None).await;
+    assert_eq!(list_res.status(), StatusCode::OK);
+    let list_body = body_json(list_res).await;
+    let entry = list_body.as_array().unwrap().iter().find(|c| c["id"] == id).expect("collection must be listed");
+    assert_eq!(entry["family_wide_kind"], Value::Null, "LIST must echo null for an ordinary collection");
+}
+
+/// Creating a collection with `family_wide_kind: "folder"` or
+/// `"item_bucket"` succeeds and the value round-trips through both existing
+/// read paths (`GET .../{id}` and `GET /api/vault/collections`) with zero new
+/// round trips.
+#[tokio::test]
+async fn family_wide_kind_folder_and_item_bucket_round_trip_through_get_and_list() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "fwk-roundtrip-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let sealed_key_json = serde_json::to_string(&seal(&owner_sk.public_key(), ck.expose()).unwrap()).unwrap();
+
+    for (id, kind) in [
+        ("bbbbbbbb-2222-4222-8222-222222222222", "folder"),
+        ("cccccccc-3333-4333-8333-333333333333", "item_bucket"),
+    ] {
+        let create_res = req(
+            &app,
+            "POST",
+            "/api/vault/collections",
+            &owner_token,
+            Some(json!({ "id": id, "enc_name": "enc-fw", "sealed_key": sealed_key_json, "family_wide_kind": kind })),
+        )
+        .await;
+        assert_eq!(create_res.status(), StatusCode::CREATED, "creating a {kind}-kind collection must succeed");
+        let create_body = body_json(create_res).await;
+        assert_eq!(create_body["family_wide_kind"].as_str(), Some(kind));
+
+        let get_res = req(&app, "GET", &format!("/api/vault/collections/{id}"), &owner_token, None).await;
+        assert_eq!(get_res.status(), StatusCode::OK);
+        let get_body = body_json(get_res).await;
+        assert_eq!(get_body["family_wide_kind"].as_str(), Some(kind), "GET must echo the stored {kind}");
+
+        let list_res = req(&app, "GET", "/api/vault/collections", &owner_token, None).await;
+        assert_eq!(list_res.status(), StatusCode::OK);
+        let list_body = body_json(list_res).await;
+        let entry = list_body.as_array().unwrap().iter().find(|c| c["id"] == id).expect("collection must be listed");
+        assert_eq!(entry["family_wide_kind"].as_str(), Some(kind), "LIST must echo the stored {kind}");
+    }
+}
+
+/// `family_wide_kind: "nonsense"` is rejected with 400 BEFORE any DB work —
+/// no row is written for the rejected call.
+#[tokio::test]
+async fn family_wide_kind_rejects_invalid_value_before_any_db_work() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "fwk-invalid-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let sealed_key_json = serde_json::to_string(&seal(&owner_sk.public_key(), ck.expose()).unwrap()).unwrap();
+    let id = "dddddddd-4444-4444-8444-444444444444";
+
+    let res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({ "id": id, "enc_name": "enc-bad", "sealed_key": sealed_key_json, "family_wide_kind": "nonsense" })),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST, "an unrecognized family_wide_kind must be rejected with 400");
+
+    let count_row: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM collections").fetch_one(&pool).await.unwrap();
+    assert_eq!(count_row, 0, "no collections row may ever be written for a rejected family_wide_kind");
+}
+
+/// A second concurrent `family_wide_kind: "item_bucket"` create for the SAME
+/// family fails cleanly with 409 (`idx_one_item_bucket_per_family`, 30-01),
+/// never a raw 500 — the bare `ON CONFLICT DO NOTHING` catches the partial
+/// unique index violation through the same `fetch_optional` `None`-branch the
+/// id-collision case already handles. A second `"folder"`-kind collection for
+/// the SAME family, by contrast, still succeeds — the partial index only
+/// scopes `item_bucket`.
+#[tokio::test]
+async fn second_item_bucket_for_same_family_is_409_but_second_folder_succeeds() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "fwk-conflict-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck1 = CollectionKey::generate();
+    let sealed_key_json_1 = serde_json::to_string(&seal(&owner_sk.public_key(), ck1.expose()).unwrap()).unwrap();
+    let ck2 = CollectionKey::generate();
+    let sealed_key_json_2 = serde_json::to_string(&seal(&owner_sk.public_key(), ck2.expose()).unwrap()).unwrap();
+
+    let first_bucket_id = "eeeeeeee-5555-4555-8555-555555555555";
+    let first_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": first_bucket_id, "enc_name": "enc-bucket-1", "sealed_key": sealed_key_json_1,
+            "family_wide_kind": "item_bucket",
+        })),
+    )
+    .await;
+    assert_eq!(first_res.status(), StatusCode::CREATED, "the first item_bucket for a family must succeed");
+
+    let second_bucket_id = "ffffffff-6666-4666-8666-666666666666";
+    let second_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": second_bucket_id, "enc_name": "enc-bucket-2", "sealed_key": sealed_key_json_2,
+            "family_wide_kind": "item_bucket",
+        })),
+    )
+    .await;
+    assert_eq!(
+        second_res.status(),
+        StatusCode::CONFLICT,
+        "a second item_bucket for the same family must be a clean 409, never an opaque 500"
+    );
+    let second_body = body_json(second_res).await;
+    assert!(second_body.get("error").is_some(), "the 409 body must carry the standard {{\"error\": ...}} shape");
+
+    // No row was written for the rejected second item_bucket.
+    let bucket_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM collections WHERE family_wide_kind = 'item_bucket'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(bucket_count, 1, "only the first item_bucket row may exist for this family");
+
+    // A second FOLDER-kind collection for the same family is unaffected — the
+    // partial index only scopes item_bucket, folders stay unbounded.
+    let ck3 = CollectionKey::generate();
+    let sealed_key_json_3 = serde_json::to_string(&seal(&owner_sk.public_key(), ck3.expose()).unwrap()).unwrap();
+    let second_folder_id = "11111111-7777-4777-8777-777777777777";
+    let second_folder_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": second_folder_id, "enc_name": "enc-folder-2", "sealed_key": sealed_key_json_3,
+            "family_wide_kind": "folder",
+        })),
+    )
+    .await;
+    assert_eq!(
+        second_folder_res.status(),
+        StatusCode::CREATED,
+        "a second folder-kind collection for the same family must still succeed \
+         — the bare ON CONFLICT DO NOTHING only trips on the id PK or the item_bucket partial index"
+    );
+}

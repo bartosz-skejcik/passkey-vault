@@ -251,6 +251,10 @@ fn substitute(path: &str, ids: &TestIds) -> String {
         "/api/families/members/{user_id}/reinstate" => {
             format!("/api/families/members/{}/reinstate", ids.some_user_id)
         }
+        // Phase 30 Plan 02 (FSH-02/FSH-03): pathless discovery endpoint — no
+        // `{id}` segment to substitute, same shape as `/api/vault/collections`/
+        // `/api/families/members`/`/api/sync/shared` above.
+        "/api/families/family-wide-pending" => path.to_string(),
         other => panic!(
             "membership_route_sweep: no id-substitution mapping registered for path {other:?} — \
              add one to substitute() in tests/membership_route_sweep.rs"

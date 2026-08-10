@@ -64,6 +64,28 @@ pub struct CreateCollectionRequest {
     /// The SAME fresh `CollectionKey`, `seal()`ed client-side to the
     /// CREATOR's own `IdentityPublicKey` — never unwrapped server-side.
     pub sealed_key: String,
+    /// FSH-01/30-DECISION-FSH-02.md: `None`/absent (the default — every
+    /// existing client payload predating this field) means an ordinary,
+    /// non-family-wide collection, byte-for-byte the same as today.
+    /// `Some("folder")`/`Some("item_bucket")` mints a family-wide
+    /// collection — closed-set validated by `validate_family_wide_kind`
+    /// below BEFORE any DB work, mirroring `validate_collection_id_shape`'s
+    /// own fail-closed-before-DB-work discipline.
+    #[serde(default)]
+    pub family_wide_kind: Option<String>,
+}
+
+/// Closed-set validates `family_wide_kind`: `None` (absent/`null`) is always
+/// accepted (the non-family-wide case); `Some(kind)` must be exactly
+/// `"folder"` or `"item_bucket"` — anything else is a clean `400` BEFORE any
+/// DB work, mirroring `validate_collection_id_shape`'s own discipline. The
+/// DB-level `CHECK` constraint (migration 0019) is defense in depth, not the
+/// primary gate — a request-time rejection never reaches the INSERT at all.
+fn validate_family_wide_kind(kind: &Option<String>) -> Result<(), ApiError> {
+    match kind.as_deref() {
+        None | Some("folder") | Some("item_bucket") => Ok(()),
+        Some(_) => Err(ApiError::BadRequest("family_wide_kind must be \"folder\" or \"item_bucket\"".into())),
+    }
 }
 
 /// Shape-validates a client-minted collection id as UUID-v4: exactly 36
@@ -102,6 +124,13 @@ pub struct CollectionResponse {
     /// included here (T-22-16) — see `access_list` for the co-recipient
     /// view, which never exposes `sealed_key` at all.
     pub sealed_key: Option<String>,
+    /// FSH-01: `None` for an ordinary, non-family-wide collection (today's
+    /// exact shape); `Some("folder")`/`Some("item_bucket")` otherwise — see
+    /// `CreateCollectionRequest::family_wide_kind`'s own doc comment.
+    /// Threaded through EVERY existing read path (`create`/`get`/`list`) so
+    /// a client that already calls any of them gets this field with zero new
+    /// round trips.
+    pub family_wide_kind: Option<String>,
 }
 
 /// `POST /api/vault/collections` — any family member may create a shared
@@ -127,6 +156,9 @@ pub async fn create(
     validate_collection_id_shape(&req.id)?;
     validate_blob_len("enc_name", &req.enc_name)?;
     validate_blob_len("sealed_key", &req.sealed_key)?;
+    // FSH-01: closed-set validated BEFORE any DB work, same discipline as
+    // the checks above.
+    validate_family_wide_kind(&req.family_wide_kind)?;
 
     let mut tx = state.db.begin().await?;
 
@@ -137,14 +169,23 @@ pub async fn create(
     // colliding client-minted id must surface as a clean `ApiError::Conflict`
     // (409), never a raw `?`-propagated `sqlx::Error` falling through
     // `error.rs:74-79`'s blanket `From<sqlx::Error>` mapping to an
-    // undifferentiated 500.
+    // undifferentiated 500. FSH-01/30-DECISION-FSH-02.md: the `ON
+    // CONFLICT(id)` TARGETED form was widened to a BARE `ON CONFLICT DO
+    // NOTHING` (mirroring `families::create`'s own precedent exactly) so a
+    // violation of `idx_one_item_bucket_per_family` (a second concurrent
+    // `family_wide_kind='item_bucket'` insert for the same family) is caught
+    // by this SAME `fetch_optional` `None`-branch the id-collision case
+    // already handles — SQLite's targeted `ON CONFLICT(...)` form does not
+    // accept a partial-index target, only the bare form catches a conflict
+    // against EITHER the PK or the partial unique index.
     let row = sqlx::query(
-        "INSERT INTO collections (id, family_id, enc_name) VALUES (?, ?, ?) \
-         ON CONFLICT(id) DO NOTHING RETURNING created_at",
+        "INSERT INTO collections (id, family_id, enc_name, family_wide_kind) VALUES (?, ?, ?, ?) \
+         ON CONFLICT DO NOTHING RETURNING created_at",
     )
     .bind(&id)
     .bind(&family.family_id)
     .bind(&req.enc_name)
+    .bind(&req.family_wide_kind)
     .fetch_optional(&mut *tx)
     .await?;
     let row = row.ok_or_else(|| ApiError::Conflict("a collection with this id already exists".into()))?;
@@ -172,6 +213,7 @@ pub async fn create(
             created_at,
             access_level: Some("edit".to_string()),
             sealed_key: Some(req.sealed_key),
+            family_wide_kind: req.family_wide_kind,
         }),
     ))
 }
@@ -183,10 +225,11 @@ pub async fn get(
     State(state): State<AppState>,
     membership: Membership<Collection, RequireRead>,
 ) -> Result<Json<CollectionResponse>, ApiError> {
-    let collection_row = sqlx::query("SELECT enc_name, created_at FROM collections WHERE id = ?")
-        .bind(&membership.resource_id)
-        .fetch_optional(&state.db)
-        .await?;
+    let collection_row =
+        sqlx::query("SELECT enc_name, created_at, family_wide_kind FROM collections WHERE id = ?")
+            .bind(&membership.resource_id)
+            .fetch_optional(&state.db)
+            .await?;
     // The extractor already proved access exists (a collection_keys row
     // exists for this caller+resource) — a missing collections row here
     // would only happen on a genuine data-integrity bug (FK violation),
@@ -194,6 +237,8 @@ pub async fn get(
     let collection_row = collection_row.ok_or(ApiError::NotFound)?;
     let enc_name: String = collection_row.try_get("enc_name").map_err(|_| ApiError::Internal)?;
     let created_at: String = collection_row.try_get("created_at").map_err(|_| ApiError::Internal)?;
+    let family_wide_kind: Option<String> =
+        collection_row.try_get("family_wide_kind").map_err(|_| ApiError::Internal)?;
 
     let key_row = sqlx::query("SELECT sealed_key FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
         .bind(&membership.resource_id)
@@ -211,6 +256,7 @@ pub async fn get(
         created_at,
         access_level: Some(membership.access.as_str().to_string()),
         sealed_key,
+        family_wide_kind,
     }))
 }
 
@@ -232,7 +278,7 @@ pub async fn list(
     // `active_collection_member_join!()` every other recipient-side resolver
     // does, so a suspended member sees an empty list alongside their E5 banner.
     let rows = sqlx::query(concat!(
-        "SELECT c.id, c.enc_name, c.created_at, ck.access_level, ck.sealed_key \
+        "SELECT c.id, c.enc_name, c.created_at, c.family_wide_kind, ck.access_level, ck.sealed_key \
          FROM collections c JOIN collection_keys ck ON ck.collection_id = c.id ",
         active_collection_member_join!(),
         "WHERE ck.recipient_user_id = ? ORDER BY c.created_at ASC, c.id ASC",
@@ -250,6 +296,7 @@ pub async fn list(
                 created_at: row.try_get("created_at").map_err(|_| ApiError::Internal)?,
                 access_level: Some(row.try_get("access_level").map_err(|_| ApiError::Internal)?),
                 sealed_key: Some(row.try_get("sealed_key").map_err(|_| ApiError::Internal)?),
+                family_wide_kind: row.try_get("family_wide_kind").map_err(|_| ApiError::Internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
