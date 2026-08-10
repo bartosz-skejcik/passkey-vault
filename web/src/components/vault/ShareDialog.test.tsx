@@ -1095,4 +1095,201 @@ describe("ShareDialog", () => {
       expect(mockAddCollectionMember).not.toHaveBeenCalled();
     });
   });
+
+  // 30-12-PLAN.md Task 1 -- `submitItemVariant`'s family-wide branch, routed
+  // through the ONE per-family auto-created `item_bucket` collection.
+  describe("family-wide item share (FSH-01 submitItemVariant)", () => {
+    const SCOPE = { kind: "item" as const, item: ITEM };
+
+    const BUCKET_ROW: CollectionRow = {
+      id: "bucket-1",
+      enc_name: "enc-bucket-name",
+      created_at: "2026-01-01 10:00:00",
+      access_level: "edit",
+      sealed_key: '{"sealed":"bucket-key"}',
+      family_wide_kind: "item_bucket",
+    };
+
+    const PLAIN_FOLDER_ROW: CollectionRow = {
+      id: "plain-1",
+      enc_name: "enc-plain-name",
+      created_at: "2026-01-01 09:00:00",
+      access_level: "edit",
+      sealed_key: '{"sealed":"plain-key"}',
+      family_wide_kind: null,
+    };
+
+    function checkFamilyWide() {
+      const familyWideCheckbox = screen
+        .getByTestId("share-recipient-family-wide")
+        .querySelector("input[type=checkbox]") as HTMLInputElement;
+      fireEvent.click(familyWideCheckbox);
+    }
+
+    async function submitFamilyWideItem(level = "read") {
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      chooseAccessLevel(level);
+      checkFamilyWide();
+      fireEvent.click(screen.getByTestId("share-submit"));
+    }
+
+    it("reuses an ALREADY-EXISTING item_bucket collection -- createCollection is never called", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      mockListCollections.mockResolvedValue([PLAIN_FOLDER_ROW, BUCKET_ROW]);
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      chooseAccessLevel("edit");
+      checkFamilyWide();
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      expect(mockCreateCollection).not.toHaveBeenCalled();
+      // Collection-scoped, never a direct `item_shares` row.
+      expect(mockCreateItemShare).not.toHaveBeenCalled();
+      // AAD binds the bucket's id + the item's id + the item's NEXT revision
+      // (submitFolderVariant's seed-move discipline, verbatim).
+      expect(mockEncryptItemForCollection).toHaveBeenCalledWith(
+        expect.anything(),
+        '{"type":"login","name":"seed"}',
+        BUCKET_ROW.id,
+        ITEM.id,
+        ITEM_ROW.revision + 1,
+      );
+      expect(mockMoveItemToCollection).toHaveBeenCalledWith(
+        ITEM.id,
+        BUCKET_ROW.id,
+        '{"nonce":"n","ciphertext":"c"}',
+        '{"nonce":"n2","ciphertext":"c2"}',
+        ITEM_ROW.revision,
+      );
+      const grantedIds = (mockAddCollectionMember.mock.calls as unknown[][]).map((c) => c[1]);
+      expect(grantedIds.sort()).toEqual([MEMBER_A.user_id, MEMBER_B.user_id].sort());
+      expect((mockAddCollectionMember.mock.calls as unknown[][])[0][0]).toBe(BUCKET_ROW.id);
+    });
+
+    it("lazily creates the bucket ONCE with family_wide_kind: 'item_bucket' when the family has none yet", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListCollections.mockResolvedValue([PLAIN_FOLDER_ROW]);
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      chooseAccessLevel("read");
+      checkFamilyWide();
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      expect(mockCreateCollection).toHaveBeenCalledTimes(1);
+      expect(mockCreateCollection).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        "item_bucket",
+      );
+      const newBucketId = (mockCreateCollection.mock.calls as unknown[][])[0][0] as string;
+      expect(mockMoveItemToCollection).toHaveBeenCalledWith(
+        ITEM.id,
+        newBucketId,
+        expect.any(String),
+        expect.any(String),
+        ITEM_ROW.revision,
+      );
+      expect(mockAddCollectionMember).toHaveBeenCalledTimes(1);
+      expect((mockAddCollectionMember.mock.calls as unknown[][])[0][0]).toBe(newBucketId);
+    });
+
+    it("omits a keyless member from the creation-time grant WITHOUT aborting the share (30-08's rule, unchanged)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_NO_KEY]);
+      mockListCollections.mockResolvedValue([BUCKET_ROW]);
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      chooseAccessLevel("read");
+      checkFamilyWide();
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      const grantedIds = (mockAddCollectionMember.mock.calls as unknown[][]).map((c) => c[1]);
+      expect(grantedIds).toEqual([MEMBER_A.user_id]);
+      expect(screen.queryByTestId("share-error")).not.toBeInTheDocument();
+    });
+
+    it("race loser: a 409 from createCollection resolves to the WINNER's bucket once its grant arrives -- never a second bucket, never a user-visible error", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      // 1st list: nothing yet (both racers see an empty family). The create
+      // then 409s on `idx_one_item_bucket_per_family`. The winner's own
+      // `addCollectionMember` fan-out has NOT landed yet, so the immediate
+      // re-list still returns nothing -- the bucket only becomes VISIBLE to
+      // this caller (collections::list is key-gated) on a later poll.
+      mockListCollections
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValue([BUCKET_ROW]);
+      mockCreateCollection.mockRejectedValueOnce({ status: 409, message: "conflict" });
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      chooseAccessLevel("read");
+      checkFamilyWide();
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled(), { timeout: 3000 });
+      // Exactly ONE create attempt from this caller, and it lost.
+      expect(mockCreateCollection).toHaveBeenCalledTimes(1);
+      // The item landed in the WINNER's bucket, not in a second one.
+      expect(mockMoveItemToCollection).toHaveBeenCalledWith(
+        ITEM.id,
+        BUCKET_ROW.id,
+        expect.any(String),
+        expect.any(String),
+        ITEM_ROW.revision,
+      );
+      expect(screen.queryByTestId("share-error")).not.toBeInTheDocument();
+    });
+
+    it("race loser whose key never arrives: polls a bounded number of times, then reports a plain retryable failure -- never moves the item into an undefined collection", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      // The winner's grant NEVER reaches this caller inside the bound, so
+      // every re-list stays empty (collections::list is key-gated).
+      mockListCollections.mockResolvedValue([]);
+      mockCreateCollection.mockRejectedValueOnce({ status: 409, message: "conflict" });
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      chooseAccessLevel("read");
+      checkFamilyWide();
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(screen.getByTestId("share-error")).toBeInTheDocument(), {
+        timeout: 3000,
+      });
+      expect(screen.getByTestId("share-error")).toHaveTextContent("share.createFailed");
+      expect(onShared).not.toHaveBeenCalled();
+      // Nothing was moved into `undefined` -- the honest failure is the whole
+      // point of the bound.
+      expect(mockMoveItemToCollection).not.toHaveBeenCalled();
+      expect(mockAddCollectionMember).not.toHaveBeenCalled();
+      // It genuinely POLLED (more than the one initial list + the one
+      // post-409 re-list) rather than giving up after a single re-list.
+      expect(mockListCollections.mock.calls.length).toBeGreaterThan(2);
+    });
+
+    it("does not touch the bucket path at all for an ordinary per-person item share", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListCollections.mockResolvedValue([BUCKET_ROW]);
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      selectRecipient(MEMBER_A.user_id);
+      chooseAccessLevel("read");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      expect(mockCreateItemShare).toHaveBeenCalledTimes(1);
+      expect(mockMoveItemToCollection).not.toHaveBeenCalled();
+      expect(mockAddCollectionMember).not.toHaveBeenCalled();
+      expect(mockCreateCollection).not.toHaveBeenCalled();
+    });
+  });
 });
