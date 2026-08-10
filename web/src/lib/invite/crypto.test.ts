@@ -22,6 +22,7 @@ const {
   mockGenerateInviteSecret,
   mockUnsealCollectionKey,
   mockSealCollectionKey,
+  freeCounts,
 } = vi.hoisted(() => {
   function deriveInviteId(secret: Uint8Array): string {
     return `invite-id-${Array.from(secret).join(".")}`;
@@ -33,12 +34,20 @@ const {
     return new Uint8Array(Array.from(secret).map((b) => b ^ 0x55));
   }
 
+  // Freed-handle counters (30-07 Task 2's "no leaked handle" behavior
+  // bullet) -- incremented by FakeCollectionKey.free below and by the
+  // WasmIdentityPublicKey mock's free (defined in vi.mock("@/lib/crypto")
+  // further down, which closes over this SAME object via hoisting).
+  const freeCounts = { collectionKey: 0, publicKey: 0 };
+
   class FakeCollectionKey {
     bytes: Uint8Array;
     free: () => void;
     constructor(bytes: Uint8Array) {
       this.bytes = bytes;
-      this.free = () => {};
+      this.free = () => {
+        freeCounts.collectionKey += 1;
+      };
     }
   }
 
@@ -86,6 +95,7 @@ const {
     mockGenerateInviteSecret: vi.fn(),
     mockUnsealCollectionKey: vi.fn(),
     mockSealCollectionKey: vi.fn(),
+    freeCounts,
   };
 });
 
@@ -97,7 +107,14 @@ vi.mock("@/lib/crypto", () => ({
   // resolved no-op keeps every existing assertion below unchanged.
   initCrypto: vi.fn().mockResolvedValue(undefined),
   WasmInviteChannel: FakeInviteChannel,
-  WasmIdentityPublicKey: { fromBytes: (bytes: Uint8Array) => ({ bytes, free: vi.fn() }) },
+  WasmIdentityPublicKey: {
+    fromBytes: (bytes: Uint8Array) => ({
+      bytes,
+      free: () => {
+        freeCounts.publicKey += 1;
+      },
+    }),
+  },
   generateInviteSecret: mockGenerateInviteSecret,
   unsealCollectionKey: mockUnsealCollectionKey,
   sealCollectionKey: mockSealCollectionKey,
@@ -145,6 +162,8 @@ beforeEach(() => {
   // (which predates 30-07) exercises the byte-identical-to-today path
   // without needing to know this mock exists.
   mockListCollections.mockResolvedValue([]);
+  freeCounts.collectionKey = 0;
+  freeCounts.publicKey = 0;
 });
 
 describe("generateInviteLink", () => {
@@ -391,5 +410,129 @@ describe("fetchInviteMetadataFlow / redeemInviteFlow", () => {
 
     await expect(redeemInviteFlow("some-other-invite-id", fragment, FAKE_UK)).rejects.toThrow();
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("redeemInviteFlow -- family-wide keys (30-07)", () => {
+  it("self-seals every family-wide key the invite's metadata carried, submitted alongside the existing single-collection grant", async () => {
+    const secretValue = 21;
+    const secret = fixedSecret(secretValue);
+    const inviteId = deriveInviteId(fixedSecret(secretValue));
+    const fragment = base64UrlEncode(secret);
+
+    // Wrap three distinct Collection Keys under a channel derived from the
+    // SAME secret -- mirrors how a real inviter's generateInviteLink would
+    // have produced these wrapped blobs.
+    const wrapChannel = FakeInviteChannel.fromSecret(fixedSecret(secretValue));
+    const singleKeyBytes = new Uint8Array([1, 2, 3]);
+    const folderKeyBytes = new Uint8Array([4, 5, 6]);
+    const bucketKeyBytes = new Uint8Array([7, 8, 9]);
+    const wrappedSingle = wrapChannel.wrapCollectionKey(new FakeCollectionKey(singleKeyBytes));
+    const wrappedFolder = wrapChannel.wrapCollectionKey(new FakeCollectionKey(folderKeyBytes));
+    const wrappedBucket = wrapChannel.wrapCollectionKey(new FakeCollectionKey(bucketKeyBytes));
+
+    const metadataBody = {
+      inviter_email: "owner@example.com",
+      family_name: "The Family",
+      inviter_fingerprint: null,
+      collection_id: "col-single",
+      wrapped_collection_key: wrappedSingle,
+      family_wide_keys: [
+        { collection_id: "col-folder", access_level: "edit", wrapped_collection_key: wrappedFolder },
+        { collection_id: "col-bucket", access_level: "read", wrapped_collection_key: wrappedBucket },
+      ],
+    };
+
+    (global.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(jsonResponse(200, metadataBody)) // redeemInviteFlow's internal metadata fetch
+      .mockResolvedValueOnce(jsonResponse(200, { already_member: false })); // accept call
+
+    let sealCallCount = 0;
+    mockSealCollectionKey.mockImplementation((_pub: unknown, ck: InstanceType<typeof FakeCollectionKey>) => {
+      sealCallCount += 1;
+      return `sealed(${Array.from(ck.bytes).join(".")})`;
+    });
+
+    const result = await redeemInviteFlow(inviteId, fragment, FAKE_UK);
+    expect(result.alreadyMember).toBe(false);
+    expect(result.collectionId).toBe("col-single");
+    expect(sealCallCount).toBe(3); // 1 single-collection + 2 family-wide
+
+    const acceptCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[1];
+    const acceptBody = JSON.parse(acceptCall[1].body as string) as {
+      sealed_for_self: string;
+      family_wide_sealed_keys: Array<{ collection_id: string; sealed_for_self: string }>;
+    };
+    expect(acceptBody.sealed_for_self).toBe(`sealed(${Array.from(singleKeyBytes).join(".")})`);
+    expect(acceptBody.family_wide_sealed_keys).toHaveLength(2);
+    const byId = Object.fromEntries(acceptBody.family_wide_sealed_keys.map((e) => [e.collection_id, e]));
+    expect(byId["col-folder"].sealed_for_self).toBe(`sealed(${Array.from(folderKeyBytes).join(".")})`);
+    expect(byId["col-bucket"].sealed_for_self).toBe(`sealed(${Array.from(bucketKeyBytes).join(".")})`);
+  });
+
+  it("zero family-wide keys: family_wide_sealed_keys is [] -- existing sealed_for_self/network call unchanged", async () => {
+    const secretValue = 23;
+    const secret = fixedSecret(secretValue);
+    const inviteId = deriveInviteId(fixedSecret(secretValue));
+    const fragment = base64UrlEncode(secret);
+
+    const metadataBody = {
+      inviter_email: "owner@example.com",
+      family_name: "The Family",
+      inviter_fingerprint: null,
+      collection_id: null,
+      wrapped_collection_key: null,
+      family_wide_keys: [],
+    };
+
+    (global.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(jsonResponse(200, metadataBody))
+      .mockResolvedValueOnce(jsonResponse(200, { already_member: false }));
+
+    await redeemInviteFlow(inviteId, fragment, FAKE_UK);
+
+    const acceptCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[1];
+    const acceptBody = JSON.parse(acceptCall[1].body as string) as {
+      sealed_for_self: string | undefined;
+      family_wide_sealed_keys: unknown[];
+    };
+    expect(acceptBody.sealed_for_self).toBeUndefined();
+    expect(acceptBody.family_wide_sealed_keys).toEqual([]);
+    expect(mockSealCollectionKey).not.toHaveBeenCalled();
+  });
+
+  it("every intermediate handle from the family-wide loop is freed in the same finally block -- no leaks", async () => {
+    const secretValue = 29;
+    const secret = fixedSecret(secretValue);
+    const inviteId = deriveInviteId(fixedSecret(secretValue));
+    const fragment = base64UrlEncode(secret);
+
+    const wrapChannel = FakeInviteChannel.fromSecret(fixedSecret(secretValue));
+    const wrappedFolder = wrapChannel.wrapCollectionKey(new FakeCollectionKey(new Uint8Array([1, 1])));
+    const wrappedBucket = wrapChannel.wrapCollectionKey(new FakeCollectionKey(new Uint8Array([2, 2])));
+
+    const metadataBody = {
+      inviter_email: "owner@example.com",
+      family_name: "The Family",
+      inviter_fingerprint: null,
+      collection_id: null,
+      wrapped_collection_key: null,
+      family_wide_keys: [
+        { collection_id: "col-folder", access_level: "edit", wrapped_collection_key: wrappedFolder },
+        { collection_id: "col-bucket", access_level: "read", wrapped_collection_key: wrappedBucket },
+      ],
+    };
+
+    (global.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(jsonResponse(200, metadataBody))
+      .mockResolvedValueOnce(jsonResponse(200, { already_member: false }));
+    mockSealCollectionKey.mockReturnValue("sealed");
+
+    await redeemInviteFlow(inviteId, fragment, FAKE_UK);
+
+    // 2 family-wide Collection Key unwraps + 2 identity public-key handles,
+    // both freed in the outer `finally` block.
+    expect(freeCounts.collectionKey).toBe(2);
+    expect(freeCounts.publicKey).toBe(2);
   });
 });
