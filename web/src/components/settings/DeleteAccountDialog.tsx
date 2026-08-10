@@ -149,9 +149,14 @@ export default function DeleteAccountDialog({ onClose }: { onClose: () => void }
       // deletion — the owner/no-family branches submit an empty batch, which
       // the server ignores for those two cases (Plan 25-06's
       // `DeleteAccountRequest`).
+      //
+      // `isSelf = true`: T-30-XX (found live, 30-17-PLAN.md's own Task 2
+      // case 1) -- this call targets the CALLER's own id, so it must not
+      // route through `getMemberAccess` (owner-only, would always 403 here).
+      // See `rekey.ts::resolveTargetCollectionIds`'s own doc comment.
       let batch: CollectionRekeyBatch[] = [];
       if (branch === "member" && selfUserId !== null) {
-        batch = await buildMemberRemovalBatch(selfUserId, uk);
+        batch = await buildMemberRemovalBatch(selfUserId, uk, true);
       }
       await deleteAccount(batch);
     } catch {

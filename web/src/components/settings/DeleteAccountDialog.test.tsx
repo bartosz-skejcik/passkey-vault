@@ -204,7 +204,7 @@ describe("DeleteAccountDialog", () => {
       expect(mockBuildMemberRemovalBatch).not.toHaveBeenCalled();
     });
 
-    it("the plain-member branch builds a real batch via buildMemberRemovalBatch(ownUserId, ownUk) before submitting", async () => {
+    it("the plain-member branch builds a real batch via buildMemberRemovalBatch(ownUserId, ownUk, true) before submitting", async () => {
       mockGetFamilyMembers.mockResolvedValue([
         { user_id: "owner-1", email: "owner@example.test", role: "owner", joined_at: "", status: "active", public_key: null, fingerprint: null, verified_at: null },
         { user_id: "self-1", email: "self@example.test", role: "member", joined_at: "", status: "active", public_key: null, fingerprint: null, verified_at: null },
@@ -216,8 +216,12 @@ describe("DeleteAccountDialog", () => {
       fireEvent.click(screen.getByTestId("account-delete-step1-continue"));
       fireEvent.click(screen.getByTestId("account-delete-step2-confirm"));
 
+      // `isSelf = true`: T-30-XX (30-17-PLAN.md Task 2 case 1) -- this call
+      // targets the caller's own id, so it must route around the
+      // owner-only `getMemberAccess` endpoint. See
+      // `rekey.ts::resolveTargetCollectionIds`'s own doc comment.
       await waitFor(() =>
-        expect(mockBuildMemberRemovalBatch).toHaveBeenCalledWith("self-1", uk),
+        expect(mockBuildMemberRemovalBatch).toHaveBeenCalledWith("self-1", uk, true),
       );
       await waitFor(() =>
         expect(mockDeleteAccount).toHaveBeenCalledWith([

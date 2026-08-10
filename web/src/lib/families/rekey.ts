@@ -21,7 +21,7 @@ import {
 } from "@/lib/crypto";
 import { base64Decode } from "@/lib/auth/api";
 import { ensureOwnIdentityKeypair } from "@/lib/identity/ensure";
-import { getCollection, getCollectionItems, getCollectionAccessList } from "@/lib/vault/api";
+import { getCollection, getCollectionItems, getCollectionAccessList, listCollections } from "@/lib/vault/api";
 import {
   getMemberAccess,
   getFamilyMembers,
@@ -30,6 +30,51 @@ import {
   type NewSealedKeyEntry,
   type ItemRewrapEntry,
 } from "./api";
+
+/**
+ * Resolves the ids of every collection `targetUserId` currently holds a
+ * `collection_keys` row for. Two callers, two paths, per T-30-XX (found
+ * live, 30-17-PLAN.md's own Task 2 case 1 -- see 30-17-SUMMARY.md's
+ * Deviations for the full write-up). `isSelf` is passed EXPLICITLY by the
+ * caller (never inferred via an extra `me()` round trip -- both call sites
+ * already structurally know which case they are: `RemoveMemberDialog` never
+ * targets the caller's own id, `DeleteAccountDialog`'s member branch always
+ * does) so the ordinary owner-removes-someone-else path stays byte-identical
+ * to before, including in the mocked unit-test lane that never stubs `me()`:
+ *
+ *   - **Someone else, `isSelf = false`** (`RemoveMemberDialog`, the owner
+ *     removing a different member): `GET /api/families/members/{user_id}/access`
+ *     (`getMemberAccess`), UNCHANGED. This route is deliberately
+ *     `FamilyMembership<RequireEdit>` (owner-only) -- `family.rs::
+ *     owner_sees_per_member_access_breakdown` explicitly asserts a plain
+ *     member querying THEIR OWN id via this same endpoint gets `403`, never
+ *     `200`. That is a locked FAM-03 decision, not a gap to close.
+ *   - **The caller's own id, `isSelf = true`** (`DeleteAccountDialog`'s
+ *     plain-member self-deletion branch calls
+ *     `buildMemberRemovalBatch(selfUserId, uk, true)`): calling
+ *     `getMemberAccess` here would ALWAYS 403, unconditionally, regardless
+ *     of what the caller actually shares -- the extractor rejects any
+ *     non-owner caller before the handler body even runs. No prior test
+ *     caught this: every existing removal/deletion test either drives the
+ *     OWNER'S OWN removal of someone else through the UI, or builds the
+ *     batch server-side/Node-side directly; none drove a PLAIN MEMBER's own
+ *     self-deletion through the real UI with real collection access until
+ *     30-17's live suite did. `GET /api/vault/collections`
+ *     (`listCollections()`) is `FamilyMembership<RequireRead>`-gated and
+ *     ALWAYS scoped to the caller's OWN `collection_keys` rows by
+ *     construction (never parameterized by a target id) -- it returns the
+ *     exact same collection-id set `getMemberAccess(self).collections`
+ *     would, without needing owner privilege. This fix is entirely
+ *     client-side and touches no authorization model on either path.
+ */
+async function resolveTargetCollectionIds(targetUserId: string, isSelf: boolean): Promise<string[]> {
+  if (isSelf) {
+    const rows = await listCollections();
+    return rows.map((row) => row.id);
+  }
+  const access = await getMemberAccess(targetUserId);
+  return access.collections.map((entry) => entry.id);
+}
 
 /**
  * Builds a real, wire-shaped re-key batch for every collection `targetUserId`
@@ -43,20 +88,25 @@ import {
  * function to THROW, never to silently proceed with a smaller recipient
  * set — a silently-shrunk recipient set would strand that member's future
  * decryption ability.
+ *
+ * `isSelf` (default `false`, preserving every existing call site's exact
+ * prior behavior) -- see `resolveTargetCollectionIds`'s own doc comment for
+ * why this must be an explicit caller-supplied flag, not inferred.
  */
 export async function buildMemberRemovalBatch(
   targetUserId: string,
   ownUk: WasmUserKey,
+  isSelf = false,
 ): Promise<CollectionRekeyBatch[]> {
   await initCrypto();
   const identityKey = await ensureOwnIdentityKeypair(ownUk);
   try {
-    const access = await getMemberAccess(targetUserId);
+    const collectionIds = await resolveTargetCollectionIds(targetUserId, isSelf);
     const roster = (await getFamilyMembers()) ?? [];
 
     const batches: CollectionRekeyBatch[] = [];
 
-    for (const { id: collectionId } of access.collections) {
+    for (const collectionId of collectionIds) {
       let oldCk: WasmCollectionKey | undefined;
       let newCk: WasmCollectionKey | undefined;
       const recipientPublicKeys: WasmIdentityPublicKey[] = [];
