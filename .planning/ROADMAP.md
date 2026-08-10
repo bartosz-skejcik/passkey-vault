@@ -84,7 +84,7 @@ Audit: [milestones/v0.4-MILESTONE-AUDIT.md](milestones/v0.4-MILESTONE-AUDIT.md).
 
 ### 🚧 v0.5 Sharing That Makes Sense (Phases 29–34) — IN PROGRESS, started 2026-08-09
 
-- [ ] **Phase 29: A Real Settings Page — Shell & Migration** - Settings becomes a linkable `/settings` route with headed sections; every existing setting survives the move, and the family surface is carried across unchanged pending its Phase 33 redesign
+- [x] **Phase 29: A Real Settings Page — Shell & Migration** (6/6 plans) — completed 2026-08-10 - Settings becomes a linkable `/settings` route with headed sections; every existing setting survives the move, and the family surface is carried across unchanged pending its Phase 33 redesign
 - [ ] **Phase 30: The Living Group — Family-Wide Sharing** - Share with the whole family in one action, and someone who joins later gains access by a client-only key path decided and documented before any dependent code
 - [ ] **Phase 31: The Share Dialog — Per-Person Access, Existing Destinations** - One row per person with their own access level, able to target a shared folder that already exists instead of minting another one
 - [ ] **Phase 32: Putting Things Into Shared Folders** - An item can be created in, moved into, and taken back out of an existing shared folder, always re-encrypted under the destination scope or refused

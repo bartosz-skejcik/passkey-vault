@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Sharing That Makes Sense
-current_phase: 29
-current_phase_name: A Real Settings Page — Shell & Migration
-status: planning
-stopped_at: Phase 29 UI-SPEC approved
-last_updated: "2026-08-09T21:33:31.341Z"
-last_activity: 2026-08-09
-last_activity_desc: v0.5 roadmap written (ROADMAP.md phases 29–33 + REQUIREMENTS.md traceability)
+current_phase: 30
+current_phase_name: The Living Group — Family-Wide Sharing
+status: phase_complete
+stopped_at: Phase 29 verified passed (5/5) — next is Phase 30
+last_updated: "2026-08-10T00:00:00.000Z"
+last_activity: 2026-08-10
+last_activity_desc: Phase 29 complete — /settings route, IA, DEBT-02 disclosure; verified 5/5 after one gap-closure cycle
 progress:
   total_phases: 6
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 6
+  completed_plans: 6
+  percent: 17
 ---
 
 # Project State
@@ -24,16 +24,47 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-31)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** v0.5 Sharing That Makes Sense — Phase 29 (The Living Group — Family-Wide Sharing). Next: `/gsd-plan-phase 29`.
+**Current focus:** v0.5 Sharing That Makes Sense — Phase 30 (The Living Group — Family-Wide Sharing). Next: `/gsd-discuss-phase 30`.
 
 ## Current Position
 
-Phase: 29 (The Living Group — Family-Wide Sharing) — NOT STARTED
-Plan: none yet — run `/gsd-plan-phase 29`
-Status: v0.5 roadmap created; 28/28 requirements mapped across phases 29–33, no orphans
-Last activity: 2026-08-09 — v0.5 roadmap written (ROADMAP.md phases 29–33 + REQUIREMENTS.md traceability)
+Phase: 30 (The Living Group — Family-Wide Sharing) — NOT STARTED
+Plan: none yet
+Status: Phase 29 complete and verified 5/5; 28/28 requirements mapped across phases 29–34, no orphans
+Last activity: 2026-08-10 — Phase 29 verified passed after one gap-closure cycle
 
 Previous milestone: Phase 28 closed v0.4's three audit blockers; v0.4 shipped/archived/tagged 2026-08-09.
+
+### Phase 29 — completed 2026-08-10 (6 plans, verified 5/5)
+
+Delivered: a real static-exported `/settings` route (`out/settings.html`, all routes `○ (Static)`), a
+shared `AuthGate` extracted from `page.tsx`, the locked four-group IA (Konto → Bezpieczeństwo → Dane →
+Rodzina i udostępnianie) with a scroll-spy jump-nav, delete-account relocated to Konto, the old
+`SettingsPanel` drawer retired, `?panel=settings` redirecting so the shipped 0.4.0 extension keeps
+working, and DEBT-02 resolved as **disclose, not mask**. Suite 821/79 → 844/83, no test deleted or
+weakened. Family & Sharing carried across verbatim, marked for Phase 33 in a code comment only.
+
+**Three findings worth carrying forward:**
+
+1. **A live run caught what 832 green tests could not.** `pv-server`'s static fallback was serving the
+   root vault SPA for `GET /settings` — Next.js 16 emits nested routes as flat `settings.html` while
+   `ServeDir` expected `settings/index.html`. `/settings` would have been broken in the real container.
+   Fixed with `rewrite_nested_static_route` (+ `/api/` guard, decode-then-validate traversal guard,
+   HEAD handling); `router_static_fallback.rs` grew 4 → 11 tests.
+2. **The phase's headline fix was initially false, and both test lanes were blind to it.** `hydrated`
+   only tracked `personalItems`, but every hidden-password item lives in the separately-loaded shared
+   sets, and `ExportDialog` read items non-reactively — so the export dialog could still show *no*
+   disclosure over a file containing hidden-password plaintext. Units mocked `getItems`; the e2e waited
+   for both rows first. Caught by code review, fixed in `7978605`, and the verifier confirmed by
+   reverting to pre-fix and watching the new tests go red.
+3. **`Referrer-Policy` was inert on every static-file response.** axum's `fallback_service` discards
+   earlier `.layer()` calls; the code comment asserted the opposite. This sat on the invite landing page
+   whose `invite_id` leak that header exists to prevent. Fixed in `fb1a9a2`.
+
+**Debt recorded, not fixed:** `settings.importExportPlaceholder` orphan i18n key (orphaned since Phase
+6); `store.ts`'s hydration poll-recovery path is prose-claimed but untested (fail-closed is correct —
+a permanently failing shared pipeline disables export rather than lying); `SharingOverviewPanel.tsx`
+still carries `role="tablist"` (pre-existing Phase 28 code, Phase 33 scope).
 
 ## Performance Metrics
 
