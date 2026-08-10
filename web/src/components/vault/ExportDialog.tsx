@@ -41,7 +41,14 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
   // array the disclosure was computed from -- one read, not two independent
   // ones (WR-06).
   const hydrated = useItemsHydrated();
-  const allItems = useVaultItems();
+  // 30-15 (FSH-02): synthetic pending-family-key rows are placeholders for
+  // an item this member genuinely cannot read yet -- they carry no
+  // plaintext, only an id. They belong in the LIST (their whole purpose is
+  // that the grant is not silently invisible) but never in an export file,
+  // where a fabricated empty entry would misrepresent the vault's actual
+  // contents. Filtered once, here, so the disclosure count below and the
+  // array `handleConfirm` writes to disk stay the same one array (WR-06).
+  const allItems = useVaultItems().filter((item) => item.pendingFamilyKey !== true);
   const allFolders = useFolders();
   const hiddenPasswordItems = hydrated ? allItems.filter(isPasswordHidden) : null;
   const hiddenPasswordCount = hiddenPasswordItems?.length ?? null;

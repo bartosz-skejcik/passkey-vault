@@ -252,3 +252,34 @@ describe("export.hiddenPasswordDisclosure copy (held-out, real dictionary -- pin
     );
   });
 });
+
+// 30-15 (FSH-02): synthetic pending-family-key rows live in the SAME merged
+// `items` array every consumer reads -- which is what makes them visible in
+// the list, and exactly why this consumer has to drop them. They are
+// placeholders for an item whose plaintext this member cannot read yet;
+// writing one to disk would put a fabricated empty entry in a file the user
+// believes is a faithful copy of their vault.
+describe("ExportDialog vs synthetic pending-family-key rows (30-15)", () => {
+  const pendingRow: VaultItem = {
+    id: "pending-family-key:c9",
+    revision: 0,
+    pendingFamilyKey: true,
+    fields: { type: "note", name: "", body: "", folderId: null, tags: [] },
+  };
+  const realItem: VaultItem = {
+    id: "item-1",
+    revision: 1,
+    fields: { type: "note", name: "Wifi", body: "hunter2", folderId: null, tags: [] },
+  };
+
+  it("never writes a pending placeholder into the exported file", () => {
+    mockUseVaultItems.mockReturnValue([realItem, pendingRow]);
+    render(<ExportDialog onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("export-confirm"));
+
+    expect(mockBuildJsonExport).toHaveBeenCalledTimes(1);
+    const [exportedItems] = mockBuildJsonExport.mock.calls[0] as unknown as [VaultItem[]];
+    expect(exportedItems.map((i) => i.id)).toEqual(["item-1"]);
+  });
+});
