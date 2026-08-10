@@ -48,9 +48,19 @@ Reused verbatim from 29-UI-SPEC.md's project-wide 4px scale — no phase-specifi
 | 2xl | 48px | Inherited; not directly exercised |
 | 3xl | 64px | Inherited; not directly exercised |
 
-Exceptions: none. No new touch-target floor is introduced — the family-wide checkbox row follows
-the exact same (already-shipped) density as every sibling recipient row in `ShareDialog`, which
-has never carried a `min-h-11` exception.
+Exceptions: two 12px usages, both **inherited verbatim from already-shipped row/toast shells**, not
+derived by this phase — recorded explicitly rather than silently omitted, since "reused" and
+"unstated" are not the same thing:
+- `px-4 py-3` on the pinned `sharing-overview-family-wide` block — copied exactly from
+  `SharingOverviewPanel.tsx`'s own existing folder/person row shell (`SharingOverviewPanel.tsx:462`
+  / `:564`), not a new padding value chosen for this phase.
+- `p-3`/`gap-3` inside the re-key toast — copied exactly from `CopyToast.tsx`'s own existing shell.
+
+Both are 4-multiples, so neither breaks the grid; they are exceptions only in the sense of not
+appearing in the named xs–3xl scale above, not in the sense of violating it. No new touch-target
+floor is introduced either — the family-wide checkbox row follows the exact same (already-shipped)
+density as every sibling recipient row in `ShareDialog`, which has never carried a `min-h-11`
+exception.
 
 ---
 
@@ -75,19 +85,24 @@ Three sizes, two weights — no new size is introduced beyond what the codebase 
   "Komu udostępnić" next to `ShareDialog.tsx:749` `"text-sm"` for a recipient's plain email). The
   new "Cała rodzina" row label uses Heading (14/700); the new member-count and timing-caveat text
   use Label (14/400).
-- **Body (16px/400/1.5)** is used exactly once, newly, for the pending-newcomer explanation inside
-  `DetailPanel` — matching the existing `"text-base text-base-content/70"` precedent
-  (`FamilyTab.tsx`'s `family.bootstrapBody`), not `text-sm`, because that note is a full
-  explanatory sentence read once, not list-row metadata.
+- **Body (16px/400/1.5)** is used exactly once, newly, for the pending-newcomer **item row's**
+  placeholder primary text (`item-row-pending-family-key`'s `"truncate text-base
+  text-base-content/70"` span — see Pending-Newcomer Item-Row State below), matching
+  `ItemRow.tsx`'s own existing `text-base` convention for a row's primary line (e.g. `primaryText`
+  at `ItemRow.tsx:131`). This is genuinely exercised, 16px, in this phase — not a placeholder row
+  kept only to fill the template.
 
-  Correction, verified against the actual DetailPanel precedent this phase copies
+  **Correction, scoped to the DetailPanel note only** (an earlier draft of this table
+  over-generalized this correction to the whole phase — it applies to exactly one element).
+  Verified against the actual precedent the pending-newcomer **detail-panel** note copies
   (`item-shared-with-you-note`, `DetailPanel.tsx:462`): that note renders at `text-sm`, not
-  `text-base`. The pending-newcomer note in this phase reuses that exact shape (see Pending
-  Newcomer Contract below), so it is **14px (Label)**, not 16px (Body) — the Body row above is
-  kept in this table only because the template requires all four roles populated; nothing in this
-  phase actually exercises Body at 16px. Recorded here rather than silently dropping the row, per
-  this document's own reuse-discipline: no invented size is exercised where an inherited one
-  suffices.
+  `text-base`. The pending-newcomer DETAIL-PANEL note (see Pending-Newcomer Detail-Panel State
+  below) reuses that exact shape, so it is **14px (Label)**, not 16px (Body). This correction does
+  **not** extend to the pending-newcomer ITEM-ROW's primary text described in the Body bullet
+  above — the row and the detail note intentionally use two different sizes because each reuses a
+  different existing precedent (`ItemRow`'s own `text-base` primary-line convention vs
+  `DetailPanel`'s own `text-sm` note convention), and Body (16px) remains a genuinely-exercised
+  role in this contract.
 
 ---
 
@@ -122,11 +137,11 @@ the same calm treatment this codebase already established for one.
 |---------|------|
 | Primary CTA | Unchanged — `share.ctaFolder`/`share.ctaItem` ("Udostępnij folder"/"Udostępnij item") serve both individual and family-wide submissions; no new CTA copy is introduced. |
 | "Cała rodzina" row label | **NEW** `share.familyWideOptionLabel`: pl "Cała rodzina", en "Whole family" |
-| Timing caveat (FSH-05 — shown in BOTH the dialog at creation time and the overview's family-wide block, same key, same string, so the two required locations can never drift) | **NEW** `share.familyWideTimingCaveat`: pl "Nowi członkowie rodziny zobaczą to od razu, jeśli dołączą przez świeże zaproszenie. Jeśli ktoś korzysta z linku wysłanego wcześniej, dostęp pojawi się dopiero, gdy inny członek rodziny otworzy aplikację.", en "New family members see this right away if they join through a fresh invite. If someone is using a link that was sent earlier, access arrives once another family member opens the app." A single compound sentence naming both mechanism paths (invite-carried = instant; outstanding pre-existing invite = lazy-reseal bound) — this IS the "state what is true per case, not one blanket sentence" resolution: it is evergreen (true regardless of whether an invite happens to be outstanding right now), so it never needs to be conditionally swapped for a different string. |
+| Timing caveat (FSH-05 — shown in BOTH the dialog at creation time and the overview's family-wide block, same key, same string, so the two required locations can never drift) | **NEW** `share.familyWideTimingCaveat`: pl "Nowi członkowie rodziny zobaczą to od razu, jeśli dołączą przez świeże zaproszenie. Jeśli ktoś korzysta z linku wysłanego wcześniej, dostęp pojawi się przy najbliższym otwarciu aplikacji przez Ciebie lub innego członka rodziny.", en "New family members see this right away if they join through a fresh invite. If someone is using a link that was sent earlier, access arrives the next time you or another family member opens the app." A single compound sentence naming both mechanism paths (invite-carried = instant; outstanding pre-existing invite = lazy-reseal bound). **Re-derived post-research** (the FSH-02 decision record confirmed the hybrid survives, with a refinement this string must reflect): the lazy-reseal trigger fires on **any key-holder's next app open, including the sharer themselves** — the sharer always already holds the Collection Key, so "you or another family member" is the correct actor set, not "another family member" alone, which named the wrong actor and overstated the wait. The PL clause is deliberately nominalized ("przy najbliższym otwarciu aplikacji przez Ciebie lub innego członka rodziny") rather than conjugated for two different grammatical persons ("Ty ... otworzysz" + "on/ona ... otworzy" cannot share one verb) — this sidesteps the agreement problem entirely rather than getting it wrong. The EN clause uses ordinary proximity agreement ("you or another family member opens" — the verb agrees with the nearer subject), which is standard English usage. This copy is **derived from the FSH-02 decision record, not asserted as permanently evergreen** — SC5's bar is "checked against the measurement, not against the intent," so if a future mechanism change alters who/what completes the fallback grant, this string must be re-derived again, not assumed to still hold. |
 | Member count — populated (n≥2) | **NEW** `share.familyWideMemberCount` (interpolated `{count}`): pl "Liczba osób w rodzinie: {count} — plus każdy, kto dołączy później.", en "People in the family right now: {count} — plus anyone who joins later." `{count}` trails as a standalone number after the noun already appears ("osób"/"family") — never governs a declined noun, correct at every `n` with zero plural-selection machinery, following 29-UI-SPEC.md's own DEBT-02 resolution pattern exactly. |
 | Member count — solo owner (n=1, just the sharer) | **NEW** `share.familyWideMemberCountSoloOwner`: pl "Na razie w rodzinie jesteś tylko Ty — to udostępnienie zobaczy każdy, kto dołączy.", en "It's just you in the family for now — anyone who joins will see this." Distinct copy, not `familyWideMemberCount` interpolated with `1` — at n=1 the number itself is uninformative ("1" doesn't communicate "nobody else can see this yet"); this sentence states the actually-relevant fact plainly. |
 | Member count — loading | **NEW** `share.familyWideMemberCountLoading`: pl "Ładowanie liczby osób w rodzinie…", en "Loading family member count…" Rendered while the count is unresolved — never a flash of "0" or of the solo-owner copy, both of which would be false claims about family size. |
-| Member count — error | **NEW** `share.familyWideMemberCountError`: pl "Nie udało się wczytać liczby osób w rodzinie.", en "Couldn't load the family member count." The timing caveat still renders regardless of this failure (it's a static string, not fetched) — only the count line degrades. |
+| Member count — error | **NEW** `share.familyWideMemberCountError`: pl "Nie udało się wczytać liczby osób w rodzinie.", en "Couldn't load the family member count." The timing caveat still renders regardless of this failure (it's a static string, not fetched) — only the count line degrades. **No retry affordance is added.** This is a stated no-action state, not an unstated gap: the count re-resolves automatically the next time the surface remounts (closing and reopening `ShareDialog`, or reopening `SharingOverviewPanel`), matching both files' existing fetch-on-mount pattern — neither surface has a manual retry control for any of its other data (recipients, collections, access lists) either, so this failure degrades the same way every other fetch in these two files already does. |
 | Pending-newcomer item-row primary text (placeholder name — the real name is inside the still-undecryptable `enc_data`, so it cannot be shown at all, not even truncated) | **NEW** `vault.pendingFamilyKeyItemName`: pl "Oczekujący element", en "Pending item" |
 | Pending-newcomer item-row subtitle | **NEW** `vault.pendingFamilyKeyRow`: pl "Pojawi się, gdy inny członek rodziny otworzy aplikację.", en "Will appear once another family member opens the app." |
 | Pending-newcomer detail-panel note (mirrors `share.sharedWithYouNote`'s exact two-line shape at `DetailPanel.tsx:462`) | **NEW** `share.pendingFamilyKeyNote`: pl "To jest udostępnione całej rodzinie, ale Twój klucz jeszcze nie dotarł.", en "This is shared with the whole family, but your key hasn't arrived yet." |
@@ -188,7 +203,9 @@ irrelevant to this row — FSH-01 covers both):
   themselves is deliberately **wrong** here — CONTEXT.md's "a live current-member count" is the
   count of everyone who would gain access, and the sharer is already implicitly included by virtue
   of being the owner; the count shown is every family member INCLUDING the sharer (mirrors how
-  `family.membersHeading`'s own list in `FamilyTab.tsx` includes the caller's own row).
+  `family.membersHeading`'s own list in `FamilyTab.tsx` includes the caller's own row). On fetch
+  failure, `familyWideMemberCountError` renders with no retry control — see the Copywriting
+  Contract's "Member count — error" row for the stated no-action behavior (re-resolves on remount).
 - **Timing caveat** (`share-family-wide-timing-caveat`, below the row, `aria-describedby`-linked to
   the checkbox): renders unconditionally whenever the family-wide row is visible — **not** only
   after it is checked. This mirrors the hidden-password inline note's own discipline
@@ -249,6 +266,10 @@ redundant and would risk drifting out of sync. Positioned **above** the existing
   unchanged.
 - **Sort order.** Stable, by `share.name` — the block itself, not its individual list rows, is
   what is "pinned above"; the list inside it has no further precedence rule to state.
+- **Member count failure.** Same behavior as `ShareDialog`'s row (see Copywriting Contract's
+  "Member count — error"): `sharing-overview-family-wide-count` renders
+  `familyWideMemberCountError` with no retry control; it re-resolves the next time
+  `SharingOverviewPanel` remounts.
 
 ---
 
@@ -324,9 +345,18 @@ renders a fully generic, placeholder-content variant instead of its normal conte
 - The sharing-marker slot (family badge / `AvatarStack` / `sharedToMe`) is **suppressed** for a
   pending row — the pending treatment already fully communicates the state; a second marker would
   be redundant, not additive.
-- Row height (`h-16`) and the trailing relative-time slot are **unchanged** — `updatedAt` is
-  server-side metadata, not inside `enc_data`, so it remains genuinely knowable and keeps
-  rendering normally.
+- **Corrected against the actual authorization model (post-research):** a pending newcomer cannot
+  reach the normal item/collection listing at all — `Collection`/`Item::resolve_access`
+  (`crates/pv-server/src/routes/membership.rs`) 404s anyone without a `collection_keys`/
+  `item_shares` row, regardless of family membership, and that 404 is deliberately not widened
+  (doing so would break the revocation guarantee it exists to enforce). Closing this needs a
+  narrow, **ids-only** discovery endpoint — this contract does not design that endpoint, but its
+  row anatomy must not assume any field richer than an id. Concretely: **the trailing metadata slot
+  (normally relative time or the TOTP ring) is omitted entirely for a pending row**, not populated
+  and not left rendering a stale/fake value — an ids-only discovery path carries no `updated_at`
+  (or any other metadata) to show there. Row height stays `h-16` (no layout shift versus a normal
+  row), but nothing occupies that slot. The row's only content is the generic icon + the two
+  placeholder text lines above, both static translator strings requiring no server data at all.
 - **Distinct from `item.undecryptable` (existing) — do not reuse or overload that flag.**
   `item.undecryptable` means "a prior successful decrypt exists; the latest sync merge failed,
   showing a retained stale copy" (`DetailPanel.tsx:441-453`'s own comment). Pending-family-key
