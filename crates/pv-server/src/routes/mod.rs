@@ -239,7 +239,16 @@ async fn rewrite_nested_static_route(
     // implicit dependency on the export's file layout, not a guard. This is
     // the guard the SUMMARY claimed; now it is genuinely present, so a
     // typo'd/future API route can never be shadowed by this rewrite.
-    if req.method() == axum::http::Method::GET && !req.uri().path().starts_with("/api/") {
+    // WR-04 (code review, Phase 29): `HEAD` used to be excluded, so
+    // `HEAD /settings` still took the pre-fix path (directory redirect, no
+    // `index.html` inside `out/settings/`, fall through to the root SPA)
+    // while `GET /settings` took the fixed one -- a caching proxy/CDN/link
+    // checker that validates with `HEAD` would see different metadata
+    // (`Content-Length`/`ETag`/`Last-Modified`) than the `GET` body it
+    // caches. `ServeDir` supports `HEAD` natively, so this rewrite must too.
+    if matches!(*req.method(), axum::http::Method::GET | axum::http::Method::HEAD)
+        && !req.uri().path().starts_with("/api/")
+    {
         let path = req.uri().path();
         let trimmed = path.trim_matches('/');
         // Bare `/`, any request that already names a real file

@@ -20,6 +20,12 @@ fn fixture_static_dir() -> std::path::PathBuf {
         .expect("write index.html fixture");
     std::fs::write(dir.join("robots.txt"), "User-agent: *\nDisallow: /pv-robots-fixture")
         .expect("write robots.txt fixture");
+    // WR-01/WR-04 (code review, Phase 29): mirrors the real Next.js export's
+    // flat `<route>.html` shape (`out/settings.html`) that
+    // `rewrite_nested_static_route` exists to serve for a bare `/settings`
+    // request -- see that function's own doc comment for the full "why".
+    std::fs::write(dir.join("settings.html"), "<!doctype html><title>pv settings fixture</title>")
+        .expect("write settings.html fixture");
     dir
 }
 
@@ -71,6 +77,62 @@ async fn api_routes_are_unaffected_by_static_fallback() {
     let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body, serde_json::json!({ "status": "ok" }));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// WR-01 (code review, Phase 29): the happy path
+// `rewrite_nested_static_route` exists for -- a bare nested route resolves
+// to its real flat `<route>.html` file, not the root SPA's `index.html`.
+#[tokio::test]
+async fn nested_route_serves_its_own_flat_html_file_not_the_root_spa() {
+    let dir = fixture_static_dir();
+    let pool = common::test_pool().await;
+    let app = common::test_app_with_static_dir(pool, dir.clone());
+
+    let res = app.oneshot(Request::builder().uri("/settings").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(
+        bytes,
+        "<!doctype html><title>pv settings fixture</title>".as_bytes(),
+        "GET /settings must serve settings.html's own bytes, never index.html's"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// WR-04 (code review, Phase 29): the rewrite used to check `GET` only, so
+// `HEAD /settings` still took the pre-fix path (directory redirect, no
+// index.html inside out/settings/, fall through to the root SPA) while GET
+// took the fixed one -- proven here by comparing HEAD's own Content-Length
+// against GET's: if HEAD had silently resolved to index.html instead, the
+// two content-lengths would differ (settings.html and index.html are
+// deliberately different lengths in the fixture above).
+#[tokio::test]
+async fn head_request_to_a_nested_route_matches_get_not_the_root_spa() {
+    let dir = fixture_static_dir();
+    let pool = common::test_pool().await;
+    let app = common::test_app_with_static_dir(pool, dir.clone());
+
+    let get_res =
+        app.clone().oneshot(Request::builder().uri("/settings").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(get_res.status(), StatusCode::OK);
+    let get_len = get_res.headers().get(axum::http::header::CONTENT_LENGTH).cloned();
+
+    let head_res = app
+        .oneshot(Request::builder().method("HEAD").uri("/settings").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(head_res.status(), StatusCode::OK);
+    let head_len = head_res.headers().get(axum::http::header::CONTENT_LENGTH).cloned();
+
+    assert!(get_len.is_some(), "sanity: GET must report a Content-Length");
+    assert_eq!(
+        head_len, get_len,
+        "HEAD /settings must report the SAME Content-Length as GET /settings (settings.html), \
+         not the root index.html's -- a mismatch means HEAD silently fell through to the SPA"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
