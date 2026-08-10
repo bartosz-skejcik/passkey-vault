@@ -40,21 +40,31 @@
 // member's grant still exists and a single reinstate click restores it --
 // hiding it would tell the caller nobody has access when that isn't true.
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Folder, Share2, UserMinus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, Share2, UserMinus, Users, X } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { me } from "@/lib/auth/api";
 import { accessLevelKey, higherAccess } from "@/lib/families/accessLevel";
+import { getFamilyMembers } from "@/lib/families/api";
 import {
   getCollectionAccessList,
+  getCollectionItems,
   listCollections,
   listItemShares,
   type CollectionAccessEntry,
+  type CollectionItemRow,
   type ItemShareEntry,
 } from "@/lib/vault/api";
 import { useCollections } from "@/lib/vault/collections";
 import { useVaultItems } from "@/lib/vault/store";
 import type { ShareRecipient } from "@/lib/vault/shareRecipients";
+import {
+  decryptItemForCollection,
+  getUnlockedUserKey,
+  initCrypto,
+  unsealCollectionKey,
+} from "@/lib/crypto";
+import { ensureOwnIdentityKeypair } from "@/lib/identity/ensure";
 import AvatarStack from "./AvatarStack";
 import RevokeShareDialog, { type RevokeShareKind } from "./RevokeShareDialog";
 
@@ -86,6 +96,31 @@ interface PersonRow {
   userId: string;
   email: string;
   entries: PersonEntry[];
+}
+
+/** 30-10 (FSH-05, "the family-wide row"): one flat entry in the pinned
+ * family-wide block's `<ul>` -- a family-wide FOLDER (name from the
+ * existing `collections.ts` decrypt path), or one individual item pulled
+ * out of the single per-family `item_bucket` collection (30-UI-SPEC.md's
+ * explicit "never one entry for the whole bucket" rule -- an item_bucket
+ * is a container, not a thing to list itself). */
+interface FamilyWideEntry {
+  id: string;
+  kind: "folder" | "item";
+  name: string;
+}
+
+/** Recombines a server row's separate enc_key/enc_data strings into the
+ * single combined JSON string `decryptItemForCollection` expects -- the
+ * SAME local helper `RemoveMemberDialog.tsx`'s `resolveFolder` carries
+ * (this codebase's established per-file-owns-its-own-tiny-helper
+ * convention for this exact split/recombine, rather than exporting a
+ * shared one). */
+function recombineEncryptedItem(encKey: string, encData: string): string {
+  return JSON.stringify({
+    enc_key: JSON.parse(encKey) as unknown,
+    enc_data: JSON.parse(encData) as unknown,
+  });
 }
 
 function mergePersonEntry(entries: PersonEntry[], next: PersonEntry): PersonEntry[] {
@@ -188,6 +223,18 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
   const [loading, setLoading] = useState(true);
   const [folderRows, setFolderRows] = useState<FolderRow[]>([]);
   const [personRows, setPersonRows] = useState<PersonRow[]>([]);
+  // 30-10 (FSH-05): `null` until the family-wide share list has resolved at
+  // least once -- distinct from `[]` (resolved, genuinely zero shares) so
+  // the block's own gate below can require BOTH this AND the member-count
+  // state to have resolved before ever rendering (no half-resolved flash).
+  const [familyWideShares, setFamilyWideShares] = useState<FamilyWideEntry[] | null>(null);
+  // Same three-state discriminant ShareDialog.tsx's `familyMemberCountState`
+  // already uses (30-08) -- reused here rather than reinvented, since
+  // 30-UI-SPEC.md requires the SAME count semantics (includes the sharer)
+  // in both required FSH-05 locations.
+  const [familyMemberCountState, setFamilyMemberCountState] = useState<
+    "loading" | { count: number } | "error"
+  >("loading");
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [expandedPeople, setExpandedPeople] = useState<Set<string>>(new Set());
   // SHARE-06 revoke (Phase 28, Plan 02): the pending confirmation, or null
@@ -224,12 +271,25 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
         setLoading(true);
       }
       try {
-        const [account, rawCollections] = await Promise.all([
+        const [account, rawCollections, familyMembers] = await Promise.all([
           me().catch(() => null),
           listCollections().catch(() => []),
+          // 30-10 (FSH-05): the SAME getFamilyMembers()-shaped source
+          // ShareDialog.tsx's own member-count discriminant uses (30-08) --
+          // fetched once here, never a second call per render.
+          getFamilyMembers().catch(() => null),
         ]);
         if (cancelled) return;
         const selfId = account?.user_id ?? null;
+
+        // FSH-05's count includes the sharer (30-UI-SPEC.md's explicit
+        // rule, mirrored verbatim from ShareDialog.tsx's own
+        // `familyMemberCountState`) -- "error" only when the roster itself
+        // could not be resolved, never a silent 0 or a stale value.
+        const nextFamilyMemberCountState: "error" | { count: number } =
+          account === null || familyMembers === null
+            ? "error"
+            : { count: familyMembers.filter((m) => m.user_id !== selfId).length + 1 };
 
         // Truth 1 / E6: only folders the caller has edit-or-owner reason to
         // manage. The creator's own collection_keys row is hard-coded to
@@ -312,9 +372,100 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
           }
         });
 
+        // 30-10 (FSH-05, "the family-wide row"): a family-wide FOLDER's
+        // name reuses collections.ts's own decrypt path -- it is already
+        // decrypted onto `collections` (from `useCollections()`) the moment
+        // that store refreshes, so no second decrypt is needed here, only
+        // a lookup by id (same rawCollections<->collections cross-reference
+        // idiom `editableCollections` above already uses). A family-wide
+        // ITEM lives inside the single per-family `item_bucket` collection
+        // and is NOT a folder at all (30-UI-SPEC.md's key link) -- it needs
+        // its own item-level decrypt, matching `RemoveMemberDialog.tsx`'s
+        // `resolveFolder` item loop.
+        const familyWideFolderRows = rawCollections.filter((c) => c.family_wide_kind === "folder");
+        const familyWideBucketRows = rawCollections.filter(
+          (c) => c.family_wide_kind === "item_bucket",
+        );
+
+        const folderEntries: FamilyWideEntry[] = [];
+        for (const c of familyWideFolderRows) {
+          const decrypted = collections.find((col) => col.id === c.id);
+          // T-30-17 (this plan's threat register): only ever the CALLER's
+          // own already-decrypted collection name -- no new disclosure.
+          // A folder this store hasn't resolved yet simply doesn't appear
+          // (the same "renders whatever DID resolve" discipline as every
+          // other partial-failure path in this file).
+          if (decrypted !== undefined) {
+            folderEntries.push({ id: c.id, kind: "folder", name: decrypted.name });
+          }
+        }
+
+        const itemEntries: FamilyWideEntry[] = [];
+        if (familyWideBucketRows.length > 0) {
+          const uk = getUnlockedUserKey();
+          if (uk !== null) {
+            try {
+              await initCrypto();
+              const identityKey = await ensureOwnIdentityKeypair(uk);
+              try {
+                for (const bucket of familyWideBucketRows) {
+                  if (bucket.sealed_key === null) continue;
+                  try {
+                    const ck = unsealCollectionKey(identityKey, bucket.sealed_key);
+                    try {
+                      const rows: CollectionItemRow[] = await getCollectionItems(bucket.id).catch(
+                        () => [],
+                      );
+                      for (const row of rows) {
+                        try {
+                          const combined = recombineEncryptedItem(row.enc_key, row.enc_data);
+                          const plaintext = decryptItemForCollection(
+                            ck,
+                            combined,
+                            bucket.id,
+                            row.id,
+                            row.revision,
+                          );
+                          const parsed = JSON.parse(plaintext) as { name?: string };
+                          if (typeof parsed.name === "string" && parsed.name.length > 0) {
+                            itemEntries.push({ id: row.id, kind: "item", name: parsed.name });
+                          }
+                        } catch {
+                          // This one item's name failed to decrypt -- its
+                          // siblings still render (same discipline as
+                          // RemoveMemberDialog.tsx's per-item fallback).
+                        }
+                      }
+                    } finally {
+                      ck.free?.();
+                    }
+                  } catch {
+                    // This one bucket's sealed_key failed to unseal -- its
+                    // entries are simply absent, never a crash.
+                  }
+                }
+              } finally {
+                identityKey.free?.();
+              }
+            } catch {
+              // Identity key unavailable (locked vault, network failure) --
+              // every item_bucket entry is simply absent; folder entries
+              // above are unaffected (T-30-17's "renders whatever DID
+              // resolve" truth).
+            }
+          }
+        }
+
+        // UI-SPEC's "Sort order": stable, by share.name.
+        const nextFamilyWideShares = [...folderEntries, ...itemEntries].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        );
+
         if (!cancelled) {
           setFolderRows(nextFolderRows);
           setPersonRows(Array.from(personMap.values()));
+          setFamilyWideShares(nextFamilyWideShares);
+          setFamilyMemberCountState(nextFamilyMemberCountState);
           setLoading(false);
           hasLoadedOnceRef.current = true;
         }
@@ -324,6 +475,8 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
         if (!cancelled) {
           setFolderRows([]);
           setPersonRows([]);
+          setFamilyWideShares([]);
+          setFamilyMemberCountState("error");
           setLoading(false);
           hasLoadedOnceRef.current = true;
         }
@@ -392,6 +545,30 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
 
   const isEmpty = folderRows.length === 0 && personRows.length === 0;
 
+  // 30-10 (FSH-05): the block renders ONLY once BOTH the family-wide-share
+  // list and the member count have resolved (never a half-resolved flash
+  // of an empty list next to a populated count or vice versa), and only
+  // when there is at least one family-wide share to show -- never a "0
+  // family-wide shares" heading (30-UI-SPEC.md's explicit empty-state
+  // rule, mirroring this file's own zero-one-many discipline elsewhere).
+  const familyWideVisible =
+    familyWideShares !== null &&
+    familyMemberCountState !== "loading" &&
+    familyWideShares.length > 0;
+  // Same four-state copy selection as ShareDialog.tsx's own
+  // `familyWideMemberCountText` (30-08) -- SAME i18n keys, so the two
+  // required FSH-05 locations can never drift.
+  const familyWideMemberCountText =
+    familyMemberCountState === "loading"
+      ? t("share.familyWideMemberCountLoading")
+      : familyMemberCountState === "error"
+        ? t("share.familyWideMemberCountError")
+        : familyMemberCountState.count === 1
+          ? t("share.familyWideMemberCountSoloOwner")
+          : interpolate(t("share.familyWideMemberCount"), {
+              count: String(familyMemberCountState.count),
+            });
+
   return (
     <aside
       ref={scrollRef}
@@ -413,6 +590,55 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
           <X size={16} aria-hidden="true" />
         </button>
       </div>
+
+      {/* 30-10 (FSH-05, "the family-wide row"): a SINGLE pinned block, not
+          a third tab and not a per-share row set -- the count and timing
+          caveat are properties of the FAMILY, not of any one share.
+          Positioned above the tab switcher (same "primary content before
+          secondary nav" precedent as 29-UI-SPEC.md's own focal-point
+          rule). No revoke action anywhere in this block (deliberately
+          absent) -- the only way to change who reads a family-wide share
+          is through the existing leave/remove/delete-account paths. */}
+      {familyWideVisible ? (
+        <div
+          data-testid="sharing-overview-family-wide"
+          className="flex flex-col gap-2 rounded-box border border-base-300 px-4 py-3"
+        >
+          <div className="flex items-center gap-2">
+            <Users size={16} className="shrink-0 text-secondary" aria-hidden="true" />
+            <span className="text-sm font-bold">{t("share.familyWideOptionLabel")}</span>
+          </div>
+          <p
+            data-testid="sharing-overview-family-wide-count"
+            className="text-sm text-base-content/70"
+          >
+            {familyWideMemberCountText}
+          </p>
+          <p
+            data-testid="sharing-overview-family-wide-caveat"
+            className="text-sm text-base-content/60"
+          >
+            {t("share.familyWideTimingCaveat")}
+          </p>
+          <ul
+            data-testid="sharing-overview-family-wide-list"
+            className="flex flex-col gap-1 pl-6"
+          >
+            {(familyWideShares ?? []).map((share) => (
+              <li key={`${share.kind}:${share.id}`} className="flex items-center gap-2">
+                {share.kind === "folder" ? (
+                  <Folder size={14} className="shrink-0 text-base-content/60" aria-hidden="true" />
+                ) : (
+                  <Share2 size={14} className="shrink-0 text-secondary" aria-hidden="true" />
+                )}
+                <span className="min-w-0 flex-1 truncate text-sm" title={share.name}>
+                  {share.name}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {/* Focal point (E6): full-width segmented toggle, the panel's
           primary visual anchor, directly beneath the heading. */}

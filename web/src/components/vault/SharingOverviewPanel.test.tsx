@@ -13,28 +13,48 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { VaultItem } from "@/lib/vault/types";
 import type { Collection } from "@/lib/vault/collections";
-import type { CollectionRow, CollectionAccessEntry, ItemShareEntry } from "@/lib/vault/api";
+import type {
+  CollectionRow,
+  CollectionAccessEntry,
+  CollectionItemRow,
+  ItemShareEntry,
+} from "@/lib/vault/api";
+import type { FamilyMemberRecord } from "@/lib/families/api";
 
 const {
   mockMe,
   mockGetMemberAccess,
+  mockGetFamilyMembers,
   mockUseCollections,
   mockUseVaultItems,
   mockListCollections,
   mockGetCollectionAccessList,
+  mockGetCollectionItems,
   mockListItemShares,
   mockRevokeCollectionAccess,
   mockRevokeItemShare,
+  mockGetUnlockedUserKey,
+  mockInitCrypto,
+  mockUnsealCollectionKey,
+  mockDecryptItemForCollection,
+  mockEnsureOwnIdentityKeypair,
 } = vi.hoisted(() => ({
   mockMe: vi.fn(),
   mockGetMemberAccess: vi.fn(),
+  mockGetFamilyMembers: vi.fn(),
   mockUseCollections: vi.fn(),
   mockUseVaultItems: vi.fn(),
   mockListCollections: vi.fn(),
   mockGetCollectionAccessList: vi.fn(),
+  mockGetCollectionItems: vi.fn(),
   mockListItemShares: vi.fn(),
   mockRevokeCollectionAccess: vi.fn(),
   mockRevokeItemShare: vi.fn(),
+  mockGetUnlockedUserKey: vi.fn(),
+  mockInitCrypto: vi.fn(),
+  mockUnsealCollectionKey: vi.fn(),
+  mockDecryptItemForCollection: vi.fn(),
+  mockEnsureOwnIdentityKeypair: vi.fn(),
 }));
 
 vi.mock("@/lib/i18n/LocaleContext", () => ({
@@ -58,8 +78,14 @@ vi.mock("@/lib/auth/api", async (importOriginal) => {
 // component must NEVER call getMemberAccess. Mocked here purely so the
 // spy assertion below can prove zero calls across a full render +
 // interaction cycle.
+//
+// 30-10 (FSH-05): `getFamilyMembers` is added here too -- the SAME source
+// ShareDialog.tsx's own member-count discriminant uses (30-08), reused by
+// the pinned family-wide block for the panel's second required timing-
+// caveat location.
 vi.mock("@/lib/families/api", () => ({
   getMemberAccess: mockGetMemberAccess,
+  getFamilyMembers: mockGetFamilyMembers,
 }));
 
 vi.mock("@/lib/vault/collections", () => ({
@@ -73,9 +99,33 @@ vi.mock("@/lib/vault/store", () => ({
 vi.mock("@/lib/vault/api", () => ({
   listCollections: mockListCollections,
   getCollectionAccessList: mockGetCollectionAccessList,
+  getCollectionItems: mockGetCollectionItems,
   listItemShares: mockListItemShares,
   revokeCollectionAccess: mockRevokeCollectionAccess,
   revokeItemShare: mockRevokeItemShare,
+}));
+
+// 30-10: the family-wide block's item_bucket branch resolves real item
+// names the SAME way `RemoveMemberDialog.tsx`'s `resolveFolder` already
+// does -- `@/lib/crypto` and `@/lib/identity/ensure` are mocked wholesale
+// here, same structural blind spot as every other component test in this
+// codebase (see that file's own evidentiary-scope note). These tests prove
+// the STATE MACHINE and RENDERING logic, not real end-to-end decryption.
+vi.mock("@/lib/crypto", () => ({
+  getUnlockedUserKey: mockGetUnlockedUserKey,
+  initCrypto: mockInitCrypto,
+  unsealCollectionKey: mockUnsealCollectionKey,
+  decryptItemForCollection: mockDecryptItemForCollection,
+  // The REAL `AvatarStack` this panel renders imports these transitively
+  // (via `lib/vault/shareRecipients.ts`) -- unrelated to this plan's own
+  // family-wide decrypt path, but required for the wholesale mock above not
+  // to break every OTHER test in this file that renders a folder row.
+  isUnlocked: () => true,
+  subscribeLockState: () => () => {},
+}));
+
+vi.mock("@/lib/identity/ensure", () => ({
+  ensureOwnIdentityKeypair: mockEnsureOwnIdentityKeypair,
 }));
 
 import { ApiClientError } from "@/lib/auth/api";
@@ -122,6 +172,30 @@ function makeShareEntry(overrides: Partial<ItemShareEntry> = {}): ItemShareEntry
   };
 }
 
+function makeFamilyMember(overrides: Partial<FamilyMemberRecord> = {}): FamilyMemberRecord {
+  return {
+    user_id: ANNA_ID,
+    email: "anna@example.test",
+    role: "member",
+    joined_at: "2026-01-01T00:00:00Z",
+    public_key: "cGs=",
+    fingerprint: null,
+    verified_at: null,
+    status: "active",
+    ...overrides,
+  };
+}
+
+function makeCollectionItemRow(overrides: Partial<CollectionItemRow> = {}): CollectionItemRow {
+  return {
+    id: "bucket-item-1",
+    enc_key: "{}",
+    enc_data: "{}",
+    revision: 2,
+    ...overrides,
+  };
+}
+
 function makeItem(overrides: Partial<VaultItem> = {}): VaultItem {
   return {
     id: "item-1",
@@ -145,6 +219,15 @@ function renderEmptyPanel() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 30-10 (FSH-05): sensible no-family-wide-shares defaults so every
+  // EXISTING test in this file (none of which know about the family-wide
+  // block) keeps working unchanged -- an unresolved default here would
+  // make `getFamilyMembers().catch(...)` reject against `undefined` before
+  // it could even be caught.
+  mockGetFamilyMembers.mockResolvedValue([]);
+  mockGetCollectionItems.mockResolvedValue([]);
+  mockGetUnlockedUserKey.mockReturnValue(null);
+  mockInitCrypto.mockResolvedValue(undefined);
 });
 
 describe("SharingOverviewPanel (D-1/E6)", () => {
@@ -685,6 +768,203 @@ describe("SharingOverviewPanel (D-1/E6)", () => {
         expect(screen.queryByTestId("revoke-share-dialog")).not.toBeInTheDocument(),
       );
       expect(screen.queryByTestId(`sharing-overview-person-${ANNA_ID}`)).not.toBeInTheDocument();
+    });
+  });
+
+  // Plan 30-10 (FSH-05, "the family-wide row"): the pinned block above
+  // `sharing-overview-tabs`, distinct from the folder/person aggregation
+  // above -- one block, not a third tab, not a per-share row set.
+  describe("Task 1 (30-10) -- pinned family-wide block", () => {
+    it("renders no sharing-overview-family-wide element when the caller has zero family-wide collections", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "col-1", name: "Ordinary Folder" })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([
+        makeCollectionRow({ id: "col-1", access_level: "edit", family_wide_kind: null }),
+      ]);
+      mockGetCollectionAccessList.mockResolvedValue([]);
+      mockListItemShares.mockResolvedValue([]);
+      mockGetFamilyMembers.mockResolvedValue([makeFamilyMember({ user_id: SELF_ID })]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      await waitFor(() =>
+        expect(screen.getByTestId("sharing-overview-folder-col-1")).toBeInTheDocument(),
+      );
+      expect(screen.queryByTestId("sharing-overview-family-wide")).not.toBeInTheDocument();
+    });
+
+    it("renders exactly 3 <li> entries -- 1 family-wide folder + 2 item_bucket items -- with no revoke-shaped testid anywhere inside", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "fam-folder-1", name: "Family Recipes" })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([
+        makeCollectionRow({ id: "fam-folder-1", access_level: "edit", family_wide_kind: "folder" }),
+        makeCollectionRow({
+          id: "fam-bucket-1",
+          access_level: "edit",
+          sealed_key: "sealed-bucket-key",
+          family_wide_kind: "item_bucket",
+        }),
+      ]);
+      mockGetCollectionAccessList.mockResolvedValue([]);
+      mockListItemShares.mockResolvedValue([]);
+      mockGetFamilyMembers.mockResolvedValue([
+        makeFamilyMember({ user_id: SELF_ID }),
+        makeFamilyMember({ user_id: ANNA_ID }),
+      ]);
+      mockGetUnlockedUserKey.mockReturnValue({ free: vi.fn() });
+      mockEnsureOwnIdentityKeypair.mockResolvedValue({ free: vi.fn() });
+      mockUnsealCollectionKey.mockReturnValue({ free: vi.fn() });
+      mockGetCollectionItems.mockResolvedValue([
+        makeCollectionItemRow({ id: "bucket-item-1" }),
+        makeCollectionItemRow({ id: "bucket-item-2" }),
+      ]);
+      mockDecryptItemForCollection.mockImplementation(
+        (_ck: unknown, _combined: unknown, _collectionId: unknown, itemId: unknown) =>
+          JSON.stringify({
+            name: itemId === "bucket-item-1" ? "Grandma's Recipe" : "Dad's BBQ Sauce",
+          }),
+      );
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      const block = await screen.findByTestId("sharing-overview-family-wide");
+      const list = within(block).getByTestId("sharing-overview-family-wide-list");
+      expect(list.querySelectorAll("li")).toHaveLength(3);
+      expect(list).toHaveTextContent("Family Recipes");
+      expect(list).toHaveTextContent("Grandma's Recipe");
+      expect(list).toHaveTextContent("Dad's BBQ Sauce");
+
+      // FSH-05's second required timing-caveat location -- the SAME key
+      // (never a duplicated/re-worded string) ShareDialog.tsx already ships.
+      expect(within(block).getByTestId("sharing-overview-family-wide-caveat")).toHaveTextContent(
+        "share.familyWideTimingCaveat",
+      );
+
+      // No revoke action anywhere inside this block (30-UI-SPEC.md's
+      // deliberate omission).
+      expect(block.querySelector('[data-testid*="revoke" i]')).toBeNull();
+    });
+
+    it("a getCollectionItems rejection for the bucket renders the block with the folder entry present and the bucket's entries simply absent -- not a crash", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "fam-folder-1", name: "Family Recipes" })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([
+        makeCollectionRow({ id: "fam-folder-1", access_level: "edit", family_wide_kind: "folder" }),
+        makeCollectionRow({
+          id: "fam-bucket-1",
+          access_level: "edit",
+          sealed_key: "sealed-bucket-key",
+          family_wide_kind: "item_bucket",
+        }),
+      ]);
+      mockGetCollectionAccessList.mockResolvedValue([]);
+      mockListItemShares.mockResolvedValue([]);
+      mockGetFamilyMembers.mockResolvedValue([makeFamilyMember({ user_id: SELF_ID })]);
+      mockGetUnlockedUserKey.mockReturnValue({ free: vi.fn() });
+      mockEnsureOwnIdentityKeypair.mockResolvedValue({ free: vi.fn() });
+      mockUnsealCollectionKey.mockReturnValue({ free: vi.fn() });
+      mockGetCollectionItems.mockRejectedValue(new Error("500 from server"));
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      const block = await screen.findByTestId("sharing-overview-family-wide");
+      const list = within(block).getByTestId("sharing-overview-family-wide-list");
+      expect(list.querySelectorAll("li")).toHaveLength(1);
+      expect(list).toHaveTextContent("Family Recipes");
+    });
+
+    it("a realistic long family-wide share name truncates inside the list, matching the existing folder-row truncate pattern", async () => {
+      const longName = "a-very-long-family-wide-folder-name-for-overflow-testing-purposes";
+      expect(longName.length).toBeGreaterThanOrEqual(40);
+
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "fam-folder-1", name: longName })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([
+        makeCollectionRow({ id: "fam-folder-1", access_level: "edit", family_wide_kind: "folder" }),
+      ]);
+      mockGetCollectionAccessList.mockResolvedValue([]);
+      mockListItemShares.mockResolvedValue([]);
+      mockGetFamilyMembers.mockResolvedValue([makeFamilyMember({ user_id: SELF_ID })]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      const block = await screen.findByTestId("sharing-overview-family-wide");
+      const nameSpan = block.querySelector(`[title="${longName}"]`);
+      expect(nameSpan).not.toBeNull();
+      expect(nameSpan).toHaveClass("truncate");
+    });
+
+    it("a family of 1 (solo owner) shows familyWideMemberCountSoloOwner in the block's count line, never an interpolated n=1", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "fam-folder-1", name: "Solo Folder" })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([
+        makeCollectionRow({ id: "fam-folder-1", access_level: "edit", family_wide_kind: "folder" }),
+      ]);
+      mockGetCollectionAccessList.mockResolvedValue([]);
+      mockListItemShares.mockResolvedValue([]);
+      mockGetFamilyMembers.mockResolvedValue([makeFamilyMember({ user_id: SELF_ID })]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      await waitFor(() =>
+        expect(screen.getByTestId("sharing-overview-family-wide-count")).toHaveTextContent(
+          "share.familyWideMemberCountSoloOwner",
+        ),
+      );
+    });
+
+    it("a family of 2+ shows the interpolated populated count (n includes the sharer)", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "fam-folder-1", name: "Shared Folder" })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([
+        makeCollectionRow({ id: "fam-folder-1", access_level: "edit", family_wide_kind: "folder" }),
+      ]);
+      mockGetCollectionAccessList.mockResolvedValue([]);
+      mockListItemShares.mockResolvedValue([]);
+      mockGetFamilyMembers.mockResolvedValue([
+        makeFamilyMember({ user_id: SELF_ID }),
+        makeFamilyMember({ user_id: ANNA_ID }),
+        makeFamilyMember({ user_id: TOMASZ_ID }),
+      ]);
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      await waitFor(() =>
+        expect(screen.getByTestId("sharing-overview-family-wide-count")).toHaveTextContent(
+          "share.familyWideMemberCount",
+        ),
+      );
+    });
+
+    it("familyWideMemberCountError renders in place of the count on a roster fetch failure, with the (static) timing caveat still rendering", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([makeCollection({ id: "fam-folder-1", name: "Shared Folder" })]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([
+        makeCollectionRow({ id: "fam-folder-1", access_level: "edit", family_wide_kind: "folder" }),
+      ]);
+      mockGetCollectionAccessList.mockResolvedValue([]);
+      mockListItemShares.mockResolvedValue([]);
+      mockGetFamilyMembers.mockRejectedValue(new Error("network error"));
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      const block = await screen.findByTestId("sharing-overview-family-wide");
+      expect(within(block).getByTestId("sharing-overview-family-wide-count")).toHaveTextContent(
+        "share.familyWideMemberCountError",
+      );
+      // No retry control -- 30-UI-SPEC.md's stated no-action state.
+      expect(within(block).queryByRole("button")).not.toBeInTheDocument();
+      // The (static, non-fetched) timing caveat still renders regardless.
+      expect(within(block).getByTestId("sharing-overview-family-wide-caveat")).toHaveTextContent(
+        "share.familyWideTimingCaveat",
+      );
     });
   });
 });
