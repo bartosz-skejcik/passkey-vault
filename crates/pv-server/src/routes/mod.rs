@@ -173,13 +173,68 @@ pub fn router_with_cors(state: AppState, static_dir: Option<PathBuf>, cors: Cors
             // preserves the served file's natural 200 status, which is what a real
             // SPA client-side route needs to render instead of erroring out.
             let serve = ServeDir::new(&dir).fallback(ServeFile::new(dir.join("index.html")));
-            api.fallback_service(serve)
+            // Plan 29-05 (found live, not in this plan's own scope but a real
+            // blocking bug SC1's own cold-navigation proof discovered):
+            // Next.js 16's Turbopack static export emits a nested App Router
+            // route's real page as a FLAT `<route>.html` file
+            // (`out/settings.html`) — the same-named `out/<route>/` directory
+            // holds only RSC prefetch fragments (`__next.*.txt`), never an
+            // `index.html`. `ServeDir`'s own directory handling (redirect to
+            // add a trailing slash, then look for `index.html` inside) finds
+            // nothing there and falls straight through to the `index.html`
+            // SPA fallback above — silently serving the ROOT page's React
+            // tree (the vault) for `GET /settings`, not Settings. Wrapping
+            // `serve` in a tiny child router with `rewrite_nested_static_route`
+            // layered on top intercepts the request BEFORE `ServeDir` ever
+            // sees the ambiguous bare path, so `/settings` gets rewritten to
+            // `/settings.html` and served directly, at its real URL, with a
+            // genuine 200 (no visible redirect).
+            let static_service = Router::new().fallback_service(serve).layer(
+                axum::middleware::from_fn_with_state(dir.clone(), rewrite_nested_static_route),
+            );
+            api.fallback_service(static_service)
         }
         None => {
             tracing::warn!("PV_STATIC_DIR not set or not a directory — serving API only");
             api
         }
     }
+}
+
+/// See the doc comment at this function's one call site (`router_with_cors`'s
+/// `Some(dir)` static-serving arm) for the full "why" — this rewrites a bare
+/// nested-route request path (`/settings`, `/self-test`, no file extension)
+/// to its real flat `<path>.html` file BEFORE `ServeDir` gets a chance to
+/// treat the same-named `out/<path>/` directory as an index-page location
+/// and silently fall through to the root SPA `index.html`.
+async fn rewrite_nested_static_route(
+    axum::extract::State(dir): axum::extract::State<PathBuf>,
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if req.method() == axum::http::Method::GET {
+        let path = req.uri().path();
+        let trimmed = path.trim_matches('/');
+        // Bare `/`, any request that already names a real file
+        // (`/settings.html`, `/_next/static/...`, `/favicon.ico`), and
+        // anything containing `..` (defense in depth — `dir.join` below
+        // never escapes `dir` for a legitimate request, but this keeps the
+        // guard self-contained) all skip straight through untouched.
+        if !trimmed.is_empty() && !trimmed.contains('.') && !trimmed.contains("..") {
+            let candidate = dir.join(format!("{trimmed}.html"));
+            if tokio::fs::try_exists(&candidate).await.unwrap_or(false) {
+                let mut new_path = format!("/{trimmed}.html");
+                if let Some(query) = req.uri().query() {
+                    new_path.push('?');
+                    new_path.push_str(query);
+                }
+                if let Ok(new_uri) = new_path.parse() {
+                    *req.uri_mut() = new_uri;
+                }
+            }
+        }
+    }
+    next.run(req).await
 }
 
 /// The ONLY place `FamilyMembership<M>`-gated routes may be registered
