@@ -615,13 +615,12 @@ export const DICTIONARY = {
   // anticipate (per-passkey rename failure, per-session revoke confirm
   // modal — both are Claude's-discretion additions, not spec paraphrases).
   "settings.title": { pl: "Ustawienia", en: "Settings" },
-  "settings.tabPasskeys": { pl: "Passkeys", en: "Passkeys" },
-  "settings.tabSessions": { pl: "Sesje i urządzenia", en: "Sessions & devices" },
-  "settings.tabSecurity": { pl: "Bezpieczeństwo", en: "Security" },
-  "settings.tabImportExport": { pl: "Import/Eksport", en: "Import/Export" },
-  // "Family" tab (FAM-04/05/06, Plan 24-05) — copy verbatim from
-  // 24-UI-SPEC.md's Copywriting Contract.
-  "settings.tabFamily": { pl: "Rodzina", en: "Family" },
+  // IN-01 (code review, Phase 29): `settings.tabPasskeys`/`tabSessions`/
+  // `tabSecurity`/`tabImportExport`/`tabFamily` retired here -- the tab
+  // mechanism they labeled (`SettingsPanel.tsx`) was deleted by this same
+  // phase in favor of the real `/settings` route + `SettingsJumpNav`'s
+  // `settings.group*` keys below; zero call sites remained. Not lost --
+  // recoverable from `git log` if the tab mechanism ever returns.
   "settings.importExportPlaceholder": {
     pl: "Import i eksport pojawią się w kolejnej fazie.",
     en: "Import and export are coming in a later phase.",
@@ -641,9 +640,8 @@ export const DICTIONARY = {
 
   // `/settings` page shell (Phase 29, SET-01/02/04, 29-UI-SPEC.md's
   // Copywriting Contract) — the real route replacing the SettingsPanel
-  // drawer above. `settings.title`/`settings.tabFamily` above stay
-  // unchanged (the former is promoted to page-title use, the latter
-  // retires with the tab mechanism it labeled).
+  // drawer above. `settings.title` above stays unchanged, promoted to
+  // page-title use (its former tab-label siblings retired above, IN-01).
   "settings.backToVault": { pl: "Wróć do sejfu", en: "Back to vault" },
   "settings.jumpNavLabel": { pl: "Nawigacja ustawień", en: "Settings navigation" },
   "settings.groupAccount": { pl: "Konto", en: "Account" },

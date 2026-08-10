@@ -38,7 +38,16 @@ export default function AuthGate({
   const [mode, setMode] = useState<"login" | "register">("login");
 
   useEffect(() => {
-    setAuthed(getSessionToken() !== null);
+    // IN-02 (code review, Phase 29): `localStorage.getItem` returns `""`
+    // (NOT `null`) for an explicitly-stored empty-string value, so
+    // `getSessionToken() !== null` alone resolves `authed = true` for that
+    // case -- a fail-open branch in a component whose whole job is to fail
+    // closed. The server remains the real authority regardless (a stale/
+    // empty token still 401s on the first real request), so the impact was
+    // limited to a UI that briefly renders then errors -- still worth
+    // closing explicitly rather than relying on that downstream backstop.
+    const token = getSessionToken();
+    setAuthed(token !== null && token !== "");
   }, []);
 
   if (authed === null) {
