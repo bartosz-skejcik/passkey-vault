@@ -14,6 +14,14 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "fs"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "uuid", "migrate"] }
 webauthn-rs = { version = "=0.5.5", features = ["danger-allow-state-serialisation"] }
 tower-http = { version = "0.6", features = ["trace", "cors", "fs"] }
+# WR-02 (code review, Phase 29): `rewrite_nested_static_route`'s traversal
+# guard used to inspect `req.uri().path()` (raw, still percent-encoded)
+# while `ServeDir` decodes before acting -- `%2e%2e%2f` passed the old
+# literal `.`/`..` checks untouched. Already resolved transitively (via
+# axum/tower-http) at 2.3.2 in Cargo.lock; promoted to a direct dependency
+# so the guard can decode-then-validate explicitly instead of relying on an
+# unstated (and now-closed) coincidence for its safety.
+percent-encoding = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"

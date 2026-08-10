@@ -251,12 +251,31 @@ async fn rewrite_nested_static_route(
     {
         let path = req.uri().path();
         let trimmed = path.trim_matches('/');
-        // Bare `/`, any request that already names a real file
-        // (`/settings.html`, `/_next/static/...`, `/favicon.ico`), and
-        // anything containing `..` (defense in depth — `dir.join` below
-        // never escapes `dir` for a legitimate request, but this keeps the
-        // guard self-contained) all skip straight through untouched.
-        if !trimmed.is_empty() && !trimmed.contains('.') && !trimmed.contains("..") {
+        // WR-02 (code review, Phase 29): `req.uri().path()` is the RAW,
+        // still percent-encoded path -- the OLD guard (`!trimmed.contains('.')`
+        // / `!trimmed.contains("..")`) inspected that raw literal, so
+        // `%2e%2e%2f` passed both checks untouched (it contains no literal
+        // `.`). This was still safe in practice ONLY by an unstated
+        // coincidence: the candidate built from that same raw literal never
+        // existed on disk, and `ServeDir` sanitises independently downstream
+        // -- not because this guard actually caught it. Decode once here,
+        // and validate the DECODED value explicitly: reject anything that
+        // decodes to an empty string, contains a literal `.` (an encoded OR
+        // unencoded extension/traversal marker), a NUL byte, or whose path
+        // components aren't ALL `Normal` (rejects a decoded `..`, a decoded
+        // leading `/` turning into `RootDir`, etc). A plain identifier like
+        // "settings" decodes to itself unchanged, so this is a no-op for
+        // every real route this middleware serves.
+        let decoded = percent_encoding::percent_decode_str(trimmed).decode_utf8().ok();
+        let is_valid_candidate_segment = decoded.as_ref().is_some_and(|decoded| {
+            !decoded.is_empty()
+                && !decoded.contains('.')
+                && !decoded.contains('\0')
+                && std::path::Path::new(decoded.as_ref())
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_)))
+        });
+        if is_valid_candidate_segment {
             let candidate = dir.join(format!("{trimmed}.html"));
             if tokio::fs::try_exists(&candidate).await.unwrap_or(false) {
                 let mut new_path = format!("/{trimmed}.html");

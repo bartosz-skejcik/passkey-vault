@@ -137,6 +137,46 @@ async fn head_request_to_a_nested_route_matches_get_not_the_root_spa() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// WR-01/WR-02 (code review, Phase 29): explicit regression coverage for the
+// two traversal-attempt forms WR-01's own fix suggestion names verbatim.
+// NOTE (honesty about what this proves): `ServeDir` sanitises the decoded
+// path independently either way, so end-to-end this assertion holds even
+// against the PRE-fix guard (the review's own words: "the rewrite is
+// currently still safe... that safety rests on an unstated coincidence").
+// What WR-02's actual fix changes is the GUARD's own internal correctness
+// (decode-then-validate explicitly, rather than inspecting the raw encoded
+// literal while `ServeDir` acts on the decoded one) -- a structural
+// robustness property this black-box HTTP test cannot discriminate
+// pre-/post-fix, since the outer defense (`ServeDir`) covers for it either
+// way. Kept here anyway because it is real, valuable defense-in-depth
+// coverage of the full pipeline, and is exactly what WR-01 asked for.
+#[tokio::test]
+async fn percent_encoded_traversal_attempts_never_escape_the_static_root() {
+    let dir = fixture_static_dir();
+    let secret_path = dir.parent().unwrap().join(format!("pv-static-secret-{}.txt", uuid::Uuid::new_v4()));
+    std::fs::write(&secret_path, "top secret, must never be served").expect("write secret sibling file");
+    let secret_name = secret_path.file_name().unwrap().to_str().unwrap().to_string();
+    let pool = common::test_pool().await;
+    let app = common::test_app_with_static_dir(pool, dir.clone());
+
+    for uri in [format!("/..%2f{secret_name}"), format!("/%2e%2e%2f{secret_name}")] {
+        let res = app
+            .clone()
+            .oneshot(Request::builder().uri(uri.as_str()).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert_ne!(
+            bytes,
+            "top secret, must never be served".as_bytes(),
+            "{uri} must never resolve to the secret sibling file outside the static root"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&secret_path);
+}
+
 #[tokio::test]
 async fn missing_static_dir_degrades_to_api_only_without_panic() {
     let missing_dir = std::env::temp_dir().join(format!("pv-static-missing-{}", uuid::Uuid::new_v4()));

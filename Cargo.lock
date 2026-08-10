@@ -2045,6 +2045,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "futures-util",
+ "percent-encoding",
  "pv-core",
  "pv-server",
  "reqwest",
