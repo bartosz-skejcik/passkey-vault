@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetSessionToken, mockGetSyncSnapshot, mockGetSharedRevisions } = vi.hoisted(() => ({
+const {
+  mockGetSessionToken,
+  mockGetSyncSnapshot,
+  mockGetSharedRevisions,
+  mockRefreshFamilyWidePending,
+} = vi.hoisted(() => ({
   mockGetSessionToken: vi.fn(),
   mockGetSyncSnapshot: vi.fn(),
   mockGetSharedRevisions: vi.fn(),
+  mockRefreshFamilyWidePending: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -13,6 +19,15 @@ vi.mock("@/lib/auth/session", () => ({
 vi.mock("./api", () => ({
   getSyncSnapshot: mockGetSyncSnapshot,
   getSharedRevisions: mockGetSharedRevisions,
+}));
+
+// 30-06-PLAN.md Task 2: sync.ts's new optional onFamilyWidePending hook
+// signals "a fresh snapshot exists" -- consumers read it via
+// familyWidePending.ts's own synchronous getter, so pullOnce() only needs to
+// call refreshFamilyWidePending() and never touches its return value
+// directly.
+vi.mock("@/lib/families/familyWidePending", () => ({
+  refreshFamilyWidePending: mockRefreshFamilyWidePending,
 }));
 
 /** Minimal mock WebSocket — records every constructed instance so tests can
@@ -58,6 +73,7 @@ beforeEach(() => {
   mockGetSessionToken.mockReturnValue("session-token");
   mockGetSyncSnapshot.mockResolvedValue({ revision: 0 });
   mockGetSharedRevisions.mockResolvedValue({ collections: [], direct: { revision: 0 } });
+  mockRefreshFamilyWidePending.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -412,5 +428,120 @@ describe("28-03 (Task 4): hasEverConfirmedFamilyMembership discriminant -- the p
     await vi.advanceTimersByTimeAsync(30_000); // next tick: 404s
 
     expect(onRemovedFromFamily).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 30-06-PLAN.md Task 2: the discovery endpoint's client-side store is
+// refreshed on the SAME pull cadence as the personal/shared-revisions pulls
+// above, opt-in via a new onFamilyWidePending hook, reusing the SAME
+// sharedPullDisabled latch (a no-family account structurally has nothing
+// family-wide pending either).
+describe("family-wide-pending pull (30-06)", () => {
+  it("never calls refreshFamilyWidePending when onFamilyWidePending is left unimplemented", async () => {
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn() }); // no onFamilyWidePending
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockRefreshFamilyWidePending).not.toHaveBeenCalled();
+  });
+
+  it("calls refreshFamilyWidePending once on a WS-open-triggered pull cycle when the hook is wired", async () => {
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onFamilyWidePending: vi.fn() });
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockRefreshFamilyWidePending).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls refreshFamilyWidePending once on an onmessage-triggered pull cycle when the hook is wired", async () => {
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onFamilyWidePending: vi.fn() });
+
+    const socket = lastSocket();
+    socket.onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+    mockRefreshFamilyWidePending.mockClear();
+
+    socket.onmessage?.({ data: "some-opaque-frame-content" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockRefreshFamilyWidePending).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls refreshFamilyWidePending once on a poll-timer-triggered pull cycle when the hook is wired", async () => {
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onFamilyWidePending: vi.fn() });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(mockRefreshFamilyWidePending).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT require onSharedRevisions to also be wired -- onFamilyWidePending is an independent opt-in", async () => {
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onFamilyWidePending: vi.fn() }); // no onSharedRevisions
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockRefreshFamilyWidePending).toHaveBeenCalledTimes(1);
+    expect(mockGetSharedRevisions).not.toHaveBeenCalled();
+  });
+
+  it("invokes onFamilyWidePending after a successful refresh", async () => {
+    const onFamilyWidePending = vi.fn();
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot: vi.fn(), onFamilyWidePending });
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onFamilyWidePending).toHaveBeenCalledTimes(1);
+  });
+
+  it("a rejected refreshFamilyWidePending call is silently ignored -- never throws, never blocks the personal pull that already ran", async () => {
+    mockRefreshFamilyWidePending.mockRejectedValue(new Error("transient network failure"));
+    const onSnapshot = vi.fn();
+    const onFamilyWidePending = vi.fn();
+    const { startSync } = await import("./sync");
+    startSync({ getSinceRevision: () => 0, onSnapshot, onFamilyWidePending });
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onSnapshot).toHaveBeenCalled();
+    expect(onFamilyWidePending).not.toHaveBeenCalled();
+  });
+
+  it("skips refreshFamilyWidePending when sharedPullDisabled is already latched true -- reuses the SAME no-family latch as getSharedRevisions", async () => {
+    mockGetSharedRevisions.mockRejectedValue({ status: 404 });
+    const { startSync } = await import("./sync");
+    // First cycle: onSharedRevisions wired and 404s, latching sharedPullDisabled true.
+    startSync({
+      getSinceRevision: () => 0,
+      onSnapshot: vi.fn(),
+      onSharedRevisions: vi.fn(),
+      onFamilyWidePending: vi.fn(),
+    });
+
+    lastSocket().onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetSharedRevisions).toHaveBeenCalledTimes(1);
+    // Latching applies mid-cycle -- the SAME cycle's own family-wide-pending
+    // call is skipped too, since it runs after the shared-revisions block.
+    expect(mockRefreshFamilyWidePending).not.toHaveBeenCalled();
+
+    // A later cycle, still the same session (no stopSync/startSync re-arm),
+    // stays latched.
+    mockGetSharedRevisions.mockClear();
+    mockRefreshFamilyWidePending.mockClear();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(mockGetSharedRevisions).not.toHaveBeenCalled();
+    expect(mockRefreshFamilyWidePending).not.toHaveBeenCalled();
   });
 });
