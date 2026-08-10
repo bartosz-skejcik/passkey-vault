@@ -24,7 +24,7 @@ import {
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { ApiClientError, me } from "@/lib/auth/api";
-import { getUnlockedUserKey } from "@/lib/crypto";
+import { getUnlockedUserKey, useIsUnlocked } from "@/lib/crypto";
 import { copyWithAutoClear, readClipboardSeconds } from "@/lib/clipboard";
 import { showCopyToast } from "@/lib/vault/copyToast";
 import {
@@ -92,6 +92,19 @@ export function formatExpiryDate(serverTimestamp: string, locale: "pl" | "en"): 
 
 export default function FamilyTab() {
   const { t, locale } = useLocale();
+
+  // T-29-13 (29-SECURITY.md): this tab mounts unconditionally inside
+  // SettingsShell, so member fetching (getFamilyMembers()/me()) must itself
+  // be gated on the vault being unlocked -- not just the eventual render.
+  // Guarding the mount effect below is sufficient: `mode` starts at
+  // "checking" and only ever advances via loadFamilyState(), so while
+  // locked it simply never advances and the existing `mode === "checking"`
+  // branch (unchanged, see below) keeps rendering null -- no member email
+  // ever reaches the DOM. useIsUnlocked() flips true reactively once
+  // UnlockOverlay calls setUnlockedUserKey(), re-running the effect and
+  // fetching then. This does not restyle or re-lay-out FamilyTab -- Phase
+  // 33 still owns that.
+  const unlocked = useIsUnlocked();
 
   const [mode, setMode] = useState<Mode>("checking");
   // WR-02 (24-REVIEW.md): GET /api/families/members is RequireRead, so every
@@ -197,13 +210,14 @@ export default function FamilyTab() {
   }
 
   useEffect(() => {
+    if (!unlocked) return;
     let cancelled = false;
     void loadFamilyState(() => cancelled);
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [unlocked]);
 
   function handleRetryLoad() {
     setMode("checking");

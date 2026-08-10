@@ -8,6 +8,7 @@ const {
   mockReinstateMember,
   mockMe,
   mockGetUnlockedUserKey,
+  mockUseIsUnlocked,
   mockGenerateInviteLink,
   mockRevokeInvite,
   mockCopyWithAutoClear,
@@ -20,6 +21,10 @@ const {
   mockReinstateMember: vi.fn(),
   mockMe: vi.fn(),
   mockGetUnlockedUserKey: vi.fn(),
+  // Mutable, defaulting to true -- every existing test in this suite
+  // exercises the already-unlocked case; T-29-13's regression test below is
+  // the one that flips it false.
+  mockUseIsUnlocked: vi.fn(() => true),
   mockGenerateInviteLink: vi.fn(),
   mockRevokeInvite: vi.fn(),
   mockCopyWithAutoClear: vi.fn(),
@@ -72,6 +77,9 @@ vi.mock("@/lib/auth/api", async (importOriginal) => {
 
 vi.mock("@/lib/crypto", () => ({
   getUnlockedUserKey: mockGetUnlockedUserKey,
+  // T-29-13 (29-SECURITY.md): FamilyTab now gates its member fetch on
+  // useIsUnlocked().
+  useIsUnlocked: mockUseIsUnlocked,
 }));
 
 vi.mock("@/lib/invite/crypto", () => ({
@@ -202,6 +210,7 @@ const mockClipboardWriteText = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetUnlockedUserKey.mockReturnValue(uk);
+  mockUseIsUnlocked.mockReturnValue(true);
   mockReadClipboardSeconds.mockReturnValue(30);
   mockMe.mockResolvedValue(OWNER_ACCOUNT);
   mockClipboardWriteText.mockReset();
@@ -1006,5 +1015,32 @@ describe("FamilyTab", () => {
         screen.getByTestId(`member-row-${NON_OWNER_MEMBER.user_id}`),
       ).toBeInTheDocument();
     });
+  });
+
+  // T-29-13 (29-SECURITY.md): regression test for the info-disclosure
+  // finding -- prior to the fix, this tab fetched from a bare
+  // `useEffect(..., [])` with no unlock guard, so a locked-but-authenticated
+  // mount still issued getFamilyMembers()/me() and painted member emails
+  // into the DOM.
+  it("does not fetch or render family members while the vault is locked (T-29-13)", async () => {
+    mockUseIsUnlocked.mockReturnValue(false);
+    mockGetFamilyMembers.mockResolvedValue([OWNER_MEMBER, NON_OWNER_MEMBER]);
+    const { rerender } = render(<FamilyTab />);
+
+    // Give any (incorrectly firing) effect a turn of the microtask queue.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockGetFamilyMembers).not.toHaveBeenCalled();
+    expect(mockMe).not.toHaveBeenCalled();
+    expect(screen.queryByText(NON_OWNER_MEMBER.email)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("family-members-section")).not.toBeInTheDocument();
+
+    // Unlocking must retroactively trigger the fetch -- the gate is a
+    // deferral, not a permanent block.
+    mockUseIsUnlocked.mockReturnValue(true);
+    rerender(<FamilyTab />);
+    await waitFor(() => expect(mockGetFamilyMembers).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTestId("family-members-section")).toBeInTheDocument());
   });
 });

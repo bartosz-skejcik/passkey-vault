@@ -10,11 +10,23 @@ import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { formatRelativeTime } from "@/lib/format/relativeTime";
 import { listPasskeys, renamePasskey, type PasskeyRow } from "@/lib/passkeys/api";
+import { useIsUnlocked } from "@/lib/crypto";
 import EnrollPasskeyDialog from "./EnrollPasskeyDialog";
 import PasskeyDeleteConfirmDialog from "./PasskeyDeleteConfirmDialog";
 
 export default function PasskeysTab() {
   const { t, locale } = useLocale();
+  // T-29-13 (29-SECURITY.md): this tab mounts unconditionally inside
+  // SettingsShell, so the fetch itself -- not just the render -- must be
+  // gated on the vault actually being unlocked. Without this, a locked but
+  // authenticated deep link to /settings issued GET /api/passkeys and
+  // painted passkey labels into the DOM behind nothing but a cosmetic
+  // blur-md. useIsUnlocked() is this codebase's one idiom for a reactive
+  // cross-component unlock signal (mirrors UnlockOverlay.tsx's own usage);
+  // it flips true the instant UnlockOverlay's setUnlockedUserKey() fires,
+  // re-running this effect and fetching then -- no separate "retry on
+  // unlock" wiring needed.
+  const unlocked = useIsUnlocked();
   const [rows, setRows] = useState<PasskeyRow[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [showEnroll, setShowEnroll] = useState(false);
@@ -38,8 +50,9 @@ export default function PasskeysTab() {
   }
 
   useEffect(() => {
+    if (!unlocked) return;
     void refetch();
-  }, []);
+  }, [unlocked]);
 
   function startRename(row: PasskeyRow) {
     setRenamingId(row.id);

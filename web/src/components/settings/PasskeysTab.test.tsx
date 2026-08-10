@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
-const { mockListPasskeys, mockRenamePasskey, mockDeletePasskey } = vi.hoisted(() => ({
-  mockListPasskeys: vi.fn(),
-  mockRenamePasskey: vi.fn(),
-  mockDeletePasskey: vi.fn(),
-}));
+const { mockListPasskeys, mockRenamePasskey, mockDeletePasskey, mockUseIsUnlocked } = vi.hoisted(
+  () => ({
+    mockListPasskeys: vi.fn(),
+    mockRenamePasskey: vi.fn(),
+    mockDeletePasskey: vi.fn(),
+    // Mutable, defaulting to true -- every existing test in this suite
+    // exercises the already-unlocked case; T-29-13's regression test below
+    // is the one that flips it false.
+    mockUseIsUnlocked: vi.fn(() => true),
+  }),
+);
 
 vi.mock("@/lib/passkeys/api", () => ({
   listPasskeys: mockListPasskeys,
@@ -20,6 +26,15 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
     t: (key: string) => key,
   }),
 }));
+
+// T-29-13 (29-SECURITY.md): PasskeysTab now gates its fetch on
+// useIsUnlocked(). importOriginal so every other real crypto export
+// (EnrollPasskeyDialog/PasskeyDeleteConfirmDialog need them when opened
+// below) stays untouched -- only useIsUnlocked itself is overridden.
+vi.mock("@/lib/crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/crypto")>();
+  return { ...actual, useIsUnlocked: mockUseIsUnlocked };
+});
 
 import PasskeysTab from "./PasskeysTab";
 import type { PasskeyRow } from "@/lib/passkeys/api";
@@ -42,6 +57,7 @@ const noPrfRow: PasskeyRow = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockUseIsUnlocked.mockReturnValue(true);
 });
 
 describe("PasskeysTab", () => {
@@ -95,5 +111,30 @@ describe("PasskeysTab", () => {
     fireEvent.click(screen.getByTestId("passkey-delete-trigger-pk-1"));
 
     expect(screen.getByTestId("passkey-delete-confirm-dialog")).toBeInTheDocument();
+  });
+
+  // T-29-13 (29-SECURITY.md): regression test for the info-disclosure
+  // finding -- prior to the fix, this tab fetched from a bare
+  // `useEffect(..., [])` with no unlock guard, so a locked-but-authenticated
+  // mount still issued GET /api/passkeys and painted the row into the DOM.
+  it("does not fetch or render passkey rows while the vault is locked (T-29-13)", async () => {
+    mockUseIsUnlocked.mockReturnValue(false);
+    mockListPasskeys.mockResolvedValue([prfRow]);
+    const { rerender } = render(<PasskeysTab />);
+
+    // Give any (incorrectly firing) effect a turn of the microtask queue.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockListPasskeys).not.toHaveBeenCalled();
+    expect(screen.queryByText(prfRow.name)).not.toBeInTheDocument();
+    expect(screen.queryByTestId(`passkey-row-${prfRow.id}`)).not.toBeInTheDocument();
+
+    // Unlocking must retroactively trigger the fetch -- the gate is a
+    // deferral, not a permanent block.
+    mockUseIsUnlocked.mockReturnValue(true);
+    rerender(<PasskeysTab />);
+    await waitFor(() => expect(mockListPasskeys).toHaveBeenCalledTimes(1));
+    await screen.findByTestId(`passkey-row-${prfRow.id}`);
   });
 });

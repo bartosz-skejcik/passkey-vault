@@ -25,6 +25,16 @@ vi.mock("@/lib/i18n/LocaleContext", () => ({
   }),
 }));
 
+// T-29-13 (29-SECURITY.md): PasskeysTab/SessionsTab now gate their fetch on
+// useIsUnlocked() -- this suite renders the real (unmocked) children, so it
+// needs the same "already unlocked" precondition every other test here
+// implicitly assumed. importOriginal so every other real crypto export
+// stays untouched.
+vi.mock("@/lib/crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/crypto")>();
+  return { ...actual, useIsUnlocked: () => true };
+});
+
 // Plan 25-09 (E6)/Phase 29 Task 2: DeleteAccountDialog has its own
 // dedicated, exhaustive test file -- shallow-mocked here so this stays a
 // fast, focused unit test of SettingsSectionAccount's own wiring, matching

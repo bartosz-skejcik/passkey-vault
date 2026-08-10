@@ -15,6 +15,7 @@ import { interpolate } from "@/lib/i18n/dictionary";
 import { formatRelativeTime } from "@/lib/format/relativeTime";
 import { detectDeviceType, type DeviceType } from "@/lib/format/deviceType";
 import { listSessions, revokeSession, type SessionRow } from "@/lib/sessions/api";
+import { useIsUnlocked } from "@/lib/crypto";
 import ConfirmDialog from "./ConfirmDialog";
 
 const DEVICE_ICON: Record<DeviceType, typeof Monitor> = {
@@ -26,6 +27,12 @@ const DEVICE_ICON: Record<DeviceType, typeof Monitor> = {
 
 export default function SessionsTab() {
   const { t, locale } = useLocale();
+  // T-29-13 (29-SECURITY.md): see PasskeysTab.tsx's identical comment --
+  // this tab mounts unconditionally inside SettingsShell, so the fetch
+  // (device/IP/last-seen rows) must itself be gated on unlock, not just the
+  // render. useIsUnlocked() flips true reactively once UnlockOverlay calls
+  // setUnlockedUserKey(), re-running this effect.
+  const unlocked = useIsUnlocked();
   const [rows, setRows] = useState<SessionRow[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [revokeError, setRevokeError] = useState(false);
@@ -43,8 +50,9 @@ export default function SessionsTab() {
   }
 
   useEffect(() => {
+    if (!unlocked) return;
     void refetch();
-  }, []);
+  }, [unlocked]);
 
   async function handleRevoke(row: SessionRow) {
     setRevokeError(false);

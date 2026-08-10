@@ -153,4 +153,53 @@ describe("/settings page", () => {
     expect(backLink.tagName).toBe("A");
     expect(backLink.getAttribute("href")).toBe("/");
   });
+
+  // T-29-13 (29-SECURITY.md): the register-corrections section of that audit
+  // found this exact gap -- SettingsShell mounts all four sections
+  // unconditionally, and PasskeysTab/SessionsTab fetched from a bare
+  // `useEffect(..., [])` with no unlock guard. A locked-but-authenticated
+  // deep link to /settings therefore issued GET /api/passkeys and
+  // GET /api/sessions and painted real rows into the DOM behind nothing but
+  // a cosmetic `blur-md`. This is the top-level assertion that matters: the
+  // document itself must contain none of the sensitive strings, and neither
+  // endpoint may be called, while locked.
+  it("does not fetch or render passkey/session data for a session mount with a locked vault (T-29-13)", async () => {
+    mockGetSessionToken.mockReturnValue("token");
+    mockUseIsUnlocked.mockReturnValue(false);
+    mockListPasskeys.mockResolvedValue([
+      {
+        id: "pk-1",
+        name: "Sensitive YubiKey Label",
+        prf_capable: true,
+        created_at: "2026-07-14 09:00:00",
+        last_used_at: null,
+      },
+    ]);
+    mockListSessions.mockResolvedValue([
+      {
+        id: "sess-1",
+        user_agent: "SensitiveSessionUA/1.0",
+        created_at: "2026-07-14 08:00:00",
+        last_used_at: null,
+        current: false,
+      },
+    ]);
+
+    render(<SettingsPage />);
+
+    // Give any (incorrectly firing) effect a turn of the microtask queue.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockListPasskeys).not.toHaveBeenCalled();
+    expect(mockListSessions).not.toHaveBeenCalled();
+    expect(screen.queryByText("Sensitive YubiKey Label")).not.toBeInTheDocument();
+    expect(screen.queryByText("SensitiveSessionUA/1.0")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("passkey-row-pk-1")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-row-sess-1")).not.toBeInTheDocument();
+
+    // The unlock affordance must still be reachable -- this is a gate, not
+    // a dead end.
+    expect(screen.getByTestId("unlock-password")).toBeInTheDocument();
+  });
 });
