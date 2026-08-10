@@ -31,6 +31,18 @@ export interface Collection {
    * anywhere in the client. `null` only when the server sent null (a
    * collection row with no resolvable grant for this caller). */
   accessLevel: string | null;
+  /** 30-11 (FSH-01): the server's own `collections.family_wide_kind`, threaded
+   * through untransformed — `null` for an ordinary collection, `'folder'` for a
+   * named family-wide folder, `'item_bucket'` for the one per-family collection
+   * holding bare items shared family-wide (30-DECISION-FSH-02.md names the
+   * contract; `api.ts`'s `CollectionRow.family_wide_kind` is the wire mirror).
+   *
+   * Normalized to `null` here, never left `undefined`: the wire field is
+   * OPTIONAL (a pre-Phase-30 response, or one served mid-rolling-restart, can
+   * omit the key entirely), and this store is what every UI consumer reads, so
+   * the "absent" and "explicitly null" cases must be indistinguishable by the
+   * time they get here. */
+  familyWideKind: string | null;
 }
 
 // Collections carry no revision column of their own — a collection's own
@@ -118,6 +130,23 @@ export function getCollectionKey(collectionId: string): WasmCollectionKey | unde
  * still unknown. */
 export function getCollectionAccessLevel(collectionId: string): string | undefined {
   return collections.find((c) => c.id === collectionId)?.accessLevel ?? undefined;
+}
+
+/** 30-11 (FSH-01): "is this collection shared with the whole family?" — the
+ * SYNCHRONOUS, zero-fetch boolean behind `ItemRow`'s family badge. Deliberately
+ * the same `.find()`-with-fallback shape as `getCollectionAccessLevel` above:
+ * it reads only already-refreshed in-memory metadata, so it has no promise to
+ * be pending and therefore no loading or error state of its own — which is what
+ * makes the badge "independent of recipient resolution by construction"
+ * (30-UI-SPEC.md), rather than inheriting `useShareRecipients`' async shape.
+ *
+ * Fails CLOSED in every unknown case — a `null`/`undefined` id, an id absent
+ * from the store, and a store that has not refreshed yet all return `false`,
+ * never throw. The wrong direction to fail here would be badging an ordinary
+ * person-to-person share as family-wide, which would tell the owner their item
+ * is more widely shared than it is. */
+export function isFamilyWideCollection(collectionId: string | null | undefined): boolean {
+  return collections.find((c) => c.id === collectionId)?.familyWideKind != null;
 }
 
 /** Frees every cached Collection Key handle and clears the map — called on
@@ -220,7 +249,16 @@ async function refreshCollections(): Promise<void> {
           // it falls through to store.ts's undecryptable path.
         }
       }
-      nextCollections.push({ id: row.id, name, accessLevel: row.access_level });
+      nextCollections.push({
+        id: row.id,
+        name,
+        accessLevel: row.access_level,
+        // 30-11 Task 1: straight through, no transform — `?? null` only
+        // collapses the OPTIONAL wire field's `undefined` (key absent) into
+        // this store's declared `string | null`, so consumers never have to
+        // distinguish "server omitted it" from "server said null".
+        familyWideKind: row.family_wide_kind ?? null,
+      });
     }
     // WR-02 (code review, Phase 26): evict every cached key whose collection
     // the server no longer returns. `refreshCollections` rebuilt

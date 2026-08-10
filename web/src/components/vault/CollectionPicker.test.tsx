@@ -44,7 +44,7 @@ describe("CollectionPicker", () => {
 
   // Backstop #4 -- exactly one collection: same <select>, no special-casing.
   it("exactly one collection: renders the same native select, no special-casing", () => {
-    mockUseCollections.mockReturnValue([{ id: "col-1", name: "Family", accessLevel: "edit" }]);
+    mockUseCollections.mockReturnValue([{ id: "col-1", name: "Family", accessLevel: "edit", familyWideKind: null }]);
     renderWithLocale(<CollectionPicker value={null} onSelect={vi.fn()} onCreateNew={vi.fn()} />);
 
     const select = screen.getByTestId("collection-picker-select");
@@ -61,9 +61,9 @@ describe("CollectionPicker", () => {
   // Backstop #4 -- many collections: every one renders as an <option>.
   it("many collections: every collection renders as its own option", () => {
     const collections: Collection[] = [
-      { id: "col-1", name: "Family", accessLevel: "edit" },
-      { id: "col-2", name: "Work", accessLevel: "edit" },
-      { id: "col-3", name: "Travel", accessLevel: "edit" },
+      { id: "col-1", name: "Family", accessLevel: "edit", familyWideKind: null },
+      { id: "col-2", name: "Work", accessLevel: "edit", familyWideKind: null },
+      { id: "col-3", name: "Travel", accessLevel: "edit", familyWideKind: null },
     ];
     mockUseCollections.mockReturnValue(collections);
     renderWithLocale(<CollectionPicker value={null} onSelect={vi.fn()} onCreateNew={vi.fn()} />);
@@ -78,7 +78,7 @@ describe("CollectionPicker", () => {
   it("#5: an option for a >=40-char collection name carries a title attribute equal to its full visible text", () => {
     const longName = "A".repeat(40) + " very long shared folder name";
     expect(longName.length).toBeGreaterThanOrEqual(40);
-    mockUseCollections.mockReturnValue([{ id: "col-long", name: longName, accessLevel: "edit" }]);
+    mockUseCollections.mockReturnValue([{ id: "col-long", name: longName, accessLevel: "edit", familyWideKind: null }]);
     renderWithLocale(<CollectionPicker value={null} onSelect={vi.fn()} onCreateNew={vi.fn()} />);
 
     const option = screen.getByRole("option", { name: longName });
@@ -95,7 +95,7 @@ describe("CollectionPicker", () => {
   // genuinely out of this component's control (see file header + SUMMARY).
   it("#6 (class-level only): container and select carry w-full, no fixed/max-width class shorter than a realistic long name", () => {
     const longName = "A very long shared folder name that could overflow a narrow container";
-    mockUseCollections.mockReturnValue([{ id: "col-long", name: longName, accessLevel: "edit" }]);
+    mockUseCollections.mockReturnValue([{ id: "col-long", name: longName, accessLevel: "edit", familyWideKind: null }]);
     renderWithLocale(<CollectionPicker value="col-long" onSelect={vi.fn()} onCreateNew={vi.fn()} />);
 
     const container = screen.getByTestId("collection-picker");
@@ -111,8 +111,8 @@ describe("CollectionPicker", () => {
 
   it("selecting an option calls onSelect(collectionId)", () => {
     const collections: Collection[] = [
-      { id: "col-1", name: "Family", accessLevel: "edit" },
-      { id: "col-2", name: "Work", accessLevel: "edit" },
+      { id: "col-1", name: "Family", accessLevel: "edit", familyWideKind: null },
+      { id: "col-2", name: "Work", accessLevel: "edit", familyWideKind: null },
     ];
     mockUseCollections.mockReturnValue(collections);
     const onSelect = vi.fn();
