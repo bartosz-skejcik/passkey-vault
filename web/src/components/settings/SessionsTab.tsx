@@ -110,7 +110,7 @@ export default function SessionsTab() {
               <li
                 key={row.id}
                 data-testid={`session-row-${row.id}`}
-                className="flex min-h-16 items-center gap-3 rounded-box border border-base-300 px-4 py-3"
+                className="flex min-h-16 items-center gap-3 rounded-box border border-base-300 bg-base-100 px-4 py-3"
               >
                 <DeviceIcon size={20} className="shrink-0 text-base-content/60" aria-hidden="true" />
                 <div className="flex min-w-0 flex-1 flex-col gap-1">

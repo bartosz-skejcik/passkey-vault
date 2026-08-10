@@ -24,7 +24,7 @@ export default function SettingsShell() {
 
   return (
     <>
-      <div className={!unlocked ? "blur-md" : undefined}>
+      <div className={`min-h-screen bg-base-300${!unlocked ? " blur-md" : ""}`}>
         <header className="sticky top-0 z-10 flex flex-col gap-1 border-b border-base-300 bg-base-100 px-4 py-4 md:px-6">
           {/* next/link, not a bare <a> (29-PATTERNS.md's navigation-primitive
               note): renders an identical <a href="/"> in the DOM (every
