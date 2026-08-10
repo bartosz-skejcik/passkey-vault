@@ -214,6 +214,37 @@ async fn existence_probe_io_error_falls_through_safely_never_panics() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// WR-01 (code review, Phase 29): the query-preservation branch
+// (`rewrite_nested_static_route` re-appends `?query` after rewriting the
+// path to `<route>.html`) had zero executable assertions before this plan.
+// A dropped query string on `/settings?tab=security` would silently lose
+// client-side routing state the settings page reads from `location.search`.
+#[tokio::test]
+async fn query_string_survives_the_nested_route_rewrite() {
+    let dir = fixture_static_dir();
+    let pool = common::test_pool().await;
+    let app = common::test_app_with_static_dir(pool, dir.clone());
+
+    // A settings.html fixture doesn't need to introspect its own query
+    // string for this assertion -- what matters is that the REQUEST reaches
+    // the server successfully rewritten (200, settings.html's own bytes),
+    // proving the rewrite's query-append branch produced a URI axum could
+    // still parse and route, not a malformed one that fell through instead.
+    let res = app
+        .oneshot(Request::builder().uri("/settings?tab=security").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(
+        bytes,
+        "<!doctype html><title>pv settings fixture</title>".as_bytes(),
+        "a query string must not break the rewrite -- still settings.html, not a fallback/error"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test]
 async fn missing_static_dir_degrades_to_api_only_without_panic() {
     let missing_dir = std::env::temp_dir().join(format!("pv-static-missing-{}", uuid::Uuid::new_v4()));
