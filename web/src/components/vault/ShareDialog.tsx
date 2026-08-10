@@ -44,6 +44,19 @@
 // `store.ts::updateVaultItem`'s own encrypt-then-expected-revision pattern
 // (AAD revision = the item's revision AFTER the move; `expected_revision`
 // sent to the server = the CURRENT, pre-move revision).
+//
+// Family-wide crypto (FSH-01, 30-08 + 30-12): a family-wide share is always
+// COLLECTION-scoped, never a per-recipient `item_shares` row — that is what
+// lets a LATER joiner read it (a direct share can only name recipients who
+// exist at share time). A family-wide FOLDER creates a fresh
+// `family_wide_kind: 'folder'` collection; a family-wide BARE ITEM is moved
+// into the ONE per-family `family_wide_kind: 'item_bucket'` collection,
+// lazily auto-created on first use and kept singular by 30-01's
+// `idx_one_item_bucket_per_family` partial unique index (a racing second
+// create 409s server-side and the loser adopts the winner's bucket). Both
+// paths then run the SAME `grantCollectionToRecipients` loop, and the item
+// path reuses the folder variant's seed-move re-encryption sequence verbatim
+// rather than carrying a second implementation of it.
 import { useEffect, useRef, useState } from "react";
 import { Users } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
@@ -54,8 +67,10 @@ import {
   createCollection,
   moveItemToCollection,
   listItems,
+  listCollections,
   createItemShare,
   addCollectionMember,
+  type CollectionRow,
 } from "@/lib/vault/api";
 import { getItems, getFolders } from "@/lib/vault/store";
 import { refreshCollectionsNow } from "@/lib/vault/collections";
@@ -66,6 +81,7 @@ import {
   decryptItem,
   encryptItemForCollection,
   sealCollectionKey,
+  unsealCollectionKey,
   sealItemKeyForRecipient,
   WasmCollectionKey,
   WasmIdentityPublicKey,
@@ -178,6 +194,91 @@ function isConflictError(err: unknown): boolean {
   );
 }
 
+/** 30-08's family-wide recipient rule, extracted so 30-12's item-variant
+ * branch applies the IDENTICAL rule rather than re-deriving it: a current
+ * member with no published public key is OMITTED from a family-wide
+ * creation-time grant (never thrown on — see `submitFolderVariant`'s
+ * `isFamilyWide` doc comment for why this deliberately diverges from
+ * T-25-16's throw for an explicitly-picked recipient) and is picked up later
+ * by the same lazy-reseal trigger a gap-window invitee already uses. */
+function withPublishedPublicKey<T extends { public_key: string | null }>(recipients: T[]): T[] {
+  return recipients.filter(
+    (r) => r.public_key !== null && r.public_key !== undefined && r.public_key !== "",
+  );
+}
+
+/** The per-recipient collection-grant loop, shared by BOTH family-wide call
+ * sites (`submitFolderVariant`'s new-folder branch and 30-12's item-bucket
+ * branch) so the two can never drift — one 409 policy, one failure-label
+ * rule, one WASM-handle-freeing discipline. A 409 means this recipient
+ * ALREADY holds this collection grant (a previous attempt's partial
+ * success): success for that recipient, never a reported failure, which is
+ * what makes a retry idempotent. Returns the label (email, falling back to
+ * user id) of every recipient that did NOT end up holding a grant. */
+async function grantCollectionToRecipients(
+  collectionId: string,
+  ck: WasmCollectionKey,
+  recipients: { user_id: string; email?: string; public_key: string | null }[],
+  level: string,
+): Promise<string[]> {
+  const handles: WasmIdentityPublicKey[] = [];
+  const failed: string[] = [];
+  try {
+    for (const recipient of recipients) {
+      const recipientPk = WasmIdentityPublicKey.fromBytes(
+        base64Decode(recipient.public_key as string),
+      );
+      handles.push(recipientPk);
+      try {
+        const sealedKey = sealCollectionKey(recipientPk, ck);
+        await addCollectionMember(collectionId, recipient.user_id, sealedKey, level);
+      } catch (err) {
+        if (!isConflictError(err)) {
+          console.error(`pv: failed to grant collection ${collectionId} to ${recipient.user_id}`, err);
+          failed.push(recipient.email ?? recipient.user_id);
+        }
+      }
+    }
+  } finally {
+    handles.forEach((pk) => pk.free?.());
+  }
+  return failed;
+}
+
+/** 30-12 (FSH-01's "or an item" clause): the fixed, non-sensitive
+ * placeholder name of the ONE per-family auto-created `item_bucket`
+ * collection. Any deterministic plaintext is acceptable here — 30-UI-SPEC.md
+ * states this collection is never rendered as a folder row, and 30-10's
+ * `SharingOverviewPanel` renders only the items INSIDE it, never its own
+ * name. It is still encrypted like every other collection name (the server
+ * must not learn even this), it simply carries no user-authored content. */
+const FAMILY_ITEM_BUCKET_PLACEHOLDER_NAME = "family-wide-items";
+
+/** 30-12, T-30-20 recovery bound. `collections::list` is KEY-GATED (it inner-
+ * joins `collection_keys` on the caller), so a race loser holds no row for
+ * the winner's bucket until the winner's own `addCollectionMember` fan-out
+ * reaches them — a single immediate re-list after the 409 can legitimately
+ * return nothing. These bound how long the loser waits for that grant to
+ * become visible before reporting an honest, retryable failure. Deliberately
+ * short: this is a same-second race between two live clients, not a
+ * cross-device sync wait. */
+const ITEM_BUCKET_GRANT_POLL_ATTEMPTS = 4;
+const ITEM_BUCKET_GRANT_POLL_DELAY_MS = 200;
+
+/** The single per-family `item_bucket` row from a `listCollections()`
+ * response, or `undefined`. Requires a usable `sealed_key`: a row the caller
+ * cannot unseal is not a bucket they can encrypt INTO, so treating it as
+ * "found" would produce exactly the undefined-shaped move this bound exists
+ * to prevent. */
+function familyItemBucketRow(rows: CollectionRow[]): CollectionRow | undefined {
+  return rows.find(
+    (c) =>
+      c.family_wide_kind === "item_bucket" &&
+      typeof c.sealed_key === "string" &&
+      c.sealed_key !== "",
+  );
+}
+
 /**
  * The item-variant's real crypto composition, EXPORTED so
  * `ShareDialog.real-wasm.test.ts` calls this exact sequence rather than
@@ -235,6 +336,96 @@ export async function shareItemWithRecipients(
     }
   }
   return failed;
+}
+
+type OwnIdentityKeypair = Awaited<ReturnType<typeof ensureOwnIdentityKeypair>>;
+
+/** The race LOSER's recovery (T-30-20). `createCollection(..., "item_bucket")`
+ * 409'd because another member's concurrent call won
+ * `idx_one_item_bucket_per_family` — the bucket EXISTS, this caller simply
+ * did not create it. It is not yet VISIBLE to them, though: `collections::
+ * list` returns only rows the caller holds a `collection_keys` row for, and
+ * the winner's `addCollectionMember` fan-out has not necessarily landed yet.
+ * So this re-lists a BOUNDED number of times rather than once, and throws a
+ * plain (caller-rendered as `share.createFailed`, "…Spróbuj ponownie.")
+ * retryable failure if the grant never arrives — never returns an id-less
+ * result that would move the item into `undefined`. */
+async function awaitFamilyItemBucketGrant(
+  identityKey: OwnIdentityKeypair,
+): Promise<{ id: string; ck: WasmCollectionKey }> {
+  for (let attempt = 0; attempt < ITEM_BUCKET_GRANT_POLL_ATTEMPTS; attempt += 1) {
+    const winner = familyItemBucketRow(await listCollections());
+    if (winner !== undefined) {
+      return { id: winner.id, ck: unsealCollectionKey(identityKey, winner.sealed_key as string) };
+    }
+    if (attempt < ITEM_BUCKET_GRANT_POLL_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, ITEM_BUCKET_GRANT_POLL_DELAY_MS));
+    }
+  }
+  throw new Error(
+    "family-wide item bucket exists, but this member's key for it has not arrived yet",
+  );
+}
+
+/**
+ * 30-12 (FSH-01): resolves the ONE per-family `item_bucket` collection —
+ * RESEARCH.md's own recommendation for routing a bare item's family-wide
+ * share through the same collection-scoped path a family-wide folder uses,
+ * rather than inventing a second mechanism.
+ *
+ * Order-independent and self-healing: it lists first and only creates when
+ * the family genuinely has no bucket, so two members independently sharing
+ * their own first item family-wide converge on the SAME bucket. That
+ * convergence is NOT merely list-then-create ordering, though — a genuine
+ * client-level race is still possible, and 30-01's
+ * `idx_one_item_bucket_per_family` partial unique index is what makes it
+ * safe: the second concurrent insert fails server-side (a clean 409 from
+ * `collections::create`'s bare `ON CONFLICT DO NOTHING` + `fetch_optional`
+ * `None` branch — the bare form is what catches a partial-index conflict at
+ * all), so exactly one bucket can ever exist per family, and the loser
+ * recovers through `awaitFamilyItemBucketGrant` instead of surfacing an
+ * error.
+ *
+ * Returns the unwrapped `WasmCollectionKey` alongside the id — the caller
+ * must re-encrypt the item UNDER this key, and re-listing + re-unsealing at
+ * the call site would duplicate exactly the work this function already did.
+ * The caller owns the handle and must `free()` it.
+ */
+async function findOrCreateFamilyItemBucket(
+  identityKey: OwnIdentityKeypair,
+): Promise<{ id: string; ck: WasmCollectionKey }> {
+  const existing = familyItemBucketRow(await listCollections());
+  if (existing !== undefined) {
+    return { id: existing.id, ck: unsealCollectionKey(identityKey, existing.sealed_key as string) };
+  }
+
+  const newBucketId = crypto.randomUUID();
+  const newCk = WasmCollectionKey.generate();
+  try {
+    const encName = encryptItemForCollection(
+      newCk,
+      JSON.stringify({ name: FAMILY_ITEM_BUCKET_PLACEHOLDER_NAME }),
+      newBucketId,
+      newBucketId,
+      1,
+    );
+    const ownPublicKey = WasmIdentityPublicKey.fromBytes(identityKey.publicKeyBytes());
+    let sealedKeyForSelf: string;
+    try {
+      sealedKeyForSelf = sealCollectionKey(ownPublicKey, newCk);
+    } finally {
+      ownPublicKey.free?.();
+    }
+    await createCollection(newBucketId, encName, sealedKeyForSelf, "item_bucket");
+  } catch (err) {
+    // Nothing landed under THIS key — free it rather than handing back a
+    // handle no server-side collection corresponds to (mirrors
+    // `submitFolderVariant`'s own create-failure discipline).
+    newCk.free?.();
+    if (!isConflictError(err)) throw err;
+    return await awaitFamilyItemBucketGrant(identityKey);
+  }
+  return { id: newBucketId, ck: newCk };
 }
 
 export default function ShareDialog({
@@ -426,6 +617,7 @@ export default function ShareDialog({
     item: VaultItem,
     selected: FamilyMemberRecord[],
     level: AccessLevelValue,
+    isFamilyWide: boolean = false,
   ): Promise<SubmitOutcome> {
     const uk = getUnlockedUserKey();
     if (uk === null) {
@@ -437,6 +629,9 @@ export default function ShareDialog({
     if (row === undefined) {
       throw new Error(`cannot share item ${item.id} — item not found in the caller's own vault listing`);
     }
+    if (isFamilyWide) {
+      return await submitItemFamilyWide(item, row, selected, level, uk);
+    }
     const failedRecipients = await shareItemWithRecipients(item.id, row.enc_key, selected, level, uk);
     return {
       failedRecipients,
@@ -445,6 +640,56 @@ export default function ShareDialog({
       // in that case `handleSubmit` may honestly report total failure.
       committedAnything: failedRecipients.length < selected.length,
     };
+  }
+
+  /** 30-12 (FSH-01's "or an item" clause): a family-wide share of a BARE item
+   * is collection-scoped, never a direct `item_shares` row — the item is
+   * moved into the ONE per-family `item_bucket` collection and the bucket's
+   * key is granted to every current active member, so a LATER joiner reads it
+   * through the exact same invite-wrap / lazy-reseal path a family-wide
+   * folder already uses (a per-recipient `item_shares` row could never do
+   * that: it names recipients who exist today).
+   *
+   * The decrypt / re-encrypt-under-destination / `moveItemToCollection`
+   * sequence is `submitFolderVariant`'s seed-move sub-step verbatim,
+   * including its AAD discipline: the payload is encrypted under the revision
+   * the item will carry AFTER the move (`move_item` bumps unconditionally),
+   * while `expected_revision` on the wire is the CURRENT, pre-move one. */
+  async function submitItemFamilyWide(
+    item: VaultItem,
+    row: { enc_key: string; enc_data: string; revision: number },
+    familyRecipients: FamilyMemberRecord[],
+    level: AccessLevelValue,
+    uk: WasmUserKey,
+  ): Promise<SubmitOutcome> {
+    const identityKey = await ensureOwnIdentityKeypair(uk);
+    let bucket: { id: string; ck: WasmCollectionKey } | null = null;
+    try {
+      bucket = await findOrCreateFamilyItemBucket(identityKey);
+      const combined = recombineEncryptedItem(row.enc_key, row.enc_data);
+      const plaintext = decryptItem(uk, combined, item.id, row.revision);
+      const reEncrypted = encryptItemForCollection(
+        bucket.ck,
+        plaintext,
+        bucket.id,
+        item.id,
+        row.revision + 1,
+      );
+      const { encKey, encData } = splitCombinedEncryptedItem(reEncrypted);
+      await moveItemToCollection(item.id, bucket.id, encKey, encData, row.revision);
+      // The item is in the bucket by this point, so SOMETHING durable has
+      // committed regardless of how the individual grants below go.
+      const failedRecipients = await grantCollectionToRecipients(
+        bucket.id,
+        bucket.ck,
+        withPublishedPublicKey(familyRecipients),
+        level,
+      );
+      return { failedRecipients, seedMoveFailures: 0, committedAnything: true };
+    } finally {
+      bucket?.ck.free?.();
+      identityKey.free?.();
+    }
   }
 
   /** Creates (once per dialog session) the shared folder, grants every
@@ -492,14 +737,9 @@ export default function ShareDialog({
     if (!isFamilyWide) {
       assertRecipientsHavePublicKeys(selected);
     }
-    const grantRecipients = isFamilyWide
-      ? selected.filter(
-          (r) => r.public_key !== null && r.public_key !== undefined && r.public_key !== "",
-        )
-      : selected;
+    const grantRecipients = isFamilyWide ? withPublishedPublicKey(selected) : selected;
 
     const identityKey = await ensureOwnIdentityKeypair(uk);
-    const recipientHandles: WasmIdentityPublicKey[] = [];
     try {
       let created = createdCollectionRef.current;
       if (created === null) {
@@ -557,22 +797,16 @@ export default function ShareDialog({
       }
       const { id: collectionId, ck: newCk, movedItemIds } = created;
 
-      const failedRecipients: string[] = [];
-      for (const recipient of grantRecipients) {
-        const recipientPk = WasmIdentityPublicKey.fromBytes(base64Decode(recipient.public_key as string));
-        recipientHandles.push(recipientPk);
-        try {
-          const sealedKey = sealCollectionKey(recipientPk, newCk);
-          await addCollectionMember(collectionId, recipient.user_id, sealedKey, level);
-        } catch (err) {
-          // 409 == this recipient already holds this collection grant (a
-          // previous attempt's partial success). Not a failure to report.
-          if (!isConflictError(err)) {
-            console.error(`pv: failed to grant collection ${collectionId} to ${recipient.user_id}`, err);
-            failedRecipients.push(recipient.email);
-          }
-        }
-      }
+      // 30-12: the per-recipient loop (and its 409-is-success-for-that-
+      // recipient rule) now lives in the shared `grantCollectionToRecipients`
+      // helper, so the item-bucket branch grants IDENTICALLY rather than
+      // carrying a second copy of this policy.
+      const failedRecipients = await grantCollectionToRecipients(
+        collectionId,
+        newCk,
+        grantRecipients,
+        level,
+      );
 
       let failures = 0;
       if (seed !== null) {
@@ -618,19 +852,27 @@ export default function ShareDialog({
       // durable has committed regardless of how the grants/moves went.
       return { failedRecipients, seedMoveFailures: failures, committedAnything: true };
     } finally {
-      recipientHandles.forEach((pk) => pk.free?.());
       identityKey.free?.();
     }
   }
 
+  /** The live CURRENT active family roster, minus the caller — resolved
+   * fresh at SUBMIT time rather than read from the dialog's mount-time
+   * `recipients` snapshot, because the family-wide checkbox selects a MODE,
+   * not a recipient list. Shared by both variants' family-wide branches
+   * (30-08's folder, 30-12's item) so they can never resolve a different
+   * recipient set from one another. */
+  async function resolveCurrentFamilyRecipients(): Promise<FamilyMemberRecord[]> {
+    const allMembers = (await getFamilyMembers()) ?? [];
+    return accountId === null ? [] : allMembers.filter((m) => m.user_id !== accountId);
+  }
+
   async function handleSubmit() {
     const selected = recipients.filter((r) => selectedRecipientIds.has(r.user_id));
-    // Family-wide mode is a folder-only submit path in this plan (30-08) —
-    // the item variant's family-wide handling is 30-11's job. `isFolder &&
-    // isFamilyWideSelected` below (`submitDisabled`) keeps the item variant's
-    // submit button disabled while family-wide is checked there, so this
-    // guard only ever sees the folder case for the family-wide branch.
-    const familyWideSubmit = isFamilyWideSelected && isFolder;
+    // 30-12: family-wide is now a submit path for BOTH variants — the folder
+    // one creates a `family_wide_kind: 'folder'` collection (30-08), the item
+    // one moves the item into the single per-family `item_bucket` collection.
+    const familyWideSubmit = isFamilyWideSelected;
     if (accessLevel === null) return;
     if (!familyWideSubmit && selected.length === 0) return;
     if (isFolder && folderName.trim() === "") return;
@@ -641,17 +883,17 @@ export default function ShareDialog({
     setFailedRecipientLabels([]);
     try {
       let outcome: SubmitOutcome;
-      if (scope.kind === "item") {
+      if (scope.kind === "item" && familyWideSubmit) {
+        outcome = await submitItemVariant(
+          scope.item,
+          await resolveCurrentFamilyRecipients(),
+          accessLevel,
+          true,
+        );
+      } else if (scope.kind === "item") {
         outcome = await submitItemVariant(scope.item, selected, accessLevel);
       } else if (familyWideSubmit) {
-        // Live current-member roster at SUBMIT time (not the dialog's
-        // mount-time `recipients` snapshot) — the checkbox selects a MODE,
-        // not a recipient list, so this branch always grants every CURRENT
-        // active family member, never `selectedRecipientIds` (which is
-        // always empty in this mode).
-        const allMembers = (await getFamilyMembers()) ?? [];
-        const familyRecipients =
-          accountId === null ? [] : allMembers.filter((m) => m.user_id !== accountId);
+        const familyRecipients = await resolveCurrentFamilyRecipients();
         outcome = await submitFolderVariant(
           folderName.trim(),
           familyRecipients,
@@ -748,13 +990,12 @@ export default function ShareDialog({
   })();
 
   const ctaKey = isFolder ? "share.ctaFolder" : "share.ctaItem";
-  // Family-wide mode is a folder-only submit path in this plan (30-08) — the
-  // item variant's family-wide handling is 30-11's job (see `handleSubmit`'s
-  // `familyWideSubmit` comment). Gating this on `isFolder` too (not just
-  // `isFamilyWideSelected`) keeps the item variant's submit button honestly
-  // disabled while family-wide is checked there, rather than enabling a
-  // button whose click would silently share with nobody.
-  const familyWideSubmittable = isFamilyWideSelected && isFolder;
+  // 30-12: BOTH variants now have a real family-wide submit path (the item
+  // one routes through the per-family `item_bucket` collection), so this is
+  // no longer gated on `isFolder` — 30-08's temporary "rendered but not yet
+  // wired, so keep submit disabled" guard has been discharged by its
+  // implementation rather than merely relaxed.
+  const familyWideSubmittable = isFamilyWideSelected;
   const submitDisabled =
     sharing ||
     accountUnavailable ||

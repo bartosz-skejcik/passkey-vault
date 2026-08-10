@@ -993,7 +993,12 @@ describe("ShareDialog", () => {
       expect(screen.getByTestId("share-submit")).not.toBeDisabled();
     });
 
-    it("keeps submit disabled for the ITEM variant while family-wide is selected -- that wiring is 30-11's job", async () => {
+    // 30-12 discharges 30-08's temporary "rendered but not yet wired, so keep
+    // the ITEM variant's submit disabled" guard: the item variant now has a
+    // real family-wide submit path (the per-family item_bucket collection),
+    // so the honest state of this button is ENABLED. Inverted deliberately —
+    // the guard was retired by implementing it, not by relaxing it.
+    it("enables submit for the ITEM variant when family-wide is selected, with zero individual recipients", async () => {
       mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
@@ -1003,7 +1008,7 @@ describe("ShareDialog", () => {
         .querySelector("input[type=checkbox]") as HTMLInputElement;
       fireEvent.click(familyWideCheckbox);
       expect(familyWideCheckbox.checked).toBe(true);
-      expect(screen.getByTestId("share-submit")).toBeDisabled();
+      expect(screen.getByTestId("share-submit")).not.toBeDisabled();
     });
   });
 
