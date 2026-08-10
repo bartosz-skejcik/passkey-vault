@@ -21,7 +21,7 @@ export default function SettingsSectionData() {
       id="dane"
       aria-labelledby="dane-heading"
       data-testid="settings-section-dane"
-      className="scroll-mt-24 flex flex-col gap-4 border-t border-base-300 pt-8 md:pt-16"
+      className="scroll-mt-24 flex flex-col gap-4 border-t border-base-300 pt-12 md:pt-16"
     >
       <h2 id="dane-heading" tabIndex={-1} className="text-[24px] font-bold leading-[1.2] outline-none">
         {t("settings.groupData")}

@@ -55,7 +55,7 @@ export default function SettingsShell() {
               FamilyTab/SessionsTab/PasskeysTab markup was built and
               visually tuned for a 400px drawer; letting it stretch wider
               before Phase 33's redesign would make it look sparse/broken. */}
-          <main className="flex max-w-2xl flex-col gap-8 md:gap-16">
+          <main className="flex max-w-2xl flex-col">
             <SettingsSectionAccount />
             <SettingsSectionSecurity />
             <SettingsSectionData />
