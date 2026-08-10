@@ -45,6 +45,7 @@
 // (AAD revision = the item's revision AFTER the move; `expected_revision`
 // sent to the server = the CURRENT, pre-move revision).
 import { useEffect, useRef, useState } from "react";
+import { Users } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { getFamilyMembers, type FamilyMemberRecord } from "@/lib/families/api";
@@ -249,6 +250,11 @@ export default function ShareDialog({
   const [state, setState] = useState<DialogState>("loading-recipients");
   const [recipients, setRecipients] = useState<FamilyMemberRecord[]>([]);
   const [selectedRecipientIds, setSelectedRecipientIds] = useState<Set<string>>(new Set());
+  // FSH-01 -- "Cała rodzina" mode. Mutually exclusive with
+  // `selectedRecipientIds`: selecting one always clears the other (see
+  // `toggleFamilyWide`/`toggleRecipient` below), so there is never a UI
+  // state where both are simultaneously populated.
+  const [isFamilyWideSelected, setIsFamilyWideSelected] = useState(false);
   const [accessLevel, setAccessLevel] = useState<AccessLevelValue | null>(null);
   const [previousAccessLevel, setPreviousAccessLevel] = useState<AccessLevelValue | null>(null);
   const [accountId, setAccountId] = useState<string | null>(null);
@@ -365,6 +371,23 @@ export default function ShareDialog({
         next.delete(userId);
       } else {
         next.add(userId);
+      }
+      return next;
+    });
+    // Mutual exclusivity (30-UI-SPEC.md's "Cała rodzina" Row Contract):
+    // picking any individual recipient clears the family-wide mode. In
+    // practice the family-wide checkbox is already `disabled` whenever an
+    // individual is selected, so this is a defensive no-op most of the
+    // time -- but it keeps the two modes provably exclusive at the state
+    // layer too, not only via the disabled attribute.
+    setIsFamilyWideSelected(false);
+  }
+
+  function toggleFamilyWide() {
+    setIsFamilyWideSelected((prev) => {
+      const next = !prev;
+      if (next) {
+        setSelectedRecipientIds(new Set());
       }
       return next;
     });
@@ -616,6 +639,31 @@ export default function ShareDialog({
   const sharing = state === "sharing";
   const hiddenPasswordAck = state === "hidden-password-ack";
 
+  // FSH-01/FSH-05 -- the family-wide row's member-count text, one of exactly
+  // four states. Derived (never a separate `useState`) directly from state
+  // this component already tracks (`load()`'s own `recipients`/
+  // `accountUnavailable`) -- purely computed each render, so it can never
+  // flash a stale value across a state transition the way a second `useState`
+  // fed by its own effect could. `recipients` already excludes the caller
+  // (WR-14's own filter), so `recipients.length + 1` is every family member
+  // INCLUDING the sharer -- 30-UI-SPEC.md's explicit "count shown includes
+  // the sharer" rule, deliberately not `recipients.length` alone.
+  const familyMemberCountState: "loading" | { count: number } | "error" = loading
+    ? "loading"
+    : accountUnavailable
+      ? "error"
+      : { count: recipients.length + 1 };
+  const familyWideMemberCountText =
+    familyMemberCountState === "loading"
+      ? t("share.familyWideMemberCountLoading")
+      : familyMemberCountState === "error"
+        ? t("share.familyWideMemberCountError")
+        : familyMemberCountState.count === 1
+          ? t("share.familyWideMemberCountSoloOwner")
+          : interpolate(t("share.familyWideMemberCount"), {
+              count: String(familyMemberCountState.count),
+            });
+
   const dialogTitle = (() => {
     if (scope.kind === "item") {
       return interpolate(t("share.itemDialogTitle"), { name: scope.item.fields.name });
@@ -642,11 +690,18 @@ export default function ShareDialog({
   })();
 
   const ctaKey = isFolder ? "share.ctaFolder" : "share.ctaItem";
+  // Family-wide mode is a folder-only submit path in this plan (30-08) — the
+  // item variant's family-wide handling is 30-11's job (see `handleSubmit`'s
+  // `familyWideSubmit` comment). Gating this on `isFolder` too (not just
+  // `isFamilyWideSelected`) keeps the item variant's submit button honestly
+  // disabled while family-wide is checked there, rather than enabling a
+  // button whose click would silently share with nobody.
+  const familyWideSubmittable = isFamilyWideSelected && isFolder;
   const submitDisabled =
     sharing ||
     accountUnavailable ||
     accessLevel === null ||
-    selectedRecipientIds.size === 0 ||
+    (!familyWideSubmittable && selectedRecipientIds.size === 0) ||
     (isFolder && folderName.trim() === "");
 
   return (
@@ -726,6 +781,48 @@ export default function ShareDialog({
                   </div>
                 ) : null}
 
+                {/* FSH-01 (30-08) -- "Cała rodzina" row, pinned above the
+                    individual recipient list in BOTH the item and folder
+                    variants (this section is shared by both -- `scope.kind`
+                    is irrelevant to this row). Boxed treatment
+                    (`rounded-field border border-base-300`) is this row's
+                    primary visual distinction from a plain person row. The
+                    timing caveat renders UNCONDITIONALLY whenever this row
+                    is visible, never gated on `isFamilyWideSelected` --
+                    30-UI-SPEC.md's "Share Dialog -- 'Cała rodzina' Row
+                    Contract". */}
+                <label
+                  data-testid="share-recipient-family-wide"
+                  className="flex items-center gap-2 rounded-field border border-base-300 px-2 py-2"
+                >
+                  <input
+                    type="checkbox"
+                    className="checkbox checkbox-sm"
+                    checked={isFamilyWideSelected}
+                    disabled={sharing || selectedRecipientIds.size > 0}
+                    aria-describedby="share-family-wide-caveat"
+                    onChange={toggleFamilyWide}
+                  />
+                  <Users size={14} className="shrink-0 text-secondary" aria-hidden="true" />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="text-sm font-bold">{t("share.familyWideOptionLabel")}</span>
+                    <span
+                      data-testid="share-family-wide-member-count"
+                      className="text-sm text-base-content/60"
+                    >
+                      {familyWideMemberCountText}
+                    </span>
+                  </span>
+                </label>
+                <p
+                  id="share-family-wide-caveat"
+                  data-testid="share-family-wide-timing-caveat"
+                  className="text-sm text-base-content/60"
+                >
+                  {t("share.familyWideTimingCaveat")}
+                </p>
+                <div className="border-t border-base-300" />
+
                 <p className="text-sm font-bold">{t("share.recipientsLabel")}</p>
                 {accountUnavailable ? null : recipients.length === 0 ? (
                   <p data-testid="share-no-other-members" className="text-sm text-base-content/70">
@@ -743,7 +840,7 @@ export default function ShareDialog({
                           type="checkbox"
                           className="checkbox checkbox-sm"
                           checked={selectedRecipientIds.has(r.user_id)}
-                          disabled={sharing}
+                          disabled={sharing || isFamilyWideSelected}
                           onChange={() => toggleRecipient(r.user_id)}
                         />
                         <span className="truncate text-sm" title={r.email}>

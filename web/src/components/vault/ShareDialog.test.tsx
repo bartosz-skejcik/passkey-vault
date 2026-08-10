@@ -892,4 +892,118 @@ describe("ShareDialog", () => {
       }
     });
   });
+
+  // 30-08-PLAN.md Task 1 (FSH-01/FSH-05) -- the "Cała rodzina" row's own
+  // anatomy, member-count states, timing caveat, and mutual exclusivity with
+  // the individual recipient list. `t()` is a literal-key passthrough for
+  // every key here (none of these are in HIDDEN_PASSWORD_HONESTY_KEYS), so
+  // assertions are against the key names themselves -- proving the RIGHT key
+  // renders in the RIGHT state, not the exact copy (that's 30-UI-SPEC.md's
+  // job, verified by inspection of dictionary.ts's literal strings).
+  describe("family-wide row (FSH-01/FSH-05)", () => {
+    const SCOPE = { kind: "folder" as const, existingFolderId: null };
+
+    it("renders the timing caveat unconditionally, before the family-wide checkbox is ever checked", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      expect(screen.getByTestId("share-family-wide-timing-caveat")).toHaveTextContent(
+        "share.familyWideTimingCaveat",
+      );
+      const familyWideCheckbox = screen
+        .getByTestId("share-recipient-family-wide")
+        .querySelector("input[type=checkbox]") as HTMLInputElement;
+      expect(familyWideCheckbox.checked).toBe(false);
+    });
+
+    it("a solo family (only the sharer) shows familyWideMemberCountSoloOwner, never an interpolated n=1", async () => {
+      mockGetFamilyMembers.mockResolvedValue([]);
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      const countEl = screen.getByTestId("share-family-wide-member-count");
+      expect(countEl).toHaveTextContent("share.familyWideMemberCountSoloOwner");
+      expect(countEl).not.toHaveTextContent("share.familyWideMemberCount ");
+    });
+
+    it("a family of 2+ shows the interpolated populated count (n includes the sharer)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      const countEl = screen.getByTestId("share-family-wide-member-count");
+      // MEMBER_A + MEMBER_B (both != SELF) + the sharer themselves = 3.
+      expect(countEl).toHaveTextContent("share.familyWideMemberCount");
+      expect(countEl).toHaveTextContent("3");
+      expect(countEl).not.toHaveTextContent("share.familyWideMemberCountSoloOwner");
+    });
+
+    it("shows the error state (never a flash of 0 or the solo-owner copy) when the account/roster fetch fails", async () => {
+      mockMe.mockRejectedValue(new Error("session hiccup"));
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      const countEl = screen.getByTestId("share-family-wide-member-count");
+      expect(countEl).toHaveTextContent("share.familyWideMemberCountError");
+      // The (static, non-fetched) timing caveat still renders regardless.
+      expect(screen.getByTestId("share-family-wide-timing-caveat")).toBeInTheDocument();
+    });
+
+    it("checking the family-wide row disables and un-checks every individual recipient checkbox", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      const familyWideCheckbox = screen
+        .getByTestId("share-recipient-family-wide")
+        .querySelector("input[type=checkbox]") as HTMLInputElement;
+      fireEvent.click(familyWideCheckbox);
+      expect(familyWideCheckbox.checked).toBe(true);
+
+      const individualCheckboxA = screen
+        .getByTestId(`share-recipient-${MEMBER_A.user_id}`)
+        .querySelector("input[type=checkbox]") as HTMLInputElement;
+      const individualCheckboxB = screen
+        .getByTestId(`share-recipient-${MEMBER_B.user_id}`)
+        .querySelector("input[type=checkbox]") as HTMLInputElement;
+      expect(individualCheckboxA.disabled).toBe(true);
+      expect(individualCheckboxB.disabled).toBe(true);
+      expect(individualCheckboxA.checked).toBe(false);
+    });
+
+    it("checking an individual recipient clears and disables the family-wide checkbox", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      const familyWideCheckbox = screen
+        .getByTestId("share-recipient-family-wide")
+        .querySelector("input[type=checkbox]") as HTMLInputElement;
+
+      selectRecipient(MEMBER_A.user_id);
+      expect(familyWideCheckbox.checked).toBe(false);
+      expect(familyWideCheckbox.disabled).toBe(true);
+    });
+
+    it("enables submit for a folder share when family-wide is selected, with zero individual recipients", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Family Docs" } });
+      chooseAccessLevel("read");
+      const familyWideCheckbox = screen
+        .getByTestId("share-recipient-family-wide")
+        .querySelector("input[type=checkbox]") as HTMLInputElement;
+      fireEvent.click(familyWideCheckbox);
+      expect(screen.getByTestId("share-submit")).not.toBeDisabled();
+    });
+
+    it("keeps submit disabled for the ITEM variant while family-wide is selected -- that wiring is 30-11's job", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      chooseAccessLevel("read");
+      const familyWideCheckbox = screen
+        .getByTestId("share-recipient-family-wide")
+        .querySelector("input[type=checkbox]") as HTMLInputElement;
+      fireEvent.click(familyWideCheckbox);
+      expect(familyWideCheckbox.checked).toBe(true);
+      expect(screen.getByTestId("share-submit")).toBeDisabled();
+    });
+  });
 });

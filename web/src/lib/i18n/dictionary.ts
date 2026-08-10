@@ -1392,6 +1392,50 @@ export const DICTIONARY = {
     pl: "Jedna z Twoich udostępnionych pozycji została ponownie zaszyfrowana, bo skład rodziny się zmienił.",
     en: "One of your shared items was re-encrypted because your family's membership changed.",
   },
+  // 30-08-PLAN.md Task 1 (FSH-01) -- the "Cała rodzina" row's own copy,
+  // 30-UI-SPEC.md's Copywriting Contract verbatim.
+  "share.familyWideOptionLabel": { pl: "Cała rodzina", en: "Whole family" },
+  // FSH-05 -- the timing caveat. Re-derived post-research from the FSH-02
+  // decision record: the lazy-reseal trigger fires on ANY key-holder's next
+  // app open, INCLUDING the sharer themselves (the sharer already holds the
+  // Collection Key) -- "you or another family member" is the correct actor
+  // set, not "another family member" alone, which named the wrong actor and
+  // overstated the wait. The PL clause is deliberately nominalized rather
+  // than conjugated for two different grammatical persons (see
+  // 30-UI-SPEC.md's note on why "Ty ... otworzysz" + "on/ona ... otworzy"
+  // cannot share one verb). Shown in BOTH ShareDialog (this plan) and
+  // SharingOverviewPanel (30-10) -- same key, same string, so the two
+  // required locations can never drift.
+  "share.familyWideTimingCaveat": {
+    pl: "Nowi członkowie rodziny zobaczą to od razu, jeśli dołączą przez świeże zaproszenie. Jeśli ktoś korzysta z linku wysłanego wcześniej, dostęp pojawi się przy najbliższym otwarciu aplikacji przez Ciebie lub innego członka rodziny.",
+    en: "New family members see this right away if they join through a fresh invite. If someone is using a link that was sent earlier, access arrives the next time you or another family member opens the app.",
+  },
+  // Member count -- populated (n>=2). `{count}` trails as a standalone
+  // number AFTER the noun already appears -- never governs a declined noun
+  // (the phase-29 "1 wpisów" trap, closed by construction), correct at
+  // every n with zero plural-selection machinery.
+  "share.familyWideMemberCount": {
+    pl: "Liczba osób w rodzinie: {count} — plus każdy, kto dołączy później.",
+    en: "People in the family right now: {count} — plus anyone who joins later.",
+  },
+  // Member count -- solo owner (n=1, just the sharer). Distinct copy, NOT
+  // `familyWideMemberCount` interpolated with 1 -- at n=1 the bare number is
+  // uninformative; this sentence states the actually-relevant fact plainly.
+  "share.familyWideMemberCountSoloOwner": {
+    pl: "Na razie w rodzinie jesteś tylko Ty — to udostępnienie zobaczy każdy, kto dołączy.",
+    en: "It's just you in the family for now — anyone who joins will see this.",
+  },
+  "share.familyWideMemberCountLoading": {
+    pl: "Ładowanie liczby osób w rodzinie…",
+    en: "Loading family member count…",
+  },
+  // No retry affordance -- a stated no-action state (30-UI-SPEC.md): the
+  // count re-resolves automatically the next time the surface remounts. The
+  // (static, non-fetched) timing caveat still renders regardless.
+  "share.familyWideMemberCountError": {
+    pl: "Nie udało się wczytać liczby osób w rodzinie.",
+    en: "Couldn't load the family member count.",
+  },
   "identity.yourFingerprintHeading": { pl: "Twój odcisk tożsamości", en: "Your identity fingerprint" },
   "identity.fingerprintRevealAria": {
     pl: "Pokaż odcisk tożsamości {email}",
