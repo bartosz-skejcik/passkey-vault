@@ -24,9 +24,9 @@ import {
 } from "@/lib/crypto";
 import { base64Encode, base64Decode } from "@/lib/auth/api";
 import { ensureOwnIdentityKeypair } from "@/lib/identity/ensure";
-import { getCollection } from "@/lib/vault/api";
+import { getCollection, listCollections } from "@/lib/vault/api";
 import { createInvite, fetchInvitePublicMetadata, redeemInvite } from "./api";
-import type { InvitePublicMetadata } from "./api";
+import type { InvitePublicMetadata, FamilyWideKeyEntry } from "./api";
 
 /**
  * RFC 4648 §5 URL-safe transform over the STANDARD base64Encode/base64Decode
@@ -78,6 +78,7 @@ export async function generateInviteLink(
   const identityKey = await ensureOwnIdentityKeypair(uk);
   let channel: WasmInviteChannel | undefined;
   let collectionKey: WasmCollectionKey | undefined;
+  const familyWideCollectionKeys: WasmCollectionKey[] = [];
   try {
     const secretBytes = generateInviteSecret();
     // Captured BEFORE the next call — WasmInviteChannel.fromSecret zeroizes
@@ -89,6 +90,29 @@ export async function generateInviteLink(
     const inviteId = channel.inviteId();
     // STANDARD encoding — this is a JSON body field, not a URL segment.
     const proofHash = base64Encode(channel.proofHashForCreation());
+
+    // 30-DECISION-FSH-02.md's invite-time-wrap fast path: fold in every
+    // family-wide collection the caller currently holds a key for, ADDITIVE
+    // to whatever single explicit collection scope this invite already
+    // carries below — never mutually exclusive with it. `listCollections()`
+    // is an existing client call gated by the caller already holding
+    // `collection_keys` rows, never a new server round trip.
+    const ownCollections = await listCollections();
+    const familyWideKeys: FamilyWideKeyEntry[] = [];
+    for (const entry of ownCollections) {
+      if (entry.family_wide_kind == null) continue;
+      // Defensive — every family-wide row returned here should carry both
+      // fields together (same `collection_keys` row), but never hardcode a
+      // fallback access_level if either is unexpectedly absent.
+      if (entry.sealed_key === null || entry.access_level == null) continue;
+      const ck = unsealCollectionKey(identityKey, entry.sealed_key);
+      familyWideCollectionKeys.push(ck);
+      familyWideKeys.push({
+        collection_id: entry.id,
+        access_level: entry.access_level,
+        wrapped_collection_key: channel.wrapCollectionKey(ck),
+      });
+    }
 
     let wrappedForInvite: string | null = null;
     if (scope.kind === "collection") {
@@ -105,6 +129,7 @@ export async function generateInviteLink(
       collection_id: scope.kind === "collection" ? scope.collectionId : null,
       access_level: scope.kind === "collection" ? scope.accessLevel : null,
       wrapped_collection_key: scope.kind === "collection" ? wrappedForInvite : null,
+      family_wide_keys: familyWideKeys,
       // Amendment 2: ONLY the hash ever travels to createInvite — never the
       // raw invite_proof (that is fetchInviteMetadataFlow/redeemInviteFlow's
       // job, at redemption time, via a DIFFERENT channel method).
@@ -117,6 +142,7 @@ export async function generateInviteLink(
       expiresAt: response.expires_at,
     };
   } finally {
+    familyWideCollectionKeys.forEach((k) => k.free?.());
     collectionKey?.free?.();
     channel?.free?.();
     identityKey.free?.();
