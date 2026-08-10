@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 5
+open_count: 6
 waived_count: 0
 fixed_count: 8
-total_count: 13
-last_updated: 2026-08-07T09:54:53.167Z
+total_count: 14
+last_updated: 2026-08-10T11:38:54.812Z
 ---
 
 # Broken Windows Ledger
@@ -28,6 +28,7 @@ last_updated: 2026-08-07T09:54:53.167Z
 | 11 | 26 | deviation | web/src/lib/vault/store.ts |  | Latent ordering hazard found while root-causing WINDOWS #10 (.planning/debug/rekey-order-dependent-hang.md), deliberately NOT fixed there to keep that fix minimal and root-cause-scoped. createVaultItem (store.ts:376-391) awaits POST /api/vault/items and THEN mutates local state (items = [...items, item]; recomputeAllTags(); notifyListeners()). Any throw in that post-await bookkeeping propagates out of createVaultItem into ItemForm.tsx:401's catch, which renders 'Failed to save item. Please try again.' over a write the server ALREADY accepted with 201 -- observed live in the #10 probe transcript. The user is invited to retry into duplicate rows. updateVaultItem (529-535) and deleteVaultItem (540-545) share the identical shape. This repo already fixed one instance of exactly this class (commit 4450dc0, 'WR-12 stop reporting failure after the server mutation already succeeded'), so the pattern is known and recurring. #10's fix removes the ONE known trigger (a tags-less plaintext) but not the hazard itself. | open |  | 2026-08-06T13:24:13.762Z |  |
 | 12 | 26 | stub | web/src/components/vault/ExportDialog.tsx |  | Hidden-password masking (SHARE-03, closed in 26-VERIFICATION-FIX blocker 1) does not extend to vault export: ExportDialog calls getItems() -- the merged view, which since 26-14 includes items shared TO the caller -- and buildCsvExport/buildJsonExport emit fields.password verbatim (toCsv.ts:59). A hidden_password recipient can still obtain the plaintext via Settings -> Export in two clicks. Deliberately not fixed: it is inside what D-2's disclosure already discloses (an explicit whole-vault export is a deliberate recovery act, not 'accidentally seeing it on screen'), and silently blanking a password in a user's own BACKUP is unnoticed data loss -- an honest fix needs an explicit in-file marker, i.e. new export-format surface plus i18n. share.hiddenPasswordRecipientNote was worded 'this view masks it' rather than 'hidden in the interface' precisely so no shipped copy overclaims because of this. Owner of the follow-up decides blank-vs-marker for BOTH exporters, and owes the same in the extension (Phase 27). See 26 deferred-items.md. | open |  | 2026-08-07T09:54:44.142Z |  |
 | 13 | 26 | stub | web/src/components/vault/ShareDialog.tsx |  | CR-01's partial-share recovery is SESSION-SCOPED only (26-VERIFICATION.md W-2, independently re-verified 2026-08-07 and confirmed correct). Retrying through the SAME open dialog is genuinely idempotent (createdCollectionRef, tested). But NO UI entry point anywhere adds a member to an EXISTING shared collection: the only ShareDialogScope folder variants constructed are existingFolderId=<personal folder id> (Sidebar:323) and null (Sidebar:422, FamilyTab:695), both of which MINT A NEW COLLECTION, and the Sidebar's shared-folder rows (Sidebar:404-417) are plain non-interactive divs with no kebab/share/delete. So closing the dialog after a partial failure strands the half-granted collection permanently; reopening mints a second one and seed items already moved into the first now fail decryptItem on the re-move as fresh seedMoveFailed. The orphan persists visibly in the Shared folders sidebar with no delete affordance. Not fixed in the verification-fix pass because the fix is a NEW UI SURFACE, not a guard: a kebab on the shared-folder row, a third ShareDialogScope variant (existingCollectionId), and a different crypto path in submit (unseal the caller's own sealed_key and re-seal the RECOVERED Collection Key, not WasmCollectionKey.generate()) -- feature work with its own real-WASM proof obligation. CR-01's unscoped claim 'no manual DB surgery' is recorded as NOT TRUE. See 26 deferred-items.md. | open |  | 2026-08-07T09:54:53.167Z |  |
+| 14 | 30 | stub | web/src/app/page.tsx |  | FamilyRekeyNotice built and tested but not mounted -- outside 30-05's files_modified/wave file-disjointness boundary; needs a one-line <FamilyRekeyNotice /> mount next to CopyToast/ErrorToast | open |  | 2026-08-10T11:38:54.812Z |  |
 
 ````json
 [
@@ -185,6 +186,18 @@ last_updated: 2026-08-07T09:54:53.167Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-07T09:54:53.167Z",
+    "resolved_at": null
+  },
+  {
+    "id": 14,
+    "kind": "stub",
+    "phase": "30",
+    "file": "web/src/app/page.tsx",
+    "line": null,
+    "description": "FamilyRekeyNotice built and tested but not mounted -- outside 30-05's files_modified/wave file-disjointness boundary; needs a one-line <FamilyRekeyNotice /> mount next to CopyToast/ErrorToast",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-10T11:38:54.812Z",
     "resolved_at": null
   }
 ]
