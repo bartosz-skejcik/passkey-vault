@@ -45,7 +45,17 @@ export default function SettingsJumpNav() {
       // via native anchor behavior; only the active-highlight is lost.
       return;
     }
-    const sections = document.querySelectorAll("section[id]");
+    // WR-08 (code review, Phase 29): `document.querySelectorAll("section[id]")`
+    // used to be a GLOBAL query, not scoped to the settings page's own four
+    // known sections -- any `<section id>` rendered by a descendant
+    // (`FamilyTab`, `PasskeysTab`, `SessionsTab`, a dialog, or anything
+    // added later) was observed too, and a match against one of THOSE ids
+    // would silently blank the active highlight (it matches no nav link).
+    // The four real targets are already known statically in `GROUPS` --
+    // look them up by id directly instead of querying the whole document.
+    const sections = GROUPS.map(({ slug }) => document.getElementById(slug)).filter(
+      (el): el is HTMLElement => el !== null,
+    );
     const observer = new IntersectionObserver(
       (entries) => {
         const visible = entries.find((e) => e.isIntersecting);
