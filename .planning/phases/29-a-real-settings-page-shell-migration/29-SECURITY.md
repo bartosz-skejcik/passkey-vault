@@ -56,9 +56,9 @@ and the Rust + vitest suites were executed rather than quoted.
 | T-29-10 | Tampering (path traversal) | `rewrite_nested_static_route` | high | mitigate | **Registered retroactively — no plan declared this middleware.** `routes/mod.rs:269-277` decodes once (`percent_decode_str(trimmed).decode_utf8().ok()`) then validates the **decoded** value: non-empty, no literal `.`, no NUL, and every `std::path::Component` is `Normal` (`605af09`). `.ok()` on invalid UTF-8 fails closed. Verified by live probe against a real booted server with a planted canary **outside** the static root and a planted `EVIL.html` sibling: `..%2f`, `%2e%2e%2f`, `%252e%252e%252f`, `%2e%2e/`, `..%252f`, `%c0%ae%c0%ae%2f`, `..%5c`, `%5c..%5c`, `....//`, `%2f`, `%00`-prefixed/suffixed, `/a/../../EVIL`, `/..;/EVIL` — **all 21 probes resolved to `index.html` (md5 `c238e77e…`); the canary and EVIL bytes were never returned.** `tests/router_static_fallback.rs` 11/11 green (was 4) | closed |
 | T-29-11 | Elevation of Privilege (route shadowing) | `rewrite_nested_static_route` | medium | mitigate | **Registered retroactively.** Two independent structural facts, both verified. (1) The middleware is layered on a *child* router used only as the fallback (`mod.rs:202-205`), so a **registered** route never passes through it at all — live proof: `/api/auth/me`, `/api/vault/items`, `/api/sessions` all still return 401 with the static dir mounted. (2) `mod.rs:250` `!req.uri().path().starts_with("/api/")` is the real guard the 29-05 SUMMARY had claimed without shipping (`fb1a9a2`) — live proof with a planted decoy `out/api/decoy.html`: `GET /api/decoy` returns `index.html`, never the decoy. `HEAD` parity closed at `mod.rs:249` (`6a8feb7`), verified live (`HEAD /settings` `content-length: 10910` = `GET /settings` = `settings.html`, not `index.html`'s 10714). Non-GET/HEAD methods on `/settings` return 405 | closed |
 | T-29-12 | Information Disclosure (honesty control weakened) | `store.ts` `doHandleSharedRevisions` | low | mitigate | **OPEN — below `high` threshold (non-blocking).** See Non-Blocking Residuals #1 | open |
-| T-29-13 | Information Disclosure | `SettingsShell.tsx` + `PasskeysTab`/`SessionsTab`/`FamilyTab` | medium | mitigate | **OPEN — below `high` threshold (non-blocking).** See Non-Blocking Residuals #2 | open |
+| T-29-13 | Information Disclosure | `SettingsShell.tsx` + `PasskeysTab`/`SessionsTab`/`FamilyTab` | medium | mitigate | **Closed by `034880e`.** The fetch itself is now gated on `useIsUnlocked()` (this codebase's one reactive unlock idiom, mirroring `UnlockOverlay.tsx`'s own usage) — not just the render. `PasskeysTab.tsx:29/52-53`, `SessionsTab.tsx:35/52-53`: `useEffect(() => { if (!unlocked) return; void refetch(); }, [unlocked])`. `FamilyTab.tsx:107/212-213`: the mount effect gets the identical `if (!unlocked) return;` guard; no render change was needed there because `mode` starts at `"checking"` and only advances via `loadFamilyState()`, and the pre-existing `if (mode === "checking") return null` branch already rendered nothing — so gating the fetch alone closes the DOM leak. `SettingsShell.tsx`/section wrapper markup is untouched (jump-nav's `IntersectionObserver` still finds all four `<section id>` targets at mount regardless of lock state); `FamilyTab.tsx`'s JSX/layout is untouched per the Phase 33 boundary. Falsification: each new test was confirmed red against the pre-fix component (`git stash` the one source file, rerun) before the fix landed. New regression tests, all failing pre-fix and green post-fix: `PasskeysTab.test.tsx` "does not fetch or render passkey rows while the vault is locked (T-29-13)", `SessionsTab.test.tsx`'s session-row equivalent, `FamilyTab.test.tsx`'s member equivalent (also asserts `getFamilyMembers()`/`me()` never called), and the top-level `app/settings/page.test.tsx` "does not fetch or render passkey/session data for a session mount with a locked vault (T-29-13)" (asserts zero `listPasskeys`/`listSessions` calls, no sensitive string in the document, and the unlock affordance still reachable). `SettingsSectionAccount.test.tsx` updated to mock `useIsUnlocked` (real children, needed the same "already unlocked" precondition every other test there already assumed). Full suite: 848/83 green (844 baseline + 4 new). `npm run build` still emits `out/settings.html`/`.txt`/`out/settings/`, all four routes `○ (Static)`. `npx playwright test e2e/settings-route.spec.ts e2e/settings-jumpnav-labels.spec.ts` — 3/3 green, including the cold-locked-entry-then-unlock path (Case 1) and jump-nav scroll-spy, confirming the fetch-only gate does not regress the unlock-then-reveal flow or nav highlighting | closed |
 
-*Status: open · closed · open — below high threshold (non-blocking)*
+*Status: open — below high threshold (non-blocking) · closed*
 *Severity: critical > high > medium > low — only open threats at or above workflow.security_block_on count toward threats_open*
 *Disposition: mitigate (implementation required) · accept (documented risk) · transfer (third-party)*
 
@@ -123,7 +123,9 @@ against `web/out`:
 
 ## Non-Blocking Residuals
 
-Both are below the `high` block threshold; neither counts toward `threats_open`.
+T-29-12 is below the `high` block threshold and does not count toward `threats_open`. T-29-13 is
+now closed (see below) — kept here for its original historical record rather than deleted, per
+Register Corrections' precedent of not letting a future audit lose the trail.
 
 **1. T-29-12 — `hydrated` can flip true on the bounded-retry fail-open path (low, open).**
 `store.ts:1263-1277`: after `MAX_FAILED_MERGE_RETRIES` (= 3, `:478`) consecutive partially-failed
@@ -141,26 +143,37 @@ residual is export *completeness* (a silently partial backup), not a false claim
 PROJECT.md Non-Negotiable #4 is not breached. Suggested fix: gate `:1172`'s confirmation on
 `failedSharedRefreshAttempts === 0`, or clear `sharedConfirmed` when the watermark is force-advanced.
 
-**2. T-29-13 — `/settings` mounts and fetches account metadata while the vault is locked (medium, open).**
-`SettingsShell.tsx:58-63` mounts `SettingsSectionAccount`/`Security`/`Data`/`Family`
-unconditionally; the only lock-dependent thing at that level is the cosmetic
-`className={!unlocked ? "blur-md" : undefined}` at `:27`. `PasskeysTab.tsx:40-41`,
-`SessionsTab.tsx:45-46` and `FamilyTab.tsx:199` all fire their fetch from a bare
-`useEffect(…, [])`. So a cold deep link to `/settings` with a valid session but a **locked** vault
-now issues `GET /api/passkeys`, `GET /api/sessions` and the family-state fetches, and paints passkey
-labels, session rows and family-member emails into the DOM behind a CSS blur and
+**2. T-29-13 — `/settings` mounts and fetches account metadata while the vault is locked (medium,
+CLOSED by `034880e`).** Originally: `SettingsShell.tsx:58-63` mounts
+`SettingsSectionAccount`/`Security`/`Data`/`Family` unconditionally; the only lock-dependent thing at
+that level was the cosmetic `className={!unlocked ? "blur-md" : undefined}` at `:27`.
+`PasskeysTab.tsx:40-41`, `SessionsTab.tsx:45-46` and `FamilyTab.tsx:199` all fired their fetch from a
+bare `useEffect(…, [])`. So a cold deep link to `/settings` with a valid session but a **locked**
+vault issued `GET /api/passkeys`, `GET /api/sessions` and the family-state fetches, and painted
+passkey labels, session rows and family-member emails into the DOM behind a CSS blur and
 `UnlockOverlay`'s `fixed inset-0 z-50` scrim (`UnlockOverlay.tsx:68-70` confirms it renders exactly
-when `sessionToken !== null && !unlocked`). This is a genuine delta: pre-Phase-29 the drawer was
+when `sessionToken !== null && !unlocked`). This was a genuine delta: pre-Phase-29 the drawer was
 only reachable by a click the overlay intercepted.
-*Why it is medium, not high:* nothing here is vault plaintext, a key, or PRF output — the
-zero-knowledge boundary is untouched, and every one of these values is server-side metadata the
-session token already authorises. The export/import CTAs are **not** affected (they are click-gated
-behind the same scrim, so `ExportDialog` never mounts while locked). The realistic attacker is
-someone with local access to an unattended, locked-but-authenticated browser using devtools; a
-script-level attacker already holds the localStorage session token and could call these endpoints
-directly. Suggested fix: gate the four sections on `unlocked` in `SettingsShell.tsx` (matching the
-"no data in the render tree" contract `page.tsx:335-338` states for `MainColumn`), rather than
-relying on `blur-md`.
+*Why it was medium, not high:* nothing here is vault plaintext, a key, or PRF output — the
+zero-knowledge boundary was untouched, and every one of these values is server-side metadata the
+session token already authorises. The export/import CTAs were **not** affected (they are
+click-gated behind the same scrim, so `ExportDialog` never mounts while locked). The realistic
+attacker was someone with local access to an unattended, locked-but-authenticated browser using
+devtools; a script-level attacker already holds the localStorage session token and could call these
+endpoints directly.
+*Fix applied:* the fetch itself — not the render — is now gated on `useIsUnlocked()` in all three
+leaf components (`PasskeysTab.tsx`, `SessionsTab.tsx`, `FamilyTab.tsx`), matching the codebase's one
+existing reactive-unlock idiom (`UnlockOverlay.tsx`'s own usage) rather than inventing a second
+mechanism. `SettingsShell.tsx` and the four `SettingsSection*.tsx` wrappers were deliberately left
+unmounted-unconditionally (not gated at that level) — `SettingsJumpNav`'s `IntersectionObserver`
+locates its four `<section id>` targets once at mount via a `useEffect(…, [])` with no re-observe
+path, so unmounting the sections while locked would have silently broken scroll-spy highlighting
+after the first unlock, a regression this fix does not introduce. `FamilyTab.tsx`'s own render logic
+did not need a change: `mode` starts at `"checking"` and only ever advances inside
+`loadFamilyState()`, and the pre-existing `if (mode === "checking") return null` branch already
+rendered nothing — gating its mount effect alone closes the DOM leak without touching JSX (Phase 33
+still owns `FamilyTab`'s redesign). See the Threat Register row above for the full verification
+evidence (tests, `git stash`-confirmed pre-fix red, full suite, build, and e2e results).
 
 **3. `/api/` guard is case-sensitive while the filesystem may not be (informational, no register row).**
 `mod.rs:250` compares `starts_with("/api/")` literally. On a case-insensitive filesystem (macOS dev,
@@ -219,8 +232,9 @@ or a log.
 | Audit Date | Threats Total | Closed | Open (blocking) | Open (non-blocking) | Run By |
 |------------|---------------|--------|-----------------|---------------------|--------|
 | 2026-08-10 | 13 | 11 | 0 | 2 | gsd-security-auditor (opus) |
+| 2026-08-10 | 13 | 12 | 0 | 1 | gsd-code-fixer (T-29-13 remediation, commit `034880e`) |
 
-**Evidence executed for this audit (not quoted from SUMMARY/VERIFICATION):**
+**Evidence executed for the 2026-08-10 audit (not quoted from SUMMARY/VERIFICATION):**
 - `cargo test -p pv-server --test router_static_fallback` → **11 passed, 0 failed**
 - `npx vitest run AuthGate.test.tsx settings/page.test.tsx ExportDialog.test.tsx store.test.ts` →
   **80 passed, 0 failed** (4 files)
@@ -231,14 +245,27 @@ or a log.
 - `grep` of `web/out/settings.html` (the artifact an unauthenticated GET receives) for authenticated
   markup → zero matches.
 
+**Evidence executed for the T-29-13 remediation (same day, follow-up fix pass):**
+- `npm test` → **848 passed, 0 failed** (83 files; 844 baseline + 4 new T-29-13 regression tests)
+- Each new regression test independently confirmed **red** against the pre-fix source file via
+  `git stash push -- <file> && npx vitest run <test file> ; git stash pop`, then green again after
+  `git stash pop` — for `PasskeysTab.tsx`, `SessionsTab.tsx`, `FamilyTab.tsx`, and the combined
+  `app/settings/page.test.tsx` integration case.
+- `npm run build` → `out/settings.html`, `out/settings.txt`, `out/settings/` all present; all four
+  routes (`/`, `/_not-found`, `/self-test`, `/settings`) reported `○ (Static)`.
+- `npx playwright test e2e/settings-route.spec.ts e2e/settings-jumpnav-labels.spec.ts` → **3 passed,
+  0 failed**, run against a real `pv-server` on port 8620 with the real `data/pv.db` dev database
+  left untouched.
+
 ---
 
 ## Sign-Off
 
 - [x] All threats have a disposition (mitigate / accept / transfer)
 - [x] Accepted risks documented in Accepted Risks Log
-- [x] `threats_open: 0` confirmed — the two open threats (T-29-12 `low`, T-29-13 `medium`) are both
-      below the configured `security_block_on: high` gate and do not block ship
+- [x] `threats_open: 0` confirmed — the one remaining open threat (T-29-12 `low`) is below the
+      configured `security_block_on: high` gate and does not block ship. T-29-13 (`medium`) was
+      closed same-day by `034880e` — see Threat Register and the T-29-13 remediation evidence above
 - [x] Two false premises in the phase's own planning artifacts corrected on the record
 - [x] Zero-knowledge invariant re-verified against the diff
 - [x] `status: verified` set in frontmatter
