@@ -218,6 +218,30 @@ export interface VaultItem {
   // successfully again. Never set by anything other than
   // `lib/vault/store.ts`'s own `applySyncSnapshot`.
   undecryptable?: boolean;
+  // 30-15 (FSH-02): `true` ONLY for a SYNTHETIC placeholder row this client
+  // built from `GET /api/families/family-wide-pending`'s ids-only `missing`
+  // list -- a family-wide collection the caller is entitled to but holds no
+  // `collection_keys` row for yet, so no item inside it can be listed, let
+  // alone decrypted. Set exclusively by `lib/vault/store.ts`'s
+  // `recomputeItems()`; such a row's `id` is additionally prefixed
+  // (`pending-family-key:{collectionId}`) so it can never collide with, or
+  // be mistaken for, a real `vault_items.id`.
+  //
+  // DELIBERATELY NOT `undecryptable`, and never derived from a caught
+  // decrypt exception. `undecryptable` means "a prior successful decrypt
+  // exists; the latest merge failed, so a retained stale copy is showing" --
+  // a genuine integrity signal that must keep its alarming treatment. This
+  // means "never decrypted at all, and correctly so; the key simply hasn't
+  // been delivered yet". They are two independently-checked conditions, and
+  // folding either into the other would either dress a real failure up as a
+  // calm wait or alarm a newcomer about a perfectly normal one.
+  //
+  // A row carrying this flag has NO real content: `fields` is an empty
+  // placeholder (the real name/type live inside still-unreachable
+  // `enc_data`), and `updatedAt`/`lastUsedAt`/`collectionId` are absent
+  // because the ids-only discovery response carries no such metadata to
+  // fabricate them from.
+  pendingFamilyKey?: boolean;
 }
 
 export interface Folder {

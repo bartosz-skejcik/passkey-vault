@@ -27,6 +27,14 @@ import {
   runFamilyWideResealTrigger,
   resetFamilyWideResealAttempts,
 } from "@/lib/families/resealTrigger";
+// 30-15 (FSH-02): the recipient side of the same signal. `sync.ts`'s
+// pullOnce() is the ONLY caller of `refreshFamilyWidePending()`; this module
+// reads the stored snapshot synchronously and subscribes to be told when it
+// changed -- never a second fetch of its own.
+import {
+  getFamilyWidePendingSnapshot,
+  subscribeFamilyWidePending,
+} from "@/lib/families/familyWidePending";
 import {
   clearCollectionsOnRemoval,
   getCollectionAccessLevel,
@@ -244,9 +252,69 @@ function recomputeItems(): void {
   for (const item of personalItems) byId.set(item.id, item);
   for (const item of collectionSharedItems) byId.set(item.id, item);
   for (const item of directSharedItems) byId.set(item.id, item);
-  items = Array.from(byId.values());
+  const real = Array.from(byId.values());
+  items = [...real, ...pendingFamilyKeyRows(real)];
   recomputeAllTags();
   notifyListeners();
+}
+
+/** 30-15 (FSH-02): id prefix every synthetic pending row carries. A real
+ * `vault_items.id` is a UUID, so this can never collide with one -- and any
+ * consumer that needs to tell the two apart has both this prefix and the
+ * `pendingFamilyKey` discriminant to check. */
+export const PENDING_FAMILY_KEY_ID_PREFIX = "pending-family-key:";
+
+/** Builds one synthetic placeholder row per family-wide grant this caller is
+ * still missing its `collection_keys` row for (30-DECISION-FSH-02.md).
+ *
+ * Sourced ENTIRELY from the discovery endpoint's positive, ids-only
+ * `missing` list -- never from a caught decrypt exception. That is the whole
+ * point: a newcomer holds no Collection Key, so `Collection::resolve_access`
+ * 404s the collection's listing outright and there is no ciphertext to fail
+ * on in the first place. A genuine decrypt failure on real ciphertext stays
+ * on the existing `undecryptable` retained-last-known-good path, untouched.
+ *
+ * Nothing is fabricated: no name (the real one is inside unreachable
+ * `enc_data`), no `updatedAt`/`lastUsedAt` (the ids-only response carries
+ * none, and ItemRow omits that slot entirely rather than showing a stale or
+ * invented value), no `collectionId` (the backing collection is encoded in
+ * the id, so no collection-scoped consumer mistakes a placeholder for a real
+ * member of that folder). `fields` exists only because `VaultItem` requires
+ * it; it is never rendered -- ItemRow/DetailPanel branch on
+ * `pendingFamilyKey` before reading any of it.
+ *
+ * A grant whose collection ALREADY has a real decrypted row is skipped: the
+ * key arrived and the snapshot is simply one pull cycle stale, and showing
+ * "waiting for your key" next to items that already decrypted would be the
+ * same dishonesty in the opposite direction. */
+function pendingFamilyKeyRows(real: VaultItem[]): VaultItem[] {
+  // Locked sessions hold no plaintext at all; a placeholder row surviving a
+  // lock would be the one piece of vault state that did.
+  if (!isUnlocked()) {
+    return [];
+  }
+  const { missing } = getFamilyWidePendingSnapshot();
+  if (missing.length === 0) {
+    return [];
+  }
+  const collectionsAlreadyReadable = new Set(
+    real.map((item) => item.collectionId).filter((id): id is string => typeof id === "string"),
+  );
+  const rows: VaultItem[] = [];
+  const seen = new Set<string>();
+  for (const grant of missing) {
+    if (collectionsAlreadyReadable.has(grant.collection_id)) continue;
+    const id = `${PENDING_FAMILY_KEY_ID_PREFIX}${grant.collection_id}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    rows.push({
+      id,
+      revision: 0,
+      pendingFamilyKey: true,
+      fields: { type: "note", name: "", body: "", folderId: null, tags: [] },
+    });
+  }
+  return rows;
 }
 
 /** Writes `updated` into whichever of the three sources currently holds
@@ -1450,6 +1518,20 @@ const syncCallbacks: SyncCallbacks = {
     }
   },
 };
+
+// 30-15 (FSH-02): the synthetic pending rows above are derived state, and
+// their source refreshes on its own schedule (sync.ts's pull cycle calls
+// `refreshFamilyWidePending()` once per pull). Without this subscription a
+// pending row would be merely "correct once" -- correct in a test that
+// primes the snapshot before importing the store, and permanently absent (or
+// permanently stale after the key arrived) in the running app, where the
+// discovery response lands long after the item list has painted. Recomputing
+// from the CURRENT snapshot on every completed refresh is also what makes
+// the row self-resolving: the pass that no longer sees the grant is the pass
+// that drops the placeholder.
+subscribeFamilyWidePending(() => {
+  recomputeItems();
+});
 
 subscribeLockState(() => {
   if (isUnlocked()) {

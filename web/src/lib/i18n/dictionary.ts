@@ -225,6 +225,18 @@ export const DICTIONARY = {
     en: "Shared with the whole family",
   },
 
+  // 30-UI-SPEC.md (FSH-02), Copywriting Contract verbatim: the
+  // pending-newcomer item row. Both strings are FULLY GENERIC on purpose —
+  // the item's real name lives inside `enc_data` this member cannot decrypt
+  // yet, so there is nothing truthful to put here, not even a truncated
+  // fragment. No interpolation at all, and no count: nothing here governs a
+  // declined noun (the phase-29 "1 wpisów" trap).
+  "vault.pendingFamilyKeyItemName": { pl: "Oczekujący element", en: "Pending item" },
+  "vault.pendingFamilyKeyRow": {
+    pl: "Pojawi się, gdy inny członek rodziny otworzy aplikację.",
+    en: "Will appear once another family member opens the app.",
+  },
+
   // Per-item last-used tracking sort control (quick-260717, NordPass-style)
   // — sits in the header area next to the dynamic heading above.
 

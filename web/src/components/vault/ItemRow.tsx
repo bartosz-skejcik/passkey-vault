@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MoreVertical, Share2, Users } from "lucide-react";
+import { Clock, MoreVertical, Share2, Users } from "lucide-react";
 import type { ItemType, VaultItem } from "@/lib/vault/types";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate, type DICTIONARY } from "@/lib/i18n/dictionary";
@@ -33,7 +33,97 @@ function maskedCardLast4(number: string): string | null {
   return `•••• ${digits.slice(-4)}`;
 }
 
-export default function ItemRow({
+/** Shared row chrome (height, selection edges) — one definition, so a
+ * pending placeholder and a real row can never drift apart in height or
+ * selected-state treatment. */
+function rowClassName(selected: boolean): string {
+  return `group flex h-16 w-full items-center gap-2 px-4 transition-colors ${
+    selected
+      ? "border-l-2 border-primary bg-primary/[0.08] last:border-b last:border-base-300"
+      : "border-l-2 border-transparent hover:bg-base-content/[0.06]"
+  }`;
+}
+
+/** 30-15 (FSH-02), 30-UI-SPEC.md "Pending-newcomer item-row state": a
+ * family-wide grant whose key has not been delivered to this member yet.
+ *
+ * A separate component rather than an early `return` inside `ItemRow`: the
+ * pending state must be decided BEFORE any of the real row's
+ * content/metadata is computed, and React's rules of hooks forbid returning
+ * before `ItemRow`'s own `useState`/`useRef`/`useEffect` run. Splitting it
+ * out makes "never reaches ItemIconTile, the sharing-marker chain, the
+ * trailing metadata slot, or the context menu" a structural fact instead of
+ * a conditional this file has to keep getting right.
+ *
+ * Everything here is a static translator string plus the row's id. There is
+ * deliberately no name, no type icon, no timestamp: the item's plaintext
+ * lives in `enc_data` this member genuinely cannot read yet, and the ids-only
+ * discovery response carries nothing else. Still selectable, so the detail
+ * panel's fuller explanation is reachable; no kebab, because there is no real
+ * item to copy, edit, move or delete. */
+function PendingFamilyKeyRow({
+  item,
+  selected,
+  onClick,
+}: {
+  item: VaultItem;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const { t } = useLocale();
+  return (
+    <div data-testid={`item-row-${item.id}`} className={rowClassName(selected)}>
+      <button
+        type="button"
+        data-testid={`item-row-select-${item.id}`}
+        onClick={onClick}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+      >
+        <div
+          data-testid="item-row-pending-family-key"
+          className="flex min-w-0 flex-1 items-center gap-2"
+        >
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-field bg-base-200 text-base-content/40">
+            <Clock size={16} aria-hidden="true" />
+          </div>
+          <span className="flex min-w-0 flex-1 flex-col items-start">
+            <span className="truncate text-base text-base-content/70">
+              {t("vault.pendingFamilyKeyItemName")}
+            </span>
+            <span className="truncate text-sm text-base-content/60">
+              {t("vault.pendingFamilyKeyRow")}
+            </span>
+          </span>
+        </div>
+      </button>
+    </div>
+  );
+}
+
+export default function ItemRow(props: {
+  item: VaultItem;
+  selected: boolean;
+  onClick: () => void;
+  onEditRequest?: (item: VaultItem) => void;
+}) {
+  // Checked before ANY decrypt-dependent rendering (30-UI-SPEC.md): a pending
+  // row has no historical decrypt result to reason about at all, so it must
+  // never fall through into `undecryptable`/`sharedToMe`/`isShared` — which
+  // is exactly what keeps the calm pending copy from becoming a catch-all
+  // over a genuine failure.
+  if (props.item.pendingFamilyKey === true) {
+    return (
+      <PendingFamilyKeyRow
+        item={props.item}
+        selected={props.selected}
+        onClick={props.onClick}
+      />
+    );
+  }
+  return <RealItemRow {...props} />;
+}
+
+function RealItemRow({
   item,
   selected,
   onClick,
@@ -126,11 +216,7 @@ export default function ItemRow({
       // boundary. It only ever applies on `:last-child`, so a selected
       // row with a following sibling still gets its sole bottom line from
       // that sibling's divide-y top border — no double-border artifact.
-      className={`group flex h-16 w-full items-center gap-2 px-4 transition-colors ${
-        selected
-          ? "border-l-2 border-primary bg-primary/[0.08] last:border-b last:border-base-300"
-          : "border-l-2 border-transparent hover:bg-base-content/[0.06]"
-      }`}
+      className={rowClassName(selected)}
     >
       <button
         type="button"
