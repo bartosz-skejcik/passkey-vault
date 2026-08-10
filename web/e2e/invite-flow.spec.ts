@@ -92,21 +92,23 @@ async function waitForVaultShell(page: Page): Promise<void> {
 }
 
 /**
- * Opens the Settings drawer's Family tab on `page` (skips re-opening the
- * drawer if it's already open -- true for every call after the first on the
- * persistent `ownerPage` this file reuses across all its tests) and resolves
- * FamilyTab's own async "checking" mode into one of its three stable states.
- * Bootstraps the singleton family the FIRST time this ever runs against a
- * given account (idempotent: a later call simply finds the bootstrap form
- * absent and does nothing extra).
+ * Navigates to the real `/settings` route's Family section on `page` (skips
+ * re-navigating if already there -- true for every call after the first on
+ * the persistent `ownerPage` this file reuses across all its tests) and
+ * resolves FamilyTab's own async "checking" mode into one of its three
+ * stable states. Bootstraps the singleton family the FIRST time this ever
+ * runs against a given account (idempotent: a later call simply finds the
+ * bootstrap form absent and does nothing extra). The retired drawer+tab
+ * click mechanism is gone: the family section already renders
+ * unconditionally once `/settings` is reached, so there is nothing further
+ * to select once the route loads.
  */
 async function openFamilyTab(page: Page): Promise<void> {
-  const panelAlreadyOpen = await page.getByTestId("settings-panel").isVisible().catch(() => false);
-  if (!panelAlreadyOpen) {
+  const alreadyOnSettings = page.url().includes("/settings");
+  if (!alreadyOnSettings) {
     await page.getByRole("button", { name: "Account" }).click();
     await page.getByTestId("sidebar-open-settings").click();
   }
-  await page.getByTestId("settings-tab-family").click();
 
   await Promise.race([
     page.getByTestId("family-bootstrap").waitFor({ state: "visible" }),

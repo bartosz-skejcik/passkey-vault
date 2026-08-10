@@ -151,18 +151,22 @@ async function waitForIdentityKeyPublished(
     .toBe(200);
 }
 
-/** Opens the Settings drawer's Family tab -- mirrors invite-flow.spec.ts/
- * remove-member.spec.ts's own identical helper (per-file-owns-its-own-tiny-
- * helper convention), works whether `page`'s account is the family owner or
- * a plain member (both reach `family-members-section`; only the invite-
- * creation FORM inside it differs by role). */
+/** Navigates to the real `/settings` route's Rodzina i udostępnianie section
+ * -- mirrors invite-flow.spec.ts/remove-member.spec.ts's own identical
+ * helper (per-file-owns-its-own-tiny-helper convention), works whether
+ * `page`'s account is the family owner or a plain member (both reach
+ * `family-members-section`; only the invite-creation FORM inside it differs
+ * by role). The retired drawer+tab click mechanism is gone: the family
+ * section already renders unconditionally once `/settings` is reached, so
+ * there is nothing further to select once the route loads. The sidebar's
+ * settings entry is a real link, so this is a client-side transition -- no
+ * re-unlock step is needed afterward. */
 async function openFamilyTab(page: Page): Promise<void> {
-  const panelAlreadyOpen = await page.getByTestId("settings-panel").isVisible().catch(() => false);
-  if (!panelAlreadyOpen) {
+  const alreadyOnSettings = page.url().includes("/settings");
+  if (!alreadyOnSettings) {
     await page.getByRole("button", { name: "Account" }).click();
     await page.getByTestId("sidebar-open-settings").click();
   }
-  await page.getByTestId("settings-tab-family").click();
 
   await Promise.race([
     page.getByTestId("family-bootstrap").waitFor({ state: "visible" }),
@@ -176,9 +180,14 @@ async function openFamilyTab(page: Page): Promise<void> {
   }
 }
 
-async function closeSettings(page: Page): Promise<void> {
-  await page.getByTestId("settings-close").click();
-  await page.getByTestId("settings-panel").waitFor({ state: "detached" });
+/** Navigates back from `/settings` to the vault shell via the real
+ * back-to-vault link, and waits for a real vault-only marker to reappear --
+ * matches this codebase's own `reloadAndUnlock` helper's post-navigation
+ * wait target. Replaces the retired drawer-dismiss helper, whose dismiss
+ * target and detachment marker no longer exist. */
+async function returnToVault(page: Page): Promise<void> {
+  await page.getByTestId("settings-back-to-vault").click();
+  await page.getByTestId("new-item-button").waitFor({ state: "visible" });
 }
 
 /** Creates one login item through the real TypePicker -> ItemForm -> Save
@@ -379,14 +388,14 @@ test("two real, freshly-registered accounts genuinely publish their identity fin
     memberA.page.getByTestId("identity-self-fingerprint-words"),
     "memberA's own KEY-01 trigger must have published a real fingerprint by now",
   ).toBeVisible({ timeout: 15000 });
-  await closeSettings(memberA.page);
+  await returnToVault(memberA.page);
 
   await openFamilyTab(memberB.page);
   await expect(
     memberB.page.getByTestId("identity-self-fingerprint-words"),
     "memberB's own KEY-01 trigger must have published a real fingerprint by now",
   ).toBeVisible({ timeout: 15000 });
-  await closeSettings(memberB.page);
+  await returnToVault(memberB.page);
 
   expect(memberA.dialogFired(), "zero OS-level dialogs across memberA's session").toBe(false);
   expect(memberB.dialogFired(), "zero OS-level dialogs across memberB's session").toBe(false);

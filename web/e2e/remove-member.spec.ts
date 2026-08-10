@@ -143,19 +143,21 @@ async function userIdFor(context: BrowserContext, token: string): Promise<string
   return ((await res.json()) as { user_id: string }).user_id;
 }
 
-/** Opens the Settings drawer's Family tab on `page` (skips re-opening the
- * drawer if already open) and resolves FamilyTab's async "checking" mode
- * into "normal", bootstrapping the singleton family the FIRST time this
- * ever runs against a given DB. Mirrors `invite-flow.spec.ts`'s own
- * `openFamilyTab` -- duplicated here per this codebase's established
- * per-file-owns-its-own-tiny-helper convention (not exported anywhere). */
+/** Navigates to the real `/settings` route's Family section on `page`
+ * (skips re-navigating if already there) and resolves FamilyTab's async
+ * "checking" mode into "normal", bootstrapping the singleton family the
+ * FIRST time this ever runs against a given DB. Mirrors
+ * `invite-flow.spec.ts`'s own `openFamilyTab` -- duplicated here per this
+ * codebase's established per-file-owns-its-own-tiny-helper convention (not
+ * exported anywhere). The retired drawer+tab click mechanism is gone: the
+ * family section already renders unconditionally once `/settings` is
+ * reached, so there is nothing further to select once the route loads. */
 async function openFamilyTab(page: Page): Promise<void> {
-  const panelAlreadyOpen = await page.getByTestId("settings-panel").isVisible().catch(() => false);
-  if (!panelAlreadyOpen) {
+  const alreadyOnSettings = page.url().includes("/settings");
+  if (!alreadyOnSettings) {
     await page.getByRole("button", { name: "Account" }).click();
     await page.getByTestId("sidebar-open-settings").click();
   }
-  await page.getByTestId("settings-tab-family").click();
 
   await Promise.race([
     page.getByTestId("family-bootstrap").waitFor({ state: "visible" }),
@@ -169,14 +171,17 @@ async function openFamilyTab(page: Page): Promise<void> {
   }
 }
 
-/** `SettingsPanel` is conditionally MOUNTED (`settingsOpen ? <SettingsPanel
- * .../> : null` in `page.tsx`) -- closing it fully unmounts `FamilyTab`, so
- * the next `openFamilyTab` call is a genuine fresh mount with a fresh
- * `loadFamilyState` fetch. Needed after any raw API mutation (e.g. adding a
- * member) that an already-mounted `FamilyTab` has no reason to know about. */
-async function closeSettings(page: Page): Promise<void> {
-  await page.getByTestId("settings-close").click();
-  await page.getByTestId("settings-panel").waitFor({ state: "detached" });
+/** Navigates back to the vault shell -- the `/settings` route (and
+ * everything mounted inside it, including `FamilyTab`) fully unmounts on
+ * this navigation, so the next `openFamilyTab` call is a genuine fresh
+ * mount with a fresh `loadFamilyState` fetch. Needed after any raw API
+ * mutation (e.g. adding a member) that an already-mounted `FamilyTab` has
+ * no reason to know about. Waits for a real vault-only marker to reappear,
+ * matching this codebase's own `reloadAndUnlock` helper's post-navigation
+ * wait target. */
+async function returnToVault(page: Page): Promise<void> {
+  await page.getByTestId("settings-back-to-vault").click();
+  await page.getByTestId("new-item-button").waitFor({ state: "visible" });
 }
 
 /** Registers a brand-new, uniquely-emailed account through the real
@@ -368,7 +373,7 @@ test("suspend_then_reinstate_live_cycle_with_no_rekey", async ({ twoSessions, br
   // roster on mount, so it must be unmounted/remounted (never merely
   // revisited) to see B after the raw add-member call below.
   await openFamilyTab(owner.page);
-  await closeSettings(owner.page);
+  await returnToVault(owner.page);
 
   const addBRes = await apiPost(owner.context.request, "/api/families/members", ownerToken, {
     user_id: bUserId,
@@ -606,7 +611,7 @@ test(
     // family-scoped call below -- closed again immediately so the next
     // `openFamilyTab` is a fresh mount that actually sees B's roster row.
     await openFamilyTab(owner.page);
-    await closeSettings(owner.page);
+    await returnToVault(owner.page);
 
     const addBRes = await apiPost(owner.context.request, "/api/families/members", ownerToken, {
       user_id: bUserId,
