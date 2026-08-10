@@ -107,7 +107,7 @@ export default function PasskeysTab() {
               <li
                 key={row.id}
                 data-testid={`passkey-row-${row.id}`}
-                className="flex min-h-16 items-center gap-3 rounded-box border border-base-300 px-4 py-3"
+                className="flex min-h-16 items-center gap-3 rounded-box border border-base-300 bg-base-100 px-4 py-3"
               >
                 <KeyRound
                   size={20}
