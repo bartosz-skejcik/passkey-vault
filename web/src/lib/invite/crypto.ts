@@ -26,7 +26,7 @@ import { base64Encode, base64Decode } from "@/lib/auth/api";
 import { ensureOwnIdentityKeypair } from "@/lib/identity/ensure";
 import { getCollection, listCollections } from "@/lib/vault/api";
 import { createInvite, fetchInvitePublicMetadata, redeemInvite } from "./api";
-import type { InvitePublicMetadata, FamilyWideKeyEntry } from "./api";
+import type { InvitePublicMetadata, FamilyWideKeyEntry, FamilyWideSealedKeyEntry } from "./api";
 
 /**
  * RFC 4648 §5 URL-safe transform over the STANDARD base64Encode/base64Decode
@@ -205,6 +205,13 @@ export async function redeemInviteFlow(
   const channel = WasmInviteChannel.fromSecret(secretBytes);
   let identityKey: Awaited<ReturnType<typeof ensureOwnIdentityKeypair>> | undefined;
   let collectionKey: WasmCollectionKey | undefined;
+  // 30-DECISION-FSH-02.md's invite-time-wrap fast path, redemption side: the
+  // family-wide analog of `collectionKey`/`myPublicKey` above, one handle
+  // per `metadata.family_wide_keys` entry. Freed in the SAME outer `finally`
+  // block below as every other handle in this function — never a
+  // per-iteration nested one — so no handle can leak across either path.
+  const familyWideCollectionKeys: WasmCollectionKey[] = [];
+  const familyWidePublicKeys: WasmIdentityPublicKey[] = [];
   try {
     if (channel.inviteId() !== inviteId) {
       throw new Error("invite link's fragment does not correspond to its own path invite_id");
@@ -228,14 +235,34 @@ export async function redeemInviteFlow(
       }
     }
 
+    // Self-seal every family-wide key this invite's metadata carried, to
+    // the invitee's OWN freshly-published identity key — the same per-entry
+    // pattern the single-collection branch above already uses, threaded N
+    // times. `metadata.family_wide_keys` is optional (absent means the same
+    // as `[]` — see `InvitePublicMetadata`'s own doc comment).
+    const familyWideSealedKeys: FamilyWideSealedKeyEntry[] = [];
+    for (const entry of metadata.family_wide_keys ?? []) {
+      const fwCollectionKey = channel.unwrapCollectionKey(entry.wrapped_collection_key);
+      familyWideCollectionKeys.push(fwCollectionKey);
+      const fwPublicKey = WasmIdentityPublicKey.fromBytes(identityKey.publicKeyBytes());
+      familyWidePublicKeys.push(fwPublicKey);
+      familyWideSealedKeys.push({
+        collection_id: entry.collection_id,
+        sealed_for_self: sealCollectionKey(fwPublicKey, fwCollectionKey),
+      });
+    }
+
     // The SAME `inviteProof` derived above, reused, never re-derived.
     const response = await redeemInvite(inviteId, {
       invite_proof: inviteProof,
       sealed_for_self: sealedForSelf,
+      family_wide_sealed_keys: familyWideSealedKeys,
     });
 
     return { alreadyMember: response.already_member, collectionId: metadata.collection_id };
   } finally {
+    familyWideCollectionKeys.forEach((k) => k.free?.());
+    familyWidePublicKeys.forEach((k) => k.free?.());
     collectionKey?.free?.();
     identityKey?.free?.();
     channel.free?.();

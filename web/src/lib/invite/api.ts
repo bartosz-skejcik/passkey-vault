@@ -20,6 +20,16 @@ export interface FamilyWideKeyEntry {
   wrapped_collection_key: string;
 }
 
+/** One family-wide collection's self-seal, submitted at accept-time —
+ * field-for-field identical to `invitations.rs`'s `FamilyWideSealedKeyEntry`
+ * (30-03). `access_level` is deliberately absent here: the server always
+ * reads it from the invitation's own stored row, never trusts it from this
+ * request body. */
+export interface FamilyWideSealedKeyEntry {
+  collection_id: string;
+  sealed_for_self: string;
+}
+
 export interface InvitePublicMetadata {
   inviter_email: string;
   family_name: string;
@@ -73,7 +83,14 @@ export function fetchInvitePublicMetadata(
  * low-trust write surface (optional session, proof-gated). */
 export function redeemInvite(
   inviteId: string,
-  body: { invite_proof: string; sealed_for_self?: string },
+  body: {
+    invite_proof: string;
+    sealed_for_self?: string;
+    /** 30-07: additive to `sealed_for_self` above, never mutually
+     * exclusive with it — `[]` when the invite carried no family-wide
+     * keys. */
+    family_wide_sealed_keys: FamilyWideSealedKeyEntry[];
+  },
 ): Promise<{ already_member: boolean }> {
   return apiJson(`/api/invitations/${inviteId}/accept`, {
     method: "POST",
