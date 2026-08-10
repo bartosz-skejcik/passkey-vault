@@ -197,6 +197,19 @@ export interface CollectionRow {
   created_at: string;
   access_level: string | null;
   sealed_key: string | null;
+  /** Wire mirror of `collections.rs`'s `CollectionResponse.family_wide_kind`
+   * (30-02, FSH-01/FSH-02): `null` for an ordinary, non-family-wide
+   * collection (today's exact behavior, unchanged); `'folder'` for a named
+   * family-wide folder; `'item_bucket'` for the one per-family
+   * auto-created collection holding bare items shared family-wide. Every
+   * later client plan in Phase 30 (invite folding, ShareDialog,
+   * SharingOverviewPanel, ItemRow badge) reads this field from here rather
+   * than re-deriving it -- 30-DECISION-FSH-02.md names this contract once.
+   * Optional (not just nullable): a response predating this phase's
+   * deploy, mid-rolling-restart, or a test fixture built before this field
+   * existed, can omit the key entirely and still type-check -- treat a
+   * missing key exactly like `null`, never a required-field throw. */
+  family_wide_kind?: string | null;
 }
 
 export function getCollection(id: string): Promise<CollectionRow> {
@@ -297,11 +310,29 @@ export function revokeItemShare(itemId: string, userId: string): Promise<void> {
  * validate the id, it only carries what the caller already produced.
  * Returns the full `CollectionResponse` shape (reuses `CollectionRow`,
  * field-for-field identical: `id` echoes the SAME id the caller sent, never
- * a server-minted one). */
-export function createCollection(id: string, encName: string, sealedKey: string): Promise<CollectionRow> {
+ * a server-minted one).
+ *
+ * `familyWideKind` (30-09, mirrors `collections.rs`'s
+ * `CreateCollectionRequest.family_wide_kind`, 30-02): optional, closed set
+ * `"folder" | "item_bucket"`. When OMITTED (not merely `undefined` --
+ * genuinely absent from the call), the key is left OUT of the POSTed JSON
+ * body entirely, matching the server's `#[serde(default)]`-shaped optional
+ * field exactly and keeping every existing 3-argument call site
+ * byte-for-byte unchanged. */
+export function createCollection(
+  id: string,
+  encName: string,
+  sealedKey: string,
+  familyWideKind?: "folder" | "item_bucket",
+): Promise<CollectionRow> {
   return apiJson("/api/vault/collections", {
     method: "POST",
-    body: JSON.stringify({ id, enc_name: encName, sealed_key: sealedKey }),
+    body: JSON.stringify({
+      id,
+      enc_name: encName,
+      sealed_key: sealedKey,
+      ...(familyWideKind !== undefined ? { family_wide_kind: familyWideKind } : {}),
+    }),
   });
 }
 
