@@ -927,3 +927,72 @@ describe("DetailPanel AvatarStack wiring (D-3/E5, Plan 26-09)", () => {
     expect(mockListItemShares).not.toHaveBeenCalled();
   });
 });
+
+// 30-15 (FSH-02): the pending-newcomer detail-panel note. The honesty risk
+// this whole block guards is the INVERSE of DEBT-03's: dressing a genuine
+// decrypt failure up as a calm "your key is on its way". The two conditions
+// are therefore checked independently, pending first, and each falsified
+// against the other below.
+describe("DetailPanel pending-family-key note (30-15, FSH-02)", () => {
+  const pendingItem: VaultItem = {
+    id: "pending-family-key:c9",
+    revision: 0,
+    pendingFamilyKey: true,
+    fields: { type: "note", name: "", body: "", folderId: null, tags: [] },
+  };
+
+  it("renders both lines of the note with role=status, never role=alert", () => {
+    render(<DetailPanel item={pendingItem} onClose={vi.fn()} />);
+
+    const note = screen.getByTestId("pending-family-key-detail");
+    expect(note).toHaveAttribute("role", "status");
+    expect(note).toHaveAttribute("aria-live", "polite");
+    // Every genuine error banner in this panel uses alert semantics; this
+    // one deliberately does not.
+    expect(note).not.toHaveAttribute("role", "alert");
+    expect(screen.getByText("share.pendingFamilyKeyNote")).toBeInTheDocument();
+    expect(screen.getByTestId("pending-family-key-detail-explanation")).toHaveTextContent(
+      "share.pendingFamilyKeyNoteDetail",
+    );
+  });
+
+  it("is checked BEFORE undecryptable and sharedToMe -- a fixture where all three would fire renders only the pending note", () => {
+    render(
+      <DetailPanel
+        item={{ ...pendingItem, undecryptable: true, sharedToMe: true }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("pending-family-key-detail")).toBeInTheDocument();
+    expect(screen.queryByTestId("undecryptable-item-banner")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("item-shared-with-you-note")).not.toBeInTheDocument();
+  });
+
+  it("a genuinely undecryptable item still gets the alarming banner and NEVER the calm pending note", () => {
+    render(<DetailPanel item={{ ...item, undecryptable: true }} onClose={vi.fn()} />);
+
+    expect(screen.getByTestId("undecryptable-item-banner")).toBeInTheDocument();
+    expect(screen.queryByTestId("pending-family-key-detail")).not.toBeInTheDocument();
+    expect(screen.queryByText("share.pendingFamilyKeyNote")).not.toBeInTheDocument();
+  });
+
+  it("offers no Share/Edit/Delete affordance for a pending placeholder -- there is no server row to act on", () => {
+    render(<DetailPanel item={pendingItem} onClose={vi.fn()} />);
+
+    expect(screen.queryByTestId("detail-panel-share")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("detail-panel-edit")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("detail-panel-delete")).not.toBeInTheDocument();
+    // Closing the panel is about the panel, not the item -- it stays.
+    expect(screen.getByTestId("detail-panel-close")).toBeInTheDocument();
+  });
+
+  it("shows the generic placeholder name instead of an empty heading, and no field rows at all", () => {
+    render(<DetailPanel item={pendingItem} onClose={vi.fn()} />);
+
+    expect(screen.getByText("vault.pendingFamilyKeyItemName")).toBeInTheDocument();
+    // A note item would otherwise render its body field row here.
+    expect(screen.queryByText("field.body")).not.toBeInTheDocument();
+    expect(screen.queryByText("item.folderLabel")).not.toBeInTheDocument();
+  });
+});

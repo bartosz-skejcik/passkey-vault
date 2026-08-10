@@ -1365,6 +1365,21 @@ export const DICTIONARY = {
     pl: "Edycja itemu udostępnionego Ci bezpośrednio nie jest jeszcze dostępna. Poproś właściciela o wprowadzenie zmiany.",
     en: "Editing isn't available yet for an item shared directly with you. Ask its owner to make the change.",
   },
+  // 30-UI-SPEC.md (FSH-02), Copywriting Contract verbatim: the
+  // pending-newcomer detail-panel note, mirroring share.sharedWithYouNote's
+  // two-line shape. States the situation plainly (the share exists, the key
+  // does not) and names the one thing that resolves it -- deliberately
+  // WITHOUT a call to action, because there is genuinely nothing this member
+  // can do, and inventing a retry button would be the reassuring lie this
+  // requirement exists to prevent. No count, no interpolation.
+  "share.pendingFamilyKeyNote": {
+    pl: "To jest udostępnione całej rodzinie, ale Twój klucz jeszcze nie dotarł.",
+    en: "This is shared with the whole family, but your key hasn't arrived yet.",
+  },
+  "share.pendingFamilyKeyNoteDetail": {
+    pl: "Pojawi się automatycznie, gdy inny członek rodziny otworzy aplikację — nie musisz nic robić.",
+    en: "It will appear automatically once another family member opens the app — there's nothing you need to do.",
+  },
   // SHARE-06 revoke (Phase 28, Plan 02) -- 28-UI-SPEC.md's Copywriting
   // Contract §A, verbatim. `share.revokeBody` is the hard, non-negotiable
   // honesty string this row exists to deliver, same class of requirement as

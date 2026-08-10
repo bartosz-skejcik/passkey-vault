@@ -302,7 +302,15 @@ export default function DetailPanel({
             item.fields.type === "card" ? (
               <ItemIconTile item={item} variant="header" />
             ) : null}
-            <span className="truncate">{item.fields.name}</span>
+            {/* 30-15 (FSH-02): a pending row's real name is inside `enc_data`
+                this member cannot read yet -- `fields.name` is an empty
+                placeholder, and an empty heading would read as a rendering
+                bug. The same generic list-row string stands in. */}
+            <span className="truncate">
+              {item.pendingFamilyKey === true
+                ? t("vault.pendingFamilyKeyItemName")
+                : item.fields.name}
+            </span>
             {/* D-3/E5 (26-UI-SPEC.md): the header's metadata area — mirrors
                 ItemRow.tsx's identical AvatarStack wiring (Plan 26-06's
                 shared data source, never re-implemented).
@@ -329,7 +337,15 @@ export default function DetailPanel({
           <h2 className="text-[20px] font-bold leading-[1.2]">{t("item.edit")}</h2>
         )}
         <div className="flex shrink-0 items-center gap-1">
-          {mode === "view" ? (
+          {/* 30-15 (FSH-02): every affordance in this group acts on a real
+              `vault_items` row -- a pending placeholder has none (the server
+              404s this member for that collection until the key lands), so
+              Share/Edit/Delete would each be an operation that can never
+              succeed. Suppressed, not disabled, the same "replaced, never
+              merely disabled" discipline the shared-to-me case above uses;
+              the pending note below is the explanation that replaces them.
+              Close stays, since it is about this panel, not the item. */}
+          {mode === "view" && item.pendingFamilyKey !== true ? (
             <>
               {/* Phase 12 cross-client fix: no Edit affordance for passkey
                   items — ItemForm has no passkey branch, and re-encrypting
@@ -447,7 +463,32 @@ export default function DetailPanel({
           UI for a flagged item via the hidden Edit button above, but this
           banner is the same defense-in-depth as that guard, not a
           replacement for it). */}
-      {item.undecryptable === true ? (
+      {/* 30-15 (FSH-02), 30-UI-SPEC.md "Pending-newcomer detail-panel state":
+          checked FIRST, ahead of every decrypt-dependent branch below. A
+          pending row has never decrypted at all, so `undecryptable`'s
+          "retained stale copy" reasoning does not apply to it, and its
+          `collectionId`/`sharedToMe` metadata does not exist. Deliberately
+          `role="status"`, NOT the `role="alert"` every genuine error banner
+          in this file uses: a screen-reader user must get the same
+          non-alarming signal a sighted user gets from the absence of
+          warning color. This is honest only because the condition itself is
+          narrow -- it is set from the discovery endpoint's positive
+          `missing` list alone (store.ts's `pendingFamilyKeyRows`), never
+          from a caught decrypt exception, so it can never soothe away a
+          real failure. */}
+      {item.pendingFamilyKey === true ? (
+        <div
+          data-testid="pending-family-key-detail"
+          role="status"
+          aria-live="polite"
+          className="flex flex-col gap-1 text-sm text-base-content/70"
+        >
+          <span>{t("share.pendingFamilyKeyNote")}</span>
+          <span data-testid="pending-family-key-detail-explanation">
+            {t("share.pendingFamilyKeyNoteDetail")}
+          </span>
+        </div>
+      ) : item.undecryptable === true ? (
         <div data-testid="undecryptable-item-banner" className="alert alert-warning text-sm">
           {t("sync.itemUndecryptableWarning")}
         </div>
@@ -478,7 +519,13 @@ export default function DetailPanel({
           ever passed for a passkey item, fall through to the view-mode
           branch below instead of mounting ItemForm (which has no passkey
           branch). */}
-      {mode === "edit" && item.fields.type !== "passkey" ? (
+      {/* 30-15 (FSH-02): a pending placeholder has no fields to show at all
+          -- its `fields` exist only because `VaultItem` requires them. The
+          view body is skipped entirely rather than rendering a column of
+          empty labels and copy buttons over nothing, which would read as
+          "this item is empty" instead of "your key hasn't arrived". */}
+      {item.pendingFamilyKey === true ? null : mode === "edit" &&
+        item.fields.type !== "passkey" ? (
         <>
           {conflict ? (
             <div
