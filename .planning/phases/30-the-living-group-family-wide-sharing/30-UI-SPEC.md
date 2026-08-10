@@ -483,7 +483,7 @@ attention (a suspended-family banner, a revision conflict).
 
 ## UI Considerations
 
-Applicable state considerations resolved: 13 covered, 2 backstop, 0 unresolved.
+Applicable state considerations resolved: 11 covered, 2 backstop, 0 unresolved (13 table rows total).
 
 Probed surfaces: **G1** "Cała rodzina" row (`interactive-control`) · **G2** member-count text
 (`static-content`, data-driven) · **G3** timing-caveat text (`static-content`, fixed) · **G4**

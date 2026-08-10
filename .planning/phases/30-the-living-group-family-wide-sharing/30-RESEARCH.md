@@ -741,31 +741,33 @@ architecture; nothing here supersedes an existing pattern, it extends one.
 **If this table is empty:** N/A — six assumptions logged above; all should be confirmed or explicitly
 adopted in the phase's own decision record before code depends on them (SC1).
 
-## Open Questions
+## Open Questions (RESOLVED — see 30-01-PLAN.md / 30-02-PLAN.md)
 
 1. **Should the family-wide flag live on `collections` or should there be a genuinely separate,
    lighter-weight "family_wide_grants" table decoupled from the collection-creation flow?**
-   - What we know: `collections` already has every column a family-wide grant needs (id, family_id,
-     enc_name, revision) and its authorization/sync/re-key machinery is fully proven.
-   - What's unclear: whether product wants a family-wide folder to be visually/organizationally a
-     "real folder" (appears in the sidebar's folder list, etc.) or a lighter concept.
-   - Recommendation: default to the `collections` property (A1 above) unless UI-SPEC's rendering
-     requirements for the sharing overview surface a reason to diverge — re-reading UI-SPEC.md's
-     "Why a dedicated block, not the existing 'By folder' tab" section suggests the overview
-     deliberately treats family-wide as its OWN category regardless of underlying data model, which
-     is compatible with either choice.
+   - **RESOLVED: the `collections` property**, per `30-DECISION-FSH-02.md` and `30-01`'s migration
+     `0019_family_wide_sharing.sql`. Concretely a SINGLE column, `family_wide_kind TEXT CHECK
+     (family_wide_kind IN ('folder', 'item_bucket'))` — not the plain `is_family_wide BOOLEAN` this
+     document's earlier reasoning (A1) sketched. Collapsing the boolean AND the folder/item-bucket
+     distinction into one nullable-enum column, rather than two independent flags, was chosen at
+     planning time specifically to make "is family-wide AND which kind" a single unambiguous read,
+     preventing the two-flag combination `is_family_wide=false, kind='folder'` from ever being a
+     representable-but-nonsensical state. `30-01` additionally adds
+     `idx_one_item_bucket_per_family`, a partial unique index bounding the `item_bucket` kind to
+     exactly one per family (the `folder` kind is correctly left unbounded) — a constraint this
+     document's original reasoning did not anticipate needing, added during plan revision once the
+     item_bucket auto-creation flow's own race window was examined.
+   - What we know / what's unclear (as originally written) still holds as background; the column
+     shape above is what shipped to plans, not merely recommended.
 
 2. **Does `PUT /api/vault/collections/{id}` (or wherever `is_family_wide` would be set) need its own
    dedicated endpoint, or can it ride on collection creation only (never toggled after the fact)?**
-   - What we know: UI-SPEC.md's ShareDialog contract shows family-wide chosen AT SHARE TIME, with no
-     "convert an existing shared-to-specific-people folder into family-wide later" UI in this phase
-     (mutual exclusivity is enforced per-dialog-session, not as a later toggle).
-   - What's unclear: whether the flag is set once at creation (`POST /api/vault/collections`, an
-     additional field) and never mutated, or needs its own PATCH-style endpoint for future phases.
-   - Recommendation: set it once at creation only for this phase — matches the locked "no per-person
-     overrides / one access level for the whole family" simplicity, and defers "can a folder change
-     between family-wide and specific-people" to a future phase exactly like per-person overrides are
-     already deferred.
+   - **RESOLVED: creation-only, no dedicated endpoint.** `30-02` Task 2 threads `family_wide_kind`
+     into `CreateCollectionRequest`/`collections::create()` exclusively — no PATCH/PUT surface is
+     added anywhere in this phase, and no plan in `30-01`..`30-17` mutates an existing collection's
+     `family_wide_kind` after creation. Matches this document's original recommendation exactly:
+     defers "can a folder change between family-wide and specific-people" to a future phase, exactly
+     like per-person overrides are already deferred.
 
 ## Environment Availability
 
