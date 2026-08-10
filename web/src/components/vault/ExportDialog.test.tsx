@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { VaultItem } from "@/lib/vault/types";
+// Deliberately NOT mocked in this file (only "@/lib/i18n/LocaleContext" is,
+// via the `t: (key) => key` identity stub below) -- these are the real
+// dictionary entry + engine functions, used by the held-out copy-pinning
+// test at the bottom of this file so the actual shipped wording is what
+// gets asserted, not a mocked-identity substring that would pass either way.
+import { interpolate as realInterpolate, t as realT } from "@/lib/i18n/dictionary";
 
 const {
   mockGetItems,
@@ -169,5 +175,39 @@ describe("ExportDialog — DEBT-02 hidden-password disclosure", () => {
 
     expect(screen.getByTestId("export-confirm")).toBeDisabled();
     expect(screen.queryByTestId("export-hidden-password-disclosure")).not.toBeInTheDocument();
+  });
+});
+
+// Held-out copy-pinning test (Task 3 checkpoint resolution, 2026-08-10):
+// the component-level tests above render through a mocked `t` (identity
+// function returning the bare key), so they never actually exercise the
+// real dictionary string -- they'd pass unchanged no matter what the real
+// PL/EN copy says. This block asserts the REAL, unmocked dictionary entry
+// + interpolate() output verbatim, at n=1 AND n=2, in both locales, so the
+// wording can't drift silently. The original "{n} wpisów" copy was
+// rejected specifically because it was grammatically wrong at n=1 ("1
+// wpisów"); this test would have caught that, and now proves the reworded
+// copy (count never governs the noun) is correct at every n with zero
+// plural-selection machinery -- in EN as well as PL, since "{n} such
+// items" would have reproduced the identical bug in English.
+describe("export.hiddenPasswordDisclosure copy (held-out, real dictionary -- pins wording against silent drift)", () => {
+  it("pl: grammatically correct at n=1 and n=2 with zero plural-selection logic", () => {
+    const template = realT("pl", "export.hiddenPasswordDisclosure");
+    expect(realInterpolate(template, { n: "1" })).toBe(
+      "Ten eksport zawiera hasła wpisów udostępnionych Ci z ukrytym hasłem — liczba takich wpisów: 1. To maskowanie działa tylko w interfejsie, nigdy kryptograficznie.",
+    );
+    expect(realInterpolate(template, { n: "2" })).toBe(
+      "Ten eksport zawiera hasła wpisów udostępnionych Ci z ukrytym hasłem — liczba takich wpisów: 2. To maskowanie działa tylko w interfejsie, nigdy kryptograficznie.",
+    );
+  });
+
+  it("en: grammatically correct at n=1 and n=2 with zero plural-selection logic", () => {
+    const template = realT("en", "export.hiddenPasswordDisclosure");
+    expect(realInterpolate(template, { n: "1" })).toBe(
+      "This export includes the passwords of items shared to you with a hidden password — 1 in total. That mask is an interface-only protection, never a cryptographic one.",
+    );
+    expect(realInterpolate(template, { n: "2" })).toBe(
+      "This export includes the passwords of items shared to you with a hidden password — 2 in total. That mask is an interface-only protection, never a cryptographic one.",
+    );
   });
 });

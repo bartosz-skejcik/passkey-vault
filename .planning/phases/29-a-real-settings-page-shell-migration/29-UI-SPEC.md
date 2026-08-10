@@ -149,7 +149,7 @@ below for why the new disclosure sentence does **not** get its own color treatme
 | Page title (`<h1>`) | `settings.title` "Ustawienia" / "Settings" — unchanged, existing key, promoted from panel-title to page-title use |
 | Empty/error states inside migrated sections | Unchanged — every existing empty/error string in `PasskeysTab`/`SessionsTab`/`SecurityTab`/`FamilyTab` carries across verbatim (SC2's "no functional regression" bar) |
 | Destructive confirmation | Unchanged — "Usuń konto" (`DeleteAccountDialog`), session revoke, passkey delete, member removal all keep their existing confirmation copy |
-| DEBT-02 export disclosure | **NEW** `export.hiddenPasswordDisclosure` (interpolated `{n}`): pl "Ten eksport zawiera hasła {n} wpisów udostępnionych Ci z ukrytym hasłem — to maskowanie działa tylko w interfejsie, nigdy kryptograficznie.", en "This export includes the passwords for {n} items shared to you with a hidden password — that mask is an interface-only protection, never a cryptographic one." Renders **only when `n > 0`**; at `n === 0` the sentence does not render at all (no empty state, no placeholder). |
+| DEBT-02 export disclosure | **NEW** `export.hiddenPasswordDisclosure` (interpolated `{n}`): pl "Ten eksport zawiera hasła wpisów udostępnionych Ci z ukrytym hasłem — liczba takich wpisów: {n}. To maskowanie działa tylko w interfejsie, nigdy kryptograficznie.", en "This export includes the passwords of items shared to you with a hidden password — {n} in total. That mask is an interface-only protection, never a cryptographic one." Reworded (Task 3 checkpoint resolution, 2026-08-10) so `{n}` never governs a noun — the original "{n} wpisów"/"{n} items" shape produced grammatically incorrect Polish at n=1 ("1 wpisów"); rather than add this codebase's first plural-selection helper, both locales trail `{n}` as a standalone count, correct at every n with zero machinery. The `account.deleteOwnerWarning` "1 member(s)" debt is intentionally left as-is — not propagated into this security-adjacent dialog. Renders **only when `n > 0`**; at `n === 0` the sentence does not render at all (no empty state, no placeholder). |
 
 ---
 
@@ -328,7 +328,7 @@ Applicable state considerations resolved: 4 covered, 1 backstop, 0 unresolved.
 
 Probed surfaces: **E1** page shell · **E2** jump-nav · **E3** settings section group · **E4**
 back-to-vault link · **E5** DEBT-02 export disclosure · **E6** sidebar settings entry.
-40 applicable considerations across the 8-category taxonomy: **37 covered, 3 backstop, 0 unresolved.**
+40 applicable considerations across the 8-category taxonomy: **38 covered, 2 backstop, 0 unresolved** (updated 2026-08-10: the E5 grammar-at-every-`n` row moved from backstop to covered per the Task 3 checkpoint resolution below).
 
 | Category | Element(s) | Status | Resolution / Reason |
 |----------|------------|--------|----------------------|
@@ -346,13 +346,14 @@ back-to-vault link · **E5** DEBT-02 export disclosure · **E6** sidebar setting
 | empty, zero-one-many | E5 DEBT-02 export disclosure | ✅ covered | `n === 0` → the sentence is **entirely absent** (not "0 wpisów"); `n ≥ 1` → it renders with the interpolated count. This *is* the DEBT-02 resolution, and SC4 verifies it against the bytes of a real generated export file, not against the rendered string. |
 | populated, overflow, long-text | E5 DEBT-02 export disclosure | ✅ covered | Rendered as a second `<p>` **inside** the existing `export-warning-banner` alert — never a competing second alert box. Fixed sentence plus a number; wraps inside the alert at every width. |
 | loading, partial, error | E5 DEBT-02 export disclosure | 🧪 backstop | **The honesty risk this phase exists to close, re-entering through the back door.** The count is derived from vault item state via `isPasswordHidden`. If the export dialog can be opened while items are still hydrating — or over a partially-hydrated set — the count is an **undercount**, and at zero it renders as *no sentence at all*: the UI would silently claim nothing is exposed while the file about to be written contains exactly those passwords. That is the same class of lie DEBT-02 is fixing, so "it will probably be hydrated by then" is not an acceptable resolution. Needs an explicit rule — the disclosure is computed only from a fully-hydrated item set, and the export action is unavailable until then — plus a falsification test that opens the dialog against an unhydrated/partial store and asserts the flow does **not** present a zero-count (absent) disclosure. |
-| zero-one-many | E5 DEBT-02 export disclosure — Polish grammar at `n === 1` | 🧪 backstop | "1 wpisów" is not grammatically correct Polish, but matches this codebase's existing, accepted no-plural-machinery convention (same shape as the recorded cosmetic debt on `account.deleteOwnerWarning`'s "1 member(s)"). Needs a held-out test asserting the exact interpolated string at `n = 1` rather than an assumption that it "reads fine." |
+| zero-one-many | E5 DEBT-02 export disclosure — grammar at every `n` | ✅ covered | Task 3 checkpoint resolution (2026-08-10, delegated by Bartek): rather than ship "1 wpisów" (the recorded `account.deleteOwnerWarning` "1 member(s)" no-plural-machinery convention, deliberately NOT propagated into this security-adjacent dialog), both pl and en copy were reworded so `{n}` stands alone as a trailing count and never governs a noun — correct at every `n` with zero plural-selection machinery, in either language. A held-out test (`ExportDialog.test.tsx`'s "export.hiddenPasswordDisclosure copy" block) asserts the exact, real (unmocked) dictionary + `interpolate()` output verbatim at `n=1` and `n=2` in both locales, closing this by construction rather than deferring to a human read. |
 
-**Planner note — the three backstops are not decoration.** Each one is a stated verification obligation
-with no wired evidence yet, so at verify time each routes to `insufficient_spec → human_needed` unless
-the plan wires it. The E5 loading/partial backstop in particular is a **correctness** obligation, not a
-polish item: it is the one place in this phase where a plausible implementation would reintroduce the
-exact dishonesty DEBT-02 removes.
+**Planner note — the remaining two backstops are not decoration.** Each one is a stated verification
+obligation with no wired evidence yet, so at verify time each routes to `insufficient_spec → human_needed`
+unless the plan wires it. The E5 loading/partial backstop in particular is a **correctness** obligation, not
+a polish item: it is the one place in this phase where a plausible implementation would reintroduce the
+exact dishonesty DEBT-02 removes. (The E5 grammar-at-every-`n` backstop that originally sat alongside it
+closed by construction in Plan 29-02 — see the table row above.)
 
 Dismissed (reason recorded, not a table row per the template's 3-status shape): long-text on the four
 group description lines — fixed, short, translator-owned, no user input can lengthen them.

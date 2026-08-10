@@ -384,9 +384,20 @@ export const DICTIONARY = {
   // export file contains the passwords for items shared to this user at
   // `hidden_password` access level. Literal copy from 29-UI-SPEC.md's
   // Copywriting Contract. Renders only when n > 0 (ExportDialog.tsx).
+  //
+  // Reworded so the count never governs the noun (Task 3 checkpoint
+  // resolution, 2026-08-10) -- the original "{n} wpisów" produced "1
+  // wpisów" at n=1, grammatically incorrect Polish. Rather than add this
+  // codebase's first plural-selection helper (a precedent every future
+  // counted string would then be measured against), both locales are
+  // reworded so `{n}` stands alone as a trailing count, correct at every
+  // n with zero machinery. The EN string needed the identical fix -- "{n}
+  // such items" would have produced "1 such items", the same bug in the
+  // other language -- so `{n}` also stands alone there, not governing
+  // "item(s)".
   "export.hiddenPasswordDisclosure": {
-    pl: "Ten eksport zawiera hasła {n} wpisów udostępnionych Ci z ukrytym hasłem — to maskowanie działa tylko w interfejsie, nigdy kryptograficznie.",
-    en: "This export includes the passwords for {n} items shared to you with a hidden password — that mask is an interface-only protection, never a cryptographic one.",
+    pl: "Ten eksport zawiera hasła wpisów udostępnionych Ci z ukrytym hasłem — liczba takich wpisów: {n}. To maskowanie działa tylko w interfejsie, nigdy kryptograficznie.",
+    en: "This export includes the passwords of items shared to you with a hidden password — {n} in total. That mask is an interface-only protection, never a cryptographic one.",
   },
 
   "aria.chooseFileToImport": { pl: "Wybierz plik do importu", en: "Choose a file to import" },
