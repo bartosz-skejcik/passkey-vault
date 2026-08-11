@@ -1,0 +1,52 @@
+=== --with-panic-probe build ===
+==> variant: --with-panic-probe (ffi06-probe compiled IN -- test-only artifact)
+==> uniffi version (single-sourced): 0.32.0
+==> IPHONEOS_DEPLOYMENT_TARGET=18.0 (must match project.pbxproj)
+==> Building pv-ffi for aarch64-apple-ios-sim (staticlib, release)
+    Finished `release` profile [optimized] target(s) in 0.40s
+==> Building pv-ffi for aarch64-apple-ios (staticlib, release)
+    Finished `release` profile [optimized] target(s) in 0.14s
+==> Generating Swift bindings (uniffi-bindgen-swift)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings/Headers --headers --modulemap --modulemap-filename module.modulemap --module-name pv_ffiFFI`
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings --swift-sources`
+==> Assembling PvFfi.xcframework
+xcframework successfully written out to: /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/build/PvFfi.xcframework
+==> Running the vtool slice gate
+==> OK: ios-arm64 (pv_ffi-322f4c99562dcf7b.pv_ffi.5bc11fa9c144ad43-cgu.3.rcgu.o) matches the expected load command (/^[[:space:]]*platform[[:space:]]+IOS$/)
+==> OK: ios-arm64-simulator (pv_ffi-b5431da78334e126.pv_ffi.ef81503862d3b17c-cgu.5.rcgu.o) matches the expected load command (/^[[:space:]]*platform[[:space:]]+IOSSIMULATOR$/)
+==> Done. XCFramework: ios/PasskeyVault/build/PvFfi.xcframework
+==> Done. Swift bindings: ios/PasskeyVault/build/swift-bindings
+=== grep ffi06SyntheticPanicProbe (expect >=1) ===
+2
+=== plain build ===
+==> variant: plain (no extra features -- the artifact every non-test consumer, including the appex, links)
+==> uniffi version (single-sourced): 0.32.0
+==> IPHONEOS_DEPLOYMENT_TARGET=18.0 (must match project.pbxproj)
+==> Building pv-ffi for aarch64-apple-ios-sim (staticlib, release)
+    Finished `release` profile [optimized] target(s) in 0.09s
+==> Building pv-ffi for aarch64-apple-ios (staticlib, release)
+    Finished `release` profile [optimized] target(s) in 0.09s
+==> Generating Swift bindings (uniffi-bindgen-swift)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings/Headers --headers --modulemap --modulemap-filename module.modulemap --module-name pv_ffiFFI`
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings --swift-sources`
+==> Assembling PvFfi.xcframework
+xcframework successfully written out to: /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/build/PvFfi.xcframework
+==> Running the vtool slice gate
+==> OK: ios-arm64 (pv_ffi-bfa79763f514813f.pv_ffi.cd2c10851ccfa4fa-cgu.0.rcgu.o) matches the expected load command (/^[[:space:]]*platform[[:space:]]+IOS$/)
+==> OK: ios-arm64-simulator (pv_ffi-8b3a19f96cba5d77.pv_ffi.90776ec1cbf88c9e-cgu.5.rcgu.o) matches the expected load command (/^[[:space:]]*platform[[:space:]]+IOSSIMULATOR$/)
+==> Done. XCFramework: ios/PasskeyVault/build/PvFfi.xcframework
+==> Done. Swift bindings: ios/PasskeyVault/build/swift-bindings
+=== greps for the six sanctioned exports (expect 1 each) ===
+exportUserKeyForSession: 1
+importUserKeyFromSession: 1
+wrapUserKey: 1
+unwrapUserKey: 1
+encryptItem: 1
+decryptItem: 1
+=== confirm plain build has NO ffi06SyntheticPanicProbe (expect 0) ===
+0
+0 (grep exit 1, no matches)
