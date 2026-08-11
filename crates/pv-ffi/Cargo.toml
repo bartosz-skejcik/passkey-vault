@@ -1,0 +1,24 @@
+[package]
+name = "pv-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "UniFFI bindings for pv-core — thin FFI layer, no crypto logic of its own, mirrors crates/pv-wasm."
+
+[lib]
+crate-type = ["staticlib", "lib"]
+
+# Open Question 1 (35-RESEARCH.md) resolved empirically this session: UniFFI
+# 0.32.0's proc-macro mode needs NO build.rs / no [build-dependencies] here
+# at all. Instead crates/pv-ffi/src/lib.rs calls `uniffi::setup_scaffolding!()`
+# at the crate root -- confirmed against mozilla/uniffi-rs
+# docs/manual/src/tutorial/Rust_scaffolding.md via Context7 ("If you are
+# only using proc macros and not UDL files, you can skip the build.rs file
+# entirely"). `.udl`/traditional mode is the only mode that needs a build.rs.
+[dependencies]
+pv-core = { path = "../pv-core" }
+uniffi = { version = "=0.32.0", features = ["cli"] }
+serde_json.workspace = true
+zeroize = { version = "1", features = ["derive"] }
+thiserror.workspace = true
