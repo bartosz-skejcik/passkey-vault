@@ -254,6 +254,37 @@ async fn reassign_departing_member_collection_items(
         .await?;
 
     for collection_id in touched_collections {
+        // WR-02 fix (30-REVIEW.md): `touched_collections` includes a
+        // collection where the departing member was the ONLY recipient — a
+        // shared folder they created and never granted to anyone, or one
+        // everyone else was later removed from. For that subset,
+        // `apply_member_removal_rekey`'s own `new_sealed_keys` set is empty
+        // (nothing survives to re-key), no `collection_keys` row remains
+        // after this transaction, and unconditionally reassigning
+        // `vault_items.user_id` here would repoint those items to
+        // `new_owner_user_id` anyway — permanent, undecryptable orphans:
+        // invisible to every read path (`fetch_items_for`'s collection arm
+        // needs a surviving `collection_keys` row; its personal arm needs
+        // `collection_id IS NULL`), owned by someone who cannot decrypt
+        // them, and no longer cleaned up by anything (before this handler
+        // existed, the account's own cascade delete destroyed them
+        // correctly). This doc comment's own stated rationale — "STAYS in
+        // that collection, readable by every remaining member" — is false
+        // for this subset: there ARE no remaining members. Only reassign
+        // when at least one OTHER recipient's grant actually survives;
+        // otherwise let the normal cascade delete these rows with the
+        // account, exactly as it did before this handler existed.
+        let survivors: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM collection_keys WHERE collection_id = ? AND recipient_user_id != ?",
+        )
+        .bind(collection_id)
+        .bind(member_user_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        if survivors == 0 {
+            continue;
+        }
+
         sqlx::query("UPDATE vault_items SET user_id = ? WHERE user_id = ? AND collection_id = ?")
             .bind(&new_owner_user_id)
             .bind(member_user_id)

@@ -1085,3 +1085,111 @@ async fn family_get_rejects_non_member_and_returns_shape_for_a_real_member() {
     assert_eq!(owner_get_body["owner_user_id"], owner_id);
     assert!(owner_get_body["created_at"].is_string());
 }
+
+/// WR-02 regression (30-REVIEW.md): a departing plain member's collection
+/// where they were the ONLY recipient (a shared folder they created and
+/// never granted to anyone else) must NOT be reassigned to the family owner
+/// -- `apply_member_removal_rekey` leaves ZERO surviving `collection_keys`
+/// rows for it, so before this fix the item would have been repointed to
+/// `new_owner_user_id` anyway, permanently orphaned (undecryptable by
+/// anyone, invisible to every read path, never cleaned up). It must instead
+/// be destroyed by the SAME cascade delete that correctly destroyed it
+/// before the WINDOWS #16 fix existed.
+#[tokio::test]
+async fn member_self_deletion_destroys_items_in_a_collection_with_no_surviving_recipients() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "acctdel-wr02-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member_token = register_second_family_member(&app, &owner_token, "acctdel-wr02-member@example.com").await;
+    let member_id = user_id_of(&app, &member_token).await;
+
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    // The MEMBER creates their own collection -- they are the SOLE
+    // recipient, never shared with the owner or anyone else.
+    let ck = CollectionKey::generate();
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &member_token,
+        Some(json!({
+            "id": "d4a1c9e3-8b2f-4b1a-9c3e-1f2a3b4c5d6e",
+            "enc_name": "enc-wr02-sole-recipient-collection",
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let plaintext = br#"{"type":"note","name":"orphan risk","body":"WR-02"}"#;
+    let encrypted = encrypt_item_for_collection(&ck, plaintext, &collection_id, &item_id, 1).unwrap();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &member_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": serde_json::to_string(&encrypted.enc_key).unwrap(),
+            "enc_data": serde_json::to_string(&encrypted.enc_data).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+    sqlx::query("UPDATE vault_items SET collection_id = ? WHERE id = ?")
+        .bind(&collection_id)
+        .bind(&item_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The re-key batch: ZERO remaining recipients, and the batch's own item
+    // set must exactly match the collection's current items (Step 2's race
+    // guard) -- `enc_key` here is never actually read by anyone once no
+    // recipient survives, so re-submitting the original blob is honest (no
+    // real rewrap happened, because there is nobody to rewrap it for).
+    let delete_res = req(
+        &app,
+        "DELETE",
+        "/api/auth/account",
+        &member_token,
+        Some(json!({
+            "collections": [
+                {
+                    "collection_id": collection_id,
+                    "new_sealed_keys": [],
+                    "item_rewraps": [
+                        { "item_id": item_id, "enc_key": serde_json::to_string(&encrypted.enc_key).unwrap() }
+                    ]
+                }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(delete_res.status(), StatusCode::NO_CONTENT);
+
+    let remaining_keys: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM collection_keys WHERE collection_id = ?")
+            .bind(&collection_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining_keys, 0, "sanity: the collection must genuinely have zero surviving recipients");
+
+    let item_still_exists: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM vault_items WHERE id = ?").bind(&item_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        item_still_exists, 0,
+        "WR-02: an item in a collection with zero surviving recipients must be destroyed by the cascade \
+         delete, never silently reassigned to the family owner as a permanent, undecryptable orphan"
+    );
+
+    assert!(!user_row_exists(&pool, &member_id).await, "the deleting member's own users row must be gone");
+}
