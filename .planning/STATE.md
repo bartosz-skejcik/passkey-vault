@@ -57,7 +57,27 @@ command, so it could not fail** (`-p pv-server` instead of `--workspace`; `vites
 typecheck, instead of `npm run compile`). Verify at CI width.
 
 Also: the verifier found phase 30's own green e2e result had been produced against a **stale release
-binary** predating the review fixes — rebuild `pv-server` before trusting any live run.
+binary** predating the review fixes. The fix pass re-ran it from a **fresh build of this HEAD** — 9/9,
+`cargo test --workspace` all crates, `npm run compile` 0 errors, 964/964 units. Still rebuild before
+trusting any future live run.
+
+### Two things the re-verify must NOT undo
+
+- **`collections::create`'s hard-coded `'edit'` for the creator's own row is deliberate and correct.**
+  I instructed the fixer to change it as part of B1; it investigated, found the hard-code matches
+  `d07c2a7`'s established `read`-case precedent, left it alone, and added a comment explaining why.
+  That judgement was right — do not "fix" it back.
+- **B1's fix enumerates the full 9-pair `(caller, requested)` matrix explicitly**, rather than adding
+  the one missing arm. That was deliberate: this bug has now appeared twice, each time as a missing
+  pair in a matrix that looked complete. Keep it exhaustive.
+
+### Known remaining gap on SC2 (not a blocker, but real)
+
+FSH-01's family-wide **item** variant (`item_bucket`) has **no recipient-side proof of any kind** —
+`web/e2e/family-wide-sharing.spec.ts` exercises only the folder variant, there is no real-WASM test,
+and the unit coverage mocks crypto. The folder half is live-proven; the item half is not. Documented in
+`30-VERIFICATION.md`'s disposition section. Decide at re-verify whether that abstains to `human_needed`
+or is closed with a test.
 
 ### Parallel work in progress — do not disturb
 
