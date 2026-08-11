@@ -1707,6 +1707,108 @@ async fn invitation_create_with_family_wide_collection_caller_lacks_edit_on_reje
     assert_eq!(before_count, after_count, "a not-held-edit-on entry must write zero invitations rows");
 }
 
+/// CR-02 regression (30-REVIEW.md): the relaxed `require_collection_access_
+/// for_propagation` bound in the `family_wide_keys` loop is meant ONLY for
+/// the automatic family-wide fold-in -- an ORDINARY (non-family-wide)
+/// collection must still clear the SAME `require_collection_edit` gate the
+/// deliberate single-collection-scope branch enforces, and that
+/// `collections::add_member` enforces for the identical deliberate-share
+/// action. A caller who holds only `read` on an ordinary collection (a
+/// fellow member's own real collection, explicitly shared with them) must
+/// be REJECTED with `403` when they put that collection's id into
+/// `family_wide_keys` -- before the fix, this bound alone would have
+/// authorized it (a `read`-holding caller propagating `read` is exactly
+/// within `may_grant_access_level`'s bound), silently bypassing the
+/// deliberate-share gate for a collection that was never family-wide at
+/// all.
+#[tokio::test]
+async fn invitation_create_with_read_only_on_a_non_family_wide_collection_in_family_wide_keys_rejects() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "invite-cr02-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    // A fellow member's own ORDINARY (non-family-wide) collection, with the
+    // OWNER granted `read` on it explicitly -- proving they hold SOME real
+    // access, not zero (the `invitation_create_with_family_wide_collection_
+    // caller_lacks_edit_on_rejects` test above already covers the
+    // zero-access case; this test covers the "holds read but not edit"
+    // case CR-02 actually found).
+    let member_token =
+        register_second_family_member(&app, &owner_token, "invite-cr02-member@example.com").await;
+    let (member_collection_id, member_ck) = create_collection_with_id(
+        &app,
+        &member_token,
+        "cccccccc-0000-4000-8000-000000000002",
+    )
+    .await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+    // Publish a REAL keypair for the owner, then seal to it for real --
+    // `add_member`'s confused-deputy guard requires a genuine
+    // `user_keypairs` row, and a malformed/fake sealed_key would make this
+    // fixture's OWN setup step fail rather than exercising CR-02.
+    let owner_sk = IdentitySecretKey::generate();
+    let publish_res = req(
+        &app,
+        "PUT",
+        "/api/identity/keypair",
+        Some(&owner_token),
+        Some(json!({
+            "public_key": STANDARD.encode(owner_sk.public_key().to_bytes()),
+            "wrapped_secret_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"BBBB\"}",
+        })),
+    )
+    .await;
+    assert_eq!(publish_res.status(), StatusCode::OK, "publishing the owner's real keypair must succeed");
+    let owner_sealed = seal(&owner_sk.public_key(), member_ck.expose()).unwrap();
+    let grant_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{member_collection_id}/members"),
+        Some(&member_token),
+        Some(json!({
+            "recipient_user_id": owner_id,
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(grant_res.status(), StatusCode::CREATED, "granting the owner read access must succeed");
+
+    let before_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invitations").fetch_one(&pool).await.unwrap();
+
+    let secrets = derive_invite_secrets();
+    let res = req(
+        &app,
+        "POST",
+        "/api/invitations",
+        Some(&owner_token),
+        Some(json!({
+            "id": secrets.invite_id,
+            "collection_id": null,
+            "access_level": null,
+            "wrapped_collection_key": null,
+            "proof_hash": secrets.proof_hash_b64,
+            "expires_in": "24h",
+            "family_wide_keys": [
+                { "collection_id": member_collection_id, "access_level": "read", "wrapped_collection_key": "fake" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(
+        res.status(),
+        StatusCode::FORBIDDEN,
+        "CR-02: a read-only holder of a NON-family-wide collection must be rejected with 403 \
+         (provably has SOME access, just not the Edit this deliberate-share gate requires) -- \
+         never authorized through the relaxed family-wide propagation bound"
+    );
+
+    let after_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM invitations").fetch_one(&pool).await.unwrap();
+    assert_eq!(before_count, after_count, "a CR-02-rejected entry must write zero invitations rows");
+}
+
 // --- 30-03-PLAN.md Task 2: accept() threads N self-seals into the SAME transaction ---
 
 /// `accept()` for an invite carrying BOTH the existing single-collection
