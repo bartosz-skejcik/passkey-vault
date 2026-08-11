@@ -19,7 +19,8 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 {instrument|sensitivity|enforcement} <evidence-log>" >&2
+  echo "Usage: $0 {instrument|sensitivity|enforcement|measure} <evidence-log>" >&2
+  echo "       $0 wording" >&2
   exit 1
 }
 
@@ -206,9 +207,145 @@ cmd_enforcement() {
   esac
 }
 
+# --- measure: E6, the FILL-06 measurement itself --------------------------
+# Reads an evidence log (ios/evidence/36/kdf-inprocess.log or
+# kdf-coldstart.log), extracts every PVPROBE|stage=kdf run's metrics,
+# computes D = peak_sampled - baseline (the KDF's own cost) and
+# R-B = residual - baseline (the allocator residual) PER RUN, and
+# classifies the whole SERIES against the thresholds declared in
+# 36-RESEARCH.md SS"E6" (defined here, before any run is read):
+#   FAIL      -- any run's peak_sampled > 110 MiB, or any run's R-B > 8 MiB
+#   MARGINAL  -- (treated as FAIL for design purposes) 90 MiB < peak <= 110 MiB
+#   PASS      -- every run's peak_sampled <= 90 MiB and R-B <= 8 MiB
+# plus an INDEPENDENT tripwire, checked regardless of band: any run's
+# D >= 32 MiB (three shipping competitors' documented guidance,
+# 36-RESEARCH.md "Competitor precedent").
+#
+# Exits non-zero ONLY when the log is unparseable or a run is missing a
+# required field -- a FAILING measurement is a real result, and this gate
+# reports it (both to stdout and in its own exit code, which stays 0) rather
+# than hiding it behind a non-zero exit (36-04-PLAN.md Task 1 action text).
+FAIL_THRESHOLD_BYTES=$((110 * 1024 * 1024))
+MARGINAL_THRESHOLD_BYTES=$((90 * 1024 * 1024))
+RESIDUAL_THRESHOLD_BYTES=$((8 * 1024 * 1024))
+TRIPWIRE_D_BYTES=$((32 * 1024 * 1024))
+
+cmd_measure() {
+  local logfile="$1"
+  require_log "$logfile"
+
+  local run_count
+  run_count=$(grep -cE 'PVPROBE\|stage=kdf' "$logfile" || true)
+  if [ "$run_count" -eq 0 ]; then
+    echo "FAIL: no PVPROBE|stage=kdf lines found in $logfile -- unparseable" >&2
+    exit 1
+  fi
+
+  echo "measure: $logfile -- $run_count run(s)"
+  echo "thresholds (bytes): FAIL peak>$FAIL_THRESHOLD_BYTES(110MiB) | MARGINAL ${MARGINAL_THRESHOLD_BYTES}(90MiB)<peak<=$FAIL_THRESHOLD_BYTES(110MiB) | PASS peak<=$MARGINAL_THRESHOLD_BYTES(90MiB) and R-B<=$RESIDUAL_THRESHOLD_BYTES(8MiB) | tripwire D>=$TRIPWIRE_D_BYTES(32MiB)"
+
+  local worst_band="PASS"
+  local tripwire_fired="no"
+  local n=0
+  local seq_keys=""
+  while IFS= read -r line; do
+    n=$((n + 1))
+    local run label standin baseline peak residual samples ledger inv
+    run=$(printf '%s\n' "$line" | grep -oE 'run=[0-9]+' | head -1 | sed -E 's/run=//')
+    label=$(printf '%s\n' "$line" | grep -oE 'label=[^ ]*' | head -1 | sed -E 's/label=//')
+    standin=$(printf '%s\n' "$line" | grep -oE 'standin=[^ ]*' | head -1 | sed -E 's/standin=//')
+    baseline=$(printf '%s\n' "$line" | grep -oE 'baseline=[0-9]+' | head -1 | sed -E 's/baseline=//')
+    peak=$(printf '%s\n' "$line" | grep -oE 'peak_sampled=[0-9]+' | head -1 | sed -E 's/peak_sampled=//')
+    residual=$(printf '%s\n' "$line" | grep -oE 'residual=[0-9]+' | head -1 | sed -E 's/residual=//')
+    samples=$(printf '%s\n' "$line" | grep -oE 'samples=[0-9]+' | head -1 | sed -E 's/samples=//')
+    ledger=$(printf '%s\n' "$line" | grep -oE 'ledger_peak=-?[0-9]+' | head -1 | sed -E 's/ledger_peak=//')
+    # `|| true`: the single-invocation log has no `inv=` field at all, so
+    # this grep legitimately finds nothing on every line there -- under
+    # `set -o pipefail` an unmatched grep's exit 1 would otherwise abort
+    # the whole script (`set -e`), even though "no inv field" is a normal,
+    # expected shape here, not a parse error.
+    inv=$( (printf '%s\n' "$line" | grep -oE 'inv=[0-9]+' | head -1 | sed -E 's/inv=//') || true)
+
+    if [ -z "$run" ] || [ -z "$baseline" ] || [ -z "$peak" ] || [ -z "$residual" ]; then
+      echo "FAIL: run entry #$n in $logfile is missing a required field (run/baseline/peak_sampled/residual) -- unparseable" >&2
+      exit 1
+    fi
+
+    # Sequence key for the gap/duplicate check below: the assembled
+    # coldstart log's five lines all carry run=1 (each is invocation N's
+    # OWN first ordinal) and are distinguished by `inv=`, so `inv` is the
+    # key when present; the single-invocation log has no `inv` field at
+    # all, so `run` (1..5) is the key there. This is what catches a
+    # DELETED line as a genuine gap rather than as a self-consistently
+    # smaller count (the defect this project calls "a check that cannot
+    # fail" -- L-9 shape, ios/IOS-SPIKE-LOG.md SS3): removing one run's
+    # line changes $run_count too, so a bare count comparison against
+    # itself can never disagree with itself.
+    if [ -n "$inv" ]; then
+      seq_keys="$seq_keys $inv"
+    else
+      seq_keys="$seq_keys $run"
+    fi
+
+    local d rb band tripwire
+    d=$((peak - baseline))
+    rb=$((residual - baseline))
+    if [ "$peak" -gt "$FAIL_THRESHOLD_BYTES" ] || [ "$rb" -gt "$RESIDUAL_THRESHOLD_BYTES" ]; then
+      band="FAIL"
+    elif [ "$peak" -gt "$MARGINAL_THRESHOLD_BYTES" ]; then
+      band="MARGINAL"
+    else
+      band="PASS"
+    fi
+    tripwire="no"
+    if [ "$d" -ge "$TRIPWIRE_D_BYTES" ]; then
+      tripwire="YES"
+      tripwire_fired="yes"
+    fi
+    if [ "$band" != "PASS" ] && [ "$worst_band" = "PASS" ]; then
+      worst_band="$band"
+    elif [ "$band" = "FAIL" ]; then
+      worst_band="FAIL"
+    fi
+
+    echo "run=$run label=${label:-<none>} standin=${standin:-false} baseline=$baseline peak_sampled=$peak D=$d residual=$residual R-B=$rb ledger_peak=${ledger:-<none>} samples=${samples:-<none>} band=$band tripwire=$tripwire"
+  done < <(grep -E 'PVPROBE\|stage=kdf' "$logfile")
+
+  if [ "$n" -ne "$run_count" ]; then
+    echo "FAIL: expected $run_count run(s) in $logfile, parsed $n -- unparseable" >&2
+    exit 1
+  fi
+
+  # Gap/duplicate check: the sequence keys collected above must be EXACTLY
+  # the permutation 1..N, N=$n -- a deleted line changes $n right along with
+  # itself, so the count check above alone can never catch a missing run
+  # (it would just be comparing $n against a $run_count derived from the
+  # SAME mutated file). This is the check that actually can fail.
+  local expected got
+  expected=$(seq 1 "$n" | tr '\n' ',')
+  got=$(printf '%s\n' $seq_keys | sort -n | tr '\n' ',')
+  if [ "$got" != "$expected" ]; then
+    echo "FAIL: run/invocation sequence in $logfile is '$got', expected the complete permutation '$expected' for $n parsed line(s) -- a run is missing or duplicated, unparseable" >&2
+    exit 1
+  fi
+
+  echo "SERIES CLASSIFICATION: $worst_band -- competitor tripwire fired: $tripwire_fired"
+  exit 0
+}
+
+# --- wording: reuses the same forbidden-phrasing deny list -----------------
+# Thin delegator to scripts/ios-autofill-layers.sh wording-gate (36-04-PLAN.md
+# Task 3 action text: "extend ... OR add a wording subcommand ... that reuses
+# the same deny list", so the deny list is never duplicated in two places).
+cmd_wording() {
+  exec "$(dirname "${BASH_SOURCE[0]}")/ios-autofill-layers.sh" wording-gate
+}
+
 case "${1:-}" in
   instrument) shift; [ -n "${1:-}" ] || usage; cmd_instrument "$1" ;;
   sensitivity) shift; [ -n "${1:-}" ] || usage; cmd_sensitivity "$1" ;;
   enforcement) shift; [ -n "${1:-}" ] || usage; cmd_enforcement "$1" ;;
+  measure) shift; [ -n "${1:-}" ] || usage; cmd_measure "$1" ;;
+  wording) shift; cmd_wording ;;
   *) usage ;;
 esac

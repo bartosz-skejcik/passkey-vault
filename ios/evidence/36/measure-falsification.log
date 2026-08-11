@@ -1,0 +1,14 @@
+=== falsification 1: run=3 line removed from kdf-inprocess.log (scratch copy, never committed as evidence) ===
+measure: /tmp/pv-measure-falsify/missing-run.log -- 4 run(s)
+thresholds (bytes): FAIL peak>115343360(110MiB) | MARGINAL 94371840(90MiB)<peak<=115343360(110MiB) | PASS peak<=94371840(90MiB) and R-B<=8388608(8MiB) | tripwire D>=33554432(32MiB)
+run=1 label=prod standin=false baseline=22153304 peak_sampled=89327752 D=67174448 residual=22169688 R-B=16384 ledger_peak=89327752 samples=9 band=PASS tripwire=YES
+run=2 label=prod standin=false baseline=22169688 peak_sampled=89327752 D=67158064 residual=22169688 R-B=0 ledger_peak=89327752 samples=8 band=PASS tripwire=YES
+run=4 label=prod standin=false baseline=22169688 peak_sampled=89327752 D=67158064 residual=22169688 R-B=0 ledger_peak=89327752 samples=9 band=PASS tripwire=YES
+run=5 label=standin standin=true baseline=22169688 peak_sampled=89327752 D=67158064 residual=22169688 R-B=0 ledger_peak=89327752 samples=16 band=PASS tripwire=YES
+FAIL: run/invocation sequence in /tmp/pv-measure-falsify/missing-run.log is '1,2,4,5,', expected the complete permutation '1,2,3,4,' for 4 parsed line(s) -- a run is missing or duplicated, unparseable
+exit=1
+
+=== falsification 2: peak_sampled field corrupted to a non-numeric value (scratch copy, never committed as evidence) ===
+measure: /tmp/pv-measure-falsify/malformed.log -- 5 run(s)
+thresholds (bytes): FAIL peak>115343360(110MiB) | MARGINAL 94371840(90MiB)<peak<=115343360(110MiB) | PASS peak<=94371840(90MiB) and R-B<=8388608(8MiB) | tripwire D>=33554432(32MiB)
+exit=1

@@ -504,3 +504,106 @@ first-party Apple figure, and neither is presented here as established (A11).
 a scratch copy of the log with ordinal 1 removed (leaving only ordinals 2 and 3, a shape matching neither
 the "all three present" outcome nor a clean truncation to `''`/`'1,'`/`'1,2,'`) exits non-zero, printing
 that the run is unclassifiable.
+
+## E6 -- the measurement: production Argon2id, ten runs, inside the real extension process
+
+The instrument is proven (E5.a-c), the enforcement question is settled (E5.d, no jetsam here), and this
+is the number the whole phase exists to produce: `FfiWrappingKey.fromPassword` -- the REAL, always
+-available production constructor, never `fromPasswordProbeUnchecked` -- called at the parameter triple
+quoted directly from `KdfParams::default()` (`crates/pv-core/src/kdf.rs:20-25`):
+`m_cost_kib=65536` (64 MiB), `t_cost=3`, `p_cost=4`. `git diff --stat crates/pv-core` stays empty for this
+plan -- the values were read, never adjusted to make the number comfortable.
+
+**Ten runs, recorded individually, never averaged (per D-09's standing discipline in this file).**
+
+### Hot series -- five runs inside one extension invocation
+
+`scripts/ios-probe-run.sh kdf` once, `ios/evidence/36/kdf.log` copied verbatim to
+`ios/evidence/36/kdf-inprocess.log`:
+
+| run | baseline (B) | peak (P) | D = P-B | residual (R) | R-B | samples |
+|---|---|---|---|---|---|---|
+| 1 | 22,153,304 (21.13 MiB) | 89,327,752 (85.19 MiB) | 67,174,448 (64.06 MiB) | 22,169,688 | 16,384 (16 KiB) | 9 |
+| 2 | 22,169,688 | 89,327,752 (85.19 MiB) | 67,158,064 (64.05 MiB) | 22,169,688 | 0 | 8 |
+| 3 | 22,169,688 | 89,327,752 (85.19 MiB) | 67,158,064 (64.05 MiB) | 22,169,688 | 0 | 10 |
+| 4 | 22,169,688 | 89,327,752 (85.19 MiB) | 67,158,064 (64.05 MiB) | 22,169,688 | 0 | 9 |
+| 5 (**stand-in**) | 22,169,688 | 89,327,752 (85.19 MiB) | 67,158,064 (64.05 MiB) | 22,169,688 | 0 | 16 |
+
+### Cold series -- five fresh extension invocations, `run=1` of each
+
+`for i in 1 2 3 4 5; do scripts/ios-probe-run.sh kdf; cp ios/evidence/36/kdf.log
+ios/evidence/36/kdf-cold-$i.log; done`, each invocation's own `run=1` line assembled into
+`ios/evidence/36/kdf-coldstart.log` tagged `inv=$i`; the raw five-ordinal per-invocation files
+(`kdf-cold-1.log` … `kdf-cold-5.log`) are kept as provenance so the "five separate launches" claim is
+auditable, not asserted:
+
+| inv | baseline (B) | peak (P) | D = P-B | residual (R) | R-B |
+|---|---|---|---|---|---|
+| 1 | 22,055,000 (21.03 MiB) | 89,229,448 (85.10 MiB) | 67,174,448 (64.06 MiB) | 22,071,384 | 16,384 |
+| 2 | 22,087,768 (21.06 MiB) | 89,262,216 (85.13 MiB) | 67,174,448 (64.06 MiB) | 22,104,152 | 16,384 |
+| 3 | 22,300,784 (21.27 MiB) | 89,475,232 (85.33 MiB) | 67,174,448 (64.06 MiB) | 22,317,168 | 16,384 |
+| 4 | 22,120,536 (21.09 MiB) | 89,311,368 (85.18 MiB) | 67,190,832 (64.08 MiB) | 22,136,920 | 16,384 |
+| 5 | 22,218,840 (21.19 MiB) | 89,409,672 (85.27 MiB) | 67,190,832 (64.08 MiB) | 22,235,224 | 16,384 |
+
+**`scripts/ios-memory-gate.sh measure`, both logs, real output:**
+
+```
+measure: ios/evidence/36/kdf-inprocess.log -- 5 run(s)
+thresholds (bytes): FAIL peak>115343360(110MiB) | MARGINAL 94371840(90MiB)<peak<=115343360(110MiB) | PASS peak<=94371840(90MiB) and R-B<=8388608(8MiB) | tripwire D>=33554432(32MiB)
+run=1..5 ... band=PASS tripwire=YES (every run)
+SERIES CLASSIFICATION: PASS -- competitor tripwire fired: yes
+
+measure: ios/evidence/36/kdf-coldstart.log -- 5 run(s)
+run=1(inv=1..5) ... band=PASS tripwire=YES (every run)
+SERIES CLASSIFICATION: PASS -- competitor tripwire fired: yes
+```
+
+Full per-run output (every input number and the threshold compared against) is in the two `measure`
+invocations' own transcripts above; both are reproducible verbatim via
+`scripts/ios-memory-gate.sh measure ios/evidence/36/kdf-{inprocess,coldstart}.log`.
+
+**Can-fail proof, recorded** (`ios/evidence/36/measure-falsification.log`): the gate run against a
+scratch copy of `kdf-inprocess.log` with run 3's line deleted exits non-zero (`a run is missing or
+duplicated, unparseable`) -- the gate compares the parsed run/invocation numbers against the complete
+permutation 1..N, not merely a self-referential count, so a deleted line cannot silently pass (an
+earlier draft of this gate had exactly that "check that cannot fail" shape -- ios/IOS-SPIKE-LOG.md's L-9
+family -- caught and fixed before this evidence was captured, never committed in the broken form). A
+second scratch copy with `peak_sampled` corrupted to a non-numeric value also exits non-zero (missing
+required field).
+
+**The two-derivation stand-in (run 5, hot series).** `pv-ffi` exports only the wrapping-key derivation
+entry point today (`wrapping_key_from_password`); the auth-hash entry point
+(`auth_hash_from_password`) is Phase 37's scoped work, so the realistic two-derivation login path cannot
+be measured through its real caller in this phase. Run 5 calls the SAME real entry point twice,
+consecutively, in one run -- a faithful stand-in for the second pass's memory shape, labelled
+`standin=true derivations=2` in the log line, never presented as the real login path.
+
+**Finding: the stand-in's peak did NOT double.** Run 5's `peak_sampled` (89,327,752) is byte-for-byte
+identical to runs 2-4's single-derivation peak, and its `D` (67,158,064) matches theirs too -- only the
+elapsed time roughly doubled (226.6ms vs ~110-130ms for a single derivation) and the sample count roughly
+doubled (16 vs 8-10), both consistent with two sequential Argon2id passes running back-to-back rather
+than concurrently. This settles Assumption A10 (`36-RESEARCH.md`): on this run, the allocator does NOT
+grow the arena for a second sequential derivation -- the freed 64 MiB region from the first pass is
+evidently reused (or promptly returned and re-acquired at the same size) rather than compounding to
+~128 MiB. Recorded as an observation from THIS run, not a proof about allocator behaviour in general.
+
+**The residual finding (allocator residual, R-B).** Every one of the ten runs shows `R-B` at or under
+16,384 bytes (16 KiB) -- run 1 of each series (hot and cold) shows exactly 16,384 bytes, every subsequent
+hot run shows 0. Both are far under the 8 MiB (8,388,608 byte) residual threshold declared before the
+run. **A second unlock attempt does not start from a meaningfully raised floor** on this simulator, for
+this parameter triple, in this process shape.
+
+**The skeleton-baseline limitation, named plainly, not as a footnote.** `36-RESEARCH.md`'s own E6
+preconditions ask for a baseline taken with a credential list rendered from a real ciphertext cache; no
+such cache exists until Phase 39 (`ios/IOS-SPIKE-LOG.md` §1, DR-1's own consequences list). This phase's
+baseline is the skeleton extension's own foreground state -- no rendered list, no populated UI. **The
+peak `phys_footprint` values recorded above are therefore a LOWER BOUND on the real peak a populated
+credential list would produce, not the final number.** A re-measurement against a populated list is owed
+by the first phase that has one (Phase 39 or 41).
+
+**Result, in the ROADMAP's mandated replacement wording:** the peak `phys_footprint`
+measured across all ten runs is **~85.1-85.3 MB in the extension process**, against an unverified and
+contested device ceiling (120 MB from one vendor-sourced figure / <32 MB per a second vendor shipping the
+same workload). The KDF's own cost (D) is consistently **~64.06-64.08 MB**, which is at and above the
+32 MiB independent competitor tripwire regardless of the numeric band the peak lands in -- see
+`## FILL-06 result` and `DR-2` below.

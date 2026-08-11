@@ -97,5 +97,28 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         #if PV_PROBE_ENFORCEMENT
         EnforcementProbe.run()
         #endif
+        // Plan 36-04, Task 1 (E6): the FILL-06 measurement itself -- five
+        // hot runs of the REAL production Argon2id parameters inside this
+        // one extension invocation. `run=5` is the two-derivation stand-in
+        // (36-RESEARCH.md "Argon2id: the allocation is exact" -- pv-ffi
+        // exports only the wrapping-key entry point today, so this is a
+        // faithful stand-in for the two-derivation login path, never the
+        // real one). scripts/ios-probe-run.sh's cold loop re-invokes this
+        // SAME dispatch five further times, each from a fresh extension
+        // launch; only each invocation's `run=1` line is genuinely cold
+        // (36-04-PLAN.md Task 1 action).
+        #if PV_PROBE_KDF
+        for run in 1...5 {
+            let derivations = (run == 5) ? 2 : 1
+            let label = (derivations > 1) ? "standin" : "prod"
+            KdfProbe.runProduction(run: run, derivations: derivations, label: label)
+        }
+        // Held open for Plan 36-04 Task 2 (E7): an independent
+        // out-of-process reading needs the extension process to still be
+        // alive to attach to (this task's own precondition). The main
+        // thread stays busy for this whole window, so the process cannot
+        // be torn down mid-hold.
+        Thread.sleep(forTimeInterval: 20.0)
+        #endif
     }
 }

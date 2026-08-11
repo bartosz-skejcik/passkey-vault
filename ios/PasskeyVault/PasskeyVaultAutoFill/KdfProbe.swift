@@ -105,4 +105,76 @@ enum KdfProbe {
         )
         #endif
     }
+
+    // -- Plan 36-04, Task 1 (E6) -- the FILL-06 measurement itself --------
+    //
+    // Runs the REAL production constructor, `FfiWrappingKey.fromPassword`,
+    // at the REAL production parameter triple read from
+    // `KdfParams::default()` (`crates/pv-core/src/kdf.rs:20-25`):
+    // m_cost_kib=64*1024=65536, t_cost=3, p_cost=4. Quoted here as literals,
+    // never re-derived from memory, and never touched by this plan
+    // (`git diff --stat crates/pv-core` stays empty, P2 held).
+    //
+    // UNLIKE `run(mCostKiB:...)` above, this does NOT need
+    // `fromPasswordProbeUnchecked` / the `kdf-probe` feature: the
+    // production triple (64 MiB) is well inside `MAX_M_COST_KIB` (96 MiB,
+    // `crates/pv-ffi/src/lib.rs`), so the always-available production
+    // constructor accepts it directly. `scripts/ios-probe-run.sh kdf`
+    // therefore builds pv-ffi PLAIN, exactly like every probe except
+    // `sensitivity`.
+    //
+    // `derivations`: 1 for a normal data point; 2 for the two-derivation
+    // stand-in (36-RESEARCH.md "Argon2id: the allocation is exact" -- a
+    // realistic login path runs `wrapping_key_from_password` AND
+    // `auth_hash_from_password` independently, but `pv-ffi` exports only
+    // the wrapping-key entry point today; the auth-hash export is Phase
+    // 37's scoped work). Two consecutive calls to the SAME real entry
+    // point is a faithful stand-in for that second pass's memory shape,
+    // labelled explicitly (`standin=true`) and NEVER presented as the real
+    // login path.
+    static func runProduction(run: Int, derivations: Int, label: String) {
+        #if PV_PROBE_KDF
+        let mCostKiB: UInt32 = 64 * 1024
+        let tCost: UInt32 = 3
+        let pCost: UInt32 = 4
+        let paramsJson =
+            "{\"m_cost_kib\":\(mCostKiB),\"t_cost\":\(tCost),\"p_cost\":\(pCost)}"
+
+        let baseline = MemoryProbe.readVMInfo()?.phys ?? 0
+        MemoryProbe.startSampling(intervalMs: 10)
+
+        var passwordBytes = Data(probePasswordString.utf8)
+        let salt = Data(probeSalt)
+
+        let startedAt = DispatchTime.now()
+        var callOk = true
+        for pass in 1...max(derivations, 1) {
+            do {
+                _ = try FfiWrappingKey.fromPassword(
+                    password: passwordBytes, salt: salt, kdfParamsJson: paramsJson)
+            } catch {
+                callOk = false
+                logger.error(
+                    "PVPROBE|kdf_error run=\(run, privacy: .public) pass=\(pass, privacy: .public) label=\(label, privacy: .public) error=\(String(describing: error), privacy: .public)"
+                )
+            }
+        }
+        let elapsedMs =
+            Double(DispatchTime.now().uptimeNanoseconds - startedAt.uptimeNanoseconds) / 1_000_000.0
+
+        // Wipe the Swift-side password buffer immediately after the call
+        // returns (pv-ffi module header's caller-side mitigation, CP-4).
+        passwordBytes.resetBytes(in: 0..<passwordBytes.count)
+
+        let sampled = MemoryProbe.stopSampling()
+        // 500ms fixed settle interval, matching 36-RESEARCH.md E6 step 4's
+        // own stated interval for R.
+        Thread.sleep(forTimeInterval: 0.5)
+        let residual = MemoryProbe.readVMInfo()?.phys ?? 0
+
+        logger.log(
+            "PVPROBE|stage=kdf run=\(run, privacy: .public) label=\(label, privacy: .public) standin=\(derivations > 1, privacy: .public) derivations=\(derivations, privacy: .public) m_cost_kib=\(mCostKiB, privacy: .public) t_cost=\(tCost, privacy: .public) p_cost=\(pCost, privacy: .public) call_ok=\(callOk, privacy: .public) baseline=\(baseline, privacy: .public) peak_sampled=\(sampled.maxSampled, privacy: .public) samples=\(sampled.sampleCount, privacy: .public) ledger_peak=\(sampled.ledgerPeak, privacy: .public) residual=\(residual, privacy: .public) elapsed_ms=\(elapsedMs, privacy: .public)"
+        )
+        #endif
+    }
 }
