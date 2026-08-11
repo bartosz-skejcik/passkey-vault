@@ -1422,12 +1422,21 @@ export const DICTIONARY = {
     en: `Revoke {email}'s access to "{item}"`,
   },
   // 30-05-PLAN.md Task 2 (FSH-04/FAM-10 "the sharer is told, quietly") --
-  // 30-UI-SPEC.md's Re-Key Notice Contract, verbatim. Deliberately generic
-  // (names no specific item/folder): a re-key batch may touch several items
-  // at once, and naming one out of the batch would misrepresent its scope.
+  // 30-UI-SPEC.md's Re-Key Notice Contract. Deliberately generic (names no
+  // specific item/folder): a re-key batch may touch several items at once,
+  // and naming one out of the batch would misrepresent its scope.
+  //
+  // WR-05 fix (30-REVIEW.md): the original copy said "one of YOUR shared
+  // items" -- but `notifyRekeyListeners` fires for ANY collection whose
+  // sealed_key changed, for EVERY remaining recipient, not only the member
+  // who originally shared it. 30-CONTEXT.md's requirement was "the sharer
+  // is told"; this string told EVERYONE they personally shared it, which is
+  // false for a member who only ever received the folder. Reworded to be
+  // audience-neutral -- true regardless of whether this reader created the
+  // share or merely holds it.
   "share.familyRekeyNotice": {
-    pl: "Jedna z Twoich udostępnionych pozycji została ponownie zaszyfrowana, bo skład rodziny się zmienił.",
-    en: "One of your shared items was re-encrypted because your family's membership changed.",
+    pl: "Udostępniony folder został ponownie zaszyfrowany, bo skład rodziny się zmienił.",
+    en: "A shared folder was re-encrypted because your family's membership changed.",
   },
   // 30-08-PLAN.md Task 1 (FSH-01) -- the "Cała rodzina" row's own copy,
   // 30-UI-SPEC.md's Copywriting Contract verbatim.
