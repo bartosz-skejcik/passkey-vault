@@ -56,10 +56,17 @@ use pv_core::{
         WrappedKey, KEY_LEN,
     },
 };
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 pub mod error;
 pub use error::FfiError;
+
+// TEST-ONLY (`#[cfg(test)]`): observes what this crate actually hands back
+// to the allocator, so the CR-01 zeroization regression is asserted on real
+// freed bytes rather than on the shape of the source. Never compiled into
+// the iOS staticlib — see the module's own doc comment.
+#[cfg(test)]
+mod heap_probe;
 
 // FFI-06/CP-3 synthetic panic probe — see crates/pv-ffi/src/panic_probe.rs's
 // own module doc for the full "synthetic, never called by production code"
@@ -91,20 +98,34 @@ pub struct FfiWrappingKey([u8; KEY_LEN]);
 impl FfiWrappingKey {
     /// `password`/`salt` to bufory wywołującego (Swift `Data`), przyjęte
     /// jako własne `Vec<u8>` — UniFFI nie ma `&mut [u8]` (patrz nagłówek
-    /// modułu, CP-4). Rust zeruje WYŁĄCZNIE swoją kopię `password`
-    /// niezależnie od wyniku; bufor po stronie Swift pozostaje
-    /// odpowiedzialnością wywołującego.
+    /// modułu, CP-4). Rust zeruje WYŁĄCZNIE swoją kopię `password` — ale
+    /// robi to na KAŻDEJ ścieżce wyjścia, bo wyzerowanie jest własnością
+    /// TYPU (`Zeroizing<Vec<u8>>`'s `Drop`), nie kolejnością instrukcji.
+    /// Bufor po stronie Swift pozostaje odpowiedzialnością wywołującego.
+    ///
+    /// CR-01 (review Fazy 35) — dlaczego to musi być własność typu: wersja
+    /// z jawnym `password.zeroize()` PO parsowaniu JSON-a nigdy nie
+    /// wykonywała się na ścieżce `?`-return z `serde_json::from_str`, a
+    /// `kdf_params_json` pochodzi z odpowiedzi NIEZAUFANEGO serwera
+    /// (`POST /api/auth/prelogin`). Wrogi serwer mógł więc DETERMINISTYCZNIE,
+    /// przy każdej próbie odblokowania, oddać master password alokatorowi z
+    /// nietkniętymi bajtami, zwracając zepsuty JSON. `Vec<u8>` nie jest
+    /// `ZeroizeOnDrop`. Regresja pilnowana przez
+    /// `tests::from_password_zeroizes_its_password_copy_on_the_parse_error_path`,
+    /// które patrzy na FAKTYCZNIE zwolnione bajty (`crate::heap_probe`), a
+    /// nie na kształt kodu.
     #[uniffi::constructor]
     pub fn from_password(
-        mut password: Vec<u8>,
+        password: Vec<u8>,
         salt: Vec<u8>,
         kdf_params_json: String,
     ) -> Result<Arc<Self>, FfiError> {
+        // Wipe-on-every-exit-path, including the `?` below and a panic
+        // unwind — not just the paths we remembered to write out (CR-01).
+        let password = Zeroizing::new(password);
         let params: KdfParams = serde_json::from_str(&kdf_params_json)
             .map_err(|e| FfiError::InvalidInput(e.to_string()))?;
-        let result = wrapping_key_from_password(&password, &salt, &params).map_err(FfiError::from);
-        password.zeroize(); // wipe Rust's OWN copy regardless of outcome (CP-4)
-        let wk = result?;
+        let wk = wrapping_key_from_password(&password, &salt, &params)?;
         Ok(Arc::new(FfiWrappingKey(*wk)))
     }
 }
@@ -212,15 +233,20 @@ pub fn export_user_key_for_session(user_key: &FfiUserKey) -> Vec<u8> {
 /// własną (Rust-ową) kopię `bytes` niezależnie od wyniku — oryginalny
 /// bufor po stronie Swift NIE jest retroaktywnie wyzerowany (CP-4, patrz
 /// nagłówek modułu).
+///
+/// Ta funkcja była poprawna także w wersji z dwoma jawnymi wywołaniami
+/// `bytes.zeroize()` — ale tylko dlatego, że OBIE ścieżki wyjścia akurat je
+/// wołały. Jedno dodane `?` odtworzyłoby CR-01 tutaj, więc wyzerowanie jest
+/// teraz własnością typu (`Zeroizing<Vec<u8>>`), tak samo jak w
+/// `FfiWrappingKey::from_password`.
 #[uniffi::export]
-pub fn import_user_key_from_session(mut bytes: Vec<u8>) -> Result<Arc<FfiUserKey>, FfiError> {
+pub fn import_user_key_from_session(bytes: Vec<u8>) -> Result<Arc<FfiUserKey>, FfiError> {
+    let bytes = Zeroizing::new(bytes);
     if bytes.len() != KEY_LEN {
-        bytes.zeroize();
         return Err(FfiError::InvalidInput("expected 32 bytes".to_string()));
     }
     let mut arr = [0u8; KEY_LEN];
     arr.copy_from_slice(&bytes);
-    bytes.zeroize();
     let out = FfiUserKey(UserKey::from_bytes(arr));
     // `[u8; KEY_LEN]` is `Copy` — `UserKey::from_bytes` copied `arr`, it did
     // not move it (mirrors pv-core/pv-wasm's own WR-01 discipline). Wipe our
@@ -232,6 +258,7 @@ pub fn import_user_key_from_session(mut bytes: Vec<u8>) -> Result<Arc<FfiUserKey
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::heap_probe::{Probe, SENTINEL};
 
     /// Deliberately cheap Argon2id params — this phase does not measure KDF
     /// memory (that is Phase 36's FILL-06 job); mirrors `pv-core::kdf`'s own
@@ -287,6 +314,51 @@ mod tests {
         let short = vec![0u8; 16];
         let result = import_user_key_from_session(short);
         assert!(result.is_err());
+    }
+
+    /// CR-01 regression (Faza 35 code review). RED before the fix, green
+    /// after: on `from_password`'s `kdf_params_json` parse-error path — the
+    /// path an UNTRUSTED server reaches at will by returning malformed JSON
+    /// from `POST /api/auth/prelogin` — the Rust-owned heap copy of the
+    /// master password must not reach the allocator with its bytes intact.
+    ///
+    /// Deliberately NOT a source-shape assertion: this observes the bytes of
+    /// the block actually being freed (`crate::heap_probe`). And it carries
+    /// its own control, so it cannot pass because the probe is blind rather
+    /// than because the wipe happened.
+    #[test]
+    fn from_password_zeroizes_its_password_copy_on_the_parse_error_path() {
+        let salt = pv_core::keys::random_bytes(16);
+
+        let probe = Probe::arm();
+        let password = SENTINEL.to_vec();
+        let result = FfiWrappingKey::from_password(
+            password,
+            salt,
+            "{ this is not valid KdfParams JSON }".to_string(),
+        );
+        let leaked = probe.sentinel_reached_allocator();
+        drop(probe);
+
+        assert!(result.is_err(), "malformed kdf_params_json must be rejected");
+        assert!(
+            !leaked,
+            "the master password's Rust-owned heap copy was released to the allocator with its \
+             bytes intact on from_password's early-return path (CR-01)"
+        );
+
+        // Control: the probe genuinely CAN see an un-zeroized buffer of
+        // exactly this shape going back to the allocator. Without this, the
+        // assertion above would be a check that cannot fail.
+        let control = Probe::arm();
+        drop(std::hint::black_box(SENTINEL.to_vec()));
+        let control_saw_it = control.sentinel_reached_allocator();
+        drop(control);
+        assert!(
+            control_saw_it,
+            "heap probe control FAILED: the probe cannot observe an un-zeroized sentinel buffer \
+             at all, so the assertion above proves nothing"
+        );
     }
 
     /// Test 4: unwrapping with the wrong wrapping key fails (`Err`, never a
