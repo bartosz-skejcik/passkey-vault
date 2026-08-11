@@ -60,20 +60,59 @@
 set -euo pipefail
 
 WITH_PANIC_PROBE=0
-if [ "${1:-}" = "--with-panic-probe" ]; then
-  WITH_PANIC_PROBE=1
-  shift
-fi
+WITH_KDF_PROBE=0
+# --with-kdf-probe (36-03, E5.c): the same shared-output-path variant
+# mechanism as --with-panic-probe, appending `--features kdf-probe`
+# instead/additionally. Compiles in crates/pv-ffi/src/kdf_probe.rs's
+# diagnostic-only `FfiWrappingKey.fromPasswordProbeUnchecked` constructor
+# (see that module's own header for why it exists separately from
+# `from_password`).
+#
+# COMBINABLE, not mutually exclusive (landmine L-11, found running 36-03
+# Task 2, ios/IOS-SPIKE-LOG.md Sec 3): `PasskeyVaultTests`' own Run Script
+# phase and `scripts/ios-probe-run.sh sensitivity`'s own pre-build both
+# write to this SAME shared output path within the SAME `xcodebuild test`
+# invocation -- one needs `ffi06-probe` (FfiPanicSafetyTests.swift, which
+# is always BUILT for testing even when skipped from RUNNING) and the
+# other needs `kdf-probe` (KdfProbe.swift). Passing only one starves the
+# other target's compile regardless of invocation order, since Xcode
+# cannot order the un-outputted Run Script phase against either target's
+# Swift compile (L-10's same root cause) -- retrying with a single-feature
+# rebuild before each attempt does NOT converge, because the clobber
+# happens INSIDE xcodebuild's own build graph, not before it. The actual
+# fix: BOTH flags accepted together produce ONE artifact carrying both
+# diagnostic symbols, so whichever target's compile runs first is
+# satisfied either way. `scripts/ios-probe-run.sh`'s `PV_FFI_TEST_VARIANT`
+# build setting is what passes both flags together during the `sensitivity`
+# probe's test build (see that script's own comment).
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --with-panic-probe) WITH_PANIC_PROBE=1; shift ;;
+    --with-kdf-probe) WITH_KDF_PROBE=1; shift ;;
+    *) break ;;
+  esac
+done
 # Every expansion of this array below uses the
 # `"${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}"` idiom, not plain
 # `"${FEATURE_ARGS[@]}"`: this machine's /bin/bash is 3.2.57 (macOS ships no
 # newer system bash), and bash <4.4 treats `"${arr[@]}"` on a zero-element
 # array as an unbound-variable error under `set -u`, which the plain form
 # hit on the very first plain (non-`--with-panic-probe`) run of this change.
-FEATURE_ARGS=()
+FEATURES=""
 if [ "$WITH_PANIC_PROBE" -eq 1 ]; then
-  FEATURE_ARGS=(--features ffi06-probe)
-  echo "==> variant: --with-panic-probe (ffi06-probe compiled IN -- test-only artifact)"
+  FEATURES="ffi06-probe"
+fi
+if [ "$WITH_KDF_PROBE" -eq 1 ]; then
+  if [ -n "$FEATURES" ]; then
+    FEATURES="$FEATURES,kdf-probe"
+  else
+    FEATURES="kdf-probe"
+  fi
+fi
+FEATURE_ARGS=()
+if [ -n "$FEATURES" ]; then
+  FEATURE_ARGS=(--features "$FEATURES")
+  echo "==> variant: features=[$FEATURES] compiled IN -- test/diagnostic-only artifact"
 else
   echo "==> variant: plain (no extra features -- the artifact every non-test consumer, including the appex, links)"
 fi

@@ -29,9 +29,20 @@ crate-type = ["staticlib", "lib"]
 # (scripts/build-ios.sh) so `FfiPanicSafetyTests.swift` (35-05) keeps a
 # probe-carrying artifact; every other consumer -- including the appex --
 # gets the plain, probe-free build.
+
+# kdf-probe (36-03, E5.c): gates crates/pv-ffi/src/kdf_probe.rs, a single
+# diagnostic-only constructor that skips validate_kdf_params's upper bound
+# for one fixed, author-chosen 256 MiB value the FILL-06 sensitivity
+# control needs and the production constructor correctly rejects. Never
+# called by production Swift code; the only Swift caller
+# (KdfProbe.swift) is itself gated behind #if PV_PROBE_SENSITIVITY, which
+# only scripts/ios-probe-run.sh sensitivity ever compiles. Default-off,
+# same posture as ffi06-probe's *current* off-by-default rationale (this
+# crate now has non-test consumers -- see that feature's own comment).
 [features]
 default = []
 ffi06-probe = []
+kdf-probe = []
 
 # Open Question 1 (35-RESEARCH.md) resolved empirically this session: UniFFI
 # 0.32.0's proc-macro mode needs NO build.rs / no [build-dependencies] here

@@ -1,0 +1,4 @@
+=== Falsification: sensitivity control against a hand-edited copy with equal peaks ===
+peak_sampled(8mib)=22399088 peak_sampled(256mib)=22399088 delta=0 accepted_range=[234042164,286051532] (target 260046848 +-10%)
+FAIL: sensitivity control -- delta=0 bytes is outside the accepted range [234042164,286051532]. The instrument is not measuring the allocation; no number from this run may be recorded (D-11, Pitfall 4).
+exit=1

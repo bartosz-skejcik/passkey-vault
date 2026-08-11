@@ -1,0 +1,5 @@
+getpwuid_r did not find a match for uid 501
+Timestamp                       Thread     Type        Activity             PID    TTL  
+2026-08-12 00:00:13.844860+0200 0x23c6f    Default     0x0                  26307  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:probe] PVPROBE|stage=configure kr=KERN_SUCCESS phys=22005872 peak=24971376 remaining=0 ffi_bytes=32
+2026-08-12 00:00:13.951870+0200 0x23c6f    Default     0x0                  26307  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:probe] PVPROBE|stage=kdf label=8mib m_cost_kib=8192 t_cost=1 p_cost=1 call_ok=true baseline=22055024 peak_sampled=22399088 samples=1 ledger_peak=24971376 residual=22104176 elapsed_ms=6.208209
+2026-08-12 00:00:14.280913+0200 0x23c6f    Default     0x0                  26307  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:probe] PVPROBE|stage=kdf label=256mib m_cost_kib=262144 t_cost=1 p_cost=1 call_ok=true baseline=22104176 peak_sampled=290687280 samples=19 ledger_peak=290687280 residual=22104176 elapsed_ms=228.179209

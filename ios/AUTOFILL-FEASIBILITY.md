@@ -407,4 +407,55 @@ against a nonexistent path — both transcripts in `ios/evidence/36/instrument-f
 
 ## E5.c — the mandatory sensitivity control
 
+Before any footprint number from this instrument enters a record, it has to be shown to MOVE with the
+KDF's own memory parameter, by an amount predicted before the run — a measurement that cannot move
+reads green regardless of the truth (`36-RESEARCH.md` Pitfall 4). This is the binding control: if it
+fails, the phase halts here and no number from this instrument is recorded, per ROADMAP SC3's second
+correction.
+
+**A recorded deviation, found running this control, not assumed.** The production constructor,
+`FfiWrappingKey::from_password`, validates `m_cost_kib` against `MAX_M_COST_KIB = 96 * 1024`
+(WR-11, `crates/pv-ffi/src/lib.rs`) — a guard that exists to bound an untrusted, server-supplied
+parameter, and it correctly REJECTS this control's `256 * 1024` value outright, before Argon2id ever
+allocates. That guard is not weakened: `crates/pv-ffi/src/kdf_probe.rs` adds a separate,
+feature-gated (`kdf-probe`, default-off) diagnostic constructor, `FfiWrappingKey.fromPasswordProbeUnchecked`,
+that skips ONLY that bound, for one fixed, author-chosen, never-server-supplied literal — mirroring
+`panic_probe.rs`'s established `ffi06-probe` precedent exactly. `crates/pv-ffi` is a thin FFI binding
+crate, not `pv-core`/`pv-provider` — `git diff --stat crates/pv-core crates/pv-provider` stays empty
+(P2 held). Full rationale in that module's own header and in `36-03-SUMMARY.md`.
+
+**Setup**: `KdfProbe.run(mCostKiB:tCost:pCost:label:)` runs the real `pv-ffi` KDF entry point twice in one
+extension invocation — `m_cost_kib=8*1024` then `m_cost_kib=256*1024`, both at `t_cost=1 p_cost=1` (this
+control is about the memory parameter alone, so the cheap time/parallelism values keep the run fast) —
+against a fixed, non-secret probe password and salt, sampling the footprint around each call exactly as
+E5.a's instrument does.
+
+**Real result** (`ios/evidence/36/sensitivity.log`, captured from the real running extension process,
+`scripts/ios-probe-run.sh sensitivity`):
+
+```
+PVPROBE|stage=kdf label=8mib   m_cost_kib=8192   t_cost=1 p_cost=1 call_ok=true baseline=22055024 peak_sampled=22399088   samples=1  ledger_peak=24971376  residual=22104176 elapsed_ms=6.208209
+PVPROBE|stage=kdf label=256mib m_cost_kib=262144 t_cost=1 p_cost=1 call_ok=true baseline=22104176 peak_sampled=290687280 samples=19 ledger_peak=290687280 residual=22104176 elapsed_ms=228.179209
+```
+
+`scripts/ios-memory-gate.sh sensitivity ios/evidence/36/sensitivity.log`:
+
+```
+peak_sampled(8mib)=22399088 peak_sampled(256mib)=290687280 delta=268288192 accepted_range=[234042164,286051532] (target 260046848 +-10%)
+PASS: sensitivity -- the reported peak moved by 268288192 bytes, within +-10% of the predicted 260046848 byte (248 MiB) delta
+```
+
+**Verdict: PASS.** The reported peak moved from ~21.4 MiB to ~277.3 MiB — a delta of 268,288,192 bytes
+(~255.9 MiB), within ±10% of the predicted 248 MiB (260,046,848 byte) delta. The instrument genuinely
+tracks the allocation it claims to measure; every number this instrument reports from here on is worth
+recording. `samples=1` on the 8 MiB run is itself informative, not a defect: that call completed in
+~6.2 ms, faster than the sampler's 10 ms interval, so a single sample landing is the expected shape for a
+call that fast — the sample COUNT field (E5.a's own contract) is what makes this distinguishable from a
+sampler that silently never ran.
+
+**Can-fail proof, recorded** (`ios/evidence/36/sensitivity-falsification.log`): the same gate run against
+a scratch copy of the log with the 256 MiB line's peak overwritten to equal the 8 MiB line's peak (delta
+forced to 0) exits non-zero, printing "the instrument is not measuring the allocation; no number from
+this run may be recorded". The edited copy itself was a scratch file, never committed as evidence.
+
 ## E5.d — the enforcement control

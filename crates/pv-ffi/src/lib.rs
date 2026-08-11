@@ -109,6 +109,15 @@ mod heap_probe;
 #[cfg(feature = "ffi06-probe")]
 mod panic_probe;
 
+// Phase 36, Plan 36-03 (E5.c) diagnostic-only probe constructor — see
+// crates/pv-ffi/src/kdf_probe.rs's own module doc for the full rationale
+// (skips ONLY validate_kdf_params's upper bound, for one fixed 256 MiB
+// diagnostic value that is never server-supplied). Feature-gated
+// (`kdf-probe`, default-off), mirroring `ffi06-probe`'s gate placement on
+// the module DECLARATION rather than only the inner `impl` (WR-04).
+#[cfg(feature = "kdf-probe")]
+mod kdf_probe;
+
 /// Nieprzezroczysty handle User Key — korzeń dostępu do vaulta. Jedyny
 /// sposób, by "użyć" klucza spoza handle, to funkcje wrap/encrypt poniżej
 /// (i export/import session pair, patrz nagłówek modułu). Brak Zeroize

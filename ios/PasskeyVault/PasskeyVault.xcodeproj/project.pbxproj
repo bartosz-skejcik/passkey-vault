@@ -343,7 +343,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"$SRCROOT/../../scripts/build-ios.sh\" --with-panic-probe\n";
+			shellScript = "\"$SRCROOT/../../scripts/build-ios.sh\" ${PV_FFI_TEST_VARIANT:---with-panic-probe}\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
