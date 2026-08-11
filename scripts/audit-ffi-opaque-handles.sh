@@ -170,7 +170,17 @@ extract_class_body() {
   ' "$file"
 }
 
+# Handle classes that MUST exist. Discovery below is dynamic (so a handle
+# type added in Phase 36+ -- session/keychain/collection -- is audited
+# automatically instead of being silently unaudited), but discovery alone
+# would be fail-open: if the codegen stopped emitting a class under a name
+# this script recognises, "found nothing" would read as "nothing to audit".
+# These two must be found, or the run is an ERROR.
+EXPECTED_CLASSES="FfiUserKey FfiWrappingKey"
+
 VIOLATIONS=""
+DISCOVERED_ALL=""
+AUDITED_ALL=""
 
 SCRATCH=$(mktemp -d)
 trap 'rm -rf "$SCRATCH"' EXIT
@@ -197,9 +207,25 @@ for f in "$BINDINGS_DIR"/*.swift; do
   fi
 
   # (B) methods declared inside each handle class's own body.
-  for cls in FfiUserKey FfiWrappingKey; do
+  #
+  # CR-03: the class list is DISCOVERED from the (stripped) bindings, not
+  # hardcoded. The previous `for cls in FfiUserKey FfiWrappingKey` plus
+  # `[ -z "$CLASS_BODY" ] && continue` meant (a) any handle type added by a
+  # later phase was silently unaudited, and (b) any change to the class
+  # declaration's spelling turned "I could not find the class" into a PASS.
+  # Both were reproduced against a leaking build. This file's own header,
+  # 20 lines up, states the rule: "WARN and skip is NOT an option here".
+  CLASSES=$(grep -oE '(^|[^A-Za-z0-9_])class[[:space:]]+Ffi[A-Za-z0-9_]+' "$STRIPPED" \
+              | sed -E 's/.*class[[:space:]]+//' | sort -u || true)
+  DISCOVERED_ALL="$DISCOVERED_ALL $CLASSES"
+
+  for cls in $CLASSES; do
     CLASS_BODY=$(extract_class_body "$cls" "$STRIPPED")
-    [ -z "$CLASS_BODY" ] && continue
+    if [ -z "$CLASS_BODY" ]; then
+      echo "ERROR: found a declaration of handle class '$cls' in $f but could not isolate its body -- refusing to report PASS over an unaudited class" >&2
+      exit 1
+    fi
+    AUDITED_ALL="$AUDITED_ALL $cls"
     MATCHES_B=$(echo "$CLASS_BODY" | grep -E "func .*$BYTE_RETURN_RE" || true)
     if [ -n "$MATCHES_B" ]; then
       while IFS= read -r line; do
@@ -213,10 +239,25 @@ for f in "$BINDINGS_DIR"/*.swift; do
   done
 done
 
+# CR-03, fail-closed: an expected handle class that was never discovered
+# means the codegen's shape changed under us. Reporting PASS over that is
+# the exact failure class this gate exists to prevent, so it is an ERROR.
+if [ -z "$(echo "$DISCOVERED_ALL" | tr -d '[:space:]')" ]; then
+  echo "ERROR: no Ffi* handle classes found anywhere under $BINDINGS_DIR -- the codegen shape changed and NOTHING was audited" >&2
+  exit 1
+fi
+for want in $EXPECTED_CLASSES; do
+  if ! echo "$AUDITED_ALL" | tr ' ' '\n' | grep -qx "$want"; then
+    echo "ERROR: expected handle class '$want' was not found/audited in $BINDINGS_DIR -- refusing to report PASS on an unaudited handle type (audited: $(echo "$AUDITED_ALL" | tr -s ' '))" >&2
+    exit 1
+  fi
+done
+
 if [ -n "$VIOLATIONS" ]; then
   echo "FAIL: raw-byte accessor(s) found on a key-handle type outside the FFI-03 sanctioned exception (exportUserKeyForSession/importUserKeyFromSession):" >&2
   echo "$VIOLATIONS" >&2
   exit 1
 fi
 
-echo "PASS: generated Swift exposes zero raw-byte accessors on FfiUserKey/FfiWrappingKey beyond exportUserKeyForSession/importUserKeyFromSession (FFI-02)"
+echo "PASS: generated Swift exposes zero raw-byte accessors beyond exportUserKeyForSession/importUserKeyFromSession (FFI-02)"
+echo "      audited handle classes:$(echo "$AUDITED_ALL" | tr -s ' ')"
