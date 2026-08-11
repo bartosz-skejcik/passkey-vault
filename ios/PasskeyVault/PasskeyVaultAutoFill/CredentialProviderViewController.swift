@@ -1,4 +1,5 @@
-// CredentialProviderViewController.swift -- Phase 36, Plan 36-01, Task 1.
+// CredentialProviderViewController.swift -- Phase 36, Plan 36-01 Task 1;
+// extended by Plan 36-02 Tasks 1-2 and Plan 36-03 Tasks 1-3.
 //
 // Tracer skeleton ONLY -- no credential-list logic, no fetching, no storage
 // (36-01-PLAN.md Task 1 action). Overrides ONLY the current, non-deprecated
@@ -8,12 +9,16 @@
 // appears in the UI, and silently never fills.
 //
 // Every override calls MemoryProbe.emit(stage:) with a FIXED stage string --
-// this four-word vocabulary (`list`/`silent`/`interactive`/`configure`) is
-// the whole vocabulary this phase emits; nothing else may use the PVPROBE|
-// marker. Every override except the configuration entry point then
-// completes via cancelRequest(withError:) carrying
-// ASExtensionErrorCode.userInteractionRequired -- this phase deliberately
-// fills nothing.
+// `list`/`silent`/`interactive`/`configure` -- MemoryProbe's own baseline
+// vocabulary from Plan 36-01. Each probe module added since (AppGroupProbe,
+// KeychainProbe, and this plan's MemoryProbe sampler/KdfProbe/
+// EnforcementProbe) owns and logs its OWN `PVPROBE|stage=*` marker, gated
+// behind its own `PV_PROBE_*` compilation condition, dispatched from
+// `prepareInterfaceForExtensionConfiguration()` below -- the one entry
+// point `AutoFillInvocationUITests` reliably reaches without the provider
+// already being elected. Every override except that one then completes via
+// cancelRequest(withError:) carrying ASExtensionErrorCode.userInteractionRequired
+// -- this phase deliberately fills nothing.
 
 import AuthenticationServices
 
@@ -66,6 +71,31 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         #endif
         #if PV_PROBE_KEYCHAIN
         KeychainProbe.emit()
+        #endif
+        // Plan 36-03, Task 1 (E5.a/E5.b): sampler thread proven inside a
+        // real extension process, plus the one-shot, never-a-gate
+        // os_proc_available_memory() finding (D-13).
+        #if PV_PROBE_INSTRUMENT
+        MemoryProbe.startSampling(intervalMs: 10)
+        MemoryProbe.emitAvailableMemory()
+        Thread.sleep(forTimeInterval: 0.5)
+        let samplerResult = MemoryProbe.stopSampling()
+        MemoryProbe.emitSamplerResult(samplerResult)
+        #endif
+        // Plan 36-03, Task 2 (E5.c): the mandatory sensitivity control --
+        // 8 MiB then 256 MiB, both cheap on time/parallelism, in one
+        // extension invocation.
+        #if PV_PROBE_SENSITIVITY
+        KdfProbe.run(mCostKiB: 8 * 1024, tCost: 1, pCost: 1, label: "8mib")
+        KdfProbe.run(mCostKiB: 256 * 1024, tCost: 1, pCost: 1, label: "256mib")
+        #endif
+        // Plan 36-03, Task 3 (E5.d): the enforcement control. Dispatched
+        // alone -- never alongside PV_PROBE_INSTRUMENT/PV_PROBE_SENSITIVITY
+        // in the same invocation (a process death here must not swallow
+        // their output too). scripts/ios-probe-run.sh's single-condition-
+        // per-run mechanism already guarantees this.
+        #if PV_PROBE_ENFORCEMENT
+        EnforcementProbe.run()
         #endif
     }
 }

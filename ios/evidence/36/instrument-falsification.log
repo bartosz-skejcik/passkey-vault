@@ -1,0 +1,6 @@
+=== Falsification 1: sampler line stripped ===
+FAIL: no PVPROBE|stage=sampler line found in /tmp/pv-falsify/instrument-stripped.log
+exit=1
+=== Falsification 2: nonexistent path ===
+FAIL: evidence log not found: ios/evidence/36/does-not-exist.log
+exit=1

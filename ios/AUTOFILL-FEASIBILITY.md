@@ -348,3 +348,63 @@ The paid-program question is therefore recorded as: **nierozstrzygalne na symula
 Every layer above passed; nothing here is a FAIL of any kind, and nothing here decides the $99 question
 either way — that decision requires the device path (signing into an Apple ID, never done on this
 machine), which this phase does not attempt.
+
+## E5.a / E5.b — the FILL-06 instrument, proven able to run inside the real extension process
+
+Plan 36-03 owns FILL-06's instrument bring-up (SC3, `36-RESEARCH.md` §E5) — before any footprint number
+enters this record, the instrument that produces it has to be shown working, in the process that matters,
+with its most ambiguous reading recorded but never trusted.
+
+**The instrument in use, named explicitly, and how it deviates from the ROADMAP's original wording
+(D-10).** SC3's own text as originally drafted named "Instruments Allocations". This phase does **not**
+use Instruments Allocations anywhere: that tool accounts for the **malloc heap**, and jetsam's kill
+decision is made on **`phys_footprint`** — a materially different, larger figure (it also counts
+mapped/dirty pages the allocator itself never sees). The instrument actually used is in-process
+`task_info(mach_task_self_, TASK_VM_INFO, ...)` (`MemoryProbe.readVMInfo()`,
+`ios/PasskeyVault/PasskeyVaultAutoFill/MemoryProbe.swift`), read from a dedicated sampler thread polling
+every 10 ms and keeping the running maximum of `phys_footprint` — because the KDF call this instrument
+wraps (Task 2, E5.c) is blocking, so an inline sampler would observe nothing while it runs.
+
+**E5.a — the instrument runs and reports a plausible reading, inside the real `.appex` process.**
+`scripts/ios-probe-run.sh instrument` builds and installs the app+extension with
+`PV_PROBE_INSTRUMENT` active, drives `AutoFillInvocationUITests` to reach
+`prepareInterfaceForExtensionConfiguration()`, and captures the resulting `os_log` output:
+
+```
+PVPROBE|stage=sampler kr=KERN_SUCCESS samples=42 peak_sampled=22055000 ledger_peak=24938584
+```
+
+`kr=KERN_SUCCESS`, `samples=42` (greater than 0 — the sampler thread genuinely ran, not a
+plausible-looking `0` from a sampler that never started), `peak_sampled=22055000` bytes (~21.0 MiB, a
+plausible extension-idle footprint, consistent with 36-01's own baseline `phys=22349912` reading from
+the same process shape). Raw evidence: `ios/evidence/36/instrument.log`.
+
+**Field units and provenance** (`<SDK>/usr/include/mach/task_info.h`, `36-RESEARCH.md` "Code Examples"):
+`peak_sampled`/`phys_footprint` are bytes, the quantity jetsam caps on a real device; `ledger_peak`
+(`ledger_phys_footprint_peak`) is the kernel's own peak-ledger field in the same units, read as a
+cross-check only, never as the primary reading.
+
+**E5.b — `os_proc_available_memory()`, recorded once as a finding, never a gate.**
+`MemoryProbe.emitAvailableMemory()` is a one-shot call, logged before the sampler starts, and appears in
+no `if`, no threshold, and no early return anywhere in this phase (D-13) — mechanically confirmed:
+`git grep -nE 'os_proc_available_memory' ios/PasskeyVault` shows the call exists in exactly one place,
+`emitAvailableMemory()`'s own body, with every other hit being a doc comment.
+
+```
+PVPROBE|stage=availmem available_bytes=0
+```
+
+**Finding: `available_bytes=0` inside the real extension process.** `os/proc.h:78-87`'s own wording —
+"0 is returned if the calling process is not an app, or the calling process exceeds its memory limit" —
+means this single reading cannot, by itself, distinguish "an app extension does not count as an app" (P2's
+prior inference, `36-RESEARCH.md` Assumption A4) from "already over some limit". Both are live
+possibilities from one `0` reading; this is exactly why the ROADMAP forbids using it as a gate. Recorded
+as the finding it is, nothing more.
+
+**Can-fail proof for the gate that reads this evidence** (`scripts/ios-memory-gate.sh instrument`):
+demonstrated exiting non-zero against a copy of the real log with the `stage=sampler` line removed, and
+against a nonexistent path — both transcripts in `ios/evidence/36/instrument-falsification.log`.
+
+## E5.c — the mandatory sensitivity control
+
+## E5.d — the enforcement control
