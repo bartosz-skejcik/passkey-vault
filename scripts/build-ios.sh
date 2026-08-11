@@ -12,16 +12,19 @@
 # ios/IOS-SPIKE-LOG.md §3): that tool reports bare "arm64" for BOTH the
 # device and simulator slices of this crate, so a check built on it cannot
 # fail. vtool -show-build distinguishes them by their actual Mach-O load
-# command (LC_VERSION_MIN_IPHONEOS vs LC_BUILD_VERSION platform
-# IOSSIMULATOR) -- but vtool cannot read a .a archive directly ("file is not
-# mach-o"), so every check below extracts an object with `ar x` first
-# (35-RESEARCH.md, verified this session against real pv-core artifacts).
+# command: with IPHONEOS_DEPLOYMENT_TARGET=18.0 both slices carry
+# LC_BUILD_VERSION and differ in its platform field (`platform IOS` vs
+# `platform IOSSIMULATOR`). Before that floor was set, the device slice
+# carried the legacy LC_VERSION_MIN_IPHONEOS instead -- see WR-02 below.
+# vtool cannot read a .a archive directly ("file is not mach-o"), so every
+# check below extracts an object with `ar x` first (35-RESEARCH.md, verified
+# against real pv-core artifacts).
 #
 # No bash-only pipe-status arrays anywhere (landmine L-3 -- this project's
 # shell is zsh, where that array is spelled differently and the bash-only
 # spelling is silently empty here). Every pipe below relies on
 # `set -o pipefail`'s propagation of the pipeline's own last non-zero exit
-# (`pipe | grep -qF pattern`), or avoids the pipe entirely via
+# (`pipe | grep -qE pattern`), or avoids the pipe entirely via
 # `find ... -print -quit` instead of `find ... | head -1` (the latter
 # SIGPIPEs `find` under `set -euo pipefail` the moment a slice's .a contains
 # more than one .o -- the common case, not theoretical).
@@ -50,6 +53,40 @@ HEADERS_DIR="$BINDINGS_DIR/Headers"
 XCFRAMEWORK="$BUILD_DIR/PvFfi.xcframework"
 SIM_LIB="target/aarch64-apple-ios-sim/release/libpv_ffi.a"
 DEVICE_LIB="target/aarch64-apple-ios/release/libpv_ffi.a"
+
+# FFI-04 expectations, single-sourced so the gate and its falsification proof
+# can never drift apart. ANCHORED: `platform IOS` is a strict prefix of
+# `platform IOSSIMULATOR`, so an unanchored device check would be satisfied
+# by a simulator-tagged object -- exactly the "cannot distinguish the two
+# slices" defect landmine L-2 is about.
+#
+# The device expectation is `platform IOS` (LC_BUILD_VERSION), NOT
+# `LC_VERSION_MIN_IPHONEOS`: with IPHONEOS_DEPLOYMENT_TARGET=18.0 set below
+# (WR-02), the linker emits the modern load command. The old expectation was
+# only ever satisfiable because the floor was silently 10.0.
+DEVICE_EXPECT='^[[:space:]]*platform[[:space:]]+IOS$'
+SIM_EXPECT='^[[:space:]]*platform[[:space:]]+IOSSIMULATOR$'
+
+# One scratch root for every `ar x` below, removed by a single EXIT trap.
+# Previously each helper ran `mktemp -d` and `rm -rf`'d it on the success
+# path only, so the `ar x` failure path leaked a temp dir under `set -e`
+# (IN-04). A per-function `trap ... RETURN` is NOT the fix -- bash fires the
+# RETURN trap again for the CALLER, which under `set -u` aborted
+# --verify-falsifiable with `scratch: unbound variable` after all three
+# proofs had already passed.
+SCRATCH_ROOT=$(mktemp -d)
+trap 'rm -rf "$SCRATCH_ROOT"' EXIT
+# `mktemp -d` per call, NOT a shell counter: every caller invokes this inside
+# `$( ... )`, and a counter incremented in that subshell does not survive
+# back to the parent -- so every call would hand back the SAME directory, the
+# second slice's `ar x` would unpack on top of the first's objects (`ar:
+# __.SYMDEF: Permission denied`) and the simulator check would then inspect a
+# leftover DEVICE object. Caught in exactly that form by the FFI-04 gate
+# while writing this change.
+new_scratch() {
+  mktemp -d "$SCRATCH_ROOT/slice.XXXXXX"
+}
+
 
 # --- vtool gate helper -------------------------------------------------
 # Extracts an object from an already-assembled XCFramework slice's .a and
@@ -90,11 +127,7 @@ extract_and_check() {
     exit 1
   fi
   local scratch
-  scratch=$(mktemp -d)
-  # RETURN-scoped cleanup so the scratch dir does not leak on any of the
-  # failure paths below (they all `exit`, but the `ar x` failure path exits
-  # via `set -e` before reaching any explicit rm).
-  trap 'rm -rf "$scratch"' RETURN
+  scratch=$(new_scratch)
   ( cd "$scratch" && ar x "$REPO_ROOT/$slice_lib" )
   local obj
   if ! obj=$(extract_pv_ffi_object "$scratch" "$slice_lib"); then
@@ -115,34 +148,40 @@ extract_and_check() {
 # Proves the FFI-04 gate above can actually FAIL, not just pass (QA-02/
 # QA-04). Assumes a prior plain `scripts/build-ios.sh` invocation already
 # produced the XCFramework on disk (this mode does not rebuild).
-run_verify_falsifiable() {
-  echo "==> --verify-falsifiable: proving the vtool gate CAN fail"
-  local slice_lib="$XCFRAMEWORK/ios-arm64-simulator/libpv_ffi.a"
+#
+# WR-10: this used to strip only the SIMULATOR slice, so the DEVICE half of
+# the gate had never been demonstrated able to fail -- and the device half is
+# the one that changes when the deployment target moves (WR-02). Both slices
+# are falsified now.
+falsify_slice() {
+  local slice_name="$1" expect="$2" strip_platform="$3"
+  echo
+  echo "==> falsifying the $slice_name half of the gate (expect /$expect/, strip '$strip_platform')"
+  local slice_lib="$XCFRAMEWORK/$slice_name/libpv_ffi.a"
   if [ ! -f "$slice_lib" ]; then
     echo "ERROR: $slice_lib not found -- run 'scripts/build-ios.sh' (no args) first" >&2
     exit 1
   fi
   local scratch
-  scratch=$(mktemp -d)
-  trap 'rm -rf "$scratch"' RETURN
+  scratch=$(new_scratch)
   ( cd "$scratch" && ar x "$REPO_ROOT/$slice_lib" )
   local obj
   if ! obj=$(extract_pv_ffi_object "$scratch" "$slice_lib"); then
     exit 1
   fi
 
-  echo "==> BEFORE strip: vtool -show-build on the real (unmodified) simulator object"
+  echo "==> BEFORE strip: vtool -show-build on the real (unmodified) $slice_name object"
   vtool -show-build "$obj"
-  if ! vtool -show-build "$obj" | grep -qF "platform IOSSIMULATOR"; then
-    echo "ERROR: the real, unstripped object unexpectedly does not contain 'platform IOSSIMULATOR' -- nothing to falsify, the gate is untested" >&2
-    rm -rf "$scratch"
+  if ! vtool -show-build "$obj" | grep -qE "$expect"; then
+    echo "ERROR: the real, unstripped object unexpectedly does not match /$expect/ -- nothing to falsify, the gate is untested" >&2
     exit 1
   fi
 
-  # Write-side platform token is the lowercase short name "iossim", NOT the
-  # "IOSSIMULATOR" string `-show-build` prints for reading (35-RESEARCH.md's
-  # own correction, verified this session against a real extracted object).
-  vtool -remove-build-version iossim -output "$scratch/stripped.o" "$obj"
+  # Write-side platform tokens are the lowercase short names ("ios",
+  # "iossim"), NOT the "IOS"/"IOSSIMULATOR" strings `-show-build` prints for
+  # reading (35-RESEARCH.md's own correction, verified against a real
+  # extracted object).
+  vtool -remove-build-version "$strip_platform" -output "$scratch/stripped.o" "$obj"
 
   echo "==> AFTER strip: vtool -show-build on the corrupted object"
   # vtool's own exit status after the load command has been stripped is not
@@ -153,32 +192,44 @@ run_verify_falsifiable() {
   stripped_output=$(vtool -show-build "$scratch/stripped.o" 2>&1 || true)
   echo "$stripped_output"
 
-  if echo "$stripped_output" | grep -qF "platform IOSSIMULATOR"; then
-    echo "ERROR: falsification FAILED -- the stripped object still reports 'platform IOSSIMULATOR'; the vtool gate cannot fail and is therefore worthless (L-2-shaped defect)" >&2
-    rm -rf "$scratch"
+  if echo "$stripped_output" | grep -qE "$expect"; then
+    echo "ERROR: falsification FAILED -- the stripped object still matches /$expect/; the $slice_name half of the vtool gate cannot fail and is therefore worthless (L-2-shaped defect)" >&2
     exit 1
   fi
 
-  echo "==> PASS: the corrupted object's 'vtool -show-build' output does NOT contain 'platform IOSSIMULATOR' -- the gate genuinely can fail (QA-02/QA-04 falsification proof)"
+  echo "==> PASS: the corrupted $slice_name object no longer matches /$expect/ -- that half of the gate genuinely can fail (QA-02/QA-04)"
+}
 
-  # --- Proof 2 (WR-03): the gate fails when the slice contains none of
-  # pv-ffi's own code. Cannot be demonstrated by mutating
-  # target/**/libpv_ffi.a and re-running the whole script -- cargo detects
-  # the tampered output and rebuilds it -- so it is proven here, against the
-  # REAL archive, on a scratch copy with pv_ffi*.o removed.
-  echo "==> Proof 2: extract_pv_ffi_object must FAIL on a slice with no pv_ffi*.o"
-  local noffi="$scratch/no-pv-ffi"
-  mkdir -p "$noffi"
-  ( cd "$noffi" && ar x "$REPO_ROOT/$slice_lib" && find . -name 'pv_ffi*.o' -delete )
-  local remaining
-  remaining=$(find "$noffi" -name '*.o' | wc -l | tr -d ' ')
-  echo "    scratch copy retains $remaining non-pv_ffi objects (the shape the old '-name *.o -print -quit' happily accepted)"
-  if extract_pv_ffi_object "$noffi" "$slice_lib (scratch copy, pv_ffi objects removed)" >/dev/null 2>"$scratch/noffi.err"; then
+# WR-03: the gate must also fail when a slice contains none of pv-ffi's own
+# code. This cannot be demonstrated by mutating target/**/libpv_ffi.a and
+# re-running the whole script -- cargo detects the tampered output and
+# rebuilds it (confirmed: the run came back exit 0 with both slices OK) -- so
+# it is proven here, against the REAL archive, on a scratch copy with
+# pv_ffi*.o removed.
+falsify_missing_pv_ffi_objects() {
+  local slice_name="$1"
+  local slice_lib="$XCFRAMEWORK/$slice_name/libpv_ffi.a"
+  echo
+  echo "==> falsifying the 'slice must contain pv-ffi's own code' guard on $slice_name"
+  local scratch
+  scratch=$(new_scratch)
+  ( cd "$scratch" && ar x "$REPO_ROOT/$slice_lib" && find . -name 'pv_ffi*.o' -delete )
+  echo "    scratch copy retains $(find "$scratch" -name '*.o' | wc -l | tr -d ' ') non-pv_ffi objects (the shape the old '-name *.o -print -quit' happily accepted)"
+  if extract_pv_ffi_object "$scratch" "$slice_lib (scratch copy, pv_ffi objects removed)" >/dev/null 2>"$scratch/err"; then
     echo "ERROR: falsification FAILED -- extract_pv_ffi_object returned an object from a slice containing none of pv-ffi's code; the WR-03 guard cannot fail" >&2
     exit 1
   fi
-  cat "$scratch/noffi.err"
-  echo "==> PASS: the gate refuses a slice with no pv-ffi code instead of validating an unrelated object (WR-03 falsification proof)"
+  cat "$scratch/err"
+  echo "==> PASS: the gate refuses a slice with no pv-ffi code instead of validating an unrelated object (WR-03)"
+}
+
+run_verify_falsifiable() {
+  echo "==> --verify-falsifiable: proving BOTH halves of the vtool gate CAN fail"
+  falsify_slice "ios-arm64"           "$DEVICE_EXPECT" "ios"
+  falsify_slice "ios-arm64-simulator" "$SIM_EXPECT"    "iossim"
+  falsify_missing_pv_ffi_objects "ios-arm64-simulator"
+  echo
+  echo "==> ALL falsification proofs passed"
 }
 
 if [ "${1:-}" = "--verify-falsifiable" ]; then
@@ -194,6 +245,53 @@ fi
 # (the lib target, and the auto-discovered `uniffi-bindgen-swift` bin target
 # at src/bin/) -- `--crate-type` cannot apply itself to "the package" when
 # more than one target exists, it must be told which one.
+# WR-02 (review Fazy 35): cargo never reads project.pbxproj, so without this
+# the Rust slices were built against rustc's ancient apple-ios defaults --
+# measured on the committed XCFramework BEFORE this line existed:
+#   ios-arm64            : LC_VERSION_MIN_IPHONEOS   version 10.0
+#   ios-arm64-simulator  : LC_BUILD_VERSION platform IOSSIMULATOR minos 14.0
+# against `IPHONEOS_DEPLOYMENT_TARGET = 18.0` in project.pbxproj (4 places).
+# 35-CONTEXT.md:130-132 flagged exactly this ("Raising the Rust-side floor
+# needs IPHONEOS_DEPLOYMENT_TARGET set explicitly in the build script's
+# environment") and it was never done.
+#
+# COUPLED CONSEQUENCE, handled deliberately rather than worked around:
+# raising the device floor past 12.0 makes the linker emit LC_BUILD_VERSION
+# (`platform IOS`) instead of LC_VERSION_MIN_IPHONEOS, so the FFI-04 gate's
+# device expectation changes with it -- see the `extract_and_check` calls at
+# the bottom of this script. The gate was NOT weakened to accept both
+# spellings; it asserts the one that is now true, and both slices are
+# re-proven falsifiable by `--verify-falsifiable`.
+export IPHONEOS_DEPLOYMENT_TARGET=18.0
+echo "==> IPHONEOS_DEPLOYMENT_TARGET=$IPHONEOS_DEPLOYMENT_TARGET (must match project.pbxproj)"
+
+# rustc reads IPHONEOS_DEPLOYMENT_TARGET from the environment at compile
+# time, but CARGO DOES NOT TRACK IT in its fingerprint -- so with warm build
+# artifacts, setting the line above changes nothing and the slices keep the
+# floor they were originally compiled with. Observed exactly that on the
+# first run of this change: cargo printed `Finished release profile in
+# 0.34s` and the device object still reported LC_VERSION_MIN_IPHONEOS
+# version 10.0. The FFI-04 gate caught it (which is the gate doing its job),
+# but a build script that needs a manual `cargo clean` to be correct is a
+# trap. Note it is not enough to delete just libpv_ffi.a: the archive bundles
+# objects from every dependency rlib, and those were compiled with the old
+# floor too -- the whole triple has to go.
+stamp_and_clean_if_floor_changed() {
+  local triple="$1"
+  local stamp="target/$triple/.pv-ios-deployment-target"
+  if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$IPHONEOS_DEPLOYMENT_TARGET" ]; then
+    return 0
+  fi
+  if [ -d "target/$triple/release" ]; then
+    echo "==> deployment floor for $triple is unrecorded or differs from $IPHONEOS_DEPLOYMENT_TARGET -- cleaning (cargo cannot detect this itself)"
+    cargo clean --release --target "$triple"
+  fi
+  mkdir -p "target/$triple"
+  printf '%s\n' "$IPHONEOS_DEPLOYMENT_TARGET" > "$stamp"
+}
+stamp_and_clean_if_floor_changed aarch64-apple-ios-sim
+stamp_and_clean_if_floor_changed aarch64-apple-ios
+
 echo "==> Building pv-ffi for aarch64-apple-ios-sim (staticlib, release)"
 cargo rustc -p pv-ffi --lib --target aarch64-apple-ios-sim --crate-type staticlib --release
 
@@ -268,9 +366,13 @@ xcodebuild -create-xcframework \
 
 # 5. The vtool gate (FFI-04) -- MUST extract an object first, vtool cannot
 #    read a .a directly.
+#    Expectations are ANCHORED regexes, not substrings: `platform IOS` is a
+#    prefix of `platform IOSSIMULATOR`, so an unanchored device check would
+#    be satisfied by a simulator-tagged object -- a gate that cannot
+#    distinguish the two slices is the L-2 defect all over again.
 echo "==> Running the vtool slice gate"
-extract_and_check "ios-arm64" "LC_VERSION_MIN_IPHONEOS"
-extract_and_check "ios-arm64-simulator" "platform IOSSIMULATOR"
+extract_and_check "ios-arm64"           "$DEVICE_EXPECT"
+extract_and_check "ios-arm64-simulator" "$SIM_EXPECT"
 
 echo "==> Done. XCFramework: $XCFRAMEWORK"
 echo "==> Done. Swift bindings: $BINDINGS_DIR"
