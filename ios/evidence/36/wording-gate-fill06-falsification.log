@@ -1,0 +1,8 @@
+=== wording-gate falsification: inserting a forbidden verdict sentence into ## FILL-06 result ===
+--- inserted sentence present: ---
+678:The measured KDF cost mieści się within budget for the extension process.
+--- running wording-gate against the mutated file ---
+FAIL: wording-gate class 2 (budget-verdict phrasing) in ios/AUTOFILL-FEASIBILITY.md:
+678:The measured KDF cost mieści się within budget for the extension process.
+FAIL: wording-gate found forbidden phrasing
+exit=1

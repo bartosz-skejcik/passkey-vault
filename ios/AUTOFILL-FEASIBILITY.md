@@ -672,3 +672,71 @@ the in-process number would defeat its entire purpose."*). **No number is inferr
 into from the in-process reading to fill this gap.** The phase's headline number (E6, above) stands on
 the in-process instrument alone for this run, with its own mandatory sensitivity control (E5.c) as its
 proof of validity -- E7 remains a currently-unobtained second witness, not a silently-skipped one.
+
+## FILL-06 result
+
+**Mandated wording (ROADMAP Phase 36 SC3, verbatim):**
+
+> szczytowy `phys_footprint` **~85.1-85.3 MB** w procesie rozszerzenia, wobec niezweryfikowanego
+> i spornego sufitu urządzenia (**120 MB** z jednego źródła vendorowego / **<32 MB** wg drugiego
+> vendora dowożącego ten sam workload).
+
+Neither ceiling figure is attributed to a first-party Apple source (`36-RESEARCH.md` Assumption A11):
+the ~120 MB figure traces to a Share-extension crash-report post and one password-manager KB article,
+neither citing Apple; the <32 MB figure is Strongbox's own stated guidance for the identical workload
+class. Both are carried here contested and unattributed, on purpose -- this record picks neither.
+
+**The measured value.** Ten runs (5 hot within one extension invocation, 5 cold across five fresh
+launches), all real, all inside the real running `PasskeyVaultAutoFill.appex` process, at the real
+production parameter triple (`m_cost_kib=65536` / `t_cost=3` / `p_cost=4`, `KdfParams::default()`):
+peak `phys_footprint` ranged **89,163,912–89,475,232 bytes (~85.05–85.33 MB)** across all ten runs. The
+KDF's own cost (D = peak − baseline) was **consistently ~64.06–64.08 MB** on every run, including the
+labelled two-derivation stand-in (run 5, hot series), whose peak did not double.
+
+**The baseline this was measured against is a skeleton baseline** (`## E6` above) -- no populated
+credential list exists until Phase 39, so the peak recorded here is a **lower bound**, not the final
+number a fully-built extension will report.
+
+**Band and tripwire, both recorded, never conflated:** every one of the ten runs falls in the
+pre-declared PASS band (peak ≤ 90 MiB, residual ≤ 8 MiB) -- but the independent 32 MiB competitor
+tripwire **fires on every run regardless**, because D is roughly double that threshold. `DR-2` above is
+written because of the tripwire, exactly as `36-RESEARCH.md` anticipates for a numeric PASS with D ≥
+32 MiB.
+
+**The residual finding:** every run's allocator residual (R−B) is at or under 16 KiB, far under the
+8 MiB threshold -- a second unlock attempt does not start from a meaningfully raised memory floor, on
+this simulator, for this parameter triple, in this process shape.
+
+**The mandatory caveat, stated plainly and not as a footnote:** this simulator has no jetsam machinery
+at all (E5.d, confirmed empirically by surviving a genuine 200 MB dirtied allocation in the same
+process shape). The failure mode FILL-06 is ultimately about -- a silent process kill under real memory
+pressure on a real device -- **cannot occur here, and this measurement cannot produce a verdict about
+it.** This is a footprint measurement, not a survival test. Nothing in this record, or in any other
+committed record this phase produces, claims otherwise.
+
+## What this phase establishes, and what it does not
+
+**Establishes** (all on evidence, from a real built extension bundle exercised as a real running
+process, not from a reading of Apple's capability table): the simulator toolchain accepts and embeds
+the AutoFill credential-provider entitlement with no team configured (E1); an App Group container
+resolves identically from outside (host, via `simctl`) and inside (extension, via `FileManager`) the
+real running process (E2); a Keychain item written by the host app is read byte-for-byte by the
+extension under the shared access group, with the missing-entitlement negative control firing (E3);
+the extension registers, is electable, and is visible with a working toggle in Settings → Passwords →
+AutoFill (SC1's three layers); the in-process memory instrument works and is proven to move with the
+KDF's own parameter by the predicted amount (E5.a–c); this simulator enforces no memory kill (E5.d);
+and production-parameter Argon2id measured for real, ten times, peaks at ~85 MB `phys_footprint` with a
+~64 MB KDF cost that trips the independent competitor tripwire, driving `DR-2`'s recommendation.
+
+**Does NOT establish** -- three things, each named because this phase's own record could otherwise be
+misread as claiming them:
+
+- **Device behaviour.** Every result in this file is a simulator-under-a-free-Apple-ID result
+  (`Ograniczenie dowodu`, top of this file). The simulator has no entitlement grantor and no jetsam
+  machinery; neither a PASS nor a numeric measurement here extrapolates to hardware.
+- **Anything about any Apple ID.** No sentence in this record links "free Apple ID" to a
+  grant/refusal verdict (D-02, `scripts/ios-autofill-layers.sh wording-gate` class 1, mechanically
+  enforced). The $99 Apple Developer Program question remains **nierozstrzygalne na symulatorze** --
+  not FAIL, not decided, not this phase's to decide (ROADMAP SC2).
+- **The paid-program question.** DR-2's disclosed-global-reduction option (b) and the $99 escalation
+  are both explicitly the product owner's calls, never taken or decided by this phase or this record.

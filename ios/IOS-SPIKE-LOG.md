@@ -19,7 +19,7 @@ file is the bug.
 | `pv-core` / `pv-provider` native iOS build | **Verified** — real artifacts, correct Mach-O platform |
 | Xcode project | App + Unit + UI test targets. `PasskeyVaultTests` links `PvFfi.xcframework` and runs 6 real tests against `pv-core`; the App target still holds only Xcode's template code |
 | FFI boundary | **Delivered and verified** (Phase 35, commits `f6cb883` … `37c1ff7`). `crates/pv-ffi` (UniFFI `=0.32.0`, proc-macro mode), `scripts/build-ios.sh` (XCFramework + `vtool` slice gate), `scripts/audit-ffi-opaque-handles.sh` (opaque-handle gate over the *generated* Swift), 11 Rust tests + 6 Swift tests green. IOS-06 **decided** (UniFFI) — see §1; what was learned building it — see §2.5. **Proof limit:** simulator only; the device slice is built and its Mach-O platform verified, never run |
-| Credential provider extension | Not attempted |
+| Credential provider extension | **Real skeleton built, installed, and exercised end-to-end (Phase 36, Plans 36-01..36-04).** Entitlement embedding, App Group + Keychain sharing, and SC1's three layers (registration/election/Settings visibility) all proven live from inside the real `.appex` process. FILL-06 measured for real: production Argon2id (64 MiB/t=3/p=4) peaks at ~85 MB `phys_footprint` across 10 runs, DR-2 recommends removing the KDF from the extension path entirely. No credential-list/fill *logic* yet (Phase 41) — this row covers the skeleton, entitlement, and memory-budget proof only. |
 | Server sync / UI | Not attempted |
 
 **Milestone.** The spike graduated into milestone **v1.0 iOS — Vault w kieszeni** on 2026-08-11.
@@ -187,6 +187,67 @@ exactly that reason.
   keychain access group (the mechanism E3 proves), and the ciphertext cache from the shared App Group
   container (the mechanism E2 proves) — both mechanisms proven live from inside the real running
   `.appex` process, not inferred from the host app's own view.
+
+### DR-2 — KDF-path architecture: **architectural (option a) recommended; the disclosed-global-reduction
+option is the product owner's call, never taken here**
+
+**Decision: recommend option (a) — the extension never runs Argon2id itself.** The host app derives the
+User Key (an app, with an app's memory budget) and hands it across the process boundary via the already
+load-bearing `export_user_key_for_session`/`import_user_key_from_session` pair (§1, IOS-06's own
+amendment), deposited in a biometric-gated Keychain item Phase 37 owns the design of. The extension reads
+the already-derived key; it never runs a KDF at all in the steady-state (unlocked-recently) path.
+
+**Written because the independent competitor tripwire fired, per FILL-06/SC4's own trigger condition** —
+not because the numeric band failed. Plan 36-04's real, ten-run measurement (`ios/AUTOFILL-FEASIBILITY.md`
+`## E6`) landed the peak `phys_footprint` in the PASS band (~85.1–85.3 MB, under the pre-declared 90 MiB
+threshold on every run) — but the KDF's own cost, D, was **~64.06–64.08 MB on every single run**, at and
+above the 32 MiB tripwire `36-RESEARCH.md`'s competitor precedent sets. `36-RESEARCH.md` is explicit that
+this case is still DR-2's to write: *"If E6 lands PASS but D ≥ 32 MiB, the tripwire fires and DR-2 is
+still worth writing — three shipping competitors' documented guidance is violated even on a numeric
+pass."*
+
+**The three options, per the mandated style — the rejected ones named and rejected on their merits, not
+by omission:**
+
+- **(a) Architectural — RECOMMENDED.** The extension never runs the derivation; the host app derives and
+  hands the key across the boundary this milestone already treats as load-bearing. Precedent: Bitwarden's
+  own community PSA (`36-RESEARCH.md` §"The escape hatch, and why it is a decision record and not a
+  recommendation") — *"The 120 MB limit of the autofill API does not apply to Bitwarden if you use
+  biometric unlock."* **Cost, stated honestly, not hidden:** a cold start with no prior unlocked session
+  (device just rebooted, no biometric session cached) needs a defined fallback — a UX decision for Phase
+  37/41, not a security one, most likely bouncing the user to the host app for a one-time password unlock
+  before the extension can fill anything. This option **widens the window in which key material is
+  resident in a second process's address space** for as long as that cached session exists — the residual
+  risk this milestone's own IOS-06 FFI decision already inherited and disclosed (CP-4/T-36-18 in this
+  plan's threat register), not a new one introduced here. Depends on Phase 37 (biometric Keychain design)
+  and E3 (Keychain sharing, already proven live, `## E3` above).
+- **(b) Lower `m_cost` globally to match a documented competitor floor (e.g. Bitwarden's 32 MiB
+  default)** — a real, disclosed security reduction, **not decided here**. This is the option FILL-06's
+  own wording explicitly forbids taking silently ("ciche obniżenie bezpieczeństwa" — ROADMAP Phase 36 SC4).
+  It requires its own decision record, a migration story for every existing vault (re-deriving and
+  re-wrapping every stored `WrappedKey` at a new parameter set), and the product owner's explicit sign-off
+  — the same escalation posture as the $99 Apple Developer Program question (SC2). **Escalated to
+  Bartek, not taken.**
+- **(c) Fork parameters per-process — REJECTED on merit.** A KDF parameter is a property of the *vault*,
+  not of the process that happens to be unlocking it: forking it so the extension uses a cheaper profile
+  than the host app leaves the extension unable to open a vault the app created (and vice versa) without a
+  re-wrap migration identical in shape to option (b)'s, but hidden behind a process boundary instead of
+  disclosed as a real parameter change. No surveyed competitor does this (`36-RESEARCH.md` §"Competitor
+  precedent" — all four rows lower the parameter *globally* or bypass the KDF entirely; none forks it).
+
+**Competitor precedent cited as the decision's basis** (`36-RESEARCH.md` §"Competitor precedent — the
+decision record's template"): Bitwarden (32 MiB default; a warning dialogue above 64 MiB — our own
+production value), KeePassium (recommends ≤32 MB, a dedicated "Not enough memory to continue" KB
+article), Strongbox (≤16 MB recommended, "anything above 32MB will cause issues... due to iOS system
+limitations"), KeePassXC (lowered its *desktop* default because ecosystem iOS AutoFill clients could not
+open the resulting databases). **Three independent shipping password managers land at ≤32 MiB for the
+extension path, and Bitwarden's own warning threshold is exactly our production value (64 MiB).**
+
+**Evidence this decision rests on:** `ios/AUTOFILL-FEASIBILITY.md` `## E6` (the ten-run measurement,
+`ios/evidence/36/kdf-inprocess.log`, `kdf-coldstart.log`, `kdf-cold-{1..5}.log`), `## E7` (the
+out-of-process cross-check attempt — not obtained, recorded honestly rather than inferred), and
+`crates/pv-ffi/src/lib.rs`'s own `MAX_M_COST_KIB` commentary (already anticipating this exact tightening,
+written in Phase 35 before this measurement existed).
 
 ---
 
@@ -423,6 +484,20 @@ discarding the real status, a `||` fallback that could never fire, and `cargo te
 filters matching zero tests (handoff §0). **Any verification command added to this spike must be
 demonstrated failing at least once before its passing is believed.**
 
+**Plan 36-04 update — a fourth instance, a different shape, the same class.** `36-RESEARCH.md`'s own
+E7 pseudocode resolved the extension's PID via
+`xcrun simctl spawn <udid> launchctl list | grep -i PasskeyVaultAutoFill`. That grep can **never**
+match: the extension's real bundle id is `cloud.blonie.PasskeyVault.AutoFill` — **with a dot** between
+"PasskeyVault" and "AutoFill" — so the contiguous literal `PasskeyVaultAutoFill` (no dot) is never a
+substring of the label `launchctl list` actually prints. Confirmed directly, live, more than once this
+session: `pgrep -f` against the compiled executable's own path found the process alive at the exact
+moment the `launchctl list | grep` shape found nothing, run back-to-back. This is Pitfall 6's own
+standing rule (`36-RESEARCH.md`) proven necessary a session later, against fresh code: *"assume any
+SDK/runtime grep is wrong until it is shown returning a hit for a string known to be present."* Fixed
+in `scripts/ios-vmmap-crosscheck.sh` by resolving the PID via `pgrep -f` against the compiled
+executable's own path on the HOST process table, with the search-shape demonstration (against
+SpringBoard) built into the script itself rather than left as a one-off manual check.
+
 ### L-4 — Spec §6 ordered a destructive command against a path that does not exist
 
 `docs/superpowers/specs/2026-08-11-ios-spike-design.md` §6 states that `ios/PasskeyVault/.git`
@@ -585,6 +660,16 @@ Deleting `libpv_ffi.a` is not enough either, because the archive bundles objects
 rlib and those carry the old floor too; the whole triple has to go.
 `scripts/build-ios.sh` now stamps the floor per triple and runs `cargo clean --release --target …`
 when it changes. A build script that needs a manual `cargo clean` to be correct is a trap.
+
+**Plan 36-04 update — a fifth instance, self-referential counting.** `scripts/ios-memory-gate.sh
+measure`'s first draft computed its "expected run count" via `grep -c` against the SAME evidence file
+it was about to parse, then compared the parsed line count against that same derived number. Deleting
+one run's line from a scratch copy changed BOTH numbers together, so the comparison could never
+disagree with itself — a real run with a genuinely missing ordinal would have read green. Caught before
+this plan's evidence was captured (not after), by actually performing the mandated falsification
+(deleting a real run's line and observing the gate still print `PASS`). Fixed by checking that the
+parsed run/invocation numbers form the *complete permutation* `1..N` — a check with an independent
+shape from the thing it is validating, not a restatement of it in different words.
 
 ### L-10 — a cold DerivedData mismatches the generated bindings against the linked library
 
