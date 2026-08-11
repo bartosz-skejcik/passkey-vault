@@ -1554,3 +1554,136 @@ async fn b1_hidden_password_declared_family_wide_share_fans_out_invites_and_rese
         "a hidden_password holder must never be able to grant edit through the family-wide reseal bound"
     );
 }
+
+// --- 260812-01e Task 1: a contributor claims edit on write, item_bucket destination ---
+
+/// The exact control probe `30-VERIFICATION.md` recorded, reversed: a
+/// family-wide item_bucket declared `'read'` used to 403 a non-creator
+/// member's own item move (`403`); this asserts `200`, and that ONLY the
+/// contributing member's own `collection_keys` row is claimed to `'edit'` --
+/// a THIRD member fanned out identically but never contributing stays at
+/// the bucket's own declared level, proving the asymmetry lands correctly
+/// and is scoped to the contributor alone.
+#[tokio::test]
+async fn task1_non_creator_contributor_claims_edit_on_read_declared_item_bucket() {
+    let pool = test_pool().await;
+    let mut client = Client::new(pool.clone());
+    let mut secrets = Secrets::default();
+
+    let owner = client.actor("t1-owner@example.com", &mut secrets).await;
+    client.create_family(&owner.token, "T1 Family").await;
+    let member_b = client.join_family(&owner.token, "t1-member-b@example.com", &mut secrets).await;
+    let member_c = client.join_family(&owner.token, "t1-member-c@example.com", &mut secrets).await;
+
+    let bucket_id = "30140000-0000-4000-8000-00000000001e";
+    let ck = CollectionKey::generate();
+    let ck_bytes = *ck.expose();
+    secrets.add_key_material("T1 item_bucket's Collection Key", &ck_bytes);
+    let enc_name = serde_json::to_string(
+        &encrypt_item_for_collection(
+            &ck,
+            "family-wide-items".as_bytes(),
+            bucket_id,
+            bucket_id,
+            COLLECTION_NAME_REVISION,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/collections",
+            Some(&owner.token),
+            Some(json!({
+                "id": bucket_id,
+                "enc_name": enc_name,
+                "sealed_key": serde_json::to_string(&seal(&owner.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "family_wide_kind": "item_bucket",
+                "family_wide_access_level": "read",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "creating the read-declared item_bucket must succeed");
+
+    for member in [&member_b, &member_c] {
+        let (status, _) = client
+            .send(
+                "POST",
+                &format!("/api/vault/collections/{bucket_id}/members"),
+                Some(&owner.token),
+                Some(json!({
+                    "recipient_user_id": member.user_id,
+                    "sealed_key": serde_json::to_string(&seal(&member.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                    "access_level": "read",
+                })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "fanning {} out at read must succeed", member.email);
+    }
+
+    // member_b creates a personal item -- opaque enc_key/enc_data suffice,
+    // matching tests/vault.rs's own `item_body` precedent (this proves the
+    // AUTHORIZATION gate, not zero-knowledge).
+    let item_id = "30140000-0000-4000-8000-00000000002e";
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/items",
+            Some(&member_b.token),
+            Some(json!({
+                "id": item_id,
+                "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"t1-key-blob\"}",
+                "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"t1-data-blob\"}",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "member_b creating a personal item must succeed");
+
+    // VERIFICATION.md's exact control probe, reversed: moving into a
+    // 'read'-declared item_bucket used to 403 here.
+    let (status, _) = client
+        .send(
+            "PUT",
+            &format!("/api/vault/items/{item_id}/collection"),
+            Some(&member_b.token),
+            Some(json!({
+                "new_collection_id": bucket_id,
+                "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"t1-key-blob-moved\"}",
+                "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"t1-data-blob-moved\"}",
+                "expected_revision": 1,
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a non-creator member holding only 'read' on a family-wide item_bucket must be able to move \
+         their own item into it -- VERIFICATION.md's exact control probe, reversed"
+    );
+
+    let member_b_level: String = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(bucket_id)
+    .bind(&member_b.user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(member_b_level, "edit", "the contributing member's own row must be claimed to edit");
+
+    let member_c_level: String = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(bucket_id)
+    .bind(&member_c.user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        member_c_level, "read",
+        "a fanned-out member who never contributed must stay at the bucket's own declared level -- \
+         the asymmetry is scoped to the contributor alone"
+    );
+}

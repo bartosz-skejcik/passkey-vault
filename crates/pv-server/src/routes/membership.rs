@@ -631,6 +631,138 @@ pub(crate) async fn is_family_wide_collection(db: &sqlx::SqlitePool, collection_
     )
 }
 
+/// Whether `collection_id` is specifically an `item_bucket`-kind family-wide
+/// collection (260812-01e Task 1) — mirrors `is_family_wide_collection`'s
+/// exact shape, but scoped narrower: a family-wide FOLDER must keep using
+/// `require_collection_edit` unchanged, since this claim mechanism (see
+/// `require_and_claim_item_bucket_edit` below) is item_bucket-only, per
+/// LOCKED decision 1's own scope. Also consumed by Task 2's
+/// `collections::revoke_access` refusal.
+pub(crate) async fn is_item_bucket_collection(db: &sqlx::SqlitePool, collection_id: &str) -> Result<bool, ApiError> {
+    Ok(
+        sqlx::query("SELECT 1 FROM collections WHERE id = ? AND family_wide_kind = 'item_bucket'")
+            .bind(collection_id)
+            .fetch_optional(db)
+            .await?
+            .is_some(),
+    )
+}
+
+/// LOCKED decision 1 (260812-01e): generalizes `collections::create`'s
+/// "the creator always holds edit on their own creation" from "the creator"
+/// to "any contributor", atomically, on the SAME request that writes the
+/// item in (`vault::move_item`'s destination gate) — never a standalone
+/// endpoint a member could call without ever contributing anything.
+///
+/// Reachability, stated honestly (plan-check B-1, T-30fix-01): this is NOT
+/// gated on a genuine "real contribution" — any member holding ANY existing
+/// row on an item_bucket reaches `edit` in two API calls (create any owned
+/// personal item, then move it in; content is irrelevant, cost is zero) —
+/// and the escalation is PERMANENT (nothing narrows it back). LOCKED
+/// decision 1's own "has ever contributed" wording accepts exactly this.
+/// What this row must NOT silently carry along (the power to revoke other
+/// members, or to hand other members/invitees more than the bucket's own
+/// declared level) is closed by Task 2, layered on top of this mechanism,
+/// never by narrowing this function.
+///
+/// Gates on `RequireRead` (proof of real, existing membership — same
+/// `None -> NotFound` semantics `require_collection_edit` uses) via the
+/// SAME `Collection::resolve_access`/`gate::<M>()` machinery every other
+/// extractor/helper in this module shares. If the resolved level is not
+/// already `Edit`, claims it by updating the caller's OWN
+/// `collection_keys` row only — no new `sealed_key` is minted (the wrapped
+/// Collection Key is level-independent; the caller already holds a usable
+/// one via their existing row). Idempotent: already-edit is a no-op, never
+/// an error.
+///
+/// Runs against `db: &sqlx::SqlitePool` (a fresh pool connection), NEVER a
+/// transaction handle — this function is called from `move_item`'s Gate 2,
+/// which per that call site's own doc comment MUST complete (and release
+/// its pool connection) before `tx` opens; this codebase's integration test
+/// harness runs its pool at `max_connections(1)`, so opening `tx` first
+/// would self-deadlock against this call's own connection acquire.
+pub(crate) async fn require_and_claim_item_bucket_edit(
+    db: &sqlx::SqlitePool,
+    caller_user_id: &str,
+    collection_id: &str,
+) -> Result<(), ApiError> {
+    let resolved = Collection::resolve_access(db, caller_user_id, collection_id).await?;
+    let level = gate::<RequireRead>(resolved)?;
+    if level != AccessLevel::Edit {
+        sqlx::query("UPDATE collection_keys SET access_level = 'edit' WHERE collection_id = ? AND recipient_user_id = ?")
+            .bind(collection_id)
+            .bind(caller_user_id)
+            .execute(db)
+            .await?;
+    }
+    Ok(())
+}
+
+/// A family-wide collection's OWN declared `family_wide_access_level`, in
+/// THREE states rather than a two-state `Option<AccessLevel>` (plan-check
+/// iteration 2, C-1). Load-bearing, not defensive padding — read this
+/// variant's own doc comment before "simplifying" it to two states.
+pub(crate) enum FamilyWideDeclaredLevel {
+    /// `family_wide_kind IS NULL` — not a family-wide collection at all.
+    /// Callers keep their existing non-family-wide branch byte-for-byte.
+    NotFamilyWide,
+    /// `family_wide_kind IS NOT NULL` AND `family_wide_access_level IS NOT
+    /// NULL` — this is the ONLY state an equality bound (Task 2) may be
+    /// applied to.
+    Declared(AccessLevel),
+    /// `family_wide_kind IS NOT NULL` but `family_wide_access_level IS
+    /// NULL` — a pre-migration-0020 row. NO equality bound is applied here;
+    /// the pre-existing `may_grant_access_level` check remains the sole
+    /// bound, exactly as it is today.
+    ///
+    /// Why this third state must never collapse onto `Declared(Read)`:
+    /// `web/src/lib/invite/crypto.ts:125` falls back to `entry.access_level`
+    /// — the CALLER'S OWN held level — when `family_wide_access_level` is
+    /// null, while `resealTrigger.ts:43` falls back to `"read"`. Those two
+    /// already disagree, and nothing notices today because nothing compares
+    /// either to the collection row. If this helper defaulted a legacy row
+    /// to `Read`, an `edit`-holder's invite would send `"edit"`, a
+    /// `Declared`-only equality bound would demand `"read"`, and
+    /// `invitations::create` would reject the ENTIRE request — that member
+    /// could never generate an invite again. That is WINDOWS #17's failure
+    /// shape, re-created by the very fix (Task 2) this type exists to
+    /// support. Never read the declared level from anything client-supplied;
+    /// it comes from the `collections` row only.
+    LegacyUnknown,
+}
+
+/// Resolves `collection_id`'s own `FamilyWideDeclaredLevel` (260812-01e Task
+/// 1, consumed by Task 2's call sites: `collections::add_member` and
+/// `invitations::create`'s `family_wide_keys` fold-in loop). Takes only an
+/// id and reads `collections.family_wide_kind`/`family_wide_access_level` —
+/// nothing client-supplied enters this resolution.
+pub(crate) async fn resolve_family_wide_declared_level(
+    db: &sqlx::SqlitePool,
+    collection_id: &str,
+) -> Result<FamilyWideDeclaredLevel, ApiError> {
+    let row = sqlx::query("SELECT family_wide_kind, family_wide_access_level FROM collections WHERE id = ?")
+        .bind(collection_id)
+        .fetch_optional(db)
+        .await?;
+    let Some(row) = row else {
+        // No such collection row at all -- treated identically to
+        // "not family-wide", mirroring `is_family_wide_collection`'s own
+        // `fetch_optional`-then-`is_some()` idiom. Every call site resolves
+        // its own membership access separately (and earlier), so a caller
+        // reaching this helper has already proven the collection exists.
+        return Ok(FamilyWideDeclaredLevel::NotFamilyWide);
+    };
+    let kind: Option<String> = row.try_get("family_wide_kind").map_err(|_| ApiError::Internal)?;
+    if kind.is_none() {
+        return Ok(FamilyWideDeclaredLevel::NotFamilyWide);
+    }
+    let level: Option<String> = row.try_get("family_wide_access_level").map_err(|_| ApiError::Internal)?;
+    match level {
+        None => Ok(FamilyWideDeclaredLevel::LegacyUnknown),
+        Some(level_str) => Ok(FamilyWideDeclaredLevel::Declared(parse_access_level(&level_str)?)),
+    }
+}
+
 /// Pathless sibling of `Membership<R, M>` for the singleton `families`
 /// resource (v0.4 has exactly one family — CONTEXT.md's locked FAM-01
 /// decision — so there is no `{id}` segment to read at all).

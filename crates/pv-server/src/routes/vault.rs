@@ -17,8 +17,8 @@ use uuid::Uuid;
 
 use super::collections::CoRecipientRecord;
 use super::membership::{
-    active_collection_member_join, parse_access_level_from_request, require_collection_edit, Item, Membership,
-    RequireEdit, RequireRead,
+    active_collection_member_join, is_item_bucket_collection, parse_access_level_from_request,
+    require_and_claim_item_bucket_edit, require_collection_edit, Item, Membership, RequireEdit, RequireRead,
 };
 use super::session::SessionUser;
 use super::sync::{ChangeType, EntityType, SyncEvent};
@@ -973,7 +973,19 @@ pub async fn move_item(
     // self-deadlock (observed directly: it manifested as a 500 from a pool
     // acquire timeout when tried during this fix).
     if let Some(dest_id) = &req.new_collection_id {
-        require_collection_edit(&state.db, &source.caller_user_id, dest_id).await?;
+        // 260812-01e Task 1 (LOCKED decision 1): an item_bucket destination
+        // takes the claim path instead of the plain edit-only gate — a
+        // contributor's own row is atomically upgraded to `edit` on this
+        // same request, generalizing `collections::create`'s "the creator
+        // is always a full editor of their own creation" from "the creator"
+        // to "any contributor". A family-wide FOLDER destination is
+        // unaffected: it keeps the byte-identical `require_collection_edit`
+        // call this branch always used.
+        if is_item_bucket_collection(&state.db, dest_id).await? {
+            require_and_claim_item_bucket_edit(&state.db, &source.caller_user_id, dest_id).await?;
+        } else {
+            require_collection_edit(&state.db, &source.caller_user_id, dest_id).await?;
+        }
     }
 
     validate_blob_len("enc_key", &req.enc_key)?;
