@@ -166,13 +166,34 @@ export interface FamilyWidePendingResponse {
  * codebase's fail-safe-never-crash discipline for background sync data
  * (mirrors how a single-user vault's `getSharedRevisions()` 404 is handled
  * one layer up, in `sync.ts`, rather than swallowed here -- this function's
- * OWN contract is simply "never throw", independent of that latch). */
+ * OWN contract is simply "never throw", independent of that latch).
+ *
+ * WR-06 fix (30-REVIEW.md): the fail-safe return value stays -- callers
+ * (`familyWidePending.ts`'s `refreshFamilyWidePending`) still never need a
+ * try/catch of their own -- but the catch used to discard EVERY error class
+ * identically, so a persistently broken endpoint (a 500, a schema mismatch,
+ * an expired token, a total network partition) was indistinguishable from
+ * "genuinely nothing pending". Two shipped guarantees then failed silently:
+ * the pending-newcomer row (FSH-05's honesty feature) never rendered, and
+ * `runFamilyWideResealTrigger` early-returns on an empty `resealable` and
+ * never fires -- FSH-02's lazy-reseal fallback quietly stopped existing,
+ * with no signal anywhere. Only the two EXPECTED statuses (403 for a
+ * suspended member, 404 for a no-family/solo account) stay silent; every
+ * other cause is logged, mirroring `resealTrigger.ts`'s own
+ * `console.warn`-and-continue discipline. */
 export async function getFamilyWidePending(): Promise<FamilyWidePendingResponse> {
   try {
     return await apiJson<FamilyWidePendingResponse>("/api/families/family-wide-pending", {
       method: "GET",
     });
-  } catch {
+  } catch (err) {
+    const status = err instanceof ApiClientError ? err.status : undefined;
+    if (status !== 403 && status !== 404) {
+      console.warn(
+        "pv: family-wide-pending discovery failed -- pending rows and lazy reseal are paused",
+        err,
+      );
+    }
     return { missing: [], resealable: [] };
   }
 }
