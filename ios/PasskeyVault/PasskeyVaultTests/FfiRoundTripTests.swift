@@ -71,6 +71,15 @@ struct FfiRoundTripTests {
     /// byte-for-byte equal to the ORIGINAL literal, never `.count`-only,
     /// never "no error was thrown". Then a literal plaintext string is
     /// encrypted and decrypted back, asserted equal to the original literal.
+    ///
+    /// WR-12 (review Fazy 35): the literal-out-equals-literal-in assertion
+    /// proves the round trip is LOSSLESS -- it does not prove anything was
+    /// ever wrapped. A `wrapUserKey`/`unwrapUserKey` pair that returned the
+    /// User Key bytes straight back as "ciphertext" would satisfy it
+    /// perfectly, and that is precisely the leak shape FFI-02 exists to
+    /// prevent, here observable from the Swift side. So the intermediate is
+    /// now inspected as well, positively (what the wrapped blob IS), not as
+    /// an absence.
     @Test func fullRoundTripOnLiteralBytes() throws {
         // Author-chosen literal: NOT `generate()`'s output.
         let originalUserKeyBytes: [UInt8] = Array(0...31)
@@ -80,6 +89,32 @@ struct FfiRoundTripTests {
         let wrappingKey = try Self.makeFixtureWrappingKey()
 
         let wrapped = try wrapUserKey(wrappingKey: wrappingKey, userKey: userKey)
+
+        // --- WR-12: the wrapped form must not be the input ---------------
+        //
+        // Structure first. Both lengths are literals transcribed from
+        // `crates/pv-core/src/keys.rs` (`NONCE_LEN = 24`, `KEY_LEN = 32`) plus
+        // XChaCha20-Poly1305's fixed 16-byte Poly1305 tag -- never computed
+        // here from `wrapped` itself, which would be the same
+        // compare-the-code-against-itself defect the file header rejects.
+        #expect(wrapped.nonce.count == 24)
+        #expect(wrapped.ciphertext.count == 48)  // 32 key bytes + 16-byte AEAD tag
+
+        // An identity/pass-through wrap fails every one of these.
+        #expect(Array(wrapped.ciphertext) != originalUserKeyBytes)
+        #expect(wrapped.ciphertext.range(of: Data(originalUserKeyBytes)) == nil)
+        #expect(Array(wrapped.nonce) != Array(originalUserKeyBytes.prefix(24)))
+
+        // The nonce must be freshly random per call, not a constant and not
+        // derived from the input: wrapping the SAME key under the SAME
+        // wrapping key twice must produce a different nonce and therefore a
+        // different ciphertext. Nonce reuse under XChaCha20-Poly1305 is
+        // catastrophic, so this is load-bearing in its own right -- and a
+        // deterministic or identity wrap goes red here too.
+        let wrappedAgain = try wrapUserKey(wrappingKey: wrappingKey, userKey: userKey)
+        #expect(wrappedAgain.nonce != wrapped.nonce)
+        #expect(wrappedAgain.ciphertext != wrapped.ciphertext)
+
         let unwrapped = try unwrapUserKey(wrappingKey: wrappingKey, wrapped: wrapped)
 
         let reExported = exportUserKeyForSession(userKey: unwrapped)
