@@ -239,8 +239,11 @@ async fn create_family_wide_collection(app: &axum::Router, owner_token: &str, id
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {owner_token}"))
                 .body(Body::from(
+                    // CR-01 fix (30-REVIEW.md): `family_wide_access_level`
+                    // is now REQUIRED whenever `family_wide_kind` is set.
                     serde_json::to_vec(&json!({
                         "id": id, "enc_name": "enc-fwp", "sealed_key": sealed_key_json, "family_wide_kind": kind,
+                        "family_wide_access_level": "read",
                     }))
                     .unwrap(),
                 ))
@@ -297,6 +300,15 @@ async fn family_wide_pending_empty_when_no_family_wide_collections_exist() {
     let body: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(body["missing"].as_array().unwrap().len(), 0);
     assert_eq!(body["resealable"].as_array().unwrap().len(), 0);
+    // IN-04 fix (30-REVIEW.md): the empty-result case is exactly
+    // `{"missing":[],"resealable":[]}`, no additional keys -- the
+    // whole-database adversarial sweep in `family_wide_sharing.rs` cannot
+    // exercise this shape (its own generic string sweep asserts a non-empty
+    // body), so this is the ONE place T-30-04's "on any path including the
+    // empty-result case" claim is proven for the exact wire shape.
+    let mut keys: Vec<&String> = body.as_object().unwrap().keys().collect();
+    keys.sort();
+    assert_eq!(keys, vec!["missing", "resealable"], "the empty-result body must carry exactly these two keys");
 }
 
 /// A second member, added AFTER a family-wide collection was created, lacks a

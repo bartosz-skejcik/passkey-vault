@@ -2324,28 +2324,50 @@ async fn family_wide_kind_folder_and_item_bucket_round_trip_through_get_and_list
         ("bbbbbbbb-2222-4222-8222-222222222222", "folder"),
         ("cccccccc-3333-4333-8333-333333333333", "item_bucket"),
     ] {
+        // CR-01 fix (30-REVIEW.md): `family_wide_access_level` is now
+        // REQUIRED whenever `family_wide_kind` is set (validated by
+        // `validate_family_wide_access_level` BEFORE any DB work) — every
+        // family-wide creation call in this suite must carry it.
         let create_res = req(
             &app,
             "POST",
             "/api/vault/collections",
             &owner_token,
-            Some(json!({ "id": id, "enc_name": "enc-fw", "sealed_key": sealed_key_json, "family_wide_kind": kind })),
+            Some(json!({
+                "id": id, "enc_name": "enc-fw", "sealed_key": sealed_key_json,
+                "family_wide_kind": kind, "family_wide_access_level": "read",
+            })),
         )
         .await;
         assert_eq!(create_res.status(), StatusCode::CREATED, "creating a {kind}-kind collection must succeed");
         let create_body = body_json(create_res).await;
         assert_eq!(create_body["family_wide_kind"].as_str(), Some(kind));
+        assert_eq!(
+            create_body["family_wide_access_level"].as_str(),
+            Some("read"),
+            "create must echo the submitted family_wide_access_level for a {kind}-kind collection"
+        );
 
         let get_res = req(&app, "GET", &format!("/api/vault/collections/{id}"), &owner_token, None).await;
         assert_eq!(get_res.status(), StatusCode::OK);
         let get_body = body_json(get_res).await;
         assert_eq!(get_body["family_wide_kind"].as_str(), Some(kind), "GET must echo the stored {kind}");
+        assert_eq!(
+            get_body["family_wide_access_level"].as_str(),
+            Some("read"),
+            "GET must echo the stored family_wide_access_level for a {kind}-kind collection"
+        );
 
         let list_res = req(&app, "GET", "/api/vault/collections", &owner_token, None).await;
         assert_eq!(list_res.status(), StatusCode::OK);
         let list_body = body_json(list_res).await;
         let entry = list_body.as_array().unwrap().iter().find(|c| c["id"] == id).expect("collection must be listed");
         assert_eq!(entry["family_wide_kind"].as_str(), Some(kind), "LIST must echo the stored {kind}");
+        assert_eq!(
+            entry["family_wide_access_level"].as_str(),
+            Some("read"),
+            "LIST must echo the stored family_wide_access_level for a {kind}-kind collection"
+        );
     }
 }
 
@@ -2407,7 +2429,7 @@ async fn second_item_bucket_for_same_family_is_409_but_second_folder_succeeds() 
         &owner_token,
         Some(json!({
             "id": first_bucket_id, "enc_name": "enc-bucket-1", "sealed_key": sealed_key_json_1,
-            "family_wide_kind": "item_bucket",
+            "family_wide_kind": "item_bucket", "family_wide_access_level": "edit",
         })),
     )
     .await;
@@ -2421,7 +2443,7 @@ async fn second_item_bucket_for_same_family_is_409_but_second_folder_succeeds() 
         &owner_token,
         Some(json!({
             "id": second_bucket_id, "enc_name": "enc-bucket-2", "sealed_key": sealed_key_json_2,
-            "family_wide_kind": "item_bucket",
+            "family_wide_kind": "item_bucket", "family_wide_access_level": "edit",
         })),
     )
     .await;
@@ -2432,6 +2454,17 @@ async fn second_item_bucket_for_same_family_is_409_but_second_folder_succeeds() 
     );
     let second_body = body_json(second_res).await;
     assert!(second_body.get("error").is_some(), "the 409 body must carry the standard {{\"error\": ...}} shape");
+    // WR-04 fix (30-REVIEW.md): the bare `ON CONFLICT DO NOTHING` catches
+    // BOTH an id collision and an `idx_one_item_bucket_per_family`
+    // violation through the same `fetch_optional` `None` branch — the
+    // message must name the ACTUAL cause for this (the common,
+    // race-loser) path, not the generic "id already exists" text that used
+    // to be hard-coded for both.
+    assert_eq!(
+        second_body["error"].as_str(),
+        Some("this family already has a family-wide item bucket"),
+        "an item_bucket conflict must report ITS OWN cause, not the id-collision message"
+    );
 
     // No row was written for the rejected second item_bucket.
     let bucket_count: i64 =
@@ -2453,7 +2486,7 @@ async fn second_item_bucket_for_same_family_is_409_but_second_folder_succeeds() 
         &owner_token,
         Some(json!({
             "id": second_folder_id, "enc_name": "enc-folder-2", "sealed_key": sealed_key_json_3,
-            "family_wide_kind": "folder",
+            "family_wide_kind": "folder", "family_wide_access_level": "edit",
         })),
     )
     .await;

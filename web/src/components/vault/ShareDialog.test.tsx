@@ -1036,11 +1036,15 @@ describe("ShareDialog", () => {
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
       expect(mockCreateCollection).toHaveBeenCalledTimes(1);
+      // CR-01 fix (30-REVIEW.md): the 5th arg is the SHARE's own chosen
+      // access level ("edit", per `chooseAccessLevel("edit")` above), the
+      // one place that level survives past creation time.
       expect(mockCreateCollection).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
         expect.any(String),
         "folder",
+        "edit",
       );
       expect(mockAddCollectionMember).toHaveBeenCalledTimes(3);
       const grantedIds = (mockAddCollectionMember.mock.calls as unknown[][]).map((c) => c[1]);
@@ -1078,10 +1082,15 @@ describe("ShareDialog", () => {
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
+      // CR-01 fix (30-REVIEW.md): the individual-recipient path also omits
+      // the 5th arg (family_wide_access_level) -- `isFamilyWide` is false,
+      // so both family-wide fields stay undefined, matching this test's own
+      // "stays byte-identical" claim.
       expect(mockCreateCollection).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
         expect.any(String),
+        undefined,
         undefined,
       );
     });
@@ -1186,11 +1195,14 @@ describe("ShareDialog", () => {
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
       expect(mockCreateCollection).toHaveBeenCalledTimes(1);
+      // CR-01 fix (30-REVIEW.md): the 5th arg is the SHARE's own chosen
+      // access level ("read", per `chooseAccessLevel("read")` above).
       expect(mockCreateCollection).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
         expect.any(String),
         "item_bucket",
+        "read",
       );
       const newBucketId = (mockCreateCollection.mock.calls as unknown[][])[0][0] as string;
       expect(mockMoveItemToCollection).toHaveBeenCalledWith(

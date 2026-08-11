@@ -109,7 +109,20 @@ export async function generateInviteLink(
       familyWideCollectionKeys.push(ck);
       familyWideKeys.push({
         collection_id: entry.id,
-        access_level: entry.access_level,
+        // CR-01 fix (30-REVIEW.md): propagate the SHARE's own declared
+        // level (`family_wide_access_level`), never `entry.access_level` —
+        // that field is the PROPAGATOR's own `collection_keys` row, which
+        // for the creator is ALWAYS `'edit'` regardless of what level the
+        // share was actually created at (`collections::create` hard-codes
+        // the creator's own row). Falling back to `entry.access_level` only
+        // when `family_wide_access_level` is absent covers a legacy
+        // family-wide collection created before that column existed (a
+        // response predating this fix, or one served mid-rolling-restart)
+        // — the server still bounds whatever is sent here by the caller's
+        // OWN actually-held level (`require_collection_access_for_propagation`),
+        // so this can never grant more than the caller could always
+        // propagate.
+        access_level: entry.family_wide_access_level ?? entry.access_level,
         wrapped_collection_key: channel.wrapCollectionKey(ck),
       });
     }

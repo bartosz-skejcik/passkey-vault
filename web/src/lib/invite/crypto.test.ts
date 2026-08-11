@@ -237,23 +237,42 @@ describe("generateInviteLink", () => {
     expect(Array.from(unwrapped.bytes)).toEqual(Array.from(originalBytes));
   });
 
-  it("family-only invite folds in every current family-wide collection's key, additively (30-07)", async () => {
+  it("family-only invite folds in every current family-wide collection's key, additively (30-07), propagating the SHARE's own declared access_level -- CR-01 fix, 30-REVIEW.md", async () => {
     const secret = fixedSecret(11);
     mockGenerateInviteSecret.mockReturnValue(secret);
     mockListCollections.mockResolvedValue([
+      // CR-01 (30-REVIEW.md): the caller's own held `access_level` ("edit"
+      // -- they are this folder's CREATOR, whose row is always hard-coded
+      // 'edit' by `collections::create`, regardless of the level the share
+      // was actually declared at) is DELIBERATELY DIFFERENT from
+      // `family_wide_access_level` ("read" -- the level FSH-01's dialog
+      // actually chose for this share). The two prior test iterations of
+      // this suite asserted "access_level is the collection's OWN
+      // caller-held level, never hardcoded to read" -- that assertion
+      // ENCODED the exact bug CR-01 describes (a read-declared share
+      // silently delivered as edit to every late joiner) and is corrected
+      // here, not merely weakened: the fixed, correct behavior is that
+      // `family_wide_access_level` -- the SHARE's own declared level --
+      // must be what is propagated, never the propagator's own row.
       {
         id: "col-folder",
         enc_name: "n",
         created_at: "t",
         access_level: "edit",
+        family_wide_access_level: "read",
         sealed_key: "sealed-folder",
         family_wide_kind: "folder",
       },
+      // A LEGACY row (created before `family_wide_access_level` existed, or
+      // served mid-rolling-restart): the field is absent entirely, so the
+      // fallback to the caller's own `access_level` engages -- proving the
+      // `?? entry.access_level` fallback half of the fix, distinct from the
+      // primary-source half `col-folder` proves above.
       {
         id: "col-bucket",
         enc_name: "n",
         created_at: "t",
-        access_level: "read",
+        access_level: "edit",
         sealed_key: "sealed-bucket",
         family_wide_kind: "item_bucket",
       },
@@ -287,10 +306,16 @@ describe("generateInviteLink", () => {
     expect(createBody.collection_id).toBeNull();
     expect(createBody.family_wide_keys).toHaveLength(2);
     const byId = Object.fromEntries(createBody.family_wide_keys.map((e) => [e.collection_id, e]));
-    // access_level is the collection's OWN caller-held level, never
-    // hardcoded to "read" — the folder entry proves this (it's "edit").
-    expect(byId["col-folder"].access_level).toBe("edit");
-    expect(byId["col-bucket"].access_level).toBe("read");
+    // CR-01 fix: the propagated level is the SHARE's own
+    // `family_wide_access_level` ("read"), never the caller's own held
+    // `access_level` ("edit") -- this is the corrected assertion; the prior
+    // iteration asserted the opposite ("edit") and that assertion encoded
+    // the bug.
+    expect(byId["col-folder"].access_level).toBe("read");
+    // Legacy row (no family_wide_access_level): falls back to the caller's
+    // own access_level ("edit") -- the only information available for a row
+    // predating this fix.
+    expect(byId["col-bucket"].access_level).toBe("edit");
     expect(byId["col-personal"]).toBeUndefined();
 
     // wrapped_collection_key is a REAL channel.wrapCollectionKey output —

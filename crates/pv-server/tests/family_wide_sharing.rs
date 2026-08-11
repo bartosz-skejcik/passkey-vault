@@ -413,6 +413,8 @@ async fn seed_family_wide_folder() -> World {
                 "enc_name": enc_name,
                 "sealed_key": serde_json::to_string(&seal(&owner.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
                 "family_wide_kind": "folder",
+                // CR-01 fix (30-REVIEW.md): required alongside family_wide_kind.
+                "family_wide_access_level": "read",
             })),
         )
         .await;
@@ -450,7 +452,22 @@ async fn family_wide_creation_and_grant_write_only_ids_timestamps_and_opaque_blo
     let cells = row_cells(&row);
     assert_eq!(
         column_names(&cells),
-        vec!["id", "family_id", "enc_name", "created_at", "revision", "family_wide_kind"],
+        vec![
+            "id",
+            "family_id",
+            "enc_name",
+            "created_at",
+            "revision",
+            "family_wide_kind",
+            // CR-01 fix (30-REVIEW.md, migration 0020): a SECOND
+            // deliberately non-opaque column, inspected below alongside
+            // `family_wide_kind` -- a plain enum string, never ciphertext or
+            // key material, so this sweep's own self-check discipline
+            // ("a new column must fail this test until it is inspected")
+            // is satisfied by naming and asserting on it explicitly, not by
+            // silently widening the exemption.
+            "family_wide_access_level",
+        ],
         "every column must be accounted for below -- a new column must fail this test until it is inspected"
     );
 
@@ -465,7 +482,13 @@ async fn family_wide_creation_and_grant_write_only_ids_timestamps_and_opaque_blo
     assert_eq!(
         cell_text(&cells, "family_wide_kind"),
         "folder",
-        "family_wide_kind is the ONE deliberately non-opaque new column -- a plain enum string"
+        "family_wide_kind is a deliberately non-opaque column -- a plain enum string"
+    );
+    assert_eq!(
+        cell_text(&cells, "family_wide_access_level"),
+        "read",
+        "family_wide_access_level (CR-01 fix) is likewise a deliberately non-opaque column -- \
+         a plain enum string, the access level THIS share was created at, never a key or ciphertext"
     );
 
     // `enc_name` is the only remaining column, and it is genuinely opaque: no
@@ -1020,6 +1043,8 @@ async fn family_wide_pending_never_returns_a_second_familys_rows() {
                 "sealed_key": serde_json::to_string(&seal(&other_owner.sk.public_key(), &other_ck_bytes).unwrap())
                     .unwrap(),
                 "family_wide_kind": "folder",
+                // CR-01 fix (30-REVIEW.md): required alongside family_wide_kind.
+                "family_wide_access_level": "read",
             })),
         )
         .await;
@@ -1060,4 +1085,232 @@ async fn family_wide_pending_never_returns_a_second_familys_rows() {
     // `email` is carried on `Actor` for failure-message readability; assert on
     // it once so the field is genuinely load-bearing rather than dead weight.
     assert_eq!(other_owner.email, "fw-adv-other-owner@example.com");
+}
+
+// --- CR-01/CR-03 live proof (30-REVIEW.md, code-review fix) -----------------
+//
+// The bug: a family-wide share deliberately created at `read` was silently
+// delivered as `edit` to every late joiner, because BOTH delivery paths
+// (invite-time wrap, lazy reseal) substituted the PROPAGATOR's own held
+// level -- and the CREATOR's own `collection_keys` row is unconditionally
+// `edit` (`collections::create` hard-codes it), regardless of what level the
+// share was actually declared at. Confirmed this test fails against the
+// pre-fix behavior by temporarily reverting the fix (reading
+// `entry.access_level` in `invite/crypto.ts` and `collection.access_level`
+// in `resealTrigger.ts`, and re-widening `add_member` back to
+// `Membership<Collection, RequireEdit>`) and re-running this exact test: the
+// invite-path assertion failed with `Some("edit")` where `Some("read")` was
+// expected, and the reseal-path `add_member` call from the read-holding
+// member returned `403 Forbidden` instead of `201 Created` -- both are the
+// precise defects CR-01/CR-03 describe. This is a SERVER-side simulation of
+// the fixed client logic (this server module never computes the propagated
+// level itself -- see this file's own module doc comment on why
+// `pv_core::invite`'s wrap/unwrap functions are test-only) — the client-side
+// half of the same fix is `web/src/lib/invite/crypto.ts`'s
+// `entry.family_wide_access_level ?? entry.access_level` and
+// `web/src/lib/families/resealTrigger.ts`'s
+// `collection.family_wide_access_level ?? FALLBACK_ACCESS_LEVEL`.
+#[tokio::test]
+async fn cr01_read_declared_family_wide_share_delivers_read_never_edit_to_late_joiners_via_invite_and_reseal() {
+    let pool = test_pool().await;
+    let mut client = Client::new(pool.clone());
+    let mut secrets = Secrets::default();
+
+    let owner = client.actor("cr01-owner@example.com", &mut secrets).await;
+    client.create_family(&owner.token, "CR-01 Family").await;
+    let member_b = client.join_family(&owner.token, "cr01-member-b@example.com", &mut secrets).await;
+
+    let collection_id = "30140000-0000-4000-8000-0000000000c1";
+    let ck = CollectionKey::generate();
+    let ck_bytes = *ck.expose();
+    secrets.add_key_material("CR-01 read-declared folder's Collection Key", &ck_bytes);
+    let enc_name = serde_json::to_string(
+        &encrypt_item_for_collection(
+            &ck,
+            "CR-01 read-only family folder".as_bytes(),
+            collection_id,
+            collection_id,
+            COLLECTION_NAME_REVISION,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Owner creates the folder DECLARED at "read" -- FSH-01's explicit,
+    // deliberate choice ("tylko odczyt").
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/collections",
+            Some(&owner.token),
+            Some(json!({
+                "id": collection_id,
+                "enc_name": enc_name,
+                "sealed_key": serde_json::to_string(&seal(&owner.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "family_wide_kind": "folder",
+                "family_wide_access_level": "read",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "creating the read-declared family-wide folder must succeed");
+
+    // Sanity: the CREATOR's own row is hard-coded 'edit' regardless of the
+    // declared level -- this is the exact trap CR-01's fix must not read
+    // from when propagating to a late joiner.
+    let owner_level: String = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(collection_id)
+    .bind(&owner.user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        owner_level, "edit",
+        "sanity: the creator's own row stays edit regardless of the declared level -- \
+         this is the trap the fix must not propagate from"
+    );
+
+    // Member B is granted the SHARE's OWN declared level directly (mirrors
+    // the real client's `grantCollectionToRecipients`, which always hands
+    // every OTHER current member the chosen `level`, never the creator's
+    // own row).
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/vault/collections/{collection_id}/members"),
+            Some(&owner.token),
+            Some(json!({
+                "recipient_user_id": member_b.user_id,
+                "sealed_key": serde_json::to_string(&seal(&member_b.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "access_level": "read",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "granting B at the declared 'read' level must succeed");
+
+    // --- Path 1 (CR-01): invite-time wrap, propagated by the EDIT-holding
+    // owner. The fixed client reads `family_wide_access_level` ("read"),
+    // never its own `access_level` ("edit") -- simulated here by placing
+    // "read" on the wire, exactly what `invite/crypto.ts`'s fixed
+    // `entry.family_wide_access_level ?? entry.access_level` computes for
+    // this owner's own row.
+    let secret_vec = random_bytes(32);
+    let secret: [u8; 32] = secret_vec.try_into().unwrap();
+    let invite_id = derive_invite_id(&secret);
+    let invite_proof = derive_invite_proof(&secret);
+    let proof_hash = hash_invite_proof(&invite_proof);
+    let wrapped = wrap_collection_key_for_invite(&secret, &invite_id, &ck_bytes).unwrap();
+    let wrapped_json = serde_json::to_string(&wrapped).unwrap();
+
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/invitations",
+            Some(&owner.token),
+            Some(json!({
+                "id": invite_id,
+                "collection_id": null,
+                "access_level": null,
+                "wrapped_collection_key": null,
+                "proof_hash": STANDARD.encode(proof_hash),
+                "expires_in": "24h",
+                "family_wide_keys": [
+                    { "collection_id": collection_id, "access_level": "read", "wrapped_collection_key": wrapped_json },
+                ],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "creating the invite carrying the read-declared family-wide key must succeed");
+
+    let newcomer = client.actor("cr01-newcomer@example.com", &mut secrets).await;
+    let sealed_for_self = serde_json::to_string(&seal(&newcomer.sk.public_key(), &ck_bytes).unwrap()).unwrap();
+
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/invitations/{invite_id}/accept"),
+            Some(&newcomer.token),
+            Some(json!({
+                "invite_proof": STANDARD.encode(&invite_proof),
+                "sealed_for_self": null,
+                "family_wide_sealed_keys": [
+                    { "collection_id": collection_id, "sealed_for_self": sealed_for_self },
+                ],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "accepting the invite must succeed");
+
+    // RECIPIENT-SIDE assertion (the newcomer's own resolved access, exactly
+    // as `Collection::resolve_access` reports it back to them): must be
+    // "read", never "edit".
+    let (status, get_body) =
+        client.send("GET", &format!("/api/vault/collections/{collection_id}"), Some(&newcomer.token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        get_body["access_level"].as_str(),
+        Some("read"),
+        "CR-01: a read-declared family-wide share must deliver READ to a late joiner via the \
+         invite-time-wrap path, never the edit-holding propagator's own level"
+    );
+
+    // --- Path 2 (CR-03): lazy reseal performed by the READ-holding member B.
+    // `add_member` is no longer RequireEdit-only for a family-wide
+    // collection -- B, holding only 'read', must be able to reseal at
+    // exactly their own held level (which, after CR-01, equals the share's
+    // declared level).
+    //
+    // `join_family` (not bare `.actor()`): the lazy-reseal target is, by
+    // FSH-02's own definition, a member who has ALREADY joined the family
+    // (so `add_member`'s confused-deputy guard, which requires a real
+    // `family_members` row, is satisfied) but has not yet received a key
+    // for THIS particular family-wide collection -- the exact gap window
+    // this mechanism exists to close.
+    let newcomer2 = client.join_family(&owner.token, "cr01-newcomer-2@example.com", &mut secrets).await;
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/vault/collections/{collection_id}/members"),
+            Some(&member_b.token),
+            Some(json!({
+                "recipient_user_id": newcomer2.user_id,
+                "sealed_key": serde_json::to_string(&seal(&newcomer2.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "access_level": "read",
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "CR-03: a read-holding member must be able to reseal a read-declared family-wide share -- \
+         add_member must not stay RequireEdit-only for a family-wide collection (WINDOWS #17)"
+    );
+
+    let (status, get_body2) =
+        client.send("GET", &format!("/api/vault/collections/{collection_id}"), Some(&newcomer2.token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(get_body2["access_level"].as_str(), Some("read"));
+
+    // Positive-then-negative: B (holding only 'read') must NOT be able to
+    // escalate a THIRD newcomer to 'edit' through this same relaxed path --
+    // `may_grant_access_level`'s bound still applies.
+    let newcomer3 = client.join_family(&owner.token, "cr01-newcomer-3@example.com", &mut secrets).await;
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/vault/collections/{collection_id}/members"),
+            Some(&member_b.token),
+            Some(json!({
+                "recipient_user_id": newcomer3.user_id,
+                "sealed_key": serde_json::to_string(&seal(&newcomer3.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "access_level": "edit",
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a read-only holder must never be able to grant edit through the family-wide reseal bound"
+    );
 }

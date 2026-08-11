@@ -508,7 +508,14 @@ pub(crate) async fn require_collection_edit(
 /// request, and both are honored exactly as submitted. Every other
 /// combination would hand the invitee MORE than the caller actually holds,
 /// and is denied.
-fn may_grant_access_level(caller_level: AccessLevel, requested_level: AccessLevel) -> bool {
+///
+/// `pub(crate)`, not private (CR-03, 30-REVIEW.md): also called directly by
+/// `collections::add_member`'s reseal-bound path, the family-wide analogue
+/// of `require_collection_access_for_propagation` below for the lazy-reseal
+/// mechanism — a `read`-holding current member must be able to reseal a
+/// `read`-declared family-wide share to a newcomer even though `add_member`
+/// was historically `RequireEdit`-only (WINDOWS #17).
+pub(crate) fn may_grant_access_level(caller_level: AccessLevel, requested_level: AccessLevel) -> bool {
     match (caller_level, requested_level) {
         (AccessLevel::Read, AccessLevel::Read) => true,
         (AccessLevel::Edit, AccessLevel::Edit) => true,
@@ -554,6 +561,26 @@ pub(crate) async fn require_collection_access_for_propagation(
         Some(caller_level) if may_grant_access_level(caller_level, requested_level) => Ok(()),
         Some(_) => Err(ApiError::Forbidden),
     }
+}
+
+/// Whether `collection_id` is a family-wide collection (`family_wide_kind IS
+/// NOT NULL`) — the ONE predicate that scopes BOTH of this module's
+/// propagation-relaxation gates to the automatic family-wide fold-in they
+/// were each designed for, never to an ordinary (deliberately, explicitly
+/// shared) collection a hand-built request could otherwise smuggle through
+/// the relaxed bound (CR-02, 30-REVIEW.md). Used by `invitations::create`'s
+/// `family_wide_keys` loop (invite-time-wrap propagation) and
+/// `collections::add_member` (lazy-reseal propagation, CR-03's fix for
+/// WINDOWS #17) — one definition, so the two call sites can never drift on
+/// what "family-wide" means.
+pub(crate) async fn is_family_wide_collection(db: &sqlx::SqlitePool, collection_id: &str) -> Result<bool, ApiError> {
+    Ok(
+        sqlx::query("SELECT 1 FROM collections WHERE id = ? AND family_wide_kind IS NOT NULL")
+            .bind(collection_id)
+            .fetch_optional(db)
+            .await?
+            .is_some(),
+    )
 }
 
 /// Pathless sibling of `Membership<R, M>` for the singleton `families`

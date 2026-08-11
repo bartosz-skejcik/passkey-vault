@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use super::membership::{
-    active_collection_member_join, parse_access_level_from_request, ActiveFamilyMembership, Collection,
-    FamilyMembership, Membership, RequireEdit, RequireRead,
+    self, active_collection_member_join, may_grant_access_level, parse_access_level_from_request,
+    ActiveFamilyMembership, Collection, FamilyMembership, MinAccess, Membership, RequireEdit, RequireRead,
 };
 use super::sync::{ChangeType, EntityType, SyncEvent};
 use super::vault::{resolve_collection_members, validate_blob_len};
@@ -73,6 +73,21 @@ pub struct CreateCollectionRequest {
     /// own fail-closed-before-DB-work discipline.
     #[serde(default)]
     pub family_wide_kind: Option<String>,
+    /// CR-01 fix (30-REVIEW.md): the access level THIS family-wide share was
+    /// created at ("read" / "edit" / "hidden_password", FSH-01) — REQUIRED
+    /// (and validated) exactly when `family_wide_kind` is `Some`, and
+    /// REQUIRED to be absent/`null` when it is `None`, mirroring
+    /// `invitations.rs`'s `collection_fields_present` all-or-nothing
+    /// discipline. Persisted verbatim to `collections.family_wide_access_level`
+    /// — deliberately NEVER derived from the creator's own hard-coded `'edit'`
+    /// `collection_keys` row below. Before this field existed, EVERY
+    /// propagation path (invite-time wrap, lazy reseal) had nothing to read
+    /// but the PROPAGATOR's own held level, so a share deliberately created
+    /// at `read` could be silently delivered as `edit` to a late joiner —
+    /// this field is what makes the share's own chosen level survive past
+    /// creation time.
+    #[serde(default)]
+    pub family_wide_access_level: Option<String>,
 }
 
 /// Closed-set validates `family_wide_kind`: `None` (absent/`null`) is always
@@ -85,6 +100,30 @@ fn validate_family_wide_kind(kind: &Option<String>) -> Result<(), ApiError> {
     match kind.as_deref() {
         None | Some("folder") | Some("item_bucket") => Ok(()),
         Some(_) => Err(ApiError::BadRequest("family_wide_kind must be \"folder\" or \"item_bucket\"".into())),
+    }
+}
+
+/// CR-01 fix (30-REVIEW.md): closed-set validates `family_wide_access_level`
+/// against `family_wide_kind` — required (and one of "read"/"edit"/
+/// "hidden_password") exactly when `kind` is `Some`; required to be
+/// `None`/absent when `kind` is `None`. Called BEFORE any DB work, same
+/// discipline as `validate_family_wide_kind` above (and the migration
+/// 0020 `CHECK` constraint is defense in depth behind this, not the primary
+/// gate, same relationship `validate_family_wide_kind` has to migration
+/// 0019's).
+fn validate_family_wide_access_level(kind: &Option<String>, level: &Option<String>) -> Result<(), ApiError> {
+    match (kind, level) {
+        (None, None) => Ok(()),
+        (None, Some(_)) => {
+            Err(ApiError::BadRequest("family_wide_access_level must be absent for a non-family-wide collection".into()))
+        }
+        (Some(_), None) => {
+            Err(ApiError::BadRequest("family_wide_access_level is required when family_wide_kind is set".into()))
+        }
+        (Some(_), Some(level_str)) => {
+            parse_access_level_from_request(level_str)?;
+            Ok(())
+        }
     }
 }
 
@@ -131,6 +170,15 @@ pub struct CollectionResponse {
     /// a client that already calls any of them gets this field with zero new
     /// round trips.
     pub family_wide_kind: Option<String>,
+    /// CR-01 fix (30-REVIEW.md): the access level THIS family-wide share was
+    /// created at — `None` for an ordinary collection (mirrors
+    /// `family_wide_kind`'s own `None` case) and for a family-wide collection
+    /// created before migration 0020 (a legacy NULL row). Every client-side
+    /// propagation path (`invite/crypto.ts`'s invite-time-wrap fold-in,
+    /// `resealTrigger.ts`'s lazy reseal) reads THIS field, never the
+    /// caller's own `access_level` above, to decide what level to hand a
+    /// late joiner.
+    pub family_wide_access_level: Option<String>,
 }
 
 /// `POST /api/vault/collections` — any family member may create a shared
@@ -159,6 +207,10 @@ pub async fn create(
     // FSH-01: closed-set validated BEFORE any DB work, same discipline as
     // the checks above.
     validate_family_wide_kind(&req.family_wide_kind)?;
+    // CR-01 fix: same discipline — the share's OWN chosen level must be
+    // present (and valid) whenever this is a family-wide creation, and
+    // absent otherwise, BEFORE any DB work.
+    validate_family_wide_access_level(&req.family_wide_kind, &req.family_wide_access_level)?;
 
     let mut tx = state.db.begin().await?;
 
@@ -179,16 +231,36 @@ pub async fn create(
     // accept a partial-index target, only the bare form catches a conflict
     // against EITHER the PK or the partial unique index.
     let row = sqlx::query(
-        "INSERT INTO collections (id, family_id, enc_name, family_wide_kind) VALUES (?, ?, ?, ?) \
+        "INSERT INTO collections (id, family_id, enc_name, family_wide_kind, family_wide_access_level) \
+         VALUES (?, ?, ?, ?, ?) \
          ON CONFLICT DO NOTHING RETURNING created_at",
     )
     .bind(&id)
     .bind(&family.family_id)
     .bind(&req.enc_name)
     .bind(&req.family_wide_kind)
+    .bind(&req.family_wide_access_level)
     .fetch_optional(&mut *tx)
     .await?;
-    let row = row.ok_or_else(|| ApiError::Conflict("a collection with this id already exists".into()))?;
+    // WR-04 fix (30-REVIEW.md): the bare `ON CONFLICT DO NOTHING` above
+    // catches TWO structurally different conflicts in the SAME `None`
+    // branch — an id collision (any creation) and a violation of
+    // `idx_one_item_bucket_per_family` (only possible when this request is
+    // itself an `item_bucket` creation, per that partial index's own
+    // definition) — but this hard-coded message named only the FIRST cause,
+    // so the race-loser path (structurally the common case for an
+    // `item_bucket` conflict, per this handler's own doc comment above) told
+    // every log line, API consumer, and future debugger the wrong thing.
+    // Disambiguated by the ONE fact that distinguishes the two causes: an id
+    // collision can happen for any request, but the partial index can only
+    // ever be violated by an `item_bucket` request.
+    let row = row.ok_or_else(|| {
+        if req.family_wide_kind.as_deref() == Some("item_bucket") {
+            ApiError::Conflict("this family already has a family-wide item bucket".into())
+        } else {
+            ApiError::Conflict("a collection with this id already exists".into())
+        }
+    })?;
     let created_at: String = row.try_get("created_at").map_err(|_| ApiError::Internal)?;
 
     // access_level is a hard-coded literal 'edit' here, NEVER taken from the
@@ -214,6 +286,7 @@ pub async fn create(
             access_level: Some("edit".to_string()),
             sealed_key: Some(req.sealed_key),
             family_wide_kind: req.family_wide_kind,
+            family_wide_access_level: req.family_wide_access_level,
         }),
     ))
 }
@@ -225,11 +298,12 @@ pub async fn get(
     State(state): State<AppState>,
     membership: Membership<Collection, RequireRead>,
 ) -> Result<Json<CollectionResponse>, ApiError> {
-    let collection_row =
-        sqlx::query("SELECT enc_name, created_at, family_wide_kind FROM collections WHERE id = ?")
-            .bind(&membership.resource_id)
-            .fetch_optional(&state.db)
-            .await?;
+    let collection_row = sqlx::query(
+        "SELECT enc_name, created_at, family_wide_kind, family_wide_access_level FROM collections WHERE id = ?",
+    )
+    .bind(&membership.resource_id)
+    .fetch_optional(&state.db)
+    .await?;
     // The extractor already proved access exists (a collection_keys row
     // exists for this caller+resource) — a missing collections row here
     // would only happen on a genuine data-integrity bug (FK violation),
@@ -239,6 +313,8 @@ pub async fn get(
     let created_at: String = collection_row.try_get("created_at").map_err(|_| ApiError::Internal)?;
     let family_wide_kind: Option<String> =
         collection_row.try_get("family_wide_kind").map_err(|_| ApiError::Internal)?;
+    let family_wide_access_level: Option<String> =
+        collection_row.try_get("family_wide_access_level").map_err(|_| ApiError::Internal)?;
 
     let key_row = sqlx::query("SELECT sealed_key FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
         .bind(&membership.resource_id)
@@ -257,6 +333,7 @@ pub async fn get(
         access_level: Some(membership.access.as_str().to_string()),
         sealed_key,
         family_wide_kind,
+        family_wide_access_level,
     }))
 }
 
@@ -278,7 +355,8 @@ pub async fn list(
     // `active_collection_member_join!()` every other recipient-side resolver
     // does, so a suspended member sees an empty list alongside their E5 banner.
     let rows = sqlx::query(concat!(
-        "SELECT c.id, c.enc_name, c.created_at, c.family_wide_kind, ck.access_level, ck.sealed_key \
+        "SELECT c.id, c.enc_name, c.created_at, c.family_wide_kind, c.family_wide_access_level, \
+                ck.access_level, ck.sealed_key \
          FROM collections c JOIN collection_keys ck ON ck.collection_id = c.id ",
         active_collection_member_join!(),
         "WHERE ck.recipient_user_id = ? ORDER BY c.created_at ASC, c.id ASC",
@@ -297,6 +375,9 @@ pub async fn list(
                 access_level: Some(row.try_get("access_level").map_err(|_| ApiError::Internal)?),
                 sealed_key: Some(row.try_get("sealed_key").map_err(|_| ApiError::Internal)?),
                 family_wide_kind: row.try_get("family_wide_kind").map_err(|_| ApiError::Internal)?,
+                family_wide_access_level: row
+                    .try_get("family_wide_access_level")
+                    .map_err(|_| ApiError::Internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
@@ -404,20 +485,51 @@ pub(crate) async fn insert_collection_key(
     Ok(result.is_some())
 }
 
-/// `POST /api/vault/collections/{id}/members` — `RequireEdit`-gated (a
-/// `read`-only member cannot grant access to others). Implements
-/// RESEARCH.md's confused-deputy guard (T-22-11): `recipient_user_id` MUST
-/// already be a `family_members` row AND have a `user_keypairs` row before
-/// any `collection_keys` insert — a buggy/compromised client can never leak
-/// a sealed Collection Key to an outsider with no server-side check.
+/// `POST /api/vault/collections/{id}/members` — `RequireEdit`-gated for an
+/// ORDINARY (deliberately, explicitly shared) collection, so a `read`-only
+/// member cannot grant access to others on the deliberate-share path.
+///
+/// CR-03 fix (30-REVIEW.md, closing WINDOWS #17): a FAMILY-WIDE collection
+/// takes a SECOND, narrower gate instead — `RequireRead` at the extractor
+/// level, then bounded in the body by `may_grant_access_level` (the same
+/// bound `require_collection_access_for_propagation` already applies to the
+/// invite-time-wrap path). Before this fix, `family_wide_pending`'s
+/// `resealable` query (`families.rs`) offered ANY current keyholder —
+/// `read` included — a pair it might be able to reseal, but this endpoint's
+/// old `RequireEdit`-only gate meant a `read`-holding resealer's attempt
+/// always 403'd. Harmless while the edit-holding creator's own session
+/// could cover every reseal, but once the creator leaves (or is removed)
+/// and every surviving member holds exactly the share's own declared level
+/// (never necessarily `edit`), NO member could ever reseal again — the
+/// newcomer this phase exists to serve would be stranded forever, silently
+/// making `share.familyWideTimingCaveat`'s promise false. Implements
+/// RESEARCH.md's confused-deputy guard (T-22-11) on BOTH paths:
+/// `recipient_user_id` MUST already be a `family_members` row AND have a
+/// `user_keypairs` row before any `collection_keys` insert — a
+/// buggy/compromised client can never leak a sealed Collection Key to an
+/// outsider with no server-side check.
 pub async fn add_member(
     State(state): State<AppState>,
-    membership: Membership<Collection, RequireEdit>,
+    membership: Membership<Collection, RequireRead>,
     Json(req): Json<AddMemberRequest>,
 ) -> Result<StatusCode, ApiError> {
     // Validate BEFORE any DB work — fails closed on a malformed/unrecognized
     // access_level string, never silently coerced to a working default.
-    parse_access_level_from_request(&req.access_level)?;
+    let requested_level = parse_access_level_from_request(&req.access_level)?;
+
+    // CR-03 fix: the relaxed, propagation-bounded gate applies ONLY to a
+    // family-wide collection — an ordinary collection keeps requiring the
+    // caller hold a full `Edit` grant, exactly as before. `RequireEdit`'s
+    // OWN `satisfied_by` decides that, never a hand-rolled `!= Edit`
+    // comparison, so this stays byte-identical in behavior to the extractor
+    // this handler used to declare.
+    if membership::is_family_wide_collection(&state.db, &membership.resource_id).await? {
+        if !may_grant_access_level(membership.access, requested_level) {
+            return Err(ApiError::Forbidden);
+        }
+    } else if !RequireEdit::satisfied_by(membership.access) {
+        return Err(ApiError::Forbidden);
+    }
 
     let is_family_member = sqlx::query(
         "SELECT 1 FROM family_members WHERE family_id = (SELECT family_id FROM collections WHERE id = ?) AND user_id = ?",

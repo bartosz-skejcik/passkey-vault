@@ -30,12 +30,16 @@ import { getFamilyWidePendingSnapshot } from "./familyWidePending";
 import { reshareCollectionToNewMember } from "./reseal";
 import type { ResealableGrant } from "./api";
 
-/** Used only when the caller's OWN `collection_keys` row somehow carries a
- * null `access_level` (a shape the wire type permits). The caller's own
- * granted level is preferred over this constant precisely because a resealer
- * is frequently NOT the original sharer and cannot otherwise know what level
- * the family-wide share was created at -- reading it from the row the caller
- * already holds costs one `getCollection` and needs no server change. */
+/** CR-01 fix (30-REVIEW.md): used only when the collection's OWN
+ * `family_wide_access_level` is `null` -- a legacy family-wide collection
+ * created before that column existed (a row served before this fix
+ * deployed, or mid-rolling-restart). Deliberately never falls back to the
+ * caller's OWN held `access_level` -- that used to be exactly this
+ * function's bug: a resealer who happens to hold `edit` (e.g. the creator,
+ * whose own row is ALWAYS `'edit'` regardless of the level the share was
+ * actually created at) would silently upgrade a `read`-declared share to
+ * `edit` for every newcomer they resealed to. `"read"` is the safe,
+ * never-over-grants default for the genuinely-unknown case. */
 const FALLBACK_ACCESS_LEVEL = "read";
 
 /** Per-SESSION set of `"${collectionId}:${recipientUserId}"` pairs this
@@ -129,10 +133,18 @@ export async function runFamilyWideResealTrigger(uk: WasmUserKey): Promise<void>
         if (collection.sealed_key === null || collection.sealed_key === undefined) {
           return;
         }
+        // CR-01 fix (30-REVIEW.md): the SHARE's own declared level
+        // (`family_wide_access_level`), never `collection.access_level` —
+        // the latter is the RESEALER's own `collection_keys` row, which
+        // could be `'edit'` (the creator) while the share was declared
+        // `'read'`, silently over-granting the newcomer. See
+        // `collections::add_member`'s CR-03 fix (`crates/pv-server/src/routes/
+        // collections.rs`) for the server-side bound that keeps this call
+        // honest even if a caller ever sent something it shouldn't.
         await reshareCollectionToNewMember(
           grant.collection_id,
           grant.recipient_user_id,
-          collection.access_level ?? FALLBACK_ACCESS_LEVEL,
+          collection.family_wide_access_level ?? FALLBACK_ACCESS_LEVEL,
           uk,
         );
       } catch (err) {

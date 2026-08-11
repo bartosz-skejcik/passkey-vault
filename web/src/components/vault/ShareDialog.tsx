@@ -62,6 +62,7 @@ import { Users } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { getFamilyMembers, type FamilyMemberRecord } from "@/lib/families/api";
+import { getFamilyWidePendingSnapshot } from "@/lib/families/familyWidePending";
 import { accessLevelKey } from "@/lib/families/accessLevel";
 import {
   createCollection,
@@ -340,6 +341,24 @@ export async function shareItemWithRecipients(
 
 type OwnIdentityKeypair = Awaited<ReturnType<typeof ensureOwnIdentityKeypair>>;
 
+/** CR-04 fix (30-REVIEW.md): thrown by `findOrCreateFamilyItemBucket` when
+ * the caller is a gap-window newcomer KNOWN to be waiting on this exact
+ * bucket's key (`getFamilyWidePendingSnapshot().missing`) rather than a
+ * genuine same-second race loser. `handleSubmit` catches this specifically
+ * and renders the honest, existing `share.pendingFamilyKeyNote`/
+ * `share.pendingFamilyKeyNoteDetail` copy instead of `share.createFailed`'s
+ * "…Spróbuj ponownie." — a retry here cannot possibly succeed until another
+ * family member's session reseals this member's key, which is exactly the
+ * state those two strings already describe correctly. */
+class FamilyWideKeyPendingError extends Error {
+  readonly collectionId: string;
+  constructor(collectionId: string) {
+    super(`family-wide item bucket ${collectionId} exists, but this member's key for it has not arrived yet`);
+    this.name = "FamilyWideKeyPendingError";
+    this.collectionId = collectionId;
+  }
+}
+
 /** The race LOSER's recovery (T-30-20). `createCollection(..., "item_bucket")`
  * 409'd because another member's concurrent call won
  * `idx_one_item_bucket_per_family` — the bucket EXISTS, this caller simply
@@ -349,7 +368,18 @@ type OwnIdentityKeypair = Awaited<ReturnType<typeof ensureOwnIdentityKeypair>>;
  * So this re-lists a BOUNDED number of times rather than once, and throws a
  * plain (caller-rendered as `share.createFailed`, "…Spróbuj ponownie.")
  * retryable failure if the grant never arrives — never returns an id-less
- * result that would move the item into `undefined`. */
+ * result that would move the item into `undefined`.
+ *
+ * CR-04 fix (30-REVIEW.md): `findOrCreateFamilyItemBucket` now checks the
+ * discovery snapshot's `missing` list BEFORE ever attempting a create, and
+ * throws `FamilyWideKeyPendingError` instead of reaching this path when the
+ * caller is a KNOWN gap-window newcomer with no reseal in flight (the case
+ * that used to poll here for ~600ms and fail with a retry that could never
+ * succeed). This path is still reachable when that snapshot is momentarily
+ * stale (the newcomer's own pull cycle hasn't caught up yet) — in that
+ * narrower window this bounded poll is still the honest mechanism, since a
+ * genuine same-second race is indistinguishable from a stale snapshot until
+ * this poll resolves it either way. */
 async function awaitFamilyItemBucketGrant(
   identityKey: OwnIdentityKeypair,
 ): Promise<{ id: string; ck: WasmCollectionKey }> {
@@ -393,10 +423,25 @@ async function awaitFamilyItemBucketGrant(
  */
 async function findOrCreateFamilyItemBucket(
   identityKey: OwnIdentityKeypair,
+  level: AccessLevelValue,
 ): Promise<{ id: string; ck: WasmCollectionKey }> {
   const existing = familyItemBucketRow(await listCollections());
   if (existing !== undefined) {
     return { id: existing.id, ck: unsealCollectionKey(identityKey, existing.sealed_key as string) };
+  }
+
+  // CR-04 fix (30-REVIEW.md): `collections::list` is KEY-GATED, so a
+  // gap-window newcomer -- who has joined the family but not yet received
+  // the bucket's key -- sees NO row here at all, would otherwise take the
+  // create branch below, hit `idx_one_item_bucket_per_family`, 409, and fall
+  // into `awaitFamilyItemBucketGrant`'s bounded poll -- which cannot
+  // possibly succeed, since no reseal is in flight for THIS member. The
+  // discovery snapshot already knows this is the pending state (the exact
+  // same `missing` list 30-15's pending-row UI reads) -- consult it BEFORE
+  // attempting a create this member cannot win.
+  const pendingBucket = getFamilyWidePendingSnapshot().missing.find((g) => g.kind === "item_bucket");
+  if (pendingBucket !== undefined) {
+    throw new FamilyWideKeyPendingError(pendingBucket.collection_id);
   }
 
   const newBucketId = crypto.randomUUID();
@@ -416,7 +461,10 @@ async function findOrCreateFamilyItemBucket(
     } finally {
       ownPublicKey.free?.();
     }
-    await createCollection(newBucketId, encName, sealedKeyForSelf, "item_bucket");
+    // CR-01 fix (30-REVIEW.md): persists the level THIS share is being
+    // created at, independent of the creator's own hard-coded 'edit' row --
+    // see `createCollection`'s own doc comment.
+    await createCollection(newBucketId, encName, sealedKeyForSelf, "item_bucket", level);
   } catch (err) {
     // Nothing landed under THIS key — free it rather than handing back a
     // handle no server-side collection corresponds to (mirrors
@@ -453,6 +501,12 @@ export default function ShareDialog({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [seedMoveFailureCount, setSeedMoveFailureCount] = useState<number | null>(null);
   const [failedRecipientLabels, setFailedRecipientLabels] = useState<string[]>([]);
+  // CR-04 fix (30-REVIEW.md): distinct from `submitError` -- a KNOWN pending
+  // family key is not an error state (nothing failed; nothing is retryable),
+  // so it renders the same honest, non-alarmed
+  // `share.pendingFamilyKeyNote`/`share.pendingFamilyKeyNoteDetail` copy
+  // `DetailPanel.tsx`'s pending-row already uses, never `share.createFailed`.
+  const [familyKeyPending, setFamilyKeyPending] = useState(false);
   // WR-14: `me()` could not be resolved -- the dialog cannot function (the
   // caller cannot be filtered out of their own recipient list, and the
   // hidden-password ack cannot be persisted per-account). Rendered as an
@@ -665,7 +719,7 @@ export default function ShareDialog({
     const identityKey = await ensureOwnIdentityKeypair(uk);
     let bucket: { id: string; ck: WasmCollectionKey } | null = null;
     try {
-      bucket = await findOrCreateFamilyItemBucket(identityKey);
+      bucket = await findOrCreateFamilyItemBucket(identityKey, level);
       const combined = recombineEncryptedItem(row.enc_key, row.enc_data);
       const plaintext = decryptItem(uk, combined, item.id, row.revision);
       const reEncrypted = encryptItemForCollection(
@@ -760,16 +814,22 @@ export default function ShareDialog({
           } finally {
             ownPublicKey.free?.();
           }
-          // `family_wide_kind` threaded in ONLY on this branch — an
-          // ordinary (non-family-wide) creation keeps omitting the field
-          // entirely, per 30-02's additive contract (`createCollection`
-          // leaves the key OUT of the POSTed body whenever the 4th arg is
-          // `undefined`).
+          // `family_wide_kind`/`family_wide_access_level` threaded in ONLY
+          // on this branch — an ordinary (non-family-wide) creation keeps
+          // omitting both fields entirely, per 30-02's additive contract
+          // (`createCollection` leaves each key OUT of the POSTed body
+          // whenever its argument is `undefined`). CR-01 fix (30-REVIEW.md):
+          // `level` here is the SAME level `grantCollectionToRecipients`
+          // below hands every other member — this is what makes it survive
+          // past creation time for later propagation paths to read, instead
+          // of only ever being visible via the creator's own hard-coded
+          // `'edit'` `collection_keys` row.
           await createCollection(
             newCollectionId,
             encName,
             sealedKeyForSelf,
             isFamilyWide ? "folder" : undefined,
+            isFamilyWide ? level : undefined,
           );
         } catch (err) {
           // The collection never landed — free the key rather than parking a
@@ -881,6 +941,7 @@ export default function ShareDialog({
     setSubmitError(null);
     setSeedMoveFailureCount(null);
     setFailedRecipientLabels([]);
+    setFamilyKeyPending(false);
     try {
       let outcome: SubmitOutcome;
       if (scope.kind === "item" && familyWideSubmit) {
@@ -928,9 +989,18 @@ export default function ShareDialog({
           setSubmitError(t("share.createFailed"));
         }
       }
-    } catch {
+    } catch (err) {
       if (!mountedRef.current) return;
-      setSubmitError(t("share.createFailed"));
+      // CR-04 fix (30-REVIEW.md): a KNOWN pending family key is not the
+      // generic "couldn't share, try again" failure -- rendering
+      // `share.createFailed` here told a gap-window newcomer to retry into a
+      // bound that can never succeed. Render the same honest pending-row
+      // copy `DetailPanel.tsx` already uses for this exact state instead.
+      if (err instanceof FamilyWideKeyPendingError) {
+        setFamilyKeyPending(true);
+      } else {
+        setSubmitError(t("share.createFailed"));
+      }
       setState("populated");
     }
   }
@@ -1178,6 +1248,22 @@ export default function ShareDialog({
                   <p role="alert" data-testid="share-error" className="text-sm text-error">
                     {submitError}
                   </p>
+                ) : null}
+                {familyKeyPending ? (
+                  // CR-04 fix (30-REVIEW.md): mirrors `DetailPanel.tsx`'s
+                  // pending-family-key styling exactly (aria-live polite,
+                  // non-error `text-base-content/70`) -- this is a true,
+                  // non-alarming statement of the current state, never a
+                  // failure to apologize for.
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    data-testid="share-family-key-pending"
+                    className="flex flex-col gap-1 text-sm text-base-content/70"
+                  >
+                    <span>{t("share.pendingFamilyKeyNote")}</span>
+                    <span>{t("share.pendingFamilyKeyNoteDetail")}</span>
+                  </div>
                 ) : null}
                 {failedRecipientLabels.length > 0 ? (
                   <p role="alert" data-testid="share-partial-error" className="text-sm text-error">

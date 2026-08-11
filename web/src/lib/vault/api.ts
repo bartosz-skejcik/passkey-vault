@@ -210,6 +210,17 @@ export interface CollectionRow {
    * existed, can omit the key entirely and still type-check -- treat a
    * missing key exactly like `null`, never a required-field throw. */
   family_wide_kind?: string | null;
+  /** CR-01 fix (30-REVIEW.md), wire mirror of `collections.rs`'s
+   * `CollectionResponse.family_wide_access_level`: the access level THIS
+   * family-wide share was created at ("read"/"edit"/"hidden_password"),
+   * `null`/absent for an ordinary collection AND for a family-wide
+   * collection created before this field existed (a legacy NULL row --
+   * every reader treats that the same as "server omitted it", never as
+   * license to fall back to the caller's OWN `access_level` above, which is
+   * exactly the propagator's-own-level bug this field exists to fix).
+   * Optional for the identical reason `family_wide_kind` is: a pre-this-fix
+   * response, or one served mid-rolling-restart, still type-checks. */
+  family_wide_access_level?: string | null;
 }
 
 export function getCollection(id: string): Promise<CollectionRow> {
@@ -318,12 +329,22 @@ export function revokeItemShare(itemId: string, userId: string): Promise<void> {
  * genuinely absent from the call), the key is left OUT of the POSTed JSON
  * body entirely, matching the server's `#[serde(default)]`-shaped optional
  * field exactly and keeping every existing 3-argument call site
- * byte-for-byte unchanged. */
+ * byte-for-byte unchanged.
+ *
+ * `familyWideAccessLevel` (CR-01 fix, 30-REVIEW.md, mirrors `collections.rs`'s
+ * `CreateCollectionRequest.family_wide_access_level`): the access level THIS
+ * family-wide share is being created at -- REQUIRED (server-validated)
+ * exactly when `familyWideKind` is passed, and left OUT of the body
+ * whenever it is not, same omit-not-null discipline as `familyWideKind`
+ * itself. This is the ONE place the share's own chosen level is persisted,
+ * so every later propagation path has something other than the creator's
+ * own hard-coded `'edit'` `collection_keys` row to read. */
 export function createCollection(
   id: string,
   encName: string,
   sealedKey: string,
   familyWideKind?: "folder" | "item_bucket",
+  familyWideAccessLevel?: string,
 ): Promise<CollectionRow> {
   return apiJson("/api/vault/collections", {
     method: "POST",
@@ -332,6 +353,7 @@ export function createCollection(
       enc_name: encName,
       sealed_key: sealedKey,
       ...(familyWideKind !== undefined ? { family_wide_kind: familyWideKind } : {}),
+      ...(familyWideAccessLevel !== undefined ? { family_wide_access_level: familyWideAccessLevel } : {}),
     }),
   });
 }
