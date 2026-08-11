@@ -487,6 +487,75 @@ pub(crate) async fn require_collection_edit(
     Ok(())
 }
 
+/// Whether `caller_level` (what the caller ACTUALLY, server-resolved, holds
+/// on a collection) authorizes them to hand `requested_level` to a THIRD
+/// PARTY via an automatic propagation path (invite-time-wrap, 30-DECISION-
+/// FSH-02.md) — as opposed to `require_collection_edit`'s deliberate-share
+/// use case above. Deliberately explicit per (caller, requested) pair, never
+/// a transitive `Ord`-derived comparison — `AccessLevel`'s own doc comment:
+/// a derived `Ord` would make `HiddenPassword` compare as strictly "between"
+/// `Read` and `Edit`, which is wrong for this decision too, so every
+/// combination is spelled out rather than computed from a rank.
+///
+/// Rules: a caller may always propagate EXACTLY the level they themselves
+/// hold (never MORE — the caller's own resolved level is always the ceiling
+/// for what they can hand someone else); a full `Edit` holder may
+/// additionally choose to narrow a propagated grant down to `Read` —
+/// deliberate, test-proven behavior
+/// (`invitation_accept_grants_single_collection_and_two_family_wide_collections_atomically`,
+/// `crates/pv-server/tests/invitations.rs`): an edit-holding caller submits
+/// `"read"` for one family-wide entry and `"edit"` for another in the SAME
+/// request, and both are honored exactly as submitted. Every other
+/// combination would hand the invitee MORE than the caller actually holds,
+/// and is denied.
+fn may_grant_access_level(caller_level: AccessLevel, requested_level: AccessLevel) -> bool {
+    match (caller_level, requested_level) {
+        (AccessLevel::Read, AccessLevel::Read) => true,
+        (AccessLevel::Edit, AccessLevel::Edit) => true,
+        (AccessLevel::HiddenPassword, AccessLevel::HiddenPassword) => true,
+        (AccessLevel::Edit, AccessLevel::Read) => true,
+        _ => false,
+    }
+}
+
+/// The additive invite-time-wrap counterpart to `require_collection_edit`
+/// above (root-caused live, `.planning/debug/family-wide-c-relock-fail.md`):
+/// unlike the single EXPLICIT collection-scope on an invite (a deliberate
+/// "share this collection" action, correctly gated at `RequireEdit`,
+/// mirroring `collections::add_member`'s own `RequireEdit`-only gate), the
+/// invite-time-wrap fast path (30-DECISION-FSH-02.md) is an AUTOMATIC,
+/// additive fold-in of every family-wide collection the caller currently
+/// holds ANY key for — propagating the caller's OWN existing access forward
+/// to a new invitee, never granting anything beyond it. Requiring `Edit`
+/// here (the pre-fix behavior) was wrong: it meant a caller who merely holds
+/// `read` on even ONE family-wide collection could never generate ANY
+/// invite again — not just one scoped to that collection — since the
+/// client folds in every family-wide grant the caller holds into every
+/// single invite it creates, unconditionally
+/// (`web/src/lib/invite/crypto.ts::generateInviteLink`).
+///
+/// Gates on `RequireRead` (the caller must genuinely hold SOME grant —
+/// proof of real membership on that collection, not an outsider forging a
+/// collection id — same `None -> NotFound` semantics `require_collection_edit`
+/// already has) and then bounds the REQUESTED level via `may_grant_access_level`
+/// above, so an invitee can never receive more access than the inviter
+/// propagating it actually holds — `Some(caller_level)` that fails the bound
+/// is `ApiError::Forbidden`, mirroring `gate::<M>()`'s own "provably has SOME
+/// access, just not enough" rule.
+pub(crate) async fn require_collection_access_for_propagation(
+    db: &sqlx::SqlitePool,
+    caller_user_id: &str,
+    collection_id: &str,
+    requested_level: AccessLevel,
+) -> Result<(), ApiError> {
+    let resolved = Collection::resolve_access(db, caller_user_id, collection_id).await?;
+    match resolved {
+        None => Err(ApiError::NotFound),
+        Some(caller_level) if may_grant_access_level(caller_level, requested_level) => Ok(()),
+        Some(_) => Err(ApiError::Forbidden),
+    }
+}
+
 /// Pathless sibling of `Membership<R, M>` for the singleton `families`
 /// resource (v0.4 has exactly one family — CONTEXT.md's locked FAM-01
 /// decision — so there is no `{id}` segment to read at all).

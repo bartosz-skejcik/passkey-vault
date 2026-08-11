@@ -229,10 +229,32 @@ pub async fn create(
     // Validate every family_wide_keys entry BEFORE any DB work, same order as
     // the single-collection-scope validation above — reject on the first
     // failing entry, writing nothing anywhere (30-03-PLAN.md Task 1).
+    //
+    // Root-caused live (.planning/debug/family-wide-c-relock-fail.md): this
+    // loop used to call `require_collection_edit`, same as the deliberate
+    // single-collection-scope check above — but this loop is the AUTOMATIC,
+    // ADDITIVE invite-time-wrap fast path (30-DECISION-FSH-02.md), which
+    // folds in EVERY family-wide collection the caller currently holds ANY
+    // key for, unconditionally, on every single invite the caller creates.
+    // Requiring `Edit` here meant a caller who merely holds `read` on even
+    // ONE family-wide collection could never generate ANY invite again — not
+    // just one scoped to that collection. `require_collection_access_for_
+    // propagation` requires only that the caller hold SOME access (same
+    // `None -> NotFound` semantics) and bounds the requested level by what
+    // they actually hold, never trusting the client's claim beyond that —
+    // see that function's own doc comment for the full rationale and the
+    // existing test it must keep passing
+    // (`invitation_accept_grants_single_collection_and_two_family_wide_collections_atomically`).
     for entry in &req.family_wide_keys {
-        membership::parse_access_level_from_request(&entry.access_level)?;
+        let requested_level = membership::parse_access_level_from_request(&entry.access_level)?;
         validate_blob_len("wrapped_collection_key", &entry.wrapped_collection_key)?;
-        membership::require_collection_edit(&state.db, &family.caller_user_id, &entry.collection_id).await?;
+        membership::require_collection_access_for_propagation(
+            &state.db,
+            &family.caller_user_id,
+            &entry.collection_id,
+            requested_level,
+        )
+        .await?;
     }
 
     // A transaction is required as soon as `family_wide_keys` is non-empty —
