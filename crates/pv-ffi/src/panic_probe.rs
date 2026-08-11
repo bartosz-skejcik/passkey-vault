@@ -10,18 +10,39 @@
 //! It is NEVER called by production Swift code — the only caller is
 //! `ios/PasskeyVault/PasskeyVaultTests/FfiPanicSafetyTests.swift`.
 //!
-//! No genuine, attacker-reachable panic exists in `pv-core`'s or
-//! `pv-provider`'s production (non-`#[cfg(test)]`) code today. This was
-//! re-confirmed at the top of this plan's Task 1 via
+//! SCOPE OF THE "no genuine panic" CLAIM — narrowed after the Faza 35 code
+//! review (WR-01). What is actually proven is this, and only this:
+//!
+//!   No `.unwrap()`/`.expect()` exists in FIRST-PARTY production
+//!   (non-`#[cfg(test)]`) source, i.e. `crates/pv-core/src/*.rs` and
+//!   `crates/pv-provider/src/*.rs`.
+//!
+//! That was re-confirmed via
 //! `grep -n '\.unwrap()\|\.expect(' crates/pv-core/src/*.rs crates/pv-provider/src/*.rs`:
 //! every hit falls inside a `#[cfg(test)] mod tests` block except
 //! `pv-core/src/keys.rs:78`'s `.expect("32 bytes is a valid HKDF-SHA256
 //! output length")`, which asserts a compile-time-fixed 32-byte HKDF-SHA256
-//! output length that can never fail — not a reachable panic. So this probe
-//! is a deliberate, labeled substitution, not a fabricated claim of a real
-//! vector (P3, 35-RESEARCH.md Pitfall 3 / Open Question 2 — the
-//! originally-proposed `ciborium`/CBOR panic vector did not survive
-//! verification, see 35-05-SUMMARY.md).
+//! output length that can never fail — not a reachable panic.
+//!
+//! That grep CANNOT see into dependencies, and the review found a real panic
+//! it therefore missed: `rand_core-0.6.4/src/os.rs:61-65`'s
+//! `OsRng::fill_bytes` is `if let Err(e) = self.try_fill_bytes(dest) {
+//! panic!("Error: {}", e) }`, reachable from `UserKey::generate()`. It is
+//! remote on iOS (the OS RNG failing), but it is a genuine unwind path, and
+//! it is why `FfiUserKey::generate` now returns `Result` (see
+//! `crates/pv-ffi/src/lib.rs`'s module header for the full per-export
+//! audit). Panics inside `argon2`/`chacha20poly1305`/`hkdf` are likewise out
+//! of the grep's reach and have not been exhaustively enumerated.
+//!
+//! So the honest statement is: this probe is a deliberate, labeled
+//! substitution for a first-party panic vector that does not exist — NOT a
+//! claim that the boundary has no reachable panic at all (P3,
+//! 35-RESEARCH.md Pitfall 3 / Open Question 2 — the originally-proposed
+//! `ciborium`/CBOR panic vector did not survive verification, see
+//! 35-05-SUMMARY.md). The defence against dependency panics is structural,
+//! not enumerative: every export that can unwind returns `Result`, so
+//! UniFFI's `catch_unwind` result reaches Swift as a `throws` rather than a
+//! `try!`-induced `fatalError`.
 //!
 //! Feature-gated behind `ffi06-probe` (default-on — see
 //! `crates/pv-ffi/Cargo.toml`'s `[features]` table comment for the
@@ -83,7 +104,7 @@ mod tests {
     /// before Task 2 proves UniFFI's boundary catches it on the Swift side.
     #[test]
     fn sentinel_input_panics() {
-        let uk = FfiUserKey::generate();
+        let uk = FfiUserKey::generate().expect("generate is infallible today");
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             uk.ffi06_synthetic_panic_probe(PANIC_SENTINEL.to_vec())
         }));
@@ -95,7 +116,7 @@ mod tests {
     /// data-driven, not unconditional.
     #[test]
     fn non_sentinel_input_returns_normally() {
-        let uk = FfiUserKey::generate();
+        let uk = FfiUserKey::generate().expect("generate is infallible today");
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             uk.ffi06_synthetic_panic_probe(vec![0x00])
         }));

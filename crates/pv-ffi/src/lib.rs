@@ -38,6 +38,33 @@
 //! wywołania. Pełny zapis decyzji: `ios/IOS-SPIKE-LOG.md` §1, "Un-zeroized
 //! Swift copies".
 //!
+//! `Result` NA KAŻDYM EKSPORCIE, KTÓRY MOŻE PANIKOWAĆ (WR-01, review Fazy
+//! 35). UniFFI generuje swiftowy wrapper `throws` WYŁĄCZNIE dla funkcji,
+//! której sygnatura w Ruście zwraca `Result<T, E: uniffi::Error>`; goły
+//! zwrot generuje wrapper NIE-throwing, który rozpakowuje wywołanie przez
+//! `try!` — więc panika, którą `catch_unwind` FAKTYCZNIE złapał, zamienia
+//! się po stronie Swifta w niełapalny `fatalError` (patrz `panic_probe.rs`).
+//! Pełny audyt wszystkich `#[uniffi::export]` w tym crate:
+//!
+//! | funkcja                        | zwraca                | panic path? |
+//! |--------------------------------|-----------------------|-------------|
+//! | `FfiUserKey::generate`         | `Result<Arc<Self>,_>` | TAK — `OsRng::fill_bytes` panikuje (`rand_core-0.6.4/src/os.rs:61-65`) |
+//! | `FfiWrappingKey::from_password`| `Result<Arc<Self>,_>` | argon2/serde — złapane jako `Err` |
+//! | `wrap_user_key`                | `Result<_,_>`         | — |
+//! | `unwrap_user_key`              | `Result<_,_>`         | — |
+//! | `encrypt_item`                 | `Result<_,_>`         | — |
+//! | `decrypt_item`                 | `Result<_,_>`         | — |
+//! | `import_user_key_from_session` | `Result<_,_>`         | — |
+//! | `ffi06_synthetic_panic_probe`  | `Result<_,_>`         | TAK (syntetyczna, patrz `panic_probe.rs`) |
+//! | `export_user_key_for_session`  | `Vec<u8>` (BEZ `Result`) | NIE — patrz niżej |
+//!
+//! `export_user_key_for_session` to JEDYNY eksport bez `Result`, świadomie:
+//! jego całe ciało to `expose().to_vec()`. Jedyna droga do paniki byłaby
+//! przez błąd alokacji, a ten w Ruście jest `abort`em, nie odwijaniem stosu
+//! — `catch_unwind` i tak by go nie zobaczył, więc `Result` niczego by tu
+//! nie kupił. Gdyby ta funkcja kiedykolwiek zyskała logikę mogącą panikować,
+//! MUSI dostać `Result`.
+//!
 //! P2: `pv-core` NIGDY nie jest modyfikowany, by dopasować się do UniFFI.
 //! Każdy impedance mismatch (ten plik, `FfiError` owijający
 //! `CryptoError`'s `&'static str`, rozbieżność `&mut [u8]` -> `Vec<u8>`
@@ -83,9 +110,24 @@ pub struct FfiUserKey(UserKey);
 
 #[uniffi::export]
 impl FfiUserKey {
+    /// DELIBERATELY returns `Result<_, FfiError>` although it never produces
+    /// `Err` — the same load-bearing reason `panic_probe.rs`'s probe does
+    /// (35-05): UniFFI emits a Swift `throws` wrapper ONLY for a Rust
+    /// signature returning `Result<T, E: uniffi::Error>`. A bare return
+    /// generates a NON-throwing wrapper that force-unwraps with `try!`, so a
+    /// panic that `catch_unwind` DID catch is then converted by the generated
+    /// Swift into an uncatchable `fatalError` — a process kill, which in an
+    /// AutoFill extension is the worst possible outcome.
+    ///
+    /// This function has a genuine panic path, so that is not theoretical
+    /// (WR-01, review Fazy 35): `UserKey::generate()` calls
+    /// `OsRng.fill_bytes`, and `rand_core-0.6.4/src/os.rs:61-65` is
+    /// literally `if let Err(e) = self.try_fill_bytes(dest) { panic!(...) }`.
+    /// Remote on iOS; not structurally impossible, and exactly the class of
+    /// failure where a catchable error matters.
     #[uniffi::constructor]
-    pub fn generate() -> Arc<Self> {
-        Arc::new(FfiUserKey(UserKey::generate()))
+    pub fn generate() -> Result<Arc<Self>, FfiError> {
+        Ok(Arc::new(FfiUserKey(UserKey::generate())))
     }
 }
 
@@ -278,7 +320,7 @@ mod tests {
         let password = b"test-password".to_vec();
         let wrapping_key = FfiWrappingKey::from_password(password, salt, kdf_json)
             .expect("from_password should succeed");
-        let user_key = FfiUserKey::generate();
+        let user_key = FfiUserKey::generate().expect("generate is infallible today");
         let wrapped = wrap_user_key(&wrapping_key, &user_key).expect("wrap should succeed");
         let unwrapped = unwrap_user_key(&wrapping_key, wrapped).expect("unwrap should succeed");
         let item = encrypt_item(
@@ -299,7 +341,7 @@ mod tests {
     /// against a second, unrelated `generate()` call would be wrong).
     #[test]
     fn export_import_user_key_roundtrip() {
-        let uk = FfiUserKey::generate();
+        let uk = FfiUserKey::generate().expect("generate is infallible today");
         let original: [u8; 32] = *uk.0.expose();
         let exported = export_user_key_for_session(&uk);
         let imported = import_user_key_from_session(exported).expect("import should succeed");
@@ -373,7 +415,7 @@ mod tests {
             kdf_json.clone(),
         )
         .expect("from_password should succeed");
-        let user_key = FfiUserKey::generate();
+        let user_key = FfiUserKey::generate().expect("generate is infallible today");
         let wrapped =
             wrap_user_key(&correct_wrapping_key, &user_key).expect("wrap should succeed");
 
