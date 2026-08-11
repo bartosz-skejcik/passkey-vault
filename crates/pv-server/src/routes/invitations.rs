@@ -262,16 +262,46 @@ pub async fn create(
         // deliberate-share action. The relaxation exists ONLY for the
         // automatic family-wide fold-in (30-DECISION-FSH-02.md) — scope it to
         // exactly that.
-        if membership::is_family_wide_collection(&state.db, &entry.collection_id).await? {
-            membership::require_collection_access_for_propagation(
-                &state.db,
-                &family.caller_user_id,
-                &entry.collection_id,
-                requested_level,
-            )
-            .await?;
-        } else {
-            membership::require_collection_edit(&state.db, &family.caller_user_id, &entry.collection_id).await?;
+        // 260812-01e Task 2 (plan-check B-3/T-30fix-05): the same
+        // additional declared-level bound as `collections::add_member` --
+        // see that call site's own comment for the full B-3/C-1 rationale
+        // AND for the item_bucket-only scoping finding made while executing
+        // this task (documented in the SUMMARY's "Deviations" section).
+        // `require_collection_access_for_propagation` alone bounds by what
+        // the CALLER holds, which Task 1's mechanism can put at `Edit` on a
+        // bucket declared below `edit`; an ADDITIONAL equality check against
+        // the collection's own `family_wide_access_level` closes that,
+        // scoped to the `Declared` state AND to `item_bucket` collections
+        // only -- a family-wide FOLDER has no contributor-escalation path
+        // (Task 1's mechanism is item_bucket-only), so this bound must not
+        // apply there.
+        match membership::resolve_family_wide_declared_level(&state.db, &entry.collection_id).await? {
+            membership::FamilyWideDeclaredLevel::Declared(declared) => {
+                membership::require_collection_access_for_propagation(
+                    &state.db,
+                    &family.caller_user_id,
+                    &entry.collection_id,
+                    requested_level,
+                )
+                .await?;
+                if requested_level != declared
+                    && membership::is_item_bucket_collection(&state.db, &entry.collection_id).await?
+                {
+                    return Err(ApiError::Forbidden);
+                }
+            }
+            membership::FamilyWideDeclaredLevel::LegacyUnknown => {
+                membership::require_collection_access_for_propagation(
+                    &state.db,
+                    &family.caller_user_id,
+                    &entry.collection_id,
+                    requested_level,
+                )
+                .await?;
+            }
+            membership::FamilyWideDeclaredLevel::NotFamilyWide => {
+                membership::require_collection_edit(&state.db, &family.caller_user_id, &entry.collection_id).await?;
+            }
         }
     }
 

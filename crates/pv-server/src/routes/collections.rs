@@ -538,12 +538,57 @@ pub async fn add_member(
     // OWN `satisfied_by` decides that, never a hand-rolled `!= Edit`
     // comparison, so this stays byte-identical in behavior to the extractor
     // this handler used to declare.
-    if membership::is_family_wide_collection(&state.db, &membership.resource_id).await? {
-        if !may_grant_access_level(membership.access, requested_level) {
-            return Err(ApiError::Forbidden);
+    // 260812-01e Task 2 (plan-check B-3/T-30fix-05): `may_grant_access_level`
+    // bounds the grant by what the CALLER holds, but Task 1's mechanism can
+    // put `Edit` in the caller's hands on a bucket declared BELOW `edit` --
+    // `(Edit, Edit) => true` would then let a self-escalated contributor
+    // hand ANOTHER member more than the bucket's own declared level,
+    // reopening CR-01/migration-0020's exact "propagator's own level
+    // substituted for the share's declared level" bug shape one level down.
+    // `resolve_family_wide_declared_level`'s three states apply an
+    // ADDITIONAL equality bound layered on top of `may_grant_access_level`
+    // -- never a change to its nine arms -- and ONLY to the `Declared`
+    // state; `LegacyUnknown` (a pre-migration-0020 NULL-level row) keeps
+    // today's `may_grant_access_level`-only behavior (see that enum
+    // variant's own doc comment for why: defaulting it to `Read` here would
+    // permanently break invite generation for an `edit`-holder on such a
+    // row -- WINDOWS #17's shape, plan-check iteration 2 C-1).
+    //
+    // Found while executing this task (see the SUMMARY's "Deviations"
+    // section): the equality bound below is additionally scoped to
+    // `item_bucket` only, mirroring `revoke_access`'s own established
+    // precedent immediately above -- Task 1's contributor-escalation
+    // mechanism ONLY exists for item_bucket destinations (a family-wide
+    // FOLDER's `edit`-holders are always the creator's own deliberate
+    // choice at share-creation time, never a self-escalated row), so
+    // T-30fix-05's propagation hole is only reachable there. Applying the
+    // bound to family-wide FOLDERS too would silently tighten pre-existing,
+    // unrelated folder-sharing behavior this plan never asked to change --
+    // confirmed by `tests/family_wide_sharing.rs`'s own pre-existing
+    // `seed_family_wide_folder` fixture, which deliberately fans a member
+    // out at `edit` on a folder declared `read` (a legitimate, deliberate
+    // per-recipient choice at creation time, unrelated to any escalation).
+    match membership::resolve_family_wide_declared_level(&state.db, &membership.resource_id).await? {
+        membership::FamilyWideDeclaredLevel::Declared(declared) => {
+            if !may_grant_access_level(membership.access, requested_level) {
+                return Err(ApiError::Forbidden);
+            }
+            if requested_level != declared
+                && membership::is_item_bucket_collection(&state.db, &membership.resource_id).await?
+            {
+                return Err(ApiError::Forbidden);
+            }
         }
-    } else if !RequireEdit::satisfied_by(membership.access) {
-        return Err(ApiError::Forbidden);
+        membership::FamilyWideDeclaredLevel::LegacyUnknown => {
+            if !may_grant_access_level(membership.access, requested_level) {
+                return Err(ApiError::Forbidden);
+            }
+        }
+        membership::FamilyWideDeclaredLevel::NotFamilyWide => {
+            if !RequireEdit::satisfied_by(membership.access) {
+                return Err(ApiError::Forbidden);
+            }
+        }
     }
 
     let is_family_member = sqlx::query(
@@ -637,6 +682,23 @@ pub async fn revoke_access(
     membership: Membership<Collection, RequireEdit>,
     Path((_collection_id, target_user_id)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
+    // 260812-01e Task 2 (plan-check B-2/T-30fix-04): a family-wide
+    // item_bucket's membership is governed by family membership and the
+    // removal re-key path (`families.rs::apply_member_removal_rekey`),
+    // never by a per-share revocation. Without this guard, a member
+    // self-escalated to `edit` via Task 1's mechanism (create any owned
+    // item, move it into a bucket declared below `edit`) could call this
+    // endpoint against every OTHER member, including the bucket's creator
+    // -- the WR-06 last-key-holder guard below stops at ONE survivor, the
+    // attacker themselves, evicting the whole family from their own shared
+    // bucket. Scoped to `item_bucket` only: a family-wide FOLDER's
+    // creator-managed revocation is pre-existing, deliberate, and unrelated
+    // to this fix's mechanism -- no contributor-escalation path exists for
+    // folders (Task 1 only claims `edit` on an item_bucket destination).
+    if membership::is_item_bucket_collection(&state.db, &membership.resource_id).await? {
+        return Err(ApiError::Forbidden);
+    }
+
     // WR-06: refuse a revocation that would empty the collection's last
     // key-holder — `create()`'s own doc comment states the invariant
     // explicitly ("a collection never exists with zero key-holders, even for
