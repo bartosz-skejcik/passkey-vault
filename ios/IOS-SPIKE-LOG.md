@@ -290,6 +290,32 @@ own record**, never a quiet tuning commit.
 
 ---
 
+## 4a. The v1.0 roadmap, in outline
+
+Phases **35–43** (this project numbers sequentially; v0.5 ran 29–34 and those directories belong to a
+live parallel session on `main` — do not touch them). Full text lives in `.planning/ROADMAP.md`, which
+is never committed, hence this outline.
+
+| # | Goal |
+|---|---|
+| 35 | **FFI boundary + skeleton — gates everything.** IOS-06 decided *before* binding code; opaque handles mirrored from `pv-wasm`; one real round-trip asserted on real bytes |
+| 36 | **AutoFill feasibility gate.** Falsifiable check of the entitlement + App Groups on a free Apple ID, and a *measured* Argon2id memory footprint — before any data-sharing design commits |
+| 37 | Account, password unlock, biometric unlock (Face ID / Touch ID gating real key release) |
+| 38 | Full vault UI — CRUD for every item type, folders/tags, TOTP, generator through FFI, clipboard, app-switcher protection |
+| 39 | Sync + offline cache — REST/WS unchanged, host app writes ciphertext where a cold-launched extension can reach it, honest freshness copy |
+| 40 | Family & sharing on the phone — truthful shared marking, family management, FSH-02 as a third client |
+| 41 | **AutoFill for passwords + cross-process lock correctness** — the first phase where both processes exist at once |
+| 42 | Proof standard — the iOS QA/CI gate, auditing phases 35–41 |
+| 43 | **Conditional: passkeys only if cheap.** Go/no-go recorded first; "not done, deferred, here is why" is a passing outcome |
+
+Coverage was **verified independently, not taken from the agent's report**: 46 requirement IDs defined,
+46 referenced, zero orphans, zero invented, zero duplicated. The duplicate check was then falsified by
+injecting a fake duplicate and watching it get caught — otherwise its silence would have proved nothing.
+
+Two phases exist purely because research disagreed with itself or with reality, and those disagreements
+are the milestone's real risk (see L-5, L-6): **36 exists to settle them before anything depends on the
+answer.**
+
 ## 5. What is explicitly *not* done
 
 - No FFI crate. Root `Cargo.toml` `members` is untouched, so the coordination point with `main`
