@@ -145,6 +145,100 @@ impl FfiUserKey {
 #[derive(Zeroize, ZeroizeOnDrop, uniffi::Object)]
 pub struct FfiWrappingKey([u8; KEY_LEN]);
 
+// --- Server-supplied KdfParams bounds (WR-11, review Fazy 35) -----------
+//
+// `kdf_params_json` reaches this boundary from the server's
+// `POST /api/auth/prelogin` response. In a zero-knowledge product that input
+// is UNTRUSTED by construction — the whole premise is that the server may be
+// hostile or compromised.
+//
+// Why an unvalidated `m_cost_kib` is worse than an ordinary bad input:
+// `argon2::Params::new` accepts `m_cost_kib` all the way up to `0x0FFFFFFF`
+// (256 GiB) and then Argon2id allocates — and WRITES — a block array of
+// exactly that size. Whichever way that ends, `catch_unwind` (the mechanism
+// the whole IOS-06 panic-safety argument rests on) never sees it and no
+// `FfiError` ever reaches Swift:
+//
+//   * where the allocator REFUSES the request, Rust calls
+//     `handle_alloc_error`, which is an `abort` — not an unwind;
+//   * where it does not refuse, the process is killed while faulting the
+//     pages in. MEASURED, not assumed: on this macOS dev host
+//     `Vec::<u8>::with_capacity(268435455 * 1024)` returns a valid pointer
+//     (lazy VA reservation, exit 0) on a 16 GB machine — so the *abort*
+//     shape the review predicted is only one of the two, and on Darwin the
+//     realistic outcome is a memory blow-up rather than a clean abort.
+//
+// On iOS both shapes are a silent process kill, and inside the AutoFill
+// extension a jetsam kill leaves no user-visible trace at all. The check
+// therefore has to happen HERE, before anything is allocated, not deeper in
+// `pv-core` (P2 — `pv-core` is never modified to suit a binding).
+//
+// CHOSEN CEILINGS AND THE REASONING, so the numbers are auditable:
+//
+//   * `MAX_M_COST_KIB = 96 MiB`. The production profile is
+//     `KdfParams::default()` = **64 MiB / t=3 / p=4**
+//     (`crates/pv-core/src/kdf.rs:20-25`), so this accepts the real
+//     parameters with 1.5x headroom — a routine server-side raise (OWASP
+//     revising its Argon2id guidance upward) does not need a client release.
+//     It is also below the ~120 MB credential-provider ceiling, the only
+//     figure anyone has for the tightest process this code is expected to
+//     run in, so an ACCEPTED value is never knowingly over that budget while
+//     the GiB-class value that turns into an abort is refused outright.
+//   * `MAX_T_COST = 10` (production 3) and `MAX_P_COST = 8` (production 4).
+//     Neither can abort — an absurd `t_cost` is a hang, not a crash — but an
+//     unbounded time multiplier on the unlock path is a denial of service
+//     the same untrusted server controls, and bounding them is free.
+//
+// HONESTY, so nobody over-trusts these constants: 96 MiB is NOT proven
+// survivable inside a credential-provider extension. The ~120 MB ceiling is
+// weakly sourced (an unattributed vendor KB article), the one real
+// measurement that exists (~64.06 MB `phys_footprint` for the 64 MiB
+// profile) was taken in a HOST APP process, and even the legitimate default
+// may not fit (landmine L-6, `ios/IOS-SPIKE-LOG.md` §3). This is a CRASH
+// GUARD, not the memory budget. Phase 36's FILL-06 owns the measured number
+// and must tighten these constants once it exists.
+//
+// UPPER BOUNDS ONLY, deliberately. The same untrusted server can also send
+// params that are too WEAK (`{"m_cost_kib":8,"t_cost":1,"p_cost":1}`) — a
+// downgrade attack. That is a real issue and it is NOT closed here: the
+// answer to it is a policy floor checked against the account's own stored
+// parameters (server-side history), not a hardcoded constant at the FFI
+// boundary, and a floor here would reject the cheap 8 MiB/t=1/p=1 test
+// profile this crate's own tests and `FfiRoundTripTests.swift` both use on
+// purpose. Recorded as out of scope, not overlooked.
+const MAX_M_COST_KIB: u32 = 96 * 1024;
+const MAX_T_COST: u32 = 10;
+const MAX_P_COST: u32 = 8;
+
+/// Rejects out-of-range server-supplied Argon2id parameters with a catchable
+/// `FfiError` BEFORE `wrapping_key_from_password` allocates anything.
+///
+/// Returns `InvalidInput` (never `Kdf`) on purpose: `Kdf` is what
+/// `argon2::Params::new`'s own validation produces, and the tests
+/// discriminate the two so that "the guard fired" cannot be confused with
+/// "argon2 happened to reject it anyway".
+fn validate_kdf_params(params: &KdfParams) -> Result<(), FfiError> {
+    if params.m_cost_kib > MAX_M_COST_KIB {
+        return Err(FfiError::InvalidInput(format!(
+            "m_cost_kib {} exceeds the accepted maximum {}",
+            params.m_cost_kib, MAX_M_COST_KIB
+        )));
+    }
+    if params.t_cost > MAX_T_COST {
+        return Err(FfiError::InvalidInput(format!(
+            "t_cost {} exceeds the accepted maximum {}",
+            params.t_cost, MAX_T_COST
+        )));
+    }
+    if params.p_cost > MAX_P_COST {
+        return Err(FfiError::InvalidInput(format!(
+            "p_cost {} exceeds the accepted maximum {}",
+            params.p_cost, MAX_P_COST
+        )));
+    }
+    Ok(())
+}
+
 #[uniffi::export]
 impl FfiWrappingKey {
     /// `password`/`salt` to bufory wywołującego (Swift `Data`), przyjęte
@@ -165,6 +259,13 @@ impl FfiWrappingKey {
     /// `tests::from_password_zeroizes_its_password_copy_on_the_parse_error_path`,
     /// które patrzy na FAKTYCZNIE zwolnione bajty (`crate::heap_probe`), a
     /// nie na kształt kodu.
+    ///
+    /// WR-11 (review Fazy 35) — ten sam NIEZAUFANY `kdf_params_json` steruje
+    /// rozmiarem alokacji Argon2id, a nieudana alokacja w Ruście to `abort`,
+    /// nie odwinięcie stosu: `catch_unwind` jej NIE widzi i żaden `FfiError`
+    /// nie dociera do Swifta. Dlatego `validate_kdf_params` odrzuca wartości
+    /// spoza zakresu PRZED jakąkolwiek alokacją — pełne uzasadnienie granic
+    /// przy stałych `MAX_*` powyżej.
     #[uniffi::constructor]
     pub fn from_password(
         password: Vec<u8>,
@@ -176,6 +277,9 @@ impl FfiWrappingKey {
         let password = Zeroizing::new(password);
         let params: KdfParams = serde_json::from_str(&kdf_params_json)
             .map_err(|e| FfiError::InvalidInput(e.to_string()))?;
+        // BEFORE `wrapping_key_from_password` — that call is where the
+        // attacker-sized block array would be allocated (WR-11).
+        validate_kdf_params(&params)?;
         let wk = wrapping_key_from_password(&password, &salt, &params)?;
         Ok(Arc::new(FfiWrappingKey(*wk)))
     }
@@ -410,6 +514,131 @@ mod tests {
             "heap probe control FAILED: the probe cannot observe an un-zeroized sentinel buffer \
              at all, so the assertion above proves nothing"
         );
+    }
+
+    /// Asserts the shared shape of the two WR-11 rejection tests below: the
+    /// error must be `InvalidInput` NAMING the offending parameter, never
+    /// merely "an error happened". `FfiError::Kdf` — what `argon2`'s own
+    /// `Params::new` validation produces — must NOT satisfy it: a `Kdf`
+    /// error would mean the rejection came from somewhere that only runs
+    /// AFTER the point where the allocation would already have happened.
+    fn assert_rejected_by_the_bounds_guard(
+        result: Result<Arc<FfiWrappingKey>, FfiError>,
+        expected_param: &str,
+    ) {
+        match result {
+            Err(FfiError::InvalidInput(msg)) => assert!(
+                msg.contains(expected_param),
+                "the rejection must name the offending parameter ({expected_param}), got: {msg}"
+            ),
+            Err(other) => panic!(
+                "expected FfiError::InvalidInput from the WR-11 bounds guard, got {other:?} -- \
+                 a Kdf error means argon2's own validation rejected it instead, i.e. AFTER the \
+                 point where a larger-but-still-argon2-legal value would have run"
+            ),
+            Ok(_) => panic!("an out-of-range {expected_param} was accepted"),
+        }
+    }
+
+    /// WR-11 regression (Faza 35 code review) — the end-to-end case, and the
+    /// one this guard's falsification transcript is taken on, because it is
+    /// the only hostile value that is safe to run with the guard REMOVED.
+    ///
+    /// 131072 KiB = 128 MiB: over the 96 MiB ceiling, exactly 2x the
+    /// production profile, and small enough that an unguarded run merely
+    /// completes an expensive Argon2id pass and returns `Ok` — which is what
+    /// makes this test go RED rather than take the host down with it.
+    #[test]
+    fn from_password_rejects_over_ceiling_m_cost_end_to_end() {
+        let salt = pv_core::keys::random_bytes(16);
+        let over_ceiling = r#"{"m_cost_kib":131072,"t_cost":3,"p_cost":4}"#;
+        assert_rejected_by_the_bounds_guard(
+            FfiWrappingKey::from_password(
+                b"any-password".to_vec(),
+                salt,
+                over_ceiling.to_string(),
+            ),
+            "m_cost_kib",
+        );
+    }
+
+    /// WR-11 — the process-killing class the guard actually exists for.
+    ///
+    /// `m_cost_kib = 0x0FFFFFFF` (268435455 KiB = 256 GiB) is ACCEPTED by
+    /// `argon2`'s own `Params::new`; `MAX_M_COST` is exactly that value. So
+    /// without `validate_kdf_params` this input reaches the block-array
+    /// allocation, and a hostile `POST /api/auth/prelogin` response is all
+    /// it takes to get there.
+    ///
+    /// FALSIFICATION LIMIT, recorded rather than glossed: this test was NOT
+    /// executed with the guard removed. Measured on the macOS dev host,
+    /// `Vec::<u8>::with_capacity(268435455 * 1024)` SUCCEEDS (lazy VA
+    /// reservation, exit 0) on a 16 GB machine, so an unguarded run would
+    /// not abort quickly — it would fault in hundreds of GiB, i.e. perform
+    /// the exact process-killing behaviour the guard exists to prevent, on
+    /// the developer's machine. `ulimit -v` cannot bound it either
+    /// (`setrlimit failed: invalid argument` — RLIMIT_AS is unsupported on
+    /// Darwin). The guard's falsifiability is therefore proven by
+    /// `from_password_rejects_over_ceiling_m_cost_end_to_end` and
+    /// `kdf_param_bounds_reject_exactly_one_past_the_maximum`, which
+    /// exercise the same single code path with safe values; this test pins
+    /// the argon2-legal extreme.
+    #[test]
+    fn from_password_rejects_argon2s_own_max_m_cost() {
+        let salt = pv_core::keys::random_bytes(16);
+        let hostile = r#"{"m_cost_kib":268435455,"t_cost":1,"p_cost":1}"#;
+        assert_rejected_by_the_bounds_guard(
+            FfiWrappingKey::from_password(b"any-password".to_vec(), salt, hostile.to_string()),
+            "m_cost_kib",
+        );
+    }
+
+    /// WR-11 control. Without this, the guard above could be satisfied by a
+    /// ceiling low enough to break the actual product, and nothing would say
+    /// so. `KdfParams::default()` IS the production profile
+    /// (`crates/pv-core/src/kdf.rs`), and this runs a REAL 64 MiB / t=3 / p=4
+    /// Argon2id pass through the same entry point Swift calls.
+    #[test]
+    fn from_password_accepts_the_real_production_kdf_params() {
+        let production = KdfParams::default();
+        // Transcribed from crates/pv-core/src/kdf.rs's `Default` impl, so a
+        // silent change to the production profile fails HERE rather than
+        // silently widening what this control actually proves.
+        assert_eq!(
+            (production.m_cost_kib, production.t_cost, production.p_cost),
+            (64 * 1024, 3, 4),
+            "the production KDF profile moved -- re-check MAX_M_COST_KIB/MAX_T_COST/MAX_P_COST"
+        );
+        assert!(validate_kdf_params(&production).is_ok());
+
+        let json = serde_json::to_string(&production).expect("KdfParams always serializes");
+        let salt = pv_core::keys::random_bytes(16);
+        let result = FfiWrappingKey::from_password(b"any-password".to_vec(), salt, json);
+        assert!(
+            result.is_ok(),
+            "the real production KDF parameters must still derive a wrapping key"
+        );
+    }
+
+    /// WR-11 boundary. Asserted on `validate_kdf_params` directly rather than
+    /// through `from_password`, so the exact-max cases cost no Argon2id run.
+    /// Each field is proven to accept its maximum AND reject maximum+1 — a
+    /// guard that only rejects absurd values would pass a test that only fed
+    /// it absurd values.
+    #[test]
+    fn kdf_param_bounds_reject_exactly_one_past_the_maximum() {
+        let at_max =
+            KdfParams { m_cost_kib: MAX_M_COST_KIB, t_cost: MAX_T_COST, p_cost: MAX_P_COST };
+        assert!(validate_kdf_params(&at_max).is_ok(), "the maximum itself must be accepted");
+
+        let over_m = KdfParams { m_cost_kib: MAX_M_COST_KIB + 1, ..at_max.clone() };
+        assert!(matches!(validate_kdf_params(&over_m), Err(FfiError::InvalidInput(_))));
+
+        let over_t = KdfParams { t_cost: MAX_T_COST + 1, ..at_max.clone() };
+        assert!(matches!(validate_kdf_params(&over_t), Err(FfiError::InvalidInput(_))));
+
+        let over_p = KdfParams { p_cost: MAX_P_COST + 1, ..at_max.clone() };
+        assert!(matches!(validate_kdf_params(&over_p), Err(FfiError::InvalidInput(_))));
     }
 
     /// Test 4: unwrapping with the wrong wrapping key fails (`Err`, never a
