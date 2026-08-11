@@ -24,3 +24,10 @@ web/tsconfig.tsbuildinfo
 # verify-container.sh repo-local scratch (certs/Caddyfile for proxy E2E)
 .verify-scratch.*
 .verify-tmp/
+
+# Xcode per-user state and build output (ios/). xcuserdata holds window
+# positions and scheme ordering — machine-local noise, never shared.
+xcuserdata/
+*.xcuserstate
+DerivedData/
+ios/**/build/
