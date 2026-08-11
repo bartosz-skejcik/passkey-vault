@@ -9,6 +9,29 @@ description = "UniFFI bindings for pv-core — thin FFI layer, no crypto logic o
 [lib]
 crate-type = ["staticlib", "lib"]
 
+# ffi06-probe (35-05): gates crates/pv-ffi/src/panic_probe.rs, a single,
+# clearly-labeled SYNTHETIC panic vector that exists solely to prove
+# FFI-06/CP-3 (UniFFI's catch_unwind scaffolding genuinely intercepts a Rust
+# panic crossing the pv-ffi boundary). No genuine, attacker-reachable panic
+# exists in pv-core's/pv-provider's production code today (confirmed by grep,
+# see panic_probe.rs's own module doc) -- this is a deliberate substitution,
+# not a claim about a real vector (P3).
+#
+# Default-ON, NOT #[cfg(debug_assertions)]: scripts/build-ios.sh always
+# builds pv-ffi with --release, and debug-assertions is false by default
+# under [profile.release] unless explicitly overridden -- a
+# debug_assertions gate would silently compile the probe OUT of the exact
+# XCFramework this phase's own Swift test links against. Default-on is
+# accepted as a reasoned trade ONLY because this phase builds exactly one
+# consumer (PasskeyVaultTests) -- no app target, no production profile yet.
+# DEBT (record in 35-05-SUMMARY.md): whichever phase first builds a
+# non-test pv-ffi consumer (likely Phase 38) MUST flip this to
+# `default = []` and add `--features ffi06-probe` to the test-only build
+# path, so the probe never ships in a real app/extension binary.
+[features]
+default = ["ffi06-probe"]
+ffi06-probe = []
+
 # Open Question 1 (35-RESEARCH.md) resolved empirically this session: UniFFI
 # 0.32.0's proc-macro mode needs NO build.rs / no [build-dependencies] here
 # at all. Instead crates/pv-ffi/src/lib.rs calls `uniffi::setup_scaffolding!()`

@@ -61,6 +61,11 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 pub mod error;
 pub use error::FfiError;
 
+// FFI-06/CP-3 synthetic panic probe — see crates/pv-ffi/src/panic_probe.rs's
+// own module doc for the full "synthetic, never called by production code"
+// disclosure. Feature-gated (`ffi06-probe`, default-on).
+mod panic_probe;
+
 /// Nieprzezroczysty handle User Key — korzeń dostępu do vaulta. Jedyny
 /// sposób, by "użyć" klucza spoza handle, to funkcje wrap/encrypt poniżej
 /// (i export/import session pair, patrz nagłówek modułu). Brak Zeroize
