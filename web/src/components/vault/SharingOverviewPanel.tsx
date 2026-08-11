@@ -297,8 +297,21 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
         // captures owners and full-edit co-managers alike, and correctly
         // excludes a folder the caller merely has read/hidden-password
         // access to (someone ELSE is the one sharing that folder).
+        //
+        // 260812-01e Task 6: also excludes `family_wide_kind === "item_bucket"`
+        // -- an item_bucket must NEVER render as a folder row here (30-UI-
+        // SPEC.md), but `access_level === "edit"` alone no longer implies
+        // "this caller is the folder's real owner/manager": 260812-01e Task 1
+        // lets ANY past contributor to a bucket hold `edit` on it, so this
+        // leak (previously reachable only by a bucket's sole creator) widens
+        // to every contributor unless excluded here. The bucket's own items
+        // still appear correctly below, in the PINNED family-wide block
+        // (`familyWideBucketRows`) -- this exclusion is scoped to the
+        // ordinary folder tab only.
         const editableIds = new Set(
-          rawCollections.filter((c) => c.access_level === "edit").map((c) => c.id),
+          rawCollections
+            .filter((c) => c.access_level === "edit" && c.family_wide_kind !== "item_bucket")
+            .map((c) => c.id),
         );
         const editableCollections = collections.filter((c) => editableIds.has(c.id));
 
