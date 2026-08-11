@@ -32,7 +32,51 @@
 # This script's own FFI-04 gate is REQUIRED to be demonstrably falsifiable
 # (QA-02/QA-04) -- run with `--verify-falsifiable` after a normal build to
 # prove the gate can fail, not just pass.
+#
+# --with-panic-probe (36-01, T-36-02): opt-in flag that appends
+# `--features ffi06-probe` to both `cargo rustc` invocations AND both
+# `cargo run --bin uniffi-bindgen-swift` invocations, so the SYNTHETIC
+# panic vector (crates/pv-ffi/src/panic_probe.rs) is compiled in and its
+# Swift binding (`ffi06SyntheticPanicProbe`) is generated. Without the
+# flag (the default, and what every OTHER invocation of this script uses)
+# neither is present. `PasskeyVaultTests`' "Build pv-ffi XCFramework" Run
+# Script phase is the ONLY committed caller that passes this flag, so
+# `FfiPanicSafetyTests.swift` keeps a probe-carrying artifact.
+#
+# HONEST LIMITATION, recorded rather than silently accepted: both variants
+# write to the SAME single output path (`$BUILD_DIR` below) -- there is no
+# per-variant output directory. So the artifact actually sitting on disk
+# after this script runs is WHICHEVER variant ran last, not necessarily the
+# one the caller currently building wants. Genuine per-target isolation
+# (separate XCFramework/bindings output paths per variant, wired into each
+# target's own Run Script phase or a build-setting-scoped output) needs a
+# real per-target build product, and is left as a named follow-up for the
+# phase that links a second non-test pv-ffi consumer with its own build
+# ordering requirements. Today's mitigation is call-order discipline:
+# scripts/ios-probe-run.sh always invokes this script with NO flag
+# immediately before building the app+extension, so the appex never
+# accidentally links a probe-carrying artifact left behind by a prior
+# `--with-panic-probe` run.
 set -euo pipefail
+
+WITH_PANIC_PROBE=0
+if [ "${1:-}" = "--with-panic-probe" ]; then
+  WITH_PANIC_PROBE=1
+  shift
+fi
+# Every expansion of this array below uses the
+# `"${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}"` idiom, not plain
+# `"${FEATURE_ARGS[@]}"`: this machine's /bin/bash is 3.2.57 (macOS ships no
+# newer system bash), and bash <4.4 treats `"${arr[@]}"` on a zero-element
+# array as an unbound-variable error under `set -u`, which the plain form
+# hit on the very first plain (non-`--with-panic-probe`) run of this change.
+FEATURE_ARGS=()
+if [ "$WITH_PANIC_PROBE" -eq 1 ]; then
+  FEATURE_ARGS=(--features ffi06-probe)
+  echo "==> variant: --with-panic-probe (ffi06-probe compiled IN -- test-only artifact)"
+else
+  echo "==> variant: plain (no extra features -- the artifact every non-test consumer, including the appex, links)"
+fi
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 REPO_ROOT="$(pwd)"
@@ -293,10 +337,10 @@ stamp_and_clean_if_floor_changed aarch64-apple-ios-sim
 stamp_and_clean_if_floor_changed aarch64-apple-ios
 
 echo "==> Building pv-ffi for aarch64-apple-ios-sim (staticlib, release)"
-cargo rustc -p pv-ffi --lib --target aarch64-apple-ios-sim --crate-type staticlib --release
+cargo rustc -p pv-ffi --lib --target aarch64-apple-ios-sim --crate-type staticlib --release "${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}"
 
 echo "==> Building pv-ffi for aarch64-apple-ios (staticlib, release)"
-cargo rustc -p pv-ffi --lib --target aarch64-apple-ios --crate-type staticlib --release
+cargo rustc -p pv-ffi --lib --target aarch64-apple-ios --crate-type staticlib --release "${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}"
 
 # 3. Generate Swift bindings via uniffi-bindgen-swift (crates/pv-ffi's own
 #    bin target -- uniffi-bindgen-swift is not published standalone on
@@ -347,10 +391,10 @@ cargo rustc -p pv-ffi --lib --target aarch64-apple-ios --crate-type staticlib --
 #    not by requirement (Rule 1 fix, 35-03).
 echo "==> Generating Swift bindings (uniffi-bindgen-swift)"
 mkdir -p "$HEADERS_DIR"
-cargo run -p pv-ffi --bin uniffi-bindgen-swift -- \
+cargo run -p pv-ffi --bin uniffi-bindgen-swift "${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}" -- \
   "$DEVICE_LIB" "$HEADERS_DIR" \
   --headers --modulemap --modulemap-filename module.modulemap --module-name pv_ffiFFI
-cargo run -p pv-ffi --bin uniffi-bindgen-swift -- \
+cargo run -p pv-ffi --bin uniffi-bindgen-swift "${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}" -- \
   "$DEVICE_LIB" "$BINDINGS_DIR" \
   --swift-sources
 

@@ -17,19 +17,20 @@ crate-type = ["staticlib", "lib"]
 # see panic_probe.rs's own module doc) -- this is a deliberate substitution,
 # not a claim about a real vector (P3).
 #
-# Default-ON, NOT #[cfg(debug_assertions)]: scripts/build-ios.sh always
-# builds pv-ffi with --release, and debug-assertions is false by default
-# under [profile.release] unless explicitly overridden -- a
-# debug_assertions gate would silently compile the probe OUT of the exact
-# XCFramework this phase's own Swift test links against. Default-on is
-# accepted as a reasoned trade ONLY because this phase builds exactly one
-# consumer (PasskeyVaultTests) -- no app target, no production profile yet.
-# DEBT (record in 35-05-SUMMARY.md): whichever phase first builds a
-# non-test pv-ffi consumer (likely Phase 38) MUST flip this to
-# `default = []` and add `--features ffi06-probe` to the test-only build
-# path, so the probe never ships in a real app/extension binary.
+# FLIPPED to `default = []` in Phase 36, Plan 36-01: this crate now has a
+# genuine NON-TEST consumer, PasskeyVaultAutoFill.appex (the credential-
+# provider extension target Task 1 adds) -- the exact "likely Phase 38"
+# trigger the DEBT note below named, arriving two phases early. The
+# default-on rationale ("this phase builds exactly one consumer,
+# PasskeyVaultTests -- no app target yet") no longer holds: a function
+# whose sole purpose is to panic must not be compiled by default into the
+# process that will handle credentials. `PasskeyVaultTests`' own Run Script
+# build phase now passes `--with-panic-probe` explicitly
+# (scripts/build-ios.sh) so `FfiPanicSafetyTests.swift` (35-05) keeps a
+# probe-carrying artifact; every other consumer -- including the appex --
+# gets the plain, probe-free build.
 [features]
-default = ["ffi06-probe"]
+default = []
 ffi06-probe = []
 
 # Open Question 1 (35-RESEARCH.md) resolved empirically this session: UniFFI

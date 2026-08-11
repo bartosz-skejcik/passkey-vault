@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Passkey Vault AutoFill</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- Legacy top-level key -- both spellings of the config-UI key are live
+	     in the shipping iOS 26.5 SafariFoundation binary
+	     (36-RESEARCH.md "Pattern: the minimum NSExtension dict"). -->
+	<key>ASCredentialProviderExtensionShowsConfigurationUI</key>
+	<true/>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.authentication-services-credential-provider-ui</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).CredentialProviderViewController</string>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<!-- Landmine L-7 (ios/IOS-SPIKE-LOG.md Sec 3): Xcode 26.6's
+			     template omits this dict entirely, and ProvidesPasswords is
+			     the undocumented key that makes the provider actually
+			     appear in Settings -> Passwords -> AutoFill. Present here
+			     from the start so 36-01 Task 3's SC1 layers are not
+			     measuring a known-broken template. -->
+			<key>ASCredentialProviderExtensionCapabilities</key>
+			<dict>
+				<key>ProvidesPasswords</key>
+				<true/>
+				<key>ShowsConfigurationUI</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+</dict>
+</plist>

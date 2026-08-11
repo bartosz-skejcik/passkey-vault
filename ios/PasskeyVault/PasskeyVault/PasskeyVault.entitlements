@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Host-app half of the credential-provider entitlement pair. Apple's
+	     docs say both the extension and the containing app declare this key;
+	     Xcode's own extension template wires only the extension side
+	     (36-RESEARCH.md "Entitlement placement" disagreement -- the docs are
+	     the stronger source, followed here as the safe superset, D-... in
+	     36-01-PLAN.md). -->
+	<key>com.apple.developer.authentication-services.autofill-credential-provider</key>
+	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.cloud.blonie.PasskeyVault</string>
+	</array>
+	<!-- $(AppIdentifierPrefix) is the Xcode build variable, NEVER its
+	     expansion -- on this machine (Team = None, IOS-04) it resolves to
+	     the literal FAKETEAMID., which is a device-time bug the simulator
+	     can never surface if hardcoded (landmine L-8,
+	     ios/IOS-SPIKE-LOG.md Sec 3). -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)cloud.blonie.PasskeyVault</string>
+	</array>
+</dict>
+</plist>
