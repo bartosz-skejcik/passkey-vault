@@ -5,10 +5,10 @@ milestone_name: Sharing That Makes Sense
 current_phase: 31
 current_phase_name: The Share Dialog — Per-Person Access, Existing Destinations
 status: phase_complete
-stopped_at: Phase 30 code-complete, all 3 verification blockers closed — needs a RE-VERIFY before 31
-last_updated: "2026-08-11T11:30:00.000Z"
+stopped_at: Phase 30 re-verified at 3219b16 — gaps_found 5/6; three original blockers closed, one NEW defect found (family-wide ITEM variant broken)
+last_updated: "2026-08-11T22:05:00.000Z"
 last_activity: 2026-08-11
-last_activity_desc: Phase 30 (17 plans) done; verification found 3 blockers, all closed; cargo --workspace + npm compile green
+last_activity_desc: Phase 30 re-verified — B1/B2/B3 closed and falsification-proven; SC2 escalated partial→failed on the item_bucket single-level defect
 progress:
   total_phases: 6
   completed_phases: 2
@@ -24,60 +24,65 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-31)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** v0.5 — Phase 30 code-complete; **re-verify 30 before starting 31**.
+**Current focus:** v0.5 — Phase 30 re-verified (5/6, `gaps_found`); one open defect on FSH-01's item half.
 
 ## Current Position
 
-Phase: 30 (The Living Group — Family-Wide Sharing) — CODE COMPLETE, RE-VERIFY PENDING
-Status: 17/17 plans executed. Verification ran at `6b51d57` and returned `gaps_found` (5/6) with three
-blockers. **All three are now closed** (`a8b8f6f` B1, `2036554` B2, `1339c5a` B3), but
-`30-VERIFICATION.md` still records the pre-fix verdict.
-Last activity: 2026-08-11 — blockers closed; `cargo test --workspace` 0 failed, `npm run compile` clean.
+Phase: 30 (The Living Group — Family-Wide Sharing) — RE-VERIFIED at `3219b16`, `gaps_found` 5/6
+Status: 17/17 plans executed. The re-verification (2026-08-11T21:50Z) confirmed all three original
+blockers closed and **falsification-proven**, with **zero regressions** — but escalated SC2's item half
+from `partial` to `failed` on a newly found, probe-proven defect. See `30-VERIFICATION.md`.
+Last activity: 2026-08-11 — re-verify complete; four CI-width commands all exit 0; e2e 9/9 from a fresh
+build of this HEAD.
 
-### ▶ How to resume in a fresh session
+### What the re-verify established (do not re-derive)
 
-1. **Re-verify phase 30 first** — its VERIFICATION.md is stale. Do **not** run `/gsd-autonomous --from 30`:
-   all 17 plans already exist, so plan-phase would stop to ask whether to replan. Run the verifier
-   directly against the six SCs in ROADMAP.md and update `30-VERIFICATION.md`.
-2. Then `/gsd-autonomous --from 31` for the rest (31–34 + milestone lifecycle).
+- **B1 CLOSED and proven.** `may_grant_access_level`'s full 9-pair matrix was re-checked pair by pair:
+  every verdict correct, no escalation path. The new `b1_hidden_password_...` test was falsified by
+  reverting the `(Edit, HiddenPassword) => true` arm — RED at PROBE 0 (`left: 403, right: 201`), and it
+  is the **sole** guard (6 passed / 1 failed under the revert; even the neighbouring `cr01` test misses
+  it). `HiddenPassword -> Read = false` is load-bearing, not an oversight.
+- **B2 CLOSED** — `cargo test --workspace --no-fail-fast` exit 0, 365 passed / 0 failed.
+- **B3 CLOSED** — `npm run compile` exit 0, 0 errors (was 9). `npm test` 964/964, `npm run build` exit 0.
+- **Live** — `playwright test e2e/family-wide-sharing.spec.ts --retries=0` 9/9 from a genuine fresh
+  rebuild of server + web at this HEAD; `data/pv.db` SHA-256 identical before and after.
+- SC1 spot-checked (`f2fb3c0` topological ancestor of `74657d2`); SC3/SC4/SC5/SC6 **re-proved**, not
+  assumed.
 
-### What the re-verify must re-check
-
-- **B1** — `hidden_password` + family-wide was fully broken (403 on fan-out, on every later invite the
-  creator generates, and on reseal). **Bartek decided it IS a supported combination.** Fixed by adding
-  the missing `(Edit, HiddenPassword)` arm to `may_grant_access_level` and removing
-  `collections::create`'s hard-coded `'edit'`. This was `d07c2a7`'s bug reintroduced one access level
-  over, *inside the commit that fixed the first instance* — so re-check the whole
-  `(caller, requested)` matrix, not just that one arm.
-- **B2** — `cargo test --workspace` was red on an order-dependent JSON assertion. Now 0 failed.
-- **B3** — `npm run compile` was red with 9 TS errors. Now clean.
-
-**B2 and B3 shared one root cause worth not repeating: the acceptance command was narrower than the CI
-command, so it could not fail** (`-p pv-server` instead of `--workspace`; `vitest run`, which does not
-typecheck, instead of `npm run compile`). Verify at CI width.
-
-Also: the verifier found phase 30's own green e2e result had been produced against a **stale release
-binary** predating the review fixes. The fix pass re-ran it from a **fresh build of this HEAD** — 9/9,
-`cargo test --workspace` all crates, `npm run compile` 0 errors, 964/964 units. Still rebuild before
-trusting any future live run.
-
-### Two things the re-verify must NOT undo
+### Two things any future pass must NOT undo
 
 - **`collections::create`'s hard-coded `'edit'` for the creator's own row is deliberate and correct.**
-  I instructed the fixer to change it as part of B1; it investigated, found the hard-code matches
-  `d07c2a7`'s established `read`-case precedent, left it alone, and added a comment explaining why.
-  That judgement was right — do not "fix" it back.
-- **B1's fix enumerates the full 9-pair `(caller, requested)` matrix explicitly**, rather than adding
-  the one missing arm. That was deliberate: this bug has now appeared twice, each time as a missing
-  pair in a matrix that looked complete. Keep it exhaustive.
+  Investigated twice now; it matches `d07c2a7`'s established `read`-case precedent. Do not "fix" it back.
+  (Note it is also what exempts the bucket's *creator* from the open defect below — which is why the
+  defect stayed invisible.)
+- **B1's fix enumerates the full 9-pair matrix explicitly, with no wildcard arm.** Deliberate: this bug
+  has appeared twice, each time as a missing pair in a matrix that looked complete. The compiler
+  enforcing coverage IS the fix. Keep it exhaustive; do not collapse it.
 
-### Known remaining gap on SC2 (not a blocker, but real)
+### ⛔ OPEN DEFECT — family-wide ITEM variant (SC2, FSH-01's "or an item")
 
-FSH-01's family-wide **item** variant (`item_bucket`) has **no recipient-side proof of any kind** —
-`web/e2e/family-wide-sharing.spec.ts` exercises only the folder variant, there is no real-WASM test,
-and the unit coverage mocks crypto. The folder half is live-proven; the item half is not. Documented in
-`30-VERIFICATION.md`'s disposition section. Decide at re-verify whether that abstains to `human_needed`
-or is closed with a test.
+Not merely unproven — **broken**, with a control probe to prove it. One root cause, two faces:
+
+Every family's items route through one singleton `item_bucket` collection carrying **one**
+`family_wide_access_level`, while `ShareDialog` offers a level control **per share**. The bucket's level
+is fixed forever by whoever makes the family's first family-wide item share.
+
+- **Face 1 — write-locked.** `submitItemFamilyWide` calls `moveItemToCollection`; `vault::move_item`
+  gates the destination with `require_collection_edit` (exact `Edit` match, Phase 22 / SHARE-04). So a
+  member fanned out at the bucket's `read` or `hidden_password` level can never put an item in it.
+  Probed at HEAD: bucket at `'read'` → **403**; same fixture with bucket at `'edit'` → **200** (control).
+  User sees `share.createFailed` — a retry that can never succeed. The bucket's creator is exempt.
+- **Face 2 — silent wrong level.** `findOrCreateFamilyItemBucket` ignores its `level` argument on the
+  existing-bucket branch, and `grantCollectionToRecipients` swallows `add_member`'s 409 as success — so
+  every item share after the family's first **reports success while delivering the old level**, to
+  current members and future joiners alike.
+
+Invisible until now because the only coverage was mocked-crypto unit tests — precisely the evidence
+class this project's standing rule rejects for crypto claims.
+
+**Not deferrable to a later phase** (checked 31–34 individually; Phase 32 owns a different surface and
+presumes a writable destination). **Needs a product decision before code:** one bucket cannot honour a
+per-share level.
 
 ### Parallel work in progress — do not disturb
 
