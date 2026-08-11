@@ -18,7 +18,7 @@ file is the bug.
 | Platform viability (PRF on iOS) | **Verified present in SDK surface.** Runtime behaviour unproven. |
 | `pv-core` / `pv-provider` native iOS build | **Verified** — real artifacts, correct Mach-O platform |
 | Xcode project | Skeleton only (App + Unit + UI test targets, no code of ours) |
-| FFI boundary | **Not started.** IOS-06 recommended (UniFFI), not yet decided — see §1. |
+| FFI boundary | **Not started (no code yet).** IOS-06 **decided** (UniFFI) — see §1. |
 | Credential provider extension | Not attempted |
 | Server sync / UI | Not attempted |
 
@@ -53,12 +53,22 @@ spec lives under `docs/superpowers/` and this file is the one the handoff points
 | IOS-04 | Simulator-only, Team = None, no signing | Free Apple ID, not the $99 program. Simulator builds need no signing | Paying before the concept is proven |
 | IOS-05 | Bundle id `cloud.blonie.PasskeyVault` | Matches the hosted instance domain `vault.blonie.cloud` | Reverse-DNS on a personal domain |
 
-### IOS-06 — FFI mechanism: **RECOMMENDED, NOT YET DECIDED**
+### IOS-06 — FFI mechanism: **DECIDED — UniFFI**
 
-UniFFI vs hand-written C ABI. Research (2026-08-11) recommends **UniFFI, crate `uniffi = "=0.32.0"`,
-proc-macro mode (no `.udl`)**, rejecting the hand-written C ABI.
+**Decision: UniFFI, crate `uniffi = "=0.32.0"`, proc-macro mode (no `.udl`).**
+**Rejected: hand-written C ABI** (raw pointers, `#[no_mangle] extern "C"` functions, manual Swift
+wrapper).
 
-Why UniFFI wins on merit:
+This was previously recorded as a recommendation, not yet decided, because UniFFI had never been
+built against this repo's actual `pv-core`/`pv-provider` types — the earlier recommendation was evidence from other
+codebases, not this one. This session (2026-08-11, `.planning/phases/35-granica-ffi-rust-swift-i-szkielet/35-RESEARCH.md`
+"IOS-06 Decision — evidence gathered this session") closed that gap: `cargo info uniffi` confirmed
+`0.32.0` is still current on crates.io (MPL-2.0, `github.com/mozilla/uniffi-rs`), and
+`gsd-tools query package-legitimacy check --ecosystem crates uniffi` returned `verdict: OK`
+(published 2020-09-11, 263,551 weekly downloads, no postinstall script). The decision is now made
+against this repo's real types, not merely cited from elsewhere.
+
+Why UniFFI wins on merit, now confirmed rather than assumed:
 
 - `#[derive(uniffi::Object)]` on an `Arc<T>`-backed type gives exactly the opaque-handle guarantee
   `pv-wasm` already establishes: **no byte accessor is generated unless the Rust wrapper explicitly
@@ -70,15 +80,55 @@ Why UniFFI wins on merit:
   larger failure surface than driving a well-tested generator. It also breaks from the
   `wasm-bindgen`-generated pattern `pv-wasm` already set.
 
-**Why this is still marked NOT DECIDED.** UniFFI has *not* been built against this repo's actual
-`pv-core` / `pv-provider` types. The recommendation is evidence-based but the evidence is from other
-codebases. Recording it as decided now would be precisely the failure this project has paid for six
-times — true in the artifact, unverified in reality. The decision record lands in the phase that
-*proves* it compiles and round-trips real bytes here, per handoff §5's commit-order rule.
+**Why hand-written C ABI loses, on the merits, not by default.** The opaque-handle guarantee
+(FFI-02) would depend entirely on reviewer vigilance across every hand-written accessor in an
+autonomous run with no human in the loop — exactly the failure mode `pv-wasm`'s own header comment
+already calls out as the reason `wasm-bindgen` was chosen over hand-rolled JS glue. Manual
+`Vec<u8>`→`UnsafeBufferPointer` marshaling and manual Swift-side memory-management wrapper code would
+be written entirely by that same autonomous run, with zero generator-enforced invariants. Panic
+safety (see below) would also need `catch_unwind` re-added by hand at every single `#[no_mangle]`
+boundary function — a much larger, more error-prone surface for the identical property UniFFI gives
+for free. Both properties this decision cares about (opaque handles, panic safety) are structurally
+*harder* to guarantee by hand, and the workspace already has a `wasm-bindgen`-shaped precedent to
+follow. UniFFI wins on the same merits this file originally named — now confirmed against the real
+types instead of assumed.
 
-Non-negotiable constraint on whichever wins: mirror `crates/pv-wasm`'s **opaque-handle** design.
-Raw key bytes must never cross the boundary except through explicitly named, auditable functions.
-An FFI that returns key bytes "for convenience" is a design error, not a tradeoff.
+**Error type normalization — concrete incompatibility found this session, not hypothetical.**
+Neither `pv-core::CryptoError` nor `pv-provider::PvProviderError` can derive `uniffi::Error` directly:
+both are `thiserror`-derived enums with an `InvalidInput(&'static str)` variant, and UniFFI has no
+builtin-type mapping for an owned enum variant holding `&'static str`. Resolution: `pv-ffi` defines
+its **own** `FfiError` enum (`#[derive(Debug, uniffi::Error)]`), mirroring the variant names but with
+`String` instead of `&'static str`, plus `From<CryptoError> for FfiError` (and
+`From<PvProviderError> for FfiError` if/when `pv-provider` is touched) conversions at the boundary —
+structurally identical to `pv-wasm`'s existing `to_js_err`/`to_js_str_err` pattern, just typed instead
+of stringly-typed. `pv-core` and `pv-provider` stay at zero `uniffi` dependency; `CryptoError` and
+`PvProviderError` are never modified.
+
+**Panic safety (CP-3).** UniFFI wraps every `#[uniffi::export]` call in
+`std::panic::catch_unwind` automatically [CITED: mozilla/uniffi-rs
+docs/manual/src/internals/rust_calls.md], converting a caught panic into a normal foreign-side error
+(a Swift-visible error/exception) instead of a process abort. **This is conditional on the crate never
+setting `panic = "abort"`** in any `[profile.*]` section — confirmed absent workspace-wide this
+session (`grep -rn panic Cargo.toml crates/*/Cargo.toml` returned nothing). This is recorded here as a
+standing constraint on `crates/pv-ffi`'s own `Cargo.toml` going forward: it must never set
+`panic = "abort"`, or this guarantee silently stops applying.
+
+**Un-zeroized Swift copies — structural amendment to CP-4, not a gloss-over.** `pv-wasm`'s
+`import_user_key_from_session`/`from_password` take `&mut [u8]`, a signature that lets
+`wasm-bindgen`'s mutable-slice marshaling copy the *caller's own* JS buffer back out zeroized after
+the call — a mechanism unique to how `wasm-bindgen` bridges JS `Uint8Array`s, not a general FFI
+property. **UniFFI has no equivalent.** UniFFI only supports immutable `&[u8]` and owned
+`Vec<u8>`/`bytes`; `&mut [u8]`/`&mut Vec<u8>` are not valid `#[uniffi::export]` argument types. So on
+the `pv-ffi` boundary: Rust takes ownership of an owned `Vec<u8>`, `Zeroizing`-wraps its own copy, and
+zeroizes it on drop/early-return exactly like the rest of `pv-core` — but **the Swift-side caller's
+original `Data`/`[UInt8]` is NOT retroactively wiped by the call**, unlike the `pv-wasm` original. This
+is accepted as a bounded residual risk, the same posture `pv-wasm`'s own header already takes for JS,
+with a best-effort caller-side mitigation: call `data.resetBytes(in: 0..<data.count)` on the Swift
+side immediately after the call returns.
+
+Non-negotiable constraint on the mechanism that won: mirror `crates/pv-wasm`'s **opaque-handle**
+design. Raw key bytes must never cross the boundary except through explicitly named, auditable
+functions. An FFI that returns key bytes "for convenience" is a design error, not a tradeoff.
 
 **Amendment from architecture research — this changes the security model, not just the plumbing.**
 In `pv-wasm`, `export_user_key_for_session` / `import_user_key_from_session` exist *only* for the MV3
@@ -271,9 +321,9 @@ own record**, never a quiet tuning commit.
 
 ## 4. Open questions — honestly open
 
-1. **IOS-06: UniFFI vs hand-written C ABI.** Blocks all binding code. UniFFI has not been evaluated
-   against this codebase's actual types; the comparison table in handoff §5 is a starting frame, not
-   an earned recommendation.
+1. ~~**IOS-06: UniFFI vs hand-written C ABI.**~~ **RESOLVED — see §1.** Decided: UniFFI, evaluated
+   against this codebase's actual `pv-core`/`pv-provider` types, not merely the handoff §5 starting
+   frame.
 2. **Does PRF actually work at runtime through a third-party credential-provider extension?** §2.1
    proves only that the API exists. This is the question the whole product surface rests on, and it
    is unanswered.
