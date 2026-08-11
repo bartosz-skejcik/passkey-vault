@@ -150,10 +150,11 @@ export default function DeleteAccountDialog({ onClose }: { onClose: () => void }
       // the server ignores for those two cases (Plan 25-06's
       // `DeleteAccountRequest`).
       //
-      // `isSelf = true`: T-30-XX (found live, 30-17-PLAN.md's own Task 2
-      // case 1) -- this call targets the CALLER's own id, so it must not
-      // route through `getMemberAccess` (owner-only, would always 403 here).
-      // See `rekey.ts::resolveTargetCollectionIds`'s own doc comment.
+      // `isSelf = true`: the bug fixed live in `1117919` (found during
+      // 30-17-PLAN.md's own Task 2 case 1) -- this call targets the
+      // CALLER's own id, so it must not route through `getMemberAccess`
+      // (owner-only, would always 403 here). See
+      // `rekey.ts::resolveTargetCollectionIds`'s own doc comment.
       let batch: CollectionRekeyBatch[] = [];
       if (branch === "member" && selfUserId !== null) {
         batch = await buildMemberRemovalBatch(selfUserId, uk, true);

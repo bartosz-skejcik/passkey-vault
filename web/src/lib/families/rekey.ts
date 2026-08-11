@@ -33,10 +33,10 @@ import {
 
 /**
  * Resolves the ids of every collection `targetUserId` currently holds a
- * `collection_keys` row for. Two callers, two paths, per T-30-XX (found
- * live, 30-17-PLAN.md's own Task 2 case 1 -- see 30-17-SUMMARY.md's
- * Deviations for the full write-up). `isSelf` is passed EXPLICITLY by the
- * caller (never inferred via an extra `me()` round trip -- both call sites
+ * `collection_keys` row for. Two callers, two paths, per the bug fixed live
+ * in `1117919` (found during 30-17-PLAN.md's own Task 2 case 1 -- see
+ * 30-17-SUMMARY.md's Deviations for the full write-up). `isSelf` is passed
+ * EXPLICITLY by the caller (never inferred via an extra `me()` round trip -- both call sites
  * already structurally know which case they are: `RemoveMemberDialog` never
  * targets the caller's own id, `DeleteAccountDialog`'s member branch always
  * does) so the ordinary owner-removes-someone-else path stays byte-identical
