@@ -160,6 +160,69 @@ on app extensions, not negative. This PASS is not "App Groups are broadly permit
 observed to resolve to the same real directory on this simulator, under a free Apple ID with no team
 configured." `Ograniczenie dowodu` (top of this file) applies unchanged.
 
+## E3 — Cross-process Keychain sharing (the MP-2 fallback path)
+
+`ProbeSeeder.swift` (host app, `PasskeyVaultApp.init()`, `PV_PROBE_KEYCHAIN`) deletes any prior probe
+item and adds a fixed, clearly-labelled 32-byte test vector (`[0, 1, 2, … 31]`, never real key material,
+no `pv-ffi`/`FfiUserKey` call anywhere on this path — confirmed: `git grep -n kSecValueData
+ios/PasskeyVault` shows only `Data([0x00])` discovery-probe writes and `Data(testVector)`) under the
+shared keychain access group. `AutoFillInvocationUITests` launches the host app first, unconditionally,
+before driving the Settings navigation that invokes the extension — the ordered sequence E3 requires.
+
+**Runtime access-group resolution, never a hardcoded literal (D-14, L-8).** There is no iOS-available
+`SecTask` API to read a bundle's own entitlements directly (`SecTaskCreateFromSelf` /
+`SecTaskCopyValueForEntitlement` are macOS-only, confirmed absent from the iphonesimulator SDK's
+`Security.framework/Headers` this session). Both `ProbeSeeder` and `KeychainProbe` instead round-trip a
+throwaway keychain item with no access group specified and read back which access group the OS assigned
+it — the actual expanded value, discovered at runtime, never typed into source.
+
+### Positive result — byte-for-byte, from the reading side
+
+`KeychainProbe.swift` (extension, `PV_PROBE_KEYCHAIN`) queries the shared access group and logs the
+`OSStatus`, byte count, and a constant-time equality comparison against the same fixed vector.
+`ios/evidence/36/keychain.log`:
+
+```
+PVPROBE|stage=seed delete_status=0 add_status=0 access_group=FAKETEAMID.cloud.blonie.PasskeyVault
+PVPROBE|stage=configure kr=KERN_SUCCESS phys=22251608 peak=25151576 remaining=0 ffi_bytes=32
+PVPROBE|stage=keychain status=0 bytes=32 equal=true
+PVPROBE|stage=keychain-negative status=-34018
+```
+
+**Result: PASS.** `status=0`, `bytes=32`, `equal=true` — the byte-for-byte receiver-side assertion, not a
+non-nil or length-only check. The discovered access group (`FAKETEAMID.cloud.blonie.PasskeyVault`) is
+the L-8 literal, observed here as runtime evidence, never hardcoded in source.
+
+### Negative control — the control that makes the positive mean something
+
+Same query shape, `kSecAttrAccessGroup` set to the same discovered team prefix plus a suffix this bundle
+does **not** declare (`…cloud.blonie.NotOurs`, reconstructed at runtime, never a hardcoded literal):
+`PVPROBE|stage=keychain-negative status=-34018` — `errSecMissingEntitlement`, exactly the code
+36-RESEARCH.md's observed `securityd` string predicted ("Client explicitly specifies access group %@ but
+is only entitled for %@"). The control fires: `securityd` on this simulator enforces access-group
+scoping, so the positive result above establishes real enforcement, not an unscoped free-for-all.
+
+### Falsification of the equality assertion itself
+
+Byte 0 of `ProbeSeeder.testVector` was flipped `0x00` → `0xFF` (rebuild, reinstall, re-run) without
+touching `KeychainProbe.expectedTestVector`:
+
+```
+PVPROBE|stage=keychain status=0 bytes=32 equal=false
+```
+
+`status=0`/`bytes=32` unchanged (the read itself still succeeds — only the *content* differs), and
+`equal` correctly flips to `false`. The mutation was reverted and re-run, restoring `equal=true`
+(both transcripts in `ios/evidence/36/keychain.log`, distinguishable by timestamp). The equality
+assertion is not a check that always passes.
+
+### What this pair establishes
+
+Bytes written by the host app process are proven present and byte-for-byte correct when read by the
+extension process, and the missing-entitlement control proves that correctness is not an artifact of the
+simulator ignoring access-group scoping altogether. Together with E2, both halves of MP-2's fallback and
+DR-1's hybrid option are now evidenced, not merely documented.
+
 ## SC1 layers (a) registration, (b) election, (c) Settings visibility
 
 Recorded separately, never aggregated (D-09). Layers (a) and (b) — Task 3, `scripts/ios-autofill-layers.sh`.

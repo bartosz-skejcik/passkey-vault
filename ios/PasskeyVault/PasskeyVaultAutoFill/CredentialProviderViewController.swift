@@ -23,6 +23,9 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         #if PV_PROBE_APPGROUP
         AppGroupProbe.emit()
         #endif
+        #if PV_PROBE_KEYCHAIN
+        KeychainProbe.emit()
+        #endif
         extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
     }
 
@@ -31,6 +34,9 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         #if PV_PROBE_APPGROUP
         AppGroupProbe.emit()
         #endif
+        #if PV_PROBE_KEYCHAIN
+        KeychainProbe.emit()
+        #endif
         extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
     }
 
@@ -38,6 +44,9 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         MemoryProbe.emit(stage: "interactive")
         #if PV_PROBE_APPGROUP
         AppGroupProbe.emit()
+        #endif
+        #if PV_PROBE_KEYCHAIN
+        KeychainProbe.emit()
         #endif
         extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
     }
@@ -54,6 +63,9 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         MemoryProbe.emit(stage: "configure")
         #if PV_PROBE_APPGROUP
         AppGroupProbe.emit()
+        #endif
+        #if PV_PROBE_KEYCHAIN
+        KeychainProbe.emit()
         #endif
     }
 }

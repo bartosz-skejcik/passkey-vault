@@ -54,6 +54,15 @@ final class AutoFillInvocationUITests: XCTestCase {
 
     @MainActor
     func testInvokeExtensionConfigurationViaSettingsAutoFillToggle() throws {
+        // Phase 36, Plan 36-02, Task 2 (E3) sequencing: launch the host app
+        // FIRST, unconditionally, so PasskeyVaultApp's PV_PROBE_KEYCHAIN-gated
+        // ProbeSeeder.seed() call (a no-op under every other probe condition)
+        // always lands before the extension is invoked -- one ordered run,
+        // not two hopeful ones. Harmless for every other probe: launching
+        // the host app costs a few hundred ms and nothing else observes it.
+        let host = XCUIApplication(bundleIdentifier: "cloud.blonie.PasskeyVault")
+        host.launch()
+
         if ProcessInfo.processInfo.environment["PV_AUTOFILL_UITEST_ROUTE"] == "safari-quicktype" {
             try runSecondaryRoute()
             return
