@@ -135,11 +135,16 @@ export async function getFamilyMembers(): Promise<FamilyMemberRecord[] | null> {
 
 /** Wire shape of `GET /api/families/family-wide-pending`'s `missing` array
  * entries -- a family-wide collection the caller lacks a `collection_keys`
- * row for. Mirrors `families.rs`'s `PendingGrant` field-for-field (30-02):
- * ids/kind only, no field capable of carrying `enc_name`/`sealed_key`. */
+ * row for. Mirrors `families.rs`'s `PendingGrant` field-for-field (30-02;
+ * `access_level` added 260812-01e Task 5, mirroring the server's field-for-
+ * field): ids/kind/access_level only, no field capable of carrying
+ * `enc_name`/`sealed_key`. `access_level` is `null` for a legacy
+ * (pre-migration-0020) family-wide row -- mirrors the server's own
+ * nullability, never defaulted client-side. */
 export interface PendingGrant {
   collection_id: string;
   kind: string;
+  access_level: string | null;
 }
 
 /** Wire shape of the same response's `resealable` array entries -- an

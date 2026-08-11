@@ -14,6 +14,7 @@ const {
   mockListCollections,
   mockCreateItemShare,
   mockAddCollectionMember,
+  mockGetCollectionAccessList,
   mockGetItems,
   mockGetFolders,
   mockGetUnlockedUserKey,
@@ -37,6 +38,7 @@ const {
   mockListCollections: vi.fn(),
   mockCreateItemShare: vi.fn(),
   mockAddCollectionMember: vi.fn(),
+  mockGetCollectionAccessList: vi.fn(),
   mockGetItems: vi.fn(),
   mockGetFolders: vi.fn(),
   mockGetUnlockedUserKey: vi.fn(),
@@ -78,6 +80,7 @@ vi.mock("@/lib/vault/api", () => ({
   listCollections: mockListCollections,
   createItemShare: mockCreateItemShare,
   addCollectionMember: mockAddCollectionMember,
+  getCollectionAccessList: mockGetCollectionAccessList,
 }));
 
 vi.mock("@/lib/vault/store", () => ({
@@ -239,6 +242,9 @@ beforeEach(() => {
   });
   mockCreateItemShare.mockResolvedValue(undefined);
   mockAddCollectionMember.mockResolvedValue(undefined);
+  // 260812-01e Task 5: sane default so any test that unexpectedly triggers
+  // the 409 verification path does not hang on an un-mocked promise.
+  mockGetCollectionAccessList.mockResolvedValue([]);
   mockMoveItemToCollection.mockResolvedValue({ revision: 4, collection_id: "col-1", updated_at: "" });
   // Defaults for the real (unmocked) @/lib/vault/collections.ts module's own
   // dependencies -- see the "@/lib/crypto" mock comment above. Individual
@@ -1122,6 +1128,10 @@ describe("ShareDialog", () => {
       access_level: "edit",
       sealed_key: '{"sealed":"bucket-key"}',
       family_wide_kind: "item_bucket",
+      // 260812-01e Task 5: required now that bucket resolution is
+      // level-keyed (`familyItemBucketRow` matches on BOTH
+      // `family_wide_kind` and `family_wide_access_level`).
+      family_wide_access_level: "edit",
     };
 
     const PLAIN_FOLDER_ROW: CollectionRow = {
@@ -1216,13 +1226,52 @@ describe("ShareDialog", () => {
       expect((mockAddCollectionMember.mock.calls as unknown[][])[0][0]).toBe(newBucketId);
     });
 
+    it("does NOT reuse an existing bucket declared at a DIFFERENT level -- creates a new, separate bucket instead (260812-01e Task 5)", async () => {
+      // Falsification note (recorded in the SUMMARY): before this task's
+      // fix, `familyItemBucketRow` ignored `level` entirely, so this
+      // assertion would have failed -- the old code would have REUSED
+      // BUCKET_ROW (declared "edit") for a share chosen at "read" instead
+      // of minting a new, separate bucket.
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListCollections.mockResolvedValue([BUCKET_ROW]);
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      chooseAccessLevel("read");
+      checkFamilyWide();
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      expect(mockCreateCollection).toHaveBeenCalledTimes(1);
+      expect(mockCreateCollection).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        "item_bucket",
+        "read",
+      );
+      const newBucketId = (mockCreateCollection.mock.calls as unknown[][])[0][0] as string;
+      expect(newBucketId).not.toBe(BUCKET_ROW.id);
+      expect(mockMoveItemToCollection).toHaveBeenCalledWith(
+        ITEM.id,
+        newBucketId,
+        expect.any(String),
+        expect.any(String),
+        ITEM_ROW.revision,
+      );
+    });
+
     it("omits a keyless member from the creation-time grant WITHOUT aborting the share (30-08's rule, unchanged)", async () => {
       mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_NO_KEY]);
       mockListCollections.mockResolvedValue([BUCKET_ROW]);
       const onShared = vi.fn();
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
-      chooseAccessLevel("read");
+      // 260812-01e Task 5: "edit" (not "read") -- BUCKET_ROW is now declared
+      // at "edit"; resolution is level-keyed, so this preserves the test's
+      // original REUSE-branch intent rather than accidentally rerouting it
+      // to the create branch.
+      chooseAccessLevel("edit");
       checkFamilyWide();
       fireEvent.click(screen.getByTestId("share-submit"));
 
@@ -1247,7 +1296,11 @@ describe("ShareDialog", () => {
       const onShared = vi.fn();
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
-      chooseAccessLevel("read");
+      // 260812-01e Task 5: "edit" (not "read") -- BUCKET_ROW is now declared
+      // at "edit"; this continues to exercise the SAME winner-bucket-
+      // found-via-poll path under the new level filter (it never asserted
+      // a specific level, only that the item lands in BUCKET_ROW.id).
+      chooseAccessLevel("edit");
       checkFamilyWide();
       fireEvent.click(screen.getByTestId("share-submit"));
 
@@ -1307,6 +1360,63 @@ describe("ShareDialog", () => {
       expect(mockMoveItemToCollection).not.toHaveBeenCalled();
       expect(mockAddCollectionMember).not.toHaveBeenCalled();
       expect(mockCreateCollection).not.toHaveBeenCalled();
+    });
+
+    describe("Face-2 defense: a 409 from addCollectionMember is no longer unconditional success (260812-01e Task 5)", () => {
+      it("a 409 whose recipient ACTUALLY holds the intended level (or edit) is NOT reported as failed", async () => {
+        mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+        mockListCollections.mockResolvedValue([BUCKET_ROW]);
+        mockAddCollectionMember.mockImplementation(async (_id: string, userId: string) => {
+          if (userId === MEMBER_B.user_id) {
+            return Promise.reject({ status: 409, message: "conflict" });
+          }
+          return undefined;
+        });
+        mockGetCollectionAccessList.mockResolvedValue([
+          { user_id: MEMBER_B.user_id, email: MEMBER_B.email, access_level: "edit", created_at: "", suspended: false },
+        ]);
+        const onShared = vi.fn();
+        render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+        await waitForPopulated();
+        chooseAccessLevel("edit");
+        checkFamilyWide();
+        fireEvent.click(screen.getByTestId("share-submit"));
+
+        await waitFor(() => expect(onShared).toHaveBeenCalled());
+        expect(mockGetCollectionAccessList).toHaveBeenCalledWith(BUCKET_ROW.id);
+        expect(screen.queryByTestId("share-partial-error")).not.toBeInTheDocument();
+        expect(screen.queryByTestId("share-error")).not.toBeInTheDocument();
+      });
+
+      it("a 409 whose recipient holds a DIFFERENT (wrong) level IS reported as failed", async () => {
+        // Falsification note (recorded in the SUMMARY): reverting
+        // `grantCollectionToRecipients`'s catch block to its original
+        // unconditional-409-is-success form makes this test fail -- no
+        // failure is reported even though the recipient's actual level is
+        // wrong. The exact reverted-vs-fixed diff and the resulting RED
+        // assertion are recorded there.
+        mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+        mockListCollections.mockResolvedValue([BUCKET_ROW]);
+        mockAddCollectionMember.mockImplementation(async (_id: string, userId: string) => {
+          if (userId === MEMBER_B.user_id) {
+            return Promise.reject({ status: 409, message: "conflict" });
+          }
+          return undefined;
+        });
+        mockGetCollectionAccessList.mockResolvedValue([
+          { user_id: MEMBER_B.user_id, email: MEMBER_B.email, access_level: "read", created_at: "", suspended: false },
+        ]);
+        const onShared = vi.fn();
+        render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+        await waitForPopulated();
+        chooseAccessLevel("edit");
+        checkFamilyWide();
+        fireEvent.click(screen.getByTestId("share-submit"));
+
+        await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
+        expect(screen.getByTestId("share-partial-error")).toHaveTextContent(MEMBER_B.email);
+        expect(onShared).not.toHaveBeenCalled();
+      });
     });
   });
 });

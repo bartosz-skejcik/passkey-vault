@@ -71,6 +71,7 @@ import {
   listCollections,
   createItemShare,
   addCollectionMember,
+  getCollectionAccessList,
   type CollectionRow,
 } from "@/lib/vault/api";
 import { getItems, getFolders } from "@/lib/vault/store";
@@ -208,14 +209,47 @@ function withPublishedPublicKey<T extends { public_key: string | null }>(recipie
   );
 }
 
+/** LOCKED decision 3 (260812-01e Task 5, plan-check B-5): stop treating
+ * EVERY 409 from `addCollectionMember` as success. Face 2's second half was
+ * exactly this unconditional swallow -- a conflict against some OTHER
+ * pre-existing grant (e.g. a stale row at a different level, from before
+ * per-level buckets existed) silently reported success without checking
+ * what the recipient ACTUALLY ended up holding. On a 409, fetches the
+ * collection's real access list and checks whether the recipient's ACTUAL
+ * persisted `access_level` equals `intendedLevel` OR `"edit"` (LOCKED
+ * decision 1's contributor asymmetry is always sufficient as a ceiling —
+ * `edit` never represents "less" than any declared level). A failure from
+ * THIS check itself (network, parse) fails CLOSED — never silently trusts
+ * the original 409 when this verification cannot complete. */
+async function recipientAlreadyHoldsIntendedLevel(
+  collectionId: string,
+  recipientUserId: string,
+  intendedLevel: string,
+): Promise<boolean> {
+  try {
+    const accessList = await getCollectionAccessList(collectionId);
+    const entry = accessList.find((a) => a.user_id === recipientUserId);
+    return entry !== undefined && (entry.access_level === intendedLevel || entry.access_level === "edit");
+  } catch (err) {
+    console.error(
+      `pv: failed to verify recipient ${recipientUserId}'s actual access on collection ${collectionId} after a 409`,
+      err,
+    );
+    return false;
+  }
+}
+
 /** The per-recipient collection-grant loop, shared by BOTH family-wide call
  * sites (`submitFolderVariant`'s new-folder branch and 30-12's item-bucket
  * branch) so the two can never drift — one 409 policy, one failure-label
- * rule, one WASM-handle-freeing discipline. A 409 means this recipient
- * ALREADY holds this collection grant (a previous attempt's partial
- * success): success for that recipient, never a reported failure, which is
- * what makes a retry idempotent. Returns the label (email, falling back to
- * user id) of every recipient that did NOT end up holding a grant. */
+ * rule, one WASM-handle-freeing discipline. A 409 no longer means
+ * unconditional success (260812-01e Task 5, see
+ * `recipientAlreadyHoldsIntendedLevel` above) — it means this recipient
+ * MIGHT already hold this collection grant at the intended level (a
+ * previous attempt's partial success, the case that makes a retry
+ * idempotent), so the actual persisted level is verified before deciding.
+ * Returns the label (email, falling back to user id) of every recipient
+ * that did NOT end up holding a grant at (at least) the intended level. */
 async function grantCollectionToRecipients(
   collectionId: string,
   ck: WasmCollectionKey,
@@ -234,7 +268,16 @@ async function grantCollectionToRecipients(
         const sealedKey = sealCollectionKey(recipientPk, ck);
         await addCollectionMember(collectionId, recipient.user_id, sealedKey, level);
       } catch (err) {
-        if (!isConflictError(err)) {
+        if (isConflictError(err)) {
+          const holdsIntendedLevel = await recipientAlreadyHoldsIntendedLevel(
+            collectionId,
+            recipient.user_id,
+            level,
+          );
+          if (!holdsIntendedLevel) {
+            failed.push(recipient.email ?? recipient.user_id);
+          }
+        } else {
           console.error(`pv: failed to grant collection ${collectionId} to ${recipient.user_id}`, err);
           failed.push(recipient.email ?? recipient.user_id);
         }
@@ -266,15 +309,19 @@ const FAMILY_ITEM_BUCKET_PLACEHOLDER_NAME = "family-wide-items";
 const ITEM_BUCKET_GRANT_POLL_ATTEMPTS = 4;
 const ITEM_BUCKET_GRANT_POLL_DELAY_MS = 200;
 
-/** The single per-family `item_bucket` row from a `listCollections()`
- * response, or `undefined`. Requires a usable `sealed_key`: a row the caller
+/** The item_bucket row from a `listCollections()` response DECLARED AT
+ * `level`, or `undefined` (260812-01e Task 5: with per-level item_bucket
+ * collections now possible, LOCKED decision 1, `kind` alone is no longer
+ * sufficient to identify "the" bucket -- a family may hold up to three,
+ * one per access level). Requires a usable `sealed_key`: a row the caller
  * cannot unseal is not a bucket they can encrypt INTO, so treating it as
  * "found" would produce exactly the undefined-shaped move this bound exists
  * to prevent. */
-function familyItemBucketRow(rows: CollectionRow[]): CollectionRow | undefined {
+function familyItemBucketRow(rows: CollectionRow[], level: AccessLevelValue): CollectionRow | undefined {
   return rows.find(
     (c) =>
       c.family_wide_kind === "item_bucket" &&
+      c.family_wide_access_level === level &&
       typeof c.sealed_key === "string" &&
       c.sealed_key !== "",
   );
@@ -382,9 +429,10 @@ class FamilyWideKeyPendingError extends Error {
  * this poll resolves it either way. */
 async function awaitFamilyItemBucketGrant(
   identityKey: OwnIdentityKeypair,
+  level: AccessLevelValue,
 ): Promise<{ id: string; ck: WasmCollectionKey }> {
   for (let attempt = 0; attempt < ITEM_BUCKET_GRANT_POLL_ATTEMPTS; attempt += 1) {
-    const winner = familyItemBucketRow(await listCollections());
+    const winner = familyItemBucketRow(await listCollections(), level);
     if (winner !== undefined) {
       return { id: winner.id, ck: unsealCollectionKey(identityKey, winner.sealed_key as string) };
     }
@@ -425,7 +473,7 @@ async function findOrCreateFamilyItemBucket(
   identityKey: OwnIdentityKeypair,
   level: AccessLevelValue,
 ): Promise<{ id: string; ck: WasmCollectionKey }> {
-  const existing = familyItemBucketRow(await listCollections());
+  const existing = familyItemBucketRow(await listCollections(), level);
   if (existing !== undefined) {
     return { id: existing.id, ck: unsealCollectionKey(identityKey, existing.sealed_key as string) };
   }
@@ -439,7 +487,13 @@ async function findOrCreateFamilyItemBucket(
   // discovery snapshot already knows this is the pending state (the exact
   // same `missing` list 30-15's pending-row UI reads) -- consult it BEFORE
   // attempting a create this member cannot win.
-  const pendingBucket = getFamilyWidePendingSnapshot().missing.find((g) => g.kind === "item_bucket");
+  //
+  // 260812-01e Task 5: also matched on `access_level` -- without it, a
+  // caller waiting on ONE level's bucket key could misidentify a DIFFERENT
+  // level's still-missing grant as theirs.
+  const pendingBucket = getFamilyWidePendingSnapshot().missing.find(
+    (g) => g.kind === "item_bucket" && g.access_level === level,
+  );
   if (pendingBucket !== undefined) {
     throw new FamilyWideKeyPendingError(pendingBucket.collection_id);
   }
@@ -471,7 +525,7 @@ async function findOrCreateFamilyItemBucket(
     // `submitFolderVariant`'s own create-failure discipline).
     newCk.free?.();
     if (!isConflictError(err)) throw err;
-    return await awaitFamilyItemBucketGrant(identityKey);
+    return await awaitFamilyItemBucketGrant(identityKey, level);
   }
   return { id: newBucketId, ck: newCk };
 }
