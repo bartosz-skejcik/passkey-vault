@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 6
+open_count: 5
 waived_count: 0
-fixed_count: 11
+fixed_count: 12
 total_count: 17
-last_updated: 2026-08-11T09:40:00.000Z
+last_updated: 2026-08-11T10:30:00.000Z
 ---
 
 # Broken Windows Ledger
@@ -31,7 +31,7 @@ last_updated: 2026-08-11T09:40:00.000Z
 | 14 | 30 | stub | web/src/app/page.tsx |  | FamilyRekeyNotice built and tested but not mounted -- outside 30-05's files_modified/wave file-disjointness boundary; needs a one-line <FamilyRekeyNotice /> mount next to CopyToast/ErrorToast | fixed |  | 2026-08-10T11:38:54.812Z | 2026-08-10T11:45:31.000Z |
 | 15 | 30 | skipped-test | web/e2e/family-wide-sharing.spec.ts |  | test.skip: 'a member LEAVES the family (self-deletion)' -- the intended test (E is the ORIGINAL CREATOR of a family-wide collection, then self-deletes) is blocked by a genuine data-loss bug (see the paired 'deviation' entry); left intact and skipped, not weakened, so it can be un-skipped once the underlying fix lands | fixed |  | 2026-08-10T23:03:49.320Z |  2026-08-11T09:40:00.000Z |
 | 16 | 30 | deviation | crates/pv-server/migrations/0001_init.sql |  | CRITICAL, found live (30-17): vault_items.user_id REFERENCES users(id) ON DELETE CASCADE is unconditional -- applies to a collection-scoped item exactly like a personal one. delete_account_as_member (account.rs) correctly re-keys every collection the departing member could reach, but never detaches/reassigns user_id on items inside a SURVIVING collection before DELETE FROM users cascades -- so a family-wide-shared item the departing member originally created is destroyed the instant their account is deleted, even though the collection itself survives with a freshly re-keyed sealed_key for every remaining member (proven live: GET /api/vault/collections/{id} -> 200 valid sealed_key, GET .../items -> 200 empty array). This is the exact inverse of 30-CONTEXT.md's locked decision ("leaving is not deletion... you keep your own originals"). delete_account_as_owner already has a deliberate, different precedent for the whole-family-dissolves case (its own Step 1 pre-deletes every collection-scoped item on purpose); delete_account_as_member needs an analogous, deliberate decision -- e.g. detaching a collection-scoped item's user_id before the cascade, mirroring last_editor_user_id's own CR-01 precedent -- which is a schema/ownership call outside 30-17's file scope. See family-wide-sharing.spec.ts's skipped 'a member LEAVES the family' test for the full live reproduction. | fixed |  | 2026-08-10T23:03:57.952Z |  2026-08-11T09:40:00.000Z |
-| 17 | 30 | deviation | crates/pv-server/src/routes/families.rs |  | Flagged during the WINDOWS #16/#15 investigation, deliberately NOT fixed to avoid scope creep under time pressure: `family_wide_pending`'s `resealable` query has no access-level filter, while the client's reseal flow calls `collections::add_member`, which is RequireEdit-gated. This is the same conceptual bug as the invite-propagation 403 fixed in d07c2a7 (a read-level holder being asked to propagate a grant it cannot legally make), on the lazy-reseal half of FSH-02 instead of the invite-carried half. No currently-failing test exercises it, so it is latent rather than observed. Likely fix: apply the same `require_collection_access_for_propagation` bound, or filter `resealable` by the caller's own access_level. | open |  | 2026-08-11T09:40:00.000Z |  |
+| 17 | 30 | deviation | crates/pv-server/src/routes/families.rs |  | Flagged during the WINDOWS #16/#15 investigation, deliberately NOT fixed to avoid scope creep under time pressure: `family_wide_pending`'s `resealable` query has no access-level filter, while the client's reseal flow calls `collections::add_member`, which is RequireEdit-gated. This is the same conceptual bug as the invite-propagation 403 fixed in d07c2a7 (a read-level holder being asked to propagate a grant it cannot legally make), on the lazy-reseal half of FSH-02 instead of the invite-carried half. No currently-failing test exercises it, so it is latent rather than observed. Likely fix: apply the same `require_collection_access_for_propagation` bound, or filter `resealable` by the caller's own access_level. | fixed |  | 2026-08-11T09:40:00.000Z |  2026-08-11T10:30:00.000Z |
 
 ````json
 [
