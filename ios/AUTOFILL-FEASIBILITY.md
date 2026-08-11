@@ -81,6 +81,85 @@ fabricate these keys unconditionally; the positive E1 result above is not vacuou
 SC1 able to come back negative (36-RESEARCH.md Open Question 1): a build that genuinely lacks the
 entitlements file produces a genuinely different, capability-key-free plist.
 
+## E2 — Does an App Group container actually resolve? (SC1 part 2, the decisive test for L-5)
+
+**Baseline established read-only (36-RESEARCH.md E2):** zero `Containers/Shared/AppGroup/` directories
+existed across all 12 simulators on this machine before this phase. Any container that appears was
+created by this phase's own builds.
+
+### Outside view
+
+`scripts/ios-autofill-layers.sh layer-appgroup` queries `xcrun simctl get_app_container <udid>
+cloud.blonie.PasskeyVault groups` (the host bundle id) — `ios/evidence/36/appgroup-host.txt`:
+
+```
+group.cloud.blonie.PasskeyVault	/Users/…/CoreSimulator/Devices/…/data/Containers/Shared/AppGroup/8B89C66D-A449-4832-9A27-125948A6E8B5
+```
+
+`group.cloud.blonie.PasskeyVault` resolves, non-empty, and the directory exists on disk.
+
+**A recorded scope limit found running this task, not assumed.** The plan's own text called for querying
+the extension bundle id (`cloud.blonie.PasskeyVault.AutoFill`) with the identical `simctl
+get_app_container … groups` shape, for a genuine two-CLI-call equality comparison. On this toolchain
+(CoreSimulator-1051.55, Xcode 26.6) that call — and every other `get_app_container` container type
+(`app`, `data`, `groups`) against the extension bundle id — returns `rc=2 "No such file or directory"`
+(`ios/evidence/36/appgroup-extension-cli-limitation.txt`). `xcrun simctl listapps` independently confirms
+the extension is never listed as its own addressable "app" at all — it only exists inside the containing
+app's `PlugInKit`/`NSExtension` registration, a different subsystem than the one `get_app_container`
+queries. This is a tool-registry limitation, not an App-Group-entitlement signal: it is the same shape as
+Apple's capability table being silent (not negative) on `app-extension` product types (36-RESEARCH.md E2),
+just found in `simctl` itself rather than in Apple's docs.
+
+**Also recorded:** the specific-group-identifier positional form (`get_app_container <udid> <bundle>
+<group-id>`) is separately broken on this toolchain — it prints the command's own usage text and exits
+117 for **any** group identifier, valid or bogus (`group.cloud.blonie.PasskeyVault` and
+`group.does.not.exist` both produce identical usage output). A check that fails identically for real and
+fake input proves nothing, so this form could never have served as the plan's literal negative control
+either. Both limitations are recorded here rather than silently routed around.
+
+### Negative control (working form)
+
+Because the specific-group form is unusable, the negative control uses the working `groups` form against
+a never-installed bundle id (`cloud.blonie.NeverInstalled`, same convention as layer-a-falsification.log):
+`ios/evidence/36/appgroup-negative-control.txt` shows the identical `rc=2 "No such file or directory"`
+error — the check can fail, proving the host-bundle positive result above is not vacuous.
+
+### Inside view — the actual equality proof
+
+Because the outside view cannot address the extension bundle id at all, the equality assertion D-02/QA-03
+require (two independent identity resolutions, not two no-error results) is performed between this
+outside, CLI-resolved host path and the **inside** view: `AppGroupProbe.swift`, running inside the real
+extension process, calls `FileManager.default.containerURL(forSecurityApplicationGroupIdentifier:)`
+directly and logs the result via `os_log` — a positive assertion made by the process that will actually
+depend on this container, not an inference drawn for it. `ios/evidence/36/appgroup.log`:
+
+```
+PVPROBE|stage=appgroup resolved=/Users/…/CoreSimulator/Devices/…/data/Containers/Shared/AppGroup/8B89C66D-A449-4832-9A27-125948A6E8B5 roundtrip=ok
+```
+
+**The two paths are byte-for-byte identical, including the container UUID (`8B89C66D-A449-4832-9A27-
+125948A6E8B5`).** `scripts/ios-autofill-layers.sh layer-appgroup`, run after the probe, performs this
+comparison mechanically and reports `equality=equal`. This is arguably a *stronger* proof than two `simctl`
+calls would have been: it is not two CLI reads of a device-level registry from outside, but the host's
+outside-CLI-resolved identity matched against the extension's own live, in-process API resolution.
+
+The extension also wrote a fixed 8-byte marker into the resolved container and read it back inside the
+same process: `roundtrip=ok`.
+
+**Result: PASS.** The App Group container resolves identically for the host app (via `simctl`, outside)
+and the extension (via `FileManager`, inside, from within the real running `.appex` process) — the same
+physical directory, confirmed both ways, with a negative control proving the check is not vacuous.
+Consistent with App Group containers being allocated per (device, group-identifier), never per bundle —
+by construction, any entitled process that resolves the identifier is pointed at the one canonical
+directory.
+
+**Scope limit that must travel with this result (36-RESEARCH.md):** Apple's `APP_GROUPS` capability-table
+`supportedProductTypes` field never mentions `com.apple.product-type.app-extension` — that field is silent
+on app extensions, not negative. This PASS is not "App Groups are broadly permitted on a free team"; it is
+"this specific App Group identifier, declared in both this app's and this extension's entitlements, was
+observed to resolve to the same real directory on this simulator, under a free Apple ID with no team
+configured." `Ograniczenie dowodu` (top of this file) applies unchanged.
+
 ## SC1 layers (a) registration, (b) election, (c) Settings visibility
 
 Recorded separately, never aggregated (D-09). Layers (a) and (b) — Task 3, `scripts/ios-autofill-layers.sh`.

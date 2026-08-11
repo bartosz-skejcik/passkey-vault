@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# scripts/ios-autofill-layers.sh -- Phase 36, Plan 36-01, Task 3.
+# scripts/ios-autofill-layers.sh -- Phase 36, Plan 36-01 Task 3 / Plan 36-02
+# Tasks 1 and 3.
 #
-# Three independently invocable subcommands, so SC1's three layers
+# Independently invocable subcommands, so SC1's three layers
 # (registration / election / Settings visibility) can never be collapsed
 # into one verdict (D-09, 36-RESEARCH.md E4):
 #
-#   layer-a       -- pluginkit registration at the credential-provider
-#                    extension point.
-#   layer-b       -- user election (pluginkit -e use).
-#   wording-gate  -- this phase's committed-record discipline gate: scans
-#                    for the four forbidden phrasing classes and fails
-#                    naming the offending file and line.
+#   layer-a        -- pluginkit registration at the credential-provider
+#                     extension point.
+#   layer-b        -- user election (pluginkit -e use).
+#   layer-appgroup -- E2: App Group container resolution, outside view +
+#                     negative control (Plan 36-02, Task 1).
+#   layer-c        -- SC1 layer (c): Settings AutoFill visibility, captured
+#                     as an artifact (Plan 36-02, Task 3).
+#   wording-gate   -- this phase's committed-record discipline gate: scans
+#                     for the four forbidden phrasing classes and fails
+#                     naming the offending file and line.
 #
 # D-08 (landmine L-3, this shell is zsh): every subcommand redirects into a
 # file and greps the FILE -- never `cmd | tail` followed by a status check.
@@ -22,12 +27,20 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 REPO_ROOT="$(pwd)"
 
 BUNDLE_ID="cloud.blonie.PasskeyVault.AutoFill"
+HOST_BUNDLE_ID="cloud.blonie.PasskeyVault"
 EXTENSION_POINT="com.apple.authentication-services-credential-provider-ui"
 EVIDENCE_DIR="ios/evidence/36"
 
+GROUP_ID="group.cloud.blonie.PasskeyVault"
+NEVER_INSTALLED_BUNDLE_ID="cloud.blonie.NeverInstalled"
+
 usage() {
-  echo "Usage: $0 {layer-a|layer-b|wording-gate}" >&2
+  echo "Usage: $0 {layer-a|layer-b|layer-appgroup|layer-c|wording-gate}" >&2
   exit 1
+}
+
+booted_udid() {
+  xcrun simctl list devices booted | grep -oE '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}' | head -1
 }
 
 require_booted_simulator() {
@@ -93,6 +106,165 @@ cmd_layer_b() {
   fi
   echo "RESULT: layer=b outcome=FAIL bundle_id=$target_bundle_id evidence=$outfile (elected '+' marker not observed -- not an entitlement verdict)" >&2
   exit 1
+}
+
+# --- layer-appgroup: E2, App Group container resolution --------------------
+# Outside view: asks simctl for the App Group container of the HOST bundle
+# id (the only bundle id `simctl get_app_container` can address -- see the
+# recorded scope limit below), plus the mandatory negative control.
+#
+# RECORDED SCOPE LIMIT (found running this task, not assumed): every
+# `simctl get_app_container <udid> <extension-bundle-id> {app|data|groups}`
+# call returns rc=2 "No such file or directory" on this toolchain
+# (CoreSimulator-1051.55 / Xcode 26.6) -- for ALL container types, not just
+# `groups`. This is a tool-registry limitation (app extensions are not
+# independently addressable "apps" in this command's lookup, confirmed via
+# `xcrun simctl listapps`, which also never lists the extension bundle id
+# separately from its containing app), NOT an App-Group-entitlement signal.
+# It is analogous to Apple's capability table being silent (not negative) on
+# `app-extension` product types (36-RESEARCH.md E2). Recorded, not routed
+# around silently: the equality assertion this layer's <verify> ultimately
+# depends on is therefore performed between this OUTSIDE host-app path and
+# the INSIDE view AppGroupProbe.swift logs from the running extension
+# process itself (a stronger, more direct proof of the property in question
+# than two simctl calls reading a device-level registry from outside would
+# have been) -- see ios/AUTOFILL-FEASIBILITY.md's E2 section.
+#
+# The specific-group-identifier positional form
+# (`get_app_container <udid> <bundle> <group-id>`) is ALSO broken on this
+# toolchain: it prints the command's own usage text and exits 117 for ANY
+# group identifier, valid or bogus, so it cannot serve as a negative control
+# shape at all (a check that fails identically for both real and fake input
+# proves nothing). The negative control below therefore uses the `groups`
+# (plural) form, which DOES work, against a never-installed bundle id.
+cmd_layer_appgroup() {
+  require_booted_simulator
+  mkdir -p "$EVIDENCE_DIR"
+  local udid
+  udid=$(booted_udid)
+
+  local host_out="$EVIDENCE_DIR/appgroup-host.txt"
+  local ext_out="$EVIDENCE_DIR/appgroup-extension-cli-limitation.txt"
+  local neg_out="$EVIDENCE_DIR/appgroup-negative-control.txt"
+
+  local host_rc=0
+  xcrun simctl get_app_container "$udid" "$HOST_BUNDLE_ID" groups > "$host_out" 2>&1 || host_rc=$?
+
+  local ext_rc=0
+  xcrun simctl get_app_container "$udid" "$BUNDLE_ID" groups > "$ext_out" 2>&1 || ext_rc=$?
+
+  local neg_rc=0
+  xcrun simctl get_app_container "$udid" "$NEVER_INSTALLED_BUNDLE_ID" groups > "$neg_out" 2>&1 || neg_rc=$?
+
+  local host_path
+  host_path=$(awk -F'\t' -v g="$GROUP_ID" '$1==g{print $2}' "$host_out" | head -1)
+
+  if [ -z "$host_path" ]; then
+    echo "RESULT: layer=appgroup outcome=FAIL reason=host-resolution-empty host_rc=$host_rc evidence=$host_out" >&2
+    exit 1
+  fi
+  if [ ! -d "$host_path" ]; then
+    echo "RESULT: layer=appgroup outcome=FAIL reason=host-dir-missing path=$host_path evidence=$host_out" >&2
+    exit 1
+  fi
+
+  # Negative control must NOT resolve our group id -- if it does, the check
+  # is worthless.
+  if [ "$neg_rc" -eq 0 ] && grep -qF "$GROUP_ID" "$neg_out"; then
+    echo "RESULT: layer=appgroup outcome=INCONCLUSIVE reason=negative-control-did-not-fire evidence=$neg_out" >&2
+    exit 1
+  fi
+
+  # Cross-check against the INSIDE view, if a prior probe run already
+  # produced ios/evidence/36/appgroup.log (AppGroupProbe.swift's
+  # PVPROBE|stage=appgroup line, emitted from the real extension process).
+  # If it has not run yet, state that plainly rather than banking equality
+  # this invocation cannot see.
+  local log_file="$EVIDENCE_DIR/appgroup.log"
+  local inside_line inside_path
+  if [ -f "$log_file" ] && inside_line=$(grep -E 'PVPROBE\|stage=appgroup' "$log_file" | tail -1) && [ -n "$inside_line" ]; then
+    inside_path=$(printf '%s' "$inside_line" | grep -oE 'resolved=[^[:space:]]+' | cut -d= -f2-)
+    if [ "$inside_path" = "$host_path" ]; then
+      echo "RESULT: layer=appgroup outcome=PASS host_path=$host_path inside_path=$inside_path equality=equal ext_bundle_query_rc=$ext_rc(recorded CLI limitation, see $ext_out) negative_control_rc=$neg_rc"
+      exit 0
+    else
+      echo "RESULT: layer=appgroup outcome=FAIL reason=paths-differ host_path=$host_path inside_path=$inside_path" >&2
+      exit 1
+    fi
+  fi
+
+  echo "RESULT: layer=appgroup outcome=PASS host_path=$host_path (extension-side comparison deferred until 'scripts/ios-probe-run.sh appgroup' has produced $log_file -- simctl cannot address the extension bundle id directly, ext_bundle_query_rc=$ext_rc, see $ext_out) negative_control_rc=$neg_rc"
+  exit 0
+}
+
+# --- layer-c: SC1 layer (c), Settings AutoFill visibility -------------------
+# Drives the SAME navigation AutoFillInvocationUITests' primary route
+# already performs (Settings -> Apps -> Passwords -> View AutoFill Settings)
+# and extracts the REAL screenshot that route already takes at the
+# "autofill-and-passwords-screen" checkpoint from the run's .xcresult bundle
+# via `xcresulttool export attachments` -- a deterministic, disk-verifiable
+# capture of the exact on-screen state at that navigation point, rather than
+# a live `simctl io screenshot` racing an in-process `sleep()` window from
+# outside the test process (XCUITest attachments ARE real
+# `XCUIApplication.screenshot()` calls, the same underlying mechanism
+# `simctl io screenshot` uses, just captured at a moment the test process
+# itself controls instead of a moment this shell script has to guess).
+# If the navigation cannot be driven at all (no .xcresult produced, or no
+# matching attachment in it), this exits non-zero with the manual steps
+# named -- never a silent `passed`.
+cmd_layer_c() {
+  require_booted_simulator
+  mkdir -p "$EVIDENCE_DIR"
+  local udid
+  udid=$(booted_udid)
+
+  local manual_steps="Manual steps: on the booted simulator, open Settings -> Apps -> Passwords -> View AutoFill Settings and observe whether \"PasskeyVault\" appears under \"AutoFill from:\" with a toggle."
+
+  local result_bundle="/tmp/pv-layerc-result.xcresult"
+  rm -rf "$result_bundle"
+
+  local test_log
+  test_log=$(mktemp)
+  local test_rc=0
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath /tmp/pv-dd \
+    -only-testing:PasskeyVaultUITests/AutoFillInvocationUITests/testInvokeExtensionConfigurationViaSettingsAutoFillToggle \
+    -resultBundlePath "$result_bundle" \
+    test > "$test_log" 2>&1 || test_rc=$?
+
+  if [ ! -d "$result_bundle" ]; then
+    echo "RESULT: layer=c outcome=human_needed reason=no-xcresult-produced test_rc=$test_rc. $manual_steps" >&2
+    tail -80 "$test_log" >&2
+    rm -f "$test_log"
+    exit 1
+  fi
+
+  local attach_dir="/tmp/pv-layerc-attachments"
+  rm -rf "$attach_dir"
+  xcrun xcresulttool export attachments --path "$result_bundle" --output-path "$attach_dir" > "$EVIDENCE_DIR/layer-c-xcresulttool-export.log" 2>&1 || true
+
+  local screenshot
+  screenshot=$(find "$attach_dir" -iname "*autofill-and-passwords-screen-screenshot*" -print -quit 2>/dev/null || true)
+  if [ -z "$screenshot" ]; then
+    screenshot=$(find "$attach_dir" -iname "*after-provider-switch-toggle-screenshot*" -print -quit 2>/dev/null || true)
+  fi
+
+  if [ -z "$screenshot" ] || [ ! -s "$screenshot" ]; then
+    echo "RESULT: layer=c outcome=human_needed reason=no-screenshot-attachment test_rc=$test_rc attach_dir=$attach_dir. $manual_steps" >&2
+    rm -f "$test_log"
+    exit 1
+  fi
+
+  cp "$screenshot" "$EVIDENCE_DIR/settings-autofill.png"
+
+  # Corroborating machine-readable dump (36-RESEARCH.md E4 4d).
+  xcrun simctl spawn "$udid" pluginkit -mAvvv -p "$EXTENSION_POINT" > "$EVIDENCE_DIR/layer-c-pluginkit-dump.txt" 2>&1 || true
+
+  echo "RESULT: layer=c outcome=CAPTURED evidence=$EVIDENCE_DIR/settings-autofill.png source=$screenshot test_rc=$test_rc"
+  rm -f "$test_log"
+  exit 0
 }
 
 # --- wording-gate: committed-record discipline -----------------------------
@@ -198,6 +370,8 @@ cmd_wording_gate() {
 case "${1:-}" in
   layer-a) shift; cmd_layer_a "$@" ;;
   layer-b) shift; cmd_layer_b "$@" ;;
+  layer-appgroup) shift; cmd_layer_appgroup "$@" ;;
+  layer-c) shift; cmd_layer_c "$@" ;;
   wording-gate) shift; cmd_wording_gate "$@" ;;
   *) usage ;;
 esac

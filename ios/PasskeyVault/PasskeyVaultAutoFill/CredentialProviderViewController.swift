@@ -20,16 +20,25 @@ import AuthenticationServices
 final class CredentialProviderViewController: ASCredentialProviderViewController {
     override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
         MemoryProbe.emit(stage: "list")
+        #if PV_PROBE_APPGROUP
+        AppGroupProbe.emit()
+        #endif
         extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
     }
 
     override func provideCredentialWithoutUserInteraction(for credentialRequest: any ASCredentialRequest) {
         MemoryProbe.emit(stage: "silent")
+        #if PV_PROBE_APPGROUP
+        AppGroupProbe.emit()
+        #endif
         extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
     }
 
     override func prepareInterfaceToProvideCredential(for credentialRequest: any ASCredentialRequest) {
         MemoryProbe.emit(stage: "interactive")
+        #if PV_PROBE_APPGROUP
+        AppGroupProbe.emit()
+        #endif
         extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
     }
 
@@ -37,8 +46,14 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     /// drives (Settings -> Passwords -> AutoFill -> our provider's config
     /// UI). This is the ONE override that does not cancel: it is the
     /// baseline probe run's target, and `stage=configure` is the label
-    /// this task's <verify> asserts on.
+    /// this task's <verify> asserts on. Every PV_PROBE_* probe added in
+    /// Phase 36 is dispatched here first, alongside the existing baseline
+    /// emission, because this is the one stage AutoFillInvocationUITests
+    /// reliably reaches without the provider already being elected.
     override func prepareInterfaceForExtensionConfiguration() {
         MemoryProbe.emit(stage: "configure")
+        #if PV_PROBE_APPGROUP
+        AppGroupProbe.emit()
+        #endif
     }
 }
