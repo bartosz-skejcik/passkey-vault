@@ -1,0 +1,29 @@
+Excerpt from the accessibility hierarchy dump attached to the FAILED UI test run
+(AutoFillInvocationUITests.swift:271) captured with ProvidesPasswords REMOVED from
+PasskeyVaultAutoFill/Info.plist's ASCredentialProviderExtensionCapabilities dict.
+Source: /tmp/pv-layerc-attachments/<uuid>.txt (autofill-and-passwords-screen-hierarchy),
+xcresulttool export attachments --path /tmp/pv-layerc-result.xcresult.
+
+Relevant lines (unedited, copied verbatim from the exported hierarchy text):
+
+                                                Switch, 0x114918dc0, {{16.0, 371.7}, {370.0, 64.3}}, label: 'PasskeyVault', value: 0
+                                                  StaticText, 0x114919040, {{69.0, 386.7}, {100.3, 20.3}}, label: 'PasskeyVault'
+
+Compare to the key-PRESENT state, where AutoFillInvocationUITests.swift's own
+`providerSwitchLabel` constant (observed live, both before and after this bisect)
+matches the switch element with label 'PasskeyVault, Passwords' -- the accessibility
+label carries a second, comma-joined component derived from the row's subtitle
+StaticText, which is absent here.
+
+Test failure this state produced (AutoFillInvocationUITests.swift:271):
+"Provider switch \"PasskeyVault, Passwords\" not found on the AutoFill & Passwords
+screen after scrolling."
+
+Finding: with ProvidesPasswords absent, the Switch element for our provider is STILL
+PRESENT in the list (a real, toggleable UI element, value=0/off) -- it did NOT
+disappear. What changed is the row's accessibility label, which drops the
+", Passwords" component entirely (no visible subtitle StaticText sibling either --
+compare to the "Passwords" system row two elements above, which keeps its
+"Passkeys, passwords, and codes" subtitle and its label's "Passwords, " prefix
+throughout this same dump). This is a different failure shape than L-7's original
+"silently fails to appear in Settings" prediction.

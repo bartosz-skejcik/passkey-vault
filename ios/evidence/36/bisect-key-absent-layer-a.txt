@@ -1,0 +1,11 @@
+     cloud.blonie.PasskeyVault.AutoFill(1.0)
+	            Path = /Users/j5on/Library/Developer/CoreSimulator/Devices/0BB00EA4-46B2-424E-A102-EE540CC8C3F4/data/Containers/Bundle/Application/146E66C4-682C-4B45-BC70-0BCE01EE3EE3/PasskeyVault.app/PlugIns/PasskeyVaultAutoFill.appex
+	            UUID = 7A4BD3F3-3D0E-443D-851B-038311815084
+	       Timestamp = 2026-08-11 2:59:45 PM +0000
+	             SDK = com.apple.authentication-services-credential-provider-ui
+	   Parent Bundle = /Users/j5on/Library/Developer/CoreSimulator/Devices/0BB00EA4-46B2-424E-A102-EE540CC8C3F4/data/Containers/Bundle/Application/146E66C4-682C-4B45-BC70-0BCE01EE3EE3/PasskeyVault.app
+	    Display Name = Passkey Vault AutoFill
+	      Short Name = Passkey Vault AutoFill
+	     Parent Name = PasskeyVault
+
+ (1 plug-in)

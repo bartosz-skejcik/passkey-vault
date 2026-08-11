@@ -269,5 +269,82 @@ which this plan does not test; see `ios/IOS-SPIKE-LOG.md` §3 L-7.
 
 ### Layer (c) — Settings → Passwords → AutoFill visibility
 
-**Not filled in by this plan — owned by Plan 36-02.** This is an explicitly unfilled placeholder, never
-an inference from (a) or (b) (D-09).
+`scripts/ios-autofill-layers.sh layer-c` drives `AutoFillInvocationUITests`' existing Settings
+navigation (Settings → Apps → Passwords → View AutoFill Settings) and extracts the real
+`XCUIApplication.screenshot()` attachment the test already takes at the "autofill-and-passwords-screen"
+checkpoint from the run's `.xcresult` via `xcresulttool export attachments` (a deterministic capture of
+the exact on-screen state at that navigation point — not a live `simctl io screenshot` racing an
+in-process `sleep()` from outside the test process; see the script header for why).
+
+**Result: OBSERVED, PASS.** `ios/evidence/36/settings-autofill.png` shows the "AutoFill & Passwords"
+screen with "PasskeyVault" listed under "AutoFill from:" alongside the system "Passwords" row, with a
+real, toggleable switch. This is independent of layers (a) and (b): a fresh `xcodebuild test` invocation
+that builds, installs, and drives the OS's own Settings UI, never inferred from `pluginkit`'s output.
+
+**Corroborating machine-readable dump:** `ios/evidence/36/layer-c-pluginkit-dump.txt`
+(`pluginkit -mAvvv -p`, verbose registration listing, captured alongside the screenshot).
+
+**A recorded deviation from the plan's literal mechanism**, not from its intent: the plan's action text
+named a `simctl io screenshot` capture. That mechanism was attempted first and found racy (no reliable
+way to fire it from outside the test process at the exact moment of an in-test `sleep()` window without
+guessing timing); the `xcresulttool` extraction above is a strictly more deterministic capture of the
+identical underlying artifact (both are `XCUIApplication.screenshot()`/OS-level screenshots of the real
+on-screen state) and is used instead. See Deviations in the SUMMARY.
+
+L-7 (Xcode 26.6's extension template omitting `ASCredentialProviderExtensionCapabilities`) did **not**
+materialize as originally speculated at this layer either — see the capability-key bisect below and
+`ios/IOS-SPIKE-LOG.md` §3 L-7's Plan 36-02 update for the precise, evidenced finding that replaces the
+speculation.
+
+### The capability-key bisect (settles Open Question 4)
+
+`ProvidesPasswords` was removed from `PasskeyVaultAutoFill/Info.plist`'s
+`ASCredentialProviderExtensionCapabilities` dict, rebuilt, reinstalled, and layers (a) and (c) re-run;
+then restored, rebuilt, reinstalled, and re-run a third time. Four observations, all recorded:
+
+| State | Layer (a) | Layer (c) — provider row |
+|---|---|---|
+| Key **present** (baseline) | PASS (`ios/evidence/36/bisect-key-present-layer-a.txt`) | Present, label `'PasskeyVault, Passwords'`, toggleable (`bisect-key-present-layer-c.png`) |
+| Key **absent** | PASS (`bisect-key-absent-layer-a.txt`) | **Still present**, label `'PasskeyVault'` (no "Passwords" suffix, no subtitle), still toggleable (`bisect-key-absent-layer-c.png`, `bisect-key-absent-hierarchy-excerpt.txt`) |
+| Key **restored** | PASS (`bisect-key-restored-layer-a.txt`) | Present, label back to `'PasskeyVault, Passwords'` (`bisect-key-restored-layer-c.png`) |
+
+**Settled: `ProvidesPasswords` is NOT required for the provider to appear, be listed, or be toggleable
+in Settings → Passwords → AutoFill on this simulator (iOS 26.5).** Registration (layer a) is unaffected
+either way. What the key actually gates is the row's declared capability category — its accessibility
+label drops the ", Passwords" component and its subtitle `StaticText` sibling entirely when the key is
+absent — which is precisely why `AutoFillInvocationUITests`' exact-label-match query fails without it
+(`AutoFillInvocationUITests.swift:271`), not because the row vanished. This is a different, more precise
+finding than L-7's original "can silently fail to appear" speculation, which this bisect disproves on
+its literal terms while confirming the key is still real, load-bearing, and worth keeping.
+
+This bisect isolated only `ProvidesPasswords`; `ShowsConfigurationUI` and the legacy top-level
+`ASCredentialProviderExtensionShowsConfigurationUI` key were never removed, so whether either of those
+(rather than `ProvidesPasswords`) is what keeps the row listed at all remains open — out of this
+bisect's scope, recorded rather than silently assumed.
+
+## SC1 — the three layers, together
+
+Restated side by side, explicitly as three separate results — D-09 forbids deriving any one from
+another, and none of the three below was inferred from the other two:
+
+| Layer | Result | Evidence | What it alone proves |
+|---|---|---|---|
+| (a) registration | **PASS** | `ios/evidence/36/pluginkit-registered.txt`, falsified in `layer-a-falsification.log` | The system accepted the built bundle at the extension point at all. Nothing about election or Settings. |
+| (b) election | **PASS** | `ios/evidence/36/pluginkit-elected.txt`, falsified and restored in `layer-b-falsification.log` | The extension is electable as a provider via `pluginkit`. Whether this is the same state Settings shows was **open assumption A5** until layer (c) ran. |
+| (c) Settings visibility | **OBSERVED, PASS** | `ios/evidence/36/settings-autofill.png`, `layer-c-pluginkit-dump.txt` | "PasskeyVault" is real, present, and toggleable in Settings → Passwords → AutoFill — the actual user-facing surface. Closes A5: the CLI-driven state and the Settings-shown state agree on this simulator run. |
+
+**What the combination establishes, and what it does not (D-06, D-09):** all three layers agree — the
+extension is registered, electable, and visible with a working toggle, on this simulator, under a free
+Apple ID with no team configured. This is a **bundle-and-toolchain** result: it does not test, and
+cannot test, anything about a device, a paid Apple Developer account, or provisioning-profile
+allowlisting — none of those exist on the simulator path (`Ograniczenie dowodu`, top of this file). The
+capability-key bisect additionally shows that a plausible FAIL cause (`ProvidesPasswords` absence) does
+**not** produce the "invisible" failure mode L-7 predicted on this OS version — a FAIL here would need a
+different, still-undiagnosed cause, and would still not by itself be a business-gate trigger (below).
+
+**The mandated positive label (ROADMAP SC2, last bullet).** This phase has not produced, and by SC2's
+own text cannot produce on a simulator, a cause for escalating the $99 Apple Developer Program decision.
+The paid-program question is therefore recorded as: **nierozstrzygalne na symulatorze — nie FAIL.**
+Every layer above passed; nothing here is a FAIL of any kind, and nothing here decides the $99 question
+either way — that decision requires the device path (signing into an Apple ID, never done on this
+machine), which this phase does not attempt.

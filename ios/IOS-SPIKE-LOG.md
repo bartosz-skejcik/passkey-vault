@@ -139,6 +139,55 @@ import pair becomes the **normal, load-bearing mechanism** by which an unlocked 
 second process at all. It must be a first-class, permanently-supported part of `pv-ffi`'s public API,
 documented with the rigor of `pv-wasm/src/lib.rs`'s header — not apologised for as unusual.
 
+### DR-1 — Data-sharing model: **hybrid (Keychain + App Group)**
+
+**Decision: hybrid.** Both the shared keychain access group (`$(AppIdentifierPrefix)cloud.blonie.
+PasskeyVault`) and the App Group container (`group.cloud.blonie.PasskeyVault`) are load-bearing —
+Keychain for the User Key envelope (small, security-critical), App Group for the ciphertext cache
+Phase 39 will write (larger, file-based).
+
+**Rejected: Keychain-only (MP-2 fallback).** Rejected on its merits, not by omission: Keychain-only
+was the fallback the pitfalls research (L-5) recommended defensively, on the unconfirmed premise that
+App Groups might be refused on a free personal team. Phase 36, Plan 36-02's E2 disproves that premise
+on this simulator (see below) — the App Group container resolves, identically, for both the host app
+(outside, via `simctl`) and the extension (inside, via `FileManager`, from the real running process).
+Falling back to Keychain-only anyway would forfeit App Group's file-based storage model for no
+measured benefit, forcing Phase 39's ciphertext cache through Keychain's item-size-oriented API
+instead — a real cost with no offsetting gain once the premise it was hedging against is disproven.
+
+**Evidence:**
+- E2 (`ios/AUTOFILL-FEASIBILITY.md` §"E2"): `ios/evidence/36/appgroup-host.txt` (outside, host bundle,
+  `simctl get_app_container … groups`) and `ios/evidence/36/appgroup.log` (inside,
+  `AppGroupProbe.swift`'s `PVPROBE|stage=appgroup` line, from the real extension process) resolve to
+  the byte-identical path, including the container UUID
+  (`8B89C66D-A449-4832-9A27-125948A6E8B5`). Negative control:
+  `ios/evidence/36/appgroup-negative-control.txt` (never-installed bundle, same command shape, fails).
+- E3 (`ios/AUTOFILL-FEASIBILITY.md` §"E3"): `ios/evidence/36/keychain.log` — a fixed 32-byte test
+  vector written by the host app (`ProbeSeeder.swift`) is read back byte-for-byte inside the extension
+  (`KeychainProbe.swift`, `status=0 bytes=32 equal=true`), with the missing-entitlement negative
+  control firing (`status=-34018`) and the equality assertion itself demonstrated falsifiable
+  (one-byte mutation → `equal=false` → reverted → `equal=true`).
+
+**Residual risk carried forward, verbatim from `Ograniczenie dowodu`:** this result is true for **the
+simulator under a free Apple ID** specifically. The simulator path has no entitlement-issuing authority
+at all — no provisioning profile, no `amfid`/`taskgated` — so this decision does not extrapolate
+automatically to hardware; the device slice has never been run (see the status table above). Apple's `APP_GROUPS`
+capability-table `supportedProductTypes` field is silent (not negative) on `app-extension` product
+types, and `simctl get_app_container` itself cannot address extension bundle ids at all on this
+toolchain (a tool-registry limitation, recorded in E2, not an entitlement signal) — the equality proof
+above rests on the extension's own in-process resolution rather than a second outside `simctl` call for
+exactly that reason.
+
+**Consequences named for the phases that consume this decision:**
+- **Phase 39** (sync + offline cache): the ciphertext cache the host app writes for a cold-launched
+  extension to read lives in the App Group container (`group.cloud.blonie.PasskeyVault`), not
+  Keychain. SYNC-03's ciphertext-only constraint is Phase 39's to enforce; this plan wrote only a fixed
+  labelled test vector into both storage mechanisms, never real vault data.
+- **Phase 41** (AutoFill for passwords): the extension reads the User Key envelope from the shared
+  keychain access group (the mechanism E3 proves), and the ciphertext cache from the shared App Group
+  container (the mechanism E2 proves) — both mechanisms proven live from inside the real running
+  `.appex` process, not inferred from the host app's own view.
+
 ---
 
 ## 2. Verified against reality (2026-08-11)
@@ -452,6 +501,32 @@ on this run (`ios/evidence/36/pluginkit-registered.txt`, `ios/evidence/36/plugin
 this landmine did not materialize at registration/election. It remains a live, untested risk for SC1
 layer (c) — Settings → Passwords → AutoFill visibility — which Plan 36-01 does not test and Plan
 36-02 owns; do not infer (c) from (a)/(b) passing (D-09).
+
+**Plan 36-02 update — the bisect ran, and the outcome is settled but NOT what was speculated.**
+`ProvidesPasswords` was removed from `Info.plist`, rebuilt, reinstalled, and layer (c) re-run; then
+restored, rebuilt, reinstalled, and re-run. Contrary to this landmine's original "can silently fail to
+appear in Settings" framing: **the provider row does NOT disappear.** With the key absent, "PasskeyVault"
+is still a real, present, toggleable `Switch` element in the AutoFill & Passwords list
+(`ios/evidence/36/bisect-key-absent-layer-c.png`). What changes is the row's accessibility label —
+`'PasskeyVault'` (key absent) vs `'PasskeyVault, Passwords'` (key present) — and its subtitle
+`StaticText` sibling disappears entirely (`ios/evidence/36/bisect-key-absent-hierarchy-excerpt.txt`).
+`AutoFillInvocationUITests`' exact-match query on the label `"PasskeyVault, Passwords"` is what fails
+(`AutoFillInvocationUITests.swift:271`), not the provider's presence in Settings.
+
+**Settled: `ProvidesPasswords` is NOT required for the provider to appear/be listed/be toggleable in
+Settings → Passwords → AutoFill on this simulator/OS version (iOS 26.5).** It gates the row's declared
+capability category (its accessibility label's "Passwords" component), not list membership. The
+original speculation — a template-built extension "can silently fail to appear" — does not hold on
+this toolchain; the more precise, evidenced finding replaces it. Four observations, all recorded:
+key present → layer-a PASS (`ios/evidence/36/bisect-key-present-layer-a.txt`), layer-c label
+`'PasskeyVault, Passwords'`, test passes; key absent → layer-a PASS (`bisect-key-absent-layer-a.txt`,
+registration is unaffected either way), layer-c label `'PasskeyVault'` (no Passwords suffix), the
+UI test's own exact-match assertion fails; key restored → layer-a PASS
+(`bisect-key-restored-layer-a.txt`), layer-c label back to `'PasskeyVault, Passwords'`
+(`bisect-key-restored-layer-c.png`), test passes again. `ShowsConfigurationUI` and the legacy
+top-level `ASCredentialProviderExtensionShowsConfigurationUI` key were never removed during this
+bisect, so whether either of THOSE keys (rather than `ProvidesPasswords`) is what keeps the row listed
+remains open — this bisect isolated only `ProvidesPasswords`, as scoped.
 
 ### L-8 — `$(AppIdentifierPrefix)` expands to the literal `FAKETEAMID.` on this setup
 

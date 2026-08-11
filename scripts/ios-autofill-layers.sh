@@ -226,11 +226,23 @@ cmd_layer_c() {
   local test_log
   test_log=$(mktemp)
   local test_rc=0
+  # -parallel-testing-enabled NO / -maximum-concurrent-test-simulator-destinations 1:
+  # WITHOUT these (matching scripts/ios-probe-run.sh's run_test, the proven
+  # working invocation shape), xcodebuild spins up an ephemeral "Clone" of
+  # the target simulator to run the test in isolation instead of using the
+  # booted device directly -- observed live this session as
+  # "Clone 1 of iPhone 17 Pro" in the test log, correlating with the primary
+  # booted device being shut down around the test session and the clone not
+  # reliably reflecting the just-built app's installed state. Never omit
+  # these flags for this project's simulator-discipline requirement (exactly
+  # one simulator, the one already booted, never a clone).
   xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
     -scheme PasskeyVault -configuration Debug \
     -destination "platform=iOS Simulator,id=$udid" \
     -derivedDataPath /tmp/pv-dd \
     -only-testing:PasskeyVaultUITests/AutoFillInvocationUITests/testInvokeExtensionConfigurationViaSettingsAutoFillToggle \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
     -resultBundlePath "$result_bundle" \
     test > "$test_log" 2>&1 || test_rc=$?
 
@@ -245,10 +257,21 @@ cmd_layer_c() {
   rm -rf "$attach_dir"
   xcrun xcresulttool export attachments --path "$result_bundle" --output-path "$attach_dir" > "$EVIDENCE_DIR/layer-c-xcresulttool-export.log" 2>&1 || true
 
-  local screenshot
-  screenshot=$(find "$attach_dir" -iname "*autofill-and-passwords-screen-screenshot*" -print -quit 2>/dev/null || true)
-  if [ -z "$screenshot" ]; then
-    screenshot=$(find "$attach_dir" -iname "*after-provider-switch-toggle-screenshot*" -print -quit 2>/dev/null || true)
+  # The exported FILE on disk is named by a UUID -- the human-readable label
+  # this test attaches (e.g. "autofill-and-passwords-screen-screenshot")
+  # lives only in manifest.json's `suggestedHumanReadableName` field, not in
+  # the filename itself (verified this session: a filename-pattern `find`
+  # here always returns empty). Resolve the UUID via jq instead.
+  local screenshot=""
+  if [ -f "$attach_dir/manifest.json" ]; then
+    local exported_name
+    exported_name=$(jq -r '.[].attachments[] | select(.suggestedHumanReadableName | startswith("autofill-and-passwords-screen-screenshot")) | .exportedFileName' "$attach_dir/manifest.json" 2>/dev/null | head -1)
+    if [ -z "$exported_name" ] || [ "$exported_name" = "null" ]; then
+      exported_name=$(jq -r '.[].attachments[] | select(.suggestedHumanReadableName | startswith("after-provider-switch-toggle-screenshot")) | .exportedFileName' "$attach_dir/manifest.json" 2>/dev/null | head -1)
+    fi
+    if [ -n "$exported_name" ] && [ "$exported_name" != "null" ]; then
+      screenshot="$attach_dir/$exported_name"
+    fi
   fi
 
   if [ -z "$screenshot" ] || [ ! -s "$screenshot" ]; then
