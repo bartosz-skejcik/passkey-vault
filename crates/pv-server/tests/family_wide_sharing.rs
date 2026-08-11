@@ -965,8 +965,22 @@ async fn family_wide_reseal_add_member_body_is_shape_identical_to_an_ordinary_sh
         })
         .expect("the reseal's request body must be on the wire");
 
-    let ordinary_keys: Vec<&String> = ordinary_body.as_object().unwrap().keys().collect();
-    let reseal_keys: Vec<&String> = reseal_body.as_object().unwrap().keys().collect();
+    // B2 (30-VERIFICATION.md): compare sorted key SETS, not the Map's raw
+    // iteration order -- under `-p pv-server` alone, serde_json's `Map` is a
+    // `BTreeMap` (sorted, so raw iteration happened to match a hardcoded
+    // sorted literal), but under `cargo test --workspace` a dev-dependency
+    // (webauthn-authenticator-rs) unifies serde_json's `preserve_order`
+    // feature on for the whole workspace, making `Map` insertion-ordered
+    // instead -- deterministically breaking a raw-order comparison while
+    // asserting nothing about zero-knowledge or shape-equality. Sorting
+    // before comparing keeps both properties this test exists to prove
+    // (the reseal's body is shape-identical to an ordinary share's, and that
+    // shape is exactly `AddMemberRequest`'s three fields) independent of
+    // which `Map` implementation happens to be linked in.
+    let mut ordinary_keys: Vec<&String> = ordinary_body.as_object().unwrap().keys().collect();
+    let mut reseal_keys: Vec<&String> = reseal_body.as_object().unwrap().keys().collect();
+    ordinary_keys.sort();
+    reseal_keys.sort();
     assert_eq!(
         reseal_keys, ordinary_keys,
         "a reseal's add_member body must be shape-identical to an ordinary share's -- no field may leak \
