@@ -35,12 +35,24 @@
 # `set -o pipefail` propagation or avoids pipes into a status check
 # entirely.
 #
-# Demonstrated falsifiable (QA-02/QA-04): add a raw-byte-returning method to
-# `impl FfiUserKey` in crates/pv-ffi/src/lib.rs, re-run scripts/build-ios.sh,
-# re-run this script, observe FAIL naming the new symbol; revert both,
-# re-run both, observe PASS. See 35-04-SUMMARY.md for the recorded
-# transcript. The missing-bindings precheck is falsified the same way (a
-# temporary `rm -rf` of the bindings directory).
+# Demonstrated falsifiable (QA-02/QA-04) on THREE distinct inputs, not one --
+# a gate whose falsification proof only covers the shape it already handles
+# is not proven falsifiable:
+#   1. Plain injected accessor: add a raw-byte-returning method to
+#      `impl FfiUserKey` in crates/pv-ffi/src/lib.rs, re-run
+#      scripts/build-ios.sh, re-run this script, observe FAIL naming the new
+#      symbol; revert both, re-run both, observe PASS (35-04-SUMMARY.md).
+#   2. CR-02 -- the same accessor preceded by a doc comment containing ONE
+#      unbalanced `}`. Against the pre-CR-02 script this printed PASS with
+#      the leak present (exit 0); it now FAILs (exit 1).
+#   3. CR-03 -- the same accessor with the class declaration reworded
+#      (`open class FfiUserKey:` -> `public final class FfiUserKey:`).
+#      Against the pre-CR-03 script this printed PASS with the leak present
+#      (exit 0); it now FAILs. Separately, a handle class that cannot be
+#      found or whose body cannot be isolated is a hard ERROR with exit 1,
+#      never a silent skip.
+# The missing-bindings precheck is falsified the same way (a temporary
+# `rm -rf` of the bindings directory).
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -65,6 +77,66 @@ BYTE_RETURN_RE='-> *(Data|\[UInt8\])'
 HANDLE_TYPES='FfiUserKey|FfiWrappingKey'
 NAME_RE='^[[:space:]]*(public|open)[[:space:]]+(static[[:space:]]+)?func[[:space:]]+([A-Za-z0-9_]+).*'
 
+# --- Lexical preprocessing (CR-02) ----------------------------------------
+# Brace counting over RAW Swift text is not sound, and this was not
+# hypothetical: the class-body isolation below counts "{" minus "}" per line,
+# and a single unbalanced "}" appearing inside a doc comment drives the
+# running depth to 0, truncating the class body before any method declared
+# after it -- reported as PASS while a raw-byte accessor sat in the skipped
+# region. The generated Swift ALREADY carries brace characters from prose:
+# the Rust doc comments in crates/pv-ffi are copied verbatim into the
+# bindings, and one of them contains
+#   `caller writes an ordinary `do { try ... } catch { ... }`) for`
+# which is brace-balanced only by coincidence. One future doc-comment edit
+# mentioning a single closing brace would have disabled this gate silently.
+#
+# So: every scan below runs over a lexically preprocessed copy in which
+# comments (`//` to EOL, and NESTED `/* */` -- Swift block comments nest)
+# and the CONTENTS of string literals have been removed. Braces, `//`
+# lookalikes and the word `class` can therefore no longer reach the scanners
+# from inside a comment or a string. Declarations themselves are code and
+# survive stripping intact, so violation lines still report readably.
+#
+# Deliberately fail-SAFE rather than fail-open on the one construct this
+# lexer does not model (Swift multiline `"""` literals -- none exist in this
+# codegen today, `grep -c '"""'` is 0): mis-lexing one would leave the string
+# state open, which UNDER-counts closing braces and therefore over-extends a
+# class body. That direction can only cause a false FAIL (loud), never a
+# false PASS (silent).
+strip_comments_and_strings() {
+  awk '
+    function strip(line,   out, i, c, d, n) {
+      out = ""
+      n = length(line)
+      i = 1
+      while (i <= n) {
+        c = substr(line, i, 1)
+        d = substr(line, i + 1, 1)
+        if (state == "block") {
+          if (c == "*" && d == "/") { cdepth--; i += 2; if (cdepth <= 0) { cdepth = 0; state = "code" } ; continue }
+          if (c == "/" && d == "*") { cdepth++; i += 2; continue }
+          i++
+          continue
+        }
+        if (state == "string") {
+          if (c == "\\") { i += 2; continue }
+          if (c == "\"") { state = "code"; i++; continue }
+          i++
+          continue
+        }
+        if (c == "/" && d == "/") { break }
+        if (c == "/" && d == "*") { state = "block"; cdepth = 1; i += 2; continue }
+        if (c == "\"") { state = "string"; i++; continue }
+        out = out c
+        i++
+      }
+      return out
+    }
+    BEGIN { state = "code"; cdepth = 0 }
+    { print strip($0) }
+  ' "$1"
+}
+
 # Isolates one class's full body by brace depth, not by line-start pattern:
 # this codegen emits FUNCTION-level closing braces at column 0 too (e.g. a
 # single-expression `generate()`'s closing "}" sits unindented, identical in
@@ -73,12 +145,20 @@ NAME_RE='^[[:space:]]*(public|open)[[:space:]]+(static[[:space:]]+)?func[[:space
 # body before any method declared after it, which would make this audit
 # blind to exactly the accessor shape it exists to catch. Brace-depth
 # counting is immune to this because it only cares about the running total,
-# not which column any individual "}" happens to land in.
+# not which column any individual "}" happens to land in -- but ONLY when it
+# runs over comment/string-stripped input (CR-02, see above); this function
+# must never be handed a raw .swift file.
+#
+# The declaration match is deliberately modifier-agnostic (`class <Name>`
+# preceded by anything) rather than anchored to the exact `^open class `
+# spelling this codegen emits today: a uniffi patch bump emitting
+# `public final class FfiUserKey:` used to make this function return nothing,
+# which the caller turned into a silent skip (CR-03).
 extract_class_body() {
   local cls="$1" file="$2"
   awk -v cls="$cls" '
     BEGIN { depth = 0; started = 0 }
-    started == 0 && $0 ~ ("^open class " cls ":") { started = 1 }
+    started == 0 && $0 ~ ("(^|[^A-Za-z0-9_])class[ \t]+" cls "[ \t]*(:|\\{)") { started = 1 }
     started == 1 {
       print
       line = $0
@@ -92,12 +172,20 @@ extract_class_body() {
 
 VIOLATIONS=""
 
+SCRATCH=$(mktemp -d)
+trap 'rm -rf "$SCRATCH"' EXIT
+
 for f in "$BINDINGS_DIR"/*.swift; do
+  # Every scan below runs over the comment/string-stripped copy, never the
+  # raw file (CR-02).
+  STRIPPED="$SCRATCH/$(basename "$f").stripped"
+  strip_comments_and_strings "$f" > "$STRIPPED"
+
   # (A) free top-level functions: signature mentions a handle type AND
   # returns Data/[UInt8], on one line (this project's uniffi-bindgen-swift
   # output emits full signatures on a single line -- verified against the
   # real generated file this session).
-  MATCHES_A=$(grep -E "^public func .*($HANDLE_TYPES).*$BYTE_RETURN_RE" "$f" || true)
+  MATCHES_A=$(grep -E "^public func .*($HANDLE_TYPES).*$BYTE_RETURN_RE" "$STRIPPED" || true)
   if [ -n "$MATCHES_A" ]; then
     while IFS= read -r line; do
       [ -z "$line" ] && continue
@@ -110,7 +198,7 @@ for f in "$BINDINGS_DIR"/*.swift; do
 
   # (B) methods declared inside each handle class's own body.
   for cls in FfiUserKey FfiWrappingKey; do
-    CLASS_BODY=$(extract_class_body "$cls" "$f")
+    CLASS_BODY=$(extract_class_body "$cls" "$STRIPPED")
     [ -z "$CLASS_BODY" ] && continue
     MATCHES_B=$(echo "$CLASS_BODY" | grep -E "func .*$BYTE_RETURN_RE" || true)
     if [ -n "$MATCHES_B" ]; then
