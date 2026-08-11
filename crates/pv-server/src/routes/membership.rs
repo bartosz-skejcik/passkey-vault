@@ -611,29 +611,9 @@ pub(crate) async fn require_collection_access_for_propagation(
     }
 }
 
-/// Whether `collection_id` is a family-wide collection (`family_wide_kind IS
-/// NOT NULL`) — the ONE predicate that scopes BOTH of this module's
-/// propagation-relaxation gates to the automatic family-wide fold-in they
-/// were each designed for, never to an ordinary (deliberately, explicitly
-/// shared) collection a hand-built request could otherwise smuggle through
-/// the relaxed bound (CR-02, 30-REVIEW.md). Used by `invitations::create`'s
-/// `family_wide_keys` loop (invite-time-wrap propagation) and
-/// `collections::add_member` (lazy-reseal propagation, CR-03's fix for
-/// WINDOWS #17) — one definition, so the two call sites can never drift on
-/// what "family-wide" means.
-pub(crate) async fn is_family_wide_collection(db: &sqlx::SqlitePool, collection_id: &str) -> Result<bool, ApiError> {
-    Ok(
-        sqlx::query("SELECT 1 FROM collections WHERE id = ? AND family_wide_kind IS NOT NULL")
-            .bind(collection_id)
-            .fetch_optional(db)
-            .await?
-            .is_some(),
-    )
-}
-
 /// Whether `collection_id` is specifically an `item_bucket`-kind family-wide
-/// collection (260812-01e Task 1) — mirrors `is_family_wide_collection`'s
-/// exact shape, but scoped narrower: a family-wide FOLDER must keep using
+/// collection (260812-01e Task 1) — scoped narrower than a plain
+/// `family_wide_kind IS NOT NULL` check: a family-wide FOLDER must keep using
 /// `require_collection_edit` unchanged, since this claim mechanism (see
 /// `require_and_claim_item_bucket_edit` below) is item_bucket-only, per
 /// LOCKED decision 1's own scope. Also consumed by Task 2's
@@ -746,7 +726,7 @@ pub(crate) async fn resolve_family_wide_declared_level(
         .await?;
     let Some(row) = row else {
         // No such collection row at all -- treated identically to
-        // "not family-wide", mirroring `is_family_wide_collection`'s own
+        // "not family-wide", mirroring `is_item_bucket_collection`'s own
         // `fetch_optional`-then-`is_some()` idiom. Every call site resolves
         // its own membership access separately (and earlier), so a caller
         // reaching this helper has already proven the collection exists.

@@ -348,13 +348,22 @@ pub async fn member_access(
 // guarantee shipped since Phase 22/25, and are NOT touched by this endpoint.
 
 /// One family-wide collection the CALLER lacks a `collection_keys` row for.
-/// Deliberately ids/kind only -- no `enc_name`, no `sealed_key`, no
-/// ciphertext field exists on this type to leak, on any path including the
-/// empty-result case (T-30-04).
+/// Deliberately ids/kind/access_level only -- no `enc_name`, no
+/// `sealed_key`, no ciphertext field exists on this type to leak, on any
+/// path including the empty-result case (T-30-04). `access_level` (Task 3,
+/// 260812-01e) is the collection's own PUBLIC `family_wide_access_level`
+/// column, not a secret.
 #[derive(Serialize)]
 pub struct PendingGrant {
     pub collection_id: String,
     pub kind: String,
+    /// 260812-01e Task 3: with per-level `item_bucket` collections now
+    /// possible (LOCKED decision 1 -- a family may hold up to three, one
+    /// per access level), `kind` alone no longer disambiguates WHICH bucket
+    /// a missing grant belongs to. Mirrors `family_wide_access_level`'s
+    /// existing nullability elsewhere -- `None` for a legacy
+    /// (pre-migration-0020) row.
+    pub access_level: Option<String>,
 }
 
 /// One (family-wide collection, active member) pairing where the CALLER
@@ -391,7 +400,7 @@ pub async fn family_wide_pending(
     membership: ActiveFamilyMembership<RequireRead>,
 ) -> Result<Json<FamilyWidePendingResponse>, ApiError> {
     let missing_rows = sqlx::query(
-        "SELECT c.id, c.family_wide_kind FROM collections c \
+        "SELECT c.id, c.family_wide_kind, c.family_wide_access_level FROM collections c \
           WHERE c.family_id = ? AND c.family_wide_kind IS NOT NULL \
             AND NOT EXISTS (SELECT 1 FROM collection_keys ck \
                              WHERE ck.collection_id = c.id AND ck.recipient_user_id = ?)",
@@ -407,6 +416,7 @@ pub async fn family_wide_pending(
             Ok(PendingGrant {
                 collection_id: row.try_get("id").map_err(|_| ApiError::Internal)?,
                 kind: row.try_get("family_wide_kind").map_err(|_| ApiError::Internal)?,
+                access_level: row.try_get("family_wide_access_level").map_err(|_| ApiError::Internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;

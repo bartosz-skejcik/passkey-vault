@@ -768,7 +768,7 @@ async fn invite_carried_family_wide_key_binds_to_the_redeeming_newcomer_alone() 
     w.client.assert_wire_holds_no_secrets(&w.secrets);
 }
 
-// --- (3) the discovery response is ids and kinds only -----------------------
+// --- (3) the discovery response is ids, kinds, and access levels only -------
 
 /// Collects every object key and every string value appearing anywhere in a
 /// JSON document.
@@ -787,7 +787,7 @@ fn walk_json(value: &Value, keys: &mut Vec<String>, strings: &mut Vec<String>) {
 }
 
 #[tokio::test]
-async fn family_wide_pending_discovery_response_carries_only_ids_and_kinds() {
+async fn family_wide_pending_discovery_response_carries_only_ids_kinds_and_access_levels() {
     let mut w = seed_family_wide_folder().await;
 
     // A fourth member with no key for the family-wide folder at all -- the
@@ -818,6 +818,11 @@ async fn family_wide_pending_discovery_response_carries_only_ids_and_kinds() {
         newcomer.user_id.clone(),
         "folder".to_string(),
         "item_bucket".to_string(),
+        // 260812-01e Task 3: `PendingGrant` now also carries the collection's
+        // own `family_wide_access_level` -- `seed_family_wide_folder`
+        // declares its folder at "read", so that is the one new value this
+        // response can legitimately carry.
+        "read".to_string(),
     ];
 
     for (label, document) in [("the newcomer's view", &body), ("the owner's view", &owner_body)] {
@@ -848,13 +853,26 @@ async fn family_wide_pending_discovery_response_carries_only_ids_and_kinds() {
     );
     let missing = body["missing"].as_array().unwrap();
     assert_eq!(missing.len(), 1, "the newcomer is missing exactly the one family-wide folder");
+    // Found while executing this task: `serde_json::Value::Object`'s
+    // RE-PARSED key order depends on whether the `preserve_order` feature is
+    // enabled for serde_json in THIS cargo invocation's dependency graph --
+    // and it differs between `cargo test -p pv-server` (not enabled by any
+    // dependency pv-server alone pulls in -> alphabetical/BTreeMap order)
+    // and `cargo test --workspace` (pv-provider's passkey-authenticator ->
+    // elliptic-curve chain enables it workspace-wide via Cargo's feature
+    // unification -> struct-declaration/insertion order). LOCKED decision
+    // 4's literal acceptance command is `--workspace`, never `-p
+    // pv-server` -- this assertion is pinned to THAT command's actual,
+    // observed order (struct declaration order: collection_id, kind,
+    // access_level), not the narrower command's.
     assert_eq!(
         missing[0].as_object().unwrap().keys().cloned().collect::<Vec<_>>(),
-        vec!["collection_id".to_string(), "kind".to_string()],
-        "a pending grant is an id and a kind, nothing else"
+        vec!["collection_id".to_string(), "kind".to_string(), "access_level".to_string()],
+        "a pending grant is an id, a kind, and (260812-01e Task 3) an access_level, nothing else"
     );
     assert_eq!(missing[0]["collection_id"].as_str(), Some(FAMILY_WIDE_COLLECTION_ID));
     assert_eq!(missing[0]["kind"].as_str(), Some("folder"));
+    assert_eq!(missing[0]["access_level"].as_str(), Some("read"));
 
     let resealable = owner_body["resealable"].as_array().unwrap();
     assert_eq!(resealable.len(), 1, "the owner holds a key the newcomer lacks -- exactly one resealable grant");

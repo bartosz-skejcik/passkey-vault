@@ -2400,15 +2400,20 @@ async fn family_wide_kind_rejects_invalid_value_before_any_db_work() {
     assert_eq!(count_row, 0, "no collections row may ever be written for a rejected family_wide_kind");
 }
 
-/// A second concurrent `family_wide_kind: "item_bucket"` create for the SAME
-/// family fails cleanly with 409 (`idx_one_item_bucket_per_family`, 30-01),
-/// never a raw 500 — the bare `ON CONFLICT DO NOTHING` catches the partial
-/// unique index violation through the same `fetch_optional` `None`-branch the
-/// id-collision case already handles. A second `"folder"`-kind collection for
-/// the SAME family, by contrast, still succeeds — the partial index only
-/// scopes `item_bucket`.
+/// A second concurrent `family_wide_kind: "item_bucket"` create at the SAME
+/// declared `family_wide_access_level` for the SAME family fails cleanly
+/// with 409 (`idx_one_item_bucket_per_family`, 30-01, re-scoped per-level by
+/// migration 0021 / 260812-01e Task 3), never a raw 500 — the bare `ON
+/// CONFLICT DO NOTHING` catches the partial unique index violation through
+/// the same `fetch_optional` `None`-branch the id-collision case already
+/// handles. A THIRD attempt at a DIFFERENT declared level for the SAME
+/// family now succeeds (LOCKED decision 1: a family may hold up to three
+/// item_bucket collections, one per access level) — this is 0021's whole
+/// point, and the entire reason for that migration. A second `"folder"`-kind
+/// collection for the SAME family, by contrast, still succeeds — the
+/// partial index only scopes `item_bucket`.
 #[tokio::test]
-async fn second_item_bucket_for_same_family_is_409_but_second_folder_succeeds() {
+async fn second_item_bucket_at_the_same_level_for_same_family_is_409_but_a_different_level_succeeds() {
     let pool = test_pool().await;
     let app = test_app(pool.clone());
 
@@ -2495,5 +2500,58 @@ async fn second_item_bucket_for_same_family_is_409_but_second_folder_succeeds() 
         StatusCode::CREATED,
         "a second folder-kind collection for the same family must still succeed \
          — the bare ON CONFLICT DO NOTHING only trips on the id PK or the item_bucket partial index"
+    );
+
+    // 260812-01e Task 3: a THIRD item_bucket for the SAME family, but at a
+    // DIFFERENT declared level ("read" instead of "edit"), must now succeed
+    // — migration 0021 re-scopes the partial unique index to
+    // (family_id, COALESCE(family_wide_access_level, '')), so this is no
+    // longer a conflict.
+    let ck4 = CollectionKey::generate();
+    let sealed_key_json_4 = serde_json::to_string(&seal(&owner_sk.public_key(), ck4.expose()).unwrap()).unwrap();
+    let third_bucket_id = "22222222-8888-4888-8888-888888888888";
+    let third_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": third_bucket_id, "enc_name": "enc-bucket-3", "sealed_key": sealed_key_json_4,
+            "family_wide_kind": "item_bucket", "family_wide_access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(
+        third_res.status(),
+        StatusCode::CREATED,
+        "a THIRD item_bucket for the same family, declared at a DIFFERENT level, must succeed — \
+         LOCKED decision 1 permits up to three item_bucket collections per family, one per access level"
+    );
+
+    let bucket_count_after_third: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM collections WHERE family_wide_kind = 'item_bucket'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(bucket_count_after_third, 2, "exactly two item_bucket rows must now exist for this family");
+
+    let bucket_levels: Vec<String> = sqlx::query_scalar(
+        "SELECT family_wide_access_level FROM collections WHERE family_wide_kind = 'item_bucket' ORDER BY id ASC",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        bucket_levels.len(),
+        2,
+        "both item_bucket rows must carry a non-NULL family_wide_access_level"
+    );
+    assert_ne!(
+        bucket_levels[0], bucket_levels[1],
+        "the two item_bucket rows must have DISTINCT declared access levels"
+    );
+    assert!(
+        bucket_levels.contains(&"edit".to_string()) && bucket_levels.contains(&"read".to_string()),
+        "the two item_bucket rows must be exactly the 'edit' and 'read' buckets created above, got {bucket_levels:?}"
     );
 }
