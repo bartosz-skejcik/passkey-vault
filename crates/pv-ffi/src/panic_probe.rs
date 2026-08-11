@@ -31,7 +31,7 @@
 //! P2: lives ONLY in `pv-ffi`. `pv-core`/`pv-provider` are never touched by
 //! this module.
 
-use crate::FfiUserKey;
+use crate::{FfiError, FfiUserKey};
 
 /// The exact byte pattern that triggers the synthetic panic. Any other
 /// input returns normally — this is what makes the probe an INPUT-DRIVEN
@@ -43,16 +43,34 @@ const PANIC_SENTINEL: &[u8] = b"FFI06-PANIC";
 #[uniffi::export]
 impl FfiUserKey {
     /// Panics ONLY when `sentinel` exactly equals `PANIC_SENTINEL` —
-    /// otherwise returns a plain, non-panicking description of the input.
-    /// SYNTHETIC, test-only — see this module's doc comment.
-    pub fn ffi06_synthetic_panic_probe(&self, sentinel: Vec<u8>) -> String {
+    /// otherwise returns `Ok` with a plain, non-panicking description of the
+    /// input. SYNTHETIC, test-only — see this module's doc comment.
+    ///
+    /// DELIBERATELY returns `Result<String, FfiError>` rather than a bare
+    /// `String`, even though the non-panic path is infallible and never
+    /// produces `Err`: this is load-bearing, not cosmetic. UniFFI only
+    /// generates a Swift `throws` wrapper (using `rustCallWithError`, whose
+    /// caller writes an ordinary `do { try ... } catch { ... }`) for
+    /// functions whose Rust signature returns `Result<T, E: uniffi::Error>`.
+    /// A bare `-> String` return generates a NON-throwing Swift wrapper that
+    /// force-unwraps the underlying FFI call with `try!` — so a caught panic
+    /// (UniFFI's `CALL_UNEXPECTED_ERROR` -> `UniffiInternalError.rustPanic`)
+    /// would still be intercepted by `catch_unwind` at the Rust/C boundary
+    /// (never raw UB), but the generated Swift codegen's own `try!` would
+    /// then immediately trigger an uncatchable `fatalError` — a real Swift
+    /// runtime trap, NOT the "catchable error (throws/Result)" SC5 requires.
+    /// Verified empirically this session by inspecting the generated
+    /// `ios/PasskeyVault/build/swift-bindings/pv_ffi.swift` for both
+    /// signature shapes (see 35-05-SUMMARY.md for the transcript) — a real,
+    /// load-bearing discovery, not an assumption.
+    pub fn ffi06_synthetic_panic_probe(&self, sentinel: Vec<u8>) -> Result<String, FfiError> {
         if sentinel == PANIC_SENTINEL {
             panic!(
                 "FFI-06 synthetic panic probe — deliberately test-only, never called by \
                  production code, see crates/pv-ffi/src/panic_probe.rs"
             );
         }
-        format!("no panic: {} non-sentinel bytes", sentinel.len())
+        Ok(format!("no panic: {} non-sentinel bytes", sentinel.len()))
     }
 }
 
@@ -82,6 +100,6 @@ mod tests {
             uk.ffi06_synthetic_panic_probe(vec![0x00])
         }));
         assert!(result.is_ok(), "non-sentinel input should not have panicked");
-        assert_eq!(result.unwrap(), "no panic: 1 non-sentinel bytes");
+        assert_eq!(result.unwrap().unwrap(), "no panic: 1 non-sentinel bytes");
     }
 }
