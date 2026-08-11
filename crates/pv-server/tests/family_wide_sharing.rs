@@ -2162,3 +2162,280 @@ async fn task2_legacy_null_level_family_wide_collection_invite_fold_in_still_suc
          'edit' must still succeed -- LegacyUnknown applies no equality bound"
     );
 }
+
+// --- 260812-01e Task 4: hidden_password variant, and Face 2 cannot recur ---
+
+/// LOCKED decision 3's `hidden_password` variant of Task 1's proof --
+/// independently falsified (does NOT assume Task 1's own falsification
+/// covers this arm too). Repeats Task 1's exact scenario with
+/// `family_wide_access_level: "hidden_password"` instead of `"read"`: a
+/// non-creator member holding only `hidden_password` on the bucket
+/// contributes an item and self-escalates to `edit`; an uncontributing
+/// third member fanned out identically stays at `hidden_password`.
+#[tokio::test]
+async fn task4_non_creator_contributor_claims_edit_on_hidden_password_declared_item_bucket() {
+    let pool = test_pool().await;
+    let mut client = Client::new(pool.clone());
+    let mut secrets = Secrets::default();
+
+    let owner = client.actor("t4-hp-owner@example.com", &mut secrets).await;
+    client.create_family(&owner.token, "T4 HP Family").await;
+    let member_b = client.join_family(&owner.token, "t4-hp-member-b@example.com", &mut secrets).await;
+    let member_c = client.join_family(&owner.token, "t4-hp-member-c@example.com", &mut secrets).await;
+
+    let bucket_id = "30140000-0000-4000-8000-000000000071";
+    let ck = CollectionKey::generate();
+    let ck_bytes = *ck.expose();
+    secrets.add_key_material("T4 hidden_password item_bucket's Collection Key", &ck_bytes);
+    let enc_name = serde_json::to_string(
+        &encrypt_item_for_collection(
+            &ck,
+            "family-wide-items".as_bytes(),
+            bucket_id,
+            bucket_id,
+            COLLECTION_NAME_REVISION,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/collections",
+            Some(&owner.token),
+            Some(json!({
+                "id": bucket_id,
+                "enc_name": enc_name,
+                "sealed_key": serde_json::to_string(&seal(&owner.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "family_wide_kind": "item_bucket",
+                "family_wide_access_level": "hidden_password",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "creating the hidden_password-declared item_bucket must succeed");
+
+    for member in [&member_b, &member_c] {
+        let (status, _) = client
+            .send(
+                "POST",
+                &format!("/api/vault/collections/{bucket_id}/members"),
+                Some(&owner.token),
+                Some(json!({
+                    "recipient_user_id": member.user_id,
+                    "sealed_key": serde_json::to_string(&seal(&member.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                    "access_level": "hidden_password",
+                })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "fanning {} out at hidden_password must succeed", member.email);
+    }
+
+    let item_id = "30140000-0000-4000-8000-000000000072";
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/items",
+            Some(&member_b.token),
+            Some(json!({
+                "id": item_id,
+                "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"t4-hp-key-blob\"}",
+                "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"t4-hp-data-blob\"}",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "member_b creating a personal item must succeed");
+
+    let (status, _) = client
+        .send(
+            "PUT",
+            &format!("/api/vault/items/{item_id}/collection"),
+            Some(&member_b.token),
+            Some(json!({
+                "new_collection_id": bucket_id,
+                "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"t4-hp-key-blob-moved\"}",
+                "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"t4-hp-data-blob-moved\"}",
+                "expected_revision": 1,
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a non-creator member holding only 'hidden_password' on a family-wide item_bucket must be able \
+         to move their own item into it"
+    );
+
+    let member_b_level: String = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(bucket_id)
+    .bind(&member_b.user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(member_b_level, "edit", "the contributing member's own row must be claimed to edit");
+
+    let member_c_level: String = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(bucket_id)
+    .bind(&member_c.user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        member_c_level, "hidden_password",
+        "a fanned-out member who never contributed must stay at the bucket's own declared level"
+    );
+}
+
+/// LOCKED decision 3's "Face 2 cannot recur" proof: TWO item_bucket
+/// collections for the SAME family at DIFFERENT declared levels, with an
+/// OVERLAPPING recipient set fanned out to each at its own bucket's declared
+/// level. The same recipient's resolved `access_level` must be exactly
+/// `"read"` on the first bucket and exactly `"edit"` on the second -- a
+/// second family-wide item share at a different level lands in a genuinely
+/// separate resource with its own correct level, never conflated with the
+/// first.
+///
+/// Falsification note (recorded in the SUMMARY too): the plan's specified
+/// falsification -- requesting the FIRST bucket's level on the SECOND
+/// bucket's `add_member` call -- was attempted and observed to fail ONE
+/// STEP EARLIER than anticipated: Task 2's own declared-level bound now
+/// refuses that mismatched grant outright (`403`) at the `add_member` call
+/// itself, never reaching this test's final two `GET`-and-compare
+/// assertions. This is still valid, informative evidence -- it demonstrates
+/// the fixture mistake is caught (doubly: first by Task 2's server-side
+/// bound, and would also have been caught here had it somehow gotten
+/// through) -- but the exact failure site differs from the plan's literal
+/// wording, which predates Task 2 being fully wired into this exact test's
+/// two-bucket setup.
+#[tokio::test]
+async fn task4_face2_two_item_buckets_at_different_levels_resolve_independently() {
+    let pool = test_pool().await;
+    let mut client = Client::new(pool.clone());
+    let mut secrets = Secrets::default();
+
+    let owner = client.actor("t4-face2-owner@example.com", &mut secrets).await;
+    client.create_family(&owner.token, "T4 Face2 Family").await;
+    let recipient = client.join_family(&owner.token, "t4-face2-recipient@example.com", &mut secrets).await;
+
+    let read_bucket_id = "30140000-0000-4000-8000-000000000081";
+    let ck_read = CollectionKey::generate();
+    let ck_read_bytes = *ck_read.expose();
+    secrets.add_key_material("T4 Face2 read-bucket's Collection Key", &ck_read_bytes);
+    let enc_name_read = serde_json::to_string(
+        &encrypt_item_for_collection(
+            &ck_read,
+            "family-wide-items".as_bytes(),
+            read_bucket_id,
+            read_bucket_id,
+            COLLECTION_NAME_REVISION,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/collections",
+            Some(&owner.token),
+            Some(json!({
+                "id": read_bucket_id,
+                "enc_name": enc_name_read,
+                "sealed_key": serde_json::to_string(&seal(&owner.sk.public_key(), &ck_read_bytes).unwrap()).unwrap(),
+                "family_wide_kind": "item_bucket",
+                "family_wide_access_level": "read",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "creating the read-declared item_bucket must succeed");
+
+    let edit_bucket_id = "30140000-0000-4000-8000-000000000082";
+    let ck_edit = CollectionKey::generate();
+    let ck_edit_bytes = *ck_edit.expose();
+    secrets.add_key_material("T4 Face2 edit-bucket's Collection Key", &ck_edit_bytes);
+    let enc_name_edit = serde_json::to_string(
+        &encrypt_item_for_collection(
+            &ck_edit,
+            "family-wide-items".as_bytes(),
+            edit_bucket_id,
+            edit_bucket_id,
+            COLLECTION_NAME_REVISION,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/collections",
+            Some(&owner.token),
+            Some(json!({
+                "id": edit_bucket_id,
+                "enc_name": enc_name_edit,
+                "sealed_key": serde_json::to_string(&seal(&owner.sk.public_key(), &ck_edit_bytes).unwrap()).unwrap(),
+                "family_wide_kind": "item_bucket",
+                "family_wide_access_level": "edit",
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "creating the SECOND item_bucket, at a DIFFERENT declared level, must succeed (Task 3)"
+    );
+
+    // The SAME recipient is fanned out to EACH bucket at ITS OWN declared
+    // level -- both requests pass Task 2's declared-level bound, since each
+    // requests exactly its own bucket's level.
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/vault/collections/{read_bucket_id}/members"),
+            Some(&owner.token),
+            Some(json!({
+                "recipient_user_id": recipient.user_id,
+                "sealed_key": serde_json::to_string(&seal(&recipient.sk.public_key(), &ck_read_bytes).unwrap())
+                    .unwrap(),
+                "access_level": "read",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "fanning the recipient out at read on the FIRST bucket must succeed");
+
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/vault/collections/{edit_bucket_id}/members"),
+            Some(&owner.token),
+            Some(json!({
+                "recipient_user_id": recipient.user_id,
+                "sealed_key": serde_json::to_string(&seal(&recipient.sk.public_key(), &ck_edit_bytes).unwrap())
+                    .unwrap(),
+                "access_level": "edit",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "fanning the recipient out at edit on the SECOND bucket must succeed");
+
+    let (status, read_bucket_view) =
+        client.send("GET", &format!("/api/vault/collections/{read_bucket_id}"), Some(&recipient.token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        read_bucket_view["access_level"].as_str(),
+        Some("read"),
+        "the recipient's resolved access_level on the FIRST bucket must be exactly 'read'"
+    );
+
+    let (status, edit_bucket_view) =
+        client.send("GET", &format!("/api/vault/collections/{edit_bucket_id}"), Some(&recipient.token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        edit_bucket_view["access_level"].as_str(),
+        Some("edit"),
+        "the recipient's resolved access_level on the SECOND bucket must be exactly 'edit' -- \
+         never conflated with the first bucket's 'read'"
+    );
+}
