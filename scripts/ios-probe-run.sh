@@ -203,6 +203,21 @@ run_test() {
 MAX_ATTEMPTS=5
 ATTEMPT=1
 TEST_LOG=$(mktemp)
+# RUN_START (found running 36-03 Task 3, blocking-issue fix, Rule 3): a
+# fixed `--last 5m` window here is a false-PASS trap when two probe runs
+# happen inside 5 minutes of each other -- a STALE PVPROBE| line from the
+# PRIOR probe run (still inside the window) can satisfy step 6's bare
+# `grep -q 'PVPROBE|'` check even when THIS run's own invocation of the
+# extension never happened (observed live: the toggle-based UI test route
+# flips the provider's election state each time it runs -- see
+# AutoFillInvocationUITests.swift -- so a run that lands on the OFF->ON
+# edge invokes the extension, and the very next run, landing on ON->OFF,
+# does not). Recording the wall-clock instant just before the test attempt
+# loop starts and filtering the log capture to `--start "$RUN_START"`
+# instead of a fixed lookback window scopes the evidence to THIS
+# invocation only, so a run that produced no new PVPROBE| line fails
+# loudly instead of silently reusing a prior run's evidence.
+RUN_START=$(date '+%Y-%m-%d %H:%M:%S')
 while ! run_test > "$TEST_LOG" 2>&1; do
   if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
     echo "ERROR: AutoFillInvocationUITests failed after $ATTEMPT attempts (not a known flake pattern, or the known flakes did not resolve)" >&2
@@ -226,12 +241,12 @@ rm -f "$TEST_LOG"
 mkdir -p ios/evidence/36
 LOGFILE="ios/evidence/36/${PROBE_NAME}.log"
 xcrun simctl spawn "$UDID" log show \
-  --predicate 'subsystem == "cloud.blonie.PasskeyVault"' --last 5m \
+  --predicate 'subsystem == "cloud.blonie.PasskeyVault"' --start "$RUN_START" \
   > "$LOGFILE" 2>&1
 
 if ! grep -q 'PVPROBE|' "$LOGFILE"; then
-  echo "ERROR: no PVPROBE| line found in $LOGFILE -- the extension did not run, or did not log" >&2
+  echo "ERROR: no PVPROBE| line found in $LOGFILE since $RUN_START -- the extension did not run, or did not log this invocation (the provider's election toggles on every UI-test run -- see AutoFillInvocationUITests.swift -- a run landing on the ON->OFF edge does not invoke the extension; re-run this command)" >&2
   exit 1
 fi
-echo "==> PASS: PVPROBE| line found in $LOGFILE"
+echo "==> PASS: PVPROBE| line found in $LOGFILE since $RUN_START"
 grep 'PVPROBE|' "$LOGFILE"

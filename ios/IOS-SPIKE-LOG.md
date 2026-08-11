@@ -604,6 +604,28 @@ looks like a flake, and on CI or a fresh clone it is the *first* run that counts
 `crates/pv-ffi/src/**` as inputs and `build/swift-bindings/pv_ffi.swift` + `build/PvFfi.xcframework`
 as outputs is the real fix and is owed before any CI job runs this.
 
+### L-11 — a second non-test pv-ffi feature variant compounds L-10's shared-output-path race
+
+Observed 2026-08-11/12, Plan 36-03 Task 2 (E5.c), the first time this repo needed TWO different
+non-default `pv-ffi` feature variants alive during the same `xcodebuild test` invocation:
+`PasskeyVaultTests` (built for testing on every `test` action, even with `-skip-testing:PasskeyVaultTests`
+— confirmed live, that flag only skips *running* it, not building it) needs `ffi06-probe`
+(`FfiPanicSafetyTests.swift`); `PasskeyVaultAutoFill`, under the `sensitivity` probe condition, needs
+`kdf-probe` (`KdfProbe.swift`). Both targets compile against the SAME shared
+`ios/PasskeyVault/build/swift-bindings/pv_ffi.swift` + `PvFfi.xcframework` (L-10's own root cause: no
+declared outputs on the Run Script phase that regenerates them). `PasskeyVaultTests`' Run Script phase
+hardcoded `--with-panic-probe`, so it unconditionally clobbered whichever variant the *other* target
+in the same invocation actually needed, non-deterministically, **inside** `xcodebuild`'s own build
+graph — retrying with a fresh single-feature rebuild *before* each attempt did not converge, because
+the clobber happens during the invocation itself, not before it starts. Fixed at the source, not
+retried around: `scripts/build-ios.sh` now accepts `--with-panic-probe` and `--with-kdf-probe`
+*together*, producing one artifact carrying both diagnostic symbols; the Run Script phase reads a
+`PV_FFI_TEST_VARIANT` build setting (`ios/PasskeyVault/PasskeyVault.xcodeproj/project.pbxproj`,
+defaulting to the prior `--with-panic-probe`-only behavior when unset), and
+`scripts/ios-probe-run.sh` sets it to both flags only for the `sensitivity` probe. **Carry forward: a
+third simultaneous non-default feature variant would need the same treatment — extend the combined
+`FEATURES` list in `build-ios.sh`, never add a third mutually-exclusive flag.**
+
 ## 4. Open questions — honestly open
 
 1. ~~**IOS-06: UniFFI vs hand-written C ABI.**~~ **RESOLVED — see §1.** Decided: UniFFI, evaluated

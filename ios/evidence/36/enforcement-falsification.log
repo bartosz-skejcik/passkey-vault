@@ -1,0 +1,3 @@
+=== Falsification: enforcement gate against an unclassifiable ordinal sequence (2,3 -- missing 1) ===
+FAIL: PVPROBE|stage=enforce ordinal sequence '2,3,' in /tmp/pv-falsify/enforcement-unclassifiable.log matches neither recorded outcome (all-3-present-with-matching-rise, or a clean truncation to '', '1,', or '1,2,') -- an unclassifiable run is not a result
+exit=1

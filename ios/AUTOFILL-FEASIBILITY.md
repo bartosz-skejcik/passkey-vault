@@ -459,3 +459,48 @@ forced to 0) exits non-zero, printing "the instrument is not measuring the alloc
 this run may be recorded". The edited copy itself was a scratch file, never committed as evidence.
 
 ## E5.d — the enforcement control
+
+Two prior research probes independently concluded this simulator has no jetsam machinery at all, but
+neither one deliberately tried to KILL the process to confirm it (`ios/IOS-SPIKE-LOG.md` §3 L-6, Open
+Question 7). This control is the cheapest experiment that could have overturned that conclusion — it
+measures, rather than assumes, whether the simulator enforces a memory limit on the extension process,
+and the answer is recorded whichever way it comes back.
+
+**Setup**: `EnforcementProbe.run()` logs a footprint reading, allocates and fully `memset`s a 200 MB
+buffer (dirtying every page — a lazy VA reservation would cost no real physical memory and prove
+nothing), logs a second reading, holds for 2 seconds, logs a third, then releases. Dispatched alone
+under `PV_PROBE_ENFORCEMENT` — never sharing an invocation with any other probe, so a process death here
+could never swallow another probe's output.
+
+**Real result** (`ios/evidence/36/enforcement.log`, captured from the real running extension process,
+`scripts/ios-probe-run.sh enforcement`):
+
+```
+PVPROBE|stage=enforce ordinal=1 kr=KERN_SUCCESS phys=22087768
+PVPROBE|stage=enforce ordinal=2 kr=KERN_SUCCESS phys=231917800
+PVPROBE|stage=enforce ordinal=3 kr=KERN_SUCCESS phys=231950568
+```
+
+`scripts/ios-memory-gate.sh enforcement ios/evidence/36/enforcement.log`:
+
+```
+CLASSIFICATION: survived -- all 3 ordinals present, footprint rose by 209830032 bytes between ordinal 1
+(22087768) and ordinal 2 (231917800), within [146800640,272629760] of the ~200 MB allocation. This
+confirms, empirically, that this simulator does not enforce a memory kill on the extension process (E5.d).
+```
+
+**Verdict: SURVIVED.** All three ordinals present; the footprint rose by 209,830,032 bytes (~200.1 MB)
+between the pre-allocation and post-allocation readings, matching the 200 MB `memset`ted buffer almost
+exactly, and held steady through the 2-second hold (ordinal 3: 231,950,568, within a few KB of ordinal
+2). This confirms, empirically rather than by inference from a code search, that **this simulator does
+not enforce a memory kill on the extension process** — the two research probes' no-jetsam conclusion is
+confirmed, not overturned. Consequently, this phase can produce a footprint number for FILL-06 but never
+a survival verdict: nothing measured here tells us whether the same allocation would survive on a real
+device. **The contested device ceiling remains contested and unattributed on both sides**: ~120 MB from
+one vendor-sourced figure, <32 MB from a second vendor shipping the same workload class — neither is a
+first-party Apple figure, and neither is presented here as established (A11).
+
+**Can-fail proof, recorded** (`ios/evidence/36/enforcement-falsification.log`): the same gate run against
+a scratch copy of the log with ordinal 1 removed (leaving only ordinals 2 and 3, a shape matching neither
+the "all three present" outcome nor a clean truncation to `''`/`'1,'`/`'1,2,'`) exits non-zero, printing
+that the run is unclassifiable.
