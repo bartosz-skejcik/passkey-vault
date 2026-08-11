@@ -17,8 +17,8 @@ file is the bug.
 |---|---|
 | Platform viability (PRF on iOS) | **Verified present in SDK surface.** Runtime behaviour unproven. |
 | `pv-core` / `pv-provider` native iOS build | **Verified** — real artifacts, correct Mach-O platform |
-| Xcode project | Skeleton only (App + Unit + UI test targets, no code of ours) |
-| FFI boundary | **Not started (no code yet).** IOS-06 **decided** (UniFFI) — see §1. |
+| Xcode project | App + Unit + UI test targets. `PasskeyVaultTests` links `PvFfi.xcframework` and runs 6 real tests against `pv-core`; the App target still holds only Xcode's template code |
+| FFI boundary | **Delivered and verified** (Phase 35, commits `f6cb883` … `37c1ff7`). `crates/pv-ffi` (UniFFI `=0.32.0`, proc-macro mode), `scripts/build-ios.sh` (XCFramework + `vtool` slice gate), `scripts/audit-ffi-opaque-handles.sh` (opaque-handle gate over the *generated* Swift), 11 Rust tests + 6 Swift tests green. IOS-06 **decided** (UniFFI) — see §1; what was learned building it — see §2.5. **Proof limit:** simulator only; the device slice is built and its Mach-O platform verified, never run |
 | Credential provider extension | Not attempted |
 | Server sync / UI | Not attempted |
 
@@ -210,7 +210,94 @@ Reading the edited file back would only have proven the edit landed, not that Xc
 | Xcode | 26.6 (17F113), SDK iPhoneOS26.5 |
 | rustc / cargo | 1.97.0 |
 | Rust targets installed | `aarch64-apple-darwin`, `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `wasm32-unknown-unknown` |
-| Workspace members | `pv-core`, `pv-server`, `pv-wasm`, `pv-provider` (unchanged — no FFI crate yet) |
+| Workspace members | `pv-core`, `pv-server`, `pv-wasm`, `pv-provider`, **`pv-ffi`** (added by Phase 35 — this is the coordination point with `main` that handoff §7 warned about, and it has now been triggered) |
+
+### 2.5 The FFI boundary, and what building it against the real types taught
+
+Phase 35. Everything below was found by building it, not by reading about it.
+
+**What exists.** `crates/pv-ffi` is a thin UniFFI layer over `pv-core`, mirroring `crates/pv-wasm`'s
+opaque-handle design: `FfiUserKey` and `FfiWrappingKey` are `#[derive(uniffi::Object)]` handles with
+no `Debug`/`Display`/`Clone`/serde derive and no byte accessor, and the *only* functions that pass raw
+key bytes are the two explicitly named ones (`export_user_key_for_session` /
+`import_user_key_from_session`, FFI-03). That is not asserted from the Rust source — it is checked
+against the **generated Swift** by `scripts/audit-ffi-opaque-handles.sh`, because the Rust source is
+not what Swift can call.
+
+**UniFFI's type mapping is the constraint, and it bites in two specific places against *these* types.**
+
+1. **`&'static str` in an error variant has no UniFFI mapping.** Both `pv_core::CryptoError` and
+   `pv_provider::PvProviderError` carry `InvalidInput(&'static str)`. UniFFI can pass `&str` as a
+   *function argument* (`[ByRef]`, valid for one call), but there is no builtin mapping for an owned
+   enum variant holding one, so neither enum can derive `uniffi::Error`. Absorbed in
+   `crates/pv-ffi/src/error.rs` as a separate `FfiError` with `String` payloads plus
+   `From<CryptoError>` — the same shape `pv-wasm` already uses for JS. `pv-core` was not modified (P2).
+2. **`&mut [u8]` has no UniFFI equivalent at all**, and this one is a *security-model* downgrade, not
+   plumbing — it is the CP-4 residual risk. `pv-wasm`'s `from_password`/`import_user_key_from_session`
+   take `&mut [u8]`, which lets `wasm-bindgen`'s mutable-slice marshaling copy the caller's own JS
+   buffer back out **zeroized**. UniFFI supports only immutable `&[u8]` and owned `Vec<u8>`. So
+   `pv-ffi` takes owned `Vec<u8>` and `Zeroizing`-wraps its own copy — **the Swift caller's original
+   `Data` is not retroactively wiped by the call.** Mitigation is caller-side and best-effort:
+   `data.resetBytes(in: 0..<data.count)` immediately after the call returns. Two further Rust-side
+   copies are outside this boundary's control and are disclosed rather than hidden: UniFFI's
+   intermediate `RustBuffer` for every `Vec<u8>`/`String` crossing, and `decrypt_item`'s returned
+   `String` / `encrypt_item`'s accepted `String`, which hold item plaintext un-zeroized. That last one
+   should become an opaque handle before Phase 43 puts passkey private keys through it.
+
+**`Result<T, E>` vs bare `T` decides whether a caught panic is catchable — this is load-bearing, and
+it was nearly missed.** UniFFI wraps every `#[uniffi::export]` call in `catch_unwind`, but it emits a
+Swift `throws` wrapper **only** for a Rust signature returning `Result<T, E: uniffi::Error>`. A bare
+return generates a NON-throwing Swift wrapper that force-unwraps the call with `try!` — so a panic
+that `catch_unwind` genuinely *did* catch is converted, on the Swift side, into an uncatchable
+`fatalError`: a process kill, which in an AutoFill extension is the worst available outcome. Every
+export in `crates/pv-ffi` now returns `Result`, including `FfiUserKey::generate()`, which does have a
+real (if remote) panic path via `OsRng::fill_bytes`. The single deliberate exception,
+`export_user_key_for_session`, is audited in a table in that file's own header.
+
+**The FFI-06/CP-3 panic proof rests on a DELIBERATELY SYNTHETIC vector, and must never be read as
+more.** No attacker-reachable panic was found in `pv-core`/`pv-provider` — so rather than dress one
+up, `crates/pv-ffi/src/panic_probe.rs` carries a single clearly-labelled synthetic `panic!()`, driven
+by a sentinel input, never called by production Swift code, behind the `ffi06-probe` Cargo feature.
+Honesty bound on the supporting evidence, too: the "no reachable panic exists" claim rests on a grep
+of *first-party source only*, which cannot see into `rand_core`/`argon2`/`chacha20poly1305`, where the
+only real ones live. The proof that a panic is caught, discriminated from an ordinary `FfiError`, and
+leaves the handle usable is real; the claim that no genuine vector exists is narrower than it sounds.
+
+**Server-supplied `KdfParams` are now bounded at this boundary.** `kdf_params_json` arrives from
+`POST /api/auth/prelogin` — untrusted by construction. `argon2::Params::new` accepts `m_cost_kib` up
+to `0x0FFFFFFF` (256 GiB) and then allocates and writes that much, which is a process kill rather than
+a catchable error, so `crates/pv-ffi/src/lib.rs` rejects out-of-range values *before* anything is
+allocated (96 MiB / t=10 / p=8 ceilings; production is 64 MiB / t=3 / p=4). Measured while proving it:
+on macOS `Vec::<u8>::with_capacity(268435455 * 1024)` **succeeds** (lazy VA reservation) on a 16 GB
+host, so the "allocation failure is an abort" reasoning is only half the story — on Darwin the
+realistic shape is a memory blow-up, not a clean abort. The ceiling is a **crash guard, not a memory
+budget**: 96 MiB is not proven survivable in an extension, and FILL-06 must tighten it once a real
+number exists. It is also upper-bounds-only — a hostile server sending *weak* params is a real,
+still-open downgrade attack that a constant here cannot answer.
+
+**Build-system recipes that took a real failure each to find.**
+
+- `uniffi-bindgen-swift` needs **two** invocations, not one: headers+modulemap into a `Headers/` dir
+  with `--module-name pv_ffiFFI`, and `--swift-sources` alone into a separate dir. The module name is
+  not cosmetic — the generated `.swift` always does `#if canImport(pv_ffiFFI)`, so any other name
+  makes the import silently fall through the `#if` and every FFI symbol go unresolved.
+- **Do NOT pass `--xcframework` to the headers invocation.** It emits a `framework module`
+  declaration, whose `header "..."` entry Clang resolves relative to a `<Name>.framework/Headers/`
+  *bundle*, not to the directory the modulemap lives in. Our headers are a plain `-I` directory, so it
+  fails with `header 'pv_ffiFFI.h' not found` with the file sitting right next to the modulemap. The
+  flag and `xcodebuild -create-xcframework` share a name by coincidence, not by requirement.
+- `PasskeyVaultTests` needs `ENABLE_USER_SCRIPT_SANDBOXING = NO` (the Run Script writes outside
+  DerivedData and shells out to cargo/xcodebuild) and `SWIFT_ENABLE_EXPLICIT_MODULES = NO` (Xcode 26's
+  default explicit-module Swift driver never discovers a hand-linked XCFramework's C module through a
+  header search path). Both found by real build-for-testing failures. Keep them confined to the test
+  target when Phase 36 adds an extension target.
+- **`ffi06-probe` is `default = true`, and that is accepted, time-bound debt.**
+  `#[cfg(debug_assertions)]` was correctly rejected as the alternative — `[profile.release]` sets
+  `debug-assertions = false` and `build-ios.sh` builds `--release`, so the probe would have been
+  compiled out of the very XCFramework its own test links against. Default-on was accepted only
+  because Phase 35 builds exactly one consumer (`PasskeyVaultTests`). **The moment a second build path
+  exists — the app target, likely Phase 38 — flip it to `default = []` and add `--features
+  ffi06-probe` to the test-only `cargo rustc` lines in `scripts/build-ios.sh`.**
 
 ---
 
@@ -233,6 +320,22 @@ mentions. Apple's own doc URLs hint at it with the `-swift.struct` suffix.
 ObjC header.** Same shape as landmine D-21 (`passkey_types::Bytes` serializing as a JSON byte
 array, see the comment in `crates/pv-provider/Cargo.toml`): a type that looks right in one
 representation and is wrong in the one that actually ships.
+
+> **AMENDMENT (2026-08-11, Phase 36 research) — the rule above is recorded TOO BROADLY and must not
+> be applied to AuthenticationServices wholesale.**
+>
+> The **password-AutoFill** headers contain **zero** `NS_REFINED_FOR_SWIFT` and **are** ground truth.
+> Going the other way is just as wrong as the original trap: the `.swiftinterface` is a *partial
+> overlay*, and it contains **no `ASCredentialProviderViewController` at all** — so a check that
+> consults only the `.swiftinterface` would conclude the base class of the entire extension does not
+> exist.
+>
+> L-1 holds for the **passkey/PRF types it was actually found on**, not for the framework as a whole.
+> The correct rule is the weaker, true one: *for any given AuthenticationServices type, check both
+> representations and reconcile them* — neither is ground truth on its own. A third instance of the
+> same shape turned up in Phase 37 research (`kSecAccessControlPrivateKeyUsage`'s header prose "(i.e.
+> sign operation)" is not the capability surface), so the shape recurs; the over-broad rule is what
+> does not survive.
 
 ### L-2 — `lipo -info` cannot tell an iOS device slice from a simulator slice
 
@@ -319,6 +422,96 @@ a real run.
 If it does not fit, lowering KDF cost *for the extension path* is a **security decision needing its
 own record**, never a quiet tuning commit.
 
+**Update (2026-08-11, Phase 36 research) — now measured once, and the ceiling got *weaker*, not
+stronger.** A standalone binary using the exact `argon2 = "=0.5.3"` pin from `crates/pv-core`, built
+for `aarch64-apple-ios-sim` and run **inside the iOS 26.5 simulator**, showed the production profile
+at **~64.06 MB `phys_footprint`, transient and fully released**. That materially de-risks this
+landmine, with three caveats that must survive: (a) the ~120 MB figure is *weaker* than
+"single-vendor sourced" — it traces to a support-KB article with no attribution and no method; (b) the
+jetsam documentation speaks of a *resident* limit while `os/proc.h` speaks of a *dirty memory* limit
+and `phys_footprint` — **different metrics** that merely coincide for a 64 MiB arena written
+end-to-end; (c) the measurement was taken in a **host-app** process, not inside a running
+credential-provider extension, so it does **not** satisfy Phase 36's SC3. And the simulator has no
+jetsam machinery at all, so it can produce a *number* but never a *verdict* — no "fits in budget"
+phrasing is provable there.
+
+### L-7 — Xcode 26.6's extension template omits the key that makes the extension appear at all
+
+The AutoFill Credential Provider template emits **no `ASCredentialProviderExtensionCapabilities`**
+dictionary in the extension's `Info.plist`, and the `ProvidesPasswords` key that belongs in it is
+**live in the OS binary but documented nowhere in the SDK**. Consequence, and it is nasty because
+every step looks correct: a template-built extension can silently fail to appear in
+Settings → Passwords → Password Options, get recorded as an **entitlement FAIL**, and escalate the
+$99 Apple Developer Program decision (see §4 q.3) over a **missing plist key**. Add the capabilities
+dictionary before concluding anything about entitlements.
+
+### L-8 — `$(AppIdentifierPrefix)` expands to the literal `FAKETEAMID.` on this setup
+
+With Team = None (IOS-04), `$(AppIdentifierPrefix)` resolves to the literal string `FAKETEAMID.`. So
+any **hardcoded** App Group identifier works on the simulator and breaks on hardware, at the moment
+the team prefix becomes real. Always compose App Group / Keychain access group strings from the
+build-setting variable, never from a string typed out after reading the simulator's value. Directly
+relevant to L-5, which is the same subject from the other direction.
+
+### L-9 — "a check that cannot fail" produced FOUR more instances in a single phase
+
+This is now the repo's most reliably recurring defect, and Phase 35 is the clearest data point yet:
+**four fresh instances in one phase**, three caught by plan-check before they were written and one
+caught only because a mutation was actually *performed*.
+
+- The one that reached committed code: `scripts/audit-ffi-opaque-handles.sh`'s first draft isolated a
+  Swift class body with a `sed` line range (`/^open class X:/,/^}/p`). `uniffi-bindgen-swift` emits a
+  single-expression function's own closing brace **unindented at column 0**, identical in shape to the
+  class's true closing brace, so the range truncated early and reported **PASS with an injected
+  raw-byte accessor present**. It was caught *only* because the plan mandated actually injecting the
+  accessor. Reading the script would not have found it. Rewritten to awk brace-depth counting, then
+  hardened again in code review (comment-aware counting, and a non-matching class declaration is now a
+  hard `ERROR`, not a `continue`).
+- The generalisation to carry forward: **a gate whose falsification proof only covers the shape it
+  already handles is not proven falsifiable.** Falsify with the input you did *not* design for.
+
+**The `compiler_builtins` corollary — a gate can validate the wrong object forever.** The FFI-04
+`vtool` slice gate originally picked its object with `find … -name '*.o' -print -quit`, i.e. whichever
+one the filesystem yielded first. Measured on the current artifact: the device slice's archive holds
+**667** objects, of which **7** are `pv_ffi*.o`, and that `find` picks a `compiler_builtins` object.
+And `compiler_builtins` ships **prebuilt inside `rust-std`**, so even after the deployment floor was
+raised it *still* reports:
+
+```
+compiler_builtins-….rcgu.o : LC_VERSION_MIN_IPHONEOS  version 10.0
+pv_ffi-….rcgu.o            : LC_BUILD_VERSION  platform IOS  minos 18.0
+```
+
+A gate sampling "any object" would therefore have gone on validating a 10.0 object indefinitely, and
+would have *failed* the moment someone did the right thing. Fixed to select `pv_ffi*.o` and to error
+out if a slice contains none of this crate's code.
+
+**And cargo does not fingerprint `IPHONEOS_DEPLOYMENT_TARGET`.** `rustc` reads it from the environment
+at compile time, but cargo does not track it, so exporting it changes **nothing** on warm artifacts —
+observed exactly that: `Finished release profile in 0.34s` and the object still reported 10.0.
+Deleting `libpv_ffi.a` is not enough either, because the archive bundles objects from every dependency
+rlib and those carry the old floor too; the whole triple has to go.
+`scripts/build-ios.sh` now stamps the floor per triple and runs `cargo clean --release --target …`
+when it changes. A build script that needs a manual `cargo clean` to be correct is a trap.
+
+### L-10 — a cold DerivedData mismatches the generated bindings against the linked library
+
+Observed 2026-08-11 while re-proving the phase's guards in a fresh git worktree. On the **first**
+`xcodebuild test` against a brand-new DerivedData, all five FFI tests failed in `0.000 seconds` with:
+
+```
+Crash: PasskeyVault at uniffiEnsurePvFfiInitialized()
+```
+
+That is UniFFI's own API-checksum guard `fatalError`-ing because the compiled `pv_ffi.swift` and the
+linked `libpv_ffi.a` did not come from the same build. Cause: the "Build pv-ffi XCFramework" Run
+Script phase declares **no inputs and no outputs** (Xcode says so itself: *"will be run during every
+build because it does not specify any outputs"*), so Xcode cannot order it against the Swift compile
+and link. A second, identical invocation passes 6/6 — which is exactly what makes this dangerous: it
+looks like a flake, and on CI or a fresh clone it is the *first* run that counts. Declaring
+`crates/pv-ffi/src/**` as inputs and `build/swift-bindings/pv_ffi.swift` + `build/PvFfi.xcframework`
+as outputs is the real fix and is owed before any CI job runs this.
+
 ## 4. Open questions — honestly open
 
 1. ~~**IOS-06: UniFFI vs hand-written C ABI.**~~ **RESOLVED — see §1.** Decided: UniFFI, evaluated
@@ -333,10 +526,19 @@ own record**, never a quiet tuning commit.
    Apple Developer Program. Not before.
 4. **App Groups** are unavailable on a free Apple ID, which affects how the extension and the host
    app would share vault state. Unexplored.
-5. **Byte-shape at the FFI boundary.** Landmine D-21 lives at serialization boundaries and the FFI
-   is a brand-new one. `crates/pv-provider/tests/response_shape.rs` (requirement QA-04) decodes raw
-   wire bytes rather than trusting the Rust type; the iOS boundary needs the equivalent, asserting
-   positively on the Swift receiving side.
+5. ~~**Byte-shape at the FFI boundary.**~~ **CLOSED for the FFI boundary itself** —
+   `ios/PasskeyVault/PasskeyVaultTests/FfiRoundTripTests.swift` asserts positively on the Swift
+   receiving side against author-chosen literals, including embedded `0x00` at a mid-buffer offset in
+   both a key and a nonce, and it discriminates `.Decrypt` from `.InvalidInput` so a silent
+   truncation cannot hide behind "some error was thrown". Proven able to fail: a NUL-truncating
+   mutation of `export_user_key_for_session` turns it red, and an identity `wrap`/`unwrap` pair turns
+   its WR-12 assertions red while every pre-existing assertion in the same test stays green.
+   **STILL OPEN, and it is the bigger half:** the **wire** encoding between clients.
+   `pv_core::keys::WrappedKey` has no serde attributes — `serde_json` emits `Vec<u8>` as a JSON
+   *number array* while Swift's `JSONEncoder` defaults `Data` to *base64*, and `pv-server` stores the
+   field as opaque `TEXT` without parsing it. Nothing in either client can catch that; only a
+   **two-direction cross-client test** can. The first phase that writes a real row from iOS owns it,
+   not "Phase 39/41".
 
 ---
 
@@ -368,9 +570,27 @@ answer.**
 
 ## 5. What is explicitly *not* done
 
-- No FFI crate. Root `Cargo.toml` `members` is untouched, so the coordination point with `main`
-  (handoff §7) has not been triggered.
-- No Swift code of ours — `ContentView.swift` etc. are Xcode's untouched template.
-- Nothing built for a physical device; nothing signed; no entitlements requested.
-- No test yet exercises a single line of `pv-core` *from Swift*. Until that exists, "the crypto core
-  runs on iOS" means "it compiles for iOS" — which is real, and is less.
+Rewritten after Phase 35 — the four bullets that used to live here ("no FFI crate", "no Swift code of
+ours", "no test exercises `pv-core` from Swift", "`members` untouched") are **no longer true** and are
+recorded as closed rather than deleted, so the change is visible:
+
+- ~~No FFI crate; root `Cargo.toml` `members` untouched.~~ **Done.** `crates/pv-ffi` exists and is a
+  workspace member — the coordination point with `main` (handoff §7) **has** now been triggered.
+- ~~No Swift code of ours.~~ **Partly done.** `PasskeyVaultTests` is ours; the App target
+  (`ContentView.swift` etc.) is still Xcode's untouched template.
+- ~~No test exercises `pv-core` from Swift.~~ **Done.** Six Swift tests call real `pv-core` crypto
+  across the UniFFI boundary. "The crypto core runs on iOS" is no longer shorthand for "it compiles".
+
+Still genuinely not done:
+
+- **Nothing built for a physical device; nothing signed; no entitlements requested.** The device
+  slice is compiled and its Mach-O platform is verified by `vtool`, but it has never been *run*. Every
+  runtime claim in this file is a **simulator** claim.
+- **No credential-provider extension target**, so nothing here proves PRF (or password AutoFill) works
+  at runtime through a real provider — §4 q.2 is still the question the product rests on.
+- **No concurrency proof on the handles.** The generated Swift declares
+  `open class FfiUserKey: …, @unchecked Sendable` — that is the compiler being *told* the invariant
+  holds, not shown. Using one handle from several threads under TSan/ASan is untested; UniFFI's
+  `Arc`-backed model makes it plausible, and plausible is not verified.
+- **No cross-client wire-format test** (§4 q.5) — the largest remaining correctness risk on this
+  branch.
