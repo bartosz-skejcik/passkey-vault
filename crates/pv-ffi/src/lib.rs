@@ -98,6 +98,15 @@ mod heap_probe;
 // FFI-06/CP-3 synthetic panic probe — see crates/pv-ffi/src/panic_probe.rs's
 // own module doc for the full "synthetic, never called by production code"
 // disclosure. Feature-gated (`ffi06-probe`, default-on).
+//
+// The gate belongs on the MODULE DECLARATION, not only on the `impl` inside
+// it (WR-04, review Fazy 35): with only the inner `impl` gated, the module's
+// `use` and its `PANIC_SENTINEL` const still compiled under
+// `--no-default-features`, producing two warnings. That is precisely the
+// configuration this crate's own Cargo.toml DEBT note instructs a later
+// phase to adopt, so the noise would have landed on whoever does the flip,
+// at the moment they are least able to tell it apart from a real problem.
+#[cfg(feature = "ffi06-probe")]
 mod panic_probe;
 
 /// Nieprzezroczysty handle User Key — korzeń dostępu do vaulta. Jedyny

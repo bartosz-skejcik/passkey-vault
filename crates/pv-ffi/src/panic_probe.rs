@@ -47,7 +47,11 @@
 //! Feature-gated behind `ffi06-probe` (default-on — see
 //! `crates/pv-ffi/Cargo.toml`'s `[features]` table comment for the
 //! `#[cfg(debug_assertions)]`-would-break-`--release` rationale, and the
-//! Phase 38 debt this default-on posture leaves behind).
+//! Phase 38 debt this default-on posture leaves behind). The gate lives on
+//! the `mod panic_probe;` DECLARATION in `lib.rs`, not on the items in here
+//! (WR-04): gating only the inner `impl` left this module's `use` and
+//! `PANIC_SENTINEL` compiling under `--no-default-features`, which made the
+//! very configuration the DEBT note mandates emit two warnings.
 //!
 //! P2: lives ONLY in `pv-ffi`. `pv-core`/`pv-provider` are never touched by
 //! this module.
@@ -60,7 +64,6 @@ use crate::{FfiError, FfiUserKey};
 /// unconditional trap.
 const PANIC_SENTINEL: &[u8] = b"FFI06-PANIC";
 
-#[cfg(feature = "ffi06-probe")]
 #[uniffi::export]
 impl FfiUserKey {
     /// Panics ONLY when `sentinel` exactly equals `PANIC_SENTINEL` —
@@ -95,7 +98,7 @@ impl FfiUserKey {
     }
 }
 
-#[cfg(all(test, feature = "ffi06-probe"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
