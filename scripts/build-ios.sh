@@ -57,6 +57,31 @@ DEVICE_LIB="target/aarch64-apple-ios/release/libpv_ffi.a"
 # substring. `slice_name` is the XCFramework subdirectory name
 # (ios-arm64 / ios-arm64-simulator), matching 35-RESEARCH.md's own verified
 # recipe shape.
+#
+# WR-03 (review Fazy 35): the object MUST be one of pv-ffi's own. The
+# previous `find -name '*.o' -print -quit` returned whichever object the
+# filesystem yielded first -- measured on the committed artifact, the device
+# archive holds 668 objects of which only 7 are pv_ffi*.o, and the pick was
+# `compiler_builtins-....cgu.206.rcgu.o`. That proved "SOME object in this
+# archive is tagged for platform X", not "pv-ffi's own compiled code is in
+# the right slice", and which object it picked was non-deterministic across
+# rebuilds and filesystems. Selecting pv_ffi*.o also upgrades the gate for
+# free: it now fails if a slice ships with none of this crate's code in it.
+extract_pv_ffi_object() {
+  local scratch="$1" slice_lib="$2"
+  # `-print -quit` gets the first match without ever opening a pipe --
+  # `find ... | head -1` SIGPIPEs `find` under `set -euo pipefail` the
+  # moment a slice's .a contains more than one .o (L-3).
+  local obj
+  obj=$(find "$scratch" -name 'pv_ffi*.o' -print -quit)
+  if [ -z "$obj" ]; then
+    echo "ERROR: no pv_ffi*.o extracted from $slice_lib -- the slice does not contain this crate's own code, so nothing about pv-ffi's platform tagging can be concluded from it" >&2
+    echo "       (objects present: $(find "$scratch" -name '*.o' | wc -l | tr -d ' '))" >&2
+    return 1
+  fi
+  printf '%s\n' "$obj"
+}
+
 extract_and_check() {
   local slice_name="$1" expect="$2"
   local slice_lib="$XCFRAMEWORK/$slice_name/libpv_ffi.a"
@@ -66,25 +91,24 @@ extract_and_check() {
   fi
   local scratch
   scratch=$(mktemp -d)
+  # RETURN-scoped cleanup so the scratch dir does not leak on any of the
+  # failure paths below (they all `exit`, but the `ar x` failure path exits
+  # via `set -e` before reaching any explicit rm).
+  trap 'rm -rf "$scratch"' RETURN
   ( cd "$scratch" && ar x "$REPO_ROOT/$slice_lib" )
-  # `-print -quit` gets the first match without ever opening a pipe --
-  # `find ... | head -1` SIGPIPEs `find` under `set -euo pipefail` the
-  # moment a slice's .a contains more than one .o (L-3).
   local obj
-  obj=$(find "$scratch" -name '*.o' -print -quit)
-  if [ -z "$obj" ]; then
-    echo "ERROR: no .o file extracted from $slice_lib" >&2
-    rm -rf "$scratch"
+  if ! obj=$(extract_pv_ffi_object "$scratch" "$slice_lib"); then
     exit 1
   fi
-  if ! vtool -show-build "$obj" | grep -qF "$expect"; then
-    echo "ERROR: vtool gate FAILED for $slice_name -- expected '$expect' not found in 'vtool -show-build' output" >&2
+  # `-E` not `-F`: the device slice's expectation is `platform IOS`, which is
+  # a PREFIX of the simulator's `platform IOSSIMULATOR` -- a substring match
+  # would let a simulator-tagged object satisfy the device check (WR-02).
+  if ! vtool -show-build "$obj" | grep -qE "$expect"; then
+    echo "ERROR: vtool gate FAILED for $slice_name -- expected /$expect/ not found in 'vtool -show-build' output" >&2
     vtool -show-build "$obj" >&2 || true
-    rm -rf "$scratch"
     exit 1
   fi
-  echo "==> OK: $slice_name contains the expected load command ('$expect')"
-  rm -rf "$scratch"
+  echo "==> OK: $slice_name ($(basename "$obj")) matches the expected load command (/$expect/)"
 }
 
 # --- --verify-falsifiable mode ------------------------------------------
@@ -100,12 +124,10 @@ run_verify_falsifiable() {
   fi
   local scratch
   scratch=$(mktemp -d)
+  trap 'rm -rf "$scratch"' RETURN
   ( cd "$scratch" && ar x "$REPO_ROOT/$slice_lib" )
   local obj
-  obj=$(find "$scratch" -name '*.o' -print -quit)
-  if [ -z "$obj" ]; then
-    echo "ERROR: no .o file extracted from $slice_lib" >&2
-    rm -rf "$scratch"
+  if ! obj=$(extract_pv_ffi_object "$scratch" "$slice_lib"); then
     exit 1
   fi
 
@@ -138,7 +160,25 @@ run_verify_falsifiable() {
   fi
 
   echo "==> PASS: the corrupted object's 'vtool -show-build' output does NOT contain 'platform IOSSIMULATOR' -- the gate genuinely can fail (QA-02/QA-04 falsification proof)"
-  rm -rf "$scratch"
+
+  # --- Proof 2 (WR-03): the gate fails when the slice contains none of
+  # pv-ffi's own code. Cannot be demonstrated by mutating
+  # target/**/libpv_ffi.a and re-running the whole script -- cargo detects
+  # the tampered output and rebuilds it -- so it is proven here, against the
+  # REAL archive, on a scratch copy with pv_ffi*.o removed.
+  echo "==> Proof 2: extract_pv_ffi_object must FAIL on a slice with no pv_ffi*.o"
+  local noffi="$scratch/no-pv-ffi"
+  mkdir -p "$noffi"
+  ( cd "$noffi" && ar x "$REPO_ROOT/$slice_lib" && find . -name 'pv_ffi*.o' -delete )
+  local remaining
+  remaining=$(find "$noffi" -name '*.o' | wc -l | tr -d ' ')
+  echo "    scratch copy retains $remaining non-pv_ffi objects (the shape the old '-name *.o -print -quit' happily accepted)"
+  if extract_pv_ffi_object "$noffi" "$slice_lib (scratch copy, pv_ffi objects removed)" >/dev/null 2>"$scratch/noffi.err"; then
+    echo "ERROR: falsification FAILED -- extract_pv_ffi_object returned an object from a slice containing none of pv-ffi's code; the WR-03 guard cannot fail" >&2
+    exit 1
+  fi
+  cat "$scratch/noffi.err"
+  echo "==> PASS: the gate refuses a slice with no pv-ffi code instead of validating an unrelated object (WR-03 falsification proof)"
 }
 
 if [ "${1:-}" = "--verify-falsifiable" ]; then
