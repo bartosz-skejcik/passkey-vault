@@ -228,5 +228,69 @@ And two CI commands are red at HEAD for the same structural reason the phase alr
 
 ---
 
+## Fix Disposition (post-verification)
+
+_Added: 2026-08-11T10:30:00Z by Claude (gsd-code-fixer), resolving the three blocking defects above. This section is a RESOLUTION record layered beneath the verifier's own findings, which are left unedited above. Re-verification against this HEAD is still required to flip this report's own frontmatter `status`; that is not this section's job._
+
+### Product decision (SC2, human_verification item)
+
+Bartek's decision, recorded here for the record: **`hidden_password` + family-wide IS a supported combination.** The server was fixed to allow it; `ShareDialog` was NOT changed to disable or guard against it — nothing in this defect required a UI change, since the whole point of the fix is that the combination now works.
+
+### B1 — `hidden_password` + family-wide grants nobody (SC2, gap 1)
+
+**Status: FIXED.** Commit `a8b8f6f`.
+
+Root cause confirmed exactly as the verifier's probe described: `may_grant_access_level` (`crates/pv-server/src/routes/membership.rs`) had no `(AccessLevel::Edit, AccessLevel::HiddenPassword)` arm. `collections::create`'s hard-coding of the creator's own `collection_keys` row to `'edit'` was investigated as the instructed "other half" of the mechanism and found to be correct, deliberate, pre-existing behavior (byte-identical to the already-proven `read` case fixed by `d07c2a7`, which needed no change to `create` either) — it was left unchanged, with a clarifying comment added explaining why changing it would be wrong (it would make the creator's own grant on their own creation narrower than `edit`, which nothing else in the codebase requires).
+
+The fix: `may_grant_access_level` now enumerates all nine `(caller_level, requested_level)` pairs explicitly (no wildcard arm), with a doc-comment table, adding the missing `(Edit, HiddenPassword) => true` case alongside the pre-existing `(Edit, Read) => true` "narrow" case. `HiddenPassword` and `Read` remain deliberately non-interchangeable in both directions (neither `(Read, HiddenPassword)` nor `(HiddenPassword, Read)` is permitted) — per `AccessLevel`'s own non-`Ord` discipline, `hidden_password` is a different axis, not "more" or "less" than `read`. No escalation path was introduced: `HiddenPassword -> Edit` and `Read -> Edit`/`Read -> HiddenPassword` remain `false`.
+
+**Required proof, delivered:** `b1_hidden_password_declared_family_wide_share_fans_out_invites_and_reseals` (`crates/pv-server/tests/family_wide_sharing.rs`), modeled directly on the existing `cr01_...` test for the `read` case. Exercises all three legs in probe order — PROBE 0 fan-out to a current member, PROBE 1 a later invite folding the collection in at its declared level, PROBE 2 the creator's own lazy reseal to a newcomer — plus a positive-then-negative escalation check (a `hidden_password` holder still cannot grant `edit`). **Confirmed failing against pre-fix HEAD**: run standalone (`cargo test -p pv-server --test family_wide_sharing b1_hidden_password`) before the `may_grant_access_level` fix was applied, it failed at the first assertion (PROBE 0) with `left: 403, right: 201` — matching the verifier's live probe transcript exactly. After the fix, all 7 tests in the file pass, including this one and the pre-existing `cr01_...` regression test.
+
+**Remaining, NOT addressed by this fix pass (out of the B1/B2/B3 scope given):** SC2's second gap — the family-wide **ITEM** variant has no recipient-side proof of any kind (no e2e test opens `ShareDialog` on an item scope with the family-wide row checked; no real-WASM test). This was not part of the B1/B2/B3 remediation instructions and remains open.
+
+### B2 — `cargo test --workspace` red on an order-dependent JSON-key assertion
+
+**Status: FIXED.** Commit `2036554`.
+
+`family_wide_reseal_add_member_body_is_shape_identical_to_an_ordinary_share` (`crates/pv-server/tests/family_wide_sharing.rs`) compared a captured request body's `Map` key iteration order against a hardcoded, alphabetically-sorted `vec!["access_level", "recipient_user_id", "sealed_key"]` literal. Under `-p pv-server` alone, serde_json's `Map` is a `BTreeMap` (sorted, so this happened to hold); under `cargo test --workspace`, `webauthn-authenticator-rs`'s dev-dependency unifies the `preserve_order` feature on for the whole workspace, making `Map` insertion-ordered and breaking the raw-order comparison deterministically.
+
+Fix: both key vectors are now sorted before comparison, so the test asserts sorted key SETS — the property it exists to prove (shape-identical to an ordinary share; exactly `AddMemberRequest`'s three fields) is preserved, independent of which `Map` implementation is linked. No test weakened, assertion strengthened to be feature-configuration-independent.
+
+**Verified**: `cargo test --workspace --no-fail-fast` — the literal CI command — passes cleanly (all crates, 0 failed). Additionally re-ran `-p pv-server --test family_wide_sharing` specifically under a build graph that pulled in `webauthn-authenticator-rs` (confirmed via the compile log), reproducing the exact feature-unification condition that caused the original failure; the test still passes.
+
+### B3 — `npm run compile` red with 9 TypeScript errors
+
+**Status: FIXED.** Commit `1339c5a`.
+
+`ee928a3` added `familyWideAccessLevel: string | null` as a **required** member of the `Collection` interface but never updated `CollectionPicker.test.tsx`'s 8 inline fixture literals or `SharingOverviewPanel.test.tsx`'s `makeCollection` helper (whose `Partial<Collection>` spread made the field's merged type `string | null | undefined`, not assignable to the required `string | null`). `npx vitest run` stayed green throughout because it does not typecheck.
+
+Fix: added `familyWideAccessLevel: null` to all 8 `CollectionPicker.test.tsx` fixture literals, and to `SharingOverviewPanel.test.tsx`'s `makeCollection` base object (ahead of its `...overrides` spread, so a caller can still override it).
+
+**Verified**: `npm run compile` (`tsc --noEmit`) exits 0 with zero errors.
+
+### `.planning/WINDOWS.md` JSON mirror
+
+**Status: FIXED.** Commit `6f5e987`.
+
+The JSON mirror block had drifted from the markdown table (flagged as a Warning-severity anti-pattern by the verifier, not a blocker): #15 and #16 still read `"status": "open"` in JSON despite the table showing `fixed`, and #17 was absent from the JSON array entirely. Brought the mirror into exact agreement with the markdown table and frontmatter counts — verified programmatically (parsed the JSON block, counted `open`/`fixed`, confirmed `5`/`12` matching `open_count: 5` / `fixed_count: 12` in this file's own frontmatter).
+
+### Full CI-width verification run (post-fix, all four commits applied)
+
+All five commands run at their literal CI width, not the narrower forms the phase burned on before:
+
+| Command | Result |
+|---|---|
+| `cargo test --workspace` | **PASS** — every crate, 0 failed (includes the new `b1_hidden_password_...` test and the fixed `family_wide_reseal_...` shape test) |
+| `cd web && npm run compile` | **PASS** — 0 errors (was 9) |
+| `cd web && npm test` (`vitest run`) | **PASS** — 964/964 (unchanged baseline) |
+| `cd web && npm run build` (`next build`) | **PASS** |
+| `cd web && npx playwright test e2e/family-wide-sharing.spec.ts --retries=0` | **PASS** — 9/9, server and web rebuilt from this HEAD immediately before the run (port 8620 confirmed free first; suite used its own throwaway `PV_E2E_DB_DIR`, `data/pv.db` untouched) |
+
+### Net effect on this report's Score
+
+The verifier's own re-run is the authority on whether this flips the frontmatter `status`/`score` — not asserted here. What changed: SC2's `hidden_password` blocker (gap 1) is fixed and proof-carrying; both red CI commands (`cargo test --workspace`, `npm run compile`) are green; the WINDOWS.md mirror warning is resolved. What did NOT change: SC2's family-wide item-variant recipient-side proof gap (gap 2) remains open — it was not in this fix pass's scope.
+
+---
+
 _Verified: 2026-08-11T09:08:26Z_
 _Verifier: Claude (gsd-verifier)_
