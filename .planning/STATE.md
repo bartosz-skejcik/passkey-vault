@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Sharing That Makes Sense
-current_phase: 30
-current_phase_name: The Living Group — Family-Wide Sharing
+current_phase: 31
+current_phase_name: The Share Dialog — Per-Person Access, Existing Destinations
 status: phase_complete
-stopped_at: Phase 29 verified passed (5/5) — next is Phase 30
-last_updated: "2026-08-10T00:00:00.000Z"
-last_activity: 2026-08-10
-last_activity_desc: Phase 29 complete — /settings route, IA, DEBT-02 disclosure; verified 5/5 after one gap-closure cycle
+stopped_at: Phase 30 code-complete, all 3 verification blockers closed — needs a RE-VERIFY before 31
+last_updated: "2026-08-11T11:30:00.000Z"
+last_activity: 2026-08-11
+last_activity_desc: Phase 30 (17 plans) done; verification found 3 blockers, all closed; cargo --workspace + npm compile green
 progress:
   total_phases: 6
-  completed_phases: 1
-  total_plans: 6
-  completed_plans: 6
-  percent: 17
+  completed_phases: 2
+  total_plans: 23
+  completed_plans: 23
+  percent: 33
 ---
 
 # Project State
@@ -24,14 +24,48 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-31)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** v0.5 Sharing That Makes Sense — Phase 30 (The Living Group — Family-Wide Sharing). Next: `/gsd-discuss-phase 30`.
+**Current focus:** v0.5 — Phase 30 code-complete; **re-verify 30 before starting 31**.
 
 ## Current Position
 
-Phase: 30 (The Living Group — Family-Wide Sharing) — NOT STARTED
-Plan: none yet
-Status: Phase 29 complete and verified 5/5; 28/28 requirements mapped across phases 29–34, no orphans
-Last activity: 2026-08-10 — Phase 29 verified passed after one gap-closure cycle
+Phase: 30 (The Living Group — Family-Wide Sharing) — CODE COMPLETE, RE-VERIFY PENDING
+Status: 17/17 plans executed. Verification ran at `6b51d57` and returned `gaps_found` (5/6) with three
+blockers. **All three are now closed** (`a8b8f6f` B1, `2036554` B2, `1339c5a` B3), but
+`30-VERIFICATION.md` still records the pre-fix verdict.
+Last activity: 2026-08-11 — blockers closed; `cargo test --workspace` 0 failed, `npm run compile` clean.
+
+### ▶ How to resume in a fresh session
+
+1. **Re-verify phase 30 first** — its VERIFICATION.md is stale. Do **not** run `/gsd-autonomous --from 30`:
+   all 17 plans already exist, so plan-phase would stop to ask whether to replan. Run the verifier
+   directly against the six SCs in ROADMAP.md and update `30-VERIFICATION.md`.
+2. Then `/gsd-autonomous --from 31` for the rest (31–34 + milestone lifecycle).
+
+### What the re-verify must re-check
+
+- **B1** — `hidden_password` + family-wide was fully broken (403 on fan-out, on every later invite the
+  creator generates, and on reseal). **Bartek decided it IS a supported combination.** Fixed by adding
+  the missing `(Edit, HiddenPassword)` arm to `may_grant_access_level` and removing
+  `collections::create`'s hard-coded `'edit'`. This was `d07c2a7`'s bug reintroduced one access level
+  over, *inside the commit that fixed the first instance* — so re-check the whole
+  `(caller, requested)` matrix, not just that one arm.
+- **B2** — `cargo test --workspace` was red on an order-dependent JSON assertion. Now 0 failed.
+- **B3** — `npm run compile` was red with 9 TS errors. Now clean.
+
+**B2 and B3 shared one root cause worth not repeating: the acceptance command was narrower than the CI
+command, so it could not fail** (`-p pv-server` instead of `--workspace`; `vitest run`, which does not
+typecheck, instead of `npm run compile`). Verify at CI width.
+
+Also: the verifier found phase 30's own green e2e result had been produced against a **stale release
+binary** predating the review fixes — rebuild `pv-server` before trusting any live run.
+
+### Parallel work in progress — do not disturb
+
+A second Claude Code session is working in a separate git worktree on branch `ios/spike` (sibling
+directory to this repo). It has local `.planning/` edits that are **deliberately never committed**. Do
+not touch that worktree and do not merge `ios/spike`. Its brief is `docs/IOS-HANDOFF.md`. Coordinate
+before editing root `Cargo.toml` (workspace `members`) or `crates/pv-core/` — the only two real
+conflict points. iOS is currently **v2 scope** per PROJECT.md.
 
 Previous milestone: Phase 28 closed v0.4's three audit blockers; v0.4 shipped/archived/tagged 2026-08-09.
 
