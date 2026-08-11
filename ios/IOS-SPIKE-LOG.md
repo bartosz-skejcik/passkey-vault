@@ -18,9 +18,23 @@ file is the bug.
 | Platform viability (PRF on iOS) | **Verified present in SDK surface.** Runtime behaviour unproven. |
 | `pv-core` / `pv-provider` native iOS build | **Verified** — real artifacts, correct Mach-O platform |
 | Xcode project | Skeleton only (App + Unit + UI test targets, no code of ours) |
-| FFI boundary | **Not started.** Blocked on decision IOS-06. |
+| FFI boundary | **Not started.** IOS-06 recommended (UniFFI), not yet decided — see §1. |
 | Credential provider extension | Not attempted |
 | Server sync / UI | Not attempted |
+
+**Milestone.** The spike graduated into milestone **v1.0 iOS — Vault w kieszeni** on 2026-08-11.
+Scope agreed with Bartek: full app UI + **password** AutoFill provider + biometric (Face ID / Touch ID)
+unlock + family management. Passkey provider and PRF unlock are **deferred and conditional** — they
+ship only if they turn out cheap, and "not done, deferred, here is why" is an acceptable outcome.
+
+iOS was explicitly lifted out of `PROJECT.md`'s *Out of Scope* (where it sat as "v2"), because the two
+assumptions that put it there — that the crypto core might not build for Apple targets, and that PRF
+might be unavailable — both turned out false, earlier than expected. **Android and Windows stay in v2.**
+
+The milestone's planning artifacts (`REQUIREMENTS.md`, `ROADMAP.md`, `STATE.md`, and four research
+files under `.planning/research/ios/`) live in `.planning/`, which **is never committed from this
+worktree** (handoff §7 — `main` rewrites it constantly while running v0.5 in parallel). That is exactly
+why the durable findings are duplicated here instead of only there.
 
 ---
 
@@ -39,17 +53,41 @@ spec lives under `docs/superpowers/` and this file is the one the handoff points
 | IOS-04 | Simulator-only, Team = None, no signing | Free Apple ID, not the $99 program. Simulator builds need no signing | Paying before the concept is proven |
 | IOS-05 | Bundle id `cloud.blonie.PasskeyVault` | Matches the hosted instance domain `vault.blonie.cloud` | Reverse-DNS on a personal domain |
 
-### IOS-06 — FFI mechanism: **OPEN**
+### IOS-06 — FFI mechanism: **RECOMMENDED, NOT YET DECIDED**
 
-UniFFI vs hand-written C ABI. **No binding code may be written before this is decided and recorded
-here** (handoff §5 requires the decision record to land before the code that depends on it, and
-that ordering is checked by commit order).
+UniFFI vs hand-written C ABI. Research (2026-08-11) recommends **UniFFI, crate `uniffi = "=0.32.0"`,
+proc-macro mode (no `.udl`)**, rejecting the hand-written C ABI.
+
+Why UniFFI wins on merit:
+
+- `#[derive(uniffi::Object)]` on an `Arc<T>`-backed type gives exactly the opaque-handle guarantee
+  `pv-wasm` already establishes: **no byte accessor is generated unless the Rust wrapper explicitly
+  exports one**. The constraint below is enforced by the generator, not by reviewer vigilance.
+- Production precedent in the closest possible neighbour: Element X iOS ships `matrix-sdk-ffi` — a
+  real, E2E-encrypted app with a Rust core driving Swift. Also Mozilla's own application-services.
+- **The decisive argument for *this* setup:** the milestone will be executed by an autonomous run with
+  no human in the loop. Hand-written raw-pointer memory management under those conditions is a far
+  larger failure surface than driving a well-tested generator. It also breaks from the
+  `wasm-bindgen`-generated pattern `pv-wasm` already set.
+
+**Why this is still marked NOT DECIDED.** UniFFI has *not* been built against this repo's actual
+`pv-core` / `pv-provider` types. The recommendation is evidence-based but the evidence is from other
+codebases. Recording it as decided now would be precisely the failure this project has paid for six
+times — true in the artifact, unverified in reality. The decision record lands in the phase that
+*proves* it compiles and round-trips real bytes here, per handoff §5's commit-order rule.
 
 Non-negotiable constraint on whichever wins: mirror `crates/pv-wasm`'s **opaque-handle** design.
-Raw key bytes must never cross the boundary except through explicitly named, auditable functions —
-`pv-wasm` allows exactly two (`export_user_key_for_session` / `import_user_key_from_session`) and
-that is the shape to copy. An FFI that returns key bytes "for convenience" is a design error, not a
-tradeoff.
+Raw key bytes must never cross the boundary except through explicitly named, auditable functions.
+An FFI that returns key bytes "for convenience" is a design error, not a tradeoff.
+
+**Amendment from architecture research — this changes the security model, not just the plumbing.**
+In `pv-wasm`, `export_user_key_for_session` / `import_user_key_from_session` exist *only* for the MV3
+idle-kill case and are documented as a sanctioned one-off exception. On iOS the host app and the
+AutoFill extension are **two independently-scheduled OS processes with no shared address space** —
+App Groups and Keychain access groups are storage-level sharing, not shared memory. So that export/
+import pair becomes the **normal, load-bearing mechanism** by which an unlocked vault reaches the
+second process at all. It must be a first-class, permanently-supported part of `pv-ffi`'s public API,
+documented with the rigor of `pv-wasm/src/lib.rs`'s header — not apologised for as unusual.
 
 ---
 
@@ -199,6 +237,37 @@ this worktree and therefore could not re-check its own claim. `rm -rf` was **not
 unverified path. Correction recorded rather than silently absorbed.
 
 ---
+
+### L-5 — Two research agents directly contradicted each other on App Groups
+
+Not a landmine hit yet; a landmine **located**. Recorded because believing either side without proof
+would design the whole cross-process story wrong.
+
+| Source | Claim |
+|---|---|
+| architecture research | The ciphertext cache lives in a **shared App Group container**; the User Key envelope in a shared Keychain access group. The design is built on both existing. |
+| pitfalls research | **App Groups are unavailable on a free personal team.** That forces Keychain-only sharing "now rather than later". |
+
+Both flagged their own confidence as less than certain. If pitfalls is right, the architecture
+design does not stand on Bartek's account, and this becomes the trigger for the $99 Apple Developer
+Program decision. **It must be settled by a real build that either gets the entitlement or is refused
+— before any code depends on App Groups existing.** Related unknown, also unconfirmed: whether
+`keychain-access-groups` needs the same paid-account allowlisting as the credential-provider
+entitlement.
+
+### L-6 — Argon2id may not fit in the extension's memory budget
+
+The project's Argon2id parameters are **64 MiB** (`m_cost_kib: 65536`). Credential-provider
+extensions are reported to sit under roughly a **120 MB** ceiling, enforced by a *silent jetsam kill*
+— the process dies, it does not throw. That would put our KDF at about half the entire budget of the
+process that has to run it.
+
+Two honesty notes: the ~120 MB figure is **single-vendor sourced, not Apple-documented**, and nobody
+has measured ours. A unit test cannot see this at all — it only appears under real memory pressure on
+a real run.
+
+If it does not fit, lowering KDF cost *for the extension path* is a **security decision needing its
+own record**, never a quiet tuning commit.
 
 ## 4. Open questions — honestly open
 
