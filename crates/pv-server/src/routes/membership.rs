@@ -515,13 +515,61 @@ pub(crate) async fn require_collection_edit(
 /// mechanism — a `read`-holding current member must be able to reseal a
 /// `read`-declared family-wide share to a newcomer even though `add_member`
 /// was historically `RequireEdit`-only (WINDOWS #17).
+///
+/// B1 (30-VERIFICATION.md): `ee928a3` (the very commit that added this
+/// gate's `RequireEdit`-only-on-ordinary-collections carve-out, CR-01/CR-03)
+/// reintroduced `d07c2a7`'s exact bug shape one access level over — the
+/// original hole was a missing `(Edit, Read)` case for a family-wide share
+/// declared at `read`; this one was a missing `(Edit, HiddenPassword)` case
+/// for a share declared at `hidden_password`. Because `collections::create`
+/// hard-codes the CREATOR's own `collection_keys` row to `'edit'` regardless
+/// of the level the share itself declares (see that fn's own comment — the
+/// creator is always a full editor of their own creation, matching this
+/// module's established `read` precedent), the creator is EVERY family-wide
+/// share's first propagator: the initial fan-out to current members, every
+/// later invite (`generateInviteLink` folds in every family-wide collection
+/// the caller holds a key for, at ITS OWN declared level), and the creator's
+/// own lazy reseal all route through this exact `(Edit, requested_level)`
+/// pair. Every combination is spelled out below — per this fn's own
+/// discipline, never derived from a rank — so a future reader sees coverage
+/// of all nine `(caller, requested)` pairs rather than having to infer it:
+///
+/// | caller \ requested | Read | HiddenPassword | Edit |
+/// |---------------------|------|-----------------|------|
+/// | Read                | ✓ exact match | ✗ escalation (different axis, not "more") | ✗ escalation |
+/// | HiddenPassword       | ✗ different axis, not "less" | ✓ exact match | ✗ escalation |
+/// | Edit                 | ✓ narrow (existing, test-proven) | ✓ narrow (B1 fix) | ✓ exact match |
+///
+/// `Read` and `HiddenPassword` are deliberately NOT mutually propagable in
+/// either direction — `AccessLevel`'s own doc comment: a `hidden_password`
+/// holder is a restricted grant along a different axis (can use, cannot
+/// reveal) than `read`, not "more" or "less" than it, so a `Read` holder
+/// gains nothing by being allowed to hand out `HiddenPassword`, and a
+/// `HiddenPassword` holder gains nothing by being allowed to hand out
+/// `Read` — both would only ever be reached by a hand-built request, never
+/// by any real client path (every real propagator resends the share's own
+/// declared level, and the ceiling stays exactly what `AccessLevel`'s
+/// non-`Ord` design already refuses to compare).
 pub(crate) fn may_grant_access_level(caller_level: AccessLevel, requested_level: AccessLevel) -> bool {
     match (caller_level, requested_level) {
         (AccessLevel::Read, AccessLevel::Read) => true,
-        (AccessLevel::Edit, AccessLevel::Edit) => true,
+        (AccessLevel::Read, AccessLevel::HiddenPassword) => false,
+        (AccessLevel::Read, AccessLevel::Edit) => false,
+
+        (AccessLevel::HiddenPassword, AccessLevel::Read) => false,
         (AccessLevel::HiddenPassword, AccessLevel::HiddenPassword) => true,
+        (AccessLevel::HiddenPassword, AccessLevel::Edit) => false,
+
         (AccessLevel::Edit, AccessLevel::Read) => true,
-        _ => false,
+        // B1 fix: the missing arm. An edit-holding caller (always true of a
+        // family-wide share's own creator) may propagate the
+        // `hidden_password` level their own share declared — never more
+        // than they hold (they hold Edit, the ceiling), and this is the
+        // SAME "narrow a propagated grant down" shape the pre-existing
+        // (Edit, Read) arm above already established as deliberate,
+        // test-proven behavior.
+        (AccessLevel::Edit, AccessLevel::HiddenPassword) => true,
+        (AccessLevel::Edit, AccessLevel::Edit) => true,
     }
 }
 

@@ -1314,3 +1314,229 @@ async fn cr01_read_declared_family_wide_share_delivers_read_never_edit_to_late_j
         "a read-only holder must never be able to grant edit through the family-wide reseal bound"
     );
 }
+
+/// B1 (30-VERIFICATION.md, gaps[0]): the `hidden_password`-declared sibling of
+/// the `cr01_...` test above -- a regression this codebase already burned on
+/// once for `read` (`d07c2a7`) and reintroduced one access level over, inside
+/// the very commit (`ee928a3`, CR-01/CR-03) that fixed the first instance.
+/// `may_grant_access_level` had no `(Edit, HiddenPassword)` arm, so the
+/// edit-holding creator of a `hidden_password`-declared family-wide share
+/// (their own `collection_keys` row is hard-coded `'edit'` by
+/// `collections::create`, asserted below, exactly like the `cr01` test's
+/// sanity check) could never propagate the level their own share declared.
+/// Drives all three legs the verifier's live probe found broken, in probe
+/// order: PROBE 0 fan-out to a current member, PROBE 1 a later invite folding
+/// this collection in at its declared level, PROBE 2 the creator's own lazy
+/// reseal to a newcomer.
+///
+/// Confirmed failing against pre-fix HEAD: with the `(AccessLevel::Edit,
+/// AccessLevel::HiddenPassword) => true` arm commented out of
+/// `may_grant_access_level`, this test fails at the FIRST `assert_eq!` below
+/// (`left: 403 FORBIDDEN, right: 201 CREATED`) on the fan-out step -- it never
+/// reaches the invite or reseal legs, matching the live probe's `403 / 403 /
+/// 403` transcript exactly (all three legs share the identical missing-arm
+/// root cause, so the first failure is representative of all three).
+#[tokio::test]
+async fn b1_hidden_password_declared_family_wide_share_fans_out_invites_and_reseals() {
+    let pool = test_pool().await;
+    let mut client = Client::new(pool.clone());
+    let mut secrets = Secrets::default();
+
+    let owner = client.actor("b1-owner@example.com", &mut secrets).await;
+    client.create_family(&owner.token, "B1 Family").await;
+    let member_b = client.join_family(&owner.token, "b1-member-b@example.com", &mut secrets).await;
+
+    let collection_id = "30140000-0000-4000-8000-0000000000b1";
+    let ck = CollectionKey::generate();
+    let ck_bytes = *ck.expose();
+    secrets.add_key_material("B1 hidden_password-declared folder's Collection Key", &ck_bytes);
+    let enc_name = serde_json::to_string(
+        &encrypt_item_for_collection(
+            &ck,
+            "B1 hidden_password family folder".as_bytes(),
+            collection_id,
+            collection_id,
+            COLLECTION_NAME_REVISION,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Owner creates the folder DECLARED at "hidden_password" -- one of the
+    // three levels `ShareDialog` offers, with nothing disabling it when
+    // "Cała rodzina" is checked (Bartek's product decision: this is a
+    // supported combination, not one to hide in the UI).
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/collections",
+            Some(&owner.token),
+            Some(json!({
+                "id": collection_id,
+                "enc_name": enc_name,
+                "sealed_key": serde_json::to_string(&seal(&owner.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "family_wide_kind": "folder",
+                "family_wide_access_level": "hidden_password",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "creating the hidden_password-declared family-wide folder must succeed");
+
+    // Sanity, mirroring the cr01 test's identical check: the CREATOR's own
+    // row is hard-coded 'edit' regardless of the declared level -- this is
+    // exactly the (Edit, HiddenPassword) pair `may_grant_access_level` must
+    // now cover for every leg below.
+    let owner_level: String = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(collection_id)
+    .bind(&owner.user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        owner_level, "edit",
+        "sanity: the creator's own row stays edit regardless of the declared level"
+    );
+
+    // --- PROBE 0: the owner fans the declared level out to a CURRENT member.
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/vault/collections/{collection_id}/members"),
+            Some(&owner.token),
+            Some(json!({
+                "recipient_user_id": member_b.user_id,
+                "sealed_key": serde_json::to_string(&seal(&member_b.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "access_level": "hidden_password",
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "PROBE 0: an edit-holding creator must be able to fan out the hidden_password level their \
+         own family-wide share declared to a current member"
+    );
+
+    // --- PROBE 1: the creator generates a LATER invite -- generateInviteLink
+    // folds in every family-wide collection the caller holds a key for, at
+    // its OWN declared level, never the caller's own held level.
+    let secret_vec = random_bytes(32);
+    let secret: [u8; 32] = secret_vec.try_into().unwrap();
+    let invite_id = derive_invite_id(&secret);
+    let invite_proof = derive_invite_proof(&secret);
+    let proof_hash = hash_invite_proof(&invite_proof);
+    let wrapped = wrap_collection_key_for_invite(&secret, &invite_id, &ck_bytes).unwrap();
+    let wrapped_json = serde_json::to_string(&wrapped).unwrap();
+
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/invitations",
+            Some(&owner.token),
+            Some(json!({
+                "id": invite_id,
+                "collection_id": null,
+                "access_level": null,
+                "wrapped_collection_key": null,
+                "proof_hash": STANDARD.encode(proof_hash),
+                "expires_in": "24h",
+                "family_wide_keys": [
+                    { "collection_id": collection_id, "access_level": "hidden_password", "wrapped_collection_key": wrapped_json },
+                ],
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "PROBE 1: generating ANY later invite must not 403 because the creator holds a \
+         hidden_password-declared family-wide collection"
+    );
+
+    let newcomer = client.actor("b1-newcomer@example.com", &mut secrets).await;
+    let sealed_for_self = serde_json::to_string(&seal(&newcomer.sk.public_key(), &ck_bytes).unwrap()).unwrap();
+
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/invitations/{invite_id}/accept"),
+            Some(&newcomer.token),
+            Some(json!({
+                "invite_proof": STANDARD.encode(&invite_proof),
+                "sealed_for_self": null,
+                "family_wide_sealed_keys": [
+                    { "collection_id": collection_id, "sealed_for_self": sealed_for_self },
+                ],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "accepting the invite must succeed");
+
+    // RECIPIENT-SIDE assertion: the newcomer's own resolved access must be
+    // "hidden_password", never "edit" -- the ceiling is what the share
+    // declared, not what the edit-holding propagator happens to hold.
+    let (status, get_body) =
+        client.send("GET", &format!("/api/vault/collections/{collection_id}"), Some(&newcomer.token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        get_body["access_level"].as_str(),
+        Some("hidden_password"),
+        "a hidden_password-declared family-wide share must deliver hidden_password to a late joiner \
+         via the invite-time-wrap path, never the edit-holding propagator's own level"
+    );
+
+    // --- PROBE 2: the creator's OWN lazy reseal to a newcomer who joined the
+    // family but has not yet received a key for this collection -- the exact
+    // gap window lazy reseal exists to close, driven here by the EDIT-holding
+    // creator rather than a hidden_password-holding member, so this leg
+    // specifically exercises the (Edit, HiddenPassword) propagation arm.
+    let newcomer2 = client.join_family(&owner.token, "b1-newcomer-2@example.com", &mut secrets).await;
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/vault/collections/{collection_id}/members"),
+            Some(&owner.token),
+            Some(json!({
+                "recipient_user_id": newcomer2.user_id,
+                "sealed_key": serde_json::to_string(&seal(&newcomer2.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "access_level": "hidden_password",
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "PROBE 2: the creator's own lazy reseal of the hidden_password-declared share must succeed"
+    );
+
+    let (status, get_body2) =
+        client.send("GET", &format!("/api/vault/collections/{collection_id}"), Some(&newcomer2.token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(get_body2["access_level"].as_str(), Some("hidden_password"));
+
+    // Positive-then-negative, mirroring cr01's escalation check: a
+    // hidden_password holder (member_b, granted in PROBE 0) must never be
+    // able to escalate a THIRD newcomer to 'edit' through this same relaxed
+    // path -- `may_grant_access_level`'s bound still applies, and widening it
+    // for HiddenPassword must not accidentally permit escalation.
+    let newcomer3 = client.join_family(&owner.token, "b1-newcomer-3@example.com", &mut secrets).await;
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/vault/collections/{collection_id}/members"),
+            Some(&member_b.token),
+            Some(json!({
+                "recipient_user_id": newcomer3.user_id,
+                "sealed_key": serde_json::to_string(&seal(&newcomer3.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "access_level": "edit",
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a hidden_password holder must never be able to grant edit through the family-wide reseal bound"
+    );
+}

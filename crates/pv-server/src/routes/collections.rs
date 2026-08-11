@@ -264,7 +264,22 @@ pub async fn create(
     let created_at: String = row.try_get("created_at").map_err(|_| ApiError::Internal)?;
 
     // access_level is a hard-coded literal 'edit' here, NEVER taken from the
-    // request — the creator is always a full editor of their own creation.
+    // request — the creator is always a full editor of their own creation,
+    // regardless of the `family_wide_access_level` the share itself declares
+    // (byte-identical to the already-proven `read` case: see the
+    // `cr01_...` test's sanity check, `tests/family_wide_sharing.rs`).
+    //
+    // B1 (30-VERIFICATION.md): confirmed this hard-code is NOT itself the
+    // bug — `d07c2a7` established the identical `edit`-creator/`read`-declared
+    // shape and needed no change here, only a new `may_grant_access_level`
+    // arm (`membership.rs`). The `hidden_password` case is the same shape
+    // one level over: this literal `'edit'` is exactly WHY the creator's own
+    // propagation of `hidden_password` needed the `(Edit, HiddenPassword)`
+    // arm added there, not a reason to change it here — changing it (e.g. to
+    // the declared level) would make the creator's own grant narrower than
+    // `edit` for their own creation, which nothing in this codebase requires
+    // and which the `cr01`/`b1` tests' sanity checks would then have to
+    // rewrite to assert the opposite.
     sqlx::query(
         "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) \
          VALUES (?, ?, ?, 'edit')",
