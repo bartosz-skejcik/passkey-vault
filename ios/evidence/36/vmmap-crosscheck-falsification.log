@@ -1,0 +1,5 @@
+=== can-fail proof: scripts/ios-vmmap-crosscheck.sh run with no extension process alive ===
+==> search-shape demonstration: the SAME pgrep -f shape used above, against a known-present process (SpringBoard)
+    PASS: pgrep -f found SpringBoard at host PID 5537 -- this search shape can return a hit, so the negative above means something
+ERROR: PasskeyVaultAutoFill is not alive (no PID matching /PasskeyVaultAutoFill\.appex/PasskeyVaultAutoFill$/) -- E7 not obtained. The extension process must be caught while alive (this task's own precondition); inferring the cross-check from the in-process number would defeat the whole purpose of an independent witness.
+exit=1

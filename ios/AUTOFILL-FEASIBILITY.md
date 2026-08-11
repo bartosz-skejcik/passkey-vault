@@ -607,3 +607,68 @@ contested device ceiling (120 MB from one vendor-sourced figure / <32 MB per a s
 same workload). The KDF's own cost (D) is consistently **~64.06-64.08 MB**, which is at and above the
 32 MiB independent competitor tripwire regardless of the numeric band the peak lands in -- see
 `## FILL-06 result` and `DR-2` below.
+
+## E7 -- an independent out-of-process reading: two real deviations fixed, the cross-check itself NOT OBTAINED
+
+`scripts/ios-vmmap-crosscheck.sh` exists, is real, and its underlying mechanism is proven working --
+demonstrated this session against `SpringBoard` (a real, long-lived simulator process): `/usr/bin/vmmap
+--summary <pid>` invoked directly against the HOST pid returns real `Physical footprint: 169.6M` /
+`Physical footprint (peak): 213.5M` lines. What follows is why it could not capture
+`PasskeyVaultAutoFill` specifically, across a real, sustained, multi-technique attempt -- not a single
+try.
+
+**Two real deviations found and fixed before the honest gap was reached, not assumed from the research:**
+
+1. **`xcrun simctl spawn <udid> vmmap --summary <pid>` fails outright** (`exit=255`, "vmmap cannot
+   examine process ... for unknown reasons ... try running with sudo"). Cause: `simctl spawn` resolves
+   the bare command `vmmap` against the GUEST runtime's own copy
+   (`RuntimeRoot/usr/bin/vmmap`), which `codesign -d --entitlements :-` shows carries **no entitlements
+   at all** -- unlike the HOST's own `/usr/bin/vmmap`, which carries
+   `com.apple.system-task-ports.read`/`.read.safe`. Apple Silicon runs simulator processes as ordinary
+   HOST processes, so the fix is to call the HOST's `/usr/bin/vmmap` directly against the PID, never
+   through `simctl spawn`.
+2. **The research's own E7 pseudocode's PID-resolution grep can never match.** It reads
+   `xcrun simctl spawn <udid> launchctl list | grep -i PasskeyVaultAutoFill` -- but the extension's real
+   bundle id is `cloud.blonie.PasskeyVault.AutoFill`, **with a dot** between "PasskeyVault" and
+   "AutoFill", so the contiguous literal `PasskeyVaultAutoFill` (no dot) is never a substring of the
+   label `launchctl list` actually prints. Confirmed directly, live, more than once: `pgrep -f` against
+   the compiled executable's own path found the process alive at the exact moment
+   `launchctl list | grep -i PasskeyVaultAutoFill` found nothing. Fixed by resolving the PID via
+   `pgrep -f 'PasskeyVaultAutoFill\.appex/PasskeyVaultAutoFill$'` against the HOST process table
+   directly (same "simulator processes are host processes" reasoning as deviation 1).
+
+**The third finding, and the reason E7 is NOT obtained this run: the process's externally-visible
+lifetime is shorter than the latency of a second tool attaching to it, even at effectively zero added
+latency.** Twelve real attempts were made across this session, using progressively tighter techniques:
+backgrounding the probe and polling concurrently; `launchctl list`-based and then `pgrep`-based
+detection; a separate detecting+capturing script invocation, then a version reordered so PID resolution
+and the `vmmap` call are the FIRST two things the script does (every discipline/bookkeeping step moved
+after); and finally a fully INLINE attempt with **no subprocess fork at all** -- `pgrep` and `vmmap`
+called back-to-back in the exact same shell, eliminating script-invocation overhead entirely. That last,
+tightest attempt still failed:
+
+```
+==> caught extension alive at iter=317, host pid=85083 -- capturing vmmap INLINE, no subprocess fork
+vmmap[85088]: vmmap cannot examine process 85083 (with name like '85083') because it no longer appears to be running.
+vmmap[85088]: [fatal] mach port for process 0 not valid
+```
+
+(`ios/evidence/36/vmmap-crosscheck-race-attempt.txt`.) `pgrep` found the PID; in the time it took to
+invoke `vmmap` immediately afterward in the same shell, the process was already gone. This is real,
+repeated evidence -- not a hypothetical -- that `AutoFillInvocationUITests`' own test-teardown lifecycle
+tears the extension process down faster than any external tool in this harness can attach to it, Task
+1's in-process 20-second hold notwithstanding: the sleep blocks the extension's OWN main thread, but does
+not prevent the OS/XCTest harness from terminating the process out from under it.
+
+**Can-fail proof, recorded** (`ios/evidence/36/vmmap-crosscheck-falsification.log`): the script run with
+no extension process alive exits non-zero with an explicit message, never an empty success; the
+search-shape demonstration inside it independently confirms `pgrep -f` can return a hit (against
+SpringBoard) before the negative is trusted.
+
+**E7 is recorded as NOT OBTAINED, honestly, per this task's own anticipated escape hatch** (36-04-PLAN.md
+Task 2 action text: *"If the process cannot be caught alive, the script exits non-zero saying so, and the
+record marks E7 as not obtained with the reason. That is an honest gap; inferring the cross-check from
+the in-process number would defeat its entire purpose."*). **No number is inferred, guessed, or backed
+into from the in-process reading to fill this gap.** The phase's headline number (E6, above) stands on
+the in-process instrument alone for this run, with its own mandatory sensitivity control (E5.c) as its
+proof of validity -- E7 remains a currently-unobtained second witness, not a silently-skipped one.
