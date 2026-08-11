@@ -1482,6 +1482,28 @@ export const DICTIONARY = {
     pl: "Nie udało się wczytać liczby osób w rodzinie.",
     en: "Couldn't load the family member count.",
   },
+  // 260812-01e Task 7 (LOCKED decision 1: "It must not be hidden — if any
+  // UI copy would now be false, fix the copy."). Rendered ONLY for a
+  // family-wide ITEM share at a non-edit level (`scope.kind === "item" &&
+  // isFamilyWideSelected && accessLevel !== "edit"`) -- exactly the case
+  // where the generic `access.readOnly`/`access.hiddenPassword` label next
+  // to the radio is no longer the whole truth: 260812-01e Task 1 lets ANY
+  // family member self-escalate to a full editor of this same bucket by
+  // contributing their own item to it (two API calls, no real content,
+  // permanent — see T-30fix-01). Plan-check iteration 2, C-2: this sentence
+  // must carry all three of (1) any member, at will, not gated on anything;
+  // (2) "read-only" here does NOT prevent editing; (3) permanent once
+  // acquired — a softer, conditional phrasing ("if someone adds an item...")
+  // understates the operative fact. Do NOT reword the shared
+  // `access.readOnly`/`access.fullEdit`/`access.hiddenPassword` strings
+  // themselves — they stay accurate on every OTHER share surface (direct
+  // item share, ordinary folder, family-wide folder, family-wide item at
+  // edit) and this is a separate, conditionally-rendered note, mirroring
+  // `share.hiddenPasswordInlineNote`'s established pattern.
+  "share.familyWideItemContributorEditNote": {
+    pl: `„Tylko odczyt" nie jest tu gwarancją: każdy członek rodziny może w dowolnej chwili dodać własny item do tego zbioru i przez to zyskać pełną edycję wszystkich itemów w nim — także tego. Nic tego nie cofa. Jeśli zależy Ci na kontroli, wybierz „Pełna edycja" albo udostępnij ten item bezpośrednio wybranej osobie.`,
+    en: `Read-only isn't a guarantee here: any family member can add their own item to this collection at any time, which makes them a full editor of every item in it — including this one. Nothing reverses it. If you need real control, choose "Full edit", or share this item directly with one person instead.`,
+  },
   "identity.yourFingerprintHeading": { pl: "Twój odcisk tożsamości", en: "Your identity fingerprint" },
   "identity.fingerprintRevealAria": {
     pl: "Pokaż odcisk tożsamości {email}",

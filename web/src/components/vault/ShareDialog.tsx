@@ -1297,6 +1297,26 @@ export default function ShareDialog({
                     })}
                   </p>
                 ) : null}
+                {/* 260812-01e Task 7 (LOCKED decision 1's copy-honesty
+                    requirement): a family-wide ITEM share at a non-edit
+                    level is exactly the case where "read"/"hidden_password"
+                    next to the radio above is no longer the whole truth --
+                    Task 1's contributor-escalation mechanism means read-only
+                    here does not prevent a family member from editing this
+                    item. Scoped precisely: item scope, family-wide checked,
+                    accessLevel chosen and not already "edit" (there is
+                    nothing to disclose at "edit" -- it already says what it
+                    means). See `share.familyWideItemContributorEditNote`'s
+                    own doc comment for the three facts this string must
+                    carry. */}
+                {scope.kind === "item" && isFamilyWideSelected && accessLevel !== null && accessLevel !== "edit" ? (
+                  <p
+                    data-testid="share-family-wide-item-contributor-note"
+                    className="text-sm text-base-content/70"
+                  >
+                    {t("share.familyWideItemContributorEditNote")}
+                  </p>
+                ) : null}
 
                 {submitError !== null ? (
                   <p role="alert" data-testid="share-error" className="text-sm text-error">
