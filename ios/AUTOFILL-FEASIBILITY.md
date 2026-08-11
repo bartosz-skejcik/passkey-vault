@@ -10,9 +10,9 @@ committed record; `ios/IOS-SPIKE-LOG.md` §3 carries the landmines this phase's 
 > allowlisting entitlementu tak jak realne urządzenie. Ten wynik nie ekstrapoluje się automatycznie na
 > sprzęt.
 
-No sentence in this file links a free Apple ID to a grant or a refusal of the entitlement — the
-simulator path has no grantor and measures no such property (D-02, 36-RESEARCH.md Pitfall 1). This
-file's `scripts/ios-autofill-layers.sh wording-gate` subcommand enforces that discipline mechanically.
+This file never states that account type caused an entitlement outcome — the simulator path has no
+grantor and measures no such property (D-02, 36-RESEARCH.md Pitfall 1). `scripts/ios-autofill-layers.sh
+wording-gate` enforces that discipline mechanically.
 
 ## E1 — Do the entitlements survive into the built extension? (SC1, part 1)
 
@@ -88,11 +88,42 @@ Layer (c) — Plan 36-02.
 
 ### Layer (a) — pluginkit registration
 
-*(filled in by Task 3, below)*
+`scripts/ios-autofill-layers.sh layer-a` runs `pluginkit -mAvv -p com.apple.authentication-services-credential-provider-ui`
+scoped to the credential-provider extension point on the booted simulator, writes the raw output to
+`ios/evidence/36/pluginkit-registered.txt`, and asserts the bundle id appears in that file.
+
+**Result: PASS.** `cloud.blonie.PasskeyVault.AutoFill(1.0)` appears in the registration listing —
+the system accepted the built bundle at the extension point at all. This is the weakest of the
+three layers (D-09): it proves acceptance, nothing about election or Settings visibility.
+
+**Falsification, recorded** (`ios/evidence/36/layer-a-falsification.log`): the same command run
+against `com.nonexistent.NeverInstalled` — a bundle id that was never installed — exits 1 and names
+the missing id, proving the assertion is not a check that always passes.
 
 ### Layer (b) — user election
 
-*(filled in by Task 3, below)*
+`scripts/ios-autofill-layers.sh layer-b` flips the user election for our bundle id
+(`pluginkit -e use -i cloud.blonie.PasskeyVault.AutoFill`), re-queries the single-bundle listing into
+`ios/evidence/36/pluginkit-elected.txt`, and asserts positively on the leading `+` (elected) marker
+in that file — never merely on the bundle id's presence, which would only re-prove layer (a).
+
+**Result: PASS.** The re-queried listing shows the `+` marker against
+`cloud.blonie.PasskeyVault.AutoFill(1.0)` — the extension is electable as a provider on this
+simulator. **Open assumption A5** (`36-RESEARCH.md` Assumptions Log): whether this CLI-driven
+election state is the same state Settings → Passwords → AutoFill shows is unconfirmed by this layer
+alone — layer (c), owned by Plan 36-02, exists to check that; this result is never used to infer (c).
+
+**Falsification, recorded** (`ios/evidence/36/layer-b-falsification.log`): the bundle was manually
+switched to `pluginkit -e ignore` and re-queried without reissuing the election verb — the same
+listing then shows a leading `-` (explicitly ignored) marker, and the `+`-marker assertion no longer
+matches (grep exit 1). The elected state was restored immediately afterward by re-running
+`scripts/ios-autofill-layers.sh layer-b`, confirmed PASS again.
+
+Neither layer (a) nor layer (b) registered a FAIL, so landmine L-7 (Xcode 26.6's extension template
+omitting `ASCredentialProviderExtensionCapabilities`) did not materialize at these two layers on this
+run — Task 1 added the capabilities dict to `Info.plist` up front (D-15), which is the preventive
+half of L-7's mitigation. L-7 remains a live risk specifically for layer (c) (Settings visibility),
+which this plan does not test; see `ios/IOS-SPIKE-LOG.md` §3 L-7.
 
 ### Layer (c) — Settings → Passwords → AutoFill visibility
 

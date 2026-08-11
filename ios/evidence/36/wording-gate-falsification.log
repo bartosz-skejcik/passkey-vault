@@ -1,0 +1,27 @@
+=== Class 1 falsification (free Apple ID grant/refusal sentence) ===
+FAIL: wording-gate class 1 (free-Apple-ID grant/refusal sentence) in ios/AUTOFILL-FEASIBILITY.md:
+102:The free Apple ID granted the entitlement on this run.
+FAIL: wording-gate found forbidden phrasing
+exit=1
+
+=== Class 2 falsification (budget-verdict phrasing) ===
+FAIL: wording-gate class 2 (budget-verdict phrasing) in ios/AUTOFILL-FEASIBILITY.md:
+102:Argon2id fits within budget for the extension process.
+FAIL: wording-gate found forbidden phrasing
+exit=1
+
+=== Class 3 falsification (expanded team-prefix literal in an entitlements file) ===
+FAIL: wording-gate class 3 (expanded team-prefix literal, landmine L-8) in ios/PasskeyVault/PasskeyVaultAutoFill/PasskeyVaultAutoFill.entitlements:
+15:		<string>FAKETEAMID.cloud.blonie.PasskeyVault</string>
+FAIL: wording-gate found forbidden phrasing
+exit=1
+
+=== Class 4 falsification (bash-only PIPESTATUS array in a scripts/*.sh file) ===
+FAIL: wording-gate class 4 (bash-only PIPESTATUS array, landmine L-3/D-08) in scripts/build-ios.sh:
+423:# TEMP FALSIFICATION: ${PIPESTATUS[0]}
+FAIL: wording-gate found forbidden phrasing
+exit=1
+
+=== Restored: wording-gate PASS again ===
+PASS: wording-gate -- no forbidden phrasing found across 6 record file(s), ios/ team-prefix scan, scripts/ PIPESTATUS scan
+exit=0

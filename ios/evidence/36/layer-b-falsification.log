@@ -1,0 +1,30 @@
+Can-fail proof for SC1 layer (b) -- user election.
+
+Setup: cloud.blonie.PasskeyVault.AutoFill was explicitly ignored via
+`xcrun simctl spawn <udid> pluginkit -e ignore -i cloud.blonie.PasskeyVault.AutoFill`,
+then re-queried with `pluginkit -mAvv -i cloud.blonie.PasskeyVault.AutoFill` (the same query
+layer-b performs, run manually here so the election verb is NOT re-issued before the check).
+
+Raw pluginkit output (leading marker is `-`, meaning "explicitly ignored", not `+`):
+
+-    cloud.blonie.PasskeyVault.AutoFill(1.0)
+            Path = .../PasskeyVault.app/PlugIns/PasskeyVaultAutoFill.appex
+            UUID = 448F4DA4-9301-43EC-B4B3-597AF7676208
+            Timestamp = 2026-08-11 2:00:45 PM +0000
+            SDK = com.apple.authentication-services-credential-provider-ui
+            Parent Bundle = .../PasskeyVault.app
+            Display Name = Passkey Vault AutoFill
+            Short Name = Passkey Vault AutoFill
+            Parent Name = PasskeyVault
+
+ (1 plug-in)
+
+Assertion applied: grep -qE '^\+[[:space:]]*cloud.blonie.PasskeyVault.AutoFill' <output>
+Result: no match. grep exit code: 1.
+
+This demonstrates layer-b's assertion is not vacuous: with the bundle explicitly ignored
+(not elected), the same positive-election pattern the PASS path requires does not match.
+
+Restoration: scripts/ios-autofill-layers.sh layer-b was re-run immediately afterward, which
+reissued `pluginkit -e use` and confirmed the elected state again (outcome=PASS, see
+ios/evidence/36/pluginkit-elected.txt, which reflects the restored/final state).

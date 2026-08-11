@@ -445,6 +445,14 @@ Settings → Passwords → Password Options, get recorded as an **entitlement FA
 $99 Apple Developer Program decision (see §4 q.3) over a **missing plist key**. Add the capabilities
 dictionary before concluding anything about entitlements.
 
+**Plan 36-01 update**: the capabilities dict was added to
+`ios/PasskeyVault/PasskeyVaultAutoFill/Info.plist` up front (both `ASCredentialProviderExtensionCapabilities`
+and the legacy top-level key), before SC1 layers (a)/(b) were tested. Neither layer registered a FAIL
+on this run (`ios/evidence/36/pluginkit-registered.txt`, `ios/evidence/36/pluginkit-elected.txt`), so
+this landmine did not materialize at registration/election. It remains a live, untested risk for SC1
+layer (c) — Settings → Passwords → AutoFill visibility — which Plan 36-01 does not test and Plan
+36-02 owns; do not infer (c) from (a)/(b) passing (D-09).
+
 ### L-8 — `$(AppIdentifierPrefix)` expands to the literal `FAKETEAMID.` on this setup
 
 With Team = None (IOS-04), `$(AppIdentifierPrefix)` resolves to the literal string `FAKETEAMID.`. So
@@ -452,6 +460,15 @@ any **hardcoded** App Group identifier works on the simulator and breaks on hard
 the team prefix becomes real. Always compose App Group / Keychain access group strings from the
 build-setting variable, never from a string typed out after reading the simulator's value. Directly
 relevant to L-5, which is the same subject from the other direction.
+
+**Plan 36-01 evidence**: confirmed against both built binaries —
+`ios/evidence/36/app-entitlements.plist` and `ios/evidence/36/appex-entitlements.plist` both show
+`keychain-access-groups = [FAKETEAMID.cloud.blonie.PasskeyVault]`, the expanded runtime value of the
+unexpanded `$(AppIdentifierPrefix)cloud.blonie.PasskeyVault` build variable both `.entitlements`
+source files carry (never the literal, per D-14). `scripts/ios-autofill-layers.sh wording-gate`
+mechanically enforces that no `ios/` source file (outside `ios/evidence/` and the gate script itself)
+hardcodes this literal; falsified against all four forbidden-phrasing classes in
+`ios/evidence/36/wording-gate-falsification.log`.
 
 ### L-9 — "a check that cannot fail" produced FOUR more instances in a single phase
 

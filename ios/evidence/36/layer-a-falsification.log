@@ -1,0 +1,12 @@
+Can-fail proof for SC1 layer (a) -- pluginkit registration.
+
+Command: scripts/ios-autofill-layers.sh layer-a com.nonexistent.NeverInstalled
+(a bundle id that was never installed on the simulator)
+
+Output:
+RESULT: layer=a outcome=FAIL bundle_id=com.nonexistent.NeverInstalled evidence=ios/evidence/36/pluginkit-registered.txt (bundle id not found in pluginkit registration listing -- FAIL-1, not an entitlement verdict, 36-RESEARCH.md E4)
+
+Exit code: 1
+
+This demonstrates layer-a's assertion is not a check that always passes: given a bundle id
+that was never registered, it names the missing id and exits non-zero.
