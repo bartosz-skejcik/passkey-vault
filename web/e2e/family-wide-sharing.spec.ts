@@ -1024,67 +1024,48 @@ test.describe("family-wide sharing — the living group, proven live (Plan 30-16
 
   // --- 30-17-PLAN.md Task 2: SC6 -- positive-then-negative revocation ----
 
-  // SKIPPED -- a genuine, SEVERE, previously-undiscovered data-loss bug in
-  // shipped code, found live by driving this EXACT scenario for the first
-  // time in this codebase's history (found 2026-08-11, this session).
-  //
+  // FIXED (Plan 30-18, WINDOWS.md #16). Was a genuine, SEVERE data-loss bug:
   // `vault_items.user_id REFERENCES users(id) ON DELETE CASCADE`
   // (migrations/0001_init.sql / 0003_vault_items_rebuild.sql) is UNCONDITIONAL
   // -- it applies to a personal item AND a collection-scoped one alike, and
-  // is never detached or reassigned before `delete_account_as_member`'s own
-  // `DELETE FROM users WHERE id = ?` (account.rs) runs. Concretely: member E
-  // creates an item, moves it into a folder, shares that folder FAMILY-WIDE
-  // (a real `collections` row, family-scoped, with real `collection_keys`
-  // rows for every other current member -- confirmed live: the OWNER
-  // genuinely read the real decrypted item BEFORE E's departure). E then
-  // self-deletes ("leaves", the only member-initiated departure this
-  // codebase implements -- see the removed test body's own comment, still
-  // below, for why). `buildMemberRemovalBatch` correctly re-keys the
-  // collection and rewraps the item's `enc_key` for every remaining
-  // recipient -- proven live via a raw diagnostic request: AFTER E's
-  // deletion, `GET /api/vault/collections/{id}` returns 200 with a fresh,
-  // valid `sealed_key` for the OWNER. But `GET
-  // /api/vault/collections/{id}/items` returns 200 with an EMPTY array --
-  // the re-keyed collection has ZERO items, because `DELETE FROM users`'s
-  // cascade already destroyed the `vault_items` row itself (its `user_id`
-  // still points at E, the original creator, regardless of it living inside
-  // a shared collection). The re-key work is real but wasted: the content
-  // it just re-sealed for everyone else is gone the instant the cascade
-  // runs, a few statements later, in the SAME request.
+  // used to be neither detached nor reassigned before
+  // `delete_account_as_member`'s own `DELETE FROM users WHERE id = ?`
+  // (account.rs) ran. Concretely: member E creates an item, moves it into a
+  // folder, shares that folder FAMILY-WIDE (a real `collections` row,
+  // family-scoped, with real `collection_keys` rows for every other current
+  // member -- confirmed live: the OWNER genuinely read the real decrypted
+  // item BEFORE E's departure). E then self-deletes ("leaves", the only
+  // member-initiated departure this codebase implements -- see this test
+  // body's own comment further below for why).
   //
-  // This is the EXACT INVERSE of 30-CONTEXT.md's own locked decision:
-  // "Leaving the family revokes everyone else's access to what you shared
-  // family-wide... You keep your own originals -- leaving is not deletion."
-  // As shipped, leaving a family-wide collection you created is MORE
-  // destructive than the decision describes -- not "revokes others' access
-  // while you keep your own copy", but "destroys the content for everyone,
-  // including the remaining members who still hold a valid key to nothing".
+  // Bartek's product decision (30-CONTEXT.md's locked "leaving is not
+  // deletion… you keep your own originals", applied to the collection-scoped
+  // case): the item stays in the collection and remains readable by every
+  // remaining member, under the collection's post-re-key state. The fix
+  // (`reassign_departing_member_collection_items`, account.rs) reassigns
+  // `vault_items.user_id` to the family owner for every item the departing
+  // member created inside a collection `apply_member_removal_rekey` just
+  // re-keyed, BEFORE the cascading delete runs -- reusing the existing
+  // re-key path rather than reimplementing it, and never touching
+  // ciphertext or key material (zero-knowledge holds:
+  // `Collection::resolve_access`'s collection-scoped branch already grants
+  // access purely via `collection_keys`, never via `vault_items.user_id`).
   //
-  // No prior test ever caught this: `delete-account.spec.ts`'s own
-  // "member_self_deletion..." test uses DUMMY, unreferenced collection
+  // `delete_account_as_owner`'s own, DIFFERENT, deliberate Step 1 (pre-
+  // deletes every collection-scoped item because the whole family dissolves)
+  // is untouched -- this fix only changes the plain-member departure path.
+  //
+  // No prior test ever caught the original bug: `delete-account.spec.ts`'s
+  // own "member_self_deletion..." test uses DUMMY, unreferenced collection
   // fixtures (`DUMMY_ENC_KEY`/`DUMMY_ENC_DATA`, never a real login item a
   // human would create), and every OTHER removal/deletion test in this
   // codebase either targets a RECIPIENT (never the original creator) or
-  // drives the OWNER's OWN dissolution path (`delete_account_as_owner`,
-  // which explicitly DOES pre-delete every collection-scoped item as its own
-  // documented Step 1 -- a DIFFERENT, deliberate design for a DIFFERENT
-  // case). This is the first live test to make a NON-owner member the
-  // original creator of a family-wide collection and then have THAT member
-  // self-delete.
-  //
-  // Fixing this needs a real architectural decision this plan is not
-  // positioned to make unilaterally (Rule 4: touches the `vault_items`
-  // ownership/schema model -- e.g. detaching a collection-scoped item's
-  // `user_id` before the cascade, mirroring `last_editor_user_id`'s own
-  // CR-01 precedent, or reassigning it to a remaining recipient) -- recorded
-  // in `.planning/WINDOWS.md` as an open, high-severity defect for a future
-  // phase to resolve. The test body below is left INTACT (not weakened to a
-  // scenario that would merely avoid the bug) so it can be un-skipped the
-  // moment the underlying fix lands -- this is the CORRECT proof FSH-04's
-  // "what YOU shared" wording requires; a version where the leaving member
-  // is a mere recipient (not the creator) would silently retreat from that
-  // exact claim rather than prove it.
-  test.skip("revocation: a member LEAVES the family (self-deletion, the only leave mechanism this codebase implements) -- the leaver's own access is revoked; another remaining member's access to what the leaver shared is unaffected", async ({
+  // drives the OWNER's OWN dissolution path. This is the first live test to
+  // make a NON-owner member the original creator of a family-wide collection
+  // and then have THAT member self-delete -- left INTACT (never weakened to
+  // a scenario that would merely avoid the bug) precisely so it could prove
+  // the fix once it landed.
+  test("revocation: a member LEAVES the family (self-deletion, the only leave mechanism this codebase implements) -- the leaver's own access is revoked; another remaining member's access to what the leaver shared is unaffected", async ({
     browser,
   }) => {
     test.setTimeout(300_000);

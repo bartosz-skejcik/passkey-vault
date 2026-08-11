@@ -192,6 +192,79 @@ async fn delete_account_as_owner(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// WINDOWS.md #16 (found live, Plan 30-17). `vault_items.user_id REFERENCES
+/// users(id) ON DELETE CASCADE` (migration `0001_init.sql`) is unconditional
+/// — it applies to a collection-scoped item exactly like a personal one.
+/// `apply_member_removal_rekey` (called just above this in
+/// `delete_account_as_member`) correctly re-keys every collection the
+/// departing member could reach — including rewrapping each item's `enc_key`
+/// under the collection's fresh post-removal key for every remaining
+/// recipient — but never touches `vault_items.user_id` itself, so the
+/// departing member's OWN `DELETE FROM users` a few statements later still
+/// cascades away every item THEY created inside a collection that survives
+/// them.
+///
+/// Bartek's product decision (30-CONTEXT.md's locked "leaving is not
+/// deletion… you keep your own originals", applied to the collection-scoped
+/// case): a family-wide (or otherwise collection-scoped) item a departing
+/// plain member created STAYS in that collection, readable by every
+/// remaining member. Ownership transfers to the collection's owner before
+/// the cascade — this schema has no separate per-collection owner column
+/// (`collections` belongs to a `families` row, and `families.owner_user_id`
+/// is the only owner concept in reach), so "the collection's owner" is the
+/// family owner.
+///
+/// Scoped to `touched_collections` — exactly the set `apply_member_removal_
+/// rekey` just re-keyed. That scope is provably exhaustive: any
+/// `vault_items` row with `collection_id = X AND user_id = member_user_id`
+/// implies the member held a `collection_keys` row in `X` (nothing else
+/// could have produced the row), and `apply_member_removal_rekey`'s own
+/// Step 1 guard already proved the submitted collection set is EXACTLY the
+/// member's actual reachable set — so `X` is necessarily a member of
+/// `touched_collections`.
+///
+/// Deliberately the opposite of `delete_account_as_owner`'s Step 1 (which
+/// pre-deletes every collection-scoped item on purpose, because there the
+/// whole family dissolves and no "remaining owner" exists to transfer to) —
+/// that precedent stays untouched; this is a different, deliberate decision
+/// for the different case where the family survives.
+///
+/// A plain `UPDATE ... SET user_id`, run BEFORE the cascading `DELETE FROM
+/// users` — never touches `enc_key`/`enc_data` or any key material, so
+/// zero-knowledge holds: the server has not decrypted or re-encrypted
+/// anything, only repointed a foreign key on an already-correctly-rewrapped
+/// row. `membership::Collection::resolve_access`'s collection-scoped item
+/// branch already grants access purely via `collection_keys`, never via
+/// `vault_items.user_id` (confirmed by reading it) — so this reassignment
+/// changes nothing about who can read the item today; it only keeps the row
+/// alive for the read path that already works.
+async fn reassign_departing_member_collection_items(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    family_id: &str,
+    member_user_id: &str,
+    touched_collections: &[String],
+) -> Result<(), ApiError> {
+    if touched_collections.is_empty() {
+        return Ok(());
+    }
+
+    let new_owner_user_id: String = sqlx::query_scalar("SELECT owner_user_id FROM families WHERE id = ?")
+        .bind(family_id)
+        .fetch_one(&mut **tx)
+        .await?;
+
+    for collection_id in touched_collections {
+        sqlx::query("UPDATE vault_items SET user_id = ? WHERE user_id = ? AND collection_id = ?")
+            .bind(&new_owner_user_id)
+            .bind(member_user_id)
+            .bind(collection_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+
+    Ok(())
+}
+
 /// The plain-member self-deletion branch: calls the SAME shared removal
 /// re-key helper `remove_member` (Plan 25-03) uses — target = the caller's
 /// own id — before their own personal data cascades away via `DELETE FROM
@@ -211,6 +284,11 @@ async fn delete_account_as_member(
     // and the helper's in-transaction membership re-check applies here too.
     let touched_collections =
         families::apply_member_removal_rekey(&mut tx, family_id, member_user_id, batch).await?;
+
+    // WINDOWS.md #16: reassign ownership of any collection-scoped item the
+    // departing member created, to the family owner, BEFORE the cascade —
+    // see this function's own doc comment above for the full rationale.
+    reassign_departing_member_collection_items(&mut tx, family_id, member_user_id, &touched_collections).await?;
 
     // CR-01: clear every dangling `last_editor_user_id` reference before the
     // delete — the ordinary collaboration case (this member edited an item
