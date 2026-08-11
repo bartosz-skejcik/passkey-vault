@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		F4C1A4D7302B0A9C00C58DEB /* PvFfi.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = F4C1A4D6302B0A9C00C58DEB /* PvFfi.xcframework */; };
+		F4C1A4DA302B0A9C00C58DEB /* pv_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4C1A4D9302B0A9C00C58DEB /* pv_ffi.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		F4C1A4BA302B0A9C00C58DEB /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +32,8 @@
 		F4C1A4AC302B0A9A00C58DEB /* PasskeyVault.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PasskeyVault.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F4C1A4B9302B0A9C00C58DEB /* PasskeyVaultTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PasskeyVaultTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F4C1A4C3302B0A9C00C58DEB /* PasskeyVaultUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PasskeyVaultUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F4C1A4D6302B0A9C00C58DEB /* PvFfi.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = PvFfi.xcframework; path = build/PvFfi.xcframework; sourceTree = "<group>"; };
+		F4C1A4D9302B0A9C00C58DEB /* pv_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = pv_ffi.swift; path = build/swift-bindings/pv_ffi.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -59,6 +66,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F4C1A4D7302B0A9C00C58DEB /* PvFfi.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +86,8 @@
 				F4C1A4AE302B0A9A00C58DEB /* PasskeyVault */,
 				F4C1A4BC302B0A9C00C58DEB /* PasskeyVaultTests */,
 				F4C1A4C6302B0A9C00C58DEB /* PasskeyVaultUITests */,
+				F4C1A4D6302B0A9C00C58DEB /* PvFfi.xcframework */,
+				F4C1A4D9302B0A9C00C58DEB /* pv_ffi.swift */,
 				F4C1A4AD302B0A9A00C58DEB /* Products */,
 			);
 			sourceTree = "<group>";
@@ -121,6 +131,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = F4C1A4D0302B0A9C00C58DEB /* Build configuration list for PBXNativeTarget "PasskeyVaultTests" */;
 			buildPhases = (
+				F4C1A4D8302B0A9C00C58DEB /* Build pv-ffi XCFramework */,
 				F4C1A4B5302B0A9C00C58DEB /* Sources */,
 				F4C1A4B6302B0A9C00C58DEB /* Frameworks */,
 				F4C1A4B7302B0A9C00C58DEB /* Resources */,
@@ -231,6 +242,23 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		F4C1A4D8302B0A9C00C58DEB /* Build pv-ffi XCFramework */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Build pv-ffi XCFramework";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/../../scripts/build-ios.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		F4C1A4A8302B0A9A00C58DEB /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -243,6 +271,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F4C1A4DA302B0A9C00C58DEB /* pv_ffi.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -456,6 +485,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(SRCROOT)/build",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
@@ -464,6 +497,7 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -477,6 +511,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(SRCROOT)/build",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
@@ -485,6 +523,7 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

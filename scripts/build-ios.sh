@@ -46,6 +46,7 @@ echo "==> uniffi version (single-sourced): $UNIFFI_VERSION"
 
 BUILD_DIR="ios/PasskeyVault/build"
 BINDINGS_DIR="$BUILD_DIR/swift-bindings"
+HEADERS_DIR="$BINDINGS_DIR/Headers"
 XCFRAMEWORK="$BUILD_DIR/PvFfi.xcframework"
 SIM_LIB="target/aarch64-apple-ios-sim/release/libpv_ffi.a"
 DEVICE_LIB="target/aarch64-apple-ios/release/libpv_ffi.a"
@@ -166,11 +167,54 @@ cargo rustc -p pv-ffi --lib --target aarch64-apple-ios --crate-type staticlib --
 #    compiled object (goblin-based, cross-platform-safe) -- either slice's
 #    .a carries the same metadata, so bindings are generated once and reused
 #    for BOTH -headers arguments below (verified 35-RESEARCH.md).
+#    Two separate invocations into two separate directories:
+#      - $HEADERS_DIR (.h + module.modulemap only) -- fed to `-headers`
+#        below, so the XCFramework's per-slice Headers/ carries only the C
+#        side, never the .swift source.
+#      - $BINDINGS_DIR (.swift only) -- consumed directly by
+#        ios/PasskeyVault/PasskeyVault.xcodeproj as an explicit Sources
+#        build-phase file reference (35-03), never embedded in the
+#        XCFramework itself.
+#    --module-name pv_ffiFFI on the headers invocation is REQUIRED, not
+#    cosmetic: uniffi-bindgen-swift's generated .swift always does
+#    `#if canImport(pv_ffiFFI) import pv_ffiFFI` (the `<crate>FFI` naming
+#    convention is hardcoded into the swift-sources codegen, independent of
+#    any --module-name flag on THAT invocation), so the modulemap's
+#    declared module name must be the exact string `pv_ffiFFI` or the
+#    import silently falls through the #if guard and every FFI symbol goes
+#    unresolved. The as-committed 35-02 invocation omitted --swift-sources,
+#    --headers, and --module-name entirely -- it produced only a
+#    `module pv_ffi { ... }` modulemap with no matching .h/.swift files at
+#    all, which 35-02's own verification never caught because no Swift code
+#    anywhere in the repo yet tried to `import` it (Rule 1/3 fix, 35-03).
+#    Deliberately OMITTING --xcframework here: that flag makes
+#    uniffi-bindgen-swift emit a `framework module` declaration, which Clang
+#    resolves its `header "..."` entry relative to a `<Name>.framework/
+#    Headers/` bundle layout -- NOT relative to the directory the
+#    module.modulemap file itself lives in. Our Headers/ dir is a plain
+#    directory (fed to `-I`/HEADER_SEARCH_PATHS via the assembled
+#    XCFramework's own per-slice Headers/, not `-F`/FRAMEWORK_SEARCH_PATHS
+#    for an actual .framework bundle), so a `framework module` declaration
+#    there fails with "header 'pv_ffiFFI.h' not found" even though the file
+#    sits right next to the modulemap -- verified this session by reproducing
+#    the exact failure with a standalone `swiftc -I ... -typecheck` outside
+#    Xcode entirely. Dropping --xcframework emits a plain `module pv_ffiFFI {
+#    header "pv_ffiFFI.h" ... }` instead, which resolves the header relative
+#    to the modulemap's own directory and imports cleanly (verified the same
+#    way, same standalone repro, now exit 0). This is still assembled into a
+#    real .xcframework by `xcodebuild -create-xcframework` below (a library-
+#    type xcframework, not a proper Apple `.framework` bundle) -- the
+#    `--xcframework` CLI flag on uniffi-bindgen-swift and the unrelated
+#    `xcodebuild -create-xcframework` command share a name by coincidence,
+#    not by requirement (Rule 1 fix, 35-03).
 echo "==> Generating Swift bindings (uniffi-bindgen-swift)"
-mkdir -p "$BINDINGS_DIR"
+mkdir -p "$HEADERS_DIR"
+cargo run -p pv-ffi --bin uniffi-bindgen-swift -- \
+  "$DEVICE_LIB" "$HEADERS_DIR" \
+  --headers --modulemap --modulemap-filename module.modulemap --module-name pv_ffiFFI
 cargo run -p pv-ffi --bin uniffi-bindgen-swift -- \
   "$DEVICE_LIB" "$BINDINGS_DIR" \
-  --xcframework --modulemap --modulemap-filename module.modulemap
+  --swift-sources
 
 # 4. Assemble the XCFramework (verified this session against real pv-core
 #    .a files -- produces PvFfi.xcframework/ios-arm64/ and
@@ -178,8 +222,8 @@ cargo run -p pv-ffi --bin uniffi-bindgen-swift -- \
 echo "==> Assembling PvFfi.xcframework"
 rm -rf "$XCFRAMEWORK"
 xcodebuild -create-xcframework \
-  -library "$DEVICE_LIB" -headers "$BINDINGS_DIR" \
-  -library "$SIM_LIB" -headers "$BINDINGS_DIR" \
+  -library "$DEVICE_LIB" -headers "$HEADERS_DIR" \
+  -library "$SIM_LIB" -headers "$HEADERS_DIR" \
   -output "$XCFRAMEWORK"
 
 # 5. The vtool gate (FFI-04) -- MUST extract an object first, vtool cannot
