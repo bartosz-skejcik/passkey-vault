@@ -1780,27 +1780,45 @@ test.describe("family-wide sharing — the ITEM variant, live (260812-01e Task 8
     // --- Step 4: Face 2, made genuinely falsifiable (plan-check B-5) -- the
     // owner shares a THIRD item, Z, family-wide at "edit".
     //
-    // Falsification note (recorded in the SUMMARY too): the plan's specified
-    // falsification for this step -- revert Task 5's `familyItemBucketRow`
-    // level filter, confirm THIS block's distinct-collection-id assertion
-    // below then fails ("all three items resolve to the same id") -- was
-    // attempted and observed to fail ONE STEP EARLIER than predicted. With
-    // the level filter disabled, `shareItemFamilyWide(ownerCtx.page, itemZId,
-    // "edit")` incorrectly REUSES item X/Y's "read"-declared bucket (exactly
-    // Face 2's original defect) instead of creating a new "edit" one --
-    // reproducing the wrong-bucket-reuse this step exists to catch. But
-    // Task 2's OWN, separate declared-level bound then refuses the
-    // resulting attempt to grant the family's other members "edit" on a
-    // bucket declared "read" (403, not a conflict), which `grantCollection
-    // ToRecipients` records as a partial failure -- so the ShareDialog never
-    // calls `onShared()` and never detaches, and `shareItemFamilyWide`'s own
-    // `waitFor({state: "detached"})` times out right here, before this
-    // test's distinct-collection-id assertion is ever reached. This is
-    // still valid evidence of the SAME underlying defect (item Z would
-    // otherwise have landed in the wrong bucket) -- Task 2's bound is a
-    // second, complementary defense the original plan-check B-5 finding
-    // predates, catching the mistake one step upstream of where B-5's own
-    // assertion would have caught it. Restored and reconfirmed green.
+    // Falsification note (260812-01e REVIEW.md ME-01): the plan's original
+    // single-revert falsification (`familyItemBucketRow`'s level filter
+    // alone) was observed to fail ONE step earlier than intended -- Task 2's
+    // OWN declared-level bound (`collections::add_member`) refuses the
+    // resulting mismatched grant with a 403 before `shareItemFamilyWide`'s
+    // own `waitFor({state: "detached"})` ever completes, so this test's real
+    // distinct-collection-id assertion below was never actually reached or
+    // observed to fail. ME-01 correctly flagged that as insufficient
+    // evidence. Investigated live and reproduced for real: a SECOND revert
+    // (Task 2's bound alone) still does not reach the assertion either --
+    // Task 5's OWN `recipientAlreadyHoldsIntendedLevel` conflict-verification
+    // correctly detects that the family's other members do not actually hold
+    // `edit` on the reused bucket and reports a genuine partial failure,
+    // which is Task 5 working exactly as designed, not evidence of Face 2.
+    // Reaching the true pre-fix behavior requires ALL THREE reverts at once
+    // (this is the honest reproduction of Face 2's original two-part defect,
+    // CONTEXT.md's own description: "(1) `findOrCreateFamilyItemBucket`
+    // ignores its `level` argument... and (2) `grantCollectionToRecipients`
+    // swallows `add_member`'s 409 as success"; Task 2's declared-level bound
+    // is a THIRD, later-added defense that also has to be disabled to let
+    // the flow through): `familyItemBucketRow`'s level filter (client),
+    // `grantCollectionToRecipients`'s 409-handling unconditionally treating
+    // conflict as success (client), AND `collections::add_member`'s
+    // declared-level bound (server). With all three reverted, rebuilt, and
+    // re-run against the FULL spec file (never `-g`-filtered -- an isolated
+    // `-g` run reproduces a documented, unrelated timing artifact against a
+    // freshly-bootstrapped family, per this file's own beforeAll comment),
+    // the dialog cleanly detaches (the false-success is no longer refused by
+    // anything) and the test reaches its own real assertion, which fails
+    // genuinely:
+    //
+    //   Error: Face 2: a family-wide item share at a DIFFERENT declared level must land in a SEPARATE collection
+    //   expect(received).not.toBe(expected) // Object.is equality
+    //   Expected: not "cd9e8066-635e-4685-81e3-58cec7fc2761"
+    //
+    // (item Z's own collection_id equalled item X/Y's -- the exact wrong-
+    // bucket-reuse Face 2 describes.) All three reverts were restored
+    // immediately after this observation; a full clean re-run of this file
+    // reconfirmed 10/10 passing.
     const ownerItemsBefore2 = await listItemIds(ownerCtx.context, ownerToken);
     await createLoginItemViaUI(ownerCtx.page, itemZName, itemZPassword);
     const itemZId = await newIdAfter(ownerItemsBefore2, () => listItemIds(ownerCtx.context, ownerToken));
