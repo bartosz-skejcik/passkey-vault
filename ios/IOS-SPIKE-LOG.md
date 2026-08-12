@@ -667,6 +667,124 @@ agreeing on the same wrong shape) would still look right in this single-directio
 is why Plan 37-03 runs the two-direction cross-client test (a web-registered account's
 `pw_wrapped_uk` unlocked from iOS, and vice versa) before this risk is fully retired.
 
+### cross-client interop — settled in BOTH directions, both shown falsifiable (Plan 37-03, Task 1)
+
+**[OBSERVED].** §2.6's own closing sentence named the residual risk: a symmetric-but-wrong encoding
+(both clients independently agreeing on the same wrong shape) would still look right in a
+single-direction observation. This closes it — `scripts/verify-ios-web-interop.mjs run-interop`
+drives all four expectations against a live, isolated `pv-server`, using the REAL `pv-wasm` artifact
+(never a hand-written JS re-implementation) on the Node side and the REAL `AccountService`/`pv-ffi` on
+the iOS side (`ios/PasskeyVault/PasskeyVaultTests/CrossClientInteropTests.swift`).
+
+**Direction 1 (iOS registers -> web/wasm unlocks).** `CrossClientInteropTests.direction1_iosRegisters_forWebUnlock`
+registers a fresh account through the real `AccountService.register`, encrypts a literal fixture
+plaintext under the resulting `FfiUserKey`, and persists it as a REAL vault item via the
+already-shipped `POST /api/vault/items` (never a server change — `crates/pv-server` diff stays empty).
+The external harness reads the account's email and that vault item's `enc_key`/`enc_data` back with a
+direct SQL query against the SAME `/private/tmp` database (not stdout/`print()` — see below), then
+runs `unlock-web`: `prelogin` -> `deriveAuthMaterial` -> `login` -> `unwrapUserKey` (the REAL `pv-wasm`
+decoder) -> `decryptItem`, asserting the decrypted plaintext equals the same literal byte-for-byte.
+
+**Direction 2 (web/wasm registers -> iOS unlocks).** The Node harness registers a fresh account
+through the real `pv-wasm` bindings (`deriveAuthMaterial`/`wrapUserKey`/`register`/`login`/`encryptItem`),
+then `CrossClientInteropTests.direction2_webRegistered_iosUnlocks` reads the email/password/item JSON
+from `PV_INTEROP_EMAIL`/`PV_INTEROP_PASSWORD`/`PV_INTEROP_ITEM_JSON` (see the env-var finding below),
+signs in through the real `AccountService.signIn`, decrypts the web-sealed item through `decryptItem`
+(the REAL `pv-ffi` decoder), and asserts the plaintext equals a literal authored in that Swift file.
+
+**Both directions were shown able to FAIL, inside the gate itself.** A SEPARATE throwaway account is
+registered for each direction, one byte of its stored `pw_wrapped_uk` ciphertext is flipped via direct
+SQL `UPDATE` (never re-encrypting — a genuine bit-flip of already-sealed AEAD ciphertext), and the same
+unlock path is re-run: both directions reject the corrupted envelope with a genuine AEAD/decrypt
+failure (`unwrapUserKey` throwing on the Node side; `unwrapUserKeyFromJson`/`decryptItem` throwing
+`FfiError.Decrypt`, surfaced as a failing `xcodebuild test`, on the iOS side) — never a length check,
+never a silent accept.
+
+**Full `run-interop` transcript (the real, non-corruption-disabled run):**
+
+```
+=== run-interop: two-direction cross-client pw_wrapped_uk proof ===
+==> starting pv-server on http://127.0.0.1:8621 against /private/tmp/pv-37-03-interop-1786538993390.db
+==> server healthy
+==> using simulator C24B6A19-9099-4FCF-B281-9CD786D0D8A1 (iPhone 17)
+==> simulator boot state: booted by this script
+
+==> Direction 1: iOS registers via CrossClientInteropTests, Node/wasm unlocks
+    iOS-registered account: ios-interop-d1-f444f1e9-0d93-47a9-8407-bc258e5be2fb@example.com
+INTEROP D1: PASS
+
+==> Direction 2: Node/wasm registers, iOS (CrossClientInteropTests) unlocks
+INTEROP D2: PASS
+
+==> Falsifying Direction 1: a SEPARATE throwaway account, one byte flipped in pw_wrapped_uk
+INTEROP D1-FALSIFIED: PASS
+
+==> Falsifying Direction 2: a SEPARATE throwaway account, one byte flipped in pw_wrapped_uk
+Failing tests:
+	CrossClientInteropTests.direction2_webRegistered_iosUnlocks()
+** TEST FAILED **
+INTEROP D2-FALSIFIED: PASS
+
+==> tearing down: server + simulator
+
+=== run-interop summary ===
+INTEROP D1: PASS
+INTEROP D2: PASS
+INTEROP D1-FALSIFIED: PASS
+INTEROP D2-FALSIFIED: PASS
+```
+(exit 0; full raw log including xcodebuild's own build noise is longer — this is the harness's own
+narration plus the load-bearing lines.)
+
+**The falsification demonstration itself, demonstrated able to fail** (acceptance criterion: run
+`run-interop` once with the direction-1 corruption step disabled and confirm it reports
+`INTEROP D1-FALSIFIED: FAIL` and exits non-zero) — `PV_INTEROP_SKIP_D1_CORRUPTION=1 node
+scripts/verify-ios-web-interop.mjs run-interop`:
+
+```
+(PV_INTEROP_SKIP_D1_CORRUPTION=1 -- deliberately disabling the D1 falsification step, to demonstrate the gate can FAIL)
+...
+INTEROP D1-FALSIFIED: FAIL (PV_INTEROP_SKIP_D1_CORRUPTION=1 -- corruption step skipped on purpose, unlock succeeded, so falsification correctly reports FAIL)
+...
+INTEROP D2-FALSIFIED: FAIL (PV_INTEROP_SKIP_D1_CORRUPTION=1 -- corruption step skipped on purpose, iOS unlock succeeded, so falsification correctly reports FAIL)
+
+=== run-interop summary ===
+INTEROP D1: PASS
+INTEROP D2: PASS
+INTEROP D1-FALSIFIED: FAIL (...)
+INTEROP D2-FALSIFIED: FAIL (...)
+```
+(exit 1 — the harness's own guard against corruption never having been exercised.)
+
+**Empirical findings recorded, not assumed, from building this task:**
+
+- **`print()` does not survive a Swift Testing run under `xcodebuild test`.** `xcresulttool get log
+  --type console` and `test-results activities` both came back EMPTY against a real recorded run of
+  this exact test. This project's own `os_log`/`PVPROBE|` convention (Phase 36's probes) was the next
+  candidate, but **`xcodebuild test` was ALSO observed to run every test on an EPHEMERAL "Clone N of
+  <device>" simulator** — `Test suite '...' started on 'Clone 1 of iPhone 17 - PasskeyVault (NNNNN)'`
+  — regardless of whether the base device UDID was already booted, and the clone (with its own
+  separate log store) is torn down by the time `xcodebuild test` returns. `xcrun simctl spawn
+  <original-udid> log show` afterward cannot see it. Direction 1 therefore moves data out through the
+  REAL, already-shipped `POST /api/vault/items` + a direct SQL read, not through any log/stdout
+  capture — see `CrossClientInteropTests.swift`'s own header for the full reasoning.
+- **`-only-testing:` for a Swift Testing method needs the trailing `()`.** Omitting it
+  (`.../direction1_iosRegisters_forWebUnlock`, no parens) silently matches **zero** tests
+  (`xcresulttool get test-results summary` reports `"totalTestCount": 0`) while `xcodebuild` still
+  prints `** TEST SUCCEEDED **` and exits 0 — a filter that can silently match nothing and still report
+  success is this repo's own landmine L-3 family. `scripts/verify-ios-web-interop.mjs`'s
+  `runXcodebuildTest` now parses the xcresult's own test count and treats zero as a hard failure.
+- **Env-var forwarding to `xcodebuild test`: only the `TEST_RUNNER_`-prefixed spelling works on this
+  toolchain (Xcode 26.6/17F113).** Tested directly: `PV_INTEROP_EMAIL=... xcodebuild test
+  -only-testing:.../direction2_webRegistered_iosUnlocks()` FAILS in 0.007s (the env-var-missing path);
+  `TEST_RUNNER_PV_INTEROP_EMAIL=... xcodebuild test ...` PASSES in 0.5s. `CrossClientInteropTests.env()`
+  checks the plain name first (matching this project's other scripts' convention) then the
+  `TEST_RUNNER_`-prefixed form; the harness sets BOTH on every invocation so it works regardless of
+  which the toolchain actually honors.
+
+`git diff --stat crates/pv-server crates/pv-core crates/pv-provider` stayed empty throughout — every
+gap this task found was closed on the iOS/Node harness side, never the server.
+
 ---
 
 ## 3. Landmines
