@@ -24,11 +24,29 @@ crate-type = ["staticlib", "lib"]
 # default-on rationale ("this phase builds exactly one consumer,
 # PasskeyVaultTests -- no app target yet") no longer holds: a function
 # whose sole purpose is to panic must not be compiled by default into the
-# process that will handle credentials. `PasskeyVaultTests`' own Run Script
-# build phase now passes `--with-panic-probe` explicitly
-# (scripts/build-ios.sh) so `FfiPanicSafetyTests.swift` (35-05) keeps a
-# probe-carrying artifact; every other consumer -- including the appex --
-# gets the plain, probe-free build.
+# process that will handle credentials.
+#
+# UPDATE (Phase 37, Plan 37-02, Task 1) -- the Run Script phase that passes
+# `--with-panic-probe` moved from `PasskeyVaultTests` to the `PasskeyVault`
+# APP target itself (a hosted test bundle and its host app cannot both
+# compile the generated bindings into their own module), so it is now the
+# APP target's own build that inherits that flag's default. Cargo's own
+# `default = []` still holds -- nothing links `ffi06-probe` unless a build
+# invocation explicitly asks for it -- but `scripts/build-ios.sh`'s Run
+# Script phase invocation still asks for it by DEFAULT
+# (`${PV_FFI_TEST_VARIANT:---with-panic-probe}`), and that phase is now
+# `PasskeyVault`'s own. HONEST RESIDUAL, not claimed closed: there is still
+# exactly ONE XCFramework/Run Script phase, now consumed by both the app
+# target and the test bundle, so `ffi06_synthetic_panic_probe` ships inside
+# every `PasskeyVault.app` this project's current build recipe produces,
+# not only test builds. `PasskeyVaultAutoFill.appex` links the same shared
+# artifact but has no Run Script phase of its own, so it only avoids the
+# probe when the app-owned phase last ran WITHOUT `--with-panic-probe`
+# (`scripts/ios-probe-run.sh`'s own call-order discipline, documented in
+# `scripts/build-ios.sh`'s header). **Phase 41 (per-target production/test
+# build split) is the named owner of closing this for real** -- a genuine
+# per-target build product/output path, not a shared one whichever
+# invocation ran last wins.
 
 # kdf-probe (36-03, E5.c): gates crates/pv-ffi/src/kdf_probe.rs, a single
 # diagnostic-only constructor that skips validate_kdf_params's upper bound

@@ -17,8 +17,8 @@
 # the CP-4 exception pair, not because this script needs to allow-list it
 # separately.
 #
-# Two shapes of "byte accessor" this project's UniFFI codegen can produce,
-# both scanned:
+# Three shapes of "byte accessor" this project's UniFFI codegen can produce,
+# all scanned:
 #   (A) a free top-level function whose signature mentions FfiUserKey/
 #       FfiWrappingKey and returns Data/[UInt8] (the shape
 #       exportUserKeyForSession itself takes: `func f(userKey: FfiUserKey)
@@ -28,6 +28,21 @@
 #       hand-added `&self` accessor would take -- self is implicit, so the
 #       handle type name never appears on the method's own signature line;
 #       catching this requires isolating each class body first).
+#   (C) a generated `struct` (from `#[derive(uniffi::Record)]`) that carries
+#       BOTH a stored property typed as a handle (FfiUserKey/FfiWrappingKey)
+#       AND a stored property typed Data/[UInt8] in the SAME struct body --
+#       e.g. a hypothetical `FfiAuthMaterial { wrappingKey: FfiWrappingKey,
+#       raw: Data }`. Neither (A) nor (B) sees this: it is not a function
+#       returning bytes given a handle, it is a Record smuggling raw bytes
+#       out ALONGSIDE a handle in the same value -- a caller who only holds
+#       the struct already has both. Introduced 37-02 (Task 1's
+#       `FfiAuthMaterial`), closed the same plan (Task 3) so the gate does
+#       not ship one release behind the shape it needs to catch. Allowlisted
+#       by exact `<StructName>.<propertyName>` pair (empty today) --
+#       `generateRegistrationSalt`'s own return (a free function returning
+#       `Data` with NO handle-typed argument at all) is reviewed separately,
+#       below, and is not a shape-C match by construction (shape C is about
+#       a struct BODY, not a free function's return type).
 #
 # Never rely on bash's post-pipe exit-code array (this project's shell is
 # zsh, where that array is silently empty -- landmine L-3,
@@ -35,7 +50,7 @@
 # `set -o pipefail` propagation or avoids pipes into a status check
 # entirely.
 #
-# Demonstrated falsifiable (QA-02/QA-04) on THREE distinct inputs, not one --
+# Demonstrated falsifiable (QA-02/QA-04) on FOUR distinct inputs, not one --
 # a gate whose falsification proof only covers the shape it already handles
 # is not proven falsifiable:
 #   1. Plain injected accessor: add a raw-byte-returning method to
@@ -51,8 +66,25 @@
 #      (exit 0); it now FAILs. Separately, a handle class that cannot be
 #      found or whose body cannot be isolated is a hard ERROR with exit 1,
 #      never a silent skip.
+#   4. Shape C (37-02, Task 3) -- a temporary `pub raw: Vec<u8>` field added
+#      to `FfiAuthMaterial` (`crates/pv-ffi/src/lib.rs`), re-run
+#      scripts/build-ios.sh, re-run this script: FAILs, naming
+#      `FfiAuthMaterial.raw`; revert both, re-run both, observe PASS
+#      (37-02-SUMMARY.md has the transcript). A struct declaring a
+#      handle-typed field whose body cannot be isolated is the same hard
+#      ERROR as (2)/(3) above, never a silent skip.
 # The missing-bindings precheck is falsified the same way (a temporary
 # `rm -rf` of the bindings directory).
+#
+# `generateRegistrationSalt() -> Data` (37-02) is a REVIEWED, NAMED
+# non-key-material byte export, not a leak this gate needs to catch: it is a
+# free function with NO handle-typed argument or return at all (shape A
+# requires the signature to MENTION a handle type; this one does not), and
+# its return is 16 bytes of explicit randomness -- a registration salt, not
+# key material -- the same sanctioned shape as `pv-wasm`'s `randomSalt`
+# (`crates/pv-wasm/src/lib.rs:690-695`) and `export_user_key_for_session`'s
+# own FFI-03 exception above. Recorded here so a future reader does not have
+# to re-derive from scratch whether it is a leak.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -154,11 +186,19 @@ strip_comments_and_strings() {
 # spelling this codegen emits today: a uniffi patch bump emitting
 # `public final class FfiUserKey:` used to make this function return nothing,
 # which the caller turned into a silent skip (CR-03).
-extract_class_body() {
-  local cls="$1" file="$2"
-  awk -v cls="$cls" '
+#
+# Generalised over the declaration KEYWORD (37-02, Task 3): shape C isolates
+# `struct` bodies (UniFFI Records) with the exact same brace-depth-over-
+# stripped-input technique shape B already uses for `class` bodies -- the
+# codegen emits the identical "function-level closing brace at column 0"
+# trap for both, so a second, independent isolator for structs would just be
+# this one with `class` typo'd to `struct`. `keyword` defaults to `class` so
+# every existing shape-B call site is unchanged.
+extract_body() {
+  local cls="$1" file="$2" keyword="${3:-class}"
+  awk -v cls="$cls" -v keyword="$keyword" '
     BEGIN { depth = 0; started = 0 }
-    started == 0 && $0 ~ ("(^|[^A-Za-z0-9_])class[ \t]+" cls "[ \t]*(:|\\{)") { started = 1 }
+    started == 0 && $0 ~ ("(^|[^A-Za-z0-9_])" keyword "[ \t]+" cls "[ \t]*(:|\\{)") { started = 1 }
     started == 1 {
       print
       line = $0
@@ -170,6 +210,13 @@ extract_class_body() {
   ' "$file"
 }
 
+# Backward-compatible alias -- shape B's own call sites read more clearly
+# spelled this way, and nothing about renaming the underlying function
+# should force touching every existing caller in the same change.
+extract_class_body() {
+  extract_body "$1" "$2" class
+}
+
 # Handle classes that MUST exist. Discovery below is dynamic (so a handle
 # type added in Phase 36+ -- session/keychain/collection -- is audited
 # automatically instead of being silently unaudited), but discovery alone
@@ -178,9 +225,15 @@ extract_class_body() {
 # These two must be found, or the run is an ERROR.
 EXPECTED_CLASSES="FfiUserKey FfiWrappingKey"
 
+# Shape C's allowlist, keyed by exact `<StructName>.<propertyName>` pairs
+# (space-separated, empty today). Every entry here is a REVIEWED, DELIBERATE
+# exception -- adding one is a security decision, not a convenience.
+STRUCT_HANDLE_BYTE_ALLOWLIST=""
+
 VIOLATIONS=""
 DISCOVERED_ALL=""
 AUDITED_ALL=""
+STRUCTS_AUDITED_ALL=""
 
 SCRATCH=$(mktemp -d)
 trap 'rm -rf "$SCRATCH"' EXIT
@@ -237,6 +290,49 @@ for f in "$BINDINGS_DIR"/*.swift; do
       done <<< "$MATCHES_B"
     fi
   done
+
+  # (C) generated `struct` (Record) bodies carrying BOTH a handle-typed
+  # field AND a Data/[UInt8]-typed field (see this file's own header, shape
+  # C). Discovery is dynamic, same reasoning as (B)'s CR-03 fix -- a struct
+  # this script has never seen gets audited automatically, never silently
+  # skipped. Unlike EXPECTED_CLASSES, there is no "N structs MUST exist"
+  # floor: a build with zero handle-carrying structs is legitimately clean,
+  # but a struct that IS found and DOES carry a handle-typed field, whose
+  # body cannot then be isolated, is the same hard ERROR shape (B) uses --
+  # never a silent skip.
+  STRUCTS=$(grep -oE '(^|[^A-Za-z0-9_])struct[[:space:]]+Ffi[A-Za-z0-9_]+' "$STRIPPED" \
+              | sed -E 's/.*struct[[:space:]]+//' | sort -u || true)
+
+  for st in $STRUCTS; do
+    STRUCT_BODY=$(extract_body "$st" "$STRIPPED" struct)
+    if [ -z "$STRUCT_BODY" ]; then
+      echo "ERROR: found a declaration of struct '$st' in $f but could not isolate its body -- refusing to report PASS over an unaudited struct" >&2
+      exit 1
+    fi
+
+    # Gate: this struct only matters to shape C if it carries a stored
+    # property whose type IS a handle. A struct with no handle-typed field
+    # (e.g. FfiWrappedKey: nonce/ciphertext both Data, no handle at all)
+    # cannot smuggle a raw handle+bytes pair out of the same value, so it is
+    # simply not this shape's concern -- `continue`, not a violation.
+    HAS_HANDLE_FIELD=$(echo "$STRUCT_BODY" | grep -E "public var [A-Za-z0-9_]+: *($HANDLE_TYPES)\\b" || true)
+    if [ -z "$HAS_HANDLE_FIELD" ]; then
+      continue
+    fi
+    STRUCTS_AUDITED_ALL="$STRUCTS_AUDITED_ALL $st"
+
+    MATCHES_C=$(echo "$STRUCT_BODY" | grep -E "public var [A-Za-z0-9_]+: *(Data|\\[UInt8\\])\\b" || true)
+    if [ -n "$MATCHES_C" ]; then
+      while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        propname=$(echo "$line" | sed -E 's/.*public var ([A-Za-z0-9_]+):.*/\1/')
+        key="${st}.${propname}"
+        if ! echo " $STRUCT_HANDLE_BYTE_ALLOWLIST " | grep -qF " $key "; then
+          VIOLATIONS="${VIOLATIONS}${f} [${st} struct, handle-carrying, raw-byte field]: ${line}"$'\n'
+        fi
+      done <<< "$MATCHES_C"
+    fi
+  done
 done
 
 # CR-03, fail-closed: an expected handle class that was never discovered
@@ -254,10 +350,11 @@ for want in $EXPECTED_CLASSES; do
 done
 
 if [ -n "$VIOLATIONS" ]; then
-  echo "FAIL: raw-byte accessor(s) found on a key-handle type outside the FFI-03 sanctioned exception (exportUserKeyForSession/importUserKeyFromSession):" >&2
+  echo "FAIL: raw-byte accessor(s)/field(s) found on or alongside a key-handle type outside the FFI-03 sanctioned exception (exportUserKeyForSession/importUserKeyFromSession) or the shape-C allowlist:" >&2
   echo "$VIOLATIONS" >&2
   exit 1
 fi
 
-echo "PASS: generated Swift exposes zero raw-byte accessors beyond exportUserKeyForSession/importUserKeyFromSession (FFI-02)"
+echo "PASS: generated Swift exposes zero raw-byte accessors beyond exportUserKeyForSession/importUserKeyFromSession, and zero handle-carrying structs smuggle a raw-byte field alongside the handle (FFI-02, shapes A/B/C)"
 echo "      audited handle classes:$(echo "$AUDITED_ALL" | tr -s ' ')"
+echo "      audited handle-carrying structs:$(echo "$STRUCTS_AUDITED_ALL" | tr -s ' ')"
