@@ -2538,17 +2538,33 @@ async fn second_item_bucket_at_the_same_level_for_same_family_is_409_but_a_diffe
             .unwrap();
     assert_eq!(bucket_count_after_third, 2, "exactly two item_bucket rows must now exist for this family");
 
+    // 260812-01e REVIEW.md LO-04: `bucket_levels.len() == 2` below only
+    // proves the query returned two rows (redundant with
+    // `bucket_count_after_third` above) — it does NOT itself prove either
+    // row's `family_wide_access_level` is non-NULL; that property held only
+    // INCIDENTALLY, via `query_scalar::<String>` (a non-`Option` decode)
+    // panicking on a NULL cell rather than this assertion catching it.
+    // Asserted explicitly here, via the actual predicate the caption claims.
+    let non_null_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM collections \
+          WHERE family_wide_kind = 'item_bucket' AND family_wide_access_level IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        non_null_count,
+        2,
+        "both item_bucket rows must carry a non-NULL family_wide_access_level"
+    );
+
     let bucket_levels: Vec<String> = sqlx::query_scalar(
         "SELECT family_wide_access_level FROM collections WHERE family_wide_kind = 'item_bucket' ORDER BY id ASC",
     )
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(
-        bucket_levels.len(),
-        2,
-        "both item_bucket rows must carry a non-NULL family_wide_access_level"
-    );
+    assert_eq!(bucket_levels.len(), 2, "sanity: the decode above must have produced exactly two rows");
     assert_ne!(
         bucket_levels[0], bucket_levels[1],
         "the two item_bucket rows must have DISTINCT declared access levels"
