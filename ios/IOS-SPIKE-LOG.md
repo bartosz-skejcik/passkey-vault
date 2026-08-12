@@ -822,6 +822,42 @@ merge (the H2 remediation the plan's own action text pre-registered) is moot: no
 
 ---
 
+### Keychain `.biometryCurrentSet` — no biometry enrollable on this harness (Plan 37-04, Task 1)
+
+**[OBSERVED].** This session's iPhone 17 / iOS 26.5 simulator has NO biometry ever enrolled, and this
+harness has NO headless path to enroll it:
+
+- `xcrun simctl` ships no biometry/passcode subcommand (confirmed directly, `simctl --help`'s full
+  subcommand list has neither).
+- The documented `xcrun simctl spawn <UDID> notifyutil -s com.apple.BiometricKit.enrollmentChanged 1`
+  + `-p` post sequence (`37-RESEARCH.md` §E5) did not change subsequent read behaviour; `notifyutil -g`
+  read the value back as `0` immediately after the `-s` write, i.e. the notify-only mechanism does not
+  durably flip enrollment state by itself.
+- GUI automation via `osascript`/System Events (the Simulator.app Features → Face ID → Enrolled menu
+  item) is denied in this environment: `System Events got an error: osascript is not allowed assistive
+  access (-1719)` — no accessibility permission is grantable non-interactively here.
+
+**Concrete effect on `UkEnvelopeStore`:** `store()` (`SecItemAdd` with
+`SecAccessControlCreateWithFlags(kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, [.biometryCurrentSet])`)
+**succeeds** — `errSecSuccess` — refuting the E1 hypothesis that this class fails to *add* on a
+passcode-less simulator. The immediately-following `SecItemCopyMatching` (via a fresh, correctly
+`kSecUseAuthenticationContext`-supplied `LAContext`) then returns `errSecItemNotFound` (**-25300**), not
+success and not a Face ID sheet. This is a NEW data point extending `37-RESEARCH.md`'s documented row for
+`-25300` ("also the pre-iOS-15 code for a biometry-set change") to the "never enrolled at all" case on
+iOS 26.5 — and it lands in exactly the `envelopeUnusable` bucket ACC-03's equivalence class already
+covers, so the existing design requires no change; it simply could not be driven to its `.ok` branch on
+this harness.
+
+**Scope of this finding:** this is a statement about THIS session's simulator and automation
+environment, not a claim about simulators in general or about physical devices — consistent with MP-1's
+pre-registered limitation. 37-04's `KeychainEnvelopeTests` therefore proves the store/read/classify
+plumbing and, via a second non-ACL Keychain item, the `pv-ffi` decrypt-of-real-bytes property, but could
+not exercise the ACL's `.ok` path end-to-end on this harness. 37-05's E1/E2 own the question of whether
+a DIFFERENT session (with Face ID interactively enrolled through the Simulator.app UI by a human, or on
+a physical device) changes this.
+
+---
+
 ## 3. Landmines
 
 ### L-1 — The Objective-C headers lie about PRF
