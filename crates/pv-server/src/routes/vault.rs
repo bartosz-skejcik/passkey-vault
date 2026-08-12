@@ -960,6 +960,34 @@ pub async fn move_item(
         return Err(ApiError::Forbidden);
     }
 
+    // Gate 1 (260812-01e REVIEW.md HI-03, "laundering"): a self-escalated
+    // item_bucket contributor holds `Edit` on EVERY item in that bucket
+    // (`Item::resolve_access`'s collection branch has no owner check once an
+    // item is collection-scoped — this is deliberate, LOCKED decision 1's
+    // "edit the other items in that same bucket" accepted consequence). But
+    // RELOCATING someone else's item OUT of an item_bucket is a different
+    // action than editing its content in place: it lets the same contributor
+    // create a SECOND item_bucket declared at a DIFFERENT level (legal,
+    // they'd hold `edit` there as its creator) and move every item out of
+    // the first bucket into it — silently upgrading (or downgrading) who can
+    // read content the item's actual owner declared at a specific level,
+    // defeating the entire per-level design this fix exists to build. Gate 0
+    // above already draws an identical ownership line for PERSONAL items;
+    // this extends the SAME line to an item_bucket SOURCE — only the item's
+    // own `user_id` may move it OUT of an item_bucket, regardless of
+    // destination. Deliberately does NOT restrict a family-wide FOLDER
+    // source (no contributor-escalation path exists there, so a folder's
+    // deliberate edit-holders relocating shared content is pre-existing,
+    // unrelated behavior this fix never asked to change) and does NOT
+    // restrict editing an item IN PLACE (`update()`, a different handler —
+    // LOCKED decision 1's accepted consequence is untouched).
+    if let Some(source_cid) = &precheck_collection {
+        if is_item_bucket_collection(&state.db, source_cid).await? && precheck_owner_user_id != source.caller_user_id
+        {
+            return Err(ApiError::Forbidden);
+        }
+    }
+
     // Gate 2 (destination) — runs BEFORE any DB mutation, and before the
     // blob-length validation below, so a caller who fails this check never
     // learns whether their oversized blob would otherwise have been

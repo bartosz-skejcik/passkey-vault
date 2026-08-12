@@ -2552,6 +2552,200 @@ async fn cr01_self_escalated_owner_cannot_bypass_declared_level_via_explicit_col
     assert_eq!(invitation_row, None, "no invitations row must have been written");
 }
 
+/// 260812-01e REVIEW.md HI-03 ("laundering"): a self-escalated contributor
+/// must not be able to relocate ANOTHER member's item out of an item_bucket
+/// -- the concrete attack the finding describes creates a SECOND item_bucket
+/// declared at a DIFFERENT level and moves every item out of the first
+/// bucket into it, silently upgrading (or downgrading) who can read content
+/// the item's actual owner declared at a specific level. This test drives
+/// exactly that: the owner's own item X sits in a `read`-declared bucket; a
+/// self-escalated contributor (via Task 1's mechanism) creates a SECOND
+/// bucket declared `edit` (legal -- they hold edit as its creator) and
+/// attempts to move item X, which they do NOT own, into it.
+#[tokio::test]
+async fn hi03_self_escalated_contributor_cannot_launder_another_members_item_to_a_different_level_bucket() {
+    let pool = test_pool().await;
+    let mut client = Client::new(pool.clone());
+    let mut secrets = Secrets::default();
+
+    let owner = client.actor("hi03-owner@example.com", &mut secrets).await;
+    client.create_family(&owner.token, "HI-03 Family").await;
+    let contributor = client.join_family(&owner.token, "hi03-contributor@example.com", &mut secrets).await;
+
+    let bucket1_id = "30140000-0000-4000-8000-0000000000a1";
+    let ck1 = CollectionKey::generate();
+    let ck1_bytes = *ck1.expose();
+    secrets.add_key_material("HI-03 read-declared bucket's Collection Key", &ck1_bytes);
+    let enc_name1 = serde_json::to_string(
+        &encrypt_item_for_collection(&ck1, "family-wide-items".as_bytes(), bucket1_id, bucket1_id, COLLECTION_NAME_REVISION)
+            .unwrap(),
+    )
+    .unwrap();
+
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/collections",
+            Some(&owner.token),
+            Some(json!({
+                "id": bucket1_id,
+                "enc_name": enc_name1,
+                "sealed_key": serde_json::to_string(&seal(&owner.sk.public_key(), &ck1_bytes).unwrap()).unwrap(),
+                "family_wide_kind": "item_bucket",
+                "family_wide_access_level": "read",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "creating the read-declared item_bucket must succeed");
+
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/vault/collections/{bucket1_id}/members"),
+            Some(&owner.token),
+            Some(json!({
+                "recipient_user_id": contributor.user_id,
+                "sealed_key": serde_json::to_string(&seal(&contributor.sk.public_key(), &ck1_bytes).unwrap()).unwrap(),
+                "access_level": "read",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "fanning the contributor out at read must succeed");
+
+    // The OWNER's own item X, contributed by the owner themselves into
+    // bucket1 -- this is the victim the laundering attack targets.
+    let item_x_id = "30140000-0000-4000-8000-0000000000a2";
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/items",
+            Some(&owner.token),
+            Some(json!({
+                "id": item_x_id,
+                "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"hi03-owner-key-blob\"}",
+                "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"hi03-owner-data-blob\"}",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "the owner's own item creation must succeed");
+    let (status, _) = client
+        .send(
+            "PUT",
+            &format!("/api/vault/items/{item_x_id}/collection"),
+            Some(&owner.token),
+            Some(json!({
+                "new_collection_id": bucket1_id,
+                "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"hi03-owner-key-blob-moved\"}",
+                "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"hi03-owner-data-blob-moved\"}",
+                "expected_revision": 1,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "the owner (already edit as bucket1's creator) moving their own item in must succeed");
+
+    // The contributor self-escalates via Task 1's mechanism: own junk item,
+    // moved into bucket1.
+    let contributor_item_id = "30140000-0000-4000-8000-0000000000a3";
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/items",
+            Some(&contributor.token),
+            Some(json!({
+                "id": contributor_item_id,
+                "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"hi03-contrib-key-blob\"}",
+                "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"hi03-contrib-data-blob\"}",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "the contributor's junk item creation must succeed");
+    let (status, _) = client
+        .send(
+            "PUT",
+            &format!("/api/vault/items/{contributor_item_id}/collection"),
+            Some(&contributor.token),
+            Some(json!({
+                "new_collection_id": bucket1_id,
+                "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"hi03-contrib-key-blob-moved\"}",
+                "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"hi03-contrib-data-blob-moved\"}",
+                "expected_revision": 1,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "Task 1's mechanism must let the contributor self-escalate to edit");
+
+    let escalated_level: String = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(bucket1_id)
+    .bind(&contributor.user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(escalated_level, "edit", "sanity: the contributor must actually hold edit before the attack below");
+
+    // The contributor creates a SECOND item_bucket, declared 'edit' -- legal
+    // (they hold edit as its own creator), and the laundering vehicle.
+    let bucket2_id = "30140000-0000-4000-8000-0000000000a4";
+    let ck2 = CollectionKey::generate();
+    let ck2_bytes = *ck2.expose();
+    secrets.add_key_material("HI-03 edit-declared laundering bucket's Collection Key", &ck2_bytes);
+    let enc_name2 = serde_json::to_string(
+        &encrypt_item_for_collection(&ck2, "family-wide-items".as_bytes(), bucket2_id, bucket2_id, COLLECTION_NAME_REVISION)
+            .unwrap(),
+    )
+    .unwrap();
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/collections",
+            Some(&contributor.token),
+            Some(json!({
+                "id": bucket2_id,
+                "enc_name": enc_name2,
+                "sealed_key": serde_json::to_string(&seal(&contributor.sk.public_key(), &ck2_bytes).unwrap()).unwrap(),
+                "family_wide_kind": "item_bucket",
+                "family_wide_access_level": "edit",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "creating the second, edit-declared item_bucket must succeed");
+
+    // The attack: the self-escalated contributor attempts to move the
+    // OWNER's item X (which they do not own) from bucket1 (read) into
+    // bucket2 (edit) -- HI-03: must be refused.
+    let (status, _) = client
+        .send(
+            "PUT",
+            &format!("/api/vault/items/{item_x_id}/collection"),
+            Some(&contributor.token),
+            Some(json!({
+                "new_collection_id": bucket2_id,
+                "enc_key": "{\"nonce\":\"EEEE\",\"ciphertext\":\"hi03-laundered-key-blob\"}",
+                "enc_data": "{\"nonce\":\"FFFF\",\"ciphertext\":\"hi03-laundered-data-blob\"}",
+                "expected_revision": 2,
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "HI-03: a self-escalated contributor must never be able to relocate ANOTHER member's item out \
+         of an item_bucket -- this is the laundering vector that upgrades/downgrades who can read it"
+    );
+
+    let item_x_collection: Option<String> = sqlx::query_scalar("SELECT collection_id FROM vault_items WHERE id = ?")
+        .bind(item_x_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        item_x_collection.as_deref(),
+        Some(bucket1_id),
+        "item X must remain in its original bucket -- the refused attack must not have moved it"
+    );
+}
+
 // --- 260812-01e Task 4: hidden_password variant, and Face 2 cannot recur ---
 
 /// LOCKED decision 3's `hidden_password` variant of Task 1's proof --
