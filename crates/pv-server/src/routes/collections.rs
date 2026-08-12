@@ -256,7 +256,13 @@ pub async fn create(
     // ever be violated by an `item_bucket` request.
     let row = row.ok_or_else(|| {
         if req.family_wide_kind.as_deref() == Some("item_bucket") {
-            ApiError::Conflict("this family already has a family-wide item bucket".into())
+            // 260812-01e REVIEW.md LO-01: `idx_one_item_bucket_per_family`
+            // is scoped per (family, level) since migration 0021 -- a
+            // family may hold up to three item_bucket collections, one per
+            // declared level (LOCKED decision 1). This message previously
+            // implied a per-family singleton, which is no longer true; the
+            // conflict is specifically at the REQUESTED level.
+            ApiError::Conflict("this family already has a family-wide item bucket at this access level".into())
         } else {
             ApiError::Conflict("a collection with this id already exists".into())
         }

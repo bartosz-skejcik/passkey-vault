@@ -2467,7 +2467,10 @@ async fn second_item_bucket_at_the_same_level_for_same_family_is_409_but_a_diffe
     // to be hard-coded for both.
     assert_eq!(
         second_body["error"].as_str(),
-        Some("this family already has a family-wide item bucket"),
+        // 260812-01e REVIEW.md LO-01: the message now names the ACTUAL
+        // scope of the conflict (per-level, since migration 0021), not a
+        // per-family singleton that no longer exists.
+        Some("this family already has a family-wide item bucket at this access level"),
         "an item_bucket conflict must report ITS OWN cause, not the id-collision message"
     );
 
