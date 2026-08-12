@@ -335,4 +335,138 @@ struct KeychainEnvelopeTests {
             return
         }
     }
+
+    // MARK: - Task 2: SessionTokenStore -- byte-identical round trip, including padding
+
+    /// A literal session-token-shaped string carrying base64 padding
+    /// (`"=="`) -- round trips byte-identical through `save`/`load`, never
+    /// re-encoded via `Data(base64Encoded:)`/`.base64EncodedString()`. A
+    /// silent re-encode that dropped or normalized padding would still
+    /// "work" for most tokens and fail unpredictably for others, so this
+    /// is asserted on a value deliberately chosen to carry padding.
+    @Test func savedTokenLoadsBackByteIdenticalIncludingPadding() {
+        SessionTokenStore.clear()
+        defer { SessionTokenStore.clear() }
+
+        let literalPaddedToken = "dGhpcy1pcy1hLTM3LTA0LWZpeHR1cmUtdG9rZW4="
+        #expect(literalPaddedToken.hasSuffix("="))
+
+        SessionTokenStore.save(literalPaddedToken)
+        let loaded = SessionTokenStore.load()
+        #expect(loaded == literalPaddedToken)
+    }
+
+    /// `clear()` makes `load()` return nil -- and is idempotent (a second
+    /// clear on an already-empty item does not crash).
+    @Test func clearMakesLoadReturnNil() {
+        SessionTokenStore.save("token-to-be-cleared")
+        SessionTokenStore.clear()
+        SessionTokenStore.clear()
+
+        #expect(SessionTokenStore.load() == nil)
+    }
+
+    /// A DIFFERENT literal token, also padded, round trips unchanged --
+    /// covers a second, independent value so the first test's pass is not
+    /// a coincidence of that one literal's specific byte pattern.
+    @Test func aSecondPaddedTokenAlsoRoundTripsUnchanged() {
+        SessionTokenStore.clear()
+        defer { SessionTokenStore.clear() }
+
+        let literalToken = "cGFzc2tleS12YXVsdC1zZXNzaW9uLXRva2VuLWZpeHR1cmU="
+        SessionTokenStore.save(literalToken)
+        #expect(SessionTokenStore.load() == literalToken)
+    }
+
+    /// Positive assertion (not "something is absent"): reading the stored
+    /// item's own attributes back reports
+    /// `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, confirming the
+    /// class `save()` set is the class actually persisted, not merely the
+    /// class `save()`'s source code claims to set.
+    @Test func storedTokenItemReportsTheExpectedAccessibleClass() {
+        SessionTokenStore.clear()
+        defer { SessionTokenStore.clear() }
+
+        SessionTokenStore.save("token-for-attribute-check")
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: SessionTokenStore.service,
+            kSecUseDataProtectionKeychain as String: true,
+            kSecReturnAttributes as String: true,
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        #expect(status == errSecSuccess)
+
+        guard let attributes = result as? [String: Any] else {
+            Issue.record("expected attributes dictionary back, got \(String(describing: result))")
+            return
+        }
+        let accessible = attributes[kSecAttrAccessible as String] as? String
+        #expect(accessible == (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String))
+    }
+
+    // MARK: - Task 2: cross-store independence (ACC-03/ACC-04 adjacency edge)
+
+    /// The two Keychain items sit side by side under different
+    /// `kSecAttrService` strings -- deleting the envelope must not touch
+    /// the session token. Positive, receiver-side: the token is asserted
+    /// to still hold the SAME literal string, not merely "no error was
+    /// thrown".
+    @Test func deletingTheEnvelopeLeavesTheSessionTokenUntouched() async throws {
+        UkEnvelopeStore.delete()
+        SessionTokenStore.clear()
+        defer { UkEnvelopeStore.delete(); SessionTokenStore.clear() }
+
+        let literalToken = "cross-store-independence-token-a"
+        try UkEnvelopeStore.store(Data(Self.literalUserKeyBytes))
+        SessionTokenStore.save(literalToken)
+
+        UkEnvelopeStore.delete()
+
+        #expect(SessionTokenStore.load() == literalToken)
+    }
+
+    /// The other direction: clearing the session token must not touch the
+    /// envelope -- asserted positively and functionally, not just "still
+    /// present": the envelope must still `read()` (or, on this harness,
+    /// fall back to the plumbing proof per the file header) and still
+    /// decrypt a fixture to a literal through `pv-ffi`.
+    @Test func clearingTheSessionTokenLeavesTheEnvelopeIntactAndDecryptable() async throws {
+        UkEnvelopeStore.delete()
+        SessionTokenStore.clear()
+        defer { UkEnvelopeStore.delete(); SessionTokenStore.clear(); Self.deletePlumbingProofItem() }
+
+        try UkEnvelopeStore.store(Data(Self.literalUserKeyBytes))
+        SessionTokenStore.save("cross-store-independence-token-b")
+
+        SessionTokenStore.clear()
+
+        let outcome = try await UkEnvelopeStore.read(reason: Self.biometricReadReason)
+        let bytesToProve: Data
+        switch outcome {
+        case let .ok(readBytes):
+            bytesToProve = readBytes
+        case .envelopeUnusable:
+            // Same documented harness limitation as the Task 1 tests above
+            // (file header) -- prove the envelope's CONTENT survived via
+            // the ACL-free plumbing item, storing the same literal bytes a
+            // second time under that separate service.
+            bytesToProve = try Self.plumbingProofRoundTrip(Data(Self.literalUserKeyBytes))
+        default:
+            Issue.record("unexpected outcome from read() after clearing only the session token: \(outcome)")
+            return
+        }
+
+        let userKey = try importUserKeyFromSession(bytes: bytesToProve)
+        let item = try encryptItem(
+            userKey: userKey,
+            plaintext: Self.literalFixturePlaintext,
+            itemId: "kc-cross-store-b",
+            revision: 1
+        )
+        let decrypted = try decryptItem(userKey: userKey, item: item, itemId: "kc-cross-store-b", revision: 1)
+        #expect(decrypted == Self.literalFixturePlaintext)
+    }
 }

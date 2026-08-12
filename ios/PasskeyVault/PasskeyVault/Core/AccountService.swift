@@ -10,8 +10,10 @@
 //  SERVER's own stored salt/params via `prelogin`, never a client-cached
 //  value from a prior attempt.
 //
-//  Session token kept in memory ONLY in this plan -- Keychain storage is
-//  37-04's job.
+//  Plan 37-04 adds Keychain persistence for the session token
+//  (`SessionTokenStore`) and `restoreSession()`, the re-unlock-after-relaunch
+//  route: a stored token + `GET /api/auth/me` recovers `pw_wrapped_uk`
+//  without minting a new session row, i.e. without calling `login` again.
 //
 
 import Foundation
@@ -90,6 +92,7 @@ final class AccountService {
         }
 
         let loginResult = try await apiClient.login(email: email, authHashB64: authMaterial.authHashB64)
+        SessionTokenStore.save(loginResult.sessionToken)
         return UnlockedSession(token: loginResult.sessionToken, userKey: userKey)
     }
 
@@ -115,6 +118,53 @@ final class AccountService {
             wrappingKey: authMaterial.wrappingKey,
             wrappedJson: loginResult.pwWrappedUk
         )
+        SessionTokenStore.save(loginResult.sessionToken)
         return UnlockedSession(token: loginResult.sessionToken, userKey: userKey)
     }
+
+    /// A previously stored session token's account, recovered WITHOUT
+    /// minting a new session row -- this is the re-unlock-after-relaunch
+    /// route (`LockView`'s reason for existing): the User Key is not held
+    /// in memory across a cold launch, but the server-issued token and the
+    /// account's `pw_wrapped_uk` can be recovered from `GET /api/auth/me`
+    /// while the User Key itself waits for a password or biometric unlock.
+    /// Returns `nil` when no token is stored (never a thrown error -- "no
+    /// session yet" is not a failure). A 401 (the stored token expired or
+    /// was revoked server-side) clears the now-useless token before
+    /// rethrowing, so a caller's next launch does not repeat the same
+    /// doomed call.
+    func restoreSession() async throws -> RestoredAccount? {
+        guard let token = SessionTokenStore.load() else {
+            return nil
+        }
+        do {
+            let me = try await apiClient.me(token: token)
+            return RestoredAccount(token: token, email: me.email, pwWrappedUkJson: me.pwWrappedUk)
+        } catch let error as PvApiError {
+            if case .invalidCredentials = error {
+                SessionTokenStore.clear()
+            }
+            throw error
+        }
+    }
+
+    /// Best-effort server-side revocation (never blocks on network failure
+    /// -- the local token is cleared regardless), then clears the local
+    /// session token unconditionally.
+    func logout() async {
+        if let token = SessionTokenStore.load() {
+            try? await apiClient.logout(token: token)
+        }
+        SessionTokenStore.clear()
+    }
+}
+
+/// The account recovered from a stored session token via `GET
+/// /api/auth/me` -- no live `FfiUserKey` (the User Key is not recoverable
+/// from the server alone; `pwWrappedUkJson` still needs a password or
+/// biometric unlock to become one).
+struct RestoredAccount {
+    let token: String
+    let email: String
+    let pwWrappedUkJson: String
 }
