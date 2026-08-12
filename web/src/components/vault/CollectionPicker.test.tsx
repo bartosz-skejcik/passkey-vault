@@ -109,6 +109,35 @@ describe("CollectionPicker", () => {
     expect(select.className).not.toMatch(fixedOrMaxWidth);
   });
 
+  // 260812-01e REVIEW.md HI-04: an item_bucket must never render as a
+  // pickable "folder" here -- picking it would silently perform a
+  // family-wide share plus a permanent self-escalation, with ShareDialog's
+  // honest disclosure copy never rendered.
+  it("HI-04: an item_bucket collection is excluded from the picker entirely", () => {
+    const collections: Collection[] = [
+      { id: "col-1", name: "Family", accessLevel: "edit", familyWideKind: null, familyWideAccessLevel: null },
+      { id: "bucket-1", name: "family-wide-items", accessLevel: "edit", familyWideKind: "item_bucket", familyWideAccessLevel: "read" },
+    ];
+    mockUseCollections.mockReturnValue(collections);
+    renderWithLocale(<CollectionPicker value={null} onSelect={vi.fn()} onCreateNew={vi.fn()} />);
+
+    expect(screen.queryByRole("option", { name: "family-wide-items" })).toBeNull();
+    expect(screen.getByRole("option", { name: "Family" })).toBeInTheDocument();
+  });
+
+  // Sibling of the above: if the item_bucket is the ONLY collection, the
+  // picker must render its zero-collections empty state, not a populated
+  // select carrying the excluded bucket alone.
+  it("HI-04: a single item_bucket collection renders the zero-collections empty state", () => {
+    mockUseCollections.mockReturnValue([
+      { id: "bucket-1", name: "family-wide-items", accessLevel: "edit", familyWideKind: "item_bucket", familyWideAccessLevel: "edit" },
+    ]);
+    renderWithLocale(<CollectionPicker value={null} onSelect={vi.fn()} onCreateNew={vi.fn()} />);
+
+    expect(screen.getByTestId("collection-picker-empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("collection-picker-select")).toBeNull();
+  });
+
   it("selecting an option calls onSelect(collectionId)", () => {
     const collections: Collection[] = [
       { id: "col-1", name: "Family", accessLevel: "edit", familyWideKind: null, familyWideAccessLevel: null },

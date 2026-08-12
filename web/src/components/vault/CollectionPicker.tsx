@@ -63,7 +63,18 @@ export interface CollectionPickerProps {
 
 export default function CollectionPicker({ value, onSelect, onCreateNew }: CollectionPickerProps) {
   const { t } = useLocale();
-  const collections = useCollections();
+  // 260812-01e REVIEW.md HI-04: `useCollections()` includes `item_bucket`
+  // rows (the family-wide item bucket(s), per-level since this fix) --
+  // 30-UI-SPEC.md's "never render an item_bucket as a folder row" rule
+  // applies here exactly as it does to SharingOverviewPanel's folder tab
+  // (Task 6's own `familyWideKind !== "item_bucket"` exclusion, mirrored
+  // verbatim). Without this filter, an item_bucket's synthetic placeholder
+  // name (e.g. "family-wide-items") appeared as an ordinary pickable
+  // "folder" here -- and picking it silently performed a family-wide share
+  // PLUS a permanent self-escalation to edit on that bucket (Task 1's
+  // mechanism), with Task 7's honest disclosure copy never rendered, since
+  // ShareDialog was never opened on this path.
+  const collections = useCollections().filter((c) => c.familyWideKind !== "item_bucket");
 
   if (collections.length === 0) {
     return (

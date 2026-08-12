@@ -108,7 +108,14 @@ export default function Sidebar({
   const folders = useFolders();
   const allTags = useAllTags();
   const syncStatus = useSyncStatus();
-  const collections = useCollections();
+  // 260812-01e REVIEW.md HI-04: `useCollections()` includes `item_bucket`
+  // rows -- 30-UI-SPEC.md's "never render an item_bucket as a folder row"
+  // rule, mirroring `CollectionPicker.tsx`'s identical exclusion and Task
+  // 6's original `familyWideKind !== "item_bucket"` fix to
+  // SharingOverviewPanel's editableIds. This "Shared folders" nav section
+  // renders every entry as a real, named folder -- an item_bucket's
+  // synthetic placeholder name has no business appearing here.
+  const collections = useCollections().filter((c) => c.familyWideKind !== "item_bucket");
 
   // Per-collection recipient cache for the icon-only AvatarStack variant
   // (UI-SPEC E5's narrow-column resolution) — a plain ref-backed cache
