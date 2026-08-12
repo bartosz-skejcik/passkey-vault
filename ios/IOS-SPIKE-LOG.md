@@ -984,6 +984,134 @@ Keychain item across a shutdown/boot cycle on this harness; expiry must remain a
 
 ---
 
+## 2.8 Plan 37-05, Task 2 — E3-alt, E5, and ACC-04's honest limit
+
+Per E2's own Result B verdict, **E3 does not run — E3-alt runs instead**, exactly as this plan's own
+`<action>` text requires.
+
+### E3-alt — code asks the OS and the ACL carries the right constraint (NOT an enforcement proof)
+E3-ALT BRANCH: ran (E2 = Result B)
+
+**`SecAccessControlCreateWithFlags` constructs successfully** and its `CFCopyDescription` was dumped:
+
+```
+<SecAccessControlRef: akpu;od(cbio(pbioc()pbioh()));odel(true);oe(true)>
+```
+
+`cbio(pbioc()pbioh())` names the biometry-current-set constraint inside the ACL's own internal
+description — positive evidence the object carries the right constraint, independent of whether this
+simulator enforces it (E2 already answered that: it does not).
+
+**A THIRD independent negative result, not anticipated by the plan's own text:**
+`LAContext.evaluateAccessControl(_:operation:localizedReason:)` — the explicit LA-level gate E3-alt's own
+design calls for — **throws unconditionally on this simulator**, regardless of a `pearl.match` or
+`pearl.nomatch` signal sent beforehand:
+
+```
+Error Domain=com.apple.LocalAuthentication Code=-1020 "This call is not supported on iOS Simulator."
+```
+
+Observed identically on both the match-signal run and the nomatch-signal run — the error fires before
+either notification could matter, confirming (a third way, after E2's SecItemCopyMatching-without-context
+result and 37-04's session-specific "no biometry enrollable" finding) that this simulator's biometric
+gating machinery is not faithfully modeled for at least this API. **This forecloses demonstrating the
+POSITIVE half of E3-alt (a successful `evaluateAccessControl` reaching `SecItemCopyMatching`) on this
+harness at all — only the negative half (never reaching it) is demonstrable, and it is demonstrable only
+because EVERY attempt fails, not because a genuine match/nomatch distinction was exercised.**
+
+**What IS proven, positively, with a falsification transcript:** the app's own gating code
+(`e3alt_nonMatchingFaceNeverReachesSecItemCopyMatching`) correctly does NOT proceed to
+`SecItemCopyMatching` when `evaluateAccessControl` fails, for ANY reason — asserted via an observable side
+effect (`reachedSecItemCopyMatching`, set `true` only if the code actually executes the read), not the
+absence of a log line. Falsification demonstrated live: the assertion was inverted
+(`#expect(reachedSecItemCopyMatching == true)`) with no other code change, re-run, and failed exactly as
+expected —
+
+```
+✘ Test e3alt_nonMatchingFaceNeverReachesSecItemCopyMatching() recorded an issue at
+  BiometricGateSimulatorTests.swift:417:13: Expectation failed: (reachedSecItemCopyMatching → false) == true
+```
+
+— then reverted and re-confirmed green (`xcodebuild test -only-testing:PasskeyVaultTests/E3AltTests`
+exit 0).
+
+**Stated in words, per this plan's own mandatory disclaimer:** *this is NOT a proof that the OS would
+deny the read on a device; it is a proof that the code asks the OS before reading, plus a proof that the
+ACL object carries the right constraint.* On THIS simulator, "asking the OS" via `evaluateAccessControl`
+always fails with "not supported" — a data point about the simulator's own limits, not about whether a
+real device's gate would open or close.
+
+### E5 — SC5, both halves, and the honest FAIL
+E5 OBSERVED status=0 row_survived=n-a
+E5 UNPROVABLE — `.biometryCurrentSet` invalidation on a biometric-set change is not simulated on this
+harness: a real read after toggling Face ID Enrolled off (Simulator.app Features -> Face ID -> Enrolled,
+driven via `osascript`/System Events `AXPress`, now that assistive access is granted this session) still
+returned the correct 32 bytes with `status=0`, never one of {-25293, -25300, -25291}. This is MP-1 item 2
+(a proof limitation this phase could not overcome), recorded here rather than softening SC5's criterion.
+
+**Part A** (`e5_partA_storeAndReadBeforeChange`): stored the envelope, read it back through the REAL
+production `UkEnvelopeStore.read` (a real `LAContext`), recorded `domainState.biometry.stateHash` before
+any change:
+
+```
+stateHash=5ueZPT6+w8K5je9JgTv7pJ4pSSuHaSYYXIq+44zYx6A= outcome=ok bytes-match=true
+```
+
+**Between Part A and Part B**, the enrolled set was changed: Simulator.app's Features -> Face ID ->
+Enrolled menu item was toggled via `osascript`/System Events `perform action "AXPress"`, in a SEPARATE
+`xcodebuild test` invocation (the change is driven from the host, not from inside the test process, per
+this plan's own design). **Read-back reliability of the checkbox's own `AXMenuItemMarkChar` was itself
+inconsistent across different scripting approaches this session** (a `click`-based read sequence reported
+`✓` at a point where an `AXPress`-based read sequence, run moments later with no intervening toggle,
+reported empty/unchecked) -- recorded honestly as a genuine ambiguity in the GUI-automation channel
+itself, not smoothed over. The LAST stable, repeated reading before Part B ran showed the "Enrolled" item
+unchecked (empty `AXMenuItemMarkChar`, confirmed twice in a row with no intervening action), which is
+what this record treats as "the enrolled set was changed" for Part B's purposes. A subsequent attempt to
+toggle it back ON, using the identical `AXPress` mechanism that produced the OFF reading, did NOT change
+the read-back state (still empty afterward) — left as an additional, honestly-recorded uncertainty about
+whether this GUI channel reliably drives the underlying simulator biometry state at all, rather than
+merely the menu's own displayed checkmark.
+
+**Part B** (`e5_partB_readAfterChangeAndCheckRecovery`): read the envelope again through the SAME
+production API:
+
+```
+status=0 row_survived=n-a stateHash=5ueZPT6+w8K5je9JgTv7pJ4pSSuHaSYYXIq+44zYx6A= stillOkBytesMatch=true
+```
+
+**The read still succeeded, with the byte-identical correct key, and the `stateHash` did not change at
+all** (identical to Part A's). Two consistent readings — the read itself, and the unchanged `stateHash` —
+both point the same direction: **this platform does not simulate `.biometryCurrentSet` invalidation on an
+enrolled-set change**, independent of whatever ambiguity exists in the GUI-toggle channel's own
+reliability (E2 already established, via a completely different code path with no dependency on the GUI
+toggle at all, that this simulator's mock AKS does not enforce the ACL in the first place — a platform
+that does not gate on biometry at read time is not a strong candidate to invalidate on a biometry
+change either, and E5's result is consistent with that).
+
+**Step 4 (row survival) does not apply** — the read never entered the `.envelopeUnusable` branch, so the
+attributes-only follow-up query and the naive-re-add/`errSecDuplicateItem` check were never reached; both
+are conditioned on that branch in the test code and neither wrote a result file, honestly reflecting that
+they did not run.
+
+**Positive user-visible half, verified independent of E5's own FAIL, over the code the app actually ships**
+(`ios/PasskeyVault/PasskeyVault/Core/I18n/Dictionary.swift`): `BiometricUnlockOutcome.envelopeInvalidated`
+maps to `.unlockEnvelopeInvalidated`, whose English copy is *"The fingerprint or face enrolled in Face
+ID/Touch ID changed. Unlock with your master password below — biometrics will re-enable automatically."*
+— contains "password", asserted via `t(.unlockEnvelopeInvalidated, locale: .en).localizedCaseInsensitiveContains("password")`,
+independently of whether THIS harness can ever reach that branch live.
+
+### MP-1 limitations recorded verbatim (items 2, 5), Task 2
+
+2. **Item 2 (whatever this simulator's biometric-set-change signal does is not evidence a real device
+   invalidates the same way).** E5's FAIL result is a statement about this mock AKS's own behaviour under
+   a simulated enrolled-set toggle, never a claim that a physical device would fail to invalidate.
+5. **Item 5 (the record must say so plainly rather than soften the criterion when a proof cannot be
+   obtained here).** Directly applied: SC5's `.biometryCurrentSet` invalidation guarantee is recorded as
+   **unprovable on this harness**, in exactly those words, with the `E5 UNPROVABLE —` marker line, rather
+   than declaring SC5 satisfied on the strength of the classifier existing.
+
+---
+
 ## 3. Landmines
 
 ### L-1 — The Objective-C headers lie about PRF

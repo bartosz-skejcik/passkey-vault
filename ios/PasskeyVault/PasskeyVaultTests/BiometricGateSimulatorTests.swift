@@ -295,3 +295,243 @@ struct E6ReadBackTests {
         ResultFile.write("e6", "item_survived_reboot=\(survived ? "yes" : "no") status=\(status)")
     }
 }
+
+// MARK: - Task 2: E3-alt (E2 = Result B, so E3 does not apply -- run per the plan's own instruction)
+
+/// E2 observed Result B (`ios/IOS-SPIKE-LOG.md`'s own `E2 VERDICT: Result B`
+/// line): this simulator returns ACL-protected data unconditionally with NO
+/// `LAContext` at all, so E3's premise (a real gate exists to drive to both
+/// outcomes) does not hold here. E3-alt runs instead: prove the ACL OBJECT
+/// itself carries the right constraint, and prove the CODE genuinely asks
+/// the OS via a real `LAContext.evaluateAccessControl` gate before it will
+/// reach `SecItemCopyMatching` -- explicitly NOT a claim that a device would
+/// deny the read (this simulator cannot demonstrate that, per E2).
+@Suite(.serialized)
+struct E3AltTests {
+    static let literalBytes: [UInt8] = BiometricGateSimulatorTests.literalUserKeyBytes
+
+    static func makeAcl() throws -> SecAccessControl {
+        var acError: Unmanaged<CFError>?
+        guard let ac = SecAccessControlCreateWithFlags(
+            kCFAllocatorDefault,
+            kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
+            [.biometryCurrentSet],
+            &acError
+        ) else {
+            throw AccessControlConstructionError(underlying: acError?.takeRetainedValue())
+        }
+        return ac
+    }
+
+    /// `SecAccessControlCreateWithFlags` returns non-nil, and its
+    /// `CFCopyDescription` is dumped into the log as evidence the object
+    /// carries the `.biometryCurrentSet` constraint -- inspectable, not
+    /// merely asserted "it constructed".
+    @Test func e3alt_aclConstructsAndDescribesTheBiometryConstraint() throws {
+        let ac = try Self.makeAcl()
+        let description = CFCopyDescription(ac) as String
+        ResultFile.write("e3alt-acl-description", description)
+        #expect(!description.isEmpty)
+    }
+
+    /// The MATCH half: a real `LAContext.evaluateAccessControl(_:operation:localizedReason:)`
+    /// gate in front of the read, driven with a `pearl.match` sent by the
+    /// HOST orchestrator (this file cannot spawn `notifyutil` itself --
+    /// `Process` is unavailable on iOS, see this file's header). Records
+    /// whether the evaluation succeeded and, ONLY if it did, whether
+    /// `SecItemCopyMatching` was reached -- the observable side effect that
+    /// stands in for a call counter.
+    @Test func e3alt_matchingFaceReachesSecItemCopyMatching() async throws {
+        let ac = try Self.makeAcl()
+        let context = LAContext()
+        defer { context.invalidate() }
+
+        do {
+            let success = try await context.evaluateAccessControl(
+                ac,
+                operation: .useItem,
+                localizedReason: "E3-alt match path"
+            )
+            var reachedSecItemCopyMatching = false
+            var status: OSStatus = -9999
+            if success {
+                let query: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: UkEnvelopeStore.service,
+                    kSecUseDataProtectionKeychain as String: true,
+                    kSecReturnData as String: true,
+                ]
+                var result: AnyObject?
+                status = SecItemCopyMatching(query as CFDictionary, &result)
+                reachedSecItemCopyMatching = true
+            }
+            ResultFile.write(
+                "e3alt-match",
+                "evaluateSuccess=\(success) reachedSecItemCopyMatching=\(reachedSecItemCopyMatching) status=\(status)"
+            )
+        } catch {
+            ResultFile.write("e3alt-match", "evaluateThrew=true error=\(error) reachedSecItemCopyMatching=false")
+        }
+    }
+
+    /// The NON-MATCH half, the falsifiability-relevant one: driven with a
+    /// `pearl.nomatch` sent by the host orchestrator, and asserts the code
+    /// demonstrably never reaches `SecItemCopyMatching` -- `reached` is
+    /// FALSE, positively recorded, not inferred from an absent log line.
+    @Test func e3alt_nonMatchingFaceNeverReachesSecItemCopyMatching() async throws {
+        let ac = try Self.makeAcl()
+        let context = LAContext()
+        defer { context.invalidate() }
+
+        var reachedSecItemCopyMatching = false
+        do {
+            let success = try await context.evaluateAccessControl(
+                ac,
+                operation: .useItem,
+                localizedReason: "E3-alt nomatch path"
+            )
+            if success {
+                // Would only happen if the evaluation itself did not honor
+                // the nomatch signal -- reached is set TRUE so the marker
+                // reflects reality rather than the expected shape.
+                let query: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: UkEnvelopeStore.service,
+                    kSecUseDataProtectionKeychain as String: true,
+                    kSecReturnData as String: true,
+                ]
+                var result: AnyObject?
+                _ = SecItemCopyMatching(query as CFDictionary, &result)
+                reachedSecItemCopyMatching = true
+            }
+            ResultFile.write(
+                "e3alt-nomatch",
+                "evaluateSuccess=\(success) reachedSecItemCopyMatching=\(reachedSecItemCopyMatching)"
+            )
+            #expect(reachedSecItemCopyMatching == false)
+        } catch {
+            ResultFile.write(
+                "e3alt-nomatch",
+                "evaluateThrew=true error=\(error) reachedSecItemCopyMatching=\(reachedSecItemCopyMatching)"
+            )
+            #expect(reachedSecItemCopyMatching == false)
+        }
+    }
+}
+
+// MARK: - Task 2: E5 -- SC5, biometric-set-change invalidation, both halves
+
+/// Two-part suite: Part A stores the envelope and reads it once
+/// successfully, recording the pre-change `stateHash`. The orchestrator then
+/// performs the enrolled-set change (Simulator.app Features -> Face ID ->
+/// Enrolled off/on, via `osascript`, now that assistive access is granted
+/// this session -- see the log's own amendment) BETWEEN Part A and Part B,
+/// in a SEPARATE `xcodebuild test` invocation, because the change itself is
+/// driven from the host, not from inside the test process.
+@Suite(.serialized)
+struct E5Tests {
+    static let literalBytes: [UInt8] = BiometricGateSimulatorTests.literalUserKeyBytes
+
+    @Test func e5_partA_storeAndReadBeforeChange() async throws {
+        await UkEnvelopeStore.delete()
+        try await UkEnvelopeStore.store(Data(Self.literalBytes))
+
+        let stateHashContext = LAContext()
+        let stateHashBefore: Data?
+        if #available(iOS 18.0, *) {
+            stateHashBefore = stateHashContext.domainState.biometry.stateHash
+        } else {
+            stateHashBefore = nil
+        }
+        stateHashContext.invalidate()
+
+        let outcome = try await UkEnvelopeStore.read(reason: "E5 part A -- before enrollment change")
+        let outcomeDescription: String
+        switch outcome {
+        case let .ok(bytes):
+            outcomeDescription = "ok bytes-match=\(Array(bytes) == Self.literalBytes)"
+        case let .envelopeUnusable(status):
+            outcomeDescription = "envelopeUnusable status=\(status)"
+        default:
+            outcomeDescription = "\(outcome)"
+        }
+
+        ResultFile.write(
+            "e5-before",
+            "stateHash=\(stateHashBefore?.base64EncodedString() ?? "nil") outcome=\(outcomeDescription)"
+        )
+    }
+
+    /// Run by the orchestrator in a SEPARATE `xcodebuild test` invocation,
+    /// after the enrolled-set change. Reads the envelope back through the
+    /// REAL production `UkEnvelopeStore.read` (a real `LAContext`, exactly
+    /// the code path `BiometricUnlockService` drives), asserts membership in
+    /// the documented equivalence class if it comes back unusable, and
+    /// checks (step 4) whether the underlying Keychain ROW itself is still
+    /// present -- deciding whether delete-then-add is load-bearing on this
+    /// OS. If the read still succeeds with the correct bytes, that is
+    /// recorded honestly as the FAIL/unprovable case, per this plan's own
+    /// mandated pairing with an `E5 UNPROVABLE --` log line.
+    @Test func e5_partB_readAfterChangeAndCheckRecovery() async throws {
+        let stateHashContext = LAContext()
+        let stateHashAfter: Data?
+        if #available(iOS 18.0, *) {
+            stateHashAfter = stateHashContext.domainState.biometry.stateHash
+        } else {
+            stateHashAfter = nil
+        }
+        stateHashContext.invalidate()
+
+        let outcome = try await UkEnvelopeStore.read(reason: "E5 part B -- after enrollment change")
+
+        let equivalenceClass: [OSStatus] = [-25293, -25300, -25291]
+
+        switch outcome {
+        case let .ok(bytes):
+            let bytesMatch = Array(bytes) == Self.literalBytes
+            ResultFile.write(
+                "e5",
+                "status=0 row_survived=n-a stateHash=\(stateHashAfter?.base64EncodedString() ?? "nil") stillOkBytesMatch=\(bytesMatch)"
+            )
+
+        case let .envelopeUnusable(status):
+            #expect(equivalenceClass.contains(status))
+
+            // Step 4: a SEPARATE attributes-only query decides whether the
+            // row itself survived (invalidated-not-deleted) or was removed.
+            let attrQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: UkEnvelopeStore.service,
+                kSecUseDataProtectionKeychain as String: true,
+                kSecReturnAttributes as String: true,
+            ]
+            var attrResult: AnyObject?
+            let attrStatus = SecItemCopyMatching(attrQuery as CFDictionary, &attrResult)
+            let rowSurvived = (attrStatus == errSecSuccess)
+            ResultFile.write("e5", "status=\(status) row_survived=\(rowSurvived ? "yes" : "no")")
+
+            if rowSurvived {
+                // A naive re-add (no delete first) must collide.
+                let naiveAddQuery: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: UkEnvelopeStore.service,
+                    kSecUseDataProtectionKeychain as String: true,
+                    kSecValueData as String: Data(Self.literalBytes),
+                ]
+                let naiveAddStatus = SecItemAdd(naiveAddQuery as CFDictionary, nil)
+                ResultFile.write("e5-naive-readd", "status=\(naiveAddStatus)")
+                #expect(naiveAddStatus == errSecDuplicateItem)
+            }
+
+            // Positive user-visible half: the mapped outcome's copy contains
+            // "password" in English, per ACC-03's fallback copy.
+            let mapped = BiometricUnlockOutcome.envelopeInvalidated
+            let englishCopy = t(mapped.copyKey!, locale: .en)
+            #expect(englishCopy.localizedCaseInsensitiveContains("password"))
+            ResultFile.write("e5-ui-copy", englishCopy)
+
+        default:
+            ResultFile.write("e5", "status=UNEXPECTED outcome=\(outcome)")
+        }
+    }
+}
