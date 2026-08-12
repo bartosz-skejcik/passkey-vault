@@ -102,6 +102,43 @@ enum BiometricUnlockService {
         try UkEnvelopeStore.store(bytes)
     }
 
+    /// Extracts the raw bytes from an `.ok` `KeychainOutcome`, hands them to
+    /// `use`, then wipes them -- `defer`-guarded so the wipe runs even if
+    /// `use` throws. Returns `nil` if `outcome` was not `.ok` (never true at
+    /// this file's one call site, which only invokes this from inside a
+    /// `case .ok` match).
+    ///
+    /// `outcome` is `inout` and is reassigned to `.benignCancel` BEFORE the
+    /// wipe runs -- this is not incidental cleanup, it IS the fix for CR-01.
+    /// `Data` is copy-on-write: the local `bytes` bound by
+    /// `case var .ok(bytes) = outcome` shares storage with `outcome`'s own
+    /// `.ok(...)` payload. If `outcome` (the caller's variable, which
+    /// outlives this function's `defer`) kept referencing that SAME
+    /// storage while `bytes.resetBytes(...)` ran, the mutation would not be
+    /// unique-referenced, so `resetBytes` would trigger a COW copy-out: it
+    /// allocates a fresh buffer, zeroes THAT buffer, and leaves `outcome`'s
+    /// original buffer -- the one holding the actual plaintext User Key --
+    /// completely untouched. (`BiometricCoWWipeTests.swift` proves this
+    /// exact trap in isolation, and proves this function avoids it, since a
+    /// zeroed LOCAL copy alone -- e.g. asserting `bytes == allZero` -- can
+    /// never distinguish an in-place wipe from a wiped COW copy: `bytes`
+    /// itself always reads back as zero either way. The only way to tell
+    /// the difference is to check that no OTHER live reference to the
+    /// original storage survives, which is exactly what reassigning
+    /// `outcome` before the wipe guarantees.)
+    ///
+    /// Not `private` so `BiometricCoWWipeTests` can exercise this exact
+    /// bytes-lifetime handling directly, without a real Keychain round trip.
+    static func consumeOkBytes<T>(
+        _ outcome: inout KeychainOutcome,
+        use: (Data) throws -> T
+    ) rethrows -> T? {
+        guard case var .ok(bytes) = outcome else { return nil }
+        outcome = .benignCancel
+        defer { bytes.resetBytes(in: 0..<bytes.count) }
+        return try use(bytes)
+    }
+
     /// `UkEnvelopeStore.read(reason:)`, then resolved into exactly the
     /// outcomes `LockView` renders. On `.envelopeUnusable`, the envelope is
     /// deleted here (recovery is `SecItemDelete`-then-`SecItemAdd`, and the
@@ -113,7 +150,7 @@ enum BiometricUnlockService {
     /// resolved here, one level above `classify(_:)`, never by changing that
     /// function's own three-bucket contract).
     static func unlockWithBiometrics(reason: String) async -> BiometricUnlockOutcome {
-        let outcome: KeychainOutcome
+        var outcome: KeychainOutcome
         do {
             outcome = try await UkEnvelopeStore.read(reason: reason)
         } catch {
@@ -121,9 +158,19 @@ enum BiometricUnlockService {
         }
 
         switch outcome {
-        case let .ok(bytes):
+        case .ok:
             do {
-                let userKey = try importUserKeyFromSession(bytes: bytes)
+                let result = try consumeOkBytes(&outcome) { bytes in
+                    try importUserKeyFromSession(bytes: bytes)
+                }
+                guard let userKey = result else {
+                    // Unreachable: this branch only runs when `outcome` just
+                    // matched `.ok` above, so `consumeOkBytes` always finds
+                    // its guard satisfied. Kept as a real, surfaced case
+                    // (not `fatalError`) so a future refactor that breaks
+                    // this invariant fails loudly instead of crashing.
+                    return .unexpected(errSecParam)
+                }
                 return .unlocked(userKey)
             } catch {
                 return .unexpected(errSecParam)
