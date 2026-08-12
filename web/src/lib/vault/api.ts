@@ -200,11 +200,13 @@ export interface CollectionRow {
   /** Wire mirror of `collections.rs`'s `CollectionResponse.family_wide_kind`
    * (30-02, FSH-01/FSH-02): `null` for an ordinary, non-family-wide
    * collection (today's exact behavior, unchanged); `'folder'` for a named
-   * family-wide folder; `'item_bucket'` for the one per-family
-   * auto-created collection holding bare items shared family-wide. Every
-   * later client plan in Phase 30 (invite folding, ShareDialog,
-   * SharingOverviewPanel, ItemRow badge) reads this field from here rather
-   * than re-deriving it -- 30-DECISION-FSH-02.md names this contract once.
+   * family-wide folder; `'item_bucket'` for an auto-created collection
+   * holding bare items shared family-wide (260812-01e: up to three per
+   * family, one per declared `family_wide_access_level` -- no longer a
+   * per-family singleton). Every later client plan in Phase 30 (invite
+   * folding, ShareDialog, SharingOverviewPanel, ItemRow badge) reads this
+   * field from here rather than re-deriving it -- 30-DECISION-FSH-02.md
+   * names this contract once.
    * Optional (not just nullable): a response predating this phase's
    * deploy, mid-rolling-restart, or a test fixture built before this field
    * existed, can omit the key entirely and still type-check -- treat a

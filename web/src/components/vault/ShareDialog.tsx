@@ -50,13 +50,17 @@
 // lets a LATER joiner read it (a direct share can only name recipients who
 // exist at share time). A family-wide FOLDER creates a fresh
 // `family_wide_kind: 'folder'` collection; a family-wide BARE ITEM is moved
-// into the ONE per-family `family_wide_kind: 'item_bucket'` collection,
-// lazily auto-created on first use and kept singular by 30-01's
-// `idx_one_item_bucket_per_family` partial unique index (a racing second
-// create 409s server-side and the loser adopts the winner's bucket). Both
-// paths then run the SAME `grantCollectionToRecipients` loop, and the item
-// path reuses the folder variant's seed-move re-encryption sequence verbatim
-// rather than carrying a second implementation of it.
+// into the `family_wide_kind: 'item_bucket'` collection DECLARED AT THE
+// SHARE'S OWN CHOSEN LEVEL (260812-01e: a family may hold up to THREE such
+// buckets, one per access level — no longer a per-family singleton),
+// lazily auto-created on first use per level and kept unique PER LEVEL by
+// migration 0021's `idx_one_item_bucket_per_family` partial unique index,
+// re-scoped to `(family_id, COALESCE(family_wide_access_level, ''))` (a
+// racing second create AT THE SAME LEVEL 409s server-side and the loser
+// adopts the winner's bucket). Both paths then run the SAME
+// `grantCollectionToRecipients` loop, and the item path reuses the folder
+// variant's seed-move re-encryption sequence verbatim rather than carrying
+// a second implementation of it.
 import { useEffect, useRef, useState } from "react";
 import { Users } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
@@ -305,8 +309,11 @@ async function grantCollectionToRecipients(
 }
 
 /** 30-12 (FSH-01's "or an item" clause): the fixed, non-sensitive
- * placeholder name of the ONE per-family auto-created `item_bucket`
- * collection. Any deterministic plaintext is acceptable here — 30-UI-SPEC.md
+ * placeholder name shared by EVERY per-level, auto-created `item_bucket`
+ * collection (260812-01e: up to three per family, one per declared level —
+ * see LO-03 for the known, accepted gap that all three currently render
+ * identically wherever a bucket's name is shown, which this task does not
+ * close). Any deterministic plaintext is acceptable here — 30-UI-SPEC.md
  * states this collection is never rendered as a folder row, and 30-10's
  * `SharingOverviewPanel` renders only the items INSIDE it, never its own
  * name. It is still encrypted like every other collection name (the server
@@ -461,23 +468,28 @@ async function awaitFamilyItemBucketGrant(
 }
 
 /**
- * 30-12 (FSH-01): resolves the ONE per-family `item_bucket` collection —
- * RESEARCH.md's own recommendation for routing a bare item's family-wide
- * share through the same collection-scoped path a family-wide folder uses,
- * rather than inventing a second mechanism.
+ * 30-12 (FSH-01): resolves the `item_bucket` collection declared at
+ * `level` — RESEARCH.md's own recommendation for routing a bare item's
+ * family-wide share through the same collection-scoped path a family-wide
+ * folder uses, rather than inventing a second mechanism. 260812-01e: a
+ * family may hold up to THREE such buckets (one per access level, LOCKED
+ * decision 1), so `level` is what disambiguates which one this call
+ * resolves or creates — `familyItemBucketRow` matches on BOTH
+ * `family_wide_kind` and `family_wide_access_level`, never kind alone.
  *
  * Order-independent and self-healing: it lists first and only creates when
- * the family genuinely has no bucket, so two members independently sharing
- * their own first item family-wide converge on the SAME bucket. That
- * convergence is NOT merely list-then-create ordering, though — a genuine
- * client-level race is still possible, and 30-01's
- * `idx_one_item_bucket_per_family` partial unique index is what makes it
- * safe: the second concurrent insert fails server-side (a clean 409 from
- * `collections::create`'s bare `ON CONFLICT DO NOTHING` + `fetch_optional`
- * `None` branch — the bare form is what catches a partial-index conflict at
- * all), so exactly one bucket can ever exist per family, and the loser
- * recovers through `awaitFamilyItemBucketGrant` instead of surfacing an
- * error.
+ * the family genuinely has no bucket AT THIS LEVEL, so two members
+ * independently sharing their own first item family-wide AT THE SAME LEVEL
+ * converge on the SAME bucket. That convergence is NOT merely
+ * list-then-create ordering, though — a genuine client-level race is still
+ * possible, and migration 0021's `idx_one_item_bucket_per_family` partial
+ * unique index (re-scoped to `(family_id, COALESCE(family_wide_access_level,
+ * ''))`) is what makes it safe: the second concurrent insert AT THE SAME
+ * LEVEL fails server-side (a clean 409 from `collections::create`'s bare
+ * `ON CONFLICT DO NOTHING` + `fetch_optional` `None` branch — the bare form
+ * is what catches a partial-index conflict at all), so exactly one bucket
+ * can ever exist per family PER LEVEL, and the loser recovers through
+ * `awaitFamilyItemBucketGrant` instead of surfacing an error.
  *
  * Returns the unwrapped `WasmCollectionKey` alongside the id — the caller
  * must re-encrypt the item UNDER this key, and re-listing + re-unsealing at
@@ -767,11 +779,12 @@ export default function ShareDialog({
 
   /** 30-12 (FSH-01's "or an item" clause): a family-wide share of a BARE item
    * is collection-scoped, never a direct `item_shares` row — the item is
-   * moved into the ONE per-family `item_bucket` collection and the bucket's
-   * key is granted to every current active member, so a LATER joiner reads it
-   * through the exact same invite-wrap / lazy-reseal path a family-wide
-   * folder already uses (a per-recipient `item_shares` row could never do
-   * that: it names recipients who exist today).
+   * moved into the `item_bucket` collection declared at this share's OWN
+   * chosen level (260812-01e: up to three per family, one per level) and
+   * the bucket's key is granted to every current active member, so a LATER
+   * joiner reads it through the exact same invite-wrap / lazy-reseal path a
+   * family-wide folder already uses (a per-recipient `item_shares` row
+   * could never do that: it names recipients who exist today).
    *
    * The decrypt / re-encrypt-under-destination / `moveItemToCollection`
    * sequence is `submitFolderVariant`'s seed-move sub-step verbatim,

@@ -33,9 +33,11 @@ export interface Collection {
   accessLevel: string | null;
   /** 30-11 (FSH-01): the server's own `collections.family_wide_kind`, threaded
    * through untransformed — `null` for an ordinary collection, `'folder'` for a
-   * named family-wide folder, `'item_bucket'` for the one per-family collection
-   * holding bare items shared family-wide (30-DECISION-FSH-02.md names the
-   * contract; `api.ts`'s `CollectionRow.family_wide_kind` is the wire mirror).
+   * named family-wide folder, `'item_bucket'` for a collection holding bare
+   * items shared family-wide (260812-01e: a family may hold up to THREE such
+   * collections, one per declared `family_wide_access_level` — no longer a
+   * per-family singleton; 30-DECISION-FSH-02.md names the original contract,
+   * `api.ts`'s `CollectionRow.family_wide_kind` is the wire mirror).
    *
    * Normalized to `null` here, never left `undefined`: the wire field is
    * OPTIONAL (a pre-Phase-30 response, or one served mid-rolling-restart, can
