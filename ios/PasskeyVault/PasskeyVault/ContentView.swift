@@ -2,123 +2,88 @@
 //  ContentView.swift
 //  PasskeyVault
 //
-//  Phase 37 (konto-unlock-hasłem-i-biometria), plan 37-02. Replaces Xcode's
-//  template with the minimal real screen this plan's tracer needs: a
-//  server-URL field, email/password, "Create account"/"Sign in" buttons
-//  calling `AccountService`, and a status line. On success, encrypts a
-//  fixture note through `encryptItem` and immediately `decryptItem`s it,
-//  showing the decrypted string -- so the screen visibly demonstrates that
-//  the key it holds actually works. No vault list, no styling work, no
-//  navigation -- Phase 38 owns the real UI.
+//  Phase 37 (konto-unlock-hasłem-i-biometria), plan 37-04. Reduced from
+//  35/37-02's minimal tracer screen to the router `37-UI-SPEC.md`'s Screen
+//  Inventory names: `AuthView` when there is no session (or the stored
+//  session can no longer be confirmed against the server), `LockView` when
+//  a session token restores an account but the User Key is not in memory.
+//
+//  Known simplification, recorded rather than hidden: `LockView`
+//  eligibility is decided by a LIVE `GET /api/auth/me` call
+//  (`AccountService.restoreSession()`) each launch, not a local cache of
+//  `pw_wrapped_uk` -- this avoids a second local-storage mechanism this
+//  phase does not otherwise need, at the cost of requiring network
+//  reachability to distinguish the two screens on cold launch. True
+//  offline-first caching is Phase 39's job (sync/offline cache), not this
+//  plan's.
 //
 
 import SwiftUI
 
 struct ContentView: View {
-    @State private var serverURLString = "http://127.0.0.1:8621"
-    @State private var email = ""
-    @State private var password = ""
-    @State private var statusMessage = ""
-    @State private var decryptedFixtureNote: String?
-    @State private var isBusy = false
+    /// Default target for this plan's own manual/automated verification
+    /// runs. Phase 38 owns real, user-configurable server settings.
+    private static let defaultServerURL = URL(string: "http://127.0.0.1:8620")!
 
-    /// Fixture plaintext encrypted/decrypted on success -- proves the
-    /// `FfiUserKey` this screen holds actually works, never just that a
-    /// network call succeeded.
-    private static let fixtureItemId = "tracer-fixture-item"
-    private static let fixtureNote = "{\"type\":\"note\",\"body\":\"Phase 37 tracer fixture\"}"
+    private enum Route {
+        case loading
+        case auth
+        case lock(RestoredAccount)
+        case unlocked(UnlockedSession)
+    }
+
+    @State private var route: Route = .loading
+    private let apiClient = PvApiClient(baseURL: ContentView.defaultServerURL)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Passkey Vault -- Phase 37 tracer").font(.headline)
-
-            TextField("Server URL", text: $serverURLString)
-                .textContentType(.URL)
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                #endif
-
-            TextField("Email", text: $email)
-                .textContentType(.emailAddress)
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                .keyboardType(.emailAddress)
-                #endif
-
-            SecureField("Password", text: $password)
-
-            HStack {
-                Button("Create account") {
-                    Task { await handle { try await accountService().register(email: email, password: password) } }
-                }
-                .disabled(isBusy || email.isEmpty || password.isEmpty)
-
-                Button("Sign in") {
-                    Task { await handle { try await accountService().signIn(email: email, password: password) } }
-                }
-                .disabled(isBusy || email.isEmpty || password.isEmpty)
-            }
-
-            if isBusy {
+        Group {
+            switch route {
+            case .loading:
                 ProgressView()
+            case .auth:
+                AuthView(apiClient: apiClient, onUnlocked: handleUnlocked)
+            case let .lock(account):
+                LockView(apiClient: apiClient, account: account, onUnlocked: handleUnlocked)
+            case let .unlocked(session):
+                unlockedPlaceholder(session)
             }
+        }
+        .task {
+            await determineRoute()
+        }
+    }
 
-            Text(statusMessage)
-                .foregroundStyle(statusMessage.hasPrefix("Error") ? .red : .primary)
-
-            if let decryptedFixtureNote {
-                Text("Decrypted fixture note:")
-                    .font(.caption)
-                Text(decryptedFixtureNote)
-                    .font(.system(.body, design: .monospaced))
-                    .padding(8)
-                    .background(.quaternary)
+    private func determineRoute() async {
+        let service = AccountService(apiClient: apiClient)
+        do {
+            if let restored = try await service.restoreSession() {
+                route = .lock(restored)
+            } else {
+                route = .auth
             }
+        } catch {
+            route = .auth
+        }
+    }
+
+    private func handleUnlocked(_ session: UnlockedSession) {
+        route = .unlocked(session)
+    }
+
+    /// Phase 38 owns the real vault UI. This is deliberately minimal --
+    /// just enough to show the session actually unlocked.
+    @ViewBuilder
+    private func unlockedPlaceholder(_ session: UnlockedSession) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.largeTitle)
+                .foregroundStyle(Color("PVAccent"))
+            Text(verbatim: "Vault unlocked")
+                .font(.title2)
+                .foregroundStyle(Color("PVTextPrimary"))
         }
         .padding()
-    }
-
-    private func accountService() throws -> AccountService {
-        guard let url = URL(string: serverURLString) else {
-            throw PvApiError.unexpectedResponse("invalid server URL: \(serverURLString)")
-        }
-        return AccountService(apiClient: PvApiClient(baseURL: url))
-    }
-
-    private func handle(_ action: @escaping () async throws -> UnlockedSession) async {
-        isBusy = true
-        statusMessage = ""
-        decryptedFixtureNote = nil
-        defer { isBusy = false }
-
-        do {
-            let session = try await action()
-            statusMessage = "Unlocked. Session token: \(session.token.prefix(8))..."
-
-            let item = try encryptItem(
-                userKey: session.userKey,
-                plaintext: Self.fixtureNote,
-                itemId: Self.fixtureItemId,
-                revision: 1
-            )
-            let decrypted = try decryptItem(
-                userKey: session.userKey,
-                item: item,
-                itemId: Self.fixtureItemId,
-                revision: 1
-            )
-            decryptedFixtureNote = decrypted
-        } catch let error as PvApiError {
-            // A 401 renders the SAME message regardless of whether the
-            // email or the password was wrong (T-37-08).
-            statusMessage = "Error: \(error.description)"
-        } catch let error as FfiError {
-            statusMessage = "Error: \(error)"
-        } catch {
-            statusMessage = "Error: \(error.localizedDescription)"
-        }
+        .background(Color("PVBackground"))
     }
 }
 

@@ -43,7 +43,7 @@ import Foundation
 /// (plus the one `Info.plist`-level string, `authFaceIdUsageDescription`).
 /// `CaseIterable` so `I18nDictionaryTests.swift` can walk every case
 /// mechanically rather than trusting a hand-maintained list.
-enum PVKey: CaseIterable {
+enum PVKey: CaseIterable, Equatable {
     // Mirrored verbatim from web/src/lib/i18n/dictionary.ts +
     // packages/pv-ui/i18n/common.ts (14 keys + aria.*).
     case authEmailLabel

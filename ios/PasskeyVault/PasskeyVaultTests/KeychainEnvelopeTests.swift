@@ -469,4 +469,38 @@ struct KeychainEnvelopeTests {
         let decrypted = try decryptItem(userKey: userKey, item: item, itemId: "kc-cross-store-b", revision: 1)
         #expect(decrypted == Self.literalFixturePlaintext)
     }
+
+    // MARK: - Task 4: BiometricUnlockOutcome -> PVKey state mapping
+
+    /// Each documented `BiometricUnlockOutcome` maps to the expected
+    /// `PVKey` -- or, for the outcomes that render nothing, to no key at
+    /// all. Positive assertion about what the user is shown, not a check
+    /// that an error object is nil.
+    @Test func biometricOutcomesMapToTheExpectedCopyKeyOrNoKeyAtAll() {
+        #expect(BiometricUnlockOutcome.envelopeInvalidated.copyKey == .unlockEnvelopeInvalidated)
+        #expect(BiometricUnlockOutcome.biometryLockedOut.copyKey == .unlockBiometryLockedOut)
+        #expect(BiometricUnlockOutcome.biometryDenied.copyKey == .unlockBiometryDenied)
+        #expect(BiometricUnlockOutcome.benignCancel.copyKey == nil)
+        #expect(BiometricUnlockOutcome.locked.copyKey == nil)
+        #expect(BiometricUnlockOutcome.unexpected(errSecParam).copyKey == nil)
+    }
+
+    /// The three documented error-state strings are pairwise distinct,
+    /// independently in EACH locale -- a shared/collapsed string between
+    /// two causes would defeat the whole point of the three-message
+    /// taxonomy.
+    @Test func theThreeBiometricErrorStatesArePairwiseDistinctPerLocale() {
+        let keys: [PVKey] = [.unlockEnvelopeInvalidated, .unlockBiometryLockedOut, .unlockBiometryDenied]
+        for locale in [PVLocale.pl, PVLocale.en] {
+            let strings = keys.map { t($0, locale: locale) }
+            #expect(Set(strings).count == strings.count, "duplicate copy among biometric error states in \(locale)")
+        }
+    }
+
+    /// The benign-cancel state produces NO message -- asserted positively
+    /// as "there is no copy key for this outcome", not merely "the error
+    /// object is nil".
+    @Test func benignCancelOutcomeProducesNoCopyKey() {
+        #expect(BiometricUnlockOutcome.benignCancel.copyKey == nil)
+    }
 }

@@ -7,14 +7,21 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		23B82439038CADC4169A65A8 /* PvFfi.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = F4C1A4D6302B0A9C00C58DEB /* PvFfi.xcframework */; };
 		35238C90CC1A6DD53B37A40B /* PvFfi.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = F4C1A4D6302B0A9C00C58DEB /* PvFfi.xcframework */; };
+		4DC5BD15F687F1DBCE281638 /* PasskeyVaultAutoFill.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 439108F12317FDDD29406623 /* PasskeyVaultAutoFill.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
 		666E2AA5574D0C4C8C2CA601 /* pv_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4C1A4D9302B0A9C00C58DEB /* pv_ffi.swift */; };
 		885B8A3979461D4BA7554003 /* pv_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4C1A4D9302B0A9C00C58DEB /* pv_ffi.swift */; };
-		23B82439038CADC4169A65A8 /* PvFfi.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = F4C1A4D6302B0A9C00C58DEB /* PvFfi.xcframework */; };
-		4DC5BD15F687F1DBCE281638 /* PasskeyVaultAutoFill.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 439108F12317FDDD29406623 /* PasskeyVaultAutoFill.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		538C25E76E7BDA127A380CC8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F4C1A4A4302B0A9A00C58DEB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3995FEC5A108122F43B310EA;
+			remoteInfo = PasskeyVaultAutoFill;
+		};
 		F4C1A4BA302B0A9C00C58DEB /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = F4C1A4A4302B0A9A00C58DEB /* Project object */;
@@ -29,25 +36,50 @@
 			remoteGlobalIDString = F4C1A4AB302B0A9A00C58DEB;
 			remoteInfo = PasskeyVault;
 		};
-		538C25E76E7BDA127A380CC8 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = F4C1A4A4302B0A9A00C58DEB /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 3995FEC5A108122F43B310EA;
-			remoteInfo = PasskeyVaultAutoFill;
-		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		B06229589BFF245E3AB4C9F5 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				4DC5BD15F687F1DBCE281638 /* PasskeyVaultAutoFill.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		439108F12317FDDD29406623 /* PasskeyVaultAutoFill.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PasskeyVaultAutoFill.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F4C1A4AC302B0A9A00C58DEB /* PasskeyVault.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PasskeyVault.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F4C1A4B9302B0A9C00C58DEB /* PasskeyVaultTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PasskeyVaultTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F4C1A4C3302B0A9C00C58DEB /* PasskeyVaultUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PasskeyVaultUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F4C1A4D6302B0A9C00C58DEB /* PvFfi.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = PvFfi.xcframework; path = build/PvFfi.xcframework; sourceTree = "<group>"; };
-		F4C1A4D9302B0A9C00C58DEB /* pv_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = pv_ffi.swift; path = build/swift-bindings/pv_ffi.swift; sourceTree = "<group>"; };
-		439108F12317FDDD29406623 /* PasskeyVaultAutoFill.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PasskeyVaultAutoFill.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F4C1A4D9302B0A9C00C58DEB /* pv_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = pv_ffi.swift; path = "build/swift-bindings/pv_ffi.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		D2445DE6872C32C424D63DCD /* Exceptions for "PasskeyVaultAutoFill" folder in "PasskeyVaultAutoFill" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3995FEC5A108122F43B310EA /* PasskeyVaultAutoFill */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		0B428FE9E49C0BB22AF61E01 /* PasskeyVaultAutoFill */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				D2445DE6872C32C424D63DCD /* Exceptions for "PasskeyVaultAutoFill" folder in "PasskeyVaultAutoFill" target */,
+			);
+			path = PasskeyVaultAutoFill;
+			sourceTree = "<group>";
+		};
 		F4C1A4AE302B0A9A00C58DEB /* PasskeyVault */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = PasskeyVault;
@@ -63,27 +95,17 @@
 			path = PasskeyVaultUITests;
 			sourceTree = "<group>";
 		};
-		0B428FE9E49C0BB22AF61E01 /* PasskeyVaultAutoFill */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				D2445DE6872C32C424D63DCD /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
-			);
-			path = PasskeyVaultAutoFill;
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		D2445DE6872C32C424D63DCD /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = 3995FEC5A108122F43B310EA /* PasskeyVaultAutoFill */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFrameworksBuildPhase section */
+		85FAE19753803895A9F31C6B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				23B82439038CADC4169A65A8 /* PvFfi.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		F4C1A4A9302B0A9A00C58DEB /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -103,14 +125,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		85FAE19753803895A9F31C6B /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				23B82439038CADC4169A65A8 /* PvFfi.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -144,6 +158,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		3995FEC5A108122F43B310EA /* PasskeyVaultAutoFill */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EA071133E5DBDFAB41659D4F /* Build configuration list for PBXNativeTarget "PasskeyVaultAutoFill" */;
+			buildPhases = (
+				585CEF5501C74197B7FE3827 /* Sources */,
+				85FAE19753803895A9F31C6B /* Frameworks */,
+				D35C8B3BD9AA84491A8BCB2A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0B428FE9E49C0BB22AF61E01 /* PasskeyVaultAutoFill */,
+			);
+			name = PasskeyVaultAutoFill;
+			packageProductDependencies = (
+			);
+			productName = PasskeyVaultAutoFill;
+			productReference = 439108F12317FDDD29406623 /* PasskeyVaultAutoFill.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		F4C1A4AB302B0A9A00C58DEB /* PasskeyVault */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = F4C1A4CD302B0A9C00C58DEB /* Build configuration list for PBXNativeTarget "PasskeyVault" */;
@@ -168,28 +204,6 @@
 			productName = PasskeyVault;
 			productReference = F4C1A4AC302B0A9A00C58DEB /* PasskeyVault.app */;
 			productType = "com.apple.product-type.application";
-		};
-		3995FEC5A108122F43B310EA /* PasskeyVaultAutoFill */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = EA071133E5DBDFAB41659D4F /* Build configuration list for PBXNativeTarget "PasskeyVaultAutoFill" */;
-			buildPhases = (
-				585CEF5501C74197B7FE3827 /* Sources */,
-				85FAE19753803895A9F31C6B /* Frameworks */,
-				D35C8B3BD9AA84491A8BCB2A /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				0B428FE9E49C0BB22AF61E01 /* PasskeyVaultAutoFill */,
-			);
-			name = PasskeyVaultAutoFill;
-			packageProductDependencies = (
-			);
-			productName = PasskeyVaultAutoFill;
-			productReference = 439108F12317FDDD29406623 /* PasskeyVaultAutoFill.appex */;
-			productType = "com.apple.product-type.app-extension";
 		};
 		F4C1A4B8302B0A9C00C58DEB /* PasskeyVaultTests */ = {
 			isa = PBXNativeTarget;
@@ -247,6 +261,9 @@
 				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
+					3995FEC5A108122F43B310EA = {
+						CreatedOnToolsVersion = 26.6;
+					};
 					F4C1A4AB302B0A9A00C58DEB = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -258,9 +275,6 @@
 						CreatedOnToolsVersion = 26.6;
 						TestTargetID = F4C1A4AB302B0A9A00C58DEB;
 					};
-					3995FEC5A108122F43B310EA = {
-						CreatedOnToolsVersion = 26.6;
-					};
 				};
 			};
 			buildConfigurationList = F4C1A4A7302B0A9A00C58DEB /* Build configuration list for PBXProject "PasskeyVault" */;
@@ -268,6 +282,7 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				pl,
 				Base,
 			);
 			mainGroup = F4C1A4A3302B0A9A00C58DEB;
@@ -286,6 +301,13 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		D35C8B3BD9AA84491A8BCB2A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		F4C1A4AA302B0A9A00C58DEB /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -307,28 +329,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		D35C8B3BD9AA84491A8BCB2A /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXResourcesBuildPhase section */
-
-/* Begin PBXCopyFilesBuildPhase section */
-		B06229589BFF245E3AB4C9F5 /* Embed Foundation Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				4DC5BD15F687F1DBCE281638 /* PasskeyVaultAutoFill.appex in Embed Foundation Extensions */,
-			);
-			name = "Embed Foundation Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		F4C1A4D8302B0A9C00C58DEB /* Build pv-ffi XCFramework */ = {
@@ -348,6 +349,14 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		585CEF5501C74197B7FE3827 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				885B8A3979461D4BA7554003 /* pv_ffi.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		F4C1A4A8302B0A9A00C58DEB /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -370,17 +379,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		585CEF5501C74197B7FE3827 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				885B8A3979461D4BA7554003 /* pv_ffi.swift in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		60C553080F9F66EA89A771F1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3995FEC5A108122F43B310EA /* PasskeyVaultAutoFill */;
+			targetProxy = 538C25E76E7BDA127A380CC8 /* PBXContainerItemProxy */;
+		};
 		F4C1A4BB302B0A9C00C58DEB /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = F4C1A4AB302B0A9A00C58DEB /* PasskeyVault */;
@@ -391,14 +397,67 @@
 			target = F4C1A4AB302B0A9A00C58DEB /* PasskeyVault */;
 			targetProxy = F4C1A4C4302B0A9C00C58DEB /* PBXContainerItemProxy */;
 		};
-		60C553080F9F66EA89A771F1 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 3995FEC5A108122F43B310EA /* PasskeyVaultAutoFill */;
-			targetProxy = 538C25E76E7BDA127A380CC8 /* PBXContainerItemProxy */;
-		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		213F0514ADFD2E4883AFECC7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PasskeyVaultAutoFill/PasskeyVaultAutoFill.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/build";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PasskeyVaultAutoFill/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cloud.blonie.PasskeyVault.AutoFill;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		5D48680EE4DAA5A16F5BC273 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PasskeyVaultAutoFill/PasskeyVaultAutoFill.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/build";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PasskeyVaultAutoFill/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cloud.blonie.PasskeyVault.AutoFill;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		F4C1A4CB302B0A9C00C58DEB /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -528,10 +587,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(SRCROOT)/build",
-				);
+				FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/build";
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Passkey Vault uses Face ID to unlock your vault.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -565,10 +623,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(SRCROOT)/build",
-				);
+				FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/build";
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Passkey Vault uses Face ID to unlock your vault.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -672,71 +729,18 @@
 			};
 			name = Release;
 		};
-		5D48680EE4DAA5A16F5BC273 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = PasskeyVaultAutoFill/PasskeyVaultAutoFill.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(SRCROOT)/build",
-				);
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = PasskeyVaultAutoFill/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "cloud.blonie.PasskeyVault.AutoFill";
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SKIP_INSTALL = YES;
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
-		};
-		213F0514ADFD2E4883AFECC7 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = PasskeyVaultAutoFill/PasskeyVaultAutoFill.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(SRCROOT)/build",
-				);
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = PasskeyVaultAutoFill/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "cloud.blonie.PasskeyVault.AutoFill";
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SKIP_INSTALL = YES;
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		EA071133E5DBDFAB41659D4F /* Build configuration list for PBXNativeTarget "PasskeyVaultAutoFill" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5D48680EE4DAA5A16F5BC273 /* Debug */,
+				213F0514ADFD2E4883AFECC7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		F4C1A4A7302B0A9A00C58DEB /* Build configuration list for PBXProject "PasskeyVault" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -769,15 +773,6 @@
 			buildConfigurations = (
 				F4C1A4D4302B0A9C00C58DEB /* Debug */,
 				F4C1A4D5302B0A9C00C58DEB /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		EA071133E5DBDFAB41659D4F /* Build configuration list for PBXNativeTarget "PasskeyVaultAutoFill" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				5D48680EE4DAA5A16F5BC273 /* Debug */,
-				213F0514ADFD2E4883AFECC7 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
