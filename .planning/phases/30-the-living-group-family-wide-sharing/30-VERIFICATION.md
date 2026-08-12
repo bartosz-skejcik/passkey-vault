@@ -1,96 +1,160 @@
 ---
 phase: 30-the-living-group-family-wide-sharing
-verified: 2026-08-11T21:50:15Z
-status: gaps_found
-score: 5/6 must-haves verified
+verified: 2026-08-12T02:04:27Z
+status: passed
+score: 6/6 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
 re_verification:
   previous_status: gaps_found
   previous_score: 5/6
-  previous_head: 6b51d57
-  current_head: 3219b16
+  previous_head: 3219b16
+  current_head: 0c67a66
   gaps_closed:
-    - "B1 — hidden_password-declared family-wide share grants nobody (SC2 gap 1). Fixed in a8b8f6f; falsification-proven by me at this HEAD."
-    - "B2 — `cargo test --workspace` red since 492be50. Fixed in 2036554; 365 tests pass, 0 failed, exit 0."
-    - "B3 — `npm run compile` red with 9 TS errors. Fixed in 1339c5a; tsc --noEmit exits 0."
-    - "WINDOWS.md JSON mirror drift (Warning-severity). Fixed in 6f5e987."
-  gaps_remaining:
-    - "SC2 — the family-wide ITEM variant. Previously recorded as `partial` (no recipient-side proof). Now escalated to `failed`: I probed it and it is not merely unproven, it is BROKEN in a reachable configuration."
+    - "SC2 — the family-wide ITEM variant. Closed by quick task 260812-01e (28 commits, 3219b16..0c67a66). Re-verified by me at this HEAD: the exact control probe that produced the original 403 now returns 200 at both `read` and `hidden_password`, and the item variant is live-proven recipient-side, cross-account, through real crypto."
+  gaps_remaining: []
   regressions: []
-gaps:
-  - truth: "SC2 — A user can share a folder OR AN ITEM with the whole family in one action, and every current member's own client opens and reads the actual content"
-    status: failed
-    reason: >-
-      The folder variant is fully proven at this HEAD (e2e 9/9 from a fresh
-      build, recipient-side decrypted name + revealed password), and B1's
-      hidden_password blocker is genuinely closed. But FSH-01's "or an item"
-      clause is broken, not merely unproven.
-
-      Root cause (one, with two user-visible faces): the family-wide ITEM
-      variant routes every item through the ONE per-family `item_bucket`
-      collection (30-12), and that singleton carries exactly ONE
-      `family_wide_access_level` — while `ShareDialog` offers a per-share
-      level control on every item share. The bucket's level is fixed forever
-      by whoever makes the family's FIRST family-wide item share.
-
-      Face 1 — the bucket is write-locked to every non-creator member
-      whenever it was created at anything other than `edit`.
-      `submitItemFamilyWide` must call `moveItemToCollection` to put the item
-      in the bucket, and `vault::move_item` gates the DESTINATION with
-      `require_collection_edit` (an exact `AccessLevel::Edit` match, Phase 22
-      / SHARE-04). A member fanned out at the bucket's declared `read` or
-      `hidden_password` level therefore cannot ever put an item in it. The
-      creator is unaffected — `collections::create` hard-codes their own row
-      to `'edit'`. Proven by a throwaway integration probe at this HEAD
-      (created, run, deleted; tree left clean), WITH a control that isolates
-      the level as the sole cause:
-        bucket declared 'read' -> member B's family-wide item share -> 403 Forbidden
-        bucket declared 'edit' -> the SAME probe, same fixture -> 200 OK, item lands in the bucket
-      `hidden_password` follows from the same exact-match gate.
-      User-visible result: `handleSubmit` catches the throw and renders
-      `share.createFailed` ("…Spróbuj ponownie.") — a retry that can never
-      succeed. This is the same "honest copy for an impossible retry" shape
-      CR-04 already fixed once on the neighbouring gap-window path.
-
-      Face 2 — after the first item share, the dialog's level control is a
-      no-op. `findOrCreateFamilyItemBucket(identityKey, level)` returns an
-      existing bucket while IGNORING its `level` argument, and nothing ever
-      updates `collections.family_wide_access_level`. The subsequent
-      `grantCollectionToRecipients(..., level)` calls `add_member`, which for
-      an already-granted recipient returns 409, and `grantCollectionToRecipients`
-      swallows 409 via `isConflictError` as success-for-that-recipient. So a
-      second family-wide item share submitted at `edit` into a `read` bucket
-      reports full success while every recipient stays at `read`, and every
-      FUTURE joiner still receives the bucket at the original `read` (both
-      the invite-wrap and lazy-reseal paths read `family_wide_access_level`).
-
-      Separately, the evidentiary gap the previous report recorded still
-      stands on its own terms: no e2e test opens `ShareDialog` on an item
-      scope with the family-wide row checked (`grep -rn item_bucket web/e2e/`
-      returns nothing), and there is no real-WASM test for it. Every existing
-      proof of this path is a `@/lib/crypto`-mocked unit test, which this
-      project's standing rule rejects as evidence for a crypto claim — which
-      is precisely why a functional 403 survived to this point undetected.
-    artifacts:
-      - path: "web/src/components/vault/ShareDialog.tsx"
-        issue: "`findOrCreateFamilyItemBucket` (line ~424) ignores its `level` argument on the existing-bucket branch; `submitItemFamilyWide` (line ~712) then calls `moveItemToCollection` into a bucket the caller may only hold `read`/`hidden_password` on; `grantCollectionToRecipients` (line ~219) swallows the resulting 409s as success"
-      - path: "crates/pv-server/src/routes/vault.rs"
-        issue: "`move_item` line ~976 gates the destination with `require_collection_edit` (exact Edit match) — correct in itself, but nothing in the item-bucket design guarantees a family-wide sharer holds Edit on the bucket"
-      - path: "web/e2e/family-wide-sharing.spec.ts"
-        issue: "all 9 tests exercise the folder variant only; no item-scope family-wide test exists, so neither face of this defect is caught"
-    missing:
-      - "Decide what ONE access level a per-family item bucket may carry, given the dialog offers a per-share level: either force the bucket to `edit` and disclose that a family-wide ITEM share is always editable, or keep per-share levels and stop routing items through a single shared bucket. This is a product decision, not a code tweak."
-      - "Until then, at minimum: refuse (with honest copy) a family-wide item share whose level does not match an existing bucket's, instead of reporting success while silently delivering the old level."
-      - "A live (or real-WASM) recipient-side proof that a family-wide ITEM share decrypts for another real account — the missing proof that let this ship."
-      - "A regression test that a NON-CREATOR member can share an item family-wide when the bucket was created at each of the three offered levels."
-human_verification:
-  - test: "Product decision: what does an access level MEAN for a family-wide item share, when all such items share one per-family bucket that can only carry one level? Options: (a) family-wide item shares are always `edit` and the dialog says so; (b) the bucket's level is per-share, which requires abandoning the single-bucket design; (c) the dialog refuses a level that conflicts with the existing bucket."
-    expected: "A recorded decision in the shape of FSH-02's, since every option changes either the UI contract or 30-12's mechanism"
-    why_human: "Product/UX call about what the level control promises, not derivable from the code — the same class of decision as the hidden_password one Bartek already made"
+gaps: []
+deferred: []
+open_followups_non_blocking:
+  - item: "Whether the family-wide item disclosure copy must also name DELETION, not only editing (HI-03's accepted destruction half)."
+    tracked_in: ".planning/quick/260812-01e-phase-30-fix-family-wide-item-variant-pe/260812-01e-VERIFICATION.md"
+    affects_success_criteria: false
+  - item: "Accept-or-close the HI-02 residual: a legacy NULL-level item_bucket row now fails closed, which would permanently block invite generation for a key-holder. Unreachable in any released build; detectable in one query."
+    tracked_in: ".planning/quick/260812-01e-phase-30-fix-family-wide-item-variant-pe/260812-01e-VERIFICATION.md"
+    affects_success_criteria: false
 ---
 
 # Phase 30: The Living Group — Family-Wide Sharing — Verification Report
+
+**Phase Goal:** A person can share with the whole family in one action, and the family behaves as a living group — someone who joins later reads that share without the sharer acting again — via a client-only key-delivery mechanism decided and written down before any code depends on it, with zero-knowledge untouched.
+
+**Verified:** 2026-08-12T02:04:27Z
+**Status:** passed — **6/6**
+**Re-verification:** Yes — THIRD pass, at HEAD `0c67a66` (second pass `3219b16`, first pass `6b51d57`)
+
+## Verdict at a Glance (third pass)
+
+**SC2 is closed. Phase 30 is 6/6 and closeable.**
+
+The one remaining failure — FSH-01's "or an item" clause — was fixed by quick task `260812-01e` (8 plan tasks, then 15 code-review fixes) and I re-verified it here rather than accepting its SUMMARY or its Fix Disposition. The full verdict on that task, including all thirteen falsifications I performed myself, is in
+`.planning/quick/260812-01e-phase-30-fix-family-wide-item-variant-pe/260812-01e-VERIFICATION.md`.
+
+Nothing else regressed: the five other success criteria were re-proved at this HEAD by the same live suite (now 10/10), and all five CI-width commands are green.
+
+## SC2, re-verified at `0c67a66`
+
+**Criterion (ROADMAP.md, verbatim):** *"A user can share a folder or an item with the whole family in one action, without ticking each person, and every current member's own client opens and reads the actual content — asserted positively and recipient-side in a live multi-session run, never by absence."*
+
+| Half | Status | Evidence at this HEAD |
+|---|---|---|
+| **Folder** | ✓ PROVEN | e2e tests 1–9, re-run by me from a fresh build of this HEAD — recipient decrypts real name + revealed password |
+| **Item** | ✓ **PROVEN — was FAILED** | e2e test 10, new: two real accounts, both decrypt directions, real crypto, assertions on decrypted content |
+
+**The original defect's own control probe, reversed and falsification-proven by me.** The second pass recorded `bucket declared 'read' → 403 Forbidden` for a non-creator's family-wide item share, with `bucket declared 'edit' → 200 OK` as the isolating control. At this HEAD the `read` case returns **200**, and so does `hidden_password`. I did not take that from the test names: I disabled `move_item`'s Gate 2 item_bucket branch and watched both server tests go red at exactly the original values —
+
+```
+task1_non_creator_contributor_claims_edit_on_read_declared_item_bucket
+  a non-creator member holding only 'read' on a family-wide item_bucket must be able to
+  move their own item into it -- VERIFICATION.md's exact control probe, reversed
+    left: 403
+   right: 200
+```
+
+— restored, and confirmed green.
+
+**Recipient-side, live, cross-account.** e2e test 10 runs two genuinely distinct real accounts: the owner (`FAMILY_OWNER_EMAIL`, fresh context) and a brand-new member (`pv-e2e-item-bucket-member-${uniqueSuffix()}@example.test`) registered through the app's own register form and joined through the real invite UI. I confirmed that identity independently in `fixtures.ts`, because the whole item-half verdict rests on it. The claim-carrying step is the **owner decrypting the member's item Y** — a non-creator, `read`-level member's family-wide item share reaching another real account — asserted on the real decrypted name in the row *and* the real password after `reveal-password`, never on a row's presence. Only the *family* is reused, which `idx_families_singleton` genuinely forces (one family per instance).
+
+**Face 2 (the level control silently delivering the wrong level) is closed three-deep**, and the truth is asserted positively live: item Z's `collection_id` differs from item X/Y's, and each bucket's own `family_wide_access_level` reads back exactly `"read"` and `"edit"`. One honest qualification, recorded rather than glossed: that live discriminating assertion is a **backstop, not a pinned instrument** — I proved first-hand that no single production revert reaches it (a single revert fails loudly one step upstream, at `share-dialog` never detaching). What *is* single-revert falsifiable, and what I did falsify one at a time, are the three defenses in front of it: the client's level-keyed resolution (1 sole-guard unit test), the client's 409 verification (3 tests), and the server's declared-level bound (`enforce_item_bucket_declared_level_bound`, wired at all three propagation surfaces). Face 2's original signature — *silent* success at the wrong level — is now structurally unreachable, because the server refuses the mismatched grant outright.
+
+**No new escalation was opened in closing it.** I enumerated every path in `crates/pv-server/src/` that can write a `collection_keys` row (eight, of which three propagate to third parties) and falsified each bound individually; the contributor's `edit` claim is now atomic with the move (driven myself with a stale `expected_revision`: `409`, and the row stays `read`); `revoke_access` refuses on item_buckets; and the cross-bucket laundering vector is refused with state unchanged. Full detail in the quick task's verdict.
+
+## Observable Truths (ROADMAP Success Criteria, verbatim)
+
+| # | Truth | Status | Evidence at `0c67a66` |
+|---|-------|--------|----------------------|
+| 1 | Decision record names the mechanism and rejected alternatives, lands before dependent code, verifiable by commit order | ✓ VERIFIED (carried) | `f2fb3c0` touches only `30-DECISION-FSH-02.md` + one PROJECT.md line; `git merge-base --is-ancestor f2fb3c0 74657d2` → true. Unchanged by this range. |
+| 2 | Share a folder **or an item** with the whole family in one action; **every current member's** client opens and reads the actual content — positively, recipient-side, live | ✓ **VERIFIED (was FAILED)** | Folder: e2e 1–9. Item: e2e 10, cross-account both directions, real decrypted content. Control probe reversed and falsification-proven. See above. |
+| 3 | An account joining **after** the share reads it with no further sharer action | ✓ VERIFIED (re-proved) | e2e tests 2 and 3 green at this HEAD from a fresh build |
+| 4 | Nothing persisted or received on that path is a Collection Key, private key, or plaintext | ✓ VERIFIED (re-proved) | `cargo test --workspace --no-fail-fast` → **376 passed, 0 failed, exit 0**, including the whole `family_wide_sharing` target (now 18 tests). Real-WASM half unchanged. |
+| 5 | UI states that "the whole family" includes future joiners **and** the real timing bound | ✓ VERIFIED (re-proved) | e2e test 4 green, including its hardcoded-literal-not-from-`t()` check |
+| 6 | Leaving, removal and account deletion revoke through the same atomic re-key path; ex-member's client drops plaintext on the next completed sync | ✓ VERIFIED (re-proved, incl. no-regression check) | e2e tests 5, 6, 7 green. Specifically re-checked against this range's `revoke_access` refusal: `families::apply_member_removal_rekey` issues its own `DELETE FROM collection_keys` in its own transaction and never routes through `revoke_access`; the batch is built from `getMemberAccess(target).collections`, which is kind-agnostic, so item_buckets are included. **SC6 does not regress.** |
+
+**Score: 6/6 truths verified (0 present-but-behavior-unverified).**
+
+## The Five CI-Width Commands, Re-Run by Me at This HEAD
+
+| # | Command | Exit | Result |
+|---|---------|------|--------|
+| 1 | `cargo test --workspace --no-fail-fast` | **0** | 31 test-result blocks, **376 passed, 0 failed** (was 365) |
+| 2 | `cd web && npm run compile` | **0** | 0 errors |
+| 3 | `cd web && npm test` | **0** | **92 files / 975 tests** (was 964) |
+| 4 | `cd web && npm run build` | **0** | build succeeded |
+| 5 | `cd web && npx playwright test e2e/family-wide-sharing.spec.ts --retries=0` | **0** | **10 passed (1.1m)** (was 9) |
+
+Live-run hygiene: server (`cargo build --release -p pv-server`) and web (`next build`) both rebuilt from this HEAD immediately before the run; port 8620 confirmed free first; throwaway `PV_E2E_DB_DIR`; `data/pv.db` SHA-256 `8e043c9d…b997c8` identical before and after every run in this session.
+
+## Requirements Coverage
+
+| Requirement | Status | Change from the second pass |
+|---|---|---|
+| FSH-01 — share a folder **or an item** family-wide in one action | ✓ **SATISFIED (was BLOCKED)** | Item half closed and live-proven |
+| FSH-02 | ✓ SATISFIED | unchanged |
+| FSH-03 | ✓ SATISFIED | unchanged, re-proved under the CI command |
+| FSH-04 | ✓ SATISFIED | unchanged, re-checked against the new `revoke_access` refusal |
+| FSH-05 | ✓ SATISFIED | unchanged |
+| FAM-10 | ✓ SATISFIED | unchanged |
+
+## Human-Verification Item from the Second Pass — Resolved
+
+The second pass escalated one product decision: *"what does an access level MEAN for a family-wide item share, when all such items share one per-family bucket that can only carry one level?"* **Answered and recorded** as LOCKED decision 1 in
+`.planning/quick/260812-01e-phase-30-fix-family-wide-item-variant-pe/260812-01e-CONTEXT.md` (Bartek, 2026-08-12): a family may hold up to three item_bucket collections, one per level; whoever contributes an item to a bucket holds `edit` on it for themselves; the asymmetry is accepted and must be disclosed, never hidden. The two rejected options are named there. The code implements exactly that, and the disclosure copy ships in both locales.
+
+## Open Follow-Ups (non-blocking, no success criterion depends on them)
+
+Neither of these is an unmet Phase 30 criterion; both are recorded against the quick task, where they are escalated for a human decision.
+
+1. **Disclosure copy vs deletion.** `share.familyWideItemContributorEditNote` honestly carries all three facts the plan required (any member, at will; read-only is not a guarantee; nothing reverses it) — but HI-03's *destruction* half was assessed and deliberately left open, and the copy says only "pełna edycja"/"full editor". Whether that is false-by-omission is a product call.
+2. **HI-02 legacy residual.** A legacy NULL-level `item_bucket` row now fails closed at all three propagation sites, which would permanently block invite generation for anyone holding a key on it (WINDOWS #17's shape). Unreachable in any released build — the column does not exist in v0.4, and the API cannot create such a row — but possible in a dev DB that ran an intermediate pre-0020 build. Detection: `SELECT id, family_id FROM collections WHERE family_wide_kind = 'item_bucket' AND family_wide_access_level IS NULL;`
+
+## Anti-Patterns
+
+`TBD` / `FIXME` / `XXX` across all 21 source files changed in `3219b16..0c67a66`: **none**. Debt-marker gate clean.
+
+## Gaps Summary
+
+None. Phase 30's goal is achieved end to end: the FSH-02 decision record landed first by topological commit order; a person can now share **a folder or an item** with the whole family in one action and every current member's own client reads the real content, proven live, cross-account, on decrypted content in both directions; a later joiner resolves the share without the sharer acting again, including the gap window only lazy reseal can close; the zero-knowledge sweep is green under the command CI actually runs; the timing copy is measured, not asserted; and all three departure paths revoke through the same atomic re-key, re-checked against this range's new `revoke_access` refusal and shown not to route through it.
+
+The item variant that failed the second pass is not merely "no longer failing" — the exact probe that produced the original `403` now produces `200` under a falsification I performed myself, the wrong-level face is defended three-deep with each layer individually falsifiable, and no new privilege-escalation path was opened in closing it (all eight `collection_keys` writers enumerated; all three third-party propagation surfaces bounded and each bound independently falsified).
+
+---
+
+_Re-verified: 2026-08-12T02:04:27Z at HEAD `0c67a66` (third pass)_
+_Verifier: Claude (gsd-verifier), adversarial goal-backward pass_
+_Quick-task detail: `.planning/quick/260812-01e-phase-30-fix-family-wide-item-variant-pe/260812-01e-VERIFICATION.md`_
+
+---
+---
+
+## Historical: second pass (`3219b16`, 2026-08-11)
+
+_Everything below is preserved verbatim: the SECOND verification pass, written at `3219b16` — which found SC2's item variant BROKEN and escalated it from `partial` to `failed` — followed by the FIRST pass at `6b51d57` and the code-fixer's own resolution record, both already demoted beneath it at that time. The verdict above supersedes the frontmatter and findings below: SC2's item-variant gap, the only one still open at `3219b16`, is now closed and re-proved closed. Everything else recorded below stands as written._
+
+### Second-pass frontmatter verdict (superseded)
+
+```yaml
+verified: 2026-08-11T21:50:15Z
+status: gaps_found
+score: 5/6 must-haves verified
+gaps:
+  - SC2 — the family-wide ITEM variant (escalated from `partial` to `failed`)   [NOW CLOSED, 3219b16..0c67a66]
+human_verification:
+  - Product decision: what an access level MEANS for a family-wide item share  [NOW ANSWERED, LOCKED decision 1]
+```
+
+### Second-pass report body (heading demoted from `#` to `###` on filing; text otherwise verbatim)
+
+#### Phase 30: The Living Group — Family-Wide Sharing — Verification Report (second pass, 2026-08-11)
 
 **Phase Goal:** A person can share with the whole family in one action, and the family behaves as a living group — someone who joins later reads that share without the sharer acting again — via a client-only key-delivery mechanism decided and written down before any code depends on it, with zero-knowledge untouched.
 

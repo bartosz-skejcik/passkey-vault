@@ -5,16 +5,16 @@ milestone_name: Sharing That Makes Sense
 current_phase: 31
 current_phase_name: The Share Dialog — Per-Person Access, Existing Destinations
 status: phase_complete
-stopped_at: Quick task 260812-01e complete -- Phase 30 SC2's item-variant defect closed, all 8 tasks falsification-proven, live e2e green (10/10)
+stopped_at: Phase 30 CLOSED -- verified 6/6 at 2026-08-12 after quick task 260812-01e + 15 code-review fixes; ready to start Phase 31
 last_updated: "2026-08-12T00:17:55.302Z"
 last_activity: 2026-08-12
 last_activity_desc: Quick task 260812-01e closed Phase 30 SC2's item-variant gap -- per-level item_bucket schema, contributor-edit-claim mechanism with two closed side doors, client level-keying, honest copy, and a live e2e proof (8/8 tasks, all falsification-proven)
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 23
   completed_plans: 23
-  percent: 33
+  percent: 50
 ---
 
 # Project State

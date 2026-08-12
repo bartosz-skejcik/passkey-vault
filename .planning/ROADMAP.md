@@ -85,7 +85,7 @@ Audit: [milestones/v0.4-MILESTONE-AUDIT.md](milestones/v0.4-MILESTONE-AUDIT.md).
 ### 🚧 v0.5 Sharing That Makes Sense (Phases 29–34) — IN PROGRESS, started 2026-08-09
 
 - [x] **Phase 29: A Real Settings Page — Shell & Migration** (6/6 plans) — completed 2026-08-10 - Settings becomes a linkable `/settings` route with headed sections; every existing setting survives the move, and the family surface is carried across unchanged pending its Phase 33 redesign
-- [ ] **Phase 30: The Living Group — Family-Wide Sharing** - Share with the whole family in one action, and someone who joins later gains access by a client-only key path decided and documented before any dependent code
+- [x] **Phase 30: The Living Group — Family-Wide Sharing** (17/17 plans + quick task 260812-01e) — completed 2026-08-12, verified 6/6 - Share with the whole family in one action, and someone who joins later gains access by a client-only key path decided and documented before any dependent code
 - [ ] **Phase 31: The Share Dialog — Per-Person Access, Existing Destinations** - One row per person with their own access level, able to target a shared folder that already exists instead of minting another one
 - [ ] **Phase 32: Putting Things Into Shared Folders** - An item can be created in, moved into, and taken back out of an existing shared folder, always re-encrypted under the destination scope or refused
 - [ ] **Phase 33: The Family & Sharing Surface** - Family & Sharing redesigned around the finished sharing model, with the last orphaned server capability finally given a proven client consumer
@@ -154,7 +154,7 @@ require a **proven** client consumer, not a wired one.
   5. Wherever a family-wide share is created or listed, the UI states that "the whole family" includes people who have not joined yet, and states the timing bound the mechanism actually delivers rather than an unqualified "instantly" — the copy and the measured behaviour agree, checked against the measurement, not against the intent.
   6. Leaving the family, being removed from it, and deleting an account each revoke family-wide access through the same correctly-scoped, atomic re-key path v0.4 established, and the ex-member's client drops the decrypted family-wide plaintext on the next completed sync (the bound v0.4 proved, not lock/unlock) — live-proven with a positive "was readable" anchor before the revocation and the same read failing after.
 
-**Plans**: 0/17 plans executed
+**Plans**: 17/17 plans executed — verified 6/6 on 2026-08-12 (`30-VERIFICATION.md`). SC2's item half was closed by quick task `260812-01e` after the 2026-08-11 re-verification found it broken rather than merely unproven.
 
 - [ ] 30-01-PLAN.md — FSH-02 decision record (own commit) + additive schema (family_wide_kind, invitation_family_wide_keys)
 - [ ] 30-02-PLAN.md — Server: family_wide_kind on collection create/get/list + GET /api/families/family-wide-pending discovery endpoint

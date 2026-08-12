@@ -1729,6 +1729,20 @@ test.describe("family-wide sharing — the ITEM variant, live (260812-01e Task 8
       "dowolnej chwili dodać własny item do tego zbioru i przez to zyskać pełną edycję",
     );
 
+    // 260812-01e verification, W3: the note must also name DELETION. HI-03's
+    // destruction half was assessed and deliberately left open (a
+    // self-escalated contributor may DELETE any other member's item in the
+    // bucket) on the reasoning that this is `edit`'s pre-existing meaning for
+    // shared collections -- which is defensible for the CODE, but LOCKED
+    // decision 1 requires that no UI copy be left false, and "pełna edycja" /
+    // "full editor" alone leaves a reader to infer deletion rather than being
+    // told. Pinned separately from the clause above so a later edit that drops
+    // the deletion wording fails here specifically, naming the omission.
+    await expect(
+      memberCtx.page.getByTestId("share-family-wide-item-contributor-note"),
+      "the disclosure note must name DELETION explicitly, not only editing (W3)",
+    ).toContainText("zmienić lub usunąć");
+
     // 260812-01e REVIEW.md ME-05: the ORIGINAL shape here clicked submit,
     // waited for the dialog to fully DETACH, and only THEN asserted
     // share-error/share-partial-error had `toHaveCount(0)` -- but once the

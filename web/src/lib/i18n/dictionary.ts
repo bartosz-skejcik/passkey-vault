@@ -1501,8 +1501,8 @@ export const DICTIONARY = {
   // edit) and this is a separate, conditionally-rendered note, mirroring
   // `share.hiddenPasswordInlineNote`'s established pattern.
   "share.familyWideItemContributorEditNote": {
-    pl: `„Tylko odczyt" nie jest tu gwarancją: każdy członek rodziny może w dowolnej chwili dodać własny item do tego zbioru i przez to zyskać pełną edycję wszystkich itemów w nim — także tego. Nic tego nie cofa. Jeśli zależy Ci na kontroli, wybierz „Pełna edycja" albo udostępnij ten item bezpośrednio wybranej osobie.`,
-    en: `Read-only isn't a guarantee here: any family member can add their own item to this collection at any time, which makes them a full editor of every item in it — including this one. Nothing reverses it. If you need real control, choose "Full edit", or share this item directly with one person instead.`,
+    pl: `„Tylko odczyt" nie jest tu gwarancją: każdy członek rodziny może w dowolnej chwili dodać własny item do tego zbioru i przez to zyskać pełną edycję wszystkich itemów w nim — także tego. Może je wtedy zmienić lub usunąć. Nic tego nie cofa. Jeśli zależy Ci na kontroli, wybierz „Pełna edycja" albo udostępnij ten item bezpośrednio wybranej osobie.`,
+    en: `Read-only isn't a guarantee here: any family member can add their own item to this collection at any time, which makes them a full editor of every item in it — including this one. They can then change it or delete it. Nothing reverses it. If you need real control, choose "Full edit", or share this item directly with one person instead.`,
   },
   "identity.yourFingerprintHeading": { pl: "Twój odcisk tożsamości", en: "Your identity fingerprint" },
   "identity.fingerprintRevealAria": {
