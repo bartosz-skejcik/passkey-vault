@@ -239,14 +239,23 @@ pub async fn create(
         // `Declared` state, only `item_bucket` collections (a family-wide
         // FOLDER has no contributor-escalation path, same rationale as the
         // other two call sites).
-        if let membership::FamilyWideDeclaredLevel::Declared(declared) =
-            membership::resolve_family_wide_declared_level(&state.db, collection_id).await?
-        {
-            if requested_level != declared
-                && membership::is_item_bucket_collection(&state.db, collection_id).await?
-            {
-                return Err(ApiError::Forbidden);
+        match membership::resolve_family_wide_declared_level(&state.db, collection_id).await? {
+            membership::FamilyWideDeclaredLevel::Declared(declared) => {
+                if requested_level != declared
+                    && membership::is_item_bucket_collection(&state.db, collection_id).await?
+                {
+                    return Err(ApiError::Forbidden);
+                }
             }
+            // HI-02: same fail-closed bound as the other two call sites --
+            // see `collections::add_member`'s identical arm for the full
+            // rationale. Legacy FOLDERS are untouched.
+            membership::FamilyWideDeclaredLevel::LegacyUnknown => {
+                if membership::is_item_bucket_collection(&state.db, collection_id).await? {
+                    return Err(ApiError::Forbidden);
+                }
+            }
+            membership::FamilyWideDeclaredLevel::NotFamilyWide => {}
         }
     }
 
@@ -322,6 +331,14 @@ pub async fn create(
                     requested_level,
                 )
                 .await?;
+                // 260812-01e REVIEW.md HI-02: same fail-closed bound as
+                // `collections::add_member`'s identical arm -- see that call
+                // site's own comment for the full rationale. Legacy FOLDERS
+                // (the case C-1 actually protects) are untouched;
+                // `is_item_bucket_collection` returns `false` for them.
+                if membership::is_item_bucket_collection(&state.db, &entry.collection_id).await? {
+                    return Err(ApiError::Forbidden);
+                }
             }
             membership::FamilyWideDeclaredLevel::NotFamilyWide => {
                 membership::require_collection_edit(&state.db, &family.caller_user_id, &entry.collection_id).await?;

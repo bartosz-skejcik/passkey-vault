@@ -2235,16 +2235,25 @@ async fn task2_self_escalated_family_owner_cannot_fold_edit_into_an_invite() {
     assert_eq!(keys_row, None, "no invitation_family_wide_keys row must have been written");
 }
 
-/// Plan-check iteration 2, C-1: a pre-migration-0020 family-wide collection
-/// (`family_wide_kind` set, `family_wide_access_level` NULL -- seeded
-/// directly via SQL since `validate_family_wide_access_level` correctly
-/// rejects creating one through the API) must NOT be bound by the new
-/// declared-level equality check. An edit-holding member's invite folding it
-/// in at `"edit"` (exactly what `invite/crypto.ts:125`'s
-/// `entry.access_level` fallback sends today) must still succeed --
-/// `LegacyUnknown` applies no equality bound.
+/// Plan-check iteration 2, C-1 -- FOLDER-scoped (260812-01e REVIEW.md HI-02
+/// renamed this from `..._family_wide_collection_...` to
+/// `..._family_wide_folder_...` and narrowed its own doc comment: as
+/// originally written, seeding `family_wide_kind = 'folder'` meant this test
+/// passed IDENTICALLY whether `LegacyUnknown` applied a bound or not --
+/// `is_item_bucket_collection` is false for a folder either way, so the
+/// property this test actually exercises is narrower than its old name
+/// claimed. What it DOES still correctly prove, and must keep proving: a
+/// pre-migration-0020 family-wide FOLDER (`family_wide_kind` set,
+/// `family_wide_access_level` NULL -- seeded directly via SQL since
+/// `validate_family_wide_access_level` correctly rejects creating one
+/// through the API) must NOT be bound by the new declared-level equality
+/// check -- an edit-holding member's invite folding it in at `"edit"`
+/// (exactly what `invite/crypto.ts:125`'s `entry.access_level` fallback
+/// sends today) must still succeed. See
+/// `hi02_legacy_null_level_item_bucket_invite_fold_in_is_refused` below for
+/// the ITEM_BUCKET sibling, which the shipped code now (correctly) refuses.
 #[tokio::test]
-async fn task2_legacy_null_level_family_wide_collection_invite_fold_in_still_succeeds() {
+async fn task2_legacy_null_level_family_wide_folder_invite_fold_in_still_succeeds() {
     let pool = test_pool().await;
     let mut client = Client::new(pool.clone());
     let mut secrets = Secrets::default();
@@ -2306,9 +2315,96 @@ async fn task2_legacy_null_level_family_wide_collection_invite_fold_in_still_suc
     assert_eq!(
         status,
         StatusCode::CREATED,
-        "an edit-holding member's invite folding in a LEGACY NULL-level family-wide collection at \
-         'edit' must still succeed -- LegacyUnknown applies no equality bound"
+        "an edit-holding member's invite folding in a LEGACY NULL-level family-wide FOLDER at \
+         'edit' must still succeed -- LegacyUnknown applies no equality bound there"
     );
+}
+
+/// 260812-01e REVIEW.md HI-02: the ITEM_BUCKET sibling of the FOLDER test
+/// above -- and the actually-discriminating regression guard the original
+/// (differently-named) test could never be, since it seeded `'folder'`. A
+/// pre-migration-0020 `item_bucket` (`family_wide_kind = 'item_bucket'`,
+/// `family_wide_access_level` NULL) is exactly the row type Task 1's
+/// contributor-escalation mechanism can silently over-empower through this
+/// path (a `read`-holder self-escalates to `edit` via `move_item`, then
+/// folds `edit` into an invite for a THIRD party with no declared level to
+/// check against) -- so unlike the folder case, this one must now FAIL
+/// CLOSED. An edit-holding member's invite folding in a legacy NULL-level
+/// `item_bucket` at `"edit"` must be refused.
+#[tokio::test]
+async fn hi02_legacy_null_level_item_bucket_invite_fold_in_is_refused() {
+    let pool = test_pool().await;
+    let mut client = Client::new(pool.clone());
+    let mut secrets = Secrets::default();
+
+    let owner = client.actor("hi02-legacy-owner@example.com", &mut secrets).await;
+    client.create_family(&owner.token, "HI-02 Legacy Family").await;
+
+    let collection_id = "30140000-0000-4000-8000-000000000091";
+    let ck = CollectionKey::generate();
+    let ck_bytes = *ck.expose();
+    secrets.add_key_material("HI-02 legacy item_bucket's Collection Key", &ck_bytes);
+
+    sqlx::query(
+        "INSERT INTO collections (id, family_id, enc_name, family_wide_kind, family_wide_access_level) \
+         VALUES (?, (SELECT family_id FROM family_members WHERE user_id = ?), 'legacy-enc-name', 'item_bucket', NULL)",
+    )
+    .bind(collection_id)
+    .bind(&owner.user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) \
+         VALUES (?, ?, ?, 'edit')",
+    )
+    .bind(collection_id)
+    .bind(&owner.user_id)
+    .bind(serde_json::to_string(&seal(&owner.sk.public_key(), &ck_bytes).unwrap()).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let secret_vec = random_bytes(32);
+    let secret: [u8; 32] = secret_vec.try_into().unwrap();
+    let invite_id = derive_invite_id(&secret);
+    let invite_proof = derive_invite_proof(&secret);
+    let proof_hash = hash_invite_proof(&invite_proof);
+    let wrapped = wrap_collection_key_for_invite(&secret, &invite_id, &ck_bytes).unwrap();
+    let wrapped_json = serde_json::to_string(&wrapped).unwrap();
+
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/invitations",
+            Some(&owner.token),
+            Some(json!({
+                "id": invite_id,
+                "collection_id": null,
+                "access_level": null,
+                "wrapped_collection_key": null,
+                "proof_hash": STANDARD.encode(proof_hash),
+                "expires_in": "24h",
+                "family_wide_keys": [
+                    { "collection_id": collection_id, "access_level": "edit", "wrapped_collection_key": wrapped_json },
+                ],
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "HI-02: an invite folding in a LEGACY NULL-level ITEM_BUCKET must now be refused -- there is \
+         no declared level to bound the grant against, and this is exactly the row type Task 1's \
+         escalation mechanism can otherwise silently over-empower"
+    );
+
+    let invitation_row: Option<i64> = sqlx::query_scalar("SELECT 1 FROM invitations WHERE id = ?")
+        .bind(&invite_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert_eq!(invitation_row, None, "no invitations row must have been written");
 }
 
 /// 260812-01e REVIEW.md CR-01: `invitations::create`'s EXPLICIT
