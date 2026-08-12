@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import type { FamilyWidePendingResponse } from "@/lib/families/api";
 
 // WR-10/Phase-24-carried-forward evidentiary scope note (same as
 // RemoveMemberDialog.test.tsx): `@/lib/crypto` is mocked wholesale here for
@@ -30,6 +31,7 @@ const {
   mockIsUnlocked,
   mockUnsealCollectionKey,
   mockDecryptItemForCollection,
+  mockGetFamilyWidePendingSnapshot,
 } = vi.hoisted(() => ({
   mockGetFamilyMembers: vi.fn(),
   mockCreateCollection: vi.fn(),
@@ -60,6 +62,13 @@ const {
   mockIsUnlocked: vi.fn(() => true),
   mockUnsealCollectionKey: vi.fn(),
   mockDecryptItemForCollection: vi.fn(),
+  // 260812-01e REVIEW.md LO-02: previously unmocked in this file -- the real
+  // module's singleton snapshot defaults to `{ missing: [], resealable: [] }`
+  // and nothing here ever calls `refreshFamilyWidePending()`, so the CR-04
+  // fast-path branch it feeds was never exercised by any test in this file.
+  // Mocked with that SAME safe default so every other (unrelated) test is
+  // unaffected; only the LO-02 test below overrides it.
+  mockGetFamilyWidePendingSnapshot: vi.fn<() => FamilyWidePendingResponse>(() => ({ missing: [], resealable: [] })),
 }));
 
 class FakeWasmCollectionKey {
@@ -71,6 +80,10 @@ class FakeWasmIdentityPublicKey {
 
 vi.mock("@/lib/families/api", () => ({
   getFamilyMembers: mockGetFamilyMembers,
+}));
+
+vi.mock("@/lib/families/familyWidePending", () => ({
+  getFamilyWidePendingSnapshot: mockGetFamilyWidePendingSnapshot,
 }));
 
 vi.mock("@/lib/vault/api", () => ({
@@ -1224,6 +1237,31 @@ describe("ShareDialog", () => {
       );
       expect(mockAddCollectionMember).toHaveBeenCalledTimes(1);
       expect((mockAddCollectionMember.mock.calls as unknown[][])[0][0]).toBe(newBucketId);
+    });
+
+    // 260812-01e REVIEW.md LO-02: a LEGACY pending grant (access_level:
+    // null, per PendingGrant's own nullability) must still be recognized as
+    // "this member is already waiting on a bucket key" -- the CR-04 fast
+    // path -- rather than silently falling through to create -> 409 -> the
+    // bounded poll's retry-worded failure, which cannot possibly succeed
+    // since no reseal is in flight for this member.
+    it("LO-02: a legacy pending grant (access_level: null) is still recognized -- renders the pending-key note, never attempts create", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListCollections.mockResolvedValue([PLAIN_FOLDER_ROW]);
+      mockGetFamilyWidePendingSnapshot.mockReturnValueOnce({
+        missing: [{ collection_id: "legacy-bucket-1", kind: "item_bucket", access_level: null }],
+        resealable: [],
+      });
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      chooseAccessLevel("read");
+      checkFamilyWide();
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(screen.getByTestId("share-family-key-pending")).toBeInTheDocument());
+      expect(mockCreateCollection).not.toHaveBeenCalled();
+      expect(onShared).not.toHaveBeenCalled();
     });
 
     // 260812-01e REVIEW.md LO-03: a newly-created bucket's placeholder name

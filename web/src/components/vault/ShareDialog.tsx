@@ -527,8 +527,23 @@ async function findOrCreateFamilyItemBucket(
   // 260812-01e Task 5: also matched on `access_level` -- without it, a
   // caller waiting on ONE level's bucket key could misidentify a DIFFERENT
   // level's still-missing grant as theirs.
+  //
+  // 260812-01e REVIEW.md LO-02: `g.access_level === level` alone has no
+  // tolerance for a legacy (pre-migration-0020) pending row, whose
+  // `access_level` the server sends as `null` (`PendingGrant`'s own doc
+  // comment) -- against such a row, or against an older server binary that
+  // omits the field entirely, this match silently fails, the CR-04 fast
+  // path above is skipped, and the caller falls into create -> 409 ->
+  // `awaitFamilyItemBucketGrant`'s bounded poll -> a retry-worded failure
+  // that cannot succeed -- the EXACT failure CR-04 exists to prevent. A
+  // `null` entry cannot be more specifically level-matched (the server
+  // itself does not know its level), so it is treated as a match for
+  // WHATEVER level the caller is waiting on -- a legacy row is rare enough,
+  // and this fast-path is itself only a UX improvement over the (still
+  // correct, still eventually-consistent) create/409/poll path, that a
+  // coarser match here is strictly better than none.
   const pendingBucket = getFamilyWidePendingSnapshot().missing.find(
-    (g) => g.kind === "item_bucket" && g.access_level === level,
+    (g) => g.kind === "item_bucket" && (g.access_level === level || g.access_level === null),
   );
   if (pendingBucket !== undefined) {
     throw new FamilyWideKeyPendingError(pendingBucket.collection_id);
