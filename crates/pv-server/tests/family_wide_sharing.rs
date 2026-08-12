@@ -2163,6 +2163,151 @@ async fn task2_legacy_null_level_family_wide_collection_invite_fold_in_still_suc
     );
 }
 
+/// 260812-01e REVIEW.md CR-01: `invitations::create`'s EXPLICIT
+/// collection-scoped grant (`collection_id`/`access_level`/
+/// `wrapped_collection_key`) is a THIRD propagation surface Task 2 never
+/// bounded -- `require_collection_edit` alone proves the caller CURRENTLY
+/// holds `edit` (true of a self-escalated contributor), but never reads the
+/// bucket's own declared level. Mirrors
+/// `task2_self_escalated_family_owner_cannot_fold_edit_into_an_invite`'s
+/// fixture exactly, but drives the attack through the EXPLICIT scope instead
+/// of `family_wide_keys` (and omits the bucket from `family_wide_keys`
+/// entirely, so the bounded fold-in loop never sees it and cannot be the
+/// thing that refuses this request).
+#[tokio::test]
+async fn cr01_self_escalated_owner_cannot_bypass_declared_level_via_explicit_collection_scope() {
+    let pool = test_pool().await;
+    let mut client = Client::new(pool.clone());
+    let mut secrets = Secrets::default();
+
+    let family_owner = client.actor("cr01-familyowner@example.com", &mut secrets).await;
+    client.create_family(&family_owner.token, "CR-01 Family").await;
+    let bucket_creator = client.join_family(&family_owner.token, "cr01-creator@example.com", &mut secrets).await;
+
+    let bucket_id = "30140000-0000-4000-8000-000000000071";
+    let ck = CollectionKey::generate();
+    let ck_bytes = *ck.expose();
+    secrets.add_key_material("CR-01 item_bucket's Collection Key", &ck_bytes);
+    let enc_name = serde_json::to_string(
+        &encrypt_item_for_collection(&ck, "family-wide-items".as_bytes(), bucket_id, bucket_id, COLLECTION_NAME_REVISION)
+            .unwrap(),
+    )
+    .unwrap();
+
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/collections",
+            Some(&bucket_creator.token),
+            Some(json!({
+                "id": bucket_id,
+                "enc_name": enc_name,
+                "sealed_key": serde_json::to_string(&seal(&bucket_creator.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "family_wide_kind": "item_bucket",
+                "family_wide_access_level": "read",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "creating the read-declared item_bucket must succeed");
+
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/vault/collections/{bucket_id}/members"),
+            Some(&bucket_creator.token),
+            Some(json!({
+                "recipient_user_id": family_owner.user_id,
+                "sealed_key": serde_json::to_string(&seal(&family_owner.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "access_level": "read",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "fanning the family owner out at read must succeed");
+
+    let item_id = "30140000-0000-4000-8000-000000000072";
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/items",
+            Some(&family_owner.token),
+            Some(json!({
+                "id": item_id,
+                "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"cr01-key-blob\"}",
+                "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"cr01-data-blob\"}",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "the family owner's junk item creation must succeed");
+    let (status, _) = client
+        .send(
+            "PUT",
+            &format!("/api/vault/items/{item_id}/collection"),
+            Some(&family_owner.token),
+            Some(json!({
+                "new_collection_id": bucket_id,
+                "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"cr01-key-blob-moved\"}",
+                "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"cr01-data-blob-moved\"}",
+                "expected_revision": 1,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "Task 1's mechanism must let the family owner self-escalate to edit");
+
+    let escalated_level: String = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(bucket_id)
+    .bind(&family_owner.user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(escalated_level, "edit", "sanity: the family owner must actually hold edit before the attack below");
+
+    let secret_vec = random_bytes(32);
+    let secret: [u8; 32] = secret_vec.try_into().unwrap();
+    let invite_id = derive_invite_id(&secret);
+    let invite_proof = derive_invite_proof(&secret);
+    let proof_hash = hash_invite_proof(&invite_proof);
+    // The invite's EXPLICIT collection scope -- not `family_wide_keys` --
+    // carries the escalation attempt, so this wrap uses the collection-scope
+    // wire shape, not `wrap_collection_key_for_invite`'s invite-secret-bound
+    // form (that helper is specific to the `family_wide_keys`/single-scope
+    // invite-time-wrap path; the explicit `wrapped_collection_key` field is
+    // opaque to the server either way -- it is never unwrapped server-side).
+    let wrapped_collection_key =
+        serde_json::to_string(&seal(&family_owner.sk.public_key(), &ck_bytes).unwrap()).unwrap();
+
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/invitations",
+            Some(&family_owner.token),
+            Some(json!({
+                "id": invite_id,
+                "collection_id": bucket_id,
+                "access_level": "edit",
+                "wrapped_collection_key": wrapped_collection_key,
+                "proof_hash": STANDARD.encode(proof_hash),
+                "expires_in": "24h",
+                "family_wide_keys": [],
+            })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a self-escalated family owner must never be able to hand a newcomer more than the bucket's \
+         own declared level through the EXPLICIT collection scope either -- CR-01"
+    );
+
+    let invitation_row: Option<i64> = sqlx::query_scalar("SELECT 1 FROM invitations WHERE id = ?")
+        .bind(&invite_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert_eq!(invitation_row, None, "no invitations row must have been written");
+}
+
 // --- 260812-01e Task 4: hidden_password variant, and Face 2 cannot recur ---
 
 /// LOCKED decision 3's `hidden_password` variant of Task 1's proof --

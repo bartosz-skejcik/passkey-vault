@@ -214,7 +214,7 @@ pub async fn create(
 
     if let Some(collection_id) = &req.collection_id {
         let access_level_str = req.access_level.as_deref().expect("checked all-or-nothing above");
-        membership::parse_access_level_from_request(access_level_str)?;
+        let requested_level = membership::parse_access_level_from_request(access_level_str)?;
         validate_blob_len(
             "wrapped_collection_key",
             req.wrapped_collection_key.as_deref().expect("checked all-or-nothing above"),
@@ -224,6 +224,30 @@ pub async fn create(
         // access to a collection they were never granted a key for (mirrors
         // `collections::add_member`'s own RequireEdit-only gate).
         membership::require_collection_edit(&state.db, &family.caller_user_id, collection_id).await?;
+
+        // 260812-01e REVIEW.md CR-01: this EXPLICIT collection-scoped grant
+        // is a THIRD propagation surface the original Task 2 fix never
+        // bounded -- `require_collection_edit` above only proves the caller
+        // (who may be a self-escalated item_bucket contributor, Task 1's
+        // mechanism) CURRENTLY holds `edit`; it never reads the collection's
+        // own declared `family_wide_access_level`. Without this check, a
+        // self-escalated owner could hand a brand-new invitee `edit` on a
+        // bucket declared `read` via THIS field, bypassing both the
+        // `add_member` bound (`collections.rs`) and the `family_wide_keys`
+        // fold-in bound (the loop below) -- the same declared-level equality
+        // bound, applied here for parity, scoped identically: only the
+        // `Declared` state, only `item_bucket` collections (a family-wide
+        // FOLDER has no contributor-escalation path, same rationale as the
+        // other two call sites).
+        if let membership::FamilyWideDeclaredLevel::Declared(declared) =
+            membership::resolve_family_wide_declared_level(&state.db, collection_id).await?
+        {
+            if requested_level != declared
+                && membership::is_item_bucket_collection(&state.db, collection_id).await?
+            {
+                return Err(ApiError::Forbidden);
+            }
+        }
     }
 
     // Validate every family_wide_keys entry BEFORE any DB work, same order as
