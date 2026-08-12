@@ -361,6 +361,99 @@ contested) — the shipped `WhenPasscodeSetThisDeviceOnly` protection class ship
 harness**. Say so plainly in the plan that runs the experiment rather than softening the criterion to
 one the simulator happens to pass.
 
+### ACC-05 — Secure Enclave for the User Key envelope: **REJECTED**, on corrected grounds
+
+The requirement's own stated reason is wrong and is replaced here, in writing, so the wrong reason
+cannot come back later wearing the authority of a decision record.
+
+**TRUE half.** `[OBSERVED]` `SecItem.h:1087-1096` (`kSecAttrTokenIDSecureEnclave`): SE Keychain items
+are 256-bit EC keys only (`kSecAttrKeyTypeECSECPrimeRandom`), generate-on-enclave only, never
+importable. `[OBSERVED]` `SecItem.h:443-445`: once created, an item's `kSecAttrTokenID` cannot change.
+
+**FALSE half.** "…therefore it cannot protect symmetric blobs" does not follow, and that specific
+sentence is **wrong**: key agreement composes into exactly a symmetric-blob protector, and Apple ships
+the composition. `[OBSERVED]` `CryptoKit.framework/…/arm64e-apple-ios.swiftinterface` line 641:
+`extension SecureEnclave.P256.KeyAgreement.PrivateKey : HPKEDiffieHellmanPrivateKey` at **iOS
+17.0+** — below this project's 18.0 floor — so `HPKE.Sender`/`HPKE.Recipient` over an SE key protects
+an arbitrary-length blob; `sharedSecretFromKeyAgreement` is iOS 13.0+. **An SE-protected User Key
+envelope is buildable.** The claim "SE cannot protect symmetric blobs" is refuted by that same
+`.swiftinterface` line, and "no symmetric decrypt on an arbitrary blob" is equally false — ECIES's
+`…VariableIV…` family (`SecKey.h:1170-1224`) explicitly does not limit message size.
+
+The rejection survives anyway, on different grounds — R1 through R5, each with its evidence marker:
+
+- **R1 [INFERRED]** — a `WhenPasscodeSetThisDeviceOnly` + `.biometryCurrentSet` Keychain item (ACC-03
+  above) is already released only after the SEP validates the LocalAuthentication result, and the SEP
+  is what invalidates that ACL on re-enrollment. Wrapping the envelope under our own SE key puts a
+  *second* SEP-held key in front of an item the SEP already gates: against a stolen locked device,
+  offline keychain-DB extraction, and backup exfiltration the two designs are indistinguishable; against
+  live compromise of an unlocked app both lose identically, because the decrypted User Key lands in the
+  same address space either way. **This claim is marked `[INFERRED]`, not `[OBSERVED]`** — it follows
+  from Apple's platform security model plus the ACL invalidation semantics ACC-03 already documents, not
+  from a measurement. **E-SE-4 (named here, owned by Plan 37-05) is the experiment that tests its
+  *consequence* — behavioural equivalence of the two designs under the realistic threats above — not its
+  mechanism. Standing obligation: if E-SE-4 shows the SE key gating or invalidating strictly better than
+  the plain Keychain item, this record is amended in a follow-up commit, and ACC-04's own invalidation
+  claim is re-checked at the same time.**
+- **R2 [OBSERVED]** — `SecKey.h:1171-1224`: ECIES on any EC key ≤256 bit wraps under **AES-128-GCM**,
+  and the SE holds only P-256, so Composition C downgrades this project's 256-bit hierarchy.
+  Compositions A/B (HPKE, manual key-agreement) avoid that AES-128 cap only by moving a KDF+AEAD step
+  into Apple-specific crypto — an iOS-only key path `pv-core`'s own test suite cannot exercise, `pv-wasm`
+  has no counterpart for, and Android/Windows (v2) will not share.
+- **R3 [OBSERVED]** — `SecItem.h:1093-1094`, `442-444`: non-exportable, non-importable, non-migratable —
+  for what is only a convenience cache whose authoritative recovery path is `pw_wrapped_uk` on the
+  server plus the passkey recipients.
+- **R4** — two artifacts (the SE key and the ciphertext envelope) that must be deleted, invalidated, and
+  recreated in lockstep across two OS processes, against ACC-03's own ACC-06 forward constraint that
+  expiry is a **single** `SecItemDelete`. A single ACL-protected item keeps exactly one delete; the SE
+  design doubles the state that can desynchronize.
+- **R5 [OBSERVED]** — `SecureEnclave.MLKEM768`/`MLKEM1024` with `decapsulate(_:) -> SymmetricKey` would
+  be the genuinely interesting version of this idea — a real KEM producing a `SymmetricKey` in hardware
+  — and is `@available(iOS 26.0)`, above IOS-03's 18.0 floor. **Record this as the explicit revisit
+  trigger: if the deployment floor ever rises to 26, ACC-05 is worth reopening on new facts, not on the
+  reasoning rejected here.**
+
+**Honest counterweight, stated rather than hidden.** With Composition A/B the envelope ciphertext is
+inert without an enclave operation, so a future bug that leaked the Keychain *item blob* without an
+LA-authorized read would be survivable, where the plain ACL design would not be. This is outweighed by
+R2–R4 for this project's stack, not dismissed.
+
+**Three claims this record must never make** (all refuted or unverified above, `37-RESEARCH.md`
+§"What the ACC-05 record must NOT claim"): "SE cannot protect symmetric blobs" is **false**, refuted by
+the `HPKEDiffieHellmanPrivateKey` conformance cited above; "no symmetric decrypt on an arbitrary blob"
+is **false**, refuted by ECIES's variable-IV family; "the extension cannot reach an SE-backed key" is
+**[UNVERIFIED]** — SE keys are ordinary Keychain items carrying `kSecAttrAccessGroup`, so a same-team
+access group should make them visible to the AutoFill extension, but **E-SE-3 is deferred because no
+extension target consuming an SE key exists yet** — do not build this record on an unverified claim.
+
+### DR-37-A — `pw_wrapped_uk` on the wire: serde owns the encoding on BOTH clients
+
+**Decision:** `pv-ffi` gains `wrap_user_key_json(...) -> String` and
+`unwrap_user_key_from_json(...) -> Arc<FfiUserKey>`, so the stored blob is produced and consumed by
+`serde_json` — the same serializer `crates/pv-wasm` already uses (`pv-wasm/src/lib.rs:182-185`) — and
+**Swift never encodes or decodes the envelope itself**; it moves an opaque `String` between `pv-ffi` and
+the HTTP body.
+
+**Rejected on merit:** "encode `FfiWrappedKey` (the UniFFI Record, `Vec<u8>` nonce + ciphertext fields)
+as `[UInt8]`/`Data` on the Swift side and JSON-encode it there." It produces the right bytes today, but
+leaves two independent encoders — `serde_json` on the Rust/web/wasm side, `Codable`/`JSONEncoder` on the
+Swift side — that must be kept agreeing forever, against a server that stores `pw_wrapped_uk` as opaque
+`TEXT` and **never parses or length-checks it** on the register route (`auth.rs:136`, in explicit
+contrast to `identity.rs:81`'s `validate_blob_len`), returning **201 on either encoding**.
+
+The concrete failure this decision buys against: `serde_json` emits `Vec<u8>` as a JSON **number
+array** (`{"nonce":[12,34,…],"ciphertext":[…]}`); Swift's `JSONEncoder` defaults `Data` to a **base64
+string**. An iOS-registered account would appear to succeed at `201`, and then fail to unlock **from the
+web app**, later, with the web client flagging the row `undecryptable` — which this codebase reads as a
+*tampering* signal, not an encoding mismatch. Same shape as landmine D-21 (`passkey_types::Bytes`
+serializing as a JSON byte array).
+
+**A2 (the exact on-disk shape) is `[INFERRED from serde_json semantics, never observed]`** at the time
+of this record — nobody has looked at a real stored row yet. **37-02 settles it against a real row, and
+37-03 proves interop in BOTH directions** — a symmetric-but-wrong encoding (both clients agreeing on the
+same wrong shape) would pass a one-direction test and hide the defect until the *other* client tries to
+read it.
+
 ---
 
 ## 2. Verified against reality (2026-08-11)
@@ -822,6 +915,29 @@ defaulting to the prior `--with-panic-probe`-only behavior when unset), and
 `scripts/ios-probe-run.sh` sets it to both flags only for the `sensitivity` probe. **Carry forward: a
 third simultaneous non-default feature variant would need the same treatment — extend the combined
 `FEATURES` list in `build-ios.sh`, never add a third mutually-exclusive flag.**
+
+### L-12 — a header's prose is not the capability surface (third instance of L-1's shape)
+
+**Numbering note:** Phase 37's own planning material named this landmine "L-9", written before Plan
+36-04 landed and claimed that slot for an unrelated defect ("`a check that cannot fail` produced FOUR
+more instances in a single phase", above). It is recorded here as **L-12**, the next free ID, rather
+than as a duplicate L-9 — two landmines sharing one ID would break every future cross-reference by that
+number. The content below is what the plan's own text called "L-9"; only the label changed.
+
+`SecAccessControl.h`'s doc comment for `kSecAccessControlPrivateKeyUsage` reads "Create access control
+for private key operations (i.e. sign operation)" — a 2014 doc gloss, not a constraint. The identical
+flag governs `Decrypt` and `KeyExchange` on Secure Enclave keys, not only `Sign` (`37-RESEARCH.md`
+§"Where the false premise probably came from" — this is `[INFERRED, high confidence]` as the origin of
+ACC-05's original wrong premise). Same shape as L-1: a type or flag looks constrained in the
+representation that documents it and is not constrained in the one that actually ships.
+
+**AMENDMENT to L-1, recorded here because this landmine is the third confirming instance of the pattern
+L-1's own amendment describes.** L-1 holds for the passkey/PRF types it was actually found on, not for
+`AuthenticationServices` wholesale — the password-AutoFill headers contain zero `NS_REFINED_FOR_SWIFT`
+and *are* ground truth. The correct general rule, now confirmed a third time across two different
+frameworks (`AuthenticationServices` and `Security`), is the weaker, true one: for any given
+header-documented capability, check both the header's prose and the type's actual behavior/conformances
+before concluding either way — neither representation is ground truth on its own by default.
 
 ## 4. Open questions — honestly open
 
