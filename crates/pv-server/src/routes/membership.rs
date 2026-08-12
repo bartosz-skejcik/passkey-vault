@@ -615,8 +615,9 @@ pub(crate) async fn require_collection_access_for_propagation(
 /// collection (260812-01e Task 1) — scoped narrower than a plain
 /// `family_wide_kind IS NOT NULL` check: a family-wide FOLDER must keep using
 /// `require_collection_edit` unchanged, since this claim mechanism (see
-/// `require_and_claim_item_bucket_edit` below) is item_bucket-only, per
-/// LOCKED decision 1's own scope. Also consumed by Task 2's
+/// `require_item_bucket_edit_access`/`claim_item_bucket_edit_in_tx` below)
+/// is item_bucket-only, per LOCKED decision 1's own scope. Also consumed by
+/// Task 2's
 /// `collections::revoke_access` refusal.
 pub(crate) async fn is_item_bucket_collection(db: &sqlx::SqlitePool, collection_id: &str) -> Result<bool, ApiError> {
     Ok(
@@ -628,53 +629,76 @@ pub(crate) async fn is_item_bucket_collection(db: &sqlx::SqlitePool, collection_
     )
 }
 
-/// LOCKED decision 1 (260812-01e): generalizes `collections::create`'s
-/// "the creator always holds edit on their own creation" from "the creator"
-/// to "any contributor", atomically, on the SAME request that writes the
-/// item in (`vault::move_item`'s destination gate) — never a standalone
-/// endpoint a member could call without ever contributing anything.
-///
-/// Reachability, stated honestly (plan-check B-1, T-30fix-01): this is NOT
-/// gated on a genuine "real contribution" — any member holding ANY existing
-/// row on an item_bucket reaches `edit` in two API calls (create any owned
-/// personal item, then move it in; content is irrelevant, cost is zero) —
-/// and the escalation is PERMANENT (nothing narrows it back). LOCKED
-/// decision 1's own "has ever contributed" wording accepts exactly this.
-/// What this row must NOT silently carry along (the power to revoke other
-/// members, or to hand other members/invitees more than the bucket's own
-/// declared level) is closed by Task 2, layered on top of this mechanism,
-/// never by narrowing this function.
-///
-/// Gates on `RequireRead` (proof of real, existing membership — same
-/// `None -> NotFound` semantics `require_collection_edit` uses) via the
+/// LOCKED decision 1 (260812-01e): the READ-ONLY half of "generalizes
+/// `collections::create`'s 'the creator always holds edit on their own
+/// creation' from 'the creator' to 'any contributor'" — proof that the
+/// caller genuinely holds SOME existing grant on this item_bucket (same
+/// `None -> NotFound` semantics `require_collection_edit` uses), via the
 /// SAME `Collection::resolve_access`/`gate::<M>()` machinery every other
-/// extractor/helper in this module shares. If the resolved level is not
-/// already `Edit`, claims it by updating the caller's OWN
-/// `collection_keys` row only — no new `sealed_key` is minted (the wrapped
-/// Collection Key is level-independent; the caller already holds a usable
-/// one via their existing row). Idempotent: already-edit is a no-op, never
-/// an error.
+/// extractor/helper in this module shares.
 ///
-/// Runs against `db: &sqlx::SqlitePool` (a fresh pool connection), NEVER a
-/// transaction handle — this function is called from `move_item`'s Gate 2,
-/// which per that call site's own doc comment MUST complete (and release
-/// its pool connection) before `tx` opens; this codebase's integration test
-/// harness runs its pool at `max_connections(1)`, so opening `tx` first
-/// would self-deadlock against this call's own connection acquire.
-pub(crate) async fn require_and_claim_item_bucket_edit(
+/// 260812-01e REVIEW.md HI-01: this function used to ALSO perform the claim
+/// UPDATE, on `db: &sqlx::SqlitePool` (a bare pool connection, autocommit) —
+/// which meant the escalation committed the instant this gate ran, BEFORE
+/// blob-length validation and BEFORE the transaction that performs the
+/// actual move. Every later failure (oversized blob, stale
+/// `expected_revision`, item deleted concurrently) left the escalation
+/// permanently persisted with no item ever landing in the bucket — contrary
+/// to this mechanism's own three doc comments (here, `vault.rs`'s Gate 2,
+/// and `T-30fix-01`) describing it as atomic with the move. The claim itself
+/// now lives in `claim_item_bucket_edit_in_tx` below, called from
+/// `move_item` only AFTER the move's own `UPDATE vault_items` has
+/// unambiguously succeeded (`Some(row)`, inside the SAME transaction) — so a
+/// later rollback of that transaction rolls the claim back with it. This
+/// function stays pool-bound and read-only, and MUST keep running BEFORE
+/// `move_item`'s `tx` opens — this codebase's integration test harness runs
+/// its pool at `max_connections(1)`, so opening `tx` first would
+/// self-deadlock against this call's own connection acquire.
+pub(crate) async fn require_item_bucket_edit_access(
     db: &sqlx::SqlitePool,
     caller_user_id: &str,
     collection_id: &str,
 ) -> Result<(), ApiError> {
     let resolved = Collection::resolve_access(db, caller_user_id, collection_id).await?;
-    let level = gate::<RequireRead>(resolved)?;
-    if level != AccessLevel::Edit {
-        sqlx::query("UPDATE collection_keys SET access_level = 'edit' WHERE collection_id = ? AND recipient_user_id = ?")
-            .bind(collection_id)
-            .bind(caller_user_id)
-            .execute(db)
-            .await?;
-    }
+    gate::<RequireRead>(resolved)?;
+    Ok(())
+}
+
+/// The claim itself (260812-01e REVIEW.md HI-01/ME-04) — the WRITE half
+/// `require_item_bucket_edit_access` above used to also perform, now split
+/// out so the caller (`move_item`) can run it INSIDE the same transaction as
+/// the move, strictly AFTER that transaction's own `UPDATE vault_items` has
+/// already returned a matched row (i.e. the move is certain to commit,
+/// modulo the rest of the same transaction). Idempotent by construction (the
+/// `access_level <> 'edit'` predicate makes an already-`edit` caller's call
+/// a no-op, never an error, matching the prior function's documented
+/// behavior).
+///
+/// ME-04 (260812-01e REVIEW.md): the `item_bucket` predicate is folded
+/// directly into this UPDATE's own `WHERE` clause via an `EXISTS`
+/// sub-select, rather than living only at the call site — the guarantee
+/// "this can only ever promote a row on an item_bucket collection" is now
+/// structural (the statement itself enforces it), not merely "true today
+/// because the one caller happens to check it first."
+///
+/// Runs on `tx: &mut sqlx::SqliteConnection` — this function must NEVER be
+/// called against `db: &sqlx::SqlitePool` directly; it exists specifically
+/// to run inside the caller's own open transaction.
+pub(crate) async fn claim_item_bucket_edit_in_tx(
+    tx: &mut sqlx::SqliteConnection,
+    caller_user_id: &str,
+    collection_id: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE collection_keys SET access_level = 'edit' \
+          WHERE collection_id = ? AND recipient_user_id = ? AND access_level <> 'edit' \
+            AND EXISTS (SELECT 1 FROM collections WHERE id = collection_keys.collection_id \
+                          AND family_wide_kind = 'item_bucket')",
+    )
+    .bind(collection_id)
+    .bind(caller_user_id)
+    .execute(tx)
+    .await?;
     Ok(())
 }
 

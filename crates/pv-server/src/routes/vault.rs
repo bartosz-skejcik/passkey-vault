@@ -17,8 +17,9 @@ use uuid::Uuid;
 
 use super::collections::CoRecipientRecord;
 use super::membership::{
-    active_collection_member_join, is_item_bucket_collection, parse_access_level_from_request,
-    require_and_claim_item_bucket_edit, require_collection_edit, Item, Membership, RequireEdit, RequireRead,
+    active_collection_member_join, claim_item_bucket_edit_in_tx, is_item_bucket_collection,
+    parse_access_level_from_request, require_collection_edit, require_item_bucket_edit_access, Item, Membership,
+    RequireEdit, RequireRead,
 };
 use super::session::SessionUser;
 use super::sync::{ChangeType, EntityType, SyncEvent};
@@ -972,21 +973,37 @@ pub async fn move_item(
     // request while this call tried to acquire a SECOND one — a genuine
     // self-deadlock (observed directly: it manifested as a 500 from a pool
     // acquire timeout when tried during this fix).
-    if let Some(dest_id) = &req.new_collection_id {
-        // 260812-01e Task 1 (LOCKED decision 1): an item_bucket destination
-        // takes the claim path instead of the plain edit-only gate — a
-        // contributor's own row is atomically upgraded to `edit` on this
-        // same request, generalizing `collections::create`'s "the creator
-        // is always a full editor of their own creation" from "the creator"
-        // to "any contributor". A family-wide FOLDER destination is
-        // unaffected: it keeps the byte-identical `require_collection_edit`
-        // call this branch always used.
-        if is_item_bucket_collection(&state.db, dest_id).await? {
-            require_and_claim_item_bucket_edit(&state.db, &source.caller_user_id, dest_id).await?;
-        } else {
-            require_collection_edit(&state.db, &source.caller_user_id, dest_id).await?;
+    // 260812-01e REVIEW.md HI-01: this gate now proves READ access only
+    // (via `require_item_bucket_edit_access`) for an item_bucket
+    // destination — the actual `edit` CLAIM is deferred until inside the
+    // transaction below, strictly after the move's own `UPDATE vault_items`
+    // has unambiguously succeeded (see that call site's own comment). This
+    // is what makes the claim genuinely atomic with the move: an oversized
+    // blob (rejected further down, still pre-tx), a stale
+    // `expected_revision` (409, inside tx), or a concurrently-deleted item
+    // (404, inside tx) can no longer leave a permanent escalation with no
+    // item ever landing in the bucket, contrary to what this mechanism's
+    // three doc comments (this one, `T-30fix-01`, membership.rs) describe.
+    // `is_item_bucket_collection` is computed once here and threaded through
+    // to the post-move claim below, so both call sites agree on the same
+    // pre-tx read of `family_wide_kind` (a bucket's kind is immutable after
+    // creation — no endpoint mutates it — so a second, later read inside the
+    // tx would be redundant, not a genuine second source of truth).
+    let dest_is_item_bucket = match &req.new_collection_id {
+        Some(dest_id) => {
+            // A family-wide FOLDER destination is unaffected: it keeps the
+            // byte-identical `require_collection_edit` call this branch
+            // always used.
+            if is_item_bucket_collection(&state.db, dest_id).await? {
+                require_item_bucket_edit_access(&state.db, &source.caller_user_id, dest_id).await?;
+                true
+            } else {
+                require_collection_edit(&state.db, &source.caller_user_id, dest_id).await?;
+                false
+            }
         }
-    }
+        None => false,
+    };
 
     validate_blob_len("enc_key", &req.enc_key)?;
     validate_blob_len("enc_data", &req.enc_data)?;
@@ -1060,6 +1077,19 @@ pub async fn move_item(
     };
     let new_revision: i64 = row.try_get("revision").map_err(|_| ApiError::Internal)?;
     let updated_at: String = row.try_get("updated_at").map_err(|_| ApiError::Internal)?;
+
+    // 260812-01e REVIEW.md HI-01: the contributor-edit claim, moved here
+    // from Gate 2 above so it is genuinely atomic with the move — this line
+    // only ever runs AFTER `UPDATE vault_items` has unambiguously matched a
+    // row (the `None` arm above already returned), and it runs on `&mut *tx`,
+    // the SAME transaction as that move. Any later failure in this same
+    // transaction (a DB error further down, before `tx.commit()`) now rolls
+    // this claim back together with the move, instead of leaving a permanent
+    // escalation behind a move that never actually happened.
+    if dest_is_item_bucket {
+        let dest_id = req.new_collection_id.as_deref().expect("dest_is_item_bucket implies new_collection_id is Some");
+        claim_item_bucket_edit_in_tx(&mut *tx, &source.caller_user_id, dest_id).await?;
+    }
 
     // SYNC-04/SYNC-05 (closes this handler's WR-09 fan-out handoff):
     // resolve_recipients is called ONCE per non-null side of

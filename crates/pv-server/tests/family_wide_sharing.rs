@@ -1706,6 +1706,154 @@ async fn task1_non_creator_contributor_claims_edit_on_read_declared_item_bucket(
     );
 }
 
+/// 260812-01e REVIEW.md HI-01: the contributor-edit claim must be genuinely
+/// ATOMIC with the move -- it must never persist when the move itself does
+/// not. Repeats Task 1's own fixture shape, but member_b's FIRST attempt
+/// carries a deliberately stale `expected_revision`; the SECOND attempt
+/// carries an oversized `enc_key` (over `MAX_ITEM_BLOB_BYTES`). Both must
+/// fail WITHOUT leaving member_b's own `collection_keys` row escalated --
+/// the exact concrete failure scenario the finding describes ("their
+/// collection_keys row is now 'edit', no junk item exists in the bucket").
+/// A final, correctly-formed attempt then succeeds and DOES claim edit,
+/// proving the fix does not simply break the working case.
+#[tokio::test]
+async fn hi01_escalation_claim_is_atomic_with_the_move() {
+    let pool = test_pool().await;
+    let mut client = Client::new(pool.clone());
+    let mut secrets = Secrets::default();
+
+    let owner = client.actor("hi01-owner@example.com", &mut secrets).await;
+    client.create_family(&owner.token, "HI-01 Family").await;
+    let member_b = client.join_family(&owner.token, "hi01-member-b@example.com", &mut secrets).await;
+
+    let bucket_id = "30140000-0000-4000-8000-000000000081";
+    let ck = CollectionKey::generate();
+    let ck_bytes = *ck.expose();
+    secrets.add_key_material("HI-01 item_bucket's Collection Key", &ck_bytes);
+    let enc_name = serde_json::to_string(
+        &encrypt_item_for_collection(&ck, "family-wide-items".as_bytes(), bucket_id, bucket_id, COLLECTION_NAME_REVISION)
+            .unwrap(),
+    )
+    .unwrap();
+
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/collections",
+            Some(&owner.token),
+            Some(json!({
+                "id": bucket_id,
+                "enc_name": enc_name,
+                "sealed_key": serde_json::to_string(&seal(&owner.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "family_wide_kind": "item_bucket",
+                "family_wide_access_level": "read",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "creating the read-declared item_bucket must succeed");
+
+    let (status, _) = client
+        .send(
+            "POST",
+            &format!("/api/vault/collections/{bucket_id}/members"),
+            Some(&owner.token),
+            Some(json!({
+                "recipient_user_id": member_b.user_id,
+                "sealed_key": serde_json::to_string(&seal(&member_b.sk.public_key(), &ck_bytes).unwrap()).unwrap(),
+                "access_level": "read",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "fanning member_b out at read must succeed");
+
+    let item_id = "30140000-0000-4000-8000-000000000082";
+    let (status, _) = client
+        .send(
+            "POST",
+            "/api/vault/items",
+            Some(&member_b.token),
+            Some(json!({
+                "id": item_id,
+                "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"hi01-key-blob\"}",
+                "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"hi01-data-blob\"}",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "member_b creating a personal item must succeed");
+
+    let member_b_level = || async {
+        sqlx::query_scalar::<_, String>(
+            "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+        )
+        .bind(bucket_id)
+        .bind(&member_b.user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+
+    // Attempt 1: stale expected_revision -- 409, and the claim must NOT
+    // have persisted (this is the review's own concrete failure scenario).
+    let (status, _) = client
+        .send(
+            "PUT",
+            &format!("/api/vault/items/{item_id}/collection"),
+            Some(&member_b.token),
+            Some(json!({
+                "new_collection_id": bucket_id,
+                "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"hi01-key-blob-moved\"}",
+                "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"hi01-data-blob-moved\"}",
+                "expected_revision": 999,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "a stale expected_revision must 409, matching the review's own scenario");
+    assert_eq!(
+        member_b_level().await,
+        "read",
+        "HI-01: the claim must NOT persist when the move itself fails on stale revision"
+    );
+
+    // Attempt 2: oversized enc_key -- 400, same non-persistence requirement.
+    let oversized = "a".repeat(70 * 1024);
+    let (status, _) = client
+        .send(
+            "PUT",
+            &format!("/api/vault/items/{item_id}/collection"),
+            Some(&member_b.token),
+            Some(json!({
+                "new_collection_id": bucket_id,
+                "enc_key": oversized,
+                "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"hi01-data-blob-moved\"}",
+                "expected_revision": 1,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "an oversized enc_key must 400");
+    assert_eq!(
+        member_b_level().await,
+        "read",
+        "HI-01: the claim must NOT persist when the move itself fails on an oversized blob"
+    );
+
+    // Attempt 3: correctly formed -- succeeds, and NOW the claim persists.
+    let (status, _) = client
+        .send(
+            "PUT",
+            &format!("/api/vault/items/{item_id}/collection"),
+            Some(&member_b.token),
+            Some(json!({
+                "new_collection_id": bucket_id,
+                "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"hi01-key-blob-moved\"}",
+                "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"hi01-data-blob-moved\"}",
+                "expected_revision": 1,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "a correctly-formed move must still succeed after the failed attempts above");
+    assert_eq!(member_b_level().await, "edit", "the claim must persist once the move itself actually succeeds");
+}
+
 // --- 260812-01e Task 2: closing the edit-row's side doors -------------------
 
 /// Shared fixture for the three attacker-path tests below: owner creates a
