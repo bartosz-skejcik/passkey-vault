@@ -614,6 +614,59 @@ still-open downgrade attack that a constant here cannot answer.
   exists — the app target, likely Phase 38 — flip it to `default = []` and add `--features
   ffi06-probe` to the test-only `cargo rustc` lines in `scripts/build-ios.sh`.**
 
+  **Update (Phase 36, Plan 36-01) — the moment named above arrived early.** `default = []` is now set
+  in `crates/pv-ffi/Cargo.toml`, and `scripts/build-ios.sh` accepts an explicit `--with-panic-probe`
+  flag (appending `--features ffi06-probe`) rather than compiling the probe in unconditionally.
+  `PasskeyVaultTests`' own Run Script phase passed `--with-panic-probe` explicitly, so
+  `FfiPanicSafetyTests.swift` kept a probe-carrying artifact while the credential-provider extension
+  target Plan 36-01 added did not.
+
+  **Update (Plan 37-02) — module ownership moved, the flag's owner changed, the residual did not
+  close.** Task 1 moved the "Build pv-ffi XCFramework" Run Script phase (and the flag it passes) from
+  `PasskeyVaultTests` to the `PasskeyVault` APP target, because a hosted test bundle and its host app
+  cannot both compile the generated bindings into their own module. The script phase's own default
+  argument (`${PV_FFI_TEST_VARIANT:---with-panic-probe}`) is unchanged, so the App target's build now
+  passes `--with-panic-probe` by default too — this is what lets `xcodebuild build-for-testing`
+  produce an App binary whose module carries `ffi06SyntheticPanicProbe` for
+  `FfiPanicSafetyTests.swift` to call via `@testable import`. **Recorded honestly, not claimed closed
+  (Task 3, Plan 37-02, does the Cargo-level half of this debt but cannot fix this):** there is still
+  exactly ONE XCFramework/one Run Script phase, now consumed by BOTH the app target and the test
+  bundle, so the synthetic probe is still present in every `PasskeyVault.app` build produced by this
+  project's current build recipe — not only test builds. What changed across Phases 36–37 is that a
+  consumer which does not opt in (the AutoFill extension's own future production build path) no longer
+  gets it *silently* — but the app target itself still does, by the script phase's own default. Phase
+  41 (per-target production/test build split) is the named owner of actually separating these; until
+  then, `ffi06_synthetic_panic_probe` ships in the real app binary, feature-flagged off by default at
+  the Cargo level but turned back on by this one Run Script phase's own default argument.
+
+### 2.6 `pw_wrapped_uk` wire shape — settled against a real row (Plan 37-02, Task 2)
+
+**[OBSERVED]**, superseding `37-RESEARCH.md`'s Assumptions Log row A2, which was
+`[INFERRED from serde_json semantics, never observed on a wire or in a DB]`.
+
+Queried directly, via `scripts/check-ios-wire-shape.sh`, against a real `users` row written by a live
+iOS-process registration (Plan 37-02, Task 1's tracer — `AccountService.register` -> `pv-ffi`'s
+`wrap_user_key_json` -> `POST /api/auth/register` -> a throwaway SQLite DB at
+`/private/tmp/pv-phase37-1786535771.db`, never `data/pv.db`):
+
+```
+$ scripts/check-ios-wire-shape.sh /private/tmp/pv-phase37-1786535771.db
+PASS: serde_json number-array shape
+pw_wrapped_uk (first 120 chars): {"nonce":[93,211,52,30,127,131,19,198,228,185,154,65,91,104,162,179,177,13,53,76,133,121,135,232],"ciphertext":[141,69,3
+```
+
+**The stored shape is `{"nonce":[<numbers>],"ciphertext":[<numbers>]}` — a plain `serde_json` number
+array for each `Vec<u8>` field, exactly the DR-37-A design (`pv-ffi`'s `wrap_user_key_json`/
+`unwrap_user_key_from_json` own both clients' encoding) and exactly A2's inference.** Never a base64
+string — the shape Swift's `Codable` `Data` default would have silently produced had any Swift code
+in this app encoded the envelope itself instead of treating it as an opaque `String` handed to/from
+`pv-ffi`.
+
+This settles the *shape*, not *interop*: a symmetric-but-wrong encoding (both clients independently
+agreeing on the same wrong shape) would still look right in this single-direction observation — which
+is why Plan 37-03 runs the two-direction cross-client test (a web-registered account's
+`pw_wrapped_uk` unlocked from iOS, and vice versa) before this risk is fully retired.
+
 ---
 
 ## 3. Landmines
