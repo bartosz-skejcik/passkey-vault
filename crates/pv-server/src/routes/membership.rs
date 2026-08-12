@@ -767,6 +767,49 @@ pub(crate) async fn resolve_family_wide_declared_level(
     }
 }
 
+/// The declared-level equality bound (260812-01e Task 2 / HI-02), extracted
+/// to a single definition (REVIEW.md LO-05) so its THREE call sites
+/// (`collections::add_member`, `invitations::create`'s explicit
+/// collection-scope check, and its `family_wide_keys` fold-in loop) can
+/// never drift apart the way CR-01 found the third of them had — each site
+/// previously carried its own copy of this exact match. Layered ADDITIONALLY
+/// on top of whatever caller-level check that call site already performs
+/// (`may_grant_access_level`/`require_collection_access_for_propagation`/
+/// `require_collection_edit`) — this function is deliberately narrow and
+/// does not replace any of those; call it alongside them, never instead.
+///
+/// - `Declared(declared)`: refuses (`Forbidden`) when `requested_level !=
+///   declared` AND the collection is specifically an `item_bucket` — a
+///   family-wide FOLDER has no contributor-escalation path (Task 1's
+///   mechanism is item_bucket-only), so this bound must not apply there.
+/// - `LegacyUnknown`: refuses unconditionally when the collection is an
+///   `item_bucket` (HI-02: there is no declared level to bound the grant
+///   against, and this is exactly the row type Task 1's escalation
+///   mechanism can otherwise silently over-empower). A legacy FOLDER is
+///   untouched — WINDOWS #17's shape, `FamilyWideDeclaredLevel::LegacyUnknown`'s
+///   own doc comment has the full rationale.
+/// - `NotFamilyWide`: no-op.
+pub(crate) async fn enforce_item_bucket_declared_level_bound(
+    db: &sqlx::SqlitePool,
+    collection_id: &str,
+    requested_level: AccessLevel,
+) -> Result<(), ApiError> {
+    match resolve_family_wide_declared_level(db, collection_id).await? {
+        FamilyWideDeclaredLevel::Declared(declared) => {
+            if requested_level != declared && is_item_bucket_collection(db, collection_id).await? {
+                return Err(ApiError::Forbidden);
+            }
+        }
+        FamilyWideDeclaredLevel::LegacyUnknown => {
+            if is_item_bucket_collection(db, collection_id).await? {
+                return Err(ApiError::Forbidden);
+            }
+        }
+        FamilyWideDeclaredLevel::NotFamilyWide => {}
+    }
+    Ok(())
+}
+
 /// Pathless sibling of `Membership<R, M>` for the singleton `families`
 /// resource (v0.4 has exactly one family — CONTEXT.md's locked FAM-01
 /// decision — so there is no `{id}` segment to read at all).

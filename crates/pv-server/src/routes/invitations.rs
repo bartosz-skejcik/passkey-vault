@@ -234,29 +234,11 @@ pub async fn create(
         // self-escalated owner could hand a brand-new invitee `edit` on a
         // bucket declared `read` via THIS field, bypassing both the
         // `add_member` bound (`collections.rs`) and the `family_wide_keys`
-        // fold-in bound (the loop below) -- the same declared-level equality
-        // bound, applied here for parity, scoped identically: only the
-        // `Declared` state, only `item_bucket` collections (a family-wide
-        // FOLDER has no contributor-escalation path, same rationale as the
-        // other two call sites).
-        match membership::resolve_family_wide_declared_level(&state.db, collection_id).await? {
-            membership::FamilyWideDeclaredLevel::Declared(declared) => {
-                if requested_level != declared
-                    && membership::is_item_bucket_collection(&state.db, collection_id).await?
-                {
-                    return Err(ApiError::Forbidden);
-                }
-            }
-            // HI-02: same fail-closed bound as the other two call sites --
-            // see `collections::add_member`'s identical arm for the full
-            // rationale. Legacy FOLDERS are untouched.
-            membership::FamilyWideDeclaredLevel::LegacyUnknown => {
-                if membership::is_item_bucket_collection(&state.db, collection_id).await? {
-                    return Err(ApiError::Forbidden);
-                }
-            }
-            membership::FamilyWideDeclaredLevel::NotFamilyWide => {}
-        }
+        // fold-in bound (the loop below). LO-05: the same shared
+        // `membership::enforce_item_bucket_declared_level_bound` all three
+        // call sites now use, so this one can never drift from the other
+        // two the way it originally did (CR-01's own finding).
+        membership::enforce_item_bucket_declared_level_bound(&state.db, collection_id, requested_level).await?;
     }
 
     // Validate every family_wide_keys entry BEFORE any DB work, same order as
@@ -302,14 +284,12 @@ pub async fn create(
         // this task (documented in the SUMMARY's "Deviations" section).
         // `require_collection_access_for_propagation` alone bounds by what
         // the CALLER holds, which Task 1's mechanism can put at `Edit` on a
-        // bucket declared below `edit`; an ADDITIONAL equality check against
-        // the collection's own `family_wide_access_level` closes that,
-        // scoped to the `Declared` state AND to `item_bucket` collections
-        // only -- a family-wide FOLDER has no contributor-escalation path
-        // (Task 1's mechanism is item_bucket-only), so this bound must not
-        // apply there.
-        match membership::resolve_family_wide_declared_level(&state.db, &entry.collection_id).await? {
-            membership::FamilyWideDeclaredLevel::Declared(declared) => {
+        // bucket declared below `edit`; the shared `membership::
+        // enforce_item_bucket_declared_level_bound` (LO-05) closes that,
+        // called identically from all three sites this bound applies to.
+        let declared_level = membership::resolve_family_wide_declared_level(&state.db, &entry.collection_id).await?;
+        match declared_level {
+            membership::FamilyWideDeclaredLevel::Declared(_) | membership::FamilyWideDeclaredLevel::LegacyUnknown => {
                 membership::require_collection_access_for_propagation(
                     &state.db,
                     &family.caller_user_id,
@@ -317,33 +297,13 @@ pub async fn create(
                     requested_level,
                 )
                 .await?;
-                if requested_level != declared
-                    && membership::is_item_bucket_collection(&state.db, &entry.collection_id).await?
-                {
-                    return Err(ApiError::Forbidden);
-                }
-            }
-            membership::FamilyWideDeclaredLevel::LegacyUnknown => {
-                membership::require_collection_access_for_propagation(
-                    &state.db,
-                    &family.caller_user_id,
-                    &entry.collection_id,
-                    requested_level,
-                )
-                .await?;
-                // 260812-01e REVIEW.md HI-02: same fail-closed bound as
-                // `collections::add_member`'s identical arm -- see that call
-                // site's own comment for the full rationale. Legacy FOLDERS
-                // (the case C-1 actually protects) are untouched;
-                // `is_item_bucket_collection` returns `false` for them.
-                if membership::is_item_bucket_collection(&state.db, &entry.collection_id).await? {
-                    return Err(ApiError::Forbidden);
-                }
             }
             membership::FamilyWideDeclaredLevel::NotFamilyWide => {
                 membership::require_collection_edit(&state.db, &family.caller_user_id, &entry.collection_id).await?;
             }
         }
+        membership::enforce_item_bucket_declared_level_bound(&state.db, &entry.collection_id, requested_level)
+            .await?;
     }
 
     // A transaction is required as soon as `family_wide_keys` is non-empty —

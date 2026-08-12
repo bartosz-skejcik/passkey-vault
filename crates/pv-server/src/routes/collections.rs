@@ -561,7 +561,9 @@ pub async fn add_member(
     // row -- WINDOWS #17's shape, plan-check iteration 2 C-1).
     //
     // Found while executing this task (see the SUMMARY's "Deviations"
-    // section): the equality bound below is additionally scoped to
+    // section): the equality bound (now `membership::
+    // enforce_item_bucket_declared_level_bound`, called below -- LO-05
+    // extracted it to a single shared definition) is additionally scoped to
     // `item_bucket` only, mirroring `revoke_access`'s own established
     // precedent immediately above -- Task 1's contributor-escalation
     // mechanism ONLY exists for item_bucket destinations (a family-wide
@@ -575,44 +577,8 @@ pub async fn add_member(
     // out at `edit` on a folder declared `read` (a legitimate, deliberate
     // per-recipient choice at creation time, unrelated to any escalation).
     match membership::resolve_family_wide_declared_level(&state.db, &membership.resource_id).await? {
-        membership::FamilyWideDeclaredLevel::Declared(declared) => {
+        membership::FamilyWideDeclaredLevel::Declared(_) | membership::FamilyWideDeclaredLevel::LegacyUnknown => {
             if !may_grant_access_level(membership.access, requested_level) {
-                return Err(ApiError::Forbidden);
-            }
-            if requested_level != declared
-                && membership::is_item_bucket_collection(&state.db, &membership.resource_id).await?
-            {
-                return Err(ApiError::Forbidden);
-            }
-        }
-        membership::FamilyWideDeclaredLevel::LegacyUnknown => {
-            if !may_grant_access_level(membership.access, requested_level) {
-                return Err(ApiError::Forbidden);
-            }
-            // 260812-01e REVIEW.md HI-02: `LegacyUnknown` previously applied
-            // NO additional bound at all -- which was correct for the case
-            // C-1 actually cared about (a legacy family-wide FOLDER, whose
-            // edit-holder must keep being able to propagate their own level
-            // forever, since folders have no declared-level concept and no
-            // contributor-escalation path). But for a legacy NULL-level
-            // `item_bucket`, that same permissiveness is exactly backwards:
-            // Task 1's contributor-escalation mechanism is item_bucket-only,
-            // so a legacy item_bucket is precisely the row type that
-            // mechanism can silently over-empower through THIS path (a
-            // `read`-holder self-escalates to `edit` via `move_item`, then
-            // `add_member`s another member at `edit` with no declared level
-            // to check against). There is no declared level to validate
-            // equality against for a legacy row, so this fails closed
-            // instead: item_bucket propagation is refused entirely on a
-            // NULL-level row. `validate_family_wide_access_level` already
-            // prevents creating a NEW NULL-level item_bucket through the
-            // API, so no legitimate current flow is narrowed by this --
-            // only a hand-seeded legacy row (this fix's own test) is
-            // affected. Legacy FOLDERS are untouched:
-            // `is_item_bucket_collection` returns `false` for them, so this
-            // branch's existing `may_grant_access_level`-only behavior is
-            // unchanged.
-            if membership::is_item_bucket_collection(&state.db, &membership.resource_id).await? {
                 return Err(ApiError::Forbidden);
             }
         }
@@ -622,6 +588,15 @@ pub async fn add_member(
             }
         }
     }
+    // 260812-01e REVIEW.md LO-05: the declared-level equality bound itself
+    // (both the `Declared` and `LegacyUnknown`/HI-02 halves) is extracted to
+    // ONE shared definition, `membership::enforce_item_bucket_declared_level_bound`
+    // -- called identically from all three sites this bound applies to
+    // (this one, and both of `invitations::create`'s), so a fourth call site
+    // can never drift the way CR-01 found the THIRD of the original two
+    // had. Layered ADDITIONALLY on top of the `may_grant_access_level`
+    // check just above -- neither replaces the other.
+    membership::enforce_item_bucket_declared_level_bound(&state.db, &membership.resource_id, requested_level).await?;
 
     let is_family_member = sqlx::query(
         "SELECT 1 FROM family_members WHERE family_id = (SELECT family_id FROM collections WHERE id = ?) AND user_id = ?",
