@@ -57,3 +57,11 @@ uniffi = { version = "=0.32.0", features = ["cli"] }
 serde_json.workspace = true
 zeroize = { version = "1", features = ["derive"] }
 thiserror.workspace = true
+# Not a new dependency at the workspace level (T-37-12) -- pv-core and
+# pv-server already pin `base64 = "0.22"` and it is already resolved in
+# Cargo.lock. `derive_auth_material` (37-02) needs `auth_hash_b64` encoded
+# with the STANDARD (padded) alphabet, the same one pv-server's
+# `routes/auth.rs` decodes with -- BASE64_URL_SAFE_NO_PAD is used elsewhere
+# in this workspace (invite links, credential ids) but would silently
+# mismatch the server's own `STANDARD.decode(&req.auth_hash)` call.
+base64 = "0.22"

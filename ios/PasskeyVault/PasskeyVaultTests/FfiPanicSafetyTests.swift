@@ -38,10 +38,11 @@
 //  shapes before settling on the `Result`-returning one.
 //
 //  `pv_ffi.swift` (built fresh on every test run by the "Build pv-ffi
-//  XCFramework" Run Script phase, 35-03) is compiled directly into this
-//  target as an ordinary Sources file -- no `import` needed here for
-//  FfiUserKey/FfiError/importUserKeyFromSession/exportUserKeyForSession,
-//  same as FfiRoundTripTests.swift.
+//  XCFramework" Run Script phase) is compiled into the `PasskeyVault` APP
+//  target, not this test target (37-02 moved module ownership there -- see
+//  FfiRoundTripTests.swift's own header for the full reason). `import
+//  PasskeyVault` below reaches FfiUserKey/FfiError/
+//  importUserKeyFromSession/exportUserKeyForSession through the app module.
 //
 //  DISCRIMINATION NOTE: the caught-panic error is UniFFI's own
 //  `UniffiInternalError.rustPanic(message)`, declared `fileprivate` inside
@@ -57,6 +58,7 @@
 
 import Foundation
 import Testing
+import PasskeyVault
 
 struct FfiPanicSafetyTests {
 

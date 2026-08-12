@@ -56,6 +56,11 @@
 //! | `decrypt_item`                 | `Result<_,_>`         | — |
 //! | `import_user_key_from_session` | `Result<_,_>`         | — |
 //! | `ffi06_synthetic_panic_probe`  | `Result<_,_>`         | TAK (syntetyczna, patrz `panic_probe.rs`) |
+//! | `derive_auth_material`         | `Result<FfiAuthMaterial,_>` | argon2/serde — złapane jako `Err` (identyczny kształt co `from_password`, ten sam CR-01/WR-11 tor) |
+//! | `wrap_user_key_json`           | `Result<String,_>`    | — |
+//! | `unwrap_user_key_from_json`    | `Result<Arc<FfiUserKey>,_>` | — |
+//! | `default_kdf_params_json`      | `String` (BEZ `Result`) | NIE — `serde_json::to_string` na stałym `KdfParams::default()`; mirror `pv-wasm`'s bezargumentowego odpowiednika, ten sam brak `Result` |
+//! | `generate_registration_salt`   | `Vec<u8>` (BEZ `Result`) | NIE — `random_bytes(16)`, jawna sól (nie materiał klucza), ten sam kształt co `export_user_key_for_session` poniżej (jedyna panika byłaby alokacyjnym `abort`em, którego `catch_unwind` i tak nie zobaczy) |
 //! | `export_user_key_for_session`  | `Vec<u8>` (BEZ `Result`) | NIE — patrz niżej |
 //!
 //! `export_user_key_for_session` to JEDYNY eksport bez `Result`, świadomie:
@@ -75,12 +80,14 @@ uniffi::setup_scaffolding!();
 
 use std::sync::Arc;
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use pv_core::{
     items::{decrypt_item as core_decrypt_item, encrypt_item as core_encrypt_item, EncryptedItem},
     kdf::{wrapping_key_from_password, KdfParams},
     keys::{
-        unwrap_user_key as core_unwrap_user_key, wrap_user_key as core_wrap_user_key, UserKey,
-        WrappedKey, KEY_LEN,
+        hkdf_expand_key, random_bytes, unwrap_user_key as core_unwrap_user_key,
+        wrap_user_key as core_wrap_user_key, UserKey, WrappedKey, INFO_AUTH_HASH, INFO_PW_UNLOCK,
+        KEY_LEN,
     },
 };
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -294,6 +301,82 @@ impl FfiWrappingKey {
     }
 }
 
+/// Wynik jednego przebiegu Argon2id, rozgałęzionego na DWA HKDF-e (37-02) —
+/// `wrapping_key` (handle, `INFO_PW_UNLOCK`) i `auth_hash_b64` (jawny
+/// `String`, `INFO_AUTH_HASH`, base64 STANDARD). `auth_hash` celowo
+/// przekracza granicę jako tekst, nie `Vec<u8>`: to poświadczenie serwerowe,
+/// które i tak trafia do ciała JSON jako base64, więc ten kształt trzyma
+/// surowe bajty z dala od granicy w ogóle i nie zostawia Swiftowi żadnego
+/// własnego kodowania do wykonania. Native UniFFI Record (mirror
+/// `FfiWrappedKey`'s own precedent), nie JSON string.
+#[derive(uniffi::Record)]
+pub struct FfiAuthMaterial {
+    pub wrapping_key: Arc<FfiWrappingKey>,
+    pub auth_hash_b64: String,
+}
+
+/// Jeden przebieg Argon2id -> DWA rozwinięcia HKDF (`INFO_PW_UNLOCK`,
+/// `INFO_AUTH_HASH`) — mirror `pv-wasm`'s `derive_auth_material`
+/// (`crates/pv-wasm/src/lib.rs:670-683`). NIGDY nie wołać
+/// `wrapping_key_from_password` i `auth_hash_from_password` osobno dla tego
+/// samego hasła — każda z nich niezależnie uruchamia Argon2id, więc dwa
+/// przebiegi 64 MiB to landmine L-6 (`ios/IOS-SPIKE-LOG.md` §3), a nie
+/// tylko marnotrawstwo.
+///
+/// `password` opakowany w `Zeroizing` jako PIERWSZA instrukcja — dokładnie
+/// ten sam CR-01 tor co `FfiWrappingKey::from_password`: `kdf_params_json`
+/// pochodzi z odpowiedzi NIEZAUFANEGO serwera (`POST /api/auth/prelogin`),
+/// a jego błąd parsowania jest `?`-returnem. Wyzerowanie musi być
+/// własnością TYPU, nie kolejności instrukcji, albo ten sam bug wróciłby
+/// tutaj w nowej funkcji. `validate_kdf_params` (WR-11) odrzuca wartości
+/// spoza zakresu PRZED przebiegiem Argon2id poniżej — ta sama alokacyjna
+/// przyczyna co w `from_password`.
+///
+/// Wołanie funkcji Argon2id w pełni kwalifikowane przez `pv_core::kdf::`
+/// (nigdy niekwalifikowany `use` tej nazwy) jest CELOWE: dokładnie jedno
+/// wystąpienie jej identyfikatora w tym pliku jest samo w sobie
+/// sprawdzalnym dowodem "dokładnie jeden przebieg Argon2id na ścieżce
+/// auth-material" (37-02 acceptance criterion), a nie tylko deklaracją w
+/// prozie.
+#[uniffi::export]
+pub fn derive_auth_material(
+    password: Vec<u8>,
+    salt: Vec<u8>,
+    kdf_params_json: String,
+) -> Result<FfiAuthMaterial, FfiError> {
+    let password = Zeroizing::new(password);
+    let params: KdfParams = serde_json::from_str(&kdf_params_json)
+        .map_err(|e| FfiError::InvalidInput(e.to_string()))?;
+    validate_kdf_params(&params)?;
+    let mk = pv_core::kdf::derive_master_key(&password, &salt, &params)?;
+    let wrapping_key_bytes = hkdf_expand_key(mk.as_ref(), INFO_PW_UNLOCK);
+    let auth_hash_bytes = hkdf_expand_key(mk.as_ref(), INFO_AUTH_HASH);
+    Ok(FfiAuthMaterial {
+        wrapping_key: Arc::new(FfiWrappingKey(wrapping_key_bytes)),
+        auth_hash_b64: BASE64_STANDARD.encode(auth_hash_bytes),
+    })
+}
+
+/// `KdfParams::default()` jako JSON — mirror `pv-wasm`'s
+/// `default_kdf_params_json` (`crates/pv-wasm/src/lib.rs:685-688`), sama
+/// bezargumentowa, bez `Result` sygnatura. Jedyne źródło domyślnych
+/// parametrów KDF przy rejestracji — Swift nigdy nie trzyma własnego
+/// numerycznego literału Argon2id.
+#[uniffi::export]
+pub fn default_kdf_params_json() -> String {
+    serde_json::to_string(&KdfParams::default()).expect("KdfParams always serializes")
+}
+
+/// Dokładnie 16 losowych bajtów — jawna sól rejestracyjna, NIE materiał
+/// klucza. Sankcjonowany, nazwany wyjątek od reguły "brak gołego `Vec<u8>`
+/// w publicznym API", ten sam precedens co `pv-wasm`'s `randomSalt`
+/// (`crates/pv-wasm/src/lib.rs:690-695`) i `pv-core/src/keys.rs`'s własny
+/// komentarz, że jawna losowość nie jest materiałem klucza.
+#[uniffi::export]
+pub fn generate_registration_salt() -> Vec<u8> {
+    random_bytes(16)
+}
+
 /// Mirror `pv_core::keys::WrappedKey` dokładnie: `nonce`/`ciphertext`.
 /// Native UniFFI Record (Swift struct z polami `Data`), NIE JSON string —
 /// per 35-RESEARCH.md's Open Question 3 recommendation.
@@ -349,6 +432,36 @@ pub fn unwrap_user_key(
     wrapped: FfiWrappedKey,
 ) -> Result<Arc<FfiUserKey>, FfiError> {
     let blob: WrappedKey = wrapped.into();
+    let uk = core_unwrap_user_key(&wrapping_key.0, &blob)?;
+    Ok(Arc::new(FfiUserKey(uk)))
+}
+
+/// DR-37-A (`ios/IOS-SPIKE-LOG.md` §1): `serde_json` owns the
+/// `pw_wrapped_uk` wire encoding on BOTH clients — Swift never encodes or
+/// decodes the envelope itself, it moves an opaque `String` between
+/// `pv-ffi` and the HTTP body. This and `unwrap_user_key_from_json` below
+/// are the ONLY functions in this crate that ever see the envelope's
+/// textual form.
+#[uniffi::export]
+pub fn wrap_user_key_json(
+    wrapping_key: &FfiWrappingKey,
+    user_key: &FfiUserKey,
+) -> Result<String, FfiError> {
+    let blob = core_wrap_user_key(&wrapping_key.0, &user_key.0)?;
+    serde_json::to_string(&blob).map_err(|e| FfiError::InvalidInput(e.to_string()))
+}
+
+/// Inverse of `wrap_user_key_json` — see that function's doc comment
+/// (DR-37-A). Any malformed `wrapped_json` (including a base64-string-shaped
+/// envelope a Swift-side `Codable` default would have produced) returns a
+/// catchable `FfiError::InvalidInput`, never a panic.
+#[uniffi::export]
+pub fn unwrap_user_key_from_json(
+    wrapping_key: &FfiWrappingKey,
+    wrapped_json: String,
+) -> Result<Arc<FfiUserKey>, FfiError> {
+    let blob: WrappedKey = serde_json::from_str(&wrapped_json)
+        .map_err(|e| FfiError::InvalidInput(e.to_string()))?;
     let uk = core_unwrap_user_key(&wrapping_key.0, &blob)?;
     Ok(Arc::new(FfiUserKey(uk)))
 }
@@ -648,6 +761,117 @@ mod tests {
 
         let over_p = KdfParams { p_cost: MAX_P_COST + 1, ..at_max.clone() };
         assert!(matches!(validate_kdf_params(&over_p), Err(FfiError::InvalidInput(_))));
+    }
+
+    /// 37-02 Test (i): `derive_auth_material`'s `auth_hash_b64` decodes to
+    /// exactly 32 bytes, and those bytes differ from the returned wrapping
+    /// key's effect — proven by successfully wrapping/unwrapping with the
+    /// returned wrapping key while the decoded auth hash sits alongside it
+    /// as a genuinely different 32 bytes (never asserted by comparing an
+    /// opaque handle's address; the wrapping key's EFFECT is what matters).
+    #[test]
+    fn derive_auth_material_single_argon2_pass_and_auth_hash_is_32_bytes() {
+        let salt = pv_core::keys::random_bytes(16);
+        let kdf_json = cheap_kdf_params_json();
+        let password = b"test-password".to_vec();
+
+        let material = derive_auth_material(password.clone(), salt.clone(), kdf_json.clone())
+            .expect("derive_auth_material should succeed");
+
+        let auth_hash_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&material.auth_hash_b64)
+            .expect("auth_hash_b64 must be valid base64");
+        assert_eq!(auth_hash_bytes.len(), 32, "auth_hash must be exactly 32 bytes");
+
+        // The wrapping key derive_auth_material returned must be
+        // interoperable with the standalone from_password path (same
+        // INFO_PW_UNLOCK derivation): wrap with a reference key derived via
+        // from_password, unwrap with the one derive_auth_material returned.
+        let reference_wrapping_key = FfiWrappingKey::from_password(password, salt, kdf_json)
+            .expect("from_password should succeed");
+        let user_key = FfiUserKey::generate().expect("generate is infallible today");
+        let wrapped =
+            wrap_user_key(&reference_wrapping_key, &user_key).expect("wrap should succeed");
+        let unwrapped =
+            unwrap_user_key(&material.wrapping_key, wrapped).expect("unwrap should succeed");
+        assert_eq!(unwrapped.0.expose(), user_key.0.expose());
+
+        // auth_hash_bytes must differ from the wrapping key's own bytes --
+        // domain separation (INFO_PW_UNLOCK vs INFO_AUTH_HASH) actually took
+        // effect, not merely "some 32 bytes came back".
+        assert_ne!(
+            auth_hash_bytes.as_slice(),
+            material.wrapping_key.0.as_slice(),
+            "auth_hash and wrapping_key must diverge (different HKDF info strings)"
+        );
+    }
+
+    /// 37-02 Test (ii): malformed `kdf_params_json` returns `Err`, and the
+    /// sentinel password does not reach the allocator intact — reuses
+    /// `crate::heap_probe::Probe`/`SENTINEL` and its control exactly as
+    /// `from_password_zeroizes_its_password_copy_on_the_parse_error_path`
+    /// does (same CR-01 shape, new function).
+    #[test]
+    fn derive_auth_material_zeroizes_its_password_copy_on_the_parse_error_path() {
+        let salt = pv_core::keys::random_bytes(16);
+
+        let probe = Probe::arm();
+        let password = SENTINEL.to_vec();
+        let result = derive_auth_material(
+            password,
+            salt,
+            "{ this is not valid KdfParams JSON }".to_string(),
+        );
+        let leaked = probe.sentinel_reached_allocator();
+        drop(probe);
+
+        assert!(result.is_err(), "malformed kdf_params_json must be rejected");
+        assert!(
+            !leaked,
+            "derive_auth_material's Rust-owned heap copy of the master password was released to \
+             the allocator with its bytes intact on the parse-error path (CR-01)"
+        );
+
+        // Control: the probe genuinely CAN see an un-zeroized buffer of
+        // exactly this shape going back to the allocator.
+        let control = Probe::arm();
+        drop(std::hint::black_box(SENTINEL.to_vec()));
+        let control_saw_it = control.sentinel_reached_allocator();
+        drop(control);
+        assert!(
+            control_saw_it,
+            "heap probe control FAILED: the probe cannot observe an un-zeroized sentinel buffer \
+             at all, so the assertion above proves nothing"
+        );
+    }
+
+    /// 37-02 Test (iii): `wrap_user_key_json`'s output parses as JSON with
+    /// `nonce`/`ciphertext` keys (DR-37-A's `serde_json`-owned shape) and
+    /// round-trips through `unwrap_user_key_from_json` to the same 32
+    /// exposed bytes.
+    #[test]
+    fn wrap_user_key_json_round_trips_and_has_serde_json_shape() {
+        let salt = pv_core::keys::random_bytes(16);
+        let kdf_json = cheap_kdf_params_json();
+        let wrapping_key = FfiWrappingKey::from_password(
+            b"test-password".to_vec(),
+            salt,
+            kdf_json,
+        )
+        .expect("from_password should succeed");
+        let user_key = FfiUserKey::generate().expect("generate is infallible today");
+
+        let wrapped_json =
+            wrap_user_key_json(&wrapping_key, &user_key).expect("wrap_user_key_json should succeed");
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&wrapped_json).expect("wrap_user_key_json output must be valid JSON");
+        assert!(parsed.get("nonce").is_some(), "wrapped JSON must have a `nonce` key");
+        assert!(parsed.get("ciphertext").is_some(), "wrapped JSON must have a `ciphertext` key");
+
+        let unwrapped = unwrap_user_key_from_json(&wrapping_key, wrapped_json)
+            .expect("unwrap_user_key_from_json should succeed");
+        assert_eq!(unwrapped.0.expose(), user_key.0.expose());
     }
 
     /// Test 4: unwrapping with the wrong wrapping key fails (`Err`, never a

@@ -8,11 +8,13 @@
 //  (ios/IOS-SPIKE-LOG.md §5's own words), which is real and is less.
 //
 //  `pv_ffi.swift` (uniffi-bindgen-swift's generated output, built fresh on
-//  every test run by the "Build pv-ffi XCFramework" Run Script phase on the
-//  PasskeyVaultTests target -- see PasskeyVault.xcodeproj/project.pbxproj)
-//  is compiled directly into THIS target as an ordinary Sources file, so no
-//  `import` statement is needed here for FfiUserKey/FfiWrappingKey/etc. --
-//  they live in the same module as this file.
+//  every test run by the "Build pv-ffi XCFramework" Run Script phase) is
+//  compiled into the `PasskeyVault` APP target, not this test target (37-02
+//  moved module ownership there -- a hosted test bundle and the app it is
+//  hosted in cannot both compile the generated bindings into their own
+//  module, or `AccountService`'s `FfiUserKey`-typed return values would not
+//  type-check against this file's own `FfiUserKey`). `import PasskeyVault`
+//  below reaches FfiUserKey/FfiWrappingKey/etc. through the app module.
 //
 //  SC2 discipline (CONTEXT.md "Specific Ideas"): every expected byte value
 //  below is a literal chosen IN THIS FILE, never a value produced by calling
@@ -27,6 +29,7 @@
 
 import Foundation
 import Testing
+import PasskeyVault
 
 struct FfiRoundTripTests {
 
