@@ -1417,6 +1417,37 @@ describe("ShareDialog", () => {
         expect(screen.getByTestId("share-partial-error")).toHaveTextContent(MEMBER_B.email);
         expect(onShared).not.toHaveBeenCalled();
       });
+
+      // 260812-01e REVIEW.md ME-02: `edit` is NOT "more than"
+      // `hidden_password` along the axis that matters here -- `edit` can
+      // reveal the password, `hidden_password` cannot. A 409 whose recipient
+      // already holds `edit` must NOT be treated as satisfying an intended
+      // `hidden_password` share.
+      it("a 409 whose recipient already holds edit does NOT satisfy an intended hidden_password level -- IS reported as failed", async () => {
+        mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+        mockListCollections.mockResolvedValue([BUCKET_ROW]);
+        mockAddCollectionMember.mockImplementation(async (_id: string, userId: string) => {
+          if (userId === MEMBER_B.user_id) {
+            return Promise.reject({ status: 409, message: "conflict" });
+          }
+          return undefined;
+        });
+        mockGetCollectionAccessList.mockResolvedValue([
+          { user_id: MEMBER_B.user_id, email: MEMBER_B.email, access_level: "edit", created_at: "", suspended: false },
+        ]);
+        const onShared = vi.fn();
+        render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+        await waitForPopulated();
+        chooseAccessLevel("hidden_password");
+        await waitFor(() => expect(screen.getByTestId("share-hidden-password-ack-confirm")).toBeInTheDocument());
+        fireEvent.click(screen.getByTestId("share-hidden-password-ack-confirm"));
+        checkFamilyWide();
+        fireEvent.click(screen.getByTestId("share-submit"));
+
+        await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
+        expect(screen.getByTestId("share-partial-error")).toHaveTextContent(MEMBER_B.email);
+        expect(onShared).not.toHaveBeenCalled();
+      });
     });
   });
 });

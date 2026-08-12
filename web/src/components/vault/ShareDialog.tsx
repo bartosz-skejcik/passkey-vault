@@ -218,7 +218,18 @@ function withPublishedPublicKey<T extends { public_key: string | null }>(recipie
  * collection's real access list and checks whether the recipient's ACTUAL
  * persisted `access_level` equals `intendedLevel` OR `"edit"` (LOCKED
  * decision 1's contributor asymmetry is always sufficient as a ceiling —
- * `edit` never represents "less" than any declared level). A failure from
+ * `edit` never represents "less" than any declared level) -- EXCEPT when
+ * `intendedLevel` is `"hidden_password"` (260812-01e REVIEW.md ME-02):
+ * `AccessLevel`'s own doc comment (`membership.rs`) and
+ * `may_grant_access_level`'s nine explicit arms exist precisely because
+ * `edit` is NOT "more than" `hidden_password` along the axis the user
+ * actually cares about here -- `hidden_password` means "cannot reveal the
+ * password", and `edit` can. A user who deliberately chose
+ * `hidden_password`, hit a 409 for a recipient who already holds `edit`,
+ * must NOT be told the share succeeded at their chosen level while that
+ * recipient can in fact read the password. The `edit`-ceiling stays correct
+ * (and load-bearing) for `read`: a past contributor legitimately holding
+ * `edit` there is not a problem this check exists to catch. A failure from
  * THIS check itself (network, parse) fails CLOSED — never silently trusts
  * the original 409 when this verification cannot complete. */
 async function recipientAlreadyHoldsIntendedLevel(
@@ -229,7 +240,11 @@ async function recipientAlreadyHoldsIntendedLevel(
   try {
     const accessList = await getCollectionAccessList(collectionId);
     const entry = accessList.find((a) => a.user_id === recipientUserId);
-    return entry !== undefined && (entry.access_level === intendedLevel || entry.access_level === "edit");
+    const contributorCeilingApplies = intendedLevel !== "hidden_password";
+    return (
+      entry !== undefined &&
+      (entry.access_level === intendedLevel || (contributorCeilingApplies && entry.access_level === "edit"))
+    );
   } catch (err) {
     console.error(
       `pv: failed to verify recipient ${recipientUserId}'s actual access on collection ${collectionId} after a 409`,
