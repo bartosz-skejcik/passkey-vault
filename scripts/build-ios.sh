@@ -59,6 +59,32 @@
 # `--with-panic-probe` run.
 set -euo pipefail
 
+# --- cargo PATH bootstrap (Xcode GUI builds) --------------------------------
+# Xcode runs a Run Script build phase with a MINIMAL PATH that does not include
+# any Rust install location. Invoked from a normal shell this script finds
+# `cargo` and works; invoked from Xcode's Build/Run it died with
+# `cargo: command not found` at the first `cargo rustc` below -- which reads
+# like a toolchain failure but is only a PATH difference between the two
+# callers. Prepend the known install locations (rustup's own, Homebrew's
+# rustup, and a Homebrew rust formula) so the script behaves identically from
+# both. Existing PATH entries still win: this only ADDS candidates.
+for _cargo_dir in "$HOME/.cargo/bin" /opt/homebrew/opt/rustup/bin /opt/homebrew/bin /usr/local/bin; do
+  [ -x "$_cargo_dir/cargo" ] && case ":$PATH:" in
+    *":$_cargo_dir:"*) : ;;
+    *) PATH="$_cargo_dir:$PATH" ;;
+  esac
+done
+export PATH
+# Fail LOUD and specific rather than letting the first `cargo rustc` emit a
+# bare "command not found" 300 lines into an Xcode transcript.
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "ERROR: cargo not found on PATH." >&2
+  echo "  Searched: \$HOME/.cargo/bin, /opt/homebrew/opt/rustup/bin, /opt/homebrew/bin, /usr/local/bin" >&2
+  echo "  PATH was: $PATH" >&2
+  echo "  Install Rust (https://rustup.rs) or add your cargo directory to the list above." >&2
+  exit 1
+fi
+
 WITH_PANIC_PROBE=0
 WITH_KDF_PROBE=0
 # --with-kdf-probe (36-03, E5.c): the same shared-output-path variant
