@@ -856,6 +856,132 @@ not exercise the ACL's `.ok` path end-to-end on this harness. 37-05's E1/E2 own 
 a DIFFERENT session (with Face ID interactively enrolled through the Simulator.app UI by a human, or on
 a physical device) changes this.
 
+**AMENDMENT (Plan 37-05, Task 1) — the "GUI automation is denied" half of the finding above did NOT
+hold in this session, and Face ID is now Enrolled on the same device.** The claim above ("GUI automation
+via `osascript`/System Events is denied … no assistive-access permission") was re-tested directly at the
+start of 37-05, not assumed carried forward:
+
+```
+$ osascript -e 'tell application "System Events" to return UI elements enabled'
+true
+```
+
+Assistive-access permission is granted in this session's environment (a change in the HOST machine's own
+permission grants between the 37-04 and 37-05 sessions, not a code or simulator change). Driving the
+Simulator.app **Features → Face ID → Enrolled** submenu via `osascript`/System Events now works, and on
+the `iPhone 17` simulator (`C24B6A19-9099-4FCF-B281-9CD786D0D8A1`) used throughout this phase, **Face ID
+is ALREADY Enrolled** (`AXMenuItemMarkChar` on the "Enrolled" menu item reads `✓`):
+
+```
+$ osascript -e '... query the "Enrolled" menu item's AXMenuItemMarkChar ...'
+✓
+```
+
+**This does not retract the 37-04 finding for the SESSION it was recorded in** — it was true then, for
+that session's environment. It does mean 37-05's own E1/E2 (below) run against a simulator with Face ID
+genuinely enrolled, not the never-enrolled state 37-04 documented.
+
+---
+
+## 2.7 Plan 37-05, Task 1 — the instrument, and E1/E2/E4/E6
+
+### Task 1(a) — settling the instrument before trusting any reading
+
+**[OBSERVED].** 35-03 and 37-03 both recorded that `xcodebuild test -destination "platform=iOS
+Simulator,name=<Name>"` (a bare device NAME) spins up an ephemeral "Clone N of `<Name>`" simulator that
+does not carry the source device's Face ID enrollment state. This matters here specifically because
+every biometry observation in this plan is attributed to `C24B6A19-9099-4FCF-B281-9CD786D0D8A1`.
+
+Tested directly: `xcodebuild test -destination "platform=iOS Simulator,id=C24B6A19-9099-4FCF-B281-9CD786D0D8A1"
+-parallel-testing-enabled NO` (pinning by exact **`id=`**, never `name=`), then reading the resulting
+`.xcresult`'s own structured device record:
+
+```
+$ xcrun xcresulttool get test-results tests --path <xcresult> | grep -A3 '"device"'
+"device" : {
+  "deviceId" : "C24B6A19-9099-4FCF-B281-9CD786D0D8A1",
+  "deviceName" : "iPhone 17",
+  ...
+```
+
+The reported `deviceId` is byte-identical to the already-booted UDID, and `deviceName` reads `"iPhone
+17"` — never `"Clone 1 of iPhone 17"`, the shape 35-03/37-03 observed when pinning by `name=` instead.
+**Pinning by exact `id=<UDID>` plus `-parallel-testing-enabled NO` avoids the clone on this toolchain.**
+This is the mechanism `scripts/run-ios-biometry-experiments.sh` and every `xcodebuild test` invocation in
+this plan use — never `name=`. `xcrun simctl list devices | grep -c Booted` was `1` throughout this
+determination.
+
+**A second instrument finding, load-bearing for how results are extracted, not just how the device is
+selected:** Foundation's `Process` type is **unavailable on iOS** — `error: cannot find 'Process' in
+scope` — a genuine compile error, not a runtime restriction. This forecloses the design this task's own
+`<action>` text anticipated (spawning `xcrun simctl spawn … notifyutil` FROM inside the test process,
+timed against the blocking Keychain call). What was found to work instead, verified with a throwaway
+probe test and read back from the host shell: a plain `Data(...).write(to: URL(fileURLWithPath:
+"/private/tmp/..."))` from inside a Simulator-hosted test process lands on the REAL host filesystem
+(`ls -la /private/tmp/pv37-05-filewrite-check.txt` showed the file, with the exact bytes written, right
+after the test run). Every experiment below writes its result to a fixed `/private/tmp/pv37-05-<name>.txt`
+path; the HOST shell (not the test process) is what sends `notifyutil` biometric-response notifications,
+timed via a fixed sleep before `xcodebuild test` returns.
+
+### E1 — can this simulator hold a passcode?
+E1 OBSERVED status=0
+
+`SecItemAdd` of the ACC-03-shaped item (`kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly` +
+`.biometryCurrentSet`) returned **`errSecSuccess` (0)**. The shipped protection class is addable — and,
+combined with Face ID now being Enrolled (see the amendment above), testable as actually shipped, not
+only as a degraded fallback class. This is consistent with, and now more directly confirms, 37-04's own
+informal observation (`SecItemAdd` succeeding regardless of enrollment state).
+
+### E2 — does this simulator enforce the ACL?
+E2 VERDICT: Result B
+
+`SecItemCopyMatching` with `kSecReturnData: true` and **NO** `LAContext` at all, against a freshly-stored
+ACC-03 envelope, on a device with Face ID genuinely Enrolled (confirmed above): status **`0`**, and the
+returned bytes equal the literal 32-byte fixture **immediately** — the test suite's own wall-clock
+duration was `2026-08-12 23:13:24.376` to `...:24.377`, i.e. **under 2ms**, well before a `pearl.match`
+notification sent 3 seconds later by the host script ever had a chance to matter. No system sheet, no
+block, no wait.
+
+**Required response, per this plan's own mandated wording:** *the OS gate was configured correctly and
+the code path was exercised; enforcement was NOT observed, because the simulator returns ACL-protected
+data unconditionally.* This is a genuinely new, stronger data point than 37-04's (which ran with NO
+biometry enrolled at all and got `errSecItemNotFound` via a real `LAContext`); this run has Face ID
+Enrolled AND supplies no `LAContext` whatsoever, and the mock AKS still released the data. **Task 2 runs
+E3-alt, not E3, per this result.** MP-1 item 1 (whatever this simulator's `securityd`/mock AKS does is not
+evidence for a physical device) applies at full force here — this is the single most consequential
+observation in the whole plan and it falls entirely on the "cannot prove enforcement here" side.
+
+### E4 — kSecAttrAccessible x kSecAttrAccessControl collision
+E4 OBSERVED status=-50
+
+Adding the same item twice — once with only `kSecAttrAccessControl`, once with BOTH that AND
+`kSecAttrAccessible` naming the same class — returned **`errSecParam` (-50)** on the second add. **The
+third-party folklore is right, and `UkEnvelopeStore`'s existing design rule (ACC-03: the class is
+supplied ONLY through `SecAccessControlCreateWithFlags`, never additionally as `kSecAttrAccessible`) is
+now empirically confirmed correct on this harness, not merely a defensive convention.**
+
+### E6 — does anything expire it?
+E6 OBSERVED item_survived_reboot=yes
+
+The ACC-03-shaped envelope was written (`status=0`), the simulator was `simctl shutdown` then `boot`ed
+(never more than one simulator booted during the cycle), and a fresh, separate test process
+(`E6ReadBackTests`, since the original process is torn down by the reboot) read the item back:
+`item_survived_reboot=yes status=0`. **Confirms ACC-06's premise operationally**: nothing expires a
+Keychain item across a shutdown/boot cycle on this harness; expiry must remain a single, explicit
+`SecItemDelete`, exactly as ACC-03/ACC-06 already designed for.
+
+### MP-1 limitations recorded verbatim (items 1, 3, 4, 6)
+
+1. **Item 1 (whatever this simulator's `securityd`/mock AKS does is not evidence for a physical
+   device).** Directly load-bearing for E2 above: "the simulator does not enforce" is a true statement
+   about THIS mock AKS, never a claim extending to real hardware.
+3. **Item 3 (`simctl shutdown`/`boot` is not a device reboot).** E6's "survived" result is a statement
+   about the simulator's own persistence semantics, not a hardware reboot's.
+4. **Item 4 (a simulator that cannot hold a passcode would leave the shipped class unverified).** Does
+   NOT apply this run — E1 observed `status=0`, so the shipped class WAS exercised, not degraded.
+6. **Item 6 (say so plainly rather than softening the criterion).** Applied directly to E2: the result is
+   recorded as "enforcement NOT observed" in exactly those words, not reworded into a pass.
+
 ---
 
 ## 3. Landmines
