@@ -61,15 +61,20 @@ final class AccountService {
         let kdfParamsJson = defaultKdfParamsJson()
 
         var passwordData = Data(password.utf8)
+        // CP-4 caller-side mitigation (crates/pv-ffi/src/lib.rs's own header
+        // -- UniFFI cannot wipe the caller's buffer for us): immediately
+        // after every pv-ffi call that took a password buffer. This MUST be
+        // a `defer`, not a trailing statement -- a trailing wipe is skipped
+        // entirely if `deriveAuthMaterial` throws (e.g. WR-11's bounds guard
+        // rejecting out-of-range KDF params), leaving the plaintext master
+        // password un-wiped on the Swift heap. `defer` runs on every exit
+        // path, including the `throw`.
+        defer { passwordData.resetBytes(in: 0..<passwordData.count) }
         let authMaterial = try deriveAuthMaterial(
             password: passwordData,
             salt: saltData,
             kdfParamsJson: kdfParamsJson
         )
-        // CP-4 caller-side mitigation (crates/pv-ffi/src/lib.rs's own header
-        // -- UniFFI cannot wipe the caller's buffer for us): immediately
-        // after every pv-ffi call that took a password buffer.
-        passwordData.resetBytes(in: 0..<passwordData.count)
 
         let userKey = try FfiUserKey.generate()
         let wrappedJson = try wrapUserKeyJson(wrappingKey: authMaterial.wrappingKey, userKey: userKey)
@@ -106,12 +111,19 @@ final class AccountService {
         }
 
         var passwordData = Data(password.utf8)
+        // CP-4 caller-side mitigation, `defer`-guarded for the same reason
+        // as `register` above: `kdfParamsJson` here comes straight from the
+        // SERVER's own `/api/auth/prelogin` response, so a malicious or
+        // misbehaving server returning out-of-bounds KDF params (WR-11's
+        // guard in crates/pv-ffi/src/lib.rs) can deterministically drive
+        // `deriveAuthMaterial` to throw -- a trailing wipe would be skipped
+        // on exactly that attacker-triggerable path.
+        defer { passwordData.resetBytes(in: 0..<passwordData.count) }
         let authMaterial = try deriveAuthMaterial(
             password: passwordData,
             salt: saltData,
             kdfParamsJson: prelogin.kdfParamsJson
         )
-        passwordData.resetBytes(in: 0..<passwordData.count)
 
         let loginResult = try await apiClient.login(email: email, authHashB64: authMaterial.authHashB64)
         let userKey = try unwrapUserKeyFromJson(
