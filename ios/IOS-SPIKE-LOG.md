@@ -249,6 +249,118 @@ out-of-process cross-check attempt — not obtained, recorded honestly rather th
 `crates/pv-ffi/src/lib.rs`'s own `MAX_M_COST_KIB` commentary (already anticipating this exact tightening,
 written in Phase 35 before this measurement existed).
 
+### ACC-03 — Keychain layout, accessibility classes, biometric invalidation: **DECIDED**
+
+Two secrets live behind this design, not one. The ROADMAP's own wording anticipates only the first;
+the second (GAP 3, `37-RESEARCH.md`) is recorded here rather than left implicit, because it needs a
+*different* accessibility class for a stated reason, not the same one by default.
+
+**Secret A — the User Key envelope.** `kSecClassGenericPassword`; `kSecAttrService` =
+`cloud.blonie.PasskeyVault.uk-envelope`; value = the 32 raw bytes returned by
+`export_user_key_for_session` (`crates/pv-ffi/src/lib.rs`, the load-bearing cross-process mechanism
+per §1 IOS-06's own amendment); protection = **`kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly`**;
+flags = `[.biometryCurrentSet]`, passed **only** through `SecAccessControlCreateWithFlags` and never
+additionally as `kSecAttrAccessible` in the `SecItemAdd` dictionary (`37-RESEARCH.md` records the
+header/folklore disagreement on that collision as unresolved — the design rule holds regardless of
+which is true, and E4 in a later plan settles it).
+
+Rejected on merit, each with its own reason, not by omission:
+- `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` — adds successfully on a passcode-less device, where
+  "unlocked" is the permanent state, silently degrading the strongest class to "always"; and it leaves
+  the ciphertext on disk after the passcode is removed, where `WhenPasscodeSetThisDeviceOnly` has the
+  OS delete it (`[OBSERVED, doc]`, `SecItem.h`: "Disabling the device passcode will cause all
+  previously protected items to be deleted").
+- both `AfterFirstUnlock*` (including `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, which Secret
+  B below deliberately DOES use) — readable while the device is locked; exactly what a User Key
+  envelope must not be.
+- every non-`ThisDeviceOnly` variant — rides an encrypted backup onto a different device, breaking the
+  zero-knowledge posture.
+- `.biometryAny` and `.userPresence` — Apple's own `SecAccessControl.h` states the item "is still
+  accessible by Touch ID even if fingers are added or removed"; an attacker who enrolls their own
+  finger on a stolen unlocked device reaches the vault.
+- `.devicePasscode` alone — no biometric gate at all, which is the entire point of ACC-04.
+
+State the counter-argument rather than suppressing it: `.biometryCurrentSet` already requires enrolled
+biometry, which already requires a passcode, so the passcode-removal deletion is defence-in-depth, not
+the primary gate. The argument that stands alone is the **write-time refusal**: on a passcode-less
+device `SecItemAdd` against `WhenPasscodeSetThisDeviceOnly` fails outright (predicted `OSStatus`:
+`errSecNotAvailable`/-25291), turning "no passcode" into a surfaced product message — "Biometric
+unlock requires a device passcode" — instead of a class that silently degrades to "always available."
+
+**Secret B — the session token (GAP 3).** A bearer credential valid 168 h by default
+(`PV_SESSION_TTL_HOURS`) that grants read of every ciphertext blob on the account. Stored
+`kSecClassGenericPassword`, `kSecAttrService` = `cloud.blonie.PasskeyVault.session-token`, protection =
+**`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`**, **no** `SecAccessControl`, **no** biometric
+flag.
+
+The asymmetry with Secret A is stated as a security decision, not an implementation shortcut: the
+AutoFill extension (Phase 41) must be able to reach the server on a cold launch without throwing a Face
+ID sheet just to attach a bearer header to an HTTP request, and gating the transport credential behind
+biometry would make that structurally impossible. The secret that actually decrypts anything is Secret
+A, which keeps the strict class; Secret B's exposure is bounded by TTL and revocation
+(`DELETE /api/sessions/{id}`), not by a biometric gate that would defeat the extension's own purpose.
+
+Transport correctness, recorded here because a silent violation is a session-invalidating bug and not
+merely a style note: the token is stored and transmitted **as the received base64 string, byte for
+byte** — `session.rs`'s `token_hash` is `SHA256(<the base64 string's bytes>)`, not of the decoded 32
+bytes. A `Data(base64Encoded:)` → `.base64EncodedString()` round trip on the Swift side can silently
+invalidate every subsequent request without ever raising a decode error.
+
+### DR-37-B — the session token's accessibility class is decided inside ACC-03, not separately
+
+Recorded as its own ID because GAP 3 surfaced it as a gap in the ROADMAP's ACC-03 wording, but the
+content lives entirely in ACC-03 Secret B above: `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`,
+no `SecAccessControl`, no biometric flag, byte-exact transport. This cross-reference exists so a future
+reader searching for "DR-37-B" or "session-token" lands on the decision rather than concluding it was
+never made.
+
+**Biometric-set change.** Apple's own word is *invalidated*, never *deleted*, and Apple names no
+`OSStatus` for it (`[OBSERVED, doc]`, `SecAccessControl.h`: "When fingers are added or removed, the
+item is invalidated. When Face ID is re-enrolled this item is invalidated."). The reported `OSStatus`
+changed across OS versions in third-party reports (`[UNVERIFIED, WEB]`, Apple forum 690546):
+`errSecItemNotFound` (**-25300**) on older OS, `errSecAuthFailed` (**-25293**) on iOS 15+, with
+`errSecNotAvailable` (**-25291**) also reported by others. Record `{-25293, -25300, -25291}` as **ONE
+equivalence class** meaning "envelope unusable" — a standing prohibition on branching on which member
+appeared, since the value already changed once between iOS 14 and 15 and could change again. Recovery
+is **`SecItemDelete` then `SecItemAdd`**, never add-and-hope; `errSecDuplicateItem` (-25299) is the
+predicted symptom of getting that order wrong (`[INFERRED]`, since a fresh add against a still-present
+invalidated row collides on the primary key).
+
+Two further groupings the code must make, from the same error taxonomy: benign cancel
+`{errSecUserCanceled -128, LAError.userCancel -2, LAError.userFallback -3}` → no alarm, no retry
+counter; locked / no-UI `{errSecInteractionNotAllowed -25308, errSecInteractionRequired -25315,
+LAError.notInteractive -1004}` → report "locked", never "missing" — the silent-probe path
+(`interactionNotAllowed = true`) exists precisely so this bucket can be distinguished without ever
+presenting UI.
+
+**`LAContext` discipline, recorded as a decision, not a style note.** Fresh `LAContext` per unlock
+attempt; `context.invalidate()` immediately after the key is obtained; `localizedReason` supplies the
+prompt copy; `interactionNotAllowed = true` for the silent probe. Quote `SecItem.h`'s own sentence as
+the reason this is mandatory, not optional: "If the specified context has been previously
+authenticated, the operation will succeed without asking user for authentication." A long-lived context
+turns the OS's gate back into the process-local boolean ACC-04 explicitly forbids, wearing OS clothing.
+
+`touchIDAuthenticationAllowableReuseDuration` is rejected by name, not merely left unused: it accepts a
+*lock-screen* unlock from the past (`[OBSERVED]`, `LAContext.h:340-362`, max 5 minutes) and does "not
+allow reusing previous biometric matches in application or between applications" — using it would mean
+"the phone was unlocked recently" releases the vault key, which is not what ACC-04 requires.
+
+**ACC-06 forward constraint (not implemented in this plan).** `SecItem.h` has no expiry/TTL/timeout/
+lifetime attribute at all; `kSecAttrCreationDate`/`kSecAttrModificationDate` are documented read-only.
+Nothing about a Keychain item expires on its own. The layout above must therefore keep expiry a
+**single** `SecItemDelete` call — this is the reason the two-artifact Secure Enclave design is rejected
+below in ACC-05 R4, not a separate argument invented there.
+
+**MP-1 proof limitations, pre-registered before any experiment runs**, so a later green run cannot
+quietly widen the claim beyond what it actually showed: whatever Phase 37 observes empirically is a
+statement about a simulator whose `securityd` links a mock AKS (`SecMockAKS`, `MockAKSRefKey`,
+`MockAKSRefKeyObject` strings are present in the binary), where simulated biometry is delivered via a
+`notifyutil` notification and not a physical sensor, where `simctl shutdown`/`boot` is not a device
+reboot, and where — if the simulator turns out unable to hold a passcode at all (`[UNVERIFIED, WEB]`,
+contested) — the shipped `WhenPasscodeSetThisDeviceOnly` protection class ships **unverified on this
+harness**. Say so plainly in the plan that runs the experiment rather than softening the criterion to
+one the simulator happens to pass.
+
 ---
 
 ## 2. Verified against reality (2026-08-11)
