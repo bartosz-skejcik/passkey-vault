@@ -50,7 +50,7 @@ The gap that makes shared folders feel broken.
 family later automatically gains access to what was already shared family-wide. This is the harder of
 the two options and was chosen deliberately over a snapshot-of-current-members shortcut.
 
-- [ ] **FSH-01**: A user can share a folder or an item with the **whole family** in one action, without ticking each person.
+- [x] **FSH-01**: A user can share a folder or an item with the **whole family** in one action, without ticking each person.
 - [ ] **FSH-02**: A member who joins **after** a family-wide share was created automatically gains access to it — without the sharer taking any further action at join time. **This is the milestone's central technical risk** and is called out as such: the server cannot reseal (it never holds a Collection Key), so the key must reach the newcomer by some client-side path. The mechanism is an explicit design decision to be made and documented **before** any dependent code, following the KEY-05 / EXT-10 precedent.
 - [ ] **FSH-03**: FSH-02's mechanism preserves zero-knowledge absolutely. If no mechanism can do so without the server holding key material, the requirement is renegotiated — **it is never satisfied by weakening the invariant.**
 - [ ] **FSH-04**: Leaving or being removed from the family revokes family-wide access with the same correctly-scoped, atomic re-key discipline v0.4 established, and the client purges its cached plaintext on the same bound v0.4 proved (next completed sync, not lock/unlock).
@@ -91,18 +91,22 @@ Recorded in `milestones/v0.4-ROADMAP.md`. Listed here so they are scheduled rath
 - Encrypted share links for people **without** accounts — still deferred (see v0.1 Future Requirements).
 - Any server-side enforcement of hidden-password. Rejected permanently in v0.4 (A-6): in a
   zero-knowledge product a pretence of enforcement is a lie.
+
 - Multi-family / nested groups / org hierarchies. The family stays a single flat object.
 
 ## Non-Negotiables
 
 1. **Zero-knowledge.** The server never sees a private key, a Collection Key, or plaintext. FSH-02 is
    subordinate to this, not the reverse.
+
 2. **A green unit suite is not evidence.** Both suites mock crypto. Crypto-adjacent claims need a
    real-WASM test or a live Playwright run; assertions are positive and recipient-side; every new guard
    is falsification-tested. v0.4 paid for this lesson five separate times.
+
 3. **Cross-phase verification.** v0.4's milestone audit found three defects that seven green per-phase
    verifications each missed — all the same shape. This milestone runs the cross-phase audit before
    believing itself done.
+
 4. **Honesty in security UI.** The product does not claim protection it does not provide, and does not
    offer an affordance it cannot honor.
 
@@ -113,7 +117,7 @@ Phases 29–33 (`ROADMAP.md`). Every v0.5 requirement is mapped to exactly one p
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FSH-01 | Phase 30 | Pending |
+| FSH-01 | Phase 30 | Complete |
 | FSH-02 | Phase 30 | Pending |
 | FSH-03 | Phase 30 | Pending |
 | FSH-04 | Phase 30 | Pending |
@@ -148,11 +152,14 @@ Phases 29–33 (`ROADMAP.md`). Every v0.5 requirement is mapped to exactly one p
   surface — the share dialog targeting a folder that already exists — and both consume the
   unwrap-own-sealed-key/reseal composition Phase 29 builds. ORG-01/02/04 are the *item editor's* scope
   moves, a different surface.
+
 - **FAM-10 sits with FSH-04.** Both are "membership ends → the same correctly-scoped atomic re-key
   runs"; splitting them would put one re-key path in two phases.
+
 - **DEBT items are placed by surface, not batched.** DEBT-01 lands where the fingerprint-verification UI
   lives (the redesigned family surface), DEBT-02 where the export flow lives (the migrated
   import/export surface), DEBT-03 with the item-list honesty work whose inverse defect it is, DEBT-04
   in the phase that edits `vault.rs` anyway.
+
 - **UX-04 is verified in Phase 32, after Phase 29 has changed what removal does.** Checking the copy's
   truthfulness before either the semantics or the surface settle would invalidate the human check.
