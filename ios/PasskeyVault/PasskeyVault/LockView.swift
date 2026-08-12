@@ -165,6 +165,19 @@ struct LockView: View {
     }
 
     private func setUpOnAppear() {
+        #if DEBUG
+        // TEST-ONLY (Task 5 screenshot matrix). See `ContentView`'s matching
+        // hook comment for the rationale and the repo-wide precedent this
+        // follows. Bypasses the real `BiometricUnlockService`/Keychain round
+        // trip entirely so every documented slot state renders
+        // deterministically for a screenshot, without needing Face ID
+        // actually enrolled in the simulator (a state Task 5's own matrix
+        // records as NOT-PRODUCIBLE here where it cannot be).
+        if let forcedState = ProcessInfo.processInfo.environment["PV_UITEST_LOCK_STATE"] {
+            applyForcedUITestState(forcedState)
+            return
+        }
+        #endif
         let currentAvailability = BiometricUnlockService.biometryAvailability()
         availability = currentAvailability
 
@@ -172,6 +185,43 @@ struct LockView: View {
         didAutoPromptBiometrics = true
         attemptBiometricUnlock(availability: currentAvailability)
     }
+
+    #if DEBUG
+    private func applyForcedUITestState(_ raw: String) {
+        let fakeAvailability = BiometryAvailability(isAvailable: true, methodName: "Face ID", biometryStateHash: nil)
+        switch raw {
+        case "idle":
+            availability = fakeAvailability
+            biometricState = .idle
+        case "envelopeInvalidated":
+            availability = fakeAvailability
+            biometricState = .envelopeInvalidated
+        case "biometryLockedOut":
+            availability = fakeAvailability
+            biometricState = .biometryLockedOut
+        case "biometryDenied":
+            availability = fakeAvailability
+            biometricState = .biometryDenied
+        case "processing":
+            availability = fakeAvailability
+            biometricState = .idle
+            isProcessing = true
+        case "banner":
+            availability = fakeAvailability
+            biometricState = .idle
+            bannerMessage = t(.appServerUnreachable)
+        case "forgotAlert":
+            availability = fakeAvailability
+            biometricState = .idle
+            showForgotPasswordAlert = true
+        case "noBiometry":
+            availability = BiometryAvailability(isAvailable: false, methodName: "Face ID", biometryStateHash: nil)
+            biometricState = .idle
+        default:
+            break
+        }
+    }
+    #endif
 
     private func attemptBiometricUnlock(availability: BiometryAvailability) {
         Task {

@@ -54,6 +54,34 @@ struct ContentView: View {
     }
 
     private func determineRoute() async {
+        #if DEBUG
+        // TEST-ONLY (Task 5 screenshot matrix, `ios/evidence/37/`): forces the
+        // router's outcome deterministically so the UI-test driver never
+        // depends on a live server or a real stored session -- mirrors the
+        // `PV_AUTOFILL_UITEST_ROUTE`/`PV_PROBE_KEYCHAIN` env-var hooks already
+        // established elsewhere in this repo. Compiled into DEBUG builds
+        // only; never reachable in Release. This hook renders a VIEW's
+        // layout for a screenshot -- it never claims biometric ENFORCEMENT
+        // was observed (37-05's job), because it never touches the real
+        // Keychain/LAContext path at all.
+        if let forced = ProcessInfo.processInfo.environment["PV_UITEST_SCREEN"] {
+            switch forced {
+            case "auth":
+                route = .auth
+            case "lock":
+                route = .lock(
+                    RestoredAccount(
+                        token: "uitest-fixture-token",
+                        email: "bartek@paczesny.pl",
+                        pwWrappedUkJson: "{}"
+                    )
+                )
+            default:
+                route = .auth
+            }
+            return
+        }
+        #endif
         let service = AccountService(apiClient: apiClient)
         do {
             if let restored = try await service.restoreSession() {
