@@ -2882,18 +2882,30 @@ async fn task4_non_creator_contributor_claims_edit_on_hidden_password_declared_i
 /// separate resource with its own correct level, never conflated with the
 /// first.
 ///
-/// Falsification note (recorded in the SUMMARY too): the plan's specified
-/// falsification -- requesting the FIRST bucket's level on the SECOND
-/// bucket's `add_member` call -- was attempted and observed to fail ONE
-/// STEP EARLIER than anticipated: Task 2's own declared-level bound now
-/// refuses that mismatched grant outright (`403`) at the `add_member` call
-/// itself, never reaching this test's final two `GET`-and-compare
-/// assertions. This is still valid, informative evidence -- it demonstrates
-/// the fixture mistake is caught (doubly: first by Task 2's server-side
-/// bound, and would also have been caught here had it somehow gotten
-/// through) -- but the exact failure site differs from the plan's literal
-/// wording, which predates Task 2 being fully wired into this exact test's
-/// two-bucket setup.
+/// Falsification note (260812-01e REVIEW.md ME-01): the plan's originally
+/// specified falsification -- requesting the FIRST bucket's level on the
+/// SECOND bucket's `add_member` call, with Task 2's OWN declared-level bound
+/// left intact -- trips that bound one step earlier (`403` at `add_member`
+/// itself) and never reaches this test's own discriminating assertions
+/// below. That was recorded as "still valid evidence" in the original
+/// SUMMARY, but ME-01 correctly points out the discriminating assertions
+/// themselves had therefore NEVER been observed to actually fail. Re-run
+/// with Task 2's declared-level bound ALSO temporarily reverted (in
+/// addition to the fixture mistake), so the mismatched grant is no longer
+/// refused upstream and the flow reaches this test's own final assertion:
+///
+/// ```text
+/// thread 'task4_face2_two_item_buckets_at_different_levels_resolve_independently' panicked at crates/pv-server/tests/family_wide_sharing.rs:3018:5:
+/// assertion `left == right` failed: the recipient's resolved access_level on the SECOND bucket must be exactly 'edit' -- never conflated with the first bucket's 'read'
+///   left: Some("read")
+///  right: Some("edit")
+/// ```
+///
+/// Both reverts (the production-code bound in `collections::add_member` and
+/// this test's own fixture) were restored immediately after this observation
+/// and `cargo test --workspace --no-fail-fast` re-confirmed green. This is
+/// the genuine, previously-missing falsification of the assertion below --
+/// not merely of Task 2's upstream bound.
 #[tokio::test]
 async fn task4_face2_two_item_buckets_at_different_levels_resolve_independently() {
     let pool = test_pool().await;
