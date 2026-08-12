@@ -785,6 +785,41 @@ INTEROP D2-FALSIFIED: FAIL (...)
 `git diff --stat crates/pv-server crates/pv-core crates/pv-provider` stayed empty throughout — every
 gap this task found was closed on the iOS/Node harness side, never the server.
 
+### ATS — H1 confirmed: cleartext loopback permitted with no Info.plist key (Plan 37-03, Task 2)
+
+ATS VERDICT: H1
+
+**[OBSERVED].** The built `PasskeyVault.app`'s `Info.plist` (Debug-iphonesimulator,
+`GENERATE_INFOPLIST_FILE = YES`, no `INFOPLIST_FILE` build setting) carries **no**
+`NSAppTransportSecurity` key at all:
+
+```
+$ plutil -p .../PasskeyVault.app/Info.plist | grep -i AppTransport
+NO ATS KEY PRESENT
+```
+
+And the positive half — a real cleartext `URLSession` call to `http://127.0.0.1:8621` succeeding with
+that key absent — is not merely inferred from the negative check above: it is what every single test in
+this plan (and 37-02's `AccountFlowLiveTests` before it) already does, dozens of times over, against the
+real host-app process. `scripts/verify-ios-server-contract.sh`'s own live run and every
+`CrossClientInteropTests`/`AccountFlowLiveTests` invocation this task performed is a positive H1
+data point: had ATS refused the connection, every one of those would have failed with
+`NSURLErrorAppTransportSecurityRequiresSecureConnection` (-1022), and none did.
+
+**H1 confirmed, H2 refuted** — `GENERATE_INFOPLIST_FILE = YES` needing an `INFOPLIST_FILE`/exception
+merge (the H2 remediation the plan's own action text pre-registered) is moot: nothing needs adding.
+
+**Two limitations, stated verbatim rather than allowed to be inferred more broadly than they are:**
+
+1. **A host-app pass is NOT evidence for the AutoFill extension**, which is a separate process with its
+   own `Info.plist` (`ios/PasskeyVault/PasskeyVaultAutoFill/Info.plist`) and its own ATS configuration —
+   Phase 41 owes its own run against the extension target specifically before this verdict can extend
+   to it.
+2. **`127.0.0.1` works only because the simulator shares the Mac's network stack** — this is not
+   evidence that "networking works on iOS" for a physical device, which needs the Mac's LAN IP over
+   `https` and hits ATS for real, on hardware this milestone has never run on (see §5, "Nothing built
+   for a physical device").
+
 ---
 
 ## 3. Landmines
