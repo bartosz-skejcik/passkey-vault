@@ -395,6 +395,26 @@ The rejection survives anyway, on different grounds — R1 through R5, each with
   mechanism. Standing obligation: if E-SE-4 shows the SE key gating or invalidating strictly better than
   the plain Keychain item, this record is amended in a follow-up commit, and ACC-04's own invalidation
   claim is re-checked at the same time.**
+
+  **E-SE-4 ran (Plan 37-05, Task 3, `SecureEnclaveProbeTests.eSe4_confirmOrAmendAccc05R1`). Obligation
+  discharged: R1 STAYS `[INFERRED]`, for a reason recorded, not left silently as-is.** `SecureEnclave
+  .isAvailable` is `true` on this harness and a plain (unguarded) SE key generates successfully — but
+  generating an SE key UNDER a `.biometryCurrentSet` `accessControl` + a real `LAContext`
+  (`authenticationContext:`) fails unconditionally with the identical error E3-alt's own
+  `evaluateAccessControl` call already hit this session:
+  `Error Domain=com.apple.LocalAuthentication Code=-1020 "This call is not supported on iOS Simulator."`
+  — a FOURTH independent instance of this exact error this plan run (after E3-alt's match run, E3-alt's
+  nomatch run, and this one), reinforcing that any code path routing through LocalAuthentication's own
+  biometric evaluation — not only `SecItemCopyMatching`'s implicit gate — is categorically unavailable on
+  this simulator/Xcode 26.6 combination, independent of whether the underlying key is a plain Keychain
+  item or a Secure-Enclave-backed one. **This means R1's actual realistic-threat comparison (does an
+  SE-wrapped envelope gate or invalidate strictly BETTER than the plain Keychain item under a genuine
+  biometric challenge) cannot be exercised for EITHER side on this harness — not because the two designs
+  were shown equivalent, but because the harness cannot drive a real biometric evaluation for either
+  design at all.** R1 is therefore kept `[INFERRED]`, explicitly NOT upgraded to `[OBSERVED]` on the
+  strength of this result (that would overclaim what "both hit the same wall" proves), and this result is
+  also not evidence AGAINST R1 — it is an honest non-result, recorded rather than glossed over. The
+  narrower E-SE-1/E-SE-1b mechanism-level facts (below) remain true and OBSERVED independent of this.
 - **R2 [OBSERVED]** — `SecKey.h:1171-1224`: ECIES on any EC key ≤256 bit wraps under **AES-128-GCM**,
   and the SE holds only P-256, so Composition C downgrades this project's 256-bit hierarchy.
   Compositions A/B (HPKE, manual key-agreement) avoid that AES-128 cap only by moving a KDF+AEAD step
@@ -1109,6 +1129,89 @@ independently of whether THIS harness can ever reach that branch live.
    obtained here).** Directly applied: SC5's `.biometryCurrentSet` invalidation guarantee is recorded as
    **unprovable on this harness**, in exactly those words, with the `E5 UNPROVABLE —` marker line, rather
    than declaring SC5 satisfied on the strength of the classifier existing.
+
+---
+
+## 2.9 Plan 37-05, Task 3 — Secure Enclave probes, ACC-05 R1, and the phase's closing gates
+
+### E-SE-2 — is the Secure Enclave available at all on this harness?
+
+`SecureEnclave.isAvailable` = **`true`**, and a plain (unguarded, no biometric `accessControl`)
+`SecKeyCreateRandomKey` with `kSecAttrTokenIDSecureEnclave` **succeeds** on this simulator. This is
+notable because Secure Enclave availability inside iOS Simulator is commonly assumed unavailable by
+default developer folklore — on THIS toolchain (Xcode 26.6, iOS 26.5 runtime, Apple Silicon host) it is
+available for key generation, even though (see E-SE-4 below) any USE of it gated by a real
+`LAContext`/biometric `accessControl` still hits the same LocalAuthentication wall E3-alt hit. So E-SE-1/
+E-SE-1b were NOT skipped (unlike the plan's own contingency for an unavailable SE).
+
+### E-SE-1 — algorithm support probe, with the mandatory RSA control
+E-SE-1 OBSERVED decrypt-ecies=true keyExchange-ecdh=true rsaControl=false
+
+`SecKeyIsAlgorithmSupported` on a real SE-backed EC key: ECIES decrypt (`…CofactorVariableIVX963SHA256AESGCM`)
+= **true**, ECDH key exchange (`…CofactorX963SHA256`) = **true**. **Mandatory RSA control**
+(`kSecKeyAlgorithmRSAEncryptionOAEPSHA256` on the same EC key) = **`false`**, exactly as required — the
+harness is not lying, so the two `true` results above are trustworthy.
+
+### E-SE-1b — the load-bearing HPKE round trip, with its mismatched-info control
+E-SE-1B OBSERVED roundtrip-matches=true mismatched-info-threw=true
+
+`SecureEnclave.P256.KeyAgreement.PrivateKey()` + `HPKE.Sender`/`HPKE.Recipient` with
+`P256_SHA256_AES_GCM_256`, round-tripping 32 literal bytes through a real SE key: **byte-exact match**.
+**Control:** opening with a mismatched `info` string throws, as required. **This is the strongest
+positive confirmation this plan produces of ACC-05's own "TRUE half"** (`ios/IOS-SPIKE-LOG.md` §1): an
+SE-protected User Key envelope really is buildable, exactly as the header/`.swiftinterface`-cited
+mechanism claimed — the rejection of ACC-05 stands on R2–R5, never on "it doesn't work".
+
+### E-SE-4 — see the ACC-05 R1 entry above (§1), where the confirm-or-amend obligation is discharged in
+place rather than duplicated here. Summary: R1 stays `[INFERRED]`; the realistic-threat comparison
+cannot be exercised on this harness for either side, because SE-key creation under a real biometric
+`accessControl`/`LAContext` hits the identical `-1020` "not supported on iOS Simulator" error E3-alt's
+`evaluateAccessControl` already hit — a fourth instance of that exact error this plan run.
+
+### E-SE-3 — deferred, as planned
+No AutoFill extension target consumes an SE-backed key yet (Phase 36 built the skeleton only; Phase 41
+owns the credential-list/fill logic). No argument in this plan or in ACC-05's record depends on E-SE-3.
+
+### Closing gates for the whole phase
+
+- **SC1 — `crates/pv-server` untouched.** `git diff --stat crates/pv-server` prints nothing. Holds for
+  the whole phase (every plan 37-01..37-05 confirmed this independently in its own SUMMARY).
+- **SC3 — decision-before-code ordering, asserted by comparing commit positions, not by prose.**
+  - ACC-03 commit (`acc`, first commit introducing `### ACC-03 — Keychain layout` into this file):
+    `df53333` (`df533335ef35a9773e56e72f33cd3e8b61de63be`).
+  - First Phase-37 code commit introducing `derive_auth_material` into `crates/pv-ffi/src/lib.rs`
+    (`code1`) AND the commit adding `Core/AccountService.swift` (`code2`): **both resolve to the SAME
+    commit**, `120b227` (`120b2273138c461321782ddb6fe7d39cad710384`) — Plan 37-02 Task 1's tracer commit,
+    which introduced the FFI surface and the app-level account service together.
+  - `git merge-base --is-ancestor df53333 120b227` — **succeeds**: `acc` is a strict ancestor of `code1`/
+    `code2`.
+  - The REVERSED comparison, `git merge-base --is-ancestor 120b227 df53333` — **fails**, as required: the
+    comparison is discriminating, not a same-commit or non-linear-graph false positive.
+  - **SC3 holds**: the ACC-03 decision record (`df53333`, committed in Plan 37-01) is a genuine ancestor
+    of the first Phase-37 code commit (`120b227`, Plan 37-02).
+- **QA-05 — `.planning/` absent from this worktree's own commits.**
+  `git log --oneline $(git merge-base main ios/spike)..ios/spike -- .planning/` prints nothing. Note
+  (per this plan's own instruction): the ROADMAP's Phase 42 SC4 wording
+  (`git log --all --full-history -- .planning/`) would NOT be empty on this branch, because `ios/spike`
+  inherits `main`'s full history and `.planning/` commits exist there (a different, parallel session's
+  work) — the worktree-scoped `merge-base..ios/spike` form used here is the correct check for THIS
+  worktree's own commits; Phase 42 owns restating the ROADMAP wording to match.
+
+### All five ROADMAP Phase 37 success criteria, with evidence or recorded impossibility
+
+| # | Criterion (paraphrased from ROADMAP) | Status | Evidence / recorded impossibility |
+|---|---|---|---|
+| SC1 | `crates/pv-server` diff empty for the whole phase | **MET** | `git diff --stat crates/pv-server` empty, confirmed above and in every plan's own SUMMARY |
+| SC2 | Password unlock + account creation works end-to-end against a live server | **MET** | 37-02 (`AccountFlowLiveTests.swift`, tracer + 2 expansion tasks), 37-03 (two-direction cross-client interop, falsified) |
+| SC3 | ACC-03 decision recorded before any Phase-37 code | **MET** | Commit-position comparison above: `df53333` (ACC-03) is a strict ancestor of `120b227` (first code commit); reversed comparison fails, confirming discrimination |
+| SC4 | Biometric unlock gates real key release (ACC-04) | **RECORDED AS UNPROVABLE ON THIS HARNESS** | E2 = Result B: this simulator returns ACL-protected data unconditionally with no `LAContext`. E3-alt and E-SE-4 both additionally show `LAContext.evaluateAccessControl`/SE-key-creation-under-accessControl are unconditionally unsupported (`-1020`) on this simulator. The CODE is proven correct (ACL construction, the three-bucket classifier, the gating logic never reaching `SecItemCopyMatching` without a successful evaluation) — enforcement itself was never observed to hold on THIS platform, and is recorded as such rather than claimed |
+| SC5 | `.biometryCurrentSet` invalidation on an enrolled-set change (ACC-06 adjacency) | **RECORDED AS UNPROVABLE ON THIS HARNESS** | E5: a read after toggling Face ID Enrolled off still returned the correct 32 bytes (`status=0`), never the documented equivalence class. Paired with an `E5 UNPROVABLE —` record per this plan's own mandatory gate |
+
+**SC4 and SC5 are the two criteria this simulator genuinely cannot prove.** Every other criterion (SC1,
+SC2, SC3) is fully met with mechanical evidence. This is the honest bottom line the plan's own objective
+asked for: *"either prove ACC-04 on both sides or record honestly that the platform under test cannot
+prove it — never by adjusting the assertion until it passes."* No ROADMAP wording was changed to
+accommodate either negative result.
 
 ---
 
