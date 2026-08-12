@@ -1729,16 +1729,39 @@ test.describe("family-wide sharing — the ITEM variant, live (260812-01e Task 8
       "dowolnej chwili dodać własny item do tego zbioru i przez to zyskać pełną edycję",
     );
 
+    // 260812-01e REVIEW.md ME-05: the ORIGINAL shape here clicked submit,
+    // waited for the dialog to fully DETACH, and only THEN asserted
+    // share-error/share-partial-error had `toHaveCount(0)` -- but once the
+    // dialog has detached, every descendant testid (including both error
+    // ones) is gone from the DOM regardless of whether either had ever
+    // appeared, so both assertions were trivially true and could never fail.
+    // Restructured as a race between the three mutually-exclusive outcomes
+    // this submit can produce, evaluated WHILE the dialog is still mounted
+    // (an error renders INSIDE the still-open dialog, never as a reason for
+    // it to detach) -- pre-fix, this call 403s, `share-error` becomes
+    // visible, and the race genuinely resolves to `"share-error"`, failing
+    // the assertion below for real.
     await memberCtx.page.getByTestId("share-submit").click();
-    await memberCtx.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 30000 });
-    await expect(
-      memberCtx.page.getByTestId("share-error"),
-      "pre-fix, this call 403s and the dialog shows share.createFailed -- post-fix it must never appear",
-    ).toHaveCount(0);
-    await expect(
-      memberCtx.page.getByTestId("share-partial-error"),
-      "post-fix, every current member (including the caller) must end up with a real grant -- no partial failure",
-    ).toHaveCount(0);
+    const submitOutcome = await Promise.race([
+      memberCtx.page
+        .getByTestId("share-dialog")
+        .waitFor({ state: "detached", timeout: 30000 })
+        .then(() => "detached" as const),
+      memberCtx.page
+        .getByTestId("share-error")
+        .waitFor({ state: "visible", timeout: 30000 })
+        .then(() => "share-error" as const),
+      memberCtx.page
+        .getByTestId("share-partial-error")
+        .waitFor({ state: "visible", timeout: 30000 })
+        .then(() => "share-partial-error" as const),
+    ]);
+    expect(
+      submitOutcome,
+      "pre-fix, this call 403s and the dialog shows share.createFailed (share-error) or ends up a " +
+        "partial failure (share-partial-error) -- post-fix the dialog must cleanly detach with neither " +
+        "ever appearing",
+    ).toBe("detached");
     await memberCtx.page.getByTestId("detail-panel-close").click();
 
     // --- Step 3 (the strongest evidence in this plan, per plan-check --
