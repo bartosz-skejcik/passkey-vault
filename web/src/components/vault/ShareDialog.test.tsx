@@ -1226,6 +1226,30 @@ describe("ShareDialog", () => {
       expect((mockAddCollectionMember.mock.calls as unknown[][])[0][0]).toBe(newBucketId);
     });
 
+    // 260812-01e REVIEW.md LO-03: a newly-created bucket's placeholder name
+    // is suffixed with its own declared level -- without this, up to three
+    // per-family buckets would render under the IDENTICAL plaintext name
+    // wherever a collection's decrypted name is shown generically (e.g.
+    // DetailPanel's share.itemSharedOnCollectionNote), indistinguishable to
+    // the person reading it.
+    it("LO-03: a newly-created bucket's placeholder name is suffixed with its own declared level", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListCollections.mockResolvedValue([PLAIN_FOLDER_ROW]);
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      chooseAccessLevel("read");
+      checkFamilyWide();
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      const bucketNameCall = (mockEncryptItemForCollection.mock.calls as unknown[][]).find(
+        (call) => typeof call[1] === "string" && (call[1] as string).includes("family-wide-items"),
+      );
+      expect(bucketNameCall).toBeDefined();
+      expect(bucketNameCall?.[1]).toBe(JSON.stringify({ name: "family-wide-items (read)" }));
+    });
+
     it("does NOT reuse an existing bucket declared at a DIFFERENT level -- creates a new, separate bucket instead (260812-01e Task 5)", async () => {
       // Falsification note (recorded in the SUMMARY): before this task's
       // fix, `familyItemBucketRow` ignored `level` entirely, so this

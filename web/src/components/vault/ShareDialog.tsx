@@ -308,17 +308,26 @@ async function grantCollectionToRecipients(
   return failed;
 }
 
-/** 30-12 (FSH-01's "or an item" clause): the fixed, non-sensitive
- * placeholder name shared by EVERY per-level, auto-created `item_bucket`
- * collection (260812-01e: up to three per family, one per declared level —
- * see LO-03 for the known, accepted gap that all three currently render
- * identically wherever a bucket's name is shown, which this task does not
- * close). Any deterministic plaintext is acceptable here — 30-UI-SPEC.md
- * states this collection is never rendered as a folder row, and 30-10's
- * `SharingOverviewPanel` renders only the items INSIDE it, never its own
- * name. It is still encrypted like every other collection name (the server
- * must not learn even this), it simply carries no user-authored content. */
-const FAMILY_ITEM_BUCKET_PLACEHOLDER_NAME = "family-wide-items";
+/** 30-12 (FSH-01's "or an item" clause): the non-sensitive placeholder name
+ * for an auto-created `item_bucket` collection, SUFFIXED with its own
+ * declared level (260812-01e REVIEW.md LO-03) -- a family may hold up to
+ * three such collections (LOCKED decision 1), and every surface that reads
+ * a collection's decrypted name generically (e.g. `DetailPanel.tsx`'s
+ * `share.itemSharedOnCollectionNote`, whose `{folder}` is simply
+ * `collections.find(...)?.name`) would otherwise render THREE buckets
+ * under the exact same string, indistinguishable to the person reading it.
+ * Any deterministic plaintext is acceptable here — 30-UI-SPEC.md states
+ * this collection is never rendered as a FOLDER ROW (`CollectionPicker`/
+ * `Sidebar`/`SharingOverviewPanel`'s folder tab all exclude it, HI-04), and
+ * `SharingOverviewPanel`'s own pinned family-wide block renders only the
+ * items INSIDE it, never its own name -- but a generic "this item lives in
+ * a shared collection named X" surface has no such exclusion and is not
+ * this task's to add. It is still encrypted like every other collection
+ * name (the server must not learn even this, or the level it corresponds
+ * to), it simply carries no user-authored content. */
+function familyItemBucketPlaceholderName(level: AccessLevelValue): string {
+  return `family-wide-items (${level})`;
+}
 
 /** 30-12, T-30-20 recovery bound. `collections::list` is KEY-GATED (it inner-
  * joins `collection_keys` on the caller), so a race loser holds no row for
@@ -530,7 +539,7 @@ async function findOrCreateFamilyItemBucket(
   try {
     const encName = encryptItemForCollection(
       newCk,
-      JSON.stringify({ name: FAMILY_ITEM_BUCKET_PLACEHOLDER_NAME }),
+      JSON.stringify({ name: familyItemBucketPlaceholderName(level) }),
       newBucketId,
       newBucketId,
       1,
