@@ -20,7 +20,7 @@ struct LockView: View {
     let account: RestoredAccount
     let onUnlocked: (UnlockedSession) -> Void
 
-    private enum BiometricSlotState {
+    private enum BiometricSlotState: Equatable {
         case idle
         case envelopeInvalidated
         case biometryLockedOut
@@ -35,6 +35,15 @@ struct LockView: View {
     @State private var didAutoPromptBiometrics = false
     @State private var showForgotPasswordAlert = false
     @State private var availability: BiometryAvailability?
+    /// `37-CONTEXT.md`'s locked decision, restated verbatim in
+    /// `37-UI-SPEC.md:272`: once the envelope is invalidated by a
+    /// biometric-set change, focus moves to the password field -- "the way
+    /// out is inside the message." Driven centrally by the `onChange`
+    /// below rather than set at each individual call site that can produce
+    /// `.envelopeInvalidated`, so the DEBUG screenshot-matrix hook
+    /// (`applyForcedUITestState`) exercises the exact same focus behaviour
+    /// a real biometric-set-changed unlock would.
+    @FocusState private var isPasswordFieldFocused: Bool
 
     var body: some View {
         ScrollView {
@@ -72,8 +81,12 @@ struct LockView: View {
                                 #if os(iOS)
                                 .textInputAutocapitalization(.never)
                                 #endif
+                                .focused($isPasswordFieldFocused)
+                                .accessibilityIdentifier("unlock-password-field")
                         } else {
                             SecureField("", text: $password)
+                                .focused($isPasswordFieldFocused)
+                                .accessibilityIdentifier("unlock-password-field")
                         }
                         Button(action: { isPasswordRevealed.toggle() }) {
                             Image(systemName: isPasswordRevealed ? "eye.slash" : "eye")
@@ -125,6 +138,18 @@ struct LockView: View {
         }
         .background(Color("PVBackground"))
         .onAppear(perform: setUpOnAppear)
+        .onChange(of: biometricState) { _, newState in
+            // 37-CONTEXT.md lock / 37-UI-SPEC.md:272: envelope-invalidated
+            // moves focus to the password field. Every path that can
+            // produce `.envelopeInvalidated` (the real
+            // `attemptBiometricUnlock` outcome switch, and the DEBUG
+            // screenshot-matrix hook) goes through this single `onChange`,
+            // so the behaviour cannot drift between the real and forced
+            // paths.
+            if newState == .envelopeInvalidated {
+                isPasswordFieldFocused = true
+            }
+        }
         .alert(t(.authForgotPasswordCta), isPresented: $showForgotPasswordAlert) {
             // No action, no recovery path -- none exists.
         } message: {
@@ -174,7 +199,19 @@ struct LockView: View {
         // actually enrolled in the simulator (a state Task 5's own matrix
         // records as NOT-PRODUCIBLE here where it cannot be).
         if let forcedState = ProcessInfo.processInfo.environment["PV_UITEST_LOCK_STATE"] {
-            applyForcedUITestState(forcedState)
+            // Deferred one runloop tick (`Task { @MainActor in ... }`, not a
+            // direct synchronous call): mirrors the REAL
+            // `attemptBiometricUnlock` path, where `.envelopeInvalidated`
+            // is only ever reached after an `await` completes, well after
+            // the view has finished its initial appearance -- setting
+            // `@FocusState` synchronously during `onAppear` itself, before
+            // the window/responder chain has settled, is unreliable and
+            // silently drops the focus request (verified empirically: the
+            // WR-03/FIX-3 focus test failed with the same code applying
+            // this state synchronously, and passed once deferred).
+            Task { @MainActor in
+                applyForcedUITestState(forcedState)
+            }
             return
         }
         #endif
