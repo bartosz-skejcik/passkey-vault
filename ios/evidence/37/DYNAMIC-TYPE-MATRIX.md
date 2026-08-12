@@ -105,10 +105,22 @@ So, split honestly:
 - The *long-text E4* guarantee as literally written (**"wrap IN PLACE in the status slot … without
   pushing the password field or its CTA off-screen"**) — **FAIL**. The CTA is off the initial viewport.
 
-**This is recorded as a FAIL, not softened into a pass.** Whether it should be fixed in the layout or
-whether the backstop's absolute wording should be amended is a UX decision, not a documentation one:
-at AX5 on a 390pt screen, no layout fits a five-line error plus a labelled field plus a 48pt CTA above
-the fold, and Apple's own apps scroll here. **Open for Bartek** — see the phase SUMMARY.
+**This was recorded as a FAIL first, and resolved second — in that order, deliberately.**
+
+**RESOLUTION (2026-08-12, Bartek's decision):** the backstop's wording is **amended**, the layout is
+not changed. At AX5 on a 390pt screen no layout fits a five-line error plus a labelled field plus a
+48pt CTA above the fold, and Apple's own apps scroll here — the original absolute was unachievable,
+not merely unmet. The guarantee now reads:
+
+> the three biometric error strings wrap fully at accessibility Dynamic Type on the narrowest
+> available device — never clipped and never truncated — and the password field, its CTA and the
+> forgot-password link all remain **reachable by scrolling** within the same `ScrollView`. Content
+> below the fold is acceptable; content that is clipped, truncated or unreachable is not.
+
+Note what the amendment does **not** do: it does not narrow to "whatever the current build happens to
+do". Clipping, truncation and unreachability all still fail it. Under the amended wording this cell is
+a **PASS**, evidenced by the scrolled screenshot. The original wording and the measurement that failed
+it are kept above so the change is auditable rather than invisible.
 
 ### Note 3 — the forgot-password alert body is visibly cut
 
@@ -129,13 +141,13 @@ Recorded as **PARTIAL**, not PASS. The backstop is not discharged by this row al
 | 2 | **Overflow, E2** — register mode is the tallest layout and holds the same scroll guarantee | [screens/auth-register-light-a11y.png](screens/auth-register-light-a11y.png) | **PASS at 390pt**, binding cell only (note 1) |
 | 3 | **Overflow, E6** — the alert carrying `auth.irrecoverableWarning` scrolls its own body and does not clip the sentence | [screens/lock-forgot-light-a11y.png](screens/lock-forgot-light-a11y.png) | **PARTIAL** — body visibly cut; scroll not driven (note 3) |
 | 4 | **Overflow, E8** — banner text wraps and never clips or truncates at accessibility Dynamic Type | [screens/lock-banner-light-a11y.png](screens/lock-banner-light-a11y.png), [screens/lock-banner-dark-a11y.png](screens/lock-banner-dark-a11y.png) | **PASS at 390pt** |
-| 5 | **Long text, E4** — the three biometric error strings wrap IN PLACE without pushing the password field or its CTA off-screen | [screens/lock-invalidated-light-a11y.png](screens/lock-invalidated-light-a11y.png), [screens/lock-invalidated-light-a11y-scrolled.png](screens/lock-invalidated-light-a11y-scrolled.png) | **FAIL as worded** (note 2) |
+| 5 | **Long text, E4** — *(amended)* strings wrap fully, never clipped or truncated, and the field/CTA/link stay reachable by scrolling | [screens/lock-invalidated-light-a11y.png](screens/lock-invalidated-light-a11y.png), [screens/lock-invalidated-light-a11y-scrolled.png](screens/lock-invalidated-light-a11y-scrolled.png) | **PASS under amended wording** — FAILED as originally worded (note 2) |
 | 6 | **Long text, E8** — same in-place wrapping guarantee for the shared banner slot across all message variants | [screens/lock-banner-light-a11y.png](screens/lock-banner-light-a11y.png) | **PASS at 390pt** |
 | 7 | **Dark/light, E1–E8** — every screen and state renders correctly in both appearances, every colour from a paired Any/Dark asset | [screens/lock-nobiometry-dark-dflt.png](screens/lock-nobiometry-dark-dflt.png) vs [screens/lock-nobiometry-light-dflt.png](screens/lock-nobiometry-light-dflt.png) | **PASS** |
 
-**Summary: 4 PASS (at 390pt, not 375pt) · 1 PASS binding-cell-only · 1 PARTIAL · 1 FAIL.**
+**Summary: 5 PASS (at 390pt, not 375pt) · 1 PASS binding-cell-only · 1 PARTIAL · 0 outstanding FAIL** (backstop 5 failed as originally worded and was resolved by an audited amendment, not by softening — see note 2).
 
-Three backstops are therefore **not** fully discharged by this artifact — #3 (partial), #5 (fail), and
+Two backstops are therefore **not** fully discharged by this artifact — #3 (partial) and
 every row's 375pt caveat. At verify time these should surface as unmet rather than pass silently; that
 surfacing is the intended honest-verifier behaviour, not over-flagging.
 
