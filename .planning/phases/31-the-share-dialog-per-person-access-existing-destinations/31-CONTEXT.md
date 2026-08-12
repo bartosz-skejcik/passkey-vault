@@ -34,8 +34,18 @@ project keeps paying for. The planner must therefore add a sixth proof obligatio
 > to decrypt on the next completed sync — live-proven with a positive "was readable" anchor before and
 > the same read failing after.
 
-Reuse `buildMemberRemovalBatch` / `removeFamilyMember` (`web/src/lib/families/rekey.ts`) rather than
-inventing a second revocation path. **Note the constraint quick task 260812-01e introduced:**
+**Correction (2026-08-12, from `31-RESEARCH.md` Q1 — this line originally said to reuse
+`buildMemberRemovalBatch` / `removeFamilyMember`; that instruction cannot be honoured as written).**
+`apply_member_removal_rekey` (`crates/pv-server/src/routes/families.rs:611-782`) is not a mis-scoped
+variant of per-collection revocation — it is a different capability: it requires the submitted
+collection set to equal the target's *entire* access surface (409 otherwise), unconditionally severs
+every `item_shares` grant on any item, and deletes the target's `family_members` row. That is
+whole-family removal, not "remove this person from this folder". Use the already-shipped
+`revokeCollectionAccess` / `revokeItemShare` (Phase 28, SHARE-06) instead. The user decision being
+served here is unchanged — "brak dostępu" really revokes; only the helper named to do it was wrong,
+and that was my suggestion, not Bartek's.
+
+**Note the constraint quick task 260812-01e introduced:**
 `collections::revoke_access` now **refuses outright on `item_bucket` collections** — so the dialog must
 never offer per-person revocation against a family-wide item bucket. Surface that honestly rather than
 letting the call 403.
