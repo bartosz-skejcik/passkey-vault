@@ -1,0 +1,24 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "NSFaceIDUsageDescription" : {
+      "comment" : "Phase 37 post-review fix WR-01/FIX-4. GENERATE_INFOPLIST_FILE=YES means the INFOPLIST_KEY_NSFaceIDUsageDescription build setting in project.pbxproj supplies only the EN default -- a build setting cannot itself be localized. This magic-named InfoPlist.xcstrings catalog is what Xcode merges per-locale Info.plist string values from at build time. Values here MUST match Core/I18n/Dictionary.swift's PVKey.authFaceIdUsageDescription entry exactly -- I18nDictionaryTests.swift's infoPlistFaceIdUsageDescriptionMatchesTheDictionaryEntry test pins that (verified against the BUILT product's own localized InfoPlist.strings via plutil, not by re-reading this file or the pbxproj).",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passkey Vault uses Face ID to unlock your vault."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passkey Vault używa Face ID, żeby odblokować Twój vault."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}
