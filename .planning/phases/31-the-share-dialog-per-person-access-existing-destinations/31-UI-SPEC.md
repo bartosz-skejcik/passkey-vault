@@ -104,9 +104,20 @@ Three sizes, two weights — no new size beyond what the codebase already uses i
 `primary` (koral) stays reserved for the Save/Share submit button (`btn-primary`) only, exactly as
 UI-DESIGN.md states ("koral zarezerwowany dla akcji i brandu, nie dla ostrzeżeń") — never applied
 to a revocation-adjacent element, even though the submit button is the SAME control that commits a
-revocation. The button's **label text**, not its color, is what changes when the pending set
-contains removals (see Copywriting Contract) — color signals "this is the primary action", text
-signals "here is specifically what it will do", and the two are not conflated.
+revocation. **Correction (checker blocker 1): the button's label text does NOT change when the
+pending set contains removals** — the Copywriting Contract's three CTA strings
+(`share.ctaFolder`/`share.ctaItem`/`share.ctaSaveAccess`) are selected purely by destination/
+first-share state, orthogonal to whether the pending set happens to include a revocation, and no
+fourth "save-with-revocation" CTA variant is introduced. A single button reading "Zapisz dostęp"
+regardless of whether the pending set is pure-addition or mixed is deliberate, not an oversight: the
+`share-pending-revocations-summary` paragraph (Copywriting Contract, rendered immediately above the
+footer, inside the same always-visible scroll region — see Scale & Scroll Contract) already states
+plainly, in full sentences, exactly who loses access and that it cannot be undone. A second signal
+on the button itself would duplicate that warning rather than add information — the same
+one-honest-note-not-two reasoning this spec already applies to not opening a second confirm dialog
+for revocation (Copywriting Contract's "Revocation confirmation" row). Color still signals "this is
+the primary action" (koral, unchanged); the copy that names the consequence lives in the summary
+paragraph, not in the button.
 
 **Distinguishing "has access" from "no access" is never color-alone**, per the design brief's own
 constraint. Three independent, non-color signals compound: (1) icon shape (`UserCheck` vs. no
@@ -140,12 +151,26 @@ rephrasing of those three.
 | Destination unavailable (SC5, the OTHER named refusal cause) | **NEW** `share.destinationUnavailable`: pl "Nie można udostępnić — brak dostępu do klucza tego miejsca docelowego.", en "Can't share — no access to this destination's key." Renders in the same `share-error` slot `submitError` already uses, when the caller's own `getCollection(id).sealed_key` is unexpectedly `null` for the selected existing destination (a genuine, if rare, refusal case new to this phase's "target an existing folder" path — the fresh-create path can never hit this, since the caller always seals their own copy at creation time). Deliberately NOT `share.createFailed`'s retry-inviting copy — this failure is not retryable by simply clicking Save again, mirroring the precedent `FamilyWideKeyPendingError` set in Phase 30 (a known, named cause gets its own honest copy instead of a generic "try again"). |
 | Pending-revocations summary (below the row list, above the footer) | **NEW** `share.pendingRevocationsSummary` (interpolated `{count}`, `{names}`): pl "Zapisanie cofnie dostęp {count} os.: {names}. Cofnięcie dostępu nie cofa tego, co już zobaczyli.", en "Saving will revoke access for {count} people: {names}. Revoking access doesn't undo what they've already seen." `{names}` is a comma-joined email list, mirroring `share.partialShareFailed`'s existing join(", ") convention (`ShareDialog.tsx:1396`) — no separate "too many, collapse to count" branch, since no sibling string in this codebase has one either. `{count} os.` sidesteps Polish plural-form agreement exactly as `share.seedFolderSummary`'s "{count} elem." already does. Renders **only** when ≥1 row's pending value is `none` while its current value is not — i.e., only when a real revocation is queued. |
 | Hidden-password disclosure — one-time blocking modal | **Unchanged.** `share.hiddenPasswordDisclosureTitle`/`Body`/`Ack` (`dictionary.ts:1197-1208`), same per-account `localStorage` ack mechanism, same blocking `hidden-password-ack` `DialogState` — only the TRIGGER condition changes: fires the first time ANY row's select value becomes `hidden_password` (was: the single global radio becoming `hidden_password`), never per-row. |
-| Hidden-password disclosure — quiet inline note, below the list | **Unchanged.** `share.hiddenPasswordInlineNote` (`dictionary.ts:1209`) + `share.hiddenPasswordRecipientFallback` (`dictionary.ts:1223`), reusing the EXACT existing WR-04 multi-subject logic (`ShareDialog.tsx:1161-1166`) re-scoped from "selected recipients" to "rows currently at `hidden_password`": exactly one such row → that person's email; two or more → the generic fallback subject. Renders **once**, below the row list (see Row Anatomy / Scale contract for "below the fold" handling), the moment ≥1 row is at `hidden_password` — never per-row, per the locked decision against "text flooding". |
+| Hidden-password disclosure — quiet inline note, below the list | **REVISED (checker blocker 2 — MOD-03/SC4 was not actually satisfied on a repeat share).** The full honest statement lives only in `share.hiddenPasswordDisclosureBody`'s one-time blocking modal, gated behind a per-account `localStorage` ack that never renders again once acknowledged. For the common case — an account that has already acked once — the inline note was the ONLY always-visible copy, and its old wording ("Ukryte tylko w interfejsie — {recipient} nadal ma dostęp do klucza.") *implies* "not cryptographic" without stating it, which does not clear SC4's literal bar ("states … that it is an interface protection and never a cryptographic one"). `share.hiddenPasswordInlineNote` is revised in place (same key — this is a strengthening, not the "softened/reworded" change the Phase 26 honesty-string comment forbids) to state the fact directly: pl "Ukryte tylko w interfejsie, nie kryptograficznie — {recipient} nadal ma dostęp do klucza i technicznie może odzyskać hasło.", en "Hidden in the interface only, not cryptographically — {recipient} still has key access and can technically recover the password." "nie kryptograficznie"/"not cryptographically" and "technicznie może odzyskać hasło"/"can technically recover the password" echo `share.hiddenPasswordDisclosureBody`'s own established phrasing verbatim ("To nie jest zabezpieczenie kryptograficzne" / "technicznie może je odzyskać") rather than inventing new vocabulary for the same fact. `share.hiddenPasswordRecipientFallback` (`dictionary.ts:1223`) and the existing WR-04 multi-subject logic (`ShareDialog.tsx:1161-1166`, re-scoped from "selected recipients" to "rows currently at `hidden_password`") are otherwise unchanged. Renders **once**, below the row list (see Row Anatomy / Scale contract for "below the fold" handling), the moment ≥1 row is at `hidden_password` — never per-row, per the locked decision against "text flooding". `share.hiddenPasswordDisclosureTitle`/`Body`/`Ack` (the blocking modal) are untouched — the Body already states the fact fully; only the always-visible fallback copy needed strengthening. The PL string is materially longer than the old one — see UI Considerations' new backstop row for the required rendered-width check and the hardcoded-literal e2e pin this note's `data-testid="share-hidden-password-inline-note"` (existing, unchanged) already requires. |
 | Empty state — solo family (no other members at all) | **Unchanged.** `share.noOtherMembers` (`dictionary.ts:1238`). |
 | Total failure | **Unchanged.** `share.createFailed`, rendered in `share-error` for any cause other than the two newly-named ones above. |
 | Partial failure (some rows' additions/edits did not land) | **Unchanged.** `share.partialShareFailed`, rendered in `share-partial-error`. |
 | Revocation confirmation | **No second dialog.** Per the locked "not today's checkbox-then-reveal pattern" spirit and MOD-01's single-submission model (SC1: "a single submission naming two people at two different levels"), a per-row "brak dostępu" toggle does NOT open `RevokeShareDialog` or any other stacked confirm — the row's own visual state (icon + color + "Obecnie" mismatch) plus the pinned `share-pending-revocations-summary` paragraph together carry the same honesty weight `RevokeShareDialog.tsx`'s confirm text does, without a second click. `RevokeShareDialog` itself is untouched and keeps serving `SharingOverviewPanel`'s own single-grant revoke action — a different surface, unaffected by this phase. |
 | Destructive confirmation reasoning | Matches `RevokeShareDialog.tsx`'s own documented tier justification verbatim: revocation inside this dialog has the SAME "zero re-key cost from the user's point of view, one clean save-and-done action" shape `RevokeShareDialog` already argues for its own single-step tier — a SECOND confirm step here would be redundant with the pending-revocations summary already shown, not additive safety. |
+
+---
+
+## Focal Point (non-blocking recommendation)
+
+Top-to-bottom in reading order, the eye lands on the **destination selector** first — it is the
+first interactive control in the scrolling body, sits directly under the dialog title, and per its
+own contract "must come first because the destination determines what the rows show" (CONTEXT.md).
+The **row list** is the dialog's actual content and where attention spends most of its time, but it
+is deliberately not the first thing seen: choosing a destination before seeing rows populated at
+that destination's real state is the whole reason the selector was moved above the list in this
+phase. The **pending-revocations summary**, when present, is the last thing seen before the footer
+— its position (immediately preceding Save) is itself part of its function, not incidental: it is
+the final honest statement the user reads before committing.
 
 ---
 
@@ -452,7 +477,7 @@ silently downgrades MOD-01's "editable in place" claim to "removable and re-adda
 
 ## UI Considerations
 
-Applicable state considerations resolved: 10 covered, 3 backstop, 0 unresolved (13 table rows
+Applicable state considerations resolved: 10 covered, 4 backstop, 0 unresolved (14 table rows
 total).
 
 Probed surfaces: **G1** destination selector (`interactive-control`) · **G2** person row
@@ -476,6 +501,7 @@ no-published-key state (`interactive-control`, disabled variant).
 | zero-one-many | G2 row count (0/1/~15) | ✅ covered | Explicit 0/1/many handling in Row Anatomy — omission at 0, plain single row at 1, grouped+scrolled at ~15. |
 | long-text | G3/G4 PL vs EN copy | 🧪 backstop | Polish strings run longer than English throughout (`share.rowCurrentlyLabel`, `share.pendingRevocationsSummary`, the destination optgroup labels). Needs a held-out visual check inside the 400px card that these wrap cleanly rather than overflowing — same backstop class Phase 30 recorded for its own timing caveat and re-key notice. |
 | long-text | G2 "Obecnie: {level}" alongside a long email, same row | 🧪 backstop | Two variable-length strings stacked in one narrow column (`min-w-0 flex-1`) at small viewport width — needs the same held-out visual check as above, scoped specifically to this row's two-line stack rather than assumed to fit by extension of the single-string backstop above. |
+| long-text | G3 revised `share.hiddenPasswordInlineNote` PL string | 🧪 backstop | **Named explicitly per checker blocker 2** — the revised PL wording ("Ukryte tylko w interfejsie, nie kryptograficznie — {recipient} nadal ma dostęp do klucza i technicznie może odzyskać hasło.") is materially longer than both the string it replaces and its own EN counterpart, and it is the single string load-bearing enough to decide whether MOD-03/SC4 actually holds on a repeat share. Needs the exact backstop Phase 30 shipped for its own PL-overflow risk: a held-out visual check that it wraps cleanly (never truncates, never pushes the footer off-card) inside the 400px card at the row list's maximum realistic length, PLUS a live/e2e assertion pinned against the note's rendered text as a **hardcoded literal, not sourced from `t()`** at the assertion site — the same discipline this codebase already applies to `share-family-wide-timing-caveat`/`share-family-wide-item-contributor-note` (30-UI-SPEC.md precedent), extended here because this is the string SC4 actually depends on for every already-acked account. |
 
 Dismissed (reason recorded, not a table row): "empty" for G4 (pending-revocations summary) — not
 an empty-DATA state, it is a conditionally-ABSENT element (renders only when a real revocation is
