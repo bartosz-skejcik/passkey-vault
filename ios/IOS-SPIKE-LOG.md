@@ -476,6 +476,150 @@ read it.
 
 ---
 
+## 1a. Phase 38 decision records
+
+Five records Phase 38 owes, in the `KEY-05` / `EXT-10` / `IOS-06` style: the decision, the rejected
+alternative rejected **on merit** rather than by omission, and the residual risk that survives the
+decision. Committed by Plan 38-01 **before** any of the code that depends on them (38-02, 38-03,
+38-04, 38-05, 38-09, 38-10, 38-11), so the ordering is auditable in `git log`.
+
+Three of these five exist because Phase 38's research found a ROADMAP premise false. Those
+corrections are recorded as landmines L-14…L-17 in §3; the records below are where the *decisions*
+that follow from them live.
+
+### DR-38-A — Password generator: **`pv-core`, exported through `pv-ffi` as free functions**
+
+**Decision:** the generator is a new `crates/pv-core/src/generator.rs`, a port of the canonical
+TypeScript implementation, exported through `pv-ffi` as **free functions that take no `FfiUserKey`**.
+
+**Rejected:** `pv-ffi` exposes a `random_bytes` primitive and Swift performs the rejection sampling
+itself. Rejected on merit, twice over. First, it satisfies the *literal* wording of the phase's
+success criterion — "generator uses the `pv-core` CSPRNG" would still grep green — while relocating
+the part that can actually be wrong (modulo bias in rejection sampling, charset composition,
+guaranteed-class placement) into Swift, where no cross-language parity test can see it. A criterion
+that passes while the risk moves somewhere unobservable is the exact failure shape this repo has now
+paid for seven times. Second, the generator must remain reachable **with the vault locked** — the
+extension's `generate-handler.ts` header states it must never hold an unlocked User Key — so binding
+generation to a key-holding handle would be a functional regression against the existing clients.
+
+Note what this record does *not* claim: UI-06's premise as written is false. There is no generator in
+`pv-core` or `pv-wasm` today to "wire up" (baseline recorded in L-15). This is a first-time port, and
+it is planned as one.
+
+**Binary-size rule this record commits to, to be amended by 38-04 with measured numbers:** if the
+release `pv-wasm` `.wasm` grows by more than **50 KB** once `generator.rs` is unconditional in
+`pv-core`, the module moves behind a `pv-core` cargo feature that `pv-ffi` enables and `pv-wasm` does
+not; below that threshold it stays unconditional. The EFF wordlist is the bulk of it (a fourth copy
+in the repo, ~90 KB of source text before compression).
+
+In **either** outcome the explicit test command that covers the module must be recorded here,
+because a feature-gated module is silently skipped by the workspace-wide default command — a green
+`cargo test --workspace` would then be evidence of nothing. 38-04 records the command it actually
+ran.
+
+**Residual risk:** the product now carries **two** generator implementations (TypeScript for
+web/extension, Rust for iOS), and they can drift. Mitigation is 38-04's byte-for-byte parity test
+over the constants and the wordlist — not a behavioural sample, a structural comparison — plus a
+backlog item for later convergence of web/extension onto the Rust generator via `pv-wasm`. Two
+implementations is hereby a **recorded state, not an accident** (research OQ-9).
+
+### DR-38-B — Swift item field model: **hand-written mirror of `packages/pv-ui/vault/types.ts`**
+
+**Decision:** the Swift item model is hand-written in `ios/PasskeyVault/PasskeyVault/Vault/`, mirroring
+`packages/pv-ui/vault/types.ts` (410 lines), which is the single source of truth for the field model
+across every client.
+
+**Rejected:** generate or derive the Swift model from `pv-ffi` types. Rejected on an observed fact,
+not a preference: `crates/pv-core/src/items.rs` **has no field model at all** — it treats the item
+payload as opaque `&[u8]` and only ever encrypts/decrypts it. There is literally nothing in Rust to
+mirror. Deriving the iOS field model from `pv-core` would derive nothing; inventing one in Rust to
+derive *from* would create a third source of truth competing with `types.ts` and the Swift mirror,
+which is strictly worse than two.
+
+The union has **six** members — `login | card | identity | note | totp | passkey`
+(`packages/pv-ui/vault/types.ts:4`) — not the five the ROADMAP and REQUIREMENTS name. The reconciling
+reading is that five is the *create/edit* surface and six is the *render* surface; that reading is
+well-supported but is an **inference** and is recorded as one in L-14. What is not in dispute, and
+what this decision binds: the decode path must tolerate a `passkey` row, or a user who created a
+passkey in the extension gets a broken list on iOS.
+
+**Residual risk:** permanent drift between the TypeScript union and the Swift mirror, with no
+compiler anywhere that can see both. Named guard: 38-03 carries a parity check that fails when the
+Swift type union and the TypeScript union diverge, and it is required to be demonstrated red before
+it is trusted green.
+
+### DR-38-C — Item and folder wire JSON: **produced by `serde_json` inside `pv-ffi`**
+
+**Decision:** the on-wire JSON for items and folders is produced and consumed **inside `pv-ffi`** by
+`serde_json`, through `encrypt_item_wire`, `decrypt_item_wire`, `encrypt_item_combined_json` and
+`decrypt_item_combined_json`. Swift never builds the persisted JSON with `JSONEncoder`.
+
+**Rejected:** Swift assembles the JSON from the existing `FfiEncryptedItem` record. Rejected because
+Foundation encodes `Data` as **base64** by default, while every other client in this project emits a
+JSON **number array**, and `pv-server` stores the field as opaque `TEXT` — so the server accepts both
+encodings happily and returns whichever it was given. The divergence would therefore **not** surface
+as a format error at the API boundary. It would surface later, to a user, in the web client, as an
+`undecryptable` row — which this codebase reads as a *tampering* signal. Identical in shape to
+landmine D-21 (`passkey_types::Bytes`) and to the `pw_wrapped_uk` problem DR-37-A already settled the
+same way. Server-visible is not recipient-decrypted.
+
+The record-shaped `encrypt_item` / `decrypt_item` exports **stay**. They serve the in-process AutoFill
+path (Phase 41), which never touches the server and for which the record shape is the better API.
+The crate therefore deliberately offers two shapes, and this record fixes which is which: **the
+persistence path — anything whose bytes reach `pv-server` — must use the `*_wire` /
+`*_combined_json` functions.** The record API is for in-process use only.
+
+**Residual risk:** two ways to do one thing, and the wrong one is not a compile error. Guard is
+38-02's byte-shape regression test, which asserts on the actual emitted JSON rather than on a
+round-trip through the same encoder (a round-trip agrees with itself no matter how wrong it is).
+
+### DR-38-D — Snapshot cover: **installed on scene resign-active, forced layout pass, flat opaque colour**
+
+**Decision:** the app-switcher cover is installed on scene **resign-active**, forced to render with an
+explicit layout pass rather than left to SwiftUI's own commit timing, and it is a **flat opaque
+colour** — not the logo, not a blurred screenshot.
+
+**Rejected:** three alternatives, each on merit. SwiftUI `scenePhase` alone — nothing orders the SwiftUI
+commit before the OS takes its snapshot, so it is a race the framework gives no way to win;
+`.privacySensitive()` — inert without a privacy redaction *reason*, which the system sets only for
+Lock Screen widgets, so it is a no-op in this context; and `sceneCaptureState` — a **detector**, it
+reports that capture is happening, it does not prevent it.
+
+The resign-active-versus-`.background` trigger question is **genuinely open** (research D3: one probe
+argues resign-active is strictly stronger because it buys the render pass real time; another warns
+resign-active also fires for Control Center, incoming calls and permission alerts, so a cover added
+there and removed in `didBecomeActive` can race). 38-05's discriminating arm settles it. **Whichever
+arm wins is written back into this record** — explicitly, with its evidence. It is not to be kept
+merely because it happened to come out green.
+
+**Residual risk:** resign-active fires for non-backgrounding interruptions, so the cover can flash
+during a Control Center pull or an incoming call. Accepted: a spurious cover is a cosmetic defect, a
+missing cover is a disclosure of vault contents to the app switcher.
+
+### DR-38-E — Secret field values in Swift: **held as `String`, with the limitation stated not glossed**
+
+**Decision:** decrypted secret field values are held as Swift `String`.
+
+**Rejected:** hold them as `[UInt8]` behind a rendering wrapper. Rejected on merit: every SwiftUI
+text-rendering API, every pasteboard API and every accessibility API takes `String`. A `[UInt8]`
+wrapper would therefore have to convert at each of those call sites, producing **more** unzeroable
+heap copies than the raw `String` it was introduced to avoid, while adding the appearance of a
+protection that is not there. A control that increases the harm it names is worse than the honest
+absence of one.
+
+**Residual risk:** stated plainly rather than mitigated away — `pv-core` returns a self-wiping
+`Zeroizing<Vec<u8>>` from `decrypt_item` precisely so the payload carries its own wipe obligation, and
+**that guarantee ends at the UniFFI boundary**. A Swift `String` is heap-allocated, may be copied by
+the runtime at will, and cannot be reliably zeroed. This is accepted, in writing, because accepting it
+silently is the failure mode this record exists to prevent.
+
+Compensating controls this phase actually builds, and against which the acceptance should be judged:
+38-11's lock handler tears down the store, the navigation path, every presented sheet and the reveal
+set; and no field value is ever written to `UserDefaults`, nor to any observable property that could
+reach a debug description or a crash log.
+
+---
+
 ## 2. Verified against reality (2026-08-11)
 
 ### 2.1 PRF is available on iOS in both directions — iOS 18.0+
