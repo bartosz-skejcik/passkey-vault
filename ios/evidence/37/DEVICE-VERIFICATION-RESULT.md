@@ -50,26 +50,51 @@ the gate.
 accepted as evidence for ACC-04, the code would have looked verified on a harness that cannot verify
 it — and the real question would never have been asked.
 
-### ⚠ PENDING CONFIRMATION — do not treat as verified
+### CONFIRMED — steps 3, 4, 5, itemised (2026-08-13, follow-up session)
 
-The operator reported "all of it works" at the end of the session. That is consistent with a full pass,
-but the **per-step observations below were not itemised**, and these are precisely the discriminating
-ones. Recording them as verified on a summary statement would be the same error this phase spent five
-plans avoiding.
+The 2026-08-13 01:22 run recorded these three as PENDING, because the operator's closing "all of it
+works" was a *summary statement* and these are precisely the discriminating observations. This section
+was written to force the next session to ask for them individually rather than infer them.
 
-| Step | Claim requiring explicit confirmation |
-|---|---|
-| 3 | **Deliberately failed biometry does NOT release the key.** The negative half of ACC-04. A positive-only result proves the key can be released, never that it is *gated*. Until confirmed, ACC-04 is half-proven. |
-| 4 | **Changing the enrolled biometric set invalidates the envelope**, the app falls back with a readable message naming the password route, and biometrics **silently re-arm** after the next successful password unlock. This is all of SC5. |
-| 5 | **The password field is focused with the keyboard up** on the invalidation message. `WR-03` — implemented and RED-verified, but its GREEN run has never been observed anywhere, because the test harness has no interactive WindowServer session. |
+They were asked individually on **2026-08-13** and confirmed individually:
 
-**Next session: ask the operator to confirm steps 3, 4 and 5 individually before flipping SC4/SC5 to
-verified in `37-VERIFICATION.md`.** If step 3 was not actually performed, it must be run — it is the
-single most valuable measurement in this protocol.
+| Step | Claim | Operator answer |
+|---|---|---|
+| 3 | **Deliberately failed biometry does NOT release the key** — the negative half of ACC-04 | ✅ Non-matching biometry presented; vault did **not** unlock, no key released |
+| 4 | **Biometric-set change invalidates the envelope**, app falls back with a readable message naming the password route, and biometrics **silently re-arm** after the next successful password unlock — all of SC5 | ✅ Invalidated, fell back, re-armed |
+| 5 | **Password field focused with the keyboard up** on the invalidation message — `WR-03`, whose GREEN run had never been observed anywhere | ✅ Focused, keyboard up |
+
+Step 3 is the one that matters most: with it, ACC-04 is proven in **both** directions on hardware — the
+key is released to a matching biometric and withheld from a non-matching one. Before it, the run proved
+only that the key *can* be released, never that it is *gated*.
+
+Step 5 is the first and only GREEN observation of `WR-03` anywhere. The automated harness cannot produce
+one — it has no interactive WindowServer session, so the fix was RED-verified only (failure case tested,
+passing case never seen).
+
+**Evidence class — read this before citing the section above.** These three are **operator attestation**,
+not captured artifacts: there is no screenshot, log, or exit code behind them, and unlike steps 1–2 they
+were reported from memory of the session rather than observed live by the tooling. That is a genuinely
+weaker evidence class than the rest of this document, and it is recorded as such deliberately. It is
+accepted here because the alternative — flipping SC4/SC5 on the unitemised "all of it works" — is
+strictly weaker still, and because the discriminating negative case (step 3) was named explicitly and
+answered explicitly rather than being folded into a general yes.
 
 ## Status
 
 - SC1, SC2, SC3 — verified (unchanged).
-- SC4 — **positive half verified on hardware**; negative half pending step-3 confirmation.
-- SC5 — pending step-4 confirmation.
-- `37-VERIFICATION.md` remains `human_needed` until the above are confirmed.
+- SC4 — **verified on hardware, both directions.** Positive half observed live (steps 1–2); negative
+  half by itemised operator attestation (step 3).
+- SC5 — **verified** by itemised operator attestation (step 4).
+- WR-03 — **GREEN observed** (step 5), by operator attestation.
+- `37-VERIFICATION.md` → `passed`.
+
+**Still not inherited by later phases.** This run used a stripped build (no AutoFill entitlement, no App
+Groups, no Keychain Sharing, appex dropped) so it proves the gate for a **single app on the default
+keychain access group only**. Phase 41 must produce its own device proof for the shared
+`keychain-access-groups` path.
+
+**Residual non-blocking a11y items** (never part of the device protocol, carried forward — see
+`37-VERIFICATION.md` `residual_items`): the Dynamic Type matrix ran at 390pt instead of the specified
+375pt; the AX5 forgot-password alert scroll was never driven (`screens/lock-forgot-light-a11y.png` shows
+the body cut mid-sentence at "...No one, including"); three `AuthView` register cells are uncaptured.
