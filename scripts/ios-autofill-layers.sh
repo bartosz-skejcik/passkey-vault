@@ -331,7 +331,37 @@ cmd_wording_gate() {
   rm -f /tmp/pv-wording-class1.txt
 
   # Class 2: budget-verdict phrasing.
-  local class2_pattern='mieści się|within budget|within the budget'
+  #
+  # W1 FIX (2026-08-13, Phase 36 verification). This pattern previously read
+  # 'mieści się|within budget|within the budget' -- it did NOT contain "fits",
+  # even though this function's own header (class 2, above) has always claimed
+  # it did. Demonstrated live during verification: the sentence "fits in the
+  # extension memory budget" passed the gate cleanly. Phase 36's actual record
+  # never used that phrasing, so nothing shipped wrong -- this was a hole in
+  # front of future phases (39, 41, 42), which is exactly when a gate that
+  # claims more than it checks does its damage.
+  #
+  # THREE DELIBERATE LIMITS, so the next reader does not "fix" them back into
+  # noise. Each was added because a wider pattern was tried first and flagged
+  # a sentence this project SHOULD be free to write:
+  #
+  #   a) Only the FORWARD order (fits ... budget, within one sentence). The
+  #      reverse ("the budget ... this fits") is knowingly not caught -- both
+  #      directions also flags "the budget is not something this harness can
+  #      adjudicate, so no run fits it".
+  #   b) Only "fits", never "fit". The infinitive is how the honest negative is
+  #      written -- L-6's own title is "Argon2id may not fit in the extension's
+  #      memory budget", and that title must not be a gate failure.
+  #   c) Not matched when immediately preceded by a quote or backtick, so the
+  #      record can QUOTE the forbidden phrasing in order to forbid it. The
+  #      spike log does exactly that: `no "fits in budget"`.
+  #
+  # The through-line: a gate that punishes correct honesty gets weakened or
+  # deleted later. One that misses an unusual word order merely stays useful.
+  #
+  # Verified able to fail before being committed, and verified not to fire on
+  # any of the five honest shapes above -- see 36-VERIFICATION.md W1.
+  local class2_pattern='(^|[^a-zA-Z"`])fits([^.]{0,80})budget|mieści się|within budget|within the budget'
   for f in "${record_files[@]}"; do
     if grep -inE "$class2_pattern" "$f" > /tmp/pv-wording-class2.txt 2>/dev/null; then
       echo "FAIL: wording-gate class 2 (budget-verdict phrasing) in $f:" >&2

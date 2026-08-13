@@ -689,9 +689,25 @@ class. Both are carried here contested and unattributed, on purpose -- this reco
 **The measured value.** Ten runs (5 hot within one extension invocation, 5 cold across five fresh
 launches), all real, all inside the real running `PasskeyVaultAutoFill.appex` process, at the real
 production parameter triple (`m_cost_kib=65536` / `t_cost=3` / `p_cost=4`, `KdfParams::default()`):
-peak `phys_footprint` ranged **89,163,912–89,475,232 bytes (~85.05–85.33 MB)** across all ten runs. The
-KDF's own cost (D = peak − baseline) was **consistently ~64.06–64.08 MB** on every run, including the
-labelled two-derivation stand-in (run 5, hot series), whose peak did not double.
+peak `phys_footprint` ranged **89,229,448–89,475,232 bytes (~85.10–85.33 MiB)** across all ten runs. The
+KDF's own cost (D = peak − baseline) ranged **64.05–64.08 MiB** across the ten runs — 64.05 MiB on four
+of them (hot runs 2–5), 64.06 MiB on four (hot run 1, cold runs 1–3), 64.08 MiB on two (cold runs 4–5) —
+including the labelled two-derivation stand-in (run 5, hot series), whose peak did not double.
+
+> **CORRECTION (2026-08-13, Phase 36 verification).** This paragraph previously gave the lower bound as
+> **89,163,912 bytes** and the D range as *"consistently ~64.06–64.08 MB"*. Both were wrong, and the first
+> one worse than wrong: **89,163,912 appears in no evidence log, in none of the 25 raw per-run
+> `PVPROBE|stage=kdf` lines, and in no commit in this repository's history** (`git log --all -S 89163912`
+> returns nothing). It was not a transcription slip from a real reading — there is no reading it could
+> have come from. The true minimum is 89,229,448 (`ios/evidence/36/kdf-cold-1.log`, run 1). The D range
+> contradicted this file's own table twelve lines above, which records 64.05 MiB on four of the ten runs.
+>
+> The magnitude is trivial — 65,536 bytes, and no conclusion in this document moves: every run still lands
+> in the pre-declared band, the tripwire still fires, and DR-2's recommendation is unchanged. **The shape
+> is not trivial.** An unsourced figure sat in the headline sentence of the committed record produced by
+> the one phase whose entire purpose was to replace assumption with measurement — and Phases 39 and 41 are
+> told to build on this number. Recorded as a correction rather than silently overwritten, because a
+> reader who quoted the old figure elsewhere needs to find out that it was never real.
 
 **The baseline this was measured against is a skeleton baseline** (`## E6` above) -- no populated
 credential list exists until Phase 39, so the peak recorded here is a **lower bound**, not the final

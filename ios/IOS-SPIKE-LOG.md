@@ -1515,6 +1515,40 @@ defaulting to the prior `--with-panic-probe`-only behavior when unset), and
 third simultaneous non-default feature variant would need the same treatment — extend the combined
 `FEATURES` list in `build-ios.sh`, never add a third mutually-exclusive flag.**
 
+### L-13 — a grep for `-fsanitize=`/`-sanitize=` reads as "the sanitizer never ran"
+
+**Found 2026-08-13, closing Phase 35's BACKSTOP B1.** `xcodebuild` escapes the `=` in the compiler
+invocations it echoes, so a fully TSan-instrumented build logs `-sanitize\=thread`, not
+`-sanitize=thread`. The obvious verification command therefore returns **zero matches on a build where
+the sanitizer is fully active**:
+
+```bash
+grep -c "sanitize=thread" build.log     # 0 -- and completely misleading
+grep -c 'sanitize\\=thread' build.log   # 20 -- the truth
+```
+
+This produced a live false negative during Phase 35's verification: TSan was declared "silently
+ignored" on the strength of that grep, and a second run was launched to "fix" a problem that did not
+exist. The false negative is the dangerous direction — it argues for *abandoning* a working
+instrument, or worse, for recording a limitation the harness does not actually have (the exact shape
+of the Phase 37 simulator/Face-ID story, but inverted and self-inflicted).
+
+**Check the artifact, not the log.** Four log-independent indicators, any of which settles it:
+
+- `otool -L <binary> | grep sanitiz` — TSan links `libclang_rt.tsan_iossim_dynamic.dylib` into the app
+  AND test binaries.
+- build products land under `Objects-normal-tsan/` rather than `Objects-normal/`.
+- the test process environment carries `TSAN_OPTIONS` (and the dylib appears in
+  `XCTestBundleInjectPath`).
+- **ASan behaves differently and must not be checked the same way:** it is injected at load time, NOT
+  link-embedded, so `otool -L` finds nothing for ASan on a correctly instrumented build. Using TSan's
+  own check on ASan reproduces the same false negative one level down.
+
+The only check that settles it for either: **run a deliberate defect and confirm the instrument
+fires.** A race made TSan `SIGABRT` at the racy closure; a 4-byte allocation written at offset 512
+made ASan crash at the overflowing function. Evidence:
+`ios/evidence/35/B1-CONCURRENCY-SANITIZERS.md`.
+
 ### L-12 — a header's prose is not the capability surface (third instance of L-1's shape)
 
 **Numbering note:** Phase 37's own planning material named this landmine "L-9", written before Plan
