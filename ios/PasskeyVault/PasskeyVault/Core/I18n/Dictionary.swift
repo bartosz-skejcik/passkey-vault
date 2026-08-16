@@ -96,6 +96,18 @@ enum PVKey: CaseIterable, Equatable {
     case onboardingServerSuccess
     case onboardingServerErrorUnreachable
     case onboardingServerErrorWrongServer
+
+    // Task 3: the AutoFill step.
+    case onboardingAutoFillTitle
+    case onboardingAutoFillSubtitle
+    case onboardingAutoFillListStep1
+    case onboardingAutoFillListStep2
+    case onboardingAutoFillListStep3
+    case onboardingAutoFillFooter
+    case onboardingAutoFillOpenSettings
+    case onboardingAutoFillLater
+    case onboardingAutoFillEnabledConfirmation
+    case onboardingAutoFillDone
 }
 
 enum PVDictionary {
@@ -254,6 +266,40 @@ enum PVDictionary {
                 pl: "Coś odpowiedziało pod {host}, ale to nie wygląda na Passkey Vault.",
                 en: "Something answered at {host}, but it doesn't look like a Passkey Vault."
             )
+
+        case .onboardingAutoFillTitle:
+            return LocalizedString(pl: "Wypełniaj hasła wszędzie", en: "Fill passwords anywhere")
+        case .onboardingAutoFillSubtitle:
+            return LocalizedString(
+                pl: "Włącz Passkey Vault w Ustawieniach, a Twoje loginy pojawią się nad klawiaturą, w "
+                    + "każdej aplikacji i na każdej stronie.",
+                en: "Turn on Passkey Vault in Settings and your logins appear above the keyboard, in "
+                    + "any app or website."
+            )
+        case .onboardingAutoFillListStep1:
+            return LocalizedString(pl: "1. Otwórz Ustawienia", en: "1. Open Settings")
+        case .onboardingAutoFillListStep2:
+            return LocalizedString(pl: "2. Ogólne → AutoFill", en: "2. General → AutoFill")
+        case .onboardingAutoFillListStep3:
+            return LocalizedString(pl: "3. Włącz Passkey Vault", en: "3. Turn on Passkey Vault")
+        case .onboardingAutoFillFooter:
+            return LocalizedString(
+                pl: "iOS pozwala to zrobić tylko z poziomu Ustawień — żadna aplikacja nie może włączyć "
+                    + "tego sama za Ciebie. Możesz wrócić do tego w dowolnym momencie.",
+                en: "iOS only lets you do this from Settings — no app can turn it on for you. You can "
+                    + "come back to this any time."
+            )
+        case .onboardingAutoFillOpenSettings:
+            return LocalizedString(pl: "Otwórz Ustawienia", en: "Open Settings")
+        case .onboardingAutoFillLater:
+            return LocalizedString(pl: "Później", en: "Later")
+        case .onboardingAutoFillEnabledConfirmation:
+            return LocalizedString(
+                pl: "AutoFill jest włączony. Passkey Vault zaproponuje Twoje loginy nad klawiaturą.",
+                en: "AutoFill is on. Passkey Vault will offer your logins above the keyboard."
+            )
+        case .onboardingAutoFillDone:
+            return LocalizedString(pl: "Gotowe", en: "Done")
         }
     }
 }

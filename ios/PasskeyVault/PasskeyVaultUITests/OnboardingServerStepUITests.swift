@@ -175,10 +175,8 @@ final class OnboardingServerStepUITests: XCTestCase {
         XCTAssertTrue(skip.waitForExistence(timeout: 5))
         skip.tap()
 
-        // Skip lands on the AutoFill step (a Task 1 scaffold at the time
-        // this test was written; Task 3 replaces it with the real step but
-        // keeps completing onboarding the same way) -- tap through to auth.
-        let later = app.buttons["onboarding-autofill-scaffold-later"]
+        // Skip lands on the real AutoFill step (Task 3) -- tap through to auth.
+        let later = app.buttons["onboarding-autofill-later"]
         if later.waitForExistence(timeout: 5) {
             later.tap()
         }
