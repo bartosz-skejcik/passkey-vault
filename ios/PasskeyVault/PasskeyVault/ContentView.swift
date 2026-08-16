@@ -21,10 +21,6 @@
 import SwiftUI
 
 struct ContentView: View {
-    /// Default target for this plan's own manual/automated verification
-    /// runs. Phase 38 owns real, user-configurable server settings.
-    private static let defaultServerURL = URL(string: "http://127.0.0.1:8620")!
-
     private enum Route {
         case loading
         case auth
@@ -36,7 +32,15 @@ struct ContentView: View {
     /// Built once when the vault route is first rendered and kept for the
     /// lifetime of the unlocked session (38-02).
     @State private var vaultStore: VaultStore?
-    private let apiClient = PvApiClient(baseURL: ContentView.defaultServerURL)
+    /// Read from `ServerSettings.resolved` at construction (38-12, Task 3)
+    /// -- never cached in a `let` bound to a compiled-in URL. `apiClient`
+    /// itself is still a `let`: it is read once per `ContentView` instance
+    /// the same way it always was, but the VALUE it captures now comes from
+    /// the persisted setting rather than a literal, so a fresh app launch
+    /// after a server change picks up the new address (a mid-session
+    /// change is out of scope -- 38-13's onboarding flow runs before a
+    /// session exists).
+    private let apiClient = PvApiClient(baseURL: ServerSettings.resolved)
 
     var body: some View {
         Group {
@@ -122,7 +126,7 @@ struct ContentView: View {
         let store = VaultStore(
             userKey: session.userKey,
             api: VaultAPI(
-                baseURL: ContentView.defaultServerURL,
+                baseURL: ServerSettings.resolved,
                 // A closure, not a captured `String`: the token is read at
                 // request time so a lock or rotation cannot leave a stale
                 // copy alive inside `VaultAPI`.

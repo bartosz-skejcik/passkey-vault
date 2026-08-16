@@ -1982,6 +1982,63 @@ on every client — not an iOS limitation.
 
 **Warning sign:** a plan that says "edit folder" without naming the HTTP verb it will call.
 
+### L-19 — the persisted server setting cannot carry a subpath
+
+**What goes wrong.** A self-hoster fronts `pv-server` under a reverse-proxy path
+(`https://example.com/vault`) instead of a dedicated subdomain, types that address into 38-13's server
+setting, and the app silently talks to the wrong origin's root for every request — no error anywhere,
+because neither client's request-building code has a place to notice.
+
+**Why it happens.** `PvApiClient.send`/`VaultAPI.send` build every request with an absolute path
+literal (`"/api/auth/login"`, `"/api/vault/items"`, …), and pass it to `URL(string:relativeTo:)`.
+Observed, both call sites:
+
+```
+$ grep -n 'URL(string: path, relativeTo: baseURL)' ios/PasskeyVault/PasskeyVault/Core/PvApiClient.swift
+185:        guard let url = URL(string: path, relativeTo: baseURL) else {
+$ grep -n 'URL(string: path, relativeTo: baseURL)' ios/PasskeyVault/PasskeyVault/Vault/VaultAPI.swift
+166:        guard let url = URL(string: path, relativeTo: baseURL) else {
+```
+
+Per RFC 3986 §5.3 (and `URL(string:relativeTo:)`'s own documented behavior), resolving an
+**absolute-path** reference (one that starts with `/`) against a base URL replaces the base's ENTIRE
+path, ignoring anything after the base's host — `https://example.com/vault` as `baseURL` plus
+`"/api/auth/login"` as `path` resolves to `https://example.com/api/auth/login`, silently discarding
+`/vault`. Neither `send` implementation has any way to detect this; the request simply goes to the
+wrong place and (if nothing happens to be mounted at the server's literal root) fails with a generic
+404/routing error that gives no hint the cause was the subpath being dropped.
+
+**How this plan (38-12) responds.** `ServerSettings.normalise(_:)` REFUSES any input carrying a path
+component, naming the reason ("has a path, and paths are not supported"), rather than accepting it and
+letting the failure surface two screens later as an inexplicable request error. This is a disclosed
+limitation, not a fix: self-hosters who need a subpath cannot use this app's server field until a
+future plan changes it.
+
+**Consequence / backlog item.** Supporting a subpath means changing BOTH `send` implementations (making
+the path-join preserve `baseURL`'s own path component ahead of each request's absolute path) and proving
+it against a server genuinely mounted under a prefix — a test against `http://127.0.0.1:8621` (root-mounted)
+cannot demonstrate this; a green suite here would prove nothing about it. Filed as backlog, not attempted
+in this plan.
+
+**Live harnesses are unaffected — checked, not assumed.** `AccountFlowLiveTests`/`CrossClientInteropTests`
+and every other `*LiveTests.swift` build their own `PvApiClient`/`VaultAPI` directly from `PV_TEST_SERVER`
+(a root-mounted `http://127.0.0.1:8621` by convention) and never read `ServerSettings.resolved`:
+
+```
+$ grep -rln 'ServerSettings' ios/PasskeyVault/PasskeyVaultTests/*.swift
+ios/PasskeyVault/PasskeyVaultTests/ServerSettingsTests.swift
+```
+
+Only this plan's own `ServerSettingsTests.swift` — the file that tests `ServerSettings` itself — reads
+it at all. Every `*LiveTests.swift` file, including this plan's sibling `ServerReachabilityTests.swift`
+(which builds its live-server case straight from `PV_TEST_SERVER`, matching `AccountFlowLiveTests`'
+own convention), has zero references. Moving the app's default off loopback (38-12) cannot break any
+live harness, because none of them go through it.
+
+**Warning sign:** a plan or bug report describing a self-hosted server "behind a reverse-proxy path" or
+"mounted under a prefix" without checking whether either `send` implementation's path-join has been
+changed to account for it.
+
 ## 4. Open questions — honestly open
 
 1. ~~**IOS-06: UniFFI vs hand-written C ABI.**~~ **RESOLVED — see §1.** Decided: UniFFI, evaluated
