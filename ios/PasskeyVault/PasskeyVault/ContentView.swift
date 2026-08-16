@@ -82,6 +82,20 @@ struct ContentView: View {
         // layout for a screenshot -- it never claims biometric ENFORCEMENT
         // was observed (37-05's job), because it never touches the real
         // Keychain/LAContext path at all.
+        // TEST-ONLY (Task 2 screenshot matrix, `ios/evidence/38/`): a fresh
+        // simulator launch shares the SAME `UserDefaults` suite across
+        // separate `XCUIApplication().launch()` calls within one
+        // `xcodebuild test` invocation -- unlike a real fresh install, so a
+        // scenario earlier in the same test run (e.g. one that reaches
+        // `ServerSettings.store(_:)`) would otherwise leak into a later
+        // one's "default value" assumption. Resetting both keys the
+        // onboarding flow touches at the START of a forced-screen launch
+        // gives each UI test method its own clean slate without needing a
+        // real reinstall between them.
+        if ProcessInfo.processInfo.environment["PV_UITEST_RESET_ONBOARDING"] != nil {
+            UserDefaults.standard.removeObject(forKey: "pv.server.url")
+            UserDefaults.standard.removeObject(forKey: OnboardingGate.completedKey)
+        }
         if let forced = ProcessInfo.processInfo.environment["PV_UITEST_SCREEN"] {
             switch forced {
             case "auth":

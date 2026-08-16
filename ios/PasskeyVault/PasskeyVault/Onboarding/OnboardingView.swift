@@ -8,16 +8,15 @@
 //  §3): Welcome -> Server -> AutoFill, three dots, `PVAccent` on the active
 //  one. Presented once, before auth, gated by `OnboardingGate` below.
 //
-//  Task 1 note, so a later reader is not surprised: this file's Server and
-//  AutoFill tabs are placeholder scaffolds (`OnboardingServerStepScaffold`/
-//  `OnboardingAutoFillStepScaffold` below) until Task 2 and Task 3 land.
-//  Each of those tasks swaps its placeholder for the real
-//  `Onboarding/OnboardingServerStep.swift` / `Onboarding/
+//  Task 1 note, so a later reader is not surprised: this file's AutoFill tab
+//  is a placeholder scaffold (`OnboardingAutoFillStepScaffold` below) until
+//  Task 3 lands, swapping it for the real `Onboarding/
 //  OnboardingAutoFillStep.swift` it creates -- touching this file again is
-//  therefore an expected, necessary wiring step for those tasks, not a scope
-//  violation (Rule 3: this file would not otherwise compile after Task 1,
-//  since the whole app target -- not just the tests being filtered by
-//  `-only-testing` -- must build for `xcodebuild test` to run at all).
+//  therefore an expected, necessary wiring step, not a scope violation
+//  (Rule 3: this file would not otherwise compile, since the whole app
+//  target -- not just the tests being filtered by `-only-testing` -- must
+//  build for `xcodebuild test` to run at all). Task 2 already made this same
+//  swap for the Server tab (`Onboarding/OnboardingServerStep.swift`).
 //
 
 import SwiftUI
@@ -66,7 +65,7 @@ struct OnboardingView: View {
                 )
                 .tag(0)
 
-                OnboardingServerStepScaffold(onAdvance: { advance(to: 2) })
+                OnboardingServerStep(onAdvance: { advance(to: 2) }, onSkip: { advance(to: 2) })
                     .tag(1)
 
                 OnboardingAutoFillStepScaffold(onFinish: finish)
@@ -77,6 +76,20 @@ struct OnboardingView: View {
             dots
         }
         .background(Color("PVBackground"))
+        .onAppear(perform: applyForcedStepIfNeeded)
+    }
+
+    /// TEST-ONLY: lands the UI-test driver on a known step without needing
+    /// to tap through the ones before it -- mirrors `LockView`'s own
+    /// `PV_UITEST_LOCK_STATE` convention. Compiled into DEBUG builds only.
+    private func applyForcedStepIfNeeded() {
+        #if DEBUG
+        if let raw = ProcessInfo.processInfo.environment["PV_UITEST_ONBOARDING_STEP"],
+           let forced = Int(raw), (0 ..< Self.stepCount).contains(forced)
+        {
+            step = forced
+        }
+        #endif
     }
 
     @ViewBuilder
@@ -106,23 +119,7 @@ struct OnboardingView: View {
     }
 }
 
-// MARK: - Task 1 scaffolds, replaced in Task 2 / Task 3
-
-/// Placeholder for `Onboarding/OnboardingServerStep.swift` (Task 2). Exists
-/// only so the shell above -- and its three-dot acceptance criterion -- is
-/// exercisable and compiles before Task 2 lands.
-private struct OnboardingServerStepScaffold: View {
-    let onAdvance: () -> Void
-
-    var body: some View {
-        VStack {
-            Spacer()
-            Button("Continue", action: onAdvance)
-            Spacer()
-        }
-        .background(Color("PVBackground"))
-    }
-}
+// MARK: - Task 1 scaffold, replaced in Task 3
 
 /// Placeholder for `Onboarding/OnboardingAutoFillStep.swift` (Task 3).
 private struct OnboardingAutoFillStepScaffold: View {
@@ -132,6 +129,7 @@ private struct OnboardingAutoFillStepScaffold: View {
         VStack {
             Spacer()
             Button("Later", action: onFinish)
+                .accessibilityIdentifier("onboarding-autofill-scaffold-later")
             Spacer()
         }
         .background(Color("PVBackground"))

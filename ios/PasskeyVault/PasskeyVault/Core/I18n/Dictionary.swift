@@ -83,6 +83,19 @@ enum PVKey: CaseIterable, Equatable {
     case onboardingWelcomeBody
     case onboardingWelcomeGetStarted
     case onboardingWelcomeAlreadyHaveVault
+
+    // Task 2: the server step.
+    case onboardingServerTitle
+    case onboardingServerSubtitle
+    case onboardingServerRowLabel
+    case onboardingServerFooterValue
+    case onboardingServerFooterEditing
+    case onboardingServerSkip
+    case onboardingServerContinue
+    case onboardingServerChecking
+    case onboardingServerSuccess
+    case onboardingServerErrorUnreachable
+    case onboardingServerErrorWrongServer
 }
 
 enum PVDictionary {
@@ -198,6 +211,49 @@ enum PVDictionary {
             return LocalizedString(pl: "Zacznij", en: "Get started")
         case .onboardingWelcomeAlreadyHaveVault:
             return LocalizedString(pl: "Mam już vault", en: "I already have a vault")
+
+        case .onboardingServerTitle:
+            return LocalizedString(pl: "Gdzie żyje Twój vault", en: "Where your vault lives")
+        case .onboardingServerSubtitle:
+            return LocalizedString(
+                pl: "To jest już skonfigurowane. Zmień to tylko, jeśli prowadzisz własny serwer.",
+                en: "This is already set up for you. Change it only if you run your own server."
+            )
+        case .onboardingServerRowLabel:
+            return LocalizedString(pl: "Serwer", en: "Server")
+        case .onboardingServerFooterValue:
+            return LocalizedString(
+                pl: "Połączono. Twój vault jest hostowany pod {host} — domyślny adres dla nowych kont. "
+                    + "Prowadzisz własny serwer? Dotknij, żeby wpisać swój adres.",
+                en: "Connected. Your vault is hosted at {host} — the default for new accounts. "
+                    + "Self-hosting? Tap to enter your own address."
+            )
+        case .onboardingServerFooterEditing:
+            return LocalizedString(
+                pl: "Musi zaczynać się od https://. Sprawdzimy adres przed przejściem dalej.",
+                en: "Must start with https://. We'll check the address before continuing."
+            )
+        case .onboardingServerSkip:
+            return LocalizedString(pl: "Pomiń", en: "Skip")
+        case .onboardingServerContinue:
+            return LocalizedString(pl: "Dalej", en: "Continue")
+        case .onboardingServerChecking:
+            return LocalizedString(pl: "Sprawdzanie…", en: "Checking…")
+        case .onboardingServerSuccess:
+            return LocalizedString(
+                pl: "Osiągalny — to jest Passkey Vault.",
+                en: "Reachable — this is a Passkey Vault."
+            )
+        case .onboardingServerErrorUnreachable:
+            return LocalizedString(
+                pl: "Nie udało się połączyć z {host}: {reason}",
+                en: "Couldn't reach {host}: {reason}"
+            )
+        case .onboardingServerErrorWrongServer:
+            return LocalizedString(
+                pl: "Coś odpowiedziało pod {host}, ale to nie wygląda na Passkey Vault.",
+                en: "Something answered at {host}, but it doesn't look like a Passkey Vault."
+            )
         }
     }
 }
