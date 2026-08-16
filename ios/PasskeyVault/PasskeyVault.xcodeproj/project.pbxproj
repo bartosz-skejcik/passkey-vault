@@ -344,7 +344,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"$SRCROOT/../../scripts/build-ios.sh\" ${PV_FFI_TEST_VARIANT:---with-panic-probe}\n";
+			shellScript = "# 38-01 Task 2: the probe follows $CONFIGURATION instead of being hardcoded ON.\n# Previously this line passed --with-panic-probe as its OWN default, so the\n# synthetic panic vector shipped in EVERY PasskeyVault.app this recipe built,\n# Release included. PV_FFI_TEST_VARIANT still wins when set (ios-probe-run.sh\n# sets it for the sensitivity probe). Debug keeps the probe because\n# FfiPanicSafetyTests.swift needs it; Release now gets a plain artifact.\n# NOT the per-target build split -- Phase 41 still owns that; see the residual\n# in crates/pv-ffi/Cargo.toml's [features] comment.\nif [ -n \"${PV_FFI_TEST_VARIANT:-}\" ]; then\n  \"$SRCROOT/../../scripts/build-ios.sh\" ${PV_FFI_TEST_VARIANT}\nelif [ \"${CONFIGURATION}\" = \"Debug\" ]; then\n  \"$SRCROOT/../../scripts/build-ios.sh\" --with-panic-probe\nelse\n  \"$SRCROOT/../../scripts/build-ios.sh\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

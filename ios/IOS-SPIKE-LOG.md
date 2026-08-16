@@ -1659,6 +1659,61 @@ defaulting to the prior `--with-panic-probe`-only behavior when unset), and
 third simultaneous non-default feature variant would need the same treatment — extend the combined
 `FEATURES` list in `build-ios.sh`, never add a third mutually-exclusive flag.**
 
+### L-14 — the app cannot be built in Release: a Swift compiler crash in generated UniFFI code
+
+**Found 2026-08-13, first time the app target was built optimized. BLOCKS SHIPPING. Not our code.**
+
+`xcodebuild build -configuration Release` fails with a `swift-frontend` crash — infinite recursion,
+the same frame repeating at one address until the stack is exhausted:
+
+```
+4.  While running pass #54311 SILFunctionTransform "EarlyPerfInliner" on SILFunction
+    "@$s12PasskeyVault15UniffiHandleMap33_3020C04B17195456C4681D445E4E403DLLCfD"
+4   swift-frontend  0x000000010622b44c isCallerAndCalleeLayoutConstraintsCompatible(swift::FullApplySite) + 236
+5   swift-frontend  0x000000010622b44c isCallerAndCalleeLayoutConstraintsCompatible(swift::FullApplySite) + 236
+    ... (same address, repeating)
+```
+
+The mangled symbol is `UniffiHandleMap.deinit` — the generic `fileprivate final class UniffiHandleMap<T>`
+that `uniffi-bindgen-swift` emits into `pv_ffi.swift` (~line 406). **Generator output, not hand-written
+code**, so it cannot be fixed by editing our sources.
+
+**The boundary, measured rather than assumed:**
+
+| `SWIFT_OPTIMIZATION_LEVEL` | Result |
+|---|---|
+| `-O` (Release default) | **crash** |
+| `-Osize` | **crash** |
+| `-Onone` (Debug default) | builds, and has all day — every test in Phases 35–37 ran here |
+
+So it is the optimizer, not the bindings' correctness, and any optimizing mode reproduces it.
+
+**Why this stayed invisible until Phase 38.** Phase 35 built exactly one consumer (`PasskeyVaultTests`),
+Phases 36–37 added the extension and moved module ownership — all Debug. Nothing had ever compiled the
+generated bindings at `-O`. This is the same shape as the `ffi06-probe` debt: a fact that was true only
+because exactly one build path existed, surfacing the moment a second one did.
+
+**Do NOT "fix" this by shipping `-Onone`.** It builds, which makes it the tempting answer, and it means
+shipping an unoptimized crypto client. Three real options, none taken yet:
+
+1. **Bump UniFFI** off the `=0.32.0` pin — the emitted `UniffiHandleMap` shape may differ. Cheapest to
+   test, and the pin is ours to move. Note IOS-06 chose `=0.32.0` deliberately, so a bump needs the
+   opaque-handle audit (`scripts/audit-ffi-opaque-handles.sh`) re-run against the new codegen.
+2. **Isolate the generated bindings into their own module built `-Onone`**, leaving the app optimized.
+   Surgical and keeps the security posture, but it is per-target build-graph work — and **Phase 41
+   already owns the per-target production/test split**, so this should land there rather than being
+   invented twice. **The crash dump supports this one specifically:** the failing frontend invocation
+   compiles `pv_ffi.swift` in the SAME whole-module pass as all fifteen app sources, with
+   `-enable-default-cmo`. Moving it to its own module removes the generated `deinit` from the app
+   module's SIL pipeline outright, rather than hoping a different `-O` level steps around it (which
+   `-Osize` already did not).
+3. **Report upstream and pin the toolchain.** Xcode 26.6 / Swift 6.3.3. Worth doing regardless of which
+   of the above is chosen; a compiler crash on generator output will hit other UniFFI users.
+
+**Phase 42 owns making this a gate.** A CI that only ever builds Debug would have shipped this. The
+QA phase must build Release, or it is measuring the wrong thing — the exact defect class this project
+keeps paying for.
+
 ### L-13 — a grep for `-fsanitize=`/`-sanitize=` reads as "the sanitizer never ran"
 
 **Found 2026-08-13, closing Phase 35's BACKSTOP B1.** `xcodebuild` escapes the `=` in the compiler

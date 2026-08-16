@@ -56,9 +56,28 @@
 //  return.
 //
 
+//  COMPILE-TIME GATING (38-01, Task 2 -- gating only, no assertion changed).
+//  The "Build pv-ffi XCFramework" Run Script phase used to pass
+//  `--with-panic-probe` as its own default, so `ffi06_synthetic_panic_probe`
+//  was compiled into EVERY PasskeyVault.app, Release included. That phase now
+//  derives the flag from `$CONFIGURATION`: Debug still gets the probe (this
+//  file needs it), Release gets a plain artifact. Consequently
+//  `ffi06SyntheticPanicProbe` does NOT exist in the generated Swift bindings
+//  under Release, and this file would fail to COMPILE in a Release test build.
+//  `#if DEBUG` is therefore required for the Release build to work at all --
+//  it is not a way of quietly dropping coverage. Every assertion below is
+//  unchanged and still runs in the Debug configuration, which is the
+//  configuration `xcodebuild test` uses.
+//
+//  This does NOT close the per-target split (one shared Run Script phase, one
+//  shared artifact path, whichever invocation ran last wins). Phase 41 owns
+//  that; see crates/pv-ffi/Cargo.toml's [features] comment for the residual.
+
 import Foundation
 import Testing
 import PasskeyVault
+
+#if DEBUG
 
 struct FfiPanicSafetyTests {
 
@@ -145,3 +164,5 @@ struct FfiPanicSafetyTests {
         #expect(reExported.count == 32)
     }
 }
+
+#endif  // DEBUG -- see the COMPILE-TIME GATING note in this file's header
