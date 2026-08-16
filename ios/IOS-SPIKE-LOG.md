@@ -1661,7 +1661,7 @@ third simultaneous non-default feature variant would need the same treatment —
 
 ### L-14 — the app cannot be built in Release: a Swift compiler crash in generated UniFFI code
 
-**Found 2026-08-13, first time the app target was built optimized. BLOCKS SHIPPING. Not our code.**
+**Found 2026-08-16, first time the app target was built optimized. BLOCKS SHIPPING. Not our code.**
 
 `xcodebuild build -configuration Release` fails with a `swift-frontend` crash — infinite recursion,
 the same frame repeating at one address until the stack is exhausted:
@@ -1716,7 +1716,7 @@ keeps paying for.
 
 ### L-13 — a grep for `-fsanitize=`/`-sanitize=` reads as "the sanitizer never ran"
 
-**Found 2026-08-13, closing Phase 35's BACKSTOP B1.** `xcodebuild` escapes the `=` in the compiler
+**Found 2026-08-16, closing Phase 35's BACKSTOP B1.** `xcodebuild` escapes the `=` in the compiler
 invocations it echoes, so a fully TSan-instrumented build logs `-sanitize\=thread`, not
 `-sanitize=thread`. The obvious verification command therefore returns **zero matches on a build where
 the sanitizer is fully active**:

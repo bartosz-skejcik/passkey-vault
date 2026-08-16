@@ -50,13 +50,13 @@ the gate.
 accepted as evidence for ACC-04, the code would have looked verified on a harness that cannot verify
 it — and the real question would never have been asked.
 
-### CONFIRMED — steps 3, 4, 5, itemised (2026-08-13, follow-up session)
+### CONFIRMED — steps 3, 4, 5, itemised (2026-08-16, follow-up session)
 
 The 2026-08-13 01:22 run recorded these three as PENDING, because the operator's closing "all of it
 works" was a *summary statement* and these are precisely the discriminating observations. This section
 was written to force the next session to ask for them individually rather than infer them.
 
-They were asked individually on **2026-08-13** and confirmed individually:
+They were asked individually on **2026-08-16** and confirmed individually:
 
 | Step | Claim | Operator answer |
 |---|---|---|

@@ -2,7 +2,7 @@
 
 ## Source
 
-`pv-logo-master-1254.png` — the "PV" monogram, 1254×1254 PNG, supplied 2026-08-13.
+`pv-logo-master-1254.png` — the "PV" monogram, 1254×1254 PNG, supplied 2026-08-16.
 
 **There is no vector source.** This is a raster master (AI-generated), so it cannot be re-cut cleanly at
 arbitrary sizes or recoloured without artefacts. 1254px is enough for the 1024px App Store icon and

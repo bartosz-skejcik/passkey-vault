@@ -1,6 +1,6 @@
 # L-14 — Release build crash, raw transcript
 
-Date: 2026-08-13 · Xcode 26.6 (17F113) · Swift 6.3.3 · iPhone 17 Pro simulator
+Date: 2026-08-16 · Xcode 26.6 (17F113) · Swift 6.3.3 · iPhone 17 Pro simulator
 
 Tree: clean. A stray uncommitted 38-01 edit to `scripts/build-ios.sh` (left behind by an
 execution agent that died mid-run) was reverted FIRST, and the crash reproduced identically

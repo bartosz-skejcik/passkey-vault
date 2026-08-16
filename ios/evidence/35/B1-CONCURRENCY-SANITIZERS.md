@@ -1,6 +1,6 @@
 # BACKSTOP B1 — FfiUserKey concurrency, sanitizer evidence
 
-Date: 2026-08-13 · Harness: iPhone 17 Pro simulator, iOS 26.5, Xcode 26.6
+Date: 2026-08-16 · Harness: iPhone 17 Pro simulator, iOS 26.5, Xcode 26.6
 
 ## Instrument proven live (five independent indicators)
 - swiftc flag `-sanitize\=thread` present in compile commands (note: xcodebuild escapes the `=`,
