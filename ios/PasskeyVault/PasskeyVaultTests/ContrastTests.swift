@@ -143,4 +143,118 @@ struct ContrastTests {
         let ratio = Self.contrastRatio("000000", "FFFFFF")
         #expect(abs(ratio - 21.0) < 0.01)
     }
+
+    // MARK: - The gap this file originally had
+    //
+    // The two tests above cover PVError and PVTextMuted. They did NOT cover
+    // PVAccent -- and PVAccent was the token that failed. At its original
+    // `#E16540` (identical in both appearances) it measured 3.42:1 as text on
+    // white and 3.42:1 under a white button label, both below AA, and nothing
+    // in this suite noticed for two phases. The tests below close that hole
+    // and extend the same obligation to every semantic token added with the
+    // design system.
+
+    /// PVAccent must be readable AS TEXT on PVSurface in both appearances.
+    /// This is the assertion whose absence let `#E16540` ship.
+    @Test func accentOnSurfaceMeetsWcagAaInBothAppearances() throws {
+        let accent = try Self.readColorSet(named: "PVAccent")
+        let surface = try Self.readColorSet(named: "PVSurface")
+
+        let anyRatio = Self.contrastRatio(accent.any, surface.any)
+        let darkRatio = Self.contrastRatio(accent.dark, surface.dark)
+
+        #expect(anyRatio >= 4.5, "PVAccent on PVSurface (Any) measured \(anyRatio), below 4.5:1")
+        #expect(darkRatio >= 4.5, "PVAccent on PVSurface (Dark) measured \(darkRatio), below 4.5:1")
+    }
+
+    /// The primary button: the PVOnAccent label on a PVAccent fill. This is
+    /// the most common appearance of the brand colour in the whole app, and at
+    /// the original `#E16540` a white label measured 3.42:1 -- large-text-only,
+    /// on a control whose label is body-sized.
+    ///
+    /// This test originally hardcoded `"FFFFFF"` as the label and FAILED in the
+    /// Dark appearance at 3.34:1. That failure was correct and the test was
+    /// wrong: PVAccent's two roles pull opposite ways in dark mode. It must be
+    /// LIGHTER to stay readable as text on a dark surface, which necessarily
+    /// makes a white label on top of it worse. The fix is a real design-system
+    /// token rather than a threshold climbdown -- PVOnAccent knocks out in
+    /// white on light and in near-black on dark. `docs/UI-DESIGN.md` defines
+    /// this as a single-valued "Primary content #FFFFFF", which is correct for
+    /// the web's always-dark surfaces and incomplete for iOS.
+    @Test func onAccentLabelOnAccentFillMeetsWcagAaInBothAppearances() throws {
+        let accent = try Self.readColorSet(named: "PVAccent")
+        let onAccent = try Self.readColorSet(named: "PVOnAccent")
+
+        let anyRatio = Self.contrastRatio(onAccent.any, accent.any)
+        let darkRatio = Self.contrastRatio(onAccent.dark, accent.dark)
+
+        #expect(anyRatio >= 4.5, "PVOnAccent on PVAccent fill (Any) measured \(anyRatio), below 4.5:1")
+        #expect(darkRatio >= 4.5, "PVOnAccent on PVAccent fill (Dark) measured \(darkRatio), below 4.5:1")
+    }
+
+    /// Guards the finding above from being silently undone. If someone sets
+    /// PVOnAccent back to white in both appearances -- the obvious "simplification",
+    /// and what UI-DESIGN.md literally says -- this fires.
+    @Test func onAccentIsModeAwareNotWhiteInBothAppearances() throws {
+        let onAccent = try Self.readColorSet(named: "PVOnAccent")
+
+        #expect(
+            onAccent.any.uppercased() == "FFFFFF",
+            "PVOnAccent (Any) is \(onAccent.any); the light-mode label is expected to be white."
+        )
+        #expect(
+            onAccent.dark.uppercased() != "FFFFFF",
+            """
+            PVOnAccent (Dark) is white. A white label on the dark-appearance PVAccent fill \
+            measures 3.34:1 and fails AA — see onAccentLabelOnAccentFillMeetsWcagAaInBothAppearances.
+            """
+        )
+    }
+
+    /// Every semantic token carries meaning a user must be able to READ --
+    /// "this password leaked", "this is a passkey", "this one is stale". They
+    /// are held to the text threshold, not the 3:1 UI-component one.
+    @Test func everySemanticTokenMeetsWcagAaOnSurface() throws {
+        let surface = try Self.readColorSet(named: "PVSurface")
+        let tokens = ["PVPasskey", "PVSuccess", "PVWarning", "PVError", "PVInfo", "PVLink"]
+
+        for name in tokens {
+            let token = try Self.readColorSet(named: name)
+            let anyRatio = Self.contrastRatio(token.any, surface.any)
+            let darkRatio = Self.contrastRatio(token.dark, surface.dark)
+
+            #expect(anyRatio >= 4.5, "\(name) on PVSurface (Any) measured \(anyRatio), below 4.5:1")
+            #expect(darkRatio >= 4.5, "\(name) on PVSurface (Dark) measured \(darkRatio), below 4.5:1")
+        }
+    }
+
+    /// PVAccentBold is the one token DELIBERATELY exempt from the AA text
+    /// threshold: it is the literal brand coral `#E16540`, kept for large text
+    /// (>=18pt regular / >=14pt bold) and decorative fills.
+    ///
+    /// This test asserts the exemption is real rather than assumed -- it pins
+    /// the value BELOW 4.5 and at or above the 3:1 large-text/UI floor. If
+    /// someone later "fixes" PVAccentBold to pass AA, this test fails and
+    /// sends them here to find out that the failure is the point: darkening it
+    /// would make it a duplicate of PVAccent and lose the brand colour
+    /// entirely.
+    @Test func accentBoldIsDeliberatelyBelowAaAndAboveTheLargeTextFloor() throws {
+        let bold = try Self.readColorSet(named: "PVAccentBold")
+        let surface = try Self.readColorSet(named: "PVSurface")
+
+        let anyRatio = Self.contrastRatio(bold.any, surface.any)
+
+        #expect(
+            anyRatio < 4.5,
+            """
+            PVAccentBold measured \(anyRatio) on light PVSurface, at or above 4.5:1. \
+            If this was intentional, PVAccentBold now duplicates PVAccent and should be \
+            removed rather than kept as a second name for the same colour.
+            """
+        )
+        #expect(
+            anyRatio >= 3.0,
+            "PVAccentBold measured \(anyRatio), below even the 3:1 large-text floor — it is not usable for anything."
+        )
+    }
 }
