@@ -48,10 +48,8 @@ struct VaultStoreRoundTripTests {
         )
         #expect(id.count == 36)
 
-        let fields = NoteFields(name: Self.noteName, body: Self.noteBody)
-        let plaintext = String(
-            data: try JSONEncoder().encode(fields), encoding: .utf8
-        )!
+        let fields = NoteFields(name: Self.noteName, folderId: nil, tags: [], body: Self.noteBody)
+        let plaintext = try ItemNormalize.plaintextJSON(for: .note(fields))
 
         let wire = try encryptItemWire(
             userKey: userKey, plaintext: plaintext, itemId: id, revision: 1
@@ -77,12 +75,16 @@ struct VaultStoreRoundTripTests {
             itemId: id,
             revision: 1
         )
-        let decoded = try JSONDecoder().decode(NoteFields.self, from: Data(recovered.utf8))
+        let normalized = try ItemNormalize.normalizeItemFields(fromPlaintext: recovered)
+        guard case let .note(decoded) = normalized else {
+            Issue.record("expected a .note, got \(normalized.typeName)")
+            return
+        }
 
         #expect(decoded == fields)
         #expect(decoded.name == Self.noteName)
         #expect(decoded.body == Self.noteBody)
-        #expect(decoded.type == "note")
+        #expect(normalized.typeName == "note")
     }
 
     /// The AAD binding, observed from Swift. Without this the round-trip test

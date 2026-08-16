@@ -36,6 +36,20 @@ final class VaultStore {
 
     private(set) var lastError: String?
 
+    /// The union of every tag on every decoded row, recomputed on EVERY
+    /// mutation (38-03).
+    ///
+    /// The web client's equivalent (`store.ts`'s `recomputeAllTags`) iterated
+    /// `item.fields.tags` unguarded and ran on create, update, sync AND
+    /// delete -- so one `tags`-less row threw out of every one of those,
+    /// including the delete that would have removed it. One malformed row
+    /// wedged the whole account, permanently. Here the coalescing happens BOTH
+    /// at decode (`ItemNormalize`) and at the point of use (`item.tags`
+    /// returns `[]` for the two field-less content cases), because the web
+    /// client learned twice that a single choke point ASSUMED complete is
+    /// what fails.
+    private(set) var allTags: [String] = []
+
     /// NOT observed (T-38-02-03). `@ObservationIgnored` keeps the unlocked
     /// User Key handle out of the observation graph entirely, so it cannot be
     /// read by a SwiftUI dependency trace or rendered into a synthesized
@@ -79,9 +93,16 @@ final class VaultStore {
     /// format is correct -- see `VaultAPI.createItem`'s own note.
     @discardableResult
     func create(noteNamed name: String, body: String) async throws -> VaultItemViewModel {
+        try await create(
+            fields: .note(NoteFields(name: name, folderId: nil, tags: [], body: body))
+        )
+    }
+
+    /// Creates one item of any type.
+    @discardableResult
+    func create(fields: ItemFields) async throws -> VaultItemViewModel {
         let id = Self.mintItemId()
-        let fields = NoteFields(name: name, body: body)
-        let plaintext = try Self.plaintextJSON(for: fields)
+        let plaintext = try ItemNormalize.plaintextJSON(for: fields)
 
         let wire = try encryptItemWire(
             userKey: userKey, plaintext: plaintext, itemId: id, revision: 1
@@ -90,13 +111,14 @@ final class VaultStore {
             id: id, encKeyJson: wire.encKeyJson, encDataJson: wire.encDataJson
         )
 
-        let item = VaultItemViewModel(id: id, revision: 1, content: .note(fields))
+        let item = VaultItemViewModel(id: id, revision: 1, content: .fields(fields))
         // Post-commit bookkeeping: the server write has already been
         // accepted, so a local failure here must never be reported as a
         // failed creation (the web client's `createVaultItem` carries the
         // same discipline for the same reason -- a retry into duplicate
         // rows).
         items.append(item)
+        recomputeTags()
         return item
     }
 
@@ -115,6 +137,22 @@ final class VaultStore {
             items = rows.map(decrypt(row:))
             lastKnownRevision = revision
         }
+        recomputeTags()
+    }
+
+    /// The tag union. Reads `item.tags`, which is safe on EVERY content case
+    /// including the two that carry no fields at all -- see `allTags`' own
+    /// note for the account-wedging defect that shape prevents.
+    private func recomputeTags() {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for item in items {
+            for tag in item.tags where !seen.contains(tag) {
+                seen.insert(tag)
+                ordered.append(tag)
+            }
+        }
+        allTags = ordered
     }
 
     /// Decrypts one row, or retains it marked. Never throws -- a single bad
@@ -128,8 +166,21 @@ final class VaultStore {
                 itemId: row.id,
                 revision: UInt32(row.revision)
             )
-            let fields = try JSONDecoder().decode(NoteFields.self, from: Data(plaintext.utf8))
-            return VaultItemViewModel(id: row.id, revision: row.revision, content: .note(fields))
+            // ONE call, and it is the single complete trust boundary for
+            // untrusted plaintext: shape normalization, both legacy
+            // migrations, the raw passkey wire sniffer and the tags
+            // invariant all live behind it (38-03).
+            let fields = try ItemNormalize.normalizeItemFields(fromPlaintext: plaintext)
+            return VaultItemViewModel(
+                id: row.id,
+                revision: row.revision,
+                content: .fields(fields),
+                updatedAt: row.updated_at,
+                lastUsedAt: row.last_used_at,
+                isShared: row.is_shared,
+                lastEditorEmail: row.last_editor_email,
+                collectionId: row.collection_id
+            )
         } catch {
             // Logged with the row id and the error only. Never the
             // ciphertext, never any key material.
@@ -139,27 +190,13 @@ final class VaultStore {
             return VaultItemViewModel(
                 id: row.id,
                 revision: row.revision,
-                content: .undecryptable(reason: String(describing: error))
+                content: .undecryptable(reason: String(describing: error)),
+                updatedAt: row.updated_at,
+                lastUsedAt: row.last_used_at,
+                isShared: row.is_shared,
+                lastEditorEmail: row.last_editor_email,
+                collectionId: row.collection_id
             )
         }
-    }
-
-    // MARK: - Plaintext encoding
-
-    /// Encodes the field struct to the plaintext JSON that gets encrypted.
-    ///
-    /// This `JSONEncoder` is safe and is NOT the DR-38-C hazard: it encodes
-    /// the PLAINTEXT payload, whose members are `String`/`[String]` only.
-    /// `NoteFields` deliberately contains no `Data`-typed property, so
-    /// Foundation's base64 default has nothing to apply itself to. The wire
-    /// envelope -- the thing that CAN be base64'd wrongly -- is built
-    /// exclusively by `pv-ffi`'s `serde_json`, one layer down.
-    private static func plaintextJSON(for fields: NoteFields) throws -> String {
-        let encoder = JSONEncoder()
-        let data = try encoder.encode(fields)
-        guard let json = String(data: data, encoding: .utf8) else {
-            throw PvApiError.unexpectedResponse("plaintext JSON was not UTF-8")
-        }
-        return json
     }
 }
