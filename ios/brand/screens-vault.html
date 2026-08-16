@@ -1,0 +1,998 @@
+<title>Passkey Vault Screens</title>
+<style>
+  :root{
+    --ink:#14171A; --paper:#F2F3F4; --paper-2:#FFFFFF; --edge:#D6D9DC; --mute:#5C646C; --rail:#8A9199;
+    --hi:#C94F2A; --ok:#008850; --warn:#A66900; --err:#D1323C;
+    --shadow:0 1px 2px rgba(20,23,26,.08), 0 12px 32px rgba(20,23,26,.10);
+    --bg:var(--paper); --fg:var(--ink); --card:var(--paper-2); --line:var(--edge); --dim:var(--mute);
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --bg:#0E1113; --fg:#E6E9EB; --card:#171B1E; --line:#262C31; --dim:#98A0A7; --rail:#6E777F;
+    --hi:#E36742; --ok:#00A96E; --warn:#FFBE00; --err:#FF5861;
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 14px 40px rgba(0,0,0,.45);}}
+  :root[data-theme="dark"]{
+    --bg:#0E1113; --fg:#E6E9EB; --card:#171B1E; --line:#262C31; --dim:#98A0A7; --rail:#6E777F;
+    --hi:#E36742; --ok:#00A96E; --warn:#FFBE00; --err:#FF5861;
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 14px 40px rgba(0,0,0,.45);}
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);line-height:1.55;-webkit-font-smoothing:antialiased;
+       font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1240px;margin:0 auto;padding:56px 24px 96px}
+  .eyebrow{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;letter-spacing:.14em;
+           text-transform:uppercase;color:var(--rail)}
+  h1{font-size:clamp(30px,4.4vw,44px);line-height:1.1;margin:10px 0 14px;letter-spacing:-.022em;font-weight:660;text-wrap:balance}
+  h2{font-size:22px;margin:0 0 6px;letter-spacing:-.014em;font-weight:640;text-wrap:balance}
+  .lede{max-width:66ch;color:var(--dim);font-size:16.5px;margin:0}
+  .stack{display:flex;flex-direction:column;gap:64px;margin-top:56px}
+  section{display:flex;flex-direction:column;gap:22px}
+  .sechead{display:flex;flex-direction:column;gap:4px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+  .note{color:var(--dim);font-size:14.5px;max-width:76ch;margin:0}
+  .inline,.note code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;
+    background:color-mix(in srgb,var(--fg) 7%,transparent);padding:1px 5px;border-radius:4px}
+  .screens{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:34px 26px}
+  .cell{display:flex;flex-direction:column;gap:12px}
+  .cap{display:flex;flex-direction:column;gap:3px}
+  .cap b{font-size:14.5px;font-weight:620;letter-spacing:-.01em}
+  .cap span{font-size:12.8px;color:var(--dim);line-height:1.45}
+  .tag{display:inline-block;align-self:flex-start;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+       font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:999px;
+       border:1px solid var(--line);color:var(--rail)}
+  .tag.k{border-color:color-mix(in srgb,var(--ok) 45%,transparent);color:var(--ok)}
+  .tag.w{border-color:color-mix(in srgb,var(--warn) 50%,transparent);color:var(--warn)}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;letter-spacing:.1em;
+     text-transform:uppercase;color:var(--rail);font-weight:500}
+  .tbl{overflow-x:auto}
+  :focus-visible{outline:2px solid var(--hi);outline-offset:2px}
+
+  /* ===== device ===== */
+  .dev{--s:.63;width:calc(393px*var(--s));height:calc(852px*var(--s));border-radius:calc(56px*var(--s));
+       padding:calc(3px*var(--s));background:linear-gradient(160deg,#3A4046,#15181B 55%);box-shadow:var(--shadow);flex:none}
+  .scr{width:100%;height:100%;border-radius:calc(53px*var(--s));overflow:hidden;position:relative;display:flex;flex-direction:column;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+    --pv-bg:#FCFBFA;--pv-surf:#FFFFFF;--pv-alt:#F4F1ED;--pv-txt:#262626;--pv-mut:#595451;
+    --pv-acc:#C94F2A;--pv-on:#FFFFFF;--pv-bold:#E16540;--pv-key:#008674;--pv-ok:#008850;
+    --pv-warn:#A66900;--pv-err:#D1323C;--pv-link:#3D7CAA;
+    --pv-sep:rgba(60,60,67,.20);--pv-fill:rgba(120,120,128,.12);
+    background:var(--pv-bg);color:var(--pv-txt)}
+  .scr.dark{--pv-bg:#1F1F1F;--pv-surf:#262626;--pv-alt:#212121;--pv-txt:#DEDDDC;--pv-mut:#ABA8A7;
+    --pv-acc:#E36742;--pv-on:#1F1F1F;--pv-key:#00CDB7;--pv-ok:#00A96E;--pv-warn:#FFBE00;
+    --pv-err:#FF5861;--pv-link:#8DCDFF;--pv-sep:rgba(235,235,245,.20);--pv-fill:rgba(120,120,128,.24)}
+  .sb{height:calc(54px*var(--s));flex:none;display:flex;align-items:flex-end;justify-content:space-between;
+      padding:0 calc(26px*var(--s)) calc(6px*var(--s));font-size:calc(15px*var(--s));font-weight:600;font-variant-numeric:tabular-nums}
+  .bar{width:calc(17px*var(--s));height:calc(11px*var(--s));border:1.4px solid currentColor;border-radius:calc(3px*var(--s));position:relative;display:inline-block}
+  .bar::after{content:"";position:absolute;inset:1.4px;background:currentColor;border-radius:1px}
+  .hi-ind{height:calc(30px*var(--s));flex:none;display:flex;align-items:center;justify-content:center}
+  .hi-ind i{width:calc(140px*var(--s));height:calc(5px*var(--s));border-radius:99px;background:var(--pv-txt);opacity:.32}
+  .body{flex:1;overflow:hidden;display:flex;flex-direction:column;padding:0 calc(16px*var(--s))}
+  .navrow{display:flex;align-items:center;justify-content:space-between;height:calc(44px*var(--s));flex:none;
+          font-size:calc(17px*var(--s));color:var(--pv-acc)}
+  .navrow .ttl{color:var(--pv-txt);font-weight:600;font-size:calc(16px*var(--s))}
+  .lgtitle{font-size:calc(32px*var(--s));font-weight:700;letter-spacing:calc(-.5px*var(--s));margin:calc(2px*var(--s)) 0 calc(8px*var(--s))}
+  .srch{background:var(--pv-fill);border-radius:calc(10px*var(--s));padding:calc(7px*var(--s)) calc(10px*var(--s));
+        font-size:calc(15px*var(--s));color:var(--pv-mut);display:flex;gap:calc(6px*var(--s));align-items:center;margin-bottom:calc(10px*var(--s))}
+  .srch.on{background:var(--pv-surf);outline:calc(2px*var(--s)) solid var(--pv-acc);color:var(--pv-txt)}
+  .grp{background:var(--pv-surf);border-radius:calc(11px*var(--s));overflow:hidden}
+  .grp + .grp{margin-top:calc(14px*var(--s))}
+  .glab{font-size:calc(12px*var(--s));color:var(--pv-mut);text-transform:uppercase;letter-spacing:.04em;
+        padding:calc(14px*var(--s)) calc(6px*var(--s)) calc(5px*var(--s))}
+
+  /* list row */
+  .r{display:flex;align-items:center;gap:calc(11px*var(--s));padding:calc(9px*var(--s)) calc(12px*var(--s));min-height:calc(52px*var(--s))}
+  .r + .r{box-shadow:inset 0 .5px 0 var(--pv-sep)}
+  .ico{width:calc(30px*var(--s));height:calc(30px*var(--s));border-radius:calc(8px*var(--s));background:var(--pv-alt);
+       display:flex;align-items:center;justify-content:center;flex:none;color:var(--pv-mut)}
+  .ico svg{width:calc(17px*var(--s));height:calc(17px*var(--s));display:block}
+  .ico.key{background:color-mix(in srgb,var(--pv-key) 15%,transparent);color:var(--pv-key)}
+  /* Favicon tile — stays LIGHT in dark mode. Live-review finding already in the code:
+     dark favicons (GitHub's is black) vanish on a dark tile. */
+  .ico.fav{background:#FFFFFF;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.10);overflow:hidden}
+  .scr.dark .ico.fav{background:#F2F2F2;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.18)}
+  .ico.fav svg,.ico.fav img{width:calc(19px*var(--s));height:calc(19px*var(--s));display:block}
+  /* Card-brand tile — drawn locally from the number; nothing leaves the client. */
+  .ico.brand{background:#FFFFFF;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.10);font-weight:800;
+             font-size:calc(8px*var(--s));letter-spacing:calc(-.2px*var(--s));color:#1A1F71;font-style:italic}
+  .scr.dark .ico.brand{background:#F2F2F2}
+  .ico.brand .mc{display:flex} .ico.brand .mc i{width:calc(11px*var(--s));height:calc(11px*var(--s));border-radius:99px;display:block}
+  .ico.brand .mc i:first-child{background:#EB001B} .ico.brand .mc i:last-child{background:#F79E1B;margin-left:calc(-4px*var(--s));opacity:.9}
+  .rt{flex:1;min-width:0;display:flex;flex-direction:column;gap:calc(1px*var(--s))}
+  .rt b{font-size:calc(15.5px*var(--s));font-weight:520;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rt span{font-size:calc(13px*var(--s));color:var(--pv-mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chev{opacity:.28;font-size:calc(15px*var(--s));flex:none}
+  .pill{font-size:calc(10px*var(--s));font-weight:600;padding:calc(1.5px*var(--s)) calc(6px*var(--s));border-radius:99px;flex:none;letter-spacing:.02em}
+  .pill.key{background:color-mix(in srgb,var(--pv-key) 15%,transparent);color:var(--pv-key)}
+  .pill.shr{background:var(--pv-fill);color:var(--pv-mut)}
+  .pill.warn{background:color-mix(in srgb,var(--pv-warn) 16%,transparent);color:var(--pv-warn)}
+  .pill.err{background:color-mix(in srgb,var(--pv-err) 14%,transparent);color:var(--pv-err)}
+
+  /* detail rows */
+  .d{display:flex;flex-direction:column;gap:calc(2px*var(--s));padding:calc(9px*var(--s)) calc(12px*var(--s))}
+  .d + .d{box-shadow:inset 0 .5px 0 var(--pv-sep)}
+  .d .k{font-size:calc(12px*var(--s));color:var(--pv-mut)}
+  .d .v{font-size:calc(15.5px*var(--s));word-break:break-word}
+  .d .v.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:calc(14px*var(--s))}
+  .d.act{flex-direction:row;align-items:center;justify-content:space-between}
+  .d.act .v{color:var(--pv-acc)}
+  .hdr{display:flex;flex-direction:column;align-items:center;gap:calc(7px*var(--s));padding:calc(10px*var(--s)) 0 calc(16px*var(--s))}
+  .hdr .big{width:calc(58px*var(--s));height:calc(58px*var(--s));border-radius:calc(14px*var(--s));background:var(--pv-alt);
+            display:flex;align-items:center;justify-content:center;color:var(--pv-mut)}
+  .hdr .big svg{width:calc(28px*var(--s));height:calc(28px*var(--s))}
+  .hdr .big.key{background:color-mix(in srgb,var(--pv-key) 15%,transparent);color:var(--pv-key)}
+  .hdr b{font-size:calc(21px*var(--s));font-weight:640}
+  .hdr span{font-size:calc(13.5px*var(--s));color:var(--pv-mut)}
+  .totp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:calc(30px*var(--s));letter-spacing:calc(3px*var(--s));
+        font-variant-numeric:tabular-nums;color:var(--pv-acc);text-align:center;padding:calc(4px*var(--s)) 0}
+  .slot{border-radius:calc(11px*var(--s));padding:calc(10px*var(--s)) calc(12px*var(--s));font-size:calc(13px*var(--s));
+        line-height:1.4;display:flex;gap:calc(8px*var(--s));align-items:flex-start;margin-bottom:calc(10px*var(--s))}
+  .slot .dot{width:calc(7px*var(--s));height:calc(7px*var(--s));border-radius:99px;margin-top:calc(5px*var(--s));flex:none}
+  .slot.mut{background:var(--pv-fill);color:var(--pv-mut)} .slot.mut .dot{background:var(--pv-mut)}
+  .slot.warn{background:color-mix(in srgb,var(--pv-warn) 14%,transparent);color:var(--pv-warn)} .slot.warn .dot{background:var(--pv-warn)}
+  .slot.err{background:color-mix(in srgb,var(--pv-err) 12%,transparent);color:var(--pv-err)} .slot.err .dot{background:var(--pv-err)}
+  .slot.key{background:color-mix(in srgb,var(--pv-key) 12%,transparent);color:var(--pv-key)} .slot.key .dot{background:var(--pv-key)}
+  .btn{background:var(--pv-acc);color:var(--pv-on);border-radius:calc(12px*var(--s));height:calc(48px*var(--s));
+       display:flex;align-items:center;justify-content:center;font-size:calc(17px*var(--s));font-weight:600}
+  .btn.tint{background:var(--pv-fill);color:var(--pv-acc)}
+  .spacer{flex:1}
+  /* ===== iOS 26 dock — stock TabView + Tab(role:) + tabViewBottomAccessory =====
+     Layout follows Bevel: accessory pill above, filter bar + detached action capsule below,
+     collapsing to circle+pill+circle on scroll. None of the glass is hand-drawn in code. */
+  .dock{position:absolute;left:calc(12px*var(--s));right:calc(12px*var(--s));bottom:calc(30px*var(--s));
+        display:flex;flex-direction:column;gap:calc(8px*var(--s));z-index:5}
+  .glass{background:rgba(255,255,255,.72);backdrop-filter:blur(24px) saturate(180%);
+         -webkit-backdrop-filter:blur(24px) saturate(180%);border-radius:99px;
+         box-shadow:0 calc(6px*var(--s)) calc(22px*var(--s)) rgba(0,0,0,.13), inset 0 0 0 .5px rgba(255,255,255,.6)}
+  .scr.dark .glass{background:rgba(52,52,52,.66);
+         box-shadow:0 calc(6px*var(--s)) calc(22px*var(--s)) rgba(0,0,0,.44), inset 0 0 0 .5px rgba(255,255,255,.12)}
+  .acc{height:calc(46px*var(--s));display:flex;align-items:center;gap:calc(9px*var(--s));
+       padding:0 calc(17px*var(--s));font-size:calc(15.5px*var(--s));color:var(--pv-mut)}
+  .acc svg{width:calc(17px*var(--s));height:calc(17px*var(--s));flex:none}
+  .drow{display:flex;gap:calc(8px*var(--s));align-items:stretch}
+  .tabs{flex:1;display:flex;align-items:center;justify-content:space-around;height:calc(54px*var(--s));padding:0 calc(4px*var(--s))}
+  .cap{width:calc(54px*var(--s));height:calc(54px*var(--s));display:flex;align-items:center;justify-content:center;flex:none}
+  .cap.acct{color:var(--pv-acc);font-size:calc(25px*var(--s));font-weight:300;line-height:1}
+  .tb{display:flex;flex-direction:column;align-items:center;gap:calc(2px*var(--s));color:var(--pv-mut);
+      font-size:calc(9.5px*var(--s));font-weight:500;padding:0 calc(4px*var(--s))}
+  .tb svg{width:calc(21px*var(--s));height:calc(21px*var(--s))}
+  .tb.on{color:var(--pv-acc)}
+  .circ{width:calc(54px*var(--s));height:calc(54px*var(--s));display:flex;align-items:center;justify-content:center;flex:none;color:var(--pv-acc)}
+  .circ svg{width:calc(22px*var(--s));height:calc(22px*var(--s))}
+  /* top-right glass pill */
+  .toppill{display:flex;align-items:center;gap:calc(4px*var(--s));padding:calc(4px*var(--s));border-radius:99px;
+           background:rgba(255,255,255,.72);backdrop-filter:blur(20px) saturate(180%);
+           -webkit-backdrop-filter:blur(20px) saturate(180%);box-shadow:0 calc(3px*var(--s)) calc(12px*var(--s)) rgba(0,0,0,.12), inset 0 0 0 .5px rgba(255,255,255,.6)}
+  .scr.dark .toppill{background:rgba(52,52,52,.66);box-shadow:0 calc(3px*var(--s)) calc(12px*var(--s)) rgba(0,0,0,.4), inset 0 0 0 .5px rgba(255,255,255,.12)}
+  .toppill .ib{width:calc(31px*var(--s));height:calc(31px*var(--s));display:flex;align-items:center;justify-content:center;color:var(--pv-mut)}
+  .toppill .ib svg{width:calc(17px*var(--s));height:calc(17px*var(--s))}
+  .av{width:calc(31px*var(--s));height:calc(31px*var(--s));border-radius:99px;background:var(--pv-acc);color:var(--pv-on);
+      display:flex;align-items:center;justify-content:center;font-size:calc(12px*var(--s));font-weight:640}
+  /* + action grid */
+  .grid{background:rgba(255,255,255,.80);backdrop-filter:blur(26px) saturate(180%);
+        -webkit-backdrop-filter:blur(26px) saturate(180%);border-radius:calc(26px*var(--s));
+        padding:calc(16px*var(--s)) calc(10px*var(--s));display:grid;grid-template-columns:repeat(3,1fr);
+        gap:calc(14px*var(--s)) calc(4px*var(--s));box-shadow:0 calc(8px*var(--s)) calc(26px*var(--s)) rgba(0,0,0,.16)}
+  .scr.dark .grid{background:rgba(52,52,52,.78)}
+  .ga{display:flex;flex-direction:column;align-items:center;gap:calc(7px*var(--s));font-size:calc(11px*var(--s));
+      color:var(--pv-txt);text-align:center;line-height:1.25}
+  .ga .b{width:calc(52px*var(--s));height:calc(52px*var(--s));border-radius:99px;background:var(--pv-surf);
+         display:flex;align-items:center;justify-content:center;color:var(--pv-txt);
+         box-shadow:0 calc(2px*var(--s)) calc(8px*var(--s)) rgba(0,0,0,.10)}
+  .ga .b svg{width:calc(22px*var(--s));height:calc(22px*var(--s))}
+  .ga .b.key{color:var(--pv-key)}
+  .shdr{font-size:calc(12.5px*var(--s));font-weight:640;color:var(--pv-mut);letter-spacing:.03em;
+        padding:calc(13px*var(--s)) calc(6px*var(--s)) calc(5px*var(--s));display:flex;justify-content:space-between;align-items:baseline}
+  .shdr em{font-style:normal;font-weight:500;opacity:.75;font-size:calc(11.5px*var(--s));font-variant-numeric:tabular-nums}
+  .scrub{position:absolute;right:calc(3px*var(--s));top:calc(150px*var(--s));display:flex;flex-direction:column;
+         gap:calc(9px*var(--s));align-items:center;padding:calc(7px*var(--s)) calc(4px*var(--s));z-index:4}
+  .scrub i{font-style:normal;font-size:calc(11px*var(--s));font-weight:600;color:var(--pv-mut);opacity:.6;
+           line-height:1;font-variant-numeric:tabular-nums}
+  .scrub i.on{color:var(--pv-acc);opacity:1}
+  /* TOTP row — the code IS the row (Google Authenticator pattern) */
+  .trow{padding:calc(10px*var(--s)) calc(13px*var(--s));display:flex;align-items:center;justify-content:space-between;gap:calc(10px*var(--s))}
+  .trow + .trow{box-shadow:inset 0 .5px 0 var(--pv-sep)}
+  .trow .tl{min-width:0;display:flex;flex-direction:column;gap:calc(2px*var(--s))}
+  .trow .lbl{font-size:calc(12.5px*var(--s));color:var(--pv-mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .trow .code{font-size:calc(31px*var(--s));font-weight:400;color:var(--pv-acc);letter-spacing:calc(1.5px*var(--s));
+              font-variant-numeric:tabular-nums;line-height:1.06}
+  /* TOTP countdown ring — Circle().trim(from:0,to:frac).stroke(...) in SwiftUI,
+     which a filled pie cannot express as cleanly. */
+  .pie{width:calc(21px*var(--s));height:calc(21px*var(--s));flex:none}
+  .pie svg{width:100%;height:100%;display:block;transform:rotate(-90deg)}
+  .pie circle{fill:none;stroke-width:2.3}
+  .pie .tk{stroke:var(--pv-fill)}
+  .pie .pg{stroke:var(--pv-acc);stroke-linecap:round;stroke-dasharray:59.69;stroke-dashoffset:22.68}
+  .pie.low .pg{stroke:var(--pv-warn);stroke-dashoffset:51.33}
+  .plus{font-size:calc(23px*var(--s));font-weight:300;color:var(--pv-acc);line-height:1}
+  .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:calc(6px*var(--s));padding:0 calc(24px*var(--s))}
+  .empty .big{width:calc(56px*var(--s));height:calc(56px*var(--s));border-radius:calc(14px*var(--s));background:var(--pv-alt);
+              display:flex;align-items:center;justify-content:center;color:var(--pv-mut);margin-bottom:calc(6px*var(--s))}
+  .empty b{font-size:calc(19px*var(--s));font-weight:620}
+  .empty p{font-size:calc(14px*var(--s));color:var(--pv-mut);margin:0;line-height:1.45}
+  .field{background:var(--pv-surf);border-radius:calc(11px*var(--s));padding:calc(10px*var(--s)) calc(12px*var(--s));font-size:calc(15.5px*var(--s));
+         display:flex;justify-content:space-between;align-items:center;gap:calc(8px*var(--s));min-height:calc(44px*var(--s))}
+  .field .ph{color:var(--pv-mut);opacity:.72}
+  .field .lab{color:var(--pv-mut);font-size:calc(13px*var(--s));flex:none;width:calc(96px*var(--s))}
+  .fgrp{background:var(--pv-surf);border-radius:calc(11px*var(--s));overflow:hidden}
+  .fgrp .field{background:transparent;border-radius:0}
+  .fgrp .field + .field{box-shadow:inset 0 .5px 0 var(--pv-sep)}
+  .sheet{position:absolute;inset:auto 0 0 0;background:var(--pv-bg);border-radius:calc(14px*var(--s)) calc(14px*var(--s)) 0 0;
+         padding:calc(16px*var(--s));box-shadow:0 calc(-8px*var(--s)) calc(30px*var(--s)) rgba(0,0,0,.24);display:flex;flex-direction:column;gap:calc(10px*var(--s))}
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,.34)}
+  .grip{width:calc(36px*var(--s));height:calc(5px*var(--s));border-radius:99px;background:var(--pv-mut);opacity:.35;margin:0 auto}
+  .pw{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:calc(18px*var(--s));word-break:break-all;line-height:1.35;text-align:center;padding:calc(8px*var(--s)) 0}
+  .pw .n{color:var(--pv-link)} .pw .s{color:var(--pv-acc)}
+  .seg{display:flex;background:var(--pv-fill);border-radius:calc(9px*var(--s));padding:calc(2px*var(--s));font-size:calc(13px*var(--s))}
+  .seg i{flex:1;text-align:center;padding:calc(5px*var(--s));border-radius:calc(7px*var(--s));font-style:normal}
+  .seg i.on{background:var(--pv-surf);font-weight:600}
+  .sl{height:calc(3px*var(--s));background:var(--pv-fill);border-radius:99px;position:relative;margin:calc(14px*var(--s)) calc(4px*var(--s))}
+  .sl i{position:absolute;left:0;top:0;height:100%;width:58%;background:var(--pv-acc);border-radius:99px}
+  .sl b{position:absolute;left:58%;top:50%;transform:translate(-50%,-50%);width:calc(20px*var(--s));height:calc(20px*var(--s));
+        background:#fff;border-radius:99px;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Passkey Vault · iOS · phases 38–40</p>
+  <h1>The vault, all six types</h1>
+  <p class="lede">Field models are transcribed from <span class="inline">packages/pv-ui/vault/types.ts</span> — the
+  actual source of truth — not invented. Every colour comes from <span class="inline">ios/brand/tokens.json</span>.
+  Light and dark alternate so both appearances are covered across the set.</p>
+
+  <div class="stack">
+
+    <section>
+      <div class="sechead">
+        <h2>One rule the whole screen set rests on</h2>
+      </div>
+      <p class="note"><strong>Type is carried by shape. State is carried by colour.</strong> Your tokens reserve
+      colour for meaning — weak, stale, breached, shared — so tinting item types by hue would spend the same
+      vocabulary twice and leave a red card ambiguous between “credit card” and “compromised”. Fallback glyphs are
+      therefore monochrome in <span class="inline">PVTextMuted</span> on a
+      <span class="inline">PVSurfaceAlt</span> tile.</p>
+      <p class="note"><strong>Logins, passkeys and cards do not use glyphs at all — they use their real mark</strong>,
+      mirroring <span class="inline">packages/pv-ui/components/ItemIconTile.tsx</span>. Logins and passkeys resolve a
+      favicon from <em>the item's own domain</em>; cards get a brand tile detected locally from the number. Everything
+      else falls back to the monochrome glyph, and so does any favicon that fails to load.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Rule (inherited, not invented here)</th><th>Why it is load-bearing</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Direct to the item's own domain. Never a proxy, never pv-server.</strong>
+            <span class="inline">https://&lt;domain&gt;/favicon.ico</span>, no-referrer.</td>
+            <td>The zero-knowledge favicon rule, already a hard constraint in
+            <span class="inline">17-UI-SPEC.md</span>. A Google/DDG favicon service would hand a third party the list
+            of every site in the vault; routing through <span class="inline">pv-server</span> would hand it to the
+            server this product promises never sees your vault.</td></tr>
+          <tr><td><strong>Card brands are drawn locally</strong> from
+            <span class="inline">detectCardBrand(number)</span>.</td>
+            <td>The component's own comment: "nothing about a saved card ever leaves the client to render its glyph."
+            No network request may be tied to a card.</td></tr>
+          <tr><td><strong>The favicon tile stays light in dark mode.</strong></td>
+            <td>Found in a live review, not in theory: GitHub's favicon is black and disappeared entirely on a dark
+            tile. The frame keeps a light ground in both appearances.</td></tr>
+          <tr><td><strong>Failed hosts are cached and not retried.</strong></td>
+            <td><span class="inline">FAILED_FAVICON_HOSTS</span> — a site without a favicon must not re-request on
+            every scroll.</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note"><strong>One iOS-specific hazard the web version does not have.</strong> The rule says
+      <em>uncached</em>. On iOS the default <span class="inline">URLSession</span> writes to a persistent on-disk
+      <span class="inline">URLCache</span> — which would leave a favicon file for every site in the vault sitting in
+      the app container, readable <em>while the vault is locked</em>. That is vault contents at rest, leaked by the
+      icon layer. Use an ephemeral session (or in-memory-only cache) for favicon loads, and load lazily so only
+      visible rows fetch.</p>
+
+      <p class="note"><strong>The single exception among the remaining glyphs is passkey, in <span class="inline">PVPasskey</span> teal</strong> —
+      because in this product “passwordless” <em>is</em> a semantic, not a category. It is the one type whose
+      colour is telling you something rather than labelling something.</p>
+      <div class="tbl">
+        <table>
+          <thead><tr><th>Type</th><th>Glyph</th><th>Row subtitle</th><th>Fields (from types.ts)</th></tr></thead>
+          <tbody>
+            <tr><td>login</td><td>globe</td><td>username</td><td>username, password, urls[], notes</td></tr>
+            <tr><td>card</td><td>credit card</td><td>•••• last4</td><td>cardholderName, number, expiry, cvv, pin?, zip?, notes</td></tr>
+            <tr><td>identity</td><td>person + text</td><td>email</td><td>firstName, lastName, email, phone, address, addressLine1?, addressLine2?, city?, state?, zip?, country?, notes</td></tr>
+            <tr><td>note</td><td>note lines</td><td>first line of body</td><td>body</td></tr>
+            <tr><td>totp</td><td>timer</td><td>issuer</td><td>secret, issuer, algorithm, digits, period, notes</td></tr>
+            <tr><td>passkey</td><td>key badge · <strong>teal</strong></td><td>rpId</td><td>rpId, credentialId, username?, userDisplayName?, rawPasskeyJson</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">All six also carry <span class="inline">name</span>, <span class="inline">folderId</span> and
+      <span class="inline">tags</span> from <span class="inline">CommonFields</span>.</p>
+    </section>
+
+    <section>
+      <div class="sechead">
+        <h2>The bottom bar is the system's, not ours</h2>
+      </div>
+      <p class="note">A floating glass tab bar with the search capsule detached to its right is what
+      <span class="inline">TabView</span> + <span class="inline">Tab(role: .search)</span> renders on iOS&nbsp;26.
+      <strong>None of it is hand-drawn</strong> — and it must not be. Verified against the SDK rather than assumed:</p>
+      <div class="tbl"><table>
+        <thead><tr><th>API</th><th>Available</th><th>Module</th></tr></thead>
+        <tbody>
+          <tr><td><span class="inline">Tab(role: .search)</span></td><td><strong>iOS 18.0+</strong></td><td>SwiftUI</td></tr>
+          <tr><td><span class="inline">glassEffect(_:in:)</span></td><td>iOS 26.0+</td><td><strong>SwiftUICore</strong> — not SwiftUI</td></tr>
+          <tr><td><span class="inline">tabBarMinimizeBehavior(_:)</span></td><td>iOS 26.0+</td><td>SwiftUI</td></tr>
+          <tr><td><span class="inline">tabViewBottomAccessory</span></td><td>iOS 26.0 / 26.1+</td><td>SwiftUI</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">Two consequences worth holding onto. First, <strong>the deployment target is iOS&nbsp;18.0</strong>
+      (locked by IOS-03 because PRF requires it), so the floating glass rendering appears only on iOS&nbsp;26 — on
+      18–25 the identical code falls back to a standard tab bar. That is a graceful degradation, not a fork: the view
+      body is the same and only the <span class="inline">.tabBarMinimizeBehavior</span> modifier needs an
+      <span class="inline">#available</span> guard.</p>
+      <p class="note">Second, <span class="inline">glassEffect</span> lives in <strong>SwiftUICore</strong>. Grepping
+      <span class="inline">SwiftUI.swiftinterface</span> for it returns nothing, which reads exactly like “this
+      doesn't exist” — the same shape as landmine L-1. Do not conclude the API is missing from the wrong module's
+      absence, and do not reach for it here anyway: hand-rolling glass onto a custom bar is both iOS&nbsp;26-only and
+      a fight with the system that stock <span class="inline">TabView</span> already wins.</p>
+      <p class="note">The knock-on, after adopting Bevel's arrangement: <strong>＋ owns the detached capsule</strong>
+      and search moves to the accessory pill above the bar, so the FAB and the list-header search field both
+      disappear. The nav bar is left holding only the account pill.</p>
+
+      <h2 style="margin-top:26px">The bar filters types; the avatar owns the account</h2>
+      <p class="note">Settings, Family and Sign out live in a context menu held on a profile avatar at the top
+      right, which frees the whole bottom bar for <strong>item types</strong>: All · Logins · Cards · Codes ·
+      Passkeys. <span class="inline">Lock&nbsp;now</span> is in that menu too — it is the one action a
+      password-manager user wants instantly, and burying it in Settings makes the safest habit the slowest one.</p>
+      <p class="note"><strong>Two honest costs, so neither is discovered later.</strong></p>
+      <div class="tbl"><table>
+        <thead><tr><th>Cost</th><th>Detail</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Two types have no tab — solved in All</strong></td>
+            <td>Six types, five slots. <span class="inline">identity</span> and <span class="inline">note</span>
+            get no tab, so <strong>All is section-headed by type with a scrubber down the right edge</strong> —
+            every type is one tap from the default screen. The ＋ grid covers creation; the scrubber covers
+            retrieval. That was the actual hole: an earlier version of this page claimed the grid alone made the
+            missing tabs survivable, which was wrong — it only fixed <em>making</em> a note, never <em>finding</em>
+            one.
+            <br><br><strong>Implementation note, corrected:</strong> an earlier version of this page claimed
+            SwiftUI has no public section-index API and that a UIKit bridge was needed. <strong>That was wrong.</strong>
+            <span class="inline">sectionIndexLabel(_:)</span> and
+            <span class="inline">listSectionIndexVisibility(_:)</span> are both public — the claim came from a grep
+            whose output was truncated before the public declarations appeared, so absence-in-the-first-five-lines
+            got read as absence. The real constraint is <strong>availability</strong>: both are
+            <span class="inline">iOS 26.0+</span>, and this app targets 18.0. So the index is native on 26 and needs
+            a <span class="inline">ScrollViewReader.scrollTo</span> overlay below it — or simply does not appear
+            there.
+            <br><br><strong>And it takes text, not symbols.</strong> The label is
+            <span class="inline">Text</span>/<span class="inline">String</span>, documented as "typically only a
+            single character", so the glyph strip drawn in an earlier revision is not buildable. It is letters:
+            <span class="inline">L C 2 P I N</span> — with <em>Codes</em> indexed as <strong>2</strong> because
+            Cards and Codes collide on C.</td></tr>
+          <tr><td><strong>It departs from the platform convention</strong></td>
+            <td>iOS tab bars are for <em>distinct sections</em>, not content filters; Apple's own guidance treats
+            filtering as a job for a picker or scope bar. This is a deliberate departure, not an oversight. It reads
+            well here because the vault genuinely <em>is</em> the app — there are no other sections once the account
+            moves to the avatar — but it is the one place this design knowingly leaves the HIG.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <!-- ============ LIST ============ -->
+    <section>
+      <div class="sechead">
+        <h2>The list and its dock</h2>
+        <p class="note">Structure borrowed from Bevel, because they solved the same problem well: accessory pill on
+        top, filter bar plus a detached action capsule below, collapsing to <em>circle &middot; pill &middot; circle</em>
+        on scroll. Every part of it is stock &mdash; <span class="inline">TabView</span>,
+        <span class="inline">Tab(role:)</span>, <span class="inline">tabViewBottomAccessory</span>,
+        <span class="inline">tabBarMinimizeBehavior(.onScrollDown)</span>.</p>
+      </div>
+      <div class="screens">
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>&#9646;&#9646;&#9646; <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span></span><span class="toppill"><span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 118 0v3"/></svg></span><span class="av">BP</span></span></div>
+              <p class="lgtitle">Vault</p>
+              <div class="shdr">Logins <em>128</em></div><div class="grp"><div class="r"><div class="ico fav"><svg viewBox="0 0 24 24" fill="#181717"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.8 2.7 1.3 3.4 1 .1-.7.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11 11 0 016 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg></div><div class="rt"><b>GitHub</b><span>bartek@paczesny.pl</span></div><span class="chev">&rsaquo;</span></div><div class="r"><div class="ico fav"><svg viewBox="0 0 24 24"><path fill="#4285F4" d="M23 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.2a5.3 5.3 0 01-2.3 3.5v2.9h3.7c2.2-2 3.4-5 3.4-8.6z"/><path fill="#34A853" d="M12 24c3.1 0 5.7-1 7.6-2.8l-3.7-2.9c-1 .7-2.3 1.1-3.9 1.1-3 0-5.5-2-6.4-4.7H1.8v3C3.7 21.4 7.6 24 12 24z"/><path fill="#FBBC05" d="M5.6 14.7a7.2 7.2 0 010-4.6v-3H1.8a12 12 0 000 10.6l3.8-3z"/><path fill="#EA4335" d="M12 4.8c1.7 0 3.2.6 4.4 1.7l3.3-3.3C17.7 1.2 15.1 0 12 0 7.6 0 3.7 2.6 1.8 6.1l3.8 3C6.5 6.4 9 4.8 12 4.8z"/></svg></div><div class="rt"><b>Google</b><span>accounts.google.com</span></div><span class="pill key">Passkey</span><span class="chev">&rsaquo;</span></div></div><div class="shdr">Cards <em>3</em></div><div class="grp"><div class="r"><div class="ico brand">VISA</div><div class="rt"><b>Revolut</b><span>&bull;&bull;&bull;&bull; 4417</span></div><span class="chev">&rsaquo;</span></div></div><div class="shdr">Codes <em>7</em></div><div class="grp"><div class="trow"><div class="tl"><div class="lbl">GitHub: bartek@paczesny.pl</div><div class="code">418 926</div></div><div class="pie"><svg viewBox="0 0 24 24"><circle class="tk" cx="12" cy="12" r="9.5"/><circle class="pg" cx="12" cy="12" r="9.5"/></svg></div></div></div><div class="shdr">Identities <em>1</em></div><div class="grp"><div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="2.5"/><path d="M4.5 18c1-2.4 2.7-3.5 4.5-3.5s3.5 1.1 4.5 3.5M15 9h4M15 13h4"/></svg></div><div class="rt"><b>Bartek Paczesny</b><span>bartek@paczesny.pl</span></div><span class="chev">&rsaquo;</span></div></div><div class="shdr">Notes <em>4</em></div><div class="grp"><div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div><div class="rt"><b>Recovery codes</b><span>Two-factor backups</span></div><span class="chev">&rsaquo;</span></div></div>
+            </div>
+            <div class="scrub"><i>L</i><i>C</i><i>2</i><i>P</i><i class="on">I</i><i>N</i></div>
+            <div class="dock">
+              <div class="acc glass"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg><span>Search your vault</span></div>
+              <div class="drow">
+                <div class="tabs glass"><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/></svg><span>Cards</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
+                <div class="cap glass acct">＋</div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag ">light</span><b>Vault &mdash; grouped by type</b>
+            <span><strong>All is section-headed</strong>, with a section index down the right edge, so notes and identities are reachable without a tab of their own. Counts in each header also answer &ldquo;what is actually in here&rdquo; at a glance. Search is the accessory pill; ＋ takes the detached capsule; the top-right pill pairs <strong>Lock now</strong> with the avatar.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>&#9646;&#9646;&#9646; <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span></span><span class="toppill"><span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 118 0v3"/></svg></span><span class="av">BP</span></span></div>
+              <p class="lgtitle">Vault</p>
+              <div class="grp" style="opacity:.4"><div class="r"><div class="ico fav"><svg viewBox="0 0 24 24" fill="#181717"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.8 2.7 1.3 3.4 1 .1-.7.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11 11 0 016 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg></div><div class="rt"><b>GitHub</b><span>bartek@paczesny.pl</span></div><span class="chev">&rsaquo;</span></div><div class="r"><div class="ico fav"><svg viewBox="0 0 24 24"><path fill="#4285F4" d="M23 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.2a5.3 5.3 0 01-2.3 3.5v2.9h3.7c2.2-2 3.4-5 3.4-8.6z"/><path fill="#34A853" d="M12 24c3.1 0 5.7-1 7.6-2.8l-3.7-2.9c-1 .7-2.3 1.1-3.9 1.1-3 0-5.5-2-6.4-4.7H1.8v3C3.7 21.4 7.6 24 12 24z"/><path fill="#FBBC05" d="M5.6 14.7a7.2 7.2 0 010-4.6v-3H1.8a12 12 0 000 10.6l3.8-3z"/><path fill="#EA4335" d="M12 4.8c1.7 0 3.2.6 4.4 1.7l3.3-3.3C17.7 1.2 15.1 0 12 0 7.6 0 3.7 2.6 1.8 6.1l3.8 3C6.5 6.4 9 4.8 12 4.8z"/></svg></div><div class="rt"><b>Google</b><span>accounts.google.com</span></div><span class="pill key">Passkey</span><span class="chev">&rsaquo;</span></div></div>
+            </div>
+            <div class="dock">
+              <div class="grid"><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg></span>New login</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/></svg></span>New card</div><div class="ga"><span class="b key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg></span>New passkey</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3M20 20v.01M17 20v.01M20 17v.01"/></svg></span>Scan QR code</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="2.5"/><path d="M4.5 18c1-2.4 2.7-3.5 4.5-3.5s3.5 1.1 4.5 3.5M15 9h4M15 13h4"/></svg></span>New identity</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span>New note</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v18M5 8l14 8M19 8L5 16"/></svg></span>Generate password</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7V5a1 1 0 011-1h3M20 7V5a1 1 0 00-1-1h-3M4 17v2a1 1 0 001 1h3M20 17v2a1 1 0 01-1 1h-3"/><rect x="8" y="8" width="8" height="8" rx="1.5"/></svg></span>Scan card</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M8 11l4 4 4-4M4 19h16"/></svg></span>Import</div></div>
+              <div class="drow">
+                <div class="tabs glass"><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/></svg><span>Cards</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
+                <div class="cap glass acct" style="font-size:calc(19px*var(--s))">✕</div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag k">dark &middot; ＋ open</span><b>The add grid</b>
+            <span>Bevel's move: ＋ expands in place into a grid and becomes ✕, rather than pushing a type-picker screen. Every type has a creation route here, including the two without a tab. Scan QR and Scan card both need <span class="inline">NSCameraUsageDescription</span>, still undeclared.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>&#9646;&#9646;&#9646; <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span></span><span class="toppill"><span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 118 0v3"/></svg></span><span class="av">BP</span></span></div>
+              <p class="lgtitle">Vault</p>
+              <div class="slot mut"><span class="dot"></span><span><strong>Offline.</strong> Showing your last synced copy from 14:02. New changes upload when you reconnect.</span></div><div class="grp"><div class="r"><div class="ico fav"><svg viewBox="0 0 24 24" fill="#181717"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.8 2.7 1.3 3.4 1 .1-.7.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11 11 0 016 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg></div><div class="rt"><b>GitHub</b><span>bartek@paczesny.pl</span></div><span class="pill warn">Not synced</span><span class="chev">&rsaquo;</span></div><div class="r"><div class="ico brand">VISA</div><div class="rt"><b>Revolut</b><span>&bull;&bull;&bull;&bull; 4417</span></div><span class="chev">&rsaquo;</span></div><div class="r" style="opacity:.65"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l9 16H3z"/><path d="M12 9v4M12 16v.5"/></svg></div><div class="rt"><b>Old backup key</b><span>Can&rsquo;t be opened</span></div><span class="pill err">Damaged</span><span class="chev">&rsaquo;</span></div></div>
+            </div>
+            <div class="dock">
+              <div class="drow">
+                <div class="circ glass"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg></div>
+                <div class="acc glass" style="flex:1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg><span>Search your vault</span></div>
+                <div class="cap glass acct">＋</div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag w">dark &middot; scrolled</span><b>Minimized on scroll</b>
+            <span>The collapsed state: the bar becomes a single circle carrying the active filter, search keeps its pill, ＋ keeps its capsule. Three sync conditions, three colours &mdash; and <span class="inline">undecryptable</span> stays visible and tappable, because the codebase reads it as a <em>tampering</em> signal.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>&#9646;&#9646;&#9646; <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span></span><span class="toppill"><span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 118 0v3"/></svg></span><span class="av">BP</span></span></div>
+              <p class="lgtitle">Vault</p>
+              <div class="empty"><div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 118 0v3"/></svg></div><b>Your vault is empty</b><p>Tap ＋ to add your first item, or turn on AutoFill and save one as you sign in somewhere.</p><div class="btn tint" style="margin-top:calc(10px*var(--s));padding:0 calc(18px*var(--s))">Set up AutoFill</div></div>
+            </div>
+            <div class="dock">
+              <div class="acc glass"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg><span>Search your vault</span></div>
+              <div class="drow">
+                <div class="tabs glass"><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/></svg><span>Cards</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
+                <div class="cap glass acct">＋</div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag ">light</span><b>Empty</b>
+            <span>Points at the ＋ rather than repeating it as a button &mdash; the capsule is always on screen, so a second affordance would only compete with it.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>&#9646;&#9646;&#9646; <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span></span><span class="toppill"><span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 118 0v3"/></svg></span><span class="av">BP</span></span></div>
+              <p class="lgtitle">Codes</p>
+              <div class="grp"><div class="trow"><div class="tl"><div class="lbl">GitHub: bartek@paczesny.pl</div><div class="code">418 926</div></div><div class="pie"><svg viewBox="0 0 24 24"><circle class="tk" cx="12" cy="12" r="9.5"/><circle class="pg" cx="12" cy="12" r="9.5"/></svg></div></div><div class="trow"><div class="tl"><div class="lbl">Amazon Web Services: root</div><div class="code">902 145</div></div><div class="pie"><svg viewBox="0 0 24 24"><circle class="tk" cx="12" cy="12" r="9.5"/><circle class="pg" cx="12" cy="12" r="9.5"/></svg></div></div><div class="trow"><div class="tl"><div class="lbl">Proton: bartek@paczesny.pl</div><div class="code">771 038</div></div><div class="pie low"><svg viewBox="0 0 24 24"><circle class="tk" cx="12" cy="12" r="9.5"/><circle class="pg" cx="12" cy="12" r="9.5"/></svg></div></div><div class="trow"><div class="tl"><div class="lbl">Vistula University: bpaczes1</div><div class="code">023 304</div></div><div class="pie"><svg viewBox="0 0 24 24"><circle class="tk" cx="12" cy="12" r="9.5"/><circle class="pg" cx="12" cy="12" r="9.5"/></svg></div></div></div>
+            </div>
+            <div class="dock">
+              <div class="acc glass"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg><span>Search your vault</span></div>
+              <div class="drow">
+                <div class="tabs glass"><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/></svg><span>Cards</span></div><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
+                <div class="cap glass acct">＋</div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag ">dark &middot; filtered</span><b>A type filter applied</b>
+            <span>Selecting a filter changes the large title as well as the list, so the state is legible without looking down at the bar. Codes get their <strong>own row shape</strong>, borrowed from Google Authenticator: the code is the row, at display size, with the issuer and account above it and a draining ring on the right. No icon tile and no chevron &mdash; there is nothing to disclose, you came to read six digits. The ring turns <span class="inline">PVWarning</span> in its last seconds, so &ldquo;will this expire before I finish typing&rdquo; is answerable at a glance.</span></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============ DETAIL ============ -->
+    <section>
+      <div class="sechead">
+        <h2>Detail — all six types</h2>
+        <p class="note">Secrets are masked by default and revealed per-field, never wholesale. Copy is the primary
+        action because it is what people actually came to do.</p>
+      </div>
+      <div class="screens">
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ Vault</span><span>Edit</span></div>
+              <div class="hdr"><div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg></div>
+                <b>GitHub</b><span>Login</span></div>
+              <div class="grp">
+                <div class="d act"><div><div class="k">Username</div><div class="v">bartek@paczesny.pl</div></div><div class="v">Copy</div></div>
+                <div class="d act"><div><div class="k">Password</div><div class="v mono">••••••••••••</div></div><div class="v">Copy</div></div>
+                <div class="d act"><div><div class="k">Website</div><div class="v">github.com</div></div><div class="v">Open</div></div>
+              </div>
+              <div class="glab">Notes</div>
+              <div class="grp"><div class="d"><div class="v">Recovery codes are in the “Recovery codes” note.</div></div></div>
+              <div class="glab">Details</div>
+              <div class="grp"><div class="d"><div class="k">Last used</div><div class="v">Today, 08:12</div></div>
+                <div class="d"><div class="k">Modified</div><div class="v">3 Aug 2026</div></div></div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag">light</span><b>Detail — login</b>
+            <span>Multiple URLs are supported by the model (<span class="inline">urls[]</span>); one row per URL,
+            each with its own Open.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ Vault</span><span>Edit</span></div>
+              <div class="hdr"><div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/></svg></div>
+                <b>Revolut</b><span>Card</span></div>
+              <div class="grp">
+                <div class="d act"><div><div class="k">Card number</div><div class="v mono">•••• •••• •••• 4417</div></div><div class="v">Copy</div></div>
+                <div class="d"><div class="k">Cardholder</div><div class="v">BARTLOMIEJ PACZESNY</div></div>
+                <div class="d act"><div><div class="k">Expires</div><div class="v mono">09/29</div></div><div class="v">Copy</div></div>
+                <div class="d act"><div><div class="k">CVV</div><div class="v mono">•••</div></div><div class="v">Copy</div></div>
+                <div class="d act"><div><div class="k">PIN</div><div class="v mono">••••</div></div><div class="v">Copy</div></div>
+                <div class="d"><div class="k">Postcode</div><div class="v">00-716</div></div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag">dark</span><b>Detail — card</b>
+            <span><span class="inline">pin</span> and <span class="inline">zip</span> are optional in the model and
+            their rows are omitted entirely when empty — matching the web's existing behaviour rather than showing
+            blank fields.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ Vault</span><span>Edit</span></div>
+              <div class="hdr"><div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="2.5"/><path d="M4.5 18c1-2.4 2.7-3.5 4.5-3.5s3.5 1.1 4.5 3.5M15 9h4M15 13h4"/></svg></div>
+                <b>Bartek Paczesny</b><span>Identity</span></div>
+              <div class="grp">
+                <div class="d"><div class="k">Name</div><div class="v">Bartek Paczesny</div></div>
+                <div class="d act"><div><div class="k">Email</div><div class="v">bartek@paczesny.pl</div></div><div class="v">Copy</div></div>
+                <div class="d act"><div><div class="k">Phone</div><div class="v">+48 601 000 000</div></div><div class="v">Copy</div></div>
+              </div>
+              <div class="glab">Address</div>
+              <div class="grp">
+                <div class="d"><div class="v">ul. Prosta 51<br>00-838 Warszawa<br>Poland</div></div>
+              </div>
+              <p class="note" style="display:none"></p>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag">light</span><b>Detail — identity</b>
+            <span>Rendered from the <em>structured</em> fields, but the flat <span class="inline">address</span>
+            string remains the source of truth the extension's autofill reads. Both must stay in sync on every save
+            — see <span class="inline">lib/vault/identityAddress.ts</span>.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ Vault</span><span>Edit</span></div>
+              <div class="hdr"><div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></div>
+                <b>GitHub 2FA</b><span>Authenticator</span></div>
+              <div class="grp" style="padding-top:calc(6px*var(--s))">
+                <div style="display:flex;align-items:center;justify-content:center;gap:calc(14px*var(--s));padding:calc(6px*var(--s)) 0 calc(12px*var(--s))">
+                  <div class="totp" style="padding:0">418 926</div>
+                  <div class="pie" style="width:calc(30px*var(--s));height:calc(30px*var(--s))"><svg viewBox="0 0 24 24"><circle class="tk" cx="12" cy="12" r="9.5"/><circle class="pg" cx="12" cy="12" r="9.5"/></svg></div>
+                </div>
+                <div class="d act"><div><div class="k">Issuer</div><div class="v">GitHub</div></div><div class="v">Copy code</div></div>
+                <div class="d"><div class="k">Algorithm</div><div class="v mono">SHA1 · 6 digits · 30s</div></div>
+              </div>
+              <div class="glab">Secret</div>
+              <div class="grp"><div class="d act"><div><div class="k">Base32</div><div class="v mono">••••••••••••••••</div></div><div class="v">Reveal</div></div></div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag">dark</span><b>Detail — TOTP</b>
+            <span>The code is the screen. Period ring drains rather than a countdown number, so the state is
+            readable without reading. <span class="inline">algorithm</span>, <span class="inline">digits</span> and
+            <span class="inline">period</span> are all real model fields and are stated, because a mismatched
+            configuration is the usual cause of “the code doesn't work”.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ Vault</span><span>Edit</span></div>
+              <div class="hdr"><div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div>
+                <b>Recovery codes</b><span>Secure note</span></div>
+              <div class="grp"><div class="d"><div class="v mono" style="line-height:1.7">a1b2-c3d4<br>e5f6-g7h8<br>i9j0-k1l2<br>m3n4-o5p6</div></div></div>
+              <div class="glab">Details</div>
+              <div class="grp"><div class="d"><div class="k">Modified</div><div class="v">12 Jul 2026</div></div></div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag">light</span><b>Detail — note</b>
+            <span>The simplest type: a single <span class="inline">body</span> field. Monospaced because notes in a
+            password manager are overwhelmingly codes and keys, where character shape matters.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ Vault</span><span></span></div>
+              <div class="hdr"><div class="big key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg></div>
+                <b>Google</b><span style="color:var(--pv-key)">Passkey</span></div>
+              <div class="slot key"><span class="dot"></span><span>Signs you in without a password. The private key never leaves your devices.</span></div>
+              <div class="grp">
+                <div class="d"><div class="k">Website</div><div class="v">accounts.google.com</div></div>
+                <div class="d"><div class="k">Account</div><div class="v">bartek@paczesny.pl</div></div>
+                <div class="d"><div class="k">Created</div><div class="v">2 Feb 2026</div></div>
+              </div>
+              <div class="glab">Advanced</div>
+              <div class="grp"><div class="d"><div class="k">Credential ID</div><div class="v mono" style="font-size:calc(11.5px*var(--s))">AX9k2_pQ…7fZ</div></div></div>
+              <div style="padding-top:calc(12px*var(--s))"><div class="btn tint" style="color:var(--pv-err)">Delete passkey</div></div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag k">dark</span><b>Detail — passkey</b>
+            <span>No Edit in the nav bar: the fields are cryptographic material, not user content. Teal throughout.
+            <span class="inline">rawPasskeyJson</span> is deliberately not shown — it has no reader on a phone.</span></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============ EDIT + GENERATOR ============ -->
+    <section>
+      <div class="sechead">
+        <h2>Create &amp; edit</h2>
+        <p class="note">One <span class="inline">Form</span>, rows switched by type. The type picker is only
+        editable on create — changing an existing item's type would orphan its fields.</p>
+      </div>
+      <div class="screens">
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>Cancel</span><span class="ttl">New login</span><span>Save</span></div>
+              <div class="fgrp" style="margin-top:calc(6px*var(--s))">
+                <div class="field"><span class="lab">Name</span><span>GitHub</span></div>
+                <div class="field"><span class="lab">Username</span><span>bartek@paczesny.pl</span></div>
+                <div class="field"><span class="lab">Password</span><span class="ph">Required</span></div>
+              </div>
+              <div style="padding:calc(8px*var(--s)) 0"><div class="btn tint">Generate a strong password</div></div>
+              <div class="glab">Websites</div>
+              <div class="fgrp">
+                <div class="field"><span class="lab">URL</span><span>github.com</span></div>
+                <div class="field"><span style="color:var(--pv-acc)">＋ Add another</span></div>
+              </div>
+              <div class="glab">Notes</div>
+              <div class="fgrp"><div class="field"><span class="ph">Optional</span></div></div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag">light</span><b>Edit — login</b>
+            <span>Generator sits next to the password field, not buried in a toolbar — it is only ever wanted at
+            that exact moment. <span class="inline">urls[]</span> grows in place.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>Cancel</span><span class="ttl">New card</span><span>Save</span></div>
+              <div class="fgrp" style="margin-top:calc(6px*var(--s))">
+                <div class="field"><span class="lab">Name</span><span>Revolut</span></div>
+                <div class="field"><span class="lab">Cardholder</span><span class="ph">Full name</span></div>
+                <div class="field"><span class="lab">Number</span><span class="ph">•••• •••• •••• ••••</span></div>
+                <div class="field"><span class="lab">Expires</span><span class="ph">MM/YY</span></div>
+                <div class="field"><span class="lab">CVV</span><span class="ph">•••</span></div>
+              </div>
+              <div class="glab">Other</div>
+              <div class="fgrp">
+                <div class="field"><span class="lab">PIN</span><span class="ph">Optional</span></div>
+                <div class="field"><span class="lab">Postcode</span><span class="ph">Optional</span></div>
+                <div class="field"><span class="ph">Notes</span></div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag">dark</span><b>Edit — card</b>
+            <span>Optional fields go in a second “Other” group so the required set reads as short. Numeric keypad
+            for number/CVV/PIN; <span class="inline">.creditCardNumber</span> content type.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>Cancel</span><span class="ttl">New identity</span><span>Save</span></div>
+              <div class="fgrp" style="margin-top:calc(6px*var(--s))">
+                <div class="field"><span class="lab">First name</span><span class="ph">Bartek</span></div>
+                <div class="field"><span class="lab">Last name</span><span class="ph">Paczesny</span></div>
+                <div class="field"><span class="lab">Email</span><span class="ph">Optional</span></div>
+                <div class="field"><span class="lab">Phone</span><span class="ph">Optional</span></div>
+              </div>
+              <div class="glab">Address</div>
+              <div class="fgrp">
+                <div class="field"><span class="lab">Line 1</span><span class="ph">Street</span></div>
+                <div class="field"><span class="lab">Line 2</span><span class="ph">Optional</span></div>
+                <div class="field"><span class="lab">City</span><span class="ph"></span></div>
+                <div class="field"><span class="lab">Postcode</span><span class="ph"></span></div>
+                <div class="field"><span class="lab">Country</span><span class="ph">Poland</span></div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag w">light</span><b>Edit — identity</b>
+            <span><strong>Trap:</strong> saving must recompose the flat <span class="inline">address</span> string
+            from these rows. It stays authoritative for the browser extension's autofill, so an iOS save that
+            updates only the structured fields silently breaks filling on desktop.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>Cancel</span><span class="ttl">New code</span><span>Save</span></div>
+              <div style="padding:calc(14px*var(--s)) 0;display:flex;flex-direction:column;gap:calc(9px*var(--s))">
+                <div class="btn">Scan QR code</div>
+                <div class="btn tint">Enter secret manually</div>
+              </div>
+              <div class="glab">Or type it</div>
+              <div class="fgrp">
+                <div class="field"><span class="lab">Issuer</span><span class="ph">GitHub</span></div>
+                <div class="field"><span class="lab">Secret</span><span class="ph">Base32</span></div>
+              </div>
+              <div class="glab">Advanced</div>
+              <div class="fgrp">
+                <div class="field"><span class="lab">Algorithm</span><span>SHA1</span></div>
+                <div class="field"><span class="lab">Digits</span><span>6</span></div>
+                <div class="field"><span class="lab">Period</span><span>30s</span></div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag w">dark</span><b>Edit — TOTP</b>
+            <span>QR scan is the primary path and needs a <strong>camera permission</strong> —
+            <span class="inline">NSCameraUsageDescription</span> is <em>not</em> currently declared. Manual entry
+            exists so a refused camera never blocks setup. Advanced defaults match the model's own defaults.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>Cancel</span><span class="ttl">New note</span><span>Save</span></div>
+              <div class="fgrp" style="margin-top:calc(6px*var(--s))"><div class="field"><span class="lab">Name</span><span class="ph">Recovery codes</span></div></div>
+              <div class="glab">Note</div>
+              <div class="grp" style="min-height:calc(200px*var(--s));padding:calc(12px*var(--s))">
+                <div class="v mono" style="color:var(--pv-mut);opacity:.7;font-size:calc(14px*var(--s))">Type anything…</div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag">light</span><b>Edit — note</b>
+            <span>One growing text editor. The only type whose edit screen is not a row list, because its single
+            field <em>is</em> the content.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span></span><span class="ttl">Vault</span><span></span></div>
+              <div class="spacer"></div>
+            </div>
+            <div class="scrim"></div>
+            <div class="sheet">
+              <div class="grip"></div>
+              <p style="margin:calc(4px*var(--s)) 0 0;font-size:calc(17px*var(--s));font-weight:640;text-align:center">Generate password</p>
+              <div class="grp" style="padding:calc(6px*var(--s)) calc(10px*var(--s))">
+                <div class="pw"><span>k7</span><span class="s">#</span><span>Wv</span><span class="n">42</span><span>qLm</span><span class="s">$</span><span>Tz</span><span class="n">9</span><span>bR</span></div>
+              </div>
+              <div class="seg"><i class="on">Random</i><i>Memorable</i><i>PIN</i></div>
+              <div style="display:flex;justify-content:space-between;font-size:calc(13px*var(--s));color:var(--pv-mut);padding-top:calc(4px*var(--s))">
+                <span>Length</span><span style="font-family:ui-monospace,monospace;color:var(--pv-txt)">20</span></div>
+              <div class="sl"><i></i><b></b></div>
+              <div class="grp">
+                <div class="d act"><div class="v" style="color:var(--pv-txt)">Numbers</div><div class="v">On</div></div>
+                <div class="d act"><div class="v" style="color:var(--pv-txt)">Symbols</div><div class="v">On</div></div>
+              </div>
+              <div class="slot key" style="margin:calc(4px*var(--s)) 0 0"><span class="dot"></span><span><strong>Strong.</strong> Would take centuries to guess.</span></div>
+              <div class="btn">Use this password</div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag w">dark</span><b>Password generator</b>
+            <span><strong>Not a wiring task.</strong> There is no generator in <span class="inline">pv-core</span>
+            or <span class="inline">pv-wasm</span> — the canonical one is TypeScript (EFF 7776-word list, rejection
+            sampling). <span class="inline">DR-38-A</span> owns whether this becomes a first-time Rust port or
+            Swift-side sampling over <span class="inline">random_bytes</span>. Colour-coded characters aid
+            transcription; strength uses <span class="inline">PVSuccess</span>.</span></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============ SHARING + SETTINGS ============ -->
+    <section>
+      <div class="sechead">
+        <h2>Family, sharing and settings</h2>
+        <p class="note">Sharing is designed now specifically because it changes <em>row anatomy</em> — retrofitting a
+        badge into a settled row is the expensive order of operations. Roles map to the model's existing
+        <span class="inline">accessLevel</span>, <span class="inline">isShared</span>,
+        <span class="inline">sharedToMe</span> and <span class="inline">lastEditorEmail</span> fields.</p>
+      </div>
+      <div class="screens">
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ Vault</span><span>Edit</span></div>
+              <div class="hdr"><div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg></div>
+                <b>GitLab (work)</b><span>Login</span></div>
+              <div class="slot mut"><span class="dot"></span><span><strong>Shared with you</strong> by anna@agencytech.pl. You can view and use it, but not edit.</span></div>
+              <div class="grp">
+                <div class="d act"><div><div class="k">Username</div><div class="v">b.paczesny@agencytech.pl</div></div><div class="v">Copy</div></div>
+                <div class="d act"><div><div class="k">Password</div><div class="v mono">••••••••••••</div></div><div class="v">Copy</div></div>
+              </div>
+              <div class="glab">Sharing</div>
+              <div class="grp">
+                <div class="d"><div class="k">Access</div><div class="v">View only</div></div>
+                <div class="d"><div class="k">Last edited by</div><div class="v">anna@agencytech.pl</div></div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag w">light · phase 40</span><b>Shared with me</b>
+            <span>Uses the real model fields — <span class="inline">sharedToMe</span>,
+            <span class="inline">accessLevel</span>, <span class="inline">lastEditorEmail</span>. Neutral grey, not
+            a colour: shared is a <em>fact</em>, not a warning. Edit is absent rather than disabled-on-tap.</span></div>
+        </div>
+
+
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ Vault</span><span class="plus">＋</span></div>
+              <p class="lgtitle">Family</p>
+              <div class="glab">Members</div>
+              <div class="grp">
+                <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4"/><path d="M5 19c.7-3.5 3.6-5.5 7-5.5s6.3 2 7 5.5"/></svg></div>
+                  <div class="rt"><b>You</b><span>bartek@paczesny.pl</span></div><span class="pill shr">Owner</span></div>
+                <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4"/><path d="M5 19c.7-3.5 3.6-5.5 7-5.5s6.3 2 7 5.5"/></svg></div>
+                  <div class="rt"><b>Anna</b><span>anna@agencytech.pl</span></div><span class="pill shr">Can edit</span><span class="chev">›</span></div>
+                <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4"/><path d="M5 19c.7-3.5 3.6-5.5 7-5.5s6.3 2 7 5.5"/></svg></div>
+                  <div class="rt"><b>Marek</b><span>marek@example.com</span></div><span class="pill shr">View only</span><span class="chev">›</span></div>
+              </div>
+              <div class="glab">Invited</div>
+              <div class="grp">
+                <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2.5"/></svg></div>
+                  <div class="rt"><b>kasia@example.com</b><span>Invited 2 days ago</span></div><span class="pill warn">Pending</span><span class="chev">›</span></div>
+              </div>
+              <p class="foot" style="font-size:calc(12.5px*var(--s));color:var(--pv-mut);padding:calc(8px*var(--s)) calc(6px*var(--s));margin:0;line-height:1.4">
+                Members can only open items you share with them. Nothing else in your vault is visible.</p>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag w">dark · phase 40</span><b>Family — members</b>
+            <span>Roles map to the model's <span class="inline">accessLevel</span>. The footer states the boundary
+            explicitly, because “family” otherwise implies the whole vault is visible — it is not.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>Cancel</span><span class="ttl">Invite</span><span>Send</span></div>
+              <div class="fgrp" style="margin-top:calc(6px*var(--s))">
+                <div class="field"><span class="lab">Email</span><span class="ph">kasia@example.com</span></div>
+              </div>
+              <div class="glab">They can</div>
+              <div class="grp">
+                <div class="d act"><div class="v" style="color:var(--pv-txt)">View shared items</div><div class="v">✓</div></div>
+                <div class="d act"><div class="v" style="color:var(--pv-txt)">Edit shared items</div><div class="v" style="color:var(--pv-mut)">Off</div></div>
+              </div>
+              <div class="slot key" style="margin-top:calc(14px*var(--s))"><span class="dot"></span>
+                <span>They'll need to accept from their own device. Your keys are re-wrapped for them — the server
+                never sees anything readable.</span></div>
+              <div class="spacer"></div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag w">light · phase 40</span><b>Family — invite</b>
+            <span>Says what actually happens cryptographically, in one sentence, without jargon. The zero-knowledge
+            property is the product's whole claim and this is one of the few moments a user can see it.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ GitHub</span><span></span></div>
+              <div class="spacer"></div>
+            </div>
+            <div class="scrim"></div>
+            <div class="sheet">
+              <div class="grip"></div>
+              <p style="margin:calc(4px*var(--s)) 0 0;font-size:calc(17px*var(--s));font-weight:640;text-align:center">Share “GitHub”</p>
+              <div class="grp">
+                <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4"/><path d="M5 19c.7-3.5 3.6-5.5 7-5.5s6.3 2 7 5.5"/></svg></div>
+                  <div class="rt"><b>Anna</b><span>Can edit</span></div><span style="color:var(--pv-acc);font-size:calc(19px*var(--s))">✓</span></div>
+                <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4"/><path d="M5 19c.7-3.5 3.6-5.5 7-5.5s6.3 2 7 5.5"/></svg></div>
+                  <div class="rt"><b>Marek</b><span>View only</span></div><span class="chev" style="opacity:.3;font-size:calc(19px*var(--s))">○</span></div>
+              </div>
+              <div class="slot mut" style="margin:0"><span class="dot"></span>
+                <span>Sharing re-wraps this item's key for each person you pick. Removing someone re-wraps it again
+                without them.</span></div>
+              <div class="btn">Share with 1 person</div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag w">dark · phase 40</span><b>Share an item</b>
+            <span>Per-item, per-person — matching the multi-recipient key-wrapping the crypto core already does.
+            The copy names the revocation behaviour, since “can I take it back” is the first question sharing raises.</span></div>
+        </div>
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ Vault</span><span></span></div>
+              <p class="lgtitle">Settings</p>
+              <div class="glab">Vault</div>
+              <div class="grp">
+                <div class="r"><div class="rt"><b>Server</b><span>vault.blonie.cloud</span></div><span class="chev">›</span></div>
+                <div class="r"><div class="rt"><b>Account</b><span>bartek@paczesny.pl</span></div><span class="chev">›</span></div>
+                <div class="r"><div class="rt"><b>Family</b><span>3 members</span></div><span class="chev">›</span></div>
+              </div>
+              <div class="glab">Security</div>
+              <div class="grp">
+                <div class="r"><div class="rt"><b>Face ID</b></div><span class="pill key">On</span></div>
+                <div class="r"><div class="rt"><b>Lock after</b><span>5 minutes</span></div><span class="chev">›</span></div>
+                <div class="r"><div class="rt"><b>AutoFill</b><span>Off — turn on in Settings</span></div><span class="pill warn">Off</span></div>
+              </div>
+              <div class="glab">Danger</div>
+              <div class="grp"><div class="r"><div class="rt"><b style="color:var(--pv-err)">Sign out</b></div></div></div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag">dark</span><b>Settings</b>
+            <span>AutoFill status is surfaced here permanently, since the onboarding step is skippable and this
+            becomes the only place it can be recovered.</span></div>
+        </div>
+
+      </div>
+    </section>
+
+    <section>
+      <div class="sechead"><h2>What this set surfaces for planning</h2></div>
+      <div class="tbl"><table>
+        <tbody>
+          <tr><td style="width:30%"><strong>Camera permission is missing</strong></td>
+            <td>TOTP QR scanning needs <span class="inline">NSCameraUsageDescription</span>, which is not declared
+            in the project today. It is the second and only other real permission this app needs.</td></tr>
+          <tr><td><strong>Generator is a port, not wiring</strong></td>
+            <td>No generator exists in <span class="inline">pv-core</span> or <span class="inline">pv-wasm</span>.
+            <span class="inline">DR-38-A</span> owns the call; either way it is real work, and doing it in Swift
+            leaves two implementations to keep in sync.</td></tr>
+          <tr><td><strong>Identity address round-trip</strong></td>
+            <td>The flat <span class="inline">address</span> string stays authoritative for the extension's
+            autofill. An iOS save that writes only the structured fields silently breaks desktop filling.</td></tr>
+          <tr><td><strong>Undecryptable is a tampering signal</strong></td>
+            <td><span class="inline">VaultItem.undecryptable</span> already exists and the codebase reads it as
+            tampering. It must be shown, not filtered out of the list.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+  </div>
+</div>
