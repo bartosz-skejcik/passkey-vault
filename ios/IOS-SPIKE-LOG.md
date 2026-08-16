@@ -1771,6 +1771,115 @@ frameworks (`AuthenticationServices` and `Security`), is the weaker, true one: f
 header-documented capability, check both the header's prose and the type's actual behavior/conformances
 before concluding either way — neither representation is ground truth on its own by default.
 
+### L-15 — the item type union has SIX members; the roadmap and requirements name five
+
+**Numbering note (same reason as L-12's):** Plan 38-01 Task 3 named these four landmines "L-9" through
+"L-12". Those four IDs were already claimed by unrelated defects from Phases 35–37 before this plan
+executed. They are recorded here as **L-15 … L-18**, the next free block after L-14, rather than as
+duplicate IDs — two landmines sharing one number breaks every future cross-reference by that number.
+Only the labels changed; the content is the plan's own.
+
+**What goes wrong.** A plan derived from `.planning/ROADMAP.md`'s SC2 ("five item types") builds a
+Swift item model with five cases, ships it, and the first user who created a passkey in the browser
+extension opens the iOS list to a decode failure — or, worse, to a silently dropped row.
+
+**Why it happens.** The roadmap's SC2 and `REQUIREMENTS.md`'s UI-03 both say five. The field model's
+actual source of truth says six. Observed this session, first line of the union:
+
+```
+$ sed -n '4p' packages/pv-ui/vault/types.ts
+export type ItemType = "login" | "card" | "identity" | "note" | "totp" | "passkey";
+```
+
+`packages/pv-ui/vault/types.ts:4` — six members, `passkey` being the sixth. Its field interface is at
+`packages/pv-ui/vault/types.ts:110` (`type: "passkey"`), written by Phase 12 for provider-created
+credentials.
+
+**The reconciling reading, marked as what it is.** [INFERRED, not established] five is plausibly the
+*create/edit* surface (a user does not hand-author a passkey item; the provider writes it) and six is
+the *render* surface. That reading is an inference and is recorded as one — nobody has confirmed the
+roadmap author meant it.
+
+**The part that is NOT in dispute, and is what actually constrains the code:** the decode path must
+tolerate the sixth type. Whatever SC2 meant, an iOS client that cannot decode a `passkey` item shows a
+broken list to any user who has ever used the extension as a passkey provider.
+
+**How to avoid.** Derive the Swift union from `packages/pv-ui/vault/types.ts`, never from the roadmap
+prose. **Warning sign:** any plan, test, or record that says "five item types" without citing a file.
+
+### L-16 — UI-06's premise is false as written: there is no generator in `pv-core` to "wire up"
+
+**What goes wrong.** UI-06 reads as an integration task ("generator via `pv-core` CSPRNG"), gets
+estimated as one, and the phase discovers mid-execution that the thing being integrated does not
+exist. The tempting recovery is to write the sampling loop in Swift, which satisfies the requirement's
+literal wording while putting modulo-bias risk where no Rust-vs-TypeScript parity test can see it
+(DR-38-A rejects exactly that, §1a).
+
+**Why it happens.** The requirement names a component by capability, not by symbol, and no one ran the
+grep.
+
+**The command, its observed output, and the date.** Observed **2026-08-16**:
+
+```
+$ grep -rliE "passphrase|wordlist|generate_password" crates/pv-core/src/ crates/pv-wasm/src/ | wc -l
+0
+```
+
+Zero files. The generator lives only in TypeScript (`packages/pv-ui`, the extension's
+`generate-handler.ts`).
+
+**This is a DATED BASELINE, not an invariant.** It is expected to stop returning zero once Plan 38-04
+lands `crates/pv-core/src/generator.rs`. A later non-zero result is **the recorded transition, not a
+regression** — do not "fix" it back to zero. A zero-hit claim is worth recording precisely *because* a
+single line of new Rust can break it; a claim that no change could break is not evidence of anything.
+
+**Warning sign:** a plan that describes UI-06 with a verb like "wire", "expose" or "surface".
+
+### L-17 — Phase 38's SC2 passes on a broken wire format
+
+**What goes wrong.** SC2 as written is satisfied by "the item is visible on the server". It is not.
+`pv-server` stores the item payload as **opaque TEXT** (`enc_data TEXT NOT NULL`,
+`crates/pv-server/migrations/0003_vault_items_rebuild.sql:20`; read back into a Rust `String`, e.g.
+`crates/pv-server/src/routes/collections.rs:311`). The server never parses it, so it accepts and
+returns **either** encoding. Swift's `JSONEncoder` emits `Data` as base64 by default; `serde_json`
+emits `Vec<u8>` as a JSON number array. An iOS-written row can therefore be server-visible, round-trip
+through iOS itself perfectly, and be **undecryptable in the web client** — surfacing to the user as an
+integrity warning, not as a format error anyone would trace back to here.
+
+**Why it happens.** "Server-visible" and "recipient-decrypted" are different claims, and the cheap one
+is the one a green test tends to make. This is the same defect shape as the milestone-v0.5 lesson
+("evidence that measures the wrong thing").
+
+**The amendment this phase adopts, in place of SC2's literal wording:** an item created on iOS is
+**opened and decrypted in the web client**, and an item created in the web client is opened and
+decrypted on iOS. Two directions, recipient-side assertion, or SC2 is not discharged.
+
+**Warning sign:** any wire-format evidence whose assertion runs on the same client that wrote the row.
+
+### L-18 — there is no folder rename or update route in `pv-server`
+
+**What goes wrong.** UI-04 ("folders and tags") is planned to include folder editing; the plan reaches
+implementation and finds no verb to call.
+
+**Why it happens.** The route table was never read. Observed route list for folders
+(`crates/pv-server/src/routes/mod.rs:71-72`):
+
+```
+.route("/api/vault/folders", get(folders::list).post(folders::create))
+.route("/api/vault/folders/{id}", delete(folders::delete))
+```
+
+`/api/vault/folders` — **GET (list) and POST (create) only**. `/api/vault/folders/{id}` — **DELETE
+only**. No `PUT`, no `PATCH`, no update or rename verb exists for either path, and
+`crates/pv-server/src/routes/folders.rs` defines no handler for one.
+
+**Consequence.** Folder **editing is out of scope for UI-04** on iOS: adding it requires a new server
+route, and this milestone's own premise is that the server does not change for iOS. iOS folder support
+is therefore create / delete / assign-item-to-folder. Renaming a folder is, today, delete-and-recreate
+on every client — not an iOS limitation.
+
+**Warning sign:** a plan that says "edit folder" without naming the HTTP verb it will call.
+
 ## 4. Open questions — honestly open
 
 1. ~~**IOS-06: UniFFI vs hand-written C ABI.**~~ **RESOLVED — see §1.** Decided: UniFFI, evaluated
