@@ -38,6 +38,79 @@ why the durable findings are duplicated here instead of only there.
 
 ---
 
+## 0. Next session — read this first
+
+**Written 2026-08-17. Delete this section once Phase 38 is finished.**
+
+### Where things stand
+
+Phases 35, 36, 37 are **verification-passed**. Phase 38 is **in progress**: plans 38-01, 38-02 and
+38-03 are committed and pushed to `origin/ios/spike`; **38-04 … 38-11 remain**.
+
+### The order Bartek asked for
+
+1. **Finish auth + onboarding first** — the 3-step onboarding (Welcome → Server → AutoFill), the
+   server URL made configurable, and the auth rework. An agent was dispatched for this on 2026-08-16
+   and produced **nothing** (see the warning below), so it is entirely unstarted in code.
+2. **Then continue the GSD run** for the rest of Phase 38 and onward, building against the approved
+   design.
+
+Resume with:
+
+```
+/gsd-autonomous --from 38
+```
+
+### The design is settled, approved, and committed — do not redesign it
+
+| File | Contents |
+|---|---|
+| `docs/superpowers/specs/2026-08-16-ios-onboarding-and-auth-design.md` | onboarding, auth, lock (9 states) |
+| `docs/superpowers/specs/2026-08-16-ios-vault-ui-design.md` | vault list, all six types, generator, family |
+| `ios/brand/screens.html` · `ios/brand/screens-vault.html` | 34 screens, light + dark, real token values |
+| `ios/brand/tokens.json` · `scripts/gen-ios-colorsets.py` | 14 colour tokens; `--check` fails on drift |
+
+Bartek approved these ("lgtm") on 2026-08-16. **Read both specs before planning 38-04 onward.** They
+carry decisions that are expensive to rediscover — `PVOnAccent` (never `.white` on an accent fill), the
+zero-knowledge favicon rule plus the iOS-only on-disk `URLCache` hazard, `Codes` indexing as `2`
+because Cards and Codes collide on `C`, and the deliberate tab-bar-as-filter departure from the HIG.
+
+### ⚠ Background agents are failing in this environment — 0 for 3 on 2026-08-16
+
+1. `gsd-execute-phase` dispatched in the background tried to spawn `gsd-executor` subagents.
+   **Backgrounded agents have no `Agent` tool.** It reported "wave 1 dispatched and running" and
+   produced zero commits — a false success report, which is worse than a failure.
+2. A direct execution agent was killed by the machine sleeping. **Mitigation that works: prefix every
+   long build/test with `caffeinate -i`.**
+3. The onboarding/auth agent ran 270 turns and 836 KB of transcript, committed **nothing**, and ended
+   on `[Request interrupted by user for tool use]` — it stalled on a permission prompt it could not
+   answer.
+
+**Everything that actually landed on 2026-08-16 was run inline.** Prefer inline execution, or a fresh
+interactive session, over backgrounding write-heavy work.
+
+### A defect shape this project keeps producing: truncated output read as absence
+
+Hit **three times in one day**, each producing a confident and wrong conclusion:
+
+- `grep … | head -5` over `SwiftUI.swiftinterface` → "there is no public section-index API". There is:
+  `sectionIndexLabel(_:)` and `listSectionIndexVisibility(_:)`, iOS 26+. The public declarations sat
+  below the cut.
+- A grep that did not account for xcodebuild escaping `=` → "ThreadSanitizer never ran". It had.
+  (Landmine **L-13**.)
+- `head -8` over a `Failing tests:` list → "only two tests failed". Thirteen had.
+
+**Never pipe a check for *absence* or *failure* through `head`.** The one line that refutes you is
+exactly the line that gets cut.
+
+### Known open items carried into 38
+
+- **`NSCameraUsageDescription` is not declared.** It gates TOTP QR scanning and card scanning.
+- **The app cannot be built in Release** — landmine **L-14**, a `swift-frontend` crash in generated
+  UniFFI code. Debug only; do not try to work around it.
+- **`.planning/` never survives this worktree.** Anything that matters goes in this file,
+  `ios/evidence/`, or `docs/`.
+
 ## 1. Decisions
 
 Recorded in the `KEY-05` / `EXT-10` style the project uses: the rejected alternative is named and
