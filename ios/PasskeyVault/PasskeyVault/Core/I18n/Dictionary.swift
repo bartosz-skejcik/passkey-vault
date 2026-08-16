@@ -77,6 +77,8 @@ enum PVKey: CaseIterable, Equatable {
     case unlockBiometryDenied
     case authForgotPasswordCta
     case authFaceIdUsageDescription
+    // Task 4: the server line under the title on both AuthView modes.
+    case authServerSubtitle
 
     // Phase 38, plan 38-13: onboarding (3 paged steps -- Welcome, Server,
     // AutoFill) and the auth "server line under the title" this plan adds.
@@ -209,6 +211,8 @@ enum PVDictionary {
                 pl: "Passkey Vault używa Face ID, żeby odblokować Twój vault.",
                 en: "Passkey Vault uses Face ID to unlock your vault."
             )
+        case .authServerSubtitle:
+            return LocalizedString(pl: "do {host}", en: "to {host}")
 
         // MARK: - Phase 38, plan 38-13: onboarding + auth server line
 

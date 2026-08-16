@@ -33,7 +33,13 @@ struct LockView: View {
     @State private var bannerMessage: String?
     @State private var biometricState: BiometricSlotState = .idle
     @State private var didAutoPromptBiometrics = false
-    @State private var showForgotPasswordAlert = false
+    /// Phase 38, plan 38-13, Task 4: the irreversibility warning is now
+    /// inline (a `PVWarning` callout inside the scrolling form), never a
+    /// `UIAlertController` -- `37-VERIFICATION.md`'s residual item recorded
+    /// that copy visibly clipped mid-sentence at AX5 inside the alert, and
+    /// the alert's scroll was never driven. This flag reveals the SAME
+    /// copy inline instead, where it can actually be scrolled to and read.
+    @State private var showForgotPasswordWarning = false
     @State private var availability: BiometryAvailability?
     /// `37-CONTEXT.md`'s locked decision, restated verbatim in
     /// `37-UI-SPEC.md:272`: once the envelope is invalidated by a
@@ -118,6 +124,7 @@ struct LockView: View {
                             ProgressView()
                         } else {
                             Text(t(.unlockSubmit))
+                                .foregroundStyle(Color("PVOnAccent"))
                         }
                     }
                     .frame(maxWidth: .infinity, minHeight: 48)
@@ -126,11 +133,27 @@ struct LockView: View {
                 .tint(Color("PVAccent"))
                 .buttonStyle(.borderedProminent)
 
-                Button(action: { showForgotPasswordAlert = true }) {
+                Button(action: { showForgotPasswordWarning.toggle() }) {
                     Text(t(.authForgotPasswordCta))
                 }
                 .tint(Color("PVAccent"))
                 .disabled(isProcessing)
+
+                // Task 4's one structural change: inline, not an alert. No
+                // action, no recovery path -- none exists. Readable at AX5
+                // by scrolling the surrounding form (`OnboardingUITests`
+                // proves the LAST words of this sentence are reachable,
+                // which is exactly what the alert never demonstrated).
+                if showForgotPasswordWarning {
+                    Text(t(.authIrrecoverableWarning))
+                        .font(.footnote)
+                        .foregroundStyle(Color("PVWarning"))
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color("PVSurface"))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("lock-forgot-password-warning")
+                }
             }
             .padding()
             .disabled(isProcessing)
@@ -149,11 +172,6 @@ struct LockView: View {
             if newState == .envelopeInvalidated {
                 isPasswordFieldFocused = true
             }
-        }
-        .alert(t(.authForgotPasswordCta), isPresented: $showForgotPasswordAlert) {
-            // No action, no recovery path -- none exists.
-        } message: {
-            Text(t(.authIrrecoverableWarning))
         }
     }
 
@@ -247,10 +265,27 @@ struct LockView: View {
             availability = fakeAvailability
             biometricState = .idle
             bannerMessage = t(.appServerUnreachable)
-        case "forgotAlert":
+        // Phase 38, plan 38-13, Task 4: renamed from "forgotAlert" -- it no
+        // longer presents an alert, it reveals the inline warning. Drives
+        // the SAME `showForgotPasswordWarning` flag the real button toggles,
+        // so the screenshot evidence and the user's experience cannot
+        // diverge (the "backstop" truth this plan names explicitly).
+        case "forgotWarning":
             availability = fakeAvailability
             biometricState = .idle
-            showForgotPasswordAlert = true
+            showForgotPasswordWarning = true
+        // §5 state 5, "Wrong password": added so the screenshot matrix can
+        // capture this state distinctly from state 8 ("Offline", the
+        // existing "banner" case above) -- both render through the same
+        // `bannerMessage` slot today (a pre-existing gap from the
+        // one-layout design recorded in this plan's SUMMARY rather than
+        // fixed here, since fixing it would mean giving the two states
+        // different visual treatment, which is a restructuring this plan's
+        // own prohibitions rule out).
+        case "wrongPassword":
+            availability = fakeAvailability
+            biometricState = .idle
+            bannerMessage = t(.authWrongCredentials)
         case "noBiometry":
             availability = BiometryAvailability(isAvailable: false, methodName: "Face ID", biometryStateHash: nil)
             biometricState = .idle

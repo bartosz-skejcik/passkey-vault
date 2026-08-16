@@ -54,6 +54,15 @@ struct AuthView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(Color("PVTextPrimary"))
 
+                // Phase 38, plan 38-13, Task 4: the server line under the
+                // title -- necessary now that self-hosting is real (38-12).
+                // A user with two vaults must be able to see which one they
+                // are signing in to.
+                Text(t(.authServerSubtitle, ["host": ServerSettings.resolved.host ?? ServerSettings.resolved.absoluteString]))
+                    .font(.subheadline)
+                    .foregroundStyle(Color("PVTextMuted"))
+                    .accessibilityIdentifier("auth-server-subtitle")
+
                 fieldGroup(labelKey: .authEmailLabel) {
                     TextField("", text: $email)
                         .textContentType(.emailAddress)
@@ -113,6 +122,7 @@ struct AuthView: View {
                             ProgressView()
                         } else {
                             Text(mode == .signIn ? t(.authLoginSubmit) : t(.authRegisterSubmit))
+                                .foregroundStyle(Color("PVOnAccent"))
                         }
                     }
                     .frame(maxWidth: .infinity, minHeight: 48)
