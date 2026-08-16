@@ -62,6 +62,10 @@
 //! | `default_kdf_params_json`      | `String` (BEZ `Result`) | NIE — `serde_json::to_string` na stałym `KdfParams::default()`; mirror `pv-wasm`'s bezargumentowego odpowiednika, ten sam brak `Result` |
 //! | `generate_registration_salt`   | `Vec<u8>` (BEZ `Result`) | NIE — `random_bytes(16)`, jawna sól (nie materiał klucza), ten sam kształt co `export_user_key_for_session` poniżej (jedyna panika byłaby alokacyjnym `abort`em, którego `catch_unwind` i tak nie zobaczy) |
 //! | `export_user_key_for_session`  | `Vec<u8>` (BEZ `Result`) | NIE — patrz niżej |
+//! | `encrypt_item_wire`            | `Result<FfiEncryptedItemWire,_>` | serde_json — złapane jako `Err` (38-02, DR-38-C; patrz `wire.rs`) |
+//! | `decrypt_item_wire`            | `Result<String,_>`    | serde_json/utf8 — złapane jako `Err` |
+//! | `encrypt_item_combined_json`   | `Result<String,_>`    | serde_json — złapane jako `Err` |
+//! | `decrypt_item_combined_json`   | `Result<String,_>`    | serde_json/utf8 — złapane jako `Err` |
 //!
 //! `export_user_key_for_session` to JEDYNY eksport bez `Result`, świadomie:
 //! jego całe ciało to `expose().to_vec()`. Jedyna droga do paniki byłaby
@@ -94,6 +98,18 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 pub mod error;
 pub use error::FfiError;
+
+// DR-38-C (`ios/IOS-SPIKE-LOG.md` §1a): the JSON wire encoding of the item
+// and folder columns is produced by `serde_json` HERE, never by Swift's
+// `JSONEncoder` — see that module's own header for why the two shapes
+// (record-shaped `encrypt_item`/`decrypt_item` above, JSON-string-shaped
+// `*_wire`/`*_combined_json` there) deliberately coexist and which one the
+// persistence path must use.
+pub mod wire;
+pub use wire::{
+    decrypt_item_combined_json, decrypt_item_wire, encrypt_item_combined_json, encrypt_item_wire,
+    FfiEncryptedItemWire,
+};
 
 // TEST-ONLY (`#[cfg(test)]`): observes what this crate actually hands back
 // to the allocator, so the CR-01 zeroization regression is asserted on real
