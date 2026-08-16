@@ -1856,6 +1856,35 @@ decrypted on iOS. Two directions, recipient-side assertion, or SC2 is not discha
 
 **Warning sign:** any wire-format evidence whose assertion runs on the same client that wrote the row.
 
+**OBSERVED 2026-08-16 — experiment E-W1, plan 38-02 Task 3.** No longer an inference. Full transcript:
+`ios/evidence/38/EW1-CROSS-CLIENT-WIRE.md`; harness
+`scripts/verify-ios-web-item-interop.mjs run-item-interop` +
+`ios/PasskeyVault/PasskeyVaultTests/VaultWireInteropTests.swift`.
+
+**The forward direction was run first** (iOS writes, `pv-wasm` reads), because it is the direction
+this landmine predicts would break. Both directions pass, asserted on the receiving side, through each
+client's own real crypto:
+
+- **D1 forward** — a note created by the real `VaultStore.create` (`encryptItemWire`, `serde_json`)
+  came back from `GET /api/sync` with `typeof enc_key.nonce = array`, and the **real `pv-wasm`
+  artifact `web/` imports** decrypted it, recovering the literal name typed independently on both
+  sides. The discriminator alone would not have been enough and was not treated as enough.
+- **D2 reverse** — a row written by `pv-wasm` exactly as `store.ts`'s `createVaultItem` writes one
+  decrypted on iOS through the real `VaultStore.refresh()`.
+- **Falsification, and it produced a real failure.** A second row in the same account, `enc_key`
+  re-encoded the way Foundation's `JSONEncoder` encodes `Data` (base64 strings), was **accepted by
+  the server with `201`** — the direct observation that server acceptance carries no information —
+  and rejected by *both* recipients: `pv-wasm` with `invalid type: string "boAfQ09q…", expected a
+  sequence`, and iOS by marking the row `undecryptable` while retaining it, in the same `refresh()`
+  that decrypted the good row. Running the harness with `PV_ITEM_INTEROP_SKIP_CORRUPTION=1` (a
+  correctly-encoded row placed in the bad slot) turns both falsification-dependent checks red, so the
+  arm is demonstrably not vacuous.
+
+**Still outstanding, deliberately not folded into the green result:** the browser-observed half — the
+iOS-written item rendering in the running web client with a clean console. `web/node_modules` does not
+exist in this worktree, so no dev server and no browser were available. `pv-wasm` is the web client's
+own crypto, not its rendering.
+
 ### L-18 — there is no folder rename or update route in `pv-server`
 
 **What goes wrong.** UI-04 ("folders and tags") is planned to include folder editing; the plan reaches

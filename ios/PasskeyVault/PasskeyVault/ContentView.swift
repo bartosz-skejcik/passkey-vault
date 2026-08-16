@@ -33,6 +33,9 @@ struct ContentView: View {
     }
 
     @State private var route: Route = .loading
+    /// Built once when the vault route is first rendered and kept for the
+    /// lifetime of the unlocked session (38-02).
+    @State private var vaultStore: VaultStore?
     private let apiClient = PvApiClient(baseURL: ContentView.defaultServerURL)
 
     var body: some View {
@@ -45,7 +48,7 @@ struct ContentView: View {
             case let .lock(account):
                 LockView(apiClient: apiClient, account: account, onUnlocked: handleUnlocked)
             case let .unlocked(session):
-                unlockedPlaceholder(session)
+                vault(session)
             }
         }
         .task {
@@ -98,20 +101,36 @@ struct ContentView: View {
         route = .unlocked(session)
     }
 
-    /// Phase 38 owns the real vault UI. This is deliberately minimal --
-    /// just enough to show the session actually unlocked.
+    /// Phase 38, plan 38-02: the unlocked route now renders the real vault
+    /// list instead of 37-04's "Vault unlocked" placeholder.
+    ///
+    /// The store is built once per unlocked session and held in `@State` —
+    /// rebuilding it on every body evaluation would drop the decrypted array
+    /// and re-pull the whole snapshot on each render. `session.userKey` goes
+    /// in as a plain (non-observed) property of the store; see
+    /// `VaultStore`'s own note (T-38-02-03).
     @ViewBuilder
-    private func unlockedPlaceholder(_ session: UnlockedSession) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.largeTitle)
-                .foregroundStyle(Color("PVAccent"))
-            Text(verbatim: "Vault unlocked")
-                .font(.title2)
-                .foregroundStyle(Color("PVTextPrimary"))
+    private func vault(_ session: UnlockedSession) -> some View {
+        let store = storeFor(session)
+        ItemListView(store: store)
+    }
+
+    private func storeFor(_ session: UnlockedSession) -> VaultStore {
+        if let vaultStore {
+            return vaultStore
         }
-        .padding()
-        .background(Color("PVBackground"))
+        let store = VaultStore(
+            userKey: session.userKey,
+            api: VaultAPI(
+                baseURL: ContentView.defaultServerURL,
+                // A closure, not a captured `String`: the token is read at
+                // request time so a lock or rotation cannot leave a stale
+                // copy alive inside `VaultAPI`.
+                tokenProvider: { [token = session.token] in token }
+            )
+        )
+        vaultStore = store
+        return store
     }
 }
 
