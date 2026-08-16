@@ -23,12 +23,21 @@ import SwiftUI
 struct ContentView: View {
     private enum Route {
         case loading
-        case auth
+        /// Phase 38, plan 38-13: presented once, before `.auth`, gated by
+        /// `OnboardingGate.shouldPresentOnboarding` (a pure decision --
+        /// `OnboardingGateTests.swift` falsifies it without touching this
+        /// view at all).
+        case onboarding
+        case auth(initialMode: AuthView.Mode)
         case lock(RestoredAccount)
         case unlocked(UnlockedSession)
     }
 
     @State private var route: Route = .loading
+    /// Same `UserDefaults` key `OnboardingView`'s own `@AppStorage` writes to
+    /// -- `OnboardingGate.completedKey` is the single string literal both
+    /// bind to, so they cannot drift into two different keys.
+    @AppStorage(OnboardingGate.completedKey) private var onboardingCompleted = false
     /// Built once when the vault route is first rendered and kept for the
     /// lifetime of the unlocked session (38-02).
     @State private var vaultStore: VaultStore?
@@ -47,8 +56,10 @@ struct ContentView: View {
             switch route {
             case .loading:
                 ProgressView()
-            case .auth:
-                AuthView(apiClient: apiClient, onUnlocked: handleUnlocked)
+            case .onboarding:
+                OnboardingView(onComplete: handleOnboardingComplete)
+            case let .auth(initialMode):
+                AuthView(apiClient: apiClient, initialMode: initialMode, onUnlocked: handleUnlocked)
             case let .lock(account):
                 LockView(apiClient: apiClient, account: account, onUnlocked: handleUnlocked)
             case let .unlocked(session):
@@ -74,7 +85,7 @@ struct ContentView: View {
         if let forced = ProcessInfo.processInfo.environment["PV_UITEST_SCREEN"] {
             switch forced {
             case "auth":
-                route = .auth
+                route = .auth(initialMode: .signIn)
             case "lock":
                 route = .lock(
                     RestoredAccount(
@@ -83,21 +94,47 @@ struct ContentView: View {
                         pwWrappedUkJson: "{}"
                     )
                 )
+            // Phase 38, plan 38-13, Task 1: lands the UI test driver on
+            // onboarding's first step without depending on a clean install
+            // (a real device/simulator that has already completed
+            // onboarding once would otherwise skip straight past it).
+            case "onboarding":
+                route = .onboarding
             default:
-                route = .auth
+                route = .auth(initialMode: .signIn)
             }
             return
         }
         #endif
+        // Phase 38, plan 38-13: onboarding is checked BEFORE any network
+        // call -- a fresh install must show Welcome without first waiting on
+        // `AccountService.restoreSession()` to fail.
+        guard onboardingCompleted else {
+            route = .onboarding
+            return
+        }
         let service = AccountService(apiClient: apiClient)
         do {
             if let restored = try await service.restoreSession() {
                 route = .lock(restored)
             } else {
-                route = .auth
+                route = .auth(initialMode: .signIn)
             }
         } catch {
-            route = .auth
+            route = .auth(initialMode: .signIn)
+        }
+    }
+
+    /// `OnboardingWelcomeStep`'s two controls decide which `AuthView` mode
+    /// the flow lands on (Task 1's "carry the branch" requirement) -- passed
+    /// through as a value on this completion callback, never a second
+    /// persisted flag.
+    private func handleOnboardingComplete(_ intent: OnboardingEntryIntent) {
+        switch intent {
+        case .newVault:
+            route = .auth(initialMode: .register)
+        case .existingVault:
+            route = .auth(initialMode: .signIn)
         }
     }
 

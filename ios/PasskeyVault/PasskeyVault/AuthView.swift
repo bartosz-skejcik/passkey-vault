@@ -20,7 +20,19 @@ struct AuthView: View {
     let apiClient: PvApiClient
     let onUnlocked: (UnlockedSession) -> Void
 
-    @State private var mode: Mode = .signIn
+    /// `initialMode` lets Phase 38's onboarding (`OnboardingWelcomeStep`'s
+    /// two controls) land the flow on sign-in or registration without a
+    /// second, redundant `@AppStorage` flag -- `ContentView` passes through
+    /// the `OnboardingEntryIntent` it received from `OnboardingView`'s
+    /// completion callback. Defaulted to `.signIn` so every other existing
+    /// call site (and every test) is unaffected.
+    init(apiClient: PvApiClient, initialMode: Mode = .signIn, onUnlocked: @escaping (UnlockedSession) -> Void) {
+        self.apiClient = apiClient
+        self.onUnlocked = onUnlocked
+        _mode = State(initialValue: initialMode)
+    }
+
+    @State private var mode: Mode
     @State private var email = ""
     @State private var password = ""
     @State private var confirmPassword = ""

@@ -77,6 +77,12 @@ enum PVKey: CaseIterable, Equatable {
     case unlockBiometryDenied
     case authForgotPasswordCta
     case authFaceIdUsageDescription
+
+    // Phase 38, plan 38-13: onboarding (3 paged steps -- Welcome, Server,
+    // AutoFill) and the auth "server line under the title" this plan adds.
+    case onboardingWelcomeBody
+    case onboardingWelcomeGetStarted
+    case onboardingWelcomeAlreadyHaveVault
 }
 
 enum PVDictionary {
@@ -178,6 +184,20 @@ enum PVDictionary {
                 pl: "Passkey Vault używa Face ID, żeby odblokować Twój vault.",
                 en: "Passkey Vault uses Face ID to unlock your vault."
             )
+
+        // MARK: - Phase 38, plan 38-13: onboarding + auth server line
+
+        case .onboardingWelcomeBody:
+            return LocalizedString(
+                pl: "Twoje hasła i passkeye, na serwerze, który kontrolujesz. Nic nie opuszcza tego "
+                    + "telefonu bez szyfrowania.",
+                en: "Your passwords and passkeys, on a server you control. Nothing leaves this phone "
+                    + "unencrypted."
+            )
+        case .onboardingWelcomeGetStarted:
+            return LocalizedString(pl: "Zacznij", en: "Get started")
+        case .onboardingWelcomeAlreadyHaveVault:
+            return LocalizedString(pl: "Mam już vault", en: "I already have a vault")
         }
     }
 }
