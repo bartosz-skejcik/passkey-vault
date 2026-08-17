@@ -49,7 +49,7 @@ struct ItemDetailView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(verbatim: label)
                 .font(.caption)
-                .foregroundStyle(Color("PVTextSecondary"))
+                .foregroundStyle(Color("PVTextMuted"))
             Text(verbatim: value)
                 .foregroundStyle(Color("PVTextPrimary"))
                 .textSelection(.enabled)
@@ -71,10 +71,10 @@ struct ItemDetailView: View {
             .foregroundStyle(Color.orange)
             Text(verbatim: "The row is still on the server and has not been altered or removed. It was retained here rather than hidden.")
                 .font(.footnote)
-                .foregroundStyle(Color("PVTextSecondary"))
+                .foregroundStyle(Color("PVTextMuted"))
             Text(verbatim: reason)
                 .font(.caption.monospaced())
-                .foregroundStyle(Color("PVTextSecondary"))
+                .foregroundStyle(Color("PVTextMuted"))
                 .accessibilityIdentifier("vault.detail.undecryptable.reason")
         }
     }
@@ -94,10 +94,10 @@ struct ItemDetailView: View {
             } icon: {
                 Image(systemName: "hourglass")
             }
-            .foregroundStyle(Color("PVTextSecondary"))
+            .foregroundStyle(Color("PVTextMuted"))
             Text(verbatim: "You have access to this shared folder, but its key has not reached this device yet. Nothing is wrong.")
                 .font(.footnote)
-                .foregroundStyle(Color("PVTextSecondary"))
+                .foregroundStyle(Color("PVTextMuted"))
                 .accessibilityIdentifier("vault.detail.pendingFamilyKey")
         }
     }

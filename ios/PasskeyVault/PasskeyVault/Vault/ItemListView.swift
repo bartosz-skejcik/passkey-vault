@@ -26,7 +26,7 @@ struct ItemListView: View {
             List {
                 if store.items.isEmpty {
                     Text(verbatim: "No items yet")
-                        .foregroundStyle(Color("PVTextSecondary"))
+                        .foregroundStyle(Color("PVTextMuted"))
                 }
                 ForEach(store.items) { item in
                     Button {
@@ -82,7 +82,7 @@ struct ItemListView: View {
             if let statusMessage {
                 Text(verbatim: statusMessage)
                     .font(.caption)
-                    .foregroundStyle(Color("PVTextSecondary"))
+                    .foregroundStyle(Color("PVTextMuted"))
             }
             HStack {
                 TextField(text: $newItemMarker) {
