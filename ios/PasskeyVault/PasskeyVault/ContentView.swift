@@ -41,6 +41,10 @@ struct ContentView: View {
     /// Built once when the vault route is first rendered and kept for the
     /// lifetime of the unlocked session (38-02).
     @State private var vaultStore: VaultStore?
+    /// Plan 38-09, Task 3: built alongside `vaultStore`, same one-per-session
+    /// discipline (`storeFor(_:)`'s own note on why rebuilding on every body
+    /// evaluation would be wrong).
+    @State private var folderStore: FolderStore?
     /// Read from `ServerSettings.resolved` at construction (38-12, Task 3)
     /// -- never cached in a `let` bound to a compiled-in URL. `apiClient`
     /// itself is still a `let`: it is read once per `ContentView` instance
@@ -167,7 +171,7 @@ struct ContentView: View {
     @ViewBuilder
     private func vault(_ session: UnlockedSession) -> some View {
         let store = storeFor(session)
-        ItemListView(store: store)
+        ItemListView(store: store, folderStore: folderStoreFor(session))
     }
 
     private func storeFor(_ session: UnlockedSession) -> VaultStore {
@@ -185,6 +189,24 @@ struct ContentView: View {
             )
         )
         vaultStore = store
+        return store
+    }
+
+    /// Same one-per-session construction discipline as `storeFor(_:)`, its
+    /// own `VaultAPI` instance (a lightweight, stateless struct -- see that
+    /// type's own header) rather than sharing `vaultStore`'s.
+    private func folderStoreFor(_ session: UnlockedSession) -> FolderStore {
+        if let folderStore {
+            return folderStore
+        }
+        let store = FolderStore(
+            userKey: session.userKey,
+            api: VaultAPI(
+                baseURL: ServerSettings.resolved,
+                tokenProvider: { [token = session.token] in token }
+            )
+        )
+        folderStore = store
         return store
     }
 }

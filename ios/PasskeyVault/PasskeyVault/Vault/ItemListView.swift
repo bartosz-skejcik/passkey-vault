@@ -145,57 +145,11 @@ struct VaultFilterToken: Identifiable, Hashable {
 }
 
 // MARK: - "+" create menu destinations
-
-/// FIVE creatable types, not six -- `passkey` is provider-created only
-/// (Phase 12, the extension/AutoFill path); there is no "create a passkey"
-/// form on any client, matching D1's reconciling reading in the research
-/// doc (five is the create/edit surface, six is the render surface) and
-/// design-conformance §5's "type picker is editable only on create".
-enum ItemCreationKind: CaseIterable {
-    case login, card, identity, note, totp
-
-    var title: String {
-        switch self {
-        case .login: return "Login"
-        case .card: return "Card"
-        case .identity: return "Identity"
-        case .note: return "Note"
-        case .totp: return "Code"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .login: return "globe"
-        case .card: return "creditcard"
-        case .identity: return "person.text.rectangle"
-        case .note: return "note.text"
-        case .totp: return "timer"
-        }
-    }
-
-    /// A minimal, honestly-empty draft -- every required `String` field is
-    /// `""` except `totp.secret`, which carries a placeholder valid base32
-    /// value (the RFC 6238 / `crates/pv-core/src/totp.rs` test-vector
-    /// secret) rather than an empty string, so a row that reaches the TOTP
-    /// arithmetic 38-10 wires later does not immediately fail to decode a
-    /// zero-length secret.
-    func emptyFields() -> ItemFields {
-        let name = "New \(title)"
-        switch self {
-        case .login:
-            return .login(LoginFields(name: name, folderId: nil, tags: [], username: "", password: "", urls: [], notes: ""))
-        case .card:
-            return .card(CardFields(name: name, folderId: nil, tags: [], cardholderName: "", number: "", expiry: "", cvv: "", pin: nil, zip: nil, notes: ""))
-        case .identity:
-            return .identity(IdentityFields(name: name, folderId: nil, tags: [], firstName: "", lastName: "", email: "", phone: "", address: "", addressLine1: nil, addressLine2: nil, city: nil, state: nil, zip: nil, country: nil, notes: ""))
-        case .note:
-            return .note(NoteFields(name: name, folderId: nil, tags: [], body: ""))
-        case .totp:
-            return .totp(TotpFields(name: name, folderId: nil, tags: [], secret: "JBSWY3DPEHPK3PXP", issuer: "", algorithm: "SHA1", digits: 6, period: 30, notes: ""))
-        }
-    }
-}
+//
+// `ItemCreationKind` moved to `TypePicker.swift` (plan 38-09, Task 1) -- the
+// five-case enum and its `emptyFields()` factory are unchanged in substance
+// (one Rule 1 fix: the TOTP placeholder secret, see that file's own note),
+// just relocated to sit beside the picker view that now presents it.
 
 // MARK: - Row pill
 
@@ -209,6 +163,12 @@ private struct RowPill: Identifiable {
 
 struct ItemListView: View {
     @Bindable var store: VaultStore
+
+    /// `nil` in any context that has no folder support wired (existing
+    /// tests/previews predating 38-09) -- every folder-dependent affordance
+    /// (the form's Folder row, "Move to folder") is itself conditional on
+    /// this being non-nil, never a force-unwrap.
+    var folderStore: FolderStore?
 
     /// Both `nil` by default -- the nav bar's Lock now/Sign out affordances
     /// render but are DISABLED rather than silently pretending to work.
@@ -226,7 +186,6 @@ struct ItemListView: View {
     @State private var sortOption: SortOption = SortPreference.read()
     @State private var selection: VaultItemViewModel?
     @State private var deleteCandidate: VaultItemViewModel?
-    @State private var editPlaceholderItem: VaultItemViewModel?
     @State private var statusMessage: String?
     @State private var copyConfirmation: String?
 
@@ -235,9 +194,31 @@ struct ItemListView: View {
     @State private var isCreating = false
     @State private var newItemMarker = ""
 
-    // MARK: "+" create affordance
+    // MARK: "+" create / edit / move-to-folder sheet router
+    //
+    // ONE `.sheet(item:)` binding for all four surfaces (plan 38-09), rather
+    // than four independent `.sheet` modifiers each with its own `Bool`/
+    // optional-item trigger: `TypePicker` handing off directly to
+    // `ItemFormView` means the SAME state transition (one sheet's content
+    // changing to another) has to be expressed as ONE identity change, not
+    // a dismiss-then-present race between two separately-driven modifiers.
+    private enum ActiveSheet: Identifiable {
+        case typePicker
+        case creating(ItemCreationKind)
+        case editing(VaultItemViewModel)
+        case movingToFolder(VaultItemViewModel)
 
-    @State private var isCreatingDraft = false
+        var id: String {
+            switch self {
+            case .typePicker: return "typePicker"
+            case let .creating(kind): return "creating-\(kind.title)"
+            case let .editing(item): return "editing-\(item.id)"
+            case let .movingToFolder(item): return "movingToFolder-\(item.id)"
+            }
+        }
+    }
+
+    @State private var activeSheet: ActiveSheet?
 
     /// E-U2/E-U3 FINDING (38-06, Task 3, recorded in
     /// `ios/IOS-SPIKE-LOG.md`): a SINGLE `NavigationStack` wrapping the whole
@@ -295,8 +276,8 @@ struct ItemListView: View {
                                 // `copySecret` stays as it is).
                                 ItemDetailView(item: item, store: store)
                             }
-                            .sheet(item: $editPlaceholderItem) { item in
-                                EditPlaceholderSheet(item: item)
+                            .sheet(item: $activeSheet) { sheet in
+                                sheetContent(sheet)
                             }
                             .confirmationDialog(
                                 "Delete this item?",
@@ -401,6 +382,41 @@ struct ItemListView: View {
             systemImage: "tray",
             description: Text(verbatim: "Items you create appear here.")
         )
+    }
+
+    // MARK: - Sheet content (router for `activeSheet`)
+
+    @ViewBuilder
+    private func sheetContent(_ sheet: ActiveSheet) -> some View {
+        switch sheet {
+        case .typePicker:
+            TypePicker { kind in
+                // Directly to `.creating(kind)` -- ONE identity change on
+                // the SAME `.sheet(item:)` binding, not a dismiss-then-
+                // present race between two separately-driven modifiers.
+                activeSheet = .creating(kind)
+            }
+        case let .creating(kind):
+            ItemFormView(mode: .create(kind), store: store, folderStore: folderStore) { created in
+                selection = created
+            }
+        case let .editing(item):
+            ItemFormView(mode: .edit(item), store: store, folderStore: folderStore) { _ in
+                activeSheet = nil
+            }
+        case let .movingToFolder(item):
+            if let folderStore {
+                FolderPicker(
+                    store: folderStore,
+                    selection: Binding(
+                        get: { item.fields?.folderId },
+                        set: { newFolderId in
+                            Task { await applyFolderMove(item, folderId: newFolderId) }
+                        }
+                    )
+                )
+            }
+        }
     }
 
     // MARK: - Row
@@ -553,7 +569,18 @@ struct ItemListView: View {
             ItemCapabilities.canEditItem(item)
         {
             Button("Edit") {
-                editPlaceholderItem = item
+                activeSheet = .editing(item)
+            }
+            // "Move to folder" -- Task 3, real now that `VaultStore.update`
+            // exists (38-06 explicitly omitted this because no update-item
+            // call existed yet). Gated identically to Edit: a row this
+            // caller cannot save an edit to must not offer to move it
+            // either -- same "never offer an operation known to fail"
+            // discipline `ItemCapabilities.swift` names.
+            if folderStore != nil {
+                Button("Move to folder") {
+                    activeSheet = .movingToFolder(item)
+                }
             }
         }
         Button("Delete", role: .destructive) {
@@ -705,27 +732,21 @@ struct ItemListView: View {
         }
     }
 
-    // MARK: - "+" create menu (design-conformance §1's detached capsule)
-
-    /// A STOCK `Menu`, not a hand-built morphing capsule-to-grid animation --
-    /// "do not hand-roll the glass" applies as much to a custom expand/
-    /// collapse transition as it does to `glassEffect` itself. This is a
-    /// recorded, deliberate simplification of the visual spec (a genuine 3×3
-    /// grid that morphs from a detached circular capsule), not a silent
-    /// substitution: the six destinations and the "create, then open it"
-    /// behaviour are real and functionally equivalent, and 38-09's real
-    /// create/edit form is the natural place to revisit the exact visual
-    /// treatment once there is a form worth animating open.
+    // MARK: - "+" create affordance (design-conformance §1's detached capsule)
+    //
+    // Plan 38-09, Task 1: this used to be a `Menu` whose per-type items
+    // created an EMPTY draft immediately and navigated straight to the
+    // detail screen (38-06's own placeholder, explicit that "a real
+    // create/edit FORM is 38-09's job"). It now opens `TypePicker`, and
+    // choosing a type opens `ItemFormView(mode: .create(kind))` -- nothing
+    // is written to the server until the user taps Save inside that form.
+    // Still a STOCK control, not a hand-built morphing capsule-to-grid
+    // animation -- "do not hand-roll the glass" applies to a custom
+    // expand/collapse transition as much as to `glassEffect` itself.
     @ViewBuilder
     private var createMenuCapsule: some View {
-        Menu {
-            ForEach(ItemCreationKind.allCases, id: \.self) { kind in
-                Button {
-                    Task { await createDraft(kind) }
-                } label: {
-                    Label(kind.title, systemImage: kind.systemImage)
-                }
-            }
+        Button {
+            activeSheet = .typePicker
         } label: {
             Image(systemName: "plus")
                 .font(.title2.weight(.semibold))
@@ -734,25 +755,8 @@ struct ItemListView: View {
                 .background(Color("PVAccent"), in: Circle())
                 .shadow(radius: 4, y: 2)
         }
-        .disabled(isCreatingDraft)
         .padding()
         .accessibilityIdentifier("vault.create.plusMenu")
-    }
-
-    /// Creates a minimal, honestly-empty draft of the chosen type and opens
-    /// it immediately -- real `VaultStore.create(fields:)` calls, not a
-    /// placeholder. Field completion (a real create/edit FORM) is 38-09's
-    /// job; this exists so the ＋ affordance the design mandates does
-    /// something genuine today rather than nothing.
-    private func createDraft(_ kind: ItemCreationKind) async {
-        isCreatingDraft = true
-        defer { isCreatingDraft = false }
-        do {
-            let created = try await store.create(fields: kind.emptyFields())
-            selection = created
-        } catch {
-            statusMessage = "create failed: \(error)"
-        }
     }
 
     // MARK: - Data pipeline (filter, then search, then sort)
@@ -786,6 +790,28 @@ struct ItemListView: View {
             try await store.refresh()
         } catch {
             statusMessage = "refresh failed: \(error)"
+        }
+    }
+
+    /// The context menu's "Move to folder" action and `ItemFormView`'s own
+    /// Folder row both end here: a real `VaultStore.update` call, gated the
+    /// same way Edit is (see `contextMenuContent`) so this can never be
+    /// reached for an item this caller cannot edit.
+    private func applyFolderMove(_ item: VaultItemViewModel, folderId: String?) async {
+        guard let fields = item.fields, fields.folderId != folderId else { return }
+        var updated = fields
+        switch updated {
+        case var .login(f): f.folderId = folderId; updated = .login(f)
+        case var .card(f): f.folderId = folderId; updated = .card(f)
+        case var .identity(f): f.folderId = folderId; updated = .identity(f)
+        case var .note(f): f.folderId = folderId; updated = .note(f)
+        case var .totp(f): f.folderId = folderId; updated = .totp(f)
+        case .passkey: return // no edit path for passkeys (design-conformance §5)
+        }
+        do {
+            try await store.update(item, fields: updated)
+        } catch {
+            statusMessage = "move to folder failed: \(error)"
         }
     }
 
@@ -845,37 +871,5 @@ private struct AvailableTabBarMinimizeBehavior: ViewModifier {
     }
 }
 
-// MARK: - Edit placeholder (38-09 owns the real form)
-
-/// Presence/absence of the Edit context-menu entry is the acceptance
-/// criterion this plan's own gating tests screenshot -- NOT the completeness
-/// of an edit form, which 38-09 owns. This sheet exists so tapping a
-/// gated-visible Edit entry does something honest rather than nothing.
-private struct EditPlaceholderSheet: View {
-    let item: VaultItemViewModel
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 12) {
-                Image(systemName: "pencil.circle")
-                    .font(.largeTitle)
-                    .foregroundStyle(Color("PVTextMuted"))
-                Text(verbatim: "Editing \(item.displayName)")
-                    .font(.headline)
-                Text(verbatim: "The edit form arrives in a later phase (38-09). This entry is gated correctly today; it does not yet save changes.")
-                    .font(.footnote)
-                    .foregroundStyle(Color("PVTextMuted"))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-            }
-            .padding()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                }
-            }
-        }
-        .presentationDetents([.medium])
-    }
-}
+// EditPlaceholderSheet retired (plan 38-09): `ItemFormView(mode: .edit(item))`
+// is the real form now, routed through `sheetContent(_:)`'s `.editing` case.

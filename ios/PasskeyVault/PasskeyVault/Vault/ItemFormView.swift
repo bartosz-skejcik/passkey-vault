@@ -74,6 +74,8 @@ struct ItemFormView: View {
     @State private var showGenerator = false
     @State private var showFolderPicker = false
     @State private var tagsText: String
+    /// See the `SecureField.id(_:)` comment at the login password row.
+    @State private var passwordFieldGeneration = 0
 
     init(
         mode: ItemFormMode,
@@ -213,6 +215,7 @@ struct ItemFormView: View {
             .sheet(isPresented: $showGenerator) {
                 GeneratorSheet { generated in
                     loginFields.password = generated
+                    passwordFieldGeneration += 1
                 }
             }
             .sheet(isPresented: $showFolderPicker) {
@@ -252,7 +255,18 @@ struct ItemFormView: View {
                 .accessibilityIdentifier("itemform.login.username")
 
             HStack {
+                // [Rule 1 - Bug, 38-09] `.id(passwordFieldGeneration)` --
+                // observed live: `SecureField`'s underlying `UITextField`
+                // does not always redraw its masked dots when its bound
+                // value changes PROGRAMMATICALLY (as opposed to by user
+                // keystroke) -- `passwordField.value` (the accessibility
+                // layer) reflected the generator's inserted value
+                // correctly, but the on-screen glyph row stayed visually
+                // blank in a UI-test screenshot until this fix. Forcing a
+                // new view identity on every programmatic insertion makes
+                // SwiftUI recreate the field, which reliably redraws.
                 SecureField("Password", text: $loginFields.password)
+                    .id(passwordFieldGeneration)
                     .accessibilityIdentifier("itemform.login.password")
                 Button {
                     showGenerator = true
