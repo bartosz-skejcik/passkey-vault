@@ -122,6 +122,26 @@ final class VaultStore {
         return item
     }
 
+    // MARK: - Delete
+
+    /// Permanent, server-confirmed delete: `DELETE /api/vault/items/{id}`,
+    /// then remove locally only on the server's 204. Added in plan 38-06,
+    /// Task 2, for the list's swipe-to-delete action -- see
+    /// `VaultAPI.deleteItem`'s own note on why a non-functional delete
+    /// button would be worse than none.
+    ///
+    /// Local removal happens AFTER the network call succeeds, mirroring
+    /// `create`'s own ordering discipline in reverse: `create` appends
+    /// locally only after the server accepts the write; this removes
+    /// locally only after the server confirms the delete, so a network
+    /// failure never desyncs the on-screen list from the server's actual
+    /// state.
+    func delete(_ item: VaultItemViewModel) async throws {
+        try await api.deleteItem(id: item.id)
+        items.removeAll { $0.id == item.id }
+        recomputeTags()
+    }
+
     // MARK: - Refresh
 
     /// `GET /api/sync?since=<watermark>` and merge.
@@ -129,6 +149,12 @@ final class VaultStore {
     /// The up-to-date branch (no `items` key at all) is a normal outcome, not
     /// an error: the server returns it on every pull where nothing changed.
     func refresh() async throws {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment[Self.uitestCapabilityFixtureEnvKey] != nil {
+            applyCapabilityGatingFixture()
+            return
+        }
+        #endif
         let response = try await api.sync(since: lastKnownRevision)
         switch response {
         case let .upToDate(revision):
@@ -139,6 +165,50 @@ final class VaultStore {
         }
         recomputeTags()
     }
+
+    #if DEBUG
+    /// TEST-ONLY (plan 38-06, Task 2): when set, `refresh()` short-circuits
+    /// to a synthetic two-item fixture instead of calling the real network.
+    /// This is the ONLY way to screenshot the "a shared row hides Edit"
+    /// acceptance criterion honestly: `VaultItemRow`/`SyncResponse` do not
+    /// carry `access_level`/a shared-direct discriminant at all today (that
+    /// sync endpoint, `GET /api/sync/shared/direct`, is Phase 40's job), so
+    /// the REAL sync path can never actually produce a `sharedToMe == true`
+    /// row for this build to screenshot. Mirrors `ContentView.swift`'s own
+    /// `PV_UITEST_SCREEN`/`PV_UITEST_ROUTE` DEBUG-only forced-state
+    /// convention -- never compiled into Release, never reachable without
+    /// deliberately setting this exact environment variable.
+    static let uitestCapabilityFixtureEnvKey = "PV_UITEST_VAULT_FIXTURE"
+
+    private func applyCapabilityGatingFixture() {
+        let owned = VaultItemViewModel(
+            id: "uitest-owned-login", revision: 1,
+            content: .fields(
+                .login(
+                    LoginFields(
+                        name: "Owned Login", folderId: nil, tags: [], username: "me@example.com",
+                        password: "hunter2", urls: ["https://example.com"], notes: ""
+                    )
+                )
+            )
+        )
+        let shared = VaultItemViewModel(
+            id: "uitest-shared-login", revision: 1,
+            content: .fields(
+                .login(
+                    LoginFields(
+                        name: "Shared Login", folderId: nil, tags: [], username: "them@example.com",
+                        password: "hunter3", urls: ["https://shared.example.com"], notes: ""
+                    )
+                )
+            ),
+            sharedToMe: true,
+            accessLevel: "read"
+        )
+        items = [owned, shared]
+        recomputeTags()
+    }
+    #endif
 
     /// The tag union. Reads `item.tags`, which is safe on EVERY content case
     /// including the two that carry no fields at all -- see `allTags`' own

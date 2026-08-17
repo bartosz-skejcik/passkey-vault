@@ -155,6 +155,22 @@ struct VaultAPI {
         return try Self.decode(SyncResponse.self, from: data)
     }
 
+    /// `DELETE /api/vault/items/{id}`. Expects **204** (`vault.rs`'s
+    /// `delete()`, `Ok(StatusCode::NO_CONTENT)`). Permanent -- there is no
+    /// trash/soft-delete in this server (its own doc comment: "per
+    /// CONTEXT.md's locked decision"). Added in plan 38-06, Task 2, as a
+    /// Rule 2 deviation: the swipe-to-delete action the design requires has
+    /// nowhere to call without this, and an action that LOOKS like it
+    /// deletes but silently does nothing is exactly the "offer an operation
+    /// known to fail" anti-pattern `ItemCapabilities.swift`'s own header
+    /// warns against.
+    func deleteItem(id: String) async throws {
+        let (data, response) = try await send(
+            path: "/api/vault/items/\(id)", method: "DELETE", body: nil, authenticated: true
+        )
+        try Self.requireStatus(204, response: response, data: data)
+    }
+
     // MARK: - Transport
 
     private func send(
