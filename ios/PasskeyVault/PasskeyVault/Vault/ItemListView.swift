@@ -38,13 +38,25 @@ import UIKit
 
 // MARK: - Dock tab bar (item-type filter)
 
-/// The five dock tabs (design-conformance: "All · Logins · Cards · Codes ·
-/// Passkeys"). `identity` and `note` deliberately have NO tab -- design-
-/// conformance's own reasoning: six types, five tab slots; the grouped All
-/// screen's sections are their only route in, and the section index is what
-/// makes them findable there.
+/// The FOUR dock tabs, in Bartek's own chosen order: **All · Logins · Codes ·
+/// Cards**.
+///
+/// WHY FOUR AND NOT FIVE, decided from pictures and not re-litigated here.
+/// The design wants a detached ＋ beside the bar, and `Tab(role: .search)` is
+/// the only stock API that produces that slot (`ios/DOCK-RESEARCH.md` §5).
+/// A search-role tab is still a tab item, so five type filters plus ＋ is six
+/// items, which overflows into a system "More" (•••) tab and swallows both
+/// Passkeys AND the ＋ -- photographed in
+/// `ios/evidence/38/38-06-dock-role-search-overflows-to-more.png`. Four
+/// filters plus ＋ fits.
+///
+/// `passkey`, `identity` and `note` therefore have NO tab. Their route in is
+/// the All screen's own type sections (`VaultSectionKind`, which still carries
+/// all six types) plus the section index that makes them findable there.
+/// Passkeys losing its tab is the price of the detached ＋; that trade was
+/// Bartek's call.
 enum VaultTypeTab: String, CaseIterable, Identifiable, Hashable {
-    case all, login, card, totp, passkey
+    case all, login, totp, card
 
     var id: String { rawValue }
 
@@ -52,9 +64,8 @@ enum VaultTypeTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .all: return "All"
         case .login: return "Logins"
-        case .card: return "Cards"
         case .totp: return "Codes"
-        case .passkey: return "Passkeys"
+        case .card: return "Cards"
         }
     }
 
@@ -62,9 +73,8 @@ enum VaultTypeTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .all: return "square.grid.2x2"
         case .login: return "globe"
-        case .card: return "creditcard"
         case .totp: return "timer"
-        case .passkey: return "key.fill"
+        case .card: return "creditcard"
         }
     }
 
@@ -75,75 +85,17 @@ enum VaultTypeTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .all: return nil
         case .login: return "login"
-        case .card: return "card"
         case .totp: return "totp"
-        case .passkey: return "passkey"
+        case .card: return "card"
         }
     }
-}
-
-// MARK: - THROWAWAY: dock layout options A/B/C/D (2026-08-17)
-//
-// Bartek has to CHOOSE between four ways of resolving one hard constraint,
-// and he chooses from pictures, not prose. The constraint: the design wants
-// FIVE type filters AND a detached ＋; the detached ＋ can only come from
-// `Tab(role: .search)` (`ios/DOCK-RESEARCH.md` §5 -- it is the only stock API
-// that produces that slot); five filters plus a search role is SIX tab items,
-// which overflows into a system "More" tab
-// (`ios/evidence/38/38-06-dock-role-search-overflows-to-more.png`).
-//
-// This switch exists ONLY to render the four candidates side by side for that
-// decision. It is DEBUG-gated and defaults to `.d`, which is byte-for-byte the
-// behaviour this file already shipped -- a Release build cannot reach any other
-// branch, and a Debug build without the env var behaves identically to before.
-// Whichever option wins, this enum and its branches get deleted and the winner
-// becomes the only code path. Do not build on it.
-enum DockLayoutOption: String {
-    /// Five filters + the detached `role: .search` ＋. The naive reading of
-    /// the design; expected to overflow.
-    case a = "A"
-    /// Four filters (All · Logins · Cards · Codes) + the detached ＋.
-    /// Passkeys reachable through the All screen's own type section.
-    case b = "B"
-    /// Four filters (All · Logins · Cards · Passkeys) + the detached ＋.
-    /// Codes reachable through the All screen's own type section.
-    case c = "C"
-    /// Five filters, NO detached ＋ -- ＋ lives at the trailing end of the
-    /// bottom accessory shelf. Today's shipped behaviour, and the default.
-    case d = "D"
-
-    /// The shipped default. Release builds can return nothing else.
-    static let shipped: DockLayoutOption = .d
-
-    static var current: DockLayoutOption {
-        #if DEBUG
-        if let raw = ProcessInfo.processInfo.environment["PV_UITEST_DOCK_OPTION"],
-           let parsed = DockLayoutOption(rawValue: raw.uppercased()) {
-            return parsed
-        }
-        #endif
-        return shipped
-    }
-
-    /// Which type filters get a tab of their own.
-    var filterTabs: [VaultTypeTab] {
-        switch self {
-        case .a, .d: return VaultTypeTab.allCases
-        case .b: return [.all, .login, .card, .totp]
-        case .c: return [.all, .login, .card, .passkey]
-        }
-    }
-
-    /// Whether ＋ takes the detached `role: .search` slot (A/B/C) or the
-    /// trailing end of the accessory shelf (D).
-    var usesSearchRolePlus: Bool { self != .d }
 }
 
 /// The `TabView`'s selection value. `.plus` exists so the detached ＋ can be a
-/// real `Tab` (the only way to get that slot) without becoming a sixth *filter*
-/// -- selecting it toggles the grid and the binding's getter immediately bounces
-/// selection back to the current type tab, so no content view is ever shown for
-/// it.
+/// real `Tab` (the only way to get that slot) without becoming a fifth *filter*
+/// -- selecting it toggles the panel and the binding's getter immediately
+/// bounces selection back to the current type tab, so no content view is ever
+/// shown for it.
 private enum DockSlot: Hashable {
     case type(VaultTypeTab)
     case plus
@@ -216,29 +168,33 @@ struct VaultFilterToken: Identifiable, Hashable {
 // `ItemCreationKind` lives in `TypePicker.swift` (plan 38-09, Task 1) -- the
 // five-case enum and its `emptyFields()` factory are unchanged.
 
-/// The nine slots of the ＋ capsule's 3×3 action grid, in the approved
-/// artifact's own order (`ios/brand/screens-vault.html`, the `.grid` block).
+/// The SIX slots of the ＋ panel, in the order Bartek named them: the five
+/// creatable item types (`ItemCreationKind`, `Vault/TypePicker.swift`) plus
+/// Generate password. Three columns, so two rows.
 ///
-/// FOUR of the nine have no working implementation on iOS today. They render
-/// anyway, DISABLED, rather than being quietly dropped to a tidier 2×3: the
-/// grid's shape is part of the approved design, and a slot that is visibly
-/// present-but-unavailable tells the truth about what this build can do,
-/// while a missing slot misrepresents the design as simpler than it is. This
-/// is the same discipline the avatar menu's Family/Settings entries already
-/// follow, and the inverse of offering an action known to fail
-/// (`ItemCapabilities.swift`'s own rule).
+/// SIX, NOT THE ARTIFACT'S NINE, and this is a deliberate narrowing recorded
+/// rather than smuggled. The earlier draft of this file rendered nine slots to
+/// match `ios/brand/screens-vault.html`'s `.grid` block, four of them DISABLED
+/// (New passkey, Scan card, Import, and a substituted Scan-QR slot), on the
+/// reasoning that a visibly-unavailable slot tells the truth better than a
+/// missing one. Bartek's instruction for this pass is the narrower set. Both
+/// readings are defensible; his is the one that ships, so the three slots with
+/// no implementation are GONE rather than greyed out:
 ///
-/// ONE DELIBERATE SUBSTITUTION, recorded rather than smuggled: the artifact's
-/// fourth slot is **Scan QR code**. There is no QR scanner in this build and
-/// none planned in this milestone, but there IS a complete, working manual
-/// TOTP create path (`ItemCreationKind.totp` -> `ItemFormView`, plan 38-09,
-/// validated by `TotpValidation`). Shipping the artifact's label disabled
-/// would make TOTP creation unreachable from the dock entirely -- a
-/// regression against 38-09's own `TypePicker`, which offered it. The slot
-/// therefore keeps its PURPOSE (create a code) with the mechanism that
-/// actually exists, and scanning stays a named gap.
+/// - **New passkey** -- not a scope gap and never will be. A passkey is
+///   cryptographic material minted during a real WebAuthn ceremony by the
+///   AutoFill credential provider; there is no meaningful "type one in" form
+///   for it, here or ever. A permanently-disabled slot for a permanently
+///   impossible action is not honesty, it is furniture.
+/// - **Scan card** / **Import** -- real, wanted, unbuilt. They are named gaps
+///   in the phase docs, not silent ones; a disabled tile is not the only place
+///   a gap can be recorded.
+///
+/// Every one of the six below has a working path. There is no `isAvailable`
+/// flag any more, because nothing is unavailable -- reintroducing one is the
+/// signal that this decision is being reversed.
 enum VaultCreateAction: String, CaseIterable, Identifiable {
-    case login, card, passkey, code, identity, note, generatePassword, scanCard, importItems
+    case login, card, identity, note, code, generatePassword
 
     var id: String { rawValue }
 
@@ -246,13 +202,10 @@ enum VaultCreateAction: String, CaseIterable, Identifiable {
         switch self {
         case .login: return "New login"
         case .card: return "New card"
-        case .passkey: return "New passkey"
-        case .code: return "New code"
         case .identity: return "New identity"
         case .note: return "New note"
+        case .code: return "New code"
         case .generatePassword: return "Generate password"
-        case .scanCard: return "Scan card"
-        case .importItems: return "Import"
         }
     }
 
@@ -260,55 +213,24 @@ enum VaultCreateAction: String, CaseIterable, Identifiable {
         switch self {
         case .login: return "globe"
         case .card: return "creditcard"
-        case .passkey: return "key.fill"
-        case .code: return "timer"
         case .identity: return "person.text.rectangle"
         case .note: return "note.text"
+        case .code: return "timer"
         case .generatePassword: return "dice"
-        case .scanCard: return "camera.viewfinder"
-        case .importItems: return "square.and.arrow.down"
         }
     }
 
     /// The item type this slot creates, or `nil` for a slot that is not a
-    /// create-an-item action at all.
+    /// create-an-item action at all (only Generate password).
     var creationKind: ItemCreationKind? {
         switch self {
         case .login: return .login
         case .card: return .card
-        case .code: return .totp
         case .identity: return .identity
         case .note: return .note
-        case .passkey, .generatePassword, .scanCard, .importItems: return nil
+        case .code: return .totp
+        case .generatePassword: return nil
         }
-    }
-
-    /// `nil` when the slot works; otherwise the reason it does not, surfaced
-    /// as the control's accessibility hint so the disabled state is not a
-    /// silent dead end for a VoiceOver user either.
-    var unavailableReason: String? {
-        switch self {
-        case .login, .card, .code, .identity, .note, .generatePassword:
-            return nil
-        case .passkey:
-            // A passkey is cryptographic material minted during a real
-            // WebAuthn ceremony by the AutoFill credential provider -- there
-            // is no meaningful "type one in" form for it, here or ever.
-            return "Passkeys are created by the site you register with, not typed in here."
-        case .scanCard:
-            return "Card scanning is not available in this build."
-        case .importItems:
-            return "Importing is not available on iOS yet."
-        }
-    }
-
-    var isAvailable: Bool { unavailableReason == nil }
-
-    /// The `key` brand colour the artifact gives the passkey bubble
-    /// (`.ga .b.key{color:var(--pv-key)}`); every other bubble takes the
-    /// primary text colour.
-    var glyphColorName: String {
-        self == .passkey ? "PVPasskey" : "PVTextPrimary"
     }
 }
 
@@ -395,9 +317,8 @@ struct ItemListView: View {
     // MARK: The dock
     //
     // `isCreateExpanded` drives BOTH halves of the ＋ affordance at once --
-    // the detached capsule's glyph (＋ / ✕) and what the accessory shelf
-    // holds (the search pill / the 3×3 grid) -- so the two can never
-    // disagree about whether the grid is open.
+    // the detached capsule's glyph (＋ / ✕) and whether the panel is on
+    // screen -- so the two can never disagree about whether it is open.
     @State private var isCreateExpanded = false
     @State private var isSearchPresented = false
 
@@ -416,10 +337,10 @@ struct ItemListView: View {
     /// within, not a stack living one level further out.
     var body: some View {
         TabView(selection: dockSelection) {
-            ForEach(dockOption.filterTabs) { tab in
+            ForEach(VaultTypeTab.allCases) { tab in
                 Tab(tab.title, systemImage: tab.systemImage, value: DockSlot.type(tab)) {
                     NavigationStack {
-                        tabContent(for: tab)
+                        dimmable(tabContent(for: tab))
                             // BUG FOUND LIVE (plan 38-06, Task 2): the
                             // create bar was originally a row INSIDE the
                             // `List` below, which meant it was reachable
@@ -461,7 +382,7 @@ struct ItemListView: View {
                                 isPresented: $isSearchPresented
                             ))
                             .searchSuggestions { tokenSuggestions }
-                            .modifier(AvailableMinimizedSearchToolbar())
+                            .modifier(AvailableMinimizedSearchToolbar(isSearchPresented: isSearchPresented))
                             .navigationTitle(Text(verbatim: tab.title))
                             .toolbar { toolbarContent }
                             .navigationDestination(item: $selection) { item in
@@ -503,59 +424,139 @@ struct ItemListView: View {
                 }
             }
 
-            // THROWAWAY (options A/B/C only): the detached trailing ＋.
+            // The detached trailing ＋.
+            //
             // `role: .search` is the ONLY stock API that produces a detached
-            // circular slot beside the tab bar (DOCK-RESEARCH.md §5). No
-            // `.searchable` is attached to this `TabView`, so selecting it
-            // does NOT summon a search field -- we own the interaction.
-            if dockOption.usesSearchRolePlus {
+            // circular slot beside the tab bar (DOCK-RESEARCH.md §5, and it
+            // grepped every `tab*` modifier in both interface files to
+            // establish the absence of any other). It survives minimization as
+            // the right-hand circle of `circle · pill · circle`.
+            //
+            // NO `.searchable` is attached to this `TabView`, so selecting it
+            // does NOT summon a search field -- we own the interaction. (Each
+            // Tab's own content has its own `.searchable`; that is a different
+            // modifier on a different view and does not activate this role.
+            // Verified by the shelf pill still being the only way in.)
+            //
+            // GUARDED ON 26 AS A DESIGN CHOICE, NOT AN AVAILABILITY ONE.
+            // `TabRole.search` is iOS 18.0, so this compiles on the floor --
+            // but on 18 it renders as an ordinary fifth tab item labelled
+            // "Add item", which is a worse affordance than a plain floating
+            // button. Below 26 the Tab is therefore omitted and
+            // `AvailableFallbackCreateButton` supplies the button instead.
+            // `TabContentBuilder.buildLimitedAvailability` (SwiftUI
+            // .swiftinterface:9729) is what makes an `if #available` legal
+            // inside this builder at all.
+            if #available(iOS 26.0, *) {
                 Tab(value: DockSlot.plus, role: .search) {
+                    // Never shown: `dockSelection`'s getter can never return
+                    // `.plus`, so this content view has no reachable state.
                     Color.clear
                 } label: {
-                    Label(
-                        isCreateExpanded ? "Close" : "Add item",
-                        systemImage: isCreateExpanded ? "xmark" : "plus"
+                    // ONE `Image` whose `systemName` CHANGES -- not two images
+                    // in an if/else. `.symbolEffect(.replace)` is a *content*
+                    // transition, so it needs the same view identity across
+                    // the change or it degrades to an instant swap. And the
+                    // `Label { } icon: { }` form, so the modifier lands on the
+                    // `Image` rather than on the whole `Label`
+                    // (DOCK-PANEL-RESEARCH.md §3, proven on video because
+                    // every still showed the glyph already swapped).
+                    Label {
+                        // The title carries the STATE, and it is deliberately
+                        // the same string as the `accessibilityLabel` below --
+                        // see the note after this closure on why belt and braces
+                        // is warranted here. A constant "Add item" would keep
+                        // announcing "add" while the glyph shows ✕.
+                        //
+                        // The detached slot draws no text (measured: a 62×62
+                        // circle holding only the glyph when the bar is
+                        // expanded, 48×48 when minimised), so this is announced
+                        // and not drawn.
+                        Text(verbatim: isCreateExpanded ? "Close create menu" : "Create item")
+                    } icon: {
+                        Image(systemName: isCreateExpanded ? "xmark" : "plus")
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .accessibilityLabel(
+                        Text(verbatim: isCreateExpanded ? "Close create menu" : "Create item")
                     )
+                    .accessibilityIdentifier("vault.create.plusMenu")
                 }
-                .accessibilityIdentifier("vault.create.plusMenu")
+                // ACCESSIBILITY, and the second point is a MEASURED CORRECTION
+                // of a conclusion this file briefly carried in the wrong form.
+                //
+                // 1. The caveat, flagged rather than absorbed: this control
+                //    occupies the semantic SEARCH slot, because
+                //    `Tab(role: .search)` is the only stock API that produces a
+                //    detached circle and there is no `TabRole.add`. With the
+                //    explicit label above, VoiceOver announces an add/create
+                //    action rather than "Search" -- but the ROLE underneath is
+                //    still search, and any future system affordance keyed to it
+                //    (a search shortcut, Spotlight hand-off, `.searchable`
+                //    activation) will still treat it as search. **Bartek's call
+                //    on whether that is acceptable is still pending.**
+                //
+                // 2. **The accessibility identifier survives onto the tab item
+                //    only while the bar is EXPANDED.** Measured, both states, in
+                //    the tree dump `VaultDockEvidenceUITests.dumpDockButtons`
+                //    prints:
+                //
+                //      expanded : label=Create item id=vault.create.plusMenu
+                //                 frame=(310.0, 769.0, 62.0, 62.0)
+                //      minimised: label=Create item id=<empty>
+                //                 frame=(317.0, 776.0, 48.0, 48.0)
+                //
+                //    While minimised the whole bar collapses to one circle plus
+                //    the detached ＋, and those collapsed items carry EMPTY
+                //    identifiers -- so does the type-tab circle, which reports
+                //    only the selected tab's label. An intermediate run of this
+                //    work concluded from the minimised state alone that
+                //    identifiers "do not propagate to a Tab at all", and wrote
+                //    that into three files. It is wrong: the real rule is that a
+                //    UI test must expand the bar before matching on identifiers,
+                //    and both earlier failures traced back to a restore-scroll
+                //    that had silently not worked.
+                //
+                //    (Which of the title text or the `accessibilityLabel`
+                //    actually supplies the announced string is NOT established
+                //    -- they are set to the same value, so the tree cannot
+                //    distinguish them. Both are kept rather than guessing.)
             }
         }
         .modifier(AvailableTabBarMinimizeBehavior())
-        .modifier(AvailableDockShelf { dockShelf })
-        // THROWAWAY (options A/B/C only): the 3×3 grid CANNOT live in the
-        // accessory shelf here -- the accessory content box is a fixed 48 pt
-        // and hard-clips (DOCK-RESEARCH.md §1). An overlay on the `TabView`
-        // draws above the bar in z-order with the dock still live underneath.
-        .overlay(alignment: .bottom) {
-            if dockOption.usesSearchRolePlus, isCreateExpanded {
-                createActionGrid
-                    .padding(.horizontal, Self.dockGridOverlayHInset)
-                    .padding(.bottom, Self.dockGridOverlayBottomInset)
-                    .transition(.scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity))
-            }
+        .modifier(AvailableDockShelf { searchShelf })
+        // THE SEARCH -> PANEL HALF of the mutual exclusion. The panel -> search half
+        // lives in `setCreateExpanded`; this is the other direction.
+        //
+        // An `onChange` rather than a second statement inside the shelf's action so
+        // that it covers EVERY route into search, not just the shelf -- the
+        // navigation bar's magnifier presents the same field and must also close the
+        // panel.
+        //
+        // KNOWN LIMITATION, recorded rather than worked around. With the panel
+        // already open, one tap on the shelf closes the panel but does NOT present
+        // the field; a second tap does. The invariant is intact either way -- the
+        // panel and the keyboard never coexist -- but the shelf needs two taps from
+        // that one state. Three shapes were tried and all behave identically:
+        // closing the panel before setting `isSearchPresented`; deferring the
+        // presentation with `DispatchQueue.main.async`; and deferring the panel's
+        // close instead so the presentation sits alone in its update. In every case
+        // the panel closes, `isSearchPresented` is observably set (this `onChange`
+        // fires), and no field appears -- so it is not transaction ordering, and the
+        // mechanism inside `.searchable` is unidentified. Asserted as-is in
+        // `VaultDockEvidenceUITests.testPanelAndKeyboardAreMutuallyExclusive`, so a
+        // future SDK that fixes it shows up as a failing test rather than as
+        // nothing.
+        .onChange(of: isSearchPresented) { _, presented in
+            if presented { isCreateExpanded = false }
         }
         .animation(.snappy(duration: 0.25), value: isCreateExpanded)
     }
 
     // MARK: - The dock
 
-    /// Which of the four candidate dock layouts to render. Read ONCE, at init:
-    /// the env var cannot change mid-run, and re-reading it per body evaluation
-    /// would be a `ProcessInfo` lookup on every render.
-    private let dockOption = DockLayoutOption.current
-
-    /// THROWAWAY: how far above the screen's bottom edge the ＋ grid floats in
-    /// options A/B/C. Not derived from `safeAreaInsets` the way a shipping
-    /// implementation must be (DOCK-RESEARCH.md §6 measures 139 pt of bottom
-    /// inset inside tab CONTENT, but this overlay is attached to the `TabView`
-    /// itself, whose own bottom inset is just the home indicator) -- a measured
-    /// constant is honest enough for a screenshot Bartek is choosing FROM, and
-    /// is called out here so nobody mistakes it for a shippable number.
-    private static let dockGridOverlayBottomInset: CGFloat = 112
-    private static let dockGridOverlayHInset: CGFloat = 16
-
     /// A computed binding, not `@State`: it exists so that changing the type
-    /// filter also closes the ＋ grid. Leaving the grid open over a list the
+    /// filter also closes the ＋ panel. Leaving the panel open over a list the
     /// user just re-filtered hides the result of the action they took.
     ///
     /// The getter ALWAYS reports a type tab, never `.plus` -- that is what
@@ -571,89 +572,43 @@ struct ItemListView: View {
                     selectedTab = tab
                     isCreateExpanded = false
                 case .plus:
-                    isCreateExpanded.toggle()
+                    setCreateExpanded(!isCreateExpanded)
                 }
             }
         )
     }
 
-    /// The accessory shelf: search and the ＋ capsule at rest, the ＋ grid
-    /// above them while expanded.
+    /// The ONE place `isCreateExpanded` is written, so the panel/keyboard
+    /// mutual exclusion cannot be forgotten at a second call site.
     ///
-    /// WHERE THE ＋ ENDED UP, AND WHY IT IS NOT WHERE THE ARTIFACT DRAWS IT.
-    /// `ios/brand/screens-vault.html` puts ＋ in a capsule DETACHED to the
-    /// right of the tab bar, on the same row. That slot is real in iOS 26 --
-    /// it is where a `Tab(role: .search)` renders -- and it is the only
-    /// detached slot a stock `TabView` offers. It cannot hold ＋ here, proven
-    /// by building it: a sixth `Tab` alongside the five type filters exceeds
-    /// the tab bar's five visible slots, so iOS collapsed **Passkeys and the
-    /// ＋ together into a "More" (•••) overflow tab** and nothing detached
-    /// at all (`ios/evidence/38/38-06-dock-role-search-overflows-to-more.png`).
-    /// Giving ＋ that slot therefore costs the Passkeys tab, which the design
-    /// also requires. So ＋ takes the trailing end of the accessory shelf --
-    /// one row up, same dock, still a floating capsule beside a glass pill,
-    /// and still expanding in place. Recorded, not silently "fixed".
-    @ViewBuilder
-    private var dockShelf: some View {
-        if dockOption.usesSearchRolePlus {
-            // A/B/C: ＋ is the detached `role: .search` capsule, so the shelf
-            // is nothing but the search pill -- which is what the accessory
-            // is actually FOR, and what its fixed 48 pt box can hold.
-            searchShelf
-        } else {
-            shippedDockShelf
-        }
-    }
-
-    @ViewBuilder
-    private var shippedDockShelf: some View {
-        VStack(spacing: PVMetrics.dockShelfGap) {
-            if isCreateExpanded {
-                createActionGrid
-            }
-            HStack(spacing: PVMetrics.dockShelfGap) {
-                // The search pill collapses away while the grid is open, so
-                // the capsule keeps its exact position on both sides of the
-                // transition -- that is what "expands in place" has to mean
-                // for a control that also becomes the dismiss affordance.
-                if isCreateExpanded {
-                    Spacer(minLength: 0)
-                } else {
-                    searchShelf
-                }
-                createCapsule
-            }
-        }
-    }
-
-    /// `.cap{54x54}` + `.plus{font-size:23; font-weight:300}` -- the ＋/✕
-    /// capsule, on the artifact's own geometry.
+    /// THE PANEL AND THE KEYBOARD ARE MUTUALLY EXCLUSIVE BY STATE, NOT BY
+    /// LAYOUT -- and that is a workaround for a problem the research could NOT
+    /// solve, stated plainly rather than presented as a design.
+    /// `DOCK-PANEL-RESEARCH.md` §5 has a measurement fix and a FAILED
+    /// positioning fix: SwiftUI folds the keyboard into the same safe-area
+    /// region, so a focused `TextField` inflated the derived inset from 139 to
+    /// 335 pt and shoved the panel most of the way off the top of the screen.
+    /// A nested reader wrapped in `.ignoresSafeArea(.keyboard)` DOES report a
+    /// keyboard-immune 139 (that half works), but feeding that number back as the
+    /// padding still left the panel displaced, because keyboard avoidance shrinks
+    /// the container the panel is aligned WITHIN -- correcting the padding cannot
+    /// compensate for a shorter box (`08-keyboard-fixed.png`).
     ///
-    /// FILLED with `PVAccent`, not glass, and that is a consequence of where
-    /// it had to live (see `dockShelf`). The artifact's capsule is glass with
-    /// an accent glyph BECAUSE it floats over the page, detached, where glass
-    /// reads as a distinct surface. Inside the accessory shelf it sits on the
-    /// shelf's own OS-rendered glass, and glass on glass is invisible --
-    /// observed, not predicted (`38-06-dock-glass-on-glass.png`). A filled
-    /// accent circle is the honest way to keep it reading as one distinct,
-    /// primary control in the place it actually is. `PVOnAccent` for the
-    /// glyph, never `.white` -- that token exists because white measures
-    /// 3.34:1 on the dark-mode accent.
-    @ViewBuilder
-    private var createCapsule: some View {
-        Button {
-            isCreateExpanded.toggle()
-        } label: {
-            Image(systemName: isCreateExpanded ? "xmark" : "plus")
-                .font(.system(size: PVMetrics.dockPlusGlyphSize, weight: .light))
-                .foregroundStyle(Color("PVOnAccent"))
-                .frame(width: PVMetrics.dockCapsuleSize, height: PVMetrics.dockCapsuleSize)
-                .background(Color("PVAccent"), in: Circle())
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text(verbatim: isCreateExpanded ? "Close" : "Create"))
-        .accessibilityIdentifier("vault.create.plusMenu")
+    /// Moving the panel inside the tab content (see `dimmable`) does not rescue
+    /// this: the keyboard is folded into the SAME safe-area region the panel is
+    /// now aligned against, so `.bottom` would mean "above the keyboard". It
+    /// removes the need for the keyboard-immune measurement, not the underlying
+    /// conflict.
+    ///
+    /// So the panel simply never coexists with a keyboard. Opening it dismisses
+    /// search. This is also the right product behaviour -- the panel is a
+    /// launcher for creating items and has no business overlapping a keyboard
+    /// -- but it is chosen because the layout fix is unsolved, and if anyone
+    /// later needs the two on screen together, that is an open problem and not
+    /// a small one.
+    private func setCreateExpanded(_ open: Bool) {
+        if open { isSearchPresented = false }
+        isCreateExpanded = open
     }
 
     /// `.acc{height:46; gap:9; padding:0 17; font-size:15.5}` -- the shelf's
@@ -665,7 +620,26 @@ struct ItemListView: View {
     @ViewBuilder
     private var searchShelf: some View {
         Button {
-            isSearchPresented = true
+            // CLOSE THE PANEL UNANIMATED, THEN ASK FOR SEARCH A TURN LATER. Both
+            // halves are load-bearing and both were arrived at by elimination.
+            //
+            // `.searchable(isPresented:)` refuses to present while the ＋ panel is on
+            // screen, and the refusal is SILENT AND STICKY: the binding stays `true`
+            // (SwiftUI never writes it back), so every later tap is a no-op change
+            // and search becomes permanently unreachable from the shelf. That is why
+            // a plain `isSearchPresented = true` here left the shelf dead after one
+            // use, not merely needing a second tap.
+            //
+            // The panel therefore has to be GONE, not merely closing, before the
+            // request. `.animation(.snappy(duration: 0.25), value: isCreateExpanded)`
+            // on the `TabView` means an ordinary write keeps it on screen for another
+            // quarter second, so the write is made inside a transaction with
+            // animations disabled; the deferral then puts the request in a later
+            // update, once that removal has actually been applied.
+            var immediate = Transaction()
+            immediate.disablesAnimations = true
+            withTransaction(immediate) { isCreateExpanded = false }
+            DispatchQueue.main.async { isSearchPresented = true }
         } label: {
             HStack(spacing: PVMetrics.dockShelfGap) {
                 Image(systemName: "magnifyingglass")
@@ -684,9 +658,34 @@ struct ItemListView: View {
         .accessibilityIdentifier("vault.search.shelf")
     }
 
-    /// `.grid{...}` + `.ga{...}` -- the 3×3 action grid, on the artifact's own
-    /// geometry. Rendered on `pvDockGlass` because, unlike the tab bar and the
-    /// shelf itself, this panel is not a stock control the OS grounds for us.
+    /// `.grid{...}` + `.ga{...}` -- the action panel, on the artifact's own
+    /// geometry. Three columns; six actions, so two rows.
+    ///
+    /// EXACTLY ONE GLASS LAYER, AND IT IS THE CARD. This is Rule B from
+    /// `DOCK-PANEL-RESEARCH.md` §4 and it is photographed twice, both failures:
+    ///
+    /// 1. `ios/evidence/38/38-06-dock-glass-on-glass.png` -- custom glass on a
+    ///    surface the SYSTEM already draws glass for (the accessory shelf). Two
+    ///    glass layers on one control; you can see the button's separate
+    ///    lighter capsule cutting across the pill's rounded edge.
+    /// 2. the research probe's `03-glass2.png` -- a `glassEffect` card wrapped
+    ///    AROUND a `GlassEffectContainer` of `.buttonStyle(.glass)` circles.
+    ///    Nesting does not stack, it COLLAPSES: the inner circles lose their
+    ///    glass entirely and read as flat ghost discs.
+    ///
+    /// So the card is glass (`pvDockGlass`) and the bubbles inside it are plain
+    /// `PVSurface` fills. Apple's own instruction, verbatim from WWDC25 219:
+    /// "always avoid glass on glass."
+    ///
+    /// NO `GlassEffectContainer` HERE, deliberately. A container exists to give
+    /// SIBLING glass elements one shared sampling region, because glass cannot
+    /// sample other glass. There is exactly one glass element in this panel, so
+    /// a container would unify nothing -- and `glassEffectID` inside it would be
+    /// morphing plain circles, which is not a thing. The research sketch keeps
+    /// one out of caution; dropping it removes an iOS 26-only symbol and an
+    /// availability guard for no visual difference. If the design ever moves to
+    /// nine glass circles with no card, the container comes back and is
+    /// required.
     @ViewBuilder
     private var createActionGrid: some View {
         let columns = Array(
@@ -701,11 +700,14 @@ struct ItemListView: View {
                     VStack(spacing: PVMetrics.dockGridActionGap) {
                         Image(systemName: action.systemImage)
                             .font(.system(size: PVMetrics.dockGridGlyphSize * 0.7))
-                            .foregroundStyle(Color(action.glyphColorName))
+                            .foregroundStyle(Color("PVTextPrimary"))
                             .frame(
                                 width: PVMetrics.dockGridBubbleSize,
                                 height: PVMetrics.dockGridBubbleSize
                             )
+                            // PLAIN, not `.buttonStyle(.glass)` -- see the note
+                            // above on why the second glass layer collapses the
+                            // first.
                             .background(Color("PVSurface"), in: Circle())
                         Text(verbatim: action.title)
                             .font(.system(size: PVMetrics.dockGridActionFontSize))
@@ -715,18 +717,27 @@ struct ItemListView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity)
-                    .opacity(action.isAvailable ? 1.0 : 0.4)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!action.isAvailable)
                 .accessibilityIdentifier("vault.create.action.\(action.rawValue)")
-                .accessibilityHint(Text(verbatim: action.unavailableReason ?? ""))
             }
         }
         .padding(.vertical, PVMetrics.dockGridVPadding)
         .padding(.horizontal, PVMetrics.dockGridHPadding)
-        .pvDockGlass(in: RoundedRectangle(cornerRadius: PVMetrics.dockGridRadius, style: .continuous))
+        // `interactive: false`: the card is a SURFACE, not a control. Interactive
+        // glass reacts to touch by scaling and brightening, which on a container
+        // holding six real buttons reads as the whole panel being pressable.
+        .pvDockGlass(
+            in: RoundedRectangle(cornerRadius: PVMetrics.dockGridRadius, style: .continuous),
+            interactive: false
+        )
+        // The diagnostic that used to hang here -- an accessibility VALUE
+        // carrying the app's own `dockInset` -- is gone with the variable it
+        // reported. It did its job: printed beside the rendered frame it showed
+        // `dockInset=139.0` against a panel whose bottom sat 51 pt above where
+        // 139 implied, which is what localised the double-count to the overlay's
+        // own alignment box rather than to the measurement.
         .accessibilityIdentifier("vault.create.grid")
     }
 
@@ -737,6 +748,188 @@ struct ItemListView: View {
         } else if action == .generatePassword {
             activeSheet = .generator
         }
+    }
+
+    // MARK: - The scrim and the panel, and why both live inside the tab content
+
+    /// Wraps a tab's content with the ＋ panel and its scrim. Both belong HERE,
+    /// inside the tab content, and neither works correctly anywhere else.
+    ///
+    /// ## Why the panel is not an `.overlay` on the `TabView`
+    ///
+    /// It was, following `DOCK-PANEL-RESEARCH.md` §1, whose argument is that an
+    /// overlay on the `TabView` renders AFTER the tab bar and is therefore above
+    /// it in z-order. That is true, and it is also **not a property this panel
+    /// needs** -- the panel must not overlap the dock at all, so which of the two
+    /// would win if they overlapped is moot.
+    ///
+    /// What that placement cost was the geometry, and it shipped a visible bug
+    /// that Bartek caught by eye. An overlay on the `TabView` sits OUTSIDE the
+    /// tab content, so it does not inherit the dock's bottom inset -- the
+    /// research's own answer was to measure the inset inside the content and
+    /// republish it up through a `PreferenceKey`. **That double-counts**, because
+    /// the overlay's own alignment box is ALREADY inset from the screen's bottom
+    /// edge, measured at 50.33 pt. Adding the full 139 pt dock height on top of
+    /// that put the panel ~51 pt too high with the bar expanded and ~58 pt too
+    /// high with it minimised. Numbers, all measured on iPhone 16 (393 × 852):
+    ///
+    /// | state | dock top | panel bottom, was | wanted | gap, was |
+    /// |---|---|---|---|---|
+    /// | expanded  | 714 | 654.7 | 706 | **59.3** |
+    /// | minimised | 777 | 710.7 | 769 | **66.3** |
+    ///
+    /// ## What replaces it, and why it is simpler rather than cleverer
+    ///
+    /// The tab content's bottom safe-area inset IS the dock. That is the one
+    /// measured fact the whole design rests on, and the research established it
+    /// for the scrim. It works just as well for the panel: a `.bottom`-aligned
+    /// layer inside the tab content ends exactly at the dock's top edge, so the
+    /// only number left is the gap.
+    ///
+    /// This deletes the `PreferenceKey`, the `@State` inset, the
+    /// `onPreferenceChange` and the hoisting -- and it fixes the two problems the
+    /// hoisting was introduced to solve:
+    ///
+    /// - **It tracks the minimize animation.** `DOCK-RESEARCH.md` §6 warns that
+    ///   the overlay "will not track the minimize animation", and a hoisted
+    ///   inset arrives one layout pass late by construction. A safe-area inset is
+    ///   read at layout time, every pass, by whoever is being laid out.
+    /// - **It cannot be inflated by the keyboard.** The reason the research needed
+    ///   `.ignoresSafeArea(.keyboard)` on its measuring reader is that a hoisted
+    ///   number is a snapshot that outlives its context. Here the keyboard case
+    ///   is handled where it belongs -- `setCreateExpanded` makes the panel and
+    ///   the keyboard mutually exclusive, so there is no state in which a
+    ///   keyboard-inflated inset can be applied to a visible panel.
+    ///
+    /// The cost, stated: the panel now draws BELOW the dock in z-order, so if a
+    /// future change makes them overlap, the dock wins and the panel is clipped
+    /// by it rather than drawing over it. That is the better failure of the two
+    /// -- the dock is the thing Bartek requires never to disappear.
+    ///
+    /// ## What the fix measures, and the 7 pt it does not fix
+    ///
+    /// Measured from PIXELS by `scripts/measure-ios-dock-panel.py`, not from
+    /// accessibility frames (which stop 16 pt short of the card's real edge) and
+    /// not by eye:
+    ///
+    /// | state | gap before | gap now | intended |
+    /// |---|---|---|---|
+    /// | expanded  | 59.3 | **8.0**  | 8 |
+    /// | minimised | 66.3 | **15.0** | 8 |
+    ///
+    /// Expanded is exact. Minimised keeps 7 pt more, and it is not something this
+    /// code can remove: with the bar collapsed the tab content's bottom safe-area
+    /// inset is 83 pt while the dock's topmost pixel is 76 pt from the bottom
+    /// edge, so **iOS reserves 7 pt more inset than the collapsed dock visually
+    /// occupies**. The panel is placed against the inset because that is the only
+    /// number the app has; the dock's visual bounds are not exposed. Subtracting a
+    /// hardcoded 7 in the inline state would be a magic number keyed to an OS
+    /// internal -- the exact defect `PVDesign.swift`'s own header exists to
+    /// prevent -- so the residual is recorded and asserted (see
+    /// `VaultDockEvidenceUITests`) rather than papered over.
+    ///
+    /// `TabViewBottomAccessoryPlacement` would tell us WHICH state we are in, and
+    /// is the semantically right signal for it, but knowing the state does not
+    /// supply the missing 7 pt -- so it is not used here, and whether it even
+    /// reaches this far down the tree is UNTESTED.
+    ///
+    /// ## Why the scrim is not on the `TabView` either
+    ///
+    /// It would draw above the tab bar and dim the dock outright. Rejected.
+    ///
+    /// WHY IT MUST NOT IGNORE THE BOTTOM SAFE AREA, which is the whole subtlety
+    /// and is photographed: **glass is not opaque.** Liquid Glass samples what
+    /// is behind it, so a full-bleed scrim underneath the dock makes the dock's
+    /// own glass darken WITH the content -- in the research probe's
+    /// `02-full.png` the accessory pill and the tab capsule are visibly grey
+    /// where in `01-abovedock.png` they are white. The dock is not immune to a
+    /// scrim drawn under it.
+    ///
+    /// The mechanism that fixes it is one measured fact: the tab content's
+    /// bottom safe-area inset IS the dock (139.0 pt on iPhone 16, expanded). So
+    /// a scrim that ignores only the TOP edge ends exactly at the dock's top
+    /// edge, with no magic number anywhere. A single stray `.ignoresSafeArea()`
+    /// reintroduces `02-full.png`.
+    ///
+    /// There is no stock scrim API to reach for instead: `grep -in
+    /// "scrim\|dimming\|dimmed"` over the whole of `SwiftUI.swiftinterface` and
+    /// `SwiftUICore.swiftinterface` returns ZERO hits, and a sheet's dimming is
+    /// internal. Hand-rolling it is not a shortcut, it is the only option.
+    @ViewBuilder
+    private func dimmable(_ content: some View) -> some View {
+        ZStack(alignment: .bottom) {
+            content
+            if isCreateExpanded {
+                scrim
+            }
+            if isCreateExpanded {
+                // NO bottom padding beyond the gap, and that is the whole fix:
+                // this layer is laid out inside the tab content's safe area, so
+                // `.bottom` alignment already means "the dock's top edge".
+                //
+                // `.sheet` remains REFUTED for this panel, empirically: the scrim
+                // can be removed and background interaction restored, but a
+                // detent is a height from the screen's bottom EDGE, so at any
+                // detent tall enough to hold the grid the sheet covers the dock
+                // completely and there is no "inset upward by the dock height"
+                // knob (`DOCK-PANEL-RESEARCH.md` §1, `04-sheet.png`). The
+                // accessory shelf is refuted too -- its content box is a fixed
+                // 48 pt and hard-clips (`DOCK-RESEARCH.md` §1).
+                createActionGrid
+                    .padding(.horizontal, PVMetrics.dockPanelHInset)
+                    // Rule C from the research: keep GEOMETRIC distance between
+                    // our glass and the dock's glass. Overlapping them makes our
+                    // card sample the dock and both turn to mush.
+                    .padding(.bottom, PVMetrics.dockPanelGap)
+                    .transition(
+                        .scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity)
+                    )
+            }
+        }
+        // Below iOS 26 only: the ＋ as a plain floating button, since there is no
+        // detached tab slot to put it in. A no-op on 26+. Attached HERE rather
+        // than to the `TabView` for exactly the same reason as the panel -- inside
+        // the tab content, `.bottomTrailing` is already relative to the dock.
+        .modifier(AvailableFallbackCreateButton(isExpanded: $isCreateExpanded))
+    }
+
+    /// A GRADIENT, not a flat fill, and the reason is the edge. Stopping a flat
+    /// scrim at the dock's top leaves a hard horizontal line across the screen
+    /// where the dimming ends. Fading the last ~20% to zero removes it.
+    ///
+    /// 0.35 is the HIG's own number for a dark dimming layer over bright content
+    /// behind Clear glass (developer.apple.com/design/human-interface-guidelines
+    /// /materials). `PVScrim` and not `.black`: literal colours are barred by
+    /// `scripts/audit-ios-colour-tokens.sh` check 1, and the token flips warm
+    /// near-black in light mode / true black in dark, because a warm-black
+    /// scrim over the cream `PVBackground` keeps the product's temperature
+    /// while dimming.
+    @ViewBuilder
+    private var scrim: some View {
+        LinearGradient(
+            stops: [
+                .init(color: Color("PVScrim").opacity(PVMetrics.dockScrimOpacity), location: 0.0),
+                .init(color: Color("PVScrim").opacity(PVMetrics.dockScrimOpacity), location: 0.8),
+                .init(color: Color("PVScrim").opacity(0.0), location: 1.0),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        // TOP ONLY. The bottom edge stays inside the safe area, i.e. it stops
+        // exactly at the dock. Do NOT add `.bottom` here.
+        .ignoresSafeArea(edges: .top)
+        .contentShape(Rectangle())
+        .onTapGesture { isCreateExpanded = false }
+        .transition(.opacity)
+        .accessibilityIdentifier("vault.create.scrim")
+        // "Dismiss create menu" and NOT "Close create menu": the ＋ itself
+        // announces the latter while open, and two buttons with one label made
+        // `app.buttons["Close create menu"]` ambiguous -- XCUITest failed with
+        // "Multiple matching elements found", not with a wrong answer. Distinct
+        // labels are also better for a VoiceOver user, who otherwise hears the
+        // same phrase from two different places on screen.
+        .accessibilityLabel(Text(verbatim: "Dismiss create menu"))
+        .accessibilityAddTraits(.isButton)
     }
 
     // MARK: - Tab content
@@ -1329,22 +1522,125 @@ private struct AvailableDockShelf<Shelf: View>: ViewModifier {
     }
 }
 
-/// `searchToolbarBehavior(.minimize)` is iOS 26.0+.
+/// The iOS 18 substitute for the detached ＋. **A no-op on iOS 26+**, where the
+/// `Tab(role: .search)` in the body owns that slot.
 ///
-/// Found live, not reasoned: `.searchable(text:tokens:isPresented:)` on iOS 26
-/// still renders a full-width search field in the list at rest, so the shelf's
-/// own search pill and that field were BOTH on screen at once
-/// (`ios/evidence/38/38-06-dock-role-search-overflows-to-more.png` shows the
-/// pair). `.minimize` collapses the toolbar's copy to a magnifier button,
-/// leaving the shelf as the primary entry point without giving up the
-/// `.searchable` field itself -- which is what owns the tag tokens, the
-/// suggestion list and the cancel affordance. Two doors onto ONE search, not
-/// two search implementations.
-private struct AvailableMinimizedSearchToolbar: ViewModifier {
+/// Below 26 there is no detached slot at all, so the ＋ becomes an ordinary
+/// floating circular button in `.overlay(alignment: .bottomTrailing)`. It is
+/// attached INSIDE the tab content (see `dimmable`), so `.bottomTrailing` is
+/// already relative to the dock's top edge and the only number needed is the same
+/// gap the panel uses -- below 26 the inset it rides on measures the classic
+/// opaque tab bar plus the home-indicator gap rather than the glass dock, which
+/// is the right number for the same reason.
+///
+/// Filled `PVAccent` with a `PVOnAccent` glyph rather than any glass: there is
+/// no `glassEffect` on this floor, and `.regularMaterial` on a 54 pt circle
+/// floating over a list reads as a smudge, not a primary action. `PVOnAccent`
+/// and never `.white` -- white measures 3.34:1 on the dark-mode accent, which
+/// is what that token exists to fix.
+///
+/// **UNRENDERED. This has never been on a screen.** `xcrun simctl list
+/// runtimes` on this machine prints exactly one line, `iOS 26.5 (26.5 -
+/// 23F77)`, so there is no iOS 18 runtime to install the app onto. The
+/// availability floors are read out of the SDK interface files and the code
+/// compiles against them; that is a signature argument, not a picture. Install
+/// an iOS 18 runtime and shoot it before claiming this branch works.
+private struct AvailableFallbackCreateButton: ViewModifier {
+    @Binding var isExpanded: Bool
+
     @ViewBuilder
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
-            content.searchToolbarBehavior(.minimize)
+            content
+        } else {
+            content.overlay(alignment: .bottomTrailing) {
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    // Same one-Image-changing-systemName shape as the 26 branch,
+                    // so the replace transition works identically. `.symbolEffect
+                    // (.replace)` is iOS 17.0, comfortably under this floor.
+                    Image(systemName: isExpanded ? "xmark" : "plus")
+                        .font(.system(size: PVMetrics.dockPlusGlyphSize, weight: .light))
+                        .contentTransition(.symbolEffect(.replace))
+                        .foregroundStyle(Color("PVOnAccent"))
+                        .frame(width: PVMetrics.dockCapsuleSize, height: PVMetrics.dockCapsuleSize)
+                        .background(Color("PVAccent"), in: Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, PVMetrics.dockPanelHInset)
+                .padding(.bottom, PVMetrics.dockPanelGap)
+                .accessibilityLabel(
+                    Text(verbatim: isExpanded ? "Close create menu" : "Create item")
+                )
+                .accessibilityIdentifier("vault.create.plusMenu")
+            }
+        }
+    }
+}
+
+/// `searchToolbarBehavior(_:)` is iOS 26.0+, and the value here is
+/// **STATE-DEPENDENT** rather than a constant `.minimize`. That is not a
+/// refinement; without it the dock's search pill does nothing when tapped.
+///
+/// ## Why `.minimize` is wanted at rest
+///
+/// Found live in plan 38-06: `.searchable(text:tokens:isPresented:)` on iOS 26
+/// renders a full-width search field in the list at rest, so the shelf's own
+/// search pill and that field are BOTH on screen at once. `.minimize` collapses
+/// the toolbar's copy to a magnifier button, leaving the shelf as the single
+/// visible search affordance without giving up the `.searchable` field itself --
+/// which is what owns the tag tokens, the suggestion list and the cancel
+/// affordance. Two doors onto ONE search, not two search implementations.
+///
+/// ## Why it cannot be `.minimize` while search is being presented
+///
+/// **`.searchToolbarBehavior(.minimize)` blocks `.searchable(isPresented:)` from
+/// presenting anything.** Tapping the shelf set `isSearchPresented = true` and no
+/// field appeared -- the dock's primary search affordance was inert. Attributed by
+/// experiment, in this order, because the first two hypotheses were wrong:
+///
+/// 1. Suspected the `Tab(role: .search)` claiming search for the tab view (Apple:
+///    "Searchable tab views will prefer to have the first tab with this role
+///    implement search", and `TabSearchActivation` offers only `.automatic` and
+///    `.searchTabSelection`, i.e. the API assumes search lives in that tab).
+///    **Wrong.**
+/// 2. Suspected a same-tick conflict; deferring with `DispatchQueue.main.async`
+///    changed nothing. **Wrong.**
+/// 3. Removed `.minimize` alone, changing nothing else: the shelf tap presented
+///    the field immediately. **That is the cause.**
+///
+/// The diagnostic that made this findable is in
+/// `VaultDockUITests.testSearchShelfNarrowsTheListWithoutTheTabBarLeaving`: on
+/// failure it dumps the tree and then taps the navigation bar's magnifier. The
+/// field appeared via the magnifier while `isPresented` did nothing, which is what
+/// separated "search is broken" from "programmatic activation is broken".
+///
+/// ## The fix, and why it is not a hack
+///
+/// `.minimize` at rest, `.automatic` while presenting. The two states want
+/// different behaviour for a real reason: minimizing exists to keep a collapsed
+/// search out of the way, and there is nothing to keep out of the way once the
+/// user has asked for search. Verified both halves live -- the shelf tap presents
+/// the field, and at rest there is still exactly one search affordance in the
+/// content area (`ios/evidence/38/38-06b-dock-at-rest-light.png`, nav bar
+/// collapsed to a magnifier).
+///
+/// Note the middle state this leaves alone: the navigation bar's magnifier still
+/// works and is a second, smaller door onto the same field. That is deliberate --
+/// it is the door that kept working throughout, and it is what a user who has
+/// scrolled the dock into its minimised row will reach for.
+private struct AvailableMinimizedSearchToolbar: ViewModifier {
+    /// Read, not written. The behaviour has to change WITH the presentation; see
+    /// the header for why.
+    let isSearchPresented: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            // STATE-DEPENDENT, and this is the whole fix. See the header above.
+            content.searchToolbarBehavior(isSearchPresented ? .automatic : .minimize)
         } else {
             content
         }
