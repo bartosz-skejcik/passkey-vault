@@ -104,6 +104,12 @@ struct ContentView: View {
             switch forced {
             case "auth":
                 route = .auth(initialMode: .signIn)
+            // Register mode needs its own forced value: reaching it by tapping
+            // the ghost control requires simulator input, which times out in
+            // this environment often enough that screenshot evidence for the
+            // register screen was going uncaptured.
+            case "authRegister":
+                route = .auth(initialMode: .register)
             case "lock":
                 route = .lock(
                     RestoredAccount(

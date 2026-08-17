@@ -48,17 +48,41 @@ struct AuthView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Item 1: app name, plain, not localized (37-UI-SPEC.md).
-                Text(verbatim: "Passkey Vault")
-                    .font(.title)
-                    .fontWeight(.semibold)
+                // The title names the ACTION, not the app -- "Sign in" /
+                // "Create your vault", per the approved visual reference
+                // (artifact "Passkey Vault iOS Screens", §"Auth").
+                //
+                // Phase 37 shipped the static app name here, on 37-UI-SPEC's
+                // instruction, and plan 38-13 left it in place because the
+                // design spec's §4 opens "Structure is unchanged. This is a
+                // colour correction plus one copy move." That sentence is
+                // about LAYOUT. The approved screens show mode-specific large
+                // titles and different button copy, and the artifact is the
+                // more specific authority: a spec sentence summarising the
+                // scope of a change does not override the drawing of what the
+                // change produces. Corrected 2026-08-17.
+                Text(t(mode == .signIn ? .authSignInTitle : .authRegisterTitle))
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
                     .foregroundStyle(Color("PVTextPrimary"))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("auth-title")
 
                 // Phase 38, plan 38-13, Task 4: the server line under the
                 // title -- necessary now that self-hosting is real (38-12).
                 // A user with two vaults must be able to see which one they
                 // are signing in to.
-                Text(t(.authServerSubtitle, ["host": ServerSettings.resolved.host ?? ServerSettings.resolved.absoluteString]))
+                //
+                // The preposition is mode-specific and comes from two
+                // dictionary keys, never interpolation: you sign in TO a
+                // server, you create a vault ON one, and Polish's "do"/"na"
+                // govern different cases so no single template covers both.
+                Text(
+                    t(
+                        mode == .signIn ? .authServerSubtitle : .authServerSubtitleRegister,
+                        ["host": ServerSettings.resolved.host ?? ServerSettings.resolved.absoluteString]
+                    )
+                )
                     .font(.subheadline)
                     .foregroundStyle(Color("PVTextMuted"))
                     .accessibilityIdentifier("auth-server-subtitle")
@@ -95,10 +119,25 @@ struct AuthView: View {
                         Text(t(.validationRequired)).font(.footnote).foregroundStyle(Color("PVError"))
                     }
 
-                    Text(t(.authIrrecoverableWarning))
+                    // A PVWarning CALLOUT, not muted footnote text. The design
+                    // spec §4 says "inline `PVWarning` callout" in those
+                    // words, and the approved screens draw it as a tinted
+                    // block with a dot. Rendering irreversibility in the same
+                    // grey as a field hint is the one thing this copy must not
+                    // do -- it is the only genuinely unrecoverable action in
+                    // the whole product.
+                    StatusCallout(text: t(.authIrrecoverableWarning), tone: .warning)
+                        .accessibilityIdentifier("auth-irrecoverable-warning")
+                } else {
+                    // Sign-in states the same fact as reassurance, not as a
+                    // warning: nothing irreversible happens on this screen, so
+                    // a PVWarning treatment here would cry wolf and dull the
+                    // register one.
+                    Text(t(.authSignInReassurance))
                         .font(.footnote)
                         .foregroundStyle(Color("PVTextMuted"))
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("auth-signin-reassurance")
                 }
 
                 if let bannerMessage {
@@ -146,11 +185,25 @@ struct AuthView: View {
 
     @ViewBuilder
     private func fieldGroup<Content: View>(labelKey: PVKey, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(t(labelKey))
                 .font(.footnote)
                 .foregroundStyle(Color("PVTextMuted"))
+            // The field sits ON `PVSurface`, as a rounded block. A bare
+            // `TextField` on `PVBackground` has no visible edge at all: the
+            // label reads as a heading and the input as empty space, which is
+            // what shipped until 2026-08-17. The approved screens draw every
+            // input as a surface-filled 11pt-radius row (the reference's own
+            // `.field` rule), and `PVSurface` exists in the token table for
+            // exactly this -- "cards, list cells, fields, sheets".
             content()
+                .padding(.horizontal, 14)
+                .padding(.vertical, 13)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(Color("PVSurface"))
+                )
         }
     }
 

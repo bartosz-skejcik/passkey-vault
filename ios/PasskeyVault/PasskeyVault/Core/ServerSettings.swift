@@ -81,8 +81,29 @@ enum ServerSettings {
     /// falls back to if it somehow fails to parse (a corrupted or
     /// future-format `UserDefaults` value is not a crash, it is a reset to
     /// the shipped default).
-    static var resolved: URL {
-        if let raw = UserDefaults.standard.string(forKey: userDefaultsKey),
+    static var resolved: URL { resolved(in: .standard) }
+
+    /// The same resolution against an EXPLICIT defaults store.
+    ///
+    /// WHY THIS OVERLOAD EXISTS — a test-isolation defect, not a preference.
+    /// `UserDefaults.standard` is disk-backed and shared ACROSS PROCESSES:
+    /// CFPreferences re-syncs values written by another process into a running
+    /// one. The UI tests pre-seed `pv.server.url` on the simulator via
+    /// `simctl` (`ItemListSearchUITests`, `SnapshotEvidenceUITests` both say
+    /// so in their headers), so a unit test asserting "with nothing stored"
+    /// could call `removeObject` and STILL read the seeded value moments
+    /// later, from disk, through no fault of its own.
+    ///
+    /// Observed 2026-08-17: `withNothingStoredResolvedIsExactlyTheShippedDefault`
+    /// failed with `resolved == "http://127.0.0.1:8621"` -- the UI harness's
+    /// server -- immediately after its own reset. It passed for the whole of
+    /// plan 38-12 only because no UI test had seeded the key yet.
+    ///
+    /// A test cannot own a cross-process global by mutating it. It can own an
+    /// injected one. Production call sites keep using `resolved`; tests pass a
+    /// private volatile suite they create and destroy themselves.
+    static func resolved(in defaults: UserDefaults) -> URL {
+        if let raw = defaults.string(forKey: userDefaultsKey),
            let url = URL(string: raw)
         {
             return url

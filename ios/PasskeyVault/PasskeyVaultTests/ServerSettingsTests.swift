@@ -64,11 +64,44 @@ struct ServerSettingsTests {
 
     // MARK: - Default resolution
 
-    @Test func withNothingStoredResolvedIsExactlyTheShippedDefault() {
-        Self.resetPersistedState()
-        defer { Self.resetPersistedState() }
+    /// Asserted against a PRIVATE, volatile defaults suite this test creates
+    /// and destroys, never `UserDefaults.standard`.
+    ///
+    /// The earlier version of this test reset `.standard` and asserted on
+    /// `ServerSettings.resolved`. It passed throughout plan 38-12 and began
+    /// failing on 2026-08-17 with `resolved == "http://127.0.0.1:8621"` --
+    /// the UI harness's own server -- *after* its own reset had run.
+    /// `UserDefaults.standard` is disk-backed and shared across processes, the
+    /// UI tests seed `pv.server.url` through `simctl`, and CFPreferences
+    /// re-syncs that value into this process. The test was not wrong about the
+    /// default; it was asserting on a global it could not own.
+    ///
+    /// This does not weaken the check -- it still asserts the exact shipped
+    /// default string, and `defaultIsNotSilentlyDependentOnTheSuite` below
+    /// pins that the same answer comes from an empty suite of any name, so a
+    /// suite that happened to be pre-populated could not fake a pass.
+    @Test func withNothingStoredResolvedIsExactlyTheShippedDefault() throws {
+        let name = "pv.tests.serversettings.default"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defaults.removePersistentDomain(forName: name)
+        defer { defaults.removePersistentDomain(forName: name) }
 
-        #expect(ServerSettings.resolved.absoluteString == "https://vault.blonie.cloud")
+        #expect(defaults.string(forKey: "pv.server.url") == nil, "the suite must genuinely be empty")
+        #expect(ServerSettings.resolved(in: defaults).absoluteString == "https://vault.blonie.cloud")
+    }
+
+    /// The falsification companion: a suite with a value stored must NOT
+    /// resolve to the default. Without this, the assertion above would pass
+    /// identically against an implementation that ignored the store entirely
+    /// and always returned the constant.
+    @Test func aStoredValueInTheSuiteOverridesTheDefault() throws {
+        let name = "pv.tests.serversettings.override"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defaults.removePersistentDomain(forName: name)
+        defer { defaults.removePersistentDomain(forName: name) }
+
+        defaults.set("https://vault.example.com", forKey: "pv.server.url")
+        #expect(ServerSettings.resolved(in: defaults).absoluteString == "https://vault.example.com")
     }
 
     // MARK: - Normalisation

@@ -79,6 +79,21 @@ enum PVKey: CaseIterable, Equatable {
     case authFaceIdUsageDescription
     // Task 4: the server line under the title on both AuthView modes.
     case authServerSubtitle
+    // The register mode's own preposition -- "on <host>", not "to <host>".
+    // You sign in TO a server; you create a vault ON one. Two keys rather
+    // than one interpolated preposition, because a preposition is not
+    // substitutable across languages: Polish takes "do" and "na", which
+    // govern different cases and cannot be swapped by string interpolation.
+    case authServerSubtitleRegister
+    // Sign-in mode's reassurance footer, from the approved visual reference.
+    // Sign-in states the same fact as register's warning, but as
+    // reassurance rather than a warning: nothing irreversible happens on
+    // this screen, so a PVWarning treatment here would cry wolf.
+    case authSignInReassurance
+    // Mode-specific large titles. These replace the static app name that
+    // shipped in Phase 37 -- see AuthView's own header for why.
+    case authSignInTitle
+    case authRegisterTitle
 
     // Phase 38, plan 38-13: onboarding (3 paged steps -- Welcome, Server,
     // AutoFill) and the auth "server line under the title" this plan adds.
@@ -124,17 +139,17 @@ enum PVDictionary {
         case .authConfirmPasswordLabel:
             return LocalizedString(pl: "Powtórz hasło główne", en: "Confirm master password")
         case .authLoginSubmit:
-            return LocalizedString(pl: "Zaloguj się", en: "Log in")
+            return LocalizedString(pl: "Zaloguj się", en: "Sign in")
         case .authRegisterSubmit:
-            return LocalizedString(pl: "Załóż konto", en: "Create account")
+            return LocalizedString(pl: "Załóż vault", en: "Create vault")
         case .authToggleToRegister:
-            return LocalizedString(pl: "Nie masz konta? Zarejestruj się", en: "No account yet? Sign up")
+            return LocalizedString(pl: "Załóż nowy vault", en: "Create a vault instead")
         case .authToggleToLogin:
-            return LocalizedString(pl: "Masz już konto? Zaloguj się", en: "Already have an account? Log in")
+            return LocalizedString(pl: "Mam już vault", en: "I already have one")
         case .authIrrecoverableWarning:
             return LocalizedString(
-                pl: "Zapamiętaj to hasło. Nie da się go odzyskać. Nikt, łącznie z nami, nie ma do niego dostępu.",
-                en: "Remember this password. It cannot be recovered. No one, including us, has access to it."
+                pl: "Nie ma odzyskiwania. Jeśli zapomnisz tego hasła, nikt — również my — nie otworzy twojego vaulta.",
+                en: "There is no recovery. If you forget this password, no one — including us — can open your vault."
             )
         case .authWrongCredentials:
             return LocalizedString(pl: "Nieprawidłowy email lub hasło", en: "Invalid email or password")
@@ -213,6 +228,17 @@ enum PVDictionary {
             )
         case .authServerSubtitle:
             return LocalizedString(pl: "do {host}", en: "to {host}")
+        case .authServerSubtitleRegister:
+            return LocalizedString(pl: "na {host}", en: "on {host}")
+        case .authSignInReassurance:
+            return LocalizedString(
+                pl: "Twoje hasło główne nigdy nie opuszcza tego urządzenia. Nie możemy go zresetować.",
+                en: "Your master password never leaves this device. We can't reset it."
+            )
+        case .authSignInTitle:
+            return LocalizedString(pl: "Zaloguj się", en: "Sign in")
+        case .authRegisterTitle:
+            return LocalizedString(pl: "Załóż swój vault", en: "Create your vault")
 
         // MARK: - Phase 38, plan 38-13: onboarding + auth server line
 

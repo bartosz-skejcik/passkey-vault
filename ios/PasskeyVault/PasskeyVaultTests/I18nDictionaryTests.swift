@@ -76,7 +76,7 @@ struct I18nDictionaryTests {
     @Test func tReturnsThePolishOrEnglishValueByLocale() {
         #expect(t(.authEmailLabel, locale: .pl) == "Email")
         #expect(t(.authLoginSubmit, locale: .pl) == "Zaloguj się")
-        #expect(t(.authLoginSubmit, locale: .en) == "Log in")
+        #expect(t(.authLoginSubmit, locale: .en) == "Sign in")
     }
 
     @Test func interpolationSubstitutesNamedPlaceholders() {

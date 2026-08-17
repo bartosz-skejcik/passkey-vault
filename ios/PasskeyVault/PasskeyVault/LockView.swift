@@ -155,13 +155,11 @@ struct LockView: View {
                 // proves the LAST words of this sentence are reachable,
                 // which is exactly what the alert never demonstrated).
                 if showForgotPasswordWarning {
-                    Text(t(.authIrrecoverableWarning))
-                        .font(.footnote)
-                        .foregroundStyle(Color("PVWarning"))
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color("PVSurface"))
-                        .fixedSize(horizontal: false, vertical: true)
+                    // The shared status slot (`Core/StatusCallout.swift`), not
+                    // a second hand-built copy. §5's nine states differ ONLY in
+                    // this slot, so two divergent renderings of it would make
+                    // the state machine stop reading as one machine.
+                    StatusCallout(text: t(.authIrrecoverableWarning), tone: .warning)
                         .accessibilityIdentifier("lock-forgot-password-warning")
                 }
             }
