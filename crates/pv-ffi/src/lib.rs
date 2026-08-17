@@ -111,6 +111,16 @@ pub use wire::{
     FfiEncryptedItemWire,
 };
 
+// UI-06 / DR-38-A (`ios/IOS-SPIKE-LOG.md` §1a): the password/passphrase
+// generator, exported as free functions taking no `FfiUserKey` -- see that
+// module's own header for the full rationale and the measured wasm-size
+// decision.
+pub mod generator;
+pub use generator::{
+    generate_character_password, generate_passphrase, generator_bounds,
+    FfiCharacterPasswordOptions, FfiGeneratorBounds,
+};
+
 // TEST-ONLY (`#[cfg(test)]`): observes what this crate actually hands back
 // to the allocator, so the CR-01 zeroization regression is asserted on real
 // freed bytes rather than on the shape of the source. Never compiled into

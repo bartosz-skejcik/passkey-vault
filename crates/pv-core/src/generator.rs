@@ -350,16 +350,35 @@ mod tests {
 
         let at_min_words = generate_passphrase(PASSPHRASE_MIN_WORDS, DEFAULT_SEPARATOR)
             .expect("PASSPHRASE_MIN_WORDS itself must be accepted");
+        assert!(!at_min_words.is_empty());
+
+        let at_max_words = generate_passphrase(PASSPHRASE_MAX_WORDS, DEFAULT_SEPARATOR)
+            .expect("PASSPHRASE_MAX_WORDS itself must be accepted");
+        assert!(!at_max_words.is_empty());
+
+        // Behavior 5: "a passphrase of n words joined by a one-character
+        // separator contains exactly n minus one separators." Asserted with
+        // a separator that CANNOT collide with word content -- four EFF
+        // wordlist entries themselves contain a literal hyphen
+        // ("drop-down", "felt-tip", "t-shirt", "yo-yo"), so counting `-`
+        // occurrences in a hyphen-joined phrase is unreliable whenever one
+        // of those words happens to be drawn (an observed flake, not a
+        // hypothetical one). `|` appears in no wordlist entry -- verified by
+        // this module's own `wordlist_has_7776_entries`/digest tests never
+        // seeing a non-alphabetic, non-hyphen character; see this plan's
+        // SUMMARY for the character-set audit.
+        let min_words_pipe_joined =
+            generate_passphrase(PASSPHRASE_MIN_WORDS, "|").expect("PASSPHRASE_MIN_WORDS accepted");
         assert_eq!(
-            at_min_words.matches(DEFAULT_SEPARATOR).count(),
+            min_words_pipe_joined.matches('|').count(),
             PASSPHRASE_MIN_WORDS - 1,
             "a passphrase of n words joined by a one-character separator must contain n-1 separators"
         );
 
-        let at_max_words = generate_passphrase(PASSPHRASE_MAX_WORDS, DEFAULT_SEPARATOR)
-            .expect("PASSPHRASE_MAX_WORDS itself must be accepted");
+        let max_words_pipe_joined =
+            generate_passphrase(PASSPHRASE_MAX_WORDS, "|").expect("PASSPHRASE_MAX_WORDS accepted");
         assert_eq!(
-            at_max_words.matches(DEFAULT_SEPARATOR).count(),
+            max_words_pipe_joined.matches('|').count(),
             PASSPHRASE_MAX_WORDS - 1,
             "a passphrase of n words joined by a one-character separator must contain n-1 separators"
         );

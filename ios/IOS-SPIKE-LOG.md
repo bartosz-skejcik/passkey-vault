@@ -121,6 +121,16 @@ exactly the line that gets cut.
   UniFFI code. Debug only; do not try to work around it.
 - **`.planning/` never survives this worktree.** Anything that matters goes in this file,
   `ios/evidence/`, or `docs/`.
+- **`pv-server`'s `family_wide_sharing.rs` has a pre-existing test-isolation flake, found by
+  38-04, not caused by it.** `family_wide_reseal_add_member_body_is_shape_identical_to_an_ordinary_share`
+  fails every time as part of `cargo test --workspace` (reproducible, not intermittent) but passes
+  reliably (5/5) when its own test file runs alone. Most likely cause: the test's
+  `w.client.request_bodies_matching(...)` capture list picks up a same-shaped request body from a
+  DIFFERENT, concurrently-running test when more test binaries execute in parallel as part of the
+  full workspace suite — a harness test-isolation issue, not a `pv-server` serialization bug.
+  `git diff --stat -- crates/pv-server` was empty for all of 38-04's execution; this is out of scope
+  for that plan (CLAUDE.md forbids touching `crates/pv-server`) and is left for a dedicated
+  follow-up.
 
 ## 1. Decisions
 
@@ -606,6 +616,43 @@ web/extension, Rust for iOS), and they can drift. Mitigation is 38-04's byte-for
 over the constants and the wordlist — not a behavioural sample, a structural comparison — plus a
 backlog item for later convergence of web/extension onto the Rust generator via `pv-wasm`. Two
 implementations is hereby a **recorded state, not an accident** (research OQ-9).
+
+**AMENDMENT, 2026-08-17 (Plan 38-04) — the binary-size rule discharged with measured numbers.**
+Both sides measured via the actual deployed artifact `scripts/build-wasm.sh` produces
+(`web/public/wasm/pv_wasm_bg.wasm`, post-`wasm-bindgen`, `wasm-bindgen 0.2.126`, the version this
+workspace pins), each rebuilt twice for determinism and stable both times:
+
+| Build | `pv_wasm_bg.wasm` size |
+|---|---|
+| **Before** (commit `c2e1c57`, the commit preceding this plan's first commit — no `generator.rs`) | 1,398,081 bytes |
+| **After** (`crates/pv-core/src/generator.rs` + `generator/wordlist.rs` unconditional, HEAD at Task 2's commit `7f99ea2`) | 1,398,626 bytes |
+| **Delta** | **+545 bytes** |
+
+Method: `git worktree add` a detached checkout of `c2e1c57` (never a `git checkout`/`git stash` on
+this worktree's own branch — the destructive-git prohibition holds), ran `scripts/build-wasm.sh`
+there for the before number, then the same script in this worktree at HEAD for the after number.
+545 bytes is **~0.04%** of the baseline and **two orders of magnitude under the 50 KB threshold**
+this record committed to.
+
+**Decision applied: the module stays UNCONDITIONAL.** No `pv-core` cargo feature gate. The
+second-order hazard this record named ("a feature-gated module is silently skipped by
+`cargo test --workspace`") therefore never triggers — plain `cargo test --workspace` already
+covers `generator::` with no separate command needed. (`cargo test -p pv-core generator::
+--release` is still the command 38-04 actually ran for the distribution/bias test specifically,
+because 200,000 draws want the release profile's speed — not because debug builds skip the
+module.)
+
+**Why the delta is this small, stated rather than left as a surprising number:** `pv-wasm` never
+calls into `pv_core::generator` — no `#[wasm_bindgen]` export reaches it, so nothing in the crate's
+own public API surface, as seen from the `wasm32-unknown-unknown` target's perspective, marks the
+module or its 7,776-entry word list as reachable. The Rust/LLVM toolchain's dead-code elimination
+for the `wasm32-unknown-unknown` target strips code that is provably unreferenced from any exported
+symbol, even when the source file compiles unconditionally as part of the crate. The word list's
+~90 KB of source text (DR-38-A's own original estimate) never becomes ~90 KB of linked `.wasm` for
+exactly this reason. This is a measured fact about *this* crate graph today, not a general license
+to assume dead code always vanishes — the day `pv-wasm` calls `generator::generate_passphrase` (the
+convergence path this record's residual-risk paragraph names), the word list becomes reachable and
+the size question would need remeasuring against a real 50 KB threshold, not re-assumed free.
 
 ### DR-38-B — Swift item field model: **hand-written mirror of `packages/pv-ui/vault/types.ts`**
 
@@ -1968,6 +2015,21 @@ regression** — do not "fix" it back to zero. A zero-hit claim is worth recordi
 single line of new Rust can break it; a claim that no change could break is not evidence of anything.
 
 **Warning sign:** a plan that describes UI-06 with a verb like "wire", "expose" or "surface".
+
+**The transition happened, 2026-08-17 (Plan 38-04).** Same command, re-run after landing
+`crates/pv-core/src/generator.rs` and `crates/pv-core/src/generator/wordlist.rs`:
+
+```
+$ grep -rliE "passphrase|wordlist|generate_password" crates/pv-core/src/ crates/pv-wasm/src/ | wc -l
+2
+crates/pv-core/src/generator.rs
+crates/pv-core/src/generator/wordlist.rs
+```
+
+Non-zero, as predicted, and as it should be — this is the baseline's own recorded transition, not a
+regression to chase back to zero. `crates/pv-wasm/src/` still contributes nothing to the match, because
+`pv-wasm` never calls into `generator` (see DR-38-A's amendment below on why that stayed true even
+after the module became unconditional in `pv-core`).
 
 ### L-17 — Phase 38's SC2 passes on a broken wire format
 
