@@ -144,12 +144,106 @@ struct VaultFilterToken: Identifiable, Hashable {
     var filter: VaultFilter { .tag(tag) }
 }
 
-// MARK: - "+" create menu destinations
+// MARK: - The dock's ＋ action grid
 //
-// `ItemCreationKind` moved to `TypePicker.swift` (plan 38-09, Task 1) -- the
-// five-case enum and its `emptyFields()` factory are unchanged in substance
-// (one Rule 1 fix: the TOTP placeholder secret, see that file's own note),
-// just relocated to sit beside the picker view that now presents it.
+// `ItemCreationKind` lives in `TypePicker.swift` (plan 38-09, Task 1) -- the
+// five-case enum and its `emptyFields()` factory are unchanged.
+
+/// The nine slots of the ＋ capsule's 3×3 action grid, in the approved
+/// artifact's own order (`ios/brand/screens-vault.html`, the `.grid` block).
+///
+/// FOUR of the nine have no working implementation on iOS today. They render
+/// anyway, DISABLED, rather than being quietly dropped to a tidier 2×3: the
+/// grid's shape is part of the approved design, and a slot that is visibly
+/// present-but-unavailable tells the truth about what this build can do,
+/// while a missing slot misrepresents the design as simpler than it is. This
+/// is the same discipline the avatar menu's Family/Settings entries already
+/// follow, and the inverse of offering an action known to fail
+/// (`ItemCapabilities.swift`'s own rule).
+///
+/// ONE DELIBERATE SUBSTITUTION, recorded rather than smuggled: the artifact's
+/// fourth slot is **Scan QR code**. There is no QR scanner in this build and
+/// none planned in this milestone, but there IS a complete, working manual
+/// TOTP create path (`ItemCreationKind.totp` -> `ItemFormView`, plan 38-09,
+/// validated by `TotpValidation`). Shipping the artifact's label disabled
+/// would make TOTP creation unreachable from the dock entirely -- a
+/// regression against 38-09's own `TypePicker`, which offered it. The slot
+/// therefore keeps its PURPOSE (create a code) with the mechanism that
+/// actually exists, and scanning stays a named gap.
+enum VaultCreateAction: String, CaseIterable, Identifiable {
+    case login, card, passkey, code, identity, note, generatePassword, scanCard, importItems
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .login: return "New login"
+        case .card: return "New card"
+        case .passkey: return "New passkey"
+        case .code: return "New code"
+        case .identity: return "New identity"
+        case .note: return "New note"
+        case .generatePassword: return "Generate password"
+        case .scanCard: return "Scan card"
+        case .importItems: return "Import"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .login: return "globe"
+        case .card: return "creditcard"
+        case .passkey: return "key.fill"
+        case .code: return "timer"
+        case .identity: return "person.text.rectangle"
+        case .note: return "note.text"
+        case .generatePassword: return "dice"
+        case .scanCard: return "camera.viewfinder"
+        case .importItems: return "square.and.arrow.down"
+        }
+    }
+
+    /// The item type this slot creates, or `nil` for a slot that is not a
+    /// create-an-item action at all.
+    var creationKind: ItemCreationKind? {
+        switch self {
+        case .login: return .login
+        case .card: return .card
+        case .code: return .totp
+        case .identity: return .identity
+        case .note: return .note
+        case .passkey, .generatePassword, .scanCard, .importItems: return nil
+        }
+    }
+
+    /// `nil` when the slot works; otherwise the reason it does not, surfaced
+    /// as the control's accessibility hint so the disabled state is not a
+    /// silent dead end for a VoiceOver user either.
+    var unavailableReason: String? {
+        switch self {
+        case .login, .card, .code, .identity, .note, .generatePassword:
+            return nil
+        case .passkey:
+            // A passkey is cryptographic material minted during a real
+            // WebAuthn ceremony by the AutoFill credential provider -- there
+            // is no meaningful "type one in" form for it, here or ever.
+            return "Passkeys are created by the site you register with, not typed in here."
+        case .scanCard:
+            return "Card scanning is not available in this build."
+        case .importItems:
+            return "Importing is not available on iOS yet."
+        }
+    }
+
+    var isAvailable: Bool { unavailableReason == nil }
+
+    /// The `key` brand colour the artifact gives the passkey bubble
+    /// (`.ga .b.key{color:var(--pv-key)}`); every other bubble takes the
+    /// primary text colour.
+    var glyphColorName: String {
+        self == .passkey ? "PVPasskey" : "PVTextPrimary"
+    }
+}
 
 // MARK: - Row pill
 
@@ -214,22 +308,31 @@ struct ItemListView: View {
     // changing to another) has to be expressed as ONE identity change, not
     // a dismiss-then-present race between two separately-driven modifiers.
     private enum ActiveSheet: Identifiable {
-        case typePicker
         case creating(ItemCreationKind)
         case editing(VaultItemViewModel)
         case movingToFolder(VaultItemViewModel)
+        case generator
 
         var id: String {
             switch self {
-            case .typePicker: return "typePicker"
             case let .creating(kind): return "creating-\(kind.title)"
             case let .editing(item): return "editing-\(item.id)"
             case let .movingToFolder(item): return "movingToFolder-\(item.id)"
+            case .generator: return "generator"
             }
         }
     }
 
     @State private var activeSheet: ActiveSheet?
+
+    // MARK: The dock
+    //
+    // `isCreateExpanded` drives BOTH halves of the ＋ affordance at once --
+    // the detached capsule's glyph (＋ / ✕) and what the accessory shelf
+    // holds (the search pill / the 3×3 grid) -- so the two can never
+    // disagree about whether the grid is open.
+    @State private var isCreateExpanded = false
+    @State private var isSearchPresented = false
 
     /// E-U2/E-U3 FINDING (38-06, Task 3, recorded in
     /// `ios/IOS-SPIKE-LOG.md`): a SINGLE `NavigationStack` wrapping the whole
@@ -245,7 +348,7 @@ struct ItemListView: View {
     /// the SAME `NavigationStack` instance the search modifier is attached
     /// within, not a stack living one level further out.
     var body: some View {
-        TabView(selection: $selectedTab) {
+        TabView(selection: dockSelection) {
             ForEach(VaultTypeTab.allCases) { tab in
                 Tab(tab.title, systemImage: tab.systemImage, value: tab) {
                     NavigationStack {
@@ -285,18 +388,15 @@ struct ItemListView: View {
                             .safeAreaInset(edge: .bottom) {
                                 if tab == .all, Self.showsTracerCreateBar { createBar }
                             }
-                            .searchable(
+                            .modifier(AvailableVaultSearchable(
                                 text: $searchText,
                                 tokens: $searchTokens,
-                                placement: .automatic,
-                                prompt: Text(verbatim: "Search")
-                            ) { token in
-                                Label(token.label, systemImage: "tag")
-                            }
+                                isPresented: $isSearchPresented
+                            ))
                             .searchSuggestions { tokenSuggestions }
+                            .modifier(AvailableMinimizedSearchToolbar())
                             .navigationTitle(Text(verbatim: tab.title))
                             .toolbar { toolbarContent }
-                            .overlay(alignment: .bottomTrailing) { createMenuCapsule }
                             .navigationDestination(item: $selection) { item in
                                 // 38-07: the detail screen owns its own
                                 // last-used-recording wiring on reveal and
@@ -337,6 +437,172 @@ struct ItemListView: View {
             }
         }
         .modifier(AvailableTabBarMinimizeBehavior())
+        .modifier(AvailableDockShelf { dockShelf })
+    }
+
+    // MARK: - The dock
+
+    /// A computed binding, not `@State`: it exists so that changing the type
+    /// filter also closes the ＋ grid. Leaving the grid open over a list the
+    /// user just re-filtered hides the result of the action they took.
+    private var dockSelection: Binding<VaultTypeTab> {
+        Binding(
+            get: { selectedTab },
+            set: { tab in
+                selectedTab = tab
+                isCreateExpanded = false
+            }
+        )
+    }
+
+    /// The accessory shelf: search and the ＋ capsule at rest, the ＋ grid
+    /// above them while expanded.
+    ///
+    /// WHERE THE ＋ ENDED UP, AND WHY IT IS NOT WHERE THE ARTIFACT DRAWS IT.
+    /// `ios/brand/screens-vault.html` puts ＋ in a capsule DETACHED to the
+    /// right of the tab bar, on the same row. That slot is real in iOS 26 --
+    /// it is where a `Tab(role: .search)` renders -- and it is the only
+    /// detached slot a stock `TabView` offers. It cannot hold ＋ here, proven
+    /// by building it: a sixth `Tab` alongside the five type filters exceeds
+    /// the tab bar's five visible slots, so iOS collapsed **Passkeys and the
+    /// ＋ together into a "More" (•••) overflow tab** and nothing detached
+    /// at all (`ios/evidence/38/38-06-dock-role-search-overflows-to-more.png`).
+    /// Giving ＋ that slot therefore costs the Passkeys tab, which the design
+    /// also requires. So ＋ takes the trailing end of the accessory shelf --
+    /// one row up, same dock, still a floating capsule beside a glass pill,
+    /// and still expanding in place. Recorded, not silently "fixed".
+    @ViewBuilder
+    private var dockShelf: some View {
+        VStack(spacing: PVMetrics.dockShelfGap) {
+            if isCreateExpanded {
+                createActionGrid
+            }
+            HStack(spacing: PVMetrics.dockShelfGap) {
+                // The search pill collapses away while the grid is open, so
+                // the capsule keeps its exact position on both sides of the
+                // transition -- that is what "expands in place" has to mean
+                // for a control that also becomes the dismiss affordance.
+                if isCreateExpanded {
+                    Spacer(minLength: 0)
+                } else {
+                    searchShelf
+                }
+                createCapsule
+            }
+        }
+    }
+
+    /// `.cap{54x54}` + `.plus{font-size:23; font-weight:300}` -- the ＋/✕
+    /// capsule, on the artifact's own geometry.
+    ///
+    /// FILLED with `PVAccent`, not glass, and that is a consequence of where
+    /// it had to live (see `dockShelf`). The artifact's capsule is glass with
+    /// an accent glyph BECAUSE it floats over the page, detached, where glass
+    /// reads as a distinct surface. Inside the accessory shelf it sits on the
+    /// shelf's own OS-rendered glass, and glass on glass is invisible --
+    /// observed, not predicted (`38-06-dock-glass-on-glass.png`). A filled
+    /// accent circle is the honest way to keep it reading as one distinct,
+    /// primary control in the place it actually is. `PVOnAccent` for the
+    /// glyph, never `.white` -- that token exists because white measures
+    /// 3.34:1 on the dark-mode accent.
+    @ViewBuilder
+    private var createCapsule: some View {
+        Button {
+            isCreateExpanded.toggle()
+        } label: {
+            Image(systemName: isCreateExpanded ? "xmark" : "plus")
+                .font(.system(size: PVMetrics.dockPlusGlyphSize, weight: .light))
+                .foregroundStyle(Color("PVOnAccent"))
+                .frame(width: PVMetrics.dockCapsuleSize, height: PVMetrics.dockCapsuleSize)
+                .background(Color("PVAccent"), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(verbatim: isCreateExpanded ? "Close" : "Create"))
+        .accessibilityIdentifier("vault.create.plusMenu")
+    }
+
+    /// `.acc{height:46; gap:9; padding:0 17; font-size:15.5}` -- the shelf's
+    /// search pill. A button, not a live `TextField`: tapping it presents the
+    /// real `.searchable` field, which is what owns the tag tokens, the
+    /// suggestion list and the cancel affordance. Duplicating any of that
+    /// into a bespoke field would be two search implementations that can
+    /// disagree.
+    @ViewBuilder
+    private var searchShelf: some View {
+        Button {
+            isSearchPresented = true
+        } label: {
+            HStack(spacing: PVMetrics.dockShelfGap) {
+                Image(systemName: "magnifyingglass")
+                Text(verbatim: searchText.isEmpty ? "Search your vault" : searchText)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: PVMetrics.dockShelfFontSize))
+            .foregroundStyle(Color("PVTextMuted"))
+            .padding(.horizontal, PVMetrics.dockShelfHPadding)
+            .frame(height: PVMetrics.dockShelfHeight)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("vault.search.shelf")
+    }
+
+    /// `.grid{...}` + `.ga{...}` -- the 3×3 action grid, on the artifact's own
+    /// geometry. Rendered on `pvDockGlass` because, unlike the tab bar and the
+    /// shelf itself, this panel is not a stock control the OS grounds for us.
+    @ViewBuilder
+    private var createActionGrid: some View {
+        let columns = Array(
+            repeating: GridItem(.flexible(), spacing: PVMetrics.dockGridColumnGap),
+            count: 3
+        )
+        LazyVGrid(columns: columns, spacing: PVMetrics.dockGridRowGap) {
+            ForEach(VaultCreateAction.allCases) { action in
+                Button {
+                    perform(action)
+                } label: {
+                    VStack(spacing: PVMetrics.dockGridActionGap) {
+                        Image(systemName: action.systemImage)
+                            .font(.system(size: PVMetrics.dockGridGlyphSize * 0.7))
+                            .foregroundStyle(Color(action.glyphColorName))
+                            .frame(
+                                width: PVMetrics.dockGridBubbleSize,
+                                height: PVMetrics.dockGridBubbleSize
+                            )
+                            .background(Color("PVSurface"), in: Circle())
+                        Text(verbatim: action.title)
+                            .font(.system(size: PVMetrics.dockGridActionFontSize))
+                            .foregroundStyle(Color("PVTextPrimary"))
+                            .multilineTextAlignment(.center)
+                            .lineSpacing(PVMetrics.dockGridActionFontSize * 0.25)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .opacity(action.isAvailable ? 1.0 : 0.4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!action.isAvailable)
+                .accessibilityIdentifier("vault.create.action.\(action.rawValue)")
+                .accessibilityHint(Text(verbatim: action.unavailableReason ?? ""))
+            }
+        }
+        .padding(.vertical, PVMetrics.dockGridVPadding)
+        .padding(.horizontal, PVMetrics.dockGridHPadding)
+        .pvDockGlass(in: RoundedRectangle(cornerRadius: PVMetrics.dockGridRadius, style: .continuous))
+        .accessibilityIdentifier("vault.create.grid")
+    }
+
+    private func perform(_ action: VaultCreateAction) {
+        isCreateExpanded = false
+        if let kind = action.creationKind {
+            activeSheet = .creating(kind)
+        } else if action == .generatePassword {
+            activeSheet = .generator
+        }
     }
 
     // MARK: - Tab content
@@ -437,13 +703,10 @@ struct ItemListView: View {
     @ViewBuilder
     private func sheetContent(_ sheet: ActiveSheet) -> some View {
         switch sheet {
-        case .typePicker:
-            TypePicker { kind in
-                // Directly to `.creating(kind)` -- ONE identity change on
-                // the SAME `.sheet(item:)` binding, not a dismiss-then-
-                // present race between two separately-driven modifiers.
-                activeSheet = .creating(kind)
-            }
+        case .generator:
+            // The dock grid's "Generate password" slot. Standalone (no
+            // `onInsert`) -- the same presentation `LockView` already uses.
+            GeneratorSheet()
         case let .creating(kind):
             ItemFormView(mode: .create(kind), store: store, folderStore: folderStore) { created in
                 selection = created
@@ -780,33 +1043,6 @@ struct ItemListView: View {
         }
     }
 
-    // MARK: - "+" create affordance (design-conformance §1's detached capsule)
-    //
-    // Plan 38-09, Task 1: this used to be a `Menu` whose per-type items
-    // created an EMPTY draft immediately and navigated straight to the
-    // detail screen (38-06's own placeholder, explicit that "a real
-    // create/edit FORM is 38-09's job"). It now opens `TypePicker`, and
-    // choosing a type opens `ItemFormView(mode: .create(kind))` -- nothing
-    // is written to the server until the user taps Save inside that form.
-    // Still a STOCK control, not a hand-built morphing capsule-to-grid
-    // animation -- "do not hand-roll the glass" applies to a custom
-    // expand/collapse transition as much as to `glassEffect` itself.
-    @ViewBuilder
-    private var createMenuCapsule: some View {
-        Button {
-            activeSheet = .typePicker
-        } label: {
-            Image(systemName: "plus")
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(Color("PVOnAccent"))
-                .frame(width: 56, height: 56)
-                .background(Color("PVAccent"), in: Circle())
-                .shadow(radius: 4, y: 2)
-        }
-        .padding()
-        .accessibilityIdentifier("vault.create.plusMenu")
-    }
-
     // MARK: - Data pipeline (filter, then search, then sort)
 
     /// Composes `VaultFilterFunctions.filterItems` -> `VaultSearch
@@ -908,13 +1144,116 @@ private struct AvailableListSectionIndexVisibility: ViewModifier {
     }
 }
 
-/// `tabBarMinimizeBehavior(_:)` is iOS 26.0+.
+/// `tabBarMinimizeBehavior(_:)` is iOS 26.0+ (`SwiftUI.swiftinterface`, whose
+/// `TabBarMinimizeBehavior` offers exactly four values: `.automatic`,
+/// `.onScrollDown`, `.onScrollUp`, `.never`).
+///
+/// **`.onScrollDown` is the one that keeps the bar on screen**, and the name
+/// is the trap: it does not mean "hide it when the user scrolls down", it
+/// means "MINIMISE it when content scrolls down" -- the bar collapses to a
+/// small pill beside the detached ＋ capsule (the artifact's
+/// "circle · pill · circle") and stays there, pressable, for the whole scroll.
+/// `.never` would also keep it, but at full size forever, which throws away
+/// the collapse the approved design explicitly asks for; `.onScrollUp` is the
+/// same mechanic keyed to the opposite direction, which minimises the bar when
+/// returning to the top -- backwards for a list. Proven, not reasoned: see
+/// `PasskeyVaultUITests/VaultDockUITests
+/// .testTabBarStaysOnScreenWhileScrollingAPopulatedList`, which scrolls a
+/// 21-item live list and asserts the bar's frame still intersects the screen
+/// and is still hittable afterwards, with a negative control proving that
+/// assertion can fail.
 private struct AvailableTabBarMinimizeBehavior: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content.tabBarMinimizeBehavior(.onScrollDown)
         } else {
             content
+        }
+    }
+}
+
+/// `tabViewBottomAccessory(content:)` is iOS 26.0+ and lives on `View` in
+/// SwiftUI (the two-argument `isEnabled:` overload is 26.1+ and deliberately
+/// not used -- 26.1 is a higher floor than this needs).
+///
+/// Below iOS 26 there is no accessory shelf at all. That is a graceful
+/// degradation, not a fork: the tab bar still renders (as a standard,
+/// non-floating bar), and search still renders, because
+/// `AvailableVaultSearchable` puts the field inline in the navigation bar on
+/// that floor instead of behind the shelf's pill. The ＋ slot degrades to an
+/// ordinary sixth tab, which is still a working create affordance.
+private struct AvailableDockShelf<Shelf: View>: ViewModifier {
+    @ViewBuilder var shelf: Shelf
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.tabViewBottomAccessory { shelf }
+        } else {
+            content
+        }
+    }
+}
+
+/// `searchToolbarBehavior(.minimize)` is iOS 26.0+.
+///
+/// Found live, not reasoned: `.searchable(text:tokens:isPresented:)` on iOS 26
+/// still renders a full-width search field in the list at rest, so the shelf's
+/// own search pill and that field were BOTH on screen at once
+/// (`ios/evidence/38/38-06-dock-role-search-overflows-to-more.png` shows the
+/// pair). `.minimize` collapses the toolbar's copy to a magnifier button,
+/// leaving the shelf as the primary entry point without giving up the
+/// `.searchable` field itself -- which is what owns the tag tokens, the
+/// suggestion list and the cancel affordance. Two doors onto ONE search, not
+/// two search implementations.
+private struct AvailableMinimizedSearchToolbar: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.searchToolbarBehavior(.minimize)
+        } else {
+            content
+        }
+    }
+}
+
+/// Search, with the SAME text/token bindings on both floors -- only how the
+/// field is summoned differs.
+///
+/// On iOS 26 the field is `isPresented`-driven, because the shelf's pill is
+/// the entry point and a second always-visible field inside the list would be
+/// the "FAB and list-header search field both disappear" the approved design
+/// explicitly removes. Below 26 there is no shelf to summon it from, so the
+/// field renders at rest exactly as it did before this change.
+///
+/// Guarded on the MODIFIER, never on the view body: every call site is
+/// identical regardless of floor.
+private struct AvailableVaultSearchable: ViewModifier {
+    @Binding var text: String
+    @Binding var tokens: [VaultFilterToken]
+    @Binding var isPresented: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.searchable(
+                text: $text,
+                tokens: $tokens,
+                isPresented: $isPresented,
+                placement: .automatic,
+                prompt: Text(verbatim: "Search")
+            ) { token in
+                Label(token.label, systemImage: "tag")
+            }
+        } else {
+            content.searchable(
+                text: $text,
+                tokens: $tokens,
+                placement: .automatic,
+                prompt: Text(verbatim: "Search")
+            ) { token in
+                Label(token.label, systemImage: "tag")
+            }
         }
     }
 }

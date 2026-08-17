@@ -114,6 +114,81 @@ enum PVMetrics {
     static let dotsGap: CGFloat = 7
     static let dotsVPadding: CGFloat = 14
     static let dotSize: CGFloat = 7
+
+    // MARK: - The dock (screens-vault.html, "iOS 26 dock" block)
+    //
+    // These come from `ios/brand/screens-vault.html`, NOT from `screens.html`
+    // which the constants above transcribe -- the vault artifact is a second
+    // file with its own stylesheet, and the dock only exists there. Same
+    // scaling rule: every `calc(Npx * var(--s))` is N device points.
+    //
+    // The three the OS owns are deliberately absent: the tab bar's own height,
+    // its horizontal inset, and the gap the system leaves under it. Those are
+    // stock `TabView` geometry on iOS 26 and hard-coding a guess at them is
+    // exactly the "invented layout" defect this whole file exists to stop.
+
+    // `.acc{height:46; gap:9; padding:0 17; font-size:15.5}` -- the accessory
+    // shelf's pill. `tabViewBottomAccessory` sizes the shelf from its content,
+    // so this height is what the content asks for, not a frame imposed on it.
+    static let dockShelfHeight: CGFloat = 46
+    static let dockShelfGap: CGFloat = 9
+    static let dockShelfHPadding: CGFloat = 17
+    static let dockShelfFontSize: CGFloat = 15.5
+
+    // `.cap{54x54}` + `.plus{font-size:23; font-weight:300}` -- the detached
+    // action capsule and its glyph.
+    static let dockCapsuleSize: CGFloat = 54
+    static let dockPlusGlyphSize: CGFloat = 23
+
+    // `.grid{border-radius:26; padding:16 10; grid-template-columns:repeat(3,1fr);
+    //        gap:14 4}`
+    static let dockGridRadius: CGFloat = 26
+    static let dockGridVPadding: CGFloat = 16
+    static let dockGridHPadding: CGFloat = 10
+    static let dockGridRowGap: CGFloat = 14
+    static let dockGridColumnGap: CGFloat = 4
+
+    // `.ga{gap:7; font-size:11; line-height:1.25}` / `.ga .b{52x52; radius 99}`
+    // / `.ga .b svg{22x22}`
+    static let dockGridActionGap: CGFloat = 7
+    static let dockGridActionFontSize: CGFloat = 11
+    static let dockGridBubbleSize: CGFloat = 52
+    static let dockGridGlyphSize: CGFloat = 22
+}
+
+// MARK: - Dock glass
+
+extension View {
+    /// The floating-glass ground for the two dock surfaces the OS does NOT
+    /// render for us -- the detached ＋ capsule and the ＋ action grid.
+    ///
+    /// The tab bar and the accessory shelf are stock `TabView` chrome and get
+    /// their glass free; these two do not exist as stock controls, so they
+    /// need the material applied explicitly. `glassEffect(_:in:)` is the stock
+    /// API for it and lives in **SwiftUICore, not SwiftUI** -- grepping
+    /// `SwiftUI.swiftinterface` for it returns nothing, which reads exactly
+    /// like "the API does not exist" and has already produced that wrong
+    /// conclusion once in this repo (landmine L-1's shape). It is real, and it
+    /// is iOS 26.0+, so the floor gets `.regularMaterial`, which is the same
+    /// blur-and-tint idea expressed with an API that exists on iOS 18.
+    ///
+    /// This is the sanctioned way to get glass, NOT a hand-rolled one: no
+    /// `.blur`, no stacked translucent fills, no `UIVisualEffectView` bridge.
+    func pvDockGlass<S: Shape>(in shape: S) -> some View {
+        modifier(PVDockGlass(shape: shape))
+    }
+}
+
+private struct PVDockGlass<S: Shape>: ViewModifier {
+    let shape: S
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular.interactive(), in: shape)
+        } else {
+            content.background(.regularMaterial, in: shape)
+        }
+    }
 }
 
 // MARK: - Buttons

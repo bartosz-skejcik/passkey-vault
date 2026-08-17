@@ -180,8 +180,111 @@ struct ContentView: View {
         ItemListView(store: store, folderStore: folderStoreFor(session))
             .task {
                 await Self.seedTooShortTotpSecretIfRequested(store: store)
+                await Self.seedDockFixtureIfRequested(store: store)
             }
     }
+
+    /// [Rule 2 deviation, plan 38-06 dock work] The dock's load-bearing
+    /// claim -- "the bottom bar minimises but never disappears while
+    /// scrolling" -- is only observable on a list that actually SCROLLS.
+    /// The existing fixtures cannot produce one: `PV_UITEST_VAULT_FIXTURE`
+    /// forces exactly two synthetic rows, and driving the tracer's marker
+    /// bar 20+ times through XCUITest keystrokes is neither fast nor
+    /// reliable enough to be evidence.
+    ///
+    /// This hook creates a spread of REAL items through the REAL
+    /// `VaultStore.create(fields:)` path -- real client-side encryption,
+    /// real `POST /api/vault/items`, real decrypt on the way back -- so the
+    /// rows under the dock are genuinely decrypted rows off the wire, not a
+    /// forced array. Only the DECISION to create them is synthetic.
+    ///
+    /// Idempotent by construction: it returns immediately if the account
+    /// already holds any item whose name carries the fixture marker, so a
+    /// re-run against the same throwaway account does not multiply the list.
+    /// DEBUG only, inert unless `PV_UITEST_SEED_DOCK_LIST` is set, matching
+    /// this repo's established `PV_UITEST_*` hook convention.
+    #if DEBUG
+    static let dockFixtureMarker = "\u{2009}·"
+
+    private static func seedDockFixtureIfRequested(store: VaultStore) async {
+        guard ProcessInfo.processInfo.environment["PV_UITEST_SEED_DOCK_LIST"] != nil else { return }
+        guard !store.items.contains(where: { $0.displayName.hasSuffix(dockFixtureMarker) }) else {
+            return
+        }
+        for fields in dockFixtureItems() {
+            _ = try? await store.create(fields: fields)
+        }
+    }
+
+    /// Real-looking vault contents across all six types, so every section of
+    /// the All tab (including `identity` and `note`, the two with no tab of
+    /// their own) is populated and the list is long enough to scroll.
+    /// Card numbers are the public Luhn-valid TEST numbers the payment
+    /// networks publish for exactly this purpose -- never a real PAN.
+    private static func dockFixtureItems() -> [ItemFields] {
+        let m = dockFixtureMarker
+        var out: [ItemFields] = []
+        let logins: [(String, String, String)] = [
+            ("GitHub", "bartek@paczesny.pl", "github.com"),
+            ("Google", "bartek@paczesny.pl", "accounts.google.com"),
+            ("Cloudflare", "bartek@paczesny.pl", "dash.cloudflare.com"),
+            ("Hetzner", "bartek", "console.hetzner.cloud"),
+            ("Fastmail", "bartek@paczesny.pl", "app.fastmail.com"),
+            ("Vercel", "bartek", "vercel.com"),
+            ("Stripe", "bartek@paczesny.pl", "dashboard.stripe.com"),
+            ("Linear", "bartek@paczesny.pl", "linear.app"),
+            ("npm", "j5on", "npmjs.com"),
+            ("Figma", "bartek@paczesny.pl", "figma.com"),
+        ]
+        for (name, user, host) in logins {
+            out.append(.login(LoginFields(
+                name: name + m, folderId: nil, tags: [], username: user,
+                password: "fixture-not-a-real-password", urls: ["https://\(host)"], notes: ""
+            )))
+        }
+        let cards: [(String, String, String)] = [
+            ("Revolut", "4242424242424242", "04/29"),
+            ("mBank", "5555555555554444", "11/28"),
+            ("Amex", "378282246310005", "07/27"),
+        ]
+        for (name, number, expiry) in cards {
+            out.append(.card(CardFields(
+                name: name + m, folderId: nil, tags: [], cardholderName: "BARTLOMIEJ PACZESNY",
+                number: number, expiry: expiry, cvv: "123", pin: nil, zip: nil, notes: ""
+            )))
+        }
+        for (name, issuer) in [("GitHub", "GitHub"), ("Google", "Google"), ("AWS", "Amazon")] {
+            out.append(.totp(TotpFields(
+                name: name + m, folderId: nil, tags: [],
+                secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", issuer: issuer,
+                algorithm: "SHA1", digits: 6, period: 30, notes: ""
+            )))
+        }
+        for (name, rpId) in [("Google", "google.com"), ("Adobe", "adobe.com")] {
+            out.append(.passkey(PasskeyFields(
+                name: name + m, folderId: nil, tags: [], rpId: rpId,
+                credentialId: "Zml4dHVyZS1jcmVkZW50aWFs", username: "bartek@paczesny.pl",
+                userDisplayName: "Bartek", rawPasskeyJson: "{}"
+            )))
+        }
+        out.append(.identity(IdentityFields(
+            name: "Bartek" + m, folderId: nil, tags: [], firstName: "Bartlomiej",
+            lastName: "Paczesny", email: "bartek@paczesny.pl", phone: "", address: "",
+            addressLine1: nil, addressLine2: nil, city: nil, state: nil, zip: nil,
+            country: nil, notes: ""
+        )))
+        for (name, body) in [
+            ("Recovery codes", "one per line"),
+            ("Router admin", "192.168.1.1"),
+            ("Wi-Fi", "guest network"),
+        ] {
+            out.append(.note(NoteFields(name: name + m, folderId: nil, tags: [], body: body)))
+        }
+        return out
+    }
+    #else
+    private static func seedDockFixtureIfRequested(store: VaultStore) async {}
+    #endif
 
     /// [Rule 2 deviation, plan 38-10] Not in this plan's `files_modified` --
     /// added because Task 2's own acceptance criteria (a screenshot of the
