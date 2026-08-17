@@ -215,4 +215,153 @@ mod tests {
         );
         assert_eq!(union.chars().count(), 87);
     }
+
+    // --- Task 2: rejection-sampling bias, bounds, boundary success ---
+
+    const ALL_CLASSES: CharacterPasswordOptions = CharacterPasswordOptions {
+        lowercase: true,
+        uppercase: true,
+        digits: true,
+        symbols: true,
+    };
+
+    const NO_CLASSES: CharacterPasswordOptions = CharacterPasswordOptions {
+        lowercase: false,
+        uppercase: false,
+        digits: false,
+        symbols: false,
+    };
+
+    /// Chi-square critical value for 86 degrees of freedom (87 characters -
+    /// 1) at p = 0.001, computed independently via the regularized
+    /// incomplete gamma function (binary search against the CDF, not a
+    /// rounded table entry) -- derivation recorded in this plan's SUMMARY.
+    /// A statistic at or above this value rejects the null hypothesis of
+    /// uniformity at p < 0.001.
+    const CHI_SQUARE_CRITICAL_86_DF_P001: f64 = 132.277;
+
+    /// Runs `draws` draws directly through `uniform_random_index` over an
+    /// 87-wide range (the union's own size) and returns the per-character
+    /// counts. Calls `uniform_random_index` directly, NOT through
+    /// `generate_character_password` -- that public function enforces
+    /// `CHAR_MIN_LENGTH` (8), so a single-character draw would be below its
+    /// own bounds. This measurement's target is the rejection-sampling
+    /// primitive itself, independent of the length bound layered on top of
+    /// it. Factored out so the falsification control (see this plan's
+    /// SUMMARY) can call the exact same measurement with only
+    /// `uniform_random_index`'s body swapped.
+    fn draw_counts_over_all_classes(draws: usize) -> Vec<u64> {
+        let n = 87usize;
+        let mut counts = vec![0u64; n];
+        for _ in 0..draws {
+            let idx = uniform_random_index(n as u32) as usize;
+            counts[idx] += 1;
+        }
+        counts
+    }
+
+    fn chi_square_statistic(counts: &[u64], draws: usize) -> f64 {
+        let expected = draws as f64 / counts.len() as f64;
+        counts
+            .iter()
+            .map(|&c| {
+                let diff = c as f64 - expected;
+                diff * diff / expected
+            })
+            .sum()
+    }
+
+    /// Research E-G2, steps 4-5: 200,000 single-character draws over all 87
+    /// characters must hit every character AND the per-character counts
+    /// must not reject uniformity at p < 0.001 -- asserted on the actual
+    /// per-character COUNTS, not merely "every character appeared at least
+    /// once". A `% 87` reduction bias over-represents the low end of the
+    /// union while still hitting every character at least once; a
+    /// presence-only assertion cannot see that, which is why this test
+    /// computes a chi-square statistic instead. The union itself (87
+    /// characters, matching `union_of_all_classes_is_87_characters` above)
+    /// is what `draw_counts_over_all_classes` samples an index into.
+    #[test]
+    fn distribution_over_all_classes_does_not_reject_uniformity_at_p_001() {
+        const DRAWS: usize = 200_000;
+        let union: Vec<char> = format!(
+            "{}{}{}{}",
+            CHARSET_LOWERCASE, CHARSET_UPPERCASE, CHARSET_DIGITS, CHARSET_SYMBOLS
+        )
+        .chars()
+        .collect();
+        assert_eq!(union.len(), 87);
+
+        let counts = draw_counts_over_all_classes(DRAWS);
+        let seen = counts.iter().filter(|&&c| c > 0).count();
+        assert_eq!(
+            seen,
+            87,
+            "not every one of the 87 characters was drawn in {DRAWS} draws"
+        );
+
+        let chi_square = chi_square_statistic(&counts, DRAWS);
+        assert!(
+            chi_square < CHI_SQUARE_CRITICAL_86_DF_P001,
+            "chi-square statistic {chi_square} rejects uniformity at p < 0.001 (critical value \
+             {CHI_SQUARE_CRITICAL_86_DF_P001}) -- see this module's uniform_random_index"
+        );
+    }
+
+    /// Research E-G2, step 6: the six error cases and four exact boundary
+    /// successes. Named with a `bounds` prefix so
+    /// `cargo test -p pv-core generator::tests::bounds` selects it.
+    #[test]
+    fn bounds_reject_out_of_range_and_accept_exact_boundaries() {
+        // --- six error cases ---
+        assert!(
+            generate_character_password(CHAR_MIN_LENGTH - 1, &ALL_CLASSES).is_err(),
+            "length one below CHAR_MIN_LENGTH must be rejected"
+        );
+        assert!(
+            generate_character_password(CHAR_MAX_LENGTH + 1, &ALL_CLASSES).is_err(),
+            "length one above CHAR_MAX_LENGTH must be rejected"
+        );
+        assert!(
+            generate_character_password(0, &ALL_CLASSES).is_err(),
+            "length zero must be rejected"
+        );
+        assert!(
+            generate_character_password(CHAR_DEFAULT_LENGTH, &NO_CLASSES).is_err(),
+            "no character class selected must be rejected"
+        );
+        assert!(
+            generate_passphrase(PASSPHRASE_MIN_WORDS - 1, DEFAULT_SEPARATOR).is_err(),
+            "word count one below PASSPHRASE_MIN_WORDS must be rejected"
+        );
+        assert!(
+            generate_passphrase(PASSPHRASE_MAX_WORDS + 1, DEFAULT_SEPARATOR).is_err(),
+            "word count one above PASSPHRASE_MAX_WORDS must be rejected"
+        );
+
+        // --- four exact boundary successes ---
+        let at_min_len = generate_character_password(CHAR_MIN_LENGTH, &ALL_CLASSES)
+            .expect("CHAR_MIN_LENGTH itself must be accepted");
+        assert_eq!(at_min_len.chars().count(), CHAR_MIN_LENGTH);
+
+        let at_max_len = generate_character_password(CHAR_MAX_LENGTH, &ALL_CLASSES)
+            .expect("CHAR_MAX_LENGTH itself must be accepted");
+        assert_eq!(at_max_len.chars().count(), CHAR_MAX_LENGTH);
+
+        let at_min_words = generate_passphrase(PASSPHRASE_MIN_WORDS, DEFAULT_SEPARATOR)
+            .expect("PASSPHRASE_MIN_WORDS itself must be accepted");
+        assert_eq!(
+            at_min_words.matches(DEFAULT_SEPARATOR).count(),
+            PASSPHRASE_MIN_WORDS - 1,
+            "a passphrase of n words joined by a one-character separator must contain n-1 separators"
+        );
+
+        let at_max_words = generate_passphrase(PASSPHRASE_MAX_WORDS, DEFAULT_SEPARATOR)
+            .expect("PASSPHRASE_MAX_WORDS itself must be accepted");
+        assert_eq!(
+            at_max_words.matches(DEFAULT_SEPARATOR).count(),
+            PASSPHRASE_MAX_WORDS - 1,
+            "a passphrase of n words joined by a one-character separator must contain n-1 separators"
+        );
+    }
 }

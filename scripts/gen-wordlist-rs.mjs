@@ -73,7 +73,12 @@ function main() {
 
 /// The EFF Large Wordlist (Diceware), ${EXPECTED_LEN} entries -- byte-for-byte
 /// the same list as packages/pv-ui/generator/wordlist.ts's EFF_WORDLIST.
-pub const EFF_WORDLIST: [&str; ${EXPECTED_LEN}] = [
+///
+/// \`static\`, not \`const\`: clippy's \`large_const_arrays\` lint (this crate
+/// builds with \`-D warnings\`) flags a const this size because a \`const\`
+/// is copied into every use site: \`static\` gives the array a single fixed
+/// memory location instead.
+pub static EFF_WORDLIST: [&str; ${EXPECTED_LEN}] = [
 ${rustEntries}
 ];
 `;
