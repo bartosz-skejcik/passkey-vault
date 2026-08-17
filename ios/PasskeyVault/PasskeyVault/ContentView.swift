@@ -178,7 +178,42 @@ struct ContentView: View {
     private func vault(_ session: UnlockedSession) -> some View {
         let store = storeFor(session)
         ItemListView(store: store, folderStore: folderStoreFor(session))
+            .task {
+                await Self.seedTooShortTotpSecretIfRequested(store: store)
+            }
     }
+
+    /// [Rule 2 deviation, plan 38-10] Not in this plan's `files_modified` --
+    /// added because Task 2's own acceptance criteria (a screenshot of the
+    /// TOTP error state) and Task 3's E-T1 second falsification arm both
+    /// need a real, server-persisted item carrying a secret `totp-rs`
+    /// rejects, and `ItemFormView`'s client-side `TotpValidation` refuses
+    /// to save one through the normal create flow (by design -- 38-09).
+    /// `VaultStore.create(fields:)` itself does no such validation (the
+    /// server is zero-knowledge and never inspects the TOTP parameters
+    /// either), so this hook goes straight through it -- the SAME call
+    /// path `ItemFormView`'s own save button uses, just without that one
+    /// view's client-side gate in front of it. Compiled into DEBUG builds
+    /// only, inert unless `PV_UITEST_SEED_BAD_TOTP` is set (this repo's
+    /// established `PV_UITEST_*` hook convention -- see
+    /// `PasskeyVaultApp.swift`'s own note on the same pattern).
+    #if DEBUG
+    private static func seedTooShortTotpSecretIfRequested(store: VaultStore) async {
+        guard ProcessInfo.processInfo.environment["PV_UITEST_SEED_BAD_TOTP"] != nil else { return }
+        // 16 base32 characters = 10 decoded bytes, below `totp-rs`'s 16-byte
+        // floor -- the exact secret `extension/entrypoints/background/
+        // autofill-match.test.ts:295` uses under a MOCKED `totpNow`
+        // (Pitfall 4, `38-RESEARCH.md`). Used here for the opposite reason:
+        // to prove the REAL path rejects it.
+        _ = try? await store.create(fields: .totp(TotpFields(
+            name: "Bad Secret (UI test fixture)", folderId: nil, tags: [],
+            secret: "JBSWY3DPEHPK3PXP", issuer: "TooShort", algorithm: "SHA1",
+            digits: 6, period: 30, notes: ""
+        )))
+    }
+    #else
+    private static func seedTooShortTotpSecretIfRequested(store: VaultStore) async {}
+    #endif
 
     private func storeFor(_ session: UnlockedSession) -> VaultStore {
         if let vaultStore {

@@ -113,6 +113,16 @@ struct ItemDetailView: View {
             identitySection(fields)
         case .passkey:
             passkeySection(fields)
+        case .totp:
+            // The composed ring+code section sits ABOVE the generic
+            // field-order loop, which still runs afterward -- it renders
+            // the raw base32 secret as the usual masked/revealable field
+            // (`DetailFieldTables.fieldOrder["totp"] == ["secret"]`,
+            // unchanged). Matches `web/.../DetailPanel.tsx`'s own
+            // structure: the `TotpCountdownRing` block, then the same
+            // `FIELD_ORDER` loop every other type goes through.
+            totpSection(fields)
+            genericFields(fields)
         default:
             genericFields(fields)
         }
@@ -120,6 +130,23 @@ struct ItemDetailView: View {
             tagsRow
         }
         detailsFooter
+    }
+
+    // MARK: - TOTP (composed layout, plan 38-10 -- design-conformance §"38-10")
+
+    @ViewBuilder
+    private func totpSection(_ fields: ItemFields) -> some View {
+        if case let .totp(f) = fields {
+            TotpCountdownView(
+                secretB32: f.secret,
+                algorithm: f.algorithm,
+                digits: f.digits,
+                period: f.period,
+                issuer: f.issuer,
+                onCopy: { code in copySecret(key: "totpCode", value: code) }
+            )
+            .padding(.vertical, 4)
+        }
     }
 
     // MARK: - Generic field-table loop (login, card, note, totp)
@@ -196,6 +223,7 @@ struct ItemDetailView: View {
         case "cardholderName": return "Cardholder"
         case "body": return "Note"
         case "secret": return "Secret"
+        case "totpCode": return "Code"
         case "url": return "Website"
         default: return key.prefix(1).uppercased() + key.dropFirst()
         }

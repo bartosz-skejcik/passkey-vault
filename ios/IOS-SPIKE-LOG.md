@@ -1009,6 +1009,91 @@ through the "+" affordance and Edit; the bar is dead UI, not a blocker for anyth
 
 ---
 
+## 1f. Plan 38-10 results — TOTP, the code is the row, E-T1, 2026-08-17
+
+**Task 1** — `crates/pv-ffi/src/totp.rs`: `totp_now` exports `pv_core::totp::generate_code` with the
+`usize`/`u32` digit-count cast absorbed at the boundary (mirroring `generator.rs`'s own precedent), the
+secret crossing as a plain `String` (per-item plaintext the caller already holds, same rationale
+`pv-wasm`'s `totpNow` records). RED-before-GREEN: a stub returning `InvalidInput` unconditionally failed
+5 of 7 Rust tests (the two error-expecting tests passed trivially against the stub); wiring the real
+call made all 7 pass. Falsification: mutated the cast to `(digits as u8) as usize % 4`, re-ran, watched
+the SAME 5 tests fail for the SAME reason (`invalid TOTP parameters`), reverted, confirmed the diff was
+byte-identical to before the mutation. `TotpFfiTests.swift` (5 tests) calls through the real generated
+framework — never mocked — with the RFC 6238 literal codes as expected values.
+
+**Task 2** — `TotpCountdownView.swift`: a `TimelineView` anchored just past a period boundary, taking
+`max(context.date, Date())` every tick and recomputing through `totpNow` fresh — never decrementing a
+locally-held value. The design-conformance replacement (ring beside an enlarged code, `PVWarning` in the
+final 5 seconds — an author-chosen threshold; design-conformance's own text does not name a number) is
+wired into `ItemDetailView.swift`'s new `totpSection`, ABOVE the existing generic field-order loop
+(matching `web/.../DetailPanel.tsx`'s own structure: composed ring/code block, then the same
+`FIELD_ORDER` loop every type goes through — the raw base32 secret still renders below, masked and
+revealable, unchanged).
+
+**Deliberate divergence from web, named rather than silently copied:** `DetailPanel.tsx`'s copy button
+under the ring is labelled "copy TOTP code" but its `onClick` actually copies `item.fields.secret` (the
+raw base32 secret), not the displayed code — an apparent bug in the web client. This iOS build's copy
+button copies the LIVE CODE instead, reusing `ItemDetailView.copySecret`'s existing choke-point
+(`ClipboardService` + last-used touch) under a new `"totpCode"` field key. Not fixed on web (out of this
+plan's scope); flagged here per this phase's own "preserved disagreements" discipline rather than
+resolved silently in either direction.
+
+**D2 discharged** (`38-RESEARCH.md`'s own preserved disagreement): UI-05's wording ("consistent with
+web/extension behaviour") is satisfiable two ways because the two reference surfaces disagree with each
+other — `TotpCountdownRing.tsx` recomputes through the crypto boundary every tick; the extension's
+`TotpFillRow.tsx` decrements locally because its popup is forbidden from touching the secret at all.
+This build follows **web's** behaviour (recompute every tick, never decrement) — the extension's
+reason for the alternative (no secret access in that process) does not apply here, where the detail
+screen already holds the decrypted item.
+
+**Never-decrement rule, proven falsifiable, not merely asserted:** with the grep-checked identifier
+spelled `remainingSeconds` exactly, `grep -vE '^\s*//' TotpCountdownView.swift | grep -cE
+'remainingSeconds\s*-=|remainingSeconds\s*=[^=]*remainingSeconds\s*-'` returned `0` on the real file.
+Mutated in place (`var remainingSeconds = result.secondsRemaining; remainingSeconds -= 0`), re-ran,
+observed `1` (the grep fires on the mutation, not on the doc-comment prose that names the pattern in
+words), reverted; `diff` against the pre-mutation copy confirmed byte-identical.
+
+**Low Power Mode caveat — could not be exercised on this harness, recorded honestly rather than
+skipped.** `38-RESEARCH.md`'s own unverified caveat asks whether `PeriodicTimelineSchedule` honours
+`TimelineScheduleMode.lowFrequency` under Low Power Mode. This iOS 26.5 Simulator (`iPhone 17`,
+`C24B6A19-9099-4FCF-B281-9CD786D0D8A1`) has **no Battery entry in Settings at all** — confirmed two
+ways: the top-level Settings list (screenshotted) has no "Battery" row, and Settings' own in-app search
+for "Low Power" returned **"No Results for 'Low Power'"** verbatim. `xcrun simctl status_bar
+--batteryState`/`--batteryLevel` only overrides the STATUS BAR GLYPH, not `ProcessInfo.processInfo
+.isLowPowerModeEnabled` — confirmed by reading `simctl status_bar --help`'s own flag list, which has no
+functional Low-Power toggle. Simulators have no physical battery, and this build has no toggle to
+simulate one being low. **Recorded as untestable-in-this-harness (an MP-1-style limitation), not as
+PASS or FAIL** — the same honest-abstention discipline this log already applies to `hasFocus`
+(§"L-...", `LockViewFocusUITests.swift`'s own header).
+
+**Landmine, live-found, fixed in this plan's own test code (not the shipped app):** typing directly
+into the two masked `SecureField`s on `AuthView` (this repo's established UI-test pattern —
+`.secureTextFields.firstMatch` / `.element(boundBy: 1)`, used by `ItemDetailScreenshotUITests.swift`,
+`ItemFormAndFolderUITests.swift`, `ItemListSearchUITests.swift`, `SnapshotEvidenceUITests.swift`)
+produced a real, repeatable, non-transient "Passwords don't match" banner in THIS harness, even though
+the identical literal string was typed into both fields and clearing first (`XCUIKeyboardKey.delete`
+x80) did not change the outcome. Root cause not fully isolated (not stale autofill content, ruled out
+by the clear-first test); worked around by tapping the shared `isPasswordRevealed` toggle once before
+typing (`AuthView.swift`'s `passwordField(text:)` is called for both fields with the SAME `@State`
+toggle, so one tap switches both from `SecureField` to a plain, autocorrection-disabled `TextField`
+simultaneously) — `TotpCountdownUITests.swift`'s own `registerFreshAccount` uses this route and is
+reliably green. The four pre-existing files above still use the masked-`SecureField` route and were NOT
+touched (out of this plan's `files_modified`); `ItemDetailScreenshotUITests.swift` was independently
+confirmed BROKEN on this build for an unrelated reason first (stale button wording, below), so at least
+one of the four is already known-red going into this plan.
+
+**Separately, pre-existing and unrelated to the SecureField finding above:** `ItemDetailScreenshotUITests
+.swift`'s `registerFreshAccount` (and `SnapshotEvidenceUITests.swift`'s fallback register path) tap
+buttons labelled `"No account yet? Sign up"` / `"Create account"` — wording that no longer exists on
+`AuthView` (current localized strings, `Core/I18n/Dictionary.swift`: `"Create a vault instead"` /
+`"Create vault"`). Confirmed broken live: `ItemDetailScreenshotUITests
+.testCardDetailWithEmptyPinOmitsThePinRow` fails at the button lookup. Not fixed (out of this plan's
+`files_modified`); named here so it is not mistaken for a regression this plan caused.
+
+**Task 3** — see the E-T1 entry immediately below.
+
+---
+
 ## 2. Verified against reality (2026-08-11)
 
 ### 2.1 PRF is available on iOS in both directions — iOS 18.0+
