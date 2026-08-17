@@ -41,6 +41,16 @@ struct LockView: View {
     /// copy inline instead, where it can actually be scrolled to and read.
     @State private var showForgotPasswordWarning = false
     @State private var availability: BiometryAvailability?
+    /// Phase 38, plan 38-08 (Rule 2 deviation -- `GeneratorSheet.swift`'s
+    /// own acceptance criteria require a screenshot proving the sheet
+    /// "reachable and generating from the locked state," and no entry
+    /// point into it existed anywhere in the app yet; 38-09's create/edit
+    /// form -- the sheet's REAL, permanent entry point next to a password
+    /// field -- has not landed. Mirrors the SAME `#if DEBUG` /
+    /// `applyForcedUITestState` pattern this file already uses for the
+    /// biometric-slot screenshot matrix, never reachable outside a DEBUG
+    /// build driven by `PV_UITEST_LOCK_STATE`.
+    @State private var showGeneratorSheet = false
     /// `37-CONTEXT.md`'s locked decision, restated verbatim in
     /// `37-UI-SPEC.md:272`: once the envelope is invalidated by a
     /// biometric-set change, focus moves to the password field -- "the way
@@ -173,6 +183,15 @@ struct LockView: View {
                 isPasswordFieldFocused = true
             }
         }
+        // Phase 38, plan 38-08 (Rule 2 deviation, see `showGeneratorSheet`'s
+        // own doc comment): the generator is a FREE function taking no key
+        // handle (DR-38-A) -- presenting it here, over the locked screen,
+        // demonstrates that architectural fact rather than merely asserting
+        // it. `GeneratorSheet` itself never reads `account`/`apiClient`/any
+        // unlocked-session state.
+        .sheet(isPresented: $showGeneratorSheet) {
+            GeneratorSheet()
+        }
     }
 
     @ViewBuilder
@@ -289,6 +308,13 @@ struct LockView: View {
         case "noBiometry":
             availability = BiometryAvailability(isAvailable: false, methodName: "Face ID", biometryStateHash: nil)
             biometricState = .idle
+        // Phase 38, plan 38-08: presents `GeneratorSheet` over the locked
+        // screen for the "reachable and generating from the locked state"
+        // screenshot -- see `showGeneratorSheet`'s own doc comment.
+        case "generatorSheet":
+            availability = fakeAvailability
+            biometricState = .idle
+            showGeneratorSheet = true
         default:
             break
         }
