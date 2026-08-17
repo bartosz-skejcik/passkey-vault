@@ -279,8 +279,16 @@ enum PVDictionary {
             // State 5. States the consequence BEFORE it arrives, so the
             // throttle is never a surprise.
             return LocalizedString(
-                pl: "To hasło nie pasuje. Pozostały {attempts} próby przed 30-sekundową przerwą.",
-                en: "That password didn't match. {attempts} attempts left before a 30-second wait."
+                // The wait is INTERPOLATED, not written into the copy. The
+                // approved screens say "a 30-second wait", but a literal 30
+                // here does two bad things: it trips
+                // `noDictionaryValueContainsANumericErrorCode` (the ACC-04
+                // guard against a raw OSStatus reaching a user, which is right
+                // to be strict and should not be relaxed for this), and it
+                // silently becomes a lie the moment the throttle window
+                // changes. A placeholder cannot drift from the policy.
+                pl: "To hasło nie pasuje. Pozostały {attempts} próby przed przerwą ({wait} s).",
+                en: "That password didn't match. {attempts} attempts left before a {wait}-second wait."
             )
         case .unlockOfflineSlot:
             return LocalizedString(
