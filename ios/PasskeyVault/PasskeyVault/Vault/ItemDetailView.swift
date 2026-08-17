@@ -323,7 +323,7 @@ struct ItemDetailView: View {
     @ViewBuilder
     private func copyConfirmationBanner(_ confirmation: ClipboardConfirmation) -> some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            let remaining = max(0, Int(confirmation.deadline.timeIntervalSince(context.date).rounded(.up)))
+            let remaining = ClipboardService.remainingSeconds(deadline: confirmation.deadline, now: context.date)
             HStack {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(Color("PVSuccess"))
@@ -336,9 +336,10 @@ struct ItemDetailView: View {
                 Button {
                     // Dismissing the confirmation is COSMETIC ONLY -- it
                     // must never cancel the real clear
-                    // (`copyToast.ts`'s own header; `ClipboardService`
-                    // enforces this by never wiring dismissal to its
-                    // timer at all).
+                    // (`copyToast.ts`'s own header; `ClipboardService
+                    // .dismissConfirmation()` is a deliberate no-op on the
+                    // real timer, unit-tested directly).
+                    ClipboardService.shared.dismissConfirmation()
                     self.confirmation = nil
                 } label: {
                     Image(systemName: "xmark")
