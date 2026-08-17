@@ -727,6 +727,53 @@ merely because it happened to come out green.
 during a Control Center pull or an incoming call. Accepted: a spurious cover is a cosmetic defect, a
 missing cover is a disclosure of vault contents to the app switcher.
 
+**AMENDMENT, 2026-08-17 (38-05 Task 3, E-S1's discriminating arm).** Measured, not assumed.
+
+Both arms were run against the REAL app-switcher snapshot store (a real registered account, a real
+item detail screen carrying a unique marker secret, backgrounded with a genuine `XCUIDevice.shared
+.press(.home)`), decoded with `scripts/snapshot-blockmap.py`, on the simulator this whole phase's
+experiments are batched onto (`C24B6A19-9099-4FCF-B281-9CD786D0D8A1`, iPhone 17, iOS 26.5):
+
+- **Default arm (resign-active, this decision's shipped mechanism):** all sceneID snapshot files —
+  main and downscaled — decoded to `nonflat=0 distinct=1`, colour exactly `PVBackground` (`fcfbfa`
+  light / `1f1f1f` dark, matching the asset catalog's own RGB literally, not approximately).
+- **Discriminating arm (`PV_SNAPSHOT_COVER_TRIGGER_BACKGROUND`: the SAME forced-`layoutIfNeeded()`
+  mechanism, moved from `sceneWillResignActive` to `sceneDidEnterBackground`):** ALSO
+  `nonflat=0 distinct=1`, colour exactly `PVBackground`, on every sceneID file, both resolutions.
+
+**Both arms passed. Neither was disqualified by a race on this harness.** This measurement itself
+required a fix: the first two runs of both arms were confounded by a real bug this Task found in
+`SnapshotCoverOverlay` (the SwiftUI `scenePhase`-driven visual mirror this record's own §"Residual
+risk" already calls cosmetic-only) — it covered on ANY `scenePhase != .active`, unconditional on
+`isCoverEnabled`. That meant the FIRST negative-control run (cover explicitly disabled via
+`PV_SNAPSHOT_COVER_DISABLED`) still showed a clean cover: the "cosmetic" SwiftUI half was doing the
+real mitigation's job whenever the UIKit half was compiled out, which would have made the negative
+control lie about proving anything. Fixed by gating `SnapshotCoverOverlay` behind the SAME
+`isCoverEnabled` AND `triggerOnBackgroundInsteadOfResignActive` flags `AppSceneDelegate.installCover`
+reads (`App/SnapshotCover.swift`); re-run afterward, and the negative control genuinely failed
+(`nonflat=3954`/`3957` on the two full-resolution captures, `2877`/`2975` on the downscaled ones —
+the marker secret legible in the attached block-map PNG). The discriminating arm was ALSO re-run
+after this fix, specifically because the SAME unconditional-`scenePhase` bug would have made a
+`.background`-only UIKit trigger look like it worked purely because the SwiftUI half was still
+covering from `.inactive` onward regardless of which arm was under test. The clean, isolated re-run
+(SwiftUI mirror now ALSO deferred to exactly `.background` under this flag) is the result reported
+above.
+
+**Decision: KEEP resign-active as the shipped default.** Not because `.background` measured worse —
+it did not, on this harness — but because the empirical tie does not retire the theoretical argument
+that motivated resign-active in the first place (research D3, restated above): resign-active fires
+strictly earlier in the interruption sequence, buying the render pass more real time before the
+system actually takes its snapshot. The simulator's scheduler is fast and uncontended; it cannot
+exercise the tight-race, memory-pressure scenario the `.background`-only arm is theoretically weaker
+under, and this experiment's own proof boundary (below) says so explicitly. A tie on a harness that
+cannot stress the race is evidence that `.background` is not DISQUALIFIED here — it is not evidence
+that the two arms are equally safe on a physical device under load. Given that, resign-active's
+structural safety margin is the deciding factor, not an arbitrary preference for whichever ran first.
+
+Evidence: `ios/evidence/38/38-05-es1-default-arm-*.{ktx,blockmap.png}`,
+`38-05-es1-negative-control-*.{ktx,blockmap.png}` (the legible failure),
+`38-05-es1-discriminating-arm-*.{ktx,blockmap.png}`. Full transcript in `38-05-SUMMARY.md`.
+
 ### DR-38-E — Secret field values in Swift: **held as `String`, with the limitation stated not glossed**
 
 **Decision:** decrypted secret field values are held as Swift `String`.

@@ -26,9 +26,16 @@ enum SnapshotCover {
     /// `PVBackground` rather than a hardcoded colour literal: the token
     /// system is the single source of truth for every colour this app
     /// renders (see `scripts/gen-ios-colorsets.py` / `ios/brand/tokens.json`),
-    /// and a snapshot cover is not an exception to that.
+    /// and a snapshot cover is not an exception to that. Force-unwrapped
+    /// rather than defaulted to a hardcoded fallback colour -- a fallback
+    /// value is still a literal colour, and `scripts/audit-ios-colour-tokens.sh`
+    /// (correctly) refuses to distinguish "fallback" from "primary" value.
+    /// The asset is a build input this app cannot run without
+    /// (`ContrastTests.swift` and the audit script's own check 2 both depend
+    /// on the catalog being intact), so a missing token belongs in a crash,
+    /// not a silent literal.
     static var color: UIColor {
-        UIColor(named: "PVBackground") ?? .black
+        UIColor(named: "PVBackground")!
     }
 
     static func makeView() -> UIView {
@@ -56,9 +63,35 @@ enum SnapshotCover {
 struct SnapshotCoverOverlay: ViewModifier {
     @Environment(\.scenePhase) private var scenePhase
 
+    /// Gated by the SAME two flags `AppSceneDelegate.installCover` reads --
+    /// discovered empirically during 38-05 Task 3's negative control (see
+    /// 38-05-SUMMARY.md) that leaving this unconditional made it
+    /// independently cover the app-switcher snapshot even with the UIKit
+    /// mitigation compiled OUT: a SwiftUI-committed frame apparently CAN win
+    /// the race often enough that the "cosmetic only" half was silently
+    /// doing the real mitigation's job, which would have made the negative
+    /// control lie about proving anything.
+    ///
+    /// Mirroring `triggerOnBackgroundInsteadOfResignActive` too (not just
+    /// `isCoverEnabled`) matters for the SAME reason: `scenePhase` becomes
+    /// `.inactive` at resign-active, before `.background` -- so if this
+    /// overlay covered on ANY non-`.active` phase regardless of which arm
+    /// is under test, it would ALSO confound the discriminating arm (E-S1),
+    /// making a `.background`-only UIKit trigger look like it works purely
+    /// because this "cosmetic" half was covering earlier than it claimed to.
+    /// Matching the SAME trigger point keeps this overlay's claim to be
+    /// cosmetic-only actually true under either arm.
+    private var shouldCover: Bool {
+        guard AppSceneDelegate.isCoverEnabled else { return false }
+        if AppSceneDelegate.triggerOnBackgroundInsteadOfResignActive {
+            return scenePhase == .background
+        }
+        return scenePhase != .active
+    }
+
     func body(content: Content) -> some View {
         content.overlay {
-            if scenePhase != .active {
+            if shouldCover {
                 Color("PVBackground")
                     .ignoresSafeArea()
                     .accessibilityIdentifier("app.snapshotCoverOverlay")
