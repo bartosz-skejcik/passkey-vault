@@ -80,7 +80,7 @@ enum IdentityAddress {
     /// recomposition. `ItemForm.tsx` gets away without that guard because its
     /// own `withLegacyAddressPrefill` has always run on the way in, so the
     /// structured fields are never all-empty for an item that had an address.
-    /// This function can be called from paths where that is not guaranteed,
+    /// This function can be called from paths where that is not always true,
     /// and losing a user's address to an all-empty recompose is not a
     /// recoverable mistake.
     static func withComposedLegacyAddress(_ fields: IdentityFields) -> IdentityFields {

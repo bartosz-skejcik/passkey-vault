@@ -104,6 +104,14 @@ struct CreateItemResponseBody: Decodable {
     let updated_at: String
 }
 
+/// `POST /api/vault/items/{id}/touch`'s 200 body
+/// (`crates/pv-server/src/routes/vault.rs`'s `TouchItemResponse`). A
+/// single-column update -- it deliberately carries no `revision`, because
+/// `touch()` never bumps one (see `VaultAPI.touchItem`'s own note).
+struct TouchItemResponseBody: Decodable {
+    let last_used_at: String
+}
+
 /// Thin `URLSession` wrapper over `pv-server`'s vault routes. Stateless in
 /// exactly the way `PvApiClient` is: the bearer token is supplied by an
 /// injected closure on every call, never stored on this struct and never
@@ -169,6 +177,25 @@ struct VaultAPI {
             path: "/api/vault/items/\(id)", method: "DELETE", body: nil, authenticated: true
         )
         try Self.requireStatus(204, response: response, data: data)
+    }
+
+    /// `POST /api/vault/items/{id}/touch`. Expects **200**.
+    ///
+    /// Added in plan 38-07, Task 1, as a Rule 3 deviation: the detail
+    /// screen's reveal/copy last-used wiring has nowhere to call without
+    /// this, and the route already exists on the server
+    /// (`crates/pv-server/src/routes/vault.rs`'s `touch()`, wired at
+    /// `routes/mod.rs`) -- unmodified, per this plan's environment rule 8.
+    /// Records "this item's secret was just used" WITHOUT bumping
+    /// `revision`, so it can never fabricate a stale-revision conflict for
+    /// another device/tab.
+    @discardableResult
+    func touchItem(id: String) async throws -> TouchItemResponseBody {
+        let (data, response) = try await send(
+            path: "/api/vault/items/\(id)/touch", method: "POST", body: nil, authenticated: true
+        )
+        try Self.requireStatus(200, response: response, data: data)
+        return try Self.decode(TouchItemResponseBody.self, from: data)
     }
 
     // MARK: - Transport

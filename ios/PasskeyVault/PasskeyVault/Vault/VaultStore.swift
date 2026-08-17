@@ -142,6 +142,34 @@ final class VaultStore {
         recomputeTags()
     }
 
+    // MARK: - Touch (last-used)
+
+    /// Fire-and-forget: records "this item's secret was just used"
+    /// (reveal/copy), never blocking the caller -- mirrors
+    /// `touchVaultItem`'s own doc comment (`DetailPanel.tsx`'s single
+    /// choke-point, fire-and-forget contract). Added in plan 38-07, Task 1,
+    /// as a Rule 3 deviation alongside `VaultAPI.touchItem`: the detail
+    /// screen's reveal/copy wiring has nowhere else to call.
+    ///
+    /// Updates the local `lastUsedAt` on success so the list's
+    /// last-used-descending sort reflects it without a full `refresh()`.
+    /// Never surfaced as a user-visible error on failure -- a touch is
+    /// metadata bookkeeping, not a save the user is waiting on.
+    func touch(itemId: String) {
+        Task {
+            do {
+                let response = try await api.touchItem(id: itemId)
+                if let index = items.firstIndex(where: { $0.id == itemId }) {
+                    items[index].lastUsedAt = response.last_used_at
+                }
+            } catch {
+                Self.log.error(
+                    "touch failed for \(itemId, privacy: .public): \(String(describing: error), privacy: .public)"
+                )
+            }
+        }
+    }
+
     // MARK: - Refresh
 
     /// `GET /api/sync?since=<watermark>` and merge.

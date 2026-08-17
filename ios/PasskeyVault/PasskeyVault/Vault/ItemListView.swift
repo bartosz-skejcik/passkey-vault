@@ -287,7 +287,13 @@ struct ItemListView: View {
                             .toolbar { toolbarContent }
                             .overlay(alignment: .bottomTrailing) { createMenuCapsule }
                             .navigationDestination(item: $selection) { item in
-                                ItemDetailView(item: item)
+                                // 38-07: the detail screen owns its own
+                                // last-used-recording wiring on reveal and
+                                // copy -- this row/context-menu copy path
+                                // deliberately stays out of that (see this
+                                // file's own header on why 38-06's inline
+                                // `copySecret` stays as it is).
+                                ItemDetailView(item: item, store: store)
                             }
                             .sheet(item: $editPlaceholderItem) { item in
                                 EditPlaceholderSheet(item: item)
