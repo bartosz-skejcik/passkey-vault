@@ -21,6 +21,7 @@
 //! bloby [`keys::WrappedKey`]. Ten crate nie robi I/O i kompiluje się do WASM.
 
 pub mod error;
+pub mod generator;
 pub mod identity;
 pub mod invite;
 pub mod items;
