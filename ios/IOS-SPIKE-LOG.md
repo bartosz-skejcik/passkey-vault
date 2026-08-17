@@ -2755,10 +2755,33 @@ Communication with Apple failed: The selected team does not have a program membe
 that is eligible for this feature.
 ```
 
-**The second message is the load-bearing one.** It is Apple refusing
-`com.apple.developer.authentication-services.autofill-credential-provider` (and
-`com.apple.security.application-groups`) to a team without a paid Developer Program membership. Not a
-misconfiguration, not a missing click — a membership refusal from Apple's own service.
+**The second message is the load-bearing one.** It is Apple refusing an entitlement to a team without a
+paid Developer Program membership. Not a misconfiguration, not a missing click — a membership refusal
+from Apple's own service.
+
+**CORRECTION, 2026-08-17, and it matters because the original wording recorded an inference as an
+observation.** This entry first said Apple refused
+`com.apple.developer.authentication-services.autofill-credential-provider` **and**
+`com.apple.security.application-groups`. The error message names **neither** — it names a *target*
+(`cloud.blonie.PasskeyVault.AutoFill`). Which key triggered it was never observed.
+
+It has since been settled empirically, against the provisioning profiles Apple actually issued to
+Bartek's machine (`~/Library/Developer/Xcode/UserData/Provisioning Profiles`, decoded with
+`security cms -D`):
+
+| Profile | `autofill-credential-provider` | `application-groups` | Expires |
+|---|---|---|---|
+| `cloud.blonie.PasskeyVault` | **absent** | **PRESENT** | 7 days out |
+| `cloud.blonie.PasskeyVault.AutoFill` | absent | absent | 7 days out |
+
+**App Groups WAS granted on the free team.** The claim that it was refused is withdrawn. Only the
+AutoFill entitlement is missing from every issued profile, so that is the one the membership buys.
+This also settles §4 q.4 ("App Groups are unavailable on a free Apple ID, unexplored"), which is
+**wrong** and is retired here.
+
+Second, unrelated but observed at the same time: **a 7-day profile expiry is the free-team
+signature.** A paid membership issues them for a year. That is the cheapest way to check whether a
+purchased membership has actually taken effect in the toolchain, without building anything.
 
 ### Why this matters beyond one failed build
 
