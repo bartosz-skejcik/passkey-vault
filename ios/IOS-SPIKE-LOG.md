@@ -968,6 +968,47 @@ strings was needed as a result of this measurement.
 
 ---
 
+## 1e. Plan 38-09 results — create/edit form, optimistic concurrency, folders, 2026-08-17
+
+**All three tasks complete.** Full detail, including RED-before-green transcripts and the folder
+cross-client proof, lives in `.planning/phases/38-pe-ny-interfejs-vaulta/38-09-SUMMARY.md`
+(`.planning/` is never committed from this worktree — this paragraph is the durable pointer).
+
+- **Task 1** — `ItemFormView.swift`/`TypePicker.swift`: one `Form`, rows switched by the five creatable
+  types; type picker editable only on create; `TotpValidation.swift` (new) enforces the REAL `totp-rs`
+  limits (6-8 digits, >=16 decoded secret bytes) before any save, catching the exact defect this
+  session found live — 38-06's own TOTP placeholder secret decoded to only 10 bytes, below the floor
+  this validator now enforces (fixed as part of this plan). Identity address round trip (38-03's
+  `IdentityAddress.swift`) proven byte-for-byte through real `pv-ffi` crypto. 12 tests,
+  `ItemFormValidationTests.swift`.
+- **Task 2** — `VaultStore.update`: sends the item's CURRENT revision as `expected_revision`, refuses
+  outright over an `undecryptable` row (proven via a fake-transport request-count assertion — zero
+  requests attempted), and mutates local state only after the awaited call returns (this repo's own
+  "post-await bookkeeping hazard has now recurred THREE times" — a fourth instance avoided here,
+  proven by an injected-throw test with the ordering demonstrated RED before GREEN). A REAL
+  stale-revision conflict was produced against the live server (a second writer bumps the row, the
+  phone's stale-revision save is refused with `VaultAPIError.revisionConflict`, never an overwrite) —
+  8 tests, `VaultMutationTests.swift`.
+- **Task 3** — `FolderStore.swift`/`FolderPicker.swift`: create/delete only (L-18: no rename route
+  exists on `pv-server`). The folder direction of the cross-client proof (L-17, above) passed in both
+  directions with a genuine falsification, `scripts/verify-ios-web-folder-interop.mjs`.
+
+**A new landmine this plan's own live tests produced, not a defect in the shipped feature:** L-20 (§3)
+— running a live XCTest against the shared simulator's live `pv-server` silently replaces the
+persisted UI-test session another test file depended on. Fixed at the two affected files; the pattern
+(`PV_UITEST_SCREEN=auth` + a fresh account per run) is the one future live/UI test files in this
+worktree should follow.
+
+**Scope note, stated rather than silently narrowed:** the tracer's legacy create-marker bar
+(`ItemListView.swift`'s `createBar`) was NOT retired in this plan, unlike 38-06's SUMMARY anticipated.
+Three UI test files (`SnapshotEvidenceUITests.swift`, `ItemListSearchUITests.swift`,
+`ItemDetailScreenshotUITests.swift`), not one, depend on its `vault.create.marker`/`vault.create.submit`
+identifiers — removing it was a larger, three-file cross-plan change with no acceptance criterion in
+this plan requiring it. The real `TypePicker`/`ItemFormView` flow this plan built is fully wired
+through the "+" affordance and Edit; the bar is dead UI, not a blocker for anything this plan needed.
+
+---
+
 ## 2. Verified against reality (2026-08-11)
 
 ### 2.1 PRF is available on iOS in both directions — iOS 18.0+
@@ -2248,6 +2289,56 @@ iOS-written item rendering in the running web client with a clean console. `web/
 exist in this worktree, so no dev server and no browser were available. `pv-wasm` is the web client's
 own crypto, not its rendering.
 
+**OBSERVED 2026-08-17 — the FOLDER direction, plan 38-09, Task 3.** Plan 38-09's own text asks for
+this to be recorded "under L-11, alongside the item result" — a mislabeling this session found and is
+correcting rather than silently reproducing: L-11 (§3, below) is an unrelated `pv-ffi` build-variant
+landmine; the item result this plan meant is the entry directly above, in THIS section (L-17). Recorded
+here, where the item result actually lives, not under the wrong number.
+
+An item pass does not imply a folder pass — the folder column is a DIFFERENT shape (DR-38-C:
+`encrypt_item_combined_json`'s ONE combined string, not the split `enc_key`/`enc_data` pair items use),
+at a FIXED revision, with an identifier that MUST be minted before encryption. Harness:
+`scripts/verify-ios-web-folder-interop.mjs run-folder-interop` +
+`ios/PasskeyVault/PasskeyVaultTests/FolderWireInteropTests.swift`. All three directions run for real,
+against an isolated `pv-server` (throwaway `/private/tmp` database, port 8624) and the real `pv-wasm`
+artifact `web/` itself imports:
+
+```
+=== Folder direction of the cross-client proof (38-09 Task 3) ===
+PASS  Folder-F1 (iOS -> pv-wasm), folder name
+PASS  Folder-F1 (iOS -> pv-wasm), item assignment
+PASS  Folder-F2 (pv-wasm -> iOS), folder name + item assignment
+PASS  Folder-F3 (iOS-side falsification)
+PASS  Folder-F3 (pv-wasm-side falsification)
+
+all 5 checks passed
+```
+
+- **F1 forward** — a folder created by the real `FolderStore.create` (`encrypt_item_combined_json`)
+  came back from `GET /api/sync` with `enc_name`'s `enc_key.nonce` typed as a JSON array, and the REAL
+  `pv-wasm` artifact decrypted it, recovering the literal name typed independently on both sides. An
+  item created in the SAME call, with `folderId` set to that folder's id, ALSO decrypted in `pv-wasm`
+  with `fields.folderId` matching the folder's own id — proving the item-assignment direction in the
+  same write, since assignment is nothing more than the item's own `folderId` field.
+- **F2 reverse** — a folder AND an assigned item, both written by `pv-wasm` exactly as
+  `web/src/lib/vault/store.ts`'s `createVaultFolder`/`createVaultItem` write them, both decrypted on
+  iOS through the real `FolderStore.refresh()`/`VaultStore.refresh()`, with the assignment surviving.
+- **Falsification (F3), and it produced a real failure, on BOTH sides.** iOS deliberately minted the
+  folder id AFTER encryption (`FolderWireInteropTests
+  .f3_iosCreatesAFalsifiedFolderWithIdMintedAfterEncryption`: encrypt bound to `wrongId`, then mint
+  `realId` and POST under it) — exactly the shape a server-minted identifier used to produce, before
+  `folders.rs::CreateFolderRequest`'s own fix, on every client. The server accepted it (`201` — carries
+  no information, same lesson as the item falsification arm). iOS's OWN next `FolderStore.refresh()`
+  failed to decrypt it (`decrypt_item_combined_json` rejected the AAD mismatch). `pv-wasm`, reading the
+  SAME row, ALSO failed: `decryption failed (wrong key or corrupted data)`. Both halves required — a
+  harness that could not decrypt anything at all would also show "both failed", which is why iOS's own
+  refresh is checked as a defense-in-depth arm rather than the only evidence.
+
+**Not outstanding this time:** unlike the item direction, no browser-rendering half is claimed missing
+here either — the same `web/node_modules` limitation applies (no dev server, no browser, in this
+worktree), and this record does not claim otherwise; the recipient-side `pv-wasm` decrypt is the
+evidence, exactly as it is for L-17's own item result above.
+
 ### L-18 — there is no folder rename or update route in `pv-server`
 
 **What goes wrong.** UI-04 ("folders and tags") is planned to include folder editing; the plan reaches
@@ -2407,6 +2498,44 @@ outputs `0` — the identifier itself is deliberately not spelled out in the scr
 the same reason as landmine 1 above: doing so would make the script a hit against its own check). Every
 check greps the WHOLE file set (`-r`) with an explicit printed count, never a sed/awk range extraction
 (CR-02/CR-03's own lesson, `audit-ffi-opaque-handles.sh`'s header).
+
+### L-20 — a live XCTest against the shared simulator's live server silently hijacks the persisted UI-test session
+
+**Found 2026-08-17, Plan 38-09, Tasks 2/3.** Both `VaultMutationTests
+.aLiveStaleRevisionConflictIsSurfacedAndDoesNotOverwrite` and `FolderWireInteropTests`' three methods
+drive the REAL `AccountService`/`PvApiClient` against `PV_TEST_SERVER ?? http://127.0.0.1:8621` —
+the SAME live `pv-server` this development simulator's actual app also talks to, and each of those
+tests `register()`s a fresh, randomly-named account. `AccountService.register`/`.signIn` write the
+resulting session (token + `pw_wrapped_uk`) into the SAME Keychain the app's own `SessionTokenStore`/
+`ContentView.determineRoute()` read on launch — there is only one Keychain per app on a given
+simulator, and a unit-test host process and the app's own UI process share it. Running these live
+tests therefore silently REPLACES whichever account the app's `LockView` was showing with an
+unrelated one, on the SAME simulator.
+
+**Symptom, observed live:** `ItemDetailScreenshotUITests`' pre-existing (38-07), previously-passing
+helper — which assumed the shared `pv-snap-38-05@example.invalid` fixture account's session was still
+the one restored on launch — started failing with `vault list never appeared after unlock` after this
+plan's own `VaultMutationTests`/`FolderWireInteropTests` ran on the same simulator. A manual screenshot
+of the "stuck" state showed `LockView` correctly rendering, but for `ios-va...14af@example.com` — an
+`ios-vault-mutation-…` fixture email from the live conflict test, not the expected account. The
+correct master password for `pv-snap-38-05` was being typed against the WRONG account's `LockView`,
+which fails to unlock silently (a wrong-password failure, not a missing-view failure), and the test's
+own generic "vault list never appeared" message gave no hint the account itself had changed.
+
+**Fix applied here, and the pattern going forward:** `ContentView.swift`'s existing
+`PV_UITEST_SCREEN=auth` forced-route hook (added for 38-13's onboarding evidence) sidesteps the
+persisted session entirely — set it in `XCUIApplication().launchEnvironment`, then always register a
+brand-new, uniquely-named account in the test itself rather than depending on ANY simulator-persisted
+state surviving between test files or plans. `ItemFormAndFolderUITests.swift` (this plan) and the
+fixed `ItemDetailScreenshotUITests.swift` both use this pattern now.
+
+**Consequence for future plans:** any `*LiveTests.swift`/`*WireInteropTests.swift` file that registers
+a REAL account against the SAME server/simulator this development environment's app itself is
+configured to talk to (as opposed to an isolated throwaway server on its own port, the
+`verify-ios-web-*-interop.mjs` scripts' own discipline) should be assumed to invalidate any
+UI-test-shared session on that simulator. Prefer either an isolated server port for the live test, or
+the `PV_UITEST_SCREEN=auth` + fresh-account pattern for the UI test — never a shared, persisted-session
+fixture account once ANY live XCTest in the suite talks to the same live server.
 
 ## 4. Open questions — honestly open
 
