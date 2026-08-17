@@ -2329,6 +2329,85 @@ live harness, because none of them go through it.
 "mounted under a prefix" without checking whether either `send` implementation's path-join has been
 changed to account for it.
 
+### E-G1 — the four-check UI-06 gate (`scripts/audit-generator-uses-ffi.sh`), verified falsifiable
+
+Plan 38-08, Task 2. `38-RESEARCH.md`'s own §"Pitfall 11": ROADMAP SC4, taken literally, greps for the
+ABSENCE of a Swift RNG call in the generator path — which passes trivially on a generator that never
+calls Rust at all. The fix is four checks (two negative, two positive), all required to hold, with
+every arm demonstrated able to FAIL under a targeted mutation before its passing was trusted. All four
+runs below, plus the reverts, were executed live in this session.
+
+**Landmine found while writing the checks, both self-inflicted, both fixed before relying on the
+gate:**
+
+1. **The script's own header comment tripped check 1 and check 4.** Naming the forbidden RNG APIs
+   (`SystemRandomNumberGenerator`, `arc4random`, …) and a wordlist example word in prose, inside
+   `GeneratorSheet.swift`'s and `PasswordStrengthTests.swift`'s own doc comments, made those files hits
+   against their own gate. Fixed by describing the forbidden set by reference (checks 1/4's own pattern
+   in the script) rather than restating it, and by using SYNTHETIC placeholder tokens
+   (`mockwordone`-style) in the strength-meter test fixture instead of a real EFF wordlist word — the
+   score is structural (letters + hyphens, length), not word-identity-dependent, so this loses nothing.
+2. **Unanchored check 3/2 patterns matched a RENAMED symbol as a substring.** The first version of
+   `SYMBOL_PATTERN`/`CALL_PATTERN` (`func generatePassphrase`, no trailing anchor) still matched
+   `func generatePassphraseRENAMED(...)` as a PREFIX, so falsification 3 (below) initially reported a
+   false PASS over the exact mutation it exists to catch — reproducing this repo's own "a check that
+   cannot fail" defect class one level up, inside the check meant to prevent it. Fixed by anchoring both
+   patterns on the literal open-paren (`generatePassphrase\(`), which a renamed symbol no longer
+   satisfies. Recorded here because it is the same lesson `audit-ffi-opaque-handles.sh`'s CR-02/CR-03
+   already paid for (an audit whose own matching is not exact reports PASS over the defect it exists to
+   find) — a fourth instance of it, discovered while building the fix for the third.
+
+**Falsification transcripts, all four checks, one mutation at a time, each reverted and the clean run
+re-confirmed before moving to the next:**
+
+```
+$ bash scripts/audit-generator-uses-ffi.sh   # baseline, before any mutation
+== check 1 (negative): no Swift RNG API anywhere under ios/ ==          count: 0   PASS
+== check 2 (positive): a real Swift call site ... ==                    count: 3   PASS
+== check 3 (positive): the generator symbols exist in the bindings ==   count: 2   PASS
+== check 4 (negative): no Swift-side wordlist/charset literal ... ==    count: 0   PASS
+OVERALL: PASS
+
+# 1. Injected `Int.random(in: 0...9)` into GeneratorSheet.swift.
+== check 1 ... ==   count: 1   FAIL -- .../Generator/GeneratorSheet.swift:391: ... Int.random(in: 0...9)
+$ echo $?
+1
+# Reverted (diff against pre-mutation copy empty); re-ran: check 1 count: 0, PASS.
+
+# 2. Renamed every real call-site occurrence of generateCharacterPassword/generatePassphrase in
+#    GeneratorSheet.swift and its UI test (a full identifier substitution, not a wrapper).
+== check 2 ... ==   count: 0   FAIL -- zero call sites ... outside the generated bindings
+$ echo $?
+1
+# Reverted both files (diff empty); re-ran: check 2 count: 3, PASS.
+
+# 3. Renamed the GENERATED binding's own declaration: `generatePassphrase` -> `generatePassphraseRENAMED`
+#    in ios/PasskeyVault/build/swift-bindings/pv_ffi.swift (gitignored build artifact).
+== check 3 ... ==   count: 1   FAIL -- expected BOTH declarations, found 1
+$ echo $?
+1
+# (First attempt at this mutation, BEFORE the check-3 anchor fix above, incorrectly PASSED --
+#  the landmine recorded above. Re-run after the anchor fix produced the FAIL shown here.)
+# Reverted the bindings file (diff against pre-mutation copy empty); re-ran: check 3 count: 2, PASS.
+
+# 4. Pasted the EFF wordlist's own first entry, "abacus", into a comment in GeneratorSheet.swift.
+== check 4 ... ==   count: 1   FAIL -- .../Generator/GeneratorSheet.swift:60: ... "abacus" ...
+$ echo $?
+1
+# Reverted (diff empty); re-ran: check 4 count: 0, PASS.
+```
+
+Final clean run after all four reverts, byte-identical to the baseline above: all four checks PASS,
+`OVERALL: PASS`.
+
+**Structural rules honoured, both paid for once already in this repository:** the shell here is zsh
+(L-3, this same file, §3) — every check captures grep's OUTPUT into a variable and tests the STRING,
+never a status read off the end of a pipe (`grep -c PIPESTATUS scripts/audit-generator-uses-ffi.sh`
+outputs `0` — the identifier itself is deliberately not spelled out in the script's own comments, for
+the same reason as landmine 1 above: doing so would make the script a hit against its own check). Every
+check greps the WHOLE file set (`-r`) with an explicit printed count, never a sed/awk range extraction
+(CR-02/CR-03's own lesson, `audit-ffi-opaque-handles.sh`'s header).
+
 ## 4. Open questions — honestly open
 
 1. ~~**IOS-06: UniFFI vs hand-written C ABI.**~~ **RESOLVED — see §1.** Decided: UniFFI, evaluated
