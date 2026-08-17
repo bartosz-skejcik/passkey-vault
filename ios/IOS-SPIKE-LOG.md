@@ -2740,6 +2740,67 @@ published artifact BEFORE writing a SUMMARY that says a plan is done.** Every
 defect in the table above would have been caught in about ten minutes of looking,
 and none of them was caught by 209 passing tests and three passing gates.
 
+## 3b. The $99 tripwire FIRED on hardware — 2026-08-17
+
+**[OBSERVED]** This closes §4 q.3, which has been open since Phase 36.
+
+Bartek set his own team (`4S7F2M7YLW`, a FREE Apple ID) on both targets in Xcode and hit ⌘R against a
+real `iPhone 16` (`iPhone17,3`). Xcode reported, on the `PasskeyVaultAutoFill` target:
+
+```
+No profiles for 'cloud.blonie.PasskeyVault.AutoFill' were found: Xcode couldn't find any
+iOS App Development provisioning profiles matching 'cloud.blonie.PasskeyVault.AutoFill'.
+
+Communication with Apple failed: The selected team does not have a program membership
+that is eligible for this feature.
+```
+
+**The second message is the load-bearing one.** It is Apple refusing
+`com.apple.developer.authentication-services.autofill-credential-provider` (and
+`com.apple.security.application-groups`) to a team without a paid Developer Program membership. Not a
+misconfiguration, not a missing click — a membership refusal from Apple's own service.
+
+### Why this matters beyond one failed build
+
+§4 q.3 pre-registered the exact condition: *"Will the simulator grant
+`com.apple.developer.authentication-services.autofill-credential-provider` to a personal/no team? If it
+refuses, that — and only that — is the decision point for the $99 Apple Developer Program. Not before."*
+
+Phase 36 answered the SIMULATOR half and answered it yes — the entitlement embedded, the extension
+registered, was elected, and appeared in Settings (`ios/evidence/36/`). That result stands and is not
+retracted. What it never touched is the **device** half, because the simulator path *"has no
+entitlement-issuing authority at all — no provisioning profile, no `amfid`/`taskgated`"* (DR-1's own
+recorded residual risk, §1). This is that residual risk arriving.
+
+**So: the simulator granted it; hardware refuses it on a free team.** DR-1's caveat was correct, and the
+$99 decision is now a live business gate rather than a hypothetical one — Bartek's call, not a technical
+phase.
+
+### What it costs, concretely, until the membership exists
+
+Phase 37's device run already showed the shape of the workaround, and it is the same one: strip
+`autofill-credential-provider`, `application-groups` and `keychain-access-groups` from **both**
+`.entitlements` files, keep the Team set, and the app signs and installs fine — a free team can sign an
+ordinary app, it simply cannot carry those three keys. The appex does NOT need unembedding; with empty
+entitlements it signs like any other target.
+
+**Consequences to state plainly rather than discover later:**
+
+- **Biometric unlock still works on device** — `UkEnvelopeStore` uses the DEFAULT keychain access group,
+  which needs no entitlement. This is what Phase 37's device run proved (SC4/SC5 confirmed on hardware,
+  `ios/evidence/37/DEVICE-VERIFICATION-RESULT.md`).
+- **Nothing about AutoFill is exercised on device.** No shared keychain group, no App Group container,
+  no credential-provider election. **Phase 41 cannot be verified on hardware at all without the paid
+  membership** — it is not "verify it later", it is blocked. Phase 41 owes its own device proof and
+  cannot inherit Phase 37's, which was taken with these keys stripped.
+- **Phase 43 (conditional passkeys) inherits the same block**, since it ships on the same extension.
+- The stripped state **must never be committed.** It disables the extension for every other build and
+  every simulator proof in Phases 36/41 silently. Both files are tracked, so
+  `git checkout -- <both paths>` restores them; the stripped copies carry a comment saying so.
+
+**Warning sign that this has been forgotten:** an `.entitlements` file in `git diff` with its keys
+removed, or a phase claiming AutoFill device coverage without naming a paid membership.
+
 ## 4. Open questions — honestly open
 
 1. ~~**IOS-06: UniFFI vs hand-written C ABI.**~~ **RESOLVED — see §1.** Decided: UniFFI, evaluated
