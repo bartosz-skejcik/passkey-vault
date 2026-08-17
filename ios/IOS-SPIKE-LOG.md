@@ -2693,6 +2693,53 @@ UI-test-shared session on that simulator. Prefer either an isolated server port 
 the `PV_UITEST_SCREEN=auth` + fresh-account pattern for the UI test — never a shared, persisted-session
 fixture account once ANY live XCTest in the suite talks to the same live server.
 
+## 3a. The visual layer was never verified — open gaps as of 2026-08-17
+
+**Written after Bartek looked at the running app and said, twice, that the screens
+do not match the approved design. He was right both times.**
+
+### The failure mode, named so it stops recurring
+
+Phase 38's plans were executed with green tests, green gates, and screenshots
+attached — and the screens still did not look like the approved artifact. Three
+distinct causes, none of which any gate could see:
+
+1. **A spec sentence was read as outranking the drawing.** The design spec's §4
+   opens *"Structure is unchanged. This is a colour correction plus one copy
+   move."* That sentence is about LAYOUT. Plan 38-13 took it as licence to leave
+   Phase 37's auth screens as they were, so the titles stayed "Passkey Vault"
+   instead of "Sign in"/"Create your vault", and every button kept saying
+   *account* where the approved copy says *vault*. **Rule: where a spec's prose
+   and the approved screens disagree about what the UI is, the screens win.**
+2. **An empty `AccentColor.colorset`.** Xcode's placeholder carries no colour
+   values; iOS's fallback for that is system blue. The entire vault surface —
+   tab bar, selected label, lock glyph — rendered iOS blue. Auth and onboarding
+   escaped only because 38-13 tinted each button by hand. Now generated from
+   PVAccent by `scripts/gen-ios-colorsets.py` and drift-checked by `--check`.
+3. **`scripts/audit-ios-colour-tokens.sh` cannot see absence.** It finds wrong
+   colours and tokens naming a nonexistent colorset. An unset accent and an
+   un-tinted control are neither — they are missing values. **A colour gate that
+   greps source cannot verify a rendering. Only looking at the screen can.**
+
+### Still open, and owned by 38-11's roll-up
+
+| Gap | Approved design says | What ships today |
+|---|---|---|
+| ＋ control | detached capsule expanding in place into a 3×3 action grid, becoming ✕ | a stock `Menu` on a plain circular FAB |
+| Search | dock accessory pill (`tabViewBottomAccessory`) | inline search bar under a large title |
+| Section index | `L C 2 P I N` down the right edge, `#available(iOS 26)` guarded | not rendered at all |
+| Lock title | "Vault locked", Face ID glyph, "Unlock with Face ID" primary | "Unlock your vault", no glyph, password primary |
+| Lock state 3 | muted status slot explaining biometry is unavailable | no slot; the screen just omits Face ID silently |
+| Lock states 5 / 8 | visually distinct (`PVError` vs muted) | one shared `PVError` banner |
+| Lock states 6 / 7 | throttled (controls visibly disabled), no-passcode | not implemented |
+
+### What to do differently next phase
+
+**Open the app and look at every screen against `ios/brand/screens*.html` and the
+published artifact BEFORE writing a SUMMARY that says a plan is done.** Every
+defect in the table above would have been caught in about ten minutes of looking,
+and none of them was caught by 209 passing tests and three passing gates.
+
 ## 4. Open questions — honestly open
 
 1. ~~**IOS-06: UniFFI vs hand-written C ABI.**~~ **RESOLVED — see §1.** Decided: UniFFI, evaluated
