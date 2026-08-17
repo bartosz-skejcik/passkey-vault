@@ -914,6 +914,60 @@ reachable through the context menu instead) — see `38-06-SUMMARY.md` for the f
 
 ---
 
+## 1d. Plan 38-07 results — the detail screen, clipboard, E-C1, 2026-08-17
+
+**Host-sync confirmation, the defaults key the research doc could not confirm:**
+`com.apple.iphonesimulator PasteboardAutomaticSync` — a boolean, `1` by default (Simulator's
+pasteboard sync starts ON). Toggled off via the Simulator app's own `Edit > Automatically Sync
+Pasteboard` menu item (confirmed unchecked via `AXMenuItemMarkChar`), then confirmed by reading the
+domain afterward: `defaults read com.apple.iphonesimulator PasteboardAutomaticSync` returned `0`.
+Re-confirmed `0` immediately before E-C1's run below.
+
+**Landmine hit and fixed during this task, recorded so it is not repeated:** the first four arm
+attempts all showed the marker MISSING even in arm A (write). Root cause: `xcrun simctl install` was
+installing a STALE binary from a second, leftover DerivedData directory
+(`PasskeyVault-faictfoarzmjrjfwplzwhmtivgnt`, last built 2026-08-13) that a `find ... | head -1` glob
+picked nondeterministically over the fresh one — the fresh app's `PasskeyVaultApp.init()` hook was
+never actually running. Diagnosed by writing a debug marker file from `init()` directly to the app's
+own `Documents` container (bypassing `NSLog`/`log show` entirely, since neither showed any app-level
+output either — later found to be the SAME stale-binary cause, not a logging-visibility issue) and
+confirming it never appeared until the stale DerivedData directory was deleted and the correct,
+freshly-verified `.app` path was installed explicitly. `xcrun simctl launch`'s environment variables
+must be set on the CALLING shell with a `SIMCTL_CHILD_` prefix (there is no `--env` flag on `simctl
+launch`, despite one being a natural guess) — confirmed working against the pre-existing
+`PV_UITEST_SCREEN` hook before trusting it for the new clipboard one.
+
+### E-C1
+
+2026-08-17
+**Arm A** PASS — write works. Copied `PV-CLIP-A-<runid>` through the real `ClipboardService.shared.copy` path (via a DEBUG-only `PV_UITEST_CLIPBOARD_COPY_MARKER` launch hook in `PasskeyVaultApp.init()`); `xcrun simctl pbpaste` printed it back exactly.
+**Arm B** PASS — expiry honoured with the app alive. Waited 35s (seconds=30 + 5s buffer) with the app still running; `pbpaste` returned empty.
+**Arm C** PASS — expiry survives app termination, the load-bearing claim. Copied, terminated the app at T+2s via `xcrun simctl terminate`, waited to T+33s; `pbpaste` returned empty. The daemon-owned `expirationDate` clears the pasteboard on this OS (iOS 26.5 simulator) independently of the writing process's lifetime.
+**Arm D** PASS — the changeCount guard does not wipe unrelated data. Copied the marker, waited 5s, wrote a DIFFERENT value externally via `xcrun simctl pbcopy`, waited past the original deadline; `pbpaste` returned the externally-written value unchanged, not empty.
+**Arm E** FALSIFIED — both mechanisms disabled (a raw `UIPasteboard.setObjects(_:localOnly:expirationDate:)` write with no expiry and no in-app timer, via `PV_UITEST_CLIPBOARD_DISABLE_BOTH_MECHANISMS`) and arms B and C re-run: both genuinely FAILED as predicted — the marker was still present after the same wait in both the alive case and the killed case, proving the observer is live and that arms B and C's PASS above is not a vacuous "nothing was ever going to be there anyway" result.
+
+**Known-unknown, recorded either way (untestable from outside the daemon with any tool available
+here):** whether the pasteboard daemon clears the item EAGERLY at the deadline or LAZILY on the next
+read is not observable — arm C only proves the item is gone by the time this external observer reads
+it sometime after the deadline, not that it vanished exactly at T. A lazy implementation would still
+leak the value to a third-party clipboard manager that happened to poll a moment before the deadline.
+The app's wording (`ClipboardService.swift`'s `ClipboardWording`) does not claim eager clearing, and
+never uses the word "guaranteed" anywhere.
+
+**Proof limitation (the arm-C boundary):** arm C shows that THIS simulator's pasteboard daemon, on
+THIS SDK (iPhoneSimulator26.5), honours `expirationDate` past the writing process's termination. It is
+evidence about this specific OS build's daemon behaviour, observed once, not a guarantee about every
+iOS version or a real device — the daemon implementation is Apple's, not this app's, and could differ
+or change. The wording in the app is written to hold regardless of which way this could go on a
+different OS build (see Task 2's `ClipboardWording`, written before this arm ran and not weakened
+after it turned out favourable).
+
+**Result for UI-07's design:** because arm C passed, the in-app timer is a genuine BACKUP (not the
+primary mechanism it would have had to become had arm B or C failed) — no wording change to Task 2's
+strings was needed as a result of this measurement.
+
+---
+
 ## 2. Verified against reality (2026-08-11)
 
 ### 2.1 PRF is available on iOS in both directions — iOS 18.0+
