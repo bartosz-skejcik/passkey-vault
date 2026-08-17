@@ -40,6 +40,10 @@ final class ItemListSearchUITests: XCTestCase {
     private func launchApp() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["PV_UITEST_SCREEN"] = "auth"
+        // The tracer marker-note bar is DEBUG + opt-in from
+        // 2026-08-17 (it was visible on the real vault screen
+        // until then). This suite depends on it, so it asks.
+        app.launchEnvironment["PV_UITEST_TRACER_CREATE_BAR"] = "1"
         app.launch()
         return app
     }
@@ -104,7 +108,7 @@ final class ItemListSearchUITests: XCTestCase {
         let passwordField = app.secureTextFields.firstMatch
         passwordField.tap()
         passwordField.typeText(Self.password)
-        app.buttons["Log in"].tap()
+        app.buttons["auth-submit"].tap()
 
         let marker = app.textFields["vault.create.marker"]
         // A real sign-in against the live server includes an actual
@@ -117,12 +121,12 @@ final class ItemListSearchUITests: XCTestCase {
         }
 
         // First run ever against this account -- switch to Create account.
-        app.buttons["No account yet? Sign up"].tap()
+        app.buttons["auth-toggle-mode"].tap()
         let confirmField = app.secureTextFields.element(boundBy: 1)
         XCTAssertTrue(confirmField.waitForExistence(timeout: 5))
         confirmField.tap()
         confirmField.typeText(Self.password)
-        app.buttons["Create account"].tap()
+        app.buttons["auth-submit"].tap()
 
         XCTAssertTrue(
             waitDismissingPromptsIfNeeded(for: marker, app: app, timeout: 20),
@@ -217,6 +221,10 @@ final class ItemListSearchUITests: XCTestCase {
     func testSharedRowHidesEditContextMenuEntryWhileOwnedRowShowsIt() throws {
         let app = XCUIApplication()
         app.launchEnvironment["PV_UITEST_SCREEN"] = "auth"
+        // The tracer marker-note bar is DEBUG + opt-in from
+        // 2026-08-17 (it was visible on the real vault screen
+        // until then). This suite depends on it, so it asks.
+        app.launchEnvironment["PV_UITEST_TRACER_CREATE_BAR"] = "1"
         app.launchEnvironment["PV_UITEST_VAULT_FIXTURE"] = "1"
         app.launch()
         try signInOrRegister(app)
@@ -256,6 +264,10 @@ final class ItemListSearchUITests: XCTestCase {
         // of any restorable session, so the account must sign in again
         // (never re-register: it already exists from the call above).
         app.launchEnvironment["PV_UITEST_SCREEN"] = "auth"
+        // The tracer marker-note bar is DEBUG + opt-in from
+        // 2026-08-17 (it was visible on the real vault screen
+        // until then). This suite depends on it, so it asks.
+        app.launchEnvironment["PV_UITEST_TRACER_CREATE_BAR"] = "1"
         app.launchEnvironment["PV_UITEST_VAULT_FIXTURE"] = "1"
         app.launch()
         try signInOrRegister(app)

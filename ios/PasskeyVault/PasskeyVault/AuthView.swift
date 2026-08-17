@@ -169,12 +169,20 @@ struct AuthView: View {
                 .disabled(isProcessing)
                 .tint(Color("PVAccent"))
                 .buttonStyle(.borderedProminent)
+                // Stable identifiers so UI tests stop targeting these controls
+                // by their visible copy. Correcting the copy to match the
+                // approved visual on 2026-08-17 broke four UI-test files that
+                // tapped `app.buttons["Log in"]` / `["Create account"]` -- a
+                // test suite that fails on a wording change is measuring the
+                // wording, not the behaviour.
+                .accessibilityIdentifier("auth-submit")
 
                 Button(action: toggleMode) {
                     Text(mode == .signIn ? t(.authToggleToRegister) : t(.authToggleToLogin))
                 }
                 .tint(Color("PVAccent"))
                 .disabled(isProcessing)
+                .accessibilityIdentifier("auth-toggle-mode")
             }
             .padding()
             .disabled(isProcessing)

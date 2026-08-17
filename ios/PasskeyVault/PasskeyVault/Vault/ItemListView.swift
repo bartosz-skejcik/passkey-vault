@@ -186,6 +186,17 @@ struct ItemListView: View {
     @State private var sortOption: SortOption = SortPreference.read()
     @State private var selection: VaultItemViewModel?
     @State private var deleteCandidate: VaultItemViewModel?
+    /// DEBUG-only, and off unless a UI test asks for it. See the
+    /// `safeAreaInset` call site for the full reasoning; in a Release build the
+    /// tracer bar cannot be rendered at all.
+    private static var showsTracerCreateBar: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["PV_UITEST_TRACER_CREATE_BAR"] != nil
+        #else
+        return false
+        #endif
+    }
+
     @State private var statusMessage: String?
     @State private var copyConfirmation: String?
 
@@ -252,8 +263,27 @@ struct ItemListView: View {
                             // account with zero items. A `safeAreaInset`
                             // at THIS level renders regardless of which
                             // branch `tabContent` takes.
+                            // The tracer's marker-note create bar is TEST-ONLY
+                            // from 2026-08-17 on.
+                            //
+                            // It was left visible in the product because
+                            // 38-05's `SnapshotEvidenceUITests` depends on
+                            // `vault.create.marker`/`vault.create.submit` being
+                            // reachable on the list screen, and 38-06's SUMMARY
+                            // expected 38-09 to retire the bar and that
+                            // dependency together. 38-09 retired neither, so a
+                            // debug text field labelled "Run marker" and a raw
+                            // item UUID were sitting on the real vault screen,
+                            // overlapping the create button
+                            // (`ios/evidence/38/38-06-list-at-rest.png`).
+                            //
+                            // Gating it on the env var the snapshot test
+                            // already sets keeps that evidence working without
+                            // shipping the scaffolding. Deleting it outright
+                            // would break a passing E-S1 proof; hiding it
+                            // behind a flag the test controls does not.
                             .safeAreaInset(edge: .bottom) {
-                                if tab == .all { createBar }
+                                if tab == .all, Self.showsTracerCreateBar { createBar }
                             }
                             .searchable(
                                 text: $searchText,
@@ -317,15 +347,22 @@ struct ItemListView: View {
         let searchOrFilterActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !searchTokens.isEmpty
 
+        // Every branch below gets the brand ground, not just the List one:
+        // an empty vault and a no-matches state were rendering on iOS grey
+        // while a populated one rendered on cream.
         if store.items.isEmpty {
             emptyVaultState
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color("PVBackground"))
         } else if rows.isEmpty && searchOrFilterActive {
             ContentUnavailableView.search(text: searchText)
+                .background(Color("PVBackground"))
         } else if rows.isEmpty {
             ContentUnavailableView(
                 "No \(tab.title.lowercased()) yet",
                 systemImage: tab.systemImage
             )
+            .background(Color("PVBackground"))
         } else {
             List {
                 if tab == .all {
@@ -336,6 +373,17 @@ struct ItemListView: View {
             }
             .modifier(AvailableListSectionIndexVisibility())
             .refreshable { await refresh() }
+            // The brand ground. Without these two lines a `List` paints iOS's
+            // own grouped-list grey and the entire vault surface loses the warm
+            // cream this product's identity is built on -- observed in
+            // `ios/evidence/38/38-06-list-at-rest.png`, where auth and
+            // onboarding were on `PVBackground` and the vault was not.
+            //
+            // `scrollContentBackground(.hidden)` is the load-bearing half: a
+            // `.background` alone sits BEHIND the List's own opaque system
+            // fill and is never seen.
+            .scrollContentBackground(.hidden)
+            .background(Color("PVBackground"))
         }
     }
 

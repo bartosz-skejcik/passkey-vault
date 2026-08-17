@@ -52,6 +52,12 @@ final class SnapshotEvidenceUITests: XCTestCase {
     @MainActor
     func testCreateMarkerItemOpenDetailAndBackground() throws {
         let app = XCUIApplication()
+        // The tracer marker-note create bar this test drives
+        // (`vault.create.marker`/`vault.create.submit`) became DEBUG-only and
+        // opt-in on 2026-08-17: until then it was visible on the real vault
+        // screen, debug label and raw item UUID and all. This test is the
+        // reason it still exists at all, so it asks for it explicitly.
+        app.launchEnvironment["PV_UITEST_TRACER_CREATE_BAR"] = "1"
         app.launch()
 
         try signInOrRegisterOrUnlock(app)
@@ -107,7 +113,7 @@ final class SnapshotEvidenceUITests: XCTestCase {
         let passwordField = app.secureTextFields.firstMatch
         passwordField.tap()
         passwordField.typeText(Self.password)
-        app.buttons["Log in"].tap()
+        app.buttons["auth-submit"].tap()
 
         let listField = app.textFields["vault.create.marker"]
         if listField.waitForExistence(timeout: 8) {
@@ -116,12 +122,12 @@ final class SnapshotEvidenceUITests: XCTestCase {
 
         // Sign-in failed (first run ever -- account does not exist yet).
         // Switch to Create account and register instead.
-        app.buttons["No account yet? Sign up"].tap()
+        app.buttons["auth-toggle-mode"].tap()
         let confirmField = app.secureTextFields.element(boundBy: 1)
         XCTAssertTrue(confirmField.waitForExistence(timeout: 5))
         confirmField.tap()
         confirmField.typeText(Self.password)
-        app.buttons["Create account"].tap()
+        app.buttons["auth-submit"].tap()
 
         XCTAssertTrue(listField.waitForExistence(timeout: 15), "vault list never appeared after registration")
     }

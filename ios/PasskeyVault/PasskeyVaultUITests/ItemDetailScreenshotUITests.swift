@@ -95,7 +95,7 @@ final class ItemDetailScreenshotUITests: XCTestCase {
         authEmailField.tap()
         authEmailField.typeText(email)
 
-        app.buttons["No account yet? Sign up"].tap()
+        app.buttons["auth-toggle-mode"].tap()
         let passwordField = app.secureTextFields.firstMatch
         XCTAssertTrue(passwordField.waitForExistence(timeout: 5))
         passwordField.tap()
@@ -104,7 +104,7 @@ final class ItemDetailScreenshotUITests: XCTestCase {
         XCTAssertTrue(confirmField.waitForExistence(timeout: 5))
         confirmField.tap()
         confirmField.typeText(Self.password)
-        app.buttons["Create account"].tap()
+        app.buttons["auth-submit"].tap()
 
         let listField = app.textFields["vault.create.marker"]
         XCTAssertTrue(listField.waitForExistence(timeout: 20), "vault list never appeared after registration")

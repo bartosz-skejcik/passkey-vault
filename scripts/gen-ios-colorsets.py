@@ -56,8 +56,39 @@ def main():
     with open(TOKENS) as f:
         spec = json.load(f)
 
+    # AccentColor is generated as a MIRROR of PVAccent, not hand-maintained.
+    #
+    # WHY, and it is the most expensive defect this script has caught. Xcode's
+    # template leaves `AccentColor.colorset` as a placeholder with NO colour
+    # values:
+    #
+    #     { "colors": [ { "idiom": "universal" } ], "info": {...} }
+    #
+    # An empty AccentColor does not fail a build, does not fail a test, and
+    # does not fail `audit-ios-colour-tokens.sh` -- that gate finds WRONG
+    # colours and MISSING tokens, and this is neither. It is the absence of a
+    # value, and the platform's fallback for that absence is SYSTEM BLUE.
+    #
+    # Consequence, observed on 2026-08-17 in `ios/evidence/38/38-06-list-at-rest
+    # .png`: every control that is not explicitly `.tint(...)`-ed rendered
+    # blue. The auth and onboarding screens looked correct only because plan
+    # 38-13 happened to tint each button by hand; the whole vault surface --
+    # tab bar, selected tab label, lock pill -- came out iOS blue in a product
+    # whose entire visual identity is a warm coral.
+    #
+    # Generating it here means the app-wide tint is drift-checked by --check
+    # like every other token, and "nobody set the accent" stops being a state
+    # this project can be in.
+    accent = next((t for t in spec["tokens"] if t["asset"] == "PVAccent"), None)
+    if accent is None:
+        print("FAIL: tokens.json has no PVAccent token to mirror into AccentColor")
+        return 1
+    generated = list(spec["tokens"]) + [
+        {"asset": "AccentColor", "light": accent["light"], "dark": accent["dark"]}
+    ]
+
     drift, wrote = [], []
-    for t in spec["tokens"]:
+    for t in generated:
         path = os.path.join(ASSETS, f"{t['asset']}.colorset")
         target = colorset(t["light"], t["dark"])
         contents = os.path.join(path, "Contents.json")
@@ -91,7 +122,7 @@ def main():
                 print(f"  - {d}")
             print("\nRe-run: python3 scripts/gen-ios-colorsets.py")
             return 1
-        print(f"PASS: all {len(spec['tokens'])} colorsets match tokens.json")
+        print(f"PASS: all {len(generated)} colorsets match tokens.json (incl. generated AccentColor)")
         return 0
 
     if wrote:
