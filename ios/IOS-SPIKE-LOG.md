@@ -848,6 +848,72 @@ build what is not there.
 
 ---
 
+## 1c. Plan 38-06 results — the list surface, E-U2/E-U3, 2026-08-17
+
+**E-U2 — which search chrome does a target-18/SDK-26 build actually render, resolved with a
+correction to the experiment's own premise.** Neither hypothesis as originally framed (H1: classic
+drawer under the large title; H2: iOS 26 minimized bottom-docked search) survived contact with a real
+run cleanly — the actual determining factor turned out to be **which container `.searchable` is
+attached to, not the deployment floor**. Observed empirically, in this order:
+
+1. `.searchable` on the outer `TabView` (with a single `NavigationStack` wrapping the whole `TabView`):
+   **zero search chrome anywhere on screen.** No field, no icon, nothing — confirmed by a live
+   screenshot with the full accessibility tree dumped alongside it.
+2. `.searchable` moved to each `Tab`'s own bare content (same single outer `NavigationStack`):
+   **still zero search chrome.**
+3. `.searchable` moved to each `Tab`'s OWN `NavigationStack` (`TabView { Tab { NavigationStack { ...
+   .searchable(...) } } }`, the structure this plan ships): **renders correctly** — a rounded "Search"
+   pill directly under the large title, matching the classic (H1-shaped) drawer appearance, not the
+   iOS 26 minimized style. `SearchField` and its `magnifyingglass` glyph are both present in the
+   accessibility hierarchy dump (`ios/evidence/38/38-06-eu2-search-at-rest.png`).
+
+Reading: the navigation bar `.searchable` docks its chrome into has to belong to the SAME
+`NavigationStack` instance the modifier is attached within. A `TabView`'s own navigation bar (or one
+belonging to an ancestor `NavigationStack` one level further out) does not count, regardless of SDK
+version. This is a real, load-bearing correction to the research doc's "root content, not the
+container" guidance — the container in question is more specific than "the immediate `NavigationStack`
+wrapper" and turned out to mean "each tab's own stack."
+
+**Second observation (scroll behaviour):** `app.swipeUp()` on a one-row list produced no visible change
+— the search pill neither minimized nor moved (`ios/evidence/38/38-06-eu2-search-after-scrolling.png`).
+Consistent with the non-minimizing drawer appearance from observation 3 above, but the fixture had too
+little content to force a genuine scroll; recorded as a proof limitation, not a settled negative.
+
+**Proof-limitation sentence (required by this plan's own acceptance criteria):** every search
+screenshot in this phase, going forward, documents the drawer-style appearance observed above — the
+appearance a user on a build linked against a DIFFERENT SDK might see is untested and could differ.
+
+**E-U3 — do tokens and scopes coexist as two modifiers?** **PASS, with a timing qualifier not stated
+in the original experiment plan.** `.searchable(text:tokens:token:)` and `.searchScopes(_:_:)` were
+applied together to the same view (temporary experiment, reverted after this observation was
+recorded — see the diff at commit `01d8871`'s parent for the exact code). Compiled cleanly. At
+runtime: **at rest, only the tokens-capable search field is visible — no scope pills.** Once the
+search field is TAPPED (active/focused), the scope pills ("All" / "Recent") appear directly below it,
+alongside the same field (`ios/evidence/38/38-06-eu3-tokens-and-scopes-together.png`, captured with
+the field focused and text typed into it). Both affordances ARE present simultaneously once the field
+is active — the plan's pass condition ("both visible simultaneously") is met, but only in that state,
+not at rest. This is standard iOS behaviour (matches Mail.app's own scope-bar timing), not a defect.
+
+**Shipped decision:** despite E-U3 passing, the SHIPPED `ItemListView` does NOT use `.searchScopes` for
+item-type filtering — design-conformance's approved navigation architecture (a `TabView` with type-
+filter tabs) supersedes the plan's own pre-approval "coarse scopes, or fallback to a toolbar menu"
+text, per that document's own stated precedence rule (design-conformance wins on "what the UI is").
+Tag tokens ARE shipped for real, wired to `store.allTags`. Folder tokens are NOT shipped — `VaultStore`
+does not decrypt folder names yet (lands with 38-09); `VaultFilter.folder(id:)` stays a faithfully
+ported case with no UI path to it, an honest bounded scope cut.
+
+**A third finding, live-discovered outside either named experiment but belonging in this section:**
+a LEADING `.swipeActions` on a `List` row specifically — not swipe actions in general, not modifier
+order — prevents `.contextMenu` on the same row from ever opening via long press. Isolated by removing
+each modifier independently: trailing-only + contextMenu works; leading-only + contextMenu breaks;
+both together breaks the same way regardless of which is applied first in the modifier chain. Not
+documented in the research doc's "Standard Stack" table, because nothing there flagged the combination
+as risky. `ItemListView.swift`'s row therefore ships trailing-delete + context menu only; the leading
+copy-swipe named in the plan's own action text is not implemented as a swipe (its copy actions remain
+reachable through the context menu instead) — see `38-06-SUMMARY.md` for the full accounting.
+
+---
+
 ## 2. Verified against reality (2026-08-11)
 
 ### 2.1 PRF is available on iOS in both directions — iOS 18.0+
