@@ -48,7 +48,20 @@ say() { printf '%s\n' "$*"; }
 check_literal_colours() {
   say "== check 1: no literal colour in any view =="
   local hits
-  hits="$(grep -rnE --include='*.swift' "$LITERAL_COLOUR" "$SRC" || true)"
+  # Comment-only lines are excluded: the rule is about CODE. A doc comment
+  # that NAMES `.white` while explaining why it is forbidden is not a
+  # violation, and on 2026-08-17 exactly that turned this gate red against
+  # PVDesign.swift's own header. Lines whose first non-space token opens a
+  # comment are dropped; a violation in a TRAILING comment after real code
+  # is still flagged, which is the safe direction to err in.
+  # NOTE ON THE REGEX BELOW, because the first attempt at it was itself a
+  # check that could not fail. Writing the comment-opener alternation as
+  # `(//|\\*)` makes the second branch "zero or more backslashes", which matches
+  # the EMPTY string -- so the exclusion swallowed every line and the whole
+  # check silently passed on a real `Color.white`. Caught only by falsifying it.
+  # A literal asterisk is `\*`, one backslash. Do not "tidy" this.
+  hits="$(grep -rnE --include='*.swift' "$LITERAL_COLOUR" "$SRC" \
+          | grep -vE ':[0-9]+:[[:space:]]*(//|/\*|\*)' || true)"
   if [ -n "$hits" ]; then
     say "FAIL -- literal colour(s) present; every colour must be an asset-catalog token:"
     say "$hits"

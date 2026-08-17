@@ -46,46 +46,33 @@ struct AuthView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+        // `PVScreenScaffold` carries the approved layout: content top, a
+        // `flex:1` spacer, action stack pinned to the BOTTOM with a 9pt gap,
+        // 20pt horizontal page padding. All four numbers come from the
+        // artifact's own stylesheet via `PVMetrics` -- see `Core/PVDesign.swift`
+        // for why they live in one place now.
+        PVScreenScaffold {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
                 // The title names the ACTION, not the app -- "Sign in" /
                 // "Create your vault", per the approved visual reference
-                // (artifact "Passkey Vault iOS Screens", §"Auth").
-                //
-                // Phase 37 shipped the static app name here, on 37-UI-SPEC's
-                // instruction, and plan 38-13 left it in place because the
-                // design spec's §4 opens "Structure is unchanged. This is a
-                // colour correction plus one copy move." That sentence is
-                // about LAYOUT. The approved screens show mode-specific large
-                // titles and different button copy, and the artifact is the
-                // more specific authority: a spec sentence summarising the
-                // scope of a change does not override the drawing of what the
-                // change produces. Corrected 2026-08-17.
-                Text(t(mode == .signIn ? .authSignInTitle : .authRegisterTitle))
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .foregroundStyle(Color("PVTextPrimary"))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("auth-title")
-
-                // Phase 38, plan 38-13, Task 4: the server line under the
-                // title -- necessary now that self-hosting is real (38-12).
-                // A user with two vaults must be able to see which one they
-                // are signing in to.
+                // (artifact "Passkey Vault iOS Screens", §"Auth"). Phase 37
+                // shipped the static app name here; 38-13 left it because the
+                // design spec's §4 says "Structure is unchanged", which is
+                // about LAYOUT, not copy. Corrected 2026-08-17.
                 //
                 // The preposition is mode-specific and comes from two
                 // dictionary keys, never interpolation: you sign in TO a
                 // server, you create a vault ON one, and Polish's "do"/"na"
                 // govern different cases so no single template covers both.
-                Text(
-                    t(
+                PVScreenTitle(
+                    title: t(mode == .signIn ? .authSignInTitle : .authRegisterTitle),
+                    subtitle: t(
                         mode == .signIn ? .authServerSubtitle : .authServerSubtitleRegister,
                         ["host": ServerSettings.resolved.host ?? ServerSettings.resolved.absoluteString]
                     )
                 )
-                    .font(.subheadline)
-                    .foregroundStyle(Color("PVTextMuted"))
-                    .accessibilityIdentifier("auth-server-subtitle")
+                .accessibilityIdentifier("auth-title")
 
                 fieldGroup(labelKey: .authEmailLabel) {
                     TextField("", text: $email)
@@ -155,40 +142,33 @@ struct AuthView: View {
                         .foregroundStyle(Color("PVTextMuted"))
                 }
 
-                Button(action: submit) {
-                    Group {
-                        if isProcessing {
-                            ProgressView()
-                        } else {
-                            Text(mode == .signIn ? t(.authLoginSubmit) : t(.authRegisterSubmit))
-                                .foregroundStyle(Color("PVOnAccent"))
-                        }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 48)
                 }
-                .disabled(isProcessing)
-                .tint(Color("PVAccent"))
-                .buttonStyle(.borderedProminent)
-                // Stable identifiers so UI tests stop targeting these controls
-                // by their visible copy. Correcting the copy to match the
-                // approved visual on 2026-08-17 broke four UI-test files that
-                // tapped `app.buttons["Log in"]` / `["Create account"]` -- a
-                // test suite that fails on a wording change is measuring the
-                // wording, not the behaviour.
-                .accessibilityIdentifier("auth-submit")
-
-                Button(action: toggleMode) {
-                    Text(mode == .signIn ? t(.authToggleToRegister) : t(.authToggleToLogin))
-                }
-                .tint(Color("PVAccent"))
-                .disabled(isProcessing)
-                .accessibilityIdentifier("auth-toggle-mode")
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding()
+        } actions: {
+            Button(action: submit) {
+                Group {
+                    if isProcessing {
+                        ProgressView().tint(Color("PVOnAccent"))
+                    } else {
+                        Text(mode == .signIn ? t(.authLoginSubmit) : t(.authRegisterSubmit))
+                    }
+                }
+            }
             .disabled(isProcessing)
-            .opacity(isProcessing ? 0.5 : 1.0)
+            .buttonStyle(PVPrimaryButtonStyle(isEnabled: !isProcessing))
+            // Stable identifiers so UI tests stop targeting these controls by
+            // their visible copy -- correcting the copy broke four test files
+            // that tapped `app.buttons["Log in"]`.
+            .accessibilityIdentifier("auth-submit")
+
+            Button(action: toggleMode) {
+                Text(mode == .signIn ? t(.authToggleToRegister) : t(.authToggleToLogin))
+            }
+            .disabled(isProcessing)
+            .buttonStyle(PVGhostButtonStyle(isEnabled: !isProcessing))
+            .accessibilityIdentifier("auth-toggle-mode")
         }
-        .background(Color("PVBackground"))
     }
 
     @ViewBuilder
@@ -204,14 +184,10 @@ struct AuthView: View {
             // input as a surface-filled 11pt-radius row (the reference's own
             // `.field` rule), and `PVSurface` exists in the token table for
             // exactly this -- "cards, list cells, fields, sheets".
-            content()
-                .padding(.horizontal, 14)
-                .padding(.vertical, 13)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .fill(Color("PVSurface"))
-                )
+            // `.field`: PVSurface, 11pt radius, 12/14 padding, 46pt minimum
+            // height -- all from `PVMetrics`, so this and every other field in
+            // the app cannot drift apart.
+            content().pvFieldChrome()
         }
     }
 
