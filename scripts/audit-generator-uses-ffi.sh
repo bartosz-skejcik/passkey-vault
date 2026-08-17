@@ -57,6 +57,28 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="${ROOT}/ios"
 BINDINGS_DIR="${ROOT}/ios/PasskeyVault/build/swift-bindings"
 
+# SHIPPED code only -- the app target and the AutoFill extension target. The
+# negative checks (1 and 4) scan THIS, not all of `ios/`.
+#
+# WHY THIS NARROWING EXISTS, and why it is not a weakening. ROADMAP SC4's own
+# wording is that Swift RNG must not appear "w ścieżce generatora" -- in the
+# GENERATOR PATH. Scanning all of `ios/` also scans the two test targets, and
+# on 2026-08-17 that produced a FAIL on two UI tests using
+# `Int.random(in: 0...9999)` to build a unique throwaway email address
+# (`ItemDetailScreenshotUITests.swift:41`, `ItemFormAndFolderUITests.swift:37`).
+# Neither can reach password generation: a test target is not linked into the
+# shipped app, so nothing in it is in any path a user's password comes out of.
+# Failing on them measures the wrong thing -- the exact defect class the rest
+# of this script exists to prevent, pointed at itself.
+#
+# The broad scan did buy one real property, and check 5 below is what keeps it:
+# a broad gate cannot be evaded by moving generator code into a directory the
+# gate does not look at. Check 5 asserts the excluded test directories define
+# no generator of their own and carry no charset/wordlist literal, so the
+# exclusion cannot become a hiding place.
+SHIPPED_SRC="${ROOT}/ios/PasskeyVault/PasskeyVault ${ROOT}/ios/PasskeyVault/PasskeyVaultAutoFill"
+TEST_SRC="${ROOT}/ios/PasskeyVault/PasskeyVaultTests ${ROOT}/ios/PasskeyVault/PasskeyVaultUITests"
+
 FAIL=0
 
 say() { printf '%s\n' "$*"; }
@@ -85,8 +107,8 @@ LITERAL_PATTERN='abacus|abcdefghijklmnopqrstuvwxyz'
 # ---------------------------------------------------------------------------
 # Check 1 -- NEGATIVE: no Swift RNG API anywhere in the app's Swift source.
 # ---------------------------------------------------------------------------
-say "== check 1 (negative): no Swift RNG API anywhere under ios/ =="
-hits1="$(grep -rnE --include='*.swift' "$RNG_PATTERN" "$SRC" || true)"
+say "== check 1 (negative): no Swift RNG API in SHIPPED Swift source (app + appex) =="
+hits1="$(grep -rnE --include='*.swift' "$RNG_PATTERN" $SHIPPED_SRC || true)"
 count1="$(printf '%s' "$hits1" | grep -c . || true)"
 [ -z "$hits1" ] && count1=0
 say "count: $count1"
@@ -141,8 +163,8 @@ fi
 # Check 4 -- NEGATIVE: no Swift-side copy of the EFF wordlist or the
 # charset literals. A copy is drift by construction (T-38-08-02).
 # ---------------------------------------------------------------------------
-say "== check 4 (negative): no Swift-side wordlist/charset literal anywhere under ios/ =="
-hits4="$(grep -rnE --include='*.swift' "$LITERAL_PATTERN" "$SRC" || true)"
+say "== check 4 (negative): no Swift-side wordlist/charset literal in SHIPPED source =="
+hits4="$(grep -rnE --include='*.swift' "$LITERAL_PATTERN" $SHIPPED_SRC || true)"
 count4="$(printf '%s' "$hits4" | grep -c . || true)"
 [ -z "$hits4" ] && count4=0
 say "count: $count4"
@@ -154,9 +176,37 @@ else
   say "PASS"
 fi
 
+# ---------------------------------------------------------------------------
+# Check 5 -- NEGATIVE, and it is what pays for checks 1 and 4 being narrowed.
+#
+# Checks 1 and 4 scan shipped code only, for the reason argued at the top of
+# this file. That narrowing would be a real hole if a generator could simply be
+# written inside a test target instead. It cannot be reached from the app --
+# test targets are not linked into it -- but a second, drifting generator
+# implementation living anywhere in this repo is exactly what DR-38-A's own
+# residual risk names, so it is worth failing on rather than trusting.
+#
+# So: the excluded directories must define no generator of their own and carry
+# no charset/wordlist literal. `Int.random` for a throwaway fixture is fine
+# there; a `func generate…` or an alphabet literal is not.
+# ---------------------------------------------------------------------------
+say "== check 5 (negative): the EXCLUDED test dirs are not a hiding place =="
+hits5="$(grep -rnE --include='*.swift' "func generateCharacterPassword|func generatePassphrase|$LITERAL_PATTERN" $TEST_SRC || true)"
+count5="$(printf '%s' "$hits5" | grep -c . || true)"
+[ -z "$hits5" ] && count5=0
+say "count: $count5"
+if [ "$count5" -ne 0 ]; then
+  say "FAIL -- a generator definition or charset literal lives in a test target,"
+  say "        which checks 1 and 4 deliberately do not scan:"
+  say "$hits5"
+  FAIL=1
+else
+  say "PASS"
+fi
+
 say ""
 if [ "$FAIL" -ne 0 ]; then
   say "OVERALL: FAIL -- see the failing check(s) above"
   exit 1
 fi
-say "OVERALL: PASS -- all four checks hold (2 negative, 2 positive); the negative results are not vacuous"
+say "OVERALL: PASS -- all five checks hold (3 negative, 2 positive); the negative results are not vacuous"
