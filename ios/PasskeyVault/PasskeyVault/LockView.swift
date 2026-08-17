@@ -80,64 +80,78 @@ struct LockView: View {
                 // and which control is emphasised. That is the whole reason
                 // this is a single view.
                 if biometryIsOffered {
-                    Image(systemName: "faceid")
-                        .font(.system(size: 52, weight: .light))
-                        .foregroundStyle(Color("PVAccent"))
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, PVMetrics.authTitleTopSpace)
-                        .accessibilityHidden(true)
-                }
+                    // STATE 1/2 -- the biometry-ready hero. Centred, 48pt from
+                    // the top, a 56pt Face ID glyph, a 24pt title and a 15.5pt
+                    // muted line. Crucially it has NO password field, NO account
+                    // line and NO forgot link: the artifact's own markup for
+                    // this state is a `.hero` div and a two-button stack, and
+                    // nothing else. An earlier pass built the left-aligned form
+                    // here and recorded it as a minor deviation; it is not
+                    // minor, it is a different screen.
+                    VStack(spacing: 6) {
+                        Image(systemName: "faceid")
+                            .font(.system(size: PVMetrics.faceIdGlyphSize, weight: .light))
+                            .foregroundStyle(Color("PVAccent"))
+                            .accessibilityHidden(true)
+                        Text(t(.unlockHeading))
+                            .font(.system(size: PVMetrics.lockHeroTitleSize, weight: .bold))
+                            .foregroundStyle(Color("PVTextPrimary"))
+                            .accessibilityIdentifier("lock-title")
+                        Text(biometricCtaText(availability: availability ?? BiometryAvailability(
+                            isAvailable: true, methodName: "Face ID", biometryStateHash: nil
+                        )))
+                            .font(.system(size: PVMetrics.heroBodySize))
+                            .foregroundStyle(Color("PVTextMuted"))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: PVMetrics.heroBodyMaxWidth)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, PVMetrics.lockHeroTopSpace)
+                } else {
+                    PVScreenTitle(
+                        title: t(.unlockHeading),
+                        subtitle: account.email.isEmpty
+                            ? nil
+                            : t(.unlockSignedInAs, ["email": account.email]),
+                        topSpace: PVMetrics.authTitleTopSpace
+                    )
+                    .accessibilityIdentifier("lock-title")
 
-                PVScreenTitle(
-                    title: t(.unlockHeading),
-                    subtitle: account.email.isEmpty
-                        ? nil
-                        : t(.unlockSignedInAs, ["email": account.email]),
-                    topSpace: biometryIsOffered ? PVMetrics.titleTopSpace : PVMetrics.authTitleTopSpace
-                )
-                .accessibilityIdentifier("lock-title")
+                    if let slot = statusSlot {
+                        StatusCallout(text: slot.text, tone: slot.tone)
+                            .accessibilityIdentifier("lock-status-slot")
+                    }
 
-                // THE status slot. Every non-idle state renders here and
-                // nowhere else, through the one shared `StatusCallout`, so the
-                // nine states read as one machine.
-                if let slot = statusSlot {
-                    StatusCallout(text: slot.text, tone: slot.tone)
-                        .accessibilityIdentifier("lock-status-slot")
-                }
-
-
-                // Placeholder inside the field, one shared 46pt chrome --
-                // identical to AuthView's, so the same control does not look
-                // like two different controls across two screens.
-                HStack(spacing: 8) {
-                    Group {
-                        if isPasswordRevealed {
-                            TextField("", text: $password, prompt: lockPrompt)
-                                .autocorrectionDisabled()
-                                #if os(iOS)
-                                .textInputAutocapitalization(.never)
-                                #endif
-                                .focused($isPasswordFieldFocused)
-                                .accessibilityIdentifier("unlock-password-field")
-                        } else {
-                            SecureField("", text: $password, prompt: lockPrompt)
-                                .focused($isPasswordFieldFocused)
-                                .accessibilityIdentifier("unlock-password-field")
+                    HStack(spacing: 8) {
+                        Group {
+                            if isPasswordRevealed {
+                                TextField("", text: $password, prompt: lockPrompt)
+                                    .autocorrectionDisabled()
+                                    #if os(iOS)
+                                    .textInputAutocapitalization(.never)
+                                    #endif
+                                    .focused($isPasswordFieldFocused)
+                                    .accessibilityIdentifier("unlock-password-field")
+                            } else {
+                                SecureField("", text: $password, prompt: lockPrompt)
+                                    .focused($isPasswordFieldFocused)
+                                    .accessibilityIdentifier("unlock-password-field")
+                            }
                         }
-                    }
-                    .font(.system(size: 16))
+                        .font(.system(size: 16))
 
-                    Button(action: { isPasswordRevealed.toggle() }) {
-                        Image(systemName: isPasswordRevealed ? "eye.slash" : "eye")
-                            .frame(width: 22, height: 22)
-                            .contentShape(Rectangle().size(width: 44, height: PVMetrics.fieldMinHeight))
+                        Button(action: { isPasswordRevealed.toggle() }) {
+                            Image(systemName: isPasswordRevealed ? "eye.slash" : "eye")
+                                .frame(width: 22, height: 22)
+                                .contentShape(Rectangle().size(width: 44, height: PVMetrics.fieldMinHeight))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color("PVAccent"))
+                        .accessibilityLabel(isPasswordRevealed ? t(.ariaHidePassword) : t(.ariaShowPassword))
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color("PVAccent"))
-                    .accessibilityLabel(isPasswordRevealed ? t(.ariaHidePassword) : t(.ariaShowPassword))
+                    .pvFieldChrome()
+                    .accessibilityLabel(t(.authPasswordLabel))
                 }
-                .pvFieldChrome()
-                .accessibilityLabel(t(.authPasswordLabel))
 
                 if isProcessing {
                     Text(t(.appProcessingHint))
@@ -178,7 +192,7 @@ struct LockView: View {
             .accessibilityIdentifier("lock-password-submit")
 
             if biometryIsOffered {
-                Button(action: submitPassword) {
+                Button(action: { prefersPasswordEntry = true }) {
                     Text(t(.unlockUseMasterPassword))
                 }
                 .disabled(isProcessing)
@@ -199,12 +213,16 @@ struct LockView: View {
                 .accessibilityIdentifier("lock-open-settings")
             }
 
-            Button(action: { showForgotPasswordWarning.toggle() }) {
-                Text(t(.authForgotPasswordCta))
+            // The forgot link belongs to the password states only. State 1's
+            // markup carries exactly two controls.
+            if !biometryIsOffered {
+                Button(action: { showForgotPasswordWarning.toggle() }) {
+                    Text(t(.authForgotPasswordCta))
+                }
+                .disabled(isProcessing)
+                .buttonStyle(PVGhostButtonStyle(isEnabled: !isProcessing))
+                .accessibilityIdentifier("lock-forgot-password-cta")
             }
-            .disabled(isProcessing)
-            .buttonStyle(PVGhostButtonStyle(isEnabled: !isProcessing))
-            .accessibilityIdentifier("lock-forgot-password-cta")
         }
         .background(Color("PVBackground"))
         .onAppear(perform: setUpOnAppear)
@@ -240,7 +258,13 @@ struct LockView: View {
             .foregroundColor(Color("PVTextMuted").opacity(PVMetrics.placeholderOpacity))
     }
 
+    /// Set by the "Use master password" ghost: leaves the hero and shows the
+    /// password form, which is what "the password stays one tap away and is never
+    /// hidden behind a menu" means in the artifact's own caption for state 1.
+    @State private var prefersPasswordEntry = false
+
     private var biometryIsOffered: Bool {
+        if prefersPasswordEntry { return false }
         guard let availability, availability.isAvailable else { return false }
         return biometricState == .idle
     }
@@ -285,11 +309,12 @@ struct LockView: View {
                 Text(biometricCtaText(availability: availability))
             }
             .foregroundStyle(Color("PVOnAccent"))
-            .frame(maxWidth: .infinity, minHeight: 48)
         }
         .disabled(isProcessing)
-        .tint(Color("PVAccent"))
-        .buttonStyle(.borderedProminent)
+        // `PVPrimaryButtonStyle`, not `.borderedProminent`: on iOS 26 the system
+        // prominent style renders a CAPSULE, and the artifact's `.btn` is a 12pt
+        // radius. This one was missed when auth and onboarding were converted.
+        .buttonStyle(PVPrimaryButtonStyle(isEnabled: !isProcessing))
         .accessibilityIdentifier("lock-biometric-primary")
     }
 

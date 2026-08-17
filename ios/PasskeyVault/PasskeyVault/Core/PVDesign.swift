@@ -101,6 +101,15 @@ enum PVMetrics {
     static let heroBodySize: CGFloat = 15.5
     static let heroBodyMaxWidth: CGFloat = 280
 
+    // Lock state 1/2's own hero: `.hero{padding-top:48}` with `.h1` overridden
+    // to 24pt and `.p` (15.5pt, muted, max-width 280) as the subtitle. This is a
+    // DIFFERENT layout from states 3-9, which are a left-aligned title over a
+    // status slot and a password field. The design spec's "nine states, one
+    // layout" holds for 3-9; 1 and 2 are the biometry-ready hero.
+    static let lockHeroTopSpace: CGFloat = 48
+    static let lockHeroTitleSize: CGFloat = 24
+    static let faceIdGlyphSize: CGFloat = 56
+
     // `.dots{gap:7; padding:14 0}`
     static let dotsGap: CGFloat = 7
     static let dotsVPadding: CGFloat = 14
