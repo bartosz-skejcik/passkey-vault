@@ -71,48 +71,33 @@ struct AuthView: View {
                         mode == .signIn ? .authServerSubtitle : .authServerSubtitleRegister,
                         ["host": ServerSettings.resolved.host ?? ServerSettings.resolved.absoluteString]
                     )
+                    ,
+                    topSpace: PVMetrics.authTitleTopSpace
                 )
                 .accessibilityIdentifier("auth-title")
 
-                fieldGroup(labelKey: .authEmailLabel) {
-                    TextField("", text: $email)
-                        .textContentType(.emailAddress)
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
-                        #endif
-                }
-                if showValidationErrors && email.isEmpty {
-                    Text(t(.validationRequired)).font(.footnote).foregroundStyle(Color("PVError"))
+                // `.stackv{gap:9}` -- the artifact wraps the inputs in the
+                // same 9pt-gap stack it wraps the buttons in. Validation
+                // messages sit OUTSIDE that stack so an appearing error cannot
+                // change the gap between fields.
+                VStack(spacing: PVMetrics.fieldStackGap) {
+                    emailField()
+                    passwordField(text: $password, labelKey: .authPasswordLabel)
+                    if mode == .register {
+                        passwordField(text: $confirmPassword, labelKey: .authConfirmPasswordLabel)
+                    }
                 }
 
-                fieldGroup(labelKey: .authPasswordLabel) {
-                    passwordField(text: $password)
-                }
-                if showValidationErrors && password.isEmpty {
-                    Text(t(.validationRequired)).font(.footnote).foregroundStyle(Color("PVError"))
+                if showValidationErrors && (email.isEmpty || password.isEmpty)
+                    || (mode == .register && (passwordsLiveMismatch || (showValidationErrors && confirmPassword.isEmpty))) {
+                    Text(passwordsLiveMismatch ? t(.validationPasswordMismatch) : t(.validationRequired))
+                        .font(.system(size: PVMetrics.footnoteSize))
+                        .foregroundStyle(Color("PVError"))
+                        .padding(.top, PVMetrics.footnoteTopSpace)
+                        .padding(.horizontal, PVMetrics.footnoteHPadding)
                 }
 
                 if mode == .register {
-                    fieldGroup(labelKey: .authConfirmPasswordLabel) {
-                        passwordField(text: $confirmPassword)
-                    }
-                    if passwordsLiveMismatch {
-                        Text(t(.validationPasswordMismatch))
-                            .font(.footnote)
-                            .foregroundStyle(Color("PVError"))
-                    } else if showValidationErrors && confirmPassword.isEmpty {
-                        Text(t(.validationRequired)).font(.footnote).foregroundStyle(Color("PVError"))
-                    }
-
-                    // A PVWarning CALLOUT, not muted footnote text. The design
-                    // spec §4 says "inline `PVWarning` callout" in those
-                    // words, and the approved screens draw it as a tinted
-                    // block with a dot. Rendering irreversibility in the same
-                    // grey as a field hint is the one thing this copy must not
-                    // do -- it is the only genuinely unrecoverable action in
-                    // the whole product.
                     StatusCallout(text: t(.authIrrecoverableWarning), tone: .warning)
                         .accessibilityIdentifier("auth-irrecoverable-warning")
                 } else {
@@ -120,10 +105,13 @@ struct AuthView: View {
                     // warning: nothing irreversible happens on this screen, so
                     // a PVWarning treatment here would cry wolf and dull the
                     // register one.
+                    // `.foot{font-size:13; color:pv-mut; padding:7 5 0}`
                     Text(t(.authSignInReassurance))
-                        .font(.footnote)
+                        .font(.system(size: PVMetrics.footnoteSize))
                         .foregroundStyle(Color("PVTextMuted"))
                         .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, PVMetrics.footnoteTopSpace)
+                        .padding(.horizontal, PVMetrics.footnoteHPadding)
                         .accessibilityIdentifier("auth-signin-reassurance")
                 }
 
@@ -171,46 +159,70 @@ struct AuthView: View {
         }
     }
 
+    /// `.field` with the label as its PLACEHOLDER, inside the surface block.
+    ///
+    /// The approved screens have no external label: each field is
+    /// `<div class="field"><span class="ph">Email</span></div>`. Rendering the
+    /// label above the box made it read as a heading, doubled the vertical
+    /// rhythm, and (because the two boxes then sized to their own content) made
+    /// the email and password inputs visibly different heights.
     @ViewBuilder
-    private func fieldGroup<Content: View>(labelKey: PVKey, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(t(labelKey))
-                .font(.footnote)
-                .foregroundStyle(Color("PVTextMuted"))
-            // The field sits ON `PVSurface`, as a rounded block. A bare
-            // `TextField` on `PVBackground` has no visible edge at all: the
-            // label reads as a heading and the input as empty space, which is
-            // what shipped until 2026-08-17. The approved screens draw every
-            // input as a surface-filled 11pt-radius row (the reference's own
-            // `.field` rule), and `PVSurface` exists in the token table for
-            // exactly this -- "cards, list cells, fields, sheets".
-            // `.field`: PVSurface, 11pt radius, 12/14 padding, 46pt minimum
-            // height -- all from `PVMetrics`, so this and every other field in
-            // the app cannot drift apart.
-            content().pvFieldChrome()
-        }
+    private func emailField() -> some View {
+        TextField(
+            "",
+            text: $email,
+            prompt: Text(t(.authEmailLabel))
+                .foregroundColor(Color("PVTextMuted").opacity(PVMetrics.placeholderOpacity))
+        )
+        .font(.system(size: 16))
+        .textContentType(.emailAddress)
+        .autocorrectionDisabled()
+        #if os(iOS)
+        .textInputAutocapitalization(.never)
+        .keyboardType(.emailAddress)
+        #endif
+        .pvFieldChrome()
+        .accessibilityLabel(t(.authEmailLabel))
     }
 
     @ViewBuilder
-    private func passwordField(text: Binding<String>) -> some View {
-        HStack {
-            if isPasswordRevealed {
-                TextField("", text: text)
-                    .autocorrectionDisabled()
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    #endif
-            } else {
-                SecureField("", text: text)
+    private func passwordField(text: Binding<String>, labelKey: PVKey) -> some View {
+        HStack(spacing: 8) {
+            Group {
+                if isPasswordRevealed {
+                    TextField("", text: text, prompt: promptText(labelKey))
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                } else {
+                    SecureField("", text: text, prompt: promptText(labelKey))
+                }
             }
+            .font(.system(size: 16))
+
             Button(action: { isPasswordRevealed.toggle() }) {
                 Image(systemName: isPasswordRevealed ? "eye.slash" : "eye")
-                    .frame(width: 44, height: 44)
+                    // A 22pt glyph in a 22pt frame. The former 44x44 frame is
+                    // what made this row taller than the email row: inside a
+                    // fixed-height 46pt field it cannot claim 44 plus padding.
+                    // The 44pt touch target is restored by `contentShape`
+                    // extending the hit area over the field's own height.
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle().size(width: 44, height: PVMetrics.fieldMinHeight))
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color("PVAccent"))
             .accessibilityLabel(isPasswordRevealed ? t(.ariaHidePassword) : t(.ariaShowPassword))
-            .tint(Color("PVAccent"))
         }
+        .pvFieldChrome()
+        .accessibilityLabel(t(labelKey))
     }
+
+    private func promptText(_ key: PVKey) -> Text {
+        Text(t(key)).foregroundColor(Color("PVTextMuted").opacity(PVMetrics.placeholderOpacity))
+    }
+
 
     private func toggleMode() {
         mode = (mode == .signIn) ? .register : .signIn

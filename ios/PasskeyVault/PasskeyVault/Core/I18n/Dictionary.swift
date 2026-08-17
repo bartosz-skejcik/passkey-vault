@@ -298,7 +298,11 @@ enum PVDictionary {
         case .authSignInTitle:
             return LocalizedString(pl: "Zaloguj się", en: "Sign in")
         case .authRegisterTitle:
-            return LocalizedString(pl: "Załóż swój vault", en: "Create your vault")
+            // Two lines, matching the artifact's explicit `Create<br>your
+            // vault`. A hard break, not a wrap: at 34pt the phrase fits on one
+            // line on this width, so leaving it to wrap gives a single long
+            // line and a different silhouette from the approved screen.
+            return LocalizedString(pl: "Załóż swój\nvault", en: "Create\nyour vault")
 
         // MARK: - Phase 38, plan 38-13: onboarding + auth server line
 

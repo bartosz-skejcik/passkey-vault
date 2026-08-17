@@ -75,6 +75,22 @@ enum PVMetrics {
 
     // `.foot{font-size:13; padding:7 5 0}`
     static let footnoteSize: CGFloat = 13
+    static let footnoteTopSpace: CGFloat = 7
+    static let footnoteHPadding: CGFloat = 5
+
+    // `.stackv{gap:9}` -- ALSO the field-to-field gap, not just the action
+    // stack's. The artifact wraps the inputs in the same `.stackv` it wraps the
+    // buttons in.
+    static let fieldStackGap: CGFloat = 9
+
+    // Auth's own title override: `<p class="lgtitle" style="margin-top:26">`.
+    static let authTitleTopSpace: CGFloat = 26
+
+    // `.field .ph{color:var(--pv-mut); opacity:.75}` -- the field's label IS
+    // its placeholder, inside the surface block. There is no external label in
+    // the approved screens; shipping one made the label read as a heading and
+    // doubled the vertical rhythm.
+    static let placeholderOpacity: CGFloat = 0.75
 
     // `.hero{padding-top:60; gap:6}` / `.mark{104x104, radius 23}`
     // / `.h1{font-size:30}` / `.p{font-size:15.5; max-width:280}`
@@ -133,11 +149,16 @@ struct PVGhostButtonStyle: ButtonStyle {
 
 extension View {
     /// `.field` -- a `PVSurface` block, not a bare underline.
+    ///
+    /// `frame(height:)`, not `minHeight`: every `.field` in the approved screens
+    /// is exactly 46pt because each holds only a placeholder span. With
+    /// `minHeight` the password row grew taller than the email row (its reveal
+    /// button contributes a 44pt intrinsic height), so two inputs on the same
+    /// form were visibly different sizes.
     func pvFieldChrome() -> some View {
         self
             .padding(.horizontal, PVMetrics.fieldHPadding)
-            .padding(.vertical, PVMetrics.fieldVPadding)
-            .frame(minHeight: PVMetrics.fieldMinHeight)
+            .frame(height: PVMetrics.fieldMinHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: PVMetrics.fieldRadius, style: .continuous)
@@ -181,14 +202,20 @@ struct PVScreenScaffold<Content: View, Actions: View>: View {
 struct PVScreenTitle: View {
     let title: String
     var subtitle: String?
+    /// Defaults to `.lgtitle`'s own `margin-top:4`. Auth overrides it to 26 with
+    /// an inline style in the artifact, so it is a parameter rather than a
+    /// constant.
+    var topSpace: CGFloat = PVMetrics.titleTopSpace
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(verbatim: title)
                 .font(.system(size: PVMetrics.titleSize, weight: .bold))
                 .foregroundStyle(Color("PVTextPrimary"))
+                // `line-height:1.08` on a 34pt title.
+                .lineSpacing(PVMetrics.titleSize * 0.08)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, PVMetrics.titleTopSpace)
+                .padding(.top, topSpace)
                 .padding(.bottom, PVMetrics.titleBottomSpace)
             if let subtitle {
                 Text(verbatim: subtitle)
