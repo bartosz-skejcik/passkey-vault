@@ -24,6 +24,19 @@ import Foundation
 import Observation
 import os
 
+/// Added in plan 38-09, Task 2.
+enum VaultStoreError: Error, CustomStringConvertible, Equatable {
+    /// See `VaultStore.update`'s own refusal note.
+    case cannotSaveUndecryptableItem
+
+    var description: String {
+        switch self {
+        case .cannotSaveUndecryptableItem:
+            return "This item failed to decrypt during the last sync -- refresh before making changes."
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class VaultStore {
@@ -120,6 +133,70 @@ final class VaultStore {
         items.append(item)
         recomputeTags()
         return item
+    }
+
+    // MARK: - Update
+
+    /// Refuses to save over a row the client could not decrypt (T-38-03-05,
+    /// 38-09's own must-have). That row's retained `revision` is stale by
+    /// construction -- see `VaultItemViewModel.Content.undecryptable`'s own
+    /// doc comment -- so using it as `expected_revision` would either 409
+    /// forever or, worse, succeed against a row that has since moved.
+    func cannotSaveUndecryptableItem(_ item: VaultItemViewModel) -> Bool {
+        item.isUndecryptable
+    }
+
+    /// Sends `item.revision` as the optimistic-concurrency guard, encrypts
+    /// at `revision + 1`, and updates local state ONLY after the server's
+    /// response has been awaited successfully -- this exact ordering hazard
+    /// ("a thrown error reported over a completed server mutation") has
+    /// recurred three times in this repository (`ios/IOS-SPIKE-LOG.md`,
+    /// the entry beginning "The post-await bookkeeping hazard has now
+    /// recurred THREE times"), each time in a different function. A stale
+    /// revision surfaces as `VaultAPIError.revisionConflict`, thrown
+    /// straight through -- the local `items` array is untouched, because
+    /// control never reaches the append/replace line below on that path.
+    @discardableResult
+    func update(_ item: VaultItemViewModel, fields: ItemFields) async throws -> VaultItemViewModel {
+        guard !cannotSaveUndecryptableItem(item) else {
+            throw VaultStoreError.cannotSaveUndecryptableItem
+        }
+        let newRevision = item.revision + 1
+        let plaintext = try ItemNormalize.plaintextJSON(for: fields)
+        let wire = try encryptItemWire(
+            userKey: userKey, plaintext: plaintext, itemId: item.id, revision: UInt32(newRevision)
+        )
+        // Everything above this line is pure computation and network I/O
+        // that has not yet mutated `self`. The awaited call is the ONLY
+        // thing that can throw a `VaultAPIError.revisionConflict` -- if it
+        // does, this function returns via that throw and NOTHING below runs.
+        let response = try await api.updateItem(
+            id: item.id, encKeyJson: wire.encKeyJson, encDataJson: wire.encDataJson,
+            expectedRevision: item.revision
+        )
+
+        // Post-await bookkeeping: the server has already accepted the
+        // write, so a local failure here must never be reported as a
+        // failed save.
+        let updated = VaultItemViewModel(
+            id: item.id,
+            revision: response.revision,
+            content: .fields(fields),
+            updatedAt: response.updated_at,
+            lastUsedAt: item.lastUsedAt,
+            isShared: item.isShared,
+            lastEditorEmail: item.lastEditorEmail,
+            collectionId: item.collectionId,
+            sharedToMe: item.sharedToMe,
+            accessLevel: item.accessLevel
+        )
+        if let index = items.firstIndex(where: { $0.id == item.id }) {
+            items[index] = updated
+        } else {
+            items.append(updated)
+        }
+        recomputeTags()
+        return updated
     }
 
     // MARK: - Delete

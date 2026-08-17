@@ -112,6 +112,40 @@ struct TouchItemResponseBody: Decodable {
     let last_used_at: String
 }
 
+/// `PUT /api/vault/items/{id}`'s 200 body
+/// (`crates/pv-server/src/routes/vault.rs`'s `UpdateItemResponse`).
+struct UpdateItemResponseBody: Decodable {
+    let revision: Int
+    let updated_at: String
+}
+
+/// `POST /api/vault/folders`'s 201 body
+/// (`crates/pv-server/src/routes/folders.rs`'s `CreateFolderResponse`).
+struct CreateFolderResponseBody: Decodable {
+    let id: String
+}
+
+/// Distinguishable from a generic `PvApiError.httpError` -- 38-09, Task 2's
+/// own requirement: a stale-revision 409 must surface as a CONFLICT the
+/// interface can explain, not a generic failure. `lastEditorEmail` mirrors
+/// `crates/pv-server/src/error.rs`'s `StaleRevisionShared` body shape
+/// (`{"error": ..., "last_editor_email": ...}`), present only for a SHARED
+/// item's conflict -- `nil` for a personal item's (that body has no such
+/// key).
+enum VaultAPIError: Error, CustomStringConvertible {
+    case revisionConflict(lastEditorEmail: String?)
+
+    var description: String {
+        switch self {
+        case let .revisionConflict(email):
+            if let email {
+                return "This item was changed elsewhere (by \(email)) -- refresh and try again."
+            }
+            return "This item was changed elsewhere -- refresh and try again."
+        }
+    }
+}
+
 /// Thin `URLSession` wrapper over `pv-server`'s vault routes. Stateless in
 /// exactly the way `PvApiClient` is: the bearer token is supplied by an
 /// injected closure on every call, never stored on this struct and never
@@ -123,6 +157,13 @@ struct VaultAPI {
     /// inside this value.
     let tokenProvider: () -> String?
 
+    /// Defaults to `.shared`. 38-09, Task 2's own testability requirement:
+    /// the ordering/refusal guards in `VaultStore` need a FAKE transport a
+    /// unit test can inject a throw into -- `URLSession.shared` cannot be
+    /// swapped from inside a test. Production call sites never pass this
+    /// argument, so nothing about the real network path changes.
+    var session: URLSession = .shared
+
     private static let userAgent = "PasskeyVault-iOS/1.0 (vault, 38-02)"
 
     private struct CreateItemRequestBody: Encodable {
@@ -132,6 +173,17 @@ struct VaultAPI {
         let id: String
         let enc_key: String
         let enc_data: String
+    }
+
+    private struct UpdateItemRequestBody: Encodable {
+        let enc_key: String
+        let enc_data: String
+        let expected_revision: Int
+    }
+
+    private struct CreateFolderRequestBody: Encodable {
+        let id: String
+        let enc_name: String
     }
 
     /// `POST /api/vault/items`. Expects **201**.
@@ -198,6 +250,69 @@ struct VaultAPI {
         return try Self.decode(TouchItemResponseBody.self, from: data)
     }
 
+    /// `PUT /api/vault/items/{id}`. Expects **200**. A **409** is NOT routed
+    /// through `requireStatus`/`PvApiError.httpError` -- it is a distinct,
+    /// expected outcome (the whole point of optimistic concurrency), not a
+    /// generic failure, and `VaultStore.update` needs to tell it apart from
+    /// every other error to refuse an overwrite rather than one.
+    ///
+    /// Added in plan 38-09, Task 2: the create/detail/list plans (38-02,
+    /// 38-06, 38-07) never needed an update path; the real create/edit form
+    /// does.
+    @discardableResult
+    func updateItem(id: String, encKeyJson: String, encDataJson: String, expectedRevision: Int) async throws
+        -> UpdateItemResponseBody
+    {
+        let body = try JSONEncoder().encode(
+            UpdateItemRequestBody(enc_key: encKeyJson, enc_data: encDataJson, expected_revision: expectedRevision)
+        )
+        let (data, response) = try await send(
+            path: "/api/vault/items/\(id)", method: "PUT", body: body, authenticated: true
+        )
+        if response.statusCode == 409 {
+            throw VaultAPIError.revisionConflict(lastEditorEmail: Self.extractLastEditorEmail(from: data))
+        }
+        try Self.requireStatus(200, response: response, data: data)
+        return try Self.decode(UpdateItemResponseBody.self, from: data)
+    }
+
+    /// `{"error": ..., "last_editor_email": ...}` -- present only for a
+    /// SHARED item's 409 (`crates/pv-server/src/error.rs`'s
+    /// `StaleRevisionShared`); a personal item's 409 body has no such key at
+    /// all, so this returns `nil` for that case rather than distinguishing
+    /// "absent" from "null" (both mean the same thing here).
+    private static func extractLastEditorEmail(from data: Data) -> String? {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return object["last_editor_email"] as? String
+    }
+
+    // MARK: - Folders (plan 38-09, Task 3)
+
+    /// `POST /api/vault/folders`. Expects **201**. `id` MUST already be
+    /// minted and its ciphertext bound to it -- see `FolderStore.create`'s
+    /// own note; this function never mints anything.
+    @discardableResult
+    func createFolder(id: String, encNameJson: String) async throws -> CreateFolderResponseBody {
+        let body = try JSONEncoder().encode(CreateFolderRequestBody(id: id, enc_name: encNameJson))
+        let (data, response) = try await send(
+            path: "/api/vault/folders", method: "POST", body: body, authenticated: true
+        )
+        try Self.requireStatus(201, response: response, data: data)
+        return try Self.decode(CreateFolderResponseBody.self, from: data)
+    }
+
+    /// `DELETE /api/vault/folders/{id}`. Expects **204**. There is no
+    /// update/rename verb for folders at all (L-18) -- this and `createFolder`
+    /// are the only two mutations this file offers for the resource.
+    func deleteFolder(id: String) async throws {
+        let (data, response) = try await send(
+            path: "/api/vault/folders/\(id)", method: "DELETE", body: nil, authenticated: true
+        )
+        try Self.requireStatus(204, response: response, data: data)
+    }
+
     // MARK: - Transport
 
     private func send(
@@ -228,7 +343,7 @@ struct VaultAPI {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await session.data(for: request)
         } catch {
             throw PvApiError.network(error)
         }
