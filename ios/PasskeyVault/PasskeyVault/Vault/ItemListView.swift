@@ -82,6 +82,73 @@ enum VaultTypeTab: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
+// MARK: - THROWAWAY: dock layout options A/B/C/D (2026-08-17)
+//
+// Bartek has to CHOOSE between four ways of resolving one hard constraint,
+// and he chooses from pictures, not prose. The constraint: the design wants
+// FIVE type filters AND a detached ＋; the detached ＋ can only come from
+// `Tab(role: .search)` (`ios/DOCK-RESEARCH.md` §5 -- it is the only stock API
+// that produces that slot); five filters plus a search role is SIX tab items,
+// which overflows into a system "More" tab
+// (`ios/evidence/38/38-06-dock-role-search-overflows-to-more.png`).
+//
+// This switch exists ONLY to render the four candidates side by side for that
+// decision. It is DEBUG-gated and defaults to `.d`, which is byte-for-byte the
+// behaviour this file already shipped -- a Release build cannot reach any other
+// branch, and a Debug build without the env var behaves identically to before.
+// Whichever option wins, this enum and its branches get deleted and the winner
+// becomes the only code path. Do not build on it.
+enum DockLayoutOption: String {
+    /// Five filters + the detached `role: .search` ＋. The naive reading of
+    /// the design; expected to overflow.
+    case a = "A"
+    /// Four filters (All · Logins · Cards · Codes) + the detached ＋.
+    /// Passkeys reachable through the All screen's own type section.
+    case b = "B"
+    /// Four filters (All · Logins · Cards · Passkeys) + the detached ＋.
+    /// Codes reachable through the All screen's own type section.
+    case c = "C"
+    /// Five filters, NO detached ＋ -- ＋ lives at the trailing end of the
+    /// bottom accessory shelf. Today's shipped behaviour, and the default.
+    case d = "D"
+
+    /// The shipped default. Release builds can return nothing else.
+    static let shipped: DockLayoutOption = .d
+
+    static var current: DockLayoutOption {
+        #if DEBUG
+        if let raw = ProcessInfo.processInfo.environment["PV_UITEST_DOCK_OPTION"],
+           let parsed = DockLayoutOption(rawValue: raw.uppercased()) {
+            return parsed
+        }
+        #endif
+        return shipped
+    }
+
+    /// Which type filters get a tab of their own.
+    var filterTabs: [VaultTypeTab] {
+        switch self {
+        case .a, .d: return VaultTypeTab.allCases
+        case .b: return [.all, .login, .card, .totp]
+        case .c: return [.all, .login, .card, .passkey]
+        }
+    }
+
+    /// Whether ＋ takes the detached `role: .search` slot (A/B/C) or the
+    /// trailing end of the accessory shelf (D).
+    var usesSearchRolePlus: Bool { self != .d }
+}
+
+/// The `TabView`'s selection value. `.plus` exists so the detached ＋ can be a
+/// real `Tab` (the only way to get that slot) without becoming a sixth *filter*
+/// -- selecting it toggles the grid and the binding's getter immediately bounces
+/// selection back to the current type tab, so no content view is ever shown for
+/// it.
+private enum DockSlot: Hashable {
+    case type(VaultTypeTab)
+    case plus
+}
+
 // MARK: - Section grouping (All tab only)
 
 /// The six type sections the All tab groups by, in design-conformance's own
@@ -349,8 +416,8 @@ struct ItemListView: View {
     /// within, not a stack living one level further out.
     var body: some View {
         TabView(selection: dockSelection) {
-            ForEach(VaultTypeTab.allCases) { tab in
-                Tab(tab.title, systemImage: tab.systemImage, value: tab) {
+            ForEach(dockOption.filterTabs) { tab in
+                Tab(tab.title, systemImage: tab.systemImage, value: DockSlot.type(tab)) {
                     NavigationStack {
                         tabContent(for: tab)
                             // BUG FOUND LIVE (plan 38-06, Task 2): the
@@ -435,22 +502,77 @@ struct ItemListView: View {
                     }
                 }
             }
+
+            // THROWAWAY (options A/B/C only): the detached trailing ＋.
+            // `role: .search` is the ONLY stock API that produces a detached
+            // circular slot beside the tab bar (DOCK-RESEARCH.md §5). No
+            // `.searchable` is attached to this `TabView`, so selecting it
+            // does NOT summon a search field -- we own the interaction.
+            if dockOption.usesSearchRolePlus {
+                Tab(value: DockSlot.plus, role: .search) {
+                    Color.clear
+                } label: {
+                    Label(
+                        isCreateExpanded ? "Close" : "Add item",
+                        systemImage: isCreateExpanded ? "xmark" : "plus"
+                    )
+                }
+                .accessibilityIdentifier("vault.create.plusMenu")
+            }
         }
         .modifier(AvailableTabBarMinimizeBehavior())
         .modifier(AvailableDockShelf { dockShelf })
+        // THROWAWAY (options A/B/C only): the 3×3 grid CANNOT live in the
+        // accessory shelf here -- the accessory content box is a fixed 48 pt
+        // and hard-clips (DOCK-RESEARCH.md §1). An overlay on the `TabView`
+        // draws above the bar in z-order with the dock still live underneath.
+        .overlay(alignment: .bottom) {
+            if dockOption.usesSearchRolePlus, isCreateExpanded {
+                createActionGrid
+                    .padding(.horizontal, Self.dockGridOverlayHInset)
+                    .padding(.bottom, Self.dockGridOverlayBottomInset)
+                    .transition(.scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity))
+            }
+        }
+        .animation(.snappy(duration: 0.25), value: isCreateExpanded)
     }
 
     // MARK: - The dock
 
+    /// Which of the four candidate dock layouts to render. Read ONCE, at init:
+    /// the env var cannot change mid-run, and re-reading it per body evaluation
+    /// would be a `ProcessInfo` lookup on every render.
+    private let dockOption = DockLayoutOption.current
+
+    /// THROWAWAY: how far above the screen's bottom edge the ＋ grid floats in
+    /// options A/B/C. Not derived from `safeAreaInsets` the way a shipping
+    /// implementation must be (DOCK-RESEARCH.md §6 measures 139 pt of bottom
+    /// inset inside tab CONTENT, but this overlay is attached to the `TabView`
+    /// itself, whose own bottom inset is just the home indicator) -- a measured
+    /// constant is honest enough for a screenshot Bartek is choosing FROM, and
+    /// is called out here so nobody mistakes it for a shippable number.
+    private static let dockGridOverlayBottomInset: CGFloat = 112
+    private static let dockGridOverlayHInset: CGFloat = 16
+
     /// A computed binding, not `@State`: it exists so that changing the type
     /// filter also closes the ＋ grid. Leaving the grid open over a list the
     /// user just re-filtered hides the result of the action they took.
-    private var dockSelection: Binding<VaultTypeTab> {
+    ///
+    /// The getter ALWAYS reports a type tab, never `.plus` -- that is what
+    /// makes the detached ＋ a button rather than a sixth filter: selecting it
+    /// toggles the grid, and selection snaps straight back to the tab the user
+    /// was already on.
+    private var dockSelection: Binding<DockSlot> {
         Binding(
-            get: { selectedTab },
-            set: { tab in
-                selectedTab = tab
-                isCreateExpanded = false
+            get: { .type(selectedTab) },
+            set: { slot in
+                switch slot {
+                case let .type(tab):
+                    selectedTab = tab
+                    isCreateExpanded = false
+                case .plus:
+                    isCreateExpanded.toggle()
+                }
             }
         )
     }
@@ -473,6 +595,18 @@ struct ItemListView: View {
     /// and still expanding in place. Recorded, not silently "fixed".
     @ViewBuilder
     private var dockShelf: some View {
+        if dockOption.usesSearchRolePlus {
+            // A/B/C: ＋ is the detached `role: .search` capsule, so the shelf
+            // is nothing but the search pill -- which is what the accessory
+            // is actually FOR, and what its fixed 48 pt box can hold.
+            searchShelf
+        } else {
+            shippedDockShelf
+        }
+    }
+
+    @ViewBuilder
+    private var shippedDockShelf: some View {
         VStack(spacing: PVMetrics.dockShelfGap) {
             if isCreateExpanded {
                 createActionGrid
