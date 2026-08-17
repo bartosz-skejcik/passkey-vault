@@ -63,16 +63,21 @@ pub struct FfiTotpCode {
 /// floor.
 #[uniffi::export]
 pub fn totp_now(
-    _secret_b32: String,
-    _algorithm: String,
-    _digits: u32,
-    _period: u64,
-    _unix_time_seconds: u64,
+    secret_b32: String,
+    algorithm: String,
+    digits: u32,
+    period: u64,
+    unix_time_seconds: u64,
 ) -> Result<FfiTotpCode, FfiError> {
-    // RED stub (TDD Task 1): deliberately not yet wired to `generate_code`.
-    // Every test below except the two error-expecting ones must fail
-    // against this body -- see this plan's SUMMARY for the transcript.
-    Err(FfiError::InvalidInput("not yet implemented".to_string()))
+    let (code, seconds_remaining) = generate_code(
+        &secret_b32,
+        &algorithm,
+        digits as usize,
+        period,
+        unix_time_seconds,
+    )
+    .map_err(FfiError::from)?;
+    Ok(FfiTotpCode { code, seconds_remaining })
 }
 
 #[cfg(test)]
