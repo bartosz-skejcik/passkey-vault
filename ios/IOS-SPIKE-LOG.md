@@ -40,20 +40,31 @@ why the durable findings are duplicated here instead of only there.
 
 ## 0. Next session — read this first
 
-**Written 2026-08-17. Delete this section once Phase 38 is finished.**
+**Written 2026-08-17, updated same day after Plan 38-13 landed. Delete this section once Phase 38
+is finished.**
 
 ### Where things stand
 
-Phases 35, 36, 37 are **verification-passed**. Phase 38 is **in progress**: plans 38-01, 38-02 and
-38-03 are committed and pushed to `origin/ios/spike`; **38-04 … 38-11 remain**.
+Phases 35, 36, 37 are **verification-passed**. Phase 38 is **in progress**: plans 38-01, 38-02,
+38-03, 38-12 and **38-13 are committed** to `ios/spike` (38-12/38-13 not yet pushed to
+`origin/ios/spike` at the time of writing — push before starting a fresh session elsewhere).
+**38-04 … 38-11 remain** (the vault-UI-facing plans; 38-12/38-13 were pulled forward ahead of them
+per Bartek's ordering below).
+
+Auth + onboarding — the item this section used to say was "entirely unstarted" — **is now done**:
+the 3-step onboarding (Welcome → Server → AutoFill) exists and is gated once
+(`OnboardingGate.shouldPresentOnboarding`); the server URL is user-configurable, persisted, and
+validated for reachability before it is accepted (`ServerSettings`/`ServerReachability`, 38-12); the
+forgot-password warning is inline (`PVWarning` callout), never an alert, retiring
+`37-VERIFICATION.md`'s residual clipping item; both auth screens name the configured server under
+the title. See `.planning/phases/38-pe-ny-interfejs-vaulta/38-13-SUMMARY.md` for the full walk of
+the design spec's §7 Done list and every falsification transcript.
 
 ### The order Bartek asked for
 
-1. **Finish auth + onboarding first** — the 3-step onboarding (Welcome → Server → AutoFill), the
-   server URL made configurable, and the auth rework. An agent was dispatched for this on 2026-08-16
-   and produced **nothing** (see the warning below), so it is entirely unstarted in code.
-2. **Then continue the GSD run** for the rest of Phase 38 and onward, building against the approved
-   design.
+1. ~~Finish auth + onboarding first~~ — **done** (38-12, 38-13).
+2. **Now continue the GSD run** for the rest of Phase 38 (38-04 onward) and beyond, building against
+   the approved design.
 
 Resume with:
 
@@ -690,6 +701,56 @@ Compensating controls this phase actually builds, and against which the acceptan
 38-11's lock handler tears down the store, the navigation path, every presented sheet and the reveal
 set; and no field value is ever written to `UserDefaults`, nor to any observable property that could
 reach a debug description or a crash log.
+
+---
+
+## 1b. Plans 38-12 and 38-13 results — auth + onboarding, 2026-08-17
+
+Same Verified/Assumed discipline as the rest of this file.
+
+**Verified.** `ServerSettings` persists a validated server URL (`UserDefaults`, default
+`https://vault.blonie.cloud`), with three distinct refusals (path-carrying, non-loopback `http://`,
+unparseable) — 13 unit tests, RED-before-green (38-12). `ServerReachability.check(_:)` distinguishes
+`reachable` / `unreachable(reason:)` / `wrongServer` by parsing the `/healthz` body rather than
+trusting the HTTP status code alone — 5 unit tests including a live run against a real `pv-server`
+(38-12). The 3-step onboarding (Welcome → Server → AutoFill) is gated once by
+`OnboardingGate.shouldPresentOnboarding`, a pure function `OnboardingGateTests.swift` falsifies
+without touching SwiftUI (38-13). The server step's `Continue` re-validates and probes live before
+advancing; `Skip` is unconditional and network-free — verified end to end via the real app
+container's `Preferences` plist (no `pv.server.url` key after Skip, resolving to the shipped
+default), not merely inferred from the code path. The AutoFill step's returning-state re-check was
+driven against the REAL Settings → Apps → Passwords → View AutoFill Settings toggle (Phase 36's own
+established navigation) and returned to via `app.activate()`, not a fresh launch — the enabled
+confirmation and "Done" primary control were observed live, genuinely toggled. The forgot-password
+warning moved out of `LockView`'s `.alert(...)` (now removed entirely — `grep '\.alert('` on
+`LockView.swift` returns nothing) into an inline `PVWarning` callout; its AX5 readability is proven
+by an assertion on the element's rendered frame HEIGHT (not `isHittable` alone, which was
+empirically shown NOT to detect internal clipping of a single opaque accessibility node), calibrated
+against a real falsification transcript (unclipped ~329pt, clipped-by-`.frame(maxHeight:
+20).clipped()` ~69pt, threshold 150pt). This retires `37-VERIFICATION.md`'s residual item — new
+evidence at `ios/evidence/38/38-13-lock-forgot-warning-ax5-light.png` shows the full sentence,
+ending "...No one, including us, has access to it.", reachable by scrolling. Both `AuthView` modes
+show the configured server under the title, reading `ServerSettings.resolved.host`.
+
+**Also found and fixed, not part of either plan's original scope (Rule 1/2 deviations, both
+plans):** `.buttonStyle(.borderedProminent)` does not use the `PVOnAccent` asset for its label by
+default — it renders a plain white label in BOTH light and dark, silently reintroducing the exact AA
+contrast failure `PVOnAccent` exists to fix (37-UI-SPEC.md's own finding about `#E16540` at
+3.34:1 in dark mode). Every primary button in `AuthView`/`LockView`/the new `Onboarding/*` views now
+sets `.foregroundStyle(Color("PVOnAccent"))` explicitly on the label. Caught by the FIRST onboarding
+screenshot taken this session, not by `ContrastTests` (which measures the asset catalog's own
+values, not what a live button actually renders) — a gap worth remembering for Phase 42's QA
+standard.
+
+**Assumed / not verified this session:** lock states 6 (Throttled) and 7 (No device passcode) are
+not implemented anywhere in `LockView` — no forced-state hook, no real code path produces them. State
+2 (Biometry presenting) is a system Face ID sheet, structurally undriveable on this simulator/harness
+per the standing MP-1 proof limitation (§1a). Recorded here as absent, not attempted, per
+38-13-PLAN.md's own instruction to verify the existing implementation against §5's table rather than
+build what is not there.
+
+**Not touched:** `crates/pv-server` (verified empty diff both plans); the Phase-38 item-model files
+(`Vault/ItemFields.swift`, `ItemNormalize.swift`, `ItemCapabilities.swift`, `IdentityAddress.swift`).
 
 ---
 
