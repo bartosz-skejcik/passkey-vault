@@ -9,6 +9,12 @@ import SwiftUI
 
 @main
 struct PasskeyVaultApp: App {
+    // Phase 38, Plan 38-05: names AppSceneDelegate as the scene delegate so
+    // sceneWillResignActive can install the app-switcher snapshot cover
+    // before the OS takes its snapshot. See App/AppSceneDelegate.swift and
+    // ios/IOS-SPIKE-LOG.md DR-38-D.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     init() {
         // Phase 36, Plan 36-02, Task 2 (E3): seed the shared keychain item
         // BEFORE the extension is ever invoked, so a launch of this app is
@@ -23,6 +29,7 @@ struct PasskeyVaultApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .snapshotCoverOverlay()
         }
     }
 }
