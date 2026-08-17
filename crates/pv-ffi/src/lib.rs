@@ -121,6 +121,13 @@ pub use generator::{
     FfiCharacterPasswordOptions, FfiGeneratorBounds,
 };
 
+// UI-05 (`ios/IOS-SPIKE-LOG.md` §1f): TOTP code generation, exported as a
+// free function -- see that module's own header for the secret-as-plain-
+// string rationale (mirroring `pv-wasm`'s `totpNow`) and the `usize`/`u32`
+// cast this file absorbs.
+pub mod totp;
+pub use totp::{totp_now, FfiTotpCode};
+
 // TEST-ONLY (`#[cfg(test)]`): observes what this crate actually hands back
 // to the allocator, so the CR-01 zeroization regression is asserted on real
 // freed bytes rather than on the shape of the source. Never compiled into
