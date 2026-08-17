@@ -66,6 +66,19 @@ struct BiometryAvailability {
     /// `OSStatus` from `UkEnvelopeStore.read`/`probe`, never this hash --
     /// MUST NOT trigger a destructive `delete()` on its own.
     let biometryStateHash: Data?
+    /// `true` only when `canEvaluatePolicy` failed with `LAError.passcodeNotSet`.
+    ///
+    /// This distinguishes lock state 7 ("Face ID needs a device passcode") from
+    /// state 3 ("Face ID isn't available on this device"), which the approved
+    /// screens render with DIFFERENT copy in the same muted slot. Without it
+    /// both collapsed into one message, and the passcode case is the one worth
+    /// separating: it is actionable, and it is the surfaced form of the
+    /// write-time refusal ACC-03 chose
+    /// `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly` specifically to
+    /// produce, rather than a class that silently degrades to always-available.
+    ///
+    /// Defaults to `false` so every existing construction site is unaffected.
+    var requiresDevicePasscode: Bool = false
 }
 
 extension BiometricUnlockOutcome {
@@ -231,6 +244,18 @@ enum BiometricUnlockService {
             stateHash = nil
         }
 
-        return BiometryAvailability(isAvailable: isAvailable, methodName: methodName, biometryStateHash: stateHash)
+        // `LAError.passcodeNotSet` is the only code that means "set a passcode
+        // and this starts working"; every other failure is state 3's generic
+        // unavailability. Read from the real NSError, never inferred.
+        let requiresPasscode = !isAvailable
+            && evaluationError?.domain == LAErrorDomain
+            && evaluationError?.code == LAError.passcodeNotSet.rawValue
+
+        return BiometryAvailability(
+            isAvailable: isAvailable,
+            methodName: methodName,
+            biometryStateHash: stateHash,
+            requiresDevicePasscode: requiresPasscode
+        )
     }
 }

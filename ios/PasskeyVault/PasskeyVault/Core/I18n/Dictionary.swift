@@ -93,6 +93,14 @@ enum PVKey: CaseIterable, Equatable {
     // Mode-specific large titles. These replace the static app name that
     // shipped in Phase 37 -- see AuthView's own header for why.
     case authSignInTitle
+    // Lock states the approved screens draw and the code did not carry.
+    case unlockUseMasterPassword
+    case unlockBiometryUnavailableSlot
+    case unlockNoPasscodeSlot
+    case unlockOpenSettings
+    case unlockThrottledSlot
+    case unlockWrongPasswordSlot
+    case unlockOfflineSlot
     case authRegisterTitle
 
     // Phase 38, plan 38-13: onboarding (3 paged steps -- Welcome, Server,
@@ -181,7 +189,12 @@ enum PVDictionary {
         case .unlockSubmit:
             return LocalizedString(pl: "Odblokuj", en: "Unlock")
         case .unlockHeading:
-            return LocalizedString(pl: "Odblokuj vault", en: "Unlock your vault")
+            // "Vault locked" -- a STATE, not an instruction. The approved
+            // screens use it as the one constant across all nine states, with
+            // the instruction carried by whichever control is emphasised.
+            // "Unlock your vault" read as an instruction and duplicated the
+            // primary button.
+            return LocalizedString(pl: "Vault zablokowany", en: "Vault locked")
 
         // MARK: - New, iOS-only
 
@@ -234,6 +247,45 @@ enum PVDictionary {
             return LocalizedString(
                 pl: "Twoje hasło główne nigdy nie opuszcza tego urządzenia. Nie możemy go zresetować.",
                 en: "Your master password never leaves this device. We can't reset it."
+            )
+        case .unlockUseMasterPassword:
+            return LocalizedString(pl: "Użyj hasła głównego", en: "Use master password")
+        case .unlockBiometryUnavailableSlot:
+            // State 3. Muted, not alarming: the vault still opens, just not
+            // with a face.
+            return LocalizedString(
+                pl: "Face ID jest niedostępne na tym urządzeniu. Odblokuj hasłem głównym.",
+                en: "Face ID isn't available on this device. Unlock with your master password."
+            )
+        case .unlockNoPasscodeSlot:
+            // State 7. The surfaced form of ACC-03's write-time refusal --
+            // `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly` was chosen
+            // specifically so "no passcode" becomes this message instead of a
+            // silent downgrade to an always-available class.
+            return LocalizedString(
+                pl: "Face ID wymaga kodu urządzenia. Ustaw go w Ustawieniach, aby odblokowywać twarzą. Hasło główne działa tak czy inaczej.",
+                en: "Face ID needs a device passcode. Set one in Settings to unlock with your face. Your master password works either way."
+            )
+        case .unlockOpenSettings:
+            return LocalizedString(pl: "Otwórz Ustawienia", en: "Open Settings")
+        case .unlockThrottledSlot:
+            // State 6. Counts DOWN -- the number the user cares about is what
+            // is left, not how many they have used.
+            return LocalizedString(
+                pl: "Zbyt wiele prób. Spróbuj ponownie za {seconds} s.",
+                en: "Too many attempts. Try again in {seconds} seconds."
+            )
+        case .unlockWrongPasswordSlot:
+            // State 5. States the consequence BEFORE it arrives, so the
+            // throttle is never a surprise.
+            return LocalizedString(
+                pl: "To hasło nie pasuje. Pozostały {attempts} próby przed 30-sekundową przerwą.",
+                en: "That password didn't match. {attempts} attempts left before a 30-second wait."
+            )
+        case .unlockOfflineSlot:
+            return LocalizedString(
+                pl: "Brak połączenia z serwerem. Możesz odblokować, ale zmiany zsynchronizują się później.",
+                en: "Can't reach the server. You can still unlock; changes will sync later."
             )
         case .authSignInTitle:
             return LocalizedString(pl: "Zaloguj się", en: "Sign in")
