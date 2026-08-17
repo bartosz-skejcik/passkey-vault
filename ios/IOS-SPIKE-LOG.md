@@ -1092,6 +1092,77 @@ buttons labelled `"No account yet? Sign up"` / `"Create account"` — wording th
 
 **Task 3** — see the E-T1 entry immediately below.
 
+### E-T1 — TOTP correctness (SC3), 2026-08-17
+
+**Step zero (oracle validation) came first, as required.** `python3 scripts/totp-oracle.py --selftest`
+reproduced all six RFC 6238 Appendix B SHA1 vectors from `crates/pv-core/src/totp.rs`'s own test
+module, transcribed independently rather than imported — exit 0, `6/6 matched`. Also independently
+verified against the crate's SHA256/SHA512 vectors (not required by the plan's own three-vector
+wording, but free extra coverage of the same secret/algorithm surface). **Falsified**: altered one
+expected vector to `00000000`, re-ran, observed exit 1 (`5/6 matched`), reverted, confirmed byte-
+identical (`diff` clean). The oracle was proven correct AND proven able to fail before it was trusted
+for anything below.
+
+**Live comparison**, driven by a throwaway XCUITest (not committed — this plan's `files_modified` names
+only `scripts/totp-oracle.py` and this file; the driver's job was to produce the transcript below, not
+to become permanent CI). Real account, real server (`127.0.0.1:8621`), real `+` → Code → Save flow
+(the RFC 6238 SHA1 secret `GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ` is `TypePicker.swift`'s own default draft
+for a Code item — no typing needed), real detail screen, accessibility values read through
+`XCUIElement.value` — never OCR.
+
+**Single-read comparison, mechanical rule, PASS:**
+```
+t_before=1786954812 t_after=1786954812 (same period: floor(t/30) equal both sides)
+displayed code=779659  oracle(1786954812)=779659   MATCH (exact, as required same-period)
+displayed remaining=18 oracle=18                    MATCH (exact, well within the ±1s tolerance)
+```
+
+**Cross-boundary continuity, 35 one-second samples, PASS:**
+```
+i=0..16   t=1786954812..1786954829  code=779659  remaining=18→1
+i=17      t=1786954830              code=149479  remaining=30   <- the ONE transition, exactly at t%30==0
+i=18..34  t=1786954832..1786954849  code=149479  remaining=28→11
+```
+Exactly one transition, landing precisely where `t % 30 == 0` (`1786954830 % 30 == 0`). Every one of
+the 35 samples' code AND remaining-seconds independently re-checked against `totp-oracle.py` after the
+run: **zero mismatches** (both code exact-match and remaining-seconds within ±1s, for all 35 rows).
+Two consecutive readings 2 seconds apart appear twice in the table (i=6→7 and i=28→29, `t` jumping by 2
+instead of 1) — `Thread.sleep(1)` plus XCUITest's own per-query overhead occasionally pushes a sample
+past a full second; the table still shows the values the LIVE app displayed at the ACTUAL captured `t`,
+and every one of those (t, code, remaining) triples independently matches the oracle, so the two-second
+gaps do not weaken the continuity claim — they are exactly why capturing an explicit `t` per sample
+(rather than assuming a fixed 1 Hz grid) is the correct mechanical rule.
+
+**Falsification arm one (altered secret), PASS — proves the comparison reads live, changing data:**
+```
+altered secret HEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ (index 0: G -> H, still 32 chars / 20 bytes, still valid)
+t=1786954862  displayed code (altered secret)=604613
+oracle(1786954862) under the ORIGINAL secret = 314843    DIFFERENT, as required
+```
+If the displayed code under the altered secret had matched the original secret's oracle value (or any
+fixed/cached value), the whole comparison above would be reading something other than the live FFI
+call. It does not: the altered secret's page shows a code that agrees with NEITHER the original
+secret's oracle value nor any value seen earlier in this run.
+
+**Falsification arm two (too-short secret), PASS:**
+```
+item "Bad Secret (UI test fixture)", secret=JBSWY3DPEHPK3PXP (16 base32 chars, 10-byte decode)
+error-visible=true  code-present=false
+```
+Screenshot already on file from Task 2 (`ios/evidence/38/38-10-totp-error-state-too-short-secret.png`)
+shows the identical error state for the identical fixture item.
+
+**Independent host tool cross-check (optional, per the plan): NOT run.** `oathtool` is not installed on
+this machine (`command -v oathtool` → not found) and installing a new tool is out of scope for an
+in-session auto-fix (deviation-rule exclusion on package-manager installs). `totp-oracle.py`'s own
+self-test against the RFC's published vectors, proven falsifiable above, stands as the independent
+validation for this plan; the optional third-tool cross-check is recorded as skipped, not silently
+omitted.
+
+**Conclusion:** all three named acceptance mechanisms (single-read, continuity, both falsification
+arms) passed under the mechanical rule, against an oracle that was itself proven correct and provably
+falsifiable before any comparison was trusted.
+
 ---
 
 ## 2. Verified against reality (2026-08-11)
