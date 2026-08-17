@@ -13,6 +13,7 @@
 //  that biometric ENFORCEMENT was observed -- 37-05 owns that observation.
 //
 
+import Combine
 import SwiftUI
 import UIKit
 
@@ -183,10 +184,10 @@ struct LockView: View {
                     }
                 }
             }
-            .disabled(isProcessing)
+            .disabled(isProcessing || isThrottled)
             // State 1 emphasises Face ID, so the password submit becomes the
             // ghost there; in the other eight states it is the primary.
-            .buttonStyle(PVPrimaryButtonStyle(isEnabled: !isProcessing))
+            .buttonStyle(PVPrimaryButtonStyle(isEnabled: !isProcessing && !isThrottled))
             .opacity(biometryIsOffered ? 0 : 1)
             .frame(height: biometryIsOffered ? 0 : PVMetrics.buttonHeight)
             .accessibilityIdentifier("lock-password-submit")
@@ -195,8 +196,8 @@ struct LockView: View {
                 Button(action: { prefersPasswordEntry = true }) {
                     Text(t(.unlockUseMasterPassword))
                 }
-                .disabled(isProcessing)
-                .buttonStyle(PVGhostButtonStyle(isEnabled: !isProcessing))
+                .disabled(isProcessing || isThrottled)
+                .buttonStyle(PVGhostButtonStyle(isEnabled: !isProcessing && !isThrottled))
                 .accessibilityIdentifier("lock-use-master-password")
             }
 
@@ -208,8 +209,8 @@ struct LockView: View {
                 } label: {
                     Text(t(.unlockOpenSettings))
                 }
-                .disabled(isProcessing)
-                .buttonStyle(PVGhostButtonStyle(isEnabled: !isProcessing))
+                .disabled(isProcessing || isThrottled)
+                .buttonStyle(PVGhostButtonStyle(isEnabled: !isProcessing && !isThrottled))
                 .accessibilityIdentifier("lock-open-settings")
             }
 
@@ -219,13 +220,27 @@ struct LockView: View {
                 Button(action: { showForgotPasswordWarning.toggle() }) {
                     Text(t(.authForgotPasswordCta))
                 }
-                .disabled(isProcessing)
-                .buttonStyle(PVGhostButtonStyle(isEnabled: !isProcessing))
+                .disabled(isProcessing || isThrottled)
+                .buttonStyle(PVGhostButtonStyle(isEnabled: !isProcessing && !isThrottled))
                 .accessibilityIdentifier("lock-forgot-password-cta")
             }
         }
         .background(Color("PVBackground"))
-        .onAppear(perform: setUpOnAppear)
+        .onAppear {
+            restoreThrottleState()
+            setUpOnAppear()
+        }
+        // Fires only while a throttle is running. `throttledUntil` is cleared
+        // the moment it elapses, which stops the timer AND re-enables the
+        // controls in the same update.
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now in
+            guard throttledUntil != nil else { return }
+            tick = now
+            if throttleRemaining == nil {
+                throttledUntil = nil
+                UserDefaults.standard.removeObject(forKey: Self.throttleDeadlineKey)
+            }
+        }
         .onChange(of: biometricState) { _, newState in
             // 37-CONTEXT.md lock / 37-UI-SPEC.md:272: envelope-invalidated
             // moves focus to the password field. Every path that can
@@ -263,6 +278,42 @@ struct LockView: View {
     /// hidden behind a menu" means in the artifact's own caption for state 1.
     @State private var prefersPasswordEntry = false
 
+    // MARK: - Throttle (state 6) and the wrong-password count (state 5)
+    //
+    // POLICY, decided 2026-08-17 and stated rather than buried: FIVE attempts,
+    // then a THIRTY second wait. The deadline is persisted, so force-quitting
+    // the app does not clear it.
+    //
+    // THIS IS NOT A SECURITY CONTROL, and must never be described as one. An
+    // attacker holding the device can delete and reinstall the app, or ignore it
+    // entirely and attack the stored ciphertext offline. What actually protects
+    // the vault against guessing is Argon2id at 64 MiB / t=3 -- a cost this
+    // counter does not add to. This exists so a mistyped password says something
+    // useful, and so a pocket-dial cannot burn through attempts silently.
+    // `pv-server` enforces nothing of the kind; if real rate limiting is wanted
+    // it belongs there, and would be a different decision.
+    private static let maxAttemptsBeforeThrottle = 5
+    private static let throttleSeconds: TimeInterval = 30
+    private static let throttleDeadlineKey = "pv.lock.throttleUntil"
+
+    @State private var failedAttempts = 0
+    @State private var throttledUntil: Date?
+    /// Ticked once a second only while a throttle is running, so the countdown
+    /// is live without a timer firing for the entire life of the screen.
+    @State private var tick = Date()
+
+    /// Whole seconds left, or `nil` when not throttled.
+    private var throttleRemaining: Int? {
+        guard let throttledUntil else { return nil }
+        let left = Int(ceil(throttledUntil.timeIntervalSince(tick)))
+        return left > 0 ? left : nil
+    }
+
+    private var isThrottled: Bool { throttleRemaining != nil }
+
+    /// `nil` until a password has actually been rejected.
+    @State private var attemptsLeft: Int?
+
     private var biometryIsOffered: Bool {
         if prefersPasswordEntry { return false }
         guard let availability, availability.isAvailable else { return false }
@@ -272,8 +323,22 @@ struct LockView: View {
     /// The single status slot the nine states share. `nil` for state 1 (nothing
     /// has gone wrong yet) and state 9 (the spinner speaks for itself).
     private var statusSlot: (text: String, tone: StatusCallout.Tone)? {
-        // A failed unlock outranks a biometric note: it is what the user just
-        // did, and it is the thing they need to act on.
+        // State 6 outranks everything: while it is running, nothing else the
+        // user could read changes what they can do.
+        if let left = throttleRemaining {
+            return (t(.unlockThrottledSlot, ["seconds": String(left)]), .error)
+        }
+        // State 5 -- the artifact states the consequence BEFORE it arrives, so
+        // the throttle is never a surprise. `authWrongCredentials` ("Invalid
+        // email or password") was rendering here instead, which says nothing
+        // about what is about to happen.
+        if let left = attemptsLeft {
+            return (
+                t(.unlockWrongPasswordSlot, ["attempts": String(left), "wait": String(Int(Self.throttleSeconds))]),
+                .error
+            )
+        }
+        // Any other failure (server unreachable, unexpected) keeps the banner.
         if let bannerMessage {
             return (bannerMessage, .error)
         }
@@ -310,11 +375,11 @@ struct LockView: View {
             }
             .foregroundStyle(Color("PVOnAccent"))
         }
-        .disabled(isProcessing)
+        .disabled(isProcessing || isThrottled)
         // `PVPrimaryButtonStyle`, not `.borderedProminent`: on iOS 26 the system
         // prominent style renders a CAPSULE, and the artifact's `.btn` is a 12pt
         // radius. This one was missed when auth and onboarding were converted.
-        .buttonStyle(PVPrimaryButtonStyle(isEnabled: !isProcessing))
+        .buttonStyle(PVPrimaryButtonStyle(isEnabled: !isProcessing && !isThrottled))
         .accessibilityIdentifier("lock-biometric-primary")
     }
 
@@ -398,9 +463,23 @@ struct LockView: View {
         // different visual treatment, which is a restructuring this plan's
         // own prohibitions rule out).
         case "wrongPassword":
+            // Drives the REAL state-5 path -- `attemptsLeft`, the same property
+            // `registerFailedAttempt` sets -- not a hand-written banner. The old
+            // hook set `bannerMessage` to `authWrongCredentials`, which is
+            // exactly the wrong copy this fix replaces; a screenshot taken
+            // through it would have shown the bug as if it were the design.
             availability = fakeAvailability
             biometricState = .idle
-            bannerMessage = t(.authWrongCredentials)
+            prefersPasswordEntry = true
+            attemptsLeft = 2
+        case "throttled":
+            // State 6, through the real deadline property so the countdown, the
+            // disabled controls and the slot all come from production code.
+            availability = fakeAvailability
+            biometricState = .idle
+            prefersPasswordEntry = true
+            throttledUntil = Date().addingTimeInterval(28)
+            tick = Date()
         case "noBiometry":
             availability = BiometryAvailability(isAvailable: false, methodName: "Face ID", biometryStateHash: nil)
             biometricState = .idle
@@ -452,7 +531,11 @@ struct LockView: View {
     /// decision: no separate "re-enable Face ID" toggle for the user to
     /// tap).
     private func submitPassword() {
-        guard !password.isEmpty else { return }
+        // While throttled the submit is disabled, but guard here too: the
+        // control is not the only way to reach this (return key, and any future
+        // caller), and a disabled-looking button that still works is worse than
+        // no throttle at all.
+        guard !password.isEmpty, !isThrottled else { return }
         bannerMessage = nil
         isProcessing = true
         Task {
@@ -461,12 +544,59 @@ struct LockView: View {
             do {
                 let session = try await service.signIn(email: account.email, password: password)
                 try? BiometricUnlockService.enrol(userKey: session.userKey)
+                clearThrottleState()
                 onUnlocked(session)
             } catch let error as PvApiError {
-                bannerMessage = mapUnlockError(error)
+                if case .invalidCredentials = error {
+                    registerFailedAttempt()
+                } else {
+                    bannerMessage = mapUnlockError(error)
+                }
             } catch {
-                bannerMessage = t(.authWrongCredentials)
+                registerFailedAttempt()
             }
+        }
+    }
+
+    /// State 5 -> state 6. Counts DOWN, because the number a user cares about is
+    /// what is left, not how many they have burned.
+    private func registerFailedAttempt() {
+        password = ""
+        failedAttempts += 1
+        let left = Self.maxAttemptsBeforeThrottle - failedAttempts
+        if left <= 0 {
+            let until = Date().addingTimeInterval(Self.throttleSeconds)
+            throttledUntil = until
+            tick = Date()
+            attemptsLeft = nil
+            failedAttempts = 0
+            // Persisted so force-quitting does not clear the wait. Still
+            // trivially bypassable by reinstalling -- see the policy note on
+            // `maxAttemptsBeforeThrottle`; this is a UX guard, not a control.
+            UserDefaults.standard.set(until.timeIntervalSince1970, forKey: Self.throttleDeadlineKey)
+        } else {
+            attemptsLeft = left
+        }
+    }
+
+    private func clearThrottleState() {
+        failedAttempts = 0
+        attemptsLeft = nil
+        throttledUntil = nil
+        UserDefaults.standard.removeObject(forKey: Self.throttleDeadlineKey)
+    }
+
+    /// Restores a deadline written before the app was killed, and drops one that
+    /// has already elapsed so a stale key cannot lock the screen forever.
+    private func restoreThrottleState() {
+        let stored = UserDefaults.standard.double(forKey: Self.throttleDeadlineKey)
+        guard stored > 0 else { return }
+        let until = Date(timeIntervalSince1970: stored)
+        if until > Date() {
+            throttledUntil = until
+            tick = Date()
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.throttleDeadlineKey)
         }
     }
 
