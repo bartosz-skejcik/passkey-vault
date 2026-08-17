@@ -154,6 +154,28 @@ enum PVMetrics {
     static let dockGridActionFontSize: CGFloat = 11
     static let dockGridBubbleSize: CGFloat = 52
     static let dockGridGlyphSize: CGFloat = 22
+
+    // MARK: The ＋ panel's placement
+    //
+    // NOT from the artifact -- the artifact draws the panel but cannot say how
+    // far above a LIVE iOS 26 dock it sits, because the dock's height is the
+    // OS's to decide and it CHANGES when the tab bar minimizes. So the vertical
+    // placement is `dockInset + dockPanelGap`, where `dockInset` is measured at
+    // runtime (`ItemListView`'s `DockInsetKey`) and only the gap is a constant.
+    //
+    // The gap is not decoration. Liquid Glass samples what is near it and
+    // CANNOT sample other glass, so a panel whose glass card overlaps the
+    // dock's glass produces mush rather than two crisp layers -- the research
+    // probe's `07-zorder.png`. This is the geometric distance that prevents it.
+    static let dockPanelGap: CGFloat = 8
+    static let dockPanelHInset: CGFloat = 16
+
+    // The HIG's own figure for a dark dimming layer over bright content behind
+    // Clear glass (developer.apple.com/design/human-interface-guidelines/
+    // materials). Applied in code rather than baked into the colorset because
+    // `scripts/gen-ios-colorsets.py` writes `"alpha": "1.000"` for every token
+    // by construction -- the catalog has no concept of a translucent token.
+    static let dockScrimOpacity: CGFloat = 0.35
 }
 
 // MARK: - Dock glass
@@ -174,17 +196,28 @@ extension View {
     ///
     /// This is the sanctioned way to get glass, NOT a hand-rolled one: no
     /// `.blur`, no stacked translucent fills, no `UIVisualEffectView` bridge.
-    func pvDockGlass<S: Shape>(in shape: S) -> some View {
-        modifier(PVDockGlass(shape: shape))
+    ///
+    /// `interactive` selects `Glass.interactive()`, which makes the material
+    /// respond to touch by scaling and brightening. Correct for a single control
+    /// that IS the tap target; wrong for a container of controls, where it reads
+    /// as the whole panel being one button. The ＋ panel passes `false`.
+    ///
+    /// **NEVER apply this to anything the system already draws glass for** --
+    /// tab labels, toolbar items, or `tabViewBottomAccessory` content. That is
+    /// two glass layers on one control and it is photographed failing in
+    /// `ios/evidence/38/38-06-dock-glass-on-glass.png`.
+    func pvDockGlass<S: Shape>(in shape: S, interactive: Bool = true) -> some View {
+        modifier(PVDockGlass(shape: shape, interactive: interactive))
     }
 }
 
 private struct PVDockGlass<S: Shape>: ViewModifier {
     let shape: S
+    let interactive: Bool
 
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
-            content.glassEffect(.regular.interactive(), in: shape)
+            content.glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
         } else {
             content.background(.regularMaterial, in: shape)
         }
