@@ -41,18 +41,16 @@ struct OnboardingWelcomeStep: View {
             VStack(spacing: 12) {
                 Button(action: onGetStarted) {
                     Text(t(.onboardingWelcomeGetStarted))
-                        .foregroundStyle(Color("PVOnAccent"))
-                        .frame(maxWidth: .infinity, minHeight: 48)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Color("PVAccent"))
+                .buttonStyle(PVPrimaryButtonStyle())
+                .buttonStyle(PVGhostButtonStyle())
                 .accessibilityIdentifier("onboarding-welcome-get-started")
 
                 Button(action: onAlreadyHaveVault) {
                     Text(t(.onboardingWelcomeAlreadyHaveVault))
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .tint(Color("PVAccent"))
+                .buttonStyle(PVGhostButtonStyle())
                 .accessibilityIdentifier("onboarding-welcome-already-have-vault")
             }
             .padding(.horizontal, 24)

@@ -41,7 +41,7 @@ struct OnboardingServerStep: View {
                     Button(action: onSkip) {
                         Text(t(.onboardingServerSkip))
                     }
-                    .tint(Color("PVAccent"))
+                    .buttonStyle(PVGhostButtonStyle())
                     .accessibilityIdentifier("onboarding-server-skip")
                 }
 
@@ -103,11 +103,9 @@ struct OnboardingServerStep: View {
 
                 Button(action: handleContinue) {
                     Text(t(.onboardingServerContinue))
-                        .foregroundStyle(Color("PVOnAccent"))
-                        .frame(maxWidth: .infinity, minHeight: 48)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Color("PVAccent"))
+                .buttonStyle(PVPrimaryButtonStyle())
+                .buttonStyle(PVGhostButtonStyle())
                 .disabled(isChecking)
                 .accessibilityIdentifier("onboarding-server-continue")
             }

@@ -105,28 +105,24 @@ struct OnboardingAutoFillStep: View {
         if isEnabled {
             Button(action: onFinish) {
                 Text(t(.onboardingAutoFillDone))
-                    .foregroundStyle(Color("PVOnAccent"))
-                    .frame(maxWidth: .infinity, minHeight: 48)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Color("PVAccent"))
+            .buttonStyle(PVPrimaryButtonStyle())
+            .buttonStyle(PVGhostButtonStyle())
             .accessibilityIdentifier("onboarding-autofill-primary")
         } else {
             VStack(spacing: 12) {
                 Button(action: openSettings) {
                     Text(t(.onboardingAutoFillOpenSettings))
-                        .foregroundStyle(Color("PVOnAccent"))
-                        .frame(maxWidth: .infinity, minHeight: 48)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Color("PVAccent"))
+                .buttonStyle(PVPrimaryButtonStyle())
+                .buttonStyle(PVGhostButtonStyle())
                 .accessibilityIdentifier("onboarding-autofill-primary")
 
                 Button(action: onFinish) {
                     Text(t(.onboardingAutoFillLater))
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .tint(Color("PVAccent"))
+                .buttonStyle(PVGhostButtonStyle())
                 .accessibilityIdentifier("onboarding-autofill-later")
             }
         }

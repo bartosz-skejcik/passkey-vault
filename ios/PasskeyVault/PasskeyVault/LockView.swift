@@ -63,8 +63,12 @@ struct LockView: View {
     @FocusState private var isPasswordFieldFocused: Bool
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+        // Same `PVScreenScaffold` as AuthView: content top, flex-1 spacer,
+        // action stack pinned to the bottom. Lock kept hand-built spacing until
+        // 2026-08-17 and visibly drifted from auth as a result.
+        PVScreenScaffold {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
                 // The approved screens (artifact "Passkey Vault iOS Screens",
                 // §"Lock — the state machine, drawn") put a Face ID glyph and
                 // the title first, and demote the account to a muted line.
@@ -80,23 +84,18 @@ struct LockView: View {
                         .font(.system(size: 52, weight: .light))
                         .foregroundStyle(Color("PVAccent"))
                         .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.bottom, 4)
+                        .padding(.top, PVMetrics.authTitleTopSpace)
                         .accessibilityHidden(true)
                 }
 
-                Text(t(.unlockHeading))
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .foregroundStyle(Color("PVTextPrimary"))
-                    .accessibilityIdentifier("lock-title")
-
-                if !account.email.isEmpty {
-                    Text(t(.unlockSignedInAs, ["email": account.email]))
-                        .font(.subheadline)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .foregroundStyle(Color("PVTextMuted"))
-                }
+                PVScreenTitle(
+                    title: t(.unlockHeading),
+                    subtitle: account.email.isEmpty
+                        ? nil
+                        : t(.unlockSignedInAs, ["email": account.email]),
+                    topSpace: biometryIsOffered ? PVMetrics.titleTopSpace : PVMetrics.authTitleTopSpace
+                )
+                .accessibilityIdentifier("lock-title")
 
                 // THE status slot. Every non-idle state renders here and
                 // nowhere else, through the one shared `StatusCallout`, so the
@@ -106,31 +105,14 @@ struct LockView: View {
                         .accessibilityIdentifier("lock-status-slot")
                 }
 
-                // State 1's primary, above the password path. The password
-                // field below stays visible rather than being revealed by the
-                // ghost -- an honest deviation from the approved screens,
-                // recorded rather than hidden: hiding it would need a reveal
-                // state that four existing UI tests reach the field without,
-                // and breaking those to gain one tap is the wrong trade to make
-                // in a visual pass. The emphasis order the design cares about
-                // (Face ID prominent, password secondary) IS honoured.
-                if let availability, biometryIsOffered {
-                    biometricPrimaryButton(availability: availability)
 
-                    Text(t(.unlockUseMasterPassword))
-                        .font(.subheadline)
-                        .foregroundStyle(Color("PVAccent"))
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .accessibilityIdentifier("lock-use-master-password")
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(t(.authPasswordLabel))
-                        .font(.footnote)
-                        .foregroundStyle(Color("PVTextMuted"))
-                    HStack {
+                // Placeholder inside the field, one shared 46pt chrome --
+                // identical to AuthView's, so the same control does not look
+                // like two different controls across two screens.
+                HStack(spacing: 8) {
+                    Group {
                         if isPasswordRevealed {
-                            TextField("", text: $password)
+                            TextField("", text: $password, prompt: lockPrompt)
                                 .autocorrectionDisabled()
                                 #if os(iOS)
                                 .textInputAutocapitalization(.never)
@@ -138,37 +120,24 @@ struct LockView: View {
                                 .focused($isPasswordFieldFocused)
                                 .accessibilityIdentifier("unlock-password-field")
                         } else {
-                            SecureField("", text: $password)
+                            SecureField("", text: $password, prompt: lockPrompt)
                                 .focused($isPasswordFieldFocused)
                                 .accessibilityIdentifier("unlock-password-field")
                         }
-                        Button(action: { isPasswordRevealed.toggle() }) {
-                            Image(systemName: isPasswordRevealed ? "eye.slash" : "eye")
-                                .frame(width: 44, height: 44)
-                        }
-                        .accessibilityLabel(isPasswordRevealed ? t(.ariaHidePassword) : t(.ariaShowPassword))
-                        .tint(Color("PVAccent"))
                     }
-                    // Same PVSurface block AuthView's fields use. The lock
-                    // field was a bare underline while auth's were filled
-                    // rows, so the two screens' inputs did not read as the
-                    // same control.
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .fill(Color("PVSurface"))
-                    )
-                }
+                    .font(.system(size: 16))
 
-                if let bannerMessage {
-                    Text(bannerMessage)
-                        .font(.footnote)
-                        .foregroundStyle(Color("PVError"))
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color("PVSurface"))
+                    Button(action: { isPasswordRevealed.toggle() }) {
+                        Image(systemName: isPasswordRevealed ? "eye.slash" : "eye")
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle().size(width: 44, height: PVMetrics.fieldMinHeight))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color("PVAccent"))
+                    .accessibilityLabel(isPasswordRevealed ? t(.ariaHidePassword) : t(.ariaShowPassword))
                 }
+                .pvFieldChrome()
+                .accessibilityLabel(t(.authPasswordLabel))
 
                 if isProcessing {
                     Text(t(.appProcessingHint))
@@ -176,68 +145,66 @@ struct LockView: View {
                         .foregroundStyle(Color("PVTextMuted"))
                 }
 
-                Button(action: submitPassword) {
-                    Group {
-                        if isProcessing {
-                            ProgressView()
-                        } else {
-                            Text(t(.unlockSubmit))
-                                .foregroundStyle(Color("PVOnAccent"))
-                        }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 48)
-                }
-                .disabled(isProcessing)
-                .tint(Color("PVAccent"))
-                // State 1 emphasises Face ID, so the password submit steps
-                // down rather than competing with it. `buttonStyle` takes a
-                // concrete type, so the choice is made with `prominence`
-                // rather than by branching the style itself -- two
-                // `.borderedProminent` buttons on one screen is the thing
-                // being avoided.
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.capsule)
-                .opacity(biometryIsOffered ? 0.55 : 1.0)
-                .accessibilityIdentifier("lock-password-submit")
-
-                // State 7's ghost: the only actionable thing about a missing
-                // device passcode is going to Settings to set one.
-                if availability?.requiresDevicePasscode == true {
-                    Button {
-                        if let url = URL(string: UIApplication.openSettingsURLString) {
-                            UIApplication.shared.open(url)
-                        }
-                    } label: {
-                        Text(t(.unlockOpenSettings))
-                    }
-                    .tint(Color("PVAccent"))
-                    .disabled(isProcessing)
-                    .accessibilityIdentifier("lock-open-settings")
-                }
-
-                Button(action: { showForgotPasswordWarning.toggle() }) {
-                    Text(t(.authForgotPasswordCta))
-                }
-                .tint(Color("PVAccent"))
-                .disabled(isProcessing)
-
-                // Task 4's one structural change: inline, not an alert. No
-                // action, no recovery path -- none exists. Readable at AX5
-                // by scrolling the surrounding form (`OnboardingUITests`
-                // proves the LAST words of this sentence are reachable,
-                // which is exactly what the alert never demonstrated).
                 if showForgotPasswordWarning {
-                    // The shared status slot (`Core/StatusCallout.swift`), not
-                    // a second hand-built copy. §5's nine states differ ONLY in
-                    // this slot, so two divergent renderings of it would make
-                    // the state machine stop reading as one machine.
+                    // Inline, not an alert. Readable at AX5 by scrolling --
+                    // which is what retires 37-VERIFICATION.md's clipped-copy
+                    // residual instead of re-testing it.
                     StatusCallout(text: t(.authIrrecoverableWarning), tone: .warning)
                         .accessibilityIdentifier("lock-forgot-password-warning")
                 }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding()
+        } actions: {
+            if let availability, biometryIsOffered {
+                biometricPrimaryButton(availability: availability)
+            }
+
+            Button(action: submitPassword) {
+                Group {
+                    if isProcessing {
+                        ProgressView().tint(biometryIsOffered ? Color("PVAccent") : Color("PVOnAccent"))
+                    } else {
+                        Text(t(.unlockSubmit))
+                    }
+                }
+            }
             .disabled(isProcessing)
-            .opacity(isProcessing ? 0.5 : 1.0)
+            // State 1 emphasises Face ID, so the password submit becomes the
+            // ghost there; in the other eight states it is the primary.
+            .buttonStyle(PVPrimaryButtonStyle(isEnabled: !isProcessing))
+            .opacity(biometryIsOffered ? 0 : 1)
+            .frame(height: biometryIsOffered ? 0 : PVMetrics.buttonHeight)
+            .accessibilityIdentifier("lock-password-submit")
+
+            if biometryIsOffered {
+                Button(action: submitPassword) {
+                    Text(t(.unlockUseMasterPassword))
+                }
+                .disabled(isProcessing)
+                .buttonStyle(PVGhostButtonStyle(isEnabled: !isProcessing))
+                .accessibilityIdentifier("lock-use-master-password")
+            }
+
+            if availability?.requiresDevicePasscode == true {
+                Button {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    Text(t(.unlockOpenSettings))
+                }
+                .disabled(isProcessing)
+                .buttonStyle(PVGhostButtonStyle(isEnabled: !isProcessing))
+                .accessibilityIdentifier("lock-open-settings")
+            }
+
+            Button(action: { showForgotPasswordWarning.toggle() }) {
+                Text(t(.authForgotPasswordCta))
+            }
+            .disabled(isProcessing)
+            .buttonStyle(PVGhostButtonStyle(isEnabled: !isProcessing))
+            .accessibilityIdentifier("lock-forgot-password-cta")
         }
         .background(Color("PVBackground"))
         .onAppear(perform: setUpOnAppear)
@@ -268,6 +235,11 @@ struct LockView: View {
     /// State 1/2: biometry is genuinely on offer, so the glyph and the Face ID
     /// primary belong on screen. Anything else falls through to the password
     /// path, which is always present -- never hidden behind a menu.
+    private var lockPrompt: Text {
+        Text(t(.authPasswordLabel))
+            .foregroundColor(Color("PVTextMuted").opacity(PVMetrics.placeholderOpacity))
+    }
+
     private var biometryIsOffered: Bool {
         guard let availability, availability.isAvailable else { return false }
         return biometricState == .idle
