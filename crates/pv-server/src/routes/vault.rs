@@ -1386,7 +1386,7 @@ pub async fn create_share(
     // Validate BEFORE any DB work — fails closed on a malformed/unrecognized
     // access_level string, never silently coerced to a working default
     // (mirrors collections::add_member's own ordering).
-    parse_access_level_from_request(&req.access_level)?;
+    let requested_level = parse_access_level_from_request(&req.access_level)?;
 
     // WR-10 (code review iteration 1): forbid a direct item_shares grant on a
     // collection-scoped item. Collection membership is meant to be the SOLE
@@ -1462,7 +1462,9 @@ pub async fn create_share(
     .bind(&membership.resource_id)
     .bind(&req.recipient_user_id)
     .bind(&req.sealed_key)
-    .bind(&req.access_level)
+    // LO-01 fix (31-REVIEW.md): binds the PARSED level's canonical string,
+    // never the raw request string.
+    .bind(requested_level.as_str())
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -1531,14 +1533,17 @@ pub async fn update_share(
     // Validate BEFORE any DB work — fails closed on a malformed/unrecognized
     // access_level string, never silently coerced to a working default
     // (mirrors create_share's own ordering above).
-    parse_access_level_from_request(&req.access_level)?;
+    let requested_level = parse_access_level_from_request(&req.access_level)?;
 
     // CR-02-style transactional discipline: the UPDATE and the target
     // recipient's own `shared_direct_revision` bump run in ONE transaction.
     let mut tx = state.db.begin().await?;
 
+    // LO-01 fix (31-REVIEW.md): binds the PARSED level's canonical string,
+    // never the raw request string — see collections::update_access's
+    // identical fix for the full rationale.
     let result = sqlx::query("UPDATE item_shares SET access_level = ? WHERE item_id = ? AND recipient_user_id = ?")
-        .bind(&req.access_level)
+        .bind(requested_level.as_str())
         .bind(&membership.resource_id)
         .bind(&target_user_id)
         .execute(&mut *tx)
