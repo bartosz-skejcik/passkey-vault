@@ -460,7 +460,8 @@ struct ItemListView: View {
                                 // itself.
                                 ItemDetailView(
                                     item: item, store: store, revealState: $root.revealState,
-                                    onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested
+                                    onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested,
+                                    onSettingsRequested: { root.activeSheet = .settings }
                                 )
                             }
                             .sheet(item: $root.activeSheet) { sheet in
@@ -1103,6 +1104,8 @@ struct ItemListView: View {
             // The dock grid's "Generate password" slot. Standalone (no
             // `onInsert`) -- the same presentation `LockView` already uses.
             GeneratorSheet()
+        case .settings:
+            SettingsView()
         case let .creating(kind):
             ItemFormView(mode: .create(kind), store: store, folderStore: folderStore) { created in
                 root.selection = created
@@ -1436,7 +1439,10 @@ struct ItemListView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        vaultLockToolbarContent(onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested)
+        vaultLockToolbarContent(
+            onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested,
+            onSettingsRequested: { root.activeSheet = .settings }
+        )
     }
 
     // MARK: - TEMPORARY tracer create bar (kept for 38-05 test compatibility)

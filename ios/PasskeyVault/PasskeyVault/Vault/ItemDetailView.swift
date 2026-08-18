@@ -48,16 +48,19 @@ struct ItemDetailView: View {
     /// needs its own copy of this toolbar rather than inheriting the list's.
     var onLockRequested: (() -> Void)?
     var onSignOutRequested: (() -> Void)?
+    var onSettingsRequested: (() -> Void)?
 
     init(
         item: VaultItemViewModel, store: VaultStore, revealState: Binding<DetailRevealState>,
-        onLockRequested: (() -> Void)? = nil, onSignOutRequested: (() -> Void)? = nil
+        onLockRequested: (() -> Void)? = nil, onSignOutRequested: (() -> Void)? = nil,
+        onSettingsRequested: (() -> Void)? = nil
     ) {
         self.item = item
         self.store = store
         self._revealState = revealState
         self.onLockRequested = onLockRequested
         self.onSignOutRequested = onSignOutRequested
+        self.onSettingsRequested = onSettingsRequested
     }
 
     var body: some View {
@@ -83,7 +86,10 @@ struct ItemDetailView: View {
         .navigationTitle(Text(verbatim: item.displayName))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            vaultLockToolbarContent(onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested)
+            vaultLockToolbarContent(
+                onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested,
+                onSettingsRequested: onSettingsRequested
+            )
         }
         // CR-01: `.onAppear` scopes the reveal set to THIS item the moment
         // the view is first shown -- `.onChange(of:)` alone never fires on

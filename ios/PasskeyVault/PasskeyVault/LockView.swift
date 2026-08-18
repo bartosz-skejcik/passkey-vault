@@ -53,6 +53,11 @@ struct LockView: View {
     /// biometric-slot screenshot matrix, never reachable outside a DEBUG
     /// build driven by `PV_UITEST_LOCK_STATE`.
     @State private var showGeneratorSheet = false
+    /// Quick task 260818-fnt, Task 1: mirrors `showGeneratorSheet`'s own
+    /// pattern exactly -- DEBUG-only, inert unless `PV_UITEST_LOCK_STATE=
+    /// settingsSheet` is set. `SettingsView` never touches `VaultStore`/
+    /// decryption, same shape as `GeneratorSheet`.
+    @State private var showSettingsSheet = false
     /// State 8 -- Offline (design-conformance §"38-11", addendum A3). Set
     /// two ways, both real: a `ServerReachability.check` probe on appear,
     /// and any unlock attempt that fails with a transport error (never a
@@ -269,6 +274,12 @@ struct LockView: View {
         // unlocked-session state.
         .sheet(isPresented: $showGeneratorSheet) {
             GeneratorSheet()
+        }
+        // Quick task 260818-fnt, Task 1: same established pattern as
+        // `showGeneratorSheet` immediately above -- see that sheet's own
+        // doc comment for the full rationale.
+        .sheet(isPresented: $showSettingsSheet) {
+            SettingsView()
         }
     }
 
@@ -547,6 +558,12 @@ struct LockView: View {
             availability = fakeAvailability
             biometricState = .idle
             showGeneratorSheet = true
+        // Quick task 260818-fnt, Task 1: same established pattern as
+        // "generatorSheet" immediately above.
+        case "settingsSheet":
+            availability = fakeAvailability
+            biometricState = .idle
+            showSettingsSheet = true
         default:
             break
         }

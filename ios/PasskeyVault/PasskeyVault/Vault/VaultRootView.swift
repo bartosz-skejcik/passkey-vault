@@ -35,7 +35,8 @@ import SwiftUI
 /// duplicated so the two screens cannot drift.
 @ToolbarContentBuilder
 func vaultLockToolbarContent(
-    onLockRequested: (() -> Void)?, onSignOutRequested: (() -> Void)?
+    onLockRequested: (() -> Void)?, onSignOutRequested: (() -> Void)?,
+    onSettingsRequested: (() -> Void)? = nil
 ) -> some ToolbarContent {
     ToolbarItem(placement: .topBarTrailing) {
         Button {
@@ -47,17 +48,18 @@ func vaultLockToolbarContent(
         .accessibilityIdentifier("vault.lockNow")
     }
     ToolbarItem(placement: .topBarTrailing) {
-        // Family and Settings have no screen to open yet (Family is
-        // Phase 40's job; there is no generic Settings screen planned for
-        // this milestone at all) -- both entries render, disabled, rather
-        // than either vanishing (which would misrepresent the approved
-        // navigation architecture as simpler than it is) or silently doing
-        // nothing when tapped (a fake affordance).
+        // Family has no screen to open yet (Phase 40's job) -- it renders,
+        // disabled, rather than either vanishing (which would misrepresent
+        // the approved navigation architecture as simpler than it is) or
+        // silently doing nothing when tapped (a fake affordance). Settings
+        // (quick task 260818-fnt) now follows the SAME disabled-until-wired
+        // pattern Lock/Sign-out already use below, rather than being a
+        // permanent special case.
         Menu {
             Button("Family") {}
                 .disabled(true)
-            Button("Settings") {}
-                .disabled(true)
+            Button("Settings") { onSettingsRequested?() }
+                .disabled(onSettingsRequested == nil)
             Divider()
             Button("Lock now") { onLockRequested?() }
                 .disabled(onLockRequested == nil)
@@ -79,6 +81,7 @@ enum VaultActiveSheet: Identifiable {
     case editing(VaultItemViewModel)
     case movingToFolder(VaultItemViewModel)
     case generator
+    case settings
 
     var id: String {
         switch self {
@@ -86,6 +89,7 @@ enum VaultActiveSheet: Identifiable {
         case let .editing(item): return "editing-\(item.id)"
         case let .movingToFolder(item): return "movingToFolder-\(item.id)"
         case .generator: return "generator"
+        case .settings: return "settings"
         }
     }
 }
