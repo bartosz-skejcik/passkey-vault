@@ -1227,9 +1227,9 @@ struct ItemListView: View {
 
     @ViewBuilder
     private func contextMenuContent(_ item: VaultItemViewModel) -> some View {
-        ForEach(copyActions(for: item), id: \.label) { action in
-            Button(action.label) {
-                copySecret(action.value, fieldLabel: action.label)
+        ForEach(copyActions(for: item), id: \.command) { action in
+            Button(action.command) {
+                copySecret(action.value, fieldLabel: action.field)
             }
         }
         // Passkey detail has no Edit (cryptographic material, not user
@@ -1270,18 +1270,26 @@ struct ItemListView: View {
     /// `ShareDialog` does not exist on iOS), so omitting them is the same
     /// "do not offer an operation known to fail" discipline
     /// `ItemCapabilities.swift` names, not an oversight.
-    private func copyActions(for item: VaultItemViewModel) -> [(label: String, value: String)] {
+    /// WR-03 (38-REVIEW.md, iteration 2): returns the menu command AND the
+    /// bare field noun separately -- `command` ("Copy password") is the
+    /// `Button` label; `field` ("Password") is what
+    /// `ClipboardWording.confirmation` composes into "Copied Password …".
+    /// Before this fix both were the same string, so CR-03's now-visible
+    /// banner rendered "Copied Copy password". `field` uses the SAME nouns
+    /// as `ItemDetailView.fieldLabel(_:)` for the identical field, so the
+    /// two screens' banners agree.
+    private func copyActions(for item: VaultItemViewModel) -> [(command: String, field: String, value: String)] {
         guard let fields = item.fields else { return [] }
         switch fields {
         case let .login(f):
-            var actions: [(label: String, value: String)] = []
-            if !f.username.isEmpty { actions.append(("Copy username", f.username)) }
-            if !f.password.isEmpty { actions.append(("Copy password", f.password)) }
+            var actions: [(command: String, field: String, value: String)] = []
+            if !f.username.isEmpty { actions.append(("Copy username", "Username", f.username)) }
+            if !f.password.isEmpty { actions.append(("Copy password", "Password", f.password)) }
             return actions
         case let .card(f):
-            return f.number.isEmpty ? [] : [("Copy card number", f.number)]
+            return f.number.isEmpty ? [] : [("Copy card number", "Card number", f.number)]
         case let .identity(f):
-            return f.email.isEmpty ? [] : [("Copy email", f.email)]
+            return f.email.isEmpty ? [] : [("Copy email", "Email", f.email)]
         default:
             return []
         }
