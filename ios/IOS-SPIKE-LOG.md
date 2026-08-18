@@ -2693,6 +2693,38 @@ UI-test-shared session on that simulator. Prefer either an isolated server port 
 the `PV_UITEST_SCREEN=auth` + fresh-account pattern for the UI test — never a shared, persisted-session
 fixture account once ANY live XCTest in the suite talks to the same live server.
 
+### L-21 — Swift Testing's default parallel execution manufactures a dozen false failures the SAME suites do not show run alone or serialized
+
+**Found 2026-08-18, plan 38-11, Task 1.** A bare `xcodebuild test -only-testing:PasskeyVaultTests`
+(the whole target, no scoping) reported roughly a dozen failing tests spread across
+`KeychainEnvelopeTests`, `AccountFlowLiveTests`, `E5Tests`, `FaviconLoaderPersistenceProofTests`,
+`ServerReachabilityTests`, `ItemDetailTouchLiveTests` and `VaultMutationTests` — files this plan never
+touched, most with `(0.000 seconds)` durations suggesting a setup-time failure rather than a real
+assertion. `KeychainEnvelopeTests` run ALONE (`-only-testing:PasskeyVaultTests/KeychainEnvelopeTests`)
+passed 12/12, immediately. Re-running the FULL target with `-parallel-testing-enabled NO` collapsed the
+failure list from ~12 methods across 7 files down to exactly the six methods of the three suites this
+project already documents as needing EXTERNAL isolated infrastructure this worktree does not have
+(`CrossClientInteropTests`, `FolderWireInteropTests`, `VaultWireInteropTests` — L-17's own "the
+browser-observed half is outstanding, `web/node_modules` does not exist in this worktree" limitation) —
+`230 tests in 36 suites`, `12 issues`, all six from the same three pre-known-limited suites, doubled by
+each method's own two assertions.
+
+**Cause, not fully root-caused (fixing it is out of this plan's scope) but narrowed:** Swift Testing
+runs `@Test` methods from different `@Suite`s concurrently by default. Several of the affected suites
+touch a genuinely SHARED, PROCESS-WIDE resource — the real Keychain, `URLProtocol.registerClass`-style
+transport interception, or a live server connection — and this project's own `.serialized` convention
+(`VaultMutationTests`/`ServerReachabilityTests`/`FaviconLoaderPersistenceProofTests`'s own header
+comments) exists PRECISELY because two suites racing on such a resource produce exactly this failure
+shape. `-parallel-testing-enabled NO` is the coarse, whole-target fix; the fine one (auditing every
+suite touching a shared resource for a missing `.serialized`) is not this plan's job.
+
+**Consequence for future plans, and for Phase 42's QA/CI work specifically:** a bare, unscoped
+`xcodebuild test` sweep of the WHOLE `PasskeyVaultTests` target is not trustworthy evidence on its own
+— a red result may be this landmine, not a regression. Either scope to the suite actually under test
+(as every plan in this phase already does for its own new tests), or pass
+`-parallel-testing-enabled NO` for a full-target sweep, and treat only the three
+externally-infrastructure-dependent interop suites as an expected, pre-existing gap.
+
 ## 3a. The visual layer was never verified — open gaps as of 2026-08-17
 
 **Written after Bartek looked at the running app and said, twice, that the screens
@@ -2906,3 +2938,138 @@ Still genuinely not done:
   `Arc`-backed model makes it plausible, and plausible is not verified.
 - **No cross-client wire-format test** (§4 q.5) — the largest remaining correctness risk on this
   branch.
+
+## 6. Phase 38 — evidence
+
+**Written 2026-08-18, plan 38-11, Task 2.** One row per ROADMAP success criterion: the criterion as
+written, the artifact that evidences it, the falsification that made that evidence admissible, and its
+status. Read `.planning/ROADMAP.md`'s Phase 38 section for the five criteria's exact original wording
+before reading this table — this section reports AGAINST that wording, amending SC2 explicitly rather
+than silently substituting a weaker claim for it.
+
+| Criterion | Artifact | Falsification | Status |
+|---|---|---|---|
+| 38-SC1 — list with `.searchable`, swipe actions and context menu renders real decrypted items from a live server | `ItemListSearchUITests.swift` (search predicate against real rows), `VaultDockUITests`/`VaultDockEvidenceUITests` (dock, swipe, context menu, live commit `4cda61f`/`50cb594`), `ios/evidence/38/38-06b-*` (10 screenshots, 5 states × light/dark, real `pv-server`) | `VaultSearch`/`VaultFilter`/`VaultSort`: three RED-before-GREEN falsifications run and reverted (diacritic-folding substitution, cardholder-name widening, a broken filter→search→sort chain), 14 Swift Testing cases; `scripts/audit-ios-colour-tokens.sh` proven able to fail (a live `.borderedProminent`-without-`PVOnAccent` regression it caught, 38-13) | met |
+| 38-SC2 — all five item types create/edit/delete, change visible server-side via a direct request | `VaultWireInteropTests.swift`/`scripts/verify-ios-web-item-interop.mjs` (items), `FolderWireInteropTests.swift`/`scripts/verify-ios-web-folder-interop.mjs` (folders) — **AMENDED wording per L-17**, see below | E-W1/F3: a base64-encoded (wrong-shape) row is server-accepted (`201`) and rejected by BOTH `pv-wasm` and iOS's own next refresh; `PV_ITEM_INTEROP_SKIP_CORRUPTION=1` turns the falsification-dependent checks red, proving the arm is not vacuous | met (amended) |
+| 38-SC3 — TOTP detail screen's code/countdown match an independent RFC 6238 computation for the same second | `scripts/totp-oracle.py --selftest` (6/6 RFC 6238 Appendix B vectors) + `ios/IOS-SPIKE-LOG.md` §1f's E-T1 live comparison transcript (single-read exact match, 35s continuity sample, one period-boundary transition, zero mismatches) | oracle validated FIRST against published vectors before any comparison was trusted; two falsification arms (altered secret, too-short secret) both produced genuine non-vacuous failures | met |
+| 38-SC4 — generator calls `pv-core`'s CSPRNG via `pv-ffi`, never `SystemRandomNumberGenerator`/`arc4random` | `scripts/audit-generator-uses-ffi.sh` (E-G1, four checks: two negative, two positive) — **replaces the ROADMAP's own literal single-grep wording**, which 38-RESEARCH.md's own Pitfall 11 names as passing trivially on a generator that never calls Rust at all | all four checks demonstrated able to FAIL under a targeted mutation, one at a time, each reverted (transcript in `ios/IOS-SPIKE-LOG.md` §"E-G1"); one check (`SYMBOL_PATTERN`/`CALL_PATTERN`) initially reported a false PASS on a renamed-symbol mutation (unanchored regex) — caught live, fixed, re-falsified before being trusted | met |
+| 38-SC5 — a background app-switcher snapshot does not reveal vault contents | `scripts/snapshot-blockmap.py` (real AAPL/LZFSE/ASTC decoder, validated against a real Calendar capture before being trusted) + `SnapshotEvidenceUITests.swift` (E-S1, real register/create/background flow) | negative control (`PV_SNAPSHOT_COVER_DISABLED`) initially passed clean when it should have failed — a SwiftUI cosmetic mirror was covering unconditionally, confounding the control; fixed, re-run genuinely failed (`nonflat=3954` etc., marker secret legible in the decoded PNG) before the real run was trusted | met |
+
+### SC2, in full: the amendment and why, item and folder results kept separate
+
+SC2's literal ROADMAP wording — "server-visible via a direct request to `/api/sync`" — is satisfied by
+`pv-server` storing `enc_data`/`enc_name` as opaque `TEXT` and returning whatever bytes it was given,
+never parsing them (`crates/pv-server/migrations/0003_vault_items_rebuild.sql:20`). An iOS-written row
+using Swift `JSONEncoder`'s base64 encoding for a `Data`/byte-array field would be perfectly
+"server-visible" and still **undecryptable in the web client** — this is L-17, and it is not
+hypothetical: `crates/pv-ffi/src/wire.rs`'s own base64-rejection test exists because of it. The amendment
+this phase adopted in its place, matching the milestone-v0.5 lesson ("evidence that measures the wrong
+thing"): **an item created on iOS is opened and decrypted in the real web client's own crypto
+(`pv-wasm`), and an item created in the web client is opened and decrypted on iOS through the real
+`pv-ffi` framework** — recipient-side, through each client's own production decode path, never the
+writer's own encoder agreeing with itself.
+
+**Items (38-02, Task 3, E-W1):** D1 forward (iOS writes → real `pv-wasm` decrypts, recovering the name
+typed independently on both sides) and D2 reverse (`pv-wasm` writes exactly as `web/src/lib/vault/
+store.ts`'s `createVaultItem` does → real iOS `VaultStore.refresh()` decrypts) both PASS. Full transcript:
+`ios/evidence/38/EW1-CROSS-CLIENT-WIRE.md`. **Still outstanding, not folded into the green result:** the
+browser-RENDERED half (an iOS-written item showing correctly in a running web client's UI, console
+clean) — `web/node_modules` does not exist in this worktree, so no dev server and no browser were
+available; `pv-wasm` is the web client's own crypto, not its rendering.
+
+**Folders (38-09, Task 3, same amendment, F1–F3):** F1 forward, F2 reverse, and F3's falsification
+(iOS deliberately mints the folder id AFTER encryption — fails on iOS's own next refresh AND in
+`pv-wasm`, both independently, proving the id-before-encryption ordering guard is load-bearing) all
+PASS — 5/5 checks. Same browser-rendered-half limitation as items, for the same reason.
+
+### The type-count correction (L-15), restated here because SC2 is where it bites
+
+The ROADMAP's SC2 and `REQUIREMENTS.md`'s UI-03 both say "all five item types". `packages/pv-ui/vault/
+types.ts:4`'s `ItemType` union has **six**: `login | card | identity | note | totp | passkey`. This
+phase built five in the CREATE surface (`ItemCreationKind`, now in `ItemFormView.swift` after 38-11's
+retirement of the dedicated `TypePicker` view — passkeys are provider-minted, never hand-typed) and six
+in the DECODE surface (`ItemFields`, `ItemNormalize.swift`) — `scripts/check-item-type-parity.sh`
+enforces the render surface stays at six, deliberately narrower than the create surface's five.
+
+### SC3/SC4's own inherited proof-standard note
+
+Neither SC3 nor SC4 is reported as met on a green unit test over a mocked crypto boundary (QA-01).
+SC3's evidence is a live comparison against an INDEPENDENT oracle implementation, itself validated
+against published test vectors before being trusted, run through the REAL `pv-ffi` framework on the
+simulator. SC4's evidence is a four-check structural audit whose every arm was demonstrated able to
+fail by mutation — not a claim about randomness quality (CSPRNG statistical soundness is `pv-core`'s
+own, pre-existing, out-of-scope-for-this-phase property), only about which code path the generator
+actually calls.
+
+### Proof limitations (MP-1 style), recorded without softening
+
+- **Everything in this phase is simulator-only.** No verification of real rendering, real timing, or
+  real performance on a physical iPhone screen — the ROADMAP itself pre-declares this for Phase 38.
+- **E-S1 (SC5) observes the simulator's own SplashBoard/app-switcher snapshot mechanism.** Timing under
+  real memory pressure on a physical device is not covered and cannot be inferred from this.
+- **E-C1's clipboard-expiry result (38-07, UI-07) is what THIS simulator's `pasteboardd` daemon does.**
+  Device behavior is inferred, not observed. Eager-versus-lazy pasteboard expiry is not observable from
+  outside the daemon at all, on any platform, with any tool available here — recorded as permanently
+  unknown, not merely untested.
+- **If the newer iOS 26 search/dock chrome rendered during this phase's screenshot evidence, every
+  search-related screenshot documents THAT appearance, not the iOS 18 appearance a user on the
+  deployment floor (IOS-03's actual target) would see.** This phase's own dock work (38-06b) confirms
+  iOS 26 rendering was in fact what was captured.
+- **The Swift `String` holding a decrypted secret cannot be reliably zeroed once it leaves the UniFFI
+  boundary (DR-38-E).** 38-11's lock handler is the compensating control this phase actually built
+  (store wipe, nav truncation, sheet dismissal, reveal-set clear, key-handle release) — it is a
+  mitigation of the RISK, not a proof the underlying heap bytes are gone. Stated in writing rather than
+  silently absorbed, per DR-38-E's own text.
+- **The iOS 18 dock fallback (`AvailableFallbackCreateButton`) has never been on a screen.** This
+  machine has exactly one simulator runtime installed (`iOS 26.5`); the fallback code path is a
+  signature argument (it compiles against the SDK's own `@available` guards), not a picture. Recorded
+  as untested, not as working.
+- **Lock state 2 (Face ID actively presenting, mid-prompt) is undriven on this simulator.**
+  `BiometricUnlockService`'s own probe returns `-1020` (no enrolled biometry in this simulator/OS
+  combination) — this state has never been observed, forced-screenshot or otherwise, and is recorded as
+  undriven, never as passing.
+- **`XCUIElement.hasFocus` never becomes `true` in this harness** (no interactive WindowServer) —
+  `LockViewFocusUITests.swift`'s own header already documents this; state 4's focus-move behavior is
+  therefore unobservable by this tool, not merely unobserved.
+
+### Unclosed research gaps, named rather than silenced
+
+- **No mapping of the product's visual language onto the phone beyond the approved design's own
+  specification.** The design work (specs + `ios/brand/screens*.html`) exists and was largely followed,
+  but no systematic pass checked EVERY rendered screen pixel-for-pixel against the artifact; §3a's own
+  gap table (below) is the closest this project came, and it was produced by a human looking, not a
+  gate.
+- **No accessibility work beyond the TOTP countdown's own accessibility VALUES** (used as the
+  machine-readable surface for live, ticking UI state) and the AX5 forgot-password-warning height check
+  (38-13). VoiceOver labeling, Dynamic Type at extreme sizes, and reduce-motion behavior across the
+  vault surface were never systematically audited this phase.
+- **No list-performance measurement at realistic item counts with a one-second tick in a visible row.**
+  The dock fixture (`PV_UITEST_SEED_DOCK_LIST`) creates ~24 real items across all six types; no
+  measurement exists of scroll performance, memory, or TOTP-ring redraw cost at hundreds or thousands of
+  items, nor of what a `TimelineView`-driven ticking row costs when many are simultaneously visible.
+
+### §3a's gap table, reconciled row by row against what this phase actually closed
+
+`ios/IOS-SPIKE-LOG.md` §3a ("The visual layer was never verified") named seven open gaps as of
+2026-08-17, owned by 38-11's roll-up. Closed here:
+
+| Gap (§3a) | Closed by | Evidence |
+|---|---|---|
+| ＋ control: detached capsule → 3×3 grid, becomes ✕ | 38-06b (`50cb594`) | `ios/evidence/38/38-06b-panel-open*.png`; `VaultDockEvidenceUITests`/`VaultDockUITests` |
+| Search: dock accessory pill vs. inline bar | 38-06b (`50cb594`, `d78da22`) | `ios/evidence/38/38-06b-at-rest*.png` (magnifier-collapsed nav bar, one search affordance in content) |
+| Section index `L C 2 P I N` | 38-06 (`AvailableSectionIndexLabel`/`AvailableListSectionIndexVisibility`, iOS 26+ guarded) | `ItemListView.swift`'s `VaultSectionKind.indexLabel`; **iOS 26+ only, below-floor behavior is "omitted", not "broken"** — recorded, not closed, on iOS 18 |
+| Lock title/glyph/primary (state 1) | 38-13 | `docs/superpowers/specs/2026-08-16-ios-onboarding-and-auth-design.md`-driven `LockView.swift` rewrite, `ios/evidence/38/38-13-*` |
+| Lock state 3 (muted, biometry unavailable) | pre-existing before 38-11 (38-13's own `unlockBiometryUnavailableSlot`/`unlockNoPasscodeSlot`) | `LockView.swift`'s `statusSlot`, the `availability`-unavailable branch |
+| **Lock states 5/8, visually distinct** | **38-11 (addendum A3, this plan)** | `LockView.swift`'s `isOffline` branch, `.muted` tone, distinct from state 5's `.error`; `ios/evidence/38/lock-states-v4/38-11-lock-state-8-offline.png` |
+| Lock states 6/7 (throttled/no-passcode) | pre-existing before 38-11 (`throttledUntil`/`requiresDevicePasscode`, both real production properties, not new this plan) | `LockView.swift`'s `throttleRemaining`/`availability?.requiresDevicePasscode` branches |
+
+**Not closed, named openly rather than silently dropped:**
+- iOS 18 dock fallback — untested (no iOS 18 runtime on this machine), see proof limitations above.
+- VoiceOver on ＋ announcing the search role despite its "Create item" label — explicitly handed to
+  Phase 42's audit register by 38-06's own header note; not touched this plan.
+- `.searchable(isPresented:)` death after ＋ use — already documented in 38-06b; referenced, not
+  re-fixed (no acceptance criterion in this plan required it).
+- `family_wide_sharing.rs`'s pre-existing test-isolation flake (`deferred-items.md`) — stays deferred;
+  `crates/pv-server` is untouchable from this worktree.
+- E-W1's browser-rendered half (item and folder directions both) — still outstanding, `web/node_modules`
+  absent from this worktree.
