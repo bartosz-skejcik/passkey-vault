@@ -67,7 +67,7 @@ the two options and was chosen deliberately over a snapshot-of-current-members s
 
 ### MOD — The Share Dialog
 
-- [ ] **MOD-01**: The share dialog presents **one row per selected person, with an access-level select on the right of that row** — the product owner's explicit design. Access level is chosen per person, visibly, in place.
+- [x] **MOD-01**: The share dialog presents **one row per selected person, with an access-level select on the right of that row** — the product owner's explicit design. Access level is chosen per person, visibly, in place.
 - [ ] **MOD-02**: The dialog can target an **existing** shared folder, not only mint a new one. (Today every `ShareDialogScope` path calls `createCollection` — which is why folders proliferate.)
 - [ ] **MOD-03**: The dialog states honestly what each access level does, reusing the existing `access.readOnly` / `access.fullEdit` / `access.hiddenPassword` vocabulary — including that hidden-password is an interface protection, never a cryptographic one.
 
@@ -123,7 +123,7 @@ Phases 29–33 (`ROADMAP.md`). Every v0.5 requirement is mapped to exactly one p
 | FSH-04 | Phase 30 | Pending |
 | FSH-05 | Phase 30 | Pending |
 | FAM-10 | Phase 30 | Pending |
-| MOD-01 | Phase 31 | Pending |
+| MOD-01 | Phase 31 | Complete |
 | MOD-02 | Phase 31 | Pending |
 | MOD-03 | Phase 31 | Pending |
 | ORG-03 | Phase 31 | Pending |

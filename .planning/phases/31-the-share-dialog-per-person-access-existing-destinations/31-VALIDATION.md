@@ -47,8 +47,8 @@ created: 2026-08-12
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 31-01-T1 | 31-01 | 1 | MOD-01 (Q2) | T-31-01..05 | update_access/update_share round-trip + 404-not-upsert | server integration (TDD) | `cargo test --workspace --no-fail-fast` | ❌ new | ⬜ pending |
-| 31-01-T2 | 31-01 | 1 | MOD-01 (Q2) | T-31-01, T-31-02 | Full 9-pair matrix + item_bucket bound + self-escalation regression | server integration (TDD) + falsification | `cargo test --workspace --no-fail-fast` | ❌ new | ⬜ pending |
+| 31-01-T1 | 31-01 | 1 | MOD-01 (Q2) | T-31-01..05 | update_access/update_share round-trip + 404-not-upsert | server integration (TDD) | `cargo test --workspace --no-fail-fast` | ✅ new | ✅ done |
+| 31-01-T2 | 31-01 | 1 | MOD-01 (Q2) | T-31-01, T-31-02 | Full 9-pair matrix + item_bucket bound + self-escalation regression | server integration (TDD) + falsification | `cargo test --workspace --no-fail-fast` | ✅ new | ✅ done |
 | 31-02-T1 | 31-02 | 2 | MOD-01, MOD-03 | T-31-06, T-31-07, T-31-08 | Family-wide isolated to its own control; BOTH scopes migrated to the row model in one step (folder mint-new grant + item grant/update/revoke); hidden-password re-anchored to rows; single-scroll-region shell | unit + e2e (TDD) + falsification (dispatch-count) | `cd web && npm run compile && npm test && npm run build && npx playwright test e2e/sharing.spec.ts e2e/shared-sync.spec.ts e2e/export-disclosure.spec.ts e2e/family-wide-sharing.spec.ts --retries=0` | ❌ new markup | ⬜ pending |
 | 31-03-T1 | 31-03 | 3 | MOD-01, MOD-02 | T-31-09, T-31-10 | Destination selector + row re-seed on switch; folder-branch update/revoke reachability + dispatch-count proof | unit (TDD) + falsification | `cd web && npm run compile && npm test && npm run build && npx playwright test e2e/sharing.spec.ts e2e/shared-sync.spec.ts e2e/export-disclosure.spec.ts e2e/family-wide-sharing.spec.ts --retries=0` | ❌ new | ⬜ pending |
 | 31-03-T2 | 31-03 | 3 | ORG-03 (SC3) | T-31-11 | New recipient on existing destination decrypts pre-existing item | real-WASM + falsification | `cd web && npm run compile && npm test` (unit lane is correct here — this task extends a real-WASM test and changes no dialog markup, so no e2e spec can observe it) | ✅ extend | ⬜ pending |
@@ -69,7 +69,7 @@ created: 2026-08-12
 > `family-wide-sharing.spec.ts:373-376`'s mutual-exclusivity assertion passing vacuously against zero
 > elements once the list holds `<select>`s instead of checkboxes.
 
-Note: Q2's "no intermediate under/over-access window" claim is proven jointly by two task-level assertions, not one — the dispatch-level half (exactly one `updateCollectionAccess` call, zero revoke/grant calls, for the edited recipient) is a unit assertion in 31-03-T1 (folder branch) and 31-02-T2 (item branch); the end-state half (server reflects both changes correctly) is 31-06-T2's live e2e. A final-state-only read cannot distinguish an atomic update from a client-side revoke-then-re-add that converges on the same state, so the dispatch-level assertions are load-bearing, not redundant.
+Note: Q2's "no intermediate under/over-access window" claim is proven jointly by two task-level assertions, not one — the dispatch-level half (exactly one `updateCollectionAccess` call, zero revoke/grant calls, for the edited recipient) is a unit assertion in 31-03-T1 (folder branch) and 31-02-T1 (item branch); the end-state half (server reflects both changes correctly) is 31-06-T2's live e2e. A final-state-only read cannot distinguish an atomic update from a client-side revoke-then-re-add that converges on the same state, so the dispatch-level assertions are load-bearing, not redundant.
 
 ### Requirement → proof obligations (from RESEARCH.md, binding on the planner)
 

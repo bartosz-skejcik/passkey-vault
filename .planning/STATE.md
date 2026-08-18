@@ -5,16 +5,16 @@ milestone_name: Sharing That Makes Sense
 current_phase: 31
 current_phase_name: The Share Dialog — Per-Person Access, Existing Destinations
 status: phase_complete
-stopped_at: Phase 30 CLOSED -- verified 6/6 at 2026-08-12 after quick task 260812-01e + 15 code-review fixes; ready to start Phase 31
-last_updated: "2026-08-12T00:17:55.302Z"
-last_activity: 2026-08-12
-last_activity_desc: Quick task 260812-01e closed Phase 30 SC2's item-variant gap -- per-level item_bucket schema, contributor-edit-claim mechanism with two closed side doors, client level-keying, honest copy, and a live e2e proof (8/8 tasks, all falsification-proven)
+stopped_at: Completed 31-01-PLAN.md (Wave 1) -- PUT /access/{user_id} and PUT /shares/{user_id} in-place level editing, full auth-matrix coverage, falsification-proven
+last_updated: "2026-08-18T20:33:43.098Z"
+last_activity: 2026-08-11
+last_activity_desc: re-verify complete; four CI-width commands all exit 0; e2e 9/9 from a fresh
 progress:
   total_phases: 6
-  completed_phases: 3
-  total_plans: 23
-  completed_plans: 23
-  percent: 50
+  completed_phases: 2
+  total_plans: 30
+  completed_plans: 24
+  percent: 33
 ---
 
 # Project State
@@ -235,6 +235,7 @@ still carries `role="tablist"` (pre-existing Phase 28 code, Phase 33 scope).
 | Phase 28 P02 | 24min | 2 tasks | 6 files |
 | Phase 28 P03 | ~110min | 5 tasks | 13 files |
 | Phase 28 P04 | 18min | 5 tasks | 7 files |
+| Phase 31 P01 | 30min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -382,6 +383,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 28-03: sync-client.ts's/sync.ts's hasEverConfirmedFamilyMembership discriminant is armed by BOTH pullOnce()'s own success AND vault-store.ts's/store.ts's earlier refreshSharedItemsNow() via an exported markFamilyMembershipConfirmed() setter -- closes the plan-review two-call-site race blocker
 - [Phase ?]: 28-03: extension's family-removal e2e fixture uses a FRESH single-purpose target identity per call (never the shared MEMBER_B fixture sibling specs reuse), with the OWNER (not member A) creating the fixture's own collection, since the account submitting a real removal/suspend/reinstate batch must hold its own collection_keys row for every collection it acts on
 - [Phase ?]: Quick task 260812-01e closed Phase 30 SC2's item-variant gap: per-level item_bucket schema, contributor-edit-claim mechanism with two closed side doors, client level-keying, honest copy, and a live e2e proof (8 tasks, all falsification-proven).
+- [Phase ?]: 31-01: Two new PUT routes (collections::update_access, vault::update_share) close MOD-01's in-place level-edit gap via a single UPDATE, bounded identically to add_member/create_share.
 
 ### Pending Todos
 
@@ -466,10 +468,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Quick task 260812-01e complete -- Phase 30 SC2's item-variant defect closed, all 8 tasks falsification-proven, live e2e green (10/10)
+**Stopped at:** Completed 31-01-PLAN.md (Wave 1) -- PUT /access/{user_id} and PUT /shares/{user_id} in-place level editing, full auth-matrix coverage, falsification-proven
 **Resume file:** None
 
-Last session: 2026-08-12T00:17:39.445Z
+Last session: 2026-08-18T20:33:43.087Z
 27-13-PLAN.md (gap closure) executed: vault-store.ts::ensureSharedItemsHydrated() (the
 shared-side counterpart to the existing ensureItemsHydrated()) is now awaited by
 handleCredentialsGet, alongside ensureItemsHydrated(), before its candidate snapshot -- closing
