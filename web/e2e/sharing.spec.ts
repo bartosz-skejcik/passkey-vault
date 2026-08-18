@@ -1160,3 +1160,141 @@ test("SC2: submitting a share against an ALREADY-EXISTING destination adds a mem
 
   await owner.context.close();
 });
+
+// 31-04-PLAN.md Task 2 -- the phase's sixth, deliberately-unrecorded proof
+// obligation (31-CONTEXT.md's scope note): "brak dostępu" really revokes.
+// Live, two real sessions, positive-then-negative -- the member's OWN
+// client must genuinely read the shared content BEFORE the revoke, and
+// genuinely lose the ability to decrypt it on its own NEXT COMPLETED SYNC
+// (never a lock/unlock, never a reload) AFTER. Mirrors
+// family-wide-sharing.spec.ts's own established positive-anchor/negative-
+// anchor shape (that file's "revocation: a member REMOVED by the owner..."
+// test, lines ~1216-1314, is the direct precedent to follow, not
+// re-derive independently) -- but this file does not import that spec's
+// helpers: a small, local `assertRecipientDecrypts`-equivalent lives here,
+// per this codebase's own established per-file-owns-its-own-tiny-helper
+// convention (already used throughout this file).
+async function assertRecipientDecrypts(
+  page: Page,
+  itemId: string,
+  itemName: string,
+  password: string,
+  because: string,
+): Promise<void> {
+  const row = page.getByTestId(`item-row-${itemId}`);
+  await expect(row, because).toBeVisible({ timeout: 90000 });
+  await expect(
+    row,
+    `${because} -- and the row must carry the REAL decrypted name, not a raw id or placeholder`,
+  ).toContainText(itemName);
+
+  await row.click();
+  await page.getByTestId("detail-panel").waitFor({ state: "visible" });
+  await page.getByTestId("reveal-password").click();
+  await expect(
+    page.getByTestId("detail-panel").getByText(password, { exact: true }),
+    `${because} -- and the REAL decrypted password must be readable, which only a genuine key unwrap can produce`,
+  ).toBeVisible();
+  await page.getByTestId("detail-panel-close").click();
+}
+
+test("the sixth proof obligation: setting a member with existing access to 'Brak dostępu' and saving revokes it live -- a real second session reads it for real BEFORE, and genuinely loses the ability to decrypt it on its own NEXT COMPLETED SYNC AFTER (no reload)", async ({
+  twoSessions,
+  browser,
+}) => {
+  test.setTimeout(180_000);
+
+  const [, member] = twoSessions;
+  const memberToken = await tokenFor(member.page);
+  const memberUserId = await userIdFor(member.context, memberToken);
+
+  await ensureFamilyMembership(browser, [memberUserId]);
+  await waitForIdentityKeyPublished(member.context, memberToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+
+  const suffix = uniqueSuffix();
+  const itemName = `PV E2E Revoke Sixth Item ${suffix}`;
+  const itemPassword = `pw-revoke-sixth-${suffix}`;
+  const personalFolderName = `PV E2E Revoke Sixth Seed Folder ${suffix}`;
+  const sharedFolderName = `PV E2E Revoke Sixth Shared Folder ${suffix}`;
+
+  // 1. Owner creates a real shared folder, shares it with the member at
+  //    "read" via the redesigned dialog (destination selector defaults to
+  //    "Nowy folder…", the member's row set to access.readOnly).
+  const itemsBefore = await listItemIds(owner.context, ownerToken);
+  await createLoginItemViaUI(owner.page, itemName, itemPassword);
+  const itemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+  const foldersBefore = await listFolderIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-folders").click();
+  await createFolderViaUI(owner.page, personalFolderName);
+  const folderId = await newIdAfter(foldersBefore, () => listFolderIds(owner.context, ownerToken));
+  await moveItemToFolder(owner.page, itemId, folderId);
+
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+  await shareExistingFolderWithMember(owner.page, folderId, memberUserId, "read", sharedFolderName);
+  const destinationId = await newIdAfter(collectionsBefore, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 2. BEFORE the positive anchor, relockAndUnlock the member's session --
+  //    this file's own `reloadAndUnlock` is the reload-and-unlock
+  //    equivalent already established here, and is itself an "unlock
+  //    transition" (this file's header comment / SHARE-01 test above).
+  //    family-wide-sharing.spec.ts:1264-1274 documents directly that
+  //    `refreshCollectionsNow()` fires only on the sharer's own submit, an
+  //    unlock transition, or the pending/reseal path, never a passive
+  //    session's ambient poll -- without this step the member's session may
+  //    never discover the brand-new collection at all, and the positive
+  //    anchor below would be untestable rather than merely slow.
+  await reloadAndUnlock(member.page, SESSION_PASSWORD);
+
+  await assertRecipientDecrypts(
+    member.page,
+    itemId,
+    itemName,
+    itemPassword,
+    "positive anchor: the member's own session must genuinely read the shared item BEFORE any revoke",
+  );
+
+  // 3. Owner reopens ShareDialog against the SAME existing folder (via the
+  //    destination selector's "Istniejące foldery" group), sets the
+  //    member's row to access.none ("Brak dostępu"), and saves -- assert
+  //    share-pending-revocations-summary is visible and names this member
+  //    BEFORE Save is clicked, queried while share-dialog is still mounted
+  //    (never after waitFor({ state: "detached" })).
+  await owner.page.getByTestId("sidebar-nav-shared-folders").click();
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-destination-select").selectOption(destinationId);
+  await owner.page
+    .getByTestId(`share-recipient-row-currently-${memberUserId}`)
+    .waitFor({ state: "visible", timeout: 20000 });
+  await owner.page.getByTestId(`share-recipient-row-select-${memberUserId}`).selectOption("none");
+
+  const summary = owner.page.getByTestId("share-pending-revocations-summary");
+  await expect(
+    summary,
+    "the pending-revocations summary must be visible, naming this member, BEFORE Save is clicked, while share-dialog is still mounted",
+  ).toBeVisible();
+  await expect(summary).toContainText(member.email);
+
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  // 4. On the member's OWN still-open session (no reload this time -- the
+  //    next completed sync), assert the item disappears -- negative
+  //    anchor. Mirrors family-wide-sharing.spec.ts's proven
+  //    `item-row-${id}` `toHaveCount(0, { timeout: 60000 })` pattern.
+  await expect(
+    member.page.getByTestId(`item-row-${itemId}`),
+    "negative anchor: the revoked member's own still-open session must lose the ability to see the shared item on its own NEXT COMPLETED SYNC, no reload",
+  ).toHaveCount(0, { timeout: 60000 });
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(member.dialogFired(), "zero OS-level dialogs across the member session").toBe(false);
+  await owner.context.close();
+});
