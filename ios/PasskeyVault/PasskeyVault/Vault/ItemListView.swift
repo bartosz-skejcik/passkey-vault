@@ -286,7 +286,12 @@ struct ItemListView: View {
     }
 
     @State private var statusMessage: String?
-    @State private var copyConfirmation: String?
+    /// CR-03 fix: was `String?`, written once at :1274 and never rendered
+    /// anywhere -- the list/context-menu copy path now routes through
+    /// `ClipboardService` (same choke point `ItemDetailView` uses), so this
+    /// carries the same `ClipboardConfirmation` type and is actually shown
+    /// (see `copyConfirmationBanner` below).
+    @State private var copyConfirmation: ClipboardConfirmation?
 
     // MARK: TEMPORARY tracer create bar (see file header)
 
@@ -368,6 +373,17 @@ struct ItemListView: View {
                             // behind a flag the test controls does not.
                             .safeAreaInset(edge: .bottom) {
                                 if tab == .all, Self.showsTracerCreateBar { createBar }
+                            }
+                            // CR-03 fix: the list/context-menu copy
+                            // confirmation now renders -- previously
+                            // `copyConfirmation` was written at :1274-ish
+                            // and never read anywhere in this file.
+                            .safeAreaInset(edge: .bottom) {
+                                if let copyConfirmation {
+                                    copyConfirmationBanner(copyConfirmation)
+                                        .padding(.horizontal)
+                                        .padding(.bottom, 4)
+                                }
                             }
                             .modifier(AvailableVaultSearchable(
                                 text: $root.searchText,
@@ -1256,22 +1272,53 @@ struct ItemListView: View {
         }
     }
 
-    /// A conservative, auto-expiring pasteboard write -- the sanctioned
-    /// mechanism the research doc names (`UIPasteboard.setObjects(_:
-    /// localOnly:expirationDate:)`, `UIKit.swiftinterface:5632`, iOS 11,
-    /// "equivalent for a plain string"), used directly rather than waiting
-    /// on 38-07's dedicated `ClipboardService` (UI-07's auto-clear timer,
-    /// reveal-state wiring, `ClipboardServiceTests.swift`). 40 seconds
-    /// matches this codebase's own established default clipboard timeout
-    /// (`web/src/lib/idle/autolock.ts`'s sibling constant, "clamped 30-60,
-    /// default 40" per the research doc). `localOnly: true` -- a copied
-    /// secret must never propagate to a paired Mac/other device via
-    /// Universal Clipboard.
+    /// CR-03 fix: routes through the SAME choke point `ItemDetailView
+    /// .copySecret` uses -- `ClipboardService` sets BOTH clearing
+    /// mechanisms (the pasteboard's own `expirationDate` AND the in-app,
+    /// change-counter-guarded timer; `ClipboardService`'s own header:
+    /// "Neither alone is sufficient", T-38-07-01) and reads the user's
+    /// configured interval from `ClipboardSettings` instead of a hardcoded
+    /// 40s. Previously wrote the system pasteboard directly with only its
+    /// own expiry set, and wrote `copyConfirmation` to a `String` nothing
+    /// ever rendered.
     private func copySecret(_ value: String, fieldLabel: String) {
-        UIPasteboard.general.setObjects(
-            [value], localOnly: true, expirationDate: Date().addingTimeInterval(40)
-        )
-        copyConfirmation = "Copied \(fieldLabel)"
+        guard !value.isEmpty else { return }
+        let deadline = ClipboardService.shared.copy(value, fieldLabel: fieldLabel)
+        copyConfirmation = ClipboardConfirmation(fieldLabel: fieldLabel, deadline: deadline)
+    }
+
+    /// The list-screen twin of `ItemDetailView.copyConfirmationBanner` --
+    /// same live-countdown-derived-from-the-deadline discipline (never a
+    /// locally decremented counter), same `ClipboardWording.confirmation`
+    /// disclosure. Kept as its own small view rather than sharing
+    /// `ItemDetailView`'s private function so this fix stays scoped to the
+    /// file CR-03 names.
+    @ViewBuilder
+    private func copyConfirmationBanner(_ confirmation: ClipboardConfirmation) -> some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let remaining = ClipboardService.remainingSeconds(deadline: confirmation.deadline, now: context.date)
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Color("PVSuccess"))
+                Text(verbatim: ClipboardWording.confirmation(
+                    fieldLabel: confirmation.fieldLabel, remainingSeconds: remaining
+                ))
+                    .font(.caption)
+                    .foregroundStyle(Color("PVTextMuted"))
+                Spacer(minLength: 0)
+                Button {
+                    ClipboardService.shared.dismissConfirmation()
+                    self.copyConfirmation = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .foregroundStyle(Color("PVTextMuted"))
+                }
+                .accessibilityIdentifier("vault.list.copyConfirmation.dismiss")
+            }
+            .padding(10)
+            .background(Color("PVSurfaceAlt"), in: RoundedRectangle(cornerRadius: 10))
+            .accessibilityIdentifier("vault.list.copyConfirmation")
+        }
     }
 
     // MARK: - Search suggestions (tags)
