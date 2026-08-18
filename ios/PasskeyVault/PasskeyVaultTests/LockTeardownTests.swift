@@ -165,6 +165,102 @@ struct LockTeardownTests {
         }
     }
 
+    // MARK: - CR-02 (38-REVIEW.md): a lock landing WHILE a mutation is
+    // in-flight must not resurrect decrypted plaintext into the torn-down
+    // store.
+
+    /// A transport whose response is deliberately DELAYED, so `store.lock()`
+    /// can be forced to land while `create`/`refresh` is suspended at its
+    /// `await` -- reproducing CR-02's exact race without depending on real
+    /// network timing. Same canned bodies as `LockTeardownStubURLProtocol`.
+    final class DelayedLockRaceStubURLProtocol: URLProtocol, @unchecked Sendable {
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            let path = request.url?.path ?? ""
+            let (status, body): (Int, Data)
+            if path.hasSuffix("/items") {
+                status = 201
+                body = Data(
+                    #"{"id":"cr02-race-fixture","revision":1,"updated_at":"2026-01-01T00:00:00Z"}"#
+                        .utf8
+                )
+            } else {
+                status = 200
+                body = Data(#"{"revision":7}"#.utf8)
+            }
+            // Deliberately slow -- long enough that the test's own
+            // `store.lock()` call, issued right after kicking off the
+            // async operation and a short `Task.sleep`, always lands
+            // BEFORE this response arrives.
+            Thread.sleep(forTimeInterval: 0.3)
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: status, httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        override func stopLoading() {}
+    }
+
+    private static func delayedRaceApi() -> VaultAPI {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [DelayedLockRaceStubURLProtocol.self]
+        let session = URLSession(configuration: config)
+        return VaultAPI(baseURL: fakeBaseURL, tokenProvider: { "fake-token" }, session: session)
+    }
+
+    /// RED-before-green: before the CR-02 fix, `store.items` was NOT empty
+    /// here -- `create`'s post-`await` bookkeeping ran unconditionally and
+    /// re-inserted the decrypted plaintext item after `lock()` had already
+    /// torn the store down.
+    @Test
+    func aLockDuringAnInFlightCreateLeavesTheStoreEmptyRatherThanResurrectingPlaintext() async throws {
+        let userKey = try FfiUserKey.generate()
+        let store = VaultStore(userKey: userKey, api: Self.delayedRaceApi())
+
+        let createTask = Task { try await store.create(fields: Self.noteFields()) }
+
+        // Give the awaited network call a chance to actually start (the
+        // task scheduled and suspended at its `await`) before locking --
+        // the stub's own 0.3s delay is what guarantees the lock always
+        // wins the race.
+        try await Task.sleep(nanoseconds: 50_000_000)
+        store.lock()
+
+        _ = try await createTask.value
+
+        #expect(
+            store.items.isEmpty,
+            "a lock landing mid-create must not be undone by create's post-await bookkeeping"
+        )
+        #expect(!store.isHydrated)
+    }
+
+    /// Same race, for `refresh()`: before the CR-02 fix, `isHydrated` was
+    /// resurrected to `true` (and, on a `.snapshot` response, `items`
+    /// repopulated) even though `lock()` had already run.
+    @Test
+    func aLockDuringAnInFlightRefreshDoesNotResurrectHydration() async throws {
+        let userKey = try FfiUserKey.generate()
+        let store = VaultStore(userKey: userKey, api: Self.delayedRaceApi())
+
+        let refreshTask = Task { try await store.refresh() }
+
+        try await Task.sleep(nanoseconds: 50_000_000)
+        store.lock()
+
+        try await refreshTask.value
+
+        #expect(!store.isHydrated, "a lock landing mid-refresh must not be undone by refresh's post-await bookkeeping")
+        #expect(store.items.isEmpty)
+        #expect(store.lastKnownRevision == 0)
+    }
+
     // MARK: - FolderStore.lock()
 
     @Test

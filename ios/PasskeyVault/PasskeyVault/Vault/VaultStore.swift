@@ -170,6 +170,16 @@ final class VaultStore {
         )
 
         let item = VaultItemViewModel(id: id, revision: 1, content: .fields(fields))
+
+        // CR-02 fix: re-check the lock immediately after the `await` and
+        // before touching `self` -- the `guard let userKey` above binds a
+        // LOCAL that survives the suspension point, so `lock()` setting
+        // `self.userKey = nil` does not by itself stop this bookkeeping.
+        // If a lock landed while the write was in flight, the server write
+        // already stands (nothing to undo), but the local store must stay
+        // torn down rather than re-populated with decrypted plaintext.
+        guard self.userKey != nil else { return item }
+
         // Post-commit bookkeeping: the server write has already been
         // accepted, so a local failure here must never be reported as a
         // failed creation (the web client's `createVaultItem` carries the
@@ -236,6 +246,15 @@ final class VaultStore {
             sharedToMe: item.sharedToMe,
             accessLevel: item.accessLevel
         )
+
+        // CR-02 fix: same re-check as `create` -- the `guard let userKey`
+        // above bound a LOCAL that survived the `await`, so a `lock()`
+        // mid-flight left this bookkeeping unconditional and re-inserted
+        // decrypted plaintext into a store that had already been torn
+        // down. The server write stands either way; only the LOCAL
+        // mutation is gated.
+        guard self.userKey != nil else { return updated }
+
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             items[index] = updated
         } else {
@@ -309,6 +328,16 @@ final class VaultStore {
         #endif
         guard userKey != nil else { throw VaultStoreError.locked }
         let response = try await api.sync(since: lastKnownRevision)
+
+        // CR-02 fix: re-check the lock immediately after the `await` and
+        // before touching `self` -- without this, a lock landing while the
+        // pull is in flight left `isHydrated` resurrected to `true` (and,
+        // on a `.snapshot` response, `items` repopulated with decrypted
+        // plaintext) AFTER the lock had explicitly cleared both. A quiet
+        // early return here is correct, not an error: the lock itself is
+        // what invalidated this in-flight read, not a network failure.
+        guard userKey != nil else { return }
+
         switch response {
         case let .upToDate(revision):
             lastKnownRevision = revision

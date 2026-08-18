@@ -103,6 +103,15 @@ final class FolderStore {
         _ = try await api.createFolder(id: id, encNameJson: combined)
 
         let folder = Folder(id: id, name: name)
+
+        // CR-02 fix (same shape as `VaultStore.create`): re-check the lock
+        // immediately after the `await` and before touching `self` -- the
+        // `guard let userKey` above bound a LOCAL that survived the
+        // suspension point, so a `lock()` mid-flight left this bookkeeping
+        // unconditional and re-inserted a decrypted plaintext folder name
+        // into a store that had already been torn down.
+        guard self.userKey != nil else { return folder }
+
         // Post-commit bookkeeping only after the server has already
         // accepted the write -- same discipline as VaultStore.create.
         folders.append(folder)
