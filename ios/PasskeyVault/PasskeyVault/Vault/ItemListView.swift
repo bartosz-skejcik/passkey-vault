@@ -285,7 +285,34 @@ struct ItemListView: View {
         #endif
     }
 
-    @State private var statusMessage: String?
+    /// WR-05 (38-REVIEW.md, iteration 2): a typed, dismissable, tone-correct
+    /// replacement for the old bare `String?` -- that variable was written
+    /// for a DEBUG tracer bar (never cleared, no dismiss, rendered in
+    /// `.error` tone unconditionally) and the WR-01 fix made it visible on
+    /// every build without giving it any of the properties a Release-visible
+    /// error channel needs. `id` makes it `Identifiable` for `.sheet(item:)`-
+    /// style call sites and gives `SwiftUI` a stable identity across
+    /// consecutive DIFFERENT failures with the same text.
+    private struct StatusBanner: Identifiable {
+        let id = UUID()
+        let text: String
+        let tone: StatusCallout.Tone
+    }
+
+    /// Production error channel: refresh/move/delete failures ONLY. Cleared
+    /// on the next successful operation and on the banner's own dismiss
+    /// button -- never left pinned across a successful retry the way the old
+    /// `statusMessage` was.
+    @State private var statusBanner: StatusBanner?
+    /// The tracer create bar's OWN message, deliberately separate from
+    /// `statusBanner` -- `createBar` is opt-in behind
+    /// `PV_UITEST_TRACER_CREATE_BAR` (a DEBUG-only env var; the view itself,
+    /// like `isCreating`/`newItemMarker` above, stays unconditionally
+    /// compiled) and its "created <id>" success text has no business
+    /// rendering in `StatusCallout(tone: .error)` (WR-05 point 4: before
+    /// this split, a DEBUG success message rendered twice, once here and
+    /// once in the general inset, both in the error tone).
+    @State private var tracerStatusMessage: String?
     /// CR-03 fix: was `String?`, written once at :1274 and never rendered
     /// anywhere -- the list/context-menu copy path now routes through
     /// `ClipboardService` (same choke point `ItemDetailView` uses), so this
@@ -393,9 +420,15 @@ struct ItemListView: View {
                             // failures) wrote to a variable nothing could
                             // ever display. This inset is unconditional, on
                             // every build, every tab.
+                            //
+                            // WR-05 (iteration 2): `statusBanner` replaces
+                            // the old bare `String?` -- typed tone, a
+                            // dismiss button (`statusBannerView` below),
+                            // and cleared on the next successful operation
+                            // rather than pinned for the life of the view.
                             .safeAreaInset(edge: .bottom) {
-                                if let statusMessage {
-                                    StatusCallout(text: statusMessage, tone: .error)
+                                if let statusBanner {
+                                    statusBannerView(statusBanner)
                                         .padding(.horizontal)
                                         .padding(.bottom, 4)
                                 }
@@ -1344,6 +1377,46 @@ struct ItemListView: View {
         }
     }
 
+    /// WR-05 (38-REVIEW.md, iteration 2): the dismiss affordance
+    /// `statusBanner`'s sibling `copyConfirmationBanner` already has and
+    /// this channel previously lacked entirely.
+    @ViewBuilder
+    private func statusBannerView(_ banner: StatusBanner) -> some View {
+        HStack(alignment: .top, spacing: 4) {
+            StatusCallout(text: banner.text, tone: banner.tone)
+            Button {
+                statusBanner = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.footnote)
+                    .foregroundStyle(Color(banner.tone.token))
+            }
+            .padding(.top, 11)
+            .padding(.trailing, 4)
+            .accessibilityIdentifier("vault.list.statusBanner.dismiss")
+        }
+        .accessibilityIdentifier("vault.list.statusBanner")
+    }
+
+    /// WR-05 (38-REVIEW.md, iteration 2): maps a thrown error to copy safe
+    /// to put in front of a user -- never the raw text a throw carries.
+    /// `PvApiError.httpError`'s `message` is the VERBATIM server response
+    /// body (`PvApiClient.swift`'s own header on that type); this file
+    /// previously interpolated `\(error)` directly, which rendered that
+    /// body on screen in Release. Every other error type already carries a
+    /// hand-written, user-safe `description` (`VaultStoreError`,
+    /// `VaultAPIError`) and is passed through unchanged; only the raw-body
+    /// case is intercepted.
+    private func userFacing(_ error: Error) -> String {
+        if let apiError = error as? PvApiError, case .httpError = apiError {
+            return "The server couldn't complete this request. Please try again."
+        }
+        if let described = error as? CustomStringConvertible {
+            return described.description
+        }
+        return "Something went wrong. Please try again."
+    }
+
     // MARK: - Search suggestions (tags)
 
     @ViewBuilder
@@ -1373,8 +1446,8 @@ struct ItemListView: View {
     @ViewBuilder
     private var createBar: some View {
         VStack(spacing: 8) {
-            if let statusMessage {
-                Text(verbatim: statusMessage)
+            if let tracerStatusMessage {
+                Text(verbatim: tracerStatusMessage)
                     .font(.caption)
                     .foregroundStyle(Color("PVTextMuted"))
             }
@@ -1408,10 +1481,10 @@ struct ItemListView: View {
                 noteNamed: newItemMarker,
                 body: "created on iOS at \(Date().ISO8601Format())"
             )
-            statusMessage = "created \(created.id)"
+            tracerStatusMessage = "created \(created.id)"
             newItemMarker = ""
         } catch {
-            statusMessage = "create failed: \(error)"
+            tracerStatusMessage = "create failed: \(error)"
         }
     }
 
@@ -1444,8 +1517,9 @@ struct ItemListView: View {
     private func refresh() async {
         do {
             try await store.refresh()
+            statusBanner = nil
         } catch {
-            statusMessage = "refresh failed: \(error)"
+            statusBanner = StatusBanner(text: "Couldn't refresh the vault. \(userFacing(error))", tone: .error)
         }
     }
 
@@ -1466,8 +1540,9 @@ struct ItemListView: View {
         }
         do {
             try await store.update(item, fields: updated)
+            statusBanner = nil
         } catch {
-            statusMessage = "move to folder failed: \(error)"
+            statusBanner = StatusBanner(text: "Couldn't move this item. \(userFacing(error))", tone: .error)
         }
     }
 
@@ -1478,8 +1553,9 @@ struct ItemListView: View {
             if root.selection?.id == item.id {
                 root.selection = nil
             }
+            statusBanner = nil
         } catch {
-            statusMessage = "delete failed: \(error)"
+            statusBanner = StatusBanner(text: "Couldn't delete this item. \(userFacing(error))", tone: .error)
         }
     }
 }
