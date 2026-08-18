@@ -1006,3 +1006,157 @@ test("owner revokes a directly-shared ITEM's access via the Sharing overview's B
   expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
   expect(recipient.dialogFired(), "zero OS-level dialogs across the recipient session").toBe(false);
 });
+
+// 31-03-PLAN.md Task 3 -- SC1 (MOD-01) and SC2 (MOD-02), live against a real
+// pv-server, real second/third accounts, and the real destination selector
+// (31-UI-SPEC.md) this plan's Task 1 built. Both tests open the dialog via
+// `sidebar-new-shared-folder-button` -- the SAME generic "+ Nowy
+// udostępniony folder" entry point Sidebar.tsx wires to `{ kind: "folder",
+// existingFolderId: null }`, the scope the destination selector actually
+// renders for.
+test("SC1: two real recipients, each set to a DIFFERENT level in ONE dialog submission, land on the server at THEIR OWN chosen level (MOD-01)", async ({
+  twoSessions,
+  browser,
+}) => {
+  const [memberA, memberB] = twoSessions;
+  const memberAToken = await tokenFor(memberA.page);
+  const memberBToken = await tokenFor(memberB.page);
+  const memberAUserId = await userIdFor(memberA.context, memberAToken);
+  const memberBUserId = await userIdFor(memberB.context, memberBToken);
+
+  await ensureFamilyMembership(browser, [memberAUserId, memberBUserId]);
+  await waitForIdentityKeyPublished(memberA.context, memberAToken);
+  await waitForIdentityKeyPublished(memberB.context, memberBToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+
+  const suffix = uniqueSuffix();
+  const sharedFolderName = `PV E2E SC1 Folder ${suffix}`;
+
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-shared-folders").click();
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-folder-name-input").fill(sharedFolderName);
+  // Each row's OWN select, set to a DIFFERENT level -- the exact shape SC1
+  // requires and the old shared-radio dialog structurally could not offer.
+  await owner.page.getByTestId(`share-recipient-row-select-${memberAUserId}`).selectOption("edit");
+  await owner.page.getByTestId(`share-recipient-row-select-${memberBUserId}`).selectOption("read");
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  const collectionId = await newIdAfter(collectionsBefore, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // The server-state read SC1 requires -- never inferred from the UI.
+  const accessRes = await apiGet(
+    owner.context.request,
+    `/api/vault/collections/${collectionId}/access`,
+    ownerToken,
+  );
+  expect(accessRes.status(), "GET .../access must succeed for the owner's own token").toBe(200);
+  const accessList = (await accessRes.json()) as { user_id: string; access_level: string }[];
+  const entryA = accessList.find((a) => a.user_id === memberAUserId);
+  const entryB = accessList.find((a) => a.user_id === memberBUserId);
+  expect(
+    entryA?.access_level,
+    "member A's own row chose edit -- must land at edit, never member B's level",
+  ).toBe("edit");
+  expect(
+    entryB?.access_level,
+    "member B's own row chose read -- must land at read, never member A's level",
+  ).toBe("read");
+
+  await owner.context.close();
+});
+
+test("SC2: submitting a share against an ALREADY-EXISTING destination adds a member without creating a new collection (MOD-02)", async ({
+  twoSessions,
+  browser,
+}) => {
+  const [memberA, memberB] = twoSessions;
+  const memberAToken = await tokenFor(memberA.page);
+  const memberBToken = await tokenFor(memberB.page);
+  const memberAUserId = await userIdFor(memberA.context, memberAToken);
+  const memberBUserId = await userIdFor(memberB.context, memberBToken);
+
+  await ensureFamilyMembership(browser, [memberAUserId, memberBUserId]);
+  await waitForIdentityKeyPublished(memberA.context, memberAToken);
+  await waitForIdentityKeyPublished(memberB.context, memberBToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+
+  const suffix = uniqueSuffix();
+  const destinationName = `PV E2E SC2 Destination ${suffix}`;
+
+  // 1. Establish the EXISTING destination -- member A at edit -- through the
+  //    SAME "mint new" path SC1 above exercises.
+  const collectionsBaseline = await listCollectionIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-shared-folders").click();
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-folder-name-input").fill(destinationName);
+  await owner.page.getByTestId(`share-recipient-row-select-${memberAUserId}`).selectOption("edit");
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  const destinationId = await newIdAfter(collectionsBaseline, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 2. SC2's own BEFORE snapshot -- captured immediately before opening the
+  //    dialog against the ALREADY-EXISTING destination, per the plan's own
+  //    falsifiable-by-construction assertion shape ("the collection count is
+  //    equal before and after").
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  // The destination selector's "Istniejące foldery" group -- selecting the
+  // PRE-CHOSEN destination re-seeds the rows from its real access list
+  // (31-03-PLAN.md's own re-seed contract); waiting for member A's OWN
+  // "Currently: …" text is the honest signal that fetch has resolved,
+  // rather than an arbitrary timeout.
+  await owner.page.getByTestId("share-destination-select").selectOption(destinationId);
+  await owner.page
+    .getByTestId(`share-recipient-row-currently-${memberAUserId}`)
+    .waitFor({ state: "visible", timeout: 20000 });
+  await owner.page.getByTestId(`share-recipient-row-select-${memberBUserId}`).selectOption("read");
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  const collectionsAfter = await listCollectionIds(owner.context, ownerToken);
+  expect(
+    collectionsAfter.length,
+    "SC2: targeting an EXISTING destination must never mint a new collection",
+  ).toBe(collectionsBefore.length);
+  expect(
+    new Set(collectionsAfter),
+    "SC2: the exact SAME collection id set, never a freshly minted id added to it",
+  ).toEqual(new Set(collectionsBefore));
+
+  // The newly-created collection_keys row's collection_id equals the
+  // PRE-CHOSEN destination id -- proven by its presence in THAT
+  // destination's own access list (a row minted under any OTHER collection
+  // id would neither appear here NOR grow `collectionsAfter`'s count, which
+  // the assertion above already forecloses).
+  const accessRes = await apiGet(
+    owner.context.request,
+    `/api/vault/collections/${destinationId}/access`,
+    ownerToken,
+  );
+  expect(accessRes.status()).toBe(200);
+  const accessList = (await accessRes.json()) as { user_id: string; access_level: string }[];
+  const entryB = accessList.find((a) => a.user_id === memberBUserId);
+  expect(
+    entryB?.access_level,
+    "member B's grant must land on the PRE-CHOSEN destination, at their own row's chosen level",
+  ).toBe("read");
+
+  await owner.context.close();
+});
