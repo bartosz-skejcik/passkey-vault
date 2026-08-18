@@ -77,6 +77,12 @@ struct ContentView: View {
 
     private func determineRoute() async {
         #if DEBUG
+        // Plan 39-04, Task 2: fires off `scripts/ios-ws-push-proof.sh`'s
+        // own sign-in-and-hold-a-socket-open probe, if requested via env
+        // var -- see `LiveSyncProbe.swift`'s own header. Runs in its own
+        // detached `Task`, never blocking this routing call, so the normal
+        // onboarding/auth/lock flow below is unaffected either way.
+        LiveSyncProbe.runIfRequested()
         // TEST-ONLY (Task 5 screenshot matrix, `ios/evidence/37/`): forces the
         // router's outcome deterministically so the UI-test driver never
         // depends on a live server or a real stored session -- mirrors the

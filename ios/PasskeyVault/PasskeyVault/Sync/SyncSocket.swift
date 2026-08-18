@@ -285,11 +285,10 @@ final class SyncSocket {
 extension SyncSocket {
     /// `pv-server` does not read headers for this endpoint even though
     /// `URLSessionWebSocketTask` CAN set them (`sync.rs:587-604` reads
-    /// `?token=`) -- the query is not a choice. Session tokens are
-    /// standard-alphabet encoded; a raw `+` in a query string decodes as a
-    /// space and yields a spurious 401 (05-02's own deviation flag, carried
-    /// over unchanged) -- `URLComponents`' query-item machinery does the
-    /// percent-encoding, never string concatenation.
+    /// `?token=`) -- the query is not a choice. Built through
+    /// `URLComponents`, never string concatenation -- see the L-23 comment
+    /// below for why the DEFAULT `.queryItems` percent-encoding is not
+    /// enough by itself on this platform.
     static func wsURL(base: URL, token: String?) -> URL? {
         guard let token, !token.isEmpty else { return nil }
         guard
@@ -306,7 +305,28 @@ extension SyncSocket {
         case "http": components.scheme = "ws"
         default: break
         }
-        components.queryItems = [URLQueryItem(name: "token", value: token)]
+        // L-23 (found live, Task 2, ios/IOS-SPIKE-LOG.md Sec 3): `URLComponents.queryItems` percent-
+        // encodes using the GENERIC URI query allowed-character set, which
+        // treats `+` as a character that needs NO escaping -- because RFC
+        // 3986 permits it unescaped in a query component. `pv-server`'s
+        // `axum::extract::Query` decodes query strings with
+        // `application/x-www-form-urlencoded` semantics instead (via
+        // `serde_urlencoded`), where an UNESCAPED `+` decodes as a SPACE --
+        // this is exactly the class of bug 05-02 already flagged for the web
+        // client (which avoids it via `encodeURIComponent`, whose escaped
+        // set DOES include `+`). `.queryItems` alone does not close this
+        // gap on this platform: verified live, a session token containing
+        // `+` round-tripped through `.queryItems` reached the server as a
+        // literal `+`, decoded server-side as a space, and the socket
+        // upgrade failed with 401 (a real login token, not a hypothetical).
+        // The fix is `.percentEncodedQueryItems` with `+` explicitly
+        // excluded from the allowed set BEFORE handing the value to
+        // `URLComponents` -- still URL-component construction, never string
+        // concatenation, just a stricter allowed-character set than
+        // `.urlQueryAllowed`'s default.
+        let allowedInQuery = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "+&=?"))
+        let encodedToken = token.addingPercentEncoding(withAllowedCharacters: allowedInQuery) ?? token
+        components.percentEncodedQueryItems = [URLQueryItem(name: "token", value: encodedToken)]
         return components.url
     }
 }

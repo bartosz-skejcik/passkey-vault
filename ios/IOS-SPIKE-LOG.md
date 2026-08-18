@@ -2915,6 +2915,55 @@ are recorded verbatim in `ios/evidence/39/01-server-contract.md`.
 **Consequence for 39-03's decoder:** decode `SyncResponse` as a genuine two-case enum (or an equivalent
 presence-checked branch), never as one struct with `items: [Item]?` defaulted to `[]` on `nil`.
 
+### L-23 -- `URLComponents.queryItems` does not escape `+`, and `pv-server`'s query decoder reads it as a space
+
+**Found 2026-08-18, Phase 39, Plan 39-04, Task 1/2, live.** 39-04-PLAN.md's own code example (`### The WS URL`)
+asserted "`URLComponents` percent-encodes" as if that alone closed the 05-02 hazard (a raw `+` in a query string
+decoding as a space). It does not, on this platform: `URLComponents.queryItems`/`.url` percent-encodes a query
+value using the GENERIC URI query allowed-character set (RFC 3986), which does **not** require escaping `+` --
+unlike JavaScript's `encodeURIComponent` (what the web and extension clients actually use), whose escaped set
+does include `+`. `pv-server`'s `axum::extract::Query` decodes the query string with
+`application/x-www-form-urlencoded` semantics (`serde_urlencoded`), where an unescaped `+` decodes as a SPACE.
+
+**Verified live, not inferred:** a real session token containing `+`, built via `SyncSocket.wsURL`'s ORIGINAL
+`.queryItems`-based implementation, was sniffed off the wire (a local TCP relay proxy logging both directions)
+reaching the server as a literal `GET /api/sync/ws?token=...+...` -- the server responded `401
+{"error":"unauthorized"}`. `URLSessionWebSocketTask` reported this back to the client as
+`NSURLErrorDomain Code=-1011 "There was a bad response from the server."` with
+`_NSURLErrorWebSocketHandshakeFailureReasonKey=0` -- a generic-looking error that gives no hint the actual cause
+is a query-encoding mismatch, not a TLS/ATS/handshake-computation problem (`Sec-WebSocket-Accept` was verified
+correct against the same token via a raw `curl --http1.1` request with a fixed key, confirmed correct via the
+RFC 6455 SHA-1 formula in Python).
+
+**Fix:** `SyncSocket.wsURL` builds the query via `URLComponents.percentEncodedQueryItems`, pre-encoding the
+token with `CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "+&=?"))` as the allowed set --
+still URL-component construction, never string concatenation, just a stricter allowed-character set than
+`.urlQueryAllowed`'s default. Re-verified live via the same sniff proxy: the identical `+`-bearing token now
+reaches the server pre-encoded (`%2B`) and the handshake completes with `HTTP/1.1 101 Switching Protocols`.
+
+**Consequence:** any FUTURE iOS code that puts a token/secret in a URL query via bare `URLComponents.queryItems`
+should not assume the encoding is equivalent to `encodeURIComponent` -- it is not, specifically for `+`, and the
+failure mode (a generic-looking 401 or, at the transport layer, a generic-looking `-1011`) does not name the
+cause.
+
+### L-24 -- a one-shot `URLSessionWebSocketTask.receive` disguised by a working poll fallback
+
+**Found 2026-08-18, Phase 39, Plan 39-04, Task 1, RED-before-green demonstration.**
+`receiveMessageWithCompletionHandler:` (`NSURLSession.h:658`) delivers exactly ONE message per call -- a receive
+loop that does not re-arm itself inside its own success branch receives precisely one push per connection and
+then looks correct forever, because nothing about the socket's own state changes. With `SyncSocket`'s re-arm
+line (`self.receiveLoop(task: task)`) temporarily removed, `SyncSocketTests
+/receivingASecondFrameOnTheSameConnectionTriggersASecondPull()` fails as expected (transcript in
+39-04-SUMMARY.md); restored, it passes. **Classified Verified** -- this is exactly why Task 2's live two-push
+proof (`scripts/ios-ws-push-proof.sh`) refuses to run with the in-foreground repeating pull enabled (D-06): with
+the poll running, a one-shot receive would be invisible, because the poll alone would still refresh the second
+mutation on its own schedule.
+
+**Note on numbering:** 39-04-PLAN.md's own text names these two landmines "L-10" and "L-11" -- both numbers were
+already in use (L-10/L-11, cold-DerivedData and shared-output-path races, Phase 36) by the time this plan
+executed. Recorded here as L-23/L-24, the next available numbers, rather than colliding with the existing
+entries.
+
 ## 3a. The visual layer was never verified — open gaps as of 2026-08-17
 
 **Written after Bartek looked at the running app and said, twice, that the screens
