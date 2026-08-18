@@ -5,15 +5,15 @@ milestone_name: Sharing That Makes Sense
 current_phase: 31
 current_phase_name: The Share Dialog — Per-Person Access, Existing Destinations
 status: phase_complete
-stopped_at: Completed 31-03-PLAN.md (Wave 3) -- destination selector wired, existing-destination grant/update/revoke dispatch-proven, ORG-03/SC3 real-WASM proof, SC1/SC2 live e2e proof
-last_updated: "2026-08-18T21:36:54.027Z"
+stopped_at: Completed 31-04-PLAN.md
+last_updated: "2026-08-18T21:57:45.434Z"
 last_activity: 2026-08-11
 last_activity_desc: re-verify complete; four CI-width commands all exit 0; e2e 9/9 from a fresh
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 30
-  completed_plans: 26
+  completed_plans: 27
   percent: 33
 ---
 
@@ -238,6 +238,7 @@ still carries `role="tablist"` (pre-existing Phase 28 code, Phase 33 scope).
 | Phase 31 P01 | 30min | 2 tasks | 6 files |
 | Phase 31 P02 | ~3h | 1 tasks | 8 files |
 | Phase 31 P03 | ~30min | 3 tasks | 6 files |
+| Phase 31 P04 | 55min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -474,10 +475,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 31-03-PLAN.md (Wave 3) -- destination selector wired, existing-destination grant/update/revoke dispatch-proven, ORG-03/SC3 real-WASM proof, SC1/SC2 live e2e proof
+**Stopped at:** Completed 31-04-PLAN.md
 **Resume file:** None
 
-Last session: 2026-08-18T21:36:53.986Z
+Last session: 2026-08-18T21:57:45.422Z
 27-13-PLAN.md (gap closure) executed: vault-store.ts::ensureSharedItemsHydrated() (the
 shared-side counterpart to the existing ensureItemsHydrated()) is now awaited by
 handleCredentialsGet, alongside ensureItemsHydrated(), before its candidate snapshot -- closing
