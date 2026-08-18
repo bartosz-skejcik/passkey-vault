@@ -176,8 +176,7 @@ async function shareExistingFolderWithMember(
   await page.getByTestId(`sidebar-folder-share-${folderId}`).click();
   await page.getByTestId("share-dialog").waitFor({ state: "visible" });
   await page.getByTestId("share-folder-name-input").fill(newCollectionName);
-  await page.getByTestId(`share-recipient-${recipientUserId}`).click();
-  await page.getByTestId(`share-access-level-${accessLevel}`).click();
+  await page.getByTestId(`share-recipient-row-select-${recipientUserId}`).selectOption(accessLevel);
   await page.getByTestId("share-submit").click();
   await page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
 }
@@ -230,8 +229,7 @@ test("hidden_password export includes real plaintext for both a directly-shared 
   await sharer.page.getByTestId(`item-menu-trigger-${directItemId}`).click();
   await sharer.page.getByTestId("context-menu-share").click();
   await sharer.page.getByTestId("share-dialog").waitFor({ state: "visible" });
-  await sharer.page.getByTestId(`share-recipient-${recipientUserId}`).click();
-  await sharer.page.getByTestId(`share-access-level-hidden_password`).click();
+  await sharer.page.getByTestId(`share-recipient-row-select-${recipientUserId}`).selectOption("hidden_password");
   await expect(
     sharer.page.getByTestId("share-hidden-password-ack-title"),
     "the FIRST-ever hidden-password selection on this account must block with the honesty disclosure",

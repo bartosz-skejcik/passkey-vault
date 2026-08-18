@@ -62,7 +62,7 @@
 // variant's seed-move re-encryption sequence verbatim rather than carrying
 // a second implementation of it.
 import { useEffect, useRef, useState } from "react";
-import { Users } from "lucide-react";
+import { Users, UserCheck, UserMinus } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { getFamilyMembers, type FamilyMemberRecord } from "@/lib/families/api";
@@ -76,6 +76,11 @@ import {
   createItemShare,
   addCollectionMember,
   getCollectionAccessList,
+  listItemShares,
+  updateCollectionAccess,
+  updateItemShare,
+  revokeCollectionAccess,
+  revokeItemShare,
   type CollectionRow,
 } from "@/lib/vault/api";
 import { getItems, getFolders } from "@/lib/vault/store";
@@ -121,6 +126,102 @@ type DialogState = "loading-recipients" | "populated" | "hidden-password-ack" | 
 
 const ACCESS_LEVEL_VALUES = ["read", "edit", "hidden_password"] as const;
 type AccessLevelValue = (typeof ACCESS_LEVEL_VALUES)[number];
+
+/** 31-UI-SPEC.md's Row Anatomy — one standing row per family member,
+ * BOTH scopes (31-02-PLAN.md). `currentLevel` is the truth as last fetched
+ * (always `null` for a mint-new folder this plan — no destination selector
+ * yet, 31-03's job; seeded from `listItemShares` for the item scope).
+ * `pendingLevel` initializes to `currentLevel ?? "none"` and is the ONLY
+ * thing the row's own `<select>` ever writes to — never a neutral default,
+ * per MOD-01's "shows their real current level, and it is editable in
+ * place". */
+export interface RecipientRow {
+  userId: string;
+  email: string;
+  currentLevel: AccessLevelValue | null;
+  pendingLevel: AccessLevelValue | "none";
+  suspended: boolean;
+  publicKey: string | null;
+}
+
+/** T-31-06's trust boundary: the ONLY source of truth for "what dispatch
+ * does this row need" — no code path may compute a different answer than
+ * this. Pure and exported so it is testable in isolation from any network
+ * mock. `pendingLevel === "none"` while `currentLevel` already holds a
+ * grant is a REVOKE (an explicit "brak dostępu" choice on an existing
+ * recipient); `pendingLevel === "none"` with no prior grant is a genuine
+ * no-op (nothing was ever asked for, nothing to reconcile). */
+export type ReconcileRowAction =
+  | { kind: "grant"; level: AccessLevelValue }
+  | { kind: "update"; level: AccessLevelValue }
+  | { kind: "revoke" }
+  | { kind: "noop" };
+
+export function reconcileRowAction(
+  currentLevel: AccessLevelValue | null,
+  pendingLevel: AccessLevelValue | "none",
+): ReconcileRowAction {
+  if (pendingLevel === "none") {
+    return currentLevel !== null ? { kind: "revoke" } : { kind: "noop" };
+  }
+  if (currentLevel === null) {
+    return { kind: "grant", level: pendingLevel };
+  }
+  if (currentLevel === pendingLevel) {
+    return { kind: "noop" };
+  }
+  return { kind: "update", level: pendingLevel };
+}
+
+/** The dispatcher half — takes the SAME decision `reconcileRowAction`
+ * computed and invokes exactly the one caller-supplied operation it names,
+ * never more than one network call per row. Callers supply scope-specific
+ * (collection vs. item) grant/update/revoke implementations; this function
+ * owns none of the crypto or wire shape itself, only the routing. */
+export async function reconcileRow(
+  row: { currentLevel: AccessLevelValue | null; pendingLevel: AccessLevelValue | "none" },
+  ops: {
+    grant: (level: AccessLevelValue) => Promise<void>;
+    update: (level: AccessLevelValue) => Promise<void>;
+    revoke: () => Promise<void>;
+  },
+): Promise<void> {
+  const action = reconcileRowAction(row.currentLevel, row.pendingLevel);
+  if (action.kind === "grant") {
+    await ops.grant(action.level);
+  } else if (action.kind === "update") {
+    await ops.update(action.level);
+  } else if (action.kind === "revoke") {
+    await ops.revoke();
+  }
+}
+
+/** Row order per 31-UI-SPEC.md Row Anatomy — "readable at a glance": rows
+ * already holding access are grouped first (so "who already has what" is
+ * visible without scrolling past everyone else at family scale), each
+ * group ordered alphabetically by email. */
+function buildRows(
+  members: FamilyMemberRecord[],
+  currentLevels: Map<string, AccessLevelValue>,
+): RecipientRow[] {
+  const rows: RecipientRow[] = members.map((m) => {
+    const currentLevel = currentLevels.get(m.user_id) ?? null;
+    return {
+      userId: m.user_id,
+      email: m.email,
+      currentLevel,
+      pendingLevel: currentLevel ?? "none",
+      suspended: m.status === "suspended",
+      publicKey: m.public_key,
+    };
+  });
+  return rows.sort((a, b) => {
+    const aHas = a.currentLevel !== null;
+    const bHas = b.currentLevel !== null;
+    if (aHas !== bHas) return aHas ? -1 : 1;
+    return a.email.localeCompare(b.email);
+  });
+}
 
 const HIDDEN_PASSWORD_ACK_KEY_PREFIX = "pv-hidden-password-ack:";
 
@@ -308,6 +409,96 @@ async function grantCollectionToRecipients(
   return failed;
 }
 
+/** 31-02-PLAN.md's per-row grant loop (Blocker 1's fix) — the row-model
+ * sibling of `grantCollectionToRecipients` above, deliberately NOT a widened
+ * version of it (family-wide still needs its one-level-for-all shape,
+ * called from its own unchanged branch). Grants each row's OWN
+ * `pendingLevel`, never a shared one, one `addCollectionMember` call per
+ * row. Shares the exact same 409 policy (`recipientAlreadyHoldsIntendedLevel`)
+ * so a retry stays idempotent regardless of which loop it went through. */
+async function grantCollectionToRows(
+  collectionId: string,
+  ck: WasmCollectionKey,
+  rows: { userId: string; email: string; publicKey: string | null; pendingLevel: AccessLevelValue }[],
+): Promise<string[]> {
+  const handles: WasmIdentityPublicKey[] = [];
+  const failed: string[] = [];
+  try {
+    for (const row of rows) {
+      const recipientPk = WasmIdentityPublicKey.fromBytes(base64Decode(row.publicKey as string));
+      handles.push(recipientPk);
+      try {
+        const sealedKey = sealCollectionKey(recipientPk, ck);
+        await addCollectionMember(collectionId, row.userId, sealedKey, row.pendingLevel);
+      } catch (err) {
+        if (isConflictError(err)) {
+          const holdsIntendedLevel = await recipientAlreadyHoldsIntendedLevel(
+            collectionId,
+            row.userId,
+            row.pendingLevel,
+          );
+          if (!holdsIntendedLevel) {
+            failed.push(row.email ?? row.userId);
+          }
+        } else {
+          console.error(`pv: failed to grant collection ${collectionId} to ${row.userId}`, err);
+          failed.push(row.email ?? row.userId);
+        }
+      }
+    }
+  } finally {
+    handles.forEach((pk) => pk.free?.());
+  }
+  return failed;
+}
+
+/** 31-02-PLAN.md's item-scope `reconcileRow` dispatch, and the FOLDER-scope
+ * update/revoke branches, which the plan documents as reachable in the
+ * function itself even though unreachable via THIS plan's own UI (a
+ * mint-new folder's rows always have `currentLevel === null` -- there is no
+ * existing destination to target yet, that is 31-03's job). Kept generic
+ * and correct now rather than stubbed, so 31-03 only needs to change how
+ * `currentLevel` is SEEDED, never this dispatch itself. */
+async function submitRowsForCollection(
+  collectionId: string,
+  ck: WasmCollectionKey,
+  rows: RecipientRow[],
+): Promise<string[]> {
+  const grantRows = rows.filter((r) => reconcileRowAction(r.currentLevel, r.pendingLevel).kind === "grant");
+  const otherRows = rows.filter((r) => {
+    const kind = reconcileRowAction(r.currentLevel, r.pendingLevel).kind;
+    return kind === "update" || kind === "revoke";
+  });
+
+  const failed = await grantCollectionToRows(
+    collectionId,
+    ck,
+    grantRows.map((r) => ({
+      userId: r.userId,
+      email: r.email,
+      publicKey: r.publicKey,
+      pendingLevel: r.pendingLevel as AccessLevelValue,
+    })),
+  );
+
+  for (const row of otherRows) {
+    try {
+      await reconcileRow(row, {
+        // Unreachable this plan (see doc comment above) -- grants for the
+        // folder scope always go through `grantRows`/`grantCollectionToRows`
+        // above, batched for shared WASM-handle management.
+        grant: async () => undefined,
+        update: (level) => updateCollectionAccess(collectionId, row.userId, level),
+        revoke: () => revokeCollectionAccess(collectionId, row.userId),
+      });
+    } catch (err) {
+      console.error(`pv: failed to reconcile collection ${collectionId} row for ${row.userId}`, err);
+      failed.push(row.email ?? row.userId);
+    }
+  }
+  return failed;
+}
+
 /** 30-12 (FSH-01's "or an item" clause): the non-sensitive placeholder name
  * for an auto-created `item_bucket` collection, SUFFIXED with its own
  * declared level (260812-01e REVIEW.md LO-03) -- a family may hold up to
@@ -415,6 +606,55 @@ export async function shareItemWithRecipients(
     }
   }
   return failed;
+}
+
+/** 31-02-PLAN.md's item-scope `reconcileRow` dispatch — full grant/update/
+ * revoke reachability, since `listItemShares` can return pre-existing
+ * shares today (unlike the folder scope this plan, a bare item's rows are
+ * never all-null). Grant reuses `shareItemWithRecipients`'s exact crypto
+ * composition (Blocker-1-adjacent discipline: `ShareDialog.real-wasm.test.ts`
+ * exercises that composition directly, so grants dispatched THROUGH here
+ * still run through the SAME code that test proves), called once per
+ * grant-action row at that row's OWN `pendingLevel` rather than one shared
+ * level for the whole set. */
+async function submitItemRows(
+  itemId: string,
+  encKeyJson: string,
+  rows: RecipientRow[],
+  uk: WasmUserKey,
+): Promise<SubmitOutcome> {
+  const actionable = rows.filter(
+    (r) => reconcileRowAction(r.currentLevel, r.pendingLevel).kind !== "noop",
+  );
+  const failed: string[] = [];
+  for (const row of actionable) {
+    try {
+      await reconcileRow(row, {
+        grant: async (level) => {
+          const rowFailed = await shareItemWithRecipients(
+            itemId,
+            encKeyJson,
+            [{ user_id: row.userId, email: row.email, public_key: row.publicKey }],
+            level,
+            uk,
+          );
+          if (rowFailed.length > 0) {
+            throw new Error(`pv: failed to grant item ${itemId} to ${row.userId}`);
+          }
+        },
+        update: (level) => updateItemShare(itemId, row.userId, level),
+        revoke: () => revokeItemShare(itemId, row.userId),
+      });
+    } catch (err) {
+      console.error(`pv: failed to reconcile item ${itemId} row for ${row.userId}`, err);
+      failed.push(row.email ?? row.userId);
+    }
+  }
+  return {
+    failedRecipients: failed,
+    seedMoveFailures: 0,
+    committedAnything: failed.length < actionable.length,
+  };
 }
 
 type OwnIdentityKeypair = Awaited<ReturnType<typeof ensureOwnIdentityKeypair>>;
@@ -593,14 +833,31 @@ export default function ShareDialog({
   const { t } = useLocale();
   const [state, setState] = useState<DialogState>("loading-recipients");
   const [recipients, setRecipients] = useState<FamilyMemberRecord[]>([]);
-  const [selectedRecipientIds, setSelectedRecipientIds] = useState<Set<string>>(new Set());
-  // FSH-01 -- "Cała rodzina" mode. Mutually exclusive with
-  // `selectedRecipientIds`: selecting one always clears the other (see
-  // `toggleFamilyWide`/`toggleRecipient` below), so there is never a UI
-  // state where both are simultaneously populated.
+  // 31-02-PLAN.md: the per-row model replaces the old shared checkbox list
+  // for BOTH scopes. `rows` is the sole source of truth for "what level is
+  // this recipient getting" in the non-family-wide branch — never a second,
+  // divergent computation of it (T-31-06).
+  const [rows, setRows] = useState<RecipientRow[]>([]);
+  // FSH-01 -- "Cała rodzina" mode. Mutually exclusive with the row model:
+  // checking it resets every row's pending edits back to its own true
+  // current state (see `toggleFamilyWide` below), and every row's own
+  // `<select>` is disabled while family-wide is active (see Row Anatomy
+  // markup) -- there is never a UI state where both simultaneously drive a
+  // submission.
   const [isFamilyWideSelected, setIsFamilyWideSelected] = useState(false);
   const [accessLevel, setAccessLevel] = useState<AccessLevelValue | null>(null);
   const [previousAccessLevel, setPreviousAccessLevel] = useState<AccessLevelValue | null>(null);
+  // 31-02-PLAN.md (Blocker 3's fix): which row (if any) triggered the
+  // shared "hidden-password-ack" DialogState -- `null` means the
+  // FAMILY-WIDE radio triggered it (byte-for-byte unchanged
+  // `handleSelectAccessLevel`/`handleHiddenPasswordAck`/
+  // `handleHiddenPasswordCancel` own that case), a userId means a ROW's
+  // own `<select>` did (the new `handleRowHiddenPasswordAck`/
+  // `handleRowHiddenPasswordCancel` below own that case). The blocking
+  // modal itself is the SAME shared markup/copy/per-account ack mechanism
+  // either way -- only which completion handler the Ack/Cancel buttons
+  // invoke depends on this.
+  const [hiddenPasswordRowTarget, setHiddenPasswordRowTarget] = useState<string | null>(null);
   const [accountId, setAccountId] = useState<string | null>(null);
   const [folderName, setFolderName] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -671,6 +928,29 @@ export default function ShareDialog({
         }
       }
     }
+    /** 31-02-PLAN.md: item-scope rows seed `currentLevel` from
+     * `listItemShares` -- a genuinely new display, since the old dialog
+     * never showed an item's pre-existing direct shares at all. The folder
+     * scope stays `null` for every row THIS plan (mint-new only -- a
+     * destination selector is 31-03's job, so there is no existing
+     * destination's access list to seed from yet). Fails open (empty map)
+     * rather than blocking the whole dialog on a transient fetch error --
+     * mirrors this file's own fail-safe discipline elsewhere. */
+    async function loadCurrentItemLevels(): Promise<Map<string, AccessLevelValue>> {
+      if (scope.kind !== "item") return new Map();
+      try {
+        const shares = await listItemShares(scope.item.id);
+        const map = new Map<string, AccessLevelValue>();
+        for (const share of shares) {
+          if (share.access_level === "read" || share.access_level === "edit" || share.access_level === "hidden_password") {
+            map.set(share.user_id, share.access_level);
+          }
+        }
+        return map;
+      } catch {
+        return new Map();
+      }
+    }
     async function load() {
       setState("loading-recipients");
       try {
@@ -682,6 +962,7 @@ export default function ShareDialog({
           // never-acknowledgeable disclosure modal.
           setAccountId(null);
           setRecipients([]);
+          setRows([]);
           setAccountUnavailable(true);
           setSubmitError(t("share.createFailed"));
           setState("populated");
@@ -690,6 +971,9 @@ export default function ShareDialog({
         setAccountId(account.user_id);
         const others = (members ?? []).filter((m) => m.user_id !== account.user_id);
         setRecipients(others);
+        const currentLevels = await loadCurrentItemLevels();
+        if (!mountedRef.current) return;
+        setRows(buildRows(others, currentLevels));
         setState("populated");
       } catch {
         if (!mountedRef.current) return;
@@ -697,6 +981,7 @@ export default function ShareDialog({
         // disabled (never a lie about "no other members", just nothing to
         // act on).
         setRecipients([]);
+        setRows([]);
         setAccountUnavailable(true);
         setSubmitError(t("share.createFailed"));
         setState("populated");
@@ -714,33 +999,66 @@ export default function ShareDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function toggleRecipient(userId: string) {
-    setSelectedRecipientIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(userId)) {
-        next.delete(userId);
-      } else {
-        next.add(userId);
-      }
-      return next;
-    });
-    // Mutual exclusivity (30-UI-SPEC.md's "Cała rodzina" Row Contract):
-    // picking any individual recipient clears the family-wide mode. In
-    // practice the family-wide checkbox is already `disabled` whenever an
-    // individual is selected, so this is a defensive no-op most of the
-    // time -- but it keeps the two modes provably exclusive at the state
-    // layer too, not only via the disabled attribute.
-    setIsFamilyWideSelected(false);
-  }
-
   function toggleFamilyWide() {
     setIsFamilyWideSelected((prev) => {
       const next = !prev;
       if (next) {
-        setSelectedRecipientIds(new Set());
+        // Mutual exclusivity (CONTEXT.md Area 1): switching TO family-wide
+        // discards any queued row edits, resetting every row back to its
+        // own true current state -- a pending "brak dostępu" (or any other
+        // edit) queued against the per-person model carries no meaning
+        // once the submission is about to go through the family-wide path
+        // instead, and leaving it queued would silently misrepresent what
+        // a later switch BACK to per-person mode would show.
+        setRows((prevRows) => prevRows.map((r) => ({ ...r, pendingLevel: r.currentLevel ?? "none" })));
       }
       return next;
     });
+  }
+
+  /** 31-02-PLAN.md Row Anatomy: a row's own `<select>` onChange. Mirrors
+   * `handleSelectAccessLevel`'s shape for the hidden-password gate (byte-
+   * for-byte unchanged sibling below), generalized to a specific row's
+   * OWN pendingLevel rather than the single shared `accessLevel`. */
+  function handleRowLevelChange(userId: string, value: AccessLevelValue | "none") {
+    if (value === "hidden_password" && (accountId === null || !hasAcknowledgedHiddenPassword(accountId))) {
+      setHiddenPasswordRowTarget(userId);
+      setState("hidden-password-ack");
+      return;
+    }
+    setRows((prev) => prev.map((r) => (r.userId === userId ? { ...r, pendingLevel: value } : r)));
+    // Mutual exclusivity (30-UI-SPEC.md's "Cała rodzina" Row Contract):
+    // a row's own select is already disabled whenever family-wide is
+    // active (it isn't even rendered -- see the Row Anatomy render
+    // condition below), so this is a defensive no-op most of the time --
+    // but it keeps the two modes provably exclusive at the state layer
+    // too, matching this file's own established discipline.
+    setIsFamilyWideSelected(false);
+  }
+
+  /** The row-triggered sibling of `handleHiddenPasswordAck` below (Blocker
+   * 3's re-anchoring) -- same per-account ack persistence, but completes
+   * the ROW's own pendingLevel change rather than the family-wide
+   * `accessLevel` one. */
+  function handleRowHiddenPasswordAck() {
+    if (accountId !== null) {
+      setAcknowledgedHiddenPassword(accountId);
+    }
+    const userId = hiddenPasswordRowTarget;
+    if (userId !== null) {
+      setRows((prev) => prev.map((r) => (r.userId === userId ? { ...r, pendingLevel: "hidden_password" } : r)));
+    }
+    setHiddenPasswordRowTarget(null);
+    setState("populated");
+  }
+
+  /** The row-triggered sibling of `handleHiddenPasswordCancel` below.
+   * Nothing to revert -- the row's `pendingLevel` was never written until
+   * Ack (mirrors `handleSelectAccessLevel`'s own "don't commit until
+   * acknowledged" shape), so cancelling is simply closing the modal. */
+  function handleRowHiddenPasswordCancel() {
+    setHiddenPasswordRowTarget(null);
+    setState("populated");
   }
 
   function handleSelectAccessLevel(value: AccessLevelValue) {
@@ -774,31 +1092,24 @@ export default function ShareDialog({
    * source of truth, the state variables are purely for rendering). */
   async function submitItemVariant(
     item: VaultItem,
-    selected: FamilyMemberRecord[],
-    level: AccessLevelValue,
-    isFamilyWide: boolean = false,
+    grant:
+      | { isFamilyWide: true; recipients: FamilyMemberRecord[]; level: AccessLevelValue }
+      | { isFamilyWide: false; rows: RecipientRow[] },
   ): Promise<SubmitOutcome> {
     const uk = getUnlockedUserKey();
     if (uk === null) {
       throw new Error("cannot share while the vault is locked");
     }
     await initCrypto();
-    const rows = await listItems();
-    const row = rows.find((r) => r.id === item.id);
+    const itemRows = await listItems();
+    const row = itemRows.find((r) => r.id === item.id);
     if (row === undefined) {
       throw new Error(`cannot share item ${item.id} — item not found in the caller's own vault listing`);
     }
-    if (isFamilyWide) {
-      return await submitItemFamilyWide(item, row, selected, level, uk);
+    if (grant.isFamilyWide) {
+      return await submitItemFamilyWide(item, row, grant.recipients, grant.level, uk);
     }
-    const failedRecipients = await shareItemWithRecipients(item.id, row.enc_key, selected, level, uk);
-    return {
-      failedRecipients,
-      seedMoveFailures: 0,
-      // Nothing durable landed only when EVERY selected recipient failed —
-      // in that case `handleSubmit` may honestly report total failure.
-      committedAnything: failedRecipients.length < selected.length,
-    };
+    return await submitItemRows(item.id, row.enc_key, grant.rows, uk);
   }
 
   /** 30-12 (FSH-01's "or an item" clause): a family-wide share of a BARE item
@@ -866,38 +1177,48 @@ export default function ShareDialog({
    * `collections::add_member`'s duplicate-409 as success-for-that-recipient
    * so the retry is genuinely idempotent.
    *
-   * `isFamilyWide` (30-08, FSH-01): when `true`, `selected` is the FULL
-   * current active family roster (minus the caller), not whatever happens
-   * to be in `selectedRecipientIds` (which is always empty in this mode —
-   * the checkbox selects a MODE, not a recipient list). T-25-16's
-   * throw-before-network discipline stays UNCHANGED for the individual-
-   * recipient path (`isFamilyWide === false`) — it exists because that
-   * recipient set was explicitly picked, and a silent drop would defeat an
-   * explicit user choice. A family-wide set is never explicitly picked
-   * per-person, so a keyless member here is structurally the same shape as
-   * a not-yet-joined member: OMITTED from this creation-time grant rather
-   * than aborting the whole share, and picked up later by the SAME
-   * lazy-reseal trigger (30-13) a gap-window invitee already uses once they
-   * publish a key. */
+   * `isFamilyWide` (30-08, FSH-01): when `true`, `grant.recipients` is the
+   * FULL current active family roster (minus the caller) — the checkbox
+   * selects a MODE, not a recipient list. T-25-16's throw-before-network
+   * discipline stays UNCHANGED for the row path (`isFamilyWide === false`)
+   * — it exists because each row's level was explicitly chosen, and a
+   * silent drop would defeat an explicit user choice. A family-wide set is
+   * never explicitly picked per-person, so a keyless member here is
+   * structurally the same shape as a not-yet-joined member: OMITTED from
+   * this creation-time grant rather than aborting the whole share, and
+   * picked up later by the SAME lazy-reseal trigger (30-13) a gap-window
+   * invitee already uses once they publish a key.
+   *
+   * 31-02-PLAN.md: the row path's grant/update/revoke dispatch lives in
+   * `submitRowsForCollection` — for a mint-new folder (this plan's only
+   * reachable folder destination; a destination selector is 31-03's job)
+   * every row's `currentLevel` is always `null`, so only the grant branch
+   * is reachable, but the dispatch itself is the same generically-correct
+   * one 31-03 will extend without touching this function again. */
   async function submitFolderVariant(
     name: string,
-    selected: FamilyMemberRecord[],
-    level: AccessLevelValue,
     seed: { id: string; itemCount: number } | null,
-    isFamilyWide: boolean = false,
+    grant:
+      | { isFamilyWide: true; recipients: FamilyMemberRecord[]; level: AccessLevelValue }
+      | { isFamilyWide: false; rows: RecipientRow[] },
   ): Promise<SubmitOutcome> {
     const uk = getUnlockedUserKey();
     if (uk === null) {
       throw new Error("cannot share while the vault is locked");
     }
     await initCrypto();
-    // T-25-16 applies to the individual-recipient path only — see the
-    // `isFamilyWide` doc comment above for why the family-wide path
-    // deliberately diverges (omits rather than throws).
-    if (!isFamilyWide) {
-      assertRecipientsHavePublicKeys(selected);
+    // T-25-16 applies to the row path only — see the `isFamilyWide` doc
+    // comment above for why the family-wide path deliberately diverges
+    // (omits rather than throws).
+    if (!grant.isFamilyWide) {
+      const grantRows = grant.rows.filter(
+        (r) => reconcileRowAction(r.currentLevel, r.pendingLevel).kind === "grant",
+      );
+      assertRecipientsHavePublicKeys(
+        grantRows.map((r) => ({ user_id: r.userId, public_key: r.publicKey })),
+      );
     }
-    const grantRecipients = isFamilyWide ? withPublishedPublicKey(selected) : selected;
+    const grantRecipients = grant.isFamilyWide ? withPublishedPublicKey(grant.recipients) : [];
 
     const identityKey = await ensureOwnIdentityKeypair(uk);
     try {
@@ -925,7 +1246,7 @@ export default function ShareDialog({
           // omitting both fields entirely, per 30-02's additive contract
           // (`createCollection` leaves each key OUT of the POSTed body
           // whenever its argument is `undefined`). CR-01 fix (30-REVIEW.md):
-          // `level` here is the SAME level `grantCollectionToRecipients`
+          // the level here is the SAME level `grantCollectionToRecipients`
           // below hands every other member — this is what makes it survive
           // past creation time for later propagation paths to read, instead
           // of only ever being visible via the creator's own hard-coded
@@ -934,8 +1255,8 @@ export default function ShareDialog({
             newCollectionId,
             encName,
             sealedKeyForSelf,
-            isFamilyWide ? "folder" : undefined,
-            isFamilyWide ? level : undefined,
+            grant.isFamilyWide ? "folder" : undefined,
+            grant.isFamilyWide ? grant.level : undefined,
           );
         } catch (err) {
           // The collection never landed — free the key rather than parking a
@@ -963,26 +1284,25 @@ export default function ShareDialog({
       }
       const { id: collectionId, ck: newCk, movedItemIds } = created;
 
-      // 30-12: the per-recipient loop (and its 409-is-success-for-that-
-      // recipient rule) now lives in the shared `grantCollectionToRecipients`
-      // helper, so the item-bucket branch grants IDENTICALLY rather than
-      // carrying a second copy of this policy.
-      const failedRecipients = await grantCollectionToRecipients(
-        collectionId,
-        newCk,
-        grantRecipients,
-        level,
-      );
+      // 30-12: the family-wide loop (and its 409-is-success-for-that-
+      // recipient rule) lives in the shared `grantCollectionToRecipients`
+      // helper; the row path's grant/update/revoke dispatch lives in
+      // `submitRowsForCollection` (31-02-PLAN.md) — the two can never grant
+      // at a different level than what their own model shows, since each
+      // reads its OWN state.
+      const failedRecipients = grant.isFamilyWide
+        ? await grantCollectionToRecipients(collectionId, newCk, grantRecipients, grant.level)
+        : await submitRowsForCollection(collectionId, newCk, grant.rows);
 
       let failures = 0;
       if (seed !== null) {
         const seedItems = getItems().filter(
           (i) => i.fields.folderId === seed.id && !movedItemIds.has(i.id),
         );
-        const rows = await listItems();
+        const itemRows = await listItems();
         for (const item of seedItems) {
           try {
-            const row = rows.find((r) => r.id === item.id);
+            const row = itemRows.find((r) => r.id === item.id);
             if (row === undefined) throw new Error(`row not found for item ${item.id}`);
             const combined = recombineEncryptedItem(row.enc_key, row.enc_data);
             const plaintext = decryptItem(uk, combined, item.id, row.revision);
@@ -1034,13 +1354,15 @@ export default function ShareDialog({
   }
 
   async function handleSubmit() {
-    const selected = recipients.filter((r) => selectedRecipientIds.has(r.user_id));
     // 30-12: family-wide is now a submit path for BOTH variants — the folder
     // one creates a `family_wide_kind: 'folder'` collection (30-08), the item
     // one moves the item into the single per-family `item_bucket` collection.
     const familyWideSubmit = isFamilyWideSelected;
-    if (accessLevel === null) return;
-    if (!familyWideSubmit && selected.length === 0) return;
+    // 31-02-PLAN.md: `accessLevel` gates ONLY the family-wide branch now —
+    // the row path's own readiness is `hasActionableRow` below, since each
+    // row carries its own level rather than one shared one.
+    if (familyWideSubmit && accessLevel === null) return;
+    if (!familyWideSubmit && !hasActionableRow) return;
     if (isFolder && folderName.trim() === "") return;
 
     setState("sharing");
@@ -1051,25 +1373,25 @@ export default function ShareDialog({
     try {
       let outcome: SubmitOutcome;
       if (scope.kind === "item" && familyWideSubmit) {
-        outcome = await submitItemVariant(
-          scope.item,
-          await resolveCurrentFamilyRecipients(),
-          accessLevel,
-          true,
-        );
+        outcome = await submitItemVariant(scope.item, {
+          isFamilyWide: true,
+          recipients: await resolveCurrentFamilyRecipients(),
+          level: accessLevel as AccessLevelValue,
+        });
       } else if (scope.kind === "item") {
-        outcome = await submitItemVariant(scope.item, selected, accessLevel);
+        outcome = await submitItemVariant(scope.item, { isFamilyWide: false, rows });
       } else if (familyWideSubmit) {
         const familyRecipients = await resolveCurrentFamilyRecipients();
-        outcome = await submitFolderVariant(
-          folderName.trim(),
-          familyRecipients,
-          accessLevel,
-          seedFolder,
-          true,
-        );
+        outcome = await submitFolderVariant(folderName.trim(), seedFolder, {
+          isFamilyWide: true,
+          recipients: familyRecipients,
+          level: accessLevel as AccessLevelValue,
+        });
       } else {
-        outcome = await submitFolderVariant(folderName.trim(), selected, accessLevel, seedFolder, false);
+        outcome = await submitFolderVariant(folderName.trim(), seedFolder, {
+          isFamilyWide: false,
+          rows,
+        });
       }
       if (!mountedRef.current) return;
       if (outcome.failedRecipients.length === 0 && outcome.seedMoveFailures === 0) {
@@ -1151,19 +1473,36 @@ export default function ShareDialog({
   })();
 
   // WR-04 (code review, Phase 26): 26-UI-SPEC.md:169's required generic
-  // fallback. The note renders as soon as hidden-password is the selected
-  // access level (honesty constraint 2: on EVERY occasion, not only after a
-  // recipient is picked), so with zero selections the previous
-  // `.map(email).join(", ")` interpolated an empty string and the phase's
-  // most load-bearing honesty string rendered subject-less. A multi-select
-  // is given the same generic subject rather than an email list, which read
-  // as "a@x, b@y still has key access" (one subject, plural referents).
-  const hiddenPasswordNoteSubject = (() => {
-    const selected = recipients.filter((r) => selectedRecipientIds.has(r.user_id));
-    return selected.length === 1
-      ? selected[0].email
+  // fallback, kept for the FAMILY-WIDE branch's own inline note (still
+  // driven by the single shared `accessLevel`, isolated per Blocker 1's
+  // fix below). Family-wide is a MODE, never a per-person selection, so
+  // this always resolves to the generic fallback subject -- exactly what
+  // the old shared computation ALSO always produced in family-wide mode
+  // (`selectedRecipientIds` stayed empty there by construction).
+  const hiddenPasswordNoteSubject = t("share.hiddenPasswordRecipientFallback");
+
+  // 31-02-PLAN.md (Blocker 3's fix): the ROW model's own inline-note
+  // subject, re-scoped from `selectedRecipientIds` to "rows currently at
+  // hidden_password" -- the note's trigger/subject now derives from the
+  // SAME state the actual dispatch reads (T-31-08), never a second,
+  // divergent computation of "who is this about".
+  const rowsAtHiddenPassword = rows.filter((r) => r.pendingLevel === "hidden_password");
+  const rowHiddenPasswordNoteSubject =
+    rowsAtHiddenPassword.length === 1
+      ? rowsAtHiddenPassword[0].email
       : t("share.hiddenPasswordRecipientFallback");
-  })();
+
+  // 31-02-PLAN.md: the row path's own readiness -- at least one row's
+  // reconciled action is not a no-op (a fresh grant, an in-place level
+  // edit, or a revocation of an existing grant).
+  const hasActionableRow = rows.some(
+    (r) => reconcileRowAction(r.currentLevel, r.pendingLevel).kind !== "noop",
+  );
+  // Mutual exclusivity, the row-model direction: once any row carries a
+  // real (non-"none") pending value, "Cała rodzina" is unavailable --
+  // exactly the reverse of the row `<select>`s being disabled while
+  // family-wide is active below.
+  const anyRowActive = rows.some((r) => r.pendingLevel !== "none");
 
   const ctaKey = isFolder ? "share.ctaFolder" : "share.ctaItem";
   // 30-12: BOTH variants now have a real family-wide submit path (the item
@@ -1175,8 +1514,7 @@ export default function ShareDialog({
   const submitDisabled =
     sharing ||
     accountUnavailable ||
-    accessLevel === null ||
-    (!familyWideSubmittable && selectedRecipientIds.size === 0) ||
+    (familyWideSubmittable ? accessLevel === null : !hasActionableRow) ||
     (isFolder && folderName.trim() === "");
 
   return (
@@ -1185,12 +1523,19 @@ export default function ShareDialog({
       className="fixed inset-0 z-50 flex items-center justify-center bg-base-300/70 p-4"
       onClick={sharing ? undefined : onClose}
     >
+      {/* 31-UI-SPEC.md's Scale & Scroll Contract: the card itself is the
+          single scroll container (`max-h-[85vh] flex-col`); the footer is
+          pinned OUTSIDE the scrolling body via `shrink-0`. No nested
+          scroll regions -- the row list does NOT get its own separate
+          `max-h`/`overflow-y-auto` (the old checkbox list did), so the
+          SAME gesture that reveals the last row also reveals the
+          hidden-password note and pending-revocations summary beneath it. */}
       <div
-        className="flex w-full max-w-[400px] flex-col gap-4 rounded-box border border-base-300 bg-base-100 p-6"
+        className="flex max-h-[85vh] w-full max-w-[400px] flex-col rounded-box border border-base-300 bg-base-100"
         onClick={(e) => e.stopPropagation()}
       >
         {hiddenPasswordAck ? (
-          <>
+          <div className="flex flex-col gap-4 p-6">
             <h2
               data-testid="share-hidden-password-ack-title"
               className="truncate text-[20px] font-bold leading-[1.2]"
@@ -1205,7 +1550,7 @@ export default function ShareDialog({
                 type="button"
                 data-testid="share-hidden-password-ack-cancel"
                 className="btn btn-ghost"
-                onClick={handleHiddenPasswordCancel}
+                onClick={hiddenPasswordRowTarget !== null ? handleRowHiddenPasswordCancel : handleHiddenPasswordCancel}
               >
                 {t("delete.cancel")}
               </button>
@@ -1213,24 +1558,25 @@ export default function ShareDialog({
                 type="button"
                 data-testid="share-hidden-password-ack-confirm"
                 className="btn btn-primary"
-                onClick={handleHiddenPasswordAck}
+                onClick={hiddenPasswordRowTarget !== null ? handleRowHiddenPasswordAck : handleHiddenPasswordAck}
               >
                 {t("share.hiddenPasswordDisclosureAck")}
               </button>
             </div>
-          </>
+          </div>
         ) : (
           <>
-            <h2 className="truncate text-[20px] font-bold leading-[1.2]" title={dialogTitle}>
-              {dialogTitle}
-            </h2>
+            <div className="flex flex-col gap-4 overflow-y-auto p-6">
+              <h2 className="truncate text-[20px] font-bold leading-[1.2]" title={dialogTitle}>
+                {dialogTitle}
+              </h2>
 
-            {loading ? (
-              <div className="flex flex-col items-center justify-center gap-3 py-8" data-testid="share-loading">
-                <span className="loading loading-spinner loading-lg" aria-hidden="true" />
-              </div>
-            ) : (
-              <>
+              {loading ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-8" data-testid="share-loading">
+                  <span className="loading loading-spinner loading-lg" aria-hidden="true" />
+                </div>
+              ) : (
+                <>
                 {isFolder ? (
                   <div className="flex flex-col gap-1">
                     <label htmlFor="share-folder-name-input" className="text-sm font-bold">
@@ -1274,7 +1620,7 @@ export default function ShareDialog({
                     type="checkbox"
                     className="checkbox checkbox-sm"
                     checked={isFamilyWideSelected}
-                    disabled={sharing || selectedRecipientIds.size > 0}
+                    disabled={sharing || anyRowActive}
                     aria-describedby="share-family-wide-caveat"
                     onChange={toggleFamilyWide}
                   />
@@ -1303,51 +1649,116 @@ export default function ShareDialog({
                   <p data-testid="share-no-other-members" className="text-sm text-base-content/70">
                     {t("share.noOtherMembers")}
                   </p>
-                ) : (
-                  <div className="flex max-h-48 flex-col gap-2 overflow-y-auto" data-testid="share-recipient-list">
-                    {recipients.map((r) => (
-                      <label
-                        key={r.user_id}
-                        data-testid={`share-recipient-${r.user_id}`}
-                        className="flex items-center gap-2"
+                ) : isFamilyWideSelected ? null : (
+                  /* 31-UI-SPEC.md Row Anatomy (MOD-01) -- one standing row
+                     per family member, BOTH scopes, replacing the old
+                     shared checkbox list ENTIRELY. No nested scroller (see
+                     the Scale & Scroll Contract comment above the outer
+                     card) -- this list is part of the single scrolling
+                     body. */
+                  <ul className="flex flex-col divide-y divide-base-300" data-testid="share-recipient-list">
+                    {rows.map((row) => (
+                      <li
+                        key={row.userId}
+                        data-testid={`share-recipient-row-${row.userId}`}
+                        className="flex items-center gap-2 py-2"
                       >
-                        <input
-                          type="checkbox"
-                          className="checkbox checkbox-sm"
-                          checked={selectedRecipientIds.has(r.user_id)}
-                          disabled={sharing || isFamilyWideSelected}
-                          onChange={() => toggleRecipient(r.user_id)}
-                        />
-                        <span className="truncate text-sm" title={r.email}>
-                          {r.email}
+                        {row.currentLevel !== null ? (
+                          <UserCheck size={14} className="shrink-0 text-secondary" aria-hidden="true" />
+                        ) : (
+                          <span className="w-[14px] shrink-0" aria-hidden="true" />
+                        )}
+                        <span className="flex min-w-0 flex-1 flex-col">
+                          <span className="truncate text-sm" title={row.email}>
+                            {row.email}
+                          </span>
+                          {row.currentLevel !== null ? (
+                            <span
+                              data-testid={`share-recipient-row-currently-${row.userId}`}
+                              className="text-sm text-base-content/60"
+                            >
+                              {interpolate(t("share.rowCurrentlyLabel"), {
+                                level: t(accessLevelKey(row.currentLevel)),
+                              })}
+                            </span>
+                          ) : null}
+                          {row.suspended ? (
+                            <span className="badge badge-warning badge-outline w-fit">
+                              {t("family.statusSuspended")}
+                            </span>
+                          ) : null}
+                          {row.publicKey === null ? (
+                            <span
+                              data-testid={`share-recipient-row-nokey-${row.userId}`}
+                              className="text-sm text-base-content/60"
+                            >
+                              {t("share.rowNoPublishedKey")}
+                            </span>
+                          ) : null}
                         </span>
-                      </label>
+                        {row.pendingLevel === "none" && row.currentLevel !== null ? (
+                          <UserMinus size={14} className="shrink-0 text-error" aria-hidden="true" />
+                        ) : null}
+                        <select
+                          data-testid={`share-recipient-row-select-${row.userId}`}
+                          className="select select-bordered select-sm w-40 shrink-0"
+                          value={row.pendingLevel}
+                          disabled={sharing || row.publicKey === null}
+                          onChange={(e) =>
+                            handleRowLevelChange(row.userId, e.target.value as AccessLevelValue | "none")
+                          }
+                        >
+                          <option value="none">{t("access.none")}</option>
+                          <option value="read">{t("access.readOnly")}</option>
+                          <option value="edit">{t("access.fullEdit")}</option>
+                          <option value="hidden_password">{t("access.hiddenPassword")}</option>
+                        </select>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 )}
-
-                <p className="text-sm font-bold">{t("share.accessLevelLabel")}</p>
-                <div className="flex flex-col gap-1">
-                  {ACCESS_LEVEL_VALUES.map((value) => (
-                    <label key={value} data-testid={`share-access-level-${value}`} className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        name="share-access-level"
-                        className="radio radio-sm"
-                        checked={accessLevel === value}
-                        disabled={sharing}
-                        onChange={() => handleSelectAccessLevel(value)}
-                      />
-                      <span className="text-sm">{t(accessLevelKey(value))}</span>
-                    </label>
-                  ))}
-                </div>
-                {accessLevel === "hidden_password" ? (
+                {!isFamilyWideSelected && rowsAtHiddenPassword.length > 0 ? (
                   <p data-testid="share-hidden-password-inline-note" className="text-sm text-base-content/70">
                     {interpolate(t("share.hiddenPasswordInlineNote"), {
-                      recipient: hiddenPasswordNoteSubject,
+                      recipient: rowHiddenPasswordNoteSubject,
                     })}
                   </p>
+                ) : null}
+
+                {/* Blocker 1's fix: this control (state, handlers, submit
+                    logic) is family-wide's OWN, isolated from the row model
+                    above -- rendered and read ONLY when `isFamilyWideSelected`.
+                    `accessLevel`/`setAccessLevel`/`previousAccessLevel`/
+                    `handleSelectAccessLevel`/`handleHiddenPasswordAck`/
+                    `handleHiddenPasswordCancel` stay byte-for-byte the same
+                    functions this dialog has always had; only THIS render
+                    condition is new. */}
+                {isFamilyWideSelected ? (
+                  <>
+                    <p className="text-sm font-bold">{t("share.accessLevelLabel")}</p>
+                    <div className="flex flex-col gap-1">
+                      {ACCESS_LEVEL_VALUES.map((value) => (
+                        <label key={value} data-testid={`share-access-level-${value}`} className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            name="share-access-level"
+                            className="radio radio-sm"
+                            checked={accessLevel === value}
+                            disabled={sharing}
+                            onChange={() => handleSelectAccessLevel(value)}
+                          />
+                          <span className="text-sm">{t(accessLevelKey(value))}</span>
+                        </label>
+                      ))}
+                    </div>
+                    {accessLevel === "hidden_password" ? (
+                      <p data-testid="share-hidden-password-inline-note" className="text-sm text-base-content/70">
+                        {interpolate(t("share.hiddenPasswordInlineNote"), {
+                          recipient: hiddenPasswordNoteSubject,
+                        })}
+                      </p>
+                    ) : null}
+                  </>
                 ) : null}
                 {/* 260812-01e Task 7 (LOCKED decision 1's copy-honesty
                     requirement): a family-wide ITEM share at a non-edit
@@ -1409,29 +1820,37 @@ export default function ShareDialog({
                     })}
                   </p>
                 ) : null}
-
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    data-testid="share-cancel"
-                    className="btn btn-ghost"
-                    disabled={sharing}
-                    onClick={onClose}
-                  >
-                    {t("delete.cancel")}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="share-submit"
-                    className="btn btn-primary"
-                    disabled={submitDisabled}
-                    onClick={() => void handleSubmit()}
-                  >
-                    {sharing ? <span className="loading loading-spinner loading-sm" aria-hidden="true" /> : null}
-                    {sharing ? t("share.sharing") : t(ctaKey)}
-                  </button>
-                </div>
-              </>
+                </>
+              )}
+            </div>
+            {/* Scale & Scroll Contract: Cancel/Save are OUTSIDE the
+                scrolling body (`shrink-0`) -- reachable without scrolling
+                at any row count or viewport size. Absent entirely while
+                `loading` (matches this dialog's own pre-existing
+                behavior: only the spinner shows until the recipient/row
+                data resolves). */}
+            {loading ? null : (
+              <div className="flex shrink-0 justify-end gap-2 border-t border-base-300 p-4">
+                <button
+                  type="button"
+                  data-testid="share-cancel"
+                  className="btn btn-ghost"
+                  disabled={sharing}
+                  onClick={onClose}
+                >
+                  {t("delete.cancel")}
+                </button>
+                <button
+                  type="button"
+                  data-testid="share-submit"
+                  className="btn btn-primary"
+                  disabled={submitDisabled}
+                  onClick={() => void handleSubmit()}
+                >
+                  {sharing ? <span className="loading loading-spinner loading-sm" aria-hidden="true" /> : null}
+                  {sharing ? t("share.sharing") : t(ctaKey)}
+                </button>
+              </div>
             )}
           </>
         )}

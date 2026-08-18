@@ -256,11 +256,15 @@ async function moveItemToFolder(page: Page, itemId: string, folderId: string): P
 
 /** Opens the seeded folder-create ShareDialog variant from an EXISTING
  * personal folder's own kebab ("Udostępnij ten folder" / "Share this
- * folder", 26-UI-SPEC.md E2), selects `recipientUserId`, sets `accessLevel`,
- * types `newCollectionName` into the (deliberately blank-by-default,
+ * folder", 26-UI-SPEC.md E2), sets `recipientUserId`'s own row to
+ * `accessLevel` (31-02-PLAN.md's row model -- a row's own `<select>` IS the
+ * selection, there is no separate checkbox step anymore), types
+ * `newCollectionName` into the (deliberately blank-by-default,
  * ShareDialog.tsx's own `folderName` state) name field, submits, and waits
  * for the dialog to close successfully. Ends with `page`'s Sidebar in its
- * normal (folders-expanded) state, dialog gone. */
+ * normal (folders-expanded) state, dialog gone. Never called with
+ * `accessLevel: "hidden_password"` in this file -- the ack modal is
+ * exercised explicitly at its own call sites, not inside this helper. */
 async function shareExistingFolderWithMember(
   page: Page,
   folderId: string,
@@ -272,20 +276,18 @@ async function shareExistingFolderWithMember(
   await page.getByTestId(`sidebar-folder-share-${folderId}`).click();
   await page.getByTestId("share-dialog").waitFor({ state: "visible" });
   await page.getByTestId("share-folder-name-input").fill(newCollectionName);
-  await page.getByTestId(`share-recipient-${recipientUserId}`).click();
-  await page.getByTestId(`share-access-level-${accessLevel}`).click();
+  await page.getByTestId(`share-recipient-row-select-${recipientUserId}`).selectOption(accessLevel);
   await page.getByTestId("share-submit").click();
   await page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
 }
 
 /** SHARE-06 revoke live proof (Phase 28, Plan 02): same flow as
- * `shareExistingFolderWithMember` above, but selects EVERY id in
- * `recipientUserIds` in ONE ShareDialog submission (`selectedRecipientIds`
- * is a real multi-select `Set<string>`, ShareDialog.tsx:251) -- this is how
- * a real second recipient gets added to the SAME brand-new collection
- * without needing WINDOWS #13's out-of-scope "add a member to an EXISTING
- * collection" primitive: both grants are created together, at collection
- * CREATION time, which already works. */
+ * `shareExistingFolderWithMember` above, but sets EVERY id in
+ * `recipientUserIds`'s OWN row to `accessLevel` in ONE ShareDialog
+ * submission -- this is how a real second recipient gets added to the SAME
+ * brand-new collection without needing WINDOWS #13's out-of-scope "add a
+ * member to an EXISTING collection" primitive: both grants are created
+ * together, at collection CREATION time, which already works. */
 async function shareExistingFolderWithMembers(
   page: Page,
   folderId: string,
@@ -298,9 +300,8 @@ async function shareExistingFolderWithMembers(
   await page.getByTestId("share-dialog").waitFor({ state: "visible" });
   await page.getByTestId("share-folder-name-input").fill(newCollectionName);
   for (const recipientUserId of recipientUserIds) {
-    await page.getByTestId(`share-recipient-${recipientUserId}`).click();
+    await page.getByTestId(`share-recipient-row-select-${recipientUserId}`).selectOption(accessLevel);
   }
-  await page.getByTestId(`share-access-level-${accessLevel}`).click();
   await page.getByTestId("share-submit").click();
   await page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
 }
@@ -575,8 +576,7 @@ test("owner-of-item shares a personal item directly at all three access levels, 
     await sharer.page.getByTestId(`item-menu-trigger-${itemId}`).click();
     await sharer.page.getByTestId("context-menu-share").click();
     await sharer.page.getByTestId("share-dialog").waitFor({ state: "visible" });
-    await sharer.page.getByTestId(`share-recipient-${recipientUserId}`).click();
-    await sharer.page.getByTestId(`share-access-level-${accessLevel}`).click();
+    await sharer.page.getByTestId(`share-recipient-row-select-${recipientUserId}`).selectOption(accessLevel);
 
     if (accessLevel === "hidden_password") {
       if (expectAckModal) {
@@ -946,8 +946,7 @@ test("owner revokes a directly-shared ITEM's access via the Sharing overview's B
   await owner.page.getByTestId(`item-menu-trigger-${itemId}`).click();
   await owner.page.getByTestId("context-menu-share").click();
   await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
-  await owner.page.getByTestId(`share-recipient-${recipientUserId}`).click();
-  await owner.page.getByTestId("share-access-level-edit").click();
+  await owner.page.getByTestId(`share-recipient-row-select-${recipientUserId}`).selectOption("edit");
   await owner.page.getByTestId("share-submit").click();
   await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
 

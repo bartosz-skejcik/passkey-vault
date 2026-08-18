@@ -1174,6 +1174,12 @@ export const DICTIONARY = {
   "access.readOnly": { pl: "Tylko odczyt", en: "Read-only" },
   "access.fullEdit": { pl: "Pełna edycja", en: "Full edit" },
   "access.hiddenPassword": { pl: "Ukryte hasło", en: "Hidden password" },
+  // Phase 31 Plan 02 (31-UI-SPEC.md Copywriting Contract) — the row model's
+  // 4th access-level option. A genuinely NEW state, not a reword of the
+  // three protected strings above (those describe what a grant DOES; this
+  // describes the absence of one — the old UI expressed "no access" via an
+  // unchecked checkbox, never a label).
+  "access.none": { pl: "Brak dostępu", en: "No access" },
   // WR-13 (code review, Phase 25) — new key. An `access_level` outside
   // `read|edit|hidden_password` used to fall back to `access.readOnly`, i.e.
   // an unknown grant displayed as the LEAST privileged, most reassuring label,
@@ -1240,6 +1246,18 @@ export const DICTIONARY = {
     en: "There are no other members in your family yet. Invite someone before you can share.",
   },
   "share.accessLevelLabel": { pl: "Poziom dostępu", en: "Access level" },
+  // Phase 31 Plan 02 (31-UI-SPEC.md Row Anatomy) — the per-row subtitle
+  // shown only when a row currently holds a grant. `{level}` interpolates
+  // the SAME reused `access.*` vocabulary via `accessLevelKey`, never a
+  // second copy of those words.
+  "share.rowCurrentlyLabel": { pl: "Obecnie: {level}", en: "Currently: {level}" },
+  // Row-level, proactive half of SC5's refusal requirement — renders under
+  // a row whose person has no published identity key; that row's select is
+  // disabled and locked to `access.none`.
+  "share.rowNoPublishedKey": {
+    pl: "Brak opublikowanego klucza — nie można udostępnić.",
+    en: "No published key — can't share with them.",
+  },
   // Deliberately not a bare "Udostępnij"/"Share" — the same submit button
   // backs two structurally different grants across the item/folder
   // variants, and honesty constraint 4 requires that distinction stay

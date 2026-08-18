@@ -370,10 +370,17 @@ async function shareFolderFamilyWide(
     page.getByTestId("share-family-wide-timing-caveat"),
     "the honest 'access arrives once a family member opens the app' caveat must be on screen at the moment of choosing family-wide",
   ).toBeVisible();
+  // 31-02-PLAN.md (plan-check iteration 2's named trap): the row model
+  // holds `<select>`s, not checkboxes -- the OLD
+  // `input[type=checkbox]` locator would resolve to ZERO elements here and
+  // this assertion would pass VACUOUSLY rather than proving mutual
+  // exclusivity. Rewritten against the row model: the per-person row list
+  // is not merely disabled, it is absent entirely once family-wide is
+  // checked (an even stronger guarantee than "disabled").
   await expect(
-    page.getByTestId("share-recipient-list").locator("input[type=checkbox]").first(),
-    "family-wide is a MODE, not a recipient list -- individual recipients must be mutually exclusive with it",
-  ).toBeDisabled();
+    page.getByTestId("share-recipient-list"),
+    "family-wide is a MODE, not a recipient list -- the per-person row list must be mutually exclusive with it",
+  ).toHaveCount(0);
 
   await page.getByTestId(`share-access-level-${accessLevel}`).click();
   await page.getByTestId("share-submit").click();

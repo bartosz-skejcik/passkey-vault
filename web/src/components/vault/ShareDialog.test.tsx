@@ -16,6 +16,11 @@ const {
   mockCreateItemShare,
   mockAddCollectionMember,
   mockGetCollectionAccessList,
+  mockListItemShares,
+  mockUpdateItemShare,
+  mockRevokeItemShare,
+  mockUpdateCollectionAccess,
+  mockRevokeCollectionAccess,
   mockGetItems,
   mockGetFolders,
   mockGetUnlockedUserKey,
@@ -41,6 +46,14 @@ const {
   mockCreateItemShare: vi.fn(),
   mockAddCollectionMember: vi.fn(),
   mockGetCollectionAccessList: vi.fn(),
+  // Phase 31 Plan 02: the row model's item-scope seed fetch, and the
+  // update/revoke halves of `reconcileRow`'s dispatch (31-01's PUT routes'
+  // client wrappers, plus the pre-existing revoke wrappers).
+  mockListItemShares: vi.fn(),
+  mockUpdateItemShare: vi.fn(),
+  mockRevokeItemShare: vi.fn(),
+  mockUpdateCollectionAccess: vi.fn(),
+  mockRevokeCollectionAccess: vi.fn(),
   mockGetItems: vi.fn(),
   mockGetFolders: vi.fn(),
   mockGetUnlockedUserKey: vi.fn(),
@@ -94,6 +107,11 @@ vi.mock("@/lib/vault/api", () => ({
   createItemShare: mockCreateItemShare,
   addCollectionMember: mockAddCollectionMember,
   getCollectionAccessList: mockGetCollectionAccessList,
+  listItemShares: mockListItemShares,
+  updateItemShare: mockUpdateItemShare,
+  revokeItemShare: mockRevokeItemShare,
+  updateCollectionAccess: mockUpdateCollectionAccess,
+  revokeCollectionAccess: mockRevokeCollectionAccess,
 }));
 
 vi.mock("@/lib/vault/store", () => ({
@@ -258,6 +276,14 @@ beforeEach(() => {
   // 260812-01e Task 5: sane default so any test that unexpectedly triggers
   // the 409 verification path does not hang on an un-mocked promise.
   mockGetCollectionAccessList.mockResolvedValue([]);
+  // 31-02-PLAN.md: no pre-existing direct shares by default -- every row
+  // seeds `currentLevel: null` unless a test explicitly overrides this to
+  // exercise the update/revoke branches of `reconcileRow`.
+  mockListItemShares.mockResolvedValue([]);
+  mockUpdateItemShare.mockResolvedValue(undefined);
+  mockRevokeItemShare.mockResolvedValue(undefined);
+  mockUpdateCollectionAccess.mockResolvedValue(undefined);
+  mockRevokeCollectionAccess.mockResolvedValue(undefined);
   mockMoveItemToCollection.mockResolvedValue({ revision: 4, collection_id: "col-1", updated_at: "" });
   // Defaults for the real (unmocked) @/lib/vault/collections.ts module's own
   // dependencies -- see the "@/lib/crypto" mock comment above. Individual
@@ -272,12 +298,18 @@ async function waitForPopulated() {
   await waitFor(() => expect(screen.getByTestId("share-submit")).toBeInTheDocument());
 }
 
-function selectRecipient(userId: string) {
-  const label = screen.getByTestId(`share-recipient-${userId}`);
-  const checkbox = label.querySelector("input[type=checkbox]") as HTMLInputElement;
-  fireEvent.click(checkbox);
+// 31-02-PLAN.md: the row model replaces the old checkbox-then-shared-radio
+// pair with a single per-row `<select>` -- setting a row's OWN level IS
+// "selecting" that recipient, there is no separate selection step anymore.
+function setRowLevel(userId: string, value: string) {
+  const select = screen.getByTestId(`share-recipient-row-select-${userId}`) as HTMLSelectElement;
+  fireEvent.change(select, { target: { value } });
 }
 
+// Still the FAMILY-WIDE mode's own control -- unchanged markup/testid,
+// isolated per Blocker 1's fix so it only renders while family-wide is
+// checked (every family-wide-mode call site below already checks
+// family-wide FIRST, per that render condition).
 function chooseAccessLevel(value: string) {
   const label = screen.getByTestId(`share-access-level-${value}`);
   const radio = label.querySelector("input[type=radio]") as HTMLInputElement;
@@ -300,31 +332,34 @@ describe("ShareDialog", () => {
       expect(screen.getByTestId("share-submit")).toBeDisabled();
     });
 
-    it("excludes the caller from the recipient checklist and renders the rest", async () => {
+    it("excludes the caller from the recipient row list and renders the rest", async () => {
       mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B, { ...MEMBER_A, user_id: SELF.user_id }]);
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
-      expect(screen.getByTestId(`share-recipient-${MEMBER_A.user_id}`)).toBeInTheDocument();
-      expect(screen.getByTestId(`share-recipient-${MEMBER_B.user_id}`)).toBeInTheDocument();
-      expect(screen.queryByTestId(`share-recipient-${SELF.user_id}`)).not.toBeInTheDocument();
+      expect(screen.getByTestId(`share-recipient-row-${MEMBER_A.user_id}`)).toBeInTheDocument();
+      expect(screen.getByTestId(`share-recipient-row-${MEMBER_B.user_id}`)).toBeInTheDocument();
+      expect(screen.queryByTestId(`share-recipient-row-${SELF.user_id}`)).not.toBeInTheDocument();
     });
 
-    it("disables submit when zero recipients are selected", async () => {
+    it("disables submit when every row is still at its default level", async () => {
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
-      chooseAccessLevel("read");
       expect(screen.getByTestId("share-submit")).toBeDisabled();
     });
 
-    it("access-level radio group defaults to none-selected until chosen", async () => {
+    // 31-02-PLAN.md: the OLD shared radio group ("choose a level, then a
+    // recipient") has no analog once level lives on each row -- setting a
+    // row's own select to a real level IS the act of granting that
+    // recipient, so this test is re-anchored to the row model's own
+    // equivalent invariant: every row's select is pre-filled at "none"
+    // (`access.none`), never a neutral/empty default, until the row is
+    // explicitly edited.
+    it("every row's select defaults to access.none until explicitly chosen", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
-      for (const value of ["read", "edit", "hidden_password"]) {
-        const label = screen.getByTestId(`share-access-level-${value}`);
-        const radio = label.querySelector("input[type=radio]") as HTMLInputElement;
-        expect(radio.checked).toBe(false);
-      }
-      selectRecipient(MEMBER_A.user_id);
+      const select = screen.getByTestId(`share-recipient-row-select-${MEMBER_A.user_id}`) as HTMLSelectElement;
+      expect(select.value).toBe("none");
       expect(screen.getByTestId("share-submit")).toBeDisabled();
     });
 
@@ -334,14 +369,13 @@ describe("ShareDialog", () => {
       expect(screen.getByTestId("share-submit")).toHaveTextContent("share.ctaItem");
     });
 
-    it("submits create_share once per selected recipient with the correct access_level", async () => {
+    it("submits create_share once per grant-actionable row with that row's own access_level", async () => {
       mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
       const onShared = vi.fn();
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
-      selectRecipient(MEMBER_A.user_id);
-      selectRecipient(MEMBER_B.user_id);
-      chooseAccessLevel("edit");
+      setRowLevel(MEMBER_A.user_id, "edit");
+      setRowLevel(MEMBER_B.user_id, "edit");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -350,12 +384,15 @@ describe("ShareDialog", () => {
       expect(mockCreateItemShare).toHaveBeenCalledWith(ITEM.id, MEMBER_B.user_id, '{"sealed":"item-key"}', "edit");
     });
 
-    it("throws before any network call when a selected recipient has no published public key, surfacing share.createFailed", async () => {
+    it("throws before any network call when a row with no published public key is force-edited, surfacing share.createFailed", async () => {
       mockGetFamilyMembers.mockResolvedValue([MEMBER_NO_KEY]);
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
-      selectRecipient(MEMBER_NO_KEY.user_id);
-      chooseAccessLevel("read");
+      // Row Anatomy locks a keyless row's select `disabled` -- this defends
+      // in depth against exactly that guard somehow being bypassed
+      // (T-25-16), so the test drives the change event directly rather than
+      // through a normal (blocked) UI interaction.
+      setRowLevel(MEMBER_NO_KEY.user_id, "read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(screen.getByTestId("share-error")).toBeInTheDocument());
@@ -370,8 +407,7 @@ describe("ShareDialog", () => {
       const onShared = vi.fn();
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={onClose} onShared={onShared} />);
       await waitForPopulated();
-      selectRecipient(MEMBER_A.user_id);
-      chooseAccessLevel("read");
+      setRowLevel(MEMBER_A.user_id, "read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(screen.getByTestId("share-error")).toBeInTheDocument());
@@ -388,8 +424,7 @@ describe("ShareDialog", () => {
     it("requires the folder name field -- submit disabled while empty", async () => {
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
-      selectRecipient(MEMBER_A.user_id);
-      chooseAccessLevel("read");
+      setRowLevel(MEMBER_A.user_id, "read");
       expect(screen.getByTestId("share-submit")).toBeDisabled();
       fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "New shared" } });
       expect(screen.getByTestId("share-submit")).not.toBeDisabled();
@@ -401,15 +436,14 @@ describe("ShareDialog", () => {
       expect(screen.getByTestId("share-submit")).toHaveTextContent("share.ctaFolder");
     });
 
-    it("mints a client UUID, calls createCollection, then addCollectionMember once per selected recipient", async () => {
+    it("mints a client UUID, calls createCollection, then addCollectionMember once per grant-actionable row at that row's OWN level", async () => {
       mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
       const onShared = vi.fn();
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
       fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Family Docs" } });
-      selectRecipient(MEMBER_A.user_id);
-      selectRecipient(MEMBER_B.user_id);
-      chooseAccessLevel("edit");
+      setRowLevel(MEMBER_A.user_id, "edit");
+      setRowLevel(MEMBER_B.user_id, "edit");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -426,13 +460,12 @@ describe("ShareDialog", () => {
       expect(createOrder).toBeLessThan(addOrder);
     });
 
-    it("throws before any network call when a selected recipient has no published public key", async () => {
+    it("throws before any network call when a row with no published public key is force-edited", async () => {
       mockGetFamilyMembers.mockResolvedValue([MEMBER_NO_KEY]);
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
       fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Family Docs" } });
-      selectRecipient(MEMBER_NO_KEY.user_id);
-      chooseAccessLevel("read");
+      setRowLevel(MEMBER_NO_KEY.user_id, "read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(screen.getByTestId("share-error")).toBeInTheDocument());
@@ -480,8 +513,7 @@ describe("ShareDialog", () => {
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
       fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Shared Docs" } });
-      selectRecipient(MEMBER_A.user_id);
-      chooseAccessLevel("read");
+      setRowLevel(MEMBER_A.user_id, "read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -514,8 +546,7 @@ describe("ShareDialog", () => {
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
       fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Shared Docs" } });
-      selectRecipient(MEMBER_A.user_id);
-      chooseAccessLevel("read");
+      setRowLevel(MEMBER_A.user_id, "read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(screen.getByTestId("share-seed-move-failures")).toBeInTheDocument());
@@ -585,8 +616,7 @@ describe("ShareDialog", () => {
       fireEvent.change(screen.getByTestId("share-folder-name-input"), {
         target: { value: "Wakacje 2026" },
       });
-      selectRecipient(MEMBER_A.user_id);
-      chooseAccessLevel("edit");
+      setRowLevel(MEMBER_A.user_id, "edit");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalledTimes(1));
@@ -636,8 +666,7 @@ describe("ShareDialog", () => {
       fireEvent.change(screen.getByTestId("share-folder-name-input"), {
         target: { value: "Rodzina" },
       });
-      selectRecipient(MEMBER_A.user_id);
-      chooseAccessLevel("read");
+      setRowLevel(MEMBER_A.user_id, "read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() =>
@@ -652,69 +681,66 @@ describe("ShareDialog", () => {
     });
   });
 
-  describe("hidden-password disclosure (D-2/UX-03, E4)", () => {
-    async function openAndSelectRecipient() {
+  // 31-02-PLAN.md (Blocker 3's re-anchoring): the trigger for the SAME
+  // shared blocking modal moved from the global radio to a ROW's own
+  // `<select>` becoming `hidden_password` -- setting a row's level directly
+  // to hidden_password IS the trigger, there is no separate "select a
+  // recipient, then choose a level" step anymore.
+  describe("hidden-password disclosure (D-2/UX-03, E4, re-anchored to rows per 31-02-PLAN.md)", () => {
+    async function openDialog() {
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
-      selectRecipient(MEMBER_A.user_id);
     }
 
     it("first selection ever blocks progression inside the SAME dialog (no second stacked overlay) until the ack is clicked", async () => {
-      await openAndSelectRecipient();
-      chooseAccessLevel("hidden_password");
+      await openDialog();
+      setRowLevel(MEMBER_A.user_id, "hidden_password");
 
       await waitFor(() => expect(screen.getByTestId("share-hidden-password-ack-confirm")).toBeInTheDocument());
       // Same dialog card, not a second overlay -- exactly one
       // [data-testid="share-dialog"] element in the document.
       expect(screen.getAllByTestId("share-dialog")).toHaveLength(1);
-      // The normal access-level radios are NOT rendered while the ack
-      // sub-step owns the card.
-      expect(screen.queryByTestId("share-access-level-read")).not.toBeInTheDocument();
+      // The row list is NOT rendered while the ack sub-step owns the card.
+      expect(screen.queryByTestId(`share-recipient-row-select-${MEMBER_A.user_id}`)).not.toBeInTheDocument();
 
       fireEvent.click(screen.getByTestId("share-hidden-password-ack-confirm"));
 
       await waitFor(() =>
         expect(screen.getByTestId("share-hidden-password-inline-note")).toBeInTheDocument(),
       );
-      const hiddenRadio = screen
-        .getByTestId("share-access-level-hidden_password")
-        .querySelector("input[type=radio]") as HTMLInputElement;
-      expect(hiddenRadio.checked).toBe(true);
+      const select = screen.getByTestId(`share-recipient-row-select-${MEMBER_A.user_id}`) as HTMLSelectElement;
+      expect(select.value).toBe("hidden_password");
     });
 
-    it("Cancel on the ack modal returns the access-level selection to its PREVIOUS value, never leaving hidden-password selected", async () => {
-      await openAndSelectRecipient();
-      chooseAccessLevel("read");
-      chooseAccessLevel("hidden_password");
+    it("Cancel on the ack modal leaves the row at its PREVIOUS value, never committing hidden-password", async () => {
+      await openDialog();
+      setRowLevel(MEMBER_A.user_id, "read");
+      setRowLevel(MEMBER_A.user_id, "hidden_password");
       await waitFor(() => expect(screen.getByTestId("share-hidden-password-ack-cancel")).toBeInTheDocument());
 
       fireEvent.click(screen.getByTestId("share-hidden-password-ack-cancel"));
 
-      await waitFor(() => expect(screen.getByTestId("share-access-level-read")).toBeInTheDocument());
-      const readRadio = screen
-        .getByTestId("share-access-level-read")
-        .querySelector("input[type=radio]") as HTMLInputElement;
-      const hiddenRadio = screen
-        .getByTestId("share-access-level-hidden_password")
-        .querySelector("input[type=radio]") as HTMLInputElement;
-      expect(readRadio.checked).toBe(true);
-      expect(hiddenRadio.checked).toBe(false);
+      await waitFor(() =>
+        expect(screen.getByTestId(`share-recipient-row-select-${MEMBER_A.user_id}`)).toBeInTheDocument(),
+      );
+      const select = screen.getByTestId(`share-recipient-row-select-${MEMBER_A.user_id}`) as HTMLSelectElement;
+      expect(select.value).toBe("read");
       expect(screen.queryByTestId("share-hidden-password-inline-note")).not.toBeInTheDocument();
     });
 
     it("backstop: toggling away and back to hidden-password within the SAME dialog session shows only the inline note, never re-triggers the blocking modal a second time", async () => {
-      await openAndSelectRecipient();
-      chooseAccessLevel("hidden_password");
+      await openDialog();
+      setRowLevel(MEMBER_A.user_id, "hidden_password");
       await waitFor(() => expect(screen.getByTestId("share-hidden-password-ack-confirm")).toBeInTheDocument());
       fireEvent.click(screen.getByTestId("share-hidden-password-ack-confirm"));
       await waitFor(() =>
         expect(screen.getByTestId("share-hidden-password-inline-note")).toBeInTheDocument(),
       );
 
-      chooseAccessLevel("read");
+      setRowLevel(MEMBER_A.user_id, "read");
       expect(screen.queryByTestId("share-hidden-password-inline-note")).not.toBeInTheDocument();
 
-      chooseAccessLevel("hidden_password");
+      setRowLevel(MEMBER_A.user_id, "hidden_password");
 
       // Never re-shows the blocking modal -- goes straight to the inline
       // note, still inside the same populated state.
@@ -724,9 +750,9 @@ describe("ShareDialog", () => {
 
     it("backstop: an account whose ack flag is already set in localStorage never sees the blocking modal, even on a fresh dialog instance (simulated reload)", async () => {
       localStorage.setItem(`pv-hidden-password-ack:${SELF.user_id}`, "1");
-      await openAndSelectRecipient();
+      await openDialog();
 
-      chooseAccessLevel("hidden_password");
+      setRowLevel(MEMBER_A.user_id, "hidden_password");
 
       expect(screen.queryByTestId("share-hidden-password-ack-confirm")).not.toBeInTheDocument();
       await waitFor(() =>
@@ -735,8 +761,8 @@ describe("ShareDialog", () => {
     });
 
     it("renders share.hiddenPasswordDisclosureBody's EXACT dictionary text, zero truncation/softening", async () => {
-      await openAndSelectRecipient();
-      chooseAccessLevel("hidden_password");
+      await openDialog();
+      setRowLevel(MEMBER_A.user_id, "hidden_password");
 
       await waitFor(() => expect(screen.getByTestId("share-hidden-password-ack-body")).toBeInTheDocument());
       expect(screen.getByTestId("share-hidden-password-ack-body").textContent).toBe(
@@ -747,32 +773,32 @@ describe("ShareDialog", () => {
       );
     });
 
-    // WR-04 (code review, Phase 26): 26-UI-SPEC.md:169's required generic
-    // `{recipient}` fallback was never implemented, so with zero selections
-    // the note rendered "Ukryte tylko w interfejsie —  nadal ma dostęp do
-    // klucza." -- the phase's most load-bearing honesty string, subject-less.
-    it("renders the generic recipient fallback -- never an empty subject -- when no single recipient is selected", async () => {
+    // WR-04 (code review, Phase 26), re-derived for the row model
+    // (31-02-PLAN.md): the old "zero selected" sub-case has no analog once
+    // hidden_password is inherently a SPECIFIC row's own choice -- the note
+    // is now simply ABSENT until a row is genuinely at that level (an even
+    // stronger honesty guarantee than a generic subject: it is never
+    // rendered subject-less, because it is never rendered with no subject
+    // to describe). The single/multi-subject halves of the original
+    // property still hold and are asserted below.
+    it("shows the row's own email for exactly one row at hidden_password, the generic fallback once a second joins it, and never renders subject-less", async () => {
       localStorage.setItem(`pv-hidden-password-ack:${SELF.user_id}`, "1");
       mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
-      chooseAccessLevel("hidden_password");
 
-      const fallback = DICTIONARY["share.hiddenPasswordRecipientFallback"].pl;
-      const expected = DICTIONARY["share.hiddenPasswordInlineNote"].pl.replace("{recipient}", fallback);
+      expect(screen.queryByTestId("share-hidden-password-inline-note")).not.toBeInTheDocument();
 
-      // Zero selected -> generic subject, never an empty one.
-      const note = await screen.findByTestId("share-hidden-password-inline-note");
-      expect(note.textContent).toBe(expected);
-
-      // Exactly one selected -> that member's email.
-      selectRecipient(MEMBER_A.user_id);
+      // Exactly one row at hidden_password -> that member's email.
+      setRowLevel(MEMBER_A.user_id, "hidden_password");
       expect(screen.getByTestId("share-hidden-password-inline-note").textContent).toBe(
         DICTIONARY["share.hiddenPasswordInlineNote"].pl.replace("{recipient}", MEMBER_A.email),
       );
 
       // More than one -> generic again, never "a@x, b@y still has ...".
-      selectRecipient(MEMBER_B.user_id);
+      const fallback = DICTIONARY["share.hiddenPasswordRecipientFallback"].pl;
+      const expected = DICTIONARY["share.hiddenPasswordInlineNote"].pl.replace("{recipient}", fallback);
+      setRowLevel(MEMBER_B.user_id, "hidden_password");
       expect(screen.getByTestId("share-hidden-password-inline-note").textContent).toBe(expected);
     });
   });
@@ -790,8 +816,8 @@ describe("ShareDialog", () => {
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
 
-      expect(screen.queryByTestId(`share-recipient-${SELF.user_id}`)).not.toBeInTheDocument();
-      expect(screen.queryByTestId(`share-recipient-${MEMBER_A.user_id}`)).not.toBeInTheDocument();
+      expect(screen.queryByTestId(`share-recipient-row-${SELF.user_id}`)).not.toBeInTheDocument();
+      expect(screen.queryByTestId(`share-recipient-row-${MEMBER_A.user_id}`)).not.toBeInTheDocument();
       // ...and it says so, rather than lying with share.noOtherMembers.
       expect(screen.getByTestId("share-error")).toHaveTextContent("share.createFailed");
       expect(screen.queryByTestId("share-no-other-members")).not.toBeInTheDocument();
@@ -805,7 +831,7 @@ describe("ShareDialog", () => {
       await waitForPopulated();
 
       expect(mockMe).toHaveBeenCalledTimes(2);
-      expect(screen.getByTestId(`share-recipient-${MEMBER_A.user_id}`)).toBeInTheDocument();
+      expect(screen.getByTestId(`share-recipient-row-${MEMBER_A.user_id}`)).toBeInTheDocument();
       expect(screen.queryByTestId("share-error")).not.toBeInTheDocument();
     });
   });
@@ -833,9 +859,8 @@ describe("ShareDialog", () => {
       const onShared = vi.fn();
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
-      selectRecipient(MEMBER_A.user_id);
-      selectRecipient(MEMBER_B.user_id);
-      chooseAccessLevel("read");
+      setRowLevel(MEMBER_A.user_id, "read");
+      setRowLevel(MEMBER_B.user_id, "read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
@@ -866,9 +891,8 @@ describe("ShareDialog", () => {
       const onShared = vi.fn();
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
-      selectRecipient(MEMBER_A.user_id);
-      selectRecipient(MEMBER_B.user_id);
-      chooseAccessLevel("read");
+      setRowLevel(MEMBER_A.user_id, "read");
+      setRowLevel(MEMBER_B.user_id, "read");
       fireEvent.click(screen.getByTestId("share-submit"));
       await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
 
@@ -894,8 +918,7 @@ describe("ShareDialog", () => {
       );
       await waitForPopulated();
       fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Docs" } });
-      selectRecipient(MEMBER_A.user_id);
-      chooseAccessLevel("edit");
+      setRowLevel(MEMBER_A.user_id, "edit");
       fireEvent.click(screen.getByTestId("share-submit"));
       await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
 
@@ -909,6 +932,35 @@ describe("ShareDialog", () => {
       for (const call of mockAddCollectionMember.mock.calls) {
         expect(call[0]).toBe(mintedId);
       }
+    });
+  });
+
+  // 31-02-PLAN.md Blocker 7 / T-31-06: the dispatch-count property is the
+  // ONLY evidence that a level EDIT is atomic (one PUT) rather than a
+  // client-side revoke-then-re-add pair -- 31-06-T2 cites this test instead
+  // of re-deriving the claim at the e2e layer, where call SHAPE (as opposed
+  // to end state) is genuinely unobservable. Mandatory falsification is
+  // recorded in 31-02-SUMMARY.md.
+  describe("item-scope reconcileRow dispatch-count (31-02-PLAN.md, T-31-06)", () => {
+    it("a row transitioning read -> edit on an item that already has a share issues EXACTLY ONE updateItemShare call and ZERO createItemShare/revokeItemShare calls for that userId", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListItemShares.mockResolvedValue([
+        { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "read", created_at: "", suspended: false },
+      ]);
+      const onShared = vi.fn();
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      await waitFor(() =>
+        expect(screen.getByTestId(`share-recipient-row-currently-${MEMBER_A.user_id}`)).toBeInTheDocument(),
+      );
+      setRowLevel(MEMBER_A.user_id, "edit");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      expect(mockUpdateItemShare).toHaveBeenCalledTimes(1);
+      expect(mockUpdateItemShare).toHaveBeenCalledWith(ITEM.id, MEMBER_A.user_id, "edit");
+      expect(mockCreateItemShare).not.toHaveBeenCalled();
+      expect(mockRevokeItemShare).not.toHaveBeenCalled();
     });
   });
 
@@ -965,37 +1017,43 @@ describe("ShareDialog", () => {
       expect(screen.getByTestId("share-family-wide-timing-caveat")).toBeInTheDocument();
     });
 
-    it("checking the family-wide row disables and un-checks every individual recipient checkbox", async () => {
+    // 31-02-PLAN.md (plan-check iteration 2's own named trap, applied here
+    // too): the OLD checkbox-based mutual-exclusivity assertion would
+    // resolve to ZERO elements once the list holds `<select>`s, passing
+    // VACUOUSLY rather than proving anything -- rewritten against the row
+    // model's own `<select>`s so it still proves "family-wide checked ->
+    // every per-person row control is disabled".
+    it("checking the family-wide row disables every per-person row's own select (row list is not even rendered)", async () => {
       mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
+      expect(screen.getByTestId(`share-recipient-row-select-${MEMBER_A.user_id}`)).toBeInTheDocument();
+
       const familyWideCheckbox = screen
         .getByTestId("share-recipient-family-wide")
         .querySelector("input[type=checkbox]") as HTMLInputElement;
       fireEvent.click(familyWideCheckbox);
       expect(familyWideCheckbox.checked).toBe(true);
 
-      const individualCheckboxA = screen
-        .getByTestId(`share-recipient-${MEMBER_A.user_id}`)
-        .querySelector("input[type=checkbox]") as HTMLInputElement;
-      const individualCheckboxB = screen
-        .getByTestId(`share-recipient-${MEMBER_B.user_id}`)
-        .querySelector("input[type=checkbox]") as HTMLInputElement;
-      expect(individualCheckboxA.disabled).toBe(true);
-      expect(individualCheckboxB.disabled).toBe(true);
-      expect(individualCheckboxA.checked).toBe(false);
+      // Row model is a MODE, not a recipient list -- individual rows must
+      // be mutually exclusive with family-wide. The row list itself is not
+      // even rendered while family-wide is active (a stronger guarantee
+      // than merely disabling each control).
+      expect(screen.queryByTestId("share-recipient-list")).not.toBeInTheDocument();
+      expect(screen.queryByTestId(`share-recipient-row-select-${MEMBER_A.user_id}`)).not.toBeInTheDocument();
+      expect(screen.queryByTestId(`share-recipient-row-select-${MEMBER_B.user_id}`)).not.toBeInTheDocument();
     });
 
-    it("checking an individual recipient clears and disables the family-wide checkbox", async () => {
+    it("setting any row's level away from access.none disables the family-wide checkbox (the reverse mutual-exclusivity direction)", async () => {
       mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
       const familyWideCheckbox = screen
         .getByTestId("share-recipient-family-wide")
         .querySelector("input[type=checkbox]") as HTMLInputElement;
+      expect(familyWideCheckbox.disabled).toBe(false);
 
-      selectRecipient(MEMBER_A.user_id);
-      expect(familyWideCheckbox.checked).toBe(false);
+      setRowLevel(MEMBER_A.user_id, "read");
       expect(familyWideCheckbox.disabled).toBe(true);
     });
 
@@ -1004,11 +1062,13 @@ describe("ShareDialog", () => {
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
       fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Family Docs" } });
-      chooseAccessLevel("read");
       const familyWideCheckbox = screen
         .getByTestId("share-recipient-family-wide")
         .querySelector("input[type=checkbox]") as HTMLInputElement;
+      // Blocker 1's isolation: the shared access-level radio only renders
+      // once family-wide is checked, so it must be checked FIRST.
       fireEvent.click(familyWideCheckbox);
+      chooseAccessLevel("read");
       expect(screen.getByTestId("share-submit")).not.toBeDisabled();
     });
 
@@ -1021,13 +1081,51 @@ describe("ShareDialog", () => {
       mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
-      chooseAccessLevel("read");
       const familyWideCheckbox = screen
         .getByTestId("share-recipient-family-wide")
         .querySelector("input[type=checkbox]") as HTMLInputElement;
       fireEvent.click(familyWideCheckbox);
+      chooseAccessLevel("read");
       expect(familyWideCheckbox.checked).toBe(true);
       expect(screen.getByTestId("share-submit")).not.toBeDisabled();
+    });
+  });
+
+  // 31-02-PLAN.md's own required regression guard (Blocker 1's isolation):
+  // `share.familyWideItemContributorEditNote`'s render condition already
+  // only ever matched inside the family-wide branch before this plan --
+  // this proves it STILL does now that the branch is wrapped in its own
+  // `isFamilyWideSelected` conditional, rather than merely asserting by
+  // inspection.
+  describe("family-wide item contributor-edit note survives Blocker 1's isolation (regression guard)", () => {
+    const SCOPE = { kind: "item" as const, item: ITEM };
+
+    function checkFamilyWide() {
+      const familyWideCheckbox = screen
+        .getByTestId("share-recipient-family-wide")
+        .querySelector("input[type=checkbox]") as HTMLInputElement;
+      fireEvent.click(familyWideCheckbox);
+    }
+
+    it("renders at read and at hidden_password (after ack), absent at edit", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      checkFamilyWide();
+      chooseAccessLevel("read");
+      expect(screen.getByTestId("share-family-wide-item-contributor-note")).toHaveTextContent(
+        "share.familyWideItemContributorEditNote",
+      );
+
+      chooseAccessLevel("edit");
+      expect(screen.queryByTestId("share-family-wide-item-contributor-note")).not.toBeInTheDocument();
+
+      chooseAccessLevel("hidden_password");
+      await waitFor(() => expect(screen.getByTestId("share-hidden-password-ack-confirm")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId("share-hidden-password-ack-confirm"));
+      expect(screen.getByTestId("share-family-wide-item-contributor-note")).toHaveTextContent(
+        "share.familyWideItemContributorEditNote",
+      );
     });
   });
 
@@ -1049,8 +1147,8 @@ describe("ShareDialog", () => {
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
       fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Family Docs" } });
-      chooseAccessLevel("edit");
       checkFamilyWide();
+      chooseAccessLevel("edit");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -1078,8 +1176,8 @@ describe("ShareDialog", () => {
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
       fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Family Docs" } });
-      chooseAccessLevel("read");
       checkFamilyWide();
+      chooseAccessLevel("read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -1096,8 +1194,7 @@ describe("ShareDialog", () => {
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
       fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Docs" } });
-      selectRecipient(MEMBER_A.user_id);
-      chooseAccessLevel("read");
+      setRowLevel(MEMBER_A.user_id, "read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -1119,8 +1216,7 @@ describe("ShareDialog", () => {
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
       fireEvent.change(screen.getByTestId("share-folder-name-input"), { target: { value: "Docs" } });
-      selectRecipient(MEMBER_NO_KEY.user_id);
-      chooseAccessLevel("read");
+      setRowLevel(MEMBER_NO_KEY.user_id, "read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(screen.getByTestId("share-error")).toBeInTheDocument());
@@ -1166,8 +1262,8 @@ describe("ShareDialog", () => {
     async function submitFamilyWideItem(level = "read") {
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
-      chooseAccessLevel(level);
       checkFamilyWide();
+      chooseAccessLevel(level);
       fireEvent.click(screen.getByTestId("share-submit"));
     }
 
@@ -1177,8 +1273,8 @@ describe("ShareDialog", () => {
       const onShared = vi.fn();
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
-      chooseAccessLevel("edit");
       checkFamilyWide();
+      chooseAccessLevel("edit");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -1212,8 +1308,8 @@ describe("ShareDialog", () => {
       const onShared = vi.fn();
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
-      chooseAccessLevel("read");
       checkFamilyWide();
+      chooseAccessLevel("read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -1255,8 +1351,8 @@ describe("ShareDialog", () => {
       const onShared = vi.fn();
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
-      chooseAccessLevel("read");
       checkFamilyWide();
+      chooseAccessLevel("read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(screen.getByTestId("share-family-key-pending")).toBeInTheDocument());
@@ -1276,8 +1372,8 @@ describe("ShareDialog", () => {
       const onShared = vi.fn();
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
-      chooseAccessLevel("read");
       checkFamilyWide();
+      chooseAccessLevel("read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -1299,8 +1395,8 @@ describe("ShareDialog", () => {
       const onShared = vi.fn();
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
-      chooseAccessLevel("read");
       checkFamilyWide();
+      chooseAccessLevel("read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -1333,8 +1429,8 @@ describe("ShareDialog", () => {
       // at "edit"; resolution is level-keyed, so this preserves the test's
       // original REUSE-branch intent rather than accidentally rerouting it
       // to the create branch.
-      chooseAccessLevel("edit");
       checkFamilyWide();
+      chooseAccessLevel("edit");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -1362,8 +1458,8 @@ describe("ShareDialog", () => {
       // at "edit"; this continues to exercise the SAME winner-bucket-
       // found-via-poll path under the new level filter (it never asserted
       // a specific level, only that the item lands in BUCKET_ROW.id).
-      chooseAccessLevel("edit");
       checkFamilyWide();
+      chooseAccessLevel("edit");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled(), { timeout: 3000 });
@@ -1389,8 +1485,8 @@ describe("ShareDialog", () => {
       const onShared = vi.fn();
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
-      chooseAccessLevel("read");
       checkFamilyWide();
+      chooseAccessLevel("read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(screen.getByTestId("share-error")).toBeInTheDocument(), {
@@ -1413,8 +1509,7 @@ describe("ShareDialog", () => {
       const onShared = vi.fn();
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
-      selectRecipient(MEMBER_A.user_id);
-      chooseAccessLevel("read");
+      setRowLevel(MEMBER_A.user_id, "read");
       fireEvent.click(screen.getByTestId("share-submit"));
 
       await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -1440,8 +1535,8 @@ describe("ShareDialog", () => {
         const onShared = vi.fn();
         render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
         await waitForPopulated();
-        chooseAccessLevel("edit");
         checkFamilyWide();
+        chooseAccessLevel("edit");
         fireEvent.click(screen.getByTestId("share-submit"));
 
         await waitFor(() => expect(onShared).toHaveBeenCalled());
@@ -1471,8 +1566,8 @@ describe("ShareDialog", () => {
         const onShared = vi.fn();
         render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
         await waitForPopulated();
-        chooseAccessLevel("edit");
         checkFamilyWide();
+        chooseAccessLevel("edit");
         fireEvent.click(screen.getByTestId("share-submit"));
 
         await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
@@ -1500,10 +1595,12 @@ describe("ShareDialog", () => {
         const onShared = vi.fn();
         render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
         await waitForPopulated();
+        // Blocker 1's isolation: the shared radio only renders once
+        // family-wide is checked.
+        checkFamilyWide();
         chooseAccessLevel("hidden_password");
         await waitFor(() => expect(screen.getByTestId("share-hidden-password-ack-confirm")).toBeInTheDocument());
         fireEvent.click(screen.getByTestId("share-hidden-password-ack-confirm"));
-        checkFamilyWide();
         fireEvent.click(screen.getByTestId("share-submit"));
 
         await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
