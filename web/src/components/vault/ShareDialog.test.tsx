@@ -1079,7 +1079,15 @@ describe("ShareDialog", () => {
 
       expect(screen.queryByTestId("revoke-share-dialog")).not.toBeInTheDocument();
       expect(screen.getByTestId("share-submit").textContent).toBe(submitLabelBefore);
-      expect(screen.getByTestId("share-submit")).toHaveTextContent("share.ctaItem");
+      // 31-05-PLAN.md: this row already has an existing recipient
+      // (MEMBER_A at "read"), so the CTA is share.ctaSaveAccess from the
+      // moment the dialog opens -- NOT share.ctaFolder/ctaItem's
+      // fresh-share wording. The invariant this test actually owns (no
+      // FOURTH "save-with-revocation" variant, label unchanged by the
+      // revocation toggle itself) is the `submitLabelBefore` comparison
+      // above; this literal only pins WHICH of the three CTAs is correct
+      // for this fixture's existing-recipient state.
+      expect(screen.getByTestId("share-submit")).toHaveTextContent("share.ctaSaveAccess");
     });
   });
 
@@ -1315,6 +1323,63 @@ describe("ShareDialog", () => {
       expect(screen.queryByTestId("share-folder-name-input")).not.toBeInTheDocument();
       setRowLevel(MEMBER_A.user_id, "edit");
       expect(screen.getByTestId("share-submit")).not.toBeDisabled();
+    });
+  });
+
+  // 31-05-PLAN.md (MOD-01): the submit CTA distinguishes editing an
+  // ALREADY-shared destination's access picture from a genuinely fresh
+  // share. Four combinations, one per scope x fresh/existing.
+  describe("submit CTA text selection (31-05-PLAN.md, MOD-01)", () => {
+    const EDIT_HELD_FOLDER: CollectionRow = {
+      id: "existing-col-edit",
+      enc_name: "e",
+      created_at: "",
+      access_level: "edit",
+      sealed_key: '{"sealed":"dest-key"}',
+    };
+
+    it("fresh folder (mint-new, no existing destination selected) -> share.ctaFolder", async () => {
+      const SCOPE = { kind: "folder" as const, existingFolderId: null };
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      expect(screen.getByTestId("share-submit")).toHaveTextContent("share.ctaFolder");
+    });
+
+    it("existing folder destination selected -> share.ctaSaveAccess", async () => {
+      const SCOPE = { kind: "folder" as const, existingFolderId: null };
+      mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+      await refreshCollectionsNow();
+      mockGetCollectionAccessList.mockResolvedValue([]);
+
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+
+      fireEvent.change(screen.getByTestId("share-destination-select"), {
+        target: { value: EDIT_HELD_FOLDER.id },
+      });
+      await waitFor(() => expect(screen.queryByTestId("share-rows-loading")).not.toBeInTheDocument());
+
+      expect(screen.getByTestId("share-submit")).toHaveTextContent("share.ctaSaveAccess");
+    });
+
+    it("fresh item (no existing recipient row) -> share.ctaItem", async () => {
+      mockListItemShares.mockResolvedValue([]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      expect(screen.getByTestId("share-submit")).toHaveTextContent("share.ctaItem");
+    });
+
+    it("item with >=1 existing recipient row -> share.ctaSaveAccess", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListItemShares.mockResolvedValue([
+        { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "read", created_at: "", suspended: false },
+      ]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      await waitFor(() =>
+        expect(screen.getByTestId(`share-recipient-row-currently-${MEMBER_A.user_id}`)).toBeInTheDocument(),
+      );
+      expect(screen.getByTestId("share-submit")).toHaveTextContent("share.ctaSaveAccess");
     });
   });
 

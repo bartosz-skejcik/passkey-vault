@@ -1696,7 +1696,22 @@ export default function ShareDialog({
     (c) => c.accessLevel === "edit" && c.familyWideKind !== "item_bucket",
   );
 
-  const ctaKey = isFolder ? "share.ctaFolder" : "share.ctaItem";
+  // 31-05-PLAN.md (MOD-01): "editing an existing access picture" vs. a
+  // genuinely fresh share. Folder scope: an EXISTING destination is
+  // selected (`destinationId !== null`, per 31-03's selector) -- that
+  // folder is already shared with someone by construction, regardless of
+  // this dialog session's own pending edits. Item scope: at least one
+  // row's CURRENT (not pending) level is non-null, i.e. `listItemShares`
+  // (31-02) already found a standing recipient for this item. Either
+  // condition means the action is reconciling WHO can see it, never
+  // "sharing" it for the first time.
+  const hasExistingItemRecipient = !isFolder && rows.some((r) => r.currentLevel !== null);
+  const ctaKey =
+    (isFolder && destinationId !== null) || hasExistingItemRecipient
+      ? "share.ctaSaveAccess"
+      : isFolder
+        ? "share.ctaFolder"
+        : "share.ctaItem";
   // 30-12: BOTH variants now have a real family-wide submit path (the item
   // one routes through the per-family `item_bucket` collection), so this is
   // no longer gated on `isFolder` — 30-08's temporary "rendered but not yet

@@ -1288,6 +1288,15 @@ export const DICTIONARY = {
   // legible through to the CTA itself.
   "share.ctaFolder": { pl: "Udostępnij folder", en: "Share folder" },
   "share.ctaItem": { pl: "Udostępnij item", en: "Share item" },
+  // 31-05-PLAN.md (MOD-01): the third CTA state -- selected when the
+  // destination/item is ALREADY shared with someone (an existing folder
+  // destination, or an item that already has >=1 recipient among the
+  // standing rows), per 31-UI-SPEC.md's Copywriting Contract. The action
+  // here is reconciling WHO can see it, not "sharing" it for the first
+  // time -- the dialog is the access picture for the chosen destination
+  // (MOD-01's own framing), so the CTA states that honestly rather than
+  // reusing ctaFolder/ctaItem's fresh-share wording.
+  "share.ctaSaveAccess": { pl: "Zapisz dostęp", en: "Save access" },
   // 26-12a gap fix: dedicated ENTRY-POINT copy, deliberately distinct from
   // the two submit CTAs directly above. ItemContextMenu.tsx (menu text) and
   // DetailPanel.tsx (Share2 icon aria-label) both used to reuse
