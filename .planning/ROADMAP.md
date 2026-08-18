@@ -189,13 +189,14 @@ require a **proven** client consumer, not a wired one.
   4. Each access level is described in the dialog using the shipped `access.readOnly` / `access.fullEdit` / `access.hiddenPassword` vocabulary, and the hidden-password description states in that same view that it is an interface protection and never a cryptographic one — visible without a hover, a tooltip, or a second click.
   5. A share that cannot complete — destination key unavailable, or a recipient with no published identity key — is refused with an honest message and leaves no partial membership behind; the failure branch is driven deliberately and the resulting server state is asserted unchanged, so the refusal is proven to fire rather than assumed.
 
-**Plans**: 0/5 plans executed
+**Plans**: 0/6 plans executed
 
 - [ ] 31-01-PLAN.md — Server: PUT /access/{user_id} and PUT /shares/{user_id} in-place level-edit routes (Q2) + client wrappers
-- [ ] 31-02-PLAN.md — ShareDialog: destination selector + per-row Row Anatomy + reconcileRow dispatcher (folder scope) + ORG-03 real-WASM proof
-- [ ] 31-03-PLAN.md — ShareDialog: pending-revocations summary + live e2e for SC1/SC2 + the sixth proof obligation's two-session revocation proof
-- [ ] 31-04-PLAN.md — ShareDialog: item-scope per-row dispatch + CTA text + hidden-password honesty (MOD-03/SC4) + scroll/footer restructure
-- [ ] 31-05-PLAN.md — ShareDialog: SC5 deliberately-driven destination-unavailable refusal + Q2 live atomicity proof + phase-wide CI-width sweep
+- [ ] 31-02-PLAN.md — ShareDialog: migrate the shared per-person control to the per-row model for BOTH scopes (folder mint-new + item), family-wide isolated to its own control, hidden-password re-wired to rows, single-scroll-region shell
+- [ ] 31-03-PLAN.md — ShareDialog: destination selector targeting an existing shared folder (MOD-02) + dispatch-count proof + ORG-03/SC3 real-WASM proof + SC1/SC2 live e2e
+- [ ] 31-04-PLAN.md — ShareDialog: pending-revocations honesty summary + the sixth proof obligation's two-session live revocation proof
+- [ ] 31-05-PLAN.md — ShareDialog: submit CTA distinction + hidden-password honesty wording revision (MOD-03/SC4)
+- [ ] 31-06-PLAN.md — ShareDialog: SC5 deliberately-driven destination-unavailable refusal + Q2 dispatch-level atomicity proof + phase-wide CI-width sweep
 
 **UI hint**: yes
 

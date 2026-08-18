@@ -47,19 +47,23 @@ created: 2026-08-12
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 31-01-T1 | 31-01 | 1 | MOD-01 (Q2) | T-31-01..05 | update_access/update_share round-trip + 404-not-upsert | server integration (TDD) | `cargo test --workspace --no-fail-fast update_access update_share` | ❌ new | ⬜ pending |
+| 31-01-T1 | 31-01 | 1 | MOD-01 (Q2) | T-31-01..05 | update_access/update_share round-trip + 404-not-upsert | server integration (TDD) | `cargo test --workspace --no-fail-fast` | ❌ new | ⬜ pending |
 | 31-01-T2 | 31-01 | 1 | MOD-01 (Q2) | T-31-01, T-31-02 | Full 9-pair matrix + item_bucket bound + self-escalation regression | server integration (TDD) + falsification | `cargo test --workspace --no-fail-fast` | ❌ new | ⬜ pending |
-| 31-02-T1 | 31-02 | 2 | MOD-01, MOD-02, ORG-03 | T-31-06, T-31-07 | Destination selector + row anatomy + reconcileRow dispatcher | unit + TDD | `cd web && npm run compile && npm test -- ShareDialog` | ❌ new markup | ⬜ pending |
-| 31-02-T2 | 31-02 | 2 | ORG-03 (SC3) | T-31-08 | New recipient on existing destination decrypts pre-existing item | real-WASM + falsification | `cd web && npm run compile && npm test -- ShareDialog.real-wasm` | ✅ extend | ⬜ pending |
-| 31-03-T1 | 31-03 | 3 | MOD-01 | T-31-10 | Pending-revocations honesty summary | unit (TDD) | `cd web && npm run compile && npm test -- ShareDialog` | ❌ new | ⬜ pending |
-| 31-03-T2 | 31-03 | 3 | MOD-01 (SC1), MOD-02 (SC2) | — | Per-recipient level + collection-count/destination-id live proof | live e2e (server state) | `cd web && npm run build && npx playwright test e2e/sharing.spec.ts --retries=0` | ✅ extend | ⬜ pending |
-| 31-03-T3 | 31-03 | 3 | 6th obligation | T-31-09, T-31-11 | Positive read before revoke, failing read after next sync (2 real sessions) | live e2e (2 sessions) + falsification | `cd web && npm run build && npx playwright test e2e/sharing.spec.ts --retries=0` | ❌ new | ⬜ pending |
-| 31-04-T1 | 31-04 | 4 | MOD-01 | T-31-12 | Item-scope grant/update/revoke parity + CTA selection | unit (TDD) | `cd web && npm run compile && npm test -- ShareDialog` | ❌ new | ⬜ pending |
-| 31-04-T2 | 31-04 | 4 | MOD-03 (SC4) | T-31-13 | Hidden-password honesty on a repeat share + scroll/footer restructure | unit (TDD) + manual PL-width | `cd web && npm run compile && npm test -- ShareDialog` + human-check | ❌ new | ⬜ pending |
-| 31-05-T1 | 31-05 | 5 | MOD-01, MOD-02, ORG-03 (SC5) | T-31-14 | Destination-unavailable refusal, deliberately driven | unit + live e2e (TDD) | `cd web && npm run compile && npm test -- ShareDialog && npm run build && npx playwright test e2e/sharing.spec.ts --retries=0` | ❌ new | ⬜ pending |
-| 31-05-T2 | 31-05 | 5 | MOD-01, MOD-02 (Q2) | T-31-15 | Atomic level-edit + fresh-grant live proof; full CI-width sweep | live e2e + full CI sweep | `cargo test --workspace --no-fail-fast && cd web && npm run compile && npm test && npm run build && npx playwright test e2e/sharing.spec.ts --retries=0` | ❌ new | ⬜ pending |
+| 31-02-T1 | 31-02 | 2 | MOD-01, MOD-03 | T-31-06, T-31-07 | Family-wide isolated to its own control; folder-scope (mint-new) row anatomy + reconcileRow grant dispatch; single-scroll-region shell | unit + e2e (TDD) | `cd web && npm run compile && npm test && npm run build && npx playwright test e2e/sharing.spec.ts --retries=0 -g "WR-09\|Backstop\|fingerprint\|SHARE-01\|SHARE-06"` | ❌ new markup | ⬜ pending |
+| 31-02-T2 | 31-02 | 2 | MOD-01, MOD-03 | T-31-06, T-31-08 | Item-scope full grant/update/revoke dispatch + hidden-password re-wiring to rows (both scopes) | unit + e2e (TDD) + falsification (dispatch-count) | `cd web && npm run compile && npm test && npm run build && npx playwright test e2e/sharing.spec.ts --retries=0` | ❌ new | ⬜ pending |
+| 31-03-T1 | 31-03 | 3 | MOD-01, MOD-02 | T-31-09, T-31-10 | Destination selector + row re-seed on switch; folder-branch update/revoke reachability + dispatch-count proof | unit (TDD) + falsification | `cd web && npm run compile && npm test` | ❌ new | ⬜ pending |
+| 31-03-T2 | 31-03 | 3 | ORG-03 (SC3) | T-31-11 | New recipient on existing destination decrypts pre-existing item | real-WASM + falsification | `cd web && npm run compile && npm test` | ✅ extend | ⬜ pending |
+| 31-03-T3 | 31-03 | 3 | MOD-01 (SC1), MOD-02 (SC2) | — | Per-recipient level + collection-count/destination-id live proof | live e2e (server state) | `cd web && npm run build && npx playwright test e2e/sharing.spec.ts --retries=0` | ✅ extend | ⬜ pending |
+| 31-04-T1 | 31-04 | 4 | MOD-01 | T-31-13 | Pending-revocations honesty summary | unit (TDD) + falsification | `cd web && npm run compile && npm test` | ❌ new | ⬜ pending |
+| 31-04-T2 | 31-04 | 4 | MOD-01 | T-31-12, T-31-14 | Positive read before revoke, failing read after next sync (2 real sessions, relock-before-anchor) | live e2e (2 sessions) + falsification | `cd web && npm run build && npx playwright test e2e/sharing.spec.ts --retries=0` | ❌ new | ⬜ pending |
+| 31-05-T1 | 31-05 | 5 | MOD-01 | — | Submit CTA distinguishes editing an existing access picture from a fresh share | unit (TDD) + falsification | `cd web && npm run compile && npm test` | ❌ new | ⬜ pending |
+| 31-05-T2 | 31-05 | 5 | MOD-03 (SC4) | T-31-15 | Hidden-password honesty on a repeat share (revised wording) | unit (TDD) + falsification + manual PL-width | `cd web && npm run compile && npm test` + human-check | ❌ new | ⬜ pending |
+| 31-06-T1 | 31-06 | 6 | MOD-01, MOD-02, ORG-03 (SC5) | T-31-16 | Destination-unavailable refusal, deliberately driven, named session + before/after baseline | unit + live e2e (TDD) + falsification | `cd web && npm run compile && npm test && npm run build && npx playwright test e2e/sharing.spec.ts --retries=0` | ❌ new | ⬜ pending |
+| 31-06-T2 | 31-06 | 6 | MOD-01, MOD-02 (Q2) | T-31-17 | Atomic level-edit + fresh-grant live proof (end-state); full CI-width sweep | live e2e + full CI sweep | `cargo test --workspace --no-fail-fast && cd web && npm run compile && npm test && npm run build && npx playwright test e2e/sharing.spec.ts --retries=0` | ❌ new | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+
+Note: Q2's "no intermediate under/over-access window" claim is proven jointly by two task-level assertions, not one — the dispatch-level half (exactly one `updateCollectionAccess` call, zero revoke/grant calls, for the edited recipient) is a unit assertion in 31-03-T1 (folder branch) and 31-02-T2 (item branch); the end-state half (server reflects both changes correctly) is 31-06-T2's live e2e. A final-state-only read cannot distinguish an atomic update from a client-side revoke-then-re-add that converges on the same state, so the dispatch-level assertions are load-bearing, not redundant.
 
 ### Requirement → proof obligations (from RESEARCH.md, binding on the planner)
 
@@ -86,10 +90,10 @@ created: 2026-08-12
 - [x] `web/src/components/vault/ShareDialog.real-wasm.test.ts` — extend with an existing-destination
       case: reshare into a collection that already holds items, assert the new recipient's client
       decrypts a **pre-existing** item
-      — covered by 31-02-T2
+      — covered by 31-03-T2
 - [x] `web/e2e/sharing.spec.ts` — SC1 per-recipient level, SC2 collection count, the revocation anchor,
       and SC5's deliberately-driven destination-unavailable case
-      — SC1/SC2 covered by 31-03-T2, revocation anchor by 31-03-T3, SC5 by 31-05-T1, Q2 live proof by 31-05-T2
+      — SC1/SC2 covered by 31-03-T3, revocation anchor by 31-04-T2, SC5 by 31-06-T1, Q2 live proof by 31-06-T2
 - [x] Framework install: none — Vitest and Playwright are already configured
 
 ---
