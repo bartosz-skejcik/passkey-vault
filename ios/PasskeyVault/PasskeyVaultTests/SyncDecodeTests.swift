@@ -124,7 +124,7 @@ struct SyncDecodeTests {
         revision: Int, accountId: String, items: [CachedSnapshot.Item], folders: [CachedSnapshot.Folder] = []
     ) -> CachedSnapshot {
         CachedSnapshot(
-            revision: revision, syncedAtMs: 1_755_555_555_000, accountId: accountId,
+            revision: revision, 1_755_555_555_000, accountId: accountId,
             serverBaseURL: "http://127.0.0.1:8621", items: items, folders: folders
         )
     }

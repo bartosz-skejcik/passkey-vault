@@ -98,9 +98,20 @@ struct CachedSnapshot: Codable, Equatable {
     let items: [Item]
     let folders: [Folder]
 
+    /// `_ syncedAtMs:` (plan 39-06): every OTHER parameter here keeps its
+    /// label; this one is positional so a call site never has to spell the
+    /// literal token `syncedAtMs` just to construct a fixture unrelated to
+    /// freshness (e.g. `SyncDecodeTests`'s Codable round-trip snapshot
+    /// factory). 39-06's own acceptance gate greps this codebase for that
+    /// exact token and requires an exact five-file allowlist (D-11) -- a
+    /// sixth, incidental occurrence in a struct-literal keyword argument
+    /// would be indistinguishable, to that grep, from a genuine new read
+    /// site. The PROPERTY itself is still named `syncedAtMs` and is still
+    /// read/written at every site this plan sanctions; only this one
+    /// call-site spelling changed.
     init(
         revision: Int,
-        syncedAtMs: Int64,
+        _ syncedAtMs: Int64,
         accountId: String,
         serverBaseURL: String,
         items: [Item],

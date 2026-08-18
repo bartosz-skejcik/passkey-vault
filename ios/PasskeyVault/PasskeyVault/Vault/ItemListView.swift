@@ -400,6 +400,20 @@ struct ItemListView: View {
                 Tab(tab.title, systemImage: tab.systemImage, value: DockSlot.type(tab)) {
                     NavigationStack {
                         dimmable(tabContent(for: tab))
+                            // Plan 39-06 (SYNC-04): the last-synced surface,
+                            // visible on EVERY tab without interaction and
+                            // without scrolling -- a `.top` safe-area inset
+                            // sits right under the navigation bar, on every
+                            // pass through this closure. This view is handed
+                            // the WHOLE snapshot object; THIS file reads no
+                            // field out of it at all -- see this plan's own
+                            // single-source gate, which enumerates this
+                            // file's deliberate absence from its allowlist.
+                            .safeAreaInset(edge: .top) {
+                                SyncStatusView(snapshot: store.currentSnapshot)
+                                    .padding(.horizontal)
+                                    .padding(.top, 4)
+                            }
                             // BUG FOUND LIVE (plan 38-06, Task 2): the
                             // create bar was originally a row INSIDE the
                             // `List` below, which meant it was reachable

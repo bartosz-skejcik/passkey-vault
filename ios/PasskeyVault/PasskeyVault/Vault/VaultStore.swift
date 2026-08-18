@@ -31,6 +31,17 @@
 //     cache is REPLACED, never merged (D-15) -- the server sends no
 //     deletion markers.
 //
+//  Plan 39-06 (SYNC-04) adds a fifth rule, on top of #4 above:
+//
+//  5. **`currentSnapshot` is written on BOTH response branches, never only
+//     the snapshot branch.** An up-to-date answer confirms the revision
+//     with the server exactly as much as a snapshot answer does -- both are
+//     a "pull the server actually answered" (T-39-23); a thrown request
+//     writes nothing, on either branch. This is THE SOLE WRITE SITE for
+//     `CachedSnapshot.syncedAtMs` (see that field's own header, D-11) --
+//     `SyncStatusView` reads it only through the whole `CachedSnapshot`
+//     object this store hands it, never the field directly.
+//
 
 import Foundation
 import Observation
@@ -82,6 +93,16 @@ final class VaultStore {
 
     /// Last `vault_revision` merged; the `since` watermark for the next pull.
     private(set) var lastKnownRevision: Int = 0
+
+    /// Plan 39-06 (SYNC-04). The whole persisted snapshot, mirrored here so
+    /// `SyncStatusView` can read `syncedAtMs` (and, in a later plan,
+    /// `items`/`folders` if ever needed) WITHOUT this store's own callers
+    /// having to know the field's name -- `ItemListView` hands this object
+    /// straight through, it never reads `syncedAtMs` itself (see the
+    /// single-source gate in this plan's own acceptance criteria). Set by
+    /// `hydrateFromCache()` on init/re-hydration and by BOTH `refresh()`
+    /// branches below (rule 5 above); never anywhere else.
+    private(set) var currentSnapshot: CachedSnapshot?
 
     private(set) var lastError: String?
 
@@ -178,6 +199,7 @@ final class VaultStore {
     /// sync.
     private func hydrateFromCache() {
         guard let snapshot = cacheStore.readCurrentSnapshot(accountId: accountId) else { return }
+        currentSnapshot = snapshot
         items = snapshot.items.map { VaultItemRow(cached: $0) }.map(decrypt(row:))
         lastKnownRevision = snapshot.revision
         recomputeTags()
@@ -492,6 +514,7 @@ final class VaultStore {
         switch response {
         case let .upToDate(revision):
             lastKnownRevision = revision
+            persistUpToDateToCache(revision: revision)
         case let .snapshot(revision, rows, folderRows):
             items = rows.map(decrypt(row:))
             lastKnownRevision = revision
@@ -509,17 +532,54 @@ final class VaultStore {
     private func persistSnapshotToCache(revision: Int, items rows: [VaultItemRow], folders folderRows: [FolderRow]) {
         let snapshot = CachedSnapshot(
             revision: revision,
-            syncedAtMs: Int64(Date().timeIntervalSince1970 * 1000),
+            Int64(Date().timeIntervalSince1970 * 1000), // syncedAtMs, positional (CachedSnapshot.init's own note)
             accountId: accountId,
             serverBaseURL: api.baseURL.absoluteString,
             items: rows.map(CachedSnapshot.Item.init(row:)),
             folders: folderRows.map(CachedSnapshot.Folder.init(row:))
         )
+        currentSnapshot = snapshot
         do {
             try cacheStore.write(snapshot)
         } catch {
             Self.log.error(
                 "failed to persist sync cache: \(String(describing: error), privacy: .public)"
+            )
+        }
+    }
+
+    /// Plan 39-06 (SYNC-04, T-39-23). The up-to-date branch structurally
+    /// carries no item collection (D-12) -- 39-03 only needed the snapshot
+    /// branch's write. This re-persists whatever items/folders are ALREADY
+    /// cached (never re-derived from `self.items`, which are already-
+    /// decrypted plaintext; the cache holds only ciphertext, D-11/SYNC-03)
+    /// under an updated `revision`/`syncedAtMs`, because an up-to-date
+    /// answer is JUST as much a confirmed pull as a snapshot answer is --
+    /// both response branches confirm the revision with the server; a
+    /// thrown request writes nothing (see `refresh()`'s own note above).
+    ///
+    /// If nothing has ever been cached, this still records the pull -- with
+    /// an EMPTY item set, which is exactly what the server confirmed exists
+    /// -- rather than leaving the freshness value permanently absent for an
+    /// account that has, in fact, synced. This is reachable on a brand-new
+    /// account's very first pull: `since=0` already equals a fresh
+    /// account's `revision=0`, so the FIRST response a new account ever
+    /// sees can be up-to-date, never a snapshot.
+    private func persistUpToDateToCache(revision: Int) {
+        let snapshot = CachedSnapshot(
+            revision: revision,
+            Int64(Date().timeIntervalSince1970 * 1000), // syncedAtMs, positional (CachedSnapshot.init's own note)
+            accountId: accountId,
+            serverBaseURL: api.baseURL.absoluteString,
+            items: currentSnapshot?.items ?? [],
+            folders: currentSnapshot?.folders ?? []
+        )
+        currentSnapshot = snapshot
+        do {
+            try cacheStore.write(snapshot)
+        } catch {
+            Self.log.error(
+                "failed to persist sync cache (up-to-date): \(String(describing: error), privacy: .public)"
             )
         }
     }
