@@ -174,10 +174,21 @@ struct LockTeardownTests {
     /// `await` -- reproducing CR-02's exact race without depending on real
     /// network timing. Same canned bodies as `LockTeardownStubURLProtocol`.
     final class DelayedLockRaceStubURLProtocol: URLProtocol, @unchecked Sendable {
+        /// WR-06 (38-REVIEW.md, iteration 2): signaled the INSTANT
+        /// `startLoading()` begins -- the moment the awaited network call is
+        /// confirmed in flight, not merely scheduled. Reset by each test
+        /// immediately before it kicks off the `Task` that will trigger a
+        /// request, so a signal can never be consumed by the wrong test.
+        /// `DispatchSemaphore` is thread-safe by design; `nonisolated(unsafe)`
+        /// only acknowledges that this file, not the compiler, is
+        /// responsible for that reset-before-use ordering.
+        nonisolated(unsafe) static var requestStarted = DispatchSemaphore(value: 0)
+
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
         override func startLoading() {
+            Self.requestStarted.signal()
             let path = request.url?.path ?? ""
             let (status, body): (Int, Data)
             if path.hasSuffix("/items") {
@@ -190,10 +201,12 @@ struct LockTeardownTests {
                 status = 200
                 body = Data(#"{"revision":7}"#.utf8)
             }
-            // Deliberately slow -- long enough that the test's own
-            // `store.lock()` call, issued right after kicking off the
-            // async operation and a short `Task.sleep`, always lands
-            // BEFORE this response arrives.
+            // Still deliberately slow -- long enough that `lock()` (which
+            // the test now issues only AFTER the checkpoint above has
+            // signaled) always lands well before this response arrives.
+            // The signal, not this duration, is what makes the ordering
+            // deterministic; the delay just gives the test loop room to
+            // schedule `store.lock()` before this thread wakes up.
             Thread.sleep(forTimeInterval: 0.3)
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: status, httpVersion: "HTTP/1.1",
@@ -214,26 +227,63 @@ struct LockTeardownTests {
         return VaultAPI(baseURL: fakeBaseURL, tokenProvider: { "fake-token" }, session: session)
     }
 
+    /// WR-06 (38-REVIEW.md, iteration 2): suspends the CALLER off the
+    /// MainActor while waiting for the stub's `startLoading()` to signal.
+    /// Deliberately NOT a synchronous `DispatchSemaphore.wait()` on the
+    /// test's own (MainActor-isolated) body -- that would freeze the
+    /// MainActor's serial executor, and the `create`/`refresh` `Task` below
+    /// needs MainActor time to even ENTER its awaited call in the first
+    /// place, so a synchronous wait here would deadlock every time, not
+    /// flake.
+    private static func waitForRequestStarted() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                DelayedLockRaceStubURLProtocol.requestStarted.wait()
+                continuation.resume()
+            }
+        }
+    }
+
     /// RED-before-green: before the CR-02 fix, `store.items` was NOT empty
     /// here -- `create`'s post-`await` bookkeeping ran unconditionally and
     /// re-inserted the decrypted plaintext item after `lock()` had already
     /// torn the store down.
+    ///
+    /// WR-06 (38-REVIEW.md, iteration 2): the two `#expect`s this test
+    /// asserted before iteration 2 (`store.items.isEmpty`, `!store
+    /// .isHydrated`) are satisfied whether the guard actually fired OR
+    /// `lock()` merely ran after the response had already arrived -- an
+    /// outcome-only assertion cannot tell the two apart, and a sleep-based
+    /// race (50ms vs. the stub's 300ms) could lose under a loaded CI
+    /// runner, a cold simulator, or an attached debugger and pass
+    /// vacuously on unfixed code. Two independent changes close that:
+    /// (1) `waitForRequestStarted()` replaces the sleep with a real
+    /// synchronization point, so the lock deterministically lands mid-
+    /// flight on every run, not just the lucky ones; (2) asserting
+    /// `store.lockedMidFlightGuardHits == 1` and
+    /// `#expect(throws: VaultStoreError.locked)` prove the GUARD ITSELF
+    /// fired (WR-02 made the guard throw rather than quietly return),
+    /// which a late `lock()` could never produce -- a late lock leaves
+    /// `create` to return normally, not throw `.locked`.
     @Test
     func aLockDuringAnInFlightCreateLeavesTheStoreEmptyRatherThanResurrectingPlaintext() async throws {
         let userKey = try FfiUserKey.generate()
         let store = VaultStore(userKey: userKey, api: Self.delayedRaceApi())
 
+        DelayedLockRaceStubURLProtocol.requestStarted = DispatchSemaphore(value: 0)
         let createTask = Task { try await store.create(fields: Self.noteFields()) }
 
-        // Give the awaited network call a chance to actually start (the
-        // task scheduled and suspended at its `await`) before locking --
-        // the stub's own 0.3s delay is what guarantees the lock always
-        // wins the race.
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await Self.waitForRequestStarted()
         store.lock()
 
-        _ = try await createTask.value
+        await #expect(throws: VaultStoreError.locked) {
+            _ = try await createTask.value
+        }
 
+        #expect(
+            store.lockedMidFlightGuardHits == 1,
+            "the post-await lock guard must have fired exactly once -- distinguishes the guard catching the race from a lock that merely ran after the response arrived"
+        )
         #expect(
             store.items.isEmpty,
             "a lock landing mid-create must not be undone by create's post-await bookkeeping"
@@ -243,19 +293,26 @@ struct LockTeardownTests {
 
     /// Same race, for `refresh()`: before the CR-02 fix, `isHydrated` was
     /// resurrected to `true` (and, on a `.snapshot` response, `items`
-    /// repopulated) even though `lock()` had already run.
+    /// repopulated) even though `lock()` had already run. See the create
+    /// test's own header for why the checkpoint + guard-hit-count pairing
+    /// (WR-06) replaces the sleep-based race here too.
     @Test
     func aLockDuringAnInFlightRefreshDoesNotResurrectHydration() async throws {
         let userKey = try FfiUserKey.generate()
         let store = VaultStore(userKey: userKey, api: Self.delayedRaceApi())
 
+        DelayedLockRaceStubURLProtocol.requestStarted = DispatchSemaphore(value: 0)
         let refreshTask = Task { try await store.refresh() }
 
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await Self.waitForRequestStarted()
         store.lock()
 
         try await refreshTask.value
 
+        #expect(
+            store.lockedMidFlightGuardHits == 1,
+            "the post-await lock guard must have fired exactly once -- distinguishes the guard catching the race from a lock that merely ran after the response arrived"
+        )
         #expect(!store.isHydrated, "a lock landing mid-refresh must not be undone by refresh's post-await bookkeeping")
         #expect(store.items.isEmpty)
         #expect(store.lastKnownRevision == 0)
