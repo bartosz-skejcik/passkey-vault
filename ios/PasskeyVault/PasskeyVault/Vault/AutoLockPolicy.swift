@@ -14,6 +14,14 @@
 //  field value, ever. See `grep -rn 'UserDefaults\|AppStorage'`'s own
 //  enumeration in `38-11-SUMMARY.md`.
 //
+//  WR-02 (38-REVIEW.md): this file has NO CONSUMER YET -- `read()`/`write()`
+//  validate the whitelist and are unit-tested (`LockTeardownTests.swift`),
+//  but nothing in the app calls `read()` to drive an actual idle timer, no
+//  scene-phase hook, no `VaultRootController` wiring. There is no auto-lock
+//  today; only the storage contract for one. Wiring the timer is explicitly
+//  Phase 39's job (38-11-SUMMARY.md, "Next Phase Readiness") -- deferred,
+//  not forgotten.
+//
 
 import Foundation
 
