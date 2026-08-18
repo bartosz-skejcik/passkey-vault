@@ -107,6 +107,16 @@ final class VaultStore {
         subsystem: "cloud.blonie.PasskeyVault", category: "vault"
     )
 
+    #if DEBUG
+    /// WR-06 (38-REVIEW.md, iteration 2): test-visible confirmation that a
+    /// post-`await` lock re-check actually fired -- distinguishes "the
+    /// guard caught a lock that landed mid-flight" from "the lock merely
+    /// ran after the response already arrived", which an outcome-only
+    /// assertion (`store.items.isEmpty`) cannot tell apart under timing
+    /// slip. DEBUG-only; production code never reads it.
+    private(set) var lockedMidFlightGuardHits = 0
+    #endif
+
     init(userKey: FfiUserKey, api: VaultAPI) {
         self.userKey = userKey
         self.api = api
@@ -197,7 +207,20 @@ final class VaultStore {
         // If a lock landed while the write was in flight, the server write
         // already stands (nothing to undo), but the local store must stay
         // torn down rather than re-populated with decrypted plaintext.
-        guard self.userKey != nil else { return item }
+        //
+        // WR-02 (iteration 2): throw rather than `return item` -- a normal
+        // return here was indistinguishable from the non-locked success
+        // path, so the caller (`ItemFormView.save()`) ran `onSaved?(item)`
+        // unconditionally and handed decrypted plaintext to a controller
+        // that `lockTeardown` had already reset. `.locked` makes the two
+        // outcomes distinguishable at the only place that can tell them
+        // apart.
+        guard self.userKey != nil else {
+            #if DEBUG
+            lockedMidFlightGuardHits += 1
+            #endif
+            throw VaultStoreError.locked
+        }
 
         // Post-commit bookkeeping: the server write has already been
         // accepted, so a local failure here must never be reported as a
@@ -280,7 +303,16 @@ final class VaultStore {
         // decrypted plaintext into a store that had already been torn
         // down. The server write stands either way; only the LOCAL
         // mutation is gated.
-        guard self.userKey != nil else { return updated }
+        //
+        // WR-02 (iteration 2): throw rather than `return updated`, for the
+        // same reason as `create` above -- a look-alike success return let
+        // `ItemFormView.save()` run `onSaved?(updated)` unconditionally.
+        guard self.userKey != nil else {
+            #if DEBUG
+            lockedMidFlightGuardHits += 1
+            #endif
+            throw VaultStoreError.locked
+        }
 
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             items[index] = updated
@@ -362,8 +394,16 @@ final class VaultStore {
         // on a `.snapshot` response, `items` repopulated with decrypted
         // plaintext) AFTER the lock had explicitly cleared both. A quiet
         // early return here is correct, not an error: the lock itself is
-        // what invalidated this in-flight read, not a network failure.
-        guard userKey != nil else { return }
+        // what invalidated this in-flight read, not a network failure --
+        // `refresh()` returns `Void`, so there is no look-alike-success
+        // value for a caller to misinterpret (contrast `create`/`update`
+        // above, WR-02).
+        guard userKey != nil else {
+            #if DEBUG
+            lockedMidFlightGuardHits += 1
+            #endif
+            return
+        }
 
         switch response {
         case let .upToDate(revision):

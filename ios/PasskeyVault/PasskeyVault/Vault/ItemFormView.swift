@@ -579,6 +579,15 @@ struct ItemFormView: View {
                 onSaved?(updated)
                 dismiss()
             }
+        } catch VaultStoreError.locked {
+            // WR-02: the server write already stands (nothing to undo,
+            // nothing to retry), but the vault locked mid-flight -- do NOT
+            // call `onSaved`, which would hand decrypted plaintext to a
+            // controller (`root.selection`/`root.activeSheet`) that
+            // `lockTeardown` has already reset, and do NOT surface an
+            // error banner for a save that in fact succeeded. The screen
+            // is already being torn down by `ContentView.performLock()`.
+            dismiss()
         } catch {
             errorMessage = String(describing: error)
         }
