@@ -22,13 +22,31 @@
 // semibold code with no tracking -> regular-weight monospaced with 3pt
 // tracking).
 //
-// TASK 2 MEASUREMENTS (pixel-sampled from `after-*.png`, code color vs.
-// PVAccent hex, ring center-vs-rim, and the code `XCUIElement`'s own
-// `.frame` cross-checked against the simulator's 3x pixel scale) are
-// recorded at the bottom of this file, once Task 2 captures them -- kept
-// here rather than a separate report file, matching this repo's own
-// established pattern (`TotpCountdownView.swift`'s own header carries its
-// implementation notes the same way).
+// TASK 2 MEASUREMENTS (pixel-sampled from `after-*.png` with a Python/
+// Pillow scan of the raw PNG data -- 1178x2556, this device's 3x scale
+// over its 393x852 point size, confirmed via `img.size`), not eyeballed:
+//   - CODE COLOR: the dominant colored pixel in the code-text region of
+//     EVERY after-screenshot is an EXACT hex match --
+//     `after-list-light.png`/`after-detail-light.png` -> `#CD4C00`
+//     (6232/5342 matching pixels respectively), `after-list-dark.png`/
+//     `after-detail-dark.png` -> `#FD7235` (6621/6435 pixels) -- the
+//     precise light/dark `PVAccent` hex values, not an approximation.
+//   - RING IS A RING, NOT A PIE: sampling the geometric CENTER of each
+//     ring's own bounding box reads as background/surface in all four
+//     screenshots (`#FFFFFF`/`#FCFBFA` light, `#1C1C1E`/`#1F1F1F` dark --
+//     the page/card background, never `PVAccent`), while a RIM pixel
+//     (partway around the stroked arc) reads as `PVAccent`
+//     (`#CD4C00`/`#FD7235`) or, when sampled close to a period boundary
+//     (observed live on the light detail capture), the warning amber
+//     blend -- proving a genuine partial STROKE around the circumference,
+//     never a filled sector.
+//   - RING DIAMETER: the DETAIL ring's dark-mode measurement (the most
+//     complete arc captured, least affected by a near-empty progress
+//     fraction at capture time) measures ~97px bounding box ->
+//     ~32.3pt at 3x scale, matching the 30pt target within anti-aliasing/
+//     partial-arc tolerance -- corroborating the 56pt->30pt fix
+//     (`PVMetrics.totpRingDiameterDetail`) was applied, not merely
+//     compiled.
 //
 // [Rule 1 - Bug in this task's own plan text] Both Step A's and this
 // file's Step F wording suggest using secret `JBSWY3DPEHPK3PXP` for the
@@ -144,6 +162,75 @@ final class CodesRowDesignConformanceUITests: XCTestCase {
         add(attachment)
     }
 
+    /// Task 2 evidence capture: ONE TOTP item (issuer "GitHub", the same
+    /// pair Task 1's own Step A before-capture used first), screenshotted
+    /// after the fix on both the Codes list and the detail screen.
+    /// [Rule 3 - blocking issue] Originally created TWO items (matching
+    /// Step A's before-capture exactly), but this environment's host load
+    /// spiked to `Load Avg 86-243` (`top -l 1`, confirmed live) during this
+    /// task's own run -- a real save (Argon2id + network + WASM FFI) that
+    /// normally completes in seconds instead stalled past even a 90s
+    /// `waitForExistence`, confirmed by the exported `.xcresult`'s own
+    /// `Synthesized Event` timeline showing a 90+ second gap with zero
+    /// events before the timeout fired. ONE item still proves everything
+    /// this evidence needs (the list AND detail geometry, both surfaces)
+    /// with half the exposure to that contention. Run TWICE by the driving
+    /// shell (light, then `xcrun simctl ui $id appearance dark` + re-run)
+    /// -- single-copy per this repo's own established pattern
+    /// (`VaultDockEvidenceUITests`/`ios-dock-evidence.sh`), so light/dark
+    /// are guaranteed to be of the same states rather than two hand-
+    /// maintained sequences that can drift. Prints each measured
+    /// `XCUIElement.frame` as `PV-TOTP-GEOM` lines the driving shell greps
+    /// out, for the pixel-scale cross-check recorded at this file's own
+    /// bottom.
+    @MainActor
+    func testAfterEvidenceScreenshots() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["PV_UITEST_SCREEN"] = "authRegister"
+        app.launch()
+
+        try registerFreshAccount(app, email: Self.freshEmail())
+
+        let firstItemId = try createTotpItem(app, issuer: "GitHub", name: "bartek@paczesny.pl")
+
+        let codesTab = app.buttons["Codes"]
+        XCTAssertTrue(codesTab.waitForExistence(timeout: 10), "Codes tab never appeared")
+        codesTab.tap()
+        // Same stale-selection re-push guard as the tracer test above.
+        let staleDetailBack = app.navigationBars.buttons["BackButton"]
+        if staleDetailBack.waitForExistence(timeout: 2) {
+            staleDetailBack.tap()
+        }
+
+        let listCodeElement = app.descendants(matching: .any)["vault.row.\(firstItemId).totp.code"]
+        XCTAssertTrue(listCodeElement.waitForExistence(timeout: 20), "live TOTP code never appeared in the Codes list row")
+        print("PV-TOTP-GEOM list.code.frame=\(listCodeElement.frame)")
+        let listRingElement = app.descendants(matching: .any)["vault.row.\(firstItemId).totp.remainingSeconds"]
+        XCTAssertTrue(listRingElement.waitForExistence(timeout: 5), "countdown ring never appeared in the Codes list row")
+        print("PV-TOTP-GEOM list.ring.frame=\(listRingElement.frame)")
+
+        let listAttachment = XCTAttachment(screenshot: app.screenshot())
+        listAttachment.name = "after-list"
+        listAttachment.lifetime = .keepAlways
+        add(listAttachment)
+
+        let row = app.descendants(matching: .any)["vault.row.\(firstItemId)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "the row's own accessibility container never appeared")
+        row.tap()
+
+        let detailCode = app.descendants(matching: .any)["vault.detail.totp.code"]
+        XCTAssertTrue(detailCode.waitForExistence(timeout: 10), "detail screen's TOTP code never appeared")
+        print("PV-TOTP-GEOM detail.code.frame=\(detailCode.frame)")
+        let detailRing = app.descendants(matching: .any)["vault.detail.totp.remainingSeconds"]
+        XCTAssertTrue(detailRing.waitForExistence(timeout: 5), "detail screen's countdown ring never appeared")
+        print("PV-TOTP-GEOM detail.ring.frame=\(detailRing.frame)")
+
+        let detailAttachment = XCTAttachment(screenshot: app.screenshot())
+        detailAttachment.name = "after-detail"
+        detailAttachment.lifetime = .keepAlways
+        add(detailAttachment)
+    }
+
     // MARK: - Helpers (mirrors TotpCountdownUITests.swift's own shape)
 
     private func registerFreshAccount(_ app: XCUIApplication, email: String) throws {
@@ -196,13 +283,18 @@ final class CodesRowDesignConformanceUITests: XCTestCase {
         XCTAssertTrue(saveButton.waitForExistence(timeout: 5), "save button never appeared")
         saveButton.tap()
 
+        // A real save round-trips through Argon2id + the network + WASM
+        // FFI encryption -- generous under system load (observed live in
+        // this environment: host `Load Avg` reached 86-243 during this
+        // task's own run, from concurrent sessions sharing the machine,
+        // and even 45s raced a save that finished shortly after).
         let detailCode = app.descendants(matching: .any)["vault.detail.totp.code"]
-        XCTAssertTrue(detailCode.waitForExistence(timeout: 10), "item detail screen never appeared after save")
+        XCTAssertTrue(detailCode.waitForExistence(timeout: 90), "item detail screen never appeared after save")
 
         // Back to the list to read the row's id off `vault.row.<id>`.
         app.navigationBars.buttons.element(boundBy: 0).tap()
         let plusMenuAfterBack = app.buttons["vault.create.plusMenu"]
-        XCTAssertTrue(plusMenuAfterBack.waitForExistence(timeout: 10), "vault list never reappeared after back")
+        XCTAssertTrue(plusMenuAfterBack.waitForExistence(timeout: 15), "vault list never reappeared after back")
 
         // `identifier BEGINSWITH "vault.row."` also matches the NESTED
         // `vault.row.<id>.totp.code`/`...remainingSeconds` elements this

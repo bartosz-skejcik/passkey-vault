@@ -211,6 +211,24 @@ enum PVMetrics {
     // detail rings (relocated from `TotpCountdownView`'s own private
     // `ringLineWidth`, already numerically correct).
     static let totpRingStrokeWidth: CGFloat = 2.3
+
+    // MARK: - TOTP detail block (screens-vault.html, ".totp"/30px ".pie")
+    //
+    // Task 2's own measured divergence: the DETAIL screen's composed TOTP
+    // block drew a 56pt ring and a semibold 31pt code with no letter-
+    // spacing against the drawing's 30pt ring / regular-weight 30pt
+    // monospaced code / 3pt tracking.
+
+    // `.totp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    // font-size:calc(30px*var(--s));letter-spacing:calc(3px*var(--s));
+    // font-variant-numeric:tabular-nums;...}`
+    static let totpDetailCodeFontSize: CGFloat = 30
+    static let totpDetailCodeLetterSpacing: CGFloat = 3
+
+    // Detail cell's own `.pie{width:calc(30px*var(--s));height:calc(30px*
+    // var(--s))}` override (the base `.pie` rule above is 21px, the LIST
+    // size).
+    static let totpRingDiameterDetail: CGFloat = 30
 }
 
 // MARK: - Dock glass

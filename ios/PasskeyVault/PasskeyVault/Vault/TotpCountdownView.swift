@@ -100,10 +100,7 @@ struct TotpCountdownView: View {
     private var ringDiameter: CGFloat {
         switch style {
         case .listRow: return PVMetrics.totpRingDiameterList
-        // Quick task 260818-irw Task 1: the detail geometry FIX is Task 2's
-        // job -- this literal 56 is the pre-existing, unchanged value, not
-        // yet routed through a PVMetrics constant.
-        case .detail: return 56
+        case .detail: return PVMetrics.totpRingDiameterDetail
         }
     }
 
@@ -209,9 +206,18 @@ struct TotpCountdownView: View {
                 Text(verbatim: label)
                     .font(.system(size: 12.5))
                     .foregroundStyle(Color("PVTextMuted"))
+                // `.totp{font-family:ui-monospace,SFMono-Regular,Menlo,
+                // monospace;font-size:30;letter-spacing:3;font-variant-
+                // numeric:tabular-nums}` -- regular weight (no override in
+                // that CSS rule), a genuine monospace font family (`design:
+                // .monospaced`, SwiftUI's equivalent), 3pt tracking.
+                // `.monospacedDigit()` stays alongside `design: .monospaced`
+                // -- harmless, and belt-and-suspenders with the CSS's own
+                // `font-variant-numeric:tabular-nums`.
                 Text(verbatim: Self.grouped(code))
-                    .font(.system(size: 31, weight: .semibold, design: .default))
+                    .font(.system(size: PVMetrics.totpDetailCodeFontSize, weight: .regular, design: .monospaced))
                     .monospacedDigit()
+                    .tracking(PVMetrics.totpDetailCodeLetterSpacing)
                     .foregroundStyle(Color("PVAccent"))
                     .accessibilityIdentifier("vault.detail.totp.code")
                     .accessibilityValue(code)
