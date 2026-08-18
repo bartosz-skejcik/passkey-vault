@@ -35,6 +35,7 @@
 
 import SwiftUI
 import UIKit
+import os
 
 // MARK: - Dock tab bar (item-type filter)
 
@@ -1401,23 +1402,40 @@ struct ItemListView: View {
         .accessibilityIdentifier("vault.list.statusBanner")
     }
 
-    /// WR-05 (38-REVIEW.md, iteration 2): maps a thrown error to copy safe
-    /// to put in front of a user -- never the raw text a throw carries.
-    /// `PvApiError.httpError`'s `message` is the VERBATIM server response
-    /// body (`PvApiClient.swift`'s own header on that type); this file
-    /// previously interpolated `\(error)` directly, which rendered that
-    /// body on screen in Release. Every other error type already carries a
-    /// hand-written, user-safe `description` (`VaultStoreError`,
-    /// `VaultAPIError`) and is passed through unchanged; only the raw-body
-    /// case is intercepted.
+    private static let log = Logger(
+        subsystem: "cloud.blonie.PasskeyVault", category: "vault-list"
+    )
+
+    /// WR-05 (38-REVIEW.md, iteration 2), corrected by WR-13 (iteration 4):
+    /// maps a thrown error to copy safe to put in front of a user -- never
+    /// the raw text a throw carries. This is an ALLOW-list, not a deny-list:
+    /// only error types known to carry hand-written, user-safe copy
+    /// (`VaultStoreError`, `VaultAPIError`, `PvApiError.invalidCredentials`,
+    /// `PvApiError.network`) are shown verbatim. Everything else --
+    /// including `PvApiError.httpError`'s VERBATIM server response body and
+    /// `PvApiError.unexpectedResponse`'s raw `DecodingError` dump built
+    /// partly from server-controlled JSON (`VaultAPI.swift`'s own header on
+    /// that type) -- is logged for diagnosis and never rendered. The
+    /// iteration-2 version denied only `.httpError`, leaving
+    /// `.unexpectedResponse` (thrown from four sites in `VaultAPI.swift`)
+    /// and any bridged `NSError` to fall through the trailing
+    /// `CustomStringConvertible` branch unchanged.
     private func userFacing(_ error: Error) -> String {
-        if let apiError = error as? PvApiError, case .httpError = apiError {
-            return "The server couldn't complete this request. Please try again."
+        switch error {
+        case let storeError as VaultStoreError:
+            return storeError.description
+        case let apiError as VaultAPIError:
+            return apiError.description
+        case PvApiError.invalidCredentials:
+            return PvApiError.invalidCredentials.description
+        case let PvApiError.network(underlying):
+            return "Couldn't reach the server. \(underlying.localizedDescription)"
+        default:
+            // httpError / unexpectedResponse / anything unknown: log the
+            // detail, show the user nothing that came off the wire.
+            Self.log.error("vault operation failed: \(String(describing: error), privacy: .public)")
+            return "Something went wrong. Please try again."
         }
-        if let described = error as? CustomStringConvertible {
-            return described.description
-        }
-        return "Something went wrong. Please try again."
     }
 
     // MARK: - Search suggestions (tags)
