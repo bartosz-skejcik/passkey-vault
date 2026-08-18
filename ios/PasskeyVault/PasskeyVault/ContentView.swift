@@ -390,9 +390,15 @@ struct ContentView: View {
             userKey: session.userKey,
             api: VaultAPI(
                 baseURL: ServerSettings.resolved,
-                // A closure, not a captured `String`: the token is read at
-                // request time so a lock or rotation cannot leave a stale
-                // copy alive inside `VaultAPI`.
+                // WR-03 (38-REVIEW.md): this closure captures `session
+                // .token` BY VALUE at construction, not a late read -- the
+                // comment here previously (and falsely) claimed the
+                // opposite. What actually prevents a stale copy surviving a
+                // lock is `VaultStore.lock()`/`FolderStore.lock()`
+                // replacing `api` with a dead `tokenProvider` (see either
+                // type's own note); a session TOKEN ROTATION without a
+                // lock is not covered by that and would still authenticate
+                // with the value captured here.
                 tokenProvider: { [token = session.token] in token }
             )
         )

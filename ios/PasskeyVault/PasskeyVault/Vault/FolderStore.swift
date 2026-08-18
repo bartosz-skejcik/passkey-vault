@@ -60,7 +60,9 @@ final class FolderStore {
     /// Plan 38-11: `var`, not `let` -- `lock()` releases it, mirroring
     /// `VaultStore.userKey`'s own note.
     @ObservationIgnored private var userKey: FfiUserKey?
-    @ObservationIgnored private let api: VaultAPI
+    /// WR-03 (38-REVIEW.md): `var`, not `let` -- mirrors `VaultStore.api`'s
+    /// own note; `lock()` replaces the token supply with a dead one.
+    @ObservationIgnored private var api: VaultAPI
     @ObservationIgnored private static let log = Logger(
         subsystem: "cloud.blonie.PasskeyVault", category: "folders"
     )
@@ -79,6 +81,10 @@ final class FolderStore {
         folders = []
         lastError = nil
         userKey = nil
+        // WR-03 fix: same discipline as `VaultStore.lock()` -- a dead
+        // token supply so any call still holding this instance fails
+        // cleanly rather than authenticating with the pre-lock token.
+        api = VaultAPI(baseURL: api.baseURL, tokenProvider: { nil }, session: api.session)
     }
 
     /// A lowercase UUID string -- matching `VaultStore.mintItemId`'s own

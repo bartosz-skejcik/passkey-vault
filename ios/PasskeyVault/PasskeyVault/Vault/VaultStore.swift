@@ -94,7 +94,15 @@ final class VaultStore {
     /// while the store instance itself is still alive and reachable (held by
     /// `ContentView`'s `@State`).
     @ObservationIgnored private var userKey: FfiUserKey?
-    @ObservationIgnored private let api: VaultAPI
+    /// WR-03 (38-REVIEW.md): a `var`, not a `let` -- `lock()` replaces this
+    /// with a dead `tokenProvider` (see `lock()`'s own note). Was `let`,
+    /// which made `ContentView.storeFor`'s own comment ("a lock ... cannot
+    /// leave a stale copy alive") false: `tokenProvider: { [token =
+    /// session.token] in token }` captures the token BY VALUE, not late-
+    /// bound, and this store never discarded `api` on a lock, so a call
+    /// with no `userKey` guard (`touch(itemId:)`, fire-and-forget) could
+    /// still authenticate with the pre-lock token afterward.
+    @ObservationIgnored private var api: VaultAPI
     @ObservationIgnored private static let log = Logger(
         subsystem: "cloud.blonie.PasskeyVault", category: "vault"
     )
@@ -125,6 +133,12 @@ final class VaultStore {
         lastKnownRevision = 0
         isHydrated = false
         userKey = nil
+        // WR-03 fix: replace the token supply with a dead one -- any call
+        // still holding this `VaultStore` instance (e.g. `touch(itemId:)`,
+        // which carries no `userKey` guard of its own by design, see its
+        // header) now fails cleanly ("no session token available") instead
+        // of authenticating with the pre-lock token.
+        api = VaultAPI(baseURL: api.baseURL, tokenProvider: { nil }, session: api.session)
     }
 
     // MARK: - Id minting

@@ -152,9 +152,16 @@ enum VaultAPIError: Error, CustomStringConvertible {
 /// logged (T-38-02-04).
 struct VaultAPI {
     let baseURL: URL
-    /// Supplies the current session token. A closure rather than a stored
-    /// `String` so a token rotation or a lock cannot leave a stale copy alive
-    /// inside this value.
+    /// Supplies the current session token.
+    ///
+    /// WR-03 (38-REVIEW.md): a closure rather than a stored `String`, but
+    /// this alone does NOT prevent a stale copy -- the production call
+    /// sites (`ContentView.storeFor`/`.folderStoreFor`) capture `session
+    /// .token` BY VALUE (`[token = session.token] in token`), not a late
+    /// read of a live session. What actually clears a stale token is
+    /// `VaultStore.lock()`/`FolderStore.lock()` replacing the WHOLE `api`
+    /// value with a dead `tokenProvider` on lock; a token ROTATION without
+    /// a lock is not covered here.
     let tokenProvider: () -> String?
 
     /// Defaults to `.shared`. 38-09, Task 2's own testability requirement:
