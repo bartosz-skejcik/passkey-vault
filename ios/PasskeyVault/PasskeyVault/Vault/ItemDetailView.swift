@@ -268,7 +268,7 @@ struct ItemDetailView: View {
     /// password-hidden gate).
     private func displayValue(for key: String, value: String, fields: ItemFields) -> String {
         DetailFieldTables.displayValue(
-            key: key, value: value, revealed: revealState.isRevealed(key),
+            key: key, value: value, revealed: revealState.isRevealed(key, forItem: item.id),
             passwordHidden: passwordFieldHidden(key: key)
         )
     }
@@ -305,11 +305,11 @@ struct ItemDetailView: View {
                     Button {
                         reveal(key)
                     } label: {
-                        Image(systemName: revealState.isRevealed(key) ? "eye.slash" : "eye")
+                        Image(systemName: revealState.isRevealed(key, forItem: item.id) ? "eye.slash" : "eye")
                             .foregroundStyle(Color("PVTextMuted"))
                     }
                     .accessibilityIdentifier("vault.detail.reveal.\(key)")
-                    .accessibilityLabel(revealState.isRevealed(key) ? "Hide \(fieldLabel(key))" : "Show \(fieldLabel(key))")
+                    .accessibilityLabel(revealState.isRevealed(key, forItem: item.id) ? "Hide \(fieldLabel(key))" : "Show \(fieldLabel(key))")
                 }
                 if !value.isEmpty {
                     copyButton(key: key, value: value)

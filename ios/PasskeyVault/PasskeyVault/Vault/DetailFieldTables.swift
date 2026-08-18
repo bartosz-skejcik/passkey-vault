@@ -119,6 +119,19 @@ struct DetailRevealState: Equatable {
         revealedKeys.contains(key)
     }
 
+    /// WR-01 (iteration 2): structural scoping, not lifecycle-ordered --
+    /// `.onAppear` fires AFTER SwiftUI's first `body` evaluation for a
+    /// freshly-pushed `ItemDetailView`, so relying on `setItem` alone left
+    /// the first composed frame of item B answering with item A's
+    /// `revealedKeys`. This overload can never answer for an item it does
+    /// not currently own, independent of when `setItem` runs relative to
+    /// `body`. Production call sites (`ItemDetailView`) must use this one;
+    /// the itemId-less overload above stays for tests that assert the raw
+    /// `revealedKeys` set directly.
+    func isRevealed(_ key: String, forItem id: String) -> Bool {
+        itemId == id && revealedKeys.contains(key)
+    }
+
     /// Toggles one field's reveal state. Returns whether the field is NOW
     /// revealed (`true`) or was just re-hidden (`false`) -- the caller uses
     /// this to fire the last-used touch ONLY on a reveal, never on a
