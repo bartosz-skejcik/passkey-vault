@@ -85,4 +85,4 @@ Skonsolidowane wyniki trzech researchy (NordPass vs Vaultwarden, krajobraz rynku
 
 ## 7. Design datafa.st — skrót (pełny doc: UI-DESIGN.md)
 
-Stack zweryfikowany ze źródła: **Next.js 15 / React 19 / Tailwind v4 / DaisyUI 5**. Koralowy primary **#E16540** na ciepłych ciemnych szarościach (#262626/#212121/#1F1F1F), light theme z kremowym #FCFBFA. Fonty: **DM Sans** (całość UI) + **Fuzzy Bubbles** (odręczne adnotacje). Karty 16px, przyciski 8px, badge-pigułki, 1px bordery zamiast cieni. Emoji w copy, founder-voice.
+Stack zweryfikowany ze źródła: **Next.js 15 / React 19 / Tailwind v4 / DaisyUI 5**. Mandarynkowy primary **#FD7235** na ciepłych ciemnych szarościach (#262626/#212121/#1F1F1F), light theme z kremowym #FCFBFA. Fonty: **DM Sans** (całość UI) + **Fuzzy Bubbles** (odręczne adnotacje). Karty 16px, przyciski 8px, badge-pigułki, 1px bordery zamiast cieni. Emoji w copy, founder-voice.
