@@ -229,16 +229,22 @@ struct ContrastTests {
     }
 
     /// PVAccentBold is the one token DELIBERATELY exempt from the AA text
-    /// threshold: it is the literal brand coral `#E16540`, kept for large text
-    /// (>=18pt regular / >=14pt bold) and decorative fills.
+    /// threshold: it is the literal brand colour, kept for decorative fills
+    /// (and, originally, large text).
     ///
-    /// This test asserts the exemption is real rather than assumed -- it pins
-    /// the value BELOW 4.5 and at or above the 3:1 large-text/UI floor. If
-    /// someone later "fixes" PVAccentBold to pass AA, this test fails and
-    /// sends them here to find out that the failure is the point: darkening it
-    /// would make it a duplicate of PVAccent and lose the brand colour
-    /// entirely.
-    @Test func accentBoldIsDeliberatelyBelowAaAndAboveTheLargeTextFloor() throws {
+    /// Rebrand coral -> mandarynka (2026-08-18, tokens.json) moved this from
+    /// `#E16540` (3.42:1 on white — cleared the 3:1 large-text/UI floor) to
+    /// `#FD7235` (measured 2.751:1 on white — it no longer does). That is the
+    /// same fact `docs/UI-DESIGN.md` records for the web's Primary content
+    /// colour: white on the new brand hue/chroma fails 3:1, which is why web
+    /// moved Primary content off white entirely. On iOS PVAccentBold has zero
+    /// non-test usages (`grep -rn PVAccentBold ios/PasskeyVault --include='*.swift'`),
+    /// so nothing regresses live UI -- but its licence narrows for real: it is
+    /// decorative-fill-only now, not even large-text-capable. This test pins
+    /// that it stays below AA (4.5) and now ALSO below the large-text floor
+    /// (3.0), so a future brand tweak that quietly crosses back over 3:1
+    /// doesn't go unnoticed the way the original E16540 failure did.
+    @Test func accentBoldIsDeliberatelyBelowAaAndBelowTheLargeTextFloor() throws {
         let bold = try Self.readColorSet(named: "PVAccentBold")
         let surface = try Self.readColorSet(named: "PVSurface")
 
@@ -253,8 +259,13 @@ struct ContrastTests {
             """
         )
         #expect(
-            anyRatio >= 3.0,
-            "PVAccentBold measured \(anyRatio), below even the 3:1 large-text floor — it is not usable for anything."
+            anyRatio < 3.0,
+            """
+            PVAccentBold measured \(anyRatio), at or above the 3:1 large-text floor. \
+            As of the mandarynka rebrand (measured 2.751:1) it is decorative-fill-only; \
+            if a brand change pushed it back over 3:1, update this test's comment and \
+            reconsider whether it may be used for large text again.
+            """
         )
     }
 }
