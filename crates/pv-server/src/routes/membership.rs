@@ -629,6 +629,29 @@ pub(crate) async fn is_item_bucket_collection(db: &sqlx::SqlitePool, collection_
     )
 }
 
+/// CR-02 fix (31-REVIEW.md): whether `collection_id` is ANY family-wide
+/// collection — folder OR item_bucket. Server-side backstop for
+/// `collections::revoke_access`, widened from `is_item_bucket_collection`
+/// above: a family-wide FOLDER's membership is governed by
+/// `family_wide_pending`'s lazy-reseal machinery exactly like a bucket's is
+/// (both are driven off `family_wide_kind IS NOT NULL` there, see
+/// `families.rs`'s `resealable` query) — a per-person revocation against
+/// either one 204s, then silently self-reverts on the next keyholder unlock,
+/// the exact dishonesty this project's revocation-honesty proof obligation
+/// exists to prevent. `is_item_bucket_collection` stays scoped narrower on
+/// purpose for its OWN callers (the contributor-escalation guard is
+/// item_bucket-only, per LOCKED decision 1) — this is a deliberately
+/// separate, wider predicate, not a generalization of that one.
+pub(crate) async fn is_family_wide_collection(db: &sqlx::SqlitePool, collection_id: &str) -> Result<bool, ApiError> {
+    Ok(
+        sqlx::query("SELECT 1 FROM collections WHERE id = ? AND family_wide_kind IS NOT NULL")
+            .bind(collection_id)
+            .fetch_optional(db)
+            .await?
+            .is_some(),
+    )
+}
+
 /// LOCKED decision 1 (260812-01e): the READ-ONLY half of "generalizes
 /// `collections::create`'s 'the creator always holds edit on their own
 /// creation' from 'the creator' to 'any contributor'" — proof that the

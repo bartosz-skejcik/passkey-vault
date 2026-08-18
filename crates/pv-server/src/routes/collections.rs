@@ -633,7 +633,10 @@ pub async fn add_member(
         &membership.resource_id,
         &req.recipient_user_id,
         &req.sealed_key,
-        &req.access_level,
+        // LO-01 fix (31-REVIEW.md): binds the PARSED level's canonical
+        // string, never the raw request string — see update_access's
+        // identical fix below for the full rationale.
+        requested_level.as_str(),
     )
     .await?;
 
@@ -692,20 +695,52 @@ pub struct UpdateAccessRequest {
 /// `UPDATE ... SET access_level = ?` — no re-seal, no client-side crypto, no
 /// revoke-then-add intermediate window (the row's `sealed_key` is untouched).
 ///
-/// T-31-01/T-31-02: bounded IDENTICALLY to `add_member` above — the same
-/// `may_grant_access_level`/`RequireEdit::satisfied_by` three-way match, and
-/// the same unconditional `enforce_item_bucket_declared_level_bound` layered
-/// on top. This is deliberately NEVER a looser check just because it is an
-/// UPDATE rather than an INSERT — a fourth propagation surface with a looser
-/// bound is exactly what this plan's non-negotiables forbid.
+/// CR-01 fix (31-REVIEW.md): T-31-01/T-31-02's original framing — "bounded
+/// IDENTICALLY to `add_member`" — was wrong, and the instruction to make it
+/// so was the plan's own mistake. `add_member` is `INSERT … ON CONFLICT DO
+/// NOTHING`, so its relaxed family-wide gate (`may_grant_access_level`
+/// applied to `RequireRead`) is safe only because it can never do more than
+/// CREATE a row — a `read` holder adding a newcomer at `read` and nothing
+/// else. Copying that matrix onto an UPDATE let the SAME nine arms mean
+/// something else entirely: the power to change somebody else's EXISTING
+/// grant, including down from `edit`. On a family-wide FOLDER (where
+/// `enforce_item_bucket_declared_level_bound` is a structural no-op) this let
+/// any `read`-holding member demote the collection's own creator away from
+/// `edit`, and — since nothing else in this API can put `edit` back — that
+/// permanently locked the whole family out of ever administering it again.
+///
+/// Two bounds are layered ADDITIONALLY on top of the pre-existing
+/// `may_grant_access_level`/`RequireEdit::satisfied_by` check below — neither
+/// replaces it, and `may_grant_access_level`'s own nine arms are UNCHANGED:
+/// 1. Changing an EXISTING grant away from what it currently is requires the
+///    caller to hold a genuine `Edit` grant on this collection — the relaxed
+///    family-wide gate above exists only to let a `read` holder ADD a
+///    stranded newcomer at `read`, never to let them alter someone else's
+///    standing grant. A no-op PUT (`requested_level == current_level`) is
+///    exempt, keeping `add_member`'s idempotent-retry shape intact.
+/// 2. The UPDATE itself refuses to leave the collection with zero `edit`
+///    holders — the exact same shape `revoke_access`'s own last-key-holder
+///    `EXISTS` guard already implements (see that handler's own doc comment
+///    for the full atomicity rationale: this MUST live inside the UPDATE's
+///    own `WHERE` clause, not a separate `COUNT` read, to stay safe against a
+///    second concurrent request).
 ///
 /// A `PUT` against a `(collection_id, user_id)` pair with no existing
 /// `collection_keys` row is a `404`, never a silent upsert (T-31-03's
-/// sibling correctness requirement) — `rows_affected() == 0` on the `UPDATE`
-/// is unambiguous here (unlike `revoke_access`'s guarded `DELETE`, this
-/// `UPDATE`'s `WHERE` clause has no additional guard condition that could
-/// itself cause a zero-row match), so no follow-up disambiguating `SELECT` is
-/// needed.
+/// sibling correctness requirement). `rows_affected() == 0` on the guarded
+/// UPDATE is now ambiguous by construction (mirrors `revoke_access`'s own
+/// shape exactly, for the same reason): it means EITHER "no such grant" OR
+/// "the grant exists but is the last edit-holder, so the guard blocked the
+/// change" — disambiguated with one follow-up `SELECT`.
+///
+/// HI-01 fix (31-REVIEW.md): bumps the TARGET recipient's own
+/// `vault_revision` in the same transaction as the UPDATE — mirrors
+/// `revoke_access`'s identical own-counter-bump (Phase 25 WR-07) and
+/// `vault::update_share`'s `shared_direct_revision` bump. Without it, a
+/// demoted recipient's own client never learns to re-fetch their cached
+/// `accessLevel` for this collection — a `hidden_password` demotion in
+/// particular would leave the OLD, more-permissive level (e.g. `edit`)
+/// cached client-side indefinitely, keeping the password revealable.
 pub async fn update_access(
     State(state): State<AppState>,
     membership: Membership<Collection, RequireRead>,
@@ -719,6 +754,9 @@ pub async fn update_access(
 
     // Byte-for-byte the same bound as add_member's own (collections.rs:579-599)
     // — see that handler's doc comment for the full rationale of each arm.
+    // This bound alone is what `add_member` uses to decide what a caller may
+    // CREATE; see this handler's own doc comment above for why an UPDATE
+    // needs the two ADDITIONAL bounds layered in below.
     match membership::resolve_family_wide_declared_level(&state.db, &membership.resource_id).await? {
         membership::FamilyWideDeclaredLevel::Declared(_) | membership::FamilyWideDeclaredLevel::LegacyUnknown => {
             if !may_grant_access_level(membership.access, requested_level) {
@@ -739,18 +777,88 @@ pub async fn update_access(
     // tx.commit() succeeds.
     let mut tx = state.db.begin().await?;
 
-    let result = sqlx::query("UPDATE collection_keys SET access_level = ? WHERE collection_id = ? AND recipient_user_id = ?")
-        .bind(&req.access_level)
+    // CR-01 fix: an UPDATE is not an INSERT — read the target's CURRENT
+    // level first, inside this transaction, so the guard below can tell a
+    // genuine level CHANGE (which needs Edit) apart from a no-op PUT (which
+    // does not, keeping the relaxed family-wide gate's idempotent-retry
+    // shape intact).
+    let current_row: Option<String> = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(&membership.resource_id)
+    .bind(&target_user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(current_row) = current_row else {
+        // No existing grant for this recipient — nothing to edit. Mirrors
+        // the pre-fix `rows_affected() == 0` 404 exactly, just detected one
+        // statement earlier now that a SELECT precedes the UPDATE.
+        return Err(ApiError::NotFound);
+    };
+    let current_level = membership::parse_access_level(&current_row)?;
+    // Changing an EXISTING grant to something it is not already requires a
+    // genuine Edit holder — never the relaxed reseal-path gate above, which
+    // exists only to let a `read` holder ADD a stranded newcomer at `read`.
+    if current_level != requested_level && !RequireEdit::satisfied_by(membership.access) {
+        return Err(ApiError::Forbidden);
+    }
+
+    // The guard itself: never let this UPDATE leave the collection with zero
+    // Edit holders. Folded into the UPDATE's own WHERE clause for the exact
+    // atomicity reason `revoke_access`'s own EXISTS guard is (see that
+    // handler's "W1 (iteration 2)" doc comment) — two independent statements
+    // are not atomic against a second concurrent request.
+    let result = sqlx::query(
+        "UPDATE collection_keys SET access_level = ? \
+          WHERE collection_id = ? AND recipient_user_id = ? \
+            AND (? = 'edit' OR access_level <> 'edit' \
+                 OR EXISTS (SELECT 1 FROM collection_keys \
+                             WHERE collection_id = ? AND recipient_user_id <> ? \
+                               AND access_level = 'edit'))",
+    )
+    // LO-01 fix (31-REVIEW.md): binds the PARSED level's canonical string,
+    // never the raw request string — the authorization decision above and
+    // the persisted value are now derived from the SAME expression, closing
+    // the normalization-drift hazard a future change to accepted spellings
+    // could otherwise open between the two.
+    .bind(requested_level.as_str())
+    .bind(&membership.resource_id)
+    .bind(&target_user_id)
+    .bind(requested_level.as_str())
+    .bind(&membership.resource_id)
+    .bind(&target_user_id)
+    .execute(&mut *tx)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        // Ambiguous by construction, same shape as revoke_access above: the
+        // row we just read above could be gone entirely (a concurrent revoke
+        // landed between our SELECT and this UPDATE) or it could still exist
+        // but the last-edit-holder guard just blocked the change.
+        let exists: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+        )
         .bind(&membership.resource_id)
+        .bind(&target_user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        return match exists {
+            Some(_) => Err(ApiError::Conflict(
+                "cannot demote the last edit-holder — the collection would be left with no editor".into(),
+            )),
+            None => Err(ApiError::NotFound),
+        };
+    }
+
+    // HI-01 fix: bumps the TARGET's own vault_revision in the SAME
+    // transaction as the UPDATE — mirrors revoke_access's identical
+    // own-counter-bump immediately below in this file, and
+    // vault::update_share's shared_direct_revision bump. See this handler's
+    // own doc comment above for why this was missing and what it broke.
+    sqlx::query("UPDATE users SET vault_revision = vault_revision + 1 WHERE id = ?")
         .bind(&target_user_id)
         .execute(&mut *tx)
         .await?;
-
-    if result.rows_affected() == 0 {
-        // This is an EDIT of an existing row, never create-on-write — no
-        // grant exists for this recipient, so there is nothing to edit.
-        return Err(ApiError::NotFound);
-    }
 
     // SYNC-05: membership-level change — fan out an EntityType::Collection
     // event to the FULL current recipient set, queried FRESH after the
@@ -801,11 +909,22 @@ pub async fn revoke_access(
     // endpoint against every OTHER member, including the bucket's creator
     // -- the WR-06 last-key-holder guard below stops at ONE survivor, the
     // attacker themselves, evicting the whole family from their own shared
-    // bucket. Scoped to `item_bucket` only: a family-wide FOLDER's
-    // creator-managed revocation is pre-existing, deliberate, and unrelated
-    // to this fix's mechanism -- no contributor-escalation path exists for
-    // folders (Task 1 only claims `edit` on an item_bucket destination).
-    if membership::is_item_bucket_collection(&state.db, &membership.resource_id).await? {
+    // bucket.
+    //
+    // CR-02 fix (31-REVIEW.md): widened from `item_bucket` alone to EVERY
+    // family-wide collection (folder included). A family-wide FOLDER's
+    // membership is governed by the SAME `family_wide_pending`/lazy-reseal
+    // machinery a bucket's is (`families.rs`'s `resealable` query keys off
+    // `family_wide_kind IS NOT NULL`, not `= 'item_bucket'`) — a per-person
+    // DELETE here used to 204 against a family-wide folder, delete the
+    // `collection_keys` row, and then silently self-revert on the very next
+    // keyholder's unlock, which re-grants the "revoked" member their key
+    // back. That is exactly the dishonesty 31-CONTEXT.md's sixth proof
+    // obligation ("brak dostępu really revokes") exists to prevent, and the
+    // client-side destination filter (`ShareDialog.tsx`) is the primary fix
+    // — this is the defense-in-depth backstop for any other/future caller of
+    // this route.
+    if membership::is_family_wide_collection(&state.db, &membership.resource_id).await? {
         return Err(ApiError::Forbidden);
     }
 

@@ -998,126 +998,545 @@ async fn update_access_returns_404_for_no_existing_row_and_does_not_upsert() {
 
 // --- Plan 31-01, Task 2: full authorization-matrix coverage for update_access ---
 
-/// The full 9-pair `may_grant_access_level` matrix (`membership.rs:553-574`)
+/// `may_grant_access_level`'s own nine `(caller, requested)` arms, transcribed
+/// directly from `membership.rs:553-574` — never re-derived.
+fn may_grant_access_level_matrix_arm(caller_level: &str, requested_level: &str) -> bool {
+    match (caller_level, requested_level) {
+        ("read", "read") => true,
+        ("read", "hidden_password") => false,
+        ("read", "edit") => false,
+        ("hidden_password", "read") => false,
+        ("hidden_password", "hidden_password") => true,
+        ("hidden_password", "edit") => false,
+        ("edit", "read") => true,
+        ("edit", "hidden_password") => true,
+        ("edit", "edit") => true,
+        _ => unreachable!("only read/hidden_password/edit are valid access levels"),
+    }
+}
+
+/// ME-04 fix (31-REVIEW.md): the CR-01 fix's own expected-outcome function,
+/// re-derived independently here (never imported from `collections.rs`) so
+/// this test proves the SERVER's behavior against an INDEPENDENT
+/// specification, not merely that the server agrees with itself. An UPDATE
+/// that would actually CHANGE the target's level (`baseline != requested`)
+/// additionally requires the caller to hold genuine `edit` — the bound
+/// `update_access`'s own CR-01 fix layers on top of `may_grant_access_level`
+/// for exactly this reason (an INSERT-only gate is not automatically safe on
+/// an UPDATE). A no-op PUT (`baseline == requested`) is exempt, keeping
+/// `add_member`'s idempotent-retry shape intact.
+fn expected_update_access_outcome(caller_level: &str, baseline_level: &str, requested_level: &str) -> bool {
+    if !may_grant_access_level_matrix_arm(caller_level, requested_level) {
+        return false;
+    }
+    if baseline_level != requested_level && caller_level != "edit" {
+        return false;
+    }
+    true
+}
+
+/// The full `may_grant_access_level` matrix (`membership.rs:553-574`)
 /// re-verified against `update_access`, mirroring the existing
 /// `b1_hidden_password_...` regression's own "prove every arm, not just the
 /// happy path" discipline. Uses a family-wide FOLDER (not item_bucket) so
 /// `enforce_item_bucket_declared_level_bound` is structurally a no-op here
 /// (it only restricts item_bucket collections — see
 /// `update_access_enforces_item_bucket_declared_level_bound` below for that
-/// dimension) — this test isolates `may_grant_access_level` alone. A fresh
-/// collection per pair keeps each case independent.
+/// dimension) — this test isolates `may_grant_access_level` AND the CR-01
+/// demotion bound together. A fresh collection per case keeps each
+/// independent.
+///
+/// ME-04 fix (31-REVIEW.md): widened from a 9-pair `(caller, requested)`
+/// matrix to a full 3×3×3 `(caller, target's BASELINE level, requested)`
+/// matrix — the original test seeded the target at a fixed `"read"`
+/// baseline in every pair, so `("read","read",true)` was a NO-OP UPDATE and
+/// no arm ever asked "may a `read` caller change a target who currently
+/// holds `edit`?" — the exact question CR-01 turns on. This is the "true in
+/// the artifact, false in reality" shape the project has recorded before:
+/// the old test proved the matrix was WIRED IN, not that it was the RIGHT
+/// bound for an UPDATE. The owner (always `edit`, distinct from both the
+/// caller and the target in every case) means the last-edit-holder guard
+/// never spuriously fires here — that guard has its own dedicated regression
+/// (`update_access_cannot_demote_the_last_edit_holder` below).
 #[tokio::test]
 async fn update_access_full_may_grant_access_level_matrix() {
     let pool = test_pool().await;
     let app = test_app(pool.clone());
 
-    // (caller_level, requested_level, expect_success) — transcribed directly
-    // from `may_grant_access_level`'s own match arms, never re-derived.
-    let matrix: [(&str, &str, bool); 9] = [
-        ("read", "read", true),
-        ("read", "hidden_password", false),
-        ("read", "edit", false),
-        ("hidden_password", "read", false),
-        ("hidden_password", "hidden_password", true),
-        ("hidden_password", "edit", false),
-        ("edit", "read", true),
-        ("edit", "hidden_password", true),
-        ("edit", "edit", true),
-    ];
+    const LEVELS: [&str; 3] = ["read", "hidden_password", "edit"];
 
     let owner_token = register_and_login(&app, "matrix-owner@example.com").await;
     create_family(&app, &owner_token).await;
 
-    for (i, (caller_level, requested_level, expect_success)) in matrix.iter().enumerate() {
-        let caller_token =
-            common::register_second_family_member(&app, &owner_token, &format!("matrix-caller-{i}@example.com"))
+    let mut i = 0usize;
+    for caller_level in LEVELS {
+        for baseline_level in LEVELS {
+            for requested_level in LEVELS {
+                let expect_success = expected_update_access_outcome(caller_level, baseline_level, requested_level);
+
+                let caller_token = common::register_second_family_member(
+                    &app,
+                    &owner_token,
+                    &format!("matrix-caller-{i}@example.com"),
+                )
                 .await;
-        let caller_id = user_id_of(&app, &caller_token).await;
-        let caller_sk = IdentitySecretKey::generate();
-        publish_keypair(&app, &caller_token, caller_sk.public_key().to_bytes()).await;
+                let caller_id = user_id_of(&app, &caller_token).await;
+                let caller_sk = IdentitySecretKey::generate();
+                publish_keypair(&app, &caller_token, caller_sk.public_key().to_bytes()).await;
 
-        let target_token =
-            common::register_second_family_member(&app, &owner_token, &format!("matrix-target-{i}@example.com"))
+                let target_token = common::register_second_family_member(
+                    &app,
+                    &owner_token,
+                    &format!("matrix-target-{i}@example.com"),
+                )
                 .await;
-        let target_id = user_id_of(&app, &target_token).await;
-        let target_sk = IdentitySecretKey::generate();
-        publish_keypair(&app, &target_token, target_sk.public_key().to_bytes()).await;
+                let target_id = user_id_of(&app, &target_token).await;
+                let target_sk = IdentitySecretKey::generate();
+                publish_keypair(&app, &target_token, target_sk.public_key().to_bytes()).await;
 
-        let owner_sk = IdentitySecretKey::generate();
-        let ck = CollectionKey::generate();
-        let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
-        let collection_id = format!("c0110000-0000-4000-8000-{i:012}");
-        let create_res = req(
-            &app,
-            "POST",
-            "/api/vault/collections",
-            &owner_token,
-            Some(json!({
-                "id": collection_id, "enc_name": format!("enc-matrix-collection-{i}"),
-                "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
-                "family_wide_kind": "folder", "family_wide_access_level": "edit",
-            })),
-        )
-        .await;
-        assert_eq!(create_res.status(), StatusCode::CREATED, "pair {i}: family-wide folder creation must succeed");
+                let owner_sk = IdentitySecretKey::generate();
+                let ck = CollectionKey::generate();
+                let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+                let collection_id = format!("c0110000-0000-4000-8000-{i:012}");
+                let create_res = req(
+                    &app,
+                    "POST",
+                    "/api/vault/collections",
+                    &owner_token,
+                    Some(json!({
+                        "id": collection_id, "enc_name": format!("enc-matrix-collection-{i}"),
+                        "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+                        "family_wide_kind": "folder", "family_wide_access_level": "edit",
+                    })),
+                )
+                .await;
+                assert_eq!(
+                    create_res.status(),
+                    StatusCode::CREATED,
+                    "case {i}: family-wide folder creation must succeed"
+                );
 
-        let caller_sealed = seal(&caller_sk.public_key(), ck.expose()).unwrap();
-        let grant_caller_res = req(
-            &app,
-            "POST",
-            &format!("/api/vault/collections/{collection_id}/members"),
-            &owner_token,
-            Some(json!({
-                "recipient_user_id": caller_id,
-                "sealed_key": serde_json::to_string(&caller_sealed).unwrap(),
-                "access_level": caller_level,
-            })),
-        )
-        .await;
-        assert_eq!(
-            grant_caller_res.status(),
-            StatusCode::CREATED,
-            "pair {i}: granting the caller {caller_level} must succeed (owner holds edit)"
-        );
+                let caller_sealed = seal(&caller_sk.public_key(), ck.expose()).unwrap();
+                let grant_caller_res = req(
+                    &app,
+                    "POST",
+                    &format!("/api/vault/collections/{collection_id}/members"),
+                    &owner_token,
+                    Some(json!({
+                        "recipient_user_id": caller_id,
+                        "sealed_key": serde_json::to_string(&caller_sealed).unwrap(),
+                        "access_level": caller_level,
+                    })),
+                )
+                .await;
+                assert_eq!(
+                    grant_caller_res.status(),
+                    StatusCode::CREATED,
+                    "case {i}: granting the caller {caller_level} must succeed (owner holds edit)"
+                );
 
-        let target_sealed = seal(&target_sk.public_key(), ck.expose()).unwrap();
-        let grant_target_res = req(
-            &app,
-            "POST",
-            &format!("/api/vault/collections/{collection_id}/members"),
-            &owner_token,
-            Some(json!({
-                "recipient_user_id": target_id,
-                "sealed_key": serde_json::to_string(&target_sealed).unwrap(),
-                "access_level": "read",
-            })),
-        )
-        .await;
-        assert_eq!(grant_target_res.status(), StatusCode::CREATED, "pair {i}: granting the target baseline read must succeed");
+                let target_sealed = seal(&target_sk.public_key(), ck.expose()).unwrap();
+                let grant_target_res = req(
+                    &app,
+                    "POST",
+                    &format!("/api/vault/collections/{collection_id}/members"),
+                    &owner_token,
+                    Some(json!({
+                        "recipient_user_id": target_id,
+                        "sealed_key": serde_json::to_string(&target_sealed).unwrap(),
+                        "access_level": baseline_level,
+                    })),
+                )
+                .await;
+                assert_eq!(
+                    grant_target_res.status(),
+                    StatusCode::CREATED,
+                    "case {i}: granting the target baseline {baseline_level} must succeed"
+                );
 
-        let update_res = req(
-            &app,
-            "PUT",
-            &format!("/api/vault/collections/{collection_id}/access/{target_id}"),
-            &caller_token,
-            Some(json!({ "access_level": requested_level })),
-        )
-        .await;
-        if *expect_success {
-            assert_eq!(
-                update_res.status(),
-                StatusCode::NO_CONTENT,
-                "pair {i} ({caller_level} -> {requested_level}): may_grant_access_level says this must succeed"
-            );
-        } else {
-            assert_eq!(
-                update_res.status(),
-                StatusCode::FORBIDDEN,
-                "pair {i} ({caller_level} -> {requested_level}): may_grant_access_level says this must be refused"
-            );
+                let update_res = req(
+                    &app,
+                    "PUT",
+                    &format!("/api/vault/collections/{collection_id}/access/{target_id}"),
+                    &caller_token,
+                    Some(json!({ "access_level": requested_level })),
+                )
+                .await;
+                if expect_success {
+                    assert_eq!(
+                        update_res.status(),
+                        StatusCode::NO_CONTENT,
+                        "case {i} (caller={caller_level}, baseline={baseline_level} -> requested={requested_level}): expected success"
+                    );
+                } else {
+                    assert_eq!(
+                        update_res.status(),
+                        StatusCode::FORBIDDEN,
+                        "case {i} (caller={caller_level}, baseline={baseline_level} -> requested={requested_level}): expected refusal"
+                    );
+                }
+
+                i += 1;
+            }
         }
     }
+}
+
+/// CR-01 fix (31-REVIEW.md) — the reviewer's exact takeover scenario
+/// (Failure scenario A): `add_member`'s relaxed family-wide gate
+/// (`may_grant_access_level`) is safe only because `add_member` is
+/// INSERT-only; `update_access` used to copy it onto an UPDATE, where the
+/// SAME `(Read, Read)` arm let a `read`-holding member change the CREATOR's
+/// own row (currently `edit`) down to `read` — permanently stripping the
+/// only `edit` holder on a family-wide FOLDER, where
+/// `enforce_item_bucket_declared_level_bound` is a structural no-op.
+#[tokio::test]
+async fn update_access_refuses_demotion_by_non_edit_caller_on_family_wide_folder() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "cr01-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+
+    let ania_token = common::register_second_family_member(&app, &owner_token, "cr01-ania@example.com").await;
+    let ania_id = user_id_of(&app, &ania_token).await;
+    let ania_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &ania_token, ania_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let collection_id = "c0160000-0000-4000-8000-000000000001";
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": collection_id, "enc_name": "enc-cr01-family-wide-folder",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+            "family_wide_kind": "folder", "family_wide_access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED, "family-wide folder creation must succeed");
+
+    let ania_sealed = seal(&ania_sk.public_key(), ck.expose()).unwrap();
+    let grant_ania_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": ania_id,
+            "sealed_key": serde_json::to_string(&ania_sealed).unwrap(),
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(grant_ania_res.status(), StatusCode::CREATED, "Ania must hold only read");
+
+    // Ania (read-only) attempts to demote the owner (edit) to read.
+    let attack_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{owner_id}"),
+        &ania_token,
+        Some(json!({ "access_level": "read" })),
+    )
+    .await;
+    assert_eq!(
+        attack_res.status(),
+        StatusCode::FORBIDDEN,
+        "a read-only member must never be able to demote another recipient's EXISTING grant, even on a family-wide folder where may_grant_access_level(Read, Read) alone would otherwise permit it"
+    );
+
+    let owner_level_after: String = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(collection_id)
+    .bind(&owner_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(owner_level_after, "edit", "the owner's own row must survive the refused takeover attempt unchanged");
+}
+
+/// CR-01 fix (31-REVIEW.md): the last-edit-holder guard, mirroring
+/// `revoke_access`'s own — never let an UPDATE leave the collection with
+/// ZERO edit holders. An edit-holding member may freely demote OTHER
+/// edit-holders (not what this guard exists to prevent — see 31-REVIEW.md's
+/// ME-06 for that separate, accepted-risk concern), but the moment they
+/// would become the collection's own last edit holder demoting THEMSELVES,
+/// the guard refuses with 409, mirroring `revoke_access`'s identical "cannot
+/// revoke the last key-holder" shape.
+#[tokio::test]
+async fn update_access_cannot_demote_the_last_edit_holder() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "lasteditor-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+
+    let b_token = common::register_second_family_member(&app, &owner_token, "lasteditor-b@example.com").await;
+    let b_id = user_id_of(&app, &b_token).await;
+    let b_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &b_token, b_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let collection_id = "c0170000-0000-4000-8000-000000000001";
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": collection_id, "enc_name": "enc-lasteditor-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+
+    // Owner grants B edit -- an ordinary collection, RequireEdit-gated
+    // add_member -- two edit holders total (owner + B).
+    let b_sealed = seal(&b_sk.public_key(), ck.expose()).unwrap();
+    let grant_b_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": b_id,
+            "sealed_key": serde_json::to_string(&b_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(grant_b_res.status(), StatusCode::CREATED, "B must hold edit");
+
+    // B demotes the owner to read -- B still holds edit afterward, so the
+    // guard does not block this (only the ZERO-edit-holders case is
+    // guarded).
+    let demote_owner_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{owner_id}"),
+        &b_token,
+        Some(json!({ "access_level": "read" })),
+    )
+    .await;
+    assert_eq!(
+        demote_owner_res.status(),
+        StatusCode::NO_CONTENT,
+        "demoting the owner is fine while B still holds edit"
+    );
+
+    // B now attempts to demote THEMSELVES -- B is the collection's sole
+    // remaining edit holder, so this must be refused.
+    let self_demote_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{b_id}"),
+        &b_token,
+        Some(json!({ "access_level": "read" })),
+    )
+    .await;
+    assert_eq!(
+        self_demote_res.status(),
+        StatusCode::CONFLICT,
+        "the sole remaining edit holder must never be able to demote themselves -- the collection would be left with no editor"
+    );
+
+    let b_level_after: String = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(collection_id)
+    .bind(&b_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(b_level_after, "edit", "B's own row must survive the refused self-demotion unchanged");
+}
+
+/// HI-01 fix (31-REVIEW.md): `update_access` must bump the TARGET
+/// recipient's own `vault_revision` in the SAME transaction as the UPDATE —
+/// mirrors `revoke_access_bumps_revoked_recipients_own_vault_revision_and_they_see_a_fresh_sync`
+/// above exactly. Without it, the target's next `GET /api/sync?since=...`
+/// still matches their stale counter and returns the cheap up-to-date
+/// shape, so their local cache never learns their level changed (and a
+/// demotion away from `hidden_password`-hiding-worthy levels would leave the
+/// OLD, more-permissive level cached client-side indefinitely).
+#[tokio::test]
+async fn update_access_bumps_targets_own_vault_revision_and_they_see_a_fresh_sync() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "hi01-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member_token = common::register_second_family_member(&app, &owner_token, "hi01-member@example.com").await;
+    let member_id = user_id_of(&app, &member_token).await;
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let collection_id = "c0180000-0000-4000-8000-000000000001";
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": collection_id, "enc_name": "enc-hi01-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    let baseline_res = req(&app, "GET", "/api/sync?since=0", &member_token, None).await;
+    assert_eq!(baseline_res.status(), StatusCode::OK);
+    let baseline_revision = body_json(baseline_res).await["revision"].as_i64().unwrap();
+
+    let still_up_to_date_res =
+        req(&app, "GET", &format!("/api/sync?since={baseline_revision}"), &member_token, None).await;
+    let still_up_to_date_body = body_json(still_up_to_date_res).await;
+    assert!(
+        still_up_to_date_body.get("items").is_none(),
+        "a repeated poll before the update, at the same baseline, must stay cheap up-to-date"
+    );
+
+    let update_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{member_id}"),
+        &owner_token,
+        Some(json!({ "access_level": "hidden_password" })),
+    )
+    .await;
+    assert_eq!(update_res.status(), StatusCode::NO_CONTENT);
+
+    let after_update_res =
+        req(&app, "GET", &format!("/api/sync?since={baseline_revision}"), &member_token, None).await;
+    let after_update_body = body_json(after_update_res).await;
+    assert!(
+        after_update_body.get("items").is_some(),
+        "the demoted member's next sync at their own last-known revision must be a FRESH snapshot, not up-to-date"
+    );
+    let after_update_revision = after_update_body["revision"].as_i64().unwrap();
+    assert_eq!(
+        after_update_revision - baseline_revision,
+        1,
+        "the target's own vault_revision must have advanced by exactly 1"
+    );
+
+    let member_vault_revision_row: i64 = sqlx::query_scalar("SELECT vault_revision FROM users WHERE id = ?")
+        .bind(&member_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        member_vault_revision_row, after_update_revision,
+        "the DB-stored vault_revision must match the value the sync response itself reported"
+    );
+}
+
+/// CR-02 fix (31-REVIEW.md): `revoke_access` refuses on a family-wide
+/// FOLDER too, not only an `item_bucket` — both are governed by the SAME
+/// `family_wide_pending`/lazy-reseal machinery (`families.rs`'s `resealable`
+/// query keys off `family_wide_kind IS NOT NULL`, not `= 'item_bucket'`), so
+/// a per-person DELETE that succeeded here would silently self-revert on the
+/// very next keyholder's unlock.
+#[tokio::test]
+async fn revoke_access_refuses_on_family_wide_folder() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "cr02-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let member_token = common::register_second_family_member(&app, &owner_token, "cr02-member@example.com").await;
+    let member_id = user_id_of(&app, &member_token).await;
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let collection_id = "c0190000-0000-4000-8000-000000000001";
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": collection_id, "enc_name": "enc-cr02-family-wide-folder",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+            "family_wide_kind": "folder", "family_wide_access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    let revoke_res = req(
+        &app,
+        "DELETE",
+        &format!("/api/vault/collections/{collection_id}/access/{member_id}"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(
+        revoke_res.status(),
+        StatusCode::FORBIDDEN,
+        "revoke_access must refuse on a family-wide FOLDER, not only an item_bucket -- membership there is governed by family membership + lazy reseal, not per-share revocation"
+    );
+
+    let member_row: Option<String> = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(collection_id)
+    .bind(&member_id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(member_row.as_deref(), Some("read"), "the member's row must survive the refused revocation unchanged");
 }
 
 /// `enforce_item_bucket_declared_level_bound` coverage on `update_access`: a
