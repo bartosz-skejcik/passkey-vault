@@ -1242,6 +1242,102 @@ falsifiable before any comparison was trusted.
 
 ---
 
+## 1g. Phase 39 decision records — DR-39-A, DR-39-B, DR-39-C, DR-39-E, 2026-08-18
+
+**Preceded by the branch-gate checkpoint (Plan 39-02, Task 1):** DR-1 (§1 above, hybrid Keychain +
+App Group) was read, quoted verbatim, and confirmed — Phase 39 executes under **Branch H**. The
+extension's SC1 layer (b) election was also read as PASS (§"SC1 layers" in
+`ios/AUTOFILL-FEASIBILITY.md`), so SC2's Branch E-yes wording is the sentence this phase is permitted
+to write, fixed in advance of the proof (D-16). Full quotes and the branch/SC2 machine-readable lines
+live in `ios/evidence/39/02-branch-gate.md`; this section records only the four decisions the phase
+owns per `39-RESEARCH.md` §"Decision records this phase owns".
+
+### DR-39-A — cache container format: **DECIDED — a single snapshot, written whole and replaced
+whole**
+
+**Decision:** the ciphertext cache is one JSON blob per user, written atomically and replaced in full
+on every successful sync pull. No incremental/partial update path exists.
+
+**Rejected: per-item files (one file per vault item).** Rejected on its merits, not by omission: it
+multiplies the surface the SYNC-03 gate must audit — every new file is a new place a plaintext field
+could leak into — and introduces partial-write states (some item files updated, others not) that no
+single atomic-write primitive covers, forcing a second coordination mechanism to exist for no
+offsetting benefit on a workload that is always a whole-snapshot replace.
+
+**Rejected: an embedded database (SQLite/SwiftData).** Rejected on its merits: it adds an entire store
+format whose ciphertext-only property must itself be proven — including its WAL/journal file and any
+index it maintains, both of which are additional surfaces that could carry plaintext-derived data —
+for a workload that has no queries at all (D-15; Phase 39's cache is read whole and written whole,
+never filtered or joined).
+
+**Evidence:** `39-RESEARCH.md` §"Decision records this phase owns" → DR-39-A, §"Alternatives
+considered".
+
+### DR-39-B — freshness timestamp location: **DECIDED — inside the snapshot itself, alongside the
+watermark**
+
+**Decision:** the freshness timestamp (`syncedAtMs`) is a field inside the same cache blob DR-39-A
+defines, written in the same atomic operation as the data it describes. This choice is
+branch-independent — it does not change under Branch H vs Branch K — and is made once, here, rather
+than re-litigated per branch.
+
+**Rejected: a separate shared preference (`UserDefaults(suiteName:)`).** Rejected on its merits: it is
+a second source of truth that can drift from the data it describes (a crash or partial write between
+the two writes would leave a freshness claim that outlives the data it claims to describe), and it is
+unavailable under Branch K anyway — Keychain has no equivalent shared-preference surface — so choosing
+it here would have made DR-39-B branch-dependent for no benefit under the branch this phase actually
+runs (D-11, D-20).
+
+**Evidence:** `39-RESEARCH.md` §"Decision records this phase owns" → DR-39-B, Branch Matrix row
+"Freshness timestamp".
+
+### DR-39-C — background refresh (`BGAppRefreshTask`): **DECIDED — out of v1.0**
+
+**Decision:** Phase 39 does not register a `BGAppRefreshTaskRequest`. Freshness is established only by
+a foreground pull; there is no background-refresh code path in v1.0.
+
+**Reasoning, stated explicitly, not left implicit:** `BGAppRefreshTask` is not a push mechanism and
+registering one would not add a server-side dependency, so SYNC-05 (no APNs) does not forbid it on its
+own terms. But the system schedules background tasks at its own discretion, and
+`BGTaskRequest.earliestBeginDate`'s own header — read this session,
+`BackgroundTasks.framework/Headers/BGTaskRequest.h` on the iOS 26.5 SDK — states: *"Setting the
+property indicates that the background task shouldn't start any earlier than this date. However, the
+system doesn't guarantee launching the task at the specified date, but only that it won't begin
+sooner."* The scheduling hint is documented as ignorable by the OS; nothing about a registered
+background task can honestly be described to a user as "keeping the cache current," because the system
+may simply never run it. It therefore buys no honest freshness copy while adding a real lifecycle
+surface (registration, expiration, a second code path that must itself be proven not to leak
+plaintext) to a phase that already has one.
+
+**Rejected: registering it anyway, with copy that never promises freshness.** Not chosen for v1.0: the
+research's own framing applies — "we registered a task" is not evidence it ever ran, and Phase 39
+already has no success criterion that could observe a background run happening on the simulator
+(`39-RESEARCH.md` Proof limitation 3, background timing does not transfer off-device either).
+
+**Reversibility, stated plainly:** this record is reversible. Adding `BGAppRefreshTask` later is purely
+additive — it does not require undoing anything DR-39-A/DR-39-B built, and revisiting it needs its own
+success criterion at that time, not an amendment to this one.
+
+**Evidence:** `BackgroundTasks.framework/Headers/BGTaskRequest.h` (iOS 26.5 SDK, read this session);
+`39-RESEARCH.md` §"Decision records this phase owns" → DR-39-C.
+
+### DR-39-E — chunking vs. a disclosed vault-size cap (conditional, Branch K only): **NOT REQUIRED**
+
+**Not required, and here is why, not merely that:** DR-39-E exists to record the choice between a
+chunked cache with a generation counter and a disclosed hard cap on vault size, and it is triggered
+only if (a) Phase 39 runs under Branch K (Keychain-only), and (b) Task 2's E-C4 measurement finds a
+ceiling below a realistic vault size. Neither condition holds: DR-1 (§1) committed Branch H, so the
+cache is written to the App Group container — a file, with a size posture the Branch Matrix records as
+"unbounded in practice" — and Task 2 performed no Keychain measurement at all under Branch H
+(`ios/evidence/39/02-branch-gate.md` "Task 2 — Branch K ceiling measurement: not applicable"). Silent
+truncation was never on the table and remains prohibited regardless (this plan's own `must_haves`); no
+size ceiling was found to require chunking or a cap because none was measured, and none needed to be.
+
+**Evidence:** `ios/evidence/39/02-branch-gate.md`; DR-1 (§1); `39-RESEARCH.md` §"Decision records this
+phase owns" → DR-39-E.
+
+---
+
 ## 2. Verified against reality (2026-08-11)
 
 ### 2.1 PRF is available on iOS in both directions — iOS 18.0+
