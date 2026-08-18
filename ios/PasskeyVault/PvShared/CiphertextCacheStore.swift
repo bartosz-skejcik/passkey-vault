@@ -102,7 +102,13 @@ final class AppGroupCiphertextCacheStore: CiphertextCacheStore {
     /// entitlements plist.
     static let groupIdentifier = "group.cloud.blonie.PasskeyVault"
 
-    private static let fileName = "vault-cache-v1.json"
+    /// Internal, not `private` (plan 39-03, Task 1's own live proof,
+    /// `scripts/ios-sync-live-proof.sh` via `SyncTracerLiveProofTests.swift`):
+    /// the D-14 discipline against a duplicated magic literal applies to
+    /// TEST code too -- the live proof reads this exact file, on the exact
+    /// path this constant names, rather than retyping the filename a second
+    /// time.
+    static let fileName = "vault-cache-v1.json"
 
     private let fileManager: FileManager
 
