@@ -44,8 +44,54 @@ say "$hits"
 # something real -- compiled into DEBUG builds only, inert unless that exact
 # env var is set. Any OTHER shipped file (this script's whole reason to
 # exist -- `ItemListView.swift` was exactly such a file before CR-03) fails.
-unexpected="$(printf '%s\n' "$hits" | grep -v 'Vault/ClipboardService\.swift$' | grep -v 'PasskeyVaultApp\.swift$' || true)"
+#
+# WR-04 (38-REVIEW.md, iteration 2): the exemption used to be per-FILE and
+# unconditional -- `PasskeyVaultApp.swift` could grow any number of
+# `UIPasteboard` writes, in or out of `#if DEBUG`, and this gate stayed
+# green. It is precisely the file where the one sanctioned raw write lives,
+# so it is the most likely place for a second, undocumented one to land.
+# Now: the app-entry file is allowed EXACTLY one hit (`app_hits -eq 1`,
+# not "any number"), anchored on the full relative path rather than a bare
+# filename suffix (a future `SomethingElsePasskeyVaultApp.swift` no longer
+# inherits the exemption), AND that one hit must fall inside an `#if
+# DEBUG` region -- a `#if DEBUG` guard is not itself proof the code stays
+# out of Release, but a hit found OUTSIDE any `#if DEBUG` region is proof
+# it is NOT DEBUG-gated, which is exactly the invariant this gate exists to
+# police.
+app_swift_rel="ios/PasskeyVault/PasskeyVault/PasskeyVaultApp.swift"
+
+unexpected="$(printf '%s\n' "$hits" | grep -v 'Vault/ClipboardService\.swift$' | grep -v "${app_swift_rel}\$" || true)"
 has_service="$(printf '%s\n' "$hits" | grep -c 'Vault/ClipboardService\.swift$' || true)"
+app_swift_file="${ROOT}/${app_swift_rel}"
+app_hits=0
+if [ -f "$app_swift_file" ]; then
+  app_hits="$(grep -n 'UIPasteboard' "$app_swift_file" | grep -c . || true)"
+fi
+
+# Every `UIPasteboard` hit line in the app-entry file must fall inside an
+# `#if DEBUG` region. Tracks `#if`/`#endif` nesting depth with a simple
+# stack; a hit is DEBUG-scoped only if the innermost enclosing `#if` at
+# that line is literally `#if DEBUG`.
+app_hits_outside_debug=0
+if [ "$app_hits" -gt 0 ]; then
+  app_hits_outside_debug="$(awk '
+    /^[[:space:]]*#if[[:space:]]/ {
+      depth++
+      isDebug[depth] = ($0 ~ /#if[[:space:]]+DEBUG([[:space:]]|$)/) ? 1 : 0
+      next
+    }
+    /^[[:space:]]*#endif/ {
+      if (depth > 0) { depth-- }
+      next
+    }
+    /UIPasteboard/ {
+      inDebug = 0
+      for (d = 1; d <= depth; d++) { if (isDebug[d]) { inDebug = 1 } }
+      if (!inDebug) { print NR ": " $0; outside++ }
+    }
+    END { print "COUNT=" (outside + 0) }
+  ' "$app_swift_file" | tail -1 | sed -n 's/^COUNT=//p')"
+fi
 
 if [ -n "$unexpected" ]; then
   say "FAIL -- UIPasteboard referenced outside the choke point and its one documented exception:"
@@ -54,8 +100,14 @@ if [ -n "$unexpected" ]; then
 elif [ "$has_service" -ne 1 ]; then
   say "FAIL -- ClipboardService.swift itself must reference UIPasteboard exactly once (found $has_service)"
   FAIL=1
+elif [ "$app_hits" -ne 1 ]; then
+  say "FAIL -- ${app_swift_rel} must contain exactly ONE documented DEBUG-only UIPasteboard write (found $app_hits)"
+  FAIL=1
+elif [ "${app_hits_outside_debug:-0}" -ne 0 ]; then
+  say "FAIL -- ${app_swift_rel}'s UIPasteboard write is not inside an '#if DEBUG' region"
+  FAIL=1
 else
-  say "PASS -- UIPasteboard is written from the choke point, plus only the one documented DEBUG-only exception"
+  say "PASS -- UIPasteboard is written from the choke point, plus only the one documented, exactly-counted, DEBUG-scoped exception"
 fi
 
 say ""
