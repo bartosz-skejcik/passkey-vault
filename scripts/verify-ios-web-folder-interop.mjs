@@ -294,6 +294,14 @@ function runXcodebuildTest(udid, onlyTestingMethod, extraEnv) {
       result.output += `\n[folder-interop] -only-testing:${onlyTestingMethod}() matched ZERO tests -- treated as failure, never a silent pass.`;
     }
   } catch (e) {
+    // WR-06 (38-REVIEW.md): previously this `catch` only appended a
+    // message -- if `xcresulttool` fails or changes its JSON shape,
+    // `totalTestCount` stays `null`, the zero-test branch above is
+    // skipped entirely, and a run that matched no tests (or whose result
+    // bundle could not even be read) was reported as a PASS. An unreadable
+    // result bundle must be a failure, never a silent pass (the L-9/L-12
+    // family this file's own comment above names).
+    result.status = result.status || 1;
     result.output += `\n[folder-interop] could not read xcresult summary: ${e}`;
   } finally {
     try {
@@ -309,6 +317,18 @@ function runXcodebuildTest(udid, onlyTestingMethod, extraEnv) {
 
 async function runFolderInterop() {
   console.log("=== Folder direction of the cross-client proof (38-09 Task 3) ===");
+  // WR-06 (38-REVIEW.md): this harness starts and talks to `SERVER_ADDR`
+  // (8624), NOT `STRAY_PORT_CHECK` (8620) -- the port-free guard must check
+  // the port it actually needs to be free, or a stray `pv-server` already
+  // listening on 8624 makes `startServer` fail to bind, `waitForHealthy`
+  // succeed against the STRAY process instead, and the whole F1/F2/F3 run
+  // execute against a foreign database (the exact failure the comment on
+  // `startServer`'s own precondition exists to prevent -- this guard could
+  // not fire for the port it needed to). `STRAY_PORT_CHECK` (8620, the
+  // default `pv-server` port) is kept as an additional guard: a stray
+  // server on the DEFAULT port is a real, separate hazard worth catching
+  // too, even though this harness itself never binds to it.
+  assertPortFree(SERVER_ADDR.split(":")[1]);
   assertPortFree(STRAY_PORT_CHECK);
 
   const dbPath = `/private/tmp/pv-38-09-folder-interop-${Date.now()}.db`;
