@@ -116,7 +116,14 @@ exactly the line that gets cut.
 
 ### Known open items carried into 38
 
-- **`NSCameraUsageDescription` is not declared.** It gates TOTP QR scanning and card scanning.
+- ~~**`NSCameraUsageDescription` is not declared.**~~ **RESOLVED, quick task 260818-lsk
+  (2026-08-18).** Declared as `INFOPLIST_KEY_NSCameraUsageDescription` in both the Debug and
+  Release `XCBuildConfiguration` blocks of the app target (`cloud.blonie.PasskeyVault`) in
+  `ios/PasskeyVault/PasskeyVault.xcodeproj/project.pbxproj` — the SAME mechanism already carrying
+  `NSFaceIDUsageDescription` there (`GENERATE_INFOPLIST_FILE = YES` auto-generates `Info.plist`
+  from `INFOPLIST_KEY_*` build settings; there is no hand-written `Info.plist` for the app target
+  to edit instead). Gates TOTP QR scanning (`TotpScanView.swift`, this task); scan card remains
+  ungated because it remains unbuilt (see DR-38-F).
 - **The app cannot be built in Release** — landmine **L-14**, a `swift-frontend` crash in generated
   UniFFI code. Debug only; do not try to work around it.
 - **`.planning/` never survives this worktree.** Anything that matters goes in this file,
@@ -795,6 +802,76 @@ Compensating controls this phase actually builds, and against which the acceptan
 38-11's lock handler tears down the store, the navigation path, every presented sheet and the reveal
 set; and no field value is ever written to `UserDefaults`, nor to any observable property that could
 reach a debug description or a crash log.
+
+---
+
+### DR-38-F — the ＋ grid's final 8, import to Settings, scan-card deferred
+
+**Written 2026-08-18, quick task 260818-lsk.** Not a Phase 38 plan (38-01…38-13 are already
+verification-passed by the time this landed) — recorded here anyway, in the same style, because it
+revises `VaultCreateAction`, the type those plans built and the design comment they wrote for it.
+
+**Decision: the panel is EIGHT slots, in this order:**
+
+1. New login  2. New card  3. New identity  4. New note  5. New code  6. Scan QR code
+7. Generate password  8. New folder
+
+`VaultCreateAction`'s case DECLARATION order is what produces this render order (`CaseIterable`'s
+synthesized `allCases` follows source order for a plain enum) — the enum literally reads
+`case login, card, identity, note, code, scanQr, generatePassword, newFolder`.
+
+**Import → Settings, explicit backlog, not built now.** Not added to this grid at all. A bulk
+import (pick a file, review a batch) is a different interaction shape than every other tile here
+(open a form for one item), and Settings is where the rest of the app's account-level actions
+already live or will land. No `VaultActiveSheet` case, no accessibility identifier, no UI path
+exists for it yet — this is a scope cut recorded as a cut, not a silent gap.
+
+**Scan card deferred, same reasoning as it was under the six-slot decision: real, wanted,
+unbuilt.** It needs bespoke Vision OCR this task does not build (reading a card's embossed/printed
+number, expiry and name off a photo is a materially different problem than reading a QR code's
+already-structured payload). The camera permission this task DOES add
+(`NSCameraUsageDescription`, for QR — see §0) makes Scan card a cheap follow-up rather than a
+second permission gate to design and request separately later.
+
+**Passkey absence reaffirmed — still permanent, still no UI path.** Unchanged from the six-slot
+decision's own reasoning, restated because this record supersedes that comment block: a passkey is
+cryptographic material minted during a real WebAuthn ceremony by the AutoFill credential provider,
+never hand-typed. `ItemFormAndFolderUITests` and `VaultDockEvidenceUITests` both still assert
+`vault.create.action.passkey` does not exist; this task added assertions, it did not weaken either.
+
+**QR-primary / manual-fallback TOTP rationale.** Most platforms hand out an `otpauth://` QR code
+carrying issuer, account and secret directly — scanning it is faster and less error-prone than
+transcribing a base32 secret by hand, character by character, which is why Scan QR code is the
+panel's PRIMARY TOTP entry path now, not merely an addition alongside the old one. But not every
+platform offers a QR code — some show only the raw secret in text — so New code (the existing
+manual form) stays exactly where it was, as the fallback path, both from the panel directly and
+from inside the scanner itself when the camera is unavailable or access is denied
+(`TotpScanView.swift`'s `noCameraFallback`/"Enter details manually").
+
+**Rejected: retiring New code once Scan QR code shipped.** Rejected on the "not every platform
+offers a QR code" fact above — retiring it would remove the only path some real accounts have.
+
+**New folder reuses `FolderPicker`, not a new form.** The folder-creation UI already existed,
+inline inside `FolderPicker`'s "New folder" section (`FolderPicker.swift`), reachable only by first
+opening an item form and tapping its Folder row. `VaultActiveSheet.creatingFolder` is a second,
+direct entry point into the SAME view — with a discarded `selection: Binding<String?>` since there
+is no item to assign here, only a folder to create — rather than a duplicated create-folder form.
+
+**TOTP parser stays FFI-boundary-clean.** `OtpauthParser.swift` parses `otpauth://totp/...` URIs
+into the fields `ItemFormView`'s Code form already edits, and NEVER computes a TOTP code — TOTP
+value generation stays `pv-ffi`-only (`TotpCountdownView.swift`'s existing call site), guarded by
+`scripts/audit-generator-uses-ffi.sh`. `ItemFormView` gained one new `init` parameter
+(`prefillTotp: TotpFields? = nil`, additive, defaulted, both existing call sites unchanged) rather
+than a second creation path, so `TotpValidation`'s own check on Save runs identically whether the
+draft came from a scan or from typing.
+
+**Residual risk:** `TotpScanView`'s live-camera capture path (`QrCaptureRepresentable`,
+`AVCaptureSession`/`AVCaptureMetadataOutput`) is unverified on a real device this session — the
+simulator has no camera, so only the no-camera fallback is machine-verified
+(`VaultDockEvidenceUITests.testPlusPanelEightActionsAndScannerNoCameraFallback`,
+`ios/evidence/38/plus-panel-v2/`). This mirrors the standing MP-1 limitation already recorded
+elsewhere in this file for other camera/biometry-gated surfaces: recorded as unverified, not
+claimed as tested.
 
 ---
 
