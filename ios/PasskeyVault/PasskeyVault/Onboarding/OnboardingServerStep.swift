@@ -30,6 +30,14 @@ struct OnboardingServerStep: View {
     @State private var isEditing = false
     @State private var fieldText = OnboardingServerStep.currentHostText()
     @State private var isChecking = false
+    /// WR-11 (38-REVIEW.md): `isChecking` alone re-enabled Continue for the
+    /// 1.2s confirmation pause between a successful reachability check and
+    /// `onAdvance()` -- a second tap in that window re-ran the whole probe/
+    /// store/advance sequence a second time. Covers exactly that pause;
+    /// `isChecking` still flips back to `false` immediately so the spinner
+    /// disappears and the success message renders cleanly, matching the
+    /// existing UI (`OnboardingServerStepUITests`' screenshot window).
+    @State private var isAdvancing = false
     @State private var inlineError: String?
     @State private var successMessage: String?
 
@@ -112,7 +120,7 @@ struct OnboardingServerStep: View {
                 // primary CTA; the ghost line was dead by construction, not
                 // a deliberate choice.
                 .buttonStyle(PVPrimaryButtonStyle())
-                .disabled(isChecking)
+                .disabled(isChecking || isAdvancing)
                 .accessibilityIdentifier("onboarding-server-continue")
             }
             .padding()
@@ -189,12 +197,23 @@ struct OnboardingServerStep: View {
                         successMessage = t(.onboardingServerSuccess)
                         fieldText = url.host ?? fieldText
                         isEditing = false
+                        // WR-11 fix: `isChecking` is already `false` at
+                        // this point (set above, before this `switch`),
+                        // which re-enabled Continue for the ENTIRE pause
+                        // below -- a second tap during that window re-ran
+                        // this whole probe/store/advance sequence a second
+                        // time (a second reachability probe, and a second
+                        // `ServerSettings.store` -- which re-clears the
+                        // Keychain if the URL differs). `isAdvancing` keeps
+                        // the control disabled for the whole operation.
+                        isAdvancing = true
                         // A short, visible pause so the inline PVPasskey
                         // confirmation actually registers before the step
                         // advances -- this is also the window
                         // `OnboardingServerStepUITests` screenshots inside.
                         try? await Task.sleep(nanoseconds: 1_200_000_000)
                         onAdvance()
+                        isAdvancing = false
                     } catch {
                         inlineError = "\(error)"
                     }
