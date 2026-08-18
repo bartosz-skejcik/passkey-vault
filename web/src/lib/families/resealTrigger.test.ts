@@ -18,7 +18,16 @@ const { mockReshare, mockGetCollection, mockGetSnapshot } = vi.hoisted(() => ({
   mockGetSnapshot: vi.fn(),
 }));
 
-vi.mock("./reseal", () => ({ reshareCollectionToNewMember: mockReshare }));
+// CR-03 fix (31-REVIEW.md): `resealTrigger.ts` now imports `isConflictError`
+// from `./reseal` alongside `reshareCollectionToNewMember` -- the real
+// (structural, duck-typed) implementation is reproduced here rather than
+// mocked to a stub, since this file's OWN new 409-handling test below
+// depends on it behaving exactly like the real one.
+vi.mock("./reseal", () => ({
+  reshareCollectionToNewMember: mockReshare,
+  isConflictError: (err: unknown) =>
+    typeof err === "object" && err !== null && "status" in err && (err as { status: unknown }).status === 409,
+}));
 vi.mock("@/lib/vault/api", () => ({ getCollection: mockGetCollection }));
 vi.mock("./familyWidePending", () => ({
   getFamilyWidePendingSnapshot: mockGetSnapshot,
@@ -195,6 +204,31 @@ describe("runFamilyWideResealTrigger", () => {
 
     expect(mockGetCollection).not.toHaveBeenCalled();
     expect(mockReshare).not.toHaveBeenCalled();
+  });
+
+  it("CR-03 fix (31-REVIEW.md): swallows a 409 from reshareCollectionToNewMember silently, without logging a warning -- this trigger's own resealable pairs can only ever 409 on a genuine race with another resealer, which is exactly the state it wants", async () => {
+    mockGetSnapshot.mockReturnValue(
+      snapshot([
+        { collection_id: "col-1", recipient_user_id: "user-a" },
+        { collection_id: "col-2", recipient_user_id: "user-b" },
+      ]),
+    );
+    mockReshare.mockImplementation((collectionId: string) =>
+      collectionId === "col-1" ? Promise.reject({ status: 409 }) : Promise.resolve(undefined),
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const { runFamilyWideResealTrigger } = await import("./resealTrigger");
+    await expect(runFamilyWideResealTrigger(FAKE_UK)).resolves.toBeUndefined();
+
+    expect(mockReshare).toHaveBeenCalledTimes(2);
+    // The 409'd pair must NOT be reported as a retry-worthy failure -- no
+    // console.warn for it, unlike a genuine transient failure (covered by
+    // the "one entry's rejection never blocks..." test above, which DOES
+    // expect a plain Error to still reach this trigger's own catch).
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    warnSpy.mockRestore();
   });
 
   it("reads the synchronous snapshot only -- it never calls the discovery endpoint itself (one query, two consumers)", async () => {

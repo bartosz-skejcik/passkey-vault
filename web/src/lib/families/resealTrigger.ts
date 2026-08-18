@@ -27,7 +27,7 @@
 import type { WasmUserKey } from "@/lib/crypto";
 import { getCollection, type CollectionRow } from "@/lib/vault/api";
 import { getFamilyWidePendingSnapshot } from "./familyWidePending";
-import { reshareCollectionToNewMember } from "./reseal";
+import { reshareCollectionToNewMember, isConflictError } from "./reseal";
 import type { ResealableGrant } from "./api";
 
 /** CR-01 fix (30-REVIEW.md): used only when the collection's OWN
@@ -148,6 +148,20 @@ export async function runFamilyWideResealTrigger(uk: WasmUserKey): Promise<void>
           uk,
         );
       } catch (err) {
+        // CR-03 fix (31-REVIEW.md): `reshareCollectionToNewMember` no longer
+        // swallows a 409 itself -- this trigger restores that behavior in
+        // its OWN catch, because it is the one caller for whom it is
+        // actually correct: this loop's `fresh` set is built from
+        // `resealable`, whose own server-side query only ever returns a pair
+        // with NO existing `collection_keys` row, so a 409 here can only be
+        // a genuine race with another resealer (or a redundant trigger
+        // firing twice) landing first -- exactly the state this trigger
+        // wants, never a stale-level ambiguity the way a user-chosen level
+        // could produce (see `ShareDialog.tsx`'s own 409 handling, which
+        // does NOT get this pass).
+        if (isConflictError(err)) {
+          return;
+        }
         // Opportunistic by construction: a failed pair is logged and left
         // for the next unlock's fresh snapshot, never surfaced to the user
         // and never allowed to reach the sync loop.
