@@ -104,8 +104,14 @@ struct OnboardingServerStep: View {
                 Button(action: handleContinue) {
                     Text(t(.onboardingServerContinue))
                 }
+                // WR-05 (38-REVIEW.md): was
+                // `.buttonStyle(PVPrimaryButtonStyle())
+                // .buttonStyle(PVGhostButtonStyle())` -- the inner (later)
+                // modifier wins in SwiftUI, so the ghost style was silently
+                // overriding the primary one applied above it. This is the
+                // primary CTA; the ghost line was dead by construction, not
+                // a deliberate choice.
                 .buttonStyle(PVPrimaryButtonStyle())
-                .buttonStyle(PVGhostButtonStyle())
                 .disabled(isChecking)
                 .accessibilityIdentifier("onboarding-server-continue")
             }

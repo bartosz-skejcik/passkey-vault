@@ -42,8 +42,12 @@ struct OnboardingWelcomeStep: View {
                 Button(action: onGetStarted) {
                     Text(t(.onboardingWelcomeGetStarted))
                 }
+                // WR-05 (38-REVIEW.md): trailing dead
+                // `.buttonStyle(PVGhostButtonStyle())` removed -- this is
+                // the primary CTA (`PVGhostButtonStyle` correctly stays on
+                // "Already have a vault" below, the actual secondary
+                // action).
                 .buttonStyle(PVPrimaryButtonStyle())
-                .buttonStyle(PVGhostButtonStyle())
                 .accessibilityIdentifier("onboarding-welcome-get-started")
 
                 Button(action: onAlreadyHaveVault) {

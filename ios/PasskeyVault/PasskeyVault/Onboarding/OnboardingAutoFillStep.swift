@@ -106,8 +106,12 @@ struct OnboardingAutoFillStep: View {
             Button(action: onFinish) {
                 Text(t(.onboardingAutoFillDone))
             }
+            // WR-05 (38-REVIEW.md): the trailing `.buttonStyle
+            // (PVGhostButtonStyle())` was dead (a later `.buttonStyle`
+            // applied after `ButtonStyle` has already resolved has no
+            // Button descendant left to style) -- deleted, not renamed;
+            // this IS the primary CTA.
             .buttonStyle(PVPrimaryButtonStyle())
-            .buttonStyle(PVGhostButtonStyle())
             .accessibilityIdentifier("onboarding-autofill-primary")
         } else {
             VStack(spacing: 12) {
@@ -115,7 +119,6 @@ struct OnboardingAutoFillStep: View {
                     Text(t(.onboardingAutoFillOpenSettings))
                 }
                 .buttonStyle(PVPrimaryButtonStyle())
-                .buttonStyle(PVGhostButtonStyle())
                 .accessibilityIdentifier("onboarding-autofill-primary")
 
                 Button(action: onFinish) {
