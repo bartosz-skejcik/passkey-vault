@@ -38,7 +38,13 @@ cd "$REPO_ROOT"
 
 STRAY_PORT=8620
 PORT="${PV_IOS_PORT:-8621}"
-EVIDENCE_FILE="ios/evidence/39/01-server-contract.md"
+# Plan 39-03: parameterized, default unchanged, so 39-01's own committed
+# evidence file is never silently overwritten by a LATER plan's harness run.
+# A caller that wants its own evidence header (e.g. 39-03's
+# scripts/ios-sync-live-proof.sh) sets PV_IOS_EVIDENCE_FILE to its own path;
+# every existing caller that does not set it keeps writing to the same file
+# it always has.
+EVIDENCE_FILE="${PV_IOS_EVIDENCE_FILE:-ios/evidence/39/01-server-contract.md}"
 
 if [ "$PORT" = "$STRAY_PORT" ]; then
   echo "ERROR: PV_IOS_PORT=${PORT} -- this harness refuses to bind the default port (${STRAY_PORT})." >&2

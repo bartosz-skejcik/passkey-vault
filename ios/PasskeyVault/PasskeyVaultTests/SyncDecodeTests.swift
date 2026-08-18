@@ -1,0 +1,243 @@
+//
+//  SyncDecodeTests.swift
+//  PasskeyVaultTests
+//
+//  Phase 39 (synchronizacja-i-cache-offline), plan 39-03, Task 1.
+//
+//  Decodes the TWO response bodies `scripts/sync-contract-probe.sh` captured
+//  live from an unmodified `pv-server` in plan 39-01, byte for byte, straight
+//  off disk (`#filePath`, the same technique `InfoPlistLocalizationTests.swift`
+//  and `ContrastTests.swift` already use for reading a real project file
+//  rather than a hand-written fixture) -- never a string literal typed by
+//  this file's author. A fixture an author writes always carries the item
+//  list, which is exactly why the up-to-date branch's missing-key shape
+//  (L-22, `ios/IOS-SPIKE-LOG.md` §3) is invisible to a unit suite that reads
+//  its own hand-rolled JSON.
+//
+//  Also covers `CiphertextCacheStore`'s round-trip contract (D-11, D-15,
+//  D-19) against a FAKE App Group container -- `FakeContainerFileManager`
+//  below overrides `containerURL(forSecurityApplicationGroupIdentifier:)`
+//  on the SAME `fileManager:` seam `AppGroupCiphertextCacheStore` already
+//  exposes for production use, pointed at a throwaway `mktemp`-style
+//  directory. This is the real store type under test, not a second
+//  reimplementation of it -- only the container resolution is faked.
+//
+
+import CryptoKit
+import Foundation
+import Testing
+@testable import PasskeyVault
+
+struct SyncDecodeTests {
+
+    // MARK: - Reading the captured evidence bodies straight off disk
+
+    /// `#filePath` resolves to THIS file's absolute path at compile time --
+    /// walking up from `PasskeyVaultTests/` to `ios/evidence/39/` reads the
+    /// SAME bytes `scripts/sync-contract-probe.sh` captured live in 39-01,
+    /// not a copy retyped into this file.
+    private static var evidenceURL: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // PasskeyVaultTests/
+            .deletingLastPathComponent() // ios/PasskeyVault/
+            .deletingLastPathComponent() // ios/
+            .appendingPathComponent("evidence")
+            .appendingPathComponent("39")
+            .appendingPathComponent("01-server-contract.md")
+    }
+
+    /// Extracts the Nth fenced ```json ... ``` block's contents, trimmed.
+    /// The evidence file carries exactly two such blocks, in document order:
+    /// (a) the snapshot branch, (b) the up-to-date branch (D-12).
+    private static func fencedJSONBlock(_ index: Int) throws -> String {
+        let data = try Data(contentsOf: evidenceURL)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw TestSupportError.missingFencedBlock(index: index, found: 0)
+        }
+        let lines = text.components(separatedBy: "\n")
+        var blocks: [String] = []
+        var capturing = false
+        var current: [String] = []
+        for line in lines {
+            if line.hasPrefix("```json") {
+                capturing = true
+                current = []
+                continue
+            }
+            if capturing, line.hasPrefix("```") {
+                blocks.append(current.joined(separator: "\n"))
+                capturing = false
+                continue
+            }
+            if capturing {
+                current.append(line)
+            }
+        }
+        guard index < blocks.count else {
+            throw TestSupportError.missingFencedBlock(index: index, found: blocks.count)
+        }
+        return blocks[index].trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private enum TestSupportError: Error, CustomStringConvertible {
+        case missingFencedBlock(index: Int, found: Int)
+
+        var description: String {
+            switch self {
+            case let .missingFencedBlock(index, found):
+                return "expected a ```json block at index \(index) in \(evidenceURL.path), found \(found)"
+            }
+        }
+    }
+
+    /// `CryptoKit.SHA256` -- a byte-equality COMPARISON over already-
+    /// decrypted, non-secret ciphertext/ID strings, never a cryptographic
+    /// primitive standing in for `pv-ffi` (this test never touches the User
+    /// Key or any wrapping key).
+    private static func sha256Hex(_ string: String) -> String {
+        SHA256.hash(data: Data(string.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// `.sortedKeys` -- the SAME discipline `ItemNormalize.plaintextJSON`
+    /// already documents ("Sorted keys so a decode/encode round trip is
+    /// byte-stable and therefore comparable in a test"): two structurally
+    /// EQUAL `CachedSnapshot` values, encoded independently, are only
+    /// digest-comparable if key order is pinned rather than left to
+    /// `JSONEncoder`'s own unspecified default.
+    private static func sortedKeysJSONString(_ snapshot: CachedSnapshot) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return String(data: try encoder.encode(snapshot), encoding: .utf8)!
+    }
+
+    // MARK: - Fixtures
+
+    private static func item(id: String, encKey: String = "k", encData: String = "d") -> CachedSnapshot.Item {
+        CachedSnapshot.Item(
+            id: id, encKey: encKey, encData: encData, revision: 1,
+            updatedAt: "2026-08-18 00:00:00", lastUsedAt: nil, isShared: false,
+            collectionId: nil, lastEditorEmail: nil
+        )
+    }
+
+    private static func snapshot(
+        revision: Int, accountId: String, items: [CachedSnapshot.Item], folders: [CachedSnapshot.Folder] = []
+    ) -> CachedSnapshot {
+        CachedSnapshot(
+            revision: revision, syncedAtMs: 1_755_555_555_000, accountId: accountId,
+            serverBaseURL: "http://127.0.0.1:8621", items: items, folders: folders
+        )
+    }
+
+    /// Overrides ONLY container resolution -- `AppGroupCiphertextCacheStore`
+    /// itself is exercised unmodified; this is not a second store
+    /// implementation.
+    private final class FakeContainerFileManager: FileManager {
+        let containerDir: URL
+
+        override init() {
+            containerDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("pv-39-03-fake-appgroup-\(UUID().uuidString)")
+            super.init()
+            try? FileManager.default.createDirectory(at: containerDir, withIntermediateDirectories: true)
+        }
+
+        override func containerURL(forSecurityApplicationGroupIdentifier groupIdentifier: String) -> URL? {
+            containerDir
+        }
+    }
+
+    private static func freshStore() -> AppGroupCiphertextCacheStore {
+        AppGroupCiphertextCacheStore(fileManager: FakeContainerFileManager())
+    }
+
+    // MARK: - 1/2. The two-case decode, over the LIVE-captured bodies
+
+    @Test func decodingASnapshotBodyYieldsTheSnapshotCaseWithNonEmptyItems() throws {
+        let json = try Self.fencedJSONBlock(0)
+        let result = try JSONDecoder().decode(SyncPullResult.self, from: Data(json.utf8))
+        guard case let .snapshot(revision, items, folders) = result else {
+            Issue.record("expected the snapshot branch, got \(result)")
+            return
+        }
+        #expect(revision == 1)
+        #expect(!items.isEmpty, "the captured since=0 body carries a non-empty item list")
+        #expect(items[0].id == "f5e2911d-6593-4daa-9c77-4a59aa1ea99a")
+        #expect(folders.isEmpty)
+    }
+
+    @Test func decodingAnUpToDateBodyYieldsTheUpToDateCase() throws {
+        let json = try Self.fencedJSONBlock(1)
+        // D-12/L-22's own falsifiability control, re-run here: this body has
+        // NO "items" key at all.
+        #expect(!json.contains("items"), "the captured up-to-date body must carry no items key")
+        let result = try JSONDecoder().decode(SyncPullResult.self, from: Data(json.utf8))
+        guard case let .upToDate(revision) = result else {
+            Issue.record("expected the up-to-date branch, got \(result) -- there is structurally no item collection on this branch to hand to a cache writer (D-12)")
+            return
+        }
+        #expect(revision == 1)
+    }
+
+    // MARK: - 3. Store round trip, compared by digest over the serialized form
+
+    @Test func writingASnapshotThenReadingItRoundTripsAllFields() throws {
+        let store = Self.freshStore()
+        let written = Self.snapshot(
+            revision: 7, accountId: "alice@example.com",
+            items: [Self.item(id: "item-1", encKey: "ek1", encData: "ed1")],
+            folders: [CachedSnapshot.Folder(id: "folder-1", encName: "fn1")]
+        )
+        try store.write(written)
+        let read = try #require(store.readCurrentSnapshot(accountId: "alice@example.com"))
+
+        #expect(read == written)
+        let writtenDigest = Self.sha256Hex(try Self.sortedKeysJSONString(written))
+        let readDigest = Self.sha256Hex(try Self.sortedKeysJSONString(read))
+        #expect(writtenDigest == readDigest, "the written and read-back snapshot must be digest-identical over their serialized form")
+    }
+
+    // MARK: - 4. Never-written vs. empty-but-present
+
+    @Test func readingFromANeverWrittenStoreReportsAbsenceDistinguishableFromAnEmptySnapshot() throws {
+        let neverWritten = Self.freshStore()
+        #expect(neverWritten.readCurrentSnapshot(accountId: "alice@example.com") == nil)
+
+        let emptyWritten = Self.freshStore()
+        let empty = Self.snapshot(revision: 0, accountId: "alice@example.com", items: [], folders: [])
+        try emptyWritten.write(empty)
+        let read = emptyWritten.readCurrentSnapshot(accountId: "alice@example.com")
+        #expect(read != nil, "an EXPLICITLY written empty snapshot must be distinguishable from 'never written'")
+        #expect(read?.items.isEmpty == true)
+    }
+
+    // MARK: - 5. Cross-account rejection (D-19)
+
+    @Test func snapshotWrittenForOneAccountIsRejectedWhenReadUnderAnotherAccount() throws {
+        let store = Self.freshStore()
+        try store.write(Self.snapshot(revision: 1, accountId: "alice@example.com", items: [Self.item(id: "a")]))
+        #expect(store.readCurrentSnapshot(accountId: "alice@example.com") != nil)
+        #expect(
+            store.readCurrentSnapshot(accountId: "mallory@example.com") == nil,
+            "a snapshot written for a different account must be REJECTED, not returned (D-19)"
+        )
+    }
+
+    // MARK: - 6. Whole-replace, never a merge (D-15)
+
+    @Test func applyingASecondSnapshotReplacesThePreviousItemSetEntirely() throws {
+        let store = Self.freshStore()
+        try store.write(Self.snapshot(
+            revision: 1, accountId: "alice@example.com",
+            items: [Self.item(id: "item-old"), Self.item(id: "item-kept")]
+        ))
+        try store.write(Self.snapshot(
+            revision: 2, accountId: "alice@example.com",
+            items: [Self.item(id: "item-kept"), Self.item(id: "item-new")]
+        ))
+        let read = try #require(store.readCurrentSnapshot(accountId: "alice@example.com"))
+        let ids = Set(read.items.map(\.id))
+        #expect(ids == ["item-kept", "item-new"])
+        #expect(!ids.contains("item-old"), "an item present in the FIRST snapshot and absent from the SECOND must be absent afterwards -- no merge (D-15)")
+    }
+}
