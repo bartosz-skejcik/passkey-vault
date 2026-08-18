@@ -34,10 +34,11 @@ struct ItemDetailView: View {
     /// Plan 38-11: OWNED by `VaultRootController` (`VaultRootView.swift`),
     /// not this view's own local `@State` -- so the controller's single lock
     /// handler can clear it directly, and a unit test can assert the clear
-    /// without instantiating this view at all. Falls back to a fresh,
-    /// itemId-scoped local `@State` only for the tests/previews that still
-    /// construct this view directly without a `VaultRootView` wrapper (see
-    /// the convenience `init` below).
+    /// without instantiating this view at all. `.onAppear` scopes it to
+    /// `item.id` the moment this view is first shown (CR-01 fix: SwiftUI's
+    /// `.onChange(of:)` does NOT fire on first appearance, so relying on it
+    /// alone left a freshly-pushed detail screen carrying the previous
+    /// item's revealed set).
     @Binding var revealState: DetailRevealState
     @State private var confirmation: ClipboardConfirmation?
 
@@ -84,12 +85,21 @@ struct ItemDetailView: View {
         .toolbar {
             vaultLockToolbarContent(onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested)
         }
-        // Defense-in-depth alongside the fresh-`init` case above: if a
-        // future navigation path ever reuses the SAME `ItemDetailView`
-        // instance across a change of `item` (rather than pushing a new
-        // one), the reveal set still clears -- "cleared whenever the
-        // displayed item changes, not on disappear" (Pitfall 6's sibling
-        // discipline, Pitfall 7).
+        // CR-01: `.onAppear` scopes the reveal set to THIS item the moment
+        // the view is first shown -- `.onChange(of:)` alone never fires on
+        // first appearance (no `initial: true`), so a freshly-pushed detail
+        // screen inherited whatever was revealed on the previously-viewed
+        // item. `setItem` is idempotent (a no-op if `id == itemId`), so
+        // calling it from both `.onAppear` and `.onChange` is safe.
+        .onAppear {
+            revealState.setItem(item.id)
+        }
+        // Defense-in-depth alongside `.onAppear` above: if a future
+        // navigation path ever reuses the SAME `ItemDetailView` instance
+        // across a change of `item` (rather than pushing a new one), the
+        // reveal set still clears -- "cleared whenever the displayed item
+        // changes, not on disappear" (Pitfall 6's sibling discipline,
+        // Pitfall 7).
         .onChange(of: item.id) { _, newId in
             revealState.setItem(newId)
         }
