@@ -385,6 +385,21 @@ struct ItemListView: View {
                                         .padding(.bottom, 4)
                                 }
                             }
+                            // WR-01 fix: `statusMessage` was previously
+                            // rendered ONLY inside `createBar`, which is
+                            // DEBUG-gated and opt-in behind
+                            // `PV_UITEST_TRACER_CREATE_BAR` -- every
+                            // Release-reachable writer (refresh/delete/move
+                            // failures) wrote to a variable nothing could
+                            // ever display. This inset is unconditional, on
+                            // every build, every tab.
+                            .safeAreaInset(edge: .bottom) {
+                                if let statusMessage {
+                                    StatusCallout(text: statusMessage, tone: .error)
+                                        .padding(.horizontal)
+                                        .padding(.bottom, 4)
+                                }
+                            }
                             .modifier(AvailableVaultSearchable(
                                 text: $root.searchText,
                                 tokens: $root.searchTokens,
