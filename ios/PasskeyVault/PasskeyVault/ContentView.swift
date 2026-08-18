@@ -45,6 +45,21 @@ struct ContentView: View {
     /// discipline (`storeFor(_:)`'s own note on why rebuilding on every body
     /// evaluation would be wrong).
     @State private var folderStore: FolderStore?
+    /// Plan 39-06 (Rule 2 deviation -- see this file's own note at
+    /// `syncCoordinatorFor(_:store:)`). `SyncCoordinator` existed since
+    /// 39-04 but was never actually started from this, the real app's
+    /// routing -- only `LiveSyncProbe` (a DEBUG-only, invisible, PARALLEL
+    /// session) ever called `.start(...)`. Without this, "a pull on every
+    /// foreground transition" (39-04's own key link, this plan's Task 2's
+    /// own action text) was not actually true of the shipped app.
+    @State private var syncCoordinator: SyncCoordinator?
+    /// Plan 39-06: the ONLY unconditional freshness guarantee this design
+    /// has (`SyncCoordinator.handleScenePhaseBecameActive()`'s own doc
+    /// comment) -- a suspended process's `Timer` does not fire, so a pull
+    /// on every transition to `.active` is what keeps the cache from going
+    /// silently stale for longer than "however long this session happens
+    /// to stay foregrounded".
+    @Environment(\.scenePhase) private var scenePhase
     /// Read from `ServerSettings.resolved` at construction (38-12, Task 3)
     /// -- never cached in a `let` bound to a compiled-in URL. `apiClient`
     /// itself is still a `let`: it is read once per `ContentView` instance
@@ -182,6 +197,7 @@ struct ContentView: View {
     @ViewBuilder
     private func vault(_ session: UnlockedSession) -> some View {
         let store = storeFor(session)
+        let coordinator = syncCoordinatorFor(session, store: store)
         VaultRootView(
             store: store,
             folderStore: folderStoreFor(session),
@@ -191,6 +207,16 @@ struct ContentView: View {
         .task {
             await Self.seedTooShortTotpSecretIfRequested(store: store)
             await Self.seedDockFixtureIfRequested(store: store)
+        }
+        // Plan 39-06: the real foreground-transition trigger. `newPhase ==
+        // .active` fires on EVERY transition into the foreground, cold
+        // launch included -- the coordinator's own `pull()` is idempotent
+        // (just another `VaultStore.refresh()`), so an extra call here on
+        // first appearance costs nothing.
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                coordinator.handleScenePhaseBecameActive()
+            }
         }
     }
 
@@ -216,6 +242,8 @@ struct ContentView: View {
     /// decided by a live call each time, not a local cache; a lock is just
     /// another entry into that same decision.
     private func performLock() {
+        syncCoordinator?.stop()
+        syncCoordinator = nil
         vaultStore = nil
         folderStore = nil
         route = .loading
@@ -233,6 +261,8 @@ struct ContentView: View {
     /// resolves the App Group container itself), so this runs regardless of
     /// whether `vaultStore` had already been constructed this session.
     private func performSignOut() {
+        syncCoordinator?.stop()
+        syncCoordinator = nil
         vaultStore = nil
         folderStore = nil
         route = .loading
@@ -424,6 +454,38 @@ struct ContentView: View {
         )
         vaultStore = store
         return store
+    }
+
+    /// Plan 39-06 (Rule 2 deviation, SYNC-04). Same one-per-session
+    /// construction discipline as `storeFor(_:)` -- built once, `.start`ed
+    /// once, and kept alive for the session's lifetime.
+    ///
+    /// **Why this exists now, and did not before:** `SyncCoordinator` (the
+    /// socket + foreground-pull transport 39-04 built) was, until this
+    /// plan, instantiated ONLY inside `LiveSyncProbe.swift` -- a DEBUG-only
+    /// hook that runs a SECOND, invisible, parallel session for a live-proof
+    /// script's benefit. It was never started from THIS view's own routing,
+    /// so the real, shipped app had no socket and no foreground-pull trigger
+    /// at all; every sync happened only via `ItemListView`'s own
+    /// `.task { refresh() }` on first appearance and pull-to-refresh. 39-04's
+    /// own key link ("scenePhase transition to active -> SyncCoordinator
+    /// .pull") and this plan's Task 2 action text ("force a pull from the
+    /// app -- by a foreground transition, which is the honest trigger this
+    /// phase built") both assume this wiring exists; it did not, until here.
+    /// `repeatingPullDisabled` is left at its default (`false`) -- the
+    /// in-foreground 30s timer stays on for real usage; only the D-06 live
+    /// proof (`LiveSyncProbe`) needs it off.
+    private func syncCoordinatorFor(_ session: UnlockedSession, store: VaultStore) -> SyncCoordinator {
+        if let syncCoordinator {
+            return syncCoordinator
+        }
+        let coordinator = SyncCoordinator(store: store)
+        coordinator.start(
+            baseURL: ServerSettings.resolved,
+            tokenProvider: { [token = session.token] in token }
+        )
+        syncCoordinator = coordinator
+        return coordinator
     }
 
     /// Same one-per-session construction discipline as `storeFor(_:)`, its
