@@ -14,8 +14,8 @@ Zasada nadrzędna: **security UI zawsze czytelne** — Fuzzy Bubbles i emoji tyl
 
 | Rola | OKLCH | Hex | Użycie u nas |
 |---|---|---|---|
-| Primary (koral) | `65.31% 0.1637 37.22` | **#E16540** | CTA, aktywne stany, brand |
-| Primary content | `100% 0 0` | #FFFFFF | tekst na primary |
+| Primary (mandarynka) | `71% 0.1849 42` | **#FD7235** | CTA, aktywne stany, brand |
+| Primary content | `26% 0.0926 42` | #421300 | tekst na primary — biały nie przechodzi WCAG 3:1 na nowym primary (2.75:1), #421300 mierzy 5.76:1 |
 | Secondary (błękit) | `82.36% 0.0962 242.82` | #8DCDFF | wykresy (linie), linki, info-akcenty |
 | Accent (teal) | `74.51% 0.167 183.61` | #00CDB7 | passkey badge, „passwordless" akcenty |
 | Base-100 dark (powierzchnia) | `26.86% 0 0` | #262626 | karty |
@@ -87,8 +87,8 @@ Founder-voice, bez korpomowy: „Twoje hasła, Twój serwer", „0 wycieków �
   name: "vault-dark";
   default: true;
   color-scheme: dark;
-  --color-primary: oklch(65.31% 0.1637 37.22);
-  --color-primary-content: oklch(100% 0 0);
+  --color-primary: oklch(71% 0.1849 42);
+  --color-primary-content: oklch(26% 0.0926 42);
   --color-secondary: oklch(82.36% 0.0962 242.82);
   --color-accent: oklch(74.51% 0.167 183.61);
   --color-neutral: oklch(42.02% 0 0);
