@@ -411,7 +411,20 @@ pub fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRouter<App
         ("/api/vault/collections/{id}", get(collections::get)),
         ("/api/vault/collections/{id}/members", post(collections::add_member)),
         ("/api/vault/collections/{id}/access", get(collections::access_list)),
-        ("/api/vault/collections/{id}/access/{user_id}", delete(collections::revoke_access)),
+        // 31-01-PLAN.md (MOD-01/Q2): PUT chained onto the SAME entry the
+        // DELETE handler already occupies — additive to an existing route
+        // registration, not a new path, mirroring `/api/vault/items/{id}/shares`'s
+        // own established `.get(...).post(...)` chaining precedent below.
+        // W-5 (31-01 plan): `tests/membership_route_sweep.rs` previously
+        // 405'd this entry on PUT (skipped by the sweep); it is now
+        // genuinely exercised — a non-member caller must 404 on PUT too,
+        // exactly as it already does on DELETE, since both share the
+        // identical `Membership<Collection, _>` extractor which runs before
+        // the request body is ever parsed.
+        (
+            "/api/vault/collections/{id}/access/{user_id}",
+            delete(collections::revoke_access).put(collections::update_access),
+        ),
         // Plan 23-02 (SYNC-04/SYNC-07, RESEARCH.md Open Question 1): the
         // per-collection sync-pull endpoint is path-`{id}`-based specifically
         // so it reuses `Membership<Collection, RequireRead>` verbatim, with
@@ -421,7 +434,14 @@ pub fn membership_routes() -> Vec<(&'static str, axum::routing::MethodRouter<App
         ("/api/vault/items/{id}/touch", post(vault::touch)),
         ("/api/vault/items/{id}/collection", put(vault::move_item)),
         ("/api/vault/items/{id}/shares", get(vault::list_item_shares).post(vault::create_share)),
-        ("/api/vault/items/{id}/shares/{user_id}", delete(vault::revoke_share)),
+        // 31-01-PLAN.md (MOD-01/Q2): same additive PUT-chaining shape as the
+        // collections/access entry above — see its comment for the
+        // `membership_route_sweep.rs` 405->404 transition note, which
+        // applies identically here.
+        (
+            "/api/vault/items/{id}/shares/{user_id}",
+            delete(vault::revoke_share).put(vault::update_share),
+        ),
         // Phase 25 (KEY-02/FAM-08's client-fetch prerequisite): the
         // collection's FULL item set (id, enc_key, enc_data) from EVERY
         // author, not just the caller's own — `vault::fetch_items_for`

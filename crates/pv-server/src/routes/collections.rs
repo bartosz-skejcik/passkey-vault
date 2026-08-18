@@ -673,6 +673,109 @@ pub async fn add_member(
     Ok(StatusCode::CREATED)
 }
 
+/// Request body for `update_access` below. Deliberately the ONLY field — the
+/// absence of a `sealed_key` field is itself documentation that this route
+/// cannot touch key material (31-RESEARCH.md Open Question 1): a
+/// `collection_keys` row's `sealed_key` never needs to change for a level
+/// edit, because it is the SAME Collection Key the recipient already holds.
+/// A future change that adds a `sealed_key` field here should be treated as a
+/// regression against this plan's own stated invariant (T-31-04).
+#[derive(Deserialize)]
+pub struct UpdateAccessRequest {
+    pub access_level: String,
+}
+
+/// `PUT /api/vault/collections/{id}/access/{user_id}` — 31-01-PLAN.md's Q2
+/// fix: today, changing an already-granted recipient's access level has no
+/// server mechanism at all (`add_member` is `ON CONFLICT DO NOTHING`, so a
+/// duplicate grant 409s instead of updating). This is a single, narrow
+/// `UPDATE ... SET access_level = ?` — no re-seal, no client-side crypto, no
+/// revoke-then-add intermediate window (the row's `sealed_key` is untouched).
+///
+/// T-31-01/T-31-02: bounded IDENTICALLY to `add_member` above — the same
+/// `may_grant_access_level`/`RequireEdit::satisfied_by` three-way match, and
+/// the same unconditional `enforce_item_bucket_declared_level_bound` layered
+/// on top. This is deliberately NEVER a looser check just because it is an
+/// UPDATE rather than an INSERT — a fourth propagation surface with a looser
+/// bound is exactly what this plan's non-negotiables forbid.
+///
+/// A `PUT` against a `(collection_id, user_id)` pair with no existing
+/// `collection_keys` row is a `404`, never a silent upsert (T-31-03's
+/// sibling correctness requirement) — `rows_affected() == 0` on the `UPDATE`
+/// is unambiguous here (unlike `revoke_access`'s guarded `DELETE`, this
+/// `UPDATE`'s `WHERE` clause has no additional guard condition that could
+/// itself cause a zero-row match), so no follow-up disambiguating `SELECT` is
+/// needed.
+pub async fn update_access(
+    State(state): State<AppState>,
+    membership: Membership<Collection, RequireRead>,
+    Path((_collection_id, target_user_id)): Path<(String, String)>,
+    Json(req): Json<UpdateAccessRequest>,
+) -> Result<StatusCode, ApiError> {
+    // Validate BEFORE any DB work — fails closed on a malformed/unrecognized
+    // access_level string, never silently coerced to a working default
+    // (mirrors add_member's own ordering above).
+    let requested_level = parse_access_level_from_request(&req.access_level)?;
+
+    // Byte-for-byte the same bound as add_member's own (collections.rs:579-599)
+    // — see that handler's doc comment for the full rationale of each arm.
+    match membership::resolve_family_wide_declared_level(&state.db, &membership.resource_id).await? {
+        membership::FamilyWideDeclaredLevel::Declared(_) | membership::FamilyWideDeclaredLevel::LegacyUnknown => {
+            if !may_grant_access_level(membership.access, requested_level) {
+                return Err(ApiError::Forbidden);
+            }
+        }
+        membership::FamilyWideDeclaredLevel::NotFamilyWide => {
+            if !RequireEdit::satisfied_by(membership.access) {
+                return Err(ApiError::Forbidden);
+            }
+        }
+    }
+    membership::enforce_item_bucket_declared_level_bound(&state.db, &membership.resource_id, requested_level).await?;
+
+    // Same WR-06/WR-01 transactional discipline as add_member/revoke_access
+    // above: the guarded UPDATE, the recipient resolution, and the revision
+    // read all run in ONE transaction. Publish still happens strictly AFTER
+    // tx.commit() succeeds.
+    let mut tx = state.db.begin().await?;
+
+    let result = sqlx::query("UPDATE collection_keys SET access_level = ? WHERE collection_id = ? AND recipient_user_id = ?")
+        .bind(&req.access_level)
+        .bind(&membership.resource_id)
+        .bind(&target_user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        // This is an EDIT of an existing row, never create-on-write — no
+        // grant exists for this recipient, so there is nothing to edit.
+        return Err(ApiError::NotFound);
+    }
+
+    // SYNC-05: membership-level change — fan out an EntityType::Collection
+    // event to the FULL current recipient set, queried FRESH after the
+    // UPDATE, mirroring add_member's identical fan-out shape above.
+    let recipients = resolve_collection_members(&mut tx, &membership.resource_id).await?;
+    let current_revision: i64 = sqlx::query_scalar("SELECT revision FROM collections WHERE id = ?")
+        .bind(&membership.resource_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    state.sync_hub.publish_to_recipients(
+        &recipients,
+        SyncEvent {
+            entity_type: EntityType::Collection,
+            id: membership.resource_id.clone(),
+            revision: current_revision,
+            change_type: ChangeType::Update,
+        },
+    );
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// `DELETE /api/vault/collections/{id}/access/{user_id}` — SHARE-06's
 /// single-share revocation. `RequireEdit`-gated. Deliberately a distinct URL
 /// shape (`/access/{user_id}`, not `/members/{user_id}`) from Phase 25's

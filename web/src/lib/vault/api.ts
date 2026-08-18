@@ -317,6 +317,33 @@ export function revokeItemShare(itemId: string, userId: string): Promise<void> {
   );
 }
 
+/** `PUT /api/vault/collections/{id}/access/{user_id}` (`collections.rs::
+ * update_access`, Phase 31 Plan 01 — MOD-01/Q2's in-place level edit): mirrors
+ * `revokeCollectionAccess`'s exact thin-wrapper shape above, PUT instead of
+ * DELETE, with a JSON body carrying only `{ access_level }` — never a crypto
+ * orchestrator, purely a wire pass-through. `204` on success; `404` means no
+ * existing grant for this recipient (the server never upserts on this route).
+ * No `sealed_key` field exists on this request — a level edit never touches
+ * key material, since it is the SAME Collection Key the recipient already
+ * holds. */
+export function updateCollectionAccess(collectionId: string, userId: string, accessLevel: string): Promise<void> {
+  return apiJson(
+    `/api/vault/collections/${encodeURIComponent(collectionId)}/access/${encodeURIComponent(userId)}`,
+    { method: "PUT", body: JSON.stringify({ access_level: accessLevel }) },
+  );
+}
+
+/** `PUT /api/vault/items/{id}/shares/{user_id}` (`vault.rs::update_share`,
+ * Phase 31 Plan 01 — MOD-01/Q2's in-place level edit): same shape as
+ * `updateCollectionAccess` above, item-share sibling of `revokeItemShare`.
+ * `204` on success; `404` means no existing share for this recipient. */
+export function updateItemShare(itemId: string, userId: string, accessLevel: string): Promise<void> {
+  return apiJson(
+    `/api/vault/items/${encodeURIComponent(itemId)}/shares/${encodeURIComponent(userId)}`,
+    { method: "PUT", body: JSON.stringify({ access_level: accessLevel }) },
+  );
+}
+
 /** `POST /api/vault/collections` — Phase 26, Plan 01 (A-1/WR-09 fix): the
  * CALLER mints `id` (a fresh `crypto.randomUUID()`) and binds it into
  * `encName`'s AAD BEFORE calling this — this wrapper does not mint or

@@ -1500,6 +1500,75 @@ pub async fn create_share(
     Ok(StatusCode::CREATED)
 }
 
+/// Request body for `update_share` below. Deliberately the ONLY field —
+/// mirrors `collections::UpdateAccessRequest`'s own doc comment: the absence
+/// of a `sealed_key` field is itself documentation that this route cannot
+/// touch key material (31-RESEARCH.md Open Question 1). An `item_shares`
+/// row's `sealed_key` never needs to change for a level edit — it is the
+/// SAME Item Key the recipient already holds.
+#[derive(Deserialize)]
+pub struct UpdateItemShareRequest {
+    pub access_level: String,
+}
+
+/// `PUT /api/vault/items/{id}/shares/{user_id}` — 31-01-PLAN.md's Q2 fix,
+/// item-share sibling of `collections::update_access`. Gated
+/// `Membership<Item, RequireEdit>`, matching `create_share`'s own gate
+/// exactly — items have no family-wide/propagation concept, so
+/// `enforce_item_bucket_declared_level_bound` does NOT apply here;
+/// `RequireEdit::satisfied_by`'s exact-match, enforced entirely by the
+/// extractor itself before this handler body ever runs, is the whole bound.
+///
+/// A `PUT` against an `(item_id, user_id)` pair with no existing
+/// `item_shares` row is a `404`, never a silent upsert — same
+/// `rows_affected() == 0` discipline as `update_access`.
+pub async fn update_share(
+    State(state): State<AppState>,
+    membership: Membership<Item, RequireEdit>,
+    Path((_item_id, target_user_id)): Path<(String, String)>,
+    Json(req): Json<UpdateItemShareRequest>,
+) -> Result<StatusCode, ApiError> {
+    // Validate BEFORE any DB work — fails closed on a malformed/unrecognized
+    // access_level string, never silently coerced to a working default
+    // (mirrors create_share's own ordering above).
+    parse_access_level_from_request(&req.access_level)?;
+
+    // CR-02-style transactional discipline: the UPDATE and the target
+    // recipient's own `shared_direct_revision` bump run in ONE transaction.
+    let mut tx = state.db.begin().await?;
+
+    let result = sqlx::query("UPDATE item_shares SET access_level = ? WHERE item_id = ? AND recipient_user_id = ?")
+        .bind(&req.access_level)
+        .bind(&membership.resource_id)
+        .bind(&target_user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        // This is an EDIT of an existing row, never create-on-write — no
+        // share exists for this recipient, so there is nothing to edit.
+        return Err(ApiError::NotFound);
+    }
+
+    // Bumps the target recipient's own `shared_direct_revision` counter — so
+    // their own next `/api/sync/shared` cheap-check stops matching their
+    // stale `since` and their next `pull_shared_direct` re-fetch naturally
+    // picks up the changed access_level. Mirrors create_share's/
+    // revoke_share's identical bump. Deliberately NO WS event is published to
+    // `target_user_id` here — mirrors revoke_share's "never notify a member
+    // of a change to their own grant through the very channel being changed"
+    // discipline; they discover the change via their own polled
+    // `GET /api/sync/shared`, never a push.
+    sqlx::query("UPDATE users SET shared_direct_revision = shared_direct_revision + 1 WHERE id = ?")
+        .bind(&target_user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// `DELETE /api/vault/items/{id}/shares/{user_id}` — removes a direct
 /// per-item share. This route has TWO path captures — this only works
 /// because `Membership<Item, RequireEdit>` reads its own `{id}` via
