@@ -380,6 +380,78 @@ struct LockTeardownTests {
         #expect(weakKey == nil)
     }
 
+    // MARK: - WR-04 (38-REVIEW.md): lockTeardown clears the pasteboard
+
+    /// Same seam `ClipboardServiceTests.swift`'s own `FakePasteboard` uses
+    /// (that type is `private` to that file, so a small local twin lives
+    /// here rather than widening its access).
+    private final class FakeLockTeardownPasteboard: PasteboardWriting {
+        private(set) var changeCount = 0
+        private(set) var clearCallCount = 0
+        func setValue(_ value: String, expirationDate: Date, localOnly: Bool) { changeCount += 1 }
+        func clear() { clearCallCount += 1; changeCount += 1 }
+
+        /// Simulates a DIFFERENT app (or a later, unrelated copy in THIS
+        /// app outside `ClipboardService`) touching the pasteboard --
+        /// mirrors `ClipboardServiceTests.swift`'s own `FakePasteboard
+        /// .simulateExternalWrite()`.
+        func simulateExternalWrite() { changeCount += 1 }
+    }
+
+    /// A scheduler that never actually fires -- these tests exercise the
+    /// EARLY, explicit `clearIfStillOurs()` path, not the timer.
+    private final class NoOpClipboardScheduler: ClipboardScheduling {
+        private final class NoOpToken: ClipboardClearToken { func invalidate() {} }
+        func scheduleClear(after seconds: TimeInterval, fire: @escaping () -> Void) -> ClipboardClearToken {
+            NoOpToken()
+        }
+    }
+
+    /// RED-before-green target 5/5: comment out `clipboard
+    /// .clearIfStillOurs()` in `VaultRootController.lockTeardown()` and
+    /// this fails.
+    @Test
+    func lockTeardownClearsThePasteboardWhenItStillHoldsThisAppsLastCopy() throws {
+        let pasteboard = FakeLockTeardownPasteboard()
+        let clipboard = ClipboardService(pasteboard: pasteboard, scheduler: NoOpClipboardScheduler())
+        clipboard.copy("hunter2", fieldLabel: "Password", seconds: 40)
+        #expect(pasteboard.clearCallCount == 0, "must not clear before the lock")
+
+        let controller = VaultRootController()
+        let userKey = try FfiUserKey.generate()
+        let store = VaultStore(userKey: userKey, api: Self.makeApi())
+
+        controller.lockTeardown(store: store, folderStore: nil, clipboard: clipboard)
+
+        #expect(
+            pasteboard.clearCallCount == 1,
+            "a lock must clear the pasteboard if it still holds this app's own last copy"
+        )
+    }
+
+    /// The change-counter guard's own falsifiability: a later, unrelated
+    /// copy must survive a lock untouched -- same discipline as
+    /// `ClipboardServiceTests.theGuardSkipsTheClearWhenSomethingElseCopiedSinceThisWrite`,
+    /// exercised here through `lockTeardown` itself.
+    @Test
+    func lockTeardownDoesNotClearAPasteboardSomethingElseHasWrittenToSince() throws {
+        let pasteboard = FakeLockTeardownPasteboard()
+        let clipboard = ClipboardService(pasteboard: pasteboard, scheduler: NoOpClipboardScheduler())
+        clipboard.copy("hunter2", fieldLabel: "Password", seconds: 40)
+        pasteboard.simulateExternalWrite() // a later, unrelated copy (another app, or a different field)
+
+        let controller = VaultRootController()
+        let userKey = try FfiUserKey.generate()
+        let store = VaultStore(userKey: userKey, api: Self.makeApi())
+
+        controller.lockTeardown(store: store, folderStore: nil, clipboard: clipboard)
+
+        #expect(
+            pasteboard.clearCallCount == 0,
+            "the change-counter guard must refuse to destroy a copy unrelated to the vault"
+        )
+    }
+
     // MARK: - AutoLockPolicy whitelist (T-38-11-02)
 
     private static func freshDefaults() -> UserDefaults {

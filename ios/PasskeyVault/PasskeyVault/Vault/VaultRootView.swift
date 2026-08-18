@@ -128,13 +128,24 @@ final class VaultRootController {
     /// 4. `revealState = DetailRevealState(itemId: "")` -- clears the
     ///    detail screen's reveal set.
     /// 5. Search dismissed and cleared.
+    /// 6. WR-04 (38-REVIEW.md): the pasteboard, if it still holds THIS
+    ///    app's own most recent copy -- `ClipboardService.shared
+    ///    .clearIfStillOurs()`'s change-counter guard is what makes an
+    ///    early clear safe (it refuses to fire if anything has copied
+    ///    since), so this can never destroy a copy unrelated to the vault.
     ///
-    /// Each of these five is independently falsifiable: comment out any one
+    /// Each of these six is independently falsifiable: comment out any one
     /// line and the matching assertion in `LockTeardownTests.swift` fails,
-    /// which is exactly what this plan's four RED-before-green
+    /// which is exactly what this plan's four (now five) RED-before-green
     /// demonstrations exercise (nav truncation, sheet dismissal, reveal-set
-    /// clear, key-handle release via the weak-reference test).
-    func lockTeardown(store: VaultStore, folderStore: FolderStore?) {
+    /// clear, key-handle release via the weak-reference test, pasteboard
+    /// clear via the injectable `PasteboardWriting` seam).
+    ///
+    /// `clipboard` defaults to the real singleton in production;
+    /// `LockTeardownTests.swift` injects a `ClipboardService` backed by a
+    /// fake `PasteboardWriting` so the pasteboard clear is asserted without
+    /// touching the real device pasteboard.
+    func lockTeardown(store: VaultStore, folderStore: FolderStore?, clipboard: ClipboardService = .shared) {
         store.lock()
         folderStore?.lock()
         selection = nil
@@ -143,6 +154,7 @@ final class VaultRootController {
         isSearchPresented = false
         searchText = ""
         searchTokens = []
+        clipboard.clearIfStillOurs()
     }
 }
 

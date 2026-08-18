@@ -118,6 +118,13 @@ final class ClipboardService {
     /// scheduling a new one.
     private var pendingToken: ClipboardClearToken?
 
+    /// WR-04 (38-REVIEW.md): the change count captured at the START of the
+    /// most recent `copy(...)` write -- the SAME value the scheduled
+    /// clear's own closure already captures, stored again here so
+    /// `clearIfStillOurs()` (an EARLY, explicit clear) can reuse the exact
+    /// same change-counter guard without waiting for the timer to fire.
+    private var lastWriteChangeCount: Int?
+
     init(
         pasteboard: PasteboardWriting,
         scheduler: ClipboardScheduling,
@@ -144,6 +151,7 @@ final class ClipboardService {
 
         pasteboard.setValue(value, expirationDate: deadline, localOnly: true)
         let stamp = pasteboard.changeCount
+        lastWriteChangeCount = stamp
 
         // Single active timer: invalidate the PREVIOUS field's pending clear
         // before scheduling this one. Two live pending clears would mean the
@@ -165,6 +173,20 @@ final class ClipboardService {
         pendingToken = nil
         guard pasteboard.changeCount == stamp else { return }
         pasteboard.clear()
+    }
+
+    /// WR-04 (38-REVIEW.md): an EARLY, explicit clear -- `lockTeardown`
+    /// calls this so a copied secret does not sit in the pasteboard for the
+    /// rest of the configured interval after the vault has already locked.
+    /// Reuses the SAME change-counter guard `fireClear` uses (refuses to
+    /// clear if anything else has copied since THIS service's own last
+    /// write), so a lock can never destroy an unrelated copy the user made
+    /// afterward. Also invalidates the pending scheduled clear -- nothing
+    /// is left to fire against once this has run.
+    func clearIfStillOurs() {
+        guard let stamp = lastWriteChangeCount else { return }
+        pendingToken?.invalidate()
+        fireClear(expectingChangeCount: stamp)
     }
 
     /// COSMETIC ONLY: dismissing the confirmation banner shown in the UI
