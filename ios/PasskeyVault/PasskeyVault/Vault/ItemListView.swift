@@ -170,33 +170,55 @@ struct VaultFilterToken: Identifiable, Hashable {
 // 38-11, addendum A2, when the dedicated `TypePicker` view was retired) --
 // the five-case enum and its `emptyFields()` factory are unchanged.
 
-/// The SIX slots of the ＋ panel, in the order Bartek named them: the five
-/// creatable item types (`ItemCreationKind`, `Vault/ItemFormView.swift`)
-/// plus Generate password. Three columns, so two rows.
+/// The EIGHT slots of the ＋ panel, quick task 260818-lsk. Three columns, so
+/// three rows (two full, the last holding two).
 ///
-/// SIX, NOT THE ARTIFACT'S NINE, and this is a deliberate narrowing recorded
-/// rather than smuggled. The earlier draft of this file rendered nine slots to
-/// match `ios/brand/screens-vault.html`'s `.grid` block, four of them DISABLED
-/// (New passkey, Scan card, Import, and a substituted Scan-QR slot), on the
-/// reasoning that a visibly-unavailable slot tells the truth better than a
-/// missing one. Bartek's instruction for this pass is the narrower set. Both
-/// readings are defensible; his is the one that ships, so the three slots with
-/// no implementation are GONE rather than greyed out:
+/// This supersedes the SIX-slot set plans 38-06/38-09 shipped -- that
+/// narrowing is not reversed here, it is EXTENDED by two slots that were
+/// always the plan for a later pass: Scan QR code (a real TOTP entry path,
+/// not a placeholder) and New folder (a direct route to the folder-creation
+/// surface that already existed, buried inside "Move to folder"/the form's
+/// Folder row, with no way to reach it from the panel itself).
+///
+/// - **Scan QR code** -- now the PRIMARY way to add a TOTP code. Most
+///   platforms hand out an `otpauth://` QR code carrying issuer/account/
+///   secret directly; scanning it is faster and less error-prone than
+///   transcribing a base32 secret by hand. `New code` (below) is not
+///   retired by this -- not every platform offers a QR code, some only show
+///   the raw secret -- so it stays as the manual fallback, and the scanner
+///   itself falls back to the same manual form when the camera is
+///   unavailable or permission is refused (`TotpScanView.swift`).
+/// - **New folder** -- reuses `FolderPicker` (`FolderPicker.swift`) exactly
+///   as it already existed for "Move to folder"; this slot is a second
+///   entry point into the SAME view, not a new form. See
+///   `VaultActiveSheet.creatingFolder`.
+///
+/// The three slots still absent are still absent for the reasons already
+/// recorded, and nothing above changes them:
 ///
 /// - **New passkey** -- not a scope gap and never will be. A passkey is
 ///   cryptographic material minted during a real WebAuthn ceremony by the
 ///   AutoFill credential provider; there is no meaningful "type one in" form
 ///   for it, here or ever. A permanently-disabled slot for a permanently
 ///   impossible action is not honesty, it is furniture.
-/// - **Scan card** / **Import** -- real, wanted, unbuilt. They are named gaps
-///   in the phase docs, not silent ones; a disabled tile is not the only place
-///   a gap can be recorded.
+/// - **Scan card** -- real, wanted, unbuilt: it needs bespoke Vision OCR
+///   this pass does not build. The camera permission this pass DOES add
+///   (`NSCameraUsageDescription`, for QR) makes that a cheap follow-up
+///   rather than a second permission gate to design later.
+/// - **Import** -- moves to Settings, not to this panel; recorded as
+///   backlog, not built now. A bulk import is a different interaction shape
+///   (pick a file, review a batch) than every other tile here (open a form
+///   for one item), and Settings is where the rest of the app's
+///   account-level actions already live.
 ///
-/// Every one of the six below has a working path. There is no `isAvailable`
-/// flag any more, because nothing is unavailable -- reintroducing one is the
-/// signal that this decision is being reversed.
+/// Every one of the eight below has a working path. There is no
+/// `isAvailable` flag any more, because nothing is unavailable --
+/// reintroducing one is the signal that this decision is being reversed.
 enum VaultCreateAction: String, CaseIterable, Identifiable {
-    case login, card, identity, note, code, generatePassword
+    // Declaration order IS render order (`CaseIterable`'s synthesized
+    // `allCases` follows source order for a plain enum) -- this is the
+    // literal 1-8 sequence the panel renders, not merely a convenient list.
+    case login, card, identity, note, code, scanQr, generatePassword, newFolder
 
     var id: String { rawValue }
 
@@ -207,7 +229,9 @@ enum VaultCreateAction: String, CaseIterable, Identifiable {
         case .identity: return "New identity"
         case .note: return "New note"
         case .code: return "New code"
+        case .scanQr: return "Scan QR code"
         case .generatePassword: return "Generate password"
+        case .newFolder: return "New folder"
         }
     }
 
@@ -218,12 +242,18 @@ enum VaultCreateAction: String, CaseIterable, Identifiable {
         case .identity: return "person.text.rectangle"
         case .note: return "note.text"
         case .code: return "timer"
+        case .scanQr: return "qrcode.viewfinder"
         case .generatePassword: return "dice"
+        case .newFolder: return "folder.badge.plus"
         }
     }
 
     /// The item type this slot creates, or `nil` for a slot that is not a
-    /// create-an-item action at all (only Generate password).
+    /// create-an-item action at all (Generate password, Scan QR code, New
+    /// folder -- none of these open `ItemFormView` directly for a fresh
+    /// draft the way the five item types do; Scan QR code opens it only
+    /// AFTER a successful scan, with parsed fields, which `perform(_:)`
+    /// handles separately from this property).
     var creationKind: ItemCreationKind? {
         switch self {
         case .login: return .login
@@ -231,7 +261,9 @@ enum VaultCreateAction: String, CaseIterable, Identifiable {
         case .identity: return .identity
         case .note: return .note
         case .code: return .totp
+        case .scanQr: return nil
         case .generatePassword: return nil
+        case .newFolder: return nil
         }
     }
 }
@@ -818,6 +850,10 @@ struct ItemListView: View {
             root.activeSheet = .creating(kind)
         } else if action == .generatePassword {
             root.activeSheet = .generator
+        } else if action == .scanQr {
+            root.activeSheet = .scanningQr
+        } else if action == .newFolder {
+            root.activeSheet = .creatingFolder
         }
     }
 
@@ -1127,7 +1163,63 @@ struct ItemListView: View {
                     )
                 )
             }
+        case .scanningQr:
+            // `TotpScanView` owns the whole scan flow, including its own
+            // no-camera/permission-denied fallback -- this call site only
+            // has to hand it a way to route onward, exactly like every
+            // other sheet here routes onward through `root.activeSheet`.
+            TotpScanView(
+                onScanned: { parsed in root.activeSheet = .creatingFromScan(parsed) },
+                onManualEntry: { root.activeSheet = .creating(.totp) }
+            )
+        case let .creatingFromScan(parsed):
+            ItemFormView(
+                mode: .create(.totp), store: store, folderStore: folderStore,
+                prefillTotp: totpFields(from: parsed)
+            ) { created in
+                root.selection = created
+            }
+        case .creatingFolder:
+            // The EXACT same view "Move to folder" presents above, reused
+            // rather than duplicated -- see `VaultActiveSheet.creatingFolder`.
+            // The discarded binding means tapping an existing folder or "No
+            // folder" just dismisses harmlessly; only "Create" has a real
+            // effect (`FolderStore.create`), which is exactly what this
+            // slot is for.
+            if let folderStore {
+                FolderPicker(store: folderStore, selection: Binding(get: { nil }, set: { _ in }))
+            }
         }
+    }
+
+    /// Maps a scanned `otpauth://` URI onto the same `TotpFields` the manual
+    /// "New code" form already edits. `OtpauthParser.swift` deliberately
+    /// knows nothing about `TotpFields` (it stays Foundation-only, testable
+    /// with zero app-model dependency) -- this is where the two meet.
+    ///
+    /// `name` strips a leading `"<issuer>: "` off `parsed.label` when the
+    /// label carries one, rather than passing the raw label straight
+    /// through: `totpRow` already renders `"\(issuer): \(name)"`, so a
+    /// pass-through would double the issuer in the row ("Issuer: Issuer:
+    /// alice@example.com"). Falls back to the raw label when there is no
+    /// such prefix to strip (e.g. no `issuer` param was present at all).
+    private func totpFields(from parsed: ParsedOtpauth) -> TotpFields {
+        var name = parsed.label
+        let prefix = "\(parsed.issuer):"
+        if !parsed.issuer.isEmpty, name.hasPrefix(prefix) {
+            name = String(name.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+        }
+        return TotpFields(
+            name: name.isEmpty ? parsed.label : name,
+            folderId: nil,
+            tags: [],
+            secret: parsed.secret,
+            issuer: parsed.issuer,
+            algorithm: parsed.algorithm.rawValue,
+            digits: parsed.digits,
+            period: parsed.period,
+            notes: ""
+        )
     }
 
     // MARK: - Row

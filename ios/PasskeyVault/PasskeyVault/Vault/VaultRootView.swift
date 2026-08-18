@@ -82,6 +82,25 @@ enum VaultActiveSheet: Identifiable {
     case movingToFolder(VaultItemViewModel)
     case generator
     case settings
+    /// Quick task 260818-lsk: the ＋ panel's "Scan QR code" slot. Presents
+    /// `TotpScanView`, which owns camera capture and the no-camera/
+    /// permission-denied fallback itself.
+    case scanningQr
+    /// Quick task 260818-lsk: what `TotpScanView` hands off to on a
+    /// successful scan. NOT `.creating(.totp)` -- that case carries no
+    /// field data, and adding an associated value to it would touch its
+    /// other (unrelated) call site for no reason. A dedicated case keeps
+    /// the prefill data scoped to exactly the one path that produces it.
+    /// The user still explicitly reviews and saves in `ItemFormView`; this
+    /// only prefills the fields, it never creates the item itself.
+    case creatingFromScan(ParsedOtpauth)
+    /// Quick task 260818-lsk: the ＋ panel's "New folder" slot. Presents the
+    /// SAME `FolderPicker` "Move to folder" already uses (see
+    /// `ItemListView.sheetContent`), with a discarded `selection` binding --
+    /// there is no item to assign here, only a folder to create, and
+    /// `FolderPicker` already offers create-inline with no separate form to
+    /// duplicate.
+    case creatingFolder
 
     var id: String {
         switch self {
@@ -90,6 +109,9 @@ enum VaultActiveSheet: Identifiable {
         case let .movingToFolder(item): return "movingToFolder-\(item.id)"
         case .generator: return "generator"
         case .settings: return "settings"
+        case .scanningQr: return "scanningQr"
+        case let .creatingFromScan(parsed): return "creatingFromScan-\(parsed.label)"
+        case .creatingFolder: return "creatingFolder"
         }
     }
 }
