@@ -5,15 +5,15 @@ milestone_name: Sharing That Makes Sense
 current_phase: 31
 current_phase_name: The Share Dialog — Per-Person Access, Existing Destinations
 status: phase_complete
-stopped_at: Completed 31-02-PLAN.md (Wave 2) -- ShareDialog migrated to the per-row access model for both scopes, family-wide isolated, hidden-password re-anchored to rows, all four driving e2e specs migrated, falsification-proven
-last_updated: "2026-08-18T21:09:50.866Z"
+stopped_at: Completed 31-03-PLAN.md (Wave 3) -- destination selector wired, existing-destination grant/update/revoke dispatch-proven, ORG-03/SC3 real-WASM proof, SC1/SC2 live e2e proof
+last_updated: "2026-08-18T21:36:54.027Z"
 last_activity: 2026-08-11
 last_activity_desc: re-verify complete; four CI-width commands all exit 0; e2e 9/9 from a fresh
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 30
-  completed_plans: 25
+  completed_plans: 26
   percent: 33
 ---
 
@@ -237,6 +237,7 @@ still carries `role="tablist"` (pre-existing Phase 28 code, Phase 33 scope).
 | Phase 28 P04 | 18min | 5 tasks | 7 files |
 | Phase 31 P01 | 30min | 2 tasks | 6 files |
 | Phase 31 P02 | ~3h | 1 tasks | 8 files |
+| Phase 31 P03 | ~30min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -387,6 +388,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 31-01: Two new PUT routes (collections::update_access, vault::update_share) close MOD-01's in-place level-edit gap via a single UPDATE, bounded identically to add_member/create_share.
 - [Phase ?]: 31-02: family-wide's radio group isolated to an isFamilyWideSelected render condition, with a new hiddenPasswordRowTarget state disambiguating the shared hidden-password-ack modal's completion handler between family-wide (byte-for-byte unchanged) and the new per-row model
 - [Phase ?]: 31-02: reconcileRowAction/reconcileRow is the single grant/update/revoke dispatch decision for both scopes; folder scope's update/revoke branches are wired but structurally unreachable until 31-03's destination selector seeds non-null currentLevel
+- [Phase ?]: 31-03: toggleFamilyWide resets destinationId to null on switch — avoids an unreachable-submit dead end when a per-person destination was chosen before enabling family-wide
+- [Phase ?]: 31-03: submitRowsForExistingDestination mirrors submitItemRows's dispatch shape — reconcileRow routes grant/update/revoke through reshareCollectionToNewMember/updateCollectionAccess/revokeCollectionAccess against a real existing destination
 
 ### Pending Todos
 
@@ -471,10 +474,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 31-02-PLAN.md (Wave 2) -- ShareDialog migrated to the per-row access model for both scopes, family-wide isolated, hidden-password re-anchored to rows, all four driving e2e specs migrated, falsification-proven
+**Stopped at:** Completed 31-03-PLAN.md (Wave 3) -- destination selector wired, existing-destination grant/update/revoke dispatch-proven, ORG-03/SC3 real-WASM proof, SC1/SC2 live e2e proof
 **Resume file:** None
 
-Last session: 2026-08-18T21:09:50.840Z
+Last session: 2026-08-18T21:36:53.986Z
 27-13-PLAN.md (gap closure) executed: vault-store.ts::ensureSharedItemsHydrated() (the
 shared-side counterpart to the existing ensureItemsHydrated()) is now awaited by
 handleCredentialsGet, alongside ensureItemsHydrated(), before its candidate snapshot -- closing

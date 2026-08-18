@@ -41,7 +41,7 @@ The gap that makes shared folders feel broken.
 
 - [ ] **ORG-01**: An item can be moved into, or created directly in, an **existing** shared folder — from the item editor, using the same mental model as choosing a personal folder. (Verified gap: `ItemForm` handles only `folderId`.)
 - [ ] **ORG-02**: Moving an item between scopes re-encrypts it under the destination scope's key with correctly-bound AAD, and is refused rather than silently mis-scoped when the destination key is unavailable. A move must never produce a row nobody can decrypt.
-- [ ] **ORG-03**: An **existing** shared folder can gain a new member without creating a second folder. (This is v0.4's WINDOWS #13, carried in deliberately: v0.4's research found it needs an "unwrap my own sealed key, reseal to a new recipient" composition that exists nowhere client-side. That composition is this milestone's to build — it is also what FSH-02 needs.)
+- [x] **ORG-03**: An **existing** shared folder can gain a new member without creating a second folder. (This is v0.4's WINDOWS #13, carried in deliberately: v0.4's research found it needs an "unwrap my own sealed key, reseal to a new recipient" composition that exists nowhere client-side. That composition is this milestone's to build — it is also what FSH-02 needs.)
 - [ ] **ORG-04**: Removing an item from a shared folder returns it to personal scope with the same re-encryption discipline, and the previously-shared members lose access to it.
 
 ### FSH — Sharing With the Whole Family
@@ -68,7 +68,7 @@ the two options and was chosen deliberately over a snapshot-of-current-members s
 ### MOD — The Share Dialog
 
 - [x] **MOD-01**: The share dialog presents **one row per selected person, with an access-level select on the right of that row** — the product owner's explicit design. Access level is chosen per person, visibly, in place.
-- [ ] **MOD-02**: The dialog can target an **existing** shared folder, not only mint a new one. (Today every `ShareDialogScope` path calls `createCollection` — which is why folders proliferate.)
+- [x] **MOD-02**: The dialog can target an **existing** shared folder, not only mint a new one. (Today every `ShareDialogScope` path calls `createCollection` — which is why folders proliferate.)
 - [x] **MOD-03**: The dialog states honestly what each access level does, reusing the existing `access.readOnly` / `access.fullEdit` / `access.hiddenPassword` vocabulary — including that hidden-password is an interface protection, never a cryptographic one.
 
 ### DEBT — Carried From v0.4
@@ -124,9 +124,9 @@ Phases 29–33 (`ROADMAP.md`). Every v0.5 requirement is mapped to exactly one p
 | FSH-05 | Phase 30 | Pending |
 | FAM-10 | Phase 30 | Pending |
 | MOD-01 | Phase 31 | In progress (server-side level-edit routes landed in 31-01; the per-person row UI ships in 31-02..31-05) |
-| MOD-02 | Phase 31 | Pending |
+| MOD-02 | Phase 31 | Complete |
 | MOD-03 | Phase 31 | Complete |
-| ORG-03 | Phase 31 | Pending |
+| ORG-03 | Phase 31 | Complete |
 | ORG-01 | Phase 32 | Pending |
 | ORG-02 | Phase 32 | Pending |
 | ORG-04 | Phase 32 | Pending |
