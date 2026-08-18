@@ -38,6 +38,14 @@ import Foundation
 @MainActor
 final class SyncCoordinator {
     private let store: VaultStore
+    private var socket: SyncSocket?
+    private var foregroundPullTimer: Timer?
+
+    /// Task 2's live two-push proof cannot fail while this optimisation
+    /// runs -- a working poll disguises a one-shot receive as a working
+    /// socket (D-06). Set BEFORE calling `start(baseURL:tokenProvider:)`;
+    /// exposed so that proof, and only that proof, can disable it.
+    var repeatingPullDisabled = false
 
     init(store: VaultStore) {
         self.store = store
@@ -53,13 +61,75 @@ final class SyncCoordinator {
         notifyIdentityStore()
     }
 
-    /// Phase 39 has no lifecycle transport of its own yet (the socket and
-    /// poll fallback are 39-04's) -- this is the same `pull()` above, named
-    /// separately so a future `UIApplication.willEnterForegroundNotification`
-    /// observer has an obvious, already-exercised call site to attach to
-    /// rather than inventing its own.
+    /// Named separately from `pull()` so a `UIApplication
+    /// .willEnterForegroundNotification`/`scenePhase` observer has an
+    /// obvious, already-exercised call site to attach to (`sync.ts`'s own
+    /// `onopen`-fires-a-catch-up-pull discipline extends here: a transition
+    /// to foreground is this platform's equivalent "the transport might have
+    /// missed something, go find out").
     func foregroundPull() async throws {
         try await pull()
+    }
+
+    /// Starts the WebSocket transport (39-04) against `baseURL`, plus the
+    /// in-foreground repeating pull unless `repeatingPullDisabled` is set.
+    /// Idempotent: calling this while already started stops the previous
+    /// transport first (`SyncSocket.start()`'s own idempotent re-entry).
+    func start(baseURL: URL, tokenProvider: @escaping () -> String?) {
+        stop()
+        let socket = SyncSocket(
+            urlProvider: { SyncSocket.wsURL(base: baseURL, token: tokenProvider()) },
+            pull: { [weak self] in
+                guard let self else { return }
+                Task { try? await self.pull() }
+            }
+        )
+        self.socket = socket
+        socket.start()
+        startRepeatingPullIfNeeded()
+    }
+
+    /// Tears down the socket and the repeating pull. Never touches the
+    /// persisted cache or the store's session state -- that is
+    /// `ContentView.performLock()`/`performSignOut()`'s job, not this
+    /// type's.
+    func stop() {
+        socket?.stop()
+        socket = nil
+        stopRepeatingPull()
+    }
+
+    /// The honest fallback (39-RESEARCH.md's Freshness section; `sync.ts`'s
+    /// own header comment, ported): a suspended process's timer does not
+    /// fire, so a pull on EVERY transition to the active scene phase is the
+    /// only unconditional freshness guarantee this design has. The
+    /// in-foreground repeating timer below is an optimisation on top of
+    /// this, never a substitute for it.
+    func handleScenePhaseBecameActive() {
+        Task { try? await foregroundPull() }
+    }
+
+    /// In-foreground OPTIMISATION only, NOT a guarantee: a backgrounded
+    /// process's `Timer` does not fire (the same reason the poll-by-alarm
+    /// rewrite exists in the extension, `sync-client.ts`'s own header) --
+    /// `handleScenePhaseBecameActive()` above is what actually keeps this
+    /// design honest across a background/foreground cycle. Disabled
+    /// entirely when `repeatingPullDisabled` is set (Task 2's live two-push
+    /// proof), because a working poll disguises a one-shot receive loop as
+    /// a working socket (D-06) -- with it disabled, the experiment can fail.
+    private func startRepeatingPullIfNeeded() {
+        guard !repeatingPullDisabled else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { try? await self.pull() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        foregroundPullTimer = timer
+    }
+
+    private func stopRepeatingPull() {
+        foregroundPullTimer?.invalidate()
+        foregroundPullTimer = nil
     }
 
     /// FILL-03 (`.planning/REQUIREMENTS.md` §FILL) -- Phase 41's to
