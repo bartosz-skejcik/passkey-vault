@@ -66,7 +66,18 @@ struct TotpCountdownView: View {
         TimelineView(.periodic(from: Date(timeIntervalSince1970: Self.anchor(for: period)), by: 1)) { context in
             // Take the LATER of the scheduled date and the real clock --
             // never trust the schedule alone (Pitfall 5).
-            let now = max(context.date.timeIntervalSince1970, Date().timeIntervalSince1970)
+            //
+            // WR-07 (38-REVIEW.md, iteration 2): clamped to 0 -- the SAME
+            // CR-04-class trap the `UInt32(exactly: digits)` conversion
+            // eleven lines below was fixed for. `UInt64(_:)` on a `Double`
+            // TRAPS (uncatchable `fatalError`) on a negative value, and a
+            // clock set before 1970-01-01 (reachable from Settings ->
+            // General -> Date & Time with automatic time off) produces
+            // exactly that. A pre-epoch clock has no meaningful TOTP answer
+            // anyway, so clamping to 0 rather than routing through a
+            // failable initializer (which would need an error row here)
+            // is the simpler fix for a value that was already nonsensical.
+            let now = max(0, max(context.date.timeIntervalSince1970, Date().timeIntervalSince1970))
             content(for: UInt64(now))
         }
     }
