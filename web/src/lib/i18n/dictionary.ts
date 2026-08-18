@@ -1276,8 +1276,12 @@ export const DICTIONARY = {
   // second copy of those words.
   "share.rowCurrentlyLabel": { pl: "Obecnie: {level}", en: "Currently: {level}" },
   // Row-level, proactive half of SC5's refusal requirement — renders under
-  // a row whose person has no published identity key; that row's select is
-  // disabled and locked to `access.none`.
+  // a row whose person has no published identity key. ME-03 fix
+  // (31-REVIEW.md): that row's select is disabled and locked to
+  // `access.none` ONLY when the person also has no existing grant — a
+  // keyless person who already holds a grant keeps a fully interactive
+  // select, since updating or revoking an EXISTING grant touches no key
+  // material at all (only a fresh GRANT genuinely needs their public key).
   "share.rowNoPublishedKey": {
     pl: "Brak opublikowanego klucza — nie można udostępnić.",
     en: "No published key — can't share with them.",
@@ -1293,9 +1297,16 @@ export const DICTIONARY = {
   // the UI-SPEC — never softened, since this sentence is what carries the
   // "brak dostępu really revokes" honesty weight in place of a second
   // confirm dialog.
+  //
+  // LO-02 fix (31-REVIEW.md): the EN copy used to read "for {count} people"
+  // — ungrammatical at the single-revocation case ("for 1 people"), which is
+  // by far the most common one, in this dialog's single most load-bearing
+  // honesty sentence. "member(s)" sidesteps the plural-form agreement the
+  // same way the PL string's "os." already does, rather than adding a
+  // second count-1 variant key.
   "share.pendingRevocationsSummary": {
     pl: "Zapisanie cofnie dostęp {count} os.: {names}. Cofnięcie dostępu nie cofa tego, co już zobaczyli.",
-    en: "Saving will revoke access for {count} people: {names}. Revoking access doesn't undo what they've already seen.",
+    en: "Saving will revoke access for {count} member(s): {names}. Revoking access doesn't undo what they've already seen.",
   },
   // Deliberately not a bare "Udostępnij"/"Share" — the same submit button
   // backs two structurally different grants across the item/folder
@@ -1341,6 +1352,23 @@ export const DICTIONARY = {
     pl: "Nie udało się udostępnić: {recipients}. Pozostałe dostępy zostały już przyznane — ponowna próba ich nie zduplikuje.",
     en: "Couldn't share with: {recipients}. The other grants already went through — retrying won't duplicate them.",
   },
+  // HI-02 fix (31-REVIEW.md): the REVOCATION-shaped sibling of
+  // `share.partialShareFailed` above. Before this fix, a failed revocation
+  // (a `DELETE` that 403/network-failed) rendered `share.partialShareFailed`
+  // over it -- "Couldn't share with: {recipients}. The other grants already
+  // went through" -- which states the OPPOSITE of the truth for a
+  // revocation set: the named person was supposed to LOSE access and still
+  // has it, and "the other grants already went through" is a meaningless,
+  // actively misleading sentence for a revocation. `handleSubmit` now
+  // renders this key specifically for `failedRevocations`, and BOTH this
+  // and `share.partialShareFailed` render together when a single submit
+  // produced both kinds of failure (mirrors this dialog's own established
+  // "render every true statement, never just one" discipline for
+  // `submitError`/`familyKeyPending`/`seedMoveFailureCount` etc.).
+  "share.partialRevokeFailed": {
+    pl: "Nie udało się cofnąć dostępu: {recipients}. Nadal mają dostęp.",
+    en: "Couldn't revoke access for: {recipients}. They still have access.",
+  },
   // 31-06-PLAN.md (SC5, T-31-16): the destination-unavailable refusal --
   // fires when a fresh `getCollection(destinationId)` re-fetch immediately
   // before dispatch finds the caller's own `sealed_key` gone (a `null` in a
@@ -1355,6 +1383,16 @@ export const DICTIONARY = {
   "share.destinationUnavailable": {
     pl: "Nie można udostępnić — brak dostępu do klucza tego miejsca docelowego.",
     en: "Can't share — no access to this destination's key.",
+  },
+  // HI-03 fix (31-REVIEW.md): renders in place of the row list when
+  // `getCollectionAccessList` fails for the chosen existing destination --
+  // deliberately distinct from `share.destinationUnavailable` above (that
+  // one means "your own access is gone"; this one means "we don't know
+  // anyone's access, including yours might still be fine — we just
+  // couldn't check"). Submit stays disabled while this is shown.
+  "share.destinationAccessUnavailable": {
+    pl: "Nie udało się wczytać obecnych dostępów dla tego folderu. Spróbuj ponownie.",
+    en: "Couldn't load the current access list for this folder. Try again.",
   },
   "share.newFolderNameLabel": { pl: "Nazwa folderu", en: "Folder name" },
   // WR-05 (code review, Phase 26): a seed-move partial failure used to

@@ -409,6 +409,40 @@ describe("ShareDialog", () => {
       expect(screen.getByTestId("share-submit")).toBeDisabled();
     });
 
+    // ME-03 fix (31-REVIEW.md): a keyless row's select is disabled and
+    // locked to `access.none` ONLY when there is no existing grant to act
+    // on -- a keyless person who already HOLDS a grant must keep a fully
+    // interactive select, since updating/revoking an EXISTING grant
+    // (`update_share`/`revoke_share`) touches no key material at all; only
+    // a fresh GRANT genuinely needs their public key.
+    it("ME-03: a keyless row's select stays interactive when the person already holds a grant -- disabled ONLY when there is no existing grant to act on", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_NO_KEY]);
+      mockListItemShares.mockResolvedValue([
+        {
+          user_id: MEMBER_NO_KEY.user_id,
+          email: MEMBER_NO_KEY.email,
+          access_level: "edit",
+          created_at: "",
+          suspended: false,
+        },
+      ]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+
+      const select = screen.getByTestId(
+        `share-recipient-row-select-${MEMBER_NO_KEY.user_id}`,
+      ) as HTMLSelectElement;
+      expect(select.disabled).toBe(false);
+      // The no-published-key note is still shown -- ME-03 does not change
+      // that, only the select's interactivity.
+      expect(screen.getByTestId(`share-recipient-row-nokey-${MEMBER_NO_KEY.user_id}`)).toBeInTheDocument();
+
+      // Revoking is genuinely reachable through the now-interactive select.
+      fireEvent.change(select, { target: { value: "none" } });
+      fireEvent.click(screen.getByTestId("share-submit"));
+      await waitFor(() => expect(mockRevokeItemShare).toHaveBeenCalledWith(ITEM.id, MEMBER_NO_KEY.user_id));
+    });
+
     it("shows share.ctaItem as the submit label, never a bare generic label", async () => {
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
       await waitForPopulated();
@@ -430,6 +464,65 @@ describe("ShareDialog", () => {
       expect(mockCreateItemShare).toHaveBeenCalledWith(ITEM.id, MEMBER_B.user_id, '{"sealed":"item-key"}', "edit");
     });
 
+    // CR-04 fix (31-REVIEW.md): `shareItemWithRecipients` used to treat
+    // EVERY 409 from `createItemShare` as success unconditionally. These
+    // two cases prove it now verifies the recipient's ACTUAL persisted
+    // level via `listItemShares` first -- mirroring the collection-scoped
+    // `grantCollectionToRecipients`'s own "Face-2 defense" tests.
+    it("CR-04: a 409 whose recipient ACTUALLY holds the intended level is NOT reported as failed", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      const conflictErr = Object.assign(new Error("already shared"), { status: 409 });
+      mockCreateItemShare.mockRejectedValue(conflictErr);
+      // The FIRST call is the dialog's own initial `listItemShares` load
+      // (no existing share yet -- that is what makes the row's action a
+      // GRANT, reaching `createItemShare` at all). Later calls are the
+      // CR-04 post-409 verification, which reflects the grant that
+      // genuinely landed server-side despite the client seeing a 409.
+      mockListItemShares
+        .mockResolvedValueOnce([])
+        .mockResolvedValue([
+          { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "read", created_at: "", suspended: false },
+        ]);
+      const onShared = vi.fn();
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+      setRowLevel(MEMBER_A.user_id, "read");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      expect(screen.queryByTestId("share-partial-error")).not.toBeInTheDocument();
+    });
+
+    it("CR-04: a 409 whose recipient holds a DIFFERENT level IS reported as failed -- never silently trusted", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      const conflictErr = Object.assign(new Error("already shared"), { status: 409 });
+      // A always 409s (mismatched level, below); B succeeds -- a genuinely
+      // PARTIAL outcome, so the assertion below exercises the
+      // partial-failure copy rather than the total-failure one.
+      mockCreateItemShare.mockImplementation((_itemId: string, recipientId: string) =>
+        recipientId === MEMBER_A.user_id ? Promise.reject(conflictErr) : Promise.resolve(undefined),
+      );
+      // The recipient's REAL persisted level (read) does not match the
+      // level the owner just chose (edit) -- a direct item share has no
+      // contributor-ceiling concept (unlike the collection-scoped check),
+      // so any mismatch must be reported as a genuine failure. First call
+      // is the initial load (no existing share); later calls are the
+      // post-409 verification.
+      mockListItemShares
+        .mockResolvedValueOnce([])
+        .mockResolvedValue([
+          { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "read", created_at: "", suspended: false },
+        ]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      setRowLevel(MEMBER_A.user_id, "edit");
+      setRowLevel(MEMBER_B.user_id, "read");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
+      expect(screen.getByTestId("share-partial-error")).toHaveTextContent(MEMBER_A.email);
+    });
+
     it("throws before any network call when a row with no published public key is force-edited, surfacing share.createFailed", async () => {
       mockGetFamilyMembers.mockResolvedValue([MEMBER_NO_KEY]);
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
@@ -444,6 +537,32 @@ describe("ShareDialog", () => {
       await waitFor(() => expect(screen.getByTestId("share-error")).toBeInTheDocument());
       expect(screen.getByTestId("share-error")).toHaveTextContent("share.createFailed");
       expect(screen.getByTestId("share-error")).toHaveAttribute("role", "alert");
+      expect(mockCreateItemShare).not.toHaveBeenCalled();
+    });
+
+    // HI-06 fix (31-REVIEW.md): the test above uses a roster of exactly ONE
+    // keyless member, so `mockCreateItemShare).not.toHaveBeenCalled()`
+    // passed trivially even before this fix (nothing to leave partially
+    // dispatched). This one puts the keyless recipient LAST in a 3-row
+    // roster -- before the fix, rows 1..N-1 would already have dispatched
+    // by the time row N's own per-recipient assert inside
+    // `shareItemWithRecipients` threw.
+    it("HI-06: a keyless row at position N leaves ZERO rows dispatched, not just row N -- the upfront check runs BEFORE any network call", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B, MEMBER_NO_KEY]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      setRowLevel(MEMBER_A.user_id, "read");
+      setRowLevel(MEMBER_B.user_id, "edit");
+      // Row Anatomy locks the keyless row's select `disabled` -- drives the
+      // change event directly, mirroring the single-row test's own
+      // T-25-16 defense-in-depth rationale.
+      setRowLevel(MEMBER_NO_KEY.user_id, "read");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(screen.getByTestId("share-error")).toBeInTheDocument());
+      expect(screen.getByTestId("share-error")).toHaveTextContent("share.createFailed");
+      // The headline assertion: NEITHER A nor B was granted, even though
+      // both have valid keys and were ordered BEFORE the keyless row.
       expect(mockCreateItemShare).not.toHaveBeenCalled();
     });
 
@@ -552,6 +671,34 @@ describe("ShareDialog", () => {
       const summary = screen.getByTestId("share-seed-summary");
       expect(summary).toHaveTextContent("Personal Docs");
       expect(summary).toHaveTextContent("2");
+    });
+
+    // HI-04 fix (31-REVIEW.md): the destination selector used to let a user
+    // pick an EXISTING shared folder for a "share this folder" (seeded)
+    // session, short-circuiting straight into
+    // `submitRowsForExistingDestination` -- the seed folder's items were
+    // NEVER moved, but the dialog's own title still named the seed folder
+    // as the thing being shared. The seeded flow is inherently mint-new;
+    // the selector must not render at all.
+    it("HI-04: the destination selector never renders for a seeded (existing-folder) session -- the seed flow is always mint-new", async () => {
+      const EDIT_HELD_FOLDER: CollectionRow = {
+        id: "existing-col-edit",
+        enc_name: "e",
+        created_at: "",
+        access_level: "edit",
+        sealed_key: '{"sealed":"dest-key"}',
+      };
+      mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+      await refreshCollectionsNow();
+
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+
+      expect(screen.queryByTestId("share-destination-select")).not.toBeInTheDocument();
+      // The folder-name input and seed summary must still be reachable --
+      // there is no destination-selected state that could hide them.
+      expect(screen.getByTestId("share-folder-name-input")).toBeInTheDocument();
+      expect(screen.getByTestId("share-seed-summary")).toBeInTheDocument();
     });
 
     it("creates the collection, adds members, THEN bulk-moves every seed item with the new collection id", async () => {
@@ -950,20 +1097,43 @@ describe("ShareDialog", () => {
 
     it("item variant: a retry treats the already-granted recipient's 409 as success and completes the share", async () => {
       mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
-      let attempt = 0;
-      mockCreateItemShare.mockImplementation((_itemId: string, recipientId: string) => {
-        if (recipientId === MEMBER_A.user_id) {
-          attempt += 1;
-          // First submit: A succeeds. Retry: A is already granted -> 409.
-          return attempt === 1 ? Promise.resolve(undefined) : Promise.reject(conflict());
-        }
-        // B fails the first time, succeeds on the retry.
-        return mockCreateItemShare.mock.calls.filter(
-          (c: unknown[]) => c[1] === MEMBER_B.user_id,
-        ).length === 1
-          ? Promise.reject(new Error("network drop"))
-          : Promise.resolve(undefined);
-      });
+      // CR-04 fix (31-REVIEW.md): a 409 is no longer trusted unconditionally
+      // -- `recipientAlreadyHoldsIntendedItemLevel` (and this ME-01 fix's
+      // own `refreshRowsAfterPartialSubmit`) verify the recipient's ACTUAL
+      // persisted level via `listItemShares`. This mock tracks real granted
+      // state so that verification has something honest to read, mirroring
+      // how the server itself would answer after a genuine grant landed.
+      const grantedLevels = new Map<string, string>();
+      let bAttempts = 0;
+      mockCreateItemShare.mockImplementation(
+        (_itemId: string, recipientId: string, _sealedKey: string, level: string) => {
+          if (recipientId === MEMBER_A.user_id) {
+            // First submit: A succeeds and is recorded as granted. Retry: A
+            // is already granted -> 409.
+            if (grantedLevels.has(MEMBER_A.user_id)) {
+              return Promise.reject(conflict());
+            }
+            grantedLevels.set(MEMBER_A.user_id, level);
+            return Promise.resolve(undefined);
+          }
+          // B fails the first time, succeeds on the retry.
+          bAttempts += 1;
+          if (bAttempts === 1) {
+            return Promise.reject(new Error("network drop"));
+          }
+          grantedLevels.set(MEMBER_B.user_id, level);
+          return Promise.resolve(undefined);
+        },
+      );
+      mockListItemShares.mockImplementation(async () =>
+        Array.from(grantedLevels.entries()).map(([user_id, access_level]) => ({
+          user_id,
+          email: `${user_id}@example.test`,
+          access_level,
+          created_at: "2024-01-01T00:00:00Z",
+          suspended: false,
+        })),
+      );
       const onShared = vi.fn();
       render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={onShared} />);
       await waitForPopulated();
@@ -971,6 +1141,12 @@ describe("ShareDialog", () => {
       setRowLevel(MEMBER_B.user_id, "read");
       fireEvent.click(screen.getByTestId("share-submit"));
       await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
+      // ME-01 fix (31-REVIEW.md): the row picture re-seeds from the real
+      // server state before the retry -- A's row now shows its genuinely
+      // landed grant.
+      await waitFor(() =>
+        expect(screen.getByTestId(`share-recipient-row-currently-${MEMBER_A.user_id}`)).toBeInTheDocument(),
+      );
 
       // The retry the copy invites must actually reach completion.
       fireEvent.click(screen.getByTestId("share-submit"));
@@ -1171,9 +1347,26 @@ describe("ShareDialog", () => {
       sealed_key: '{"sealed":"dest-key-3"}',
       family_wide_kind: "item_bucket",
     };
+    // CR-02 fix (31-REVIEW.md): a family-wide FOLDER (not just item_bucket)
+    // must never appear as a per-person destination -- its own creator row
+    // is hardcoded 'edit' (collections::create), so it used to slip through
+    // this filter indistinguishable from an ordinary shared folder.
+    const FAMILY_WIDE_FOLDER: CollectionRow = {
+      id: "existing-col-family-wide-folder",
+      enc_name: "e",
+      created_at: "",
+      access_level: "edit",
+      sealed_key: '{"sealed":"dest-key-4"}',
+      family_wide_kind: "folder",
+    };
 
-    it("offers only edit-held, non-item_bucket collections in 'Istniejące foldery' -- never CollectionPicker's unfiltered list", async () => {
-      mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER, READ_HELD_FOLDER, ITEM_BUCKET_FOLDER]);
+    it("offers only edit-held, non-family-wide collections in 'Istniejące foldery' -- never CollectionPicker's unfiltered list", async () => {
+      mockListCollections.mockResolvedValue([
+        EDIT_HELD_FOLDER,
+        READ_HELD_FOLDER,
+        ITEM_BUCKET_FOLDER,
+        FAMILY_WIDE_FOLDER,
+      ]);
       await refreshCollectionsNow();
 
       render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
@@ -1184,6 +1377,11 @@ describe("ShareDialog", () => {
       expect(optionValues).toContain(EDIT_HELD_FOLDER.id);
       expect(optionValues).not.toContain(READ_HELD_FOLDER.id);
       expect(optionValues).not.toContain(ITEM_BUCKET_FOLDER.id);
+      // CR-02 fix (31-REVIEW.md): a family-wide FOLDER's own membership is
+      // governed by family_wide_pending's lazy-reseal machinery, never by
+      // this per-person model -- offering it here let "brak dostępu" 204
+      // and then silently self-revert on the next keyholder unlock.
+      expect(optionValues).not.toContain(FAMILY_WIDE_FOLDER.id);
       // "Nowy folder…" always survives, regardless of what's editable.
       expect(optionValues).toContain("new");
     });
@@ -1258,6 +1456,31 @@ describe("ShareDialog", () => {
 
       resolveAccessList([]);
       await waitFor(() => expect(screen.queryByTestId("share-rows-loading")).not.toBeInTheDocument());
+    });
+
+    // HI-03 fix (31-REVIEW.md): a failed access-list fetch must fail
+    // CLOSED -- never the old `buildRows(recipients, new Map())` fabricated
+    // "everyone at Brak dostępu" picture.
+    it("HI-03: a failed access-list fetch renders an honest error instead of a fabricated 'everyone at Brak dostępu' picture, and disables submit", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+      await refreshCollectionsNow();
+      mockGetCollectionAccessList.mockRejectedValue(new Error("network drop"));
+
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+
+      fireEvent.change(screen.getByTestId("share-destination-select"), {
+        target: { value: EDIT_HELD_FOLDER.id },
+      });
+
+      await waitFor(() =>
+        expect(screen.getByTestId("share-destination-access-unavailable")).toBeInTheDocument(),
+      );
+      // Never the fabricated picture: no row claiming "Brak dostępu" for a
+      // member whose real access could not be verified.
+      expect(screen.queryByTestId("share-recipient-list")).not.toBeInTheDocument();
+      expect(screen.getByTestId("share-submit")).toBeDisabled();
     });
 
     it("granting a NEW recipient (currentLevel null) on an existing destination dispatches EXACTLY ONE reshareCollectionToNewMember call and ZERO addCollectionMember/updateCollectionAccess/revokeCollectionAccess calls", async () => {
@@ -1351,6 +1574,46 @@ describe("ShareDialog", () => {
       expect(mockReshareCollectionToNewMember).not.toHaveBeenCalled();
       expect(mockAddCollectionMember).not.toHaveBeenCalled();
       expect(mockUpdateCollectionAccess).not.toHaveBeenCalled();
+    });
+
+    // HI-02 fix (31-REVIEW.md): a failed REVOKE must render DISTINCT,
+    // revocation-shaped copy -- never `share.partialShareFailed`'s
+    // grant-shaped "the other grants already went through", which states
+    // the opposite of the truth for a revocation (the person was supposed
+    // to LOSE access and still has it).
+    it("HI-02: a failed revoke renders share-partial-revoke-error, distinct from a failed grant's share-partial-error", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+      await refreshCollectionsNow();
+      mockGetCollectionAccessList.mockResolvedValue([
+        { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "edit", created_at: "", suspended: false },
+      ]);
+      mockRevokeCollectionAccess.mockRejectedValue(new Error("network drop"));
+      mockReshareCollectionToNewMember.mockResolvedValue(undefined);
+
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+
+      fireEvent.change(screen.getByTestId("share-destination-select"), {
+        target: { value: EDIT_HELD_FOLDER.id },
+      });
+      await waitFor(() =>
+        expect(screen.getByTestId(`share-recipient-row-currently-${MEMBER_A.user_id}`)).toBeInTheDocument(),
+      );
+
+      // A: revoke (will fail). B: fresh grant (will succeed) -- so this is
+      // a genuinely PARTIAL outcome, not a total failure.
+      setRowLevel(MEMBER_A.user_id, "none");
+      setRowLevel(MEMBER_B.user_id, "read");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(screen.getByTestId("share-partial-revoke-error")).toBeInTheDocument());
+      expect(screen.getByTestId("share-partial-revoke-error")).toHaveAttribute("role", "alert");
+      expect(screen.getByTestId("share-partial-revoke-error")).toHaveTextContent("share.partialRevokeFailed");
+      expect(screen.getByTestId("share-partial-revoke-error")).toHaveTextContent(MEMBER_A.email);
+      // The grant-shaped message must NOT appear -- nothing about A's
+      // revoke failure is a grant, and B's own grant succeeded.
+      expect(screen.queryByTestId("share-partial-error")).not.toBeInTheDocument();
     });
 
     it("the folder-name input and seed summary are hidden once an existing destination is chosen, and submit no longer requires a name", async () => {
@@ -1594,6 +1857,34 @@ describe("ShareDialog", () => {
       expect(familyWideCheckbox.disabled).toBe(false);
 
       setRowLevel(MEMBER_A.user_id, "read");
+      expect(familyWideCheckbox.disabled).toBe(true);
+    });
+
+    // HI-05 fix (31-REVIEW.md): `anyRowActive` used to be
+    // `pendingLevel !== "none"`, which `buildRows` initializes to
+    // `currentLevel ?? "none"` -- true from the moment the dialog paints
+    // for ANY item that already has a direct share, permanently disabling
+    // "Cała rodzina" before the user touched anything. The existing test
+    // above starts from a fresh item where every row is "none", so it
+    // could not catch this -- this one seeds an EXISTING share instead.
+    it("HI-05: the family-wide checkbox stays ENABLED on paint for an item that already has a direct share (a pre-existing grant is not a QUEUED edit)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      mockListItemShares.mockResolvedValue([
+        { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "read", created_at: "", suspended: false },
+      ]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      // Sanity: A's row genuinely shows the pre-existing grant.
+      expect(screen.getByTestId(`share-recipient-row-currently-${MEMBER_A.user_id}`)).toBeInTheDocument();
+
+      const familyWideCheckbox = screen
+        .getByTestId("share-recipient-family-wide")
+        .querySelector("input[type=checkbox]") as HTMLInputElement;
+      expect(familyWideCheckbox.disabled).toBe(false);
+
+      // The reverse direction still holds: an actual QUEUED edit (changing
+      // A's level, or B's fresh grant) still disables it.
+      setRowLevel(MEMBER_B.user_id, "read");
       expect(familyWideCheckbox.disabled).toBe(true);
     });
 

@@ -112,9 +112,19 @@ export type ShareDialogScope =
  * report total failure" apart from "some grants landed, report exactly which
  * ones didn't" without inspecting variant-specific state. */
 interface SubmitOutcome {
-  /** Labels (email, or user id when unknown) of recipients that did NOT end
-   * up holding a grant after this attempt. */
+  /** Labels (email, or user id when unknown) of recipients whose GRANT or
+   * UPDATE did NOT land during this attempt. */
   failedRecipients: string[];
+  /** HI-02 fix (31-REVIEW.md): revoke failures are reported SEPARATELY from
+   * `failedRecipients` above — the two used to be folded into ONE flat
+   * list, rendered through `share.partialShareFailed`'s grant-shaped copy
+   * ("the other grants already went through") regardless of which action
+   * actually failed. For a failed REVOKE that copy states the exact
+   * opposite of the truth: the person was supposed to LOSE access and still
+   * has it, not gain something that "already went through". Labels (email,
+   * or user id when unknown) of recipients whose "brak dostępu" did NOT
+   * take effect during this attempt. */
+  failedRevocations: string[];
   /** Seed items that failed to move into the new shared folder (folder
    * variant only; always 0 for the item variant). */
   seedMoveFailures: number;
@@ -303,6 +313,29 @@ function isConflictError(err: unknown): boolean {
   );
 }
 
+/** ME-02 fix (31-REVIEW.md): true for an error that carries NO HTTP status
+ * at all — a network-layer failure (dropped connection, timeout, offline)
+ * as opposed to a genuine server response the caller can trust (a 403, a
+ * 404, a 409 already handled by `isConflictError` above). The distinction
+ * matters for `committedAnything`'s heuristic below: a network-layer
+ * failure means the REQUEST'S OUTCOME IS UNKNOWN — the server may have
+ * committed the mutation before the response was lost in transit — so it
+ * must never be treated the same as a definite server-side rejection when
+ * deciding whether to render `share.createFailed`'s total-failure claim
+ * ("nothing committed") versus the partial-failure copy. Rendering
+ * total-failure over a mutation that in fact landed is the exact defect
+ * this fix closes: a single-row submit whose request timed out AFTER the
+ * server committed used to report "Nie udało się udostępnić. Spróbuj
+ * ponownie." over a grant/revocation that genuinely succeeded. */
+function isNetworkLayerFailure(err: unknown): boolean {
+  return !(
+    typeof err === "object" &&
+    err !== null &&
+    "status" in err &&
+    typeof (err as { status: unknown }).status === "number"
+  );
+}
+
 /** 30-08's family-wide recipient rule, extracted so 30-12's item-variant
  * branch applies the IDENTICAL rule rather than re-deriving it: a current
  * member with no published public key is OMITTED from a family-wide
@@ -355,6 +388,34 @@ async function recipientAlreadyHoldsIntendedLevel(
   } catch (err) {
     console.error(
       `pv: failed to verify recipient ${recipientUserId}'s actual access on collection ${collectionId} after a 409`,
+      err,
+    );
+    return false;
+  }
+}
+
+/** CR-04 fix (31-REVIEW.md): the `item_shares` sibling of
+ * `recipientAlreadyHoldsIntendedLevel` above — `shareItemWithRecipients`
+ * used to treat EVERY 409 from `createItemShare` as success unconditionally,
+ * with no check of what the recipient's `item_shares.access_level` actually
+ * is. A direct item share has no family-wide/contributor-escalation concept
+ * (`create_share` forbids a collection-scoped item outright), so there is no
+ * "edit is always an acceptable ceiling" exception to carry over from the
+ * collection-scoped check — an EXACT match against `intendedLevel` is the
+ * whole rule. A failure from this check itself (network, parse) fails
+ * CLOSED, same discipline as its collection-scoped sibling. */
+async function recipientAlreadyHoldsIntendedItemLevel(
+  itemId: string,
+  recipientUserId: string,
+  intendedLevel: string,
+): Promise<boolean> {
+  try {
+    const shares = await listItemShares(itemId);
+    const entry = shares.find((s) => s.user_id === recipientUserId);
+    return entry !== undefined && entry.access_level === intendedLevel;
+  } catch (err) {
+    console.error(
+      `pv: failed to verify recipient ${recipientUserId}'s actual access on item ${itemId} after a 409`,
       err,
     );
     return false;
@@ -466,14 +527,14 @@ async function submitRowsForCollection(
   collectionId: string,
   ck: WasmCollectionKey,
   rows: RecipientRow[],
-): Promise<string[]> {
+): Promise<{ failedRecipients: string[]; failedRevocations: string[] }> {
   const grantRows = rows.filter((r) => reconcileRowAction(r.currentLevel, r.pendingLevel).kind === "grant");
   const otherRows = rows.filter((r) => {
     const kind = reconcileRowAction(r.currentLevel, r.pendingLevel).kind;
     return kind === "update" || kind === "revoke";
   });
 
-  const failed = await grantCollectionToRows(
+  const failedRecipients = await grantCollectionToRows(
     collectionId,
     ck,
     grantRows.map((r) => ({
@@ -484,7 +545,14 @@ async function submitRowsForCollection(
     })),
   );
 
+  // HI-02 fix (31-REVIEW.md): a revoke failure is bucketed SEPARATELY from a
+  // grant/update failure — see `SubmitOutcome.failedRevocations`'s own doc
+  // comment for why. Unreachable this plan (see this function's own doc
+  // comment above), but kept symmetric with `submitRowsForExistingDestination`
+  // below rather than silently dropping the distinction here.
+  const failedRevocations: string[] = [];
   for (const row of otherRows) {
+    const isRevoke = reconcileRowAction(row.currentLevel, row.pendingLevel).kind === "revoke";
     try {
       await reconcileRow(row, {
         // Unreachable this plan (see doc comment above) -- grants for the
@@ -496,10 +564,10 @@ async function submitRowsForCollection(
       });
     } catch (err) {
       console.error(`pv: failed to reconcile collection ${collectionId} row for ${row.userId}`, err);
-      failed.push(row.email ?? row.userId);
+      (isRevoke ? failedRevocations : failedRecipients).push(row.email ?? row.userId);
     }
   }
-  return failed;
+  return { failedRecipients, failedRevocations };
 }
 
 /** 31-06-PLAN.md (SC5, T-31-16): thrown by `submitRowsForExistingDestination`
@@ -573,7 +641,7 @@ export async function submitRowsForExistingDestination(
   destinationId: string,
   rows: RecipientRow[],
   uk: WasmUserKey,
-): Promise<{ failedRecipients: string[]; committedAnything: boolean }> {
+): Promise<{ failedRecipients: string[]; failedRevocations: string[]; committedAnything: boolean }> {
   let freshDestination: CollectionRow;
   try {
     freshDestination = await getCollection(destinationId);
@@ -587,20 +655,62 @@ export async function submitRowsForExistingDestination(
   const actionable = rows.filter(
     (r) => reconcileRowAction(r.currentLevel, r.pendingLevel).kind !== "noop",
   );
-  const failed: string[] = [];
+  const failedRecipients: string[] = [];
+  const failedRevocations: string[] = [];
+  // ME-02 fix (31-REVIEW.md): see `isNetworkLayerFailure`'s own doc comment.
+  let anyAmbiguousFailure = false;
   for (const row of actionable) {
+    // HI-02 fix (31-REVIEW.md): captured BEFORE dispatch — reconcileRow's
+    // own dispatch reads `row.currentLevel`/`row.pendingLevel` fresh, and
+    // this is the SAME computation, so the action kind used to bucket a
+    // failure below can never disagree with the one actually dispatched.
+    const isRevoke = reconcileRowAction(row.currentLevel, row.pendingLevel).kind === "revoke";
     try {
       await reconcileRow(row, {
-        grant: (level) => reshareCollectionToNewMember(destinationId, row.userId, level, uk),
+        // CR-03 fix (31-REVIEW.md): `reshareCollectionToNewMember` no
+        // longer treats its own 409 as success (see its own doc comment) --
+        // this is the ONE caller for which that unconditional swallow was
+        // wrong: a 409 here means the recipient already holds SOME grant on
+        // this destination, at a level this dialog never chose (a stale row
+        // from before per-level buckets existed, or a second admin's grant
+        // landing between destination-select and submit), not necessarily
+        // the level the user just picked. Reuses the SAME
+        // `recipientAlreadyHoldsIntendedLevel` verification
+        // `grantCollectionToRecipients`/`grantCollectionToRows` already
+        // apply, rather than writing a third variant of this check.
+        grant: async (level) => {
+          try {
+            await reshareCollectionToNewMember(destinationId, row.userId, level, uk);
+          } catch (err) {
+            if (!isConflictError(err)) throw err;
+            const holdsIntendedLevel = await recipientAlreadyHoldsIntendedLevel(
+              destinationId,
+              row.userId,
+              level,
+            );
+            if (!holdsIntendedLevel) throw err;
+          }
+        },
         update: (level) => updateCollectionAccess(destinationId, row.userId, level),
         revoke: () => revokeCollectionAccess(destinationId, row.userId),
       });
     } catch (err) {
       console.error(`pv: failed to reconcile existing destination ${destinationId} row for ${row.userId}`, err);
-      failed.push(row.email ?? row.userId);
+      if (isNetworkLayerFailure(err)) {
+        anyAmbiguousFailure = true;
+      }
+      (isRevoke ? failedRevocations : failedRecipients).push(row.email ?? row.userId);
     }
   }
-  return { failedRecipients: failed, committedAnything: failed.length < actionable.length };
+  return {
+    failedRecipients,
+    failedRevocations,
+    // ME-02 fix (31-REVIEW.md): an ambiguous (network-layer) failure means
+    // the request MAY have committed before the response was lost — never
+    // collapse that into "nothing committed" just because every actionable
+    // row happened to fail.
+    committedAnything: failedRecipients.length + failedRevocations.length < actionable.length || anyAmbiguousFailure,
+  };
 }
 
 /** 30-12 (FSH-01's "or an item" clause): the non-sensitive placeholder name
@@ -701,7 +811,21 @@ export async function shareItemWithRecipients(
       const sealedKey = sealItemKeyForRecipient(uk, encKeyJson, itemId, recipientPk);
       await createItemShare(itemId, recipient.user_id, sealedKey, accessLevel);
     } catch (err) {
-      if (!isConflictError(err)) {
+      if (isConflictError(err)) {
+        // CR-04 fix (31-REVIEW.md): a 409 here used to be treated as
+        // success unconditionally — verify what the recipient ACTUALLY
+        // holds before deciding, mirroring the collection-scoped grant
+        // loops' identical discipline (`grantCollectionToRecipients`/
+        // `grantCollectionToRows`).
+        const holdsIntendedLevel = await recipientAlreadyHoldsIntendedItemLevel(
+          itemId,
+          recipient.user_id,
+          accessLevel,
+        );
+        if (!holdsIntendedLevel) {
+          failed.push(recipient.email ?? recipient.user_id);
+        }
+      } else {
         console.error(`pv: failed to share item ${itemId} with ${recipient.user_id}`, err);
         failed.push(recipient.email ?? recipient.user_id);
       }
@@ -710,6 +834,19 @@ export async function shareItemWithRecipients(
     }
   }
   return failed;
+}
+
+/** ME-02 fix (31-REVIEW.md): a marker class thrown ONLY by `submitItemRows`'s
+ * own grant closure, to signal "the underlying per-recipient grant already
+ * ran its own conflict verification and definitely failed" without losing
+ * that definiteness the way a bare `new Error(...)` would (status-less,
+ * indistinguishable from a genuine network-layer failure to
+ * `isNetworkLayerFailure`). */
+class ItemGrantFailedSignal extends Error {
+  constructor(itemId: string, recipientUserId: string) {
+    super(`pv: failed to grant item ${itemId} to ${recipientUserId}`);
+    this.name = "ItemGrantFailedSignal";
+  }
 }
 
 /** 31-02-PLAN.md's item-scope `reconcileRow` dispatch — full grant/update/
@@ -730,8 +867,15 @@ async function submitItemRows(
   const actionable = rows.filter(
     (r) => reconcileRowAction(r.currentLevel, r.pendingLevel).kind !== "noop",
   );
-  const failed: string[] = [];
+  const failedRecipients: string[] = [];
+  const failedRevocations: string[] = [];
+  // ME-02 fix (31-REVIEW.md): see `isNetworkLayerFailure`'s own doc comment.
+  let anyAmbiguousFailure = false;
   for (const row of actionable) {
+    // HI-02 fix (31-REVIEW.md): see `submitRowsForExistingDestination`'s
+    // identical comment — captured before dispatch, same computation
+    // `reconcileRow` itself dispatches from.
+    const isRevoke = reconcileRowAction(row.currentLevel, row.pendingLevel).kind === "revoke";
     try {
       await reconcileRow(row, {
         grant: async (level) => {
@@ -743,7 +887,16 @@ async function submitItemRows(
             uk,
           );
           if (rowFailed.length > 0) {
-            throw new Error(`pv: failed to grant item ${itemId} to ${row.userId}`);
+            // `shareItemWithRecipients` already ran its own per-recipient
+            // conflict verification (CR-04 fix) before adding this label to
+            // `rowFailed` — by the time we see it here, that check is
+            // already resolved either way, so this signal is a DEFINITE
+            // failure, never itself a network-layer ambiguity. Marked with
+            // `ItemGrantFailedSignal` so the ME-02 check below does not
+            // misclassify this synthetic, status-less `Error` as an
+            // ambiguous (network-layer) failure — it would otherwise look
+            // identical to a genuine dropped connection.
+            throw new ItemGrantFailedSignal(itemId, row.userId);
           }
         },
         update: (level) => updateItemShare(itemId, row.userId, level),
@@ -751,13 +904,18 @@ async function submitItemRows(
       });
     } catch (err) {
       console.error(`pv: failed to reconcile item ${itemId} row for ${row.userId}`, err);
-      failed.push(row.email ?? row.userId);
+      if (!(err instanceof ItemGrantFailedSignal) && isNetworkLayerFailure(err)) {
+        anyAmbiguousFailure = true;
+      }
+      (isRevoke ? failedRevocations : failedRecipients).push(row.email ?? row.userId);
     }
   }
   return {
-    failedRecipients: failed,
+    failedRecipients,
+    failedRevocations,
     seedMoveFailures: 0,
-    committedAnything: failed.length < actionable.length,
+    committedAnything:
+      failedRecipients.length + failedRevocations.length < actionable.length || anyAmbiguousFailure,
   };
 }
 
@@ -982,10 +1140,26 @@ export default function ShareDialog({
   // `<select>` itself stays interactive throughout (31-UI-SPEC.md), only the
   // row list below it shows a spinner in place of stale-destination rows.
   const [rowsLoading, setRowsLoading] = useState(false);
+  // HI-03 fix (31-REVIEW.md): a destination access-list fetch failure used
+  // to fail OPEN — `buildRows(recipients, new Map())` presented every
+  // member as "Brak dostępu" on a destination where they might genuinely
+  // hold access, a fabricated picture with no visible indication anything
+  // had failed. `31-CONTEXT.md`'s locked decision is that this dialog IS
+  // the access picture for the chosen destination — showing a wrong one is
+  // a security-relevant lie, and it fed CR-03/CR-04's silent false
+  // successes downstream (every row reconciling to `grant` instead of
+  // `update`). This flag drives an explicit error state instead, with
+  // `rows` left empty and submit disabled — see `handleDestinationChange`.
+  const [destinationAccessUnavailable, setDestinationAccessUnavailable] = useState(false);
   const [folderName, setFolderName] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [seedMoveFailureCount, setSeedMoveFailureCount] = useState<number | null>(null);
   const [failedRecipientLabels, setFailedRecipientLabels] = useState<string[]>([]);
+  // HI-02 fix (31-REVIEW.md): tracked separately from `failedRecipientLabels`
+  // -- see `SubmitOutcome.failedRevocations`'s own doc comment for why a
+  // failed revocation must never render `share.partialShareFailed`'s
+  // grant-shaped copy.
+  const [failedRevocationLabels, setFailedRevocationLabels] = useState<string[]>([]);
   // CR-04 fix (30-REVIEW.md): distinct from `submitError` -- a KNOWN pending
   // family key is not an error state (nothing failed; nothing is retryable),
   // so it renders the same honest, non-alarmed
@@ -1061,23 +1235,30 @@ export default function ShareDialog({
      * never showed an item's pre-existing direct shares at all. The folder
      * scope stays `null` for every row THIS plan (mint-new only -- a
      * destination selector is 31-03's job, so there is no existing
-     * destination's access list to seed from yet). Fails open (empty map)
-     * rather than blocking the whole dialog on a transient fetch error --
-     * mirrors this file's own fail-safe discipline elsewhere. */
+     * destination's access list to seed from yet).
+     *
+     * CR-04 fix (31-REVIEW.md): used to fail OPEN (an empty map on any
+     * fetch error), which made every row's `currentLevel` look like `null`
+     * -- an item that in fact already has recipients rendered as shared
+     * with nobody, `reconcileRowAction` classified every subsequent
+     * selection as `grant` instead of `update`, and a 409 from the ensuing
+     * `createItemShare` call (CR-04's own feeder) reported success while
+     * the recipient's REAL level never changed. Now propagates the error
+     * instead of swallowing it, so `load()`'s own surrounding try/catch
+     * (below) takes the SAME fail-closed path it already uses for a
+     * `me()`/`getFamilyMembers` failure -- `accountUnavailable`, empty
+     * rows, submit disabled, an honest error -- rather than a second,
+     * divergent "fail open" policy for this one fetch alone. */
     async function loadCurrentItemLevels(): Promise<Map<string, AccessLevelValue>> {
       if (scope.kind !== "item") return new Map();
-      try {
-        const shares = await listItemShares(scope.item.id);
-        const map = new Map<string, AccessLevelValue>();
-        for (const share of shares) {
-          if (share.access_level === "read" || share.access_level === "edit" || share.access_level === "hidden_password") {
-            map.set(share.user_id, share.access_level);
-          }
+      const shares = await listItemShares(scope.item.id);
+      const map = new Map<string, AccessLevelValue>();
+      for (const share of shares) {
+        if (share.access_level === "read" || share.access_level === "edit" || share.access_level === "hidden_password") {
+          map.set(share.user_id, share.access_level);
         }
-        return map;
-      } catch {
-        return new Map();
       }
+      return map;
     }
     async function load() {
       setState("loading-recipients");
@@ -1170,11 +1351,13 @@ export default function ShareDialog({
     if (value === "new") {
       setDestinationId(null);
       setRowsLoading(false);
+      setDestinationAccessUnavailable(false);
       setRows(buildRows(recipients, new Map()));
       return;
     }
     setDestinationId(value);
     setRowsLoading(true);
+    setDestinationAccessUnavailable(false);
     try {
       const accessList = await getCollectionAccessList(value);
       if (!mountedRef.current || destinationRequestRef.current !== requestId) return;
@@ -1188,7 +1371,12 @@ export default function ShareDialog({
     } catch (err) {
       console.error(`pv: failed to fetch access list for destination ${value}`, err);
       if (!mountedRef.current || destinationRequestRef.current !== requestId) return;
-      setRows(buildRows(recipients, new Map()));
+      // HI-03 fix (31-REVIEW.md): fail CLOSED — never present a fabricated
+      // "everyone at Brak dostępu" picture (`buildRows(recipients, new
+      // Map())`'s old behavior here). Empty the rows and render an explicit
+      // error instead; `submitDisabled` below is gated on this flag too.
+      setRows([]);
+      setDestinationAccessUnavailable(true);
     } finally {
       if (mountedRef.current && destinationRequestRef.current === requestId) {
         setRowsLoading(false);
@@ -1289,6 +1477,21 @@ export default function ShareDialog({
     if (grant.isFamilyWide) {
       return await submitItemFamilyWide(item, row, grant.recipients, grant.level, uk);
     }
+    // HI-06 fix (31-REVIEW.md): mirrors `submitFolderVariant`'s identical
+    // upfront `assertRecipientsHavePublicKeys` guard (see that call site's
+    // own doc comment for the T-25-16 rationale) -- this check used to run
+    // only INSIDE `shareItemWithRecipients`'s per-recipient loop, so a
+    // keyless row at position N left rows 1..N-1 already dispatched by the
+    // time it threw. Runs to completion BEFORE any network call, for every
+    // grant-actionable row, so a bad recipient never leaves a partially
+    // shared item behind — same discipline, same place in the call graph as
+    // the folder scope already has.
+    const grantRows = grant.rows.filter(
+      (r) => reconcileRowAction(r.currentLevel, r.pendingLevel).kind === "grant",
+    );
+    assertRecipientsHavePublicKeys(
+      grantRows.map((r) => ({ user_id: r.userId, public_key: r.publicKey })),
+    );
     return await submitItemRows(item.id, row.enc_key, grant.rows, uk);
   }
 
@@ -1336,7 +1539,10 @@ export default function ShareDialog({
         withPublishedPublicKey(familyRecipients),
         level,
       );
-      return { failedRecipients, seedMoveFailures: 0, committedAnything: true };
+      // Family-wide is always a GRANT-only path (30-08/30-12's own doc
+      // comments) -- never revoke/update, so `failedRevocations` is always
+      // empty here.
+      return { failedRecipients, failedRevocations: [], seedMoveFailures: 0, committedAnything: true };
     } finally {
       bucket?.ck.free?.();
       identityKey.free?.();
@@ -1418,12 +1624,12 @@ export default function ShareDialog({
     // 31-03-PLAN.md: the existing-destination row path short-circuits here,
     // before any mint-new machinery below runs.
     if (!grant.isFamilyWide && destinationId !== null) {
-      const { failedRecipients, committedAnything } = await submitRowsForExistingDestination(
+      const { failedRecipients, failedRevocations, committedAnything } = await submitRowsForExistingDestination(
         destinationId,
         grant.rows,
         uk,
       );
-      return { failedRecipients, seedMoveFailures: 0, committedAnything };
+      return { failedRecipients, failedRevocations, seedMoveFailures: 0, committedAnything };
     }
 
     const grantRecipients = grant.isFamilyWide ? withPublishedPublicKey(grant.recipients) : [];
@@ -1498,8 +1704,10 @@ export default function ShareDialog({
       // `submitRowsForCollection` (31-02-PLAN.md) — the two can never grant
       // at a different level than what their own model shows, since each
       // reads its OWN state.
-      const failedRecipients = grant.isFamilyWide
-        ? await grantCollectionToRecipients(collectionId, newCk, grantRecipients, grant.level)
+      // Family-wide is grant-only (see `submitItemFamilyWide`'s identical
+      // note) -- `failedRevocations` is always empty on that branch.
+      const { failedRecipients, failedRevocations } = grant.isFamilyWide
+        ? { failedRecipients: await grantCollectionToRecipients(collectionId, newCk, grantRecipients, grant.level), failedRevocations: [] as string[] }
         : await submitRowsForCollection(collectionId, newCk, grant.rows);
 
       let failures = 0;
@@ -1544,7 +1752,7 @@ export default function ShareDialog({
       }
       // The collection itself always exists by this point, so SOMETHING
       // durable has committed regardless of how the grants/moves went.
-      return { failedRecipients, seedMoveFailures: failures, committedAnything: true };
+      return { failedRecipients, failedRevocations, seedMoveFailures: failures, committedAnything: true };
     } finally {
       identityKey.free?.();
     }
@@ -1559,6 +1767,64 @@ export default function ShareDialog({
   async function resolveCurrentFamilyRecipients(): Promise<FamilyMemberRecord[]> {
     const allMembers = (await getFamilyMembers()) ?? [];
     return accountId === null ? [] : allMembers.filter((m) => m.user_id !== accountId);
+  }
+
+  /** ME-01 fix (31-REVIEW.md): re-fetches the CURRENT access picture and
+   * rebuilds `rows` after a PARTIAL submit outcome, before the user is
+   * invited to retry. `handleSubmit` used to leave `rows` exactly as they
+   * were at submit time — so a retry (which `share.partialShareFailed`'s own
+   * copy explicitly invites: "ponowna próba ich nie zduplikuje") re-dispatched
+   * an action for every row that ALREADY succeeded too: a revocation that
+   * genuinely landed (204, `currentLevel` now stale-null) got re-sent,
+   * 404'd (`revoke_access`'s own not-found-on-retry semantics), and was
+   * reported as a NEW failure on the very submit meant to be an honest
+   * retry — noise that could bury the row that is genuinely still failing.
+   * Best-effort: a failure to refresh here leaves `rows` as-is rather than
+   * blocking the retry the user is being invited to make. */
+  async function refreshRowsAfterPartialSubmit(): Promise<void> {
+    try {
+      let freshLevels: Map<string, AccessLevelValue>;
+      if (scope.kind === "item") {
+        const shares = await listItemShares(scope.item.id);
+        freshLevels = new Map();
+        for (const share of shares) {
+          if (share.access_level === "read" || share.access_level === "edit" || share.access_level === "hidden_password") {
+            freshLevels.set(share.user_id, share.access_level);
+          }
+        }
+      } else {
+        // Folder scope: the collection whose access list is now
+        // authoritative is either the chosen EXISTING destination, or
+        // (mint-new path) the collection this dialog session already
+        // created.
+        const targetCollectionId = destinationId ?? createdCollectionRef.current?.id ?? null;
+        if (targetCollectionId === null) {
+          // Family-wide has no rows to refresh (no per-person model there).
+          return;
+        }
+        const accessList = await getCollectionAccessList(targetCollectionId);
+        freshLevels = new Map();
+        for (const entry of accessList) {
+          if (entry.access_level === "read" || entry.access_level === "edit" || entry.access_level === "hidden_password") {
+            freshLevels.set(entry.user_id, entry.access_level);
+          }
+        }
+      }
+      if (!mountedRef.current) return;
+      // Refreshes ONLY `currentLevel` from the server's real state — NEVER
+      // re-seeds `pendingLevel` via `buildRows` (which would reset it to
+      // match the fresh `currentLevel` for EVERY row, silently discarding
+      // the user's still-pending selection for whichever row genuinely
+      // still needs a retry). A row whose action already landed converges
+      // on its own: `currentLevel` now equals `pendingLevel`, so
+      // `reconcileRowAction` correctly re-classifies it as a no-op on the
+      // next submit; a row that is still failing keeps the exact
+      // `pendingLevel` the user chose, so the retry re-attempts the SAME
+      // action rather than silently reverting to "Brak dostępu".
+      setRows((prev) => prev.map((r) => ({ ...r, currentLevel: freshLevels.get(r.userId) ?? null })));
+    } catch (err) {
+      console.error("pv: failed to refresh the access picture after a partial submit", err);
+    }
   }
 
   async function handleSubmit() {
@@ -1584,6 +1850,7 @@ export default function ShareDialog({
     setSubmitError(null);
     setSeedMoveFailureCount(null);
     setFailedRecipientLabels([]);
+    setFailedRevocationLabels([]);
     setFamilyKeyPending(false);
     try {
       let outcome: SubmitOutcome;
@@ -1609,7 +1876,11 @@ export default function ShareDialog({
         });
       }
       if (!mountedRef.current) return;
-      if (outcome.failedRecipients.length === 0 && outcome.seedMoveFailures === 0) {
+      if (
+        outcome.failedRecipients.length === 0 &&
+        outcome.failedRevocations.length === 0 &&
+        outcome.seedMoveFailures === 0
+      ) {
         onShared();
         return;
       }
@@ -1622,11 +1893,27 @@ export default function ShareDialog({
         // accepted risk is scoped to the seed-item bulk move only.
         setSeedMoveFailureCount(outcome.seedMoveFailures);
       }
-      if (outcome.failedRecipients.length > 0) {
+      if (outcome.failedRecipients.length > 0 || outcome.failedRevocations.length > 0) {
         if (outcome.committedAnything) {
           // Partial: name exactly who missed out, and say plainly that the
           // successful grants already exist so the retry is honest.
-          setFailedRecipientLabels(outcome.failedRecipients);
+          //
+          // HI-02 fix (31-REVIEW.md): the two lists render through
+          // DIFFERENT, action-appropriate copy -- both can be non-empty in
+          // the SAME submit (some rows granted/updated, others revoked, a
+          // mix of each landed and failed), so both are set independently
+          // rather than one overwriting the other.
+          if (outcome.failedRecipients.length > 0) {
+            setFailedRecipientLabels(outcome.failedRecipients);
+          }
+          if (outcome.failedRevocations.length > 0) {
+            setFailedRevocationLabels(outcome.failedRevocations);
+          }
+          // ME-01 fix (31-REVIEW.md): re-seed `rows` from the server's real
+          // current state before the user retries -- best-effort,
+          // fire-and-forget (never blocks the error message from
+          // rendering); see this function's own doc comment above.
+          void refreshRowsAfterPartialSubmit();
         } else {
           // Nothing committed at all — total failure is the honest report.
           setSubmitError(t("share.createFailed"));
@@ -1734,10 +2021,20 @@ export default function ShareDialog({
     (r) => reconcileRowAction(r.currentLevel, r.pendingLevel).kind !== "noop",
   );
   // Mutual exclusivity, the row-model direction: once any row carries a
-  // real (non-"none") pending value, "Cała rodzina" is unavailable --
-  // exactly the reverse of the row `<select>`s being disabled while
-  // family-wide is active below.
-  const anyRowActive = rows.some((r) => r.pendingLevel !== "none");
+  // QUEUED edit, "Cała rodzina" is unavailable -- exactly the reverse of the
+  // row `<select>`s being disabled while family-wide is active below.
+  //
+  // HI-05 fix (31-REVIEW.md): used to be `r.pendingLevel !== "none"`, which
+  // `buildRows` initializes to `currentLevel ?? "none"` -- true from the
+  // moment the dialog paints for ANY row that already has a grant (any
+  // already-shared item, or any existing destination with >=1 member), so
+  // "Cała rodzina" rendered permanently disabled before the user touched
+  // anything. 31-CONTEXT.md's mutual-exclusivity rule is about PENDING
+  // edits, not pre-existing server state — gates on the SAME `hasActionableRow`
+  // predicate two lines above (a queued change, i.e. `reconcileRowAction`'s
+  // kind is not `noop`), never a second, divergent computation of "is
+  // anything happening here".
+  const anyRowActive = hasActionableRow;
 
   // 31-UI-SPEC.md's Destination Selector Contract: the SAME predicate
   // `SharingOverviewPanel.tsx:315`'s own "By folder" tab already uses for
@@ -1747,8 +2044,22 @@ export default function ShareDialog({
   // `may_grant_access_level` server-side, and `collections::revoke_access`
   // refuses `item_bucket` outright per the constraint 260812-01e
   // introduced).
+  //
+  // CR-02 fix (31-REVIEW.md): excludes EVERY family-wide collection, not
+  // only `item_bucket` -- a family-wide FOLDER's own creator row is
+  // hardcoded `edit` (`collections::create`), so it used to slip through
+  // this filter indistinguishable from an ordinary shared folder. Its
+  // membership is governed by family membership + the lazy-reseal
+  // machinery (`family_wide_pending`), never by this per-person model:
+  // setting a member's row to "Brak dostępu" against a family-wide folder
+  // 204'd, then silently self-reverted on the very next keyholder unlock
+  // (that member matches `family_wide_pending`'s `resealable` set again the
+  // instant their `collection_keys` row is gone) -- exactly the dishonesty
+  // the sixth proof obligation ("brak dostępu really revokes") exists to
+  // prevent. A family-wide collection is reachable through this dialog only
+  // via the "Cała rodzina" mode, never as a per-person destination.
   const editableExistingFolders = allCollections.filter(
-    (c) => c.accessLevel === "edit" && c.familyWideKind !== "item_bucket",
+    (c) => c.accessLevel === "edit" && c.familyWideKind === null,
   );
 
   // 31-05-PLAN.md (MOD-01): "editing an existing access picture" vs. a
@@ -1780,6 +2091,10 @@ export default function ShareDialog({
     // reconciled from them right now would be trustworthy.
     rowsLoading ||
     accountUnavailable ||
+    // HI-03 fix (31-REVIEW.md): the destination's real access picture could
+    // not be loaded — never let a submit reconcile against `rows` this
+    // dialog knows is empty/wrong.
+    destinationAccessUnavailable ||
     (familyWideSubmittable ? accessLevel === null : !hasActionableRow) ||
     (isFolder && destinationId === null && folderName.trim() === "");
 
@@ -1848,8 +2163,23 @@ export default function ShareDialog({
                     (and above the folder-name input, which only makes sense
                     once "mint new" is the chosen destination) -- it must
                     come first because it determines what the rows below
-                    show. */}
-                {isFolder ? (
+                    show.
+
+                    HI-04 fix (31-REVIEW.md): hidden entirely when
+                    `seedFolder !== null` -- opened from Sidebar's
+                    "Udostępnij ten folder" on an EXISTING personal folder,
+                    the dialog title (`share.folderDialogTitleExisting`)
+                    names THAT folder, and `submitFolderVariant`'s seed-move
+                    sub-step only ever moves ITS items into a MINT-NEW
+                    collection. Picking an existing destination here used to
+                    short-circuit straight into `submitRowsForExistingDestination`,
+                    silently skipping the seed-move entirely -- the personal
+                    folder stayed untouched and personal while the dialog's
+                    own title kept claiming it was the thing being shared.
+                    The seeded flow is inherently mint-new; this is the
+                    honest minimum (31-REVIEW.md's own recommended option
+                    (a)), not a narrower title/copy patch. */}
+                {isFolder && seedFolder === null ? (
                   <div className="flex flex-col gap-1">
                     <label htmlFor="share-destination-select" className="text-sm font-bold">
                       {t("share.destinationLabel")}
@@ -1961,6 +2291,18 @@ export default function ShareDialog({
                   >
                     <span className="loading loading-spinner loading-md" aria-hidden="true" />
                   </div>
+                ) : destinationAccessUnavailable ? (
+                  // HI-03 fix (31-REVIEW.md): an honest error in place of
+                  // the row list -- never the old fabricated "everyone at
+                  // Brak dostępu" picture. Submit stays disabled while this
+                  // is shown (see `submitDisabled` above).
+                  <p
+                    role="alert"
+                    data-testid="share-destination-access-unavailable"
+                    className="text-sm text-error"
+                  >
+                    {t("share.destinationAccessUnavailable")}
+                  </p>
                 ) : (
                   /* 31-UI-SPEC.md Row Anatomy (MOD-01) -- one standing row
                      per family member, BOTH scopes, replacing the old
@@ -2015,7 +2357,22 @@ export default function ShareDialog({
                           data-testid={`share-recipient-row-select-${row.userId}`}
                           className="select select-bordered select-sm w-40 shrink-0"
                           value={row.pendingLevel}
-                          disabled={sharing || row.publicKey === null}
+                          // ME-03 fix (31-REVIEW.md): used to disable
+                          // whenever `publicKey === null`, regardless of
+                          // `currentLevel` -- a member who HOLDS a grant but
+                          // has since lost their published keypair rendered
+                          // "Currently: Pełna edycja" behind a frozen
+                          // control, with no way to revoke them from the
+                          // one surface that is supposed to be the
+                          // authoritative access picture. A fresh GRANT
+                          // genuinely needs the recipient's public key (to
+                          // seal key material to them) -- an UPDATE or
+                          // REVOKE of an EXISTING grant does not (neither
+                          // `update_access`/`update_share` nor
+                          // `revoke_access`/`revoke_share` touch
+                          // `sealed_key` at all). Only disable when there is
+                          // both no key AND no existing grant to act on.
+                          disabled={sharing || (row.publicKey === null && row.currentLevel === null)}
                           onChange={(e) =>
                             handleRowLevelChange(row.userId, e.target.value as AccessLevelValue | "none")
                           }
@@ -2118,6 +2475,20 @@ export default function ShareDialog({
                   <p role="alert" data-testid="share-partial-error" className="text-sm text-error">
                     {interpolate(t("share.partialShareFailed"), {
                       recipients: failedRecipientLabels.join(", "),
+                    })}
+                  </p>
+                ) : null}
+                {/* HI-02 fix (31-REVIEW.md): a DISTINCT testid/message from
+                    `share-partial-error` above -- a failed revocation must
+                    never render the grant-shaped "the other grants already
+                    went through" copy, which states the opposite of the
+                    truth for a revocation. Renders ALONGSIDE
+                    `share-partial-error` when a single submit produced
+                    both kinds of failure. */}
+                {failedRevocationLabels.length > 0 ? (
+                  <p role="alert" data-testid="share-partial-revoke-error" className="text-sm text-error">
+                    {interpolate(t("share.partialRevokeFailed"), {
+                      recipients: failedRevocationLabels.join(", "),
                     })}
                   </p>
                 ) : null}
