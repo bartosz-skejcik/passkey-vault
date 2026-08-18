@@ -76,6 +76,16 @@ final class LockTeardownStubURLProtocol: URLProtocol, @unchecked Sendable {
     override func stopLoading() {}
 }
 
+/// `.serialized`: the CR-02 race tests below reassign the SAME static
+/// `DelayedLockRaceStubURLProtocol.requestStarted`, and the stub's
+/// `startLoading()` signals whichever instance the static holds AT SIGNAL
+/// TIME -- interleaved, one test's request can steal the other test's
+/// waiter (or wake it before its own request even started), the exact
+/// hazard `VaultMutationTests.swift`, `ServerReachabilityTests.swift`,
+/// `FaviconLoaderPersistenceProofTests.swift`, `ServerSettingsTests.swift`,
+/// `KeychainEnvelopeTests.swift` and `SecureEnclaveProbeTests.swift` already
+/// guard against for their own shared statics.
+@Suite(.serialized)
 @MainActor
 struct LockTeardownTests {
     private static let fakeBaseURL = URL(string: "https://lock-teardown-tests.invalid")!
@@ -235,13 +245,24 @@ struct LockTeardownTests {
     /// needs MainActor time to even ENTER its awaited call in the first
     /// place, so a synchronous wait here would deadlock every time, not
     /// flake.
-    private static func waitForRequestStarted() async {
-        await withCheckedContinuation { continuation in
+    ///
+    /// WR-12 (38-REVIEW.md, iteration 4): bounded, not eternal. A prior
+    /// version waited with no timeout, so if `create`/`refresh` ever threw
+    /// before reaching the network (or -- absent `.serialized` -- a sibling
+    /// test stole this signal) the wait never returned and the run hung
+    /// until xcodebuild's own timeout killed it instead of the test failing.
+    /// `#require` turns "never signaled" into a normal, reported failure.
+    private static func waitForRequestStarted(
+        timeout: DispatchTime = .now() + 10
+    ) async throws {
+        let result: DispatchTimeoutResult = await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
-                DelayedLockRaceStubURLProtocol.requestStarted.wait()
-                continuation.resume()
+                continuation.resume(
+                    returning: DelayedLockRaceStubURLProtocol.requestStarted.wait(timeout: timeout)
+                )
             }
         }
+        try #require(result == .success, "the stub's startLoading() never signaled -- the race was never set up")
     }
 
     /// RED-before-green: before the CR-02 fix, `store.items` was NOT empty
@@ -304,7 +325,7 @@ struct LockTeardownTests {
         DelayedLockRaceStubURLProtocol.requestStarted = DispatchSemaphore(value: 0)
         let refreshTask = Task { try await store.refresh() }
 
-        await Self.waitForRequestStarted()
+        try await Self.waitForRequestStarted()
         store.lock()
 
         try await refreshTask.value
