@@ -137,15 +137,34 @@ final class TotpCountdownUITests: XCTestCase {
         // secret/algorithm/digits/period this create form seeded --
         // `ItemFormView.emptyFields()`'s `.code` case, the RFC 6238
         // Appendix B SHA1 vector.
-        let oracleCode1 = Self.totpOracle(unixTimeSeconds: time1, digits: 6, period: 30)
+        //
+        // WR-08 (38-REVIEW.md, iteration 2): compares against the APP'S
+        // OWN period bucket (`Self.appBucketStart`, derived from
+        // `remaining` -- the value the app itself reported), not against
+        // `time1`/`time2` (the wall clock sampled AFTER the accessibility
+        // query, up to ~1s plus query latency after the app actually
+        // computed the code). The old comparison legitimately failed
+        // whenever those two moments straddled a 30s period boundary --
+        // several-percent-per-run false failure rate, high enough to be
+        // re-run rather than believed. `appBucketStart` cannot straddle a
+        // boundary: it is derived entirely from data the app already
+        // committed to (`remaining` fixes the app's own bucket exactly),
+        // never from a second, independently-sampled clock reading.
+        let oracleCode1 = Self.totpOracle(
+            unixTimeSeconds: Self.appBucketStart(now: time1, remaining: remaining1, period: 30),
+            digits: 6, period: 30
+        )
         XCTAssertEqual(
             code1, oracleCode1,
-            "on-screen code did not match the independent RFC 6238 oracle at t=\(time1)"
+            "on-screen code did not match the independent RFC 6238 oracle for the app's own period bucket"
         )
-        let oracleCode2 = Self.totpOracle(unixTimeSeconds: time2, digits: 6, period: 30)
+        let oracleCode2 = Self.totpOracle(
+            unixTimeSeconds: Self.appBucketStart(now: time2, remaining: remaining2, period: 30),
+            digits: 6, period: 30
+        )
         XCTAssertEqual(
             code2, oracleCode2,
-            "on-screen code did not match the independent RFC 6238 oracle at t=\(time2)"
+            "on-screen code did not match the independent RFC 6238 oracle for the app's own period bucket"
         )
 
         let liveAttachment = XCTAttachment(screenshot: app.screenshot())
@@ -236,6 +255,24 @@ final class TotpCountdownUITests: XCTestCase {
     }
 
     // MARK: - WR-10 (38-REVIEW.md): real assertions, not "non-empty"/"all digits"
+
+    /// WR-08 (38-REVIEW.md, iteration 2): derives the app's own TOTP period
+    /// bucket start from data the app already committed to, so the oracle
+    /// comparison cannot straddle a 30s period boundary the way comparing
+    /// against a separately-sampled wall clock could.
+    ///
+    /// `seconds_remaining = period - (unix_time_seconds % period)`
+    /// (`crates/pv-core/src/totp.rs`), so `t_app + remaining` is EXACTLY the
+    /// start of the period AFTER the app's own bucket, regardless of how
+    /// much later than `t_app` this function's `now` argument is sampled --
+    /// `t_app + remaining` is already a multiple of `period` by
+    /// construction, and adding the small (sub-period) latency between the
+    /// app computing the code and the test reading `now` cannot push the
+    /// integer-divided result into a different bucket. Subtracting one
+    /// `period` back gives the app's own bucket start.
+    private static func appBucketStart(now: UInt64, remaining: UInt64, period: UInt64) -> UInt64 {
+        ((now + remaining) / period) * period - period
+    }
 
     /// Reads the code + remaining-seconds accessibility VALUES (never label
     /// text, never OCR -- same discipline as the call site above) alongside
