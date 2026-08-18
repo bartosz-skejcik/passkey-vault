@@ -2802,6 +2802,23 @@ suite touching a shared resource for a missing `.serialized`) is not this plan's
 `-parallel-testing-enabled NO` for a full-target sweep, and treat only the three
 externally-infrastructure-dependent interop suites as an expected, pre-existing gap.
 
+### L-22 -- the `GET /api/sync` up-to-date branch omits `items` entirely, not merely sets it null
+
+**Found 2026-08-18, Phase 39, Plan 39-01, Task 2.** `SyncResponse` (`crates/pv-server/src/routes/sync.rs`) is a
+`#[serde(untagged)]` two-variant enum, not one struct with an optional `items` field: the `UpToDate` branch has no
+`items` KEY at all on the wire. A Swift decoder that models `items` as optional and coalesces a missing value to an
+empty array would silently erase a persisted cache on the server's most common response (every sync call after the
+first one, on an unchanged vault).
+
+**Verified against a live isolated server** (`scripts/ios-live-server.sh --exec scripts/sync-contract-probe.sh`),
+not inferred from source alone: `GET /api/sync?since=<current revision>` returned a body where
+`jq -e 'has("items")|not'` exits **0** -- while the identical check against the `since=0` snapshot body (which
+does carry `items`) exits **non-zero**, the required falsifiability control (D-06). Both bodies and both exit codes
+are recorded verbatim in `ios/evidence/39/01-server-contract.md`.
+
+**Consequence for 39-03's decoder:** decode `SyncResponse` as a genuine two-case enum (or an equivalent
+presence-checked branch), never as one struct with `items: [Item]?` defaulted to `[]` on `nil`.
+
 ## 3a. The visual layer was never verified — open gaps as of 2026-08-17
 
 **Written after Bartek looked at the running app and said, twice, that the screens

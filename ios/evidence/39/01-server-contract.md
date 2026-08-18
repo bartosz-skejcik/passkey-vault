@@ -3,8 +3,8 @@
 ## Server identity
 
 - Port: 8621
-- Database (mktemp -d, throwaway): /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T//pv-ios-live.IbKDX3/pv.db
-- pv-server git SHA (repo HEAD at harness start; crates/pv-server working tree is clean, confirmed by `git status --porcelain -- crates/pv-server` below): d7963b0c2ce1bd24699f449a91c9be56dd646aa5
+- Database (mktemp -d, throwaway): /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T//pv-ios-live.KXqJkT/pv.db
+- pv-server git SHA (repo HEAD at harness start; crates/pv-server working tree is clean, confirmed by `git status --porcelain -- crates/pv-server` below): 7040cb59c43dfb6aa2caaadff35d1b03d15763e6
 - Binary run: /Users/j5on/.work/projects/passkey-vault-ios/target/release/pv-server
 
 ## lsof preflight (default port :8620)
@@ -20,4 +20,43 @@ $ lsof -nP -i :8620
 $ git status --porcelain -- crates/pv-server
 (empty -- no local changes)
 ```
+
+## Task 2 transcript -- E-S1/E-S2 probe run
+
+- Fixture account: pv-39-01-sync-contract-1787063522212@example.invalid
+- Fixture item id: f5e2911d-6593-4daa-9c77-4a59aa1ea99a
+- Fixture password literal (known, for a later byte-equality proof): `pv-39-01 sync-contract-probe fixture password 1787063522`
+- Revision after one item create: 1
+
+### (a) GET /api/sync?since=0 (Snapshot branch)
+
+```json
+{"revision":1,"items":[{"id":"f5e2911d-6593-4daa-9c77-4a59aa1ea99a","enc_key":"{\"nonce\":[205,138,54,18,244,182,104,64,136,23,101,113,228,101,88,156,104,184,140,106,99,252,139,45],\"ciphertext\":[214,252,14,200,124,13,207,165,20,74,44,115,156,245,249,148,146,0,248,68,93,193,167,210,70,222,46,80,41,212,102,120,1,152,105,30,14,245,76,228,42,16,70,90,214,7,104,106]}","enc_data":"{\"nonce\":[203,33,163,104,255,184,49,140,18,233,77,163,241,82,46,242,104,207,137,158,60,84,239,90],\"ciphertext\":[146,214,171,239,132,18,35,245,88,59,156,24,6,64,111,238,78,239,183,34,219,122,120,28,145,150,220,126,189,179,0,5,75,133,183,131,123,72,61,110,54,196,0,151,142,255,187,71,38,218,17,185,215,171,201,217,176,112,213,242,187,182,97,236,113,210,153,17,16,10,228,182,85,212,100,102,243,250,19,246,99,27,107,152,120,228,156,3,98,89,182,94,88,12,146,222,15,53,11,101,82,170,130,172,161,147,90,81,107,172,85,220,255,220,140,38,164,154,175,145,129,180,8,142,10,125,13,1,219,48,71,9,39,44,245,213,216,64,223,165,84,217,227,244,2,42,198,38,114,45,68,80,102,1,223,208,129,227,159,173,109,110,31,2,242,189,175,75,144,135,66,179,62,71,62,182,75,103,185,190,49,252,219,137,169,163,12,191,12,13,49,145,150,28,62,37,132,74,51,136,69,33,138,90,114,157,244,8,54,77,66,229,166,92,91,111,63,172,49,217,235,45,232,106,92,99,12,154,219,64,148,157,112,210,104,28,50,85,163,65,101,56,230,157,35,217,126,161,229,159,52,188,248,15,134,193,184,233,155,19,201,229,42,9,254,167,7,13,14,27,206,182,185,152,53,137,215,179,126,121,0,51,16,152,27,57]}","revision":1,"updated_at":"2026-08-18 14:32:02","last_used_at":null,"is_shared":false,"collection_id":null,"last_editor_email":"pv-39-01-sync-contract-1787063522212@example.invalid"}],"folders":[]}
+```
+
+### (b) GET /api/sync?since=1 (UpToDate branch, D-12)
+
+```json
+{"revision":1}
+```
+
+Falsifiability control: `jq -e 'has("items")|not'` against the since=0 body above exits **1** (non-zero required, and observed).
+
+### (c) enc_key wire encoding (D-13)
+
+First 40 characters of `items[0].enc_key`: `{"nonce":[205,138,54,18,244,182,104,64,1`
+
+`.nonce | type` => `array` (expected literal: `array`)
+
+### (d) crates/pv-server diff gate (D-01)
+
+- Before falsification: `git diff --stat -- crates/pv-server` => `<empty>`
+- After touching crates/pv-server/src/main.rs (trailing newline appended): ` crates/pv-server/src/main.rs | 1 +
+ 1 file changed, 1 insertion(+)`
+- After `git checkout -- crates/pv-server/src/main.rs`: `<empty>`
+
+### Assertion summary
+
+- PASS count: 6
+- FAIL count: 0
 
