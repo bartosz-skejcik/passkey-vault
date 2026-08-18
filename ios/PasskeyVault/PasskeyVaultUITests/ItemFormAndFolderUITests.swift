@@ -4,7 +4,10 @@
 // running app (never a forced view state):
 //
 //   1. "The type picker offers exactly five options, asserted by a UI test
-//      counting them." (Task 1)
+//      counting them." (Task 1) -- EXTENDED by quick task 260818-lsk to the
+//      panel's full eight-slot set (the five item types, Scan QR code,
+//      Generate password, New folder); the passkey-absence assertion this
+//      test already made is kept exactly as it was, not weakened.
 //   2. "A screenshot shows the generator sheet invoked from the login
 //      form's password field with the value inserted." (Task 1)
 //   3. The folder direction's on-device half: a folder created through the
@@ -61,16 +64,24 @@ final class ItemFormAndFolderUITests: XCTestCase {
         XCTAssertTrue(grid.waitForExistence(timeout: 5), "the \"+\" action panel never appeared")
 
         // The must-have this test proves: exactly FIVE creatable ITEM types
-        // in the panel (the panel's sixth slot, `generatePassword`, is not a
-        // creatable item type at all -- see `VaultCreateAction`).
+        // in the panel (the panel's other three slots -- `generatePassword`,
+        // `scanQr`, `newFolder` -- are not creatable item types at all, see
+        // `VaultCreateAction`).
         let expectedIds = ["login", "card", "identity", "note", "code"]
         for id in expectedIds {
+            XCTAssertTrue(app.buttons["vault.create.action.\(id)"].exists, "missing create-panel tile for \(id)")
+        }
+        // Quick task 260818-lsk: the panel's EIGHTH-slot set, in full --
+        // the five item types above plus the three non-item-type actions.
+        // Asserted together so a regression in either half fails here.
+        for id in ["scanQr", "generatePassword", "newFolder"] {
             XCTAssertTrue(app.buttons["vault.create.action.\(id)"].exists, "missing create-panel tile for \(id)")
         }
         // Alongside `VaultDockEvidenceUITests`' own existing assertion of
         // the same fact, from the same panel (addendum A2): the create
         // surface must never offer a "New passkey" slot at all -- a passkey
         // is provider-created cryptographic material, not typed-in content.
+        // Unchanged by quick task 260818-lsk -- still asserted, still true.
         let passkeyTile = app.buttons["vault.create.action.passkey"]
         XCTAssertFalse(passkeyTile.exists, "the create panel must NOT offer the sixth (render-only, provider-created) type")
 

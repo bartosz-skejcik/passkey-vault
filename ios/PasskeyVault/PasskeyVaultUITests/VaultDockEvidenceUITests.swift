@@ -257,10 +257,12 @@ final class VaultDockEvidenceUITests: XCTestCase {
         XCTAssertTrue(panel.waitForExistence(timeout: 8), "the ＋ panel never opened")
         attach(app, "dock-panel-open")
 
-        // SIX slots, all working. There is no disabled slot any more; a
-        // `.isEnabled == false` here means the six-action decision got reverted
-        // without this assertion being updated.
-        for id in ["login", "card", "identity", "note", "code", "generatePassword"] {
+        // EIGHT slots (quick task 260818-lsk extended the panel from six to
+        // eight -- Scan QR code and New folder), all working. There is no
+        // disabled slot any more; a `.isEnabled == false` here means the
+        // eight-action decision got reverted without this assertion being
+        // updated.
+        for id in ["login", "card", "identity", "note", "code", "scanQr", "generatePassword", "newFolder"] {
             let slot = app.buttons["vault.create.action.\(id)"]
             XCTAssertTrue(slot.exists, "panel slot '\(id)' is missing")
             XCTAssertTrue(slot.isEnabled, "panel slot '\(id)' is present but disabled")
@@ -429,12 +431,96 @@ final class VaultDockEvidenceUITests: XCTestCase {
             + "\(app.searchFields.firstMatch.waitForExistence(timeout: 5))")
     }
 
+    // MARK: - Plus panel v2 (quick task 260818-lsk): eight actions + scanner fallback
+
+    /// The panel's post-260818-lsk eight-action set, and the QR scanner's
+    /// no-camera fallback -- the one scanner state this harness can actually
+    /// drive, because the simulator has no camera (`TotpScanView`'s own
+    /// header). `launchAppNoFixtureSeed()`, not `launchApp()`: this test
+    /// never scrolls a seeded list, so it skips `PV_UITEST_SEED_DOCK_LIST`
+    /// and the ~60-75s / 21-item seed that flag costs.
+    ///
+    /// Also the evidence source for `ios/evidence/38/plus-panel-v2/`, driven
+    /// by `scripts/ios-plus-panel-v2-evidence.sh` the same way
+    /// `ios-dock-evidence.sh` drives `testDockEvidence` -- same rig, same
+    /// reasoning (attachment names carry the state->file mapping, not a
+    /// human picking a frame out of a timed capture loop).
+    @MainActor
+    func testPlusPanelEightActionsAndScannerNoCameraFallback() throws {
+        let app = launchAppNoFixtureSeed()
+        try signInOrRegister(app)
+
+        let plus = plusControl(app)
+        XCTAssertTrue(
+            waitDismissingPromptsIfNeeded(for: plus, app: app, timeout: 15),
+            "the detached ＋ never appeared"
+        )
+        plus.tap()
+
+        let grid = app.otherElements["vault.create.grid"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 8), "the ＋ panel never opened")
+
+        // The EIGHT slots, in the order the panel renders them.
+        for id in ["login", "card", "identity", "note", "code", "scanQr", "generatePassword", "newFolder"] {
+            XCTAssertTrue(app.buttons["vault.create.action.\(id)"].exists, "panel slot '\(id)' is missing")
+        }
+        XCTAssertFalse(
+            app.buttons["vault.create.action.passkey"].exists,
+            "a 'New passkey' slot is back; passkeys are provider-created, never typed in"
+        )
+        attach(app, "plus-panel-v2-eight-actions")
+
+        let scanTile = app.buttons["vault.create.action.scanQr"]
+        XCTAssertTrue(scanTile.exists, "the Scan QR code tile never appeared")
+        scanTile.tap()
+
+        // SIMULATOR HAS NO CAMERA -- `TotpScanView` checks `cameraAvailable`
+        // BEFORE authorization status, so this state is reached
+        // deterministically, with no `AVCaptureDevice.requestAccess` call
+        // (and therefore no OS permission dialog) ever fired.
+        let fallback = app.otherElements["totpscan.noCameraFallback"]
+        XCTAssertTrue(fallback.waitForExistence(timeout: 8), "the no-camera explainer never appeared")
+        attach(app, "plus-panel-v2-scanner-no-camera-fallback")
+
+        let manualEntry = app.buttons["totpscan.manualEntry"]
+        XCTAssertTrue(
+            manualEntry.waitForExistence(timeout: 5),
+            "the 'Enter details manually' fallback button is missing"
+        )
+        manualEntry.tap()
+
+        // Reaches the SAME manual Code creation form "New code" already
+        // opens, unprefilled -- `itemform.totp.secret` is that form's own
+        // field id (`ItemFormView.totpRows`), proving navigation actually
+        // landed on the Code form and not merely dismissed the scanner.
+        let secretField = app.textFields["itemform.totp.secret"]
+        XCTAssertTrue(
+            secretField.waitForExistence(timeout: 8),
+            "'Enter details manually' did not reach the Code creation form"
+        )
+        attach(app, "plus-panel-v2-manual-entry-reaches-code-form")
+    }
+
     // MARK: - Rig
 
     private func launchApp() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["PV_UITEST_SCREEN"] = "auth"
         app.launchEnvironment["PV_UITEST_SEED_DOCK_LIST"] = "1"
+        app.launch()
+        return app
+    }
+
+    /// Quick task 260818-lsk: identical to `launchApp()` MINUS
+    /// `PV_UITEST_SEED_DOCK_LIST` -- for tests that only need the dock
+    /// itself (the ＋ panel, the scanner) and never scroll a seeded list.
+    /// The dock renders on a genuinely empty vault exactly as it does on a
+    /// populated one (`ItemListView.body`'s `TabView` is outside the
+    /// empty/populated branch), so skipping the seed is not skipping
+    /// coverage, only the ~60-75s / 21-item cost of building it.
+    private func launchAppNoFixtureSeed() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["PV_UITEST_SCREEN"] = "auth"
         app.launch()
         return app
     }

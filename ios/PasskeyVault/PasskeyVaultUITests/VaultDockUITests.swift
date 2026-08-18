@@ -335,15 +335,16 @@ final class VaultDockUITests: XCTestCase {
                 + "accessibility label and is announcing itself as 'Search'"
         )
 
-        // SIX slots, and every one of them works.
+        // EIGHT slots, and every one of them works.
         //
         // This assertion was nine slots with four disabled until 2026-08-17,
         // when Bartek narrowed the panel to the five creatable types plus
-        // Generate password. The disabled slots are GONE rather than greyed out
-        // -- see `VaultCreateAction`'s own header for why each one went. The
-        // `isEnabled` checks below are what makes the narrowing load-bearing:
+        // Generate password; quick task 260818-lsk (2026-08-18) then extended
+        // it to eight by ADDING two slots with working paths (Scan QR code,
+        // New folder -- see `VaultCreateAction`'s header and DR-38-F). The
+        // `isEnabled` checks below are what makes the set load-bearing:
         // reintroducing a permanently-disabled tile fails here.
-        for id in ["login", "card", "identity", "note", "code", "generatePassword"] {
+        for id in ["login", "card", "identity", "note", "code", "scanQr", "generatePassword", "newFolder"] {
             let slot = app.buttons["vault.create.action.\(id)"]
             XCTAssertTrue(slot.exists, "panel slot '\(id)' is missing")
             XCTAssertTrue(slot.isEnabled, "panel slot '\(id)' is present but disabled")
