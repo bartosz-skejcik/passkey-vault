@@ -3251,3 +3251,27 @@ it"), and this section is that record. Every command that CAN legitimately gate 
 does: items 2, 3, 5–9 all PASS cleanly; item 1's one failure and item 4's twenty failures are each
 individually accounted for above, none traced to this plan's own changes.
 
+
+## 8. Phase 38 — human-verify backlog (2026-08-18, orchestrator disposition)
+
+`38-VERIFICATION.md` closed 12/13 with `human_needed`; the autonomous run continued per Bartek's
+standing brief ("choose continuation, record what remains"). Items still owed to a human:
+
+1. **Browser-RENDERED half of E-W1** — an iOS-written item viewed in the *running* web client
+   (`npm i` in `web/`, dev server), row renders, console clean. pv-wasm decrypt was re-proven; the
+   rendering half needs `web/node_modules`, absent in this worktree.
+2. **Per-type EDIT and DELETE recipient-side** — edit+delete one card, identity and TOTP on the
+   phone, confirm each recipient-side. The interop proof covers notes both directions + a live
+   stale-revision conflict; the wire path is type-agnostic and field names diff clean against
+   `packages/pv-ui/vault/types.ts`, so residual risk is low but not zero.
+3. **TOTP boundary-transition live UI sampling** — the committed
+   `TotpCountdownUITests.testLiveCodeAndCountdownThenErrorState` hits a runner-launch failure
+   (`ipc/mig server died`) in this environment; crypto is triple-proven (oracle 6/6 RFC vectors,
+   pv-ffi vectors, fresh-per-tick FFI), and `CodesRowDesignConformanceUITests` now exercises the
+   live code+ring — but a sampled period-wrap remains unwitnessed by a committed runnable test.
+4. **Full visual pass** — every screen against `ios/brand/screens*.html` + the artifacts. Partially
+   discharged live by Bartek on 2026-08-18 (Codes rows, ＋ panel, icons — all fixed to match); the
+   sweep of the remaining screens is still a taste call for a human.
+5. **`AutoLockPolicy` is orphaned** (verifier finding): tested storage whitelist, zero consumers, so
+   no auto-lock ships. Named owner in-code is Phase 39; the truer home is Phase 41's ACC-06/ACC-07.
+   MUST be claimed by one of them or it will be lost.
