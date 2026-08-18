@@ -76,8 +76,14 @@ BINDINGS_DIR="${ROOT}/ios/PasskeyVault/build/swift-bindings"
 # gate does not look at. Check 5 asserts the excluded test directories define
 # no generator of their own and carry no charset/wordlist literal, so the
 # exclusion cannot become a hiding place.
-SHIPPED_SRC="${ROOT}/ios/PasskeyVault/PasskeyVault ${ROOT}/ios/PasskeyVault/PasskeyVaultAutoFill"
-TEST_SRC="${ROOT}/ios/PasskeyVault/PasskeyVaultTests ${ROOT}/ios/PasskeyVault/PasskeyVaultUITests"
+# WR-09 (38-REVIEW.md): bash ARRAYS, not space-joined strings -- the
+# unquoted `$SHIPPED_SRC`/`$TEST_SRC` expansions below relied on word-
+# splitting, which is deliberate for exactly two paths each but breaks
+# silently (degrading the scan to a PARTIAL one, never erroring) on any
+# checkout path containing a space. `"${SHIPPED_SRC[@]}"`/`"${TEST_SRC[@]}"`
+# expand each element as its own argument regardless of embedded spaces.
+SHIPPED_SRC=("${ROOT}/ios/PasskeyVault/PasskeyVault" "${ROOT}/ios/PasskeyVault/PasskeyVaultAutoFill")
+TEST_SRC=("${ROOT}/ios/PasskeyVault/PasskeyVaultTests" "${ROOT}/ios/PasskeyVault/PasskeyVaultUITests")
 
 FAIL=0
 
@@ -92,7 +98,14 @@ if [ ! -d "$BINDINGS_DIR" ] || [ -z "$(find "$BINDINGS_DIR" -maxdepth 1 -name '*
   exit 1
 fi
 
-RNG_PATTERN='SystemRandomNumberGenerator|arc4random|SecRandomCopyBytes|\.randomElement|\.shuffled\(|Int\.random|UInt[0-9]*\.random'
+# WR-09 (38-REVIEW.md): the original alternation did not match
+# `Bool.random()`, `Double.random(in:)`, `Float.random(in:)`,
+# `CGFloat.random(in:)`, `CCRandomGenerateBytes`, or a `RandomNumberGenerator`
+# conformance -- all of which can build a password. `\.random\(` catches the
+# general `TYPE.random(in:)` shape (covering Bool/Double/Float/CGFloat and
+# any future numeric type at once); the named alternatives stay explicit
+# for the zero-argument and CryptoKit-adjacent forms.
+RNG_PATTERN='SystemRandomNumberGenerator|arc4random|SecRandomCopyBytes|CCRandomGenerateBytes|RandomNumberGenerator|\.randomElement|\.shuffled\(|\.random\(|Int\.random|Bool\.random|Double\.random|Float\.random|CGFloat\.random|UInt[0-9]*\.random'
 # `\(` anchors on the EXACT symbol name, not a prefix match -- without it, a
 # renamed binding such as `generatePassphraseRENAMED(` would still satisfy
 # a bare `generatePassphrase` substring search and both checks would report
@@ -108,7 +121,7 @@ LITERAL_PATTERN='abacus|abcdefghijklmnopqrstuvwxyz'
 # Check 1 -- NEGATIVE: no Swift RNG API anywhere in the app's Swift source.
 # ---------------------------------------------------------------------------
 say "== check 1 (negative): no Swift RNG API in SHIPPED Swift source (app + appex) =="
-hits1="$(grep -rnE --include='*.swift' "$RNG_PATTERN" $SHIPPED_SRC || true)"
+hits1="$(grep -rnE --include='*.swift' "$RNG_PATTERN" "${SHIPPED_SRC[@]}" || true)"
 count1="$(printf '%s' "$hits1" | grep -c . || true)"
 [ -z "$hits1" ] && count1=0
 say "count: $count1"
@@ -164,7 +177,7 @@ fi
 # charset literals. A copy is drift by construction (T-38-08-02).
 # ---------------------------------------------------------------------------
 say "== check 4 (negative): no Swift-side wordlist/charset literal in SHIPPED source =="
-hits4="$(grep -rnE --include='*.swift' "$LITERAL_PATTERN" $SHIPPED_SRC || true)"
+hits4="$(grep -rnE --include='*.swift' "$LITERAL_PATTERN" "${SHIPPED_SRC[@]}" || true)"
 count4="$(printf '%s' "$hits4" | grep -c . || true)"
 [ -z "$hits4" ] && count4=0
 say "count: $count4"
@@ -191,7 +204,7 @@ fi
 # there; a `func generate…` or an alphabet literal is not.
 # ---------------------------------------------------------------------------
 say "== check 5 (negative): the EXCLUDED test dirs are not a hiding place =="
-hits5="$(grep -rnE --include='*.swift' "func generateCharacterPassword|func generatePassphrase|$LITERAL_PATTERN" $TEST_SRC || true)"
+hits5="$(grep -rnE --include='*.swift' "func generateCharacterPassword|func generatePassphrase|$LITERAL_PATTERN" "${TEST_SRC[@]}" || true)"
 count5="$(printf '%s' "$hits5" | grep -c . || true)"
 [ -z "$hits5" ] && count5=0
 say "count: $count5"
