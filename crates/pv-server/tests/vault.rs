@@ -538,6 +538,131 @@ async fn item_share_create_and_revoke_round_trip() {
     );
 }
 
+// --- Plan 31-01, Task 1 (MOD-01/Q2): PUT /api/vault/items/{id}/shares/{user_id} ---
+
+/// `update_share`'s round trip: an edit-holding caller PUTs a valid new
+/// access_level for a recipient who already holds an `item_shares` row -> 204
+/// and a follow-up `GET /api/vault/items/{id}/shares` reflects the new level.
+/// Also asserts the row's `sealed_key` is byte-identical before and after —
+/// a level edit must never touch key material.
+#[tokio::test]
+async fn update_share_round_trip_changes_level() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "upd-share-owner@example.com").await;
+    let create_family_res =
+        req(&app, "POST", "/api/families", &owner_token, Some(json!({ "name": "Upd Share Family" }))).await;
+    assert_eq!(create_family_res.status(), StatusCode::CREATED);
+
+    let member_token = common::register_second_family_member(&app, &owner_token, "upd-share-member@example.com").await;
+    let member_me_res = req(&app, "GET", "/api/auth/me", &member_token, None).await;
+    let member_id = body_json(member_me_res).await["user_id"].as_str().unwrap().to_string();
+
+    let publish_res = req(
+        &app,
+        "PUT",
+        "/api/identity/keypair",
+        &member_token,
+        Some(json!({
+            "public_key": STANDARD.encode([7u8; 32]),
+            "wrapped_secret_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"BBBB\"}",
+        })),
+    )
+    .await;
+    assert_eq!(publish_res.status(), StatusCode::OK);
+
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(&app, "POST", "/api/vault/items", &owner_token, Some(item_body(&item_id))).await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    let sealed_key_json = "{\"nonce\":\"CCCC\",\"ciphertext\":\"sealed-item-key\"}";
+    let create_share_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/items/{item_id}/shares"),
+        &owner_token,
+        Some(json!({ "recipient_user_id": member_id, "sealed_key": sealed_key_json, "access_level": "read" })),
+    )
+    .await;
+    assert_eq!(create_share_res.status(), StatusCode::CREATED);
+
+    let update_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/shares/{member_id}"),
+        &owner_token,
+        Some(json!({ "access_level": "edit" })),
+    )
+    .await;
+    assert_eq!(update_res.status(), StatusCode::NO_CONTENT, "an in-place item-share level edit must return 204");
+
+    let list_res = req(&app, "GET", &format!("/api/vault/items/{item_id}/shares"), &owner_token, None).await;
+    assert_eq!(list_res.status(), StatusCode::OK);
+    let list_body = body_json(list_res).await;
+    let list = list_body.as_array().unwrap();
+    let member_row = list.iter().find(|r| r["user_id"].as_str() == Some(member_id.as_str())).unwrap();
+    assert_eq!(member_row["access_level"].as_str(), Some("edit"), "member's level must be updated to edit");
+
+    let sealed_key_after: String =
+        sqlx::query_scalar("SELECT sealed_key FROM item_shares WHERE item_id = ? AND recipient_user_id = ?")
+            .bind(&item_id)
+            .bind(&member_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        sealed_key_after, sealed_key_json,
+        "an access-level edit must not touch sealed_key at all — same key material, only the level column changes"
+    );
+}
+
+/// A PUT against an `(item_id, user_id)` pair with NO existing `item_shares`
+/// row -> 404, and no row is created.
+#[tokio::test]
+async fn update_share_returns_404_for_no_existing_row_and_does_not_upsert() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "upd-share-404-owner@example.com").await;
+    let create_family_res =
+        req(&app, "POST", "/api/families", &owner_token, Some(json!({ "name": "Upd Share 404 Family" }))).await;
+    assert_eq!(create_family_res.status(), StatusCode::CREATED);
+
+    let member_token =
+        common::register_second_family_member(&app, &owner_token, "upd-share-404-member@example.com").await;
+    let member_me_res = req(&app, "GET", "/api/auth/me", &member_token, None).await;
+    let member_id = body_json(member_me_res).await["user_id"].as_str().unwrap().to_string();
+
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(&app, "POST", "/api/vault/items", &owner_token, Some(item_body(&item_id))).await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    // member never granted a share.
+    let update_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/shares/{member_id}"),
+        &owner_token,
+        Some(json!({ "access_level": "edit" })),
+    )
+    .await;
+    assert_eq!(
+        update_res.status(),
+        StatusCode::NOT_FOUND,
+        "a PUT against an (item_id, user_id) pair with no existing row must 404"
+    );
+
+    let row_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM item_shares WHERE item_id = ? AND recipient_user_id = ?")
+            .bind(&item_id)
+            .bind(&member_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(row_count, 0, "a 404 PUT must never silently upsert an item_shares row");
+}
+
 // --- is_shared/last_editor_email metadata (Plan 23-01, Task 3 — BLOCKER-1 fix) ---
 
 /// Covers all three of Task 3's behavior bullets in one round trip: (a) a

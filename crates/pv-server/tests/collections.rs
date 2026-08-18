@@ -833,6 +833,169 @@ async fn add_member_rejects_malformed_access_level() {
     assert_eq!(count, 0, "a rejected malformed access_level must never leave a collection_keys row behind");
 }
 
+// --- Plan 31-01, Task 1 (MOD-01/Q2): PUT /api/vault/collections/{id}/access/{user_id} ---
+
+/// `update_access`'s round trip: an edit-holding caller PUTs a valid new
+/// access_level for a recipient who already holds a `collection_keys` row ->
+/// 204, and a follow-up `GET /api/vault/collections/{id}/access` shows that
+/// recipient's `access_level` changed to the new value — a SECOND, untouched
+/// recipient's own row is asserted unchanged in the same round trip. Also
+/// asserts the row's `sealed_key` is byte-identical before and after — a
+/// level edit must never touch key material (T-31-04).
+#[tokio::test]
+async fn update_access_round_trip_changes_level_without_touching_other_recipients() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "upd-access-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let member2_token =
+        common::register_second_family_member(&app, &owner_token, "upd-access-member2@example.com").await;
+    let member2_id = user_id_of(&app, &member2_token).await;
+    let member2_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member2_token, member2_sk.public_key().to_bytes()).await;
+
+    let member3_token =
+        common::register_second_family_member(&app, &owner_token, "upd-access-member3@example.com").await;
+    let member3_id = user_id_of(&app, &member3_token).await;
+    let member3_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member3_token, member3_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": "b4f6a1b2-0000-4000-8000-00000000a001","enc_name": "enc-upd-access-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    let member2_sealed_json = serde_json::to_string(&seal(&member2_sk.public_key(), ck.expose()).unwrap()).unwrap();
+    let add_member2_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({ "recipient_user_id": member2_id, "sealed_key": member2_sealed_json, "access_level": "read" })),
+    )
+    .await;
+    assert_eq!(add_member2_res.status(), StatusCode::CREATED);
+
+    let member3_sealed_json = serde_json::to_string(&seal(&member3_sk.public_key(), ck.expose()).unwrap()).unwrap();
+    let add_member3_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({ "recipient_user_id": member3_id, "sealed_key": member3_sealed_json, "access_level": "read" })),
+    )
+    .await;
+    assert_eq!(add_member3_res.status(), StatusCode::CREATED);
+
+    // The edit-holding owner PUTs member2's level up to "edit".
+    let update_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{member2_id}"),
+        &owner_token,
+        Some(json!({ "access_level": "edit" })),
+    )
+    .await;
+    assert_eq!(update_res.status(), StatusCode::NO_CONTENT, "an in-place level edit must return 204");
+
+    let access_res =
+        req(&app, "GET", &format!("/api/vault/collections/{collection_id}/access"), &owner_token, None).await;
+    assert_eq!(access_res.status(), StatusCode::OK);
+    let access_body = body_json(access_res).await;
+    let access_list = access_body.as_array().unwrap();
+    let member2_row = access_list.iter().find(|r| r["user_id"].as_str() == Some(member2_id.as_str())).unwrap();
+    assert_eq!(member2_row["access_level"].as_str(), Some("edit"), "member2's level must be updated to edit");
+    let member3_row = access_list.iter().find(|r| r["user_id"].as_str() == Some(member3_id.as_str())).unwrap();
+    assert_eq!(
+        member3_row["access_level"].as_str(),
+        Some("read"),
+        "member3's row must be untouched by member2's update"
+    );
+
+    let sealed_key_after: String =
+        sqlx::query_scalar("SELECT sealed_key FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+            .bind(&collection_id)
+            .bind(&member2_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        sealed_key_after, member2_sealed_json,
+        "an access-level edit must not touch sealed_key at all — same key material, only the level column changes"
+    );
+}
+
+/// A PUT against a `(collection_id, user_id)` pair with NO existing
+/// `collection_keys` row -> 404, and no row is created — `rows_affected() ==
+/// 0` is a not-found, never an upsert.
+#[tokio::test]
+async fn update_access_returns_404_for_no_existing_row_and_does_not_upsert() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "upd-access-404-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let member_token =
+        common::register_second_family_member(&app, &owner_token, "upd-access-404-member@example.com").await;
+    let member_id = user_id_of(&app, &member_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": "b4f6a1b2-0000-4000-8000-00000000a002","enc_name": "enc-upd-access-404-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED);
+    let collection_id = body_json(create_res).await["id"].as_str().unwrap().to_string();
+
+    // member never granted -- no collection_keys row exists for them.
+    let update_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{member_id}"),
+        &owner_token,
+        Some(json!({ "access_level": "edit" })),
+    )
+    .await;
+    assert_eq!(
+        update_res.status(),
+        StatusCode::NOT_FOUND,
+        "a PUT against a (collection_id, user_id) pair with no existing row must 404"
+    );
+
+    let row_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+            .bind(&collection_id)
+            .bind(&member_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(row_count, 0, "a 404 PUT must never silently upsert a collection_keys row");
+}
+
 // --- Plan 22-04, Task 1: the move endpoint (SHARE-04 / Vaultwarden #6269) ---
 
 /// The headline regression this plan exists to close (SHARE-04, Vaultwarden
