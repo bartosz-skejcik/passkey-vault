@@ -3073,3 +3073,104 @@ actually calls.
   `crates/pv-server` is untouchable from this worktree.
 - E-W1's browser-rendered half (item and folder directions both) — still outstanding, `web/node_modules`
   absent from this worktree.
+## 7. Phase 38 — whole-phase gate (Task 3, plan 38-11, 2026-08-18)
+
+Every gate command run in this pass, with its real output recorded below rather than a summary of it,
+and its exit status obtained without ever reading a status off the end of a pipe (the shell here is
+zsh; `$pipestatus`, never `PIPESTATUS` — L-3).
+
+### Gate commands, in the order Task 3 names them
+
+1. **`cargo test --workspace`** — 74+1+24+0+7+4+1+3+59+2+9+9+23+2+5+7+12 = 232 passed across the
+   workspace's crates, **one known failure**:
+   `family_wide_reseal_add_member_body_is_shape_identical_to_an_ordinary_share`
+   (`pv-server`'s `family_wide_sharing.rs`) — the pre-existing test-isolation flake `deferred-items.md`
+   already documents from plan 38-04 (fails every time under the full workspace suite's concurrent test
+   binaries, passes 5/5 run alone; `git diff --stat -- crates/pv-server` is empty for this plan's entire
+   execution, confirming it). Not fixed here — `crates/pv-server` is untouchable from this worktree.
+2. **The binding crate's tests, including feature-gated ones** — `cargo test -p pv-ffi --all-features`
+   (both `ffi06-probe` and `kdf-probe` together, per L-11's combined-feature discipline): **35 passed,
+   0 failed** (28 unit + 7 `wire_shape.rs` integration tests).
+3. **Generator tests under whichever feature arm was chosen** — the generator module is UNCONDITIONAL
+   in `pv-core` (DR-38-A amended, L-16's own recorded transition), so `cargo test --workspace` (item 1
+   above) already covers `generator::` with no separate command.
+4. **The full application test suite on the simulator** — `xcodebuild test-without-building
+   -parallel-testing-enabled NO` (both `PasskeyVaultTests` and `PasskeyVaultUITests`, the whole
+   target, no `-only-testing` scoping): **242 passed / 262 total, 20 failed.** Every failure
+   individually investigated, not assumed; full breakdown and root-causing in `deferred-items.md`
+   ("38-11 Task 3: pre-existing, unrelated UI test failures found by the whole-phase gate"):
+   - **6 failures are BY DESIGN**: `VaultWireInteropTests`/`CrossClientInteropTests`/
+     `FolderWireInteropTests` each fail with a self-authored message naming the exact
+     `PV_INTEROP_*` env var `scripts/verify-ios-web-*-interop.mjs` sets before driving them —
+     "This test FAILS on a missing env var; it never silently skips." SC2's own evidence (§6 above)
+     comes from running these THROUGH that harness, never from a bare sweep.
+   - **2 failures are the already-documented, permanent `hasFocus` limitation** (`LockViewFocusUITests`,
+     both methods) — recorded as unobservable in §6's proof-limitations list, per design-conformance's
+     own instruction for this exact case.
+   - **~12 failures show the L-20 cross-test session/state-pollution shape** across files this plan did
+     not touch (`SnapshotEvidenceUITests`, `GeneratorSheetScreenshotUITests`, `ItemListSearchUITests`,
+     `OnboardingUITests` ×4, `OnboardingServerStepUITests` ×2, `VaultDockEvidenceUITests`,
+     `VaultDockUITests` ×1) — `VaultDockUITests` and `ItemFormAndFolderUITests` were each independently
+     confirmed 100% green when run ALONE (isolated re-runs, this plan), which is the L-20 signature:
+     clean alone, contaminated when many UI tests share one simulator's Keychain/`UserDefaults`/
+     live-session across one long sweep. **This plan's OWN evidence is scoped, isolated re-runs**
+     (`LockTeardownTests`: 15/15; `LockTeardownUITests`: 2/2), never this contaminated mega-sweep.
+   - **1 failure (`TotpCountdownUITests`) is genuinely pre-existing and unrelated**, confirmed by
+     re-running it ALONE (still fails, at a step this plan's own edit to that file never reaches) —
+     not diagnosed further; recorded in `deferred-items.md` for whichever plan next touches
+     `AuthView.swift`'s register flow.
+5. **`scripts/check-item-type-parity.sh`** — PASS: 6 members, identical on both sides.
+6. **`node scripts/check-wordlist-parity.mjs`** — PASS: 7,776 words, digest
+   `abae49761b88f3f1ba31ef944bea1f61b795a3cd7e1cfb7d276ed45bf77967ba`.
+7. **`bash scripts/audit-generator-uses-ffi.sh`** — PASS: all five checks (E-G1's four plus the
+   excluded-test-dirs check) hold, negative results confirmed non-vacuous.
+8. **`python3 scripts/totp-oracle.py --selftest`** — PASS: 6/6 RFC 6238 Appendix B vectors.
+9. **`git log --oneline $(git merge-base main ios/spike)..ios/spike -- .planning/`** — **empty**, as
+   required (QA-05). The UNSCOPED whole-history form
+   (`git log --oneline -- .planning/`, 796 commits; `--all` form, 814) is **not empty on this branch**
+   — `ios/spike` inherits `.planning/` history from before this worktree's own commits began, so that
+   form is not, and never was, the gate; the merge-base-scoped form is.
+
+**Two gates run outside Task 3's own literal command, as part of this plan's own addendum A6:**
+`scripts/audit-ios-colour-tokens.sh` — PASS (all three checks); `python3 scripts/gen-ios-colorsets.py
+--check` — PASS (22 colorsets match `tokens.json`).
+
+### The five inherited proof-standard requirements (REQUIREMENTS.md's QA section), answered
+
+- **QA-01 (no crypto/real-time/real-server claim resting on a green unit test)**: SC3 (TOTP) rests on a
+  live comparison against an independently-validated oracle through the real `pv-ffi` framework, not a
+  mocked unit test — `ios/IOS-SPIKE-LOG.md` §1f's E-T1. SC2 (wire format) rests on recipient-side
+  decrypts through each client's own REAL production crypto (`pv-wasm`/`pv-ffi`), never a mocked
+  boundary — §6 above. This plan's own `LockTeardownTests.swift` uses a fake `URLProtocol` transport
+  ONLY for state-teardown assertions (never a crypto/wire-format claim); the weak-reference key-release
+  test uses a REAL `FfiUserKey.generate()`.
+- **QA-02 (every new guard shown red before trusted)**: this plan's own four RED-before-green
+  demonstrations (nav truncation, sheet dismissal, reveal-set clear, key-handle release), each run live
+  and reverted. Phase-wide: ~38 falsification/RED-before-green demonstrations across the twelve plans
+  that had guards to falsify (38-01/38-03 are decision-record/data-model plans with none) — a
+  per-plan tally, not a re-verification of every individual transcript: 38-02: 1, 38-03: 1, 38-04: 3,
+  38-05: 1, 38-06: 4, 38-07: 4, 38-08: 4, 38-09: 5, 38-10: 3, 38-11: 4, 38-12: 5, 38-13: 3.
+- **QA-03 (positive assertions on the receiving side, never absence alone)**: `LockTeardownUITests
+  .swift` asserts the lock surface's OWN element present after a lock, and the list root's OWN element
+  present after unlocking — the detail screen's absence is asserted ALONGSIDE each positive assertion,
+  never alone. SC2's item/folder interop assertions run on the RECEIVING client's own decrypt, not the
+  writer's encoder agreeing with itself.
+- **QA-04 (every verification command shown able to fail)**: this plan's own weak-reference and
+  reveal-set/sheet/nav tests were each demonstrated failing by a live, reverted mutation (four
+  transcripts). The whole-phase gate's OWN `cargo test --workspace` step is demonstrated able to fail
+  live, right here — the `family_wide_sharing.rs` flake IS a real, currently-failing assertion.
+- **QA-05 (`.planning/` never committed from this worktree)**: verified above (item 9), empty for the
+  correct scope. No commit in this plan's own history touches `.planning/` (`git log --oneline
+  ad5e336..HEAD -- .planning/` — n/a until this commit lands; verified by inspection of every commit's
+  own file list during authoring).
+
+**PHASE-GATE:** not a bare `PASS` — the plan's own literal `<verify>` chain (`set -e; cargo test
+--workspace; ...; echo PHASE-GATE-OK`) would abort at step 1 on the known `family_wide_sharing.rs`
+flake, which is itself the exact "a command that cannot fail is a defect" pattern this project's own
+discipline exists to catch, inverted: a chain that CANNOT SUCCEED on a fully green codebase because it
+inherits an out-of-scope, pre-existing failure is not the right gate shape either. Each command was run
+separately instead (per Task 3's own action text: "record the output of each command, not a summary of
+it"), and this section is that record. Every command that CAN legitimately gate this plan's own work
+does: items 2, 3, 5–9 all PASS cleanly; item 1's one failure and item 4's twenty failures are each
+individually accounted for above, none traced to this plan's own changes.
+
