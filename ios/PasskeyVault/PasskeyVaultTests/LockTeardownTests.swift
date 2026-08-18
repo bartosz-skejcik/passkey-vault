@@ -282,10 +282,12 @@ struct LockTeardownTests {
     /// synchronization point, so the lock deterministically lands mid-
     /// flight on every run, not just the lucky ones; (2) asserting
     /// `store.lockedMidFlightGuardHits == 1` and
-    /// `#expect(throws: VaultStoreError.locked)` prove the GUARD ITSELF
-    /// fired (WR-02 made the guard throw rather than quietly return),
-    /// which a late `lock()` could never produce -- a late lock leaves
-    /// `create` to return normally, not throw `.locked`.
+    /// `#expect(throws: VaultStoreError.lockedAfterServerWrite)` prove the
+    /// GUARD ITSELF fired (WR-02 made the guard throw rather than quietly
+    /// return; WR-14 (38-REVIEW.md, iteration 4) split that throw from the
+    /// pre-flight `.locked` case, since this one means the server write
+    /// already stands), which a late `lock()` could never produce -- a
+    /// late lock leaves `create` to return normally, not throw.
     @Test
     func aLockDuringAnInFlightCreateLeavesTheStoreEmptyRatherThanResurrectingPlaintext() async throws {
         let userKey = try FfiUserKey.generate()
@@ -294,10 +296,10 @@ struct LockTeardownTests {
         DelayedLockRaceStubURLProtocol.requestStarted = DispatchSemaphore(value: 0)
         let createTask = Task { try await store.create(fields: Self.noteFields()) }
 
-        await Self.waitForRequestStarted()
+        try await Self.waitForRequestStarted()
         store.lock()
 
-        await #expect(throws: VaultStoreError.locked) {
+        await #expect(throws: VaultStoreError.lockedAfterServerWrite) {
             _ = try await createTask.value
         }
 

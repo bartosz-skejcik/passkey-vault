@@ -1565,6 +1565,13 @@ struct ItemListView: View {
         do {
             try await store.update(item, fields: updated)
             statusBanner = nil
+        } catch VaultStoreError.lockedAfterServerWrite {
+            // WR-14 (38-REVIEW.md, iteration 4): the server accepted this
+            // move -- only the local mirror was refused because a lock
+            // landed mid-flight. Showing "Couldn't move this item" here
+            // would be a false claim about the user's data; there is
+            // nothing to retry and nothing to undo.
+            statusBanner = nil
         } catch {
             statusBanner = StatusBanner(text: "Couldn't move this item. \(userFacing(error))", tone: .error)
         }

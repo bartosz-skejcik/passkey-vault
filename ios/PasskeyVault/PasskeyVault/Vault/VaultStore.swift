@@ -28,10 +28,21 @@ import os
 enum VaultStoreError: Error, CustomStringConvertible, Equatable {
     /// See `VaultStore.update`'s own refusal note.
     case cannotSaveUndecryptableItem
-    /// Plan 38-11: the store's key handle has been released by `lock()` --
-    /// any operation needing it (create/update) refuses outright rather than
-    /// crashing on a force-unwrap or silently no-op'ing.
+    /// Plan 38-11: the store's key handle has been released by `lock()`
+    /// BEFORE this call ever reached the network -- the pre-flight `guard
+    /// let userKey` in `create`/`update`/`refresh`. Nothing was written,
+    /// locally or on the server; the caller's in-progress form/action is
+    /// still safe to keep and retry.
     case locked
+    /// WR-14 (38-REVIEW.md, iteration 4): the mirror image of `.locked`,
+    /// split out because it means the opposite thing. Thrown by the
+    /// post-`await` re-check in `create`/`update`: the server has already
+    /// accepted the write, and only the LOCAL mirror (the in-memory
+    /// `items` array) was refused because a lock landed mid-flight
+    /// (CR-04/WR-02, 38-REVIEW.md). Callers must never treat this as a
+    /// failed save/move/delete -- there is nothing to retry and nothing to
+    /// undo.
+    case lockedAfterServerWrite
     /// CR-04 (38-REVIEW.md): the revision this update would encrypt at does
     /// not fit in a `UInt32` -- refuse rather than trap.
     case invalidRevision
@@ -41,7 +52,9 @@ enum VaultStoreError: Error, CustomStringConvertible, Equatable {
         case .cannotSaveUndecryptableItem:
             return "This item failed to decrypt during the last sync -- refresh before making changes."
         case .locked:
-            return "The vault is locked."
+            return "The vault locked -- nothing was saved."
+        case .lockedAfterServerWrite:
+            return "The vault locked, but this change was already saved."
         case .invalidRevision:
             return "This item's revision is out of range and cannot be saved."
         }
@@ -212,14 +225,18 @@ final class VaultStore {
         // return here was indistinguishable from the non-locked success
         // path, so the caller (`ItemFormView.save()`) ran `onSaved?(item)`
         // unconditionally and handed decrypted plaintext to a controller
-        // that `lockTeardown` had already reset. `.locked` makes the two
-        // outcomes distinguishable at the only place that can tell them
-        // apart.
+        // that `lockTeardown` had already reset.
+        //
+        // WR-14 (38-REVIEW.md, iteration 4): `.lockedAfterServerWrite`, not
+        // `.locked` -- the server write above already succeeded; only this
+        // local bookkeeping is refused. Reusing `.locked` here made this
+        // site indistinguishable from the pre-flight `guard let userKey`
+        // above, which means the opposite ("nothing was written").
         guard self.userKey != nil else {
             #if DEBUG
             lockedMidFlightGuardHits += 1
             #endif
-            throw VaultStoreError.locked
+            throw VaultStoreError.lockedAfterServerWrite
         }
 
         // Post-commit bookkeeping: the server write has already been
@@ -307,11 +324,16 @@ final class VaultStore {
         // WR-02 (iteration 2): throw rather than `return updated`, for the
         // same reason as `create` above -- a look-alike success return let
         // `ItemFormView.save()` run `onSaved?(updated)` unconditionally.
+        //
+        // WR-14 (38-REVIEW.md, iteration 4): `.lockedAfterServerWrite`, not
+        // `.locked` -- see `create`'s own note above. This is also the
+        // guard `ItemListView.applyFolderMove` hits, which must not report
+        // a move the server accepted as a failure.
         guard self.userKey != nil else {
             #if DEBUG
             lockedMidFlightGuardHits += 1
             #endif
-            throw VaultStoreError.locked
+            throw VaultStoreError.lockedAfterServerWrite
         }
 
         if let index = items.firstIndex(where: { $0.id == item.id }) {

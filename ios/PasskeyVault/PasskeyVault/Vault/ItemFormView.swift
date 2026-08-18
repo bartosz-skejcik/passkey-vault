@@ -579,15 +579,25 @@ struct ItemFormView: View {
                 onSaved?(updated)
                 dismiss()
             }
-        } catch VaultStoreError.locked {
-            // WR-02: the server write already stands (nothing to undo,
-            // nothing to retry), but the vault locked mid-flight -- do NOT
-            // call `onSaved`, which would hand decrypted plaintext to a
-            // controller (`root.selection`/`root.activeSheet`) that
-            // `lockTeardown` has already reset, and do NOT surface an
-            // error banner for a save that in fact succeeded. The screen
-            // is already being torn down by `ContentView.performLock()`.
+        } catch VaultStoreError.lockedAfterServerWrite {
+            // WR-02, split by WR-14 (38-REVIEW.md, iteration 4): the server
+            // write already stands (nothing to undo, nothing to retry), but
+            // the vault locked mid-flight -- do NOT call `onSaved`, which
+            // would hand decrypted plaintext to a controller
+            // (`root.selection`/`root.activeSheet`) that `lockTeardown` has
+            // already reset, and do NOT surface an error banner for a save
+            // that in fact succeeded. The screen is already being torn down
+            // by `ContentView.performLock()`.
             dismiss()
+        } catch VaultStoreError.locked {
+            // WR-14 (38-REVIEW.md, iteration 4): the OPPOSITE case -- the
+            // pre-flight guard means NOTHING was written, locally or on the
+            // server. Before this split, both cases fell into the branch
+            // above and this one silently discarded the user's typed item
+            // with a plain `dismiss()` -- no error, no banner, no retry, in
+            // a handler that read as "saved successfully". Keep the form up
+            // and say so.
+            errorMessage = VaultStoreError.locked.description
         } catch {
             errorMessage = String(describing: error)
         }
