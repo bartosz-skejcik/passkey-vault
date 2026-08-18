@@ -171,6 +171,14 @@ struct TotpCountdownView: View {
         return "\(code[..<mid]) \(code[mid...])"
     }
 
+    /// CR-04 (38-REVIEW.md): `digits`/`period` trace back to decrypted item
+    /// PLAINTEXT -- `ItemNormalize.swift`'s own header states plaintext is
+    /// UNTRUSTED INPUT, and only `TotpValidation` range-checks it, only in
+    /// the create/edit FORM, never on this render path.
+    private enum TotpRenderError: Error {
+        case outOfRangeParameters
+    }
+
     /// Calls the real `pv-ffi` boundary -- `totpNow` is compiled directly
     /// into this app target (see `FfiRoundTripTests.swift`'s own header),
     /// so no import is needed beyond this file's own `import SwiftUI`.
@@ -181,11 +189,20 @@ struct TotpCountdownView: View {
         secretB32: String, algorithm: String, digits: Int, period: Int, unixTimeSeconds: UInt64
     ) -> Result<FfiTotpCode, Error> {
         Result {
-            try totpNow(
+            // `UInt32(_:)`/`UInt64(_:)` TRAP (uncatchable `fatalError`) on a
+            // negative input -- this `Result { try ... }` wrapper does NOT
+            // catch a trap, only a genuine `throw`. Convert with the
+            // failable initializers FIRST, throwing an ordinary error on
+            // out-of-range input so the `.failure` branch below (already
+            // rendered, already tested) handles it instead of crashing.
+            guard let digits32 = UInt32(exactly: digits), let period64 = UInt64(exactly: period) else {
+                throw TotpRenderError.outOfRangeParameters
+            }
+            return try totpNow(
                 secretB32: secretB32,
                 algorithm: algorithm,
-                digits: UInt32(digits),
-                period: UInt64(period),
+                digits: digits32,
+                period: period64,
                 unixTimeSeconds: unixTimeSeconds
             )
         }

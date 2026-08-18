@@ -32,6 +32,9 @@ enum VaultStoreError: Error, CustomStringConvertible, Equatable {
     /// any operation needing it (create/update) refuses outright rather than
     /// crashing on a force-unwrap or silently no-op'ing.
     case locked
+    /// CR-04 (38-REVIEW.md): the revision this update would encrypt at does
+    /// not fit in a `UInt32` -- refuse rather than trap.
+    case invalidRevision
 
     var description: String {
         switch self {
@@ -39,6 +42,8 @@ enum VaultStoreError: Error, CustomStringConvertible, Equatable {
             return "This item failed to decrypt during the last sync -- refresh before making changes."
         case .locked:
             return "The vault is locked."
+        case .invalidRevision:
+            return "This item's revision is out of range and cannot be saved."
         }
     }
 }
@@ -218,9 +223,17 @@ final class VaultStore {
         }
         guard let userKey else { throw VaultStoreError.locked }
         let newRevision = item.revision + 1
+        // CR-04 fix: `item.revision` ultimately traces back to a
+        // server-controlled `Int` (`decrypt(row:)` below). `UInt32(_:)`
+        // TRAPS on a negative/out-of-range value; `UInt32(exactly:)` is
+        // failable, routing the same class of bad input into the store's
+        // existing "cannot save this item" refusal instead of a crash.
+        guard let revision32 = UInt32(exactly: newRevision) else {
+            throw VaultStoreError.invalidRevision
+        }
         let plaintext = try ItemNormalize.plaintextJSON(for: fields)
         let wire = try encryptItemWire(
-            userKey: userKey, plaintext: plaintext, itemId: item.id, revision: UInt32(newRevision)
+            userKey: userKey, plaintext: plaintext, itemId: item.id, revision: revision32
         )
         // Everything above this line is pure computation and network I/O
         // that has not yet mutated `self`. The awaited call is the ONLY
@@ -429,13 +442,37 @@ final class VaultStore {
                 collectionId: row.collection_id
             )
         }
+        // CR-04 fix: `row.revision` is server-controlled, untrusted input
+        // (this product's own threat model). Swift's `UInt32(_:)` TRAPS
+        // (uncatchable `fatalError`) on a negative value -- a `do`/`catch`
+        // around the decrypt call below cannot save this row from that, and
+        // a hostile or corrupted `revision: -1` would crash every client on
+        // every launch, permanently, with no way to reach the row to delete
+        // it. `UInt32(exactly:)` is failable, so an out-of-range revision
+        // becomes an ordinary `.undecryptable` row -- same shape as every
+        // other decrypt failure -- instead of a crash.
+        guard let revision = UInt32(exactly: row.revision) else {
+            Self.log.error(
+                "row \(row.id, privacy: .public) has an out-of-range revision (\(row.revision)); marking undecryptable"
+            )
+            return VaultItemViewModel(
+                id: row.id,
+                revision: row.revision,
+                content: .undecryptable(reason: "server returned an out-of-range revision"),
+                updatedAt: row.updated_at,
+                lastUsedAt: row.last_used_at,
+                isShared: row.is_shared,
+                lastEditorEmail: row.last_editor_email,
+                collectionId: row.collection_id
+            )
+        }
         do {
             let plaintext = try decryptItemWire(
                 userKey: userKey,
                 encKeyJson: row.enc_key,
                 encDataJson: row.enc_data,
                 itemId: row.id,
-                revision: UInt32(row.revision)
+                revision: revision
             )
             // ONE call, and it is the single complete trust boundary for
             // untrusted plaintext: shape normalization, both legacy
