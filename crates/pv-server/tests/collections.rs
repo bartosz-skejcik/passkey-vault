@@ -996,6 +996,470 @@ async fn update_access_returns_404_for_no_existing_row_and_does_not_upsert() {
     assert_eq!(row_count, 0, "a 404 PUT must never silently upsert a collection_keys row");
 }
 
+// --- Plan 31-01, Task 2: full authorization-matrix coverage for update_access ---
+
+/// The full 9-pair `may_grant_access_level` matrix (`membership.rs:553-574`)
+/// re-verified against `update_access`, mirroring the existing
+/// `b1_hidden_password_...` regression's own "prove every arm, not just the
+/// happy path" discipline. Uses a family-wide FOLDER (not item_bucket) so
+/// `enforce_item_bucket_declared_level_bound` is structurally a no-op here
+/// (it only restricts item_bucket collections — see
+/// `update_access_enforces_item_bucket_declared_level_bound` below for that
+/// dimension) — this test isolates `may_grant_access_level` alone. A fresh
+/// collection per pair keeps each case independent.
+#[tokio::test]
+async fn update_access_full_may_grant_access_level_matrix() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    // (caller_level, requested_level, expect_success) — transcribed directly
+    // from `may_grant_access_level`'s own match arms, never re-derived.
+    let matrix: [(&str, &str, bool); 9] = [
+        ("read", "read", true),
+        ("read", "hidden_password", false),
+        ("read", "edit", false),
+        ("hidden_password", "read", false),
+        ("hidden_password", "hidden_password", true),
+        ("hidden_password", "edit", false),
+        ("edit", "read", true),
+        ("edit", "hidden_password", true),
+        ("edit", "edit", true),
+    ];
+
+    let owner_token = register_and_login(&app, "matrix-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    for (i, (caller_level, requested_level, expect_success)) in matrix.iter().enumerate() {
+        let caller_token =
+            common::register_second_family_member(&app, &owner_token, &format!("matrix-caller-{i}@example.com"))
+                .await;
+        let caller_id = user_id_of(&app, &caller_token).await;
+        let caller_sk = IdentitySecretKey::generate();
+        publish_keypair(&app, &caller_token, caller_sk.public_key().to_bytes()).await;
+
+        let target_token =
+            common::register_second_family_member(&app, &owner_token, &format!("matrix-target-{i}@example.com"))
+                .await;
+        let target_id = user_id_of(&app, &target_token).await;
+        let target_sk = IdentitySecretKey::generate();
+        publish_keypair(&app, &target_token, target_sk.public_key().to_bytes()).await;
+
+        let owner_sk = IdentitySecretKey::generate();
+        let ck = CollectionKey::generate();
+        let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+        let collection_id = format!("c0110000-0000-4000-8000-{i:012}");
+        let create_res = req(
+            &app,
+            "POST",
+            "/api/vault/collections",
+            &owner_token,
+            Some(json!({
+                "id": collection_id, "enc_name": format!("enc-matrix-collection-{i}"),
+                "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+                "family_wide_kind": "folder", "family_wide_access_level": "edit",
+            })),
+        )
+        .await;
+        assert_eq!(create_res.status(), StatusCode::CREATED, "pair {i}: family-wide folder creation must succeed");
+
+        let caller_sealed = seal(&caller_sk.public_key(), ck.expose()).unwrap();
+        let grant_caller_res = req(
+            &app,
+            "POST",
+            &format!("/api/vault/collections/{collection_id}/members"),
+            &owner_token,
+            Some(json!({
+                "recipient_user_id": caller_id,
+                "sealed_key": serde_json::to_string(&caller_sealed).unwrap(),
+                "access_level": caller_level,
+            })),
+        )
+        .await;
+        assert_eq!(
+            grant_caller_res.status(),
+            StatusCode::CREATED,
+            "pair {i}: granting the caller {caller_level} must succeed (owner holds edit)"
+        );
+
+        let target_sealed = seal(&target_sk.public_key(), ck.expose()).unwrap();
+        let grant_target_res = req(
+            &app,
+            "POST",
+            &format!("/api/vault/collections/{collection_id}/members"),
+            &owner_token,
+            Some(json!({
+                "recipient_user_id": target_id,
+                "sealed_key": serde_json::to_string(&target_sealed).unwrap(),
+                "access_level": "read",
+            })),
+        )
+        .await;
+        assert_eq!(grant_target_res.status(), StatusCode::CREATED, "pair {i}: granting the target baseline read must succeed");
+
+        let update_res = req(
+            &app,
+            "PUT",
+            &format!("/api/vault/collections/{collection_id}/access/{target_id}"),
+            &caller_token,
+            Some(json!({ "access_level": requested_level })),
+        )
+        .await;
+        if *expect_success {
+            assert_eq!(
+                update_res.status(),
+                StatusCode::NO_CONTENT,
+                "pair {i} ({caller_level} -> {requested_level}): may_grant_access_level says this must succeed"
+            );
+        } else {
+            assert_eq!(
+                update_res.status(),
+                StatusCode::FORBIDDEN,
+                "pair {i} ({caller_level} -> {requested_level}): may_grant_access_level says this must be refused"
+            );
+        }
+    }
+}
+
+/// `enforce_item_bucket_declared_level_bound` coverage on `update_access`: a
+/// `Declared(level)` item_bucket refuses a requested_level that does not
+/// equal the declared level (403) and accepts a matching one (204).
+#[tokio::test]
+async fn update_access_enforces_item_bucket_declared_level_bound() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "bucket-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let target_token = common::register_second_family_member(&app, &owner_token, "bucket-target@example.com").await;
+    let target_id = user_id_of(&app, &target_token).await;
+    let target_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &target_token, target_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let collection_id = "c0120000-0000-4000-8000-000000000001";
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": collection_id, "enc_name": "enc-bucket-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+            "family_wide_kind": "item_bucket", "family_wide_access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED, "declared item_bucket creation must succeed");
+
+    let target_sealed = seal(&target_sk.public_key(), ck.expose()).unwrap();
+    let grant_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": target_id,
+            "sealed_key": serde_json::to_string(&target_sealed).unwrap(),
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(grant_res.status(), StatusCode::CREATED);
+
+    // Owner holds edit; may_grant_access_level(Edit, Edit) is true, so ONLY
+    // enforce_item_bucket_declared_level_bound can be refusing this —
+    // requested "edit" != declared "read" on an item_bucket collection.
+    let update_mismatch_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{target_id}"),
+        &owner_token,
+        Some(json!({ "access_level": "edit" })),
+    )
+    .await;
+    assert_eq!(
+        update_mismatch_res.status(),
+        StatusCode::FORBIDDEN,
+        "an item_bucket declared at 'read' must refuse a level-edit to 'edit', even from an edit-holding caller"
+    );
+
+    // The declared level itself is always accepted.
+    let update_match_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{target_id}"),
+        &owner_token,
+        Some(json!({ "access_level": "read" })),
+    )
+    .await;
+    assert_eq!(
+        update_match_res.status(),
+        StatusCode::NO_CONTENT,
+        "a level edit matching the item_bucket's own declared level must succeed"
+    );
+
+    let level_after: String =
+        sqlx::query_scalar("SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+            .bind(collection_id)
+            .bind(&target_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(level_after, "read");
+}
+
+/// The `LegacyUnknown` sibling: a pre-migration-0020 item_bucket
+/// (`family_wide_kind = 'item_bucket'`, `family_wide_access_level` NULL,
+/// seeded directly via SQL — the API's own `validate_family_wide_access_level`
+/// correctly refuses creating one this way, mirroring
+/// `family_wide_sharing.rs`'s own established `LegacyUnknown` fixture
+/// pattern) refuses UNCONDITIONALLY, regardless of what `may_grant_access_level`
+/// would otherwise allow.
+#[tokio::test]
+async fn update_access_enforces_item_bucket_bound_on_legacy_null_level_row() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "legacy-bucket-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+    let target_token =
+        common::register_second_family_member(&app, &owner_token, "legacy-bucket-target@example.com").await;
+    let target_id = user_id_of(&app, &target_token).await;
+    let target_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &target_token, target_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let collection_id = "c0130000-0000-4000-8000-000000000001";
+
+    let family_id: String = sqlx::query_scalar("SELECT family_id FROM family_members WHERE user_id = ?")
+        .bind(&owner_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO collections (id, family_id, enc_name, family_wide_kind, family_wide_access_level) \
+         VALUES (?, ?, 'legacy-enc-name', 'item_bucket', NULL)",
+    )
+    .bind(collection_id)
+    .bind(&family_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) VALUES (?, ?, ?, 'edit')",
+    )
+    .bind(collection_id)
+    .bind(&owner_id)
+    .bind(serde_json::to_string(&seal(&owner_sk.public_key(), ck.expose()).unwrap()).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO collection_keys (collection_id, recipient_user_id, sealed_key, access_level) VALUES (?, ?, ?, 'read')",
+    )
+    .bind(collection_id)
+    .bind(&target_id)
+    .bind(serde_json::to_string(&seal(&target_sk.public_key(), ck.expose()).unwrap()).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let update_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{target_id}"),
+        &owner_token,
+        Some(json!({ "access_level": "read" })),
+    )
+    .await;
+    assert_eq!(
+        update_res.status(),
+        StatusCode::FORBIDDEN,
+        "a LegacyUnknown item_bucket must refuse ANY update_access call unconditionally, even a same-level one"
+    );
+}
+
+/// `update_access_returns_404_when_no_existing_row` for BOTH an ordinary
+/// (non-family-wide) and a family-wide collection — the family-wide branch
+/// resolves through a DIFFERENT code path inside `resolve_family_wide_declared_level`
+/// before ever reaching the `UPDATE`, so this must be proven independently
+/// of Task 1's ordinary-collection 404 test.
+#[tokio::test]
+async fn update_access_returns_404_when_no_existing_row() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "404-both-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let target_token = common::register_second_family_member(&app, &owner_token, "404-both-target@example.com").await;
+    let target_id = user_id_of(&app, &target_token).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let ordinary_id = "c0140000-0000-4000-8000-000000000001";
+    let create_ordinary_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": ordinary_id, "enc_name": "enc-404-ordinary",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_ordinary_res.status(), StatusCode::CREATED);
+    let update_ordinary_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{ordinary_id}/access/{target_id}"),
+        &owner_token,
+        Some(json!({ "access_level": "read" })),
+    )
+    .await;
+    assert_eq!(update_ordinary_res.status(), StatusCode::NOT_FOUND, "an ordinary collection with no grant row must 404");
+
+    let ck2 = CollectionKey::generate();
+    let owner_sealed2 = seal(&owner_sk.public_key(), ck2.expose()).unwrap();
+    let family_wide_id = "c0140000-0000-4000-8000-000000000002";
+    let create_fw_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": family_wide_id, "enc_name": "enc-404-family-wide",
+            "sealed_key": serde_json::to_string(&owner_sealed2).unwrap(),
+            "family_wide_kind": "folder", "family_wide_access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(create_fw_res.status(), StatusCode::CREATED);
+    let update_fw_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{family_wide_id}/access/{target_id}"),
+        &owner_token,
+        Some(json!({ "access_level": "read" })),
+    )
+    .await;
+    assert_eq!(
+        update_fw_res.status(),
+        StatusCode::NOT_FOUND,
+        "a family-wide collection with no grant row must ALSO 404, never upsert"
+    );
+
+    for cid in [ordinary_id, family_wide_id] {
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+                .bind(cid)
+                .bind(&target_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0, "a 404 PUT must never upsert, family-wide or not");
+    }
+}
+
+/// Pitfall 1's own named regression shape: a caller holding only `read` on
+/// an ORDINARY (non-family-wide) collection PUTs `edit` for another
+/// recipient -> 403 via `RequireEdit` — `may_grant_access_level` is never
+/// even consulted on the `NotFamilyWide` branch.
+#[tokio::test]
+async fn update_access_rejects_self_escalation_beyond_held_level() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "selfesc-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+
+    let caller_token = common::register_second_family_member(&app, &owner_token, "selfesc-caller@example.com").await;
+    let caller_id = user_id_of(&app, &caller_token).await;
+    let caller_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &caller_token, caller_sk.public_key().to_bytes()).await;
+
+    let target_token = common::register_second_family_member(&app, &owner_token, "selfesc-target@example.com").await;
+    let target_id = user_id_of(&app, &target_token).await;
+    let target_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &target_token, target_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let collection_id = "c0150000-0000-4000-8000-000000000001";
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": collection_id, "enc_name": "enc-selfesc-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED, "ordinary (non-family-wide) collection creation must succeed");
+
+    let caller_sealed = seal(&caller_sk.public_key(), ck.expose()).unwrap();
+    let grant_caller_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": caller_id,
+            "sealed_key": serde_json::to_string(&caller_sealed).unwrap(),
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(grant_caller_res.status(), StatusCode::CREATED, "caller must hold only read");
+
+    let target_sealed = seal(&target_sk.public_key(), ck.expose()).unwrap();
+    let grant_target_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": target_id,
+            "sealed_key": serde_json::to_string(&target_sealed).unwrap(),
+            "access_level": "read",
+        })),
+    )
+    .await;
+    assert_eq!(grant_target_res.status(), StatusCode::CREATED);
+
+    let escalate_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{target_id}"),
+        &caller_token,
+        Some(json!({ "access_level": "edit" })),
+    )
+    .await;
+    assert_eq!(
+        escalate_res.status(),
+        StatusCode::FORBIDDEN,
+        "a read-only caller on an ordinary collection must never be able to escalate another recipient to edit"
+    );
+
+    let target_level_after: String =
+        sqlx::query_scalar("SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?")
+            .bind(collection_id)
+            .bind(&target_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(target_level_after, "read", "the target's level must be unchanged after the refused escalation attempt");
+}
+
 // --- Plan 22-04, Task 1: the move endpoint (SHARE-04 / Vaultwarden #6269) ---
 
 /// The headline regression this plan exists to close (SHARE-04, Vaultwarden
