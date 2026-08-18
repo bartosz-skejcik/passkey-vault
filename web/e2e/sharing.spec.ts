@@ -1515,3 +1515,100 @@ test("SC5: a concurrent revoke of the caller's OWN access to an existing destina
   expect(memberB.dialogFired(), "zero OS-level dialogs across memberB's session").toBe(false);
   await owner.context.close();
 });
+
+// 31-06-PLAN.md Task 2 -- Q2's END-STATE half: an in-place level EDIT on an
+// existing recipient and a brand-new GRANT to a second recipient, in ONE
+// dialog submission, both land correctly on the server. This is deliberately
+// only the end-state half of Q2's atomicity claim -- the DISPATCH-level half
+// (exactly one updateCollectionAccess call, zero revoke/grant calls, for the
+// edited recipient) is separately proven by two existing unit tests, cited
+// here rather than re-derived: `ShareDialog.test.tsx`'s "dispatch-count
+// against an EXISTING destination (Blocker 7, T-31-06)" describe block
+// (31-03-PLAN.md Task 1, folder branch) and its item-scope sibling
+// "item-scope reconcileRow dispatch-count (31-02-PLAN.md, T-31-06)"
+// (31-02-PLAN.md Task 1). A final-state-only read genuinely CANNOT
+// distinguish an atomic PUT from a client-side revoke-then-re-add that
+// happens to converge on the same end state -- this test proves the
+// end-state is correct, not the call shape that produced it.
+test("Q2: an in-place level EDIT and a brand-new GRANT in ONE submission both land correctly (end-state proof; dispatch-shape proven by 31-03-T1/31-02-T1's unit tests, cited not re-derived)", async ({
+  twoSessions,
+  browser,
+}) => {
+  const [memberA, memberB] = twoSessions;
+  const memberAToken = await tokenFor(memberA.page);
+  const memberBToken = await tokenFor(memberB.page);
+  const memberAUserId = await userIdFor(memberA.context, memberAToken);
+  const memberBUserId = await userIdFor(memberB.context, memberBToken);
+
+  await ensureFamilyMembership(browser, [memberAUserId, memberBUserId]);
+  await waitForIdentityKeyPublished(memberA.context, memberAToken);
+  await waitForIdentityKeyPublished(memberB.context, memberBToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+  const ownerUserId = await userIdFor(owner.context, ownerToken);
+
+  const suffix = uniqueSuffix();
+  const destinationName = `PV E2E Q2 Destination ${suffix}`;
+
+  // 1. Establish the existing destination -- memberA already at "read".
+  const collectionsBaseline = await listCollectionIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-shared-folders").click();
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-folder-name-input").fill(destinationName);
+  await owner.page.getByTestId(`share-recipient-row-select-${memberAUserId}`).selectOption("read");
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  const destinationId = await newIdAfter(collectionsBaseline, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 2. ONE submission: EDIT memberA's row (read -> edit) AND GRANT memberB
+  //    a brand-new row at hidden_password -- the first-ever hidden_password
+  //    selection on the owner's fresh account, so the blocking one-time
+  //    disclosure modal fires and must be acked.
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-destination-select").selectOption(destinationId);
+  await owner.page
+    .getByTestId(`share-recipient-row-currently-${memberAUserId}`)
+    .waitFor({ state: "visible", timeout: 20000 });
+
+  await owner.page.getByTestId(`share-recipient-row-select-${memberAUserId}`).selectOption("edit");
+  await owner.page.getByTestId(`share-recipient-row-select-${memberBUserId}`).selectOption("hidden_password");
+  await expect(owner.page.getByTestId("share-hidden-password-ack-title")).toBeVisible();
+  await owner.page.getByTestId("share-hidden-password-ack-confirm").click();
+
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  // 3. End-state: both changes landed, and nothing else was touched.
+  const accessRes = await apiGet(
+    owner.context.request,
+    `/api/vault/collections/${destinationId}/access`,
+    ownerToken,
+  );
+  expect(accessRes.status()).toBe(200);
+  const accessList = (await accessRes.json()) as { user_id: string; access_level: string }[];
+
+  const entryA = accessList.find((a) => a.user_id === memberAUserId);
+  const entryB = accessList.find((a) => a.user_id === memberBUserId);
+  const entryOwner = accessList.find((a) => a.user_id === ownerUserId);
+  expect(entryA?.access_level, "memberA's in-place edit must land at edit, not read").toBe("edit");
+  expect(entryB?.access_level, "memberB's brand-new grant must land at hidden_password").toBe(
+    "hidden_password",
+  );
+  expect(entryOwner?.access_level, "the owner's own row must be untouched by this submission").toBe("edit");
+  expect(
+    accessList.length,
+    "exactly three rows: owner (creator), memberA (edited), memberB (newly granted) -- nothing else touched",
+  ).toBe(3);
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(memberA.dialogFired(), "zero OS-level dialogs across memberA's session").toBe(false);
+  expect(memberB.dialogFired(), "zero OS-level dialogs across memberB's session").toBe(false);
+  await owner.context.close();
+});
