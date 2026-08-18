@@ -788,6 +788,36 @@ describe("ShareDialog", () => {
       );
     });
 
+    // 31-05-PLAN.md (MOD-03/SC4, checker blocker 2): the case that was
+    // previously UNPROVEN. For an already-acked account, the one-time
+    // blocking modal (which states the fact fully) never reappears -- the
+    // inline note is the ONLY always-visible copy this account sees on
+    // every REPEAT share. SC4's literal bar is that it states plainly, in
+    // that same view, that hidden-password is an interface protection and
+    // NEVER a cryptographic one. The old wording only implied this; the
+    // revised wording must state it directly.
+    it("on a REPEAT share by an already-acked account, the always-visible inline note states the interface-only/not-cryptographic fact DIRECTLY (MOD-03/SC4)", async () => {
+      localStorage.setItem(`pv-hidden-password-ack:${SELF.user_id}`, "1");
+      await openDialog();
+
+      setRowLevel(MEMBER_A.user_id, "hidden_password");
+
+      // The one-time modal must NOT reappear -- this account already acked.
+      expect(screen.queryByTestId("share-hidden-password-ack-confirm")).not.toBeInTheDocument();
+
+      const note = await screen.findByTestId("share-hidden-password-inline-note");
+      // The exact fact SC4 requires, stated directly -- not merely implied
+      // -- echoing share.hiddenPasswordDisclosureBody's own established
+      // "nie kryptograficznie"/"technicznie może odzyskać" phrasing.
+      expect(note.textContent).toContain("nie kryptograficznie");
+      expect(note.textContent).toContain("technicznie może odzyskać hasło");
+      // And it's the real, revised dictionary string -- not a stray
+      // coincidental substring match.
+      expect(note.textContent).toBe(
+        DICTIONARY["share.hiddenPasswordInlineNote"].pl.replace("{recipient}", MEMBER_A.email),
+      );
+    });
+
     it("renders share.hiddenPasswordDisclosureBody's EXACT dictionary text, zero truncation/softening", async () => {
       await openDialog();
       setRowLevel(MEMBER_A.user_id, "hidden_password");

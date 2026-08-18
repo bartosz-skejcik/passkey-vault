@@ -1212,9 +1212,24 @@ export const DICTIONARY = {
     pl: "Rozumiem, przyznaj dostęp",
     en: "I understand, grant access",
   },
+  // REVISED 31-05-PLAN.md (checker blocker 2 -- MOD-03/SC4 was not
+  // actually satisfied on a REPEAT share). The full honest statement lives
+  // only in share.hiddenPasswordDisclosureBody's one-time blocking modal,
+  // gated behind a per-account localStorage ack that never renders again
+  // once acknowledged. For every account that has already acked once, this
+  // inline note is the ONLY always-visible copy -- and the old wording
+  // ("nadal ma dostęp do klucza" / "still has key access") only IMPLIED
+  // "not cryptographic" without stating it, which does not clear SC4's
+  // literal bar. This is a STRENGTHENING of the same key, not the
+  // "softened/reworded" change the Phase 26 honesty-string comment
+  // forbids: "nie kryptograficznie"/"not cryptographically" and
+  // "technicznie może odzyskać hasło"/"can technically recover the
+  // password" echo hiddenPasswordDisclosureBody's own established phrasing
+  // verbatim ("To nie jest zabezpieczenie kryptograficzne" / "technicznie
+  // może je odzyskać"), never inventing new vocabulary for the same fact.
   "share.hiddenPasswordInlineNote": {
-    pl: "Ukryte tylko w interfejsie — {recipient} nadal ma dostęp do klucza.",
-    en: "Hidden in the interface only — {recipient} still has key access.",
+    pl: "Ukryte tylko w interfejsie, nie kryptograficznie — {recipient} nadal ma dostęp do klucza i technicznie może odzyskać hasło.",
+    en: "Hidden in the interface only, not cryptographically — {recipient} still has key access and can technically recover the password.",
   },
   // WR-04 (code review, Phase 26): 26-UI-SPEC.md:169 requires
   // `share.hiddenPasswordInlineNote`'s `{recipient}` to interpolate "the

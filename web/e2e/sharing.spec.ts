@@ -593,7 +593,54 @@ test("owner-of-item shares a personal item directly at all three access levels, 
           sharer.page.getByTestId("share-hidden-password-ack-title"),
           "a LATER hidden-password selection in the same session must NOT re-trigger the blocking modal",
         ).toHaveCount(0);
-        await expect(sharer.page.getByTestId("share-hidden-password-inline-note")).toBeVisible();
+        const inlineNote = sharer.page.getByTestId("share-hidden-password-inline-note");
+        await expect(inlineNote).toBeVisible();
+
+        // 31-05-PLAN.md (MOD-03/SC4, checker blocker 2): THIS is the
+        // previously-unproven case -- an already-acked account's REPEAT
+        // share, where the always-visible inline note is the ONLY honesty
+        // copy this account ever sees again. Pinned against a hardcoded
+        // literal, never sourced from `t()` at the assertion site, per
+        // this codebase's established discipline for load-bearing
+        // conditional notes (share-family-wide-timing-caveat's
+        // gapWindowHonestyPhrase / share-pending-revocations-summary
+        // precedent) -- a softened dictionary edit that dropped these
+        // clauses must fail HERE, independent of the dictionary itself.
+        const notCryptographicPhrase = "not cryptographically";
+        const canRecoverPhrase = "can technically recover the password";
+        await expect(
+          inlineNote,
+          "the always-visible inline note must state DIRECTLY, on a repeat share, that hidden-password is an interface protection and never a cryptographic one -- against a hardcoded literal so a softened dictionary edit fails here",
+        ).toContainText(notCryptographicPhrase);
+        await expect(inlineNote).toContainText(canRecoverPhrase);
+        // Self-consistency confirmation against the real (revised)
+        // dictionary string too -- both must hold.
+        await expect(inlineNote).toHaveText(
+          interpolate(t("en", "share.hiddenPasswordInlineNote"), { recipient: recipient.email }),
+        );
+
+        // Automated PL-width backstop (31-VALIDATION.md's Manual-Only row):
+        // the revised PL string is materially longer than its predecessor
+        // and than its own EN counterpart -- assert it never overflows the
+        // real rendered card at real font metrics, at BOTH the 375px
+        // viewport and the current (desktop) one. This catches gross
+        // overflow; it does NOT replace the held-out "technically fits,
+        // reads badly" visual judgment call, which is reported separately.
+        const desktopViewport = sharer.page.viewportSize();
+        const desktopFits = await inlineNote.evaluate((el) => el.scrollWidth <= el.clientWidth);
+        expect(desktopFits, "the inline note must wrap, never overflow, the real rendered card at desktop width").toBe(
+          true,
+        );
+
+        await sharer.page.setViewportSize({ width: 375, height: 800 });
+        await expect(inlineNote).toBeVisible();
+        const mobileFits = await inlineNote.evaluate((el) => el.scrollWidth <= el.clientWidth);
+        const mobileScreenshotPath = `/private/tmp/claude-501/-Users-j5on--work-projects-passkey-vault/939d8db5-eefd-495c-95db-4758fe0b4ec7/scratchpad/31-05-hidden-password-note-375px-${suffix}.png`;
+        await sharer.page.getByTestId("share-dialog").screenshot({ path: mobileScreenshotPath }).catch(() => {});
+        expect(mobileFits, "the inline note must wrap, never overflow, the real rendered card at 375px").toBe(true);
+        if (desktopViewport) {
+          await sharer.page.setViewportSize(desktopViewport);
+        }
       }
     }
 
