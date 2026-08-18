@@ -333,16 +333,23 @@
 
       <h2 style="margin-top:26px">The bar filters types; the avatar owns the account</h2>
       <p class="note">Settings, Family and Sign out live in a context menu held on a profile avatar at the top
-      right, which frees the whole bottom bar for <strong>item types</strong>: All · Logins · Cards · Codes ·
+      right, which frees the whole bottom bar for <strong>item types</strong>: All · Logins · Folders · Codes ·
       Passkeys. <span class="inline">Lock&nbsp;now</span> is in that menu too — it is the one action a
       password-manager user wants instantly, and burying it in Settings makes the safest habit the slowest one.</p>
+      <p class="note"><strong>Why Folders, not Cards, in the third slot:</strong> Cards-as-tab duplicated a type
+      filter already one tap away from the default screen via All's own section index — it never earned its slot.
+      Folders is a genuinely different axis (user organization, not item type), and it is more valuable now that
+      folder creation lives in the ＋ panel (shipped today). Cards remain fully reachable: All's type-headed
+      sections and the unchanged <span class="inline">L C 2 P I N</span> scrubber still index them by <span
+      class="inline">C</span>, exactly as before.</p>
       <p class="note"><strong>Two honest costs, so neither is discovered later.</strong></p>
       <div class="tbl"><table>
         <thead><tr><th>Cost</th><th>Detail</th></tr></thead>
         <tbody>
-          <tr><td><strong>Two types have no tab — solved in All</strong></td>
-            <td>Six types, five slots. <span class="inline">identity</span> and <span class="inline">note</span>
-            get no tab, so <strong>All is section-headed by type with a scrubber down the right edge</strong> —
+          <tr><td><strong>Three types have no tab — solved in All</strong></td>
+            <td>Six types, five slots, and — with Folders now occupying the third slot instead of Cards —
+            <span class="inline">card</span>, <span class="inline">identity</span> and <span class="inline">note</span>
+            all get no tab, so <strong>All is section-headed by type with a scrubber down the right edge</strong> —
             every type is one tap from the default screen. The ＋ grid covers creation; the scrubber covers
             retrieval. That was the actual hole: an earlier version of this page claimed the grid alone made the
             missing tabs survivable, which was wrong — it only fixed <em>making</em> a note, never <em>finding</em>
@@ -394,7 +401,7 @@
             <div class="dock">
               <div class="acc glass"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg><span>Search your vault</span></div>
               <div class="drow">
-                <div class="tabs glass"><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/></svg><span>Cards</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
+                <div class="tabs glass"><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 7.5a2 2 0 012-2h4.2l1.8 2h6.5a2 2 0 012 2v7a2 2 0 01-2 2h-14.5a2 2 0 01-2-2v-9z"/></svg><span>Folders</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
                 <div class="cap glass acct">＋</div>
               </div>
             </div>
@@ -415,7 +422,7 @@
             <div class="dock">
               <div class="grid"><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg></span>New login</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/></svg></span>New card</div><div class="ga"><span class="b key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg></span>New passkey</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3M20 20v.01M17 20v.01M20 17v.01"/></svg></span>Scan QR code</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="2.5"/><path d="M4.5 18c1-2.4 2.7-3.5 4.5-3.5s3.5 1.1 4.5 3.5M15 9h4M15 13h4"/></svg></span>New identity</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span>New note</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v18M5 8l14 8M19 8L5 16"/></svg></span>Generate password</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7V5a1 1 0 011-1h3M20 7V5a1 1 0 00-1-1h-3M4 17v2a1 1 0 001 1h3M20 17v2a1 1 0 01-1 1h-3"/><rect x="8" y="8" width="8" height="8" rx="1.5"/></svg></span>Scan card</div><div class="ga"><span class="b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M8 11l4 4 4-4M4 19h16"/></svg></span>Import</div></div>
               <div class="drow">
-                <div class="tabs glass"><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/></svg><span>Cards</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
+                <div class="tabs glass"><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 7.5a2 2 0 012-2h4.2l1.8 2h6.5a2 2 0 012 2v7a2 2 0 01-2 2h-14.5a2 2 0 01-2-2v-9z"/></svg><span>Folders</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
                 <div class="cap glass acct" style="font-size:calc(19px*var(--s))">✕</div>
               </div>
             </div>
@@ -457,7 +464,7 @@
             <div class="dock">
               <div class="acc glass"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg><span>Search your vault</span></div>
               <div class="drow">
-                <div class="tabs glass"><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/></svg><span>Cards</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
+                <div class="tabs glass"><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 7.5a2 2 0 012-2h4.2l1.8 2h6.5a2 2 0 012 2v7a2 2 0 01-2 2h-14.5a2 2 0 01-2-2v-9z"/></svg><span>Folders</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
                 <div class="cap glass acct">＋</div>
               </div>
             </div>
@@ -478,7 +485,7 @@
             <div class="dock">
               <div class="acc glass"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg><span>Search your vault</span></div>
               <div class="drow">
-                <div class="tabs glass"><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19"/></svg><span>Cards</span></div><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
+                <div class="tabs glass"><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 7.5a2 2 0 012-2h4.2l1.8 2h6.5a2 2 0 012 2v7a2 2 0 01-2 2h-14.5a2 2 0 01-2-2v-9z"/></svg><span>Folders</span></div><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
                 <div class="cap glass acct">＋</div>
               </div>
             </div>
@@ -486,6 +493,132 @@
           </div></div>
           <div class="cap"><span class="tag ">dark &middot; filtered</span><b>A type filter applied</b>
             <span>Selecting a filter changes the large title as well as the list, so the state is legible without looking down at the bar. Codes get their <strong>own row shape</strong>, borrowed from Google Authenticator: the code is the row, at display size, with the issuer and account above it and a draining ring on the right. No icon tile and no chevron &mdash; there is nothing to disclose, you came to read six digits. The ring turns <span class="inline">PVWarning</span> in its last seconds, so &ldquo;will this expire before I finish typing&rdquo; is answerable at a glance.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>&#9646;&#9646;&#9646; <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span></span><span class="toppill"><span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 118 0v3"/></svg></span><span class="av">BP</span></span></div>
+              <p class="lgtitle">Vault</p>
+              <div class="grp"><div class="r"><div class="ico fav"><svg viewBox="0 0 24 24" fill="#181717"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.8 2.7 1.3 3.4 1 .1-.7.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11 11 0 016 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg></div><div class="rt"><b>GitHub (work)</b><span>b.paczesny@agencytech.pl</span></div><span class="pill shr">Shared · 2</span><span class="chev">&rsaquo;</span></div></div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag ">light</span><b>Shared BY me</b>
+            <span>A <span class="inline">.pill shr</span> reads &ldquo;Shared · 2&rdquo; — a direction-neutral count
+            (mirrors <span class="inline">sharing.sharedWithLabel</span> &ldquo;Shared with {count}&rdquo;). Satisfies
+            FAM-01 / ROADMAP Phase 40 SC1 together with the two cells that follow: three states, textually distinct,
+            never colour-only.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>&#9646;&#9646;&#9646; <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span></span><span class="toppill"><span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 118 0v3"/></svg></span><span class="av">BP</span></span></div>
+              <p class="lgtitle">Vault</p>
+              <div class="grp"><div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg></div><div class="rt"><b>GitLab (work)</b><span>anna@agencytech.pl</span></div><span class="pill shr">Shared with you</span><span class="chev">&rsaquo;</span></div></div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag ">light</span><b>Shared TO me</b>
+            <span>A <span class="inline">.pill shr</span> reads the verbatim <span class="inline">sharing.sharedWithYouLabel</span>
+            &ldquo;Shared with you&rdquo; — text alone already distinguishes it from &ldquo;Shared · 2&rdquo; above,
+            satisfying FAM-01 / ROADMAP Phase 40 SC1's textual-distinction requirement without relying on colour.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>&#9646;&#9646;&#9646; <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span></span><span class="toppill"><span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 118 0v3"/></svg></span><span class="av">BP</span></span></div>
+              <p class="lgtitle">Vault</p>
+              <div class="grp"><div class="r" style="opacity:.6"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg></div><div class="rt"><b>Streaming account</b><span>Shared with the family</span></div><span class="pill shr">Key pending</span></div></div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag w">light</span><b>Not yet delivered (E-F1)</b>
+            <span>Whole row muted at <span class="inline">opacity:.6</span> (same treatment the existing damaged-item
+            row uses), pill reads an honest &ldquo;Key pending&rdquo; — deliberately <span class="inline">.pill shr</span>,
+            never <span class="inline">.pill err</span> (nothing failed) and never success-styled (nothing succeeded
+            yet). No chevron: no action is offered on the row itself. Concept mirrors
+            <span class="inline">share.pendingFamilyKeyNote</span>/<span class="inline">pendingFamilyKeyNoteDetail</span>
+            — &ldquo;shared with the whole family, but your key hasn&rsquo;t arrived yet; it appears automatically
+            once another member opens the app.&rdquo; The web app has no row-level equivalent today; this is a new
+            iOS-specific treatment for FAM-01 / ROADMAP Phase 40 SC1.</span></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============ FOLDERS ============ -->
+    <section>
+      <div class="sechead">
+        <h2>Folders</h2>
+        <p class="note">Folders are the user-organization axis, distinct from item <em>type</em> — a login and a
+        note can sit in the same folder. One landmine to state plainly rather than discover later: folders are
+        <strong>create / delete / assign only — there is no rename on the server</strong>. Renaming a folder today
+        means deleting it and recreating it under the new name; every item assigned to it has to be reassigned.</p>
+      </div>
+      <div class="screens">
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>&#9646;&#9646;&#9646; <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span></span><span class="toppill"><span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 118 0v3"/></svg></span><span class="av">BP</span></span></div>
+              <p class="lgtitle">Folders</p>
+              <div class="grp">
+                <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 7.5a2 2 0 012-2h4.2l1.8 2h6.5a2 2 0 012 2v7a2 2 0 01-2 2h-14.5a2 2 0 01-2-2v-9z"/></svg></div><div class="rt"><b>Work</b><span>12 items</span></div><span class="pill shr">Shared</span><span class="chev">&rsaquo;</span></div>
+                <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 7.5a2 2 0 012-2h4.2l1.8 2h6.5a2 2 0 012 2v7a2 2 0 01-2 2h-14.5a2 2 0 01-2-2v-9z"/></svg></div><div class="rt"><b>Personal</b><span>34 items</span></div><span class="chev">&rsaquo;</span></div>
+                <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 7.5a2 2 0 012-2h4.2l1.8 2h6.5a2 2 0 012 2v7a2 2 0 01-2 2h-14.5a2 2 0 01-2-2v-9z"/></svg></div><div class="rt"><b>Family finances</b><span>6 items</span></div><span class="pill shr">Shared</span><span class="chev">&rsaquo;</span></div>
+              </div>
+            </div>
+            <div class="dock">
+              <div class="acc glass"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg><span>Search your vault</span></div>
+              <div class="drow">
+                <div class="tabs glass"><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>All</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg><span>Logins</span></div><div class="tb on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.5 7.5a2 2 0 012-2h4.2l1.8 2h6.5a2 2 0 012 2v7a2 2 0 01-2 2h-14.5a2 2 0 01-2-2v-9z"/></svg><span>Folders</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span>Codes</span></div><div class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="4"/><path d="M3 20c0-3.3 2.7-6 6-6M15 13l6 6M18 16l-2 2M21 13l-2 2"/></svg><span>Passkeys</span></div></div>
+                <div class="cap glass acct">＋</div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag ">light</span><b>Folder list</b>
+            <span>Grouped rows: name, item count, chevron. A shared folder carries a <span class="inline">.pill shr</span>
+            &ldquo;Shared&rdquo; pill before the chevron, same vocabulary the Family &amp; Sharing screens use. Folders
+            are create/delete/assign only — <strong>no rename</strong>; renaming means delete-and-recreate.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr dark">
+            <div class="sb"><span>9:41</span><span>&#9646;&#9646;&#9646; <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ Folders</span><span class="ttl">Work</span></div>
+              <div class="grp">
+                <div class="r"><div class="ico fav"><svg viewBox="0 0 24 24" fill="#181717"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.8 2.7 1.3 3.4 1 .1-.7.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11 11 0 016 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg></div><div class="rt"><b>GitHub</b><span>bartek@paczesny.pl</span></div><span class="chev">&rsaquo;</span></div>
+                <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="2.5"/><path d="M4.5 18c1-2.4 2.7-3.5 4.5-3.5s3.5 1.1 4.5 3.5M15 9h4M15 13h4"/></svg></div><div class="rt"><b>Bartek Paczesny</b><span>bartek@paczesny.pl</span></div><span class="chev">&rsaquo;</span></div>
+              </div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag k">dark · pushed</span><b>Folder — open</b>
+            <span>Title-only navrow (mirrors the passkey detail screen's shape — no trailing action), filtered to
+            this folder's items. Assignment happens from an item's own edit screen, not from here.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>&#9646;&#9646;&#9646; <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ Folders</span><span></span></div>
+              <div class="empty"><div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.5 7.5a2 2 0 012-2h4.2l1.8 2h6.5a2 2 0 012 2v7a2 2 0 01-2 2h-14.5a2 2 0 01-2-2v-9z"/></svg></div><b>No folders yet</b><p>Tap ＋ and choose &ldquo;New folder&rdquo; from the add grid to create one.</p></div>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag ">light</span><b>Folders — empty</b>
+            <span>Points at the ＋ grid, same house rule as the Vault-empty screen — one affordance, not a
+            competing second button. Folders are create/delete/assign only, no rename (delete-and-recreate).</span></div>
         </div>
 
       </div>
@@ -868,11 +1001,11 @@
               <div class="glab">Members</div>
               <div class="grp">
                 <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4"/><path d="M5 19c.7-3.5 3.6-5.5 7-5.5s6.3 2 7 5.5"/></svg></div>
-                  <div class="rt"><b>You</b><span>bartek@paczesny.pl</span></div><span class="pill shr">Owner</span></div>
+                  <div class="rt"><b>You</b><span>bartek@paczesny.pl</span><span class="v mono" style="font-size:calc(11px*var(--s));display:block">Identity fingerprint: 7F3A·9K2Q</span></div><span class="pill shr">Owner</span></div>
                 <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4"/><path d="M5 19c.7-3.5 3.6-5.5 7-5.5s6.3 2 7 5.5"/></svg></div>
-                  <div class="rt"><b>Anna</b><span>anna@agencytech.pl</span></div><span class="pill shr">Can edit</span><span class="chev">›</span></div>
+                  <div class="rt"><b>Anna</b><span>anna@agencytech.pl</span><span class="v mono" style="font-size:calc(11px*var(--s));display:block">Identity fingerprint: B81C·5MXT</span></div><span class="pill shr">Can edit</span><span class="chev">›</span></div>
                 <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4"/><path d="M5 19c.7-3.5 3.6-5.5 7-5.5s6.3 2 7 5.5"/></svg></div>
-                  <div class="rt"><b>Marek</b><span>marek@example.com</span></div><span class="pill shr">View only</span><span class="chev">›</span></div>
+                  <div class="rt"><b>Marek</b><span>marek@example.com</span><span class="v mono" style="font-size:calc(11px*var(--s));display:block">Identity fingerprint: D42E·7QPL</span></div><span class="pill shr">View only</span><span class="chev">›</span></div>
               </div>
               <div class="glab">Invited</div>
               <div class="grp">
@@ -880,13 +1013,49 @@
                   <div class="rt"><b>kasia@example.com</b><span>Invited 2 days ago</span></div><span class="pill warn">Pending</span><span class="chev">›</span></div>
               </div>
               <p class="foot" style="font-size:calc(12.5px*var(--s));color:var(--pv-mut);padding:calc(8px*var(--s)) calc(6px*var(--s));margin:0;line-height:1.4">
-                Members can only open items you share with them. Nothing else in your vault is visible.</p>
+                Members can only open items you share with them. Nothing else in your vault is visible. Each row is
+                swipeable to remove a member — <strong>removing someone does not undo access they already had</strong>;
+                if they saw a password, they still know it. Removal re-keys the family going forward and we recommend
+                rotating anything they saw.</p>
             </div>
             <div class="hi-ind"><i></i></div>
           </div></div>
           <div class="cap"><span class="tag w">dark · phase 40</span><b>Family — members</b>
             <span>Roles map to the model's <span class="inline">accessLevel</span>. The footer states the boundary
-            explicitly, because “family” otherwise implies the whole vault is visible — it is not.</span></div>
+            explicitly, because “family” otherwise implies the whole vault is visible — it is not. Each member row
+            now also carries its own <span class="inline">Identity fingerprint</span> line (mirrors
+            <span class="inline">invite.fingerprintLabel</span>), and the footer's removal sentence condenses
+            <span class="inline">member.removeHonestyWarning</span> — removal is honest about what it does NOT undo.</span></div>
+        </div>
+
+        <div class="cell">
+          <div class="dev"><div class="scr">
+            <div class="sb"><span>9:41</span><span>▮▮▮ <span class="bar"></span></span></div>
+            <div class="body">
+              <div class="navrow"><span>‹ Family</span><span></span></div>
+              <div class="spacer"></div>
+            </div>
+            <div class="scrim"></div>
+            <div class="sheet">
+              <div class="grip"></div>
+              <p style="margin:calc(4px*var(--s)) 0 0;font-size:calc(17px*var(--s));font-weight:640;text-align:center">Invite to family</p>
+              <div class="glab" style="margin-top:calc(10px*var(--s))">Link expires after</div>
+              <div class="seg"><i>1 hour</i><i class="on">24 hours</i><i>7 days</i></div>
+              <div class="btn" style="margin-top:calc(12px*var(--s))">Generate link</div>
+              <div class="field" style="margin-top:calc(10px*var(--s))"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace;font-size:calc(12.5px*var(--s))">vault.blonie.cloud/invite/a91f…c3d8</span><span style="color:var(--pv-acc);font-weight:600;flex:none">Copy</span></div>
+              <p class="foot" style="font-size:calc(12px*var(--s));color:var(--pv-mut);padding:calc(4px*var(--s)) calc(2px*var(--s)) 0;margin:0">
+                Expires 24 Aug, 20:36. One-time link — the entry point for FAM-02, distinct from the per-item share
+                dialog below.</p>
+            </div>
+            <div class="hi-ind"><i></i></div>
+          </div></div>
+          <div class="cap"><span class="tag w">light · phase 40</span><b>Invite — link sheet</b>
+            <span>A <span class="inline">ShareLink</span>-style one-time-link invite: expiry <span class="inline">.seg</span>
+            (mirrors <span class="inline">invite.expiry1h/24h/7d</span>), <span class="inline">Generate link</span>
+            (mirrors <span class="inline">invite.generateCta</span>), and a generated-state field with Copy (mirrors
+            <span class="inline">invite.copyLinkAria</span>) and an Expires caption (mirrors
+            <span class="inline">invite.expiresAt</span>). Deliberately its own sheet, not folded into the per-item
+            Share dialog — they answer different questions.</span></div>
         </div>
 
         <div class="cell">
@@ -925,13 +1094,18 @@
             <div class="sheet">
               <div class="grip"></div>
               <p style="margin:calc(4px*var(--s)) 0 0;font-size:calc(17px*var(--s));font-weight:640;text-align:center">Share “GitHub”</p>
+              <div class="seg" style="margin-top:calc(8px*var(--s))"><i class="on">Person</i><i>Whole family</i></div>
               <div class="grp">
                 <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4"/><path d="M5 19c.7-3.5 3.6-5.5 7-5.5s6.3 2 7 5.5"/></svg></div>
-                  <div class="rt"><b>Anna</b><span>Can edit</span></div><span style="color:var(--pv-acc);font-size:calc(19px*var(--s))">✓</span></div>
-                <div class="r"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4"/><path d="M5 19c.7-3.5 3.6-5.5 7-5.5s6.3 2 7 5.5"/></svg></div>
-                  <div class="rt"><b>Marek</b><span>View only</span></div><span class="chev" style="opacity:.3;font-size:calc(19px*var(--s))">○</span></div>
+                  <div class="rt"><b>Anna</b></div><span style="color:var(--pv-acc);font-size:calc(19px*var(--s))">✓</span></div>
               </div>
-              <div class="slot mut" style="margin:0"><span class="dot"></span>
+              <div class="glab">Access</div>
+              <div class="seg"><i>Read-only</i><i class="on">Full edit</i><i>Hidden password</i></div>
+              <div class="slot warn" style="margin-top:calc(10px*var(--s))"><span class="dot"></span>
+                <span><strong>What &ldquo;hidden password&rdquo; actually means.</strong> This hides the password only in the interface — anyone with access still holds the decryption key and can technically recover it (e.g. via browser developer tools, or by reading the encrypted data directly if they have their own key). It is not a cryptographic protection. Use this level when you want someone to be able to use the password without accidentally seeing it on screen — not as a way to hide it FROM that person.</span></div>
+              <p class="foot" style="font-size:calc(12px*var(--s));color:var(--pv-mut);padding:calc(6px*var(--s)) calc(2px*var(--s)) 0;margin:0">
+                Hidden in the interface only — Anna still has key access.</p>
+              <div class="slot mut" style="margin-top:calc(8px*var(--s))"><span class="dot"></span>
                 <span>Sharing re-wraps this item's key for each person you pick. Removing someone re-wraps it again
                 without them.</span></div>
               <div class="btn">Share with 1 person</div>
@@ -939,8 +1113,14 @@
             <div class="hi-ind"><i></i></div>
           </div></div>
           <div class="cap"><span class="tag w">dark · phase 40</span><b>Share an item</b>
-            <span>Per-item, per-person — matching the multi-recipient key-wrapping the crypto core already does.
-            The copy names the revocation behaviour, since “can I take it back” is the first question sharing raises.</span></div>
+            <span>Per-item, per-person or whole-family — matching the multi-recipient key-wrapping the crypto core
+            already does. Access is a real 3-level picker (<span class="inline">access.readOnly</span> /
+            <span class="inline">access.fullEdit</span> / <span class="inline">access.hiddenPassword</span> — exact
+            labels &ldquo;Read-only&rdquo; / &ldquo;Full edit&rdquo; / &ldquo;Hidden password&rdquo;), and selecting
+            Hidden password shows the disclosure verbatim from <span class="inline">share.hiddenPasswordDisclosureBody</span>
+            in <span class="inline">web/src/lib/i18n/dictionary.ts</span> — the exact string ROADMAP Phase 40 SC3
+            asks to verify. The copy also names the revocation behaviour, since “can I take it back” is the first
+            question sharing raises.</span></div>
         </div>
         <div class="cell">
           <div class="dev"><div class="scr dark">
