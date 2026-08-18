@@ -84,7 +84,8 @@ import {
   type CollectionRow,
 } from "@/lib/vault/api";
 import { getItems, getFolders } from "@/lib/vault/store";
-import { refreshCollectionsNow } from "@/lib/vault/collections";
+import { refreshCollectionsNow, useCollections } from "@/lib/vault/collections";
+import { reshareCollectionToNewMember } from "@/lib/families/reseal";
 import type { VaultItem } from "@/lib/vault/types";
 import {
   getUnlockedUserKey,
@@ -453,12 +454,13 @@ async function grantCollectionToRows(
 }
 
 /** 31-02-PLAN.md's item-scope `reconcileRow` dispatch, and the FOLDER-scope
- * update/revoke branches, which the plan documents as reachable in the
- * function itself even though unreachable via THIS plan's own UI (a
- * mint-new folder's rows always have `currentLevel === null` -- there is no
- * existing destination to target yet, that is 31-03's job). Kept generic
- * and correct now rather than stubbed, so 31-03 only needs to change how
- * `currentLevel` is SEEDED, never this dispatch itself. */
+ * update/revoke branches, mirrored for the MINT-NEW folder path. A mint-new
+ * folder's rows always have `currentLevel === null` (there is no existing
+ * destination to target -- that is `submitRowsForExistingDestination`
+ * below's job, wired to `destinationId !== null` by 31-03-PLAN.md), so the
+ * `update`/`revoke` branches stay structurally unreachable via THIS
+ * function specifically -- not a stub, still generically correct, kept
+ * symmetric with its existing-destination sibling below. */
 async function submitRowsForCollection(
   collectionId: string,
   ck: WasmCollectionKey,
@@ -497,6 +499,60 @@ async function submitRowsForCollection(
     }
   }
   return failed;
+}
+
+/** 31-03-PLAN.md's destination-selector counterpart to `submitRowsForCollection`
+ * above -- dispatches against an EXISTING destination the caller already
+ * holds edit access to (never a freshly minted collection, no
+ * `createCollection` call, no `WasmCollectionKey` to manage), for the row
+ * path only (family-wide keeps its own always-mint-new branch in
+ * `submitFolderVariant`, untouched by this function).
+ *
+ * Reuses the SAME `reconcileRow` dispatcher the item scope already proved
+ * out (T-31-06's trust boundary: one decision, one dispatch, never a second
+ * divergent computation) -- grant/update/revoke are now ALL genuinely
+ * reachable for the first time against a real existing destination:
+ *  - grant -> `reshareCollectionToNewMember` (Phase 30, real-WASM-proven):
+ *    unwraps the CALLER's own sealed Collection Key for `destinationId` and
+ *    reseals the SAME key to the new recipient -- never
+ *    `WasmCollectionKey.generate()`, which would produce a key that cannot
+ *    decrypt anything already in the destination (ORG-03/SC3's whole point).
+ *  - update -> `updateCollectionAccess` (31-01's PUT route).
+ *  - revoke -> `revokeCollectionAccess` (existing, SHARE-06).
+ *
+ * T-25-16 discipline (mirrors `submitFolderVariant`'s mint-new branch):
+ * callers must run `assertRecipientsHavePublicKeys` on the grant-actionable
+ * rows BEFORE calling this -- this function itself does not re-check, since
+ * `reconcileRow`'s grant op would otherwise reach `reshareCollectionToNewMember`
+ * with a `null` public key and throw asynchronously, after any earlier rows
+ * in the loop already dispatched (a partial, silently incomplete share the
+ * upfront check exists to prevent).
+ *
+ * EXPORTED so `ShareDialog.real-wasm.test.ts` (Task 2) calls this EXACT
+ * production dispatch rather than re-implementing the composition --
+ * mirrors `shareItemWithRecipients`'s identical export rationale. */
+export async function submitRowsForExistingDestination(
+  destinationId: string,
+  rows: RecipientRow[],
+  uk: WasmUserKey,
+): Promise<{ failedRecipients: string[]; committedAnything: boolean }> {
+  const actionable = rows.filter(
+    (r) => reconcileRowAction(r.currentLevel, r.pendingLevel).kind !== "noop",
+  );
+  const failed: string[] = [];
+  for (const row of actionable) {
+    try {
+      await reconcileRow(row, {
+        grant: (level) => reshareCollectionToNewMember(destinationId, row.userId, level, uk),
+        update: (level) => updateCollectionAccess(destinationId, row.userId, level),
+        revoke: () => revokeCollectionAccess(destinationId, row.userId),
+      });
+    } catch (err) {
+      console.error(`pv: failed to reconcile existing destination ${destinationId} row for ${row.userId}`, err);
+      failed.push(row.email ?? row.userId);
+    }
+  }
+  return { failedRecipients: failed, committedAnything: failed.length < actionable.length };
 }
 
 /** 30-12 (FSH-01's "or an item" clause): the non-sensitive placeholder name
@@ -831,6 +887,11 @@ export default function ShareDialog({
   onShared: () => void;
 }) {
   const { t } = useLocale();
+  // 31-03-PLAN.md Destination Selector Contract: called unconditionally
+  // (hooks rule), filtered below to what the folder-scope selector actually
+  // offers -- never `CollectionPicker`'s unfiltered list (see that
+  // component's own header comment for why it has no access-level filter).
+  const allCollections = useCollections();
   const [state, setState] = useState<DialogState>("loading-recipients");
   const [recipients, setRecipients] = useState<FamilyMemberRecord[]>([]);
   // 31-02-PLAN.md: the per-row model replaces the old shared checkbox list
@@ -859,6 +920,20 @@ export default function ShareDialog({
   // invoke depends on this.
   const [hiddenPasswordRowTarget, setHiddenPasswordRowTarget] = useState<string | null>(null);
   const [accountId, setAccountId] = useState<string | null>(null);
+  // 31-03-PLAN.md's Destination Selector Contract (MOD-02/ORG-03), folder
+  // scope only. `null` means "mint a new folder" (this dialog's ONLY
+  // behavior before this plan, and still the default) -- a non-null value
+  // is an EXISTING collection id the caller holds edit access to. Switching
+  // this is what re-seeds every row's `currentLevel` from that destination's
+  // real access list (T-31-10) and is what makes the folder-scope
+  // update/revoke branches genuinely reachable for the first time.
+  const [destinationId, setDestinationId] = useState<string | null>(null);
+  // The row region's OWN loading sub-state while a destination switch's
+  // `getCollectionAccessList` fetch resolves -- deliberately distinct from
+  // `loading` (the dialog's initial recipient fetch): the destination
+  // `<select>` itself stays interactive throughout (31-UI-SPEC.md), only the
+  // row list below it shows a spinner in place of stale-destination rows.
+  const [rowsLoading, setRowsLoading] = useState(false);
   const [folderName, setFolderName] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [seedMoveFailureCount, setSeedMoveFailureCount] = useState<number | null>(null);
@@ -875,6 +950,11 @@ export default function ShareDialog({
   // error rather than the misleading `share.noOtherMembers` empty state.
   const [accountUnavailable, setAccountUnavailable] = useState(false);
   const mountedRef = useRef(true);
+  // 31-03-PLAN.md: monotonically-increasing token guarding
+  // `handleDestinationChange`'s async fetch -- a rapid second switch must
+  // never let the FIRST (now-stale) `getCollectionAccessList` response
+  // overwrite the rows the user's LATEST selection already requested.
+  const destinationRequestRef = useRef(0);
   // CR-01: the collection this dialog session created, minted ONCE and
   // reused by every later submit attempt. `crypto.randomUUID()` used to be
   // called inside `submitFolderVariant` on every submit, so each retry after
@@ -1011,9 +1091,61 @@ export default function ShareDialog({
         // instead, and leaving it queued would silently misrepresent what
         // a later switch BACK to per-person mode would show.
         setRows((prevRows) => prevRows.map((r) => ({ ...r, pendingLevel: r.currentLevel ?? "none" })));
+        // 31-03-PLAN.md: family-wide keeps its own always-mint-new path
+        // (`submitFolderVariant`'s `isFamilyWide` branch never reads
+        // `destinationId`) -- if a per-person destination had been chosen
+        // BEFORE switching to family-wide, the folder-name input would stay
+        // hidden (per the Destination Selector Contract's `destinationId
+        // === null` render condition) while family-wide's own submit still
+        // requires a non-empty `name`, an unreachable-submit dead end.
+        // Resetting back to "mint new" here keeps the two modes as
+        // genuinely independent as the row-reset above already makes them.
+        setDestinationId(null);
       }
       return next;
     });
+  }
+
+  /** 31-03-PLAN.md Destination Selector Contract's onChange -- `"new"` mints
+   * a folder (this dialog's pre-31-03 default, restored by re-seeding every
+   * row's `currentLevel` back to `null`, exactly `load()`'s own initial
+   * folder-scope seed); any other value is an EXISTING collection id, whose
+   * REAL current access list is fetched and used to re-seed every row's
+   * `currentLevel` (Pitfall 3, T-31-10: never carries a `pendingLevel` from
+   * the PREVIOUS destination forward -- `buildRows` always re-derives
+   * `pendingLevel` from the freshly-fetched `currentLevel`). Fails open
+   * (empty map, matching `loadCurrentItemLevels`'s own established
+   * discipline) on a transient fetch error, rather than blocking the whole
+   * dialog. */
+  async function handleDestinationChange(value: string) {
+    const requestId = ++destinationRequestRef.current;
+    if (value === "new") {
+      setDestinationId(null);
+      setRowsLoading(false);
+      setRows(buildRows(recipients, new Map()));
+      return;
+    }
+    setDestinationId(value);
+    setRowsLoading(true);
+    try {
+      const accessList = await getCollectionAccessList(value);
+      if (!mountedRef.current || destinationRequestRef.current !== requestId) return;
+      const currentLevels = new Map<string, AccessLevelValue>();
+      for (const entry of accessList) {
+        if (entry.access_level === "read" || entry.access_level === "edit" || entry.access_level === "hidden_password") {
+          currentLevels.set(entry.user_id, entry.access_level);
+        }
+      }
+      setRows(buildRows(recipients, currentLevels));
+    } catch (err) {
+      console.error(`pv: failed to fetch access list for destination ${value}`, err);
+      if (!mountedRef.current || destinationRequestRef.current !== requestId) return;
+      setRows(buildRows(recipients, new Map()));
+    } finally {
+      if (mountedRef.current && destinationRequestRef.current === requestId) {
+        setRowsLoading(false);
+      }
+    }
   }
 
   /** 31-02-PLAN.md Row Anatomy: a row's own `<select>` onChange. Mirrors
@@ -1190,14 +1322,27 @@ export default function ShareDialog({
    * invitee already uses once they publish a key.
    *
    * 31-02-PLAN.md: the row path's grant/update/revoke dispatch lives in
-   * `submitRowsForCollection` — for a mint-new folder (this plan's only
-   * reachable folder destination; a destination selector is 31-03's job)
-   * every row's `currentLevel` is always `null`, so only the grant branch
-   * is reachable, but the dispatch itself is the same generically-correct
-   * one 31-03 will extend without touching this function again. */
+   * `submitRowsForCollection` — for a mint-new folder every row's
+   * `currentLevel` is always `null`, so only the grant branch is reachable
+   * there.
+   *
+   * 31-03-PLAN.md: `destinationId !== null` (the row path targeting an
+   * EXISTING destination) short-circuits entirely into
+   * `submitRowsForExistingDestination` below, BEFORE any of this function's
+   * mint-new machinery (`createdCollectionRef`, `ensureOwnIdentityKeypair`,
+   * `createCollection`, the seed-move sub-step) runs — there is no
+   * collection to create, no `WasmCollectionKey` this function itself needs
+   * to manage (each row's grant unwraps/reseals its own via
+   * `reshareCollectionToNewMember`), and 31-UI-SPEC.md's Destination
+   * Selector Contract never renders the folder-name/seed-summary inputs
+   * `seed`/`name` describe once an existing destination is chosen — so
+   * neither parameter is meaningful on this branch. `isFamilyWide` NEVER
+   * takes this branch (see its own doc comment above: family-wide keeps its
+   * pre-existing always-mint-new path, untouched by this plan). */
   async function submitFolderVariant(
     name: string,
     seed: { id: string; itemCount: number } | null,
+    destinationId: string | null,
     grant:
       | { isFamilyWide: true; recipients: FamilyMemberRecord[]; level: AccessLevelValue }
       | { isFamilyWide: false; rows: RecipientRow[] },
@@ -1209,7 +1354,10 @@ export default function ShareDialog({
     await initCrypto();
     // T-25-16 applies to the row path only — see the `isFamilyWide` doc
     // comment above for why the family-wide path deliberately diverges
-    // (omits rather than throws).
+    // (omits rather than throws). Applies identically whether the row path
+    // targets a mint-new or an EXISTING destination — an explicitly chosen
+    // recipient with no published key must never be silently dropped
+    // either way.
     if (!grant.isFamilyWide) {
       const grantRows = grant.rows.filter(
         (r) => reconcileRowAction(r.currentLevel, r.pendingLevel).kind === "grant",
@@ -1218,6 +1366,18 @@ export default function ShareDialog({
         grantRows.map((r) => ({ user_id: r.userId, public_key: r.publicKey })),
       );
     }
+
+    // 31-03-PLAN.md: the existing-destination row path short-circuits here,
+    // before any mint-new machinery below runs.
+    if (!grant.isFamilyWide && destinationId !== null) {
+      const { failedRecipients, committedAnything } = await submitRowsForExistingDestination(
+        destinationId,
+        grant.rows,
+        uk,
+      );
+      return { failedRecipients, seedMoveFailures: 0, committedAnything };
+    }
+
     const grantRecipients = grant.isFamilyWide ? withPublishedPublicKey(grant.recipients) : [];
 
     const identityKey = await ensureOwnIdentityKeypair(uk);
@@ -1363,7 +1523,14 @@ export default function ShareDialog({
     // row carries its own level rather than one shared one.
     if (familyWideSubmit && accessLevel === null) return;
     if (!familyWideSubmit && !hasActionableRow) return;
-    if (isFolder && folderName.trim() === "") return;
+    // 31-03-PLAN.md: the folder-name field is never rendered once an
+    // EXISTING destination is chosen (31-UI-SPEC.md's Destination Selector
+    // Contract) -- requiring it in that state would block a submit the UI
+    // never asked for. `toggleFamilyWide` resets `destinationId` back to
+    // `null` the moment family-wide is switched on, so `destinationId ===
+    // null` alone is sufficient here -- family-wide always mints, and by
+    // that reset it always does so with `destinationId === null` too.
+    if (isFolder && destinationId === null && folderName.trim() === "") return;
 
     setState("sharing");
     setSubmitError(null);
@@ -1382,13 +1549,13 @@ export default function ShareDialog({
         outcome = await submitItemVariant(scope.item, { isFamilyWide: false, rows });
       } else if (familyWideSubmit) {
         const familyRecipients = await resolveCurrentFamilyRecipients();
-        outcome = await submitFolderVariant(folderName.trim(), seedFolder, {
+        outcome = await submitFolderVariant(folderName.trim(), seedFolder, destinationId, {
           isFamilyWide: true,
           recipients: familyRecipients,
           level: accessLevel as AccessLevelValue,
         });
       } else {
-        outcome = await submitFolderVariant(folderName.trim(), seedFolder, {
+        outcome = await submitFolderVariant(folderName.trim(), seedFolder, destinationId, {
           isFamilyWide: false,
           rows,
         });
@@ -1504,6 +1671,18 @@ export default function ShareDialog({
   // family-wide is active below.
   const anyRowActive = rows.some((r) => r.pendingLevel !== "none");
 
+  // 31-UI-SPEC.md's Destination Selector Contract: the SAME predicate
+  // `SharingOverviewPanel.tsx:315`'s own "By folder" tab already uses for
+  // "collections I manage" -- narrower than `CollectionPicker`'s unfiltered
+  // list on purpose, since selecting a read-only or `item_bucket` folder
+  // here would produce a call that cannot succeed (`RequireEdit`/
+  // `may_grant_access_level` server-side, and `collections::revoke_access`
+  // refuses `item_bucket` outright per the constraint 260812-01e
+  // introduced).
+  const editableExistingFolders = allCollections.filter(
+    (c) => c.accessLevel === "edit" && c.familyWideKind !== "item_bucket",
+  );
+
   const ctaKey = isFolder ? "share.ctaFolder" : "share.ctaItem";
   // 30-12: BOTH variants now have a real family-wide submit path (the item
   // one routes through the per-family `item_bucket` collection), so this is
@@ -1513,9 +1692,13 @@ export default function ShareDialog({
   const familyWideSubmittable = isFamilyWideSelected;
   const submitDisabled =
     sharing ||
+    // 31-03-PLAN.md: a destination-switch fetch is in flight -- the rows on
+    // screen are not yet this destination's real current state, so nothing
+    // reconciled from them right now would be trustworthy.
+    rowsLoading ||
     accountUnavailable ||
     (familyWideSubmittable ? accessLevel === null : !hasActionableRow) ||
-    (isFolder && folderName.trim() === "");
+    (isFolder && destinationId === null && folderName.trim() === "");
 
   return (
     <div
@@ -1577,7 +1760,42 @@ export default function ShareDialog({
                 </div>
               ) : (
                 <>
+                {/* 31-UI-SPEC.md's Destination Selector Contract (MOD-02/
+                    ORG-03): folder scope only, rendered ABOVE the row list
+                    (and above the folder-name input, which only makes sense
+                    once "mint new" is the chosen destination) -- it must
+                    come first because it determines what the rows below
+                    show. */}
                 {isFolder ? (
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor="share-destination-select" className="text-sm font-bold">
+                      {t("share.destinationLabel")}
+                    </label>
+                    <select
+                      id="share-destination-select"
+                      data-testid="share-destination-select"
+                      className="select select-bordered w-full"
+                      value={destinationId ?? "new"}
+                      disabled={sharing}
+                      onChange={(e) => void handleDestinationChange(e.target.value)}
+                    >
+                      <optgroup label={t("share.destinationNewGroupLabel")}>
+                        <option value="new">{t("share.destinationNewFolderOption")}</option>
+                      </optgroup>
+                      {editableExistingFolders.length > 0 ? (
+                        <optgroup label={t("share.destinationExistingGroupLabel")}>
+                          {editableExistingFolders.map((c) => (
+                            <option key={c.id} value={c.id} title={c.name}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ) : null}
+                    </select>
+                  </div>
+                ) : null}
+
+                {isFolder && destinationId === null ? (
                   <div className="flex flex-col gap-1">
                     <label htmlFor="share-folder-name-input" className="text-sm font-bold">
                       {t("share.newFolderNameLabel")}
@@ -1649,7 +1867,18 @@ export default function ShareDialog({
                   <p data-testid="share-no-other-members" className="text-sm text-base-content/70">
                     {t("share.noOtherMembers")}
                   </p>
-                ) : isFamilyWideSelected ? null : (
+                ) : isFamilyWideSelected ? null : rowsLoading ? (
+                  // 31-03-PLAN.md: the row region's OWN loading sub-state
+                  // while a destination switch's access-list fetch resolves
+                  // -- the destination `<select>` above stays interactive
+                  // throughout (its own `disabled={sharing}` is unaffected).
+                  <div
+                    className="flex items-center justify-center py-6"
+                    data-testid="share-rows-loading"
+                  >
+                    <span className="loading loading-spinner loading-md" aria-hidden="true" />
+                  </div>
+                ) : (
                   /* 31-UI-SPEC.md Row Anatomy (MOD-01) -- one standing row
                      per family member, BOTH scopes, replacing the old
                      shared checkbox list ENTIRELY. No nested scroller (see

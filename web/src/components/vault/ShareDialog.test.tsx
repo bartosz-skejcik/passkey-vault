@@ -37,6 +37,7 @@ const {
   mockUnsealCollectionKey,
   mockDecryptItemForCollection,
   mockGetFamilyWidePendingSnapshot,
+  mockReshareCollectionToNewMember,
 } = vi.hoisted(() => ({
   mockGetFamilyMembers: vi.fn(),
   mockCreateCollection: vi.fn(),
@@ -82,6 +83,12 @@ const {
   // Mocked with that SAME safe default so every other (unrelated) test is
   // unaffected; only the LO-02 test below overrides it.
   mockGetFamilyWidePendingSnapshot: vi.fn<() => FamilyWidePendingResponse>(() => ({ missing: [], resealable: [] })),
+  // Phase 31 Plan 03: mocked wholesale here per this file's own WR-10 scope
+  // note -- the composition's REAL crypto is proven by
+  // `ShareDialog.real-wasm.test.ts` (Task 2), never by this component-level
+  // suite. This IS the "reshareCollectionToNewMember" the dispatch-count
+  // test (Blocker 7) asserts zero/one calls against.
+  mockReshareCollectionToNewMember: vi.fn(),
 }));
 
 class FakeWasmCollectionKey {
@@ -93,6 +100,10 @@ class FakeWasmIdentityPublicKey {
 
 vi.mock("@/lib/families/api", () => ({
   getFamilyMembers: mockGetFamilyMembers,
+}));
+
+vi.mock("@/lib/families/reseal", () => ({
+  reshareCollectionToNewMember: mockReshareCollectionToNewMember,
 }));
 
 vi.mock("@/lib/families/familyWidePending", () => ({
@@ -187,8 +198,13 @@ import type { VaultItem, Folder } from "@/lib/vault/types";
 import type { CollectionRow } from "@/lib/vault/api";
 // Real, unmocked -- this is the module under test for the "collections
 // store integration" describe block below (proves a genuine readback, not
-// a spy on a refresh function having been called).
-import { getCollections } from "@/lib/vault/collections";
+// a spy on a refresh function having been called). Phase 31 Plan 03 adds
+// `refreshCollectionsNow`/`clearCollectionsOnRemoval`: the destination
+// selector's own `useCollections()` reads from this SAME real singleton
+// store, so seeding/resetting it directly (rather than mocking the hook) is
+// what makes the "existing-destination folder sharing" describe block below
+// exercise the real read path the component itself uses.
+import { getCollections, refreshCollectionsNow, clearCollectionsOnRemoval } from "@/lib/vault/collections";
 
 const SELF = { user_id: "self-1", email: "self@example.test", pw_wrapped_uk: "x" };
 
@@ -284,6 +300,13 @@ beforeEach(() => {
   mockRevokeItemShare.mockResolvedValue(undefined);
   mockUpdateCollectionAccess.mockResolvedValue(undefined);
   mockRevokeCollectionAccess.mockResolvedValue(undefined);
+  mockReshareCollectionToNewMember.mockResolvedValue(undefined);
+  // Phase 31 Plan 03: the destination selector's own `useCollections()` read
+  // path -- most tests in this file never select an existing destination,
+  // so a benign empty default keeps them unaffected; the
+  // "existing-destination folder sharing" describe block below seeds this
+  // explicitly per test via `refreshCollectionsNow()` and resets it after.
+  clearCollectionsOnRemoval();
   mockMoveItemToCollection.mockResolvedValue({ revision: 4, collection_id: "col-1", updated_at: "" });
   // Defaults for the real (unmocked) @/lib/vault/collections.ts module's own
   // dependencies -- see the "@/lib/crypto" mock comment above. Individual
@@ -961,6 +984,241 @@ describe("ShareDialog", () => {
       expect(mockUpdateItemShare).toHaveBeenCalledWith(ITEM.id, MEMBER_A.user_id, "edit");
       expect(mockCreateItemShare).not.toHaveBeenCalled();
       expect(mockRevokeItemShare).not.toHaveBeenCalled();
+    });
+  });
+
+  // 31-03-PLAN.md's Destination Selector Contract (MOD-02/ORG-03) -- folder
+  // scope only, rendered above the row list, choosing between minting a new
+  // shared folder (this dialog's pre-31-03 default) and targeting an
+  // EXISTING collection the caller already holds edit access to. Seeds
+  // `useCollections()`'s real singleton store directly (via
+  // `refreshCollectionsNow()`), never mocking the hook itself, so these
+  // tests exercise the SAME read path `CollectionPicker.tsx` and
+  // `SharingOverviewPanel.tsx:315` already do.
+  describe("destination selector (31-03-PLAN.md, MOD-02/ORG-03)", () => {
+    const SCOPE = { kind: "folder" as const, existingFolderId: null };
+    const EDIT_HELD_FOLDER: CollectionRow = {
+      id: "existing-col-edit",
+      enc_name: "e",
+      created_at: "",
+      access_level: "edit",
+      sealed_key: '{"sealed":"dest-key"}',
+    };
+    const READ_HELD_FOLDER: CollectionRow = {
+      id: "existing-col-read",
+      enc_name: "e",
+      created_at: "",
+      access_level: "read",
+      sealed_key: '{"sealed":"dest-key-2"}',
+    };
+    const ITEM_BUCKET_FOLDER: CollectionRow = {
+      id: "existing-col-bucket",
+      enc_name: "e",
+      created_at: "",
+      access_level: "edit",
+      sealed_key: '{"sealed":"dest-key-3"}',
+      family_wide_kind: "item_bucket",
+    };
+
+    it("offers only edit-held, non-item_bucket collections in 'Istniejące foldery' -- never CollectionPicker's unfiltered list", async () => {
+      mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER, READ_HELD_FOLDER, ITEM_BUCKET_FOLDER]);
+      await refreshCollectionsNow();
+
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+
+      const select = screen.getByTestId("share-destination-select") as HTMLSelectElement;
+      const optionValues = Array.from(select.options).map((o) => o.value);
+      expect(optionValues).toContain(EDIT_HELD_FOLDER.id);
+      expect(optionValues).not.toContain(READ_HELD_FOLDER.id);
+      expect(optionValues).not.toContain(ITEM_BUCKET_FOLDER.id);
+      // "Nowy folder…" always survives, regardless of what's editable.
+      expect(optionValues).toContain("new");
+    });
+
+    it("never renders the destination selector for the item scope", async () => {
+      mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+      await refreshCollectionsNow();
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      expect(screen.queryByTestId("share-destination-select")).not.toBeInTheDocument();
+    });
+
+    it("switching to an existing destination re-fetches the real access list and re-seeds every row -- a pending edit queued against the PREVIOUS destination is never carried forward (Pitfall 3, T-31-10)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+      await refreshCollectionsNow();
+      mockGetCollectionAccessList.mockImplementation(async (collectionId: string) => {
+        if (collectionId === EDIT_HELD_FOLDER.id) {
+          return [
+            { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "read", created_at: "", suspended: false },
+          ];
+        }
+        return [];
+      });
+
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+
+      // A pending edit queued against "Nowy folder…" (the default
+      // destination) -- this row has no currentLevel yet, so "edit" here is
+      // a pending GRANT, not an edit of anything real.
+      setRowLevel(MEMBER_A.user_id, "edit");
+      expect(
+        (screen.getByTestId(`share-recipient-row-select-${MEMBER_A.user_id}`) as HTMLSelectElement).value,
+      ).toBe("edit");
+
+      fireEvent.change(screen.getByTestId("share-destination-select"), {
+        target: { value: EDIT_HELD_FOLDER.id },
+      });
+
+      await waitFor(() =>
+        expect(screen.getByTestId(`share-recipient-row-currently-${MEMBER_A.user_id}`)).toBeInTheDocument(),
+      );
+      // Re-seeded from the NEW destination's real state -- the "edit" queued
+      // against the OLD one was never carried over.
+      expect(
+        (screen.getByTestId(`share-recipient-row-select-${MEMBER_A.user_id}`) as HTMLSelectElement).value,
+      ).toBe("read");
+      expect(mockGetCollectionAccessList).toHaveBeenCalledWith(EDIT_HELD_FOLDER.id);
+    });
+
+    it("shows a row-region loading state while the destination switch's access-list fetch is in flight, without disabling the destination select itself", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+      await refreshCollectionsNow();
+      let resolveAccessList!: (value: unknown[]) => void;
+      mockGetCollectionAccessList.mockReturnValue(
+        new Promise((resolve) => {
+          resolveAccessList = resolve;
+        }),
+      );
+
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+
+      fireEvent.change(screen.getByTestId("share-destination-select"), {
+        target: { value: EDIT_HELD_FOLDER.id },
+      });
+
+      await waitFor(() => expect(screen.getByTestId("share-rows-loading")).toBeInTheDocument());
+      expect(screen.getByTestId("share-destination-select")).not.toBeDisabled();
+
+      resolveAccessList([]);
+      await waitFor(() => expect(screen.queryByTestId("share-rows-loading")).not.toBeInTheDocument());
+    });
+
+    it("granting a NEW recipient (currentLevel null) on an existing destination dispatches EXACTLY ONE reshareCollectionToNewMember call and ZERO addCollectionMember/updateCollectionAccess/revokeCollectionAccess calls", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+      await refreshCollectionsNow();
+      mockGetCollectionAccessList.mockResolvedValue([]);
+
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+
+      fireEvent.change(screen.getByTestId("share-destination-select"), {
+        target: { value: EDIT_HELD_FOLDER.id },
+      });
+      await waitFor(() => expect(screen.queryByTestId("share-rows-loading")).not.toBeInTheDocument());
+
+      setRowLevel(MEMBER_A.user_id, "edit");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      expect(mockReshareCollectionToNewMember).toHaveBeenCalledTimes(1);
+      expect(mockReshareCollectionToNewMember).toHaveBeenCalledWith(
+        EDIT_HELD_FOLDER.id,
+        MEMBER_A.user_id,
+        "edit",
+        uk,
+      );
+      expect(mockAddCollectionMember).not.toHaveBeenCalled();
+      expect(mockUpdateCollectionAccess).not.toHaveBeenCalled();
+      expect(mockRevokeCollectionAccess).not.toHaveBeenCalled();
+    });
+
+    describe("dispatch-count against an EXISTING destination (Blocker 7, T-31-06)", () => {
+      it("a row transitioning read -> edit issues EXACTLY ONE updateCollectionAccess call and ZERO reshareCollectionToNewMember/addCollectionMember/revokeCollectionAccess calls for that userId", async () => {
+        mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+        mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+        await refreshCollectionsNow();
+        mockGetCollectionAccessList.mockResolvedValue([
+          { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "read", created_at: "", suspended: false },
+        ]);
+
+        const onShared = vi.fn();
+        render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+        await waitForPopulated();
+
+        fireEvent.change(screen.getByTestId("share-destination-select"), {
+          target: { value: EDIT_HELD_FOLDER.id },
+        });
+        await waitFor(() =>
+          expect(screen.getByTestId(`share-recipient-row-currently-${MEMBER_A.user_id}`)).toBeInTheDocument(),
+        );
+
+        setRowLevel(MEMBER_A.user_id, "edit");
+        fireEvent.click(screen.getByTestId("share-submit"));
+
+        await waitFor(() => expect(onShared).toHaveBeenCalled());
+        expect(mockUpdateCollectionAccess).toHaveBeenCalledTimes(1);
+        expect(mockUpdateCollectionAccess).toHaveBeenCalledWith(EDIT_HELD_FOLDER.id, MEMBER_A.user_id, "edit");
+        expect(mockReshareCollectionToNewMember).not.toHaveBeenCalled();
+        expect(mockAddCollectionMember).not.toHaveBeenCalled();
+        expect(mockRevokeCollectionAccess).not.toHaveBeenCalled();
+      });
+    });
+
+    it("setting an existing row to 'brak dostępu' issues EXACTLY ONE revokeCollectionAccess call and ZERO reshareCollectionToNewMember/addCollectionMember/updateCollectionAccess calls", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+      await refreshCollectionsNow();
+      mockGetCollectionAccessList.mockResolvedValue([
+        { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "edit", created_at: "", suspended: false },
+      ]);
+
+      const onShared = vi.fn();
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+      await waitForPopulated();
+
+      fireEvent.change(screen.getByTestId("share-destination-select"), {
+        target: { value: EDIT_HELD_FOLDER.id },
+      });
+      await waitFor(() =>
+        expect(screen.getByTestId(`share-recipient-row-currently-${MEMBER_A.user_id}`)).toBeInTheDocument(),
+      );
+
+      setRowLevel(MEMBER_A.user_id, "none");
+      fireEvent.click(screen.getByTestId("share-submit"));
+
+      await waitFor(() => expect(onShared).toHaveBeenCalled());
+      expect(mockRevokeCollectionAccess).toHaveBeenCalledTimes(1);
+      expect(mockRevokeCollectionAccess).toHaveBeenCalledWith(EDIT_HELD_FOLDER.id, MEMBER_A.user_id);
+      expect(mockReshareCollectionToNewMember).not.toHaveBeenCalled();
+      expect(mockAddCollectionMember).not.toHaveBeenCalled();
+      expect(mockUpdateCollectionAccess).not.toHaveBeenCalled();
+    });
+
+    it("the folder-name input and seed summary are hidden once an existing destination is chosen, and submit no longer requires a name", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+      await refreshCollectionsNow();
+      mockGetCollectionAccessList.mockResolvedValue([]);
+
+      render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      expect(screen.getByTestId("share-folder-name-input")).toBeInTheDocument();
+
+      fireEvent.change(screen.getByTestId("share-destination-select"), {
+        target: { value: EDIT_HELD_FOLDER.id },
+      });
+      await waitFor(() => expect(screen.queryByTestId("share-rows-loading")).not.toBeInTheDocument());
+
+      expect(screen.queryByTestId("share-folder-name-input")).not.toBeInTheDocument();
+      setRowLevel(MEMBER_A.user_id, "edit");
+      expect(screen.getByTestId("share-submit")).not.toBeDisabled();
     });
   });
 

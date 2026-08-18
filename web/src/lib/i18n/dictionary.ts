@@ -1240,6 +1240,15 @@ export const DICTIONARY = {
     en: `Share folder "{name}"`,
   },
   "share.folderDialogTitleNew": { pl: "Nowy udostępniony folder", en: "New shared folder" },
+  // Phase 31 Plan 03 (31-UI-SPEC.md's Destination Selector Contract,
+  // MOD-02/ORG-03) — the folder-scope-only selector rendered above the row
+  // list, choosing between minting a brand-new shared folder and targeting
+  // one the caller already holds edit access to. Verbatim per the plan's
+  // own key names.
+  "share.destinationLabel": { pl: "Cel udostępnienia", en: "Destination" },
+  "share.destinationNewFolderOption": { pl: "Nowy folder…", en: "New folder…" },
+  "share.destinationNewGroupLabel": { pl: "Utwórz nowy", en: "Create new" },
+  "share.destinationExistingGroupLabel": { pl: "Istniejące foldery", en: "Existing folders" },
   "share.recipientsLabel": { pl: "Komu udostępnić", en: "Share with" },
   "share.noOtherMembers": {
     pl: "W Twojej rodzinie nie ma jeszcze innych członków. Zaproś kogoś, żeby móc udostępniać.",
