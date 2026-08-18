@@ -1341,6 +1341,21 @@ export const DICTIONARY = {
     pl: "Nie udało się udostępnić: {recipients}. Pozostałe dostępy zostały już przyznane — ponowna próba ich nie zduplikuje.",
     en: "Couldn't share with: {recipients}. The other grants already went through — retrying won't duplicate them.",
   },
+  // 31-06-PLAN.md (SC5, T-31-16): the destination-unavailable refusal --
+  // fires when a fresh `getCollection(destinationId)` re-fetch immediately
+  // before dispatch finds the caller's own `sealed_key` gone (a `null` in a
+  // 200, or the request itself now 404s), which per 31-RESEARCH.md is only
+  // reachable through a narrow TOCTOU window: the caller's own access to
+  // that destination was revoked in a concurrent session between
+  // dialog-open/destination-select and submit. Deliberately NOT
+  // `share.createFailed`'s retry-inviting copy -- clicking Save again cannot
+  // possibly succeed until the caller's own access is restored, mirroring
+  // the precedent `share.pendingFamilyKeyNote` set for a different
+  // known-cause, non-retryable refusal.
+  "share.destinationUnavailable": {
+    pl: "Nie można udostępnić — brak dostępu do klucza tego miejsca docelowego.",
+    en: "Can't share — no access to this destination's key.",
+  },
   "share.newFolderNameLabel": { pl: "Nazwa folderu", en: "Folder name" },
   // WR-05 (code review, Phase 26): a seed-move partial failure used to
   // render `share.createFailed` ("Couldn't share. Try again.") over a share

@@ -21,6 +21,7 @@ const {
   mockRevokeItemShare,
   mockUpdateCollectionAccess,
   mockRevokeCollectionAccess,
+  mockGetCollection,
   mockGetItems,
   mockGetFolders,
   mockGetUnlockedUserKey,
@@ -55,6 +56,10 @@ const {
   mockRevokeItemShare: vi.fn(),
   mockUpdateCollectionAccess: vi.fn(),
   mockRevokeCollectionAccess: vi.fn(),
+  // Phase 31 Plan 06 (SC5, T-31-16): the fresh pre-dispatch re-fetch
+  // `submitRowsForExistingDestination` now performs before any grant/
+  // update/revoke call against an existing destination.
+  mockGetCollection: vi.fn(),
   mockGetItems: vi.fn(),
   mockGetFolders: vi.fn(),
   mockGetUnlockedUserKey: vi.fn(),
@@ -117,6 +122,7 @@ vi.mock("@/lib/vault/api", () => ({
   listCollections: mockListCollections,
   createItemShare: mockCreateItemShare,
   addCollectionMember: mockAddCollectionMember,
+  getCollection: mockGetCollection,
   getCollectionAccessList: mockGetCollectionAccessList,
   listItemShares: mockListItemShares,
   updateItemShare: mockUpdateItemShare,
@@ -306,6 +312,18 @@ beforeEach(() => {
   mockUpdateCollectionAccess.mockResolvedValue(undefined);
   mockRevokeCollectionAccess.mockResolvedValue(undefined);
   mockReshareCollectionToNewMember.mockResolvedValue(undefined);
+  // 31-06-PLAN.md (SC5, T-31-16): sane default so every PRE-EXISTING
+  // existing-destination test (which never selected losing access) keeps
+  // resolving a usable `sealed_key` from the fresh pre-dispatch re-fetch --
+  // the "destination unavailable" describe block below overrides this
+  // per test to exercise both refusal shapes.
+  mockGetCollection.mockResolvedValue({
+    id: "unused-default",
+    enc_name: "e",
+    created_at: "",
+    access_level: "edit",
+    sealed_key: '{"sealed":"fresh-dest-key"}',
+  });
   // Phase 31 Plan 03: the destination selector's own `useCollections()` read
   // path -- most tests in this file never select an existing destination,
   // so a benign empty default keeps them unaffected; the
@@ -1353,6 +1371,79 @@ describe("ShareDialog", () => {
       expect(screen.queryByTestId("share-folder-name-input")).not.toBeInTheDocument();
       setRowLevel(MEMBER_A.user_id, "edit");
       expect(screen.getByTestId("share-submit")).not.toBeDisabled();
+    });
+
+    // 31-06-PLAN.md (SC5, T-31-16): the destination-unavailable refusal.
+    // Both defensive shapes -- a `null` sealed_key in a resolved response,
+    // and the `getCollection` call itself throwing (the actually-reachable
+    // 404 shape per 31-RESEARCH.md) -- must map to the SAME honest,
+    // non-retry-worded message, rendered inside the still-mounted dialog,
+    // with ZERO grant/update/revoke dispatch (nothing committed).
+    describe("destination unavailable (31-06-PLAN.md, SC5, T-31-16)", () => {
+      it("a fresh getCollection re-fetch resolving with sealed_key: null refuses honestly and dispatches NOTHING", async () => {
+        mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+        mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+        await refreshCollectionsNow();
+        mockGetCollectionAccessList.mockResolvedValue([]);
+        mockGetCollection.mockResolvedValue({
+          id: EDIT_HELD_FOLDER.id,
+          enc_name: "e",
+          created_at: "",
+          access_level: null,
+          sealed_key: null,
+        });
+
+        render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+        await waitForPopulated();
+
+        fireEvent.change(screen.getByTestId("share-destination-select"), {
+          target: { value: EDIT_HELD_FOLDER.id },
+        });
+        await waitFor(() => expect(screen.queryByTestId("share-rows-loading")).not.toBeInTheDocument());
+
+        setRowLevel(MEMBER_A.user_id, "edit");
+        fireEvent.click(screen.getByTestId("share-submit"));
+
+        await waitFor(() => expect(screen.getByTestId("share-error")).toBeInTheDocument());
+        expect(screen.getByTestId("share-error")).toHaveTextContent("share.destinationUnavailable");
+        expect(screen.getByTestId("share-error")).toHaveAttribute("role", "alert");
+        // The dialog is still mounted -- the refusal is visible, not
+        // asserted after detach (260812-01e ME-05's own hazard).
+        expect(screen.getByTestId("share-dialog")).toBeInTheDocument();
+        // No partial membership: the fresh re-fetch throws BEFORE the
+        // dispatch loop starts, so none of the three ops ever fire.
+        expect(mockReshareCollectionToNewMember).not.toHaveBeenCalled();
+        expect(mockAddCollectionMember).not.toHaveBeenCalled();
+        expect(mockUpdateCollectionAccess).not.toHaveBeenCalled();
+        expect(mockRevokeCollectionAccess).not.toHaveBeenCalled();
+      });
+
+      it("a fresh getCollection re-fetch that itself throws (the 404 shape) refuses with the SAME honest message and dispatches NOTHING", async () => {
+        mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+        mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+        await refreshCollectionsNow();
+        mockGetCollectionAccessList.mockResolvedValue([]);
+        mockGetCollection.mockRejectedValue(new Error("404 not found"));
+
+        render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+        await waitForPopulated();
+
+        fireEvent.change(screen.getByTestId("share-destination-select"), {
+          target: { value: EDIT_HELD_FOLDER.id },
+        });
+        await waitFor(() => expect(screen.queryByTestId("share-rows-loading")).not.toBeInTheDocument());
+
+        setRowLevel(MEMBER_A.user_id, "edit");
+        fireEvent.click(screen.getByTestId("share-submit"));
+
+        await waitFor(() => expect(screen.getByTestId("share-error")).toBeInTheDocument());
+        expect(screen.getByTestId("share-error")).toHaveTextContent("share.destinationUnavailable");
+        expect(screen.getByTestId("share-dialog")).toBeInTheDocument();
+        expect(mockReshareCollectionToNewMember).not.toHaveBeenCalled();
+        expect(mockAddCollectionMember).not.toHaveBeenCalled();
+        expect(mockUpdateCollectionAccess).not.toHaveBeenCalled();
+        expect(mockRevokeCollectionAccess).not.toHaveBeenCalled();
+      });
     });
   });
 

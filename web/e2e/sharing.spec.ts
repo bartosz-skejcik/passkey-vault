@@ -94,6 +94,14 @@ async function apiPost(
   });
 }
 
+/** 31-06-PLAN.md (SC5, T-31-16): the raw DELETE this file's own TOCTOU-driven
+ * refusal test needs -- the SECOND edit-holder's own session revokes the
+ * OWNER's own access mid-session, which no existing helper in this file
+ * performs (every prior revoke test drives the UI, never a raw DELETE). */
+async function apiDelete(request: BrowserContext["request"], path: string, token: string) {
+  return request.delete(`${BASE_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+}
+
 async function tokenFor(page: Page): Promise<string> {
   const token = await page.evaluate(() => window.localStorage.getItem("pv-session-token"));
   if (!token) {
@@ -1343,5 +1351,167 @@ test("the sixth proof obligation: setting a member with existing access to 'Brak
 
   expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
   expect(member.dialogFired(), "zero OS-level dialogs across the member session").toBe(false);
+  await owner.context.close();
+});
+
+// 31-06-PLAN.md Task 1 -- SC5's SECOND, genuinely new refusal case: the
+// destination's own key becomes unavailable to the caller mid-session.
+// Per 31-RESEARCH.md's own finding, `getCollection(id).sealed_key` is
+// documented as "should be unreachable" through a `Membership<Collection,
+// RequireRead>`-gated handler -- the ONLY real route to it is a narrow
+// TOCTOU window: the caller's own access is revoked in a CONCURRENT
+// session between the destination list loading and submit. This test
+// DRIVES that window deliberately (a second, independent edit-holder
+// revokes the owner's own access mid-dialog-session) rather than waiting
+// for it, and asserts BOTH halves: the owner sees the honest refusal while
+// the dialog is STILL MOUNTED, and the server state is genuinely unchanged
+// (asserted from the SECOND edit-holder's own token, since the owner's own
+// `GET .../access` call would itself now 404 -- they lost access too).
+test("SC5: a concurrent revoke of the caller's OWN access to an existing destination, driven mid-session between destination-select and submit, refuses honestly with NO partial membership behind (T-31-16)", async ({
+  twoSessions,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+
+  const [memberA, memberB] = twoSessions;
+  const memberAToken = await tokenFor(memberA.page);
+  const memberBToken = await tokenFor(memberB.page);
+  const memberAUserId = await userIdFor(memberA.context, memberAToken);
+  const memberBUserId = await userIdFor(memberB.context, memberBToken);
+
+  await ensureFamilyMembership(browser, [memberAUserId, memberBUserId]);
+  await waitForIdentityKeyPublished(memberA.context, memberAToken);
+  await waitForIdentityKeyPublished(memberB.context, memberBToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+  const ownerUserId = await userIdFor(owner.context, ownerToken);
+
+  const suffix = uniqueSuffix();
+  const destinationName = `PV E2E SC5 Destination ${suffix}`;
+
+  // 1. Establish the destination the owner CO-MANAGES with a SECOND real
+  //    edit-holder (memberA) -- this is what makes the later revoke
+  //    observable: WR-06's last-key-holder guard requires at least one
+  //    OTHER key-holder to remain, and memberA (still `edit`-capable after
+  //    the owner's own row is gone) is that remaining holder AND the one
+  //    performing the revoke (`RequireEdit`-gated).
+  const collectionsBaseline = await listCollectionIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-shared-folders").click();
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-folder-name-input").fill(destinationName);
+  await owner.page.getByTestId(`share-recipient-row-select-${memberAUserId}`).selectOption("edit");
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  const destinationId = await newIdAfter(collectionsBaseline, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 2. Owner reopens ShareDialog, selects the EXISTING destination via the
+  //    selector, and waits for the real re-seed (memberA's own "Currently:
+  //    edit" row) -- exactly SC2's own destination-selection shape.
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-destination-select").selectOption(destinationId);
+  await owner.page
+    .getByTestId(`share-recipient-row-currently-${memberAUserId}`)
+    .waitFor({ state: "visible", timeout: 20000 });
+
+  // 3. The BEFORE snapshot -- captured on the SECOND edit-holder's OWN
+  //    session/token, BEFORE the owner's submit. This is the honest
+  //    baseline the AFTER snapshot (step 6) is compared against: the
+  //    owner's own token cannot be used for this, since the very next step
+  //    revokes the owner's own access (their own future GET would 404).
+  const accessBeforeRes = await apiGet(
+    memberA.context.request,
+    `/api/vault/collections/${destinationId}/access`,
+    memberAToken,
+  );
+  expect(accessBeforeRes.status(), "memberA's own token must still read the access list before the revoke").toBe(
+    200,
+  );
+  const accessBefore = (await accessBeforeRes.json()) as {
+    user_id: string;
+    access_level: string;
+    created_at: string;
+  }[];
+
+  // 4. The deliberately-driven TOCTOU window: STILL using memberA's own
+  //    session, revoke the OWNER's own access to the destination -- between
+  //    the owner's destination-selection (step 2, already done) and their
+  //    submit click (step 5, below).
+  const revokeRes = await apiDelete(
+    memberA.context.request,
+    `/api/vault/collections/${destinationId}/access/${ownerUserId}`,
+    memberAToken,
+  );
+  expect(
+    revokeRes.status(),
+    "memberA (edit-capable, and the remaining key-holder) must be able to revoke the owner's own access",
+  ).toBe(204);
+
+  // 5. The owner -- unaware their own access to the destination is now
+  //    gone -- submits a change: granting memberB a brand-new row. Neither
+  //    memberB's grant nor any other dispatch may reach the network; the
+  //    fresh pre-dispatch `getCollection` re-fetch must refuse BEFORE any
+  //    of the three ops fire.
+  await owner.page.getByTestId(`share-recipient-row-select-${memberBUserId}`).selectOption("read");
+  await owner.page.getByTestId("share-submit").click();
+
+  // 6. Assert the refusal while share-dialog is STILL MOUNTED -- queried
+  //    BEFORE any waitFor({ state: "detached" }), per 260812-01e ME-05's
+  //    own standing hazard (an assertion evaluated post-detach is
+  //    trivially true). Hardcoded EN literal, never sourced from `t()` --
+  //    mirrors this codebase's established honesty-string pinning
+  //    convention (share.hiddenPasswordInlineNote et al.) so a silent
+  //    reword back toward retry-inviting copy would be caught here.
+  const errorLocator = owner.page.getByTestId("share-error");
+  await expect(
+    errorLocator,
+    "the destination-unavailable refusal must render while share-dialog is still mounted",
+  ).toBeVisible({ timeout: 20000 });
+  await expect(owner.page.getByTestId("share-dialog")).toBeVisible();
+  await expect(errorLocator).toHaveText("Can't share — no access to this destination's key.");
+  expect(
+    await errorLocator.textContent(),
+    "must never be share.createFailed's retry-inviting copy -- retrying cannot succeed until access is restored",
+  ).not.toContain("Try again");
+
+  // 7. The AFTER snapshot -- again on memberA's OWN session/token (never
+  //    the owner's, which would itself now 404). The BEFORE snapshot (step
+  //    3) was captured BEFORE step 4's deliberate revoke, so the owner's
+  //    OWN row disappearing between BEFORE and AFTER is the setup action's
+  //    own effect, not evidence of anything the failed submit did -- the
+  //    property this step actually owns is that the ONLY difference
+  //    between BEFORE and AFTER is that deliberate removal: no new memberB
+  //    row, no changed row, from the failed attempt -- "no partial
+  //    membership behind" (T-31-16).
+  const accessAfterRes = await apiGet(
+    memberA.context.request,
+    `/api/vault/collections/${destinationId}/access`,
+    memberAToken,
+  );
+  expect(accessAfterRes.status()).toBe(200);
+  const accessAfter = (await accessAfterRes.json()) as {
+    user_id: string;
+    access_level: string;
+    created_at: string;
+  }[];
+  const expectedAfterDeliberateRevokeOnly = accessBefore.filter((a) => a.user_id !== ownerUserId);
+  expect(
+    accessAfter,
+    "the failed submit must add/change NOTHING beyond step 4's own deliberate revoke of the owner's row -- no partial membership from the doomed attempt itself",
+  ).toEqual(expectedAfterDeliberateRevokeOnly);
+  expect(
+    accessAfter.find((a) => a.user_id === memberBUserId),
+    "memberB's doomed grant must never have landed",
+  ).toBeUndefined();
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(memberA.dialogFired(), "zero OS-level dialogs across memberA's session").toBe(false);
+  expect(memberB.dialogFired(), "zero OS-level dialogs across memberB's session").toBe(false);
   await owner.context.close();
 });

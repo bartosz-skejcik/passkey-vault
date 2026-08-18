@@ -75,6 +75,7 @@ import {
   listCollections,
   createItemShare,
   addCollectionMember,
+  getCollection,
   getCollectionAccessList,
   listItemShares,
   updateCollectionAccess,
@@ -501,6 +502,34 @@ async function submitRowsForCollection(
   return failed;
 }
 
+/** 31-06-PLAN.md (SC5, T-31-16): thrown by `submitRowsForExistingDestination`
+ * when a FRESH `getCollection(destinationId)` re-fetch -- taken immediately
+ * before dispatching the FIRST grant/update/revoke call, never a value
+ * cached from dialog-open or destination-select time -- shows the caller's
+ * own access to the destination is gone. Two shapes collapse to this SAME
+ * error, per 31-RESEARCH.md's finding that this is reachable only through a
+ * narrow TOCTOU window (the caller's own access revoked in a concurrent
+ * session between the destination list loading and submit):
+ *  - a successful response whose `sealed_key` is unexpectedly `null`
+ *    (`Membership<Collection, RequireRead>` should make this unreachable in
+ *    the ordinary case -- kept as a defensive check, not the expected path);
+ *  - the `getCollection` call itself throwing (a 404 `ApiClientError`,
+ *    since a `RequireRead`-gated handler 404s the instant the caller's own
+ *    `collection_keys` row is gone -- the actually-reachable shape).
+ * `handleSubmit` catches this specifically and renders
+ * `share.destinationUnavailable` -- deliberately NOT `share.createFailed`'s
+ * retry-inviting copy, mirroring `FamilyWideKeyPendingError`'s precedent for
+ * a known, non-retryable cause. Thrown BEFORE the dispatch loop starts, so
+ * "no partial membership" holds by construction: nothing was dispatched. */
+class DestinationUnavailableError extends Error {
+  readonly destinationId: string;
+  constructor(destinationId: string) {
+    super(`destination ${destinationId} is unavailable -- caller's own sealed_key is gone`);
+    this.name = "DestinationUnavailableError";
+    this.destinationId = destinationId;
+  }
+}
+
 /** 31-03-PLAN.md's destination-selector counterpart to `submitRowsForCollection`
  * above -- dispatches against an EXISTING destination the caller already
  * holds edit access to (never a freshly minted collection, no
@@ -530,12 +559,31 @@ async function submitRowsForCollection(
  *
  * EXPORTED so `ShareDialog.real-wasm.test.ts` (Task 2) calls this EXACT
  * production dispatch rather than re-implementing the composition --
- * mirrors `shareItemWithRecipients`'s identical export rationale. */
+ * mirrors `shareItemWithRecipients`'s identical export rationale.
+ *
+ * 31-06-PLAN.md (SC5, T-31-16): before dispatching ANY of the three ops
+ * above, re-fetches `getCollection(destinationId)` FRESH -- never a value
+ * cached from dialog-open or destination-select time -- and throws
+ * `DestinationUnavailableError` if that call fails OR resolves with a
+ * `null` `sealed_key`. This runs ONCE, before the loop, not per-row: if the
+ * caller's own access is gone, it is gone for every row in this submission,
+ * and throwing here means nothing in the loop below ever dispatches --
+ * "no partial membership behind" holds by construction, not by cleanup. */
 export async function submitRowsForExistingDestination(
   destinationId: string,
   rows: RecipientRow[],
   uk: WasmUserKey,
 ): Promise<{ failedRecipients: string[]; committedAnything: boolean }> {
+  let freshDestination: CollectionRow;
+  try {
+    freshDestination = await getCollection(destinationId);
+  } catch {
+    throw new DestinationUnavailableError(destinationId);
+  }
+  if (freshDestination.sealed_key === null) {
+    throw new DestinationUnavailableError(destinationId);
+  }
+
   const actionable = rows.filter(
     (r) => reconcileRowAction(r.currentLevel, r.pendingLevel).kind !== "noop",
   );
@@ -1593,6 +1641,13 @@ export default function ShareDialog({
       // copy `DetailPanel.tsx` already uses for this exact state instead.
       if (err instanceof FamilyWideKeyPendingError) {
         setFamilyKeyPending(true);
+      } else if (err instanceof DestinationUnavailableError) {
+        // 31-06-PLAN.md (SC5): the caller's own access to the chosen
+        // existing destination is gone (a concurrent revoke mid-session).
+        // Deliberately NOT `share.createFailed` -- retrying cannot succeed
+        // until access is restored. Renders in the same `share-error` slot,
+        // inside the STILL-MOUNTED dialog (setState below keeps it open).
+        setSubmitError(t("share.destinationUnavailable"));
       } else {
         setSubmitError(t("share.createFailed"));
       }
