@@ -1524,6 +1524,23 @@ pub struct UpdateItemShareRequest {
 /// A `PUT` against an `(item_id, user_id)` pair with no existing
 /// `item_shares` row is a `404`, never a silent upsert — same
 /// `rows_affected() == 0` discipline as `update_access`.
+///
+/// ME-08 (31-REVIEW.md) — NAMED ACCEPTED RISK, not a proven non-issue: this
+/// handler inherits `create_share`'s pre-existing `item_bucket` bypass.
+/// `enforce_item_bucket_declared_level_bound` guards `collection_keys`
+/// only, never `item_shares` — `membership::claim_item_bucket_edit_in_tx`
+/// can put `edit` in a self-escalated contributor's hands on a bucket
+/// declared BELOW `edit`, and `Membership<Item, RequireEdit>` is then
+/// satisfied for every item in that bucket, so `create_share`/`update_share`
+/// will write ANY level to `item_shares` for ANY recipient — a
+/// contributor-escalation path this handler does not close. `create_share`
+/// already carried this gap before this plan; `update_share` widens it from
+/// "create a new direct share" to "also change existing ones". Closing it
+/// properly needs an item-scoped variant of
+/// `enforce_item_bucket_declared_level_bound` that resolves the item's
+/// owning collection and applies the same equality bound — out of scope for
+/// this fix pass; recorded here so a future reader does not mistake the
+/// omission for a proven non-issue.
 pub async fn update_share(
     State(state): State<AppState>,
     membership: Membership<Item, RequireEdit>,

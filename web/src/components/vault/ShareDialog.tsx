@@ -555,10 +555,19 @@ async function submitRowsForCollection(
     const isRevoke = reconcileRowAction(row.currentLevel, row.pendingLevel).kind === "revoke";
     try {
       await reconcileRow(row, {
-        // Unreachable this plan (see doc comment above) -- grants for the
+        // LO-04 fix (31-REVIEW.md): structurally unreachable this plan
+        // (`otherRows` above is filtered to exclude "grant"; grants for the
         // folder scope always go through `grantRows`/`grantCollectionToRows`
-        // above, batched for shared WASM-handle management.
-        grant: async () => undefined,
+        // above, batched for shared WASM-handle management) -- but a
+        // silent successful no-op is the worst possible failure mode if
+        // that filter ever drifts: a row would be reported as granted with
+        // zero network calls. Throws instead, so a future regression here
+        // fails loudly rather than silently.
+        grant: async () => {
+          throw new Error(
+            "unreachable: mint-new folder grants go through grantCollectionToRows, never this dispatcher's grant op",
+          );
+        },
         update: (level) => updateCollectionAccess(collectionId, row.userId, level),
         revoke: () => revokeCollectionAccess(collectionId, row.userId),
       });

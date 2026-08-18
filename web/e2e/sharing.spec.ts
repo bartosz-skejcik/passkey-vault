@@ -643,7 +643,14 @@ test("owner-of-item shares a personal item directly at all three access levels, 
         await sharer.page.setViewportSize({ width: 375, height: 800 });
         await expect(inlineNote).toBeVisible();
         const mobileFits = await inlineNote.evaluate((el) => el.scrollWidth <= el.clientWidth);
-        const mobileScreenshotPath = `/private/tmp/claude-501/-Users-j5on--work-projects-passkey-vault/939d8db5-eefd-495c-95db-4758fe0b4ec7/scratchpad/31-05-hidden-password-note-375px-${suffix}.png`;
+        // LO-03 fix (31-REVIEW.md): was a hardcoded, session-specific
+        // absolute scratchpad path -- machine/user/session-UUID-specific,
+        // and committed into CI code that will never resolve on any other
+        // machine (the `.catch(() => {})` masked that it never produced the
+        // artifact anywhere but the one machine it was written on).
+        // `test.info().outputPath()` is Playwright's own portable
+        // per-test-run artifact location.
+        const mobileScreenshotPath = test.info().outputPath(`31-05-hidden-password-note-375px-${suffix}.png`);
         await sharer.page.getByTestId("share-dialog").screenshot({ path: mobileScreenshotPath }).catch(() => {});
         expect(mobileFits, "the inline note must wrap, never overflow, the real rendered card at 375px").toBe(true);
         if (desktopViewport) {
