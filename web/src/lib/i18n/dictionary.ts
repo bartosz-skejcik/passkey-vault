@@ -1267,6 +1267,21 @@ export const DICTIONARY = {
     pl: "Brak opublikowanego klucza — nie można udostępnić.",
     en: "No published key — can't share with them.",
   },
+  // Phase 31 Plan 04 (31-UI-SPEC.md Copywriting Contract, MOD-01's sixth
+  // proof obligation) — the pending-revocations honesty summary. Renders
+  // ONLY when >=1 row's pendingLevel is "none" while its currentLevel is
+  // not (a real queued revocation), below the row list, above the footer.
+  // `{names}` is a comma-joined email list, mirroring
+  // `share.partialShareFailed`'s existing `.join(", ")` convention. `{count}
+  // os.` sidesteps Polish plural-form agreement exactly as
+  // `share.seedFolderSummary`'s "{count} elem." already does. Verbatim per
+  // the UI-SPEC — never softened, since this sentence is what carries the
+  // "brak dostępu really revokes" honesty weight in place of a second
+  // confirm dialog.
+  "share.pendingRevocationsSummary": {
+    pl: "Zapisanie cofnie dostęp {count} os.: {names}. Cofnięcie dostępu nie cofa tego, co już zobaczyli.",
+    en: "Saving will revoke access for {count} people: {names}. Revoking access doesn't undo what they've already seen.",
+  },
   // Deliberately not a bare "Udostępnij"/"Share" — the same submit button
   // backs two structurally different grants across the item/folder
   // variants, and honesty constraint 4 requires that distinction stay

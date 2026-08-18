@@ -175,6 +175,11 @@ const HIDDEN_PASSWORD_HONESTY_KEYS = new Set([
   // WR-04: the inline note's generic `{recipient}` fallback is part of the
   // same honesty string, so it renders real dictionary text here too.
   "share.hiddenPasswordRecipientFallback",
+  // 31-04-PLAN.md: the pending-revocations summary is the SAME weight-class
+  // of honesty string (see 31-UI-SPEC.md's Design System note on reusing
+  // RevokeShareDialog's text-base sizing) -- real dictionary text lets the
+  // "correct count/name interpolation" tests below catch a real reword.
+  "share.pendingRevocationsSummary",
 ]);
 
 vi.mock("@/lib/i18n/LocaleContext", async () => {
@@ -984,6 +989,97 @@ describe("ShareDialog", () => {
       expect(mockUpdateItemShare).toHaveBeenCalledWith(ITEM.id, MEMBER_A.user_id, "edit");
       expect(mockCreateItemShare).not.toHaveBeenCalled();
       expect(mockRevokeItemShare).not.toHaveBeenCalled();
+    });
+  });
+
+  // 31-04-PLAN.md (MOD-01's sixth proof obligation, T-31-13): the
+  // pending-revocations honesty summary. Its {count}/{names} MUST derive
+  // from the exact same `rows` state `reconcileRow` dispatches from --
+  // these tests assert both the render-guard (present ONLY for a real
+  // queued revocation, absent for pure-addition/pure-edit) and the
+  // interpolated content. Both the absence and presence assertions here are
+  // falsification-proven (31-04-SUMMARY.md records the exact observed
+  // output for each, per the plan's mandatory falsification instructions).
+  describe("pending-revocations honesty summary (31-04-PLAN.md, MOD-01's sixth proof obligation)", () => {
+    it("is ABSENT when the pending set is pure-addition (a fresh grant, no prior access)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListItemShares.mockResolvedValue([]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      setRowLevel(MEMBER_A.user_id, "read");
+      expect(screen.queryByTestId("share-pending-revocations-summary")).not.toBeInTheDocument();
+    });
+
+    it("is ABSENT when the pending set is pure-edit (an existing recipient's level changes, never to none)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListItemShares.mockResolvedValue([
+        { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "read", created_at: "", suspended: false },
+      ]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      await waitFor(() =>
+        expect(screen.getByTestId(`share-recipient-row-currently-${MEMBER_A.user_id}`)).toBeInTheDocument(),
+      );
+      setRowLevel(MEMBER_A.user_id, "edit");
+      expect(screen.queryByTestId("share-pending-revocations-summary")).not.toBeInTheDocument();
+    });
+
+    it("is PRESENT with the correct count and comma-joined name list once >=1 row is queued for a REAL revocation (pendingLevel none, currentLevel not null)", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+      mockListItemShares.mockResolvedValue([
+        { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "read", created_at: "", suspended: false },
+        { user_id: MEMBER_B.user_id, email: MEMBER_B.email, access_level: "read", created_at: "", suspended: false },
+      ]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      await waitFor(() =>
+        expect(screen.getByTestId(`share-recipient-row-currently-${MEMBER_A.user_id}`)).toBeInTheDocument(),
+      );
+      setRowLevel(MEMBER_A.user_id, "none");
+
+      await waitFor(() => {
+        const summary = screen.getByTestId("share-pending-revocations-summary");
+        expect(summary).toHaveAttribute("role", "status");
+        expect(summary).toHaveAttribute("aria-live", "polite");
+        expect(summary.textContent).toBe(
+          DICTIONARY["share.pendingRevocationsSummary"].pl
+            .replace("{count}", "1")
+            .replace("{names}", MEMBER_A.email),
+        );
+      });
+
+      // A second queued revocation comma-joins into {names}, mirroring
+      // share.partialShareFailed's own established .join(", ") convention
+      // -- never a "too many, collapse to count" branch.
+      setRowLevel(MEMBER_B.user_id, "none");
+      await waitFor(() => {
+        expect(screen.getByTestId("share-pending-revocations-summary").textContent).toBe(
+          DICTIONARY["share.pendingRevocationsSummary"].pl
+            .replace("{count}", "2")
+            .replace("{names}", `${MEMBER_A.email}, ${MEMBER_B.email}`),
+        );
+      });
+    });
+
+    it("does NOT open RevokeShareDialog (or any second confirm step), and the submit button's own label does NOT change, when the pending set contains a revocation", async () => {
+      mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+      mockListItemShares.mockResolvedValue([
+        { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "read", created_at: "", suspended: false },
+      ]);
+      render(<ShareDialog scope={{ kind: "item", item: ITEM }} onClose={vi.fn()} onShared={vi.fn()} />);
+      await waitForPopulated();
+      await waitFor(() =>
+        expect(screen.getByTestId(`share-recipient-row-currently-${MEMBER_A.user_id}`)).toBeInTheDocument(),
+      );
+      const submitLabelBefore = screen.getByTestId("share-submit").textContent;
+      setRowLevel(MEMBER_A.user_id, "none");
+      await waitFor(() =>
+        expect(screen.getByTestId("share-pending-revocations-summary")).toBeInTheDocument(),
+      );
+
+      expect(screen.queryByTestId("revoke-share-dialog")).not.toBeInTheDocument();
+      expect(screen.getByTestId("share-submit").textContent).toBe(submitLabelBefore);
+      expect(screen.getByTestId("share-submit")).toHaveTextContent("share.ctaItem");
     });
   });
 

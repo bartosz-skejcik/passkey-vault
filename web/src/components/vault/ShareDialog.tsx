@@ -62,7 +62,7 @@
 // variant's seed-move re-encryption sequence verbatim rather than carrying
 // a second implementation of it.
 import { useEffect, useRef, useState } from "react";
-import { Users, UserCheck, UserMinus } from "lucide-react";
+import { Users, UserCheck, UserMinus, AlertTriangle } from "lucide-react";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { interpolate } from "@/lib/i18n/dictionary";
 import { getFamilyMembers, type FamilyMemberRecord } from "@/lib/families/api";
@@ -1659,6 +1659,19 @@ export default function ShareDialog({
       ? rowsAtHiddenPassword[0].email
       : t("share.hiddenPasswordRecipientFallback");
 
+  // 31-04-PLAN.md (MOD-01's sixth proof obligation, T-31-13): the
+  // pending-revocations honesty summary's {count}/{names} derive from the
+  // EXACT same `rows` state `reconcileRow` dispatches from -- never a
+  // second, independently-computed list. A "real queued revocation" is a
+  // row whose pendingLevel is "none" while its currentLevel already holds a
+  // grant (mirrors `reconcileRowAction`'s own revoke branch, line ~166);
+  // this is deliberately NOT `reconcileRowAction(...).kind === "revoke"`
+  // itself to avoid importing a second meaning for "revoke" into render
+  // logic, but the predicate is identical by construction.
+  const pendingRevocationRows = rows.filter(
+    (r) => r.pendingLevel === "none" && r.currentLevel !== null,
+  );
+
   // 31-02-PLAN.md: the row path's own readiness -- at least one row's
   // reconciled action is not a no-op (a fresh grant, an in-place level
   // edit, or a revocation of an existing grant).
@@ -2048,6 +2061,37 @@ export default function ShareDialog({
                       count: String(seedMoveFailureCount),
                     })}
                   </p>
+                ) : null}
+                {/* 31-UI-SPEC.md Copywriting Contract + Focal Point: the
+                    LAST thing seen before the footer, deliberately -- its
+                    position (immediately preceding Save) is part of its
+                    function, the final honest statement read before
+                    committing. Gated on `!isFamilyWideSelected` since rows
+                    (and therefore a "real queued revocation") only exist in
+                    that mode -- "Cała rodzina" has no rows. Icon+color
+                    mirrors `RevokeShareDialog.tsx`'s own AlertTriangle/
+                    text-error pairing; the paragraph reuses
+                    `RevokeShareDialog.tsx:132`'s `text-base` class verbatim
+                    -- the SAME weight-class as that dialog's own single most
+                    load-bearing honesty sentence. No second confirm dialog
+                    opens (Copywriting Contract's "Revocation confirmation"
+                    row) -- this summary plus each row's own UserMinus icon
+                    carry the honesty weight together. */}
+                {!isFamilyWideSelected && pendingRevocationRows.length > 0 ? (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    data-testid="share-pending-revocations-summary"
+                    className="flex items-center gap-3"
+                  >
+                    <AlertTriangle size={20} className="shrink-0 text-error" aria-hidden="true" />
+                    <p className="text-base">
+                      {interpolate(t("share.pendingRevocationsSummary"), {
+                        count: String(pendingRevocationRows.length),
+                        names: pendingRevocationRows.map((r) => r.email).join(", "),
+                      })}
+                    </p>
+                  </div>
                 ) : null}
                 </>
               )}
