@@ -365,6 +365,18 @@ async function shareFolderFamilyWide(
 
   const familyWideRow = page.getByTestId("share-recipient-family-wide");
   await familyWideRow.waitFor({ state: "visible" });
+  // ME-05 fix (31-REVIEW.md): a POSITIVE anchor, taken BEFORE `.check()` --
+  // without this, the `toHaveCount(0)` assertion below proves absence only
+  // (it would pass identically if `share-recipient-list`'s testid were
+  // renamed, the list never rendered due to a crashed subtree, or a roster
+  // fetch failure left it empty), which is a strictly weaker claim than the
+  // "mutually exclusive" one its own message makes. Asserting the list is
+  // genuinely PRESENT first is what turns the later absence into evidence
+  // of exclusivity rather than a vacuously-true negative.
+  await expect(
+    page.getByTestId("share-recipient-list"),
+    "sanity: the per-person row list must genuinely be on screen BEFORE family-wide is checked, or its later absence proves nothing",
+  ).toBeVisible();
   await familyWideRow.locator("input[type=checkbox]").check();
   await expect(
     page.getByTestId("share-family-wide-timing-caveat"),
@@ -376,7 +388,8 @@ async function shareFolderFamilyWide(
   // this assertion would pass VACUOUSLY rather than proving mutual
   // exclusivity. Rewritten against the row model: the per-person row list
   // is not merely disabled, it is absent entirely once family-wide is
-  // checked (an even stronger guarantee than "disabled").
+  // checked (an even stronger guarantee than "disabled") -- and now
+  // meaningful, thanks to the positive anchor above.
   await expect(
     page.getByTestId("share-recipient-list"),
     "family-wide is a MODE, not a recipient list -- the per-person row list must be mutually exclusive with it",
