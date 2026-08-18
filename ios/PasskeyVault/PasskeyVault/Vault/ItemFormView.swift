@@ -148,6 +148,15 @@ struct ItemFormView: View {
         mode: ItemFormMode,
         store: VaultStore,
         folderStore: FolderStore? = nil,
+        /// Quick task 260818-lsk: a scanned `otpauth://` URI's fields, used
+        /// ONLY when `mode` is `.create(.totp)` -- ignored for every other
+        /// creation kind and for `.edit`, both of which already have their
+        /// own field source. `nil` (the default) is the ordinary "New code"
+        /// path: `ItemCreationKind.emptyFields()`'s honest-empty draft,
+        /// unchanged. This is additive, not a restructuring -- the two
+        /// existing call sites (`ItemListView.sheetContent`'s `.creating`
+        /// and `.editing` cases) compile unchanged with the default.
+        prefillTotp: TotpFields? = nil,
         onSaved: ((VaultItemViewModel) -> Void)? = nil
     ) {
         self.mode = mode
@@ -168,16 +177,29 @@ struct ItemFormView: View {
 
         switch mode {
         case let .create(creationKind):
-            let fresh = creationKind.emptyFields()
-            switch fresh {
-            case let .login(f): login = f; resolvedKind = .login
-            case let .card(f): card = f; resolvedKind = .card
-            case let .identity(f): identity = f; resolvedKind = .identity
-            case let .note(f): note = f; resolvedKind = .note
-            case let .totp(f): totp = f; resolvedKind = .totp
-            case .passkey: resolvedKind = .note // unreachable -- ItemCreationKind has no .passkey case
+            if creationKind == .totp, let prefillTotp {
+                // The scan path: `TotpScanView` already validated the URI
+                // via `OtpauthParser` before this form ever opened, so
+                // nothing here re-derives or re-validates the fields --
+                // this is a straight prefill, and `TotpValidation`'s own
+                // check still runs on Save exactly as it does for a
+                // hand-typed secret (Rule: the scan is a shortcut into the
+                // SAME form, not a bypass of it).
+                totp = prefillTotp
+                resolvedKind = .totp
+                resolvedTags = prefillTotp.tags
+            } else {
+                let fresh = creationKind.emptyFields()
+                switch fresh {
+                case let .login(f): login = f; resolvedKind = .login
+                case let .card(f): card = f; resolvedKind = .card
+                case let .identity(f): identity = f; resolvedKind = .identity
+                case let .note(f): note = f; resolvedKind = .note
+                case let .totp(f): totp = f; resolvedKind = .totp
+                case .passkey: resolvedKind = .note // unreachable -- ItemCreationKind has no .passkey case
+                }
+                resolvedTags = fresh.tags
             }
-            resolvedTags = fresh.tags
         case let .edit(item):
             // Defensive fallback: unreachable via any real navigation path
             // today (`ItemListView` gates Edit behind `!isUndecryptable`,
