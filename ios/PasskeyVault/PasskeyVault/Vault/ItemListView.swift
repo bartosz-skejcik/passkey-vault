@@ -1185,6 +1185,65 @@ struct ItemListView: View {
 
     @ViewBuilder
     private func row(_ item: VaultItemViewModel) -> some View {
+        // Quick task 260818-irw: "the code is the row" -- a `.totp` item
+        // with DECRYPTED fields gets the trow layout (live code + ring,
+        // matching `ios/brand/screens-vault.html`'s `.trow`/`.pie`)
+        // instead of the generic icon+title+chevron body every other type
+        // uses. An undecryptable/pending-family-key totp item has
+        // `item.fields == nil`, so it falls through this `if case let`
+        // unchanged and still renders via the generic branch below -- no
+        // special-casing needed, that fallthrough is the existing
+        // optional's own behavior.
+        if case let .totp(f) = item.fields {
+            totpRow(item, f)
+        } else {
+            genericRow(item)
+        }
+    }
+
+    @ViewBuilder
+    private func totpRow(_ item: VaultItemViewModel, _ fields: TotpFields) -> some View {
+        HStack(spacing: PVMetrics.totpRowGap) {
+            TotpCountdownView(
+                secretB32: fields.secret,
+                algorithm: fields.algorithm,
+                digits: fields.digits,
+                period: fields.period,
+                style: .listRow,
+                // `"{issuer}: {name}"`, or just `{name}` when issuer is
+                // empty -- transcribes the artifact's own rendered text
+                // (e.g. "GitHub: bartek@paczesny.pl").
+                label: fields.issuer.isEmpty ? fields.name : "\(fields.issuer): \(fields.name)",
+                onCopy: nil,
+                codeAccessibilityId: "vault.row.\(item.id).totp.code",
+                ringAccessibilityId: "vault.row.\(item.id).totp.remainingSeconds"
+            )
+            let rowPills = pills(for: item)
+            if !rowPills.isEmpty {
+                ForEach(rowPills) { pill in
+                    Text(verbatim: pill.label)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color(pill.colorName).opacity(0.15))
+                        .foregroundStyle(Color(pill.colorName))
+                        .clipShape(Capsule())
+                }
+            }
+        }
+        // The correct per-row List inset API -- `.padding()` would STACK
+        // on top of List's own default insets rather than replacing them.
+        .listRowInsets(EdgeInsets(
+            top: PVMetrics.totpRowVPadding, leading: PVMetrics.totpRowHPadding,
+            bottom: PVMetrics.totpRowVPadding, trailing: PVMetrics.totpRowHPadding
+        ))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("vault.row.\(item.id)")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    @ViewBuilder
+    private func genericRow(_ item: VaultItemViewModel) -> some View {
         HStack(spacing: 12) {
             ItemIconTile(item: item)
             VStack(alignment: .leading, spacing: 2) {

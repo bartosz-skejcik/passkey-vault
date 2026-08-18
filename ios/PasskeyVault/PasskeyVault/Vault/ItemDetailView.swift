@@ -180,7 +180,13 @@ struct ItemDetailView: View {
                 algorithm: f.algorithm,
                 digits: f.digits,
                 period: f.period,
-                issuer: f.issuer,
+                style: .detail,
+                // Byte-identical to the old internal formatting, just moved
+                // to the call site now that the view takes a pre-formatted
+                // label (quick task 260818-irw, Task 1 -- a mechanical
+                // signature update; Task 2 changes `.detail`'s rendered
+                // numbers, not this).
+                label: f.issuer.isEmpty ? "Authenticator" : f.issuer,
                 onCopy: { code in copySecret(key: "totpCode", value: code) }
             )
             .padding(.vertical, 4)

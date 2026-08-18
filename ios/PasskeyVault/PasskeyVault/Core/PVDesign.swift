@@ -176,6 +176,41 @@ enum PVMetrics {
     // `scripts/gen-ios-colorsets.py` writes `"alpha": "1.000"` for every token
     // by construction -- the catalog has no concept of a translucent token.
     static let dockScrimOpacity: CGFloat = 0.35
+
+    // MARK: - TOTP rows (screens-vault.html, ".trow"/".pie"/".totp")
+    //
+    // Quick task 260818-irw: "the code is the row" -- the Codes tab's list
+    // rows render the live TOTP code AS the row, not a generic
+    // icon+title+chevron. These are the LIST row's own numbers, transcribed
+    // from `.trow`/`.pie` in `ios/brand/screens-vault.html`; the DETAIL
+    // block's numbers (`totpDetail*`/`totpRingDiameterDetail`) follow below.
+
+    // `.trow{padding:calc(10px*var(--s)) calc(13px*var(--s));...
+    // gap:calc(10px*var(--s))}`
+    static let totpRowVPadding: CGFloat = 10
+    static let totpRowHPadding: CGFloat = 13
+    static let totpRowGap: CGFloat = 10
+
+    // `.trow .tl{...gap:calc(2px*var(--s))}` -- the label-over-code column's
+    // own internal gap.
+    static let totpRowLabelGap: CGFloat = 2
+
+    // `.trow .lbl{font-size:calc(12.5px*var(--s));...}`
+    static let totpRowLabelFontSize: CGFloat = 12.5
+
+    // `.trow .code{font-size:calc(31px*var(--s));font-weight:400;...
+    // letter-spacing:calc(1.5px*var(--s));font-variant-numeric:tabular-nums}`
+    static let totpRowCodeFontSize: CGFloat = 31
+    static let totpRowCodeLetterSpacing: CGFloat = 1.5
+
+    // `.pie{width:calc(21px*var(--s));height:calc(21px*var(--s));...}` --
+    // the LIST ring.
+    static let totpRingDiameterList: CGFloat = 21
+
+    // `.pie circle{...stroke-width:2.3}` -- shared by both the list and
+    // detail rings (relocated from `TotpCountdownView`'s own private
+    // `ringLineWidth`, already numerically correct).
+    static let totpRingStrokeWidth: CGFloat = 2.3
 }
 
 // MARK: - Dock glass

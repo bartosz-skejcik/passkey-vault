@@ -9,6 +9,19 @@
 //  enlarged code, that turns `PVWarning` in its final seconds so "will
 //  this expire before I finish typing" is answerable without counting.
 //
+//  Quick task 260818-irw ("fix iOS Codes surface: TOTP rows to match"):
+//  the LIST surface never actually got this component -- `ItemListView
+//  .swift`'s `row(_:)` fell through the same generic icon+title+chevron
+//  branch every other item type uses, so the Codes tab showed no live
+//  code and no ring at all. Refactored into a `Style`-parameterized view
+//  (`.listRow`/`.detail`) so the SAME already-hardened timing/FFI engine
+//  below (unchanged by this refactor) drives both surfaces -- never a
+//  second, independently-written countdown implementation. `.listRow`'s
+//  geometry (`PVMetrics.totpRow*`/`totpRingDiameterList`) matches
+//  `ios/brand/screens-vault.html`'s `.trow`/`.pie`; `.detail`'s geometry
+//  (`PVMetrics.totpDetail*`/`totpRingDiameterDetail`) matches that
+//  artifact's own `.totp`/30px `.pie` cell.
+//
 //  THE SCHEDULED-DATE CORRECTION (Pitfall 5, `38-RESEARCH.md` "Code
 //  Examples"): `TimelineView`'s `context.date` is the SCHEDULE's date, not
 //  the real clock -- a late run loop hands back a stale date, a marginally
@@ -31,17 +44,34 @@
 //  stable identifiers, so `TotpCountdownUITests.swift` reads real values
 //  through the accessibility tree rather than recognising characters in
 //  the rendered ring image -- OCR on a countdown ring is a needless
-//  failure source (`38-RESEARCH.md` E-T1, step 2).
+//  failure source (`38-RESEARCH.md` E-T1, step 2). `.listRow` callers
+//  supply their OWN per-item identifiers (`codeAccessibilityId`/
+//  `ringAccessibilityId`) since one screen can render many rows; `.detail`
+//  keeps the original fixed `vault.detail.totp.*` identifiers unchanged --
+//  load-bearing for existing UI tests (see `ItemListView.swift`'s call
+//  site header).
 //
 
 import SwiftUI
+import UIKit
 
 struct TotpCountdownView: View {
+    enum Style {
+        case listRow
+        case detail
+    }
+
     let secretB32: String
     let algorithm: String
     let digits: Int
     let period: Int
-    let issuer: String
+    let style: Style
+    /// The fully-formatted text to show above/beside the code -- callers
+    /// compute the formatting (issuer/name composition differs per
+    /// surface), this view only renders it. Replaces the old `issuer:
+    /// String` parameter, which formatted internally and could only ever
+    /// serve one caller.
+    let label: String
     /// Reuses the detail screen's existing copy choke-point
     /// (`ItemDetailView.copySecret`) -- routes through `ClipboardService`
     /// and records the last-used touch, exactly like every other copy
@@ -49,11 +79,16 @@ struct TotpCountdownView: View {
     /// secret) -- a deliberate divergence from `web/.../DetailPanel.tsx`,
     /// which copies `item.fields.secret` under a button labelled "copy
     /// TOTP code" (an apparent bug there, not reproduced here: see
-    /// `ios/IOS-SPIKE-LOG.md` §1f for the recorded reasoning).
-    let onCopy: (String) -> Void
-
-    private static let ringDiameter: CGFloat = 56
-    private static let ringLineWidth: CGFloat = 2.3
+    /// `ios/IOS-SPIKE-LOG.md` §1f for the recorded reasoning). `nil` for
+    /// `.listRow`, which shows no copy button (matching `.trow`'s own
+    /// two-element layout -- label+code, then the ring, nothing else).
+    var onCopy: ((String) -> Void)?
+    /// Per-item accessibility identifiers for `.listRow`, since a List can
+    /// render many rows and a single fixed identifier (as `.detail` uses)
+    /// would collide across rows. `nil` for `.detail`, which keeps its own
+    /// fixed `vault.detail.totp.*` identifiers applied directly below.
+    var codeAccessibilityId: String?
+    var ringAccessibilityId: String?
 
     /// The ring turns `PVWarning` at this many seconds or fewer remaining.
     /// Design-conformance's own wording ("in its final seconds") does not
@@ -61,6 +96,16 @@ struct TotpCountdownView: View {
     /// convention Google Authenticator itself uses (the same reference
     /// point design-conformance names for this row).
     private static let warningThresholdSeconds: UInt64 = 5
+
+    private var ringDiameter: CGFloat {
+        switch style {
+        case .listRow: return PVMetrics.totpRingDiameterList
+        // Quick task 260818-irw Task 1: the detail geometry FIX is Task 2's
+        // job -- this literal 56 is the pre-existing, unchanged value, not
+        // yet routed through a PVMetrics constant.
+        case .detail: return 56
+        }
+    }
 
     var body: some View {
         TimelineView(.periodic(from: Date(timeIntervalSince1970: Self.anchor(for: period)), by: 1)) { context in
@@ -98,28 +143,11 @@ struct TotpCountdownView: View {
             let fraction = Self.fraction(remainingSeconds: remainingSeconds, period: period)
             let isWarning = remainingSeconds <= Self.warningThresholdSeconds
 
-            HStack(spacing: 12) {
-                ring(fraction: fraction, isWarning: isWarning, remainingSeconds: remainingSeconds)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: issuer.isEmpty ? "Authenticator" : issuer)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Color("PVTextMuted"))
-                    Text(verbatim: Self.grouped(code))
-                        .font(.system(size: 31, weight: .semibold, design: .default))
-                        .monospacedDigit()
-                        .foregroundStyle(Color("PVAccent"))
-                        .accessibilityIdentifier("vault.detail.totp.code")
-                        .accessibilityValue(code)
-                }
-                Spacer(minLength: 0)
-                Button {
-                    onCopy(code)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .foregroundStyle(Color("PVAccent"))
-                }
-                .accessibilityIdentifier("vault.detail.totp.copy")
-                .accessibilityLabel("Copy code")
+            switch style {
+            case .listRow:
+                listRowContent(code: code, remainingSeconds: remainingSeconds, fraction: fraction, isWarning: isWarning)
+            case .detail:
+                detailContent(code: code, remainingSeconds: remainingSeconds, fraction: fraction, isWarning: isWarning)
             }
         case .failure:
             // A visible, non-crashing error state -- an item imported with
@@ -133,15 +161,87 @@ struct TotpCountdownView: View {
                     .font(.caption)
                     .foregroundStyle(Color("PVError"))
             }
-            .accessibilityIdentifier("vault.detail.totp.error")
+            .accessibilityIdentifier(style == .detail ? "vault.detail.totp.error" : "")
+        }
+    }
+
+    /// `.trow{padding:10 13;display:flex;align-items:center;
+    /// justify-content:space-between;gap:10}` -- label+code leading, the
+    /// ring trailing, pushed to the row's edges. No icon tile, no chevron
+    /// (design-conformance's own wording: "nothing to disclose").
+    @ViewBuilder
+    private func listRowContent(code: String, remainingSeconds: UInt64, fraction: Double, isWarning: Bool) -> some View {
+        HStack(spacing: PVMetrics.totpRowGap) {
+            VStack(alignment: .leading, spacing: PVMetrics.totpRowLabelGap) {
+                Text(verbatim: label)
+                    .font(.system(size: PVMetrics.totpRowLabelFontSize))
+                    .foregroundStyle(Color("PVTextMuted"))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                // `.trow .code{font-size:31;font-weight:400;
+                // letter-spacing:1.5;font-variant-numeric:tabular-nums;
+                // color:var(--pv-acc)}`
+                Text(verbatim: Self.grouped(code))
+                    .font(.system(size: PVMetrics.totpRowCodeFontSize, weight: .regular))
+                    .monospacedDigit()
+                    .tracking(PVMetrics.totpRowCodeLetterSpacing)
+                    .foregroundStyle(Color("PVAccent"))
+                    .accessibilityIdentifier(codeAccessibilityId ?? "")
+                    .accessibilityValue(code)
+            }
+            Spacer(minLength: 0)
+            ring(fraction: fraction, isWarning: isWarning, remainingSeconds: remainingSeconds)
+                .accessibilityIdentifier(ringAccessibilityId ?? "")
+        }
+    }
+
+    /// Unchanged structural composition from before this refactor (ring,
+    /// then label+code, then a trailing copy button) -- only the `Style`/
+    /// `label` plumbing moves in Task 1; Task 2 corrects this style's own
+    /// measured numeric divergences (ring diameter, code weight/font/
+    /// letter-spacing).
+    @ViewBuilder
+    private func detailContent(code: String, remainingSeconds: UInt64, fraction: Double, isWarning: Bool) -> some View {
+        HStack(spacing: 12) {
+            ring(fraction: fraction, isWarning: isWarning, remainingSeconds: remainingSeconds)
+                .accessibilityIdentifier("vault.detail.totp.remainingSeconds")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: label)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Color("PVTextMuted"))
+                Text(verbatim: Self.grouped(code))
+                    .font(.system(size: 31, weight: .semibold, design: .default))
+                    .monospacedDigit()
+                    .foregroundStyle(Color("PVAccent"))
+                    .accessibilityIdentifier("vault.detail.totp.code")
+                    .accessibilityValue(code)
+            }
+            Spacer(minLength: 0)
+            if let onCopy {
+                Button {
+                    onCopy(code)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .foregroundStyle(Color("PVAccent"))
+                }
+                .accessibilityIdentifier("vault.detail.totp.copy")
+                .accessibilityLabel("Copy code")
+            }
         }
     }
 
     @ViewBuilder
     private func ring(fraction: Double, isWarning: Bool, remainingSeconds: UInt64) -> some View {
         ZStack {
+            // `--pv-fill:rgba(120,120,128,.12)` light / `.24` dark -- no
+            // `PVFill`/`PVSep` colorset exists in `Assets.xcassets`
+            // (confirmed during planning), so `UIColor.tertiarySystemFill`
+            // (`rgba(118,118,128,.12)`/`.24`) is used instead of inventing
+            // a new token for one ring's track. Replaces the previous
+            // `Color("PVTextMuted").opacity(0.25)` ungrounded literal-
+            // opacity hack, for BOTH styles.
             Circle()
-                .stroke(Color("PVTextMuted").opacity(0.25), lineWidth: Self.ringLineWidth)
+                .stroke(Color(uiColor: .tertiarySystemFill), lineWidth: PVMetrics.totpRingStrokeWidth)
             // A trimmed ring, not a pie (design-conformance's own
             // wording): a partial stroke around the circle's
             // circumference, never a filled sector.
@@ -149,12 +249,11 @@ struct TotpCountdownView: View {
                 .trim(from: 0, to: fraction)
                 .stroke(
                     isWarning ? Color("PVWarning") : Color("PVAccent"),
-                    style: StrokeStyle(lineWidth: Self.ringLineWidth, lineCap: .round)
+                    style: StrokeStyle(lineWidth: PVMetrics.totpRingStrokeWidth, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
         }
-        .frame(width: Self.ringDiameter, height: Self.ringDiameter)
-        .accessibilityIdentifier("vault.detail.totp.remainingSeconds")
+        .frame(width: ringDiameter, height: ringDiameter)
         .accessibilityValue("\(remainingSeconds)")
     }
 
