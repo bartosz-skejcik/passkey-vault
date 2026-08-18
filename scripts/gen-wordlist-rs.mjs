@@ -87,6 +87,13 @@ ${rustEntries}
   console.log(digest);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// WR-07 (38-REVIEW.md): was `import.meta.url === \`file://${process.argv[1]}\``
+// -- `import.meta.url` is PERCENT-ENCODED, `process.argv[1]` is a raw path.
+// On any checkout whose absolute path contains a space, `#`, `?` or a
+// non-ASCII character, that comparison silently fails, `main()` never runs,
+// and the script prints nothing and exits 0 -- the regeneration silently
+// does not happen. `fileURLToPath` decodes the URL back to a raw path
+// first, so both sides of the comparison are apples-to-apples.
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   main();
 }
