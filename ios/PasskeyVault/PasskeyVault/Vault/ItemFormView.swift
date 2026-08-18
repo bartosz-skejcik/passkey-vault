@@ -5,10 +5,19 @@
 //  Phase 38 (pełny interfejs vaulta), plan 38-09, Task 1. Create AND edit for
 //  the five creatable item types -- ONE `Form`, rows switched by TYPE, per
 //  design-conformance §"38-09 -- create, edit, folders": "Edit is one Form,
-//  rows switched by type." The type picker (`TypePicker.swift`) is reachable
-//  ONLY on create -- there is no affordance anywhere in this file to change
-//  an existing item's type, because doing so would orphan its fields (a
-//  login's `password` has nowhere to go in a note).
+//  rows switched by type." `ItemCreationKind` (below) is reachable ONLY on
+//  create, from the dock's "+" panel (`ItemListView.swift`'s
+//  `VaultCreateAction.creationKind`) -- there is no affordance anywhere in
+//  this file to change an existing item's type, because doing so would
+//  orphan its fields (a login's `password` has nowhere to go in a note).
+//
+//  `ItemCreationKind` moved HERE, verbatim, in plan 38-11: the dedicated
+//  `TypePicker` VIEW that used to own it was retired (deferred-items.md,
+//  option 1 -- the dock's "+" panel replaced it as the ONLY create route
+//  since commit `4cda61f`, and the picker sheet it used to hand off to had
+//  no call site left anywhere in the app). The enum itself has real call
+//  sites (`VaultCreateAction.creationKind`, `ItemFormMode.create`) and stays;
+//  only the orphaned view is gone.
 //
 //  Presented as a SHEET, never pushed onto the navigation stack: 38-11 (lock
 //  teardown) needs to tear the whole editing surface down in ONE state
@@ -32,8 +41,66 @@
 
 import SwiftUI
 
+/// FIVE creatable types. `scripts/check-item-type-parity.sh`'s own six-member
+/// union (`ItemFields.swift`) is the render surface; this is the narrower
+/// create surface and is intentionally NOT required to match it 1:1.
+/// `passkey` is provider-created only (Phase 12, the extension/AutoFill
+/// path); there is no "create a passkey" form on any client, matching
+/// design-conformance §5.
+enum ItemCreationKind: CaseIterable {
+    case login, card, identity, note, totp
+
+    var title: String {
+        switch self {
+        case .login: return "Login"
+        case .card: return "Card"
+        case .identity: return "Identity"
+        case .note: return "Note"
+        case .totp: return "Code"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .login: return "globe"
+        case .card: return "creditcard"
+        case .identity: return "person.text.rectangle"
+        case .note: return "note.text"
+        case .totp: return "timer"
+        }
+    }
+
+    /// A minimal, honestly-empty draft -- every required `String` field is
+    /// `""` except `totp.secret`.
+    ///
+    /// [Rule 1 - Bug, 38-09] `totp.secret`'s placeholder was 38-06's
+    /// `"JBSWY3DPEHPK3PXP"` -- decodes to only **10 bytes** (80 bits),
+    /// below `totp-rs`'s own 128-bit/16-byte minimum
+    /// (`TotpValidation.minSecretBytes`). Opening a fresh Code draft would
+    /// therefore have failed THIS PLAN'S OWN validator immediately, before
+    /// the user typed anything. Replaced with the RFC 6238 Appendix B SHA1
+    /// test-vector secret (`crates/pv-core/src/totp.rs`'s own
+    /// `SHA1_SECRET`) -- 32 base32 characters, 20 decoded bytes, valid under
+    /// every rule `TotpValidation` checks.
+    func emptyFields() -> ItemFields {
+        let name = "New \(title)"
+        switch self {
+        case .login:
+            return .login(LoginFields(name: name, folderId: nil, tags: [], username: "", password: "", urls: [], notes: ""))
+        case .card:
+            return .card(CardFields(name: name, folderId: nil, tags: [], cardholderName: "", number: "", expiry: "", cvv: "", pin: nil, zip: nil, notes: ""))
+        case .identity:
+            return .identity(IdentityFields(name: name, folderId: nil, tags: [], firstName: "", lastName: "", email: "", phone: "", address: "", addressLine1: nil, addressLine2: nil, city: nil, state: nil, zip: nil, country: nil, notes: ""))
+        case .note:
+            return .note(NoteFields(name: name, folderId: nil, tags: [], body: ""))
+        case .totp:
+            return .totp(TotpFields(name: name, folderId: nil, tags: [], secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", issuer: "", algorithm: "SHA1", digits: 6, period: 30, notes: ""))
+        }
+    }
+}
+
 /// How this form was opened. Type is fixed for the form's whole lifetime --
-/// `.create` fixes it from the picker's choice, `.edit` fixes it from the
+/// `.create` fixes it from the "+" panel's choice, `.edit` fixes it from the
 /// item's own existing type. Neither case can change it afterward.
 enum ItemFormMode {
     case create(ItemCreationKind)

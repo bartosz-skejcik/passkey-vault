@@ -165,12 +165,13 @@ struct VaultFilterToken: Identifiable, Hashable {
 
 // MARK: - The dock's ＋ action grid
 //
-// `ItemCreationKind` lives in `TypePicker.swift` (plan 38-09, Task 1) -- the
-// five-case enum and its `emptyFields()` factory are unchanged.
+// `ItemCreationKind` lives in `ItemFormView.swift` (moved there in plan
+// 38-11, addendum A2, when the dedicated `TypePicker` view was retired) --
+// the five-case enum and its `emptyFields()` factory are unchanged.
 
 /// The SIX slots of the ＋ panel, in the order Bartek named them: the five
-/// creatable item types (`ItemCreationKind`, `Vault/TypePicker.swift`) plus
-/// Generate password. Three columns, so two rows.
+/// creatable item types (`ItemCreationKind`, `Vault/ItemFormView.swift`)
+/// plus Generate password. Three columns, so two rows.
 ///
 /// SIX, NOT THE ARTIFACT'S NINE, and this is a deliberate narrowing recorded
 /// rather than smuggled. The earlier draft of this file rendered nine slots to
@@ -253,21 +254,25 @@ struct ItemListView: View {
     /// this being non-nil, never a force-unwrap.
     var folderStore: FolderStore?
 
-    /// Both `nil` by default -- the nav bar's Lock now/Sign out affordances
-    /// render but are DISABLED rather than silently pretending to work.
-    /// Real session teardown (nav path truncation, dismissing every
-    /// presented sheet, clearing the reveal set) is 38-11's job
-    /// (design-conformance §"38-11"); wiring a half-built lock action here
-    /// risks the exact "true in the artifact, false in reality" defect
-    /// shape this project has repeatedly paid for.
+    /// Plan 38-11: the navigation path (`selection`), the presented-sheet
+    /// router (`activeSheet`) and the search state all moved OUT of this
+    /// view's own `@State` and into `VaultRootView`'s `VaultRootController`
+    /// -- so that controller's single `lockTeardown()` handler can reach
+    /// every one of them without poking into this view's private state.
+    /// `@Bindable` (not a plain `let`) so `$root.selection`/`$root.activeSheet`
+    /// keep working as real `Binding`s at every call site below.
+    @Bindable var root: VaultRootController
+
+    /// Real session teardown (store wipe, nav path truncation, dismissing
+    /// every presented sheet, clearing the reveal set) is wired through
+    /// `VaultRootView.performLock()`, which this closure always is in
+    /// production -- `nil` only in tests/previews that construct
+    /// `ItemListView` directly without a `VaultRootView` wrapper.
     var onLockRequested: (() -> Void)?
     var onSignOutRequested: (() -> Void)?
 
     @State private var selectedTab: VaultTypeTab = .all
-    @State private var searchText = ""
-    @State private var searchTokens: [VaultFilterToken] = []
     @State private var sortOption: SortOption = SortPreference.read()
-    @State private var selection: VaultItemViewModel?
     @State private var deleteCandidate: VaultItemViewModel?
     /// DEBUG-only, and off unless a UI test asks for it. See the
     /// `safeAreaInset` call site for the full reasoning; in a Release build the
@@ -292,27 +297,16 @@ struct ItemListView: View {
     //
     // ONE `.sheet(item:)` binding for all four surfaces (plan 38-09), rather
     // than four independent `.sheet` modifiers each with its own `Bool`/
-    // optional-item trigger: `TypePicker` handing off directly to
+    // optional-item trigger: the "+" grid handing off directly to
     // `ItemFormView` means the SAME state transition (one sheet's content
     // changing to another) has to be expressed as ONE identity change, not
     // a dismiss-then-present race between two separately-driven modifiers.
-    private enum ActiveSheet: Identifiable {
-        case creating(ItemCreationKind)
-        case editing(VaultItemViewModel)
-        case movingToFolder(VaultItemViewModel)
-        case generator
-
-        var id: String {
-            switch self {
-            case let .creating(kind): return "creating-\(kind.title)"
-            case let .editing(item): return "editing-\(item.id)"
-            case let .movingToFolder(item): return "movingToFolder-\(item.id)"
-            case .generator: return "generator"
-            }
-        }
-    }
-
-    @State private var activeSheet: ActiveSheet?
+    //
+    // Plan 38-11: the router type moved to file scope as `VaultActiveSheet`
+    // and the LIVE VALUE moved to `VaultRootController.activeSheet`, so the
+    // controller's single lock handler can dismiss whatever is presented
+    // without reaching into this view's private state. See that type's own
+    // header in `VaultRootView.swift`.
 
     // MARK: The dock
     //
@@ -320,7 +314,6 @@ struct ItemListView: View {
     // the detached capsule's glyph (＋ / ✕) and whether the panel is on
     // screen -- so the two can never disagree about whether it is open.
     @State private var isCreateExpanded = false
-    @State private var isSearchPresented = false
 
     /// E-U2/E-U3 FINDING (38-06, Task 3, recorded in
     /// `ios/IOS-SPIKE-LOG.md`): a SINGLE `NavigationStack` wrapping the whole
@@ -377,24 +370,36 @@ struct ItemListView: View {
                                 if tab == .all, Self.showsTracerCreateBar { createBar }
                             }
                             .modifier(AvailableVaultSearchable(
-                                text: $searchText,
-                                tokens: $searchTokens,
-                                isPresented: $isSearchPresented
+                                text: $root.searchText,
+                                tokens: $root.searchTokens,
+                                isPresented: $root.isSearchPresented
                             ))
                             .searchSuggestions { tokenSuggestions }
-                            .modifier(AvailableMinimizedSearchToolbar(isSearchPresented: isSearchPresented))
+                            .modifier(AvailableMinimizedSearchToolbar(isSearchPresented: root.isSearchPresented))
                             .navigationTitle(Text(verbatim: tab.title))
                             .toolbar { toolbarContent }
-                            .navigationDestination(item: $selection) { item in
+                            .navigationDestination(item: $root.selection) { item in
                                 // 38-07: the detail screen owns its own
                                 // last-used-recording wiring on reveal and
                                 // copy -- this row/context-menu copy path
                                 // deliberately stays out of that (see this
                                 // file's own header on why 38-06's inline
                                 // `copySecret` stays as it is).
-                                ItemDetailView(item: item, store: store)
+                                //
+                                // Plan 38-11: the reveal set (`DetailRevealState`)
+                                // moved from this screen's own local `@State`
+                                // to `root.revealState`, a `Binding` passed
+                                // down here -- so `VaultRootController
+                                // .lockTeardown()` can clear it directly,
+                                // independent of whether SwiftUI has yet torn
+                                // down the pushed `ItemDetailView` instance
+                                // itself.
+                                ItemDetailView(
+                                    item: item, store: store, revealState: $root.revealState,
+                                    onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested
+                                )
                             }
-                            .sheet(item: $activeSheet) { sheet in
+                            .sheet(item: $root.activeSheet) { sheet in
                                 sheetContent(sheet)
                             }
                             .confirmationDialog(
@@ -547,7 +552,7 @@ struct ItemListView: View {
         // `VaultDockEvidenceUITests.testPanelAndKeyboardAreMutuallyExclusive`, so a
         // future SDK that fixes it shows up as a failing test rather than as
         // nothing.
-        .onChange(of: isSearchPresented) { _, presented in
+        .onChange(of: root.isSearchPresented) { _, presented in
             if presented { isCreateExpanded = false }
         }
         .animation(.snappy(duration: 0.25), value: isCreateExpanded)
@@ -607,7 +612,7 @@ struct ItemListView: View {
     /// later needs the two on screen together, that is an open problem and not
     /// a small one.
     private func setCreateExpanded(_ open: Bool) {
-        if open { isSearchPresented = false }
+        if open { root.isSearchPresented = false }
         isCreateExpanded = open
     }
 
@@ -639,11 +644,11 @@ struct ItemListView: View {
             var immediate = Transaction()
             immediate.disablesAnimations = true
             withTransaction(immediate) { isCreateExpanded = false }
-            DispatchQueue.main.async { isSearchPresented = true }
+            DispatchQueue.main.async { root.isSearchPresented = true }
         } label: {
             HStack(spacing: PVMetrics.dockShelfGap) {
                 Image(systemName: "magnifyingglass")
-                Text(verbatim: searchText.isEmpty ? "Search your vault" : searchText)
+                Text(verbatim: root.searchText.isEmpty ? "Search your vault" : root.searchText)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -744,9 +749,9 @@ struct ItemListView: View {
     private func perform(_ action: VaultCreateAction) {
         isCreateExpanded = false
         if let kind = action.creationKind {
-            activeSheet = .creating(kind)
+            root.activeSheet = .creating(kind)
         } else if action == .generatePassword {
-            activeSheet = .generator
+            root.activeSheet = .generator
         }
     }
 
@@ -937,8 +942,8 @@ struct ItemListView: View {
     @ViewBuilder
     private func tabContent(for tab: VaultTypeTab) -> some View {
         let rows = filteredSortedItems(from: store.items, tab: tab)
-        let searchOrFilterActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !searchTokens.isEmpty
+        let searchOrFilterActive = !root.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !root.searchTokens.isEmpty
 
         // Every branch below gets the brand ground, not just the List one:
         // an empty vault and a no-matches state were rendering on iOS grey
@@ -948,7 +953,7 @@ struct ItemListView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color("PVBackground"))
         } else if rows.isEmpty && searchOrFilterActive {
-            ContentUnavailableView.search(text: searchText)
+            ContentUnavailableView.search(text: root.searchText)
                 .background(Color("PVBackground"))
         } else if rows.isEmpty {
             ContentUnavailableView(
@@ -1025,10 +1030,10 @@ struct ItemListView: View {
         )
     }
 
-    // MARK: - Sheet content (router for `activeSheet`)
+    // MARK: - Sheet content (router for `root.activeSheet`)
 
     @ViewBuilder
-    private func sheetContent(_ sheet: ActiveSheet) -> some View {
+    private func sheetContent(_ sheet: VaultActiveSheet) -> some View {
         switch sheet {
         case .generator:
             // The dock grid's "Generate password" slot. Standalone (no
@@ -1036,11 +1041,11 @@ struct ItemListView: View {
             GeneratorSheet()
         case let .creating(kind):
             ItemFormView(mode: .create(kind), store: store, folderStore: folderStore) { created in
-                selection = created
+                root.selection = created
             }
         case let .editing(item):
             ItemFormView(mode: .edit(item), store: store, folderStore: folderStore) { _ in
-                activeSheet = nil
+                root.activeSheet = nil
             }
         case let .movingToFolder(item):
             if let folderStore {
@@ -1092,7 +1097,7 @@ struct ItemListView: View {
         row(item)
             .contentShape(Rectangle())
             .onTapGesture {
-                selection = item
+                root.selection = item
             }
             .contextMenu {
                 contextMenuContent(item)
@@ -1207,7 +1212,7 @@ struct ItemListView: View {
             ItemCapabilities.canEditItem(item)
         {
             Button("Edit") {
-                activeSheet = .editing(item)
+                root.activeSheet = .editing(item)
             }
             // "Move to folder" -- Task 3, real now that `VaultStore.update`
             // exists (38-06 explicitly omitted this because no update-item
@@ -1217,7 +1222,7 @@ struct ItemListView: View {
             // discipline `ItemCapabilities.swift` names.
             if folderStore != nil {
                 Button("Move to folder") {
-                    activeSheet = .movingToFolder(item)
+                    root.activeSheet = .movingToFolder(item)
                 }
             }
         }
@@ -1273,8 +1278,8 @@ struct ItemListView: View {
 
     @ViewBuilder
     private var tokenSuggestions: some View {
-        let selected = Set(searchTokens.map(\.tag))
-        let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let selected = Set(root.searchTokens.map(\.tag))
+        let needle = root.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let candidates = store.allTags.filter { tag in
             !selected.contains(tag) && (needle.isEmpty || tag.lowercased().contains(needle))
         }
@@ -1288,37 +1293,7 @@ struct ItemListView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            Button {
-                onLockRequested?()
-            } label: {
-                Label("Lock now", systemImage: "lock.fill")
-            }
-            .disabled(onLockRequested == nil)
-            .accessibilityIdentifier("vault.lockNow")
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            // Family and Settings have no screen to open yet (Family is
-            // Phase 40's job; there is no generic Settings screen planned
-            // for this milestone at all) -- both entries render, disabled,
-            // rather than either vanishing (which would misrepresent the
-            // approved navigation architecture as simpler than it is) or
-            // silently doing nothing when tapped (a fake affordance).
-            Menu {
-                Button("Family") {}
-                    .disabled(true)
-                Button("Settings") {}
-                    .disabled(true)
-                Divider()
-                Button("Lock now") { onLockRequested?() }
-                    .disabled(onLockRequested == nil)
-                Button("Sign out", role: .destructive) { onSignOutRequested?() }
-                    .disabled(onSignOutRequested == nil)
-            } label: {
-                Image(systemName: "person.crop.circle")
-            }
-            .accessibilityIdentifier("vault.avatarMenu")
-        }
+        vaultLockToolbarContent(onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested)
     }
 
     // MARK: - TEMPORARY tracer create bar (kept for 38-05 test compatibility)
@@ -1386,10 +1361,10 @@ struct ItemListView: View {
         if let wireType = tab.wireType {
             working = VaultFilterFunctions.filterItems(working, filter: .itemType(wireType))
         }
-        for token in searchTokens {
+        for token in root.searchTokens {
             working = VaultFilterFunctions.filterItems(working, filter: token.filter)
         }
-        working = VaultSearch.searchItems(working, query: searchText)
+        working = VaultSearch.searchItems(working, query: root.searchText)
         working = VaultSort.sortItems(working, by: sortOption)
         return working
     }
@@ -1430,8 +1405,8 @@ struct ItemListView: View {
         deleteCandidate = nil
         do {
             try await store.delete(item)
-            if selection?.id == item.id {
-                selection = nil
+            if root.selection?.id == item.id {
+                root.selection = nil
             }
         } catch {
             statusMessage = "delete failed: \(error)"

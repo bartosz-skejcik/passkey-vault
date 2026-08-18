@@ -53,6 +53,14 @@ struct LockView: View {
     /// biometric-slot screenshot matrix, never reachable outside a DEBUG
     /// build driven by `PV_UITEST_LOCK_STATE`.
     @State private var showGeneratorSheet = false
+    /// State 8 -- Offline (design-conformance §"38-11", addendum A3). Set
+    /// two ways, both real: a `ServerReachability.check` probe on appear,
+    /// and any unlock attempt that fails with a transport error (never a
+    /// real invalid-credentials rejection, which stays state 5). Rendered
+    /// through `statusSlot` as its OWN muted treatment, distinct from state
+    /// 5's `PVError` banner -- the gap `38-13-SUMMARY.md`/design-
+    /// conformance §"38-11" both named and left for this plan to close.
+    @State private var isOffline = false
     /// `37-CONTEXT.md`'s locked decision, restated verbatim in
     /// `37-UI-SPEC.md:272`: once the envelope is invalidated by a
     /// biometric-set change, focus moves to the password field -- "the way
@@ -338,7 +346,19 @@ struct LockView: View {
                 .error
             )
         }
-        // Any other failure (server unreachable, unexpected) keeps the banner.
+        // State 8 -- Offline. Outranks the generic banner (a transport
+        // failure now routes HERE, never into `bannerMessage` -- see
+        // `submitPassword`'s catch branch) and stays BELOW states 5/6: a
+        // throttle or a wrong-password count already in progress from a
+        // still-reachable earlier attempt is more specific than "can't
+        // reach the server right now" and must not be masked by it.
+        // Distinct MUTED treatment from state 5's `PVError`, per
+        // design-conformance's own gap table -- the vault still opens
+        // (Unlock stays offered), the copy just tells the truth about sync.
+        if isOffline {
+            return (t(.unlockOfflineSlot), .muted)
+        }
+        // Any other failure (unexpected, non-transport) keeps the banner.
         if let bannerMessage {
             return (bannerMessage, .error)
         }
@@ -416,9 +436,29 @@ struct LockView: View {
         let currentAvailability = BiometricUnlockService.biometryAvailability()
         availability = currentAvailability
 
+        probeReachabilityOnAppear()
+
         guard currentAvailability.isAvailable, !didAutoPromptBiometrics else { return }
         didAutoPromptBiometrics = true
         attemptBiometricUnlock(availability: currentAvailability)
+    }
+
+    /// State 8's OTHER trigger (addendum A3): a real probe against the
+    /// configured server, run once per appearance -- independent of whether
+    /// the user ever attempts an unlock. `ServerReachability.check` is the
+    /// SAME probe 38-12's onboarding "Server" step already uses; reusing it
+    /// here means this screen and that one can never disagree about what
+    /// "reachable" means.
+    private func probeReachabilityOnAppear() {
+        Task {
+            let result = await ServerReachability.check(apiClient.baseURL)
+            switch result {
+            case .reachable:
+                isOffline = false
+            case .unreachable, .wrongServer:
+                isOffline = true
+            }
+        }
     }
 
     #if DEBUG
@@ -445,6 +485,28 @@ struct LockView: View {
             availability = fakeAvailability
             biometricState = .idle
             bannerMessage = t(.appServerUnreachable)
+        // State 8, "Offline" (addendum A3, plan 38-11) -- drives the SAME
+        // `isOffline` property both real triggers (the on-appear probe and a
+        // transport-failed unlock attempt) set, so this screenshot cannot
+        // drift from the real muted treatment `statusSlot` now gives it,
+        // distinct from state 5/the generic "banner" case above.
+        case "offline":
+            availability = fakeAvailability
+            biometricState = .idle
+            isOffline = true
+            // Mirrors `wrongPassword`/`throttled`'s own precedent just below:
+            // BOTH of those real states are only ever reached AFTER the user
+            // has already left the biometry hero (`prefersPasswordEntry`
+            // becomes true the moment "Use master password" is tapped, and
+            // neither state is reachable without a submitted password
+            // first). The offline probe can in principle fire WHILE the hero
+            // is still showing (it runs on appear, independent of
+            // `prefersPasswordEntry`) -- but the muted slot this state
+            // exists to prove only renders in the shared password-primary
+            // layout (`biometryIsOffered == false`), so a representative
+            // screenshot needs the SAME precondition those two states
+            // already establish for themselves.
+            prefersPasswordEntry = true
         // Phase 38, plan 38-13, Task 4: renamed from "forgotAlert" -- it no
         // longer presents an alert, it reveals the inline warning. Drives
         // the SAME `showForgotPasswordWarning` flag the real button toggles,
@@ -454,14 +516,9 @@ struct LockView: View {
             availability = fakeAvailability
             biometricState = .idle
             showForgotPasswordWarning = true
-        // §5 state 5, "Wrong password": added so the screenshot matrix can
-        // capture this state distinctly from state 8 ("Offline", the
-        // existing "banner" case above) -- both render through the same
-        // `bannerMessage` slot today (a pre-existing gap from the
-        // one-layout design recorded in this plan's SUMMARY rather than
-        // fixed here, since fixing it would mean giving the two states
-        // different visual treatment, which is a restructuring this plan's
-        // own prohibitions rule out).
+        // §5 state 5, "Wrong password" -- now visually distinct from state 8
+        // "Offline" above (addendum A3 closed the gap this comment used to
+        // describe): state 5 is `.error`/`PVError`, state 8 is `.muted`.
         case "wrongPassword":
             // Drives the REAL state-5 path -- `attemptsLeft`, the same property
             // `registerFailedAttempt` sets -- not a hand-written banner. The old
@@ -545,14 +602,27 @@ struct LockView: View {
                 let session = try await service.signIn(email: account.email, password: password)
                 try? BiometricUnlockService.enrol(userKey: session.userKey)
                 clearThrottleState()
+                isOffline = false
                 onUnlocked(session)
             } catch let error as PvApiError {
                 if case .invalidCredentials = error {
+                    // A real credential rejection means the server WAS
+                    // reachable -- clears any stale offline slot from an
+                    // earlier probe rather than leaving two contradictory
+                    // signals on screen.
+                    isOffline = false
                     registerFailedAttempt()
+                } else if case .network = error {
+                    // Addendum A3: a transport-failed unlock attempt routes
+                    // to the muted Offline slot, never the generic `.error`
+                    // banner -- distinct from a real wrong password.
+                    isOffline = true
                 } else {
+                    isOffline = false
                     bannerMessage = mapUnlockError(error)
                 }
             } catch {
+                isOffline = false
                 registerFailedAttempt()
             }
         }

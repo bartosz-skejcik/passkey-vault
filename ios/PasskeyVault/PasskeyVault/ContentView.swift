@@ -137,16 +137,7 @@ struct ContentView: View {
             route = .onboarding
             return
         }
-        let service = AccountService(apiClient: apiClient)
-        do {
-            if let restored = try await service.restoreSession() {
-                route = .lock(restored)
-            } else {
-                route = .auth(initialMode: .signIn)
-            }
-        } catch {
-            route = .auth(initialMode: .signIn)
-        }
+        await reroute()
     }
 
     /// `OnboardingWelcomeStep`'s two controls decide which `AuthView` mode
@@ -174,14 +165,87 @@ struct ContentView: View {
     /// and re-pull the whole snapshot on each render. `session.userKey` goes
     /// in as a plain (non-observed) property of the store; see
     /// `VaultStore`'s own note (T-38-02-03).
+    ///
+    /// Plan 38-11: renders `VaultRootView`, not `ItemListView` directly, so
+    /// its `VaultRootController` owns the navigation path/sheet/reveal/
+    /// search state a lock must tear down, and wires the REAL "Lock now"/
+    /// "Sign out" affordances -- both rendered but DISABLED before this plan
+    /// (`ItemListView`'s own former note on why: a half-built lock action is
+    /// the exact "true in the artifact, false in reality" shape this project
+    /// keeps paying for).
     @ViewBuilder
     private func vault(_ session: UnlockedSession) -> some View {
         let store = storeFor(session)
-        ItemListView(store: store, folderStore: folderStoreFor(session))
-            .task {
-                await Self.seedTooShortTotpSecretIfRequested(store: store)
-                await Self.seedDockFixtureIfRequested(store: store)
+        VaultRootView(
+            store: store,
+            folderStore: folderStoreFor(session),
+            onLockRequested: { performLock() },
+            onSignOutRequested: { performSignOut() }
+        )
+        .task {
+            await Self.seedTooShortTotpSecretIfRequested(store: store)
+            await Self.seedDockFixtureIfRequested(store: store)
+        }
+    }
+
+    /// Runs AFTER `VaultRootController.lockTeardown()` has already emptied
+    /// the store/folderStore's own arrays and released their key handles --
+    /// this closure's job is what that controller cannot reach: the ROUTE
+    /// itself, and the `@State` references this view holds to the now-locked
+    /// store instances.
+    ///
+    /// `vaultStore`/`folderStore` are set `nil` here, NOT merely left
+    /// pointing at their now-empty-but-still-alive instances: the next
+    /// unlock's `UnlockedSession` carries a FRESH `FfiUserKey` object (a new
+    /// `LockView` unlock, or a fresh sign-in), and `storeFor(_:)`/
+    /// `folderStoreFor(_:)` only build a new store when their cached
+    /// reference is `nil` -- reusing the OLD, now-permanently-locked
+    /// instance would make the vault unrecoverable without relaunching the
+    /// app.
+    ///
+    /// Re-derives the `.lock` route the SAME way cold launch does
+    /// (`AccountService.restoreSession()`, a live `GET /api/auth/me` call)
+    /// rather than caching the account/`pwWrappedUkJson` locally -- this
+    /// file's own header already documents that `LockView` eligibility is
+    /// decided by a live call each time, not a local cache; a lock is just
+    /// another entry into that same decision.
+    private func performLock() {
+        vaultStore = nil
+        folderStore = nil
+        route = .loading
+        Task { await reroute() }
+    }
+
+    /// Same teardown as `performLock()`, plus forgetting the local session
+    /// token server-side/locally (`AccountService.logout()`) -- a signed-out
+    /// account has no session left to restore into `.lock`, so this always
+    /// lands on `.auth`, never re-derived.
+    private func performSignOut() {
+        vaultStore = nil
+        folderStore = nil
+        route = .loading
+        Task {
+            let service = AccountService(apiClient: apiClient)
+            await service.logout()
+            route = .auth(initialMode: .signIn)
+        }
+    }
+
+    /// The SAME decision `determineRoute()`'s post-onboarding branch makes,
+    /// factored out so `performLock()` can reuse it without also re-running
+    /// the onboarding/DEBUG-forced-route checks that only make sense at
+    /// initial launch.
+    private func reroute() async {
+        let service = AccountService(apiClient: apiClient)
+        do {
+            if let restored = try await service.restoreSession() {
+                route = .lock(restored)
+            } else {
+                route = .auth(initialMode: .signIn)
             }
+        } catch {
+            route = .auth(initialMode: .signIn)
+        }
     }
 
     /// [Rule 2 deviation, plan 38-06 dock work] The dock's load-bearing

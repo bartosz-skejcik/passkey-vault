@@ -3,15 +3,17 @@
 // Produces the screenshot this plan's own acceptance criteria require: "A
 // screenshot shows a card detail with an empty pin, and the pin row is
 // absent rather than showing a placeholder." Drives the REAL "+" create
-// affordance -> `TypePicker` -> `ItemFormView`, saving a genuinely empty
+// affordance -> the dock panel -> `ItemFormView`, saving a genuinely empty
 // card draft against the real `pv-server` -- never a forced view state.
 //
 // [Rule 1 - Bug, 38-09] The "+" affordance stopped being a `Menu` whose
 // items created an item immediately (38-06's own placeholder, explicit that
-// a real create/edit FORM was 38-09's job) -- it now opens `TypePicker`,
-// and the chosen type opens a real, empty `ItemFormView` that must be
-// explicitly saved. Updated to drive that real flow rather than the
-// placeholder one.
+// a real create/edit FORM was 38-09's job) -- it opened `TypePicker`, and
+// the chosen type opened a real, empty `ItemFormView` that must be
+// explicitly saved.
+//
+// Plan 38-11 (addendum A2): `TypePicker` itself is retired -- the dock's
+// "+" panel routes straight into `ItemFormView` now, one tap fewer.
 //
 // Added as a Rule 2 deviation (not in this plan's `files_modified`, which
 // predates a screenshot-only evidence file need) -- mirrors
@@ -54,15 +56,15 @@ final class ItemDetailScreenshotUITests: XCTestCase {
 
         try registerFreshAccount(app, email: Self.freshEmail())
 
-        // The "+" create affordance (`vault.create.plusMenu`) -> TypePicker
-        // -> "Card" tile -> the real, empty `ItemFormView` -> Save. Opens
-        // the created item's detail screen via `ItemFormView`'s own
-        // `onSaved` closure (`selection = created`).
+        // The "+" create affordance (`vault.create.plusMenu`) -> the dock
+        // panel -> "Card" tile -> the real, empty `ItemFormView` -> Save.
+        // Opens the created item's detail screen via `ItemFormView`'s own
+        // `onSaved` closure (`root.selection = created`).
         let plusMenu = app.buttons["vault.create.plusMenu"]
         XCTAssertTrue(plusMenu.waitForExistence(timeout: 10), "plus create affordance never appeared")
         plusMenu.tap()
-        let cardOption = app.buttons["typepicker.Card"]
-        XCTAssertTrue(cardOption.waitForExistence(timeout: 5), "Card type-picker tile never appeared")
+        let cardOption = app.buttons["vault.create.action.card"]
+        XCTAssertTrue(cardOption.waitForExistence(timeout: 5), "Card create-panel tile never appeared")
         cardOption.tap()
 
         let saveButton = app.buttons["itemform.save"]
@@ -106,7 +108,12 @@ final class ItemDetailScreenshotUITests: XCTestCase {
         confirmField.typeText(Self.password)
         app.buttons["auth-submit"].tap()
 
-        let listField = app.textFields["vault.create.marker"]
-        XCTAssertTrue(listField.waitForExistence(timeout: 20), "vault list never appeared after registration")
+        // [Rule 1 - Bug, found live by plan 38-11] `vault.create.marker` is
+        // the DEBUG-gated tracer create bar, opt-in behind
+        // `PV_UITEST_TRACER_CREATE_BAR` -- never set in this file's launch
+        // environment, so this wait could never have succeeded. The list
+        // root's own, always-present element is the dock's "+" instead.
+        let plusMenu = app.buttons["vault.create.plusMenu"]
+        XCTAssertTrue(plusMenu.waitForExistence(timeout: 20), "vault list never appeared after registration")
     }
 }

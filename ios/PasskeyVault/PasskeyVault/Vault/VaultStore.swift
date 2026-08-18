@@ -28,11 +28,17 @@ import os
 enum VaultStoreError: Error, CustomStringConvertible, Equatable {
     /// See `VaultStore.update`'s own refusal note.
     case cannotSaveUndecryptableItem
+    /// Plan 38-11: the store's key handle has been released by `lock()` --
+    /// any operation needing it (create/update) refuses outright rather than
+    /// crashing on a force-unwrap or silently no-op'ing.
+    case locked
 
     var description: String {
         switch self {
         case .cannotSaveUndecryptableItem:
             return "This item failed to decrypt during the last sync -- refresh before making changes."
+        case .locked:
+            return "The vault is locked."
         }
     }
 }
@@ -63,11 +69,26 @@ final class VaultStore {
     /// what fails.
     private(set) var allTags: [String] = []
 
+    /// Plan 38-11: whether this store has completed at least one `refresh()`
+    /// since the last unlock (mirrors `web/src/lib/vault/store.ts`'s own
+    /// `hydrated` flag). `lock()` resets it to `false` -- a re-unlock is
+    /// genuinely a fresh "not yet known" window, exactly the web client's own
+    /// discipline ("Arm 'not yet known' FIRST, before any async work
+    /// starts -- every unlock re-opens the hydration window").
+    private(set) var isHydrated = false
+
     /// NOT observed (T-38-02-03). `@ObservationIgnored` keeps the unlocked
     /// User Key handle out of the observation graph entirely, so it cannot be
     /// read by a SwiftUI dependency trace or rendered into a synthesized
     /// debug description of this object.
-    @ObservationIgnored private let userKey: FfiUserKey
+    ///
+    /// Plan 38-11: a `var`, not a `let` -- `lock()` sets it `nil`, releasing
+    /// the only strong reference this store holds to the decrypted session's
+    /// key handle. Every read site below guards it explicitly rather than
+    /// force-unwrapping, because after a lock this genuinely can be `nil`
+    /// while the store instance itself is still alive and reachable (held by
+    /// `ContentView`'s `@State`).
+    @ObservationIgnored private var userKey: FfiUserKey?
     @ObservationIgnored private let api: VaultAPI
     @ObservationIgnored private static let log = Logger(
         subsystem: "cloud.blonie.PasskeyVault", category: "vault"
@@ -76,6 +97,29 @@ final class VaultStore {
     init(userKey: FfiUserKey, api: VaultAPI) {
         self.userKey = userKey
         self.api = api
+    }
+
+    // MARK: - Lock
+
+    /// THE single teardown for everything this store owns (plan 38-11,
+    /// T-38-11-01/T-38-11-05): empties every array/map, clears the hydration
+    /// flag, and releases the key handle -- in that order, in ONE place, so
+    /// a lock can never forget a second one the way `web/src/lib/vault/
+    /// store.ts`'s own header warns about (the whole reason that file uses a
+    /// single subscription rather than several independent observers).
+    ///
+    /// Releasing `userKey` here is what a weak-reference test can observe:
+    /// this store is the LAST strong holder of the decrypted session's key
+    /// handle mid-render (`ContentView`'s `@State private var vaultStore`
+    /// keeps the STORE instance alive across a lock -- only clearing its
+    /// insides, not deallocating the store itself, actually tears the
+    /// session down).
+    func lock() {
+        items = []
+        allTags = []
+        lastKnownRevision = 0
+        isHydrated = false
+        userKey = nil
     }
 
     // MARK: - Id minting
@@ -114,6 +158,7 @@ final class VaultStore {
     /// Creates one item of any type.
     @discardableResult
     func create(fields: ItemFields) async throws -> VaultItemViewModel {
+        guard let userKey else { throw VaultStoreError.locked }
         let id = Self.mintItemId()
         let plaintext = try ItemNormalize.plaintextJSON(for: fields)
 
@@ -161,6 +206,7 @@ final class VaultStore {
         guard !cannotSaveUndecryptableItem(item) else {
             throw VaultStoreError.cannotSaveUndecryptableItem
         }
+        guard let userKey else { throw VaultStoreError.locked }
         let newRevision = item.revision + 1
         let plaintext = try ItemNormalize.plaintextJSON(for: fields)
         let wire = try encryptItemWire(
@@ -257,9 +303,11 @@ final class VaultStore {
         #if DEBUG
         if ProcessInfo.processInfo.environment[Self.uitestCapabilityFixtureEnvKey] != nil {
             applyCapabilityGatingFixture()
+            isHydrated = true
             return
         }
         #endif
+        guard userKey != nil else { throw VaultStoreError.locked }
         let response = try await api.sync(since: lastKnownRevision)
         switch response {
         case let .upToDate(revision):
@@ -269,6 +317,7 @@ final class VaultStore {
             lastKnownRevision = revision
         }
         recomputeTags()
+        isHydrated = true
     }
 
     #if DEBUG
@@ -332,7 +381,25 @@ final class VaultStore {
 
     /// Decrypts one row, or retains it marked. Never throws -- a single bad
     /// row must not abort the loop over the rest of the vault.
+    ///
+    /// `refresh()` already guards `userKey != nil` before this is ever
+    /// called on the real path -- the `guard` below is defense-in-depth
+    /// against a future call site, not the primary lock check, and reports
+    /// the same "vault is locked" shape as any other decrypt failure rather
+    /// than crashing.
     private func decrypt(row: VaultItemRow) -> VaultItemViewModel {
+        guard let userKey else {
+            return VaultItemViewModel(
+                id: row.id,
+                revision: row.revision,
+                content: .undecryptable(reason: VaultStoreError.locked.description),
+                updatedAt: row.updated_at,
+                lastUsedAt: row.last_used_at,
+                isShared: row.is_shared,
+                lastEditorEmail: row.last_editor_email,
+                collectionId: row.collection_id
+            )
+        }
         do {
             let plaintext = try decryptItemWire(
                 userKey: userKey,

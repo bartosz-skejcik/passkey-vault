@@ -43,7 +43,7 @@ final class ItemFormAndFolderUITests: XCTestCase {
     }
 
     @MainActor
-    func testTypePickerOffersExactlyFiveOptionsAndGeneratorInsertsIntoLoginPassword() throws {
+    func testCreatePanelOffersExactlyFiveOptionsAndGeneratorInsertsIntoLoginPassword() throws {
         let app = XCUIApplication()
         app.launchEnvironment["PV_UITEST_SCREEN"] = "auth"
         app.launch()
@@ -53,23 +53,33 @@ final class ItemFormAndFolderUITests: XCTestCase {
         XCTAssertTrue(plusMenu.waitForExistence(timeout: 10), "plus create affordance never appeared")
         plusMenu.tap()
 
-        let grid = app.otherElements["typepicker.grid"]
-        XCTAssertTrue(grid.waitForExistence(timeout: 5), "TypePicker never appeared")
+        // Plan 38-11 (addendum A2): the dedicated `TypePicker` sheet was
+        // retired -- `vault.create.plusMenu` now opens the dock's own "+"
+        // panel directly (`vault.create.grid`), and each action tile routes
+        // straight into `ItemFormView` with no intermediate picker sheet.
+        let grid = app.otherElements["vault.create.grid"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 5), "the \"+\" action panel never appeared")
 
-        // The must-have this test proves: exactly FIVE creatable types.
-        let expectedTitles = ["Login", "Card", "Identity", "Note", "Code"]
-        for title in expectedTitles {
-            XCTAssertTrue(app.buttons["typepicker.\(title)"].exists, "missing type-picker tile for \(title)")
+        // The must-have this test proves: exactly FIVE creatable ITEM types
+        // in the panel (the panel's sixth slot, `generatePassword`, is not a
+        // creatable item type at all -- see `VaultCreateAction`).
+        let expectedIds = ["login", "card", "identity", "note", "code"]
+        for id in expectedIds {
+            XCTAssertTrue(app.buttons["vault.create.action.\(id)"].exists, "missing create-panel tile for \(id)")
         }
-        let sixthTypeTile = app.buttons["typepicker.Passkey"]
-        XCTAssertFalse(sixthTypeTile.exists, "the create picker must NOT offer the sixth (render-only) type")
+        // Alongside `VaultDockEvidenceUITests`' own existing assertion of
+        // the same fact, from the same panel (addendum A2): the create
+        // surface must never offer a "New passkey" slot at all -- a passkey
+        // is provider-created cryptographic material, not typed-in content.
+        let passkeyTile = app.buttons["vault.create.action.passkey"]
+        XCTAssertFalse(passkeyTile.exists, "the create panel must NOT offer the sixth (render-only, provider-created) type")
 
         let attachment0 = XCTAttachment(screenshot: app.screenshot())
-        attachment0.name = "38-09-typepicker-five-options"
+        attachment0.name = "38-11-create-panel-five-options"
         attachment0.lifetime = .keepAlways
         add(attachment0)
 
-        app.buttons["typepicker.Login"].tap()
+        app.buttons["vault.create.action.login"].tap()
 
         let usernameField = app.textFields["itemform.login.username"]
         XCTAssertTrue(usernameField.waitForExistence(timeout: 10), "the login form never appeared")
@@ -127,11 +137,14 @@ final class ItemFormAndFolderUITests: XCTestCase {
         let plusMenu = app.buttons["vault.create.plusMenu"]
         XCTAssertTrue(plusMenu.waitForExistence(timeout: 10), "plus create affordance never appeared")
         plusMenu.tap()
-        let noteTile = app.buttons["typepicker.Note"]
+        let noteTile = app.buttons["vault.create.action.note"]
         XCTAssertTrue(noteTile.waitForExistence(timeout: 5))
         noteTile.tap()
 
-        let bodyField = app.textViews["itemform.note.body"].firstMatch
+        // [Rule 1 - Bug, found live by plan 38-11] the note body row is a
+        // `TextField(..., axis: .vertical)`, not a `TextEditor` -- it maps to
+        // `XCUIElementTypeTextField`, never `XCUIElementTypeTextView`.
+        let bodyField = app.textFields["itemform.note.body"].firstMatch
         _ = bodyField.waitForExistence(timeout: 10)
 
         let folderRow = app.buttons["itemform.folder.picker"]
@@ -181,7 +194,12 @@ final class ItemFormAndFolderUITests: XCTestCase {
         confirmField.typeText(Self.password)
         app.buttons["auth-submit"].tap()
 
-        let listField = app.textFields["vault.create.marker"]
-        XCTAssertTrue(listField.waitForExistence(timeout: 20), "vault list never appeared after registration")
+        // [Rule 1 - Bug, found live by plan 38-11] `vault.create.marker` is
+        // the DEBUG-gated tracer create bar, opt-in behind
+        // `PV_UITEST_TRACER_CREATE_BAR` -- never set in this file's launch
+        // environment, so this wait could never have succeeded. The list
+        // root's own, always-present element is the dock's "+" instead.
+        let plusMenu = app.buttons["vault.create.plusMenu"]
+        XCTAssertTrue(plusMenu.waitForExistence(timeout: 20), "vault list never appeared after registration")
     }
 }

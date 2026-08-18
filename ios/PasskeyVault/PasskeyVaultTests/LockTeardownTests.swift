@@ -1,0 +1,342 @@
+//
+//  LockTeardownTests.swift
+//  PasskeyVaultTests
+//
+//  Phase 38 (pełny interfejs vaulta), plan 38-11, Task 1.
+//
+//  Three boundaries this file exercises, deliberately kept apart:
+//
+//  * `VaultStore`/`FolderStore` -- the store's OWN teardown (`lock()`):
+//    arrays/maps emptied, hydration flag cleared, key handle released.
+//    The key-handle release is proven with a WEAK reference, not merely by
+//    reading a property back as `nil` -- the strongest available assertion
+//    that the reference was genuinely dropped, not that a getter now
+//    returns a different value while the object underneath is still alive
+//    (this project's own recurring "true in the artifact, false in
+//    reality" defect shape).
+//  * `VaultRootController` -- the view-state half a store does not own:
+//    the navigation path, the presented sheet, the detail screen's reveal
+//    set, and search. `VaultRootController.lockTeardown()` is a plain
+//    method on a plain `@Observable` class, callable here with NO view
+//    hierarchy at all.
+//  * `AutoLockPolicy` -- the whitelist validation on read (T-38-11-02),
+//    ported from `web/src/lib/idle/autolock.ts`'s own three-shape failure
+//    coverage: an out-of-list value, a negative value, a non-numeric value.
+//
+//  A fake `URLProtocol` transport (same shape as `VaultMutationTests
+//  .VaultMutationStubURLProtocol`) answers `VaultStore.create`/`.refresh`
+//  with canned, always-successful responses -- these tests are about STATE
+//  TEARDOWN, not about the network or the crypto wire format (both already
+//  covered elsewhere: `VaultStoreRoundTripTests.swift`,
+//  `VaultMutationTests.swift`). The KEY is real (`FfiUserKey.generate()`),
+//  because the weak-reference test needs a REAL class instance to observe
+//  being released.
+//
+
+import Foundation
+import Testing
+@testable import PasskeyVault
+
+// MARK: - Fake transport (state-teardown tests only; not a wire-format proof)
+
+/// Answers every request with a fixed 201/200 body regardless of path --
+/// unlike `VaultMutationTests.VaultMutationStubURLProtocol`, these tests
+/// never need to distinguish one endpoint from another, only to get PAST
+/// the network call so `VaultStore.create`/`.refresh` can run their real
+/// local bookkeeping.
+final class LockTeardownStubURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let path = request.url?.path ?? ""
+        let (status, body): (Int, Data)
+        if path.hasSuffix("/items") {
+            status = 201
+            body = Data(
+                #"{"id":"lock-teardown-fixture","revision":1,"updated_at":"2026-01-01T00:00:00Z"}"#
+                    .utf8
+            )
+        } else {
+            // `GET /api/sync?since=N` -- always reports "up to date", which
+            // is enough to exercise `isHydrated` without needing a real
+            // encrypted row.
+            status = 200
+            body = Data(#"{"revision":7}"#.utf8)
+        }
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: status, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+@MainActor
+struct LockTeardownTests {
+    private static let fakeBaseURL = URL(string: "https://lock-teardown-tests.invalid")!
+
+    private static func stubSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [LockTeardownStubURLProtocol.self]
+        return URLSession(configuration: config)
+    }
+
+    private static func makeApi() -> VaultAPI {
+        VaultAPI(baseURL: fakeBaseURL, tokenProvider: { "fake-token" }, session: stubSession())
+    }
+
+    private static func noteFields(name: String = "n") -> ItemFields {
+        .note(NoteFields(name: name, folderId: nil, tags: ["one"], body: "b"))
+    }
+
+    private static func makeItem() -> VaultItemViewModel {
+        VaultItemViewModel(id: "fixture-item", revision: 1, content: .fields(noteFields()))
+    }
+
+    // MARK: - VaultStore.lock()
+
+    /// Component 1/2 of the store's own teardown: arrays/maps and the
+    /// hydration flag.
+    @Test
+    func lockEmptiesTheStoresArraysMapsAndHydrationFlag() async throws {
+        let userKey = try FfiUserKey.generate()
+        let store = VaultStore(userKey: userKey, api: Self.makeApi())
+
+        // Seed real state through the store's own real call paths -- not by
+        // poking `items` directly (it is `private(set)` for exactly this
+        // reason: nothing outside this file may set it any other way).
+        _ = try await store.create(fields: Self.noteFields())
+        try await store.refresh()
+
+        #expect(!store.items.isEmpty)
+        #expect(!store.allTags.isEmpty)
+        #expect(store.isHydrated)
+
+        store.lock()
+
+        #expect(store.items.isEmpty)
+        #expect(store.allTags.isEmpty)
+        #expect(store.lastKnownRevision == 0)
+        #expect(!store.isHydrated)
+    }
+
+    /// Component: the weak reference. The ONLY strong reference to `userKey`
+    /// alive after this inner closure returns is the one `VaultStore.init`
+    /// stored internally -- so `weakKey` becoming `nil` after `lock()` is
+    /// direct evidence the store released ITS reference, not merely that a
+    /// getter now reports something different.
+    @Test
+    func lockReleasesTheKeyHandleSoAWeakReferenceIsNilAfterward() throws {
+        weak var weakKey: FfiUserKey?
+        let store: VaultStore = try {
+            let userKey = try FfiUserKey.generate()
+            weakKey = userKey
+            return VaultStore(userKey: userKey, api: Self.makeApi())
+        }()
+
+        // Sanity: the store is still holding it before the lock.
+        #expect(weakKey != nil, "the store should still hold the key handle before lock()")
+
+        store.lock()
+
+        #expect(weakKey == nil, "a weak reference taken before the lock must be nil afterward")
+    }
+
+    /// Post-lock, every operation needing the key refuses outright rather
+    /// than crashing or silently no-op'ing (T-38-11-05's "no field value
+    /// leaks" companion: an operation that could not refuse would have to
+    /// force-unwrap a nil key handle instead).
+    @Test
+    func operationsRefuseAfterLockRatherThanCrashing() async throws {
+        let userKey = try FfiUserKey.generate()
+        let store = VaultStore(userKey: userKey, api: Self.makeApi())
+        store.lock()
+
+        await #expect(throws: VaultStoreError.locked) {
+            try await store.create(fields: Self.noteFields())
+        }
+        await #expect(throws: VaultStoreError.locked) {
+            try await store.refresh()
+        }
+    }
+
+    // MARK: - FolderStore.lock()
+
+    @Test
+    func folderStoreLockEmptiesFoldersAndReleasesTheKeyHandle() throws {
+        weak var weakKey: FfiUserKey?
+        let store: FolderStore = try {
+            let userKey = try FfiUserKey.generate()
+            weakKey = userKey
+            return FolderStore(userKey: userKey, api: Self.makeApi())
+        }()
+
+        #expect(weakKey != nil)
+        store.lock()
+        #expect(store.folders.isEmpty)
+        #expect(weakKey == nil, "FolderStore.lock() must release its key handle too")
+    }
+
+    // MARK: - VaultRootController.lockTeardown() -- the view-state half
+
+    /// RED-before-green target 1/4: comment out `selection = nil` in
+    /// `VaultRootController.lockTeardown()` and this fails.
+    @Test
+    func lockTeardownTruncatesTheNavigationPathBackToTheListRoot() throws {
+        let controller = VaultRootController()
+        controller.selection = Self.makeItem()
+
+        let userKey = try FfiUserKey.generate()
+        let store = VaultStore(userKey: userKey, api: Self.makeApi())
+
+        controller.lockTeardown(store: store, folderStore: nil)
+
+        #expect(controller.selection == nil, "unlocking must return to the list root, not the previously viewed item")
+    }
+
+    /// RED-before-green target 2/4: comment out `activeSheet = nil` and
+    /// this fails.
+    @Test
+    func lockTeardownDismissesAnyPresentedSheet() throws {
+        let controller = VaultRootController()
+        controller.activeSheet = .generator
+
+        let userKey = try FfiUserKey.generate()
+        let store = VaultStore(userKey: userKey, api: Self.makeApi())
+
+        controller.lockTeardown(store: store, folderStore: nil)
+
+        #expect(controller.activeSheet == nil, "a presented sheet must be dismissed by the lock")
+    }
+
+    /// RED-before-green target 3/4: comment out the `revealState = ...`
+    /// reset and this fails.
+    @Test
+    func lockTeardownClearsTheRevealSet() throws {
+        let controller = VaultRootController()
+        controller.revealState = DetailRevealState(itemId: "fixture-item")
+        _ = controller.revealState.toggle("password")
+        #expect(controller.revealState.isRevealed("password"))
+
+        let userKey = try FfiUserKey.generate()
+        let store = VaultStore(userKey: userKey, api: Self.makeApi())
+
+        controller.lockTeardown(store: store, folderStore: nil)
+
+        #expect(!controller.revealState.isRevealed("password"), "the reveal set must be empty after a lock")
+    }
+
+    @Test
+    func lockTeardownDismissesAndClearsSearch() throws {
+        let controller = VaultRootController()
+        controller.isSearchPresented = true
+        controller.searchText = "hunter2"
+        controller.searchTokens = [VaultFilterToken(tag: "work")]
+
+        let userKey = try FfiUserKey.generate()
+        let store = VaultStore(userKey: userKey, api: Self.makeApi())
+
+        controller.lockTeardown(store: store, folderStore: nil)
+
+        #expect(!controller.isSearchPresented)
+        #expect(controller.searchText.isEmpty)
+        #expect(controller.searchTokens.isEmpty)
+    }
+
+    /// The full handler in one place: every field a lock must reach,
+    /// including the store's own, asserted together -- this is the "one
+    /// handler, not several observers" claim itself, not just its parts.
+    @Test
+    func lockTeardownReachesEveryPieceOfStateInOneCall() async throws {
+        let controller = VaultRootController()
+        controller.selection = Self.makeItem()
+        controller.activeSheet = .editing(Self.makeItem())
+        controller.revealState = DetailRevealState(itemId: "fixture-item")
+        _ = controller.revealState.toggle("secret")
+        controller.isSearchPresented = true
+        controller.searchText = "x"
+
+        weak var weakKey: FfiUserKey?
+        let store: VaultStore = try {
+            let userKey = try FfiUserKey.generate()
+            weakKey = userKey
+            return VaultStore(userKey: userKey, api: Self.makeApi())
+        }()
+        _ = try await store.create(fields: Self.noteFields())
+
+        let folderUserKey = try FfiUserKey.generate()
+        let folderStore = FolderStore(userKey: folderUserKey, api: Self.makeApi())
+
+        controller.lockTeardown(store: store, folderStore: folderStore)
+
+        #expect(controller.selection == nil)
+        #expect(controller.activeSheet == nil)
+        #expect(!controller.revealState.isRevealed("secret"))
+        #expect(!controller.isSearchPresented)
+        #expect(controller.searchText.isEmpty)
+        #expect(store.items.isEmpty)
+        #expect(!store.isHydrated)
+        #expect(weakKey == nil)
+    }
+
+    // MARK: - AutoLockPolicy whitelist (T-38-11-02)
+
+    private static func freshDefaults() -> UserDefaults {
+        UserDefaults(suiteName: "lock-teardown-tests-\(UUID().uuidString)")!
+    }
+
+    @Test
+    func autoLockPolicyDefaultsWhenNothingIsStored() {
+        let defaults = Self.freshDefaults()
+        #expect(AutoLockPolicy.read(defaults: defaults) == AutoLockPolicy.defaultMinutes)
+    }
+
+    /// The three malformed-input shapes `readAutolockMinutes()` (`web/src/
+    /// lib/idle/autolock.ts`) is validated against, ported verbatim.
+    @Test
+    func autoLockPolicyDefaultsOnAnOutOfWhitelistValue() {
+        let defaults = Self.freshDefaults()
+        defaults.set(999, forKey: AutoLockPolicy.key)
+        #expect(AutoLockPolicy.read(defaults: defaults) == AutoLockPolicy.defaultMinutes)
+    }
+
+    @Test
+    func autoLockPolicyDefaultsOnANegativeValue() {
+        let defaults = Self.freshDefaults()
+        defaults.set(-5, forKey: AutoLockPolicy.key)
+        #expect(AutoLockPolicy.read(defaults: defaults) == AutoLockPolicy.defaultMinutes)
+    }
+
+    @Test
+    func autoLockPolicyDefaultsOnANonNumericValue() {
+        let defaults = Self.freshDefaults()
+        defaults.set("tampered", forKey: AutoLockPolicy.key)
+        #expect(AutoLockPolicy.read(defaults: defaults) == AutoLockPolicy.defaultMinutes)
+    }
+
+    @Test
+    func autoLockPolicyRoundTripsEveryWhitelistedOption() {
+        let defaults = Self.freshDefaults()
+        for option in AutoLockPolicy.options {
+            AutoLockPolicy.write(option, defaults: defaults)
+            #expect(AutoLockPolicy.read(defaults: defaults) == option)
+        }
+    }
+
+    /// `write` itself refuses to persist an out-of-whitelist value, so a
+    /// programmer error at a future call site cannot even get one stored in
+    /// the first place (defense-in-depth alongside `read`'s own
+    /// validation).
+    @Test
+    func autoLockPolicyWriteRefusesAnOutOfWhitelistValue() {
+        let defaults = Self.freshDefaults()
+        AutoLockPolicy.write(30, defaults: defaults)
+        AutoLockPolicy.write(999, defaults: defaults)
+        #expect(AutoLockPolicy.read(defaults: defaults) == 30, "a rejected write must not clobber the last valid stored value")
+    }
+}

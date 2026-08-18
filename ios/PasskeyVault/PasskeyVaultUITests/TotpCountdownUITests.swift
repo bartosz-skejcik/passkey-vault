@@ -6,12 +6,16 @@
 // precedent `ItemDetailScreenshotUITests.swift`'s own header already
 // records for the same class of gap.
 //
-// Drives the REAL "+" create affordance -> TypePicker "Code" tile (its
+// Drives the REAL "+" create affordance -> the dock panel's "Code" tile (its
 // draft's secret is ALREADY the RFC 6238 Appendix B SHA1 vector,
-// `GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ` -- `TypePicker.swift`'s own
-// `emptyFields()`, no typing required) -> Save -> the real detail screen,
-// and reads the live code/countdown through XCUITest ACCESSIBILITY VALUES,
-// never OCR on the rendered ring (38-RESEARCH.md E-T1 step 2).
+// `GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ` -- `ItemCreationKind.emptyFields()`, no
+// typing required) -> Save -> the real detail screen, and reads the live
+// code/countdown through XCUITest ACCESSIBILITY VALUES, never OCR on the
+// rendered ring (38-RESEARCH.md E-T1 step 2).
+//
+// Plan 38-11 (addendum A2): the intermediate `TypePicker` sheet the panel
+// used to hand off to is retired -- `vault.create.action.code` routes
+// straight into `ItemFormView` now.
 //
 // The error-state screenshot uses a second item, seeded by a DEBUG-only
 // launch hook (`ContentView.swift`'s `PV_UITEST_SEED_BAD_TOTP`, a Rule 2
@@ -53,8 +57,8 @@ final class TotpCountdownUITests: XCTestCase {
         let plusMenu = app.buttons["vault.create.plusMenu"]
         XCTAssertTrue(plusMenu.waitForExistence(timeout: 10), "plus create affordance never appeared")
         plusMenu.tap()
-        let codeOption = app.buttons["typepicker.Code"]
-        XCTAssertTrue(codeOption.waitForExistence(timeout: 5), "Code type-picker tile never appeared")
+        let codeOption = app.buttons["vault.create.action.code"]
+        XCTAssertTrue(codeOption.waitForExistence(timeout: 5), "Code create-panel tile never appeared")
         codeOption.tap()
 
         let saveButton = app.buttons["itemform.save"]
@@ -164,7 +168,12 @@ final class TotpCountdownUITests: XCTestCase {
 
         app.buttons["Create vault"].tap()
 
-        let listField = app.textFields["vault.create.marker"]
-        XCTAssertTrue(listField.waitForExistence(timeout: 20), "vault list never appeared after registration")
+        // [Rule 1 - Bug, found live by plan 38-11] `vault.create.marker` is
+        // the DEBUG-gated tracer create bar, opt-in behind
+        // `PV_UITEST_TRACER_CREATE_BAR` -- never set in this file's launch
+        // environment, so this wait could never have succeeded. The list
+        // root's own, always-present element is the dock's "+" instead.
+        let plusMenu = app.buttons["vault.create.plusMenu"]
+        XCTAssertTrue(plusMenu.waitForExistence(timeout: 20), "vault list never appeared after registration")
     }
 }

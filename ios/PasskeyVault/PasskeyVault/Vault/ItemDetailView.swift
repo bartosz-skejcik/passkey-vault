@@ -31,13 +31,32 @@ struct ItemDetailView: View {
     let item: VaultItemViewModel
     let store: VaultStore
 
-    @State private var revealState: DetailRevealState
+    /// Plan 38-11: OWNED by `VaultRootController` (`VaultRootView.swift`),
+    /// not this view's own local `@State` -- so the controller's single lock
+    /// handler can clear it directly, and a unit test can assert the clear
+    /// without instantiating this view at all. Falls back to a fresh,
+    /// itemId-scoped local `@State` only for the tests/previews that still
+    /// construct this view directly without a `VaultRootView` wrapper (see
+    /// the convenience `init` below).
+    @Binding var revealState: DetailRevealState
     @State private var confirmation: ClipboardConfirmation?
 
-    init(item: VaultItemViewModel, store: VaultStore) {
+    /// Plan 38-11: the SAME "Lock now"/avatar-menu chrome `ItemListView`
+    /// carries, threaded through here too -- see `vaultLockToolbarContent`'s
+    /// own header for why a screen pushed onto the list's `NavigationStack`
+    /// needs its own copy of this toolbar rather than inheriting the list's.
+    var onLockRequested: (() -> Void)?
+    var onSignOutRequested: (() -> Void)?
+
+    init(
+        item: VaultItemViewModel, store: VaultStore, revealState: Binding<DetailRevealState>,
+        onLockRequested: (() -> Void)? = nil, onSignOutRequested: (() -> Void)? = nil
+    ) {
         self.item = item
         self.store = store
-        _revealState = State(initialValue: DetailRevealState(itemId: item.id))
+        self._revealState = revealState
+        self.onLockRequested = onLockRequested
+        self.onSignOutRequested = onSignOutRequested
     }
 
     var body: some View {
@@ -62,6 +81,9 @@ struct ItemDetailView: View {
         .background(Color("PVBackground"))
         .navigationTitle(Text(verbatim: item.displayName))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            vaultLockToolbarContent(onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested)
+        }
         // Defense-in-depth alongside the fresh-`init` case above: if a
         // future navigation path ever reuses the SAME `ItemDetailView`
         // instance across a change of `item` (rather than pushing a new

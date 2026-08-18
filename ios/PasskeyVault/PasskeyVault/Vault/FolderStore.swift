@@ -57,7 +57,9 @@ final class FolderStore {
     private(set) var folders: [Folder] = []
     private(set) var lastError: String?
 
-    @ObservationIgnored private let userKey: FfiUserKey
+    /// Plan 38-11: `var`, not `let` -- `lock()` releases it, mirroring
+    /// `VaultStore.userKey`'s own note.
+    @ObservationIgnored private var userKey: FfiUserKey?
     @ObservationIgnored private let api: VaultAPI
     @ObservationIgnored private static let log = Logger(
         subsystem: "cloud.blonie.PasskeyVault", category: "folders"
@@ -66,6 +68,17 @@ final class FolderStore {
     init(userKey: FfiUserKey, api: VaultAPI) {
         self.userKey = userKey
         self.api = api
+    }
+
+    // MARK: - Lock
+
+    /// The folder half of `VaultRootController.lockTeardown()` -- empties
+    /// `folders` and releases the key handle, same discipline as
+    /// `VaultStore.lock()`.
+    func lock() {
+        folders = []
+        lastError = nil
+        userKey = nil
     }
 
     /// A lowercase UUID string -- matching `VaultStore.mintItemId`'s own
@@ -81,6 +94,7 @@ final class FolderStore {
     /// fixed revision -> `POST /api/vault/folders` with that same id.
     @discardableResult
     func create(name: String) async throws -> Folder {
+        guard let userKey else { throw VaultStoreError.locked }
         let id = Self.mintFolderId()
         let plaintext = try Self.plaintextJSON(name: name)
         let combined = try encryptItemCombinedJson(
@@ -111,6 +125,7 @@ final class FolderStore {
     /// its own `since=0` pull. Small dataset (folders, not items), so the
     /// duplication is a deliberate, bounded simplification, not an oversight.
     func refresh() async throws {
+        guard userKey != nil else { throw VaultStoreError.locked }
         let response = try await api.sync(since: 0)
         guard case let .snapshot(_, _, rows) = response else {
             return
@@ -127,6 +142,9 @@ final class FolderStore {
     /// (never a folder rendered as "Unreadable" that the user then tries to
     /// assign items into).
     private func decrypt(row: FolderRow) -> Folder? {
+        // `refresh()` already guards `userKey != nil` -- this is
+        // defense-in-depth, matching `VaultStore.decrypt(row:)`'s own note.
+        guard let userKey else { return nil }
         do {
             let plaintext = try decryptItemCombinedJson(
                 userKey: userKey, combinedJson: row.enc_name, itemId: row.id, revision: Self.folderRevision
