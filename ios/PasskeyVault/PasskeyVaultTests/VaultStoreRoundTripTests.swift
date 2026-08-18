@@ -162,7 +162,7 @@ struct VaultStoreRoundTripTests {
     @Test
     func syncResponseDecodesBothBranchesOfTheUntaggedServerEnum() throws {
         let upToDate = try JSONDecoder().decode(
-            SyncResponse.self, from: Data(#"{"revision":7}"#.utf8)
+            SyncPullResult.self, from: Data(#"{"revision":7}"#.utf8)
         )
         guard case let .upToDate(revision) = upToDate else {
             Issue.record("expected the revision-only branch, got \(upToDate)")
@@ -176,7 +176,7 @@ struct VaultStoreRoundTripTests {
         "collection_id":null,"last_editor_email":null}],"folders":[{"id":"bb","enc_name":"{}"}]}
         """
         let snapshot = try JSONDecoder().decode(
-            SyncResponse.self, from: Data(snapshotJSON.utf8)
+            SyncPullResult.self, from: Data(snapshotJSON.utf8)
         )
         guard case let .snapshot(rev, items, folders) = snapshot else {
             Issue.record("expected the snapshot branch, got \(snapshot)")

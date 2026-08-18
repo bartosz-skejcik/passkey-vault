@@ -22,9 +22,17 @@ import Foundation
 /// verbatim, never re-encoded) and the live `FfiUserKey` handle capable of
 /// encrypting/decrypting real items. Raw key bytes never appear here --
 /// `userKey` is the same opaque handle `pv-ffi` hands back everywhere else.
+///
+/// `email` (plan 39-03, Rule 2 deviation): the account identifier
+/// `ContentView.storeFor` threads into `VaultStore`'s `accountId`, which
+/// `CiphertextCacheStore` checks on every read (D-19) -- without it, the
+/// persisted cache would have no way to reject a snapshot left behind by a
+/// different account on the same device. Every construction site already
+/// has the email in scope; this is not a new network call.
 struct UnlockedSession {
     let token: String
     let userKey: FfiUserKey
+    let email: String
 }
 
 /// Drives the one real account-creation/unlock path through `pv-ffi` and
@@ -98,7 +106,7 @@ final class AccountService {
 
         let loginResult = try await apiClient.login(email: email, authHashB64: authMaterial.authHashB64)
         SessionTokenStore.save(loginResult.sessionToken)
-        return UnlockedSession(token: loginResult.sessionToken, userKey: userKey)
+        return UnlockedSession(token: loginResult.sessionToken, userKey: userKey, email: email)
     }
 
     /// `preloginKdf` -> `deriveAuthMaterial` over the SERVER-supplied salt
@@ -131,7 +139,7 @@ final class AccountService {
             wrappedJson: loginResult.pwWrappedUk
         )
         SessionTokenStore.save(loginResult.sessionToken)
-        return UnlockedSession(token: loginResult.sessionToken, userKey: userKey)
+        return UnlockedSession(token: loginResult.sessionToken, userKey: userKey, email: email)
     }
 
     /// A previously stored session token's account, recovered WITHOUT

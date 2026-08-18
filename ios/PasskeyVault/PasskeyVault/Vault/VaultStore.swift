@@ -19,6 +19,18 @@
 //  3. **A row that fails to decrypt is kept and marked, never dropped**, and
 //     never allowed to abort the loop over the other rows (T-38-02-02).
 //
+//  Phase 39 (synchronizacja-i-cache-offline), plan 39-03 adds a fourth rule:
+//
+//  4. **`refresh()`'s `since` comes from the persisted cache, never from
+//     `lastKnownRevision` alone.** `SyncClient.pull()` reads the watermark
+//     out of `CachedSnapshot` itself (D-11) -- `lastKnownRevision` is
+//     updated FROM that response, it is never the value SENT. On the
+//     up-to-date branch nothing is written to the cache store at all: that
+//     branch structurally carries no collection to write (D-12, L-22,
+//     `Sync/SyncModels.swift`'s header). On the snapshot branch the whole
+//     cache is REPLACED, never merged (D-15) -- the server sends no
+//     deletion markers.
+//
 
 import Foundation
 import Observation
@@ -116,6 +128,18 @@ final class VaultStore {
     /// with no `userKey` guard (`touch(itemId:)`, fire-and-forget) could
     /// still authenticate with the pre-lock token afterward.
     @ObservationIgnored private var api: VaultAPI
+    /// Plan 39-03. The account this store belongs to -- the value written
+    /// into, and checked against, every `CachedSnapshot` this store reads
+    /// or writes (D-19). Defaults to `""` so every pre-39-03 unit-test call
+    /// site (`VaultStore(userKey:api:)`) keeps compiling and behaving
+    /// exactly as before: an empty accountId paired with the default
+    /// `NullCiphertextCacheStore` below never resolves to a real cache read.
+    @ObservationIgnored private let accountId: String
+    /// Plan 39-03. Branch H's App Group store in production
+    /// (`ContentView.storeFor`); `NullCiphertextCacheStore` (no-op) by
+    /// default for every existing test construction that has nothing to do
+    /// with the cache.
+    @ObservationIgnored private let cacheStore: CiphertextCacheStore
     @ObservationIgnored private static let log = Logger(
         subsystem: "cloud.blonie.PasskeyVault", category: "vault"
     )
@@ -130,9 +154,33 @@ final class VaultStore {
     private(set) var lockedMidFlightGuardHits = 0
     #endif
 
-    init(userKey: FfiUserKey, api: VaultAPI) {
+    init(
+        userKey: FfiUserKey,
+        api: VaultAPI,
+        accountId: String = "",
+        cacheStore: CiphertextCacheStore = NullCiphertextCacheStore()
+    ) {
         self.userKey = userKey
         self.api = api
+        self.accountId = accountId
+        self.cacheStore = cacheStore
+        hydrateFromCache()
+    }
+
+    // MARK: - Cache hydration (plan 39-03)
+
+    /// Reads the persisted snapshot BEFORE any network call, so a cold,
+    /// offline launch still renders the last-known vault instead of an
+    /// empty list. Deliberately does NOT set `isHydrated` -- that flag's
+    /// contract (`refresh()`'s own note, T-38-11) is "at least one
+    /// CONFIRMED server pull since unlock"; a disk read is not one, and a
+    /// caller must not mistake a stale cached row for a just-confirmed
+    /// sync.
+    private func hydrateFromCache() {
+        guard let snapshot = cacheStore.readCurrentSnapshot(accountId: accountId) else { return }
+        items = snapshot.items.map { VaultItemRow(cached: $0) }.map(decrypt(row:))
+        lastKnownRevision = snapshot.revision
+        recomputeTags()
     }
 
     // MARK: - Lock
@@ -399,6 +447,13 @@ final class VaultStore {
     ///
     /// The up-to-date branch (no `items` key at all) is a normal outcome, not
     /// an error: the server returns it on every pull where nothing changed.
+    ///
+    /// Plan 39-03: the `since` sent is no longer `lastKnownRevision` read
+    /// directly -- `SyncClient.pull()` reads it out of the persisted
+    /// `CachedSnapshot` itself (D-11, the watermark's single copy). On the
+    /// up-to-date branch NOTHING is written to the cache store: that branch
+    /// structurally carries no collection to write (D-12). On the snapshot
+    /// branch the cache is REPLACED whole, never merged (D-15).
     func refresh() async throws {
         #if DEBUG
         if ProcessInfo.processInfo.environment[Self.uitestCapabilityFixtureEnvKey] != nil {
@@ -408,7 +463,14 @@ final class VaultStore {
         }
         #endif
         guard userKey != nil else { throw VaultStoreError.locked }
-        let response = try await api.sync(since: lastKnownRevision)
+        let syncClient = SyncClient(
+            baseURL: api.baseURL,
+            tokenProvider: api.tokenProvider,
+            cacheStore: cacheStore,
+            accountId: accountId,
+            session: api.session
+        )
+        let response = try await syncClient.pull()
 
         // CR-02 fix: re-check the lock immediately after the `await` and
         // before touching `self` -- without this, a lock landing while the
@@ -430,19 +492,43 @@ final class VaultStore {
         switch response {
         case let .upToDate(revision):
             lastKnownRevision = revision
-        case let .snapshot(revision, rows, _):
+        case let .snapshot(revision, rows, folderRows):
             items = rows.map(decrypt(row:))
             lastKnownRevision = revision
+            persistSnapshotToCache(revision: revision, items: rows, folders: folderRows)
         }
         recomputeTags()
         isHydrated = true
+    }
+
+    /// DR-39-A: one JSON blob, written whole and replaced whole. Failure is
+    /// logged, never thrown -- the server write (nothing happens here) and
+    /// the in-memory `items` array are already correct at this point in
+    /// `refresh()`; a cache-persistence failure must not be reported to the
+    /// caller as a failed sync.
+    private func persistSnapshotToCache(revision: Int, items rows: [VaultItemRow], folders folderRows: [FolderRow]) {
+        let snapshot = CachedSnapshot(
+            revision: revision,
+            syncedAtMs: Int64(Date().timeIntervalSince1970 * 1000),
+            accountId: accountId,
+            serverBaseURL: api.baseURL.absoluteString,
+            items: rows.map(CachedSnapshot.Item.init(row:)),
+            folders: folderRows.map(CachedSnapshot.Folder.init(row:))
+        )
+        do {
+            try cacheStore.write(snapshot)
+        } catch {
+            Self.log.error(
+                "failed to persist sync cache: \(String(describing: error), privacy: .public)"
+            )
+        }
     }
 
     #if DEBUG
     /// TEST-ONLY (plan 38-06, Task 2): when set, `refresh()` short-circuits
     /// to a synthetic two-item fixture instead of calling the real network.
     /// This is the ONLY way to screenshot the "a shared row hides Edit"
-    /// acceptance criterion honestly: `VaultItemRow`/`SyncResponse` do not
+    /// acceptance criterion honestly: `VaultItemRow`/`SyncPullResult` do not
     /// carry `access_level`/a shared-direct discriminant at all today (that
     /// sync endpoint, `GET /api/sync/shared/direct`, is Phase 40's job), so
     /// the REAL sync path can never actually produce a `sharedToMe == true`

@@ -576,7 +576,7 @@ struct LockView: View {
             switch outcome {
             case let .unlocked(userKey):
                 biometricState = .idle
-                onUnlocked(UnlockedSession(token: account.token, userKey: userKey))
+                onUnlocked(UnlockedSession(token: account.token, userKey: userKey, email: account.email))
             case .envelopeInvalidated:
                 biometricState = .envelopeInvalidated
             case .biometryLockedOut:

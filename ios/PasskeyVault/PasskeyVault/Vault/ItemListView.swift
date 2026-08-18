@@ -150,9 +150,10 @@ enum VaultSectionKind: CaseIterable {
 
 /// A folder/tag filter rendered as a `.searchable` token. FOLDER tokens are
 /// deliberately NOT offered yet: `VaultStore` does not decrypt folder NAMES
-/// today (`VaultAPI.swift`'s `FolderRow`/`SyncResponse.snapshot` carries
-/// them off the wire but nothing decrypts `enc_name` into a `Folder` array
-/// -- that lands with 38-09's folder support). Offering a folder token
+/// today (`Sync/SyncModels.swift`'s `FolderRow`/`SyncPullResult.snapshot`
+/// carries them off the wire but nothing here decrypts `enc_name` into a
+/// `Folder` array -- `FolderStore`, 38-09's folder support, owns that).
+/// Offering a folder token
 /// labelled by its raw id would be worse than not offering one; `VaultFilter
 /// .folder(id:)` stays a faithfully ported case with no UI path to it yet,
 /// which is an honest, bounded scope cut, not an oversight.

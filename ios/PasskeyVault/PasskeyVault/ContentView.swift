@@ -220,6 +220,12 @@ struct ContentView: View {
     /// token server-side/locally (`AccountService.logout()`) -- a signed-out
     /// account has no session left to restore into `.lock`, so this always
     /// lands on `.auth`, never re-derived.
+    ///
+    /// Plan 39-03: also purges the persisted ciphertext cache -- the cache,
+    /// its in-blob watermark and the session token die together on
+    /// sign-out (D-19). `purge()` needs no live `VaultStore` instance (it
+    /// resolves the App Group container itself), so this runs regardless of
+    /// whether `vaultStore` had already been constructed this session.
     private func performSignOut() {
         vaultStore = nil
         folderStore = nil
@@ -227,6 +233,7 @@ struct ContentView: View {
         Task {
             let service = AccountService(apiClient: apiClient)
             await service.logout()
+            AppGroupCiphertextCacheStore().purge()
             route = .auth(initialMode: .signIn)
         }
     }
@@ -400,7 +407,14 @@ struct ContentView: View {
                 // lock is not covered by that and would still authenticate
                 // with the value captured here.
                 tokenProvider: { [token = session.token] in token }
-            )
+            ),
+            // Plan 39-03: the real Branch H cache (App Group container) and
+            // the account identifier it is checked against on every read
+            // (D-19). Every other `VaultStore(userKey:api:)` construction
+            // in this codebase is a test call site that keeps its pre-39-03
+            // defaults (no cache configured).
+            accountId: session.email,
+            cacheStore: AppGroupCiphertextCacheStore()
         )
         vaultStore = store
         return store

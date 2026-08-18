@@ -24,78 +24,12 @@
 
 import Foundation
 
-/// One vault item row exactly as `crates/pv-server/src/routes/vault.rs`'s
-/// `VaultItem` serializes it. Field names are the server's own snake_case --
-/// there are no rename attributes on either side, so `CodingKeys` would only
-/// be a place for the two to drift apart.
-struct VaultItemRow: Decodable {
-    let id: String
-    /// Opaque. See this file's header (DR-38-C).
-    let enc_key: String
-    /// Opaque. See this file's header (DR-38-C).
-    let enc_data: String
-    let revision: Int
-    let updated_at: String
-    let last_used_at: String?
-    let is_shared: Bool
-    let collection_id: String?
-    let last_editor_email: String?
-}
-
-/// One folder row (`crates/pv-server/src/routes/folders.rs`'s
-/// `FolderRecord`). `enc_name` carries the COMBINED JSON shape, not the split
-/// pair items use -- see `pv-ffi`'s `wire.rs` header for the column map.
-struct FolderRow: Decodable {
-    let id: String
-    /// Opaque. See this file's header (DR-38-C).
-    let enc_name: String
-}
-
-/// `GET /api/sync`'s two response shapes.
+/// `VaultItemRow`, `FolderRow` and the closed `SyncPullResult` two-case
+/// decode moved to `Sync/SyncModels.swift` in plan 39-03 -- one definition,
+/// one decoding site (that file's own header explains why). `sync(since:)`
+/// below still performs the HTTP call and still decodes through that single
+/// type.
 ///
-/// `SyncResponse` is `#[serde(untagged)]` on the server
-/// (`crates/pv-server/src/routes/sync.rs:70-81`), so the wire carries NO
-/// discriminator: the up-to-date branch is `{"revision":N}` and the snapshot
-/// branch is `{"revision":N,"items":[…],"folders":[…]}`. A `Decodable` with a
-/// required `items` key throws on the first branch, and the server returns
-/// that branch on every poll where nothing changed -- i.e. almost always.
-/// Decoding therefore ATTEMPTS the snapshot branch and falls back.
-enum SyncResponse: Decodable {
-    case upToDate(revision: Int)
-    case snapshot(revision: Int, items: [VaultItemRow], folders: [FolderRow])
-
-    private struct SnapshotBody: Decodable {
-        let revision: Int
-        let items: [VaultItemRow]
-        let folders: [FolderRow]
-    }
-
-    private struct UpToDateBody: Decodable {
-        let revision: Int
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let snapshot = try? container.decode(SnapshotBody.self) {
-            self = .snapshot(
-                revision: snapshot.revision,
-                items: snapshot.items,
-                folders: snapshot.folders
-            )
-            return
-        }
-        let upToDate = try container.decode(UpToDateBody.self)
-        self = .upToDate(revision: upToDate.revision)
-    }
-
-    var revision: Int {
-        switch self {
-        case let .upToDate(revision): return revision
-        case let .snapshot(revision, _, _): return revision
-        }
-    }
-}
-
 /// `POST /api/vault/items`' 201 body
 /// (`crates/pv-server/src/routes/vault.rs`'s `CreateItemResponse`).
 struct CreateItemResponseBody: Decodable {
@@ -214,12 +148,12 @@ struct VaultAPI {
     }
 
     /// `GET /api/sync?since=N`.
-    func sync(since: Int) async throws -> SyncResponse {
+    func sync(since: Int) async throws -> SyncPullResult {
         let (data, response) = try await send(
             path: "/api/sync?since=\(since)", method: "GET", body: nil, authenticated: true
         )
         try Self.requireStatus(200, response: response, data: data)
-        return try Self.decode(SyncResponse.self, from: data)
+        return try Self.decode(SyncPullResult.self, from: data)
     }
 
     /// `DELETE /api/vault/items/{id}`. Expects **204** (`vault.rs`'s
