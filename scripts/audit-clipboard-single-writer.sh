@@ -65,32 +65,57 @@ has_service="$(printf '%s\n' "$hits" | grep -c 'Vault/ClipboardService\.swift$' 
 app_swift_file="${ROOT}/${app_swift_rel}"
 app_hits=0
 if [ -f "$app_swift_file" ]; then
-  app_hits="$(grep -n 'UIPasteboard' "$app_swift_file" | grep -c . || true)"
+  # WR-15 (38-REVIEW.md, iteration 4): count WRITES (`UIPasteboard.<member>`),
+  # not mentions -- a bare `grep -c 'UIPasteboard'` counted comment lines
+  # too, so documenting the exception in prose (naming `UIPasteboard` in a
+  # sentence) made this gate FAIL with "found 2", punishing exactly the
+  # kind of documentation this codebase otherwise requires. Comment-only
+  # lines (`grep -n` prefixes each with "N:", so a line that is ENTIRELY a
+  # `//` comment after optional leading whitespace matches
+  # `^[0-9]+:[[:space:]]*//`) are excluded.
+  app_hits="$(grep -n 'UIPasteboard\.' "$app_swift_file" | grep -vc '^[0-9]*:[[:space:]]*//' || true)"
 fi
 
-# Every `UIPasteboard` hit line in the app-entry file must fall inside an
+# Every `UIPasteboard` write line in the app-entry file must fall inside an
 # `#if DEBUG` region. Tracks `#if`/`#endif` nesting depth with a simple
 # stack; a hit is DEBUG-scoped only if the innermost enclosing `#if` at
 # that line is literally `#if DEBUG`.
+#
+# WR-15 (38-REVIEW.md, iteration 4): `#else` was previously unhandled, so it
+# fell through to the generic body and left `isDebug[depth]` untouched --
+# everything in the `#else` arm of an `#if DEBUG` was scored as
+# DEBUG-scoped, the exact inversion of the invariant this check exists to
+# police. The `#else` rule below flips `isDebug[depth]` back to 0 for the
+# current nesting level.
 app_hits_outside_debug=0
+app_hits_outside_debug_detail=""
 if [ "$app_hits" -gt 0 ]; then
-  app_hits_outside_debug="$(awk '
+  awk_out="$(awk '
     /^[[:space:]]*#if[[:space:]]/ {
       depth++
       isDebug[depth] = ($0 ~ /#if[[:space:]]+DEBUG([[:space:]]|$)/) ? 1 : 0
+      next
+    }
+    /^[[:space:]]*#else/ {
+      if (depth > 0) { isDebug[depth] = 0 }
       next
     }
     /^[[:space:]]*#endif/ {
       if (depth > 0) { depth-- }
       next
     }
-    /UIPasteboard/ {
+    /UIPasteboard\./ {
       inDebug = 0
       for (d = 1; d <= depth; d++) { if (isDebug[d]) { inDebug = 1 } }
       if (!inDebug) { print NR ": " $0; outside++ }
     }
     END { print "COUNT=" (outside + 0) }
-  ' "$app_swift_file" | tail -1 | sed -n 's/^COUNT=//p')"
+  ' "$app_swift_file")"
+  app_hits_outside_debug="$(printf '%s\n' "$awk_out" | tail -1 | sed -n 's/^COUNT=//p')"
+  # Keep every offending line (all but the trailing COUNT= line) so the
+  # FAIL message below can name them -- previously discarded by `| tail -1`
+  # alone, so a failure named no line at all.
+  app_hits_outside_debug_detail="$(printf '%s\n' "$awk_out" | sed '$d')"
 fi
 
 if [ -n "$unexpected" ]; then
@@ -104,7 +129,8 @@ elif [ "$app_hits" -ne 1 ]; then
   say "FAIL -- ${app_swift_rel} must contain exactly ONE documented DEBUG-only UIPasteboard write (found $app_hits)"
   FAIL=1
 elif [ "${app_hits_outside_debug:-0}" -ne 0 ]; then
-  say "FAIL -- ${app_swift_rel}'s UIPasteboard write is not inside an '#if DEBUG' region"
+  say "FAIL -- ${app_swift_rel}'s UIPasteboard write is not inside an '#if DEBUG' region:"
+  say "$app_hits_outside_debug_detail"
   FAIL=1
 else
   say "PASS -- UIPasteboard is written from the choke point, plus only the one documented, exactly-counted, DEBUG-scoped exception"
