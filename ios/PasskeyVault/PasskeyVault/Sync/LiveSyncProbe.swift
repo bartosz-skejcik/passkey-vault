@@ -29,15 +29,23 @@
 //  literal `repeatingPullDisabled = true` and refuses to run if it is
 //  absent (demonstrated failing once, this plan's own acceptance criteria).
 //
-//  Logs `PVSYNC|event=render` via `os.Logger` (subsystem
-//  `cloud.blonie.PasskeyVault`, category `sync`) whenever a login item's
-//  decrypted password changes -- `privacy: .public`, deliberately: these
-//  are throwaway test literals THIS SAME SCRIPT generates and passes in via
-//  `--literal-one`/`--literal-two`, never real vault data, and the whole
-//  point of this file is for the shell script to read the DECRYPTED value
-//  off the device log. `VaultItemViewModel.content` is this codebase's own
-//  established definition of "rendered" (`SyncTracerLiveProofTests.swift`'s
-//  header: "the exact value ItemDetailView/ItemListView render from").
+//  CR-05 (39-REVIEW.md): logs `PVSYNC|event=render` via `os.Logger`
+//  (subsystem `cloud.blonie.PasskeyVault`, category `sync`) at `privacy:
+//  .public`, but ONLY for a login password that is byte-equal to one of the
+//  two literals the driving script passed in via a THIRD required env var,
+//  `PV_WS_PROOF_LITERALS` (comma-separated, matching `--literal-one`/
+//  `--literal-two`) -- never every login item in the account, which is what
+//  this file used to do before this fix. `runIfRequested()` is a no-op
+//  unless `PV_WS_PROOF_LITERALS` is ALSO set and non-empty, on top of the
+//  existing email/password gate -- so a bare `PV_WS_PROOF_EMAIL`/
+//  `PV_WS_PROOF_PASSWORD` pair (a plausible mistake against a real account)
+//  can no longer publish a single decrypted secret. The loop also carries a
+//  hard deadline (`probeDeadline`) and calls `store.lock()` on every exit
+//  path, so this probe cannot outlive its own proof or keep holding
+//  `session.userKey`/decrypted items after the two-push window closes.
+//  `VaultItemViewModel.content` is this codebase's own established
+//  definition of "rendered" (`SyncTracerLiveProofTests.swift`'s header: "the
+//  exact value ItemDetailView/ItemListView render from").
 //
 
 #if DEBUG
@@ -47,35 +55,57 @@ import os
 enum LiveSyncProbe {
     private static let logger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "sync")
 
-    /// Called once from `ContentView.determineRoute()`. A no-op unless both
-    /// env vars are set -- inert for every normal DEBUG launch (and
+    /// CR-05 (39-REVIEW.md): the probe's whole runtime, from sign-in to
+    /// `store.lock()`, is bounded by this many seconds -- generous for the
+    /// two-push proof's own ~30s-of-work budget (`scripts
+    /// /ios-ws-push-proof.sh`'s own 30s-per-wait timeouts), never unbounded
+    /// as the pre-fix loop was.
+    private static let probeDurationSeconds: TimeInterval = 120
+
+    /// Called once from `ContentView.determineRoute()`. A no-op unless ALL
+    /// THREE env vars are set -- inert for every normal DEBUG launch (and
     /// compiled out entirely in Release, this whole file is `#if DEBUG`).
+    /// `PV_WS_PROOF_LITERALS` (CR-05, 39-REVIEW.md): the comma-separated
+    /// pair of literals this run is allowed to log -- without it, this hook
+    /// stays inert even if the email/password pair alone would otherwise
+    /// point at a real account.
     static func runIfRequested() {
         let env = ProcessInfo.processInfo.environment
         guard
             let email = env["PV_WS_PROOF_EMAIL"], !email.isEmpty,
-            let password = env["PV_WS_PROOF_PASSWORD"], !password.isEmpty
+            let password = env["PV_WS_PROOF_PASSWORD"], !password.isEmpty,
+            let literalsRaw = env["PV_WS_PROOF_LITERALS"], !literalsRaw.isEmpty
         else {
             return
         }
+        let expectedLiterals = Set(literalsRaw.split(separator: ",").map(String.init)).filter { !$0.isEmpty }
+        guard !expectedLiterals.isEmpty else { return }
         let baseURL = ServerSettings.resolved
         Task { @MainActor in
-            await run(email: email, password: password, baseURL: baseURL)
+            await run(email: email, password: password, baseURL: baseURL, expectedLiterals: expectedLiterals)
         }
     }
 
     @MainActor
-    private static func run(email: String, password: String, baseURL: URL) async {
+    private static func run(email: String, password: String, baseURL: URL, expectedLiterals: Set<String>) async {
+        var store: VaultStore?
+        // CR-05: every exit path -- deadline, cancellation, or a thrown
+        // error after sign-in -- releases the key handle this probe holds,
+        // mirroring `ContentView.performLock()`'s own single-teardown
+        // discipline. `store` starts `nil` so an error BEFORE sign-in has
+        // nothing to lock.
+        defer { store?.lock() }
         do {
             let accountService = AccountService(apiClient: PvApiClient(baseURL: baseURL))
             let session = try await accountService.signIn(email: email, password: password)
-            let store = VaultStore(
+            let liveStore = VaultStore(
                 userKey: session.userKey,
                 api: VaultAPI(baseURL: baseURL, tokenProvider: { session.token }),
                 accountId: session.email,
                 cacheStore: AppGroupCiphertextCacheStore()
             )
-            let coordinator = SyncCoordinator(store: store)
+            store = liveStore
+            let coordinator = SyncCoordinator(store: liveStore)
             coordinator.repeatingPullDisabled = true // see this file's header -- the D-06 requirement
             coordinator.start(baseURL: baseURL, tokenProvider: { session.token })
             logger.log("PVSYNC|event=signedin")
@@ -83,12 +113,18 @@ enum LiveSyncProbe {
             // Polls the ALREADY-DECRYPTED in-memory store (never a second
             // decode path) and logs only on CHANGE, so the shell script can
             // read one `PVSYNC|event=render` line per distinct value rather
-            // than one every 300ms.
+            // than one every 300ms. Bounded by `probeDeadline` (CR-05) --
+            // this loop no longer runs for the life of the process.
+            let deadline = Date().addingTimeInterval(Self.probeDurationSeconds)
             var lastLoggedPassword: [String: String] = [:]
-            while !Task.isCancelled {
+            while !Task.isCancelled, Date() < deadline {
                 try? await Task.sleep(nanoseconds: 300_000_000)
-                for item in store.items {
+                for item in liveStore.items {
                     guard case let .fields(.login(loginFields)) = item.content else { continue }
+                    // CR-05: only the two literals THIS run's driving
+                    // script named are ever eligible to be logged --
+                    // everything else in the account is skipped, silently.
+                    guard expectedLiterals.contains(loginFields.password) else { continue }
                     if lastLoggedPassword[item.id] != loginFields.password {
                         lastLoggedPassword[item.id] = loginFields.password
                         logger.log(

@@ -316,8 +316,13 @@ wait_for_pattern() {
 }
 
 echo "==> launching the host app with LiveSyncProbe env vars (repeating pull disabled)"
+# CR-05 (39-REVIEW.md): PV_WS_PROOF_LITERALS is the third, now-required gate
+# on LiveSyncProbe.swift's logging -- without it the probe stays inert, and
+# with it the probe logs ONLY these two literals, never every login
+# password in the account.
 SIMCTL_CHILD_PV_WS_PROOF_EMAIL="$WS_EMAIL" \
 SIMCTL_CHILD_PV_WS_PROOF_PASSWORD="$WS_ACCOUNT_PASSWORD" \
+SIMCTL_CHILD_PV_WS_PROOF_LITERALS="${LITERAL1},${LITERAL2}" \
   xcrun simctl launch "$SIM_UDID" "$HOST_BUNDLE_ID" >"${SCRATCH_DIR}/launch.log" 2>&1
 
 echo "==> waiting for PVSYNC|event=open (delegate open callback, via device log)"
