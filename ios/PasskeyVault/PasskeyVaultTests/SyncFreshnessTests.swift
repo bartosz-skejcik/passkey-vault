@@ -43,16 +43,54 @@ struct SyncFreshnessTests {
         #expect(text.hasPrefix("Last synced"))
     }
 
-    // WR-10 (39-REVIEW.md): the test above is satisfied by simply deleting
-    // the same-day branch entirely and always taking the relative path --
-    // "3 days ago" contains neither "minute" nor "hour" either way, so it
-    // pins nothing about the SPLIT the two branches actually implement.
-    // This test asserts the property that genuinely distinguishes them: a
-    // same-day string is relative to `reference` (moves as `reference`
-    // does), a previous-day string is NOT (it is pinned to the calendar
-    // date), and the two render DIFFERENTLY for the same underlying instant
-    // and reference. Delete the `isDate(_:inSameDayAs:)` branch and this
-    // test fails, because `earlierDay` starts moving with `reference` too.
+    // WR-02 (39-REVIEW.md, iteration 2): the previous version of this test
+    // (WR-10, iteration 1's fix) is STILL vacuous with the
+    // `isDate(_:inSameDayAs:)` branch deleted. With that branch removed,
+    // `describe` always takes the `RelativeDateTimeFormatter` path, and
+    // `RelativeDateTimeFormatter.localizedString(for:relativeTo:)` selects
+    // the LARGEST WHOLE UNIT -- a three-day-old instant renders "3 days ago"
+    // whether `reference` is `Self.reference` or `Self.reference + 1 hour`,
+    // because a one-hour shift never crosses a day boundary once the
+    // magnitude is already in days. Both of the deleted test's assertions
+    // (same-day differs, previous-day does not) therefore still pass with
+    // the branch gone -- it pinned nothing about the split.
+    //
+    // This version asserts the property that actually distinguishes the two
+    // branches: a previous-day instant renders through the EXACT SAME
+    // `DateFormatter(dateStyle: .medium, timeStyle: .short)` the production
+    // code's absolute branch uses -- not merely "some string that happens
+    // not to move". Delete the `isDate(_:inSameDayAs:)` branch (so every
+    // instant, including this one, takes the relative path instead) and
+    // this assertion fails immediately: the relative phrase ("3 days ago")
+    // is never equal to the absolute-formatter string ("Nov 11, 2023 at
+    // 10:13 PM"), regardless of locale rounding or the 1-hour reference
+    // shift this test also exercises.
+    @Test func aPreviousDayStringIsRenderedByTheAbsoluteFormatterNotARelativePhrase() {
+        let threeDaysAgo = Date(timeIntervalSince1970: Self.reference.timeIntervalSince1970 - 3 * 24 * 3600)
+        let threeDaysAgoMs = Int64(threeDaysAgo.timeIntervalSince1970 * 1000)
+        let laterReference = Self.reference.addingTimeInterval(3600)
+
+        let absoluteFormatter = DateFormatter()
+        absoluteFormatter.dateStyle = .medium
+        absoluteFormatter.timeStyle = .short
+        let expected = "Last synced \(absoluteFormatter.string(from: threeDaysAgo))"
+
+        let earlierDayNow = SyncFreshness.describe(syncedAtMs: threeDaysAgoMs, reference: Self.reference)
+        #expect(
+            earlierDayNow == expected,
+            "a previous-day instant must be rendered by the ABSOLUTE formatter, not a relative phrase -- got \(earlierDayNow.debugDescription), expected \(expected.debugDescription)"
+        )
+
+        // The reference clock advancing by an hour must not change the
+        // rendering at all -- the absolute string is pinned to the calendar
+        // date, never to `reference`.
+        let earlierDayLater = SyncFreshness.describe(syncedAtMs: threeDaysAgoMs, reference: laterReference)
+        #expect(earlierDayLater == expected, "a previous-day (absolute) string must NOT move as the reference clock advances")
+    }
+
+    // The same-day/previous-day SPLIT itself, kept alongside the assertion
+    // above: a same-day string is relative to `reference` (moves as
+    // `reference` does) while a previous-day string does not.
     @Test func aSameDayStringMovesWithReferenceWhileAPreviousDayStringDoesNot() {
         let fiveMinutesAgoMs = Int64((Self.reference.timeIntervalSince1970 - 5 * 60) * 1000)
         let threeDaysAgoMs = Int64((Self.reference.timeIntervalSince1970 - 3 * 24 * 3600) * 1000)
