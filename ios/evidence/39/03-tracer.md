@@ -1,5 +1,34 @@
 # Phase 39, Plan 39-03 -- tracer evidence
 
+## CR-04 fix-review reconciliation (39-REVIEW.md, iteration 1) -- 2026-08-19
+
+Plan 39-06 (`fc8b0b0`) changed `VaultStore.persistUpToDateToCache` to re-persist a
+blob with a FRESH `syncedAtMs` on every up-to-date pull (SYNC-04, T-39-23) -- but
+`SyncTracerLiveProofTests`'s assertion 3 still asserted the persisted cache file was
+byte-for-byte IDENTICAL across a second, up-to-date pull, which two pulls separated
+by a real network round trip cannot satisfy (they cannot share a millisecond). The
+review (CR-04) caught this: the assertion had been asserting a behaviour the code no
+longer had, and this file's last run before this fix (2026-08-18T21:13Z) predated
+the commit that made it false.
+
+**Fix:** the assertion is retargeted at the invariant that still genuinely holds --
+the persisted CIPHERTEXT and REVISION are unchanged across an up-to-date pull, and
+`syncedAtMs` never moves backwards. This is still exactly what the RED mutation in
+`SyncDecodeTests`'s own acceptance criteria demonstrates able to fail (an empty
+`.snapshot` masquerading as `.upToDate` would empty `items`, which the new
+`after.items == before.items` check still catches). `SyncModels.swift`'s header,
+`VaultStore.swift`'s rule 4, `SyncTracerLiveProofTests.swift`'s own header, and this
+script's PASS line were all corrected to match (`fix(39): CR-04 ...` in `git log`).
+
+This fix landed alongside CR-02 (the up-to-date branch now re-persists from the
+ON-DISK snapshot it read the watermark from, never a divergent in-memory mirror) and
+CR-03 (pulls are serialised, and both response branches now refuse to regress the
+watermark). **The live proof below was RE-RUN, live, against the CR-02/CR-03/CR-04
+fixed code** (`2026-08-19T03:04:50Z` run) -- rendered password matched, both
+enc_key/enc_data digests matched curl's same-session fetch, and the up-to-date
+second pull left the persisted ciphertext/revision unchanged with `syncedAtMs`
+advancing (never regressing), exactly the new assertion's own claim.
+
 **Branch implemented:** Branch H (DR-1, confirmed in `ios/evidence/39/02-branch-gate.md`) -- the
 App Group container (`group.cloud.blonie.PasskeyVault`), never Keychain, for the ciphertext cache.
 
@@ -242,6 +271,25 @@ Digests are IDENTICAL for both fields.
 |---|---|---|
 | enc_key | `8741b1cbd8185749857139d5f260deccbb51fcc55d05021366d98a2f81bb786d` | `8741b1cbd8185749857139d5f260deccbb51fcc55d05021366d98a2f81bb786d` |
 | enc_data | `07b009e285c4d25233de80a92ede9f78138c2794c9fa827a2a132c23abe70fc2` | `07b009e285c4d25233de80a92ede9f78138c2794c9fa827a2a132c23abe70fc2` |
+
+Digests are IDENTICAL for both fields.
+
+## Live proof run -- 2026-08-19T03:04:50Z
+
+- Server: http://127.0.0.1:8621
+- Simulator UDID: 34992BB7-4982-4915-92C7-C7FC987802AF
+- Tracer account: pv-39-03-tracer-1787108646@example.invalid
+- Item id: 6e287992-5f1f-4904-bc8c-946d8804a0ff, revision after create: 1
+- --expect-password literal (verbatim): `pv-39-reviewfix cr04 reproof 1787108645`
+- xcodebuild test totalTestCount: 1, exit status: 0
+- App Group container (host path): /Users/j5on/Library/Developer/CoreSimulator/Devices/34992BB7-4982-4915-92C7-C7FC987802AF/data/Containers/Shared/AppGroup/1BAFFC1E-B911-473D-8D85-BBA274FAC34A
+
+### D-13 digest comparison (enc_key/enc_data, curl-fetched vs. persisted store)
+
+| field | curl (same session) | persisted store |
+|---|---|---|
+| enc_key | `264ceaab6c100cbd9dd4dd1c420bfb4f95d545771a512e5300213a1b14c33119` | `264ceaab6c100cbd9dd4dd1c420bfb4f95d545771a512e5300213a1b14c33119` |
+| enc_data | `8c7a1f65645ad8b5d43461e25204aeccb344c22e79cb4367c2c03e1a556e8e23` | `8c7a1f65645ad8b5d43461e25204aeccb344c22e79cb4367c2c03e1a556e8e23` |
 
 Digests are IDENTICAL for both fields.
 
