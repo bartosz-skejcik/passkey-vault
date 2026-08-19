@@ -230,6 +230,23 @@ EXPECTED_CLASSES="FfiUserKey FfiWrappingKey"
 # exception -- adding one is a security decision, not a convenience.
 STRUCT_HANDLE_BYTE_ALLOWLIST=""
 
+# Shape B's class-method allowlist (Phase 40, plan 40-02), keyed by exact
+# `<ClassName>.<methodName>` pairs -- same discipline as
+# STRUCT_HANDLE_BYTE_ALLOWLIST above, added because shape B previously had
+# NO named exceptions at all (`$ALLOWED` only ever matches the two FFI-03
+# free-function names, which by construction never appear as a class
+# method). `FfiIdentityKey.publicKeyBytes` is the X25519 identity keypair's
+# PUBLIC half -- publishable by design (KEY-02/DR-40-A, `crates/pv-ffi/src/
+# sharing.rs`'s own module header), never the private half, mirroring
+# `pv-wasm`'s own `WasmIdentityKey.publicKeyBytes` and this file's own
+# reviewed `generateRegistrationSalt` reasoning ("explicit, non-secret value
+# crossing the boundary as bytes on purpose", not key material leaking out
+# of a handle that is supposed to keep it opaque). Falsified 40-02: with
+# this entry removed, the gate FAILs naming
+# `FfiIdentityKey.publicKeyBytes`; restored, it PASSes again (see
+# 40-02-SUMMARY.md for the transcript).
+CLASS_METHOD_BYTE_ALLOWLIST="FfiIdentityKey.publicKeyBytes"
+
 VIOLATIONS=""
 DISCOVERED_ALL=""
 AUDITED_ALL=""
@@ -284,7 +301,9 @@ for f in "$BINDINGS_DIR"/*.swift; do
       while IFS= read -r line; do
         [ -z "$line" ] && continue
         name=$(echo "$line" | sed -E "s/$NAME_RE/\\3/")
-        if ! echo "$name" | grep -qE "$ALLOWED"; then
+        key="${cls}.${name}"
+        if ! echo "$name" | grep -qE "$ALLOWED" \
+           && ! echo " $CLASS_METHOD_BYTE_ALLOWLIST " | grep -qF " $key "; then
           VIOLATIONS="${VIOLATIONS}${f} [${cls} method]: ${line}"$'\n'
         fi
       done <<< "$MATCHES_B"
