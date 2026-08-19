@@ -846,28 +846,36 @@ async fn family_wide_pending_discovery_response_carries_only_ids_kinds_and_acces
     }
 
     // Only now the narrower exact-shape assertions.
+    //
+    // This is the SECOND instance of Phase 30's B2 (see 2036554), with
+    // INVERTED polarity: `serde_json::Value::Object`'s RE-PARSED key order
+    // depends on whether the `preserve_order` feature is enabled for
+    // serde_json in THIS cargo invocation's dependency graph -- under
+    // `cargo test -p pv-server` alone (not enabled by any dependency
+    // pv-server alone pulls in) `Map` is a `BTreeMap`, sorted/alphabetical;
+    // under `cargo test --workspace`, pv-provider's passkey-authenticator ->
+    // elliptic-curve chain unifies the feature on workspace-wide, making
+    // `Map` insertion-ordered (struct declaration order) instead. A literal
+    // order comparison is therefore pinned to whichever one width happened
+    // to produce it and structurally cannot be green at both. The property
+    // these assertions exist to prove is exact-field-SET, not order -- so
+    // compare sorted key sets, exactly as 2036554 fixed B2's first instance.
+    let mut body_keys: Vec<String> = body.as_object().unwrap().keys().cloned().collect();
+    body_keys.sort();
     assert_eq!(
-        body.as_object().unwrap().keys().cloned().collect::<Vec<_>>(),
+        body_keys,
         vec!["missing".to_string(), "resealable".to_string()],
         "the response has exactly two top-level fields"
     );
     let missing = body["missing"].as_array().unwrap();
     assert_eq!(missing.len(), 1, "the newcomer is missing exactly the one family-wide folder");
-    // Found while executing this task: `serde_json::Value::Object`'s
-    // RE-PARSED key order depends on whether the `preserve_order` feature is
-    // enabled for serde_json in THIS cargo invocation's dependency graph --
-    // and it differs between `cargo test -p pv-server` (not enabled by any
-    // dependency pv-server alone pulls in -> alphabetical/BTreeMap order)
-    // and `cargo test --workspace` (pv-provider's passkey-authenticator ->
-    // elliptic-curve chain enables it workspace-wide via Cargo's feature
-    // unification -> struct-declaration/insertion order). LOCKED decision
-    // 4's literal acceptance command is `--workspace`, never `-p
-    // pv-server` -- this assertion is pinned to THAT command's actual,
-    // observed order (struct declaration order: collection_id, kind,
-    // access_level), not the narrower command's.
+    let mut missing0_keys: Vec<String> = missing[0].as_object().unwrap().keys().cloned().collect();
+    missing0_keys.sort();
+    let mut expected_missing0_keys =
+        vec!["collection_id".to_string(), "kind".to_string(), "access_level".to_string()];
+    expected_missing0_keys.sort();
     assert_eq!(
-        missing[0].as_object().unwrap().keys().cloned().collect::<Vec<_>>(),
-        vec!["collection_id".to_string(), "kind".to_string(), "access_level".to_string()],
+        missing0_keys, expected_missing0_keys,
         "a pending grant is an id, a kind, and (260812-01e Task 3) an access_level, nothing else"
     );
     assert_eq!(missing[0]["collection_id"].as_str(), Some(FAMILY_WIDE_COLLECTION_ID));
@@ -876,9 +884,12 @@ async fn family_wide_pending_discovery_response_carries_only_ids_kinds_and_acces
 
     let resealable = owner_body["resealable"].as_array().unwrap();
     assert_eq!(resealable.len(), 1, "the owner holds a key the newcomer lacks -- exactly one resealable grant");
+    let mut resealable0_keys: Vec<String> = resealable[0].as_object().unwrap().keys().cloned().collect();
+    resealable0_keys.sort();
+    let mut expected_resealable0_keys = vec!["collection_id".to_string(), "recipient_user_id".to_string()];
+    expected_resealable0_keys.sort();
     assert_eq!(
-        resealable[0].as_object().unwrap().keys().cloned().collect::<Vec<_>>(),
-        vec!["collection_id".to_string(), "recipient_user_id".to_string()],
+        resealable0_keys, expected_resealable0_keys,
         "a resealable grant is two ids, nothing else"
     );
 

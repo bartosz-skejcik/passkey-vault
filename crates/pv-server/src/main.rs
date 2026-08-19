@@ -15,6 +15,12 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = Config::from_env()?;
     cfg.validate()?;
+    // 2026-07-20-stale-default-pv-origin-3000: a mismatched rp_id/rp_origin
+    // pair boots fine and only fails later as InvalidRPOrigin on the first
+    // real WebAuthn ceremony -- log the effective values at INFO so a
+    // misconfiguration is visible in the first screenful, not after a live
+    // debugging session.
+    tracing::info!(rp_id = %cfg.rp_id, rp_origin = %cfg.rp_origin, "effective WebAuthn RP configuration");
 
     let db = build_pool(&cfg.db_url).await?;
     let webauthn = build_webauthn(&cfg.rp_id, &cfg.rp_origin)?;

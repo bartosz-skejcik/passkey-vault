@@ -1411,5 +1411,42 @@ mod tests {
              (`let app = extra_routes(api);`) that `router_literal_routes_match_documented_allowlist`'s \
              per-function extraction and `let api =` name-based counter cannot see into"
         );
+
+        // (c) 2026-07-30-router-guard-gap-main-rs: (a) and (b) above only
+        // scan THIS file. `src/main.rs:16` calls `routes::router(state,
+        // static_dir)` and could chain a further `.route(...)` (or `.nest(`/
+        // `.merge(`/their `_service` twins) onto the `Router` it returns —
+        // such a route would need no allowlist edit, appear in neither
+        // `family_routes()`/`membership_routes()`'s tables, and be invisible
+        // to every guard above, the exact silent-escape shape this whole
+        // test module exists to prevent. Cheapest fix (per the todo): extend
+        // this same source scan to also cover main.rs's production region —
+        // it has no legitimate reason to register a route itself (its own
+        // job is bootstrapping: build the router via `routes::router(`, then
+        // apply cross-cutting middleware like `.layer(TraceLayer...)`), so
+        // ANY occurrence of these markers there is itself the violation.
+        let main_rs_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs");
+        let main_rs_lines = non_comment_lines(&main_rs_path);
+        let main_test_mod_idx = main_rs_lines
+            .iter()
+            .position(|line| line.trim() == "#[cfg(test)]")
+            .unwrap_or_else(|| panic!("could not locate `#[cfg(test)]` in main.rs — this test's source anchor is stale"));
+        let main_rs_production_source = main_rs_lines[..main_test_mod_idx].join(" ");
+        assert!(
+            main_rs_production_source.contains("routes::router("),
+            "main.rs must call routes::router( to build its Router — if this ever stops being true, the \
+             reasoning below (that main.rs has no legitimate `.route(`-family call of its own) no longer holds"
+        );
+        for forbidden in [".route(", ".nest(", ".nest_service(", ".merge(", ".route_service(", ".fallback_service("]
+        {
+            assert!(
+                !main_rs_production_source.contains(forbidden),
+                "src/main.rs must perform NO route registration itself (found {forbidden}) — it exists solely to \
+                 call routes::router(...) and apply cross-cutting middleware (.layer(...)); a route chained \
+                 directly onto the Router main.rs receives back would need no allowlist edit and be invisible \
+                 to every structural guard in this module (router_literal_routes_match_documented_allowlist, \
+                 the cardinality tripwire, and (a)/(b) above), which all scan only routes/mod.rs"
+            );
+        }
     }
 }
