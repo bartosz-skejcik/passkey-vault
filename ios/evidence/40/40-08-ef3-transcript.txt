@@ -1,0 +1,30 @@
+E-F3 live hidden-password FFI recovery -- Phase 40, plan 40-08, Task 3
+Recorded: 2026-08-19 8:42:21 AM +0000
+Server origin: http://127.0.0.1:8621
+
+Account A: pv-ef3-a-1787128941@example.invalid (user_id 307de3ed-c22e-4a21-8e4b-d4689854759e)
+Account B: pv-ef3-b-1787128941@example.invalid (user_id d39c3946-abdf-4369-93c0-33565a5915a8)
+
+Item X (0857369b-d575-4b4c-a590-5a06726c903b): login item, A -> B, shared at hidden_password.
+  B's own ingestion (SharedItemsStore.ingestDirectShared): decrypted successfully.
+  ItemCapabilities.isPasswordHidden(B's item) = true
+  ItemCapabilities.canEditItem(B's item) = false
+
+THE decisive step -- recovering the plaintext IS the expected, desired
+outcome (this is the mask's honesty proof, not a leak):
+  Direct FFI call: unsealCollectionKey(myIdentityKey: B's identity, sealedJson: item_shares.sealed_key)
+                    -> decryptItemWithSharedKey(ck: recovered, encDataJson: item_shares.enc_data, itemId, revision: 1)
+  Recovered plaintext contains the distinctive literal: "E-F3-distinctive-pw-1787128941-9f21a"
+  Recovered plaintext: {"type":"login","name":"E-F3 hidden password item","folderId":null,"tags":[],"username":"owner","password":"E-F3-distinctive-pw-1787128941-9f21a","urls":[],"notes":""}
+
+Unrecognised-level case ("superadmin_from_the_future"):
+  AccessLevel.label = "Nieznany poziom dostępu"
+  ItemCapabilities.canEditItem = false
+
+Level-respect checks, live:
+  Item Y (cdbfb9af-d95d-4809-a994-f991763b237f), read-level direct share: PUT /api/vault/items/cdbfb9af-d95d-4809-a994-f991763b237f as B -> 403 (expected 403)
+  Item X (0857369b-d575-4b4c-a590-5a06726c903b), hidden_password direct share: PUT /api/vault/items/0857369b-d575-4b4c-a590-5a06726c903b as B -> 403 (expected 403)
+  Item Z (65a74544-9a95-4c4a-bece-39dd8e39f1d1), collection 27e18972-dac5-4401-b22f-044f65401b23, B holds edit: PUT /api/vault/items/65a74544-9a95-4c4a-bece-39dd8e39f1d1 as B -> 200 (expected 200)
+
+No green unit test was accepted as evidence for the cryptographic claim (QA-01) --
+this live run and the direct FFI call above are SC3's actual evidence.
