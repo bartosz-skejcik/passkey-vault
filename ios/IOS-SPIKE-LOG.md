@@ -3227,6 +3227,30 @@ records the fallback this plan took instead: asserting the underlying, already-p
 already-tested production gate condition (`DetailFieldTables.passwordFieldIsHidden`) rather than the
 rendered tree.
 
+### L-30 -- `xcodebuild test -only-testing:.../methodName` WITHOUT the trailing `()` silently selects ZERO Swift Testing tests and exits 0
+
+**Found 2026-08-19, Phase 40, Plan 40-09, Tasks 2-3, empirically.** This plan's own `<verify>` commands,
+copied verbatim from the PLAN.md text, read `-only-testing:PasskeyVaultTests/Fsh02ReceiveTests/livePathAInviteTimeWrap`
+(no trailing parens). Run exactly as written, `xcodebuild test` printed `** TEST SUCCEEDED **` -- but no
+evidence files landed on disk, and a follow-up run with `-parallel-testing-enabled NO` (which suppresses
+L-28's clone-doubling and makes the true count visible) reported `Executed 0 tests, with 0 failures` /
+`Test run with 0 tests in 1 suite passed`. The identifier silently matched NOTHING, and an empty test
+selection is, to `xcodebuild`, a passing run -- exactly the "vacuous gate" shape this project's own
+review discipline watches for (a `<verify>` that cannot fail because it never runs). Confirmed the fix
+empirically: adding the trailing `()` -- `-only-testing:PasskeyVaultTests/Fsh02ReceiveTests/livePathAInviteTimeWrap()`
+-- made `xcodebuild` actually select and run the method (`◇ Test livePathAInviteTimeWrap() started` /
+`✔ ... passed after 0.83 seconds`, real evidence files written to disk immediately after). This is a
+DIFFERENT failure mode from L-28 (suite-level scope running everything twice) -- this is method-level
+scope, missing parens, running NOTHING.
+
+**Consequence:** every `-only-testing:<Target>/<Suite>/<method>` invocation targeting a Swift Testing
+(not XCTest) method on this toolchain MUST include the trailing `()`, or the command silently verifies
+nothing while reporting success. A PLAN.md `<verify>` block that omits the parens (as this plan's own
+Task 2/3 blocks did, copying the shape of an ordinary shell path rather than a Swift Testing method
+identifier) is not just a style nit -- it is a gate that can never fail. This plan's own two live runs
+were actually executed and their evidence actually produced using the corrected, parenthesized form;
+the PLAN.md text itself should be read as needing that correction for any future re-run.
+
 ### L-27 -- two shell landmines found building this plan's own live-proof harness
 
 **Found 2026-08-19, Phase 39, Plan 39-07, Task 1.** (1) `grep -rc PATTERN DIR | grep -v ":0" | wc -l`,
