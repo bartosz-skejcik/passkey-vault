@@ -267,6 +267,29 @@ struct SyncDecodeTests {
         )
     }
 
+    // MARK: - 5d. The current-account marker (WR-05, 39-REVIEW.md)
+
+    @Test func writingASnapshotRecordsACurrentAccountMarkerThatPurgeClears() throws {
+        let store = Self.freshStore()
+        #expect(store.currentAccountMarker() == nil, "a fresh container must carry no marker")
+
+        try store.write(Self.snapshot(revision: 1, accountId: "alice@example.com", items: [Self.item(id: "a")]))
+        let marker = try #require(store.currentAccountMarker())
+        #expect(marker.accountId == "alice@example.com")
+        #expect(marker.serverBaseURL == Self.fixtureServerBaseURL)
+
+        // The marker is what CredentialProviderViewController.renderFreshnessSurface()
+        // (WR-05's own production call site) uses to discover which account to
+        // pass to the account-scoped read -- round-trip it through that exact call.
+        #expect(
+            store.readCurrentSnapshot(accountId: marker.accountId, serverBaseURL: marker.serverBaseURL) != nil,
+            "the marker must name an account/server pair the store can actually read a snapshot for"
+        )
+
+        store.purge()
+        #expect(store.currentAccountMarker() == nil, "purge() must clear the marker together with the cache and the watermark (D-19)")
+    }
+
     // MARK: - 6. Whole-replace, never a merge (D-15)
 
     @Test func applyingASecondSnapshotReplacesThePreviousItemSetEntirely() throws {

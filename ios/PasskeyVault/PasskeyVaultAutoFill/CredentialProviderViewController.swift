@@ -143,13 +143,31 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     /// PRODUCTION behaviour, not a probe: renders `PvShared/SyncFreshness`'s
     /// own string -- the SAME formatter `SyncStatusView` (host app) uses,
     /// never a second implementation -- sourced from the snapshot's own
-    /// `syncedAtMs` via `CacheColdReadProbe.currentSyncedAtMs()`, never from
-    /// a value computed in the extension and never from a connection state
-    /// (this extension holds no connection at all in this milestone,
-    /// `39-RESEARCH.md` "Freshness (SYNC-04)"). `reference: Date()` -- "now"
-    /// -- exactly like the host's own production call site
-    /// (`SyncStatusView.body`'s default), because a real user's config
-    /// screen has no reason to pin anything.
+    /// `syncedAtMs`, never from a value computed in the extension and never
+    /// from a connection state (this extension holds no connection at all
+    /// in this milestone, `39-RESEARCH.md` "Freshness (SYNC-04)").
+    /// `reference: Date()` -- "now" -- exactly like the host's own
+    /// production call site (`SyncStatusView.body`'s default), because a
+    /// real user's config screen has no reason to pin anything.
+    ///
+    /// WR-05 (39-REVIEW.md): sourced through the ACCOUNT-SCOPED read
+    /// (`AppGroupCiphertextCacheStore.readCurrentSnapshot(accountId:
+    /// serverBaseURL:)`, keyed off `currentAccountMarker()`), never
+    /// `CacheColdReadProbe.currentSyncedAtMs()` -- that probe's `readRaw`
+    /// deliberately skips D-19's cross-account rejection (its own header:
+    /// "exists precisely because it skips readCurrentSnapshot's
+    /// cross-account rejection"), which is correct for the byte-reachability
+    /// evidence sequence it exists for, but meant this PRODUCTION surface
+    /// could render a "Last synced …" line sourced from a DIFFERENT
+    /// account's snapshot (`scripts/ios-cold-read-proof.sh` demonstrated
+    /// exactly this, writing a foreign-account blob the extension then
+    /// happily rendered). If no marker has ever been written (a fresh
+    /// container, or a signed-out account whose marker `purge()` removed),
+    /// this renders `SyncFreshness.neverSyncedText`, same as any other
+    /// "nothing to read" case -- never a fallback to the unscoped probe
+    /// read. `CacheColdReadProbe` itself is untouched and remains the
+    /// evidence sequence's own, EXPLICITLY NAMED bypass (`#if
+    /// PV_PROBE_COLDREAD` below).
     ///
     /// The copy is intentionally IDENTICAL to the host's: `SyncFreshness
     /// .neverSyncedText`/the "Last synced …" phrase never imply the
@@ -172,7 +190,13 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     }()
 
     private func renderFreshnessSurface() {
-        let syncedAtMs = CacheColdReadProbe.currentSyncedAtMs()
+        let store = AppGroupCiphertextCacheStore()
+        let syncedAtMs: Int64?
+        if let marker = store.currentAccountMarker() {
+            syncedAtMs = store.readCurrentSnapshot(accountId: marker.accountId, serverBaseURL: marker.serverBaseURL)?.syncedAtMs
+        } else {
+            syncedAtMs = nil
+        }
         let rendered = SyncFreshness.describe(syncedAtMs: syncedAtMs, reference: Date())
 
         if lastSyncedLabel.superview == nil {

@@ -118,6 +118,28 @@ final class AppGroupCiphertextCacheStore: CiphertextCacheStore {
     /// time.
     static let fileName = "vault-cache-v1.json"
 
+    /// WR-05 (39-REVIEW.md): a SEPARATE, tiny, non-ciphertext file --
+    /// `accountId`/`serverBaseURL` ONLY, never anything reachable from a
+    /// User Key -- written alongside every successful `write(_:)`. The
+    /// AutoFill extension carries no session/account context in this
+    /// milestone (FILL-03 is still unimplemented), so its production
+    /// freshness read (`CredentialProviderViewController
+    /// .renderFreshnessSurface()`) has no `accountId` to pass to the
+    /// account-scoped `readCurrentSnapshot(accountId:serverBaseURL:)` --
+    /// this marker is what lets it discover one WITHOUT falling back to
+    /// `CacheColdReadProbe`'s raw, unscoped read (that probe's own header:
+    /// "exists precisely because it skips readCurrentSnapshot's
+    /// cross-account rejection" -- correct for the evidence sequence,
+    /// wrong for production). Deliberately outside `vault-cache-v1.json`'s
+    /// own JSON shape, so `scripts/audit-ios-cache-ciphertext.sh`'s closed
+    /// key allowlist (scoped to that one file) is untouched by this fix.
+    static let currentAccountMarkerFileName = "vault-cache-v1-current-account.json"
+
+    private struct CurrentAccountMarker: Codable {
+        let accountId: String
+        let serverBaseURL: String
+    }
+
     private let fileManager: FileManager
 
     init(fileManager: FileManager = .default) {
@@ -130,6 +152,25 @@ final class AppGroupCiphertextCacheStore: CiphertextCacheStore {
 
     private func fileURL() -> URL? {
         containerURL()?.appendingPathComponent(Self.fileName)
+    }
+
+    private func currentAccountMarkerURL() -> URL? {
+        containerURL()?.appendingPathComponent(Self.currentAccountMarkerFileName)
+    }
+
+    /// WR-05 (39-REVIEW.md): the account-id/server pair the marker file
+    /// above carries, or `nil` if it has never been written (a fresh
+    /// container) or is unreadable/undecodable -- absence, not a crash or a
+    /// fallback to an unscoped read.
+    func currentAccountMarker() -> (accountId: String, serverBaseURL: String)? {
+        guard
+            let url = currentAccountMarkerURL(),
+            let data = try? Data(contentsOf: url),
+            let marker = try? JSONDecoder().decode(CurrentAccountMarker.self, from: data)
+        else {
+            return nil
+        }
+        return (marker.accountId, marker.serverBaseURL)
     }
 
     func readCurrentSnapshot(accountId: String, serverBaseURL: String) -> CachedSnapshot? {
@@ -180,11 +221,30 @@ final class AppGroupCiphertextCacheStore: CiphertextCacheStore {
         } catch {
             throw CiphertextCacheStoreError.writeFailed(error)
         }
+        // WR-05: best-effort -- a failure here must never fail the write
+        // above (the real cache write already succeeded and is the thing
+        // that matters); it only means the extension's freshness surface
+        // falls back to "Not synced yet" until the next successful pull
+        // updates the marker too.
+        if let markerURL = currentAccountMarkerURL(),
+           let markerData = try? JSONEncoder().encode(
+               CurrentAccountMarker(accountId: snapshot.accountId, serverBaseURL: snapshot.serverBaseURL)
+           ) {
+            try? markerData.write(to: markerURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        }
     }
 
     func purge() {
-        guard let url = fileURL() else { return }
-        try? fileManager.removeItem(at: url)
+        if let url = fileURL() {
+            try? fileManager.removeItem(at: url)
+        }
+        // WR-05/D-19: the marker dies with the cache and the session token
+        // on sign-out too -- a stale marker surviving a purge would point
+        // the extension's freshness read at an account whose cache no
+        // longer exists.
+        if let markerURL = currentAccountMarkerURL() {
+            try? fileManager.removeItem(at: markerURL)
+        }
     }
 }
 
