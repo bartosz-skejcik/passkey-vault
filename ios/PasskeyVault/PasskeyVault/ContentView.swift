@@ -38,8 +38,8 @@ struct ContentView: View {
     /// -- `OnboardingGate.completedKey` is the single string literal both
     /// bind to, so they cannot drift into two different keys.
     @AppStorage(OnboardingGate.completedKey) private var onboardingCompleted = false
-    /// Built once when the vault route is first rendered and kept for the
-    /// lifetime of the unlocked session (38-02).
+    /// Built once, in `handleUnlocked(_:)` (GAP1, 40-VERIFICATION.md truth
+    /// 5), and kept for the lifetime of the unlocked session (38-02).
     @State private var vaultStore: VaultStore?
     /// Plan 38-09, Task 3: built alongside `vaultStore`, same one-per-session
     /// discipline (`storeFor(_:)`'s own note on why rebuilding on every body
@@ -229,7 +229,34 @@ struct ContentView: View {
         }
     }
 
+    /// GAP1 (40-VERIFICATION.md truth 5) fix: `vaultStore`/`folderStore` are
+    /// now built HERE -- inside the async `Task { ... }` closures
+    /// `AuthView`/`LockView` call `onUnlocked` from, a genuine SwiftUI event
+    /// handler -- rather than lazily inside `vault(_:)`'s `storeFor`/
+    /// `folderStoreFor` calls, which ran synchronously as part of `body`'s
+    /// own `switch` evaluation. `body` mutating `@State` while it evaluates
+    /// is exactly the "Modifying state during view update, this will cause
+    /// undefined behavior" SwiftUI runtime warning WR-14 (39-REVIEW.md)
+    /// already fixed for `syncCoordinatorFor` below -- but that fix's own
+    /// comment claimed `storeFor`/`folderStoreFor` were "unaffected" because
+    /// they perform no I/O. Root-caused live (`.planning/debug/`, GAP1):
+    /// that assumption is false. SwiftUI's Observation machinery
+    /// establishes a view's dependency graph WHILE evaluating its body: a
+    /// `@State` write landing mid-evaluation (here, the FIRST `case
+    /// .unlocked` render, when `vaultStore` was still `nil`) can corrupt
+    /// that SAME render's tracking transaction, so the freshly-constructed
+    /// `VaultRootView`/`ItemListView` never properly registers as an
+    /// observer of `store.items` -- confirmed live: `VaultStore.items`
+    /// genuinely contained the shared item on every refresh cycle
+    /// (temporary `Self.log.error` instrumentation, reverted, never
+    /// committed) while the rendered list stayed on "No items yet" for the
+    /// full 90s window. Constructing both stores here means `storeFor`/
+    /// `folderStoreFor` are PURE reads by the time `body` reaches
+    /// `case .unlocked` -- `vaultStore`/`folderStore` are already non-nil,
+    /// so neither mutates `@State` during view update anymore.
     private func handleUnlocked(_ session: UnlockedSession) {
+        _ = storeFor(session)
+        _ = folderStoreFor(session)
         route = .unlocked(session)
     }
 
@@ -240,7 +267,13 @@ struct ContentView: View {
     /// rebuilding it on every body evaluation would drop the decrypted array
     /// and re-pull the whole snapshot on each render. `session.userKey` goes
     /// in as a plain (non-observed) property of the store; see
-    /// `VaultStore`'s own note (T-38-02-03).
+    /// `VaultStore`'s own note (T-38-02-03). `storeFor`/`folderStoreFor`
+    /// below are called again here as a pure lookup (`handleUnlocked`'s own
+    /// note above: both are already built and stored by the time this runs)
+    /// -- kept, rather than force-unwrapping `vaultStore`/`folderStore`
+    /// directly, so this function has exactly one source of truth for "how
+    /// to get the current session's store" and a future second route into
+    /// `.unlocked` cannot silently skip construction.
     ///
     /// Plan 38-11: renders `VaultRootView`, not `ItemListView` directly, so
     /// its `VaultRootController` owns the navigation path/sheet/reveal/
@@ -292,8 +325,13 @@ struct ContentView: View {
             // behaviour in SwiftUI (the runtime's "Modifying state during
             // view update" warning) and made socket startup depend on how
             // many times SwiftUI decided to evaluate the body.
-            // `storeFor`/`folderStoreFor` above share the construction-only
-            // shape but perform no I/O, so they are unaffected.
+            // GAP1 correction (40-VERIFICATION.md truth 5): this comment
+            // used to claim `storeFor`/`folderStoreFor` above were
+            // "unaffected" because they perform no I/O -- FALSE, root-caused
+            // live and fixed in `handleUnlocked(_:)`'s own note. `storeFor`/
+            // `folderStoreFor` below are pure reads by the time `body`
+            // reaches this branch now; both stores are actually built in
+            // `handleUnlocked(_:)`, not here.
             _ = syncCoordinatorFor(session, store: store)
             await Self.seedTooShortTotpSecretIfRequested(store: store)
             await Self.seedDockFixtureIfRequested(store: store)
