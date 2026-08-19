@@ -790,6 +790,33 @@ pub struct UpdateAccessRequest {
 /// this handler and has been removed — the declared-level equality bound
 /// remains fully live for `add_member` and `invitations::create`, its other
 /// two call sites.
+///
+/// F-3 fix (31-VERIFICATION.md gap closure, CR-01 Failure Scenario B): the
+/// demotion bound below ("changing an EXISTING grant requires genuine
+/// Edit") has no recovery arm — an edit-holding member who is not the
+/// collection's creator can demote every OTHER edit-holder (never
+/// themselves, so the last-edit-holder guard never fires) and become sole
+/// administrator; the stranded creator's own `update_access` call is then
+/// ALSO refused by this same bound, since they no longer hold Edit. There
+/// is no crafted-request path back for them. This handler now carries one
+/// additional exemption: the family's OWNER (`family_members.role =
+/// 'owner'`, resolved fresh, never client-supplied) may change ANY existing
+/// grant on ANY collection in the family regardless of their own held level
+/// on that specific collection — Bartek's own steer: the owner can already
+/// dissolve the family outright (`families::delete`), which cascades
+/// through every collection in it, so granting them this narrower,
+/// single-collection recovery power adds no new authority, only a cheaper
+/// way to exercise authority they already have. Scoped to v0.4's FAM-01
+/// invariant (exactly one family exists at all), so "owner of THE family"
+/// needs no additional collection-to-family scoping query. Applies to BOTH
+/// authorization gates below (mirroring `add_member`'s own bound, and the
+/// CR-01 demotion bound layered beneath it) — the owner's recovery power is
+/// general ("collections in their own family"), not scoped to one specific
+/// gate's failure shape. Does NOT touch the item_bucket refusal above
+/// (still unconditional, no owner exception, mirroring `revoke_access`
+/// exactly) or the last-edit-holder `EXISTS` guard below (unaffected either
+/// way — the owner is promoting someone TO edit, never emptying the
+/// collection of edit holders).
 pub async fn update_access(
     State(state): State<AppState>,
     membership: Membership<Collection, RequireRead>,
@@ -808,19 +835,38 @@ pub async fn update_access(
         return Err(ApiError::Forbidden);
     }
 
+    // F-3 fix: resolved BEFORE the two authorization gates below AND before
+    // `tx` opens further down, deliberately — this test harness's own pool
+    // runs at `max_connections(1)` (see `require_item_bucket_edit_access`'s
+    // doc comment for the identical constraint), so a `resolve_family_role`
+    // call against `&state.db` (the bare pool) AFTER `tx` has already
+    // checked out the only connection would self-deadlock waiting for a
+    // second one. Computed unconditionally (not only inside a branch) so
+    // this ordering constraint is impossible to violate by a future edit
+    // that moves a branch around; the value is simply unused when the
+    // caller already holds genuine Edit or `may_grant_access_level`
+    // already admits them.
+    let caller_is_family_owner = matches!(
+        membership::resolve_family_role(&state.db, &membership.caller_user_id).await?,
+        Some((_, role)) if RequireEdit::satisfied_by(role)
+    );
+
     // Byte-for-byte the same bound as add_member's own (collections.rs:579-599)
     // — see that handler's doc comment for the full rationale of each arm.
     // This bound alone is what `add_member` uses to decide what a caller may
     // CREATE; see this handler's own doc comment above for why an UPDATE
     // needs the two ADDITIONAL bounds layered in below.
+    //
+    // F-3 fix: the family owner is exempted from both arms — see this
+    // handler's own doc comment above (CR-01 Failure Scenario B).
     match membership::resolve_family_wide_declared_level(&state.db, &membership.resource_id).await? {
         membership::FamilyWideDeclaredLevel::Declared(_) | membership::FamilyWideDeclaredLevel::LegacyUnknown => {
-            if !may_grant_access_level(membership.access, requested_level) {
+            if !may_grant_access_level(membership.access, requested_level) && !caller_is_family_owner {
                 return Err(ApiError::Forbidden);
             }
         }
         membership::FamilyWideDeclaredLevel::NotFamilyWide => {
-            if !RequireEdit::satisfied_by(membership.access) {
+            if !RequireEdit::satisfied_by(membership.access) && !caller_is_family_owner {
                 return Err(ApiError::Forbidden);
             }
         }
@@ -854,7 +900,13 @@ pub async fn update_access(
     // Changing an EXISTING grant to something it is not already requires a
     // genuine Edit holder — never the relaxed reseal-path gate above, which
     // exists only to let a `read` holder ADD a stranded newcomer at `read`.
-    if current_level != requested_level && !RequireEdit::satisfied_by(membership.access) {
+    //
+    // F-3 fix: EXCEPT the family's own owner, who retains an unconditional
+    // recovery path here — see this handler's own doc comment above for the
+    // full rationale (CR-01 Failure Scenario B: a hostile edit-holder can
+    // otherwise strand every other member, including the collection's own
+    // creator, with no API path back).
+    if current_level != requested_level && !RequireEdit::satisfied_by(membership.access) && !caller_is_family_owner {
         return Err(ApiError::Forbidden);
     }
 

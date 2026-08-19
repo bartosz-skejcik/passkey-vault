@@ -1363,6 +1363,156 @@ async fn update_access_cannot_demote_the_last_edit_holder() {
     assert_eq!(b_level_after, "edit", "B's own row must survive the refused self-demotion unchanged");
 }
 
+/// F-3 fix (31-VERIFICATION.md gap closure, CR-01 Failure Scenario B):
+/// probe P1's exact reproduction. B (edit, not the collection's creator)
+/// demotes the owner AND every other edit-holder in turn, becoming sole
+/// administrator of an ORDINARY (non-family-wide) folder they did not
+/// create — the last-edit-holder guard never fires, since it only stops
+/// emptying the collection to ZERO edit holders, not concentrating it to
+/// ONE hostile one. Before this fix there was no API path back for anyone,
+/// including the family's own owner. This test proves the recovery path:
+/// the owner (who still holds `read` — demoted, not fully revoked) calls
+/// `update_access` on THEMSELVES to restore `edit`, and it now succeeds
+/// specifically because they are the family's owner — never because of any
+/// bound `may_grant_access_level`'s nine arms or the demotion bound already
+/// govern (a `read`-only NON-owner attempting the identical self-restore is
+/// asserted refused in the same test, as the negative control).
+#[tokio::test]
+async fn update_access_lets_the_family_owner_recover_from_cr01_failure_scenario_b() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "f3-recovery-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let owner_id = user_id_of(&app, &owner_token).await;
+
+    let b_token = common::register_second_family_member(&app, &owner_token, "f3-recovery-b@example.com").await;
+    let b_id = user_id_of(&app, &b_token).await;
+    let b_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &b_token, b_sk.public_key().to_bytes()).await;
+
+    let c_token = common::register_second_family_member(&app, &owner_token, "f3-recovery-c@example.com").await;
+    let c_id = user_id_of(&app, &c_token).await;
+    let c_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &c_token, c_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let collection_id = "c01a0000-0000-4000-8000-000000000001";
+    let create_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": collection_id, "enc_name": "enc-f3-recovery-collection",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status(), StatusCode::CREATED, "the OWNER creates this ordinary folder, but is NOT tested for that fact -- only their family role matters to the fix");
+
+    let b_sealed = seal(&b_sk.public_key(), ck.expose()).unwrap();
+    let grant_b_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": b_id,
+            "sealed_key": serde_json::to_string(&b_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(grant_b_res.status(), StatusCode::CREATED);
+
+    let c_sealed = seal(&c_sk.public_key(), ck.expose()).unwrap();
+    let grant_c_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{collection_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": c_id,
+            "sealed_key": serde_json::to_string(&c_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(grant_c_res.status(), StatusCode::CREATED);
+
+    // B demotes the owner, then C -- B is now sole edit holder. Neither
+    // demotion empties the collection of edit holders (B always remains),
+    // so the last-edit-holder guard never fires for either step.
+    let demote_owner_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{owner_id}"),
+        &b_token,
+        Some(json!({ "access_level": "read" })),
+    )
+    .await;
+    assert_eq!(demote_owner_res.status(), StatusCode::NO_CONTENT, "B demotes the owner -- B still holds edit");
+
+    let demote_c_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{c_id}"),
+        &b_token,
+        Some(json!({ "access_level": "read" })),
+    )
+    .await;
+    assert_eq!(demote_c_res.status(), StatusCode::NO_CONTENT, "B demotes C too -- B is now SOLE edit holder");
+
+    // Negative control: C (read-only, NOT the family owner) attempts the
+    // identical self-restore -- must still be refused. Proves the fix is
+    // scoped to the family owner specifically, not "any stranded read
+    // holder."
+    let c_self_restore_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{c_id}"),
+        &c_token,
+        Some(json!({ "access_level": "edit" })),
+    )
+    .await;
+    assert_eq!(
+        c_self_restore_res.status(),
+        StatusCode::FORBIDDEN,
+        "a stranded read-only member who is NOT the family owner has no recovery path -- the fix is scoped to the owner"
+    );
+
+    // The owner (family role, still holding `read` on this collection --
+    // demoted, not fully revoked) restores themselves to `edit`. Their OWN
+    // access level on THIS collection (`read`) does not satisfy
+    // `RequireEdit`, so this succeeds ONLY through the F-3 owner exemption.
+    let owner_recovery_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/collections/{collection_id}/access/{owner_id}"),
+        &owner_token,
+        Some(json!({ "access_level": "edit" })),
+    )
+    .await;
+    assert_eq!(
+        owner_recovery_res.status(),
+        StatusCode::NO_CONTENT,
+        "the family owner must retain an unconditional recovery path over a collection in their own family, even holding only read on it themselves"
+    );
+
+    let owner_level_after: String = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(collection_id)
+    .bind(&owner_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(owner_level_after, "edit", "the owner's own row must now read back as edit, genuinely restored");
+}
+
 /// F-1 fix (31-VERIFICATION.md gap closure): REPLACES the original HI-01
 /// regression test, which asserted `GET /api/sync` (the PERSONAL lane) —
 /// real, but the wrong lane. `SyncSnapshot = {revision, items?, folders?}`
