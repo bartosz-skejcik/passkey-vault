@@ -1,0 +1,44 @@
+E-F5 live member-removal re-key run -- Phase 40, plan 40-07, Task 3
+Recorded: 2026-08-19 11:47:52 AM +0000
+Server origin: http://127.0.0.1:8621
+
+Account A (owner, performs the removal): pv-ef5-owner-065cf523-adb3-4ad6-86e5-ce76f6a99bda@example.invalid (user_id cab88cef-afdc-4afc-8d6e-d6655d5ad719)
+Account B (remaining member): pv-ef5-remaining-065cf523-adb3-4ad6-86e5-ce76f6a99bda@example.invalid (user_id e91d6549-66c4-4e6c-8194-7951bbdb10fa)
+Account T (removed): pv-ef5-target-065cf523-adb3-4ad6-86e5-ce76f6a99bda@example.invalid (user_id 0a221edb-65c2-4c0c-92eb-14fd1dd83a5c)
+
+Fixture: 2 plain (non-family-wide) collections, 2 items each, A/B/T all holding a
+collection_keys row on both before removal.
+  Collection 0: 515b866a-1b74-4ade-b394-325a8daf7f69 -- items ["e2acb22c-3d98-42ff-90df-18ce1f46af01", "e715e816-c261-4cc4-9547-e018fe46008c"]
+  Collection 1: 12bd1784-a12c-49e2-b2db-d0a27c2dbdb7 -- items ["fad1bae5-248a-4e53-a553-acbf263b80d2", "8fa16461-f2e8-4519-b3ba-07078e1c6e7d"]
+
+Falsification FIRST (RemoveMemberService.testOnlyDropLastRecipient = true, a DEBUG-only
+fault-injection flag dropping the last remaining recipient from the seal loop):
+  DELETE /api/families/members/0a221edb-65c2-4c0c-92eb-14fd1dd83a5c with a batch missing one remaining
+  recipient's new_sealed_keys entry -> HTTP 409
+  (expected 409 -- the server's own apply_member_removal_rekey Step 2 completeness guard
+  rejects a submitted remaining-recipient set that does not EXACTLY match the collection's
+  actual remaining recipients, and rolls the whole transaction back).
+  T still a family member immediately afterward: true
+  This is the correct, stronger form of "the dropped member can no longer decrypt": the
+  guard makes that outcome unreachable against this server, rather than merely catching it
+  after the fact.
+
+The REAL removal (flag reset to false): DELETE /api/families/members/0a221edb-65c2-4c0c-92eb-14fd1dd83a5c.
+Captured request body (2 collections, 2 new_sealed_keys + 2 item_rewraps each -- exactly
+matching the fixture's member and item counts):
+
+{"collections":[{"collection_id":"12bd1784-a12c-49e2-b2db-d0a27c2dbdb7","item_rewraps":[{"item_id":"fad1bae5-248a-4e53-a553-acbf263b80d2","enc_key":"{\"nonce\":[214,232,11,181,206,198,66,196,81,151,165,191,172,67,174,52,4,194,77,213,157,109,194,20],\"ciphertext\":[198,10,3,77,205,42,141,141,25,31,61,245,39,1,16,24,209,36,252,212,52,171,144,0,18,87,247,180,215,136,170,227,83,198,96,77,33,113,137,238,252,47,3,36,94,162,104,161]}"},{"item_id":"8fa16461-f2e8-4519-b3ba-07078e1c6e7d","enc_key":"{\"nonce\":[9,220,123,233,162,162,139,92,189,120,228,221,165,23,204,180,151,164,241,75,107,199,153,203],\"ciphertext\":[159,243,33,102,123,184,49,88,189,251,132,248,156,82,121,139,74,17,75,81,220,164,99,68,44,241,37,29,182,26,237,241,197,96,14,73,81,144,126,141,153,202,52,63,63,118,248,19]}"}],"new_sealed_keys":[{"recipient_user_id":"cab88cef-afdc-4afc-8d6e-d6655d5ad719","sealed_key":"{\"ephemeral_pk\":[151,206,55,189,25,215,173,131,51,44,122,156,18,46,212,252,69,0,78,100,130,142,225,183,182,254,25,104,217,7,70,49],\"nonce\":[210,182,106,115,204,185,233,85,150,137,193,230,123,131,230,99,26,70,109,231,57,54,16,176],\"ciphertext\":[233,240,95,17,159,107,96,177,162,195,7,194,4,181,22,240,56,252,167,69,153,33,226,232,155,100,202,213,254,42,78,197,230,59,111,251,196,142,248,244,141,48,165,11,78,52,179,142]}"},{"recipient_user_id":"e91d6549-66c4-4e6c-8194-7951bbdb10fa","sealed_key":"{\"ephemeral_pk\":[152,81,173,134,97,70,113,241,203,163,173,176,181,33,167,114,126,199,231,119,231,188,40,47,155,196,173,195,49,24,120,45],\"nonce\":[146,41,69,85,102,178,224,147,222,207,78,143,26,1,39,63,177,19,18,65,226,181,98,197],\"ciphertext\":[19,57,88,230,137,4,218,179,27,38,50,251,86,129,81,3,18,69,177,134,115,83,237,212,132,13,129,202,77,250,214,182,171,22,225,217,131,47,69,223,59,215,202,110,158,101,25,204]}"}]},{"collection_id":"515b866a-1b74-4ade-b394-325a8daf7f69","item_rewraps":[{"enc_key":"{\"nonce\":[22,160,75,165,78,162,234,164,65,80,76,95,207,33,31,52,74,153,109,149,174,4,4,37],\"ciphertext\":[77,111,111,83,176,205,47,62,154,58,105,158,19,111,91,182,240,218,113,4,100,174,125,94,218,128,245,28,216,5,63,176,225,230,177,44,26,188,199,156,235,63,103,149,212,111,28,189]}","item_id":"e2acb22c-3d98-42ff-90df-18ce1f46af01"},{"enc_key":"{\"nonce\":[172,166,114,179,1,180,94,142,151,81,233,234,95,204,14,80,208,65,21,35,108,3,112,124],\"ciphertext\":[23,72,194,179,29,5,121,147,175,96,185,224,198,216,28,246,68,77,69,134,249,146,148,8,131,136,160,233,232,116,64,150,239,187,124,209,128,95,228,144,40,142,243,44,199,92,169,241]}","item_id":"e715e816-c261-4cc4-9547-e018fe46008c"}],"new_sealed_keys":[{"sealed_key":"{\"ephemeral_pk\":[60,52,16,16,65,105,33,192,126,197,254,186,43,25,100,138,70,230,32,118,114,221,63,111,211,3,35,217,179,168,5,89],\"nonce\":[158,167,94,212,142,69,156,145,65,153,234,173,55,8,68,185,46,129,93,223,43,195,148,113],\"ciphertext\":[172,27,91,79,26,32,122,159,203,118,72,111,128,77,108,140,194,74,174,119,6,108,166,10,90,208,19,140,159,174,239,64,200,58,79,71,60,58,218,100,201,229,72,28,247,203,49,123]}","recipient_user_id":"cab88cef-afdc-4afc-8d6e-d6655d5ad719"},{"sealed_key":"{\"ephemeral_pk\":[6,170,155,101,183,85,103,180,186,39,202,127,82,82,13,250,41,192,125,168,148,241,107,146,114,98,221,54,142,95,175,123],\"nonce\":[27,177,124,196,20,62,146,110,60,249,235,130,134,160,59,87,117,4,244,227,212,216,254,125],\"ciphertext\":[243,13,227,78,35,119,244,186,141,193,139,146,225,187,61,220,3,225,219,149,141,31,201,34,249,211,94,175,193,97,8,229,5,84,214,251,244,73,163,237,91,69,199,53,227,125,73,45]}","recipient_user_id":"e91d6549-66c4-4e6c-8194-7951bbdb10fa"}]}]}
+
+Receiver-side proof (B, the REMAINING member, driven through REAL pv-ffi calls -- see this
+test's own header for why this stands in for a literal separate web-browser process,
+following plan 40-06's E-F2 precedent, ios/IOS-SPIKE-LOG.md §L-27):
+  B re-fetched both collections' FRESH sealed_key (rewrapped under the NEW post-removal
+  Collection Key) and decrypted all 4 items to their original plaintexts.
+  Decrypted item ids: ["8fa16461-f2e8-4519-b3ba-07078e1c6e7d", "e2acb22c-3d98-42ff-90df-18ce1f46af01", "e715e816-c261-4cc4-9547-e018fe46008c", "fad1bae5-248a-4e53-a553-acbf263b80d2"]
+
+Removed member's client (T): GET /api/vault/collections/{id} on both affected collections:
+  ["515b866a-1b74-4ade-b394-325a8daf7f69": 404, "12bd1784-a12c-49e2-b2db-d0a27c2dbdb7": 404]
+  (expected 404 on both -- T's collection_keys row is gone)
+
+No green fabricated-fixture RemoveMemberTests test (Task 2) was accepted as evidence for
+this claim -- this live run against a real pv-server is SC/E-F5's actual evidence.

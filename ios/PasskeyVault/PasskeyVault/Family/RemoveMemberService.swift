@@ -83,7 +83,6 @@ struct RemoveMemberService {
     private var collectionService: CollectionService {
         CollectionService(baseURL: baseURL, tokenProvider: tokenProvider, session: session)
     }
-    private var vaultAPI: VaultAPI { VaultAPI(baseURL: baseURL, tokenProvider: tokenProvider, session: session) }
 
     // MARK: - Public API (network-integrated)
 
@@ -162,6 +161,19 @@ struct RemoveMemberService {
         }
     }
 
+    #if DEBUG
+    /// TEST-ONLY fault injection (Task 3, E-F5's falsification run) --
+    /// mirrors `crates/pv-server/src/routes/families.rs`'s own
+    /// `FAULT_INJECT_AFTER_COLLECTION_INDEX` thread-local precedent for the
+    /// identical "prove a completeness gate can fail" need. When `true`,
+    /// drops the LAST remaining recipient from the seal loop below, exactly
+    /// as a real "silently shrunk recipient set" bug would. `#if DEBUG`-gated
+    /// (this whole project ships/tests Debug-only, L-14) and read ONLY here
+    /// -- no production call site ever sets it; `false` by default, so every
+    /// ordinary call is completely unaffected.
+    static var testOnlyDropLastRecipient = false
+    #endif
+
     /// Builds ONE collection's re-key batch entirely client-side -- no
     /// network calls anywhere in this function, which is why "a missing
     /// public key throws before any request is issued" is not merely
@@ -182,9 +194,16 @@ struct RemoveMemberService {
     ) throws -> (newCk: FfiCollectionKey, batch: FamilyAPI.CollectionRekeyBatch) {
         let newCk = try FfiCollectionKey.generate()
 
+        var recipientsToSeal = remainingRecipients
+        #if DEBUG
+        if testOnlyDropLastRecipient {
+            recipientsToSeal = Array(recipientsToSeal.dropLast())
+        }
+        #endif
+
         var newSealedKeys: [FamilyAPI.NewSealedKeyEntry] = []
-        newSealedKeys.reserveCapacity(remainingRecipients.count)
-        for recipient in remainingRecipients {
+        newSealedKeys.reserveCapacity(recipientsToSeal.count)
+        for recipient in recipientsToSeal {
             guard let publicKeyBase64 = recipient.publicKeyBase64 else {
                 throw BatchBuilderError.recipientMissingPublicKey(userId: recipient.userId, collectionId: collectionId)
             }
@@ -234,7 +253,6 @@ struct RemoveMemberService {
         let identityKey = try await identityService.ensureOwnIdentityKeypair(userKey: userKey)
         let roster = try await familyAPI.fetchMembers()
         let collectionIds = try await resolveTargetCollectionIds(targetUserId: targetUserId, isSelf: isSelf)
-        let itemRows = try await fetchAllItemRows()
 
         var batches: [FamilyAPI.CollectionRekeyBatch] = []
         batches.reserveCapacity(collectionIds.count)
@@ -254,9 +272,12 @@ struct RemoveMemberService {
                     return RemainingRecipient(userId: recipient.userId, publicKeyBase64: publicKeyBase64)
                 }
 
-            let items: [ItemToRewrap] = itemRows
-                .filter { $0.collection_id == collectionId }
-                .map { ItemToRewrap(itemId: $0.id, encKeyJson: $0.enc_key) }
+            // Per collection, NOT a single prefetched list -- see
+            // `fetchCollectionItemRows`'s own header for why `GET
+            // /api/vault/collections/{id}/sync` (every item in THIS
+            // collection, any author) is the only correct source here.
+            let itemRows = try await fetchCollectionItemRows(collectionId: collectionId)
+            let items: [ItemToRewrap] = itemRows.map { ItemToRewrap(itemId: $0.id, encKeyJson: $0.enc_key) }
 
             let (_, batch) = try Self.buildCollectionBatch(
                 collectionId: collectionId, oldCk: oldCk, remainingRecipients: remaining, items: items
@@ -306,24 +327,54 @@ struct RemoveMemberService {
         return try Self.decode([CoRecipientRow].self, from: data)
     }
 
-    /// `GET /api/sync?since=0` -- always the full snapshot (a real user's
-    /// `vault_revision` is bumped by every write; `since=0` triggers the
-    /// up-to-date shape ONLY when `vault_revision` is genuinely still `0`,
-    /// which means the caller has zero items -- so mapping `.upToDate` to an
-    /// empty item list is not a fallback, it is the exact, only case that
-    /// shape can mean here). Reused rather than adding a fourth `VaultAPI`
-    /// items-list call: `VaultAPI.sync(since:)` already returns every item's
-    /// `enc_key`/`collection_id`, scoped to every collection the caller holds
-    /// a key for, regardless of item owner -- precisely the set this
-    /// function needs.
-    private func fetchAllItemRows() async throws -> [VaultItemRow] {
-        let result = try await vaultAPI.sync(since: 0)
-        switch result {
-        case .upToDate:
-            return []
-        case let .snapshot(_, items, _):
-            return items
+    private struct SharedCollectionSyncSnapshotBody: Decodable {
+        let revision: Int
+        let items: [VaultItemRow]
+    }
+
+    private struct SharedCollectionSyncUpToDateBody: Decodable {
+        let revision: Int
+    }
+
+    /// `GET /api/vault/collections/{id}/sync` (`sync.rs::pull_shared_collection`,
+    /// NO `since` query param -- `OptionalSyncQuery`'s own documented
+    /// contract: an absent `since` is ALWAYS a full-snapshot request). This
+    /// is the ONLY item-enumeration endpoint correct for this file's own
+    /// purpose: `WHERE collection_id = ?` with NO `user_id` filter of any
+    /// kind, so it returns EVERY item in the collection regardless of who
+    /// created it.
+    ///
+    /// `VaultAPI.sync(since:)` (`GET /api/sync`, `vault::fetch_items_for`) is
+    /// the WRONG endpoint here, discovered live during this plan's own E-F5
+    /// run (`pull_shared_collection`'s own doc comment names it "Pitfall
+    /// A"): its collection arm carries an ADDITIONAL `i.user_id = ?` bind on
+    /// top of the `collection_keys` join -- it is scoped to "items in a
+    /// collection I hold a key for AND that I personally authored", by
+    /// design (that module's own header: "scoped strictly to
+    /// `session.user_id`"). A remaining-recipient B who never personally
+    /// authored an item in a shared collection would silently vanish from
+    /// `RemoveMemberService`'s own item enumeration, producing a re-key
+    /// batch that never rewraps that item's key for the new Collection Key
+    /// at all -- exactly the T-40-28 "incomplete re-key batch" failure mode
+    /// this file's own threat-register mitigation is supposed to prevent.
+    /// Same "snapshot-shape-first" decode discipline `SyncModels.swift`'s
+    /// own header documents for `SyncPullResult` (L-22): the up-to-date
+    /// shape has no `items` KEY at all on the wire, so an optional-with-
+    /// default decode would silently produce an empty list on ANY decode,
+    /// not just the genuine up-to-date case.
+    private func fetchCollectionItemRows(collectionId: String) async throws -> [VaultItemRow] {
+        guard let token = tokenProvider() else {
+            throw RemoveMemberError.noSessionToken("/api/vault/collections/\(collectionId)/sync")
         }
+        let (data, response) = try await send(
+            path: "/api/vault/collections/\(collectionId)/sync", method: "GET", body: nil, token: token
+        )
+        try Self.requireStatus(200, response: response, data: data)
+        if let snapshot = try? JSONDecoder().decode(SharedCollectionSyncSnapshotBody.self, from: data) {
+            return snapshot.items
+        }
+        _ = try Self.decode(SharedCollectionSyncUpToDateBody.self, from: data)
+        return []
     }
 
     private struct DeleteAccountRequestBody: Encodable {
