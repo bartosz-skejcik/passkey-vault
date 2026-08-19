@@ -112,6 +112,11 @@ struct SyncDecodeTests {
 
     // MARK: - Fixtures
 
+    /// WR-09 (39-REVIEW.md): the one `serverBaseURL` every fixture below
+    /// shares, so `readCurrentSnapshot(accountId:serverBaseURL:)` call sites
+    /// in this file stay in sync with what `snapshot()` actually wrote.
+    private static let fixtureServerBaseURL = "http://127.0.0.1:8621"
+
     private static func item(id: String, encKey: String = "k", encData: String = "d") -> CachedSnapshot.Item {
         CachedSnapshot.Item(
             id: id, encKey: encKey, encData: encData, revision: 1,
@@ -125,7 +130,7 @@ struct SyncDecodeTests {
     ) -> CachedSnapshot {
         CachedSnapshot(
             revision: revision, 1_755_555_555_000, accountId: accountId,
-            serverBaseURL: "http://127.0.0.1:8621", items: items, folders: folders
+            serverBaseURL: Self.fixtureServerBaseURL, items: items, folders: folders
         )
     }
 
@@ -189,7 +194,7 @@ struct SyncDecodeTests {
             folders: [CachedSnapshot.Folder(id: "folder-1", encName: "fn1")]
         )
         try store.write(written)
-        let read = try #require(store.readCurrentSnapshot(accountId: "alice@example.com"))
+        let read = try #require(store.readCurrentSnapshot(accountId: "alice@example.com", serverBaseURL: Self.fixtureServerBaseURL))
 
         #expect(read == written)
         let writtenDigest = Self.sha256Hex(try Self.sortedKeysJSONString(written))
@@ -201,12 +206,12 @@ struct SyncDecodeTests {
 
     @Test func readingFromANeverWrittenStoreReportsAbsenceDistinguishableFromAnEmptySnapshot() throws {
         let neverWritten = Self.freshStore()
-        #expect(neverWritten.readCurrentSnapshot(accountId: "alice@example.com") == nil)
+        #expect(neverWritten.readCurrentSnapshot(accountId: "alice@example.com", serverBaseURL: Self.fixtureServerBaseURL) == nil)
 
         let emptyWritten = Self.freshStore()
         let empty = Self.snapshot(revision: 0, accountId: "alice@example.com", items: [], folders: [])
         try emptyWritten.write(empty)
-        let read = emptyWritten.readCurrentSnapshot(accountId: "alice@example.com")
+        let read = emptyWritten.readCurrentSnapshot(accountId: "alice@example.com", serverBaseURL: Self.fixtureServerBaseURL)
         #expect(read != nil, "an EXPLICITLY written empty snapshot must be distinguishable from 'never written'")
         #expect(read?.items.isEmpty == true)
     }
@@ -216,10 +221,49 @@ struct SyncDecodeTests {
     @Test func snapshotWrittenForOneAccountIsRejectedWhenReadUnderAnotherAccount() throws {
         let store = Self.freshStore()
         try store.write(Self.snapshot(revision: 1, accountId: "alice@example.com", items: [Self.item(id: "a")]))
-        #expect(store.readCurrentSnapshot(accountId: "alice@example.com") != nil)
+        #expect(store.readCurrentSnapshot(accountId: "alice@example.com", serverBaseURL: Self.fixtureServerBaseURL) != nil)
         #expect(
-            store.readCurrentSnapshot(accountId: "mallory@example.com") == nil,
+            store.readCurrentSnapshot(accountId: "mallory@example.com", serverBaseURL: Self.fixtureServerBaseURL) == nil,
             "a snapshot written for a different account must be REJECTED, not returned (D-19)"
+        )
+    }
+
+    // MARK: - 5b. Cross-server rejection (WR-09, 39-REVIEW.md)
+
+    @Test func snapshotWrittenForOneServerIsRejectedWhenReadUnderAnotherServer() throws {
+        let store = Self.freshStore()
+        try store.write(Self.snapshot(revision: 1, accountId: "alice@example.com", items: [Self.item(id: "a")]))
+        #expect(store.readCurrentSnapshot(accountId: "alice@example.com", serverBaseURL: Self.fixtureServerBaseURL) != nil)
+        #expect(
+            store.readCurrentSnapshot(accountId: "alice@example.com", serverBaseURL: "https://a-different-server.example.invalid") == nil,
+            "a snapshot written against a DIFFERENT server must be REJECTED, not returned -- the same account email against a different server must never be served the OTHER server's cached ciphertext (WR-09, 39-REVIEW.md)"
+        )
+    }
+
+    // MARK: - 5c. Newer-schema rejection (WR-07, 39-REVIEW.md)
+
+    @Test func aSnapshotWithABumpedSchemaVersionIsRejectedOnRead() throws {
+        let fm = FakeContainerFileManager()
+        let store = AppGroupCiphertextCacheStore(fileManager: fm)
+        // `CachedSnapshot.init` always stamps `currentSchemaVersion` -- a
+        // future client's bump has to be written as raw JSON, hand-rolled,
+        // to simulate what this build cannot construct through the type's
+        // own initialiser.
+        let future: [String: Any] = [
+            "schemaVersion": CachedSnapshot.currentSchemaVersion + 1,
+            "revision": 1,
+            "syncedAtMs": 1_755_555_555_000,
+            "accountId": "alice@example.com",
+            "serverBaseURL": Self.fixtureServerBaseURL,
+            "items": [],
+            "folders": [],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: future)
+        try data.write(to: fm.containerDir.appendingPathComponent(AppGroupCiphertextCacheStore.fileName))
+
+        #expect(
+            store.readCurrentSnapshot(accountId: "alice@example.com", serverBaseURL: Self.fixtureServerBaseURL) == nil,
+            "a snapshot written under a NEWER schema version than this build understands must be rejected, not served (WR-07, 39-REVIEW.md)"
         )
     }
 
@@ -235,7 +279,7 @@ struct SyncDecodeTests {
             revision: 2, accountId: "alice@example.com",
             items: [Self.item(id: "item-kept"), Self.item(id: "item-new")]
         ))
-        let read = try #require(store.readCurrentSnapshot(accountId: "alice@example.com"))
+        let read = try #require(store.readCurrentSnapshot(accountId: "alice@example.com", serverBaseURL: Self.fixtureServerBaseURL))
         let ids = Set(read.items.map(\.id))
         #expect(ids == ["item-kept", "item-new"])
         #expect(!ids.contains("item-old"), "an item present in the FIRST snapshot and absent from the SECOND must be absent afterwards -- no merge (D-15)")

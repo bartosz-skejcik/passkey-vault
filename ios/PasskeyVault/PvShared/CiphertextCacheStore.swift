@@ -51,13 +51,21 @@ import Foundation
 /// whole" contract: there is no partial-update method to accidentally call.
 protocol CiphertextCacheStore {
     /// The current snapshot for `accountId`, or `nil` if none has ever been
-    /// written OR the persisted snapshot belongs to a DIFFERENT account
-    /// (D-19) -- both report absence, deliberately indistinguishable to the
-    /// caller: either way, there is nothing this account may read. Absence
-    /// is itself distinguishable from an empty-but-present snapshot: the
-    /// former returns `nil`, the latter returns a `CachedSnapshot` whose
-    /// `items`/`folders` arrays happen to be empty.
-    func readCurrentSnapshot(accountId: String) -> CachedSnapshot?
+    /// written, OR the persisted snapshot belongs to a DIFFERENT account
+    /// (D-19), OR it was written against a DIFFERENT `serverBaseURL`
+    /// (WR-09, 39-REVIEW.md), OR it carries a `schemaVersion` this build
+    /// does not understand (WR-07, 39-REVIEW.md) -- all four report
+    /// absence, deliberately indistinguishable to the caller: either way,
+    /// there is nothing this account may read on this server, with this
+    /// build. Absence is itself distinguishable from an empty-but-present
+    /// snapshot: the former returns `nil`, the latter returns a
+    /// `CachedSnapshot` whose `items`/`folders` arrays happen to be empty.
+    ///
+    /// WR-09: `serverBaseURL` exists on `CachedSnapshot` precisely so "a
+    /// cache written against one server must never be silently served as
+    /// though it came from another" (that field's own doc comment) is an
+    /// enforced guard, not merely a recorded fact nothing ever compares.
+    func readCurrentSnapshot(accountId: String, serverBaseURL: String) -> CachedSnapshot?
 
     /// Replaces whatever was persisted, in full, in one atomic operation.
     /// Never a partial/merge write (D-15) -- the server sends no deletion
@@ -124,7 +132,7 @@ final class AppGroupCiphertextCacheStore: CiphertextCacheStore {
         containerURL()?.appendingPathComponent(Self.fileName)
     }
 
-    func readCurrentSnapshot(accountId: String) -> CachedSnapshot? {
+    func readCurrentSnapshot(accountId: String, serverBaseURL: String) -> CachedSnapshot? {
         guard let url = fileURL(), fileManager.fileExists(atPath: url.path) else {
             return nil
         }
@@ -132,9 +140,20 @@ final class AppGroupCiphertextCacheStore: CiphertextCacheStore {
         guard let snapshot = try? JSONDecoder().decode(CachedSnapshot.self, from: data) else {
             return nil
         }
+        // WR-07 (39-REVIEW.md): D-21's stated purpose ("Phase 40 can extend
+        // this shape ... without forcing a cache wipe on every device that
+        // has already synced once") requires this field to actually be
+        // CHECKED, not merely written -- a future v2 blob whose keys are a
+        // superset of v1's would otherwise decode as v1 and be served as
+        // current, and a v1 blob read by a v2 build would be served as v2.
+        guard snapshot.schemaVersion == CachedSnapshot.currentSchemaVersion else { return nil }
         // D-19: a snapshot written for one account is REJECTED, not
         // returned, when read under a different account identifier.
         guard snapshot.accountId == accountId else { return nil }
+        // WR-09 (39-REVIEW.md): same discipline, for the server it was
+        // pulled from -- `serverBaseURL`'s own doc comment states the
+        // reason this field exists; before this fix, nothing compared it.
+        guard snapshot.serverBaseURL == serverBaseURL else { return nil }
         return snapshot
     }
 
@@ -175,7 +194,7 @@ final class AppGroupCiphertextCacheStore: CiphertextCacheStore {
 /// "no cache configured" -- without every one of them needing to learn
 /// about this phase's two new constructor parameters.
 final class NullCiphertextCacheStore: CiphertextCacheStore {
-    func readCurrentSnapshot(accountId: String) -> CachedSnapshot? { nil }
+    func readCurrentSnapshot(accountId: String, serverBaseURL: String) -> CachedSnapshot? { nil }
     func write(_ snapshot: CachedSnapshot) throws {}
     func purge() {}
 }

@@ -31,7 +31,7 @@ struct SyncClient {
     /// -- and sends exactly that value as `since`. No in-memory counter, no
     /// second watermark, is ever consulted.
     func pull() async throws -> SyncPullResult {
-        let since = cacheStore.readCurrentSnapshot(accountId: accountId)?.revision ?? 0
+        let since = cacheStore.readCurrentSnapshot(accountId: accountId, serverBaseURL: baseURL.absoluteString)?.revision ?? 0
         let api = VaultAPI(baseURL: baseURL, tokenProvider: tokenProvider, session: session)
         return try await api.sync(since: since)
     }
