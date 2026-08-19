@@ -51,23 +51,31 @@ happen), the Family & Sharing settings surface (Phase 33), the exposure inventor
   decisions are deliberate and disclosed. **If a later review argues for disclosure here, it is
   re-opening a decision, not finding a gap.**
 
-- **Pre-existing per-item shares (`item_shares`) survive a move into a shared folder.**
+- **Pre-existing per-item shares (`item_shares`) are deleted on a move into a shared folder — the
+  shipped behaviour stands. DECISION REVERSED 2026-08-19 (Bartek), after its premise collapsed twice.**
 
-  **Correction (2026-08-19, from `32-RESEARCH.md` Q4).** I justified this decision to Bartek by saying
-  the server "already takes the maximum of the two via `combine_access`", so keeping the shares was the
-  status quo. That was **wrong about this path**: `vault::move_item` (`vault.rs:1193-1207`)
-  **unconditionally deletes** every `item_shares` row on any move into any collection. So honouring the
-  decision means **changing shipped behaviour**, not preserving it.
+  History, recorded because the reversal is the interesting part:
 
-  The decision itself stands — Bartek's stated reason ("zero utraty dostępu przy zmianie folderu") is
-  unaffected by my error, and it is the same principle he applied one question earlier when he declined
-  to even warn about scope moves: a folder change should not silently take someone's access away.
+  1. Bartek originally chose "shares survive", on the reasoning I gave him — that the server takes the
+     maximum of the two grants via `combine_access`, so keeping them was the status quo and cost
+     nothing.
+  2. `32-RESEARCH.md` (Q4) disproved the "status quo" half: `vault::move_item` (`vault.rs:1193-1207`)
+     **unconditionally deletes** every `item_shares` row on any move into any collection. Honouring the
+     decision would have *changed* shipped behaviour.
+  3. `32-PLAN-CHECK.md` (B-1) disproved the rest. A surviving `item_shares` row does **not** preserve
+     read access: after the move the item is encrypted under the destination collection's key, which
+     that recipient does not hold, so they can never read it. What the row *does* preserve is
+     `Membership<Item, RequireEdit>` — and `vault::update` has no collection guard while `vault::delete`
+     is `Membership<Item, RequireEdit>`. So the surviving grant is **purely destructive**: it lets
+     someone overwrite the ciphertext or delete an item they cannot see. Zero benefit, real harm.
 
-  Implementation, per RESEARCH.md's recommendation: **scope the DELETE to `item_bucket` destinations
-  only** — the escalation-prevention rationale genuinely applies there (a contributor claims `edit` on
-  the bucket, so a lingering direct share would compound) — and drop it for ordinary shared folders,
-  where `combine_access` does do the right thing. This is a change to a shipped, tested code path:
-  it needs its own regression test and an explicit note in the SUMMARY, not a quiet edit.
+  **Resolution: keep the existing unconditional DELETE.** The recipient loses the item, but they would
+  have lost read access regardless — all that disappears is the ability to destroy something invisible
+  to them. `move_item` is not touched by this phase, and `sync_shared.rs:1117`'s existing test needs no
+  retarget.
+
+  **Lesson for whoever plans next:** the original decision was sound *given what I told Bartek*, and
+  wrong given the code. Both corrections came from agents reading the source rather than the artifact.
 
 ### Claude's Discretion
 
@@ -143,7 +151,9 @@ shape every item starts from.
   if real use shows accidental widening, not on review preference.
 - **Offering family-wide buckets as editor destinations.** Declined — that path exists in the share
   dialog with its own disclosure.
-- **Collapsing per-item shares into folder membership** when an item enters a shared folder. Declined:
-  it would revoke access as a side effect of a folder change.
+- **Preserving per-item shares across a move into a shared folder.** Considered, chosen, then reversed
+  once it turned out the surviving grant conveys destruction without read (see Area 2). The honest
+  version — re-sealing the item to each direct-share recipient so they genuinely keep access — was
+  offered and declined as not worth a plan.
 
 </deferred>
