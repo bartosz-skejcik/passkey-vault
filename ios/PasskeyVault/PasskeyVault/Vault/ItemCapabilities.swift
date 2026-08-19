@@ -18,6 +18,21 @@
 //  write. What these buy is that the UI stops OFFERING operations it knows
 //  will fail, and stops showing a value the owner was told would be masked.
 //
+//  EXTENDED by Phase 40, plan 40-08, Task 1 -- `40-UI-SPEC.md` §0.2
+//  (binding, orchestrator resolution): plan 40-08's own text asked for a
+//  SECOND `enum ItemCapabilities` in `Sharing/ItemCapabilities.swift`, which
+//  is a compile-time redeclaration error against THIS file, already shipped
+//  by plan 38-03. The resolution is to extend this file in place instead --
+//  folding 40-08's `AccessLevel`-typed capability rule into the SAME
+//  `canEditItem(_:)`/`isPasswordHidden(_:)` choke point, not a parallel one.
+//  `Sharing/AccessLevel.swift` (net-new, no collision) supplies the closed,
+//  fail-closed 4-case type both predicates below now route through
+//  internally; the OBSERVABLE behaviour of both functions is UNCHANGED --
+//  `ItemCapabilitiesTests.swift` (Phase 38) passes against this file
+//  unmodified, including its case-sensitive/whitespace-sensitive exact-match
+//  assertions, because `AccessLevel(wireValue:)`'s `switch` is exactly as
+//  strict as the raw `== "edit"` comparison it replaces.
+//
 
 import Foundation
 
@@ -37,8 +52,16 @@ enum ItemCapabilities {
     /// And it is an INTERFACE predicate by construction: the recipient holds
     /// the item's Cipher Key and can recover the password by other means.
     /// Nothing here is, or may be presented as, cryptographic protection.
+    ///
+    /// Routed through `AccessLevel(wireValue:)` (plan 40-08, Task 1) rather
+    /// than the raw `== "hidden_password"` string comparison this replaced
+    /// -- behaviourally identical (the enum's parser matches the exact same
+    /// literal), but now shares the ONE fail-closed parser `canEditItem`
+    /// below also uses, instead of two independent string literals that
+    /// could silently drift apart.
     static func isPasswordHidden(_ item: VaultItemViewModel) -> Bool {
-        item.accessLevel == "hidden_password"
+        guard let raw = item.accessLevel else { return false }
+        return AccessLevel(wireValue: raw) == .hiddenPassword
     }
 
     /// Whether this caller can actually save an edit to this item.
@@ -71,9 +94,18 @@ enum ItemCapabilities {
     /// branch, so the server would 403 that save too. Before this helper the
     /// UI offered Edit there and the save surfaced as "Failed to save item.
     /// Please try again." -- an error the user could do nothing about.
+    ///
+    /// Routed through `AccessLevel.grantsEdit` (plan 40-08, Task 1) for the
+    /// "otherwise" branch -- `AccessLevel(wireValue:).grantsEdit` is an
+    /// EXACT match against `.fullEdit`, identical in effect to the raw `==
+    /// "edit"` comparison this replaced (`ItemCapabilitiesTests.swift`'s
+    /// `onlyAnExactEditMatchGrantsEdit`/`anUnrecognizedAccessLevelFailsClosedAndSurvivesUnnormalized`
+    /// pin this unchanged). The `sharedToMe`/`nil` branches are untouched --
+    /// `AccessLevel` has no opinion on either; both are resolved before this
+    /// enum is ever consulted.
     static func canEditItem(_ item: VaultItemViewModel) -> Bool {
         if item.sharedToMe == true { return false }
-        if item.accessLevel == nil { return true }
-        return item.accessLevel == "edit"
+        guard let raw = item.accessLevel else { return true }
+        return AccessLevel(wireValue: raw).grantsEdit
     }
 }
