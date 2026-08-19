@@ -15,6 +15,13 @@
 // plaintext value the instant the detail screen appeared, because
 // `.onChange(of: item.id)` never fires on first appearance and `setItem`
 // was therefore never called for the newly-pushed item.
+//
+// WR-09 (40-REVIEW.md): this test registers a real account and creates
+// real items -- unlike the E-F* live-server runs elsewhere in this repo,
+// it previously had no documented `scripts/ios-live-server.sh`
+// precondition. It needs a real `pv-server` reachable at the app's
+// resolved base URL, or `createLogin`'s save will fail and this test will
+// report a misleading downstream symptom instead of the real cause.
 
 import XCTest
 
@@ -110,7 +117,21 @@ final class RevealStateCarryoverUITests: XCTestCase {
         passwordField.tap()
         passwordField.typeText(password)
 
-        app.buttons["itemform.save"].tap()
+        // WR-09 (40-REVIEW.md): this used to be a bare `.tap()` with no
+        // existence check and no post-condition -- if the save failed (no
+        // live server on the resolved base URL, a 4xx, a validation
+        // error), the sheet stayed up with itemform's own error text
+        // visible, and the FAILURE the caller actually saw was a
+        // misleading "login A's detail screen never appeared" ten seconds
+        // later on an unrelated assertion. Fail here, at the real failure
+        // point, with the real error text if there is one.
+        let save = app.buttons["itemform.save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 5), "the save button never appeared")
+        save.tap()
+        XCTAssertTrue(
+            nameField.waitForNonExistence(timeout: 10),
+            "the item form never dismissed -- save failed: \(app.staticTexts["itemform.error"].label)"
+        )
     }
 
     /// `PV_UITEST_SCREEN=auth` (set by the caller above) forces `AuthView`
