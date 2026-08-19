@@ -1338,6 +1338,122 @@ phase owns" → DR-39-E.
 
 ---
 
+## 1h. Phase 40 decision records — DR-40-A, DR-40-B, 2026-08-19
+
+Written before any `crates/pv-ffi/` or `ios/PasskeyVault/` code, on the `IOS-06`/`KEY-05`/`EXT-10`
+precedent this project already follows (decision-record-before-dependent-code). Owed per
+`40-RESEARCH.md` §"Decision records this phase owes".
+
+### DR-40-A — `pv-ffi` sharing serialization contract: **DECIDED — `String`-JSON produced by
+`serde_json` inside Rust**
+
+**Decision:** every new `#[uniffi::export]` added in plans 40-02/40-03/40-04 whose value reaches the
+server wire returns a `String` produced by `serde_json` INSIDE Rust, and accepts such a `String` on
+the way back — mirroring `pv-wasm`'s own convention: `sealCollectionKey`, `unsealCollectionKey`'s
+input, `encryptItemForCollection`, `decryptItemForCollection`, and `WasmInviteChannel::wrapCollectionKey`
+all serialize/deserialize via `serde_json::to_string`/`serde_json::from_str` in Rust, never handing a
+typed record to the FFI boundary for a wire-bound value [OBS: `crates/pv-wasm/src/lib.rs:326-333,
+343-353, 355-373`].
+
+**Rejected: UniFFI `Record` with `Data`/byte-array fields** (Phase 35's `FfiWrappedKey`/
+`FfiEncryptedItem` style, `crates/pv-ffi/src/lib.rs:417-448`). Rejected on the merit that `serde_json`
+encodes `Vec<u8>` as a JSON number array and `[u8; N]` as a fixed-length sequence, while Swift's
+`JSONEncoder` encodes a `Data` field as base64 by default — so a `Record`-of-`Data` hands the wire
+format to Swift's encoder instead of fixing it in Rust, and iOS would write an encoding no other
+client reads (the D-21 defect shape, third instance this project has now named explicitly).
+
+**Two things make this sharper than the Phase 37/38 instance:**
+- `SealedKey.ephemeral_pk` is `[u8; 32]` [OBS: `crates/pv-core/src/identity.rs:267-268`], whose serde
+  representation is a fixed-length SEQ of numbers — a wrong encoding here fails at a *different* layer
+  than the `nonce`/`ciphertext` `Vec<u8>` fields Phase 38 already reasoned about, so the existing
+  wire-shape mental model does not fully cover it by analogy.
+- `wrapped_secret_key` is written **once per account and then adopted forever** by
+  `identity.rs::upsert`'s `ON CONFLICT(user_id) DO NOTHING` — a wrong encoding there is not one bad
+  row, it is the account's identity keypair, permanently, for every client that ever authenticates.
+
+**This project has already lived this exact tradeoff once, inside `pv-ffi` itself.** DR-38-C
+(§1a below) coexists two shapes on purpose in the SAME file: `encrypt_item`/`decrypt_item` stay
+`Record`-shaped (`FfiWrappedKey`/`FfiEncryptedItem`, non-wire-bound call sites), while
+`encrypt_item_wire`/`decrypt_item_wire`/`encrypt_item_combined_json`/`decrypt_item_combined_json`
+are `String`-JSON produced by `serde_json` inside Rust for anything that reaches persistence
+[OBS: `crates/pv-ffi/src/lib.rs:102-112`, `wire.rs`]. DR-40-A extends that same split to the sharing
+surface: every new sharing function is wire-bound by construction (it either goes into an HTTP request
+body or gets read back out of one), so it follows the `*_wire`/`*_combined_json` half of that split,
+never the `Record` half.
+
+**The sanctioned raw-bytes exceptions, named explicitly (FFI-03 style).** Two of the fourteen new
+functions genuinely need to exit as raw bytes, not JSON, and DR-40-A states why rather than leaving it
+implicit: `generate_invite_secret` (mirrors `pv-wasm`'s `generateInviteSecret`, its own header calling
+itself the *"TRZECI SANKCJONOWANY WYJĄTEK"* [OBS: `crates/pv-wasm/src/lib.rs:21-28`]) returns raw
+bytes because the secret must literally appear in a shareable URL fragment — it cannot be JSON-wrapped
+and still be a pasteable link fragment. `FfiInviteChannel::proof_for_redemption` returns raw bytes
+because the proof is a bearer credential presented in a POST body (WR-08), not a structured value with
+named fields. Plan 40-04 adds both to `scripts/audit-ffi-opaque-handles.sh`'s named, justified
+allowlist — the pattern is NOT loosened to admit them generically (Pitfall 9); each is a specific,
+commented entry.
+
+**Residual risk, stated not glossed:** this record is INFERRED until plan 40-02's E-W2 run observes a
+real row on the wire and confirms `jq -e '... | fromjson | .nonce | type'` reads `"array"`, not
+`"string"`. If E-W2 contradicts it, this record is amended in place, not quietly ignored or overwritten.
+
+**Evidence:** `crates/pv-wasm/src/lib.rs:21-28, 326-373, 697-760`; `crates/pv-ffi/src/lib.rs:102-112,
+417-448`; `crates/pv-core/src/identity.rs:267-268`; `40-RESEARCH.md` §"`pv-ffi` additions this phase
+requires", §"Decision records this phase owes" → DR-40-A.
+
+### DR-40-B — iOS's role in FSH-02: **DECIDED — full participant (receiver AND resealer)**
+
+**Decision:** iOS is a FULL FSH-02 participant. It receives a Collection Key by BOTH invite-time-wrap
+(Path A) and lazy reseal (Path B), AND it runs the reseal trigger as a keyholder (owned by a later
+plan, currently numbered 40-10 in this phase's plan set).
+
+**Rejected: receiver-only.** Rejected on the merit that a family whose only key holder uses iOS never
+heals under receiver-only — no web session ever fires the trigger, so `family-wide-pending`'s
+`resealable` list stays unserved indefinitely for that family — and that FAM-04's prohibition
+(*"nie wolno wynaleźć tu drugiego, rozjeżdżającego się modelu"*) reads as owning the whole delivery
+mechanism, not the half SC4's literal wording happens to exercise. **Accepted cost, stated plainly:**
+roughly one extra plan to port the trigger.
+
+**Invariants the port must preserve, each named as load-bearing** (ported from
+`main:web/src/lib/families/resealTrigger.ts`/`reseal.ts`, read this session):
+- The trigger set deliberately includes the sharer — no `recipient_user_id != me` guard anywhere.
+- The attempted-pair set is claimed synchronously before the first `await` and cleared on every
+  lock/unlock transition, so a transient failure retries next unlock and is never stranded.
+- The trigger never rejects — each pair is its own best-effort attempt — and is never awaited on the
+  unlock critical path.
+- A `409` from `add_member` during reseal is SUCCESS, not failure (idempotent grant via the server's
+  `ON CONFLICT DO NOTHING` on `collection_keys`' composite PK) — never treated as an error.
+- A recipient with no published public key throws BEFORE any network call (T-25-16) — never a
+  silently skipped grant.
+- Reseal delivers the SAME Collection Key and never rotates it; rotation belongs only to member
+  removal.
+- The level propagated to a late joiner is the SHARE's own `family_wide_access_level`, with `"read"`
+  as the only fallback when that column is `NULL` — **never** the propagator's own held `access_level`.
+  This is precisely the bug migration `0020_family_wide_access_level.sql` and the CR-01/CR-03 fix
+  (brought current by this plan's Task 1) exist to close; an iOS port that reads `access_level` off
+  its own collection row to decide what to grant reproduces a shipped, fixed bug.
+
+**Three scope calls this phase makes explicitly, recorded here rather than left to omission**
+(`40-RESEARCH.md` Open Questions 2/3/4):
+- iOS authors FAMILY-scope invites only in this milestone. Collection-scoped invite authoring stays
+  UI-absent on iOS, matching Phase 24's web precedent — no share-authoring sheet ships this phase (see
+  `40-UI-SPEC.md` §0.3, "SPECIFIED, NOT SCHEDULED").
+- iOS reproduces `itemCapabilities.ts::canEditItem`'s refusal to edit a `sharedToMe` item at ANY
+  access level, including `edit`, because no encrypt-as-shared-key-recipient primitive exists on any
+  client yet (the crypto half is itself deferred, tracked outside this phase). iOS must not present an
+  Edit affordance it structurally cannot honor.
+- iOS is NOT the surface that closes WINDOWS #13 (no UI path to add a member to an existing
+  collection). That gap, if still open after re-reading `main`'s `ShareDialog.tsx`, stays open; iOS is
+  not planned to be its fix.
+
+**Evidence:** `main:web/src/lib/families/resealTrigger.ts`, `reseal.ts` (read this session, post-merge);
+`crates/pv-server/migrations/0020_family_wide_access_level.sql`; `crates/pv-server/src/routes/
+collections.rs` (19 occurrences of `family_wide_access_level`, confirmed post-merge, Task 1);
+`crates/pv-server/tests/family_wide_sharing.rs`
+`family_wide_reseal_add_member_body_is_shape_identical_to_an_ordinary_share`; `40-RESEARCH.md`
+§"FSH-02, as actually implemented", §"Open Question 1", §"Decision records this phase owes" → DR-40-B.
+
+---
+
 ## 2. Verified against reality (2026-08-11)
 
 ### 2.1 PRF is available on iOS in both directions — iOS 18.0+
