@@ -1,123 +1,37 @@
 ---
 phase: 31-the-share-dialog-per-person-access-existing-destinations
-verified: 2026-08-19T02:35:00Z
-status: gaps_found
+verified: 2026-08-19T03:35:00Z
+status: human_needed
 score: 6/6 must-haves verified (the five ROADMAP success criteria + CONTEXT.md's sixth proof obligation)
 behavior_unverified: 0
 overrides_applied: 0
 re_verification:
-  previous_status: none
-  previous_score: n/a
-  gaps_closed: []
+  previous_status: gaps_found
+  previous_score: 6/6 truths, 4 review-closure gaps open
+  gaps_closed:
+    - "F-1 — HI-01's fix targeted the wrong sync lane; update_access now bumps collections.revision and the demoted recipient's live session genuinely converges (independently falsified end-to-end)"
+    - "F-2 — update_access re-opened the item_bucket takeover; now refuses unconditionally on item_bucket, and the refusal holds for the family owner too"
+    - "F-3 — CR-01 Failure Scenario B had no recovery path; the family owner now has one, scoped to owners only and bounded by the Membership extractor"
+    - "F-4 — the existing-destination 409 wrapper accepted a persisted `edit` for an intended `read`; now an exact match, and reports failure"
+    - "F-6 — ROADMAP.md and 31-VALIDATION.md advanced to match the evidence beneath them, with citations rather than fabrication"
   gaps_remaining: []
   regressions: []
-gaps:
-  - truth: "HI-01 (31-REVIEW.md, High, marked `fixed`): an in-place demotion reaches the target's live session"
-    status: failed
-    reason: >-
-      The fix bumps `users.vault_revision`, which drives only the PERSONAL `/api/sync` lane.
-      The lane the client's cached collection `accessLevel` actually depends on is
-      `/api/sync/shared`, whose payload is `(collection.id, collections.revision)` plus the
-      caller's `shared_direct_revision` — none of which `update_access` touches. Verified by
-      probe: the target's `/api/sync/shared` response is byte-identical before and after a
-      demotion from `edit` to `hidden_password`. `sharedRevisionsChanged()` therefore returns
-      false, `doHandleSharedRevisions` early-returns, and `refreshCollectionsNow()` — the only
-      production path that refreshes `collections.ts`'s cached `accessLevel`, which is exactly
-      what drives the hidden-password interface gate — never runs. The demoted recipient keeps
-      the stale, more-permissive level (and keeps revealing the password) until a relock/unlock
-      or an unrelated item mutation bumps `collections.revision`. The review's own second
-      recommendation ("also consider bumping `collections.revision`") was not applied. The
-      regression test added with the fix asserts the PERSONAL lane returns a fresh snapshot —
-      true, but it measures the wrong lane. The sibling `update_share` bumps
-      `shared_direct_revision`, which the shared lane DOES read, so the item scope converges
-      correctly; only the collection scope does not.
-    artifacts:
-      - path: "crates/pv-server/src/routes/collections.rs:754-760"
-        issue: "Bumps users.vault_revision only; collections.revision is read (`SELECT revision`) but never incremented."
-      - path: "crates/pv-server/tests/collections.rs:1375-1461"
-        issue: "`update_access_bumps_targets_own_vault_revision_and_they_see_a_fresh_sync` asserts GET /api/sync (personal lane), which cannot carry a collection access level (SyncSnapshot = {revision, items?, folders?})."
-      - path: "web/src/lib/vault/store.ts:1201-1276"
-        issue: "sharedRevisionsChanged() compares only collections[].revision and the id set — both unchanged by an in-place level edit — so refreshCollectionsNow() is unreachable for this mutation."
-    missing:
-      - "Bump `collections.revision` inside update_access's transaction (or add a per-recipient counter to /api/sync/shared) so sharedRevisionsChanged() fires for the demoted recipient."
-      - "Replace/extend the regression test so it asserts the SHARED lane changes, not the personal one — ideally a live two-session e2e mirroring the sixth obligation's shape but for a demotion rather than a revocation."
-  - truth: "`update_access` is bounded so that no unprivileged member can strip another member's access level"
-    status: failed
-    reason: >-
-      NEW finding — not in 31-REVIEW.md's 23. `update_access` re-opens on `item_bucket`
-      collections the exact takeover that `revoke_access`'s hard 403 (quick task 260812-01e
-      Task 2) was installed to prevent. Driven live in a probe: a `read`-level family member
-      self-escalates to `edit` via the documented `claim_item_bucket_edit_in_tx` mechanism
-      (create an owned item, `PUT /api/vault/items/{id}/collection` into the bucket — observed
-      200, level flips read -> edit), then `PUT /api/vault/collections/{id}/access/{creatorId}`
-      with `{"access_level":"read"}` -> **204**, and the bucket's creator drops from `edit` to
-      `read`. `enforce_item_bucket_declared_level_bound` cannot stop it — the requested level
-      EQUALS the declared level, which is precisely what that bound requires. CR-01's new
-      demotion bound cannot stop it — the attacker genuinely holds `edit`. `revoke_access`'s own
-      doc comment names this same attacker and this same victim as its reason for existing;
-      `update_access` shipped with no equivalent guard. Recoverable (the creator can re-run the
-      same self-escalation), so not irreversible — but it is a new privilege-stripping path this
-      phase opened on a surface the project had already deliberately fenced.
-    artifacts:
-      - path: "crates/pv-server/src/routes/collections.rs:743-812"
-        issue: "No item_bucket / family-wide refusal on update_access, unlike revoke_access at :890-916 which 403s on every family-wide collection."
-    missing:
-      - "Mirror revoke_access's `is_family_wide_collection` refusal on update_access (at minimum for `item_bucket`), or make the demotion bound reject a caller whose `edit` came from claim_item_bucket_edit_in_tx."
-      - "A server test driving the self-escalated-contributor demotion, in `crates/pv-server/tests/collections.rs`."
-  - truth: "CR-01 (31-REVIEW.md, Critical, marked `fixed`): `update_access` cannot be used to strip `edit` and strand a collection"
-    status: partial
-    reason: >-
-      Failure Scenario A (the crafted family-wide-folder request by a read-holder) IS closed —
-      403, row unchanged, falsification-confirmed. Failure Scenario B — the one the review
-      labelled "reachable through the shipped UI, no crafted request" — is NOT closed. Probe on
-      an ordinary shared folder: edit-holder B (not the creator) demoted the owner (204) and a
-      third edit-holder C (204) and is now sole administrator. The creator's recovery attempts
-      both fail: `POST .../members` -> 403 (INSERT-only, ON CONFLICT DO NOTHING + relaxed gate),
-      `PUT .../access/{self}` -> 403 (the new demotion bound requires edit, which they no longer
-      hold). There is no API path back. The last-edit-holder guard stops only at ZERO holders,
-      exactly as designed. The fixer folded this into ME-06 (documented in a test doc comment,
-      not silently dropped) — but ME-06 is explicitly about `revoke_access` bulk eviction, and
-      its "actor as sole survivor" framing does not describe "the folder's creator is
-      permanently stranded read-only".
-    artifacts:
-      - path: "crates/pv-server/src/routes/collections.rs:805-812"
-        issue: "The EXISTS guard admits any state with >=1 remaining edit holder, including 'only the attacker'."
-    missing:
-      - "Either close scenario B (e.g. only the collection's creator, or an existing edit-holder acting on someone they granted, may demote another edit-holder), or route it to Bartek as a product question the way ME-06 was — it is a distinct concern from ME-06's revocation case."
-  - truth: "CR-03 (31-REVIEW.md, Critical, marked `fixed`): a 409 on the existing-destination grant path never reports unqualified success at the wrong level"
-    status: partial
-    reason: >-
-      Half closed. `reshareCollectionToNewMember`'s unconditional swallow is genuinely gone and
-      `submitRowsForExistingDestination` now verifies the persisted level — but it verifies it
-      through `recipientAlreadyHoldsIntendedLevel`, whose contributor ceiling accepts
-      `entry.access_level === "edit"` for ANY intent other than `hidden_password`. Driven with a
-      throwaway probe against the real production function: grant intent `read`, 409 from the
-      reshare, access list showing the recipient at `edit` -> returns
-      `{failedRecipients: [], failedRevocations: [], committedAnything: true}` — unqualified
-      success, while the recipient holds `edit` and the owner chose `read`. That is the review's
-      own CR-03 step 5 ("Ania still holds edit. She can reveal passwords the owner believes she
-      was just restricted from"). The ceiling's stated justification is family-wide contributor
-      self-escalation, which cannot apply here at all: CR-02's own fix excludes every
-      family-wide collection from the destination list. The item path
-      (`recipientAlreadyHoldsIntendedItemLevel`, exact match) does meet the bar. There is also
-      no unit test anywhere covering `submitRowsForExistingDestination`'s 409 wrapper.
-    artifacts:
-      - path: "web/src/components/vault/ShareDialog.tsx:375-396"
-        issue: "contributorCeilingApplies = intendedLevel !== 'hidden_password' — accepts a persisted `edit` as satisfying an intended `read` on a destination that is guaranteed non-family-wide."
-      - path: "web/src/components/vault/ShareDialog.tsx:685-700"
-        issue: "The CR-03 grant wrapper delegates the whole policy to that helper; no test exercises this wrapper."
-    missing:
-      - "On the existing-destination path, require an exact level match (or pass a `strict` flag into recipientAlreadyHoldsIntendedLevel) — the contributor ceiling has no reachable justification there."
-      - "A ShareDialog unit test: intended read + 409 + recipient at edit MUST land in failedRecipients."
+gaps: []
 deferred:
-  - truth: "Per-person revocation is still OFFERED against a family-wide folder in the Sharing overview (`SharingOverviewPanel.tsx:315` filters only `family_wide_kind !== 'item_bucket'`), where it now hits the new server 403 and renders the generic `share.revokeFailed`."
+  - truth: "F-5 — the Sharing overview still OFFERS per-person revocation on a family-wide folder (SharingOverviewPanel.tsx:315 filters only `family_wide_kind !== \"item_bucket\"`)"
     addressed_in: "Phase 33"
-    evidence: "31-CONTEXT.md scope: 'Out of scope: the Family & Sharing settings surface (Phase 33)'. The BEHAVIOUR is fenced by CR-02's server backstop (probe: DELETE on a family-wide folder -> 403, row survives), so the lazy-reseal trigger can no longer undo an offered revocation anywhere; only the dead affordance remains."
+    evidence: "31-CONTEXT.md: 'Out of scope: the Family & Sharing settings surface (Phase 33)'. Recorded as WINDOWS.md ledger entry #19 (open); markdown table and JSON mirror agree (19 entries, 7 open, matching frontmatter). The BEHAVIOUR is fenced — probe-confirmed DELETE on a family-wide folder -> 403, row survives — so only a dead affordance remains."
+  - truth: "The same hostile edit-holder who can DEMOTE (F-3, now recoverable) can instead REVOKE the family owner outright, after which no recovery path exists — `update_access` 404, `add_member` 404, `GET` 404"
+    addressed_in: "ME-06 (31-REVIEW.md), already routed to Bartek as a product question"
+    evidence: "Reached through `collections::revoke_access`, shipped in Phase 28 (SHARE-06) and untouched by Phase 31; it is ME-06's own 'last-key-holder guard permits actor as sole survivor' scenario. Verified by probe. Not a Phase 31 regression — but it means F-3's cheap recovery covers the milder attack and not the harsher one that reaches a strictly worse end state, which is worth stating when ME-06 is decided."
+  - truth: "`crates/pv-server/tests/family_wide_sharing.rs`'s `family_wide_pending_discovery_response_carries_only_ids_kinds_and_access_levels` fails under `cargo test -p pv-server` on a raw JSON-key-order assertion — a SECOND instance of Phase 30's B2 defect class, in the same file"
+    addressed_in: "Not scheduled — belongs in the record; Phase 30's B2 remediation"
+    evidence: "Reproduced: left [\"access_level\",\"collection_id\",\"kind\"] vs right [\"collection_id\",\"kind\",\"access_level\"]. Pre-existing at 9700992 and untouched by Phase 31 (empty diff). Judged a second instance, not a distinct defect — see the re-verification section's own analysis."
 behavior_unverified_items: []
 human_verification:
   - test: "Open the share dialog at 375px and at desktop width with one row set to 'Ukryte hasło'; read the revised PL `share.hiddenPasswordInlineNote`."
     expected: "The PL string wraps without clipping and without pushing the footer off-screen, and reads well — not merely 'technically fits'."
-    why_human: "31-VALIDATION.md's own Manual-Only row. The automated backstop (e2e sharing.spec.ts:634-655, scrollWidth <= clientWidth at both widths) catches gross overflow only; the taste call is held out."
+    why_human: "31-VALIDATION.md's own Manual-Only row — the single held-out item for this phase. The automated backstop (e2e sharing.spec.ts, scrollWidth <= clientWidth at both widths) catches gross overflow only; the taste call is deliberately not automated. This is the ONLY thing standing between Phase 31 and closure."
 ---
 
 # Phase 31: The Share Dialog — Per-Person Access, Existing Destinations — Verification Report
@@ -136,6 +50,101 @@ human_verification:
 **The six-criterion bar is met — every one of the five ROADMAP success criteria and CONTEXT.md's sixth proof obligation is genuinely, non-vacuously proven, and I could not falsify any of them.** The gaps are elsewhere: the Fix Disposition's claim of "Critical 4/4 fixed, High 6/6 fixed" is **not accurate for HI-01 (not fixed — the fix bumps a counter the client never reads) and only partially accurate for CR-01 and CR-03**, and I found one access-control hole that neither the review nor the fix pass caught.
 
 ---
+
+---
+
+# Re-verification (2026-08-19, after the F-1..F-6 gap-closure pass)
+
+**Range re-verified:** `9700992..901b050` (7 commits)
+**Verdict:** **status `human_needed`, score 6/6.** Every gap this report opened is closed, each one independently falsified by me rather than taken on the Gap Closure section's word — including the single falsification that section explicitly skipped. **No code gap remains.** One held-out human item (the PL-width taste call) is all that stands between Phase 31 and closure.
+
+## The five CI-width commands, re-run by me at this HEAD
+
+| # | Command | Exit | Result |
+|---|---|---|---|
+| 1 | `cargo test --workspace --no-fail-fast` | **0** | 31/31 blocks `ok`, **393 passed, 0 failed** (was 391) |
+| 2 | `cd web && npm run compile` | **0** | 0 errors |
+| 3 | `cd web && npm test` | **0** | **92 files / 1008 tests** (was 1006) |
+| 4 | `cd web && npm run build` | **0** | 5 static routes |
+| 5 | 4 Playwright specs `--retries=0` | **0** | **27/27 passed** (2.5m) — `sharing.spec.ts` 12/12 incl. the new F-1 test |
+
+Freshness: port 8620 free, `CI=1` (so `reuseExistingServer` is off), throwaway `PV_E2E_DB_DIR`; `target/release/pv-server` 03:21 and `web/out` 03:20, with `find crates -name '*.rs' -newer target/release/pv-server` empty; `data/pv.db` md5 `173b2d0953ab820a1ea0b936e18fb58a` identical before and after. Every number matches the Gap Closure section's claims.
+
+> **One correction to the Gap Closure table.** My first `npm run compile` at this HEAD exited **2**, with three `TS2307 Cannot find module 'react'` errors from `packages/pv-ui/components/ItemIconTile.tsx`. That is `packages/pv-ui/node_modules` being absent, not a source defect: `web`'s `prebuild` is what populates it (`cd ../packages/pv-ui && npm ci`), so `compile` only passes if a `build` has run since the last time that tree was wiped. Re-run after `npm run build`: **exit 0, zero errors**. Recording it because "compile is green" is load-bearing here and is silently order-dependent on a sibling package's install state.
+
+## Per-gap verdict
+
+| Gap | Verdict | How I proved it, not how it was claimed |
+|---|---|---|
+| **F-1** — HI-01 targeted the wrong sync lane | **CLOSED** | `update_access` now calls `bump_collection_revision` in-transaction. My own P5 probe: the target's `/api/sync/shared` payload goes `revision: 0` → `revision: 1` across a demotion (it was byte-identical before), so `sharedRevisionsChanged()` will fire. The replaced server test asserts the **shared** lane, and the old wrong-lane test is **gone** — renamed, with the personal-lane check demoted to a secondary assertion inside the same test, not left sitting alongside as a second test. **And I ran the falsification the closer skipped:** with the bump reverted, the new live e2e fails at exactly its negative anchor — `getByTestId('reveal-password')` `123 × resolved to 1 element` over the full 60s, i.e. the demoted member's still-open session kept the password revealable. With the bump in place the same test passes in 2.9s. That is convergence at the UI layer the defect described, not a counter comparison. |
+| **F-2** — item_bucket takeover through the new route | **CLOSED** | My P3 probe re-run: the self-escalation still works (`edit` claimed via a move, 200) but `PUT .../access/{creator}` is now **403** and the creator keeps `edit`. Falsified: with the `is_item_bucket_collection` refusal removed, the attack reproduces exactly (**204**, creator → `read`) and both new tests go red. The removal of `enforce_item_bucket_declared_level_bound` from this handler is genuine dead-code removal — I confirmed that helper is a no-op unless `is_item_bucket_collection` is true, so the earlier unconditional refusal subsumes it, and its other two call sites (`add_member`, `invitations::create`) are untouched. |
+| **F-3** — no recovery from Failure Scenario B | **CLOSED, with the blast radius checked** | Probe: Scenario B still reproduces (owner and C demoted to `read`, B sole admin — the takeover was made *recoverable*, not impossible), then the family owner self-restores to `edit` (**204**) and demotes the attacker back (**204**). Negative control: non-owner C's identical self-restore is still **403**. Falsified: with either exemption removed, the owner's recovery returns **403**. |
+| **F-4** — `edit` accepted for an intended `read` | **CLOSED** | Drove the exact scenario against the real `submitRowsForExistingDestination`: 409 + persisted `edit` + intended `read` now returns `failedRecipients: ["ania@example.test"], committedAnything: false`. Under the reverted code the same probe returns `failedRecipients: [], committedAnything: true` — the old unqualified success. The `strict` default is `false`, so the two family-wide call sites where the contributor ceiling is legitimate are byte-unchanged. |
+| **F-5** — stale revoke affordance | **DEFERRED as instructed** | Untouched; recorded as `WINDOWS.md` #19 (open). I parsed the JSON mirror: 19 entries, 7 open, #19 present — agrees with the markdown table and the frontmatter counts. |
+| **F-6** — documentation drift | **CLOSED, and honest** | `ROADMAP.md` now reads 6/6 with all six plan boxes ticked; `31-VALIDATION.md` is `validated` / `nyquist_compliant: true` / `wave_0_complete: true` with every sign-off line carrying a citation to the row it is true because of. I checked the underlying rows were already green rather than being edited to look green — they were. |
+
+## F-3 blast radius — the thing worth reading twice
+
+The exemption is `resolve_family_role(...) == Some((_, role)) if RequireEdit::satisfied_by(role)`. That is an indirect spelling of "role = owner": `resolve_family_membership` maps `"owner" → AccessLevel::Edit`, `"member" → AccessLevel::Read`, and `RequireEdit::satisfied_by` is an exact `== Edit`. So no member can reach it. Confirmed by probe (plain member peer-promote → **403**).
+
+Four containment properties I checked rather than assumed:
+
+- **It cannot reach a collection the owner is not already in.** `Membership<Collection, RequireRead>` requires a `collection_keys` row **and** an active `family_members` row in the collection's *own* family. Probe: the family owner calling `update_access` on a member's own collection they hold no key for gets **404**, not a bypass.
+- **Cross-family is structurally impossible.** `migrations/0014` carries `CREATE UNIQUE INDEX idx_families_singleton ON families ((1))` — FAM-01 is enforced by the database, not by convention, so `family_members` has at most one row per user and "owner of a family" is necessarily "owner of *this* collection's family". (Forward-looking note: if that singleton index is ever dropped, `resolve_family_role`'s `WHERE user_id = ?` has no `family_id` predicate and would need one.)
+- **A suspended owner cannot use it.** `resolve_family_role` deliberately carries no status predicate, but the extractor's own join is `fm.status = 'active'`, so a suspended caller never reaches the handler body.
+- **It does not bypass the item_bucket refusal.** Probe DOOR-1c: the **family owner** calling `update_access` on an item_bucket is **403**. The F-2 fence has no owner exception, exactly as documented. And `enforce_item_bucket_declared_level_bound` is not "bypassed" by the exemption — it is unreachable because item_buckets are refused outright first, which is strictly stronger.
+
+**The TOCTOU question:** the role is read before `tx.begin()` (forced by the harness's `max_connections(1)`). This does not widen anything. `membership.access` — the value both pre-existing gates turn on — is resolved by the extractor *even earlier*, before the handler body runs at all. The role read therefore sits strictly inside an already-existing window, and there is no ownership-transfer route in this codebase for an attacker to race against. The last-edit-holder guard, the only invariant that must be atomic, is still folded into the UPDATE's own `WHERE`.
+
+## Hunting the same takeover through a different door
+
+The coordinator's instinct was right to ask; the answer is that the fence now holds on every access-level door, and one non-access-level door is open but predates this phase.
+
+| Door | Result |
+|---|---|
+| `update_access` on an item_bucket (creator / peer / **as family owner**) | **403 / 403 / 403** |
+| `revoke_access` on the bucket | **403** (CR-02) |
+| `add_member` at a level above the declared one | **403** |
+| Move the creator's item **out** of the bucket | **403** |
+| **Delete the creator's item from inside the bucket** | **204 — succeeds** |
+
+That last one is real but is **not** this phase's: a self-escalated contributor holds genuine `edit` on the bucket, which satisfies `delete_item`'s gate. `git diff 2096fba..HEAD -- crates/pv-server/src/routes/vault.rs` contains no delete-path change, so Phase 31 neither created nor widened it. It is the same `claim_item_bucket_edit_in_tx` primitive that motivated both access-level fences, surfacing as destruction rather than privilege-stripping. Worth a ledger entry when someone next touches that primitive; not a Phase 31 gap.
+
+I also re-derived the write-surface enumeration at this HEAD and found no new door: `claim_item_bucket_edit_in_tx` is self-scoped (`recipient_user_id = ?` bound to the caller) and only ever escalates, never demotes.
+
+## The `family_wide_sharing.rs` key-order failure — is it Phase 30's B2 again?
+
+**It is a second instance of the same defect class, and B2's fix was incomplete.** Reproduced verbatim:
+
+```
+assertion `left == right` failed: a pending grant is an id, a kind, and (260812-01e Task 3) an access_level, nothing else
+  left: ["access_level", "collection_id", "kind"]
+ right: ["collection_id", "kind", "access_level"]
+```
+
+Same root cause as B2: a raw `serde_json::Map` key-iteration order compared against a hardcoded literal, where the iteration order depends on whether `preserve_order` got feature-unified into the build graph. Same file. The pre-existing claim checks out — `git diff 9700992..HEAD -- crates/pv-server/tests/family_wide_sharing.rs` shows the assertion untouched.
+
+Two things make it worth putting in the record rather than filing as a flake:
+
+1. **The polarity is inverted, which is why nothing catches it.** B2 was pinned to *alphabetical* order, so it passed under `-p pv-server` and failed under `--workspace`. This one is pinned to *declaration* order, so it passes under `--workspace` and fails under `-p pv-server`. The CI-width command is `--workspace` — the one width that structurally cannot see it. Every verification pass, mine included, has reported 31/31 green.
+2. **It is a deliberate opt-out, not an oversight.** The comment directly above the assertion documents the `preserve_order` hazard in full and then chooses to pin to `--workspace`'s observed order anyway. B2's own remediation established the opposite rule — "both key vectors are now sorted before comparison … independent of which `Map` implementation is linked."
+
+Scoping the class repo-wide: eight sites compare JSON key vectors. Five sort first (`vault.rs` ×2, `family.rs`, `passkey_login.rs`, and B2's own repaired `family_wide_sharing.rs:998`). Three do not — **all three in this one test** (`:850`, `:869`, `:880`). Two of the three are only accidentally safe, because alphabetical and declaration order coincide for their field sets; rename or add a field and they break too. So B2 repaired the instance that happened to be red and never generalized the rule, leaving the sole holdout in the repo.
+
+**Recommendation:** sort all three vectors (a three-line change, no assertion weakened — it is the same key-*set* property), and record it as a WINDOWS entry attributed to Phase 30's B2 remediation. Not a Phase 31 blocker.
+
+## Process note
+
+`ROADMAP.md` was marked "completed 2026-08-19, verified 6/6 (`31-VERIFICATION.md`)" by the gap-closure pass itself, at a moment when this report's own status was `gaps_found`. The claim happens to land true now that I have re-verified — but it was written ahead of its evidence, which is the same ordering that produced F-1 in the first place.
+
+## Is Phase 31 closeable?
+
+**Yes — after one human check.** All six must-have truths are verified and re-proven live at this HEAD; all four code gaps are closed and independently falsified; the two deliberate deferrals (F-5, ME-06) are recorded with ledger entries rather than dropped. The only outstanding item is the PL-width taste call in the frontmatter's `human_verification` block, which `31-VALIDATION.md` itself designates manual-only. Nothing in the codebase blocks closure.
+
+
+---
+
+# Original verification (2026-08-19, pre-gap-closure) — preserved below
 
 ## Goal Achievement
 
