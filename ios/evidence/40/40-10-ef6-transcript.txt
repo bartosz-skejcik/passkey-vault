@@ -2,6 +2,20 @@ E-F6 live iOS-as-propagator run -- Phase 40, plan 40-10, Task 3
 Recorded: 2026-08-19 5:03:33 PM +0000
 Server origin: http://127.0.0.1:8621
 
+CORRECTION, 2026-08-19 (40-VERIFICATION.md gap 3), and it matters because this transcript's own
+naming implied a cross-client claim it never demonstrated. "Account web" / "web member" below is
+NOT a browser or pv-wasm client -- it is `ResealTriggerTests.sessionSecondMember`, a SECOND
+Swift/pv-ffi account registered by this same test method
+(ios/PasskeyVault/PasskeyVaultTests/ResealTriggerTests.swift). Its email literal
+(`pv-ef6-web-...`) and this transcript's own filenames (`40-10-ef6-web-before.png`/`-after.png`)
+are unchanged from before WR-08 (40-REVIEW.md iteration 2) renamed the SOURCE identifiers to
+`sessionSecondMember`/`emailSecondMember` specifically so a future reader would not conclude
+cross-client interop was proven here -- that fix corrected the source but not this
+already-committed transcript. Read every "web" below as "second Swift account, still owned by
+iOS/pv-ffi crypto, never pv-wasm or a browser." The real Swift/pv-ffi-vs-pv-wasm cross-client
+crypto proof is E-W2 (40-02-SUMMARY.md), not this file. Not silently rewritten -- this block is
+prepended, the run below is otherwise untouched.
+
 Account iOS (owner, holds the ONLY key, runs the production ResealTrigger): pv-ef6-ios-1787159013-ac379541@example.invalid (user_id f31ffcb5-e488-4e36-98ad-d6be2efa5667)
 Account web (joins the family FIRST, before any family-wide collection exists): pv-ef6-web-1787159013-ac379541@example.invalid (user_id 11a5ca6c-a60f-4013-8cbe-83b45f73b5e4)
 
