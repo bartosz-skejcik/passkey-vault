@@ -1452,6 +1452,35 @@ collections.rs` (19 occurrences of `family_wide_access_level`, confirmed post-me
 `family_wide_reseal_add_member_body_is_shape_identical_to_an_ordinary_share`; `40-RESEARCH.md`
 §"FSH-02, as actually implemented", §"Open Question 1", §"Decision records this phase owes" → DR-40-B.
 
+### Plan 40-03 closing note — `sharing.rs`'s crypto surface is now complete, two durable facts for later plans
+
+Plan 40-03 finished the collection-scoped + direct-share crypto surface DR-40-A anticipated:
+`rewrap_item_key_for_collection`, `seal_item_key_for_recipient`, `decrypt_item_with_shared_key` are
+now in `crates/pv-ffi/src/sharing.rs` alongside 40-02's `encrypt_item_for_collection`/
+`decrypt_item_for_collection` — every function `40-RESEARCH.md`'s "`pv-ffi` additions this phase
+requires" names for items now exists, callable from Swift. No new decision record was needed; two
+facts surfaced worth recording for whichever later plan (40-05 onward) next touches `FfiWrappedKey`
+or writes a falsification transcript:
+
+- **`FfiWrappedKey.nonce`/`.ciphertext` are UniFFI-native `Data`, not `[UInt8]`**, contrary to what the
+  `pv-wasm`/`pv-core` precedent might suggest by analogy. Building a hand-rolled `WrappedKey`-shaped
+  JSON string from a `FfiWrappedKey` in Swift (as plan 40-03's `seal_item_key_for_recipient` test does,
+  `enc_key_json: String`) must map `Data` byte-by-byte into `[Int]` BEFORE `JSONSerialization` — handing
+  the `Data` itself to `JSONEncoder`/`JSONSerialization` produces base64, the exact DR-40-A divergence
+  this whole record exists to prevent. `Data.map { Int($0) }` is the safe path; `JSONEncoder().encode(_:)`
+  on a `Codable` wrapping the `Data` field directly is not.
+- **A falsification mutation must hardcode the SPECIFIC value the target negative test's own fixture
+  used, not an arbitrary wrong one.** Hardcoding an arbitrary/generic wrong AAD-component value still
+  makes `decrypt` fail (for the wrong reason) and the negative test's `assert(is_err())` stays green —
+  no RED is observed, and the falsification proves nothing. The mutation must make decrypt SUCCEED when
+  it should not, by hardcoding the value that happens to be correct for that one test's own encrypted
+  fixture — that is what turns the negative test's own assertion RED.
+
+**Evidence:** `40-03-SUMMARY.md`'s Falsification Transcripts and Decisions Made sections;
+`crates/pv-ffi/src/sharing.rs` (`rewrap_item_key_for_collection`, `seal_item_key_for_recipient`,
+`decrypt_item_with_shared_key`); `ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:1681-1690`
+(`FfiWrappedKey`'s generated `Data` fields).
+
 ---
 
 ## 2. Verified against reality (2026-08-11)
