@@ -197,7 +197,6 @@ struct ContentView: View {
     @ViewBuilder
     private func vault(_ session: UnlockedSession) -> some View {
         let store = storeFor(session)
-        let coordinator = syncCoordinatorFor(session, store: store)
         VaultRootView(
             store: store,
             folderStore: folderStoreFor(session),
@@ -205,6 +204,20 @@ struct ContentView: View {
             onSignOutRequested: { performSignOut() }
         )
         .task {
+            // WR-14 (39-REVIEW.md): construction AND start moved here, out
+            // of `body` evaluation. `syncCoordinatorFor` writes `@State`
+            // (`syncCoordinator = coordinator`) and, on first call,
+            // `SyncSocket.start()` opens a network connection and schedules
+            // a repeating timer -- both real side effects that used to run
+            // as a consequence of evaluating a `@ViewBuilder` function's
+            // body (`vault(_:)` was called directly from `body`'s own
+            // `switch`). Mutating `@State` during view update is undefined
+            // behaviour in SwiftUI (the runtime's "Modifying state during
+            // view update" warning) and made socket startup depend on how
+            // many times SwiftUI decided to evaluate the body.
+            // `storeFor`/`folderStoreFor` above share the construction-only
+            // shape but perform no I/O, so they are unaffected.
+            _ = syncCoordinatorFor(session, store: store)
             await Self.seedTooShortTotpSecretIfRequested(store: store)
             await Self.seedDockFixtureIfRequested(store: store)
         }
@@ -212,10 +225,13 @@ struct ContentView: View {
         // .active` fires on EVERY transition into the foreground, cold
         // launch included -- the coordinator's own `pull()` is idempotent
         // (just another `VaultStore.refresh()`), so an extra call here on
-        // first appearance costs nothing.
+        // first appearance costs nothing. Reads the `@State` coordinator
+        // directly (WR-14) -- it is no longer computed synchronously in
+        // `body`, so a transition landing before `.task` has run yet is a
+        // safe no-op rather than a crash.
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                coordinator.handleScenePhaseBecameActive()
+                syncCoordinator?.handleScenePhaseBecameActive()
             }
         }
     }
