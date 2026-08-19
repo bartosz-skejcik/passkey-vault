@@ -107,13 +107,18 @@ async function apiDelete(request: BrowserContext["request"], path: string, token
  * it outright. `Collection::resolve_access` resolves a fully-deleted row to
  * `None`, which `gate::<M>()` (membership.rs:399) turns into 404 NotFound --
  * confirmed independently by `membership_route_sweep.rs`'s own "an unrelated
- * caller gets 404, not 403" sweep for this exact route. `moveVaultItem`'s
- * client code (store.ts's `isForbiddenError`) recognizes ONLY `status ===
- * 403` as the TOCTOU signal that produces `CollectionKeyUnavailableError` --
- * a 404 falls through to the raw, retry-inviting `error.itemSaveFailed`
- * banner instead. A DEMOTION resolves to `Some(Read)`, which
- * `gate::<RequireEdit>` correctly turns into 403 Forbidden -- the genuinely
- * reachable, client-recognized shape of this refusal. */
+ * caller gets 404, not 403" sweep for this exact route. A DEMOTION resolves
+ * to `Some(Read)`, which `gate::<RequireEdit>` correctly turns into 403
+ * Forbidden -- the OTHER genuinely reachable shape of this refusal.
+ *
+ * HI-01 (code review, Phase 32): at the time this comment was first
+ * written, `moveVaultItem`'s client code (store.ts's `isForbiddenError`)
+ * recognized ONLY `status === 403` as the TOCTOU signal -- a 404 (the
+ * DELETE shape, exercised by the dedicated HI-01 test below, not this
+ * demotion-driven one) fell through to the raw, retry-inviting
+ * `error.itemSaveFailed` banner. `store.ts` now also classifies
+ * `isNotFoundError` the same non-retry-inviting way, closing that gap --
+ * this comment is kept accurate rather than silently going stale. */
 async function apiPut(
   request: BrowserContext["request"],
   path: string,
@@ -2155,6 +2160,146 @@ test("SC3: a concurrent demotion of the owner's OWN access to an existing destin
   await owner.context.close();
 });
 
+// HI-01 (code review, Phase 32): the executor discovered while writing SC3
+// that a FULLY REVOKED destination grant resolves to 404 (not 403), routed
+// around it with a PUT demotion instead of a DELETE, and never filed or
+// fixed the production gap the DELETE shape revealed. This is that
+// dedicated proof -- structurally identical to SC3 above, DELETE instead
+// of PUT, asserting the SAME honest, non-retry-inviting refusal and the
+// SAME byte-identical rollback.
+test("HI-01: a concurrent FULL REVOCATION (not demotion) of the owner's OWN access to an existing destination refuses the move honestly with byte-identical rollback", async ({
+  twoSessions,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+
+  const [memberA] = twoSessions;
+  const memberAToken = await tokenFor(memberA.page);
+  const memberAUserId = await userIdFor(memberA.context, memberAToken);
+
+  await ensureFamilyMembership(browser, [memberAUserId]);
+  await waitForIdentityKeyPublished(memberA.context, memberAToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+  const ownerUserId = await userIdFor(owner.context, ownerToken);
+
+  const suffix = uniqueSuffix();
+  const itemName = `PV E2E HI-01 404 Item ${suffix}`;
+  const itemPassword = `pw-HI01-404-${suffix}`;
+  const personalFolderName = `PV E2E HI-01 404 Seed Folder ${suffix}`;
+  const destinationName = `PV E2E HI-01 404 Destination ${suffix}`;
+
+  // 1. Owner creates a personal login item with a known password.
+  const itemsBefore = await listItemIds(owner.context, ownerToken);
+  await createLoginItemViaUI(owner.page, itemName, itemPassword);
+  const itemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+  // 2. Owner creates a personal folder and shares it with memberA at
+  //    "edit" -- a SECOND real edit-holder, so the later revoke is
+  //    observable (update_access/revoke_access's own last-edit-holder
+  //    guard is never tripped) and memberA remains the one performing it.
+  const foldersBefore = await listFolderIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-folders").click();
+  await createFolderViaUI(owner.page, personalFolderName);
+  const folderId = await newIdAfter(foldersBefore, () => listFolderIds(owner.context, ownerToken));
+
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+  await shareExistingFolderWithMember(owner.page, folderId, memberAUserId, "edit", destinationName);
+  const destinationId = await newIdAfter(collectionsBefore, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 3. Owner opens the item in edit mode and selects the shared
+  //    destination -- do NOT click Save yet.
+  await owner.page.getByTestId(`item-row-${itemId}`).click();
+  await owner.page.getByTestId("detail-panel").waitFor({ state: "visible" });
+  await owner.page.getByTestId("detail-panel-edit").click();
+  await owner.page.getByTestId("item-folder-select").waitFor({ state: "visible" });
+  await owner.page.getByTestId("item-folder-select").selectOption(`collection:${destinationId}`);
+
+  // 4. Baseline, captured via the owner's own token.
+  const baselineRes = await apiGet(owner.context.request, "/api/vault/items", ownerToken);
+  expect(baselineRes.status()).toBe(200);
+  const baselineItems = (await baselineRes.json()) as {
+    id: string;
+    enc_key: string;
+    enc_data: string;
+    revision: number;
+    collection_id: string | null;
+  }[];
+  const baseline = baselineItems.find((i) => i.id === itemId);
+  expect(baseline, "the item must exist server-side before the driven refusal").toBeDefined();
+  expect(baseline?.collection_id, "the item must still be personal before the refused attempt").toBeNull();
+
+  // 5. The deliberately-driven TOCTOU window: memberA FULLY REVOKES the
+  //    owner's own access on the destination -- a raw DELETE, not a
+  //    demotion. `Collection::resolve_access` resolves the now-absent row
+  //    to `None`, and `gate::<RequireEdit>` turns that into 404, not 403 --
+  //    THE shape HI-01 is about.
+  const revokeRes = await apiDelete(
+    memberA.context.request,
+    `/api/vault/collections/${destinationId}/access/${ownerUserId}`,
+    memberAToken,
+  );
+  expect(
+    revokeRes.status(),
+    "memberA (edit-capable, and the remaining key-holder) must be able to fully revoke the owner's own access",
+  ).toBe(204);
+
+  // 6. The owner -- unaware their own access to the destination is now
+  //    gone entirely -- submits the move.
+  await owner.page.getByTestId("item-form-submit").click();
+
+  // 7. Assert the honest refusal renders while the item editor is still
+  //    mounted, and is the SAME non-retry-inviting copy SC3's demotion
+  //    case produces -- both are "access loss", regardless of which HTTP
+  //    status code the server used to say so.
+  const errorLocator = owner.page.getByTestId("item-save-error-banner");
+  await expect(
+    errorLocator,
+    "the destination-access-lost refusal must render while the item editor is still mounted",
+  ).toBeVisible({ timeout: 20000 });
+  await expect(owner.page.getByTestId("item-form-login")).toBeVisible();
+  await expect(errorLocator).toHaveText(
+    "You no longer have write access to this folder. The change was not saved.",
+  );
+  const errorText = await errorLocator.textContent();
+  expect(
+    errorText,
+    "HI-01: a FULLY revoked grant must never surface the retry-inviting generic banner",
+  ).not.toContain("Please try again");
+  expect(errorText, "must never invite a retry in Polish copy either").not.toContain("Spróbuj ponownie");
+
+  // 8. Byte-identical rollback, same discipline as SC3.
+  const afterRes = await apiGet(owner.context.request, "/api/vault/items", ownerToken);
+  expect(afterRes.status()).toBe(200);
+  const afterItems = (await afterRes.json()) as {
+    id: string;
+    enc_key: string;
+    enc_data: string;
+    revision: number;
+    collection_id: string | null;
+  }[];
+  const after = afterItems.find((i) => i.id === itemId);
+  expect(after, "the item must still exist server-side after the refused attempt").toBeDefined();
+  expect(after?.enc_key, "the item's stored enc_key must be byte-identical after the refusal").toBe(
+    baseline?.enc_key,
+  );
+  expect(after?.enc_data, "the item's stored enc_data must be byte-identical after the refusal").toBe(
+    baseline?.enc_data,
+  );
+  expect(after?.revision, "the item's stored revision must be identical after the refusal").toBe(
+    baseline?.revision,
+  );
+  expect(after?.collection_id, "the item must still be personal -- the move never landed").toBeNull();
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(memberA.dialogFired(), "zero OS-level dialogs across memberA's session").toBe(false);
+  await owner.context.close();
+});
+
 /** 32-04-PLAN.md Task 2's own local, NON-CLOSING copy of `assertRecipientDecrypts`
  * (32-PLAN-CHECK.md iteration 2's blocker C-1): the existing helper's last
  * line is `detail-panel-close`, which the positive anchor here must NOT do
@@ -2307,6 +2452,45 @@ test("SC4: a member with only folder-derived access loses it after the owner mov
   await expect(
     member.page.getByText(itemPassword, { exact: true }),
     "the same read must fail after the move-out -- not merely absent from the list",
+  ).toHaveCount(0);
+
+  // ME-04 (code review, Phase 32): the negative read above runs DOWNSTREAM
+  // of the list-removal wait (step 5's own first assertion) -- it measures
+  // DOM absence, which `mergeCollectionSnapshot`'s wholesale replace would
+  // produce whether or not the member's underlying access is genuinely
+  // gone. Two assertions that CANNOT be explained by a stale unmount or a
+  // rendering-only effect, closing that gap:
+  //
+  // (a) an API-level check, with the MEMBER's OWN token, against the
+  //     destination collection directly -- if the member's server-side
+  //     access were still live, this would return 200 with the item in the
+  //     list regardless of what the client happens to be rendering.
+  const memberToken2 = await tokenFor(member.page);
+  const destItemsRes = await apiGet(
+    member.context.request,
+    `/api/vault/collections/${destinationId}/items`,
+    memberToken2,
+  );
+  // The item is genuinely gone from the collection (moved out), so this is
+  // 200-with-absent rather than 403/404 -- but the SAME check, run with the
+  // member's own token, is what makes it an access proof rather than a
+  // rendering one: a stale/cached client state cannot fabricate this
+  // response.
+  expect(destItemsRes.status()).toBe(200);
+  const destItems = (await destItemsRes.json()) as { id: string }[];
+  expect(
+    destItems.find((i) => i.id === itemId),
+    "API-level proof (member's own token): the item must be genuinely gone from the destination collection, not merely absent from a stale client render",
+  ).toBeUndefined();
+  //
+  // (b) a full reload + re-unlock, then the SAME positive-anchor locator
+  //     from step 3, re-asserted absent on a GENUINELY FRESH render. A
+  //     post-reload absence cannot be explained by a stale unmount --
+  //     there is nothing left to be stale.
+  await reloadAndUnlock(member.page, SESSION_PASSWORD);
+  await expect(
+    member.page.getByText(itemPassword, { exact: true }),
+    "post-reload proof: a genuinely fresh render must never show the password either -- rules out a stale-unmount explanation for the earlier absence",
   ).toHaveCount(0);
 
   expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
