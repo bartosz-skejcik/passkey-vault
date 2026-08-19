@@ -109,8 +109,17 @@ fi
 
 SCRATCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pv-39-04-ws.XXXXXX")"
 LOG_STREAM_PID=""
+# CR-06 (39-REVIEW.md): set only once the server diff gate below has taken a
+# scratch copy of crates/pv-server/src/main.rs. `cleanup` restores from it on
+# ANY exit -- including an interrupt mid-gate -- rather than the gate
+# unconditionally `git checkout --`ing a file it may not have exclusively
+# touched, which would discard uncommitted work a developer had in progress.
+SERVER_BACKUP=""
 cleanup() {
   local exit_code=$?
+  if [ -n "$SERVER_BACKUP" ] && [ -f "$SERVER_BACKUP" ]; then
+    cp "$SERVER_BACKUP" crates/pv-server/src/main.rs 2>/dev/null || true
+  fi
   if [ -n "$LOG_STREAM_PID" ]; then
     kill "$LOG_STREAM_PID" >/dev/null 2>&1 || true
     wait "$LOG_STREAM_PID" 2>/dev/null || true
@@ -399,6 +408,19 @@ echo "    gap between mutation 1 and mutation 2: ${MUTATION_GAP_S}s (poll interv
 
 # --- server diff gate, demonstrated able to fail ---------------------------
 echo "==> crates/pv-server diff gate"
+# CR-06 (39-REVIEW.md): refuse BEFORE this gate touches anything -- the
+# unconditional `git checkout -- crates/pv-server/src/main.rs` this used to
+# end on would discard ANY uncommitted change to that file, not just the
+# newline this gate appends, and did so AFTER the mutation, with the
+# clean-tree check running only afterward. A scratch copy (SERVER_BACKUP,
+# restored by `cleanup`'s trap on every exit path, including an interrupt
+# mid-gate) replaces the working-tree restore below.
+if [ -n "$(git status --porcelain -- crates/pv-server)" ]; then
+  echo "REFUSED: crates/pv-server has uncommitted changes -- this gate would destroy them." >&2
+  exit 2
+fi
+SERVER_BACKUP="${SCRATCH_DIR}/main.rs.bak"
+cp crates/pv-server/src/main.rs "$SERVER_BACKUP"
 DIFF_BEFORE="$(git diff --stat -- crates/pv-server 2>/dev/null || true)"
 DIFF_BEFORE_STATUS=0
 [ -z "$DIFF_BEFORE" ] || DIFF_BEFORE_STATUS=1
@@ -406,7 +428,7 @@ echo "" >>crates/pv-server/src/main.rs
 DIFF_TOUCHED="$(git diff --stat -- crates/pv-server 2>/dev/null || true)"
 DIFF_TOUCHED_STATUS=0
 [ -z "$DIFF_TOUCHED" ] || DIFF_TOUCHED_STATUS=1
-git checkout -- crates/pv-server/src/main.rs
+cp "$SERVER_BACKUP" crates/pv-server/src/main.rs
 DIFF_AFTER="$(git diff --stat -- crates/pv-server 2>/dev/null || true)"
 DIFF_AFTER_STATUS=0
 [ -z "$DIFF_AFTER" ] || DIFF_AFTER_STATUS=1
