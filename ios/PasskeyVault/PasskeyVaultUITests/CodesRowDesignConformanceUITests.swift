@@ -267,9 +267,14 @@ final class CodesRowDesignConformanceUITests: XCTestCase {
         // context-menu copy actions.
         let banner = app.otherElements["vault.list.copyConfirmation"]
         XCTAssertTrue(banner.waitForExistence(timeout: 5), "tapping the TOTP code never showed the copy confirmation banner")
-        XCTAssertTrue(banner.staticTexts["Copied Code"].waitForExistence(timeout: 2)
-            || app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Copied Code")).firstMatch.waitForExistence(timeout: 2),
-            "the banner must read \"Copied Code ...\", not a generic/wrong field label")
+        // `.exists` (instant, no poll timeout), not a second `waitForExistence`
+        // -- design-conformance fix, Phase 40: the shared `CopyHUD` this
+        // banner now renders through auto-dismisses after ~2.5s, so a
+        // second multi-second wait here would race that dismiss instead of
+        // reading the text that is ALREADY on screen the instant the
+        // container above was found.
+        let bannerText = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Copied Code")).firstMatch
+        XCTAssertTrue(bannerText.exists, "the banner must read \"Copied Code ...\", not a generic/wrong field label")
 
         // Negative half: no navigation push happened. The Codes list root's
         // own always-present element (the "+" dock) is still on screen, and

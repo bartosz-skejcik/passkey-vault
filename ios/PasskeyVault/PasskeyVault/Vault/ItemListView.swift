@@ -502,17 +502,27 @@ struct ItemListView: View {
                             .safeAreaInset(edge: .bottom) {
                                 if tab == .all, Self.showsTracerCreateBar { createBar }
                             }
-                            // CR-03 fix: the list/context-menu copy
-                            // confirmation now renders -- previously
-                            // `copyConfirmation` was written at :1274-ish
-                            // and never read anywhere in this file.
-                            .safeAreaInset(edge: .bottom) {
+                            // CR-03 fix, restyled by the Phase 40 design-
+                            // conformance fix: the list/context-menu copy
+                            // confirmation renders via the SAME shared
+                            // `CopyHUD` (`Core/CopyHUD.swift`) the detail
+                            // screen uses -- `.overlay`, not
+                            // `.safeAreaInset`: a HUD floats over content,
+                            // it does not reserve layout space that shifts
+                            // the dock/list underneath it, which the old
+                            // full-width banner's `safeAreaInset` did.
+                            .overlay(alignment: .bottom) {
                                 if let copyConfirmation {
-                                    copyConfirmationBanner(copyConfirmation)
-                                        .padding(.horizontal)
-                                        .padding(.bottom, 4)
+                                    CopyHUD(confirmation: copyConfirmation, accessibilityId: "vault.list.copyConfirmation")
+                                        .padding(.bottom, 12)
+                                        .task(id: copyConfirmation.deadline) {
+                                            await CopyHUD.autoDismiss { self.copyConfirmation = nil }
+                                        }
+                                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                                        .animation(.default, value: copyConfirmation.deadline)
                                 }
                             }
+                            .sensoryFeedback(.success, trigger: copyConfirmation?.deadline)
                             // WR-01 fix: `statusMessage` was previously
                             // rendered ONLY inside `createBar`, which is
                             // DEBUG-gated and opt-in behind
@@ -1610,45 +1620,6 @@ struct ItemListView: View {
         guard !value.isEmpty else { return }
         let deadline = ClipboardService.shared.copy(value, fieldLabel: fieldLabel)
         copyConfirmation = ClipboardConfirmation(fieldLabel: fieldLabel, deadline: deadline)
-    }
-
-    /// The list-screen twin of `ItemDetailView.copyConfirmationBanner` --
-    /// same live-countdown-derived-from-the-deadline discipline (never a
-    /// locally decremented counter), same `ClipboardWording.confirmation`
-    /// disclosure. Kept as its own small view rather than sharing
-    /// `ItemDetailView`'s private function so this fix stays scoped to the
-    /// file CR-03 names.
-    @ViewBuilder
-    private func copyConfirmationBanner(_ confirmation: ClipboardConfirmation) -> some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let remaining = ClipboardService.remainingSeconds(deadline: confirmation.deadline, now: context.date)
-            HStack {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(Color("PVSuccess"))
-                Text(verbatim: ClipboardWording.confirmation(
-                    fieldLabel: confirmation.fieldLabel, remainingSeconds: remaining
-                ))
-                    .font(.caption)
-                    .foregroundStyle(Color("PVTextMuted"))
-                Spacer(minLength: 0)
-                Button {
-                    ClipboardService.shared.dismissConfirmation()
-                    self.copyConfirmation = nil
-                } label: {
-                    Image(systemName: "xmark")
-                        .foregroundStyle(Color("PVTextMuted"))
-                }
-                .accessibilityIdentifier("vault.list.copyConfirmation.dismiss")
-            }
-            .padding(10)
-            .background(Color("PVSurfaceAlt"), in: RoundedRectangle(cornerRadius: 10))
-            // `.contain` keeps this container a real accessibility element so
-            // the identifier below survives -- without it SwiftUI can flatten
-            // the HStack away and the id never appears in the XCUITest tree
-            // (the same trap the +-panel hit; its fix was this exact modifier).
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("vault.list.copyConfirmation")
-        }
     }
 
     /// WR-05 (38-REVIEW.md, iteration 2): the dismiss affordance
