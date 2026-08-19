@@ -399,6 +399,109 @@ struct VaultMutationTests {
         #expect(store.lastError != nil, "a failed cache write must be recorded on lastError, not merely logged")
         #expect(store.items.count == 1, "the decoded items still populate the in-memory list -- only the CACHE PERSISTENCE claim is what this test pins")
     }
+
+    // MARK: - WR-03 (39-REVIEW.md, iteration 2): a WS frame arriving mid-pull
+    // must produce a SECOND pull, not be silently coalesced into the one
+    // already in flight.
+
+    /// Blocks INSIDE `startLoading()` on `releaseResponse` after signalling
+    /// `requestStarted` -- lets a test hold a `GET /api/sync` response open
+    /// long enough to simulate a second caller (a WS frame) arriving while
+    /// the first pull is still in flight, deterministically rather than via
+    /// a sleep-based race (`LockTeardownTests.DelayedLockRaceStubURLProtocol`
+    /// already established this discipline for the sibling CR-02 race).
+    final class WR03LatchStubURLProtocol: URLProtocol, @unchecked Sendable {
+        nonisolated(unsafe) static var requestStarted = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) static var releaseResponse = DispatchSemaphore(value: 0)
+        static let requestCount = VaultMutationStubURLProtocol.Counter()
+
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            Self.requestCount.increment()
+            Self.requestStarted.signal()
+            Self.releaseResponse.wait()
+            let body = Data(#"{"revision":1}"#.utf8)
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        override func stopLoading() {}
+    }
+
+    private static func waitForWR03RequestStarted(timeout: DispatchTime = .now() + 10) async throws {
+        let result: DispatchTimeoutResult = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: WR03LatchStubURLProtocol.requestStarted.wait(timeout: timeout))
+            }
+        }
+        try #require(result == .success, "the stub's startLoading() never signaled -- the race was never set up")
+    }
+
+    /// Before WR-03's fix, `refresh()`'s in-flight latch made a caller
+    /// arriving mid-pull simply AWAIT the same in-flight task's result --
+    /// so a WS frame arriving while a pull was already running never
+    /// produced a SECOND network round trip, even though the frame meant
+    /// "something changed AFTER the request already in flight was issued".
+    /// This drives `VaultStore.refresh()` directly (never `SyncSocket`/
+    /// `SyncCoordinator`, exercised elsewhere) with two overlapping callers
+    /// -- the first held open mid-request by the stub above, the second
+    /// issued once the first is CONFIRMED in flight -- and asserts exactly
+    /// two `GET /api/sync` requests are made: the original pull, plus the
+    /// re-run WR-03's fix schedules for the caller that arrived during it.
+    @MainActor
+    @Test func aSecondRefreshCallArrivingMidPullProducesASecondPullAfterTheFirstCompletes() async throws {
+        WR03LatchStubURLProtocol.requestStarted = DispatchSemaphore(value: 0)
+        WR03LatchStubURLProtocol.releaseResponse = DispatchSemaphore(value: 0)
+        WR03LatchStubURLProtocol.requestCount.reset()
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [WR03LatchStubURLProtocol.self]
+        let session = URLSession(configuration: config)
+        let userKey = try FfiUserKey.generate()
+        let api = VaultAPI(baseURL: Self.fakeBaseURL, tokenProvider: { "tok" }, session: session)
+        let store = VaultStore(userKey: userKey, api: api)
+
+        let leaderTask = Task { try await store.refresh() }
+        try await Self.waitForWR03RequestStarted()
+        #expect(WR03LatchStubURLProtocol.requestCount.read() == 1, "only the leader's own request must have started so far")
+
+        // Simulate a WS frame arriving mid-pull: a second caller arrives
+        // while the leader's request is still open, held there by
+        // `releaseResponse` above.
+        let joinerTask = Task { try await store.refresh() }
+        // A bounded settle window for the joiner to reach the in-flight
+        // branch and set `pullRequestedDuringFlight` -- it issues no
+        // network request of its own, so there is no request-count signal
+        // to synchronize on for this step (the same absence-adjacent
+        // ordering shape `LockTeardownTests`'s own `settle()` documents).
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        // Release the leader's response -- its own `repeat` loop must now
+        // see `pullRequestedDuringFlight == true` and issue a SECOND
+        // request, rather than returning.
+        WR03LatchStubURLProtocol.releaseResponse.signal()
+        try await Self.waitForWR03RequestStarted()
+        #expect(
+            WR03LatchStubURLProtocol.requestCount.read() == 2,
+            "a frame arriving mid-pull must produce a SECOND pull, not be silently coalesced into the one already in flight"
+        )
+
+        // Release the second request too, so both tasks can complete.
+        WR03LatchStubURLProtocol.releaseResponse.signal()
+        try await leaderTask.value
+        try await joinerTask.value
+        #expect(
+            WR03LatchStubURLProtocol.requestCount.read() == 2,
+            "exactly two requests total -- the original pull plus the one re-run for the mid-flight arrival, never a third"
+        )
+    }
 }
 
 // MARK: - HTTPBodyStream helper

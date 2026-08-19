@@ -177,6 +177,18 @@ final class VaultStore {
     /// arrives while a pull is already running awaits THIS task's result
     /// rather than starting a second, overlapping network round trip.
     @ObservationIgnored private var pullInFlight: Task<Void, Error>?
+    /// WR-03 (39-REVIEW.md, iteration 2): set by a caller that arrives
+    /// while `pullInFlight` is already running -- `SyncSocket` is
+    /// notification-only (this type's own header on `refresh()`, `d
+    /// `SyncSocket.swift`'s own "any frame means go pull"); a frame arriving
+    /// mid-pull was, before this fix, silently COALESCED into the
+    /// already-in-flight request (whose `GET /api/sync?since=N` was issued
+    /// BEFORE the frame arrived, so its response may predate the change the
+    /// frame is announcing) rather than producing a NEW pull afterwards.
+    /// Read and cleared only inside `refresh()`'s own `repeat` loop below,
+    /// all on the main actor -- never a source of the race this member's
+    /// sibling already closed.
+    @ObservationIgnored private var pullRequestedDuringFlight = false
 
     #if DEBUG
     /// WR-06 (38-REVIEW.md, iteration 2): test-visible confirmation that a
@@ -533,6 +545,23 @@ final class VaultStore {
     /// than one this store already merged (a retried request racing a
     /// fresher one at the HTTP layer, for instance) -- `performRefresh()`'s
     /// own monotonicity guard on both branches is the backstop for that.
+    ///
+    /// WR-03 (39-REVIEW.md, iteration 2): a caller arriving mid-flight no
+    /// longer merely JOINS the in-flight task's result -- it also sets
+    /// `pullRequestedDuringFlight`, so the leader's `repeat` loop below
+    /// issues a FRESH pull once the current one completes. `SyncSocket` is
+    /// notification-only: a WS frame arriving while a pull is already
+    /// running means "something changed AFTER the request that pull already
+    /// sent was issued" -- joining that in-flight task silently discarded
+    /// the notification (its response could predate the change the frame
+    /// announced, and nothing retried). This also closes the narrower
+    /// finished-but-not-yet-nilled race the same finding named: the
+    /// `defer { pullInFlight = nil }` below and this loop's `while` check
+    /// run in the SAME uninterrupted stretch of main-actor execution as
+    /// `task.value` resuming (no `await` between them), so a caller cannot
+    /// observe `pullInFlight` as non-nil for a task that has already
+    /// finished, nor nil for one that has not yet started its next
+    /// iteration.
     func refresh() async throws {
         #if DEBUG
         if ProcessInfo.processInfo.environment[Self.uitestCapabilityFixtureEnvKey] != nil {
@@ -541,14 +570,18 @@ final class VaultStore {
             return
         }
         #endif
-        if let pullInFlight {
-            try await pullInFlight.value
+        if let inFlight = pullInFlight {
+            pullRequestedDuringFlight = true
+            try await inFlight.value
             return
         }
-        let task = Task { try await self.performRefresh() }
-        pullInFlight = task
-        defer { pullInFlight = nil }
-        try await task.value
+        repeat {
+            pullRequestedDuringFlight = false
+            let task = Task { try await self.performRefresh() }
+            pullInFlight = task
+            defer { pullInFlight = nil }
+            try await task.value
+        } while pullRequestedDuringFlight
     }
 
     private func performRefresh() async throws {
