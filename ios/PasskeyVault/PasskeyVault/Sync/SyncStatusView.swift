@@ -39,6 +39,22 @@ struct SyncStatusView: View {
     /// discipline up to this call site. Defaults to "now" for production
     /// call sites; evidence/test call sites can pin it.
     var reference: Date = Date()
+    /// WR-23 (40-REVIEW.md, iteration 2): `true` when this account's vault
+    /// currently holds ANY item this view's own `syncedAtMs` timestamp does
+    /// NOT cover -- shared-to-me/family-wide rows are never written to
+    /// `CachedSnapshot` (`VaultStore.persistSnapshotToCache` is called with
+    /// only the PERSONAL `/api/sync` rows, before `mergeSharedAndFamilyWideItems`
+    /// runs). Direct-shared items are sealed to this account's own
+    /// identity key (never this account's User Key), and family-wide
+    /// items are sealed under a Collection Key this account only holds by
+    /// unsealing it live through that same identity key -- both require a
+    /// second, currently network-only round trip
+    /// (`GET /api/identity/keypair`) that has no offline/cached path of
+    /// its own, so persisting the ROWS alone into this cache would not
+    /// have made them recoverable offline anyway. Recorded here, not
+    /// silently: "last synced n ago" must not imply shared items are
+    /// covered by it when they are not.
+    var hasUncachedSharedItems: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -46,6 +62,12 @@ struct SyncStatusView: View {
                 .font(.caption)
                 .foregroundStyle(Color("PVTextMuted"))
                 .accessibilityIdentifier("vault.sync.lastSynced")
+            if hasUncachedSharedItems {
+                Text(verbatim: "Itemy udostępnione Tobie i te z rodzinnych kolekcji wymagają połączenia z serwerem.")
+                    .font(.caption2)
+                    .foregroundStyle(Color("PVTextMuted"))
+                    .accessibilityIdentifier("vault.sync.sharedItemsOfflineGap")
+            }
             if let lastError {
                 Text(verbatim: lastError)
                     .font(.caption2)

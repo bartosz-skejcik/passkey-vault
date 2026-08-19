@@ -470,7 +470,14 @@ struct ItemListView: View {
                             // single-source gate, which enumerates this
                             // file's deliberate absence from its allowlist.
                             .safeAreaInset(edge: .top) {
-                                SyncStatusView(snapshot: store.currentSnapshot, lastError: store.lastError)
+                                SyncStatusView(
+                                    snapshot: store.currentSnapshot, lastError: store.lastError,
+                                    // WR-23: neither this account's directly-shared items nor its
+                                    // family-wide-collection items are covered by `syncedAtMs` --
+                                    // see `SyncStatusView`'s own doc comment on `hasUncachedSharedItems`
+                                    // for why.
+                                    hasUncachedSharedItems: VaultStore.hasAnySharedOrFamilyWideItem(store.items)
+                                )
                                     .padding(.horizontal)
                                     .padding(.top, 4)
                             }

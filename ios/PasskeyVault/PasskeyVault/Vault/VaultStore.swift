@@ -1006,6 +1006,16 @@ final class VaultStore {
         record.accessLevel ?? record.familyWideAccessLevel ?? "read"
     }
 
+    /// WR-23 (40-REVIEW.md, iteration 2): pulled out for direct
+    /// unit-testability (`SyncStatusViewCoverageTests.swift`) --
+    /// `SyncStatusView.hasUncachedSharedItems`'s own doc comment explains
+    /// WHY these two flags are the ones this store's cache never covers
+    /// (`persistSnapshotToCache` is called with the PERSONAL `/api/sync`
+    /// rows only, before this store's own merge runs).
+    static func hasAnySharedOrFamilyWideItem(_ items: [VaultItemViewModel]) -> Bool {
+        items.contains { $0.sharedToMe == true || $0.isFamilyWide }
+    }
+
     /// CR-06/WR-16 (40-REVIEW.md, iteration 2): the compute-then-swap
     /// application step, extracted as a pure, `static` function so it is
     /// directly unit-testable without a live server (`VaultStoreMergeTests
