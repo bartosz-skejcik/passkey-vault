@@ -184,6 +184,206 @@ final class ItemFormAndFolderUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1)
     }
 
+    /// Quick fix 40-UX-01: the folder-open surface (`FoldersListView.swift`'s
+    /// `FolderOpenView`) used to render a flat `ForEach` over a folder's
+    /// items -- unlike the All tab's own list, which groups by item type via
+    /// `vaultTypeSections(_:rowContent:)` (`ItemListView.swift`). This proves
+    /// the fix live: two items of DIFFERENT types assigned to the SAME
+    /// folder render under TWO section headers, each carrying the exact
+    /// same "Title (count)" shape the All tab's own sections use
+    /// (`allTabSections`'s `Text(verbatim: "\(section.title)
+    /// (\(sectionRows.count))")`) -- not a re-implemented, differently-
+    /// worded grouping.
+    @MainActor
+    func testFolderOpenGroupsItemsByTypeSections() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["PV_UITEST_SCREEN"] = "auth"
+        app.launch()
+        try registerFreshAccount(app, email: Self.freshEmail())
+
+        let folderName = "40-UX-01 grouping folder \(Int(Date().timeIntervalSince1970))"
+
+        // Item 1: a login, assigned to a BRAND NEW folder.
+        try createItemAssignedToFolder(app, actionId: "login", existingFolder: false, folderName: folderName)
+
+        // Item 2: a note, assigned to the SAME, now-EXISTING folder.
+        try createItemAssignedToFolder(app, actionId: "note", existingFolder: true, folderName: folderName)
+
+        // Open that folder from the Folders tab.
+        let foldersTab = app.buttons["Folders"]
+        XCTAssertTrue(foldersTab.waitForExistence(timeout: 10), "Folders tab never appeared")
+        foldersTab.tap()
+
+        let folderRow = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "vault.folders.row.")
+        ).firstMatch
+        XCTAssertTrue(folderRow.waitForExistence(timeout: 10), "the created folder's own row never appeared on the Folders tab")
+        folderRow.tap()
+
+        // The must-have: TWO type-section headers, each "Title (count)",
+        // matching `VaultSectionKind`'s own titles -- login sorts before
+        // note in `VaultSectionKind.allCases`' declaration order, so
+        // "Logins (1)" is expected to appear above "Notes (1)" on screen,
+        // not merely to both exist.
+        let loginsHeader = app.staticTexts["Logins (1)"]
+        XCTAssertTrue(loginsHeader.waitForExistence(timeout: 10), "the folder-open screen never grouped the login item under a \"Logins (1)\" section header")
+        let notesHeader = app.staticTexts["Notes (1)"]
+        XCTAssertTrue(notesHeader.waitForExistence(timeout: 5), "the folder-open screen never grouped the note item under a \"Notes (1)\" section header")
+        XCTAssertLessThan(
+            loginsHeader.frame.minY, notesHeader.frame.minY,
+            "Logins must render ABOVE Notes, matching VaultSectionKind's own declared order"
+        )
+
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "40-ux-01-folder-open-grouped-by-type"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    /// Quick fix 40-UX-03: before this, `ItemDetailView` had no Edit
+    /// affordance at all -- the only route to `ItemFormView(mode: .edit)`
+    /// was the LIST screen's long-press context menu. Proves the toolbar
+    /// button (`vault.detail.edit`) is reachable AND that the form it opens
+    /// is genuinely PREFILLED, not a blank `.create` form reusing the same
+    /// sheet identity: the username typed at creation must still be there
+    /// after Edit re-opens the form, read back from the real, round-tripped
+    /// item (never assumed from the create step alone).
+    ///
+    /// The capability-DENIED half of this fix (a shared read-only item hides
+    /// the button) is unit-tested directly against `ItemCapabilities
+    /// .canShowEditAffordance` in `ItemCapabilitiesTests.swift`
+    /// (`aSharedReadOnlyItemHidesTheEditAffordance` et al.) rather than here
+    /// -- `ios/IOS-SPIKE-LOG.md`'s L-29 already required one fixture-heavy,
+    /// family-sharing UI test elsewhere in this phase to be replaced by a
+    /// unit test for exactly this reason, and standing up a second account
+    /// plus a live share just to prove a boolean gate would repeat that
+    /// mistake.
+    @MainActor
+    func testEditButtonOnDetailScreenOpensFormPrefilled() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["PV_UITEST_SCREEN"] = "auth"
+        app.launch()
+        try registerFreshAccount(app, email: Self.freshEmail())
+
+        let plusMenu = app.buttons["vault.create.plusMenu"]
+        XCTAssertTrue(plusMenu.waitForExistence(timeout: 10), "plus create affordance never appeared")
+        plusMenu.tap()
+        app.buttons["vault.create.action.login"].tap()
+
+        let usernameField = app.textFields["itemform.login.username"]
+        XCTAssertTrue(usernameField.waitForExistence(timeout: 10), "the login form never appeared")
+        let username = "40-ux-03-\(Int(Date().timeIntervalSince1970))"
+        usernameField.tap()
+        usernameField.typeText(username)
+
+        // `ItemFormView(mode: .create)`'s own `onCreated` closure sets
+        // `root.selection = created` -- saving lands directly on the new
+        // item's OWN detail screen, no extra navigation needed.
+        app.buttons["itemform.save"].tap()
+
+        let editButton = app.buttons["vault.detail.edit"]
+        XCTAssertTrue(editButton.waitForExistence(timeout: 15), "the detail screen's Edit button never appeared for an owned, editable item")
+        editButton.tap()
+
+        // Same field, same identifier, now re-rendered by `.edit(item)` --
+        // its VALUE must be the username typed above, not empty (a blank
+        // `.create` form would also make `itemform.login.username` exist,
+        // so existence alone would not distinguish prefilled from blank).
+        let prefilledUsernameField = app.textFields["itemform.login.username"]
+        XCTAssertTrue(prefilledUsernameField.waitForExistence(timeout: 10), "Edit did not open the item form")
+        let prefilledValue = prefilledUsernameField.value as? String ?? ""
+        XCTAssertEqual(prefilledValue, username, "the edit form must be prefilled with the item's own username, not blank")
+
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "40-ux-03-detail-edit-button-opens-prefilled-form"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        app.buttons["Cancel"].tap()
+        Thread.sleep(forTimeInterval: 1)
+    }
+
+    /// Creates one item of the given create-panel action id, optionally
+    /// assigning it to a brand-new folder (`existingFolder: false`, types
+    /// `folderName` into `folderpicker.newName` and taps `folderpicker
+    /// .create`) or to the SINGLE already-existing folder (`existingFolder:
+    /// true`, taps the one `folderpicker.folder.<id>` row present -- this
+    /// helper is only ever used with exactly one folder in play, so a prefix
+    /// match is unambiguous, the same discipline `CodesRowDesignConformance
+    /// UITests.createTotpItem`'s own row-id lookup already uses). Ends on
+    /// the created item's own detail/list surface; navigates back to the
+    /// list root itself so the caller can create a second item immediately.
+    private func createItemAssignedToFolder(
+        _ app: XCUIApplication, actionId: String, existingFolder: Bool, folderName: String
+    ) throws {
+        let plusMenu = app.buttons["vault.create.plusMenu"]
+        XCTAssertTrue(plusMenu.waitForExistence(timeout: 15), "plus create affordance never appeared")
+        plusMenu.tap()
+        let tile = app.buttons["vault.create.action.\(actionId)"]
+        XCTAssertTrue(tile.waitForExistence(timeout: 5), "create-panel tile for \(actionId) never appeared")
+        tile.tap()
+
+        let folderRow = app.buttons["itemform.folder.picker"]
+        XCTAssertTrue(folderRow.waitForExistence(timeout: 10), "the form's Folder row never appeared")
+        folderRow.tap()
+
+        if existingFolder {
+            let existingFolderButton = app.descendants(matching: .any).matching(
+                NSPredicate(format: "identifier BEGINSWITH %@", "folderpicker.folder.")
+            ).firstMatch
+            XCTAssertTrue(existingFolderButton.waitForExistence(timeout: 10), "the already-created folder never appeared in the picker")
+            existingFolderButton.tap()
+        } else {
+            let newNameField = app.textFields["folderpicker.newName"]
+            XCTAssertTrue(newNameField.waitForExistence(timeout: 10), "FolderPicker never appeared")
+            newNameField.tap()
+            newNameField.typeText(folderName)
+            app.buttons["folderpicker.create"].tap()
+        }
+
+        XCTAssertTrue(folderRow.waitForExistence(timeout: 10), "did not return to the form after the folder picker")
+        app.buttons["itemform.save"].tap()
+
+        // BUG FOUND LIVE (this test's own first run): the original guard
+        // here was `backButton.waitForExistence(...) &&
+        // app.buttons["vault.create.plusMenu"].exists == false`, on the
+        // theory that `vault.create.plusMenu` -- the dock's detached "+" --
+        // is present ONLY at the list root and absent on a pushed detail
+        // screen, so its absence would signal "a fresh push happened, tap
+        // back". That theory is wrong: the dock is `TabView` chrome, not
+        // per-screen content, so it stays on screen for the ENTIRE tab
+        // (`ItemListView.body`'s `TabView(selection: dockSelection)`), a
+        // pushed `ItemDetailView` included. `plusMenu.exists` was therefore
+        // TRUE immediately after every save, the guard's second half never
+        // passed, `backButton.tap()` never ran, and the second item in this
+        // test's own two-item sequence was created while still buried on
+        // the FIRST item's detail push -- silently: the trailing
+        // `waitForExistence(15)` below still passed (the dock never left),
+        // masking that the fixture was on the wrong screen, so the failure
+        // only surfaced later as "create-panel tile for note never
+        // appeared" (that tap opened the panel on a screen the create-panel
+        // grid is not rendered over).
+        //
+        // A real save through `.creating(kind)` ALWAYS pushes the new
+        // item's own detail screen (`ItemListView.sheetContent`'s
+        // `root.selection = created`, unconditional) -- there is no
+        // "already back at the list" case for this flow to be robust
+        // against, so the back button is tapped unconditionally instead.
+        //
+        // `"BackButton"` (the standard system identifier), NOT
+        // `.element(boundBy: 0)` -- quick fix 40-UX-03 added a SECOND
+        // navigation-bar button to this exact screen (`vault.detail.edit`,
+        // `.navigationBarTrailing`), and `boundBy: 0` has no documented
+        // left-to-right guarantee across leading/trailing items, so it is
+        // no longer safe to assume index 0 is the back button. Matches
+        // `CodesRowDesignConformanceUITests`' own already-proven-reliable
+        // lookup for this identical screen (`staleDetailBack`).
+        let backButton = app.navigationBars.buttons["BackButton"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 20), "no navigation bar back button appeared after saving -- expected a push to the new item's detail screen")
+        backButton.tap()
+        XCTAssertTrue(app.buttons["vault.create.plusMenu"].waitForExistence(timeout: 15), "vault list never reappeared after saving")
+    }
+
     /// `PV_UITEST_SCREEN=auth` (set by both callers above) forces `AuthView`
     /// regardless of any session currently persisted in the Keychain --
     /// this file always registers a brand-new account rather than depending

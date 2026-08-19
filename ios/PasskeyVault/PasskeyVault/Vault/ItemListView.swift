@@ -155,6 +155,44 @@ enum VaultSectionKind: CaseIterable {
     }
 }
 
+/// The ONE type-section grouping mechanism -- section headers with counts,
+/// `VaultSectionKind`'s own declaration order, and (iOS 26+) the trailing
+/// section index. Shared by the All tab's own list (`ItemListView
+/// .allTabSections`) and, quick fix 40-UX-01, the Folders tab's folder-open
+/// screen (`FoldersListView.swift`'s `FolderOpenView`) -- a free, file-scope
+/// function (not a private instance method) precisely so a DIFFERENT file's
+/// view can call it too, rather than re-implementing the same `ForEach
+/// (VaultSectionKind.allCases...)` loop a second time. `rowContent` stays a
+/// caller-supplied closure so this function knows nothing about `rowButton`'s
+/// tap/context-menu/swipe wiring -- that stays wherever the caller already
+/// owns it (`ItemListView`'s own `rowButton`, or the closure `ItemListView`
+/// already hands `FolderOpenView` for the exact same purpose).
+///
+/// Deliberately narrower than `ItemListView.allTabSections`: the
+/// `undecryptable`/`isPendingFamilyKey` catch-all sections stay OUT of this
+/// shared function and are appended by `allTabSections` itself, not
+/// duplicated here for `FolderOpenView` to also render -- an item with
+/// `fields == nil` (both of those states) has no `folderId` to match
+/// against, so `FolderOpenView`'s own `folderItems` filter already excludes
+/// them structurally; a folder-open list can never need those two sections.
+@ViewBuilder
+func vaultTypeSections<RowContent: View>(
+    _ rows: [VaultItemViewModel],
+    @ViewBuilder rowContent: @escaping (VaultItemViewModel) -> RowContent
+) -> some View {
+    ForEach(VaultSectionKind.allCases, id: \.self) { section in
+        let sectionRows = rows.filter { $0.fields?.typeName == section.wireType }
+        if !sectionRows.isEmpty {
+            Section {
+                ForEach(sectionRows) { item in rowContent(item) }
+            } header: {
+                Text(verbatim: "\(section.title) (\(sectionRows.count))")
+            }
+            .modifier(AvailableSectionIndexLabel(label: section.indexLabel))
+        }
+    }
+}
+
 // MARK: - Search tokens (tags only -- see file header)
 
 /// A folder/tag filter rendered as a `.searchable` token. FOLDER tokens are
@@ -1160,17 +1198,7 @@ struct ItemListView: View {
 
     @ViewBuilder
     private func allTabSections(_ rows: [VaultItemViewModel]) -> some View {
-        ForEach(VaultSectionKind.allCases, id: \.self) { section in
-            let sectionRows = rows.filter { $0.fields?.typeName == section.wireType }
-            if !sectionRows.isEmpty {
-                Section {
-                    ForEach(sectionRows) { item in rowButton(item) }
-                } header: {
-                    Text(verbatim: "\(section.title) (\(sectionRows.count))")
-                }
-                .modifier(AvailableSectionIndexLabel(label: section.indexLabel))
-            }
-        }
+        vaultTypeSections(rows) { item in rowButton(item) }
         // `undecryptable` rows are shown, NEVER filtered (design-
         // conformance's "One more" rule) -- they get their own section, not
         // folded into one of the six type sections above (an undecryptable
@@ -1819,7 +1847,11 @@ struct ItemListView: View {
 /// on the MODIFIER rather than wrapping the whole `Section` in an
 /// `if #available` at the call site keeps every call site identical
 /// regardless of SDK/floor, per design-conformance's standing obligation 5.
-private struct AvailableSectionIndexLabel: ViewModifier {
+///
+/// NOT `private` (file-scope `private` == `fileprivate` in Swift): quick fix
+/// 40-UX-01 has `vaultTypeSections(_:rowContent:)` above apply this from
+/// `FoldersListView.swift` too, a different file in the same target.
+struct AvailableSectionIndexLabel: ViewModifier {
     let label: String
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
@@ -1835,7 +1867,11 @@ private struct AvailableSectionIndexLabel: ViewModifier {
 }
 
 /// `listSectionIndexVisibility(_:)` is iOS 26.0+.
-private struct AvailableListSectionIndexVisibility: ViewModifier {
+///
+/// NOT `private`, for the same reason as `AvailableSectionIndexLabel` just
+/// above -- `FoldersListView.swift`'s `FolderOpenView` applies this to its
+/// own `List` too, quick fix 40-UX-01.
+struct AvailableListSectionIndexVisibility: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content.listSectionIndexVisibility(.visible)

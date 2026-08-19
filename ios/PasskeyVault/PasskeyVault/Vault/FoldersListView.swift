@@ -117,6 +117,19 @@ struct FoldersListView: View {
 /// passkey detail screen's already-shipped title-only shape. Assignment
 /// happens from an item's OWN edit screen (`FolderPicker`), never from
 /// here.
+///
+/// Quick fix 40-UX-01: this surface used to render `folderItems` as one flat
+/// `ForEach`, unlike the All tab's own type-grouped sections
+/// (`ItemListView.allTabSections`) -- a real inconsistency Bartek flagged
+/// live, not a deliberate simplification. It now groups by the SAME
+/// mechanism the All tab uses, `vaultTypeSections(_:rowContent:)`
+/// (`ItemListView.swift`) -- section headers with counts, `VaultSectionKind`'s
+/// own order, and, on iOS 26+, the trailing section index
+/// (`AvailableListSectionIndexVisibility`) -- rather than a second,
+/// independently-written grouping loop. Both modifiers/the function are
+/// declared `internal` (not `private`) in `ItemListView.swift` specifically
+/// so this file can reuse them; see that file's own note at each
+/// declaration.
 struct FolderOpenView: View {
     let folder: Folder
     var items: [VaultItemViewModel]
@@ -137,10 +150,17 @@ struct FolderOpenView: View {
                 .background(Color("PVBackground"))
             } else {
                 List {
-                    ForEach(folderItems) { item in
-                        rowContent(item)
-                    }
+                    vaultTypeSections(folderItems, rowContent: rowContent)
                 }
+                // The right-edge section index DOES compose cheaply here --
+                // it is the same stock `listSectionIndexVisibility(.visible)`
+                // call the All tab already makes on ITS `List`, gated
+                // identically behind iOS 26 by the same shared modifier. No
+                // folder-open-specific reason it would not apply (the index
+                // reads off the `Section`s this screen now renders the same
+                // way the All tab does), so it is kept ON rather than
+                // dropped.
+                .modifier(AvailableListSectionIndexVisibility())
                 .scrollContentBackground(.hidden)
                 .background(Color("PVBackground"))
             }
