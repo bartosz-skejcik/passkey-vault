@@ -20,7 +20,7 @@ file is the bug.
 | Xcode project | App + Unit + UI test targets. `PasskeyVaultTests` links `PvFfi.xcframework` and runs 6 real tests against `pv-core`; the App target still holds only Xcode's template code |
 | FFI boundary | **Delivered and verified** (Phase 35, commits `f6cb883` … `37c1ff7`). `crates/pv-ffi` (UniFFI `=0.32.0`, proc-macro mode), `scripts/build-ios.sh` (XCFramework + `vtool` slice gate), `scripts/audit-ffi-opaque-handles.sh` (opaque-handle gate over the *generated* Swift), 11 Rust tests + 6 Swift tests green. IOS-06 **decided** (UniFFI) — see §1; what was learned building it — see §2.5. **Proof limit:** simulator only; the device slice is built and its Mach-O platform verified, never run |
 | Credential provider extension | **Real skeleton built, installed, and exercised end-to-end (Phase 36, Plans 36-01..36-04).** Entitlement embedding, App Group + Keychain sharing, and SC1's three layers (registration/election/Settings visibility) all proven live from inside the real `.appex` process. FILL-06 measured for real: production Argon2id (64 MiB/t=3/p=4) peaks at ~85 MB `phys_footprint` across 10 runs, DR-2 recommends removing the KDF from the extension path entirely. No credential-list/fill *logic* yet (Phase 41) — this row covers the skeleton, entitlement, and memory-budget proof only. |
-| Server sync / UI | Not attempted |
+| Server sync / UI | **Verified live (Phase 39, Plans 39-01..39-07).** REST pull + two live WebSocket pushes with plaintext compared byte for byte (SYNC-01); whole-snapshot cache write, SYNC-03's ciphertext-only gate proven red-then-green against a real leaking build; freshness timestamp real and honest under a forced-failure pull, unchanged when the server cannot answer (SYNC-04); and SYNC-02's own claim — a real credential-provider extension process read the host's persisted cache with the host provably terminated (`simctl terminate`, absence confirmed by two independent `launchctl list` captures), the bytes SHA-256-identical to what the host wrote, both mandatory negative controls (a sharing identifier the extension does not declare; the cache file deleted) firing as required. **Assumed / not verified:** background wake (SYNC-05 ships without APNs by design, not by omission); a cold read after a genuine device reboot (only a cold *simulator extension invocation* was produced — see PROOF-LIMITATION-4 below); decrypt inside the extension (Phase 41 owns FILL-05); anything beyond the personal vault (Phase 40 extends the schema to shared buckets). |
 
 **Milestone.** The spike graduated into milestone **v1.0 iOS — Vault w kieszeni** on 2026-08-11.
 Scope agreed with Bartek: full app UI + **password** AutoFill provider + biometric (Face ID / Touch ID)
@@ -2963,6 +2963,58 @@ mutation on its own schedule.
 already in use (L-10/L-11, cold-DerivedData and shared-output-path races, Phase 36) by the time this plan
 executed. Recorded here as L-23/L-24, the next available numbers, rather than colliding with the existing
 entries.
+
+### L-25 -- the cross-process reach result (SYNC-02), and the two controls that proved it was enforced
+
+**Found 2026-08-19, Phase 39, Plan 39-07, Tasks 1/2.** A snapshot written by the host app IS readable,
+cold, by a second, independently-scheduled process: a real credential-provider extension process
+(invoked via `AutoFillInvocationUITests`' Settings toggle, Phase 36), with the host app terminated
+(`xcrun simctl terminate`, absence confirmed by two independent `launchctl list` captures rather than
+assumed from the command alone), read bytes SHA-256-identical to what the host wrote
+(`ios/evidence/39/07-cold-read.md`). Both mandatory negative controls fired: a read against a sharing
+identifier the extension does not declare in its entitlements returns `resolve_failed`
+(`containerURL(forSecurityApplicationGroupIdentifier:)` returning nil for an undeclared identifier IS
+the platform's own enforcement -- if it had instead resolved, the positive result above would have
+proven nothing); and a read after the cache file is deleted reports `status=absent`, not a stale
+in-process copy, proving the reader reads storage rather than memory. `scripts/ios-cold-read-proof.sh`
+also proved the AutoFill surface's own last-synced line (SYNC-04): the host and the extension,
+reading the same persisted snapshot through the SAME `PvShared/SyncFreshness` formatter with a
+pinned, externally-coordinated reference instant, render byte-identical strings -- and the identical
+comparison mechanism, pointed at a snapshot with a deliberately different `syncedAtMs`, emits a
+genuinely different string, so "SAME" is not indistinguishable from a comparison that never ran.
+
+### L-26 -- Xcode 26.6's Debug app-extension binary is a thin loader stub; the real code lives in a sidecar `.debug.dylib`
+
+**Found 2026-08-19, Phase 39, Plan 39-07, Task 1's own backstop-truth check.** Proving "the shared
+module compiled into the extension target and the extension binary links it" by inspecting the built
+`.appex`'s own executable (`nm .../PasskeyVaultAutoFill | grep AppGroupCiphertextCacheStore`) returned
+**zero matches** on a run that had JUST demonstrated the real code executing correctly (matching
+SHA-256 digests, correct freshness strings) -- `nm`/`strings`/`otool -l` on that binary showed only
+~80 symbols total, no Swift metadata sections, and a `___debug_blank_executor_main` symbol; total file
+size ~56 KB. This is not a build failure: Xcode 26.6's Debug configuration links the target's actual
+compiled code into a **sidecar `<Target>.debug.dylib`** sitting next to the on-disk executable inside
+the same `.appex`/`.app` bundle (confirmed: `PasskeyVaultAutoFill.appex/PasskeyVaultAutoFill.debug.dylib`,
+~4.7 MB, 17868 symbols, 52 matches for the same class name) -- the thin executable is a loader stub for
+faster iterative Debug rebuilds. **Any future binary-inspection gate against a Debug build product on
+this toolchain must check the `.debug.dylib` first, falling back to the plain executable only for
+configurations (e.g. Release) where this indirection does not apply** -- `scripts/ios-cold-read-proof.sh`
+does this now.
+
+### L-27 -- two shell landmines found building this plan's own live-proof harness
+
+**Found 2026-08-19, Phase 39, Plan 39-07, Task 1.** (1) `grep -rc PATTERN DIR | grep -v ":0" | wc -l`,
+used elsewhere in this repo to count files WITH a match, aborts under this project's own
+`set -euo pipefail` discipline on the DESIRED, passing outcome (zero hits anywhere): `grep -rc` with no
+match at all exits 1 even though it still prints `file:0` for every file, and `pipefail` propagates that
+upstream exit-1 through the pipe even though the downstream `grep -v`/`wc`/`tr` stages all succeed.
+Rewritten as `grep -rl PATTERN DIR | wc -l` (list files WITH a match) with a guarding `|| true` on the
+assignment. (2) A stale marker file left in the shared App Group container by an earlier, aborted run of
+the SAME script silently satisfied a `wait_for_file` poll before the CURRENT run's own host test had
+written anything -- pinning a freshness comparison to a DIFFERENT run's own reference instant and
+producing a plausible-looking but false mismatch. Fixed by deleting every marker file the script itself
+owns immediately before waiting for it, the same discipline `scripts/ios-probe-run.sh`'s own
+`RUN_START`-scoped log capture already established for exactly this class of stale-evidence
+false-positive.
 
 ## 3a. The visual layer was never verified — open gaps as of 2026-08-17
 

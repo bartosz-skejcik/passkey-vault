@@ -78,3 +78,36 @@ FRESHNESS-MATCH-CONTROL: DIFFERENT
 
 The mechanism reports DIFFERENT when the underlying instant genuinely differs -- "SAME" above is not indistinguishable from a comparison that never ran.
 
+## Task 3 -- SC2's result, in the sentence fixed before the experiment (D-16)
+
+`ios/evidence/39/02-branch-gate.md` fixed the following sentence, before this plan's own proof ran,
+as the ONE this phase is permitted to close on if (and only if) a real credential-provider extension
+process was reached and the SHA-256 comparison came back byte-identical -- both conditions this run's
+own live evidence above satisfies:
+
+> "The cache was read by a real credential-provider extension process, cold, with the host app
+> terminated (`simctl terminate`, absence confirmed by `launchctl list`); the bytes read were
+> SHA-256-identical to those the host wrote."
+
+Transcribed here with the observed values filled in: the extension was invoked through
+`AutoFillInvocationUITests` (Phase 36, unmodified) toggling the real AutoFill provider switch in
+Settings -- the same, only established trigger for a genuine `.appex` launch on this setup, and the
+same route Phase 36's own layer (b) election proof (`ios/AUTOFILL-FEASIBILITY.md`) already showed
+electable. The host app was terminated by `xcrun simctl terminate`, with its absence confirmed by two
+independent `launchctl list` captures (BEFORE: present, AFTER: absent) -- never assumed from the
+terminate command alone. The bytes the extension read hashed to
+`7c3613ca01736de302c69144eb799f30d6097e9fee7dcd152b1cff489b654264`, SHA-256-identical to the digest
+independently computed over the host's own persisted write. The election outcome this sentence
+depends on was decided upstream (39-02, `sc2-real`), not chosen by this task.
+
+```
+SC2-PROCESS: real-extension
+SC2-VERDICT: proven
+PROOF-LIMITATION-1: Everything here is a simulator result under a free Apple ID. Entitlement allowlisting, jetsam, data protection and Keychain hardware backing all differ on real hardware.
+PROOF-LIMITATION-2: The simulator has no data protection enforcement, so the chosen file-protection class / kSecAttrAccessible value is a declaration, not a demonstrated behaviour.
+PROOF-LIMITATION-3: Background timing does not transfer. Even where E-S4 returns Result A, the exact interval after which iOS kills a background socket is device- and power-state-dependent.
+PROOF-LIMITATION-4: A cold extension read on the simulator is not a cold read after a device reboot. SYNC-02's own text names device restart as the motivating case, and that case cannot be produced here.
+PROOF-LIMITATION-5: Phase 39 does not prove the extension can decrypt. Only that it can read the bytes -- FILL-05 is Phase 41's.
+PROOF-LIMITATION-6: The cache is personal-vault only. Any statement that "the vault" is cached is false until Phase 40 extends the schema.
+```
+
