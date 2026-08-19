@@ -29,6 +29,7 @@ const {
   mockGetSharedRevisions,
   mockGetCollectionSync,
   mockGetSharedDirectSync,
+  mockListItems,
 } = vi.hoisted(() => ({
   mockGetSyncSnapshot: vi.fn(),
   mockListCollections: vi.fn(),
@@ -36,6 +37,10 @@ const {
   mockGetSharedRevisions: vi.fn(),
   mockGetCollectionSync: vi.fn(),
   mockGetSharedDirectSync: vi.fn(),
+  // ME-05 (code review, Phase 32): moveVaultItem's own recovery/
+  // classification catch block -- previously entirely untested -- reads
+  // `listItems()` for a move-OUT probe (ME-03).
+  mockListItems: vi.fn(),
 }));
 
 vi.mock("./api", async (importOriginal) => ({
@@ -50,6 +55,7 @@ vi.mock("./api", async (importOriginal) => ({
   getSharedRevisions: mockGetSharedRevisions,
   getCollectionSync: mockGetCollectionSync,
   getSharedDirectSync: mockGetSharedDirectSync,
+  listItems: mockListItems,
 }));
 
 const { mockEnsureOwnIdentityKeypair } = vi.hoisted(() => ({
@@ -73,7 +79,13 @@ import {
   decryptItem,
 } from "@/lib/crypto";
 import { getCollectionKey } from "@/lib/vault/collections";
-import { CollectionKeyUnavailableError, moveVaultItem } from "./store";
+import {
+  CollectionKeyUnavailableError,
+  NotItemOwnerError,
+  RevisionConflictError,
+  getItems,
+  moveVaultItem,
+} from "./store";
 
 beforeAll(async () => {
   // `initCrypto()` hardcodes the fetch path "/wasm/pv_wasm_bg.wasm" --
@@ -411,6 +423,447 @@ describe("store.ts encrypt dispatch: moveVaultItem re-encrypts under the DESTINA
       // ever reaching the network, never sending ciphertext encrypted
       // under the wrong (or no) key.
       expect(mockMoveItemToCollection).not.toHaveBeenCalled();
+    } finally {
+      lockVault();
+    }
+  });
+});
+
+// ME-05 (code review, Phase 32): moveVaultItem's ENTIRE catch block --
+// recovery, the C-2 revision+content conjunct, the "rethrow the ORIGINAL
+// error on refetch failure" rule, and the 403/404 classification -- had
+// ZERO test coverage before this describe block (the C-2 conjunct was
+// tested only in ItemForm's own mirror, where moveVaultItem itself is a
+// mock). Real WASM throughout, same discipline as every other describe
+// block in this file: no `vi.mock("@/lib/crypto", ...)`, only the wire
+// boundary (`./api`) is mocked.
+describe("store.ts moveVaultItem: ownership guard, recovery, and error classification (ME-05/CR-01/CR-02/ME-03/ME-06/HI-01)", () => {
+  /** Seeds ONE real collection (via the same collections.ts pipeline
+   * setupTwoRealCollections uses) plus a genuine item inside it, encrypted
+   * under the collection's own key -- but with `owned_by_caller: false` on
+   * the wire, simulating an item authored by a FELLOW member (never the
+   * caller). Drives the exact same `getSharedRevisions` ->
+   * `getCollectionSync` sync pipeline production code uses, rather than
+   * reaching into store.ts internals -- so `ownedByMe: false` lands in
+   * `getItems()` the same way it would from a real server. */
+  async function setupForeignCollectionItem(): Promise<{
+    collectionId: string;
+    ck: WasmCollectionKey;
+    itemId: string;
+    fields: { type: "note"; name: string; body: string; folderId: null; tags: string[] };
+    itemRevision: number;
+  }> {
+    const identityKey = WasmIdentityKey.generate();
+    mockEnsureOwnIdentityKeypair.mockResolvedValue(identityKey);
+
+    const collectionId = "collection-foreign-owner";
+    const ck = WasmCollectionKey.generate();
+    const identityPub = WasmIdentityPublicKey.fromBytes(identityKey.publicKeyBytes());
+    let sealedKey: string;
+    try {
+      sealedKey = sealCollectionKey(identityPub, ck);
+    } finally {
+      identityPub.free?.();
+    }
+    const encName = encryptItemForCollection(
+      ck,
+      JSON.stringify({ name: "Foreign Owner Folder" }),
+      collectionId,
+      collectionId,
+      1,
+    );
+    mockListCollections.mockResolvedValue([
+      {
+        id: collectionId,
+        enc_name: encName,
+        created_at: "2026-08-19T00:00:00Z",
+        access_level: "edit",
+        sealed_key: sealedKey,
+      },
+    ]);
+
+    const itemId = "item-foreign-owner";
+    const itemRevision = 3;
+    const fields = {
+      type: "note" as const,
+      name: "Not Mine",
+      body: "authored by a fellow member, not the caller",
+      folderId: null,
+      tags: [],
+    };
+    const encryptedCombined = encryptItemForCollection(
+      ck,
+      JSON.stringify(fields),
+      collectionId,
+      itemId,
+      itemRevision,
+    );
+    const parsed = JSON.parse(encryptedCombined) as { enc_key: unknown; enc_data: unknown };
+    const itemRow = {
+      id: itemId,
+      enc_key: JSON.stringify(parsed.enc_key),
+      enc_data: JSON.stringify(parsed.enc_data),
+      revision: itemRevision,
+      updated_at: "2026-08-19T00:10:00Z",
+      last_used_at: null,
+      is_shared: true,
+      last_editor_email: null,
+      collection_id: collectionId,
+      // THE central fixture value: this row was NOT authored by the
+      // caller.
+      owned_by_caller: false,
+    };
+
+    mockGetSyncSnapshot.mockResolvedValue({ revision: 0, items: [], folders: [] });
+    // Drives the real sync pipeline: a non-zero collection revision (vs.
+    // the fresh-unlock watermark of 0) is what makes
+    // `doHandleSharedRevisions` actually call `getCollectionSync`.
+    mockGetSharedRevisions.mockResolvedValue({
+      collections: [{ id: collectionId, revision: 1 }],
+      direct: { revision: 0 },
+    });
+    mockGetCollectionSync.mockResolvedValue({ revision: 1, items: [itemRow] });
+
+    const uk = generateUserKey();
+    setUnlockedUserKey(uk);
+
+    await vi.waitFor(() => expect(getCollectionKey(collectionId)).toBeDefined());
+    await vi.waitFor(() => {
+      const seeded = getItems().find((i) => i.id === itemId);
+      expect(seeded).toBeDefined();
+      expect(seeded?.ownedByMe).toBe(false);
+      expect(seeded?.collectionId).toBe(collectionId);
+    });
+
+    return { collectionId, ck, itemId, fields, itemRevision };
+  }
+
+  it("CR-01: refuses (NotItemOwnerError) a move-out of a collection item the caller does not own, BEFORE any network call", async () => {
+    const { itemId, fields, itemRevision } = await setupForeignCollectionItem();
+    try {
+      await expect(
+        moveVaultItem(itemId, fields, itemRevision, null),
+      ).rejects.toBeInstanceOf(NotItemOwnerError);
+      expect(mockMoveItemToCollection).not.toHaveBeenCalled();
+    } finally {
+      lockVault();
+    }
+  });
+
+  it("CR-01: does NOT refuse a move-out of the caller's OWN collection item (ownedByMe: true reaches the same guard and passes it)", async () => {
+    mockListCollections.mockResolvedValue([]);
+    mockGetSyncSnapshot.mockResolvedValue({ revision: 0, items: [], folders: [] });
+    const uk = generateUserKey();
+    try {
+      setUnlockedUserKey(uk);
+      const itemId = "item-own-move-out";
+      const fields = {
+        type: "note" as const,
+        name: "Mine",
+        body: "the caller's own item",
+        folderId: null,
+        tags: [],
+      };
+      mockMoveItemToCollection.mockResolvedValue({
+        revision: 2,
+        collection_id: null,
+        updated_at: "2026-08-19T00:11:00Z",
+      });
+      // No pre-existing store entry at all (existingBeforeSave undefined)
+      // -- the guard must not fire on an item it has no ownership
+      // information for at all (the create-then-move sequence's own shape).
+      const updated = await moveVaultItem(itemId, fields, 1, null);
+      expect(updated.collectionId).toBeNull();
+      expect(mockMoveItemToCollection).toHaveBeenCalledTimes(1);
+    } finally {
+      lockVault();
+    }
+  });
+
+  it("CR-02: recovery DECLINES when the fresh row is at the right destination/revision but its DECRYPTED content does not match this attempt's own -- the exact false-success shape C-2 exists to prevent", async () => {
+    const { collectionId, ck, itemId } = await setupForeignCollectionItem();
+    try {
+      // This attempt's own content -- deliberately DIFFERENT from what the
+      // fresh row (below) actually holds, simulating: save #1 committed
+      // content A; the client never observed it; the user edited to B;
+      // save #2 (THIS attempt) is B, and fails.
+      const thisAttemptFields = {
+        type: "note" as const,
+        name: "Not Mine",
+        body: "THIS ATTEMPT's content (B) -- must never be silently eaten",
+        folderId: null,
+        tags: [],
+      };
+      // The fresh row genuinely IS at the destination and at the exact
+      // revision this attempt would compute (itemRevision + 1) -- the
+      // revision conjunct ALONE would recover here. Its content is
+      // SOMEONE ELSE's commit (content A), re-encrypted under the SAME
+      // real collection key so the AEAD open succeeds and the mismatch is
+      // provably a CONTENT mismatch, not a decrypt failure.
+      const foreignPriorFields = {
+        type: "note" as const,
+        name: "Not Mine",
+        body: "A PRIOR attempt's content (A) -- landed, but is not THIS attempt's",
+        folderId: null,
+        tags: [],
+      };
+      const freshEncrypted = encryptItemForCollection(
+        ck,
+        JSON.stringify(foreignPriorFields),
+        collectionId,
+        itemId,
+        4, // itemRevision (3) + 1
+      );
+      const freshParsed = JSON.parse(freshEncrypted) as { enc_key: unknown; enc_data: unknown };
+      mockGetCollectionSync.mockResolvedValueOnce({
+        revision: 2,
+        items: [
+          {
+            id: itemId,
+            enc_key: JSON.stringify(freshParsed.enc_key),
+            enc_data: JSON.stringify(freshParsed.enc_data),
+            revision: 4,
+            updated_at: "2026-08-19T00:12:00Z",
+            last_used_at: null,
+            is_shared: true,
+            last_editor_email: null,
+            collection_id: collectionId,
+            owned_by_caller: true,
+          },
+        ],
+      });
+      mockMoveItemToCollection.mockRejectedValue(new Error("aborted"));
+
+      // itemRevision (3) is the caller's own last-known revision here --
+      // recovery would compute newRevision = 4, exactly matching the
+      // fresh row above; a revision-only check would wrongly recover.
+      await expect(
+        moveVaultItem(itemId, thisAttemptFields, 3, collectionId),
+      ).rejects.toThrow("aborted");
+    } finally {
+      lockVault();
+    }
+  });
+
+  it("CR-02: recovery SUCCEEDS when the fresh row is at the right destination/revision AND its decrypted content genuinely matches this attempt's own", async () => {
+    const { collectionId, ck, itemId } = await setupForeignCollectionItem();
+    try {
+      const thisAttemptFields = {
+        type: "note" as const,
+        name: "Not Mine",
+        body: "THIS ATTEMPT's own content, genuinely landed",
+        folderId: null,
+        tags: [],
+      };
+      const freshEncrypted = encryptItemForCollection(
+        ck,
+        JSON.stringify(thisAttemptFields),
+        collectionId,
+        itemId,
+        4,
+      );
+      const freshParsed = JSON.parse(freshEncrypted) as { enc_key: unknown; enc_data: unknown };
+      mockGetCollectionSync.mockResolvedValueOnce({
+        revision: 2,
+        items: [
+          {
+            id: itemId,
+            enc_key: JSON.stringify(freshParsed.enc_key),
+            enc_data: JSON.stringify(freshParsed.enc_data),
+            revision: 4,
+            updated_at: "2026-08-19T00:13:00Z",
+            last_used_at: null,
+            is_shared: true,
+            last_editor_email: null,
+            collection_id: collectionId,
+            owned_by_caller: true,
+          },
+        ],
+      });
+      mockMoveItemToCollection.mockRejectedValue(new Error("lost response"));
+
+      const recovered = await moveVaultItem(itemId, thisAttemptFields, 3, collectionId);
+      expect(recovered.revision).toBe(4);
+      expect(recovered.fields).toEqual(thisAttemptFields);
+    } finally {
+      lockVault();
+    }
+  });
+
+  it("ME-03: the recovery probe for a NON-NULL destination calls getCollectionSync (every author's rows), never listItems (caller-authored only)", async () => {
+    const { collectionId, itemId, fields, itemRevision } = await setupForeignCollectionItem();
+    try {
+      mockGetCollectionSync.mockClear();
+      mockGetCollectionSync.mockResolvedValueOnce({ revision: 2, items: [] });
+      mockMoveItemToCollection.mockRejectedValue(new Error("network fail"));
+
+      await expect(
+        moveVaultItem(itemId, fields, itemRevision, collectionId),
+      ).rejects.toThrow("network fail");
+
+      expect(mockGetCollectionSync).toHaveBeenCalledWith(collectionId);
+      expect(mockListItems).not.toHaveBeenCalled();
+    } finally {
+      lockVault();
+    }
+  });
+
+  it("ME-03: the recovery probe for a NULL destination (move-out) calls listItems, never getCollectionSync (only the item's owner can ever reach this branch)", async () => {
+    mockListCollections.mockResolvedValue([]);
+    mockGetSyncSnapshot.mockResolvedValue({ revision: 0, items: [], folders: [] });
+    const uk = generateUserKey();
+    try {
+      setUnlockedUserKey(uk);
+      mockGetCollectionSync.mockClear();
+      mockListItems.mockResolvedValueOnce([]);
+      mockMoveItemToCollection.mockRejectedValue(new Error("network fail"));
+
+      await expect(
+        moveVaultItem("item-move-out-probe", { type: "note", name: "n", body: "b", folderId: null, tags: [] }, 1, null),
+      ).rejects.toThrow("network fail");
+
+      expect(mockListItems).toHaveBeenCalledTimes(1);
+      expect(mockGetCollectionSync).not.toHaveBeenCalled();
+    } finally {
+      lockVault();
+    }
+  });
+
+  it("rethrows the ORIGINAL error, not the refetch's, when the recovery probe itself fails (never masks a genuine refusal behind a network blip)", async () => {
+    mockListCollections.mockResolvedValue([]);
+    mockGetSyncSnapshot.mockResolvedValue({ revision: 0, items: [], folders: [] });
+    const uk = generateUserKey();
+    try {
+      setUnlockedUserKey(uk);
+      mockListItems.mockRejectedValueOnce(new Error("recovery probe network blip"));
+      mockMoveItemToCollection.mockRejectedValue(new Error("original failure"));
+
+      await expect(
+        moveVaultItem("item-refetch-fails", { type: "note", name: "n", body: "b", folderId: null, tags: [] }, 1, null),
+      ).rejects.toThrow("original failure");
+    } finally {
+      lockVault();
+    }
+  });
+
+  it("ME-06/CR-01: a 403 with a NULL destination classifies as NotItemOwnerError (an ownership refusal, not a destination-key refusal)", async () => {
+    mockListCollections.mockResolvedValue([]);
+    mockGetSyncSnapshot.mockResolvedValue({ revision: 0, items: [], folders: [] });
+    const uk = generateUserKey();
+    try {
+      setUnlockedUserKey(uk);
+      mockListItems.mockResolvedValueOnce([]);
+      mockMoveItemToCollection.mockRejectedValue(
+        Object.assign(new Error("forbidden"), { status: 403 }),
+      );
+
+      await expect(
+        moveVaultItem("item-403-null-dest", { type: "note", name: "n", body: "b", folderId: null, tags: [] }, 1, null),
+      ).rejects.toBeInstanceOf(NotItemOwnerError);
+    } finally {
+      lockVault();
+    }
+  });
+
+  it("ME-06: a 403 with a NON-NULL destination classifies as CollectionKeyUnavailableError (the pre-existing destination-access-lost shape, unchanged)", async () => {
+    const { collectionId, itemId, fields, itemRevision } = await setupForeignCollectionItem();
+    try {
+      mockGetCollectionSync.mockResolvedValueOnce({ revision: 2, items: [] });
+      mockMoveItemToCollection.mockRejectedValue(
+        Object.assign(new Error("forbidden"), { status: 403 }),
+      );
+
+      await expect(
+        moveVaultItem(itemId, fields, itemRevision, collectionId),
+      ).rejects.toBeInstanceOf(CollectionKeyUnavailableError);
+    } finally {
+      lockVault();
+    }
+  });
+
+  it("HI-01: a 404 (a FULLY revoked destination grant) classifies as CollectionKeyUnavailableError, not an unhandled raw 404", async () => {
+    const { collectionId, itemId, fields, itemRevision } = await setupForeignCollectionItem();
+    try {
+      mockGetCollectionSync.mockResolvedValueOnce({ revision: 2, items: [] });
+      mockMoveItemToCollection.mockRejectedValue(
+        Object.assign(new Error("not found"), { status: 404 }),
+      );
+
+      await expect(
+        moveVaultItem(itemId, fields, itemRevision, collectionId),
+      ).rejects.toBeInstanceOf(CollectionKeyUnavailableError);
+    } finally {
+      lockVault();
+    }
+  });
+
+  // Live-E2E-caught regression (code review, Phase 32): this fix's OWN
+  // first draft still had `throw err` INSIDE the recovery probe's `catch`
+  // block -- a throw inside a catch unwinds the stack immediately, so it
+  // does NOT "fall through" to isConflictError/isForbiddenError/
+  // isNotFoundError below in the SAME outer catch. Invisible against the
+  // test above (its mocked probe SUCCEEDS, just finds nothing) and against
+  // SC3's live demotion case (a mere demotion leaves read access, so the
+  // probe never fails there) -- caught live by THIS exact shape: a FULL
+  // revocation where the caller loses read access too, so the recovery
+  // probe 404s right alongside the move itself. Reproduces that here with
+  // BOTH the move AND the probe rejecting.
+  it("HI-01 (live-E2E-caught): a 404 STILL classifies as CollectionKeyUnavailableError even when the recovery probe ITSELF also fails (both the move and the probe lose access together)", async () => {
+    const { collectionId, itemId, fields, itemRevision } = await setupForeignCollectionItem();
+    try {
+      mockGetCollectionSync.mockRejectedValueOnce(
+        Object.assign(new Error("not found"), { status: 404 }),
+      );
+      mockMoveItemToCollection.mockRejectedValue(
+        Object.assign(new Error("not found"), { status: 404 }),
+      );
+
+      await expect(
+        moveVaultItem(itemId, fields, itemRevision, collectionId),
+      ).rejects.toBeInstanceOf(CollectionKeyUnavailableError);
+    } finally {
+      lockVault();
+    }
+  });
+
+  it("ME-06 (live-E2E-caught shape): a 403 with a NULL destination STILL classifies as NotItemOwnerError even when the recovery probe (listItems) itself also fails", async () => {
+    mockListCollections.mockResolvedValue([]);
+    mockGetSyncSnapshot.mockResolvedValue({ revision: 0, items: [], folders: [] });
+    const uk = generateUserKey();
+    try {
+      setUnlockedUserKey(uk);
+      mockListItems.mockRejectedValueOnce(new Error("network blip during recovery"));
+      mockMoveItemToCollection.mockRejectedValue(
+        Object.assign(new Error("forbidden"), { status: 403 }),
+      );
+
+      await expect(
+        moveVaultItem(
+          "item-403-null-dest-probe-fails",
+          { type: "note", name: "n", body: "b", folderId: null, tags: [] },
+          1,
+          null,
+        ),
+      ).rejects.toBeInstanceOf(NotItemOwnerError);
+    } finally {
+      lockVault();
+    }
+  });
+
+  it("a 409 still classifies as RevisionConflictError -- unchanged by any of this describe block's other fixes", async () => {
+    mockListCollections.mockResolvedValue([]);
+    mockGetSyncSnapshot.mockResolvedValue({ revision: 0, items: [], folders: [] });
+    const uk = generateUserKey();
+    try {
+      setUnlockedUserKey(uk);
+      mockListItems.mockResolvedValueOnce([]);
+      mockMoveItemToCollection.mockRejectedValue(
+        Object.assign(new Error("conflict"), { status: 409 }),
+      );
+
+      await expect(
+        moveVaultItem("item-409", { type: "note", name: "n", body: "b", folderId: null, tags: [] }, 1, null),
+      ).rejects.toBeInstanceOf(RevisionConflictError);
     } finally {
       lockVault();
     }

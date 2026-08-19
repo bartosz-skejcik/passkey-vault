@@ -24,6 +24,10 @@ const {
   mockDeleteItem,
   mockDeleteFolder,
   mockTouchItem,
+  // ME-07 (code review, Phase 32): createVaultItem's own lost-response
+  // recovery reads listItems() -- not mocked in this file before now,
+  // since nothing here previously exercised it.
+  mockListItems,
   mockStartSync,
   mockStopSync,
   mockGetCollectionKey,
@@ -56,6 +60,7 @@ const {
   mockDeleteItem: vi.fn(),
   mockDeleteFolder: vi.fn(),
   mockTouchItem: vi.fn(),
+  mockListItems: vi.fn(),
   mockStartSync: vi.fn(),
   mockStopSync: vi.fn(),
   mockGetCollectionKey: vi.fn(),
@@ -114,6 +119,7 @@ vi.mock("./api", () => ({
   deleteItem: mockDeleteItem,
   deleteFolder: mockDeleteFolder,
   touchItem: mockTouchItem,
+  listItems: mockListItems,
 }));
 
 vi.mock("./sync", () => ({
@@ -321,6 +327,102 @@ describe("recombine/split round-trip", () => {
       1,
     );
     expect(JSON.parse(NOTE_PLAINTEXT)).toEqual(fields);
+  });
+});
+
+// ME-07 (code review, Phase 32): a lost/aborted createVaultItem response
+// previously duplicated the item on retry -- `presetId` (minted once by
+// the CALLER, ItemForm's own `pendingCreateIdRef`) plus this recovery is
+// what makes a retry idempotent instead.
+describe("createVaultItem retry recovery (ME-07)", () => {
+  const fields = {
+    type: "note" as const,
+    name: "n",
+    body: "b",
+    folderId: null,
+    tags: [],
+  };
+
+  it("without a presetId, mints a fresh crypto.randomUUID() every call -- unchanged pre-existing behavior for every OTHER caller", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockEncryptItem.mockReturnValue(JSON.stringify({ enc_key: {}, enc_data: {} }));
+    mockCreateItem.mockResolvedValue({ id: "whatever", revision: 1, updated_at: "2026-08-19T00:00:00Z" });
+
+    const { store } = await importStoreAndGetLockListener();
+    await store.createVaultItem(fields);
+    await store.createVaultItem(fields);
+
+    const [firstId] = mockCreateItem.mock.calls[0];
+    const [secondId] = mockCreateItem.mock.calls[1];
+    expect(firstId).not.toBe(secondId);
+  });
+
+  it("a presetId'd retry that hits the server's 409 (id already exists) recovers instead of throwing, when the existing row DECRYPTS to this attempt's own content", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockEncryptItem.mockReturnValue(JSON.stringify({ enc_key: {}, enc_data: {} }));
+    mockCreateItem.mockRejectedValue(new ApiClientError(409, "item id already exists"));
+    mockListItems.mockResolvedValue([
+      {
+        id: "retry-id",
+        enc_key: "{}",
+        enc_data: "{}",
+        revision: 1,
+        updated_at: "2026-08-19T00:05:00Z",
+        last_used_at: null,
+        is_shared: false,
+        last_editor_email: null,
+        collection_id: null,
+        owned_by_caller: true,
+      },
+    ]);
+    // The decrypted plaintext of the EXISTING row genuinely matches this
+    // attempt's own JSON.stringify(fields) -- proving identity, not merely
+    // a coincidental id collision.
+    mockDecryptItem.mockReturnValue(JSON.stringify(fields));
+
+    const { store } = await importStoreAndGetLockListener();
+    const created = await store.createVaultItem(fields, "retry-id");
+
+    expect(created.id).toBe("retry-id");
+    expect(created.revision).toBe(1);
+    expect(created.updatedAt).toBe("2026-08-19T00:05:00Z");
+    expect(created.fields).toEqual(fields);
+    // No SECOND create call was made -- the recovery never re-POSTs.
+    expect(mockCreateItem).toHaveBeenCalledTimes(1);
+  });
+
+  it("a presetId'd retry declines recovery (rethrows the 409) when the existing row's decrypted content does NOT match this attempt's own -- a genuine (if astronomically unlikely) id collision", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockEncryptItem.mockReturnValue(JSON.stringify({ enc_key: {}, enc_data: {} }));
+    mockCreateItem.mockRejectedValue(new ApiClientError(409, "item id already exists"));
+    mockListItems.mockResolvedValue([
+      {
+        id: "retry-id",
+        enc_key: "{}",
+        enc_data: "{}",
+        revision: 1,
+        updated_at: "2026-08-19T00:05:00Z",
+        last_used_at: null,
+        is_shared: false,
+        last_editor_email: null,
+        collection_id: null,
+        owned_by_caller: true,
+      },
+    ]);
+    mockDecryptItem.mockReturnValue(JSON.stringify({ ...fields, name: "SOMEONE ELSE'S item" }));
+
+    const { store } = await importStoreAndGetLockListener();
+    await expect(store.createVaultItem(fields, "retry-id")).rejects.toBeInstanceOf(ApiClientError);
+  });
+
+  it("a presetId'd retry against a genuine non-conflict error (not 409) rethrows without ever probing listItems", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockEncryptItem.mockReturnValue(JSON.stringify({ enc_key: {}, enc_data: {} }));
+    mockCreateItem.mockRejectedValue(new Error("network fail"));
+
+    const { store } = await importStoreAndGetLockListener();
+    await expect(store.createVaultItem(fields, "retry-id")).rejects.toThrow("network fail");
+    expect(mockListItems).not.toHaveBeenCalled();
   });
 });
 

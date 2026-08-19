@@ -194,6 +194,31 @@ export class DirectShareNotEditableError extends Error {
   }
 }
 
+/** CR-01 (code review, Phase 32): thrown by `moveVaultItem` -- client-side,
+ * BEFORE any encryption/network call -- when the caller attempts to move a
+ * collection-scoped item they do NOT own out to personal scope
+ * (`newCollectionId === null`). A move-out re-seals the item's ciphertext
+ * under the CALLER's own UserKey (`moveVaultItem`'s own doc comment); only
+ * the item's actual owner can ever open a key sealed to them. This is
+ * presentation, not authorization -- the authoritative bound is
+ * `vault.rs::move_item`'s Gate 1b, which refuses the identical case
+ * server-side regardless of what this client check does or does not catch
+ * (`ownedByMe` is metadata the client trusts but the server never does).
+ *
+ * ALSO thrown (ME-06, code review) when the server itself refuses with a
+ * 403 on a null-destination move -- `move_item`'s Gate 0/1/1b, none of
+ * which consult the destination at all. The prior code mapped every 403
+ * here to `CollectionKeyUnavailableError`'s "you no longer have write
+ * access to this folder" copy, which is actively wrong for an ownership
+ * refusal: there is no folder in this picture, and the real problem is
+ * that the caller never owned the item to begin with. */
+export class NotItemOwnerError extends Error {
+  constructor(itemId: string) {
+    super(`cannot move item ${itemId} to personal scope -- you are not its owner`);
+    this.name = "NotItemOwnerError";
+  }
+}
+
 /** Combined JSON shape encryptItem produces / decryptItem expects:
  * `{"enc_key": WrappedKey, "enc_data": WrappedKey}`. The server instead
  * stores these as two separate opaque-string columns — this module is the
@@ -547,7 +572,45 @@ function decryptItemRow(row: ItemRow, uk: WasmUserKey): VaultItem {
     // pull lands, where the same item renders as freely editable.
     accessLevel:
       row.collection_id === null ? undefined : getCollectionAccessLevel(row.collection_id),
+    // CR-01 (code review, Phase 32): a personal item is always the
+    // caller's own by construction (both `fetch_items_for` arms filter on
+    // it server-side) -- only a collection-scoped row's wire
+    // `owned_by_caller` can ever be `false`, when it was authored by a
+    // fellow member. See VaultItem.ownedByMe's own doc comment.
+    ownedByMe: row.collection_id === null ? true : row.owned_by_caller,
   };
+}
+
+/** CR-02 (code review, Phase 32): attempts to decrypt an `ItemRow` under
+ * the SAME key dispatch `decryptItemRow` uses, returning the raw plaintext
+ * STRING (never parsed/normalized -- callers that need identity, not
+ * display, want the exact bytes an AEAD open produced) or `null` on ANY
+ * failure (wrong/missing key, corrupt ciphertext, AEAD auth failure).
+ * `null` here means "cannot prove", never "assume equal" -- every caller
+ * treats it as a decline, not a pass.
+ *
+ * Used by `moveVaultItem`'s and `createVaultItem`'s lost-response recovery
+ * to answer a stronger question than a bare revision match can: not just
+ * "is SOME row sitting at the expected revision/destination" but "does
+ * that row's ACTUAL content genuinely equal what THIS attempt tried to
+ * write" -- the closing requirement 32-PLAN-CHECK.md's C-2 blocker states
+ * explicitly: "recovery must decline whenever the client cannot prove the
+ * stored ciphertext is its own." A revision conjunct alone proves "this
+ * commit is recent"; this proves "this commit is MINE". */
+function tryDecryptFreshRowPlaintext(row: ItemRow, uk: WasmUserKey): string | null {
+  try {
+    const combinedFresh = recombineEncryptedItem(row.enc_key, row.enc_data);
+    if (row.collection_id === null) {
+      return decryptItem(uk, combinedFresh, row.id, row.revision);
+    }
+    const freshCk = getCollectionKey(row.collection_id);
+    if (freshCk === undefined) {
+      return null;
+    }
+    return decryptItemForCollection(freshCk, combinedFresh, row.collection_id, row.id, row.revision);
+  } catch {
+    return null;
+  }
 }
 
 function decryptFolderRow(row: FolderRow, uk: WasmUserKey): Folder {
@@ -911,7 +974,16 @@ async function mergeDirectSnapshot(
   }
 }
 
-export async function createVaultItem(rawFields: ItemFields): Promise<VaultItem> {
+/** `presetId` (ME-07, code review Phase 32): optional caller-supplied item
+ * id, for a CALLER that must be able to retry the SAME logical create
+ * attempt without minting a fresh id each time (`ItemForm`'s create-then-
+ * move sequence -- see its own `pendingCreateIdRef` comment). Every other
+ * caller omits it and gets the pre-existing `crypto.randomUUID()` behavior
+ * unchanged. */
+export async function createVaultItem(
+  rawFields: ItemFields,
+  presetId?: string,
+): Promise<VaultItem> {
   const uk = getUnlockedUserKey();
   if (uk === null) {
     throw new Error("cannot create an item while the vault is locked");
@@ -926,11 +998,50 @@ export async function createVaultItem(rawFields: ItemFields): Promise<VaultItem>
   // and the normalized shape is what gets encrypted, so the server row is
   // well-formed too.
   const fields = normalizeItemFields(rawFields);
-  const id = crypto.randomUUID();
+  const id = presetId ?? crypto.randomUUID();
   const plaintext = JSON.stringify(fields);
   const combined = encryptItem(uk, plaintext, id, 1);
   const { encKey, encData } = splitCombinedEncryptedItem(combined);
-  const created = await createItem(id, encKey, encData);
+  let created: { updated_at: string };
+  try {
+    created = await createItem(id, encKey, encData);
+  } catch (err) {
+    // ME-07 (code review, Phase 32): a caller-supplied id hitting the
+    // server's `ON CONFLICT(id) DO NOTHING` guard as a 409 is proof of a
+    // PRIOR, successful attempt of THIS exact create having already
+    // landed -- ids are minted fresh per genuinely NEW item (every OTHER
+    // caller either omits `presetId` or, per this function's own doc
+    // comment, only ever reuses one it itself generated for this same
+    // submission attempt), never coincidentally reused. Without this,
+    // a lost/aborted create response reported the generic "please try
+    // again" copy, and the NEXT retry called this function with a brand
+    // new randomUUID(), silently creating a SECOND item server-side.
+    //
+    // Recover instead of duplicating: probe the item's own current
+    // server-side row and confirm -- by DECRYPTING it under the SAME
+    // key/AAD this attempt just used -- that it genuinely holds what this
+    // attempt tried to write, not merely a coincidental id collision.
+    // `null`/mismatch is a decline, never a pass (same discipline
+    // `moveVaultItem`'s recovery uses, see `tryDecryptFreshRowPlaintext`'s
+    // own doc comment).
+    if (presetId === undefined || !isConflictError(err)) {
+      throw err;
+    }
+    let freshRows: ItemRow[];
+    try {
+      freshRows = await listItems();
+    } catch {
+      // Same discipline as moveVaultItem's recovery: a failure of the
+      // recovery probe itself must never surface AS the probe's own
+      // failure -- rethrow the ORIGINAL 409 classification.
+      throw err;
+    }
+    const freshRow = freshRows.find((row) => row.id === id);
+    if (freshRow === undefined || tryDecryptFreshRowPlaintext(freshRow, uk) !== plaintext) {
+      throw err;
+    }
+    created = { updated_at: freshRow.updated_at };
+  }
   const item: VaultItem = { id, revision: 1, fields, updatedAt: created.updated_at };
   // WR-08 / WINDOWS #11: the server write has ALREADY been accepted at this
   // point. Any throw from the local bookkeeping below used to propagate out
@@ -1179,6 +1290,20 @@ export async function moveVaultItem(
   if (directSharedItems.some((item) => item.id === id)) {
     throw new DirectShareNotEditableError(id);
   }
+  // CR-01 (code review, Phase 32): refuse client-side, BEFORE any
+  // encryption, a move OUT to personal scope of an item this caller does
+  // NOT own -- see NotItemOwnerError's own doc comment for the full
+  // rationale. This is presentation, not authorization: the authoritative
+  // bound is vault.rs::move_item's Gate 1b, which refuses the identical
+  // case server-side regardless of what `items`/`ownedByMe` (client-
+  // trusted metadata) says here.
+  if (
+    newCollectionId === null &&
+    existingBeforeSave?.collectionId != null &&
+    existingBeforeSave.ownedByMe !== true
+  ) {
+    throw new NotItemOwnerError(id);
+  }
   const newRevision = currentRevision + 1;
   const plaintext = JSON.stringify(fields);
   let combined: string;
@@ -1198,24 +1323,47 @@ export async function moveVaultItem(
   const { encKey, encData } = splitCombinedEncryptedItem(combined);
 
   function buildUpdated(revision: number, updatedAt: string): VaultItem {
-    const existingIndex = items.findIndex((item) => item.id === id);
-    const existing = existingIndex === -1 ? undefined : items[existingIndex];
+    const existing = items.find((item) => item.id === id);
     // Same carry-forward discipline updateVaultItem's own tail comment
     // documents for lastUsedAt/isShared/lastEditorEmail -- this response
     // body has none of those fields either. `isShared`/`accessLevel` are a
     // best-effort OPTIMISTIC value here (mirrors decryptItemRow's dispatch
     // for accessLevel), corrected on the next background snapshot, same as
     // updateVaultItem's own carried-forward fields.
+    //
+    // ME-02 (code review, Phase 32): `lastEditorEmail` gets the IDENTICAL
+    // carry-forward `updateVaultItem`'s own WR-02 fix already documents --
+    // this was silently omitted here despite the comment above already
+    // claiming otherwise, re-regressing WR-02 for the move path
+    // specifically (a shared item's live-conflict attribution falling back
+    // to generic copy immediately after this same user's own move).
     return {
       id,
       revision,
       fields,
       updatedAt,
       lastUsedAt: existing?.lastUsedAt,
+      lastEditorEmail: existing?.lastEditorEmail,
       collectionId: newCollectionId,
       accessLevel:
         newCollectionId === null ? undefined : getCollectionAccessLevel(newCollectionId),
-      isShared: newCollectionId !== null ? true : (existing?.isShared ?? false),
+      // LO-02 (code review, Phase 32): a move-out no longer keeps `true`
+      // stale off the item's PRIOR (shared) state -- an item that just
+      // left a shared folder should read as no longer shared until the
+      // next snapshot corrects it either way, not keep advertising
+      // exposure it may no longer have. Errs toward UNDER-reporting for at
+      // most one snapshot interval, the opposite direction of the stale
+      // "shared" badge LO-02 flagged.
+      isShared: newCollectionId !== null ? true : false,
+      // CR-01: ownership never changes as a SIDE EFFECT of a move -- a
+      // successful null-destination move only ever completes when the
+      // caller IS the owner (this function's own guard above, backstopped
+      // server-side by Gate 1b), so `true` is not optimistic there, it's
+      // certain. For a collection destination, carry the prior known value
+      // forward (defaulting `true` only when `existing` itself is
+      // unknown -- e.g. the create-then-move sequence's first destination
+      // pick, where the caller just created this exact item themselves).
+      ownedByMe: newCollectionId === null ? true : (existing?.ownedByMe ?? true),
     };
   }
 
@@ -1240,21 +1388,72 @@ export async function moveVaultItem(
     // row's revision is the one save #1 wrote, not currentRevision + 1, so
     // recovery correctly declines and the request falls through to the
     // existing conflict/forbidden classification below.
-    let freshRows: ItemRow[];
+    //
+    // ME-03 (code review, Phase 32): the PROBE itself must be able to see
+    // the row at all. `listItems()` (`fetch_items_for`) only ever returns
+    // items the caller AUTHORED -- for a move of a collection item
+    // authored by someone else (the exact CR-01 population) `freshRow` was
+    // structurally always `undefined` through this probe, so recovery
+    // could never fire and every such lost response was reported as a
+    // failure. Probe the DESTINATION collection directly for a non-null
+    // destination (every author's rows -- `pull_shared_collection`, the
+    // same endpoint `collectionSharedItems` is built from); `listItems()`
+    // remains correct for a move-OUT, where the only caller who could ever
+    // have performed it is the item's own owner (Gate 1b), so their own
+    // personal list IS the right probe there.
+    // Live-E2E-caught regression (code review Phase 32, found by this
+    // fix's OWN falsification run, not by the review): the ORIGINAL code
+    // (and this fix's first draft) rethrew the refetch's OWN failure
+    // wrapped as `throw err` from INSIDE this inner `catch` block. A
+    // `throw` inside a `catch` block does not "fall through" to the
+    // classification code below it in the SAME outer `catch` -- it
+    // unwinds the stack immediately, so `err` propagated OUT OF
+    // `moveVaultItem` entirely, raw and UNCLASSIFIED, skipping
+    // `isConflictError`/`isForbiddenError`/`isNotFoundError` below
+    // completely. Invisible for the ALREADY-covered 403 case (SC3's mere
+    // demotion still leaves read access, so the recovery probe itself
+    // never fails there) -- but HI-01's FULL revocation shape has the
+    // caller losing read access too, so the probe 404s right alongside
+    // the move itself, and the live 2-session run for that exact test hit
+    // this: the banner rendered the generic `error.itemSaveFailed`
+    // instead of the classified `error.itemMoveAccessLost`. Fixed by
+    // leaving `freshRow` `undefined` on a probe failure and falling
+    // through to the SAME classification every other non-recovered path
+    // already uses, instead of a second, bypassing throw.
+    let freshRow: ItemRow | undefined;
     try {
-      freshRows = await listItems();
-    } catch {
-      // Wrap the recovery re-fetch itself: if IT throws, rethrow the
-      // ORIGINAL error rather than the fetch error, and never treat this
-      // as recovered -- otherwise a network blip during recovery masks a
-      // genuine TOCTOU 403, quietly weakening SC3's refusal surfacing.
-      throw err;
+      const freshRows =
+        newCollectionId === null
+          ? await listItems()
+          : ((await getCollectionSync(newCollectionId)).items ?? []);
+      freshRow = freshRows.find((row) => row.id === id);
+    } catch (refetchErr) {
+      // LO-05 (code review, Phase 32): log the swallowed re-fetch failure
+      // -- every OTHER post-commit failure in this file already does, and
+      // without this a false-failure report in the field is undebuggable:
+      // there is no signal telling whether the recovery probe even ran.
+      // `freshRow` stays `undefined` -- never treated as recovered -- and
+      // execution falls through to the ORIGINAL error's classification
+      // below, exactly as a "the fresh row isn't a match" outcome would.
+      console.error("pv: moveVaultItem's recovery re-fetch failed", refetchErr);
     }
-    const freshRow = freshRows.find((row) => row.id === id);
+    // CR-02 (32-PLAN-CHECK.md C-2, code review iteration 4): the revision
+    // conjunct alone proves "this is a RECENT commit", not "this is MY
+    // commit" -- `DetailPanel` pinning `editBaselineRevision` across a
+    // failed-then-retried edit-mode save can make `currentRevision` (and
+    // therefore `newRevision`) IDENTICAL across two genuinely different
+    // attempts, which defeats the revision conjunct exactly when it
+    // matters most. A stronger, genuinely available identity proof: decrypt
+    // the fresh row under the SAME key this attempt just encrypted under,
+    // and require its plaintext to equal what THIS attempt tried to write,
+    // byte-for-byte. `tryDecryptFreshRowPlaintext`'s `null` (decrypt/key
+    // failure) is a decline, never a pass -- "recovery must decline
+    // whenever the client cannot prove the stored ciphertext is its own."
     if (
       freshRow !== undefined &&
       freshRow.collection_id === newCollectionId &&
-      freshRow.revision === newRevision
+      freshRow.revision === newRevision &&
+      tryDecryptFreshRowPlaintext(freshRow, uk) === plaintext
     ) {
       const recovered = buildUpdated(newRevision, freshRow.updated_at);
       try {
@@ -1275,13 +1474,35 @@ export async function moveVaultItem(
       const lastEditorEmail = details?.last_editor_email ?? undefined;
       throw new RevisionConflictError(lastEditorEmail);
     }
-    // A 403 can only occur when newCollectionId !== null (Gate 2 only runs
-    // on a non-null destination) -- this is the client-visible half of
-    // ORG-02's TOCTOU refusal (destination access revoked between the
-    // client's stale useCollections() view and submit; vault.rs::move_item
-    // Gate 2 refuses server-side before any write -- no server change
-    // needed).
     if (isForbiddenError(err)) {
+      // ME-06 (code review, Phase 32): a 403 here is NOT reachable only
+      // when newCollectionId !== null -- move_item's Gate 0/1/1b all
+      // return Forbidden without ever consulting the destination, and
+      // every one of them can fire on a null-destination move (an
+      // ownership refusal, CR-01). Distinguish that shape from Gate 2's
+      // genuine destination-access refusal below, so the copy names the
+      // real problem instead of blaming a folder the caller never chose.
+      if (newCollectionId === null) {
+        throw new NotItemOwnerError(id);
+      }
+      // The client-visible half of ORG-02's TOCTOU refusal (destination
+      // access revoked between the client's stale useCollections() view
+      // and submit; vault.rs::move_item Gate 2 refuses server-side before
+      // any write -- no server change needed).
+      throw new CollectionKeyUnavailableError(newCollectionId);
+    }
+    if (isNotFoundError(err)) {
+      // HI-01 (code review, Phase 32): `require_collection_edit`'s
+      // `gate()` resolves a FULLY REVOKED destination grant to `None` ->
+      // 404 -- the ordinary result of "stop sharing this folder", at
+      // least as reachable as the demotion-driven 403 above, and
+      // previously unhandled here at all: it fell through to `throw err`
+      // and DetailPanel's generic "Failed to save item. Please try
+      // again." on an operation that cannot succeed until someone else
+      // restores access. Only reachable via Gate 2 (the destination
+      // check), so `newCollectionId` is never null on this branch in
+      // practice -- the `?? "personal"` fallback exists only so this
+      // never crashes if that ever changes.
       throw new CollectionKeyUnavailableError(newCollectionId ?? "personal");
     }
     throw err;
