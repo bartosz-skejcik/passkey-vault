@@ -17,7 +17,9 @@ import type { ItemFields, VaultItem } from "@/lib/vault/types";
 import {
   CollectionKeyUnavailableError,
   DirectShareNotEditableError,
+  NotItemOwnerError,
   RevisionConflictError,
+  getItems,
   touchVaultItem,
   useFolders,
 } from "@/lib/vault/store";
@@ -148,19 +150,36 @@ export default function DetailPanel({
   // 32-01-PLAN.md: "moveRefused" is the TOCTOU refusal path ORG-02
   // requires -- CollectionKeyUnavailableError thrown by moveVaultItem on a
   // 403 (destination access revoked between the client's stale
-  // useCollections() view and submit). This string must NOT invite a
-  // retry (SC3/Phase 31's established rule -- retrying cannot succeed
-  // until access is restored), unlike error.itemCreatedButMoveFailed's
+  // useCollections() view and submit) OR a 404 (HI-01, code review Phase
+  // 32: a FULLY revoked grant). This string must NOT invite a retry
+  // (SC3/Phase 31's established rule -- retrying cannot succeed until
+  // access is restored), unlike error.itemCreatedButMoveFailed's
   // genuinely different create-mode case.
-  const [saveError, setSaveError] = useState<null | "generic" | "notEditable" | "moveRefused">(
-    null,
-  );
+  // "notOwner" (ME-06, code review Phase 32): NotItemOwnerError's own
+  // distinct shape -- a completely different failure than "this folder
+  // revoked your access" (there is no folder in a null-destination move),
+  // so it gets its own string and its own copy rather than being folded
+  // into "moveRefused".
+  const [saveError, setSaveError] = useState<
+    null | "generic" | "notEditable" | "moveRefused" | "notOwner"
+  >(null);
   // Proactive live-edit-conflict banner (SYNC-03) — a SECOND, independently
   // controlled trigger path alongside the reactive save-time `conflict`
   // state above; never merged into one boolean. Captured only at edit-entry
   // (startEditing() and the initialMode effect below), never re-derived on
   // every live `item` prop update.
   const [editBaselineRevision, setEditBaselineRevision] = useState<number | null>(null);
+  // CR-02 (code review, Phase 32): the revision the NEXT save attempt
+  // should predict `newRevision` from -- kept SEPARATE from
+  // `editBaselineRevision` on purpose. `editBaselineRevision` also drives
+  // `ItemForm`'s own `key` below, so changing it forces a REMOUNT -- fine
+  // (desired, even) for the two existing call sites that WANT fresh
+  // content loaded (startEditing(), the live-conflict refresh button), but
+  // wrong for a failed-save retry: remounting re-seeds `fields` from
+  // `initialFields`, silently discarding whatever the user had just typed
+  // in the still-open form. `currentRevision` below reads THIS state
+  // instead, so it can advance on a failed save without remounting.
+  const [retryFromRevision, setRetryFromRevision] = useState<number | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   // Safe: every key in FIELD_ORDER[item.fields.type] is a string field of
   // that exact variant — this loop never reads folderId/tags/type/name/urls
@@ -192,6 +211,7 @@ export default function DetailPanel({
     setSaveError(null);
     if (initialMode === "edit") {
       setEditBaselineRevision(item.revision);
+      setRetryFromRevision(item.revision);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, initialMode]);
@@ -243,6 +263,7 @@ export default function DetailPanel({
     setConflictEditorEmail(undefined);
     setSaveError(null);
     setEditBaselineRevision(item.revision);
+    setRetryFromRevision(item.revision);
     setMode("edit");
   }
 
@@ -572,7 +593,10 @@ export default function DetailPanel({
                   type="button"
                   data-testid="live-edit-conflict-refresh"
                   className="btn btn-error btn-outline btn-sm self-start"
-                  onClick={() => setEditBaselineRevision(item.revision)}
+                  onClick={() => {
+                    setEditBaselineRevision(item.revision);
+                    setRetryFromRevision(item.revision);
+                  }}
                 >
                   <RefreshCw size={14} aria-hidden="true" />
                   {t("sync.refreshAction")}
@@ -601,7 +625,9 @@ export default function DetailPanel({
                 ? t("share.sharedWithYouNotEditable")
                 : saveError === "moveRefused"
                   ? t("error.itemMoveAccessLost")
-                  : t("error.itemSaveFailed")}
+                  : saveError === "notOwner"
+                    ? t("error.itemMoveNotOwner")
+                    : t("error.itemSaveFailed")}
             </div>
           ) : null}
           <ItemForm
@@ -609,8 +635,9 @@ export default function DetailPanel({
             type={item.fields.type}
             mode="edit"
             itemId={item.id}
-            currentRevision={editBaselineRevision ?? item.revision}
+            currentRevision={retryFromRevision ?? item.revision}
             currentCollectionId={item.collectionId ?? null}
+            ownedByMe={item.ownedByMe ?? true}
             initialFields={item.fields}
             onCreated={() => {
               setConflict(false);
@@ -619,11 +646,39 @@ export default function DetailPanel({
               setMode("view");
             }}
             onError={(err) => {
+              // CR-02 (32-PLAN-CHECK.md C-2, code review iteration 4): a
+              // failed save's revision prediction must advance BEFORE the
+              // next attempt, or a retry re-predicts the exact same
+              // `newRevision` the previous attempt already committed
+              // server-side -- `moveVaultItem`'s own recovery gate then
+              // recovers against that PRIOR attempt's commit and reports
+              // success over content the user's actual last edit never
+              // reached. Deliberately `setRetryFromRevision`, NOT
+              // `setEditBaselineRevision` -- the latter also drives
+              // `ItemForm`'s own `key` above, and changing it would REMOUNT
+              // the form, silently discarding whatever the user had just
+              // typed (see `retryFromRevision`'s own doc comment; a real
+              // regression this exact substitution caused and a test
+              // caught -- "shows a revision-conflict banner and KEEPS the
+              // in-progress edit"). Read from `getItems()` (the store's own
+              // current knowledge), not from the `item` prop, which can be
+              // one snapshot behind whatever `moveVaultItem`'s own
+              // `loadAndDecryptAll()`/recovery path just wrote. `?? null`
+              // (item genuinely not found) falls back to `item.revision`
+              // via the prop above, unchanged from before this fix.
+              setRetryFromRevision(getItems().find((i) => i.id === item.id)?.revision ?? null);
               if (err instanceof RevisionConflictError) {
                 setConflict(true);
                 setConflictEditorEmail(err.lastEditorEmail);
               } else if (err instanceof DirectShareNotEditableError) {
                 setSaveError("notEditable");
+              } else if (err instanceof NotItemOwnerError) {
+                // ME-06 (code review, Phase 32): a distinct shape from
+                // CollectionKeyUnavailableError below -- never fixable by
+                // retrying, same as that one, but a DIFFERENT reason (the
+                // caller never owned this item, not "this folder revoked
+                // your access").
+                setSaveError("notOwner");
               } else if (err instanceof CollectionKeyUnavailableError) {
                 // 32-01-PLAN.md: the TOCTOU refusal path ORG-02 requires --
                 // never invites a retry (SC3/Phase 31's established rule).

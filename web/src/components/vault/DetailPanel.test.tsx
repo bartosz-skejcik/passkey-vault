@@ -18,6 +18,7 @@ const {
   MockRevisionConflictError,
   MockDirectShareNotEditableError,
   MockCollectionKeyUnavailableError,
+  MockNotItemOwnerError,
 } = vi.hoisted(() => ({
   mockUseFolders: vi.fn(),
   mockUseAllTags: vi.fn(),
@@ -28,7 +29,12 @@ const {
   // imports moveVaultItem/getItems from this module — the mock must export
   // both or ItemForm crashes at import/call time.
   mockMoveVaultItem: vi.fn(),
-  mockGetItems: vi.fn(() => []),
+  // CR-02 (code review, Phase 32): explicit `VaultItem[]` return type --
+  // an inferred `() => []` locks vi.fn()'s generic to `never[]`, which
+  // rejects this file's new `mockGetItems.mockReturnValue([...])` calls at
+  // compile time (mirrors ItemForm.test.tsx's own identical fix/rationale
+  // for its mockGetItems).
+  mockGetItems: vi.fn((): VaultItem[] => []),
   mockDeleteVaultItem: vi.fn(),
   mockTotpNow: vi.fn(),
   mockTouchVaultItem: vi.fn(),
@@ -65,6 +71,16 @@ const {
       this.name = "CollectionKeyUnavailableError";
     }
   },
+  // ME-06/CR-01 (code review, Phase 32): DetailPanel's onError now also
+  // `instanceof`-branches on this class -- same "must export or
+  // instanceof-undefined throws" reasoning as the three error classes
+  // above.
+  MockNotItemOwnerError: class MockNotItemOwnerError extends Error {
+    constructor(itemId: string) {
+      super(`cannot move item ${itemId} -- not the owner`);
+      this.name = "NotItemOwnerError";
+    }
+  },
 }));
 
 vi.mock("@/lib/vault/store", () => ({
@@ -80,6 +96,7 @@ vi.mock("@/lib/vault/store", () => ({
   RevisionConflictError: MockRevisionConflictError,
   DirectShareNotEditableError: MockDirectShareNotEditableError,
   CollectionKeyUnavailableError: MockCollectionKeyUnavailableError,
+  NotItemOwnerError: MockNotItemOwnerError,
 }));
 
 vi.mock("@/lib/vault/collections", () => ({
@@ -305,6 +322,122 @@ describe("DetailPanel", () => {
     );
     // Never the conflict banner — this is a DIFFERENT error class.
     expect(screen.queryByTestId("revision-conflict-banner")).not.toBeInTheDocument();
+  });
+
+  // ME-05 (code review, Phase 32): the moveRefused branch's own DetailPanel
+  // test -- the 20-line diff that first introduced
+  // MockCollectionKeyUnavailableError added mocks only, never asserted
+  // that it renders error.itemMoveAccessLost; only the live SC3 e2e test
+  // covered it.
+  it("32-01/ME-05: shows the moveRefused banner (never retry-inviting) when moveVaultItem rejects with CollectionKeyUnavailableError", async () => {
+    mockUseCollections.mockReturnValue([
+      { id: "col-1", name: "Shared Folder", accessLevel: "edit", familyWideKind: null },
+    ]);
+    mockMoveVaultItem.mockRejectedValue(new MockCollectionKeyUnavailableError("col-1"));
+    render(<DetailPanel item={item} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("detail-panel-edit"));
+
+    fireEvent.change(screen.getByTestId("item-folder-select"), {
+      target: { value: "collection:col-1" },
+    });
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("item-save-error-banner")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("item-save-error-banner")).toHaveTextContent(
+      "error.itemMoveAccessLost",
+    );
+  });
+
+  // ME-06/CR-01 (code review, Phase 32): NotItemOwnerError's own distinct
+  // copy -- must never render as the folder-access-lost banner above, since
+  // there is no folder in this refusal's picture at all.
+  it("ME-06/CR-01: shows the notOwner banner (a DIFFERENT message than moveRefused) when moveVaultItem rejects with NotItemOwnerError", async () => {
+    // `ownedByMe` deliberately left unset here (not `false`) -- this test
+    // exercises DetailPanel's ERROR CLASSIFICATION in isolation from
+    // ItemForm's own offer-prevention (which a `false` value would trigger,
+    // making "Bez folderu" undeliverable through normal fireEvent.change
+    // and conflating two different tests). Represents the genuinely
+    // reachable TOCTOU shape: the client's cached ownership view allowed
+    // the pick, and the (mocked) SERVER is what discovers otherwise.
+    mockUseCollections.mockReturnValue([
+      { id: "col-1", name: "Shared Folder", accessLevel: "edit", familyWideKind: null },
+    ]);
+    mockMoveVaultItem.mockRejectedValue(new MockNotItemOwnerError("item-1"));
+    // LO-03 (code review, Phase 32): `accessLevel` must be set explicitly
+    // for a collection-scoped fixture now -- `undefined` fails closed
+    // (canEditItem hides the Edit button entirely) for any `collectionId`.
+    render(
+      <DetailPanel
+        item={{ ...item, collectionId: "col-1", accessLevel: "edit" }}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("detail-panel-edit"));
+
+    // The item is currently in col-1; picking "Bez folderu" drives the
+    // move-out dispatch.
+    fireEvent.change(screen.getByTestId("item-folder-select"), { target: { value: "" } });
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("item-save-error-banner")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("item-save-error-banner")).toHaveTextContent(
+      "error.itemMoveNotOwner",
+    );
+    expect(screen.getByTestId("item-save-error-banner")).not.toHaveTextContent(
+      "error.itemMoveAccessLost",
+    );
+  });
+
+  // CR-02 (32-PLAN-CHECK.md C-2, code review iteration 4): the retry-revision
+  // fix's own regression test -- proves BOTH halves at once: (1) a failed
+  // save's NEXT attempt uses the store's fresh revision (not the stale one
+  // the first attempt predicted from), and (2) the form is NOT remounted in
+  // the process, so the user's in-progress typed edit survives (the exact
+  // defect this fix's first draft introduced -- caught by "keeps the
+  // in-progress edit on RevisionConflictError" above going red).
+  it("CR-02: after a generic (non-conflict) save failure, a retry predicts newRevision from the STORE's current knowledge, and never wipes the user's in-progress typed edit", async () => {
+    mockUpdateVaultItem.mockRejectedValueOnce(new Error("network blip"));
+    // The store's own current knowledge has moved on since edit-entry
+    // (revision 1) to revision 3 -- e.g. a background sync landed a write
+    // this same save's own lost/aborted response might have been.
+    mockGetItems.mockReturnValue([{ id: "item-1", revision: 3, fields: item.fields }]);
+    mockUpdateVaultItem.mockResolvedValueOnce({
+      id: "item-1",
+      revision: 4,
+      fields: item.fields,
+    });
+    render(<DetailPanel item={item} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("detail-panel-edit"));
+
+    fireEvent.change(screen.getByTestId("item-body"), {
+      target: { value: "typed-before-first-failure" },
+    });
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockUpdateVaultItem).toHaveBeenCalledTimes(1));
+    expect(mockUpdateVaultItem).toHaveBeenNthCalledWith(1, "item-1", expect.any(Object), 1);
+    await waitFor(() =>
+      expect(screen.getByTestId("item-save-error-banner")).toBeInTheDocument(),
+    );
+    // The form was NOT remounted -- the typed content survives the failure.
+    expect(screen.getByTestId("item-body")).toHaveValue("typed-before-first-failure");
+
+    // Retry: the SAME still-open form, same typed content, second submit.
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockUpdateVaultItem).toHaveBeenCalledTimes(2));
+    // The retry's OWN currentRevision must be the store's fresh value (3),
+    // never the original stale 1 -- a stale retry would 409 forever.
+    expect(mockUpdateVaultItem).toHaveBeenNthCalledWith(2, "item-1", expect.any(Object), 3);
+    // The retry's own submitted content is exactly what the user typed --
+    // proving it was never remounted/reset between the two attempts (the
+    // second call's fields argument, not merely the still-visible DOM).
+    const secondCallFields = mockUpdateVaultItem.mock.calls[1][1] as { body: string };
+    expect(secondCallFields.body).toBe("typed-before-first-failure");
   });
 
   it("opens the delete confirmation dialog when the Trash2 button is clicked", () => {
@@ -881,7 +1014,12 @@ describe("DetailPanel — a directly-shared item never offers an edit it cannot 
     mockUseCollections.mockReturnValue([{ id: "col-1", name: "Rodzina" }]);
     render(
       <DetailPanel
-        item={{ ...item, isShared: true, collectionId: "col-1" }}
+        // LO-03 (code review, Phase 32): `accessLevel` is now REQUIRED to
+        // read as editable for a collection-scoped item -- see
+        // ItemContextMenu.test.tsx's identical fixture update for the full
+        // rationale (`undefined` fails CLOSED for any `collectionId`-set
+        // item now, matching this function's own stated discipline).
+        item={{ ...item, isShared: true, collectionId: "col-1", accessLevel: "edit" }}
         onClose={vi.fn()}
       />,
     );
