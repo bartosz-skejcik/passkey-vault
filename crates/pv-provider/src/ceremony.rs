@@ -149,14 +149,15 @@ pub fn create_provider_credential(
 /// `after_pk.counter` (both `Option<u32>`) compared just below always stay
 /// `None`, so `updated_passkey_json` is always `None` on this axis — and
 /// `crates/pv-provider/tests/response_shape.rs`'s
-/// `sign_count_is_always_zero_for_a_provider_ceremony_assertion` (EXT-10 Task
-/// 1) confirms this empirically on the RAW WIRE BYTES: it decodes the
-/// base64url `response.authenticatorData` field returned to the page and
-/// reads the fixed 4-byte big-endian counter at offset 33..37, asserting it
-/// is 0 — a stronger claim than trusting the Rust-side `Option<u32>` alone.
-/// That in-process test is the permanent fast-regression tier only; the
-/// genuine live-wire measurement against a real browser and a real RP is
-/// completed downstream by 27-06's headed dual-extension ceremony spec.
+/// `sign_count_is_always_zero_for_a_provider_ceremony_assertion` (EXT-10
+/// Task 1) confirms this empirically on the RAW WIRE BYTES: it decodes
+/// the base64url `response.authenticatorData` field returned to the page
+/// and reads the fixed 4-byte big-endian counter at offset 33..37,
+/// asserting it is 0 — a stronger claim than trusting the Rust-side
+/// `Option<u32>` alone. That in-process test is the permanent
+/// fast-regression tier only; the genuine live-wire measurement against a
+/// real browser and a real RP is completed downstream by 27-06's headed
+/// dual-extension ceremony spec.
 ///
 /// **Decision: no counter is added.** WebAuthn L3 §6.1.1 explicitly permits
 /// an authenticator that "does not implement a signature counter" to report

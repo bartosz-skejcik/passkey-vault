@@ -190,6 +190,7 @@ fn get_response_binary_fields_are_base64url_strings() {
 ///   - bytes 33..37: signCount, 4-byte big-endian u32
 ///   - bytes 37..:   attestedCredentialData / extensions (variable, get
 ///     ceremonies never carry this)
+///
 /// This test decodes `response.authenticatorData` from the base64url string
 /// on the wire (never through any typed Rust wrapper that might silently
 /// normalize an absent counter to a default) and reads bytes 33..37 directly.

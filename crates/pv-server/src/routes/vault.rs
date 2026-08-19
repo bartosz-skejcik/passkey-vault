@@ -623,7 +623,7 @@ pub async fn update(
     // with only direct item_shares recipients has no collection to bump;
     // signal (2) — the recipients' vault_revision bump — is the whole
     // mechanism for those (CONTEXT.md's locked framing).
-    let recipients = resolve_recipients(&mut *tx, &id, collection_id.as_deref(), &owner_user_id).await?;
+    let recipients = resolve_recipients(&mut tx, &id, collection_id.as_deref(), &owner_user_id).await?;
     // CR-01 (code review iteration 1): the audience for the "go pull"
     // vault_revision bump (`recipients` above, unchanged) is intentionally a
     // SUPERSET of collection membership (item_shares recipients, and a
@@ -634,20 +634,20 @@ pub async fn update(
     // `Membership<Collection, _>` would deny them with 404. Resolved fresh,
     // same as `recipients`, never cached.
     let collection_members = match &collection_id {
-        Some(cid) => Some(resolve_collection_members(&mut *tx, cid).await?),
+        Some(cid) => Some(resolve_collection_members(&mut tx, cid).await?),
         None => None,
     };
     let new_collection_revision = match &collection_id {
-        Some(cid) => Some(bump_collection_revision(&mut *tx, cid).await?),
+        Some(cid) => Some(bump_collection_revision(&mut tx, cid).await?),
         None => None,
     };
-    bump_recipients_vault_revision(&mut *tx, &recipients).await?;
+    bump_recipients_vault_revision(&mut tx, &recipients).await?;
     // CR-02: an item's own direct item_shares recipients (if any — always
     // empty for a collection-scoped item after WR-10) get their "direct"
     // bucket counter bumped too, independent of the collection/vault_revision
     // bumps above.
     if collection_id.is_none() {
-        bump_direct_share_revision(&mut *tx, &id).await?;
+        bump_direct_share_revision(&mut tx, &id).await?;
     }
 
     tx.commit().await?;
@@ -756,7 +756,7 @@ pub async fn delete(
     // SYNC-04/SYNC-05 (closes this handler's WR-09 fan-out handoff):
     // resolve the CURRENT recipient set fresh, inside this same transaction,
     // BEFORE the cascade below removes it.
-    let recipients = resolve_recipients(&mut *tx, &id, collection_id.as_deref(), &owner_user_id).await?;
+    let recipients = resolve_recipients(&mut tx, &id, collection_id.as_deref(), &owner_user_id).await?;
     // CR-01: see update()'s identical comment above — the Collection-typed
     // event's audience must equal actual collection membership, never the
     // wider `recipients` set (which correctly includes item_shares
@@ -764,14 +764,14 @@ pub async fn delete(
     // for this). Resolved BEFORE the DELETE, same ordering requirement as
     // `recipients` above.
     let collection_members = match &collection_id {
-        Some(cid) => Some(resolve_collection_members(&mut *tx, cid).await?),
+        Some(cid) => Some(resolve_collection_members(&mut tx, cid).await?),
         None => None,
     };
     // CR-02: bump direct item_shares recipients' own "direct" bucket counter
     // BEFORE the DELETE cascades their item_shares rows away — same ordering
     // requirement as `resolve_recipients` above.
     if collection_id.is_none() {
-        bump_direct_share_revision(&mut *tx, &id).await?;
+        bump_direct_share_revision(&mut tx, &id).await?;
     }
 
     let result = sqlx::query("DELETE FROM vault_items WHERE id = ?").bind(&id).execute(&mut *tx).await?;
@@ -783,10 +783,10 @@ pub async fn delete(
     // every resolved recipient's vault_revision in ONE batched statement —
     // replacing the old single-caller bump this TODO used to leave in place.
     let new_collection_revision = match &collection_id {
-        Some(cid) => Some(bump_collection_revision(&mut *tx, cid).await?),
+        Some(cid) => Some(bump_collection_revision(&mut tx, cid).await?),
         None => None,
     };
-    bump_recipients_vault_revision(&mut *tx, &recipients).await?;
+    bump_recipients_vault_revision(&mut tx, &recipients).await?;
 
     // SYNC-01: the pre-existing "global-vault_revision-as-event-revision"
     // convention this handler used before Phase 23 for a personal item's
@@ -1116,7 +1116,7 @@ pub async fn move_item(
     // escalation behind a move that never actually happened.
     if dest_is_item_bucket {
         let dest_id = req.new_collection_id.as_deref().expect("dest_is_item_bucket implies new_collection_id is Some");
-        claim_item_bucket_edit_in_tx(&mut *tx, &source.caller_user_id, dest_id).await?;
+        claim_item_bucket_edit_in_tx(&mut tx, &source.caller_user_id, dest_id).await?;
     }
 
     // SYNC-04/SYNC-05 (closes this handler's WR-09 fan-out handoff):
@@ -1128,9 +1128,9 @@ pub async fn move_item(
     // de-duplicates). Both `owner_row`'s `current_collection` (fetched
     // above, Gate 0) and `req.new_collection_id` get their OWN collection
     // revision bumped in this SAME transaction as the move.
-    let source_recipients = resolve_recipients(&mut *tx, &id, current_collection.as_deref(), &owner_user_id).await?;
+    let source_recipients = resolve_recipients(&mut tx, &id, current_collection.as_deref(), &owner_user_id).await?;
     let dest_recipients = match &req.new_collection_id {
-        Some(dest_id) => Some(resolve_recipients(&mut *tx, &id, Some(dest_id.as_str()), &owner_user_id).await?),
+        Some(dest_id) => Some(resolve_recipients(&mut tx, &id, Some(dest_id.as_str()), &owner_user_id).await?),
         None => None,
     };
     // CR-01 (code review iteration 1): each side's ACTUAL collection
@@ -1144,11 +1144,11 @@ pub async fn move_item(
     // owner with no grant there — learns a collection id/revision
     // `Membership<Collection, _>` would deny them with 404.
     let source_collection_members = match &current_collection {
-        Some(cid) => Some(resolve_collection_members(&mut *tx, cid).await?),
+        Some(cid) => Some(resolve_collection_members(&mut tx, cid).await?),
         None => None,
     };
     let dest_collection_members = match &req.new_collection_id {
-        Some(cid) => Some(resolve_collection_members(&mut *tx, cid).await?),
+        Some(cid) => Some(resolve_collection_members(&mut tx, cid).await?),
         None => None,
     };
 
@@ -1172,7 +1172,7 @@ pub async fn move_item(
         all_recipients.insert(owner_user_id.clone());
     }
     let all_recipients: Vec<String> = all_recipients.into_iter().collect();
-    bump_recipients_vault_revision(&mut *tx, &all_recipients).await?;
+    bump_recipients_vault_revision(&mut tx, &all_recipients).await?;
     // BL-01 (code review iteration 2): bump the item's own direct
     // item_shares recipients' "direct" bucket counter UNCONDITIONALLY, on
     // BOTH directions of the move — never only "ends up personal". The
@@ -1189,7 +1189,7 @@ pub async fn move_item(
     // remove the very `item_shares` rows this bump needs to discover the
     // affected recipients from (mirrors `resolve_recipients`'s own ordering
     // requirement elsewhere in this file).
-    bump_direct_share_revision(&mut *tx, &id).await?;
+    bump_direct_share_revision(&mut tx, &id).await?;
     if req.new_collection_id.is_some() {
         // BL-01: WR-10's invariant ("a collection-scoped item must never
         // carry a direct item_shares grant") was previously enforced ONLY at
@@ -1207,11 +1207,11 @@ pub async fn move_item(
     }
 
     let new_source_collection_revision = match &current_collection {
-        Some(cid) => Some(bump_collection_revision(&mut *tx, cid).await?),
+        Some(cid) => Some(bump_collection_revision(&mut tx, cid).await?),
         None => None,
     };
     let new_dest_collection_revision = match &req.new_collection_id {
-        Some(cid) => Some(bump_collection_revision(&mut *tx, cid).await?),
+        Some(cid) => Some(bump_collection_revision(&mut tx, cid).await?),
         None => None,
     };
 
