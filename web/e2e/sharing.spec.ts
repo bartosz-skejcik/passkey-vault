@@ -2483,15 +2483,49 @@ test("SC4: a member with only folder-derived access loses it after the owner mov
     "API-level proof (member's own token): the item must be genuinely gone from the destination collection, not merely absent from a stale client render",
   ).toBeUndefined();
   //
-  // (b) a full reload + re-unlock, then the SAME positive-anchor locator
-  //     from step 3, re-asserted absent on a GENUINELY FRESH render. A
-  //     post-reload absence cannot be explained by a stale unmount --
-  //     there is nothing left to be stale.
+  // (b) a full reload + re-unlock, forcing a genuinely fresh FULL-STATE
+  //     fetch (the initial-load `getCollectionSync` path, independent of
+  //     the incremental `mergeCollectionSnapshot` path step 5's own first
+  //     assertion already proved) -- then re-assert the item's ROW is
+  //     STILL absent from the member's list on that fresh fetch.
+  //
+  //     32-VERIFICATION.md F-1: the PRIOR form of this check re-asserted
+  //     step 3's PASSWORD-TEXT locator here instead. That assertion is
+  //     vacuous -- nothing renders the plaintext password after a reload
+  //     without an explicit row-click + reveal-password click, which this
+  //     step never performs, so it passed even in a throwaway build where
+  //     the member's access was fully RETAINED (falsified independently by
+  //     the verifier: SC4 driven up to the positive anchor, move-out
+  //     skipped, assertion (b) still green, a positive control confirming
+  //     access). Asserting LIST MEMBERSHIP on the fresh full fetch is the
+  //     genuinely discriminating form: if the member's access were
+  //     retained, the reload's own initial load would put the row back
+  //     regardless of what the incremental-sync assertion above already
+  //     proved -- this exercises the INITIAL LOAD path independently of
+  //     the incremental one, so a bug isolated to one path cannot hide
+  //     behind the other.
   await reloadAndUnlock(member.page, SESSION_PASSWORD);
-  await expect(
-    member.page.getByText(itemPassword, { exact: true }),
-    "post-reload proof: a genuinely fresh render must never show the password either -- rules out a stale-unmount explanation for the earlier absence",
-  ).toHaveCount(0);
+  // `toHaveCount(0)` alone is vulnerable to the SAME timing trap this
+  // phase already hit once (this file's own header, and the 30s-poll-
+  // fallback-recovered SC4 falsification C-1 fixed): checked the instant
+  // after reload, BEFORE the post-unlock fetch (`loadAndDecryptAll`/
+  // `refreshSharedItemsNow`) has resolved, the row's count is genuinely 0
+  // regardless of access -- a web-first assertion returns on its FIRST
+  // successful poll, so an immediate `toHaveCount(0)` could pass on a
+  // build where access was fully retained, purely because it observed the
+  // loading gap. Instead, actively WAIT for the row to become visible
+  // (which resolves once the fetch lands, in a couple of seconds in
+  // practice, per the positive anchor above) or GENUINELY exhaust the
+  // wait -- only THEN is an observed absence non-vacuous.
+  const rowAfterReload = member.page.getByTestId(`item-row-${itemId}`);
+  const rowReappeared = await rowAfterReload
+    .waitFor({ state: "visible", timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+  expect(
+    rowReappeared,
+    "post-reload proof: a genuinely fresh full-state fetch must never re-surface the item either -- rules out an incremental-sync-only explanation for the earlier absence",
+  ).toBe(false);
 
   expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
   expect(member.dialogFired(), "zero OS-level dialogs across the member session").toBe(false);
