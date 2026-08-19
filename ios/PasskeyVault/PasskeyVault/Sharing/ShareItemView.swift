@@ -344,10 +344,29 @@ struct ShareItemView: View {
                 )
                 succeeded.append(member.email)
             } catch where ResealService.isConflictError(error) {
-                // Already holds this exact grant -- the outcome this call
-                // wanted, and what lets a retry make progress past a
-                // recipient a previous attempt already reached.
-                succeeded.append(member.email)
+                // CR-08 (40-REVIEW.md, iteration 2): a 409 here means the
+                // recipient already holds SOME grant for this item -- but,
+                // unlike `ResealService`'s own re-share-onward call (that
+                // type's own doc comment names this exact exclusion), the
+                // level offered here is a USER CHOICE on THIS sheet, made
+                // fresh every time it opens. Treating the 409 as success
+                // outright silently discarded a re-share at a DIFFERENT
+                // level -- `create_share`'s `ON CONFLICT DO NOTHING` leaves
+                // the pre-existing row's old `access_level` untouched, so a
+                // downgrade from `edit` to `hidden_password` reported
+                // success while the recipient kept `edit`. Discriminate:
+                // attempt the level EDIT via `PUT .../shares/{user_id}`
+                // (`update_share`) before counting this recipient as
+                // succeeded.
+                do {
+                    try await familyAPI.updateItemShare(
+                        itemId: item.itemId, recipientUserId: member.userId,
+                        accessLevel: accessLevel.rawValue
+                    )
+                    succeeded.append(member.email)
+                } catch {
+                    failed.append(member.email)
+                }
             } catch {
                 failed.append(member.email)
             }

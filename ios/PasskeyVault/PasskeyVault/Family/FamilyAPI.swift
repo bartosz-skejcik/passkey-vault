@@ -328,6 +328,37 @@ struct FamilyAPI {
         try Self.requireStatus(201, response: response, data: data)
     }
 
+    private struct UpdateItemShareRequestBody: Encodable {
+        let access_level: String
+    }
+
+    /// `PUT /api/vault/items/{id}/shares/{user_id}` -- `crates/pv-server/
+    /// src/routes/vault.rs::update_share`. CR-08 (40-REVIEW.md, iteration
+    /// 2): the recipient already holds SOME grant for this item (a 409 on
+    /// `createItemShare` above), and this call changes its LEVEL only --
+    /// `update_share`'s own doc comment records that the row's
+    /// `sealed_key` never needs to change for a level edit (the recipient
+    /// already holds the same Item Key). 404s if no `item_shares` row
+    /// exists for this pair (an edit of an existing row, never a silent
+    /// upsert); expects **204**.
+    func updateItemShare(
+        itemId: String,
+        recipientUserId: String,
+        accessLevel: String
+    ) async throws {
+        guard let token = tokenProvider() else {
+            throw PvApiError.unexpectedResponse(
+                "no session token available for /api/vault/items/\(itemId)/shares/\(recipientUserId)"
+            )
+        }
+        let requestBody = UpdateItemShareRequestBody(access_level: accessLevel)
+        let body = try JSONEncoder().encode(requestBody)
+        let (data, response) = try await send(
+            path: "/api/vault/items/\(itemId)/shares/\(recipientUserId)", method: "PUT", body: body, token: token
+        )
+        try Self.requireStatus(204, response: response, data: data)
+    }
+
     private struct AddCollectionMemberRequestBody: Encodable {
         let recipient_user_id: String
         let sealed_key: String
