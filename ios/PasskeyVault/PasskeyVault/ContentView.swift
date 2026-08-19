@@ -474,12 +474,40 @@ struct ContentView: View {
     /// phase built") both assume this wiring exists; it did not, until here.
     /// `repeatingPullDisabled` is left at its default (`false`) -- the
     /// in-foreground 30s timer stays on for real usage; only the D-06 live
-    /// proof (`LiveSyncProbe`) needs it off.
+    /// proof (`LiveSyncProbe`) needs it off in that file's own context.
+    ///
+    /// A SECOND, DIFFERENT reason to disable it, DEBUG-only and opt-in via
+    /// `PV_UITEST_DISABLE_REPEATING_PULL` (this repo's established
+    /// `PV_UITEST_*` hook convention): plan 39-06's `FreshnessEvidenceUITests`
+    /// needs to hold a signed-in session open across a real, external
+    /// server stop to prove SC4/E-F2's stale-cache artifact, and the SAME
+    /// 30s repeating timer this note defends for real usage was observed
+    /// LIVE to fire mid-test, mid-server-kill-window, and leave the app
+    /// unresponsive to further XCUITest interaction (a background pull
+    /// racing that test's own, deliberately-triggered one against a
+    /// now-dead server). Disabling it there removes that race without
+    /// touching the mechanism itself -- the test's own explicit
+    /// pull-to-refresh gesture is the ONLY pull it needs or wants.
     private func syncCoordinatorFor(_ session: UnlockedSession, store: VaultStore) -> SyncCoordinator {
         if let syncCoordinator {
             return syncCoordinator
         }
         let coordinator = SyncCoordinator(store: store)
+        #if DEBUG
+        // `PV_UITEST_DISABLE_REPEATING_PULL` skips `.start(...)` entirely --
+        // NOT just the 30s timer. `FreshnessEvidenceUITests` observed live
+        // that the underlying `SyncSocket`'s OWN reconnect loop (independent
+        // of `repeatingPullDisabled`, which only gates SyncCoordinator's
+        // separate in-foreground timer) kept the app unresponsive to further
+        // XCUITest interaction once the server it was reconnecting against
+        // died mid-test. That test drives `VaultStore.refresh()` directly
+        // via pull-to-refresh, never through this coordinator or its socket
+        // -- so skipping `.start()` here costs that test nothing.
+        if ProcessInfo.processInfo.environment["PV_UITEST_DISABLE_REPEATING_PULL"] != nil {
+            syncCoordinator = coordinator
+            return coordinator
+        }
+        #endif
         coordinator.start(
             baseURL: ServerSettings.resolved,
             tokenProvider: { [token = session.token] in token }

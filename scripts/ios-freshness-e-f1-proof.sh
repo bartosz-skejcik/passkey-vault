@@ -147,13 +147,25 @@ BEFORE_RENDERED="$(jq -r '.rendered' "$BEFORE_PROBE")"
 echo "    baseline: before=${BEFORE_TS}"
 
 # --- 3. STOP THE SERVER FOR REAL --------------------------------------------
-SERVER_PID="$(lsof -ti ":${PORT}" 2>/dev/null || true)"
-if [ -z "$SERVER_PID" ]; then
-  echo "ERROR: no process found listening on :${PORT} -- cannot stop what isn't running." >&2
+# `lsof -ti :PORT` matches EVERY process with a socket touching that port --
+# NOT ONLY the server's own LISTEN socket, but ALSO the app's own
+# ESTABLISHED connection to it from the OTHER side (39-06 Task 3's own
+# finding, ios/evidence/39/06-freshness-host.md -- an unfiltered kill here
+# risks terminating the very client process the proof needs to keep
+# running). Filtered to the actual `pv-server` binary by command name.
+SERVER_PIDS="$(lsof -ti ":${PORT}" 2>/dev/null | while IFS= read -r pid; do
+  if ps -p "$pid" -o comm= 2>/dev/null | grep -q 'pv-server'; then
+    echo "$pid"
+  fi
+done)"
+if [ -z "$SERVER_PIDS" ]; then
+  echo "ERROR: no pv-server process found listening on :${PORT} -- cannot stop what isn't running." >&2
   exit 1
 fi
-echo "==> stopping pv-server: kill -TERM ${SERVER_PID} (PID resolved via lsof -ti :${PORT})"
-kill -TERM "$SERVER_PID"
+echo "==> stopping pv-server: kill -TERM $(echo "$SERVER_PIDS" | tr '\n' ' ') (PID(s) resolved via lsof -ti :${PORT}, filtered to pv-server by command name)"
+echo "$SERVER_PIDS" | while IFS= read -r pid; do
+  [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null || true
+done
 DEAD=0
 for _ in $(seq 1 50); do
   if [ -z "$(lsof -ti ":${PORT}" 2>/dev/null || true)" ] && ! curl -fsS -m 1 "${PV_IOS_BASE}/healthz" >/dev/null 2>&1; then
