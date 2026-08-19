@@ -84,6 +84,14 @@ protocol SyncSocketTransport: AnyObject {
         onOpen: @escaping @Sendable () -> Void,
         onClose: @escaping @Sendable (URLSessionWebSocketTask.CloseCode, Data?) -> Void
     ) -> SyncSocketTask
+
+    /// WR-02 (39-REVIEW.md): explicit, task-scoped teardown -- called by
+    /// `SyncSocket.handleClose(task:code:)`, the SINGLE place `currentTask`
+    /// is ever nilled, so a task that never fires a close frame at all
+    /// (connection refused, TLS failure, `didCompleteWithError` with no
+    /// corresponding `didCloseWith`) still has its stored handler entry
+    /// removed. A no-op for a fake transport that keeps no such table.
+    func discardHandlers(for task: SyncSocketTask)
 }
 
 /// Real transport: one `URLSession` configured with itself as the
@@ -104,6 +112,16 @@ final class URLSessionSyncSocketTransport: NSObject, SyncSocketTransport, URLSes
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
 
+    /// WR-02 (39-REVIEW.md): `URLSession(configuration:delegate:delegateQueue:)`
+    /// retains its delegate until INVALIDATED -- without this, every
+    /// `SyncSocket` (one per lock/unlock cycle, since `ContentView
+    /// .performLock` drops the coordinator) leaked its transport's session
+    /// forever. `invalidateAndCancel()` cancels any outstanding task too, so
+    /// this is safe even if `stop()` was never called first.
+    deinit {
+        session.invalidateAndCancel()
+    }
+
     func makeTask(
         url: URL,
         onOpen: @escaping @Sendable () -> Void,
@@ -114,6 +132,17 @@ final class URLSessionSyncSocketTransport: NSObject, SyncSocketTransport, URLSes
         handlers[ObjectIdentifier(task)] = (onOpen, onClose)
         lock.unlock()
         return task
+    }
+
+    /// WR-02 (39-REVIEW.md): see the protocol requirement's own header --
+    /// removes this task's stored handler entry unconditionally, whether or
+    /// not `didCloseWith` ever fired for it. `ObjectIdentifier` is
+    /// address-derived, so this is scoped to exactly the task the caller
+    /// names, never a broader sweep.
+    func discardHandlers(for task: SyncSocketTask) {
+        lock.lock()
+        handlers[ObjectIdentifier(task)] = nil
+        lock.unlock()
     }
 
     func urlSession(
@@ -298,6 +327,14 @@ final class SyncSocket {
     }
 
     private func handleClose(task: SyncSocketTask, code: URLSessionWebSocketTask.CloseCode) {
+        // WR-02 (39-REVIEW.md): unconditional, task-scoped -- this is the
+        // SINGLE place `currentTask` is ever nilled (this type's own
+        // header), so it is also the single place that can guarantee a
+        // task's transport-level handler entry is discarded, whether or not
+        // this task ever fired a real close frame, and whether or not it is
+        // the CURRENT task (a superseded task's own late close must not
+        // leak its entry either).
+        transport.discardHandlers(for: task)
         guard currentTask === task else { return } // stale close -- a newer connection already owns state
         currentTask = nil
         Self.logger.log("PVSYNC|event=close code=\(code.rawValue, privacy: .public)")

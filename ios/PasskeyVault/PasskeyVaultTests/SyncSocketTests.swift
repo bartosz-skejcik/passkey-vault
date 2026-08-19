@@ -85,6 +85,11 @@ final class FakeSyncSocketTask: SyncSocketTask, @unchecked Sendable {
 
 final class FakeSyncSocketTransport: SyncSocketTransport {
     private(set) var madeTasks: [FakeSyncSocketTask] = []
+    /// WR-02 (39-REVIEW.md): tracks calls, so a test could assert cleanup
+    /// happened -- this fake keeps no real handler table of its own to
+    /// clear (unlike `URLSessionSyncSocketTransport`), so there is nothing
+    /// else for this method to do.
+    private(set) var discardedTaskCount = 0
 
     func makeTask(
         url: URL,
@@ -94,6 +99,10 @@ final class FakeSyncSocketTransport: SyncSocketTransport {
         let task = FakeSyncSocketTask(onOpen: onOpen, onClose: onClose)
         madeTasks.append(task)
         return task
+    }
+
+    func discardHandlers(for task: SyncSocketTask) {
+        discardedTaskCount += 1
     }
 }
 
@@ -169,6 +178,8 @@ final class BackgroundDispatchingSyncSocketTransport: SyncSocketTransport, @unch
         lock.lock(); _madeTasks.append(task); lock.unlock()
         return task
     }
+
+    func discardHandlers(for task: SyncSocketTask) {}
 }
 
 private struct FakeCancellable: SyncSocketCancellable {
@@ -281,6 +292,21 @@ struct SyncSocketTests {
         #expect(task.isCancelled)
         #expect(scheduler.scheduled.isEmpty, "an intentional stop must never schedule a reconnect")
         #expect(transport.madeTasks.count == 1, "no reconnect means no second task was ever created")
+    }
+
+    // WR-02 (39-REVIEW.md): every close -- intentional or not -- must
+    // discard that task's transport-level handler entry, or the entry (and
+    // the `URLSessionWebSocketTask` it captures) leaks for the process's
+    // life. `handleClose` is the single place this can be guaranteed from.
+    @MainActor
+    @Test func everyCloseDiscardsTheTasksTransportHandlerEntry() {
+        let (socket, transport, _, _) = makeSocket()
+        socket.start()
+        let task = transport.madeTasks[0]
+        task.simulateOpen()
+        #expect(transport.discardedTaskCount == 0, "no close has fired yet")
+        socket.stop()
+        #expect(transport.discardedTaskCount == 1, "stop()'s own close must discard the handler entry")
     }
 
     // Behaviour 5: a close on a superseded connection does not alter the
