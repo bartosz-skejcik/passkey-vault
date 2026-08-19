@@ -79,6 +79,13 @@
 //! | `rewrap_item_key_for_collection` | `Result<String,_>`  | serde_json — złapane jako `Err` (40-03) |
 //! | `seal_item_key_for_recipient`  | `Result<String,_>`    | serde_json — złapane jako `Err` (40-03) |
 //! | `decrypt_item_with_shared_key` | `Result<String,_>`    | serde_json/utf8 — złapane jako `Err` (40-03) |
+//! | `generate_invite_secret`       | `Vec<u8>` (BEZ `Result`) | NIE — `random_bytes(32)`, ten sam kształt co `generate_registration_salt` (40-04) |
+//! | `FfiInviteChannel::from_secret` | `Result<Arc<Self>,_>` | długość — złapane jako `Err` (40-04) |
+//! | `FfiInviteChannel::invite_id`  | `String` (BEZ `Result`) | NIE — czysta derywacja, żadnej alokacji poza zwykłym `String` (40-04) |
+//! | `FfiInviteChannel::proof_hash_for_creation` | `Vec<u8>` (BEZ `Result`) | NIE — HKDF+SHA-256, ten sam kształt co `generate_registration_salt` (40-04) |
+//! | `FfiInviteChannel::proof_for_redemption` | `Vec<u8>` (BEZ `Result`) | NIE — HKDF, ten sam kształt (40-04) |
+//! | `FfiInviteChannel::wrap_collection_key` | `Result<String,_>` | serde_json — złapane jako `Err` (40-04) |
+//! | `FfiInviteChannel::unwrap_collection_key` | `Result<Arc<FfiCollectionKey>,_>` | serde_json/AAD mismatch — złapane jako `Err` (40-04) |
 //!
 //! `export_user_key_for_session` to JEDYNY eksport bez `Result`, świadomie:
 //! jego całe ciało to `expose().to_vec()`. Jedyna droga do paniki byłaby
@@ -147,12 +154,16 @@ pub use totp::{totp_now, FfiTotpCode};
 // follows) and for the Rule-2 rationale behind
 // `encrypt_item_for_collection`/`decrypt_item_for_collection` living there
 // already, ahead of plan 40-03's own scope.
+// Plan 40-04 additionally adds the invite channel (`FfiInviteChannel`,
+// `generate_invite_secret`) -- see sharing.rs's own module header for the
+// two SANCTIONED RAW-BYTES EXITS this adds.
 pub mod sharing;
 pub use sharing::{
     decrypt_item_for_collection, decrypt_item_with_shared_key, encrypt_item_for_collection,
-    rewrap_item_key_for_collection, seal_collection_key, seal_item_key_for_recipient,
-    unseal_collection_key, unwrap_identity_secret_key, wrap_identity_secret_key, FfiCollectionKey,
-    FfiIdentityKey, FfiIdentityPublicKey,
+    generate_invite_secret, rewrap_item_key_for_collection, seal_collection_key,
+    seal_item_key_for_recipient, unseal_collection_key, unwrap_identity_secret_key,
+    wrap_identity_secret_key, FfiCollectionKey, FfiIdentityKey, FfiIdentityPublicKey,
+    FfiInviteChannel,
 };
 
 // TEST-ONLY (`#[cfg(test)]`): observes what this crate actually hands back

@@ -41,6 +41,32 @@
 //! descendant of the module that defines it, per ordinary Rust privacy) —
 //! that is how the round-trip tests below capture "the original bytes"
 //! without needing a public accessor at all.
+//!
+//! SANCTIONED RAW-BYTES EXITS (Phase 40, plan 40-04, invite channel) — two
+//! functions in this module deliberately cross the Swift/Rust boundary as
+//! raw bytes, each the counterpart of an exception `pv-wasm`'s own header
+//! already documents (`crates/pv-wasm/src/lib.rs:697-706`,
+//! `generateInviteSecret`'s comment — the THIRD wasm-side exception, after
+//! `randomSalt`/`exportUserKeyForSession`) and mirroring `lib.rs`'s own
+//! FFI-03 exception pair on this crate's side:
+//!
+//! - `generate_invite_secret() -> Vec<u8>` — the invite secret must
+//!   literally appear in the URL fragment a human forwards as an invite
+//!   link; there is no ciphertext form it could take instead, since nothing
+//!   yet exists to encrypt it under at the moment it is generated.
+//! - `FfiInviteChannel::proof_for_redemption() -> Vec<u8>` — a bearer
+//!   credential (WR-08, `pv_core::invite`'s own module header) presented in
+//!   a POST body at redemption time; the server verifies it directly
+//!   against its own stored hash, so no other form would let it do its job.
+//!
+//! Neither exit returns the invite secret itself. `FfiInviteChannel` stores
+//! ONLY the raw 32-byte `invite_secret` — never a pre-derived wrap key or
+//! proof, mirroring `pv_core::invite`'s own re-derivation design and
+//! `WasmInviteChannel`'s recorded decision — and re-derives everything else
+//! on demand. The caller MUST capture the URL-safe base64 of the secret
+//! BEFORE handing the bytes to `FfiInviteChannel::from_secret`: the channel
+//! zeroizes its own copy on construction, and no accessor ever returns the
+//! secret again.
 
 use std::sync::Arc;
 
@@ -59,7 +85,7 @@ use pv_core::{
         unwrap_item_key_for_sharing as core_unwrap_item_key_for_sharing, CollectionKey,
         EncryptedItem,
     },
-    keys::{WrappedKey, KEY_LEN},
+    keys::{random_bytes, WrappedKey, KEY_LEN},
 };
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
@@ -320,6 +346,111 @@ pub fn decrypt_item_with_shared_key(
         core_decrypt_item_payload_with_shared_key(&ck.0, &enc_data, &item_id, revision)?;
     let bytes = std::mem::take(&mut *plaintext);
     String::from_utf8(bytes).map_err(|e| FfiError::InvalidInput(e.to_string()))
+}
+
+// --- Invite channel (Phase 40, plan 40-04) --------------------------------
+//
+// See this file's module header (SANCTIONED RAW-BYTES EXITS) for why
+// `generate_invite_secret` and `FfiInviteChannel::proof_for_redemption` are
+// the only two raw-byte exits this section adds.
+
+/// Generuje świeży 32-bajtowy `invite_secret` — mirror `pv-wasm`'s
+/// `generateInviteSecret` (`crates/pv-wasm/src/lib.rs:697-706`). Ten sam
+/// `random_bytes` co reszta tego pliku/`pv-core`'s CSPRNG — żadna nowa
+/// logika losowości. `Vec<u8>` bez `Result`, ten sam kształt co
+/// `generate_registration_salt` (`lib.rs`) — jawna losowość, nie materiał
+/// klucza, ten sam precedens.
+#[uniffi::export]
+pub fn generate_invite_secret() -> Vec<u8> {
+    random_bytes(KEY_LEN)
+}
+
+/// Nieprzezroczysty handle kanału zaproszenia (Phase 40, `pv_core::invite`)
+/// — mirror `pv-wasm`'s `WasmInviteChannel`. Trzyma WYŁĄCZNIE surowy
+/// `invite_secret`, NIGDY pre-derived wrap key ani proof —
+/// `wrap_collection_key_for_invite`/`unwrap_collection_key_for_invite`/
+/// `derive_invite_proof`/`hash_invite_proof` same wewnętrznie na nowo
+/// derywują to, czego potrzebują z sekretu + `invite_id`; zadaniem tego
+/// handle'a jest tylko przechowywać to, czego te funkcje potrzebują, nie
+/// reimplementować ich derywacji. `invite_id` jest jawnie NIE-sekretny
+/// (`#[zeroize(skip)]`), `invite_secret` zeruje się przy Drop. Żadna metoda
+/// tego structu nie zwraca `invite_secret`'s bajtów wprost — wyłącznie jego
+/// jednokierunkowe derywacje przekraczają granicę.
+#[derive(Zeroize, ZeroizeOnDrop, uniffi::Object)]
+pub struct FfiInviteChannel {
+    #[zeroize(skip)]
+    invite_id: String,
+    invite_secret: [u8; KEY_LEN],
+}
+
+#[uniffi::export]
+impl FfiInviteChannel {
+    /// Buduje kanał WYŁĄCZNIE z surowych bajtów sekretu (własnego wyjścia
+    /// `generate_invite_secret`, lub fragmentu linku zaproszenia) — NIGDY z
+    /// samego `invite_id`, bo `invite_id` nie pozwala odtworzyć ani wrap
+    /// key, ani proof. Odrzuca KAŻDĄ długość inną niż dokładnie 32 bajty.
+    /// Derywuje `invite_id` raz, przy konstrukcji.
+    #[uniffi::constructor]
+    pub fn from_secret(secret: Vec<u8>) -> Result<Arc<Self>, FfiError> {
+        let arr: [u8; KEY_LEN] = secret
+            .as_slice()
+            .try_into()
+            .map_err(|_| FfiError::InvalidInput("expected 32 bytes".to_string()))?;
+        let invite_id = pv_core::invite::derive_invite_id(&arr);
+        Ok(Arc::new(FfiInviteChannel { invite_id, invite_secret: arr }))
+    }
+
+    /// Jedyne pole tego handle'a, które NIE jest sekretem — deterministyczne:
+    /// ten sam `invite_secret` zawsze produkuje ten sam `invite_id`,
+    /// niezależnie od tego, na którym niezależnie skonstruowanym handle'u
+    /// zostanie wywołane.
+    pub fn invite_id(&self) -> String {
+        self.invite_id.clone()
+    }
+
+    /// Wartość, którą klient ZAPRASZAJĄCEGO wysyła jako `proof_hash` przy
+    /// tworzeniu zaproszenia — `SHA-256(invite_proof)`, digest a nie
+    /// sekret. NIE mylić z `proof_for_redemption`.
+    pub fn proof_hash_for_creation(&self) -> Vec<u8> {
+        let proof = pv_core::invite::derive_invite_proof(&self.invite_secret);
+        pv_core::invite::hash_invite_proof(&proof).to_vec()
+    }
+
+    /// Surowa (NIE zahaszowana) wartość, którą klient ZAPROSZONEGO
+    /// prezentuje przy odbiorze zaproszenia — drugi sankcjonowany
+    /// raw-bajtowy wyjątek tego modułu (patrz nagłówek pliku). WR-08: bearer
+    /// credential.
+    pub fn proof_for_redemption(&self) -> Vec<u8> {
+        pv_core::invite::derive_invite_proof(&self.invite_secret).to_vec()
+    }
+
+    /// Zawija `ck` pod `invite_wrap_key` derywowanym z tego kanału,
+    /// AAD-bound do `self.invite_id`. DR-40-A: `String` przez `serde_json`.
+    pub fn wrap_collection_key(&self, ck: &FfiCollectionKey) -> Result<String, FfiError> {
+        let blob = pv_core::invite::wrap_collection_key_for_invite(
+            &self.invite_secret,
+            &self.invite_id,
+            &ck.0,
+        )?;
+        serde_json::to_string(&blob).map_err(|e| FfiError::InvalidInput(e.to_string()))
+    }
+
+    /// Odwrotność `wrap_collection_key`. Na kanale zbudowanym z INNEGO
+    /// sekretu (a więc z innym `invite_id`, więc inną AAD) to zawodzi
+    /// zamknięte.
+    pub fn unwrap_collection_key(
+        &self,
+        wrapped_json: String,
+    ) -> Result<Arc<FfiCollectionKey>, FfiError> {
+        let blob: WrappedKey = serde_json::from_str(&wrapped_json)
+            .map_err(|e| FfiError::InvalidInput(e.to_string()))?;
+        let collection_key = pv_core::invite::unwrap_collection_key_for_invite(
+            &self.invite_secret,
+            &self.invite_id,
+            &blob,
+        )?;
+        Ok(Arc::new(FfiCollectionKey(collection_key)))
+    }
 }
 
 #[cfg(test)]
@@ -665,5 +796,140 @@ mod tests {
             2,
         );
         assert!(result.is_err());
+    }
+
+    // --- Task 1 tests (invite channel) --------------------------------
+
+    #[test]
+    fn invite_secret_is_32_bytes() {
+        let secret = generate_invite_secret();
+        assert_eq!(secret.len(), KEY_LEN);
+    }
+
+    #[test]
+    fn invite_channel_from_secret_rejects_wrong_length() {
+        let too_short = vec![0u8; 31];
+        assert!(FfiInviteChannel::from_secret(too_short).is_err());
+
+        let too_long = vec![0u8; 33];
+        assert!(FfiInviteChannel::from_secret(too_long).is_err());
+    }
+
+    /// Compares against `pv_core::invite::derive_invite_id` called
+    /// independently on the same fixed 32-byte literal -- never the
+    /// wrapper compared to itself.
+    #[test]
+    fn invite_id_matches_pv_core_derivation() {
+        let secret: [u8; KEY_LEN] = [0x5cu8; KEY_LEN];
+        let expected = pv_core::invite::derive_invite_id(&secret);
+
+        let channel = FfiInviteChannel::from_secret(secret.to_vec())
+            .expect("from_secret should succeed on a 32-byte literal");
+
+        assert_eq!(channel.invite_id(), expected);
+    }
+
+    /// Wraps a `FfiCollectionKey` under the invite channel, unwraps it on
+    /// the SAME channel, and proves the recovered key is functionally
+    /// identical by decrypting a fixture that was encrypted under the
+    /// ORIGINAL key -- not merely comparing raw bytes to raw bytes.
+    #[test]
+    fn invite_wrap_unwrap_collection_key_roundtrip() {
+        let secret = generate_invite_secret();
+        let channel = FfiInviteChannel::from_secret(secret)
+            .expect("from_secret should succeed on generate_invite_secret's own output");
+
+        let ck = FfiCollectionKey::generate().expect("generate is infallible today");
+        let original: [u8; KEY_LEN] = ck.0;
+
+        let plaintext = "{\"type\":\"note\",\"body\":\"invite fixture 🔑\\u0000tail\"}".to_string();
+        let item_json = encrypt_item_for_collection(
+            &ck,
+            plaintext.clone(),
+            "collection-fixture".to_string(),
+            "item-fixture".to_string(),
+            1,
+        )
+        .expect("encrypt_item_for_collection should succeed");
+
+        let wrapped_json = channel
+            .wrap_collection_key(&ck)
+            .expect("wrap_collection_key should succeed");
+        let recovered = channel
+            .unwrap_collection_key(wrapped_json)
+            .expect("unwrap_collection_key should succeed");
+
+        assert_eq!(recovered.0, original);
+
+        let decrypted = decrypt_item_for_collection(
+            &recovered,
+            item_json,
+            "collection-fixture".to_string(),
+            "item-fixture".to_string(),
+            1,
+        )
+        .expect(
+            "decrypting a fixture encrypted under the original ck, using the recovered ck, \
+             must succeed",
+        );
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn invite_unwrap_with_different_secret_errors() {
+        let secret_a = generate_invite_secret();
+        let secret_b = generate_invite_secret();
+        let channel_a = FfiInviteChannel::from_secret(secret_a)
+            .expect("from_secret should succeed on generate_invite_secret's own output");
+        let channel_b = FfiInviteChannel::from_secret(secret_b)
+            .expect("from_secret should succeed on generate_invite_secret's own output");
+
+        let ck = FfiCollectionKey::generate().expect("generate is infallible today");
+        let wrapped_json = channel_a
+            .wrap_collection_key(&ck)
+            .expect("wrap_collection_key should succeed");
+
+        let result = channel_b.unwrap_collection_key(wrapped_json);
+        assert!(result.is_err());
+    }
+
+    /// Proves the AAD binding is to `invite_id` SPECIFICALLY, not merely
+    /// "some channel-derived value": forges a blob wrapped under the SAME
+    /// secret but a DIFFERENT invite_id (via `pv_core::invite` directly,
+    /// bypassing `from_secret`'s own correct re-derivation), then attempts
+    /// to unwrap it through the real channel (whose `invite_id` is the
+    /// correct derivation) -- must fail. A control unwrap of the
+    /// correctly-wrapped blob on the same channel confirms the failure is
+    /// about the invite_id mismatch, not a broken channel.
+    #[test]
+    fn invite_unwrap_with_different_invite_id_errors() {
+        let secret = generate_invite_secret();
+        let channel = FfiInviteChannel::from_secret(secret.clone())
+            .expect("from_secret should succeed on generate_invite_secret's own output");
+
+        let ck = FfiCollectionKey::generate().expect("generate is infallible today");
+        let wrapped_json = channel
+            .wrap_collection_key(&ck)
+            .expect("wrap_collection_key should succeed");
+
+        let mut secret_arr = [0u8; KEY_LEN];
+        secret_arr.copy_from_slice(&secret);
+        let forged_wrapped = pv_core::invite::wrap_collection_key_for_invite(
+            &secret_arr,
+            "not-the-real-invite-id",
+            &ck.0,
+        )
+        .expect("wrap_collection_key_for_invite should succeed");
+        let forged_json =
+            serde_json::to_string(&forged_wrapped).expect("WrappedKey always serializes");
+
+        let result = channel.unwrap_collection_key(forged_json);
+        assert!(result.is_err());
+
+        // Control: the correctly-wrapped blob still unwraps fine on the
+        // same channel -- the failure above is specifically about the
+        // invite_id mismatch, not a broken channel.
+        let recovered = channel.unwrap_collection_key(wrapped_json);
+        assert!(recovered.is_ok());
     }
 }
