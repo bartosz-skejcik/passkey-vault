@@ -1483,6 +1483,187 @@ or writes a falsification transcript:
 
 ---
 
+## 1i. Phase 41 decision records — DR-41-A, DR-41-C, 2026-08-20
+
+Written before any Phase-41 fill code, on the `IOS-06`/`ACC-03`/`DR-40-A` precedent this project
+already follows (decision-record-before-dependent-code). Owed per `41-RESEARCH.md` §"Decision records
+this phase owns" and §"Primary recommendation for the planner". Answered at Plan `41-02`'s Task 1
+`checkpoint:decision` (gate `blocking`), resolved by the orchestrator under Bartek's standing
+full-autonomy brief for architecture-level calls — presentation and evidence transcript in
+`ios/evidence/41/dr-41-a-options.md`.
+
+### DR-41-A — The silent-fill artifact: **DECIDED — Option B, a second, non-biometric session artifact ("Secret C")**
+
+**Decision: a second, non-biometric Keychain item** (`kSecClassGenericPassword`,
+`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, **no** `SecAccessControl`, shared access group
+`$(AppIdentifierPrefix)cloud.blonie.PasskeyVault`, same group ACC-03's Secret A already uses), written
+by the host app on every successful biometric or master-password unlock, carrying the exported User Key
+session bytes (`export_user_key_for_session`, the load-bearing mechanism IOS-06's own amendment already
+made permanent), deleted by whichever process observes expiry (ACC-06). Named **Secret C** in this
+record to keep it distinct from ACC-03's Secret A (the `.biometryCurrentSet` User Key envelope,
+unchanged) and Secret B (the session token, GAP 3).
+
+**Rejected: Option A, no second artifact.** Under Option A the extension would always read Secret A
+directly, so every QuickType tap becomes a Face ID sheet (F1, `41-RESEARCH.md`) and ROADMAP SC3 would
+have to be reworded to a weaker claim — "one biometric prompt, never a master-password prompt" — rather
+than met. Rejected on the merit that the phase's own `Goal` line (`ROADMAP.md` §"Phase 41") names the
+Bitwarden "Face ID mówi odblokowane, autofill i tak pyta o hasło główne" bug class as the defect this
+phase exists to avoid, and SC3's literal wording — *"odblokowanie w host apce, potem wywołanie AutoFilla
+NIE pyta ponownie o hasło"* — is Option B by construction: no rewording of SC3 that keeps Option A can
+make that sentence true, because a `.biometryCurrentSet`-only artifact cannot be read without UI from a
+second process (F1, composed from `ASCredentialProviderViewController.h:100-134`'s UI prohibition and
+37-RESEARCH's confirmed fact that an `LAContext` cannot cross a process boundary). Option A is not wrong,
+it is simply the choice that redefines the goal around the defect instead of closing it, and this record
+chooses to close it.
+
+**Rejected, explicitly, as structurally impossible: Option C, a long-lived pre-authenticated `LAContext`
+shared across the host app and extension processes.** This is not a cost/benefit rejection — it cannot
+be built. An `LAContext` is process-local; it cannot cross a process boundary at all [37-RESEARCH,
+OBSERVED]. Even confined to one process, keeping a pre-authenticated context alive indefinitely across
+calls is the exact anti-pattern Apple's own `SecItem.h`/`LAContext` header prose warns against. Recorded
+here, by name, so it does not return as a proposal in a later phase.
+
+**Evidence that framed the decision — E41-1, literal `OSStatus` integers**
+(`ios/evidence/41/e41-1-silent-read.log`): `stage=silent status=0`, `stage=nocontext status=0`,
+`stage=negative-control status=-34018`, host-written and extension-read digests byte-for-byte equal
+(`00e988677eecf94c0bb9233371c7c0d6f4db8ebdcdecb7c5ebaa666f17249227`) — **PASS-silent**. Per
+`ios/evidence/41/branch-state.md` §"What a PASS in this phase can and cannot mean" and Phase 37's own E2
+result (`ios/IOS-SPIKE-LOG.md:1962-1979`), this simulator releases `.biometryCurrentSet`-gated data
+unconditionally regardless of `LAContext`, so E41-1's PASS-silent is a statement about our code's intent
+(does it correctly ask the OS before reading?), not about a real device's Secure Enclave behaviour. F1's
+structural claim — that Secret A alone can never be read silently from a second process **on real
+hardware** — stands un-falsified by this simulator result; it rests on API mechanics (an `LAContext`'s
+process-locality, the header's UI prohibition), not on this simulator's ACL enforcement, which is why
+Secret C is being added rather than relying on Secret A to somehow answer differently on a device.
+
+**The exposure, stated without softening, exactly as the checkpoint required.** For the duration of the
+session window, a second process — the AutoFill extension — can read the User Key with **no** biometric
+challenge, through Secret C. This is the exact posture `ACC-04` (biometry gates key release, always) was
+written to prevent. It is not eliminated by this decision; it is **scoped to a bounded window instead of
+forbidden outright**. `ACC-04`'s guarantee is amended for Secret C only — Secret A (the Phase-37
+envelope) keeps its `.biometryCurrentSet` ACL completely unchanged; nothing about its write path,
+accessibility class, or biometric flag is touched here. `ACC-06`'s lazy expiry check and its explicit
+`SecItemDelete` on expiry are hereby **load-bearing security controls**, not housekeeping — they are the
+only thing bounding Secret C's exposure once it exists, and Plan `41-07` must prove them **red-first** (a
+mutation that skips the delete, shown to fail the guard, before the guard is trusted). This is,
+structurally, what Bitwarden's own "biometric unlock bypasses the limit" PSA describes — the same
+tradeoff, now made explicitly and bounded rather than discovered as an unrecorded behaviour.
+
+**Evidence:** `ios/evidence/41/e41-1-silent-read.log`; `ios/evidence/41/branch-state.md` §"B4", §"What a
+PASS in this phase can and cannot mean"; `ios/evidence/41/dr-41-a-options.md` (full presentation +
+provenance transcript); `ios/IOS-SPIKE-LOG.md:353-409` (ACC-03, Secret A/Secret B, the precedent for an
+asymmetric accessibility class stated as a security decision, not a shortcut); `41-RESEARCH.md` §F1,
+§"Decision records this phase owns" → DR-41-A, §"Wording the phase record must use".
+
+### DR-41-C — Lock marker: storage, clock, extension write permission, absolute session ceiling: **DECIDED**
+
+**Storage: the App Group container** (`group.cloud.blonie.PasskeyVault`), as
+`UserDefaults(suiteName:)` under key `unlockedAtMs`-equivalent (a small struct, not a bare timestamp —
+see clock below) — following DR-1's hybrid model (§1, `ios/IOS-SPIKE-LOG.md:243-290`), which this
+phase's own branch-state row B1 confirms is committed reality, not a proposal
+(`ios/evidence/41/branch-state.md` §"B1"). `41-RESEARCH.md`'s own Branch Matrix names this the
+comparatively-easy outcome under Hybrid: "the `unlockedAtMs` marker can live in
+`UserDefaults(suiteName:)` or a group file; both processes read/write it directly."
+
+**Rejected: a Keychain item colocated with Secret C.** Both processes must read this marker on **every**
+entry point before any other read (ACC-06's lazy check, inherited premise), including the hot QuickType
+fill path where latency is directly user-visible — a `SecItem*` round trip on every fill is real,
+avoidable cost for a value that itself protects nothing at rest: the marker is a timestamp, not key
+material, and an attacker who can already read the App Group container (the same access-group boundary
+Keychain access-group scoping also enforces, both proven live in Phase 36's E2/E3) learns nothing more
+from it than "the user unlocked at approximately time T" — no bytes that decrypt anything. Colocating a
+frequently-written, low-sensitivity value with Secret C's own storage class would add write traffic to a
+security-critical item's Keychain entry for no compensating security gain, since the Keychain's own lack
+of an expiry attribute (37-RESEARCH, CONFIRMED — `kSecAttrCreationDate`/`kSecAttrModificationDate` are
+read-only) means Secret C's own storage mechanism offers no expiry primitive the marker could inherit by
+being colocated.
+
+**Clock: a boot-session-identifier + monotonic-uptime pair**, not wall-clock `Date()` alone and not
+boot-relative uptime alone. The marker records `(bootSessionId, systemUptimeAtUnlock)` —
+`ProcessInfo.processInfo.systemUptime` for the monotonic half, paired with the Darwin
+`kern.bootsessionuuid` sysctl value (a UUID that changes every boot) as the comparability key. A read
+compares `bootSessionId` for equality first: a mismatch means the device has rebooted since the marker
+was written, treated as expired (a reboot ending the session is judged a defensible default, not a
+defect — 41-RESEARCH's own reasoning). If `bootSessionId` matches, the elapsed
+`systemUptime - systemUptimeAtUnlock` is compared against the idle window and against the 12-hour
+absolute ceiling below.
+
+- **Rejected: `Date()` alone.** User-rewindable — moving the system clock backward is a direct
+  session-extension attack surface against both ACC-06's expiry and the 12-hour absolute ceiling this
+  record adds below. This is precisely the attack DR-41-C exists to close, not merely a theoretical
+  concern (`41-RESEARCH.md` A8, E41-7's own mandated backward-jump leg).
+- **Rejected: boot-relative uptime alone, with no boot identifier.** `systemUptime` resets near zero on
+  every boot, so without a per-boot identifier a stored value from a **previous** boot cannot be
+  distinguished from a small elapsed value in the **current** boot — an ambiguous state depending on
+  comparison direction, not a clean "expired," which is worse than either alternative on its own.
+
+**This reasoning is [ASSUMED]/UNVERIFIED** — `kern.bootsessionuuid`'s exact accessibility and stability
+from an app-extension sandbox on this iOS/toolchain combination has not been measured. It is a decision
+about which primitive to build against, not a proof that the primitive behaves as expected here. Plan
+`41-07`'s clock legs (the forward-jump and backward-jump `Date()` manipulation runs, plus a real
+`simctl shutdown`+`boot` cycle observing whether `bootSessionId` actually changes) are the falsifier; if
+`kern.bootsessionuuid` is unreachable or unstable inside the `.appex` sandbox, this record must be
+amended in place, not quietly worked around.
+
+**Extension write permission: YES.** ACC-07 requires it — an AutoFill-only user (never opening the host
+app) would otherwise be logged out mid-use even while actively using the product as designed. The cost,
+named plainly per the checkpoint context: a process the user never looks at can extend the *idle* window
+indefinitely without the lock screen ever appearing.
+
+**Absolute session ceiling: YES — 12 hours from the last real unlock in the host app.** The session ends
+12 hours after the last successful biometric or master-password unlock event **in the host app**,
+regardless of any AutoFill activity in the interim. AutoFill traffic (ACC-07's marker refresh) can extend
+the *idle* window but can never push the session past this 12-hour ceiling measured from the last real
+unlock — the ceiling is tracked as a separate, host-app-only-writable field the extension's own refresh
+never touches. This bounds Secret C's non-biometric exposure window (DR-41-A) even under continuous,
+legitimate AutoFill-only use, which is exactly the case DR-41-A's cost statement names.
+
+**Evidence:** `ios/IOS-SPIKE-LOG.md:243-290` (DR-1, hybrid model); `ios/evidence/41/branch-state.md`
+§"B1"; `ios/IOS-SPIKE-LOG.md:391-408` (ACC-03 Secret B, the precedent for `SecItem.h`'s confirmed
+lack of an expiry attribute); `ios/evidence/41/dr-41-a-options.md` (the ceiling decision's
+provenance); `41-RESEARCH.md` §"ACC-06 inherited premise" and §"Decision records this phase owns" →
+DR-41-C.
+
+### Restated success criteria for Phase 41
+
+Both restatements are forced by `41-RESEARCH.md` F1 (SC3) and Pitfall 4 (SC2). Quoted verbatim first,
+per this record's own QA-05/QA-03 obligation not to silently narrow scope.
+
+**SC2, as written in `ROADMAP.md` §"Phase 41", verbatim:** *"Rozszerzenie odszyfrowuje i wypełnia
+hasło uruchomione **na zimno** (host app force-quit, brak wcześniejszej aktywności w tej sesji
+symulatora) wyłącznie z cache'u — pozytywny dowód wypełnienia w realnym polu formularza w Safari na
+symulatorze."*
+
+**Replaced because:** force-quitting the host app does not cold-start a separate `.appex` process —
+they are independently-scheduled OS processes with no shared address space (Pitfall 4,
+`41-RESEARCH.md`). A "cold" claim built on a host-app swipe-up proves nothing about the extension's own
+process state.
+
+**Restated wording:** *"po `simctl shutdown` + `boot`, bez ani jednego uruchomienia host appki po
+starcie; nowość procesu potwierdzona pidem rozszerzenia."*
+
+**SC3, as written in `ROADMAP.md` §"Phase 41", verbatim:** *"`.biometryCurrentSet`/timeout ustawione w
+jednym procesie faktycznie obowiązuje w drugim: odblokowanie w host apce, potem wywołanie AutoFilla NIE
+pyta ponownie o hasło (pozytywny dowód — zrzut ekranu/log pokazujący brak promptu); i odwrotnie,
+wygaśnięcie sesji w jednym procesie jest widoczne w drugim przy jego następnym dostępie (ACC-06)."*
+
+**Replaced because:** even under DR-41-A(b) (chosen above), where the silent branch is achievable, the
+literal wording's proof shape — "pozytywny dowód — zrzut ekranu/log pokazujący brak promptu" — asks for
+an **absence** of a prompt as the primary evidence, which QA-03 forbids as a primary proof (an absence
+assertion cannot distinguish "correctly filled silently" from "silently failed to do anything"). The
+replacement keeps SC3's substance (no ceremony after a real unlock) but requires a positive assertion
+instead.
+
+**Restated wording (this phase's DR-41-A(b) branch):** *"rozszerzenie loguje gałąź silent i wypełnia
+poprawne hasło bez żadnej ceremonii biometrycznej (dowód: wartość pola == zapisane hasło, plus log
+gałęzi)."* The reverse direction (ACC-06 expiry visible cross-process) is unchanged from the original
+wording — it was already a positive proof shape ("wygaśnięcie ... jest widoczne").
+
+**Evidence:** `.planning/ROADMAP.md` §"Phase 41" Success Criteria (quoted verbatim above);
+`41-RESEARCH.md` §"Wording the phase record must use", §F1, §"Pitfall 4".
+
+---
+
 ## 2. Verified against reality (2026-08-11)
 
 ### 2.1 PRF is available on iOS in both directions — iOS 18.0+
@@ -3266,6 +3447,41 @@ producing a plausible-looking but false mismatch. Fixed by deleting every marker
 owns immediately before waiting for it, the same discipline `scripts/ios-probe-run.sh`'s own
 `RUN_START`-scoped log capture already established for exactly this class of stale-evidence
 false-positive.
+
+### L-31 -- a `.biometryCurrentSet` Keychain item makes silent QuickType fill structurally impossible
+
+**Found 2026-08-20, Phase 41, Plan 41-02, Task 2, from the composed facts DR-41-A is written against**
+(not newly observed this plan -- `41-RESEARCH.md` F1 named it; recorded here as a landmine, per this
+plan's own mandate, so it is never rediscovered as a bug). `provideCredentialWithoutUserInteraction`
+[OBSERVED, `ASCredentialProviderViewController.h:100-134`] forbids showing any UI at all; reading a
+`.biometryCurrentSet`-protected Keychain item **is** a biometric evaluation; and an `LAContext` cannot
+be shared between the host app and the extension process [37-RESEARCH, OBSERVED]. Composing the three:
+any design that stores the User Key *only* behind a `.biometryCurrentSet` item has chosen, structurally,
+to prompt Face ID on every single AutoFill invocation, including the QuickType-bar tap path. This is not
+a bug to be found and fixed later -- it is the exact bug class (Bitwarden's "Face ID mówi odblokowane,
+autofill i tak pyta o hasło główne") that Phase 41's own goal line exists to avoid, and DR-41-A's Secret C
+is the artifact that avoids it.
+
+**Consequence:** never diagnose a Face ID prompt on every QuickType tap as a defect in the cross-process
+lock plumbing before checking which Keychain item the fill path actually read. If it read Secret A
+(the `.biometryCurrentSet` envelope) instead of Secret C (DR-41-A's session artifact), the prompt is
+expected behaviour by design, not a regression.
+
+### L-32 -- a cold launch of an app extension is not a force-quit of the host app
+
+**Found 2026-08-20, Phase 41, Plan 41-02, Task 2, from `41-RESEARCH.md` Pitfall 4** (recorded here as a
+landmine per this plan's own mandate). The host app and the `.appex` are two independently-scheduled OS
+processes with no shared address space or lifecycle. Force-quitting (swiping away) the host app does not
+touch the extension process, does not clear its memory, and does not reset whatever the OS has cached for
+it. A "cold fill" claim (ROADMAP SC2) built on a host-app swipe-up therefore proves nothing about the
+extension's own process state -- it must be built on an actual new extension process, confirmed by pid,
+which this phase's own restated SC2 wording (§1i above) now requires via `simctl shutdown` + `boot`
+rather than a host-app force-quit.
+
+**Consequence:** any plan or test that "goes cold" only by force-quitting `PasskeyVault.app` and then
+invoking AutoFill has not tested a cold extension launch at all -- the `.appex` process may still be
+warm, with the identity store and any in-memory state from a prior invocation intact. `simctl shutdown`
++ `boot`, with pid verification, is the only definition this phase accepts.
 
 ## 3a. The visual layer was never verified — open gaps as of 2026-08-17
 
