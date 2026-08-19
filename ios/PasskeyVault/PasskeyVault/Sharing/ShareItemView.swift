@@ -146,11 +146,15 @@ struct ShareItemView: View {
     let members: [FamilyAPI.FamilyMemberRecord]
     let familyAPI: FamilyAPI
 
+    @Environment(\.dismiss) private var dismiss
+
     @State private var scope: ShareScope = .person
     @State private var accessLevel: ShareAccessLevelOption = .read
     @State private var selectedMemberIds: Set<String> = []
     @State private var isSharing = false
     @State private var errorMessage: String?
+    /// CR-05: read on full success to dismiss the sheet -- previously
+    /// assigned and never read, so there was no success state at all.
     @State private var didShare = false
 
     /// WR-06: the ONE filtered set both the person picker AND
@@ -300,6 +304,15 @@ struct ShareItemView: View {
     /// (`crates/pv-ffi/src/sharing.rs`), then `POST`s the resulting sealed
     /// blob through `familyAPI.createItemShare` -- SHARE-02's own write-side
     /// primitive, unchanged.
+    ///
+    /// CR-05: settles EACH recipient independently rather than throwing on
+    /// the first failure. A partial failure is reported honestly (who DID
+    /// get access, who did not) instead of a blanket "nothing was shared"
+    /// that hides that some recipients already hold the key. A 409 for a
+    /// recipient who already has this exact grant is treated as success
+    /// (mirrors `ResealService.isConflictError`'s duck-typed check) so a
+    /// retry after a partial failure can make forward progress instead of
+    /// throwing again on the first (already-succeeded) recipient.
     private func share() async {
         errorMessage = nil
         let recipients = ShareItemComposer.recipients(
@@ -312,8 +325,11 @@ struct ShareItemView: View {
 
         isSharing = true
         defer { isSharing = false }
-        do {
-            for member in recipients {
+
+        var succeeded: [String] = []
+        var failed: [String] = []
+        for member in recipients {
+            do {
                 guard
                     let publicKeyB64 = member.publicKey,
                     let publicKeyData = Data(base64Encoded: publicKeyB64)
@@ -328,10 +344,25 @@ struct ShareItemView: View {
                     itemId: item.itemId, recipientUserId: member.userId,
                     sealedKeyJson: sealedJson, accessLevel: accessLevel.rawValue
                 )
+                succeeded.append(member.email)
+            } catch where ResealService.isConflictError(error) {
+                // Already holds this exact grant -- the outcome this call
+                // wanted, and what lets a retry make progress past a
+                // recipient a previous attempt already reached.
+                succeeded.append(member.email)
+            } catch {
+                failed.append(member.email)
             }
+        }
+
+        if failed.isEmpty {
             didShare = true
-        } catch {
-            errorMessage = "Nie udało się udostępnić itemu. Spróbuj ponownie."
+            dismiss()
+        } else {
+            // Name who DID get access -- never a bare "it failed", which
+            // would misreport a partial success as total failure.
+            let succeededNote = succeeded.isEmpty ? "" : "Udostępniono: \(succeeded.joined(separator: ", ")). "
+            errorMessage = succeededNote + "Nie udało się dla: \(failed.joined(separator: ", "))."
         }
     }
 }
