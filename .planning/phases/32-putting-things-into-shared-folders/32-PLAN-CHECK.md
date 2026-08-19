@@ -228,3 +228,155 @@ frontmatter — do not leave it to the executor.
 6. **Frontmatter/waves** — serialize 32-03 ahead of 32-01, or mandate separate worktrees. (B-5)
 7. **32-01 store.ts** — document `moveVaultItem`'s plaintext precondition. (W-6)
 8. **32-03** — require Task 2 to run after Task 1 and re-run the full clippy gate last. (W-5)
+
+---
+
+# Iteration 2 (2026-08-19)
+
+**Verdict: REVISE** — 2 blockers remain, both narrow and precisely specifiable. Everything
+else from iteration 1 is genuinely closed. Deltas only; iteration 1's independently verified
+facts (DEBT-04's 19+6, the `ceremony.rs` diagnosis, SC3's byte-identical implementability,
+the encrypt-only departure's safety) are not re-derived.
+
+## B-1 — resolved, and the reversal is clean
+
+`32-CONTEXT.md` Area 2 now records the reversal with its full two-step history. I checked for
+vestiges and found none:
+
+- `32-03` `files_modified` no longer lists `crates/pv-server/tests/sync_shared.rs`; its
+  `requirements` is now `[DEBT-04]` only; it has exactly one task (the clippy sweep). No
+  retarget, no `dest_is_item_bucket` condition, no new server test survives anywhere.
+- `32-01`'s objective was updated rather than left stale.
+- The only remaining `item_shares` references in the plan set are `32-04` Task 2's
+  by-construction scoping ("the member holds no direct grant at any point"), which is still
+  correct and still necessary.
+- Requirement coverage survives the re-scoping: ORG-01 → 32-01/32-02, ORG-02 → 32-01/32-04,
+  ORG-04 → 32-01/32-04, DEBT-04 → 32-03. All four ROADMAP ids still claimed.
+
+## B-2 — resolved
+
+The guard now renders a disabled `<select>` whose single selected option is
+`item.folderLockedByFamilyShare`, with `value="item-bucket-locked"` and the "+ new folder"
+button omitted. It cannot fall back to the shipped path: the branch replaces the control
+outright rather than parameterising it, so `value={fields.folderId ?? ""}` is unreachable
+here. A save from this state is also safe — `destinationCollectionId` is initialised from
+`currentCollectionId`, so the edit-mode dispatch compares equal and routes to the untouched
+`updateVaultItem`, and with the control disabled `fields.folderId` cannot be mutated from this
+branch at all. `32-02` Task 1 asserts the disabled property, the label, and the no-side-effect
+claim. Copy names where a real change happens. Good.
+
+## B-5 — resolved
+
+Fully serialized: 32-03 wave 1 alone → 32-01 wave 2 → 32-02 wave 3 → 32-04 wave 4, with the
+`depends_on` on both 32-01 and 32-04 annotated as build-hazard / file-overlap rather than
+content. Since `vault.rs` is only written in wave 1 and every live verify runs in waves 2-4,
+the `playwright.config.ts` live-build race is gone.
+
+## Warning dispositions — all confirmed
+
+W-1/W-2 are moot by construction (no retarget, no new server test). W-5 is moot (32-03 adds no
+Rust test code, and it is a single task whose gate is the full workspace command). W-3 is
+resolved in the plan text itself — the absent-optgroup fork is decided as "assert absent".
+W-4's DOM-`disabled`-property requirement is now written into `32-02`. W-6's doc-comment
+precondition is spelled out on `moveVaultItem`, including the explicit warning about widening
+the context-menu `moveItemToFolder` path. W-7 is annotated. I also confirmed the two new API
+symbols the B-3 fix leans on exist: `listItems` (`web/src/lib/vault/api.ts:142`) and
+`getItems` (`web/src/lib/vault/store.ts:364`), and that `fetch_items_for` returns
+`collection_id` and `revision` on both arms, so the fresh-row check is implementable.
+
+---
+
+## BLOCKER C-1 — 32-04 Task 2 step 3: the negative anchor is still vacuous, because the positive-anchor helper closes the panel
+
+The B-4 fix is correct in intent and the locator shape is right — `assertRecipientDecrypts`
+asserts `detail-panel.getByText(password, { exact: true })` after clicking `reveal-password`,
+so a page-scoped `getByText(password, { exact: true })` really is its inverse. But the last
+line of that helper is:
+
+```ts
+await page.getByTestId("detail-panel-close").click();
+```
+
+The task says "`assertRecipientDecrypts` (or its local equivalent from 32-01) reads the real
+decrypted password, panel left OPEN (no `detail-panel-close`)" — which the existing helper
+cannot satisfy. Reuse it as written and the panel is closed before step 4 even begins, so the
+step-5 negative assertion counts zero for a reason entirely unrelated to access loss. It would
+pass against a build where the member keeps full read access. That is the same defect B-4
+identified, re-entering through the helper the fix depends on.
+
+**Required, concretely:**
+1. In `32-04` Task 2 step 3, do not call `assertRecipientDecrypts`. Add a local
+   `assertRecipientDecryptsLeavingPanelOpen(page, itemId, itemName, password, because)` —
+   a copy of the existing helper with the final `detail-panel-close` click removed — and use
+   it. State in the task that reusing the closing helper here silently voids step 5.
+2. Immediately before step 4's move-out, add the driving pre-check on the **same page-scoped
+   locator step 5 uses**:
+   `await expect(member.page.getByText(itemPassword, { exact: true })).toHaveCount(1)`
+   (adjust the count if the reveal renders the value twice — assert the observed non-zero
+   count, not `toBeVisible`). Without this, step 5 remains an unanchored absence assertion:
+   with it, the assertion is proven to have been capable of failing.
+
+## BLOCKER C-2 — 32-01 Task 1: the lost-response recovery can report success over a write that never landed
+
+The recovery condition is destination-only: on any failure, re-fetch and *if the row's
+`collection_id` already equals `newCollectionId`, return success*. That is right for the
+first-attempt lost-response case. It is wrong on a retry, and the retry path is exactly what
+B-3 introduced.
+
+Sequence, entirely within the plan's own create-mode flow:
+
+1. Save #1 sends content **A** with the destination. The server commits; the response is lost.
+   Suppose the internal recovery also misses it (the `listItems` call fails, or the store
+   backstop runs first) — the form stays open with `error.itemCreatedButMoveFailed` and a
+   refreshed revision.
+2. The user, being told to try again, corrects a field. Content is now **B**.
+3. Save #2 sends content **B** at the refreshed revision and fails (409 from the concurrent
+   state, or any error).
+4. Recovery re-fetches, sees `collection_id === destination` — from step 1's commit — and
+   returns **success**. `onCreated()` fires, the form closes.
+
+The item is in the right folder holding content **A**. The user's last edit is gone and the UI
+reported success. "Reports success over a write that didn't land" is precisely the state the
+fix exists to prevent, and it is reachable through the fix's own retry loop.
+
+The same hole exists in the `ItemForm` backstop, which tests only
+`fresh?.collectionId === destinationCollectionId`.
+
+**Required, concretely — one extra conjunct in both layers:**
+
+- In `moveVaultItem`'s recovery check, recover only when the fresh row is at the destination
+  **and** its `revision === currentRevision + 1` — i.e. the server row is this attempt's own
+  commit, not an earlier one. Any other revision at the destination means someone else's write
+  (or an earlier attempt's) is what landed: fall through to the existing classification
+  (`isConflictError` → `loadAndDecryptAll()` → `RevisionConflictError`), which is the honest
+  outcome and which `DetailPanel` already surfaces as a conflict rather than a retry lie.
+- In `ItemForm`'s create-mode backstop, apply the same conjunct against
+  `created.revision + 1`; when it does not hold, take the existing refresh-and-report branch.
+- Add the case to `32-02` Task 1's retry describe block: `getItems()` returns the item at the
+  destination but at an unexpected revision → assert `onCreated` is **not** called and the
+  error renders. Without this test the guard is unfalsified.
+
+**Two smaller things to fold into the same edit** (not separately blocking, but cheap and in
+the same lines):
+
+- Wrap the recovery `listItems()` call in its own try/catch. If the recovery fetch itself
+  fails, rethrow the **original** error so the 403/409 classification below still runs —
+  otherwise a network failure during recovery masks a genuine TOCTOU refusal and
+  `DetailPanel` shows the generic banner instead of `error.itemMoveAccessLost`, quietly
+  weakening SC3's own surfacing path.
+- The plan licenses `error.itemCreatedButMoveFailed` to say "Spróbuj ponownie" because "B-3's
+  recovery mechanism makes the promise true." With C-2 fixed, one case remains where it is not
+  true: destination reached at a foreign revision. That path throws `RevisionConflictError`,
+  and create mode currently flattens every throw into the retry-inviting copy. Route a
+  `RevisionConflictError` in create mode to the conflict copy, not the retry copy.
+
+---
+
+## Verdict
+
+**REVISE.** Both remaining blockers are localized and fully specified above: one added
+non-closing helper plus one pre-check in `32-04` Task 2, and one `revision === currentRevision + 1`
+conjunct (plus its unit test and two copy/error-routing details) in `32-01` Task 1 / `32-02`
+Task 1. Nothing else in the plan set stands in the way — B-1, B-2, B-5 and all seven warnings
+are genuinely closed, and the phase's five success criteria are each covered by a test that
+can fail once C-1 is fixed.
