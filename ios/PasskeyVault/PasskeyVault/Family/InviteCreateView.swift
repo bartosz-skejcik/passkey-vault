@@ -28,7 +28,8 @@
 //  ShareLink is available from iOS 16.0, comfortably under this app's 18.0
 //  floor. The trailing "Copy" control IS the `ShareLink` -- tapping it
 //  opens the system share sheet (which itself offers Copy among its
-//  built-in actions), rather than a bespoke `UIPasteboard` write; this
+//  built-in actions), rather than a bespoke pasteboard write of our own
+//  (the single-writer audit bars any second writer by design); this
 //  satisfies both this task's own `<action>` text ("presents the resulting
 //  URL through SwiftUI's ShareLink") and `40-UI-SPEC.md` §5.6's drawn
 //  "Copy" label/`invite.copyLinkAria` accessible name in the same control.

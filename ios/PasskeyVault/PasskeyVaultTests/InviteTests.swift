@@ -390,8 +390,11 @@ extension InviteTests {
         // Flip exactly one character, same technique the live tamper case
         // uses (InviteTests.tamperOneFragmentCharacter).
         var chars = Array(goodFragment)
-        let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
-        guard let replacement = alphabet.first(where: { $0 != chars[0] }) else {
+        // Any two distinct url-safe characters suffice; spelling the whole
+        // alphabet would trip the generator audit's check 5 (a charset
+        // literal in a test target reads as a hiding place).
+        let candidates: [Character] = ["A", "B"]
+        guard let replacement = candidates.first(where: { $0 != chars[0] }) else {
             Issue.record("could not find a differing replacement character")
             return
         }
@@ -695,8 +698,10 @@ extension InviteTests {
         guard let fragment = url.fragment, let firstChar = fragment.first else {
             throw LiveInviteE2EError.malformedInviteURL(url.absoluteString)
         }
-        let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
-        guard let replacement = alphabet.first(where: { $0 != firstChar }) else {
+        // Two candidates cover every case; a full alphabet literal would
+        // trip the generator audit's check 5.
+        let candidates: [Character] = ["A", "B"]
+        guard let replacement = candidates.first(where: { $0 != firstChar }) else {
             throw LiveInviteE2EError.malformedInviteURL(url.absoluteString)
         }
         let tamperedFragment = String(replacement) + fragment.dropFirst()
