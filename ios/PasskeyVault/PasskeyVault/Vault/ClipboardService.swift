@@ -227,4 +227,16 @@ enum ClipboardWording {
         }
         return "Copied \(fieldLabel)."
     }
+
+    /// The compact HUD's own single visible line (`CopyHUD.swift`) --
+    /// design-conformance fix, Phase 40: the design draws no toast at all,
+    /// so there is no CSS line to transcribe, only Bartek's own spec,
+    /// "Copied <Field> — clears in <N>s". `confirmation` above's full
+    /// disclosure text is NOT dropped -- `CopyHUD` still attaches it as the
+    /// view's `accessibilityLabel`, so VoiceOver hears the whole warning
+    /// while the visible capsule stays one short line.
+    static func hudLine(fieldLabel: String, remainingSeconds: Int) -> String {
+        guard remainingSeconds > 0 else { return "Copied \(fieldLabel)" }
+        return "Copied \(fieldLabel) — clears in \(remainingSeconds)s"
+    }
 }

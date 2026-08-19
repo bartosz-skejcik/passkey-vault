@@ -26,6 +26,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct ItemDetailView: View {
     let item: VaultItemViewModel
@@ -101,7 +102,23 @@ struct ItemDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            // `.body{padding:0 16px}` -- the design's own screens carry NO
+            // vertical page padding (the `.hdr`/`.grp` elements supply
+            // their own top/bottom rhythm); design-conformance fix, Phase
+            // 40 (was a uniform `.padding()`, which doubled the `.hdr`'s
+            // own `padding-top:10` into an extra ~16pt gap under the nav
+            // bar that is not in the drawing).
+            // `spacing: 0` deliberately -- `.hdr`'s own `padding-bottom:16`
+            // and `PVDetailSectionLabel`'s own `padding-top:14` (`.glab`)
+            // already supply the vertical rhythm between the header, the
+            // first unlabelled `.grp`, and every labelled group after it;
+            // a uniform `VStack` spacing on top of those would double it.
+            VStack(alignment: .leading, spacing: 0) {
+                // `PVMetrics.detailToolbarClearance`'s own header: a
+                // platform workaround, not a design value -- every branch
+                // below needs it, not just `.fields`, so it sits once here
+                // rather than duplicated into each panel.
+                Color.clear.frame(height: PVMetrics.detailToolbarClearance)
                 switch item.content {
                 case let .fields(fields):
                     header(fields)
@@ -111,14 +128,30 @@ struct ItemDetailView: View {
                 case .pendingFamilyKey:
                     pendingFamilyKeyPanel()
                 }
-                if let confirmation {
-                    copyConfirmationBanner(confirmation)
-                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding()
+            .padding(.horizontal, PVMetrics.screenHPadding)
+            .padding(.bottom, 16)
         }
         .background(Color("PVBackground"))
+        // `CopyHUD.swift`'s own header: a shared, compact, auto-dismissing
+        // capsule -- design-conformance fix, Phase 40, replacing the old
+        // full-width `copyConfirmationBanner`. An `.overlay` on the SCREEN,
+        // not inside the `ScrollView`'s content, so it floats centered near
+        // the bottom safe area regardless of scroll position, matching
+        // `ItemListView`'s twin placement.
+        .overlay(alignment: .bottom) {
+            if let confirmation {
+                CopyHUD(confirmation: confirmation, accessibilityId: "vault.detail.copyConfirmation")
+                    .padding(.bottom, 12)
+                    .task(id: confirmation.deadline) {
+                        await CopyHUD.autoDismiss { self.confirmation = nil }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .animation(.default, value: confirmation.deadline)
+            }
+        }
+        .sensoryFeedback(.success, trigger: confirmation?.deadline)
         .navigationTitle(Text(verbatim: item.displayName))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -162,23 +195,37 @@ struct ItemDetailView: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Header (`.hdr`, screens-vault.html:118-124)
+    //
+    // Design-conformance fix, Phase 40: was a LEFT-aligned `HStack` with a
+    // 24pt icon shown for only 3 of 6 types and `.title3.bold()`/`.caption`
+    // sizes that match neither `.hdr b{21px;640}` nor `.hdr span{13.5px}`.
+    // The approved screens draw a CENTERED column for every type, always
+    // with the 58pt icon tile -- `ItemIconTile(variant: .header)`'s own fix
+    // (Phase 40, `ItemIconTile.swift`) is what makes it always the plain
+    // type glyph rather than a favicon/card-brand substitute.
 
     @ViewBuilder
     private func header(_ fields: ItemFields) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            if ["login", "passkey", "card"].contains(fields.typeName) {
-                ItemIconTile(item: item, variant: .header)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: item.displayName)
-                    .font(.title3.bold())
-                    .foregroundStyle(Color("PVTextPrimary"))
-                Text(verbatim: typeLabel(fields.typeName))
-                    .font(.caption)
-                    .foregroundStyle(Color("PVTextMuted"))
-            }
+        VStack(spacing: PVMetrics.detailHeaderGap) {
+            ItemIconTile(item: item, variant: .header)
+            // `.hdr b{font-weight:640}` -- SwiftUI's `Font.Weight` is a
+            // fixed enum (no arbitrary numeric weight without shipping a
+            // variable-font file), so 640 is approximated with the closest
+            // standard trait, `.semibold` (600), matching this file's own
+            // prior handling of the title's 700 (`.bold`) elsewhere in the
+            // approved screens.
+            Text(verbatim: item.displayName)
+                .font(.system(size: PVMetrics.detailTitleSize, weight: .semibold))
+                .foregroundStyle(Color("PVTextPrimary"))
+                .multilineTextAlignment(.center)
+            Text(verbatim: typeLabel(fields.typeName))
+                .font(.system(size: PVMetrics.detailSubtitleSize))
+                .foregroundStyle(Color("PVTextMuted"))
         }
+        .frame(maxWidth: .infinity)
+        .padding(.top, PVMetrics.detailHeaderTopSpace)
+        .padding(.bottom, PVMetrics.detailHeaderBottomSpace)
     }
 
     private func typeLabel(_ typeName: String) -> String {
@@ -193,7 +240,17 @@ struct ItemDetailView: View {
         }
     }
 
-    // MARK: - Body dispatch
+    // MARK: - Body dispatch (`.grp`/`.glab`, screens-vault.html:77-80,111-117)
+    //
+    // Design-conformance fix, Phase 40: every screen in the approved
+    // artifact groups its rows into one or more rounded `.grp` cards, the
+    // second and later ones each preceded by an uppercase `.glab` label
+    // ("Notes", "Details", "Secret", "Tags") -- this file previously
+    // rendered one flat, uncarded `VStack` of loose rows with no grouping
+    // at all. `notes` is spliced OUT of the generic field-order loop into
+    // its own labelled group (login/card's own mockups, screens-vault.html
+    // :649-652) rather than sitting inside the main card with everything
+    // else.
 
     @ViewBuilder
     private func fieldsBody(_ fields: ItemFields) -> some View {
@@ -203,65 +260,114 @@ struct ItemDetailView: View {
         case .passkey:
             passkeySection(fields)
         case .totp:
-            // The composed ring+code section sits ABOVE the generic
-            // field-order loop, which still runs afterward -- it renders
-            // the raw base32 secret as the usual masked/revealable field
-            // (`DetailFieldTables.fieldOrder["totp"] == ["secret"]`,
-            // unchanged). Matches `web/.../DetailPanel.tsx`'s own
-            // structure: the `TotpCountdownRing` block, then the same
-            // `FIELD_ORDER` loop every other type goes through.
             totpSection(fields)
-            genericFields(fields)
         default:
-            genericFields(fields)
+            PVDetailGroup(rows: genericFieldRows(fields, excluding: ["notes"]))
+        }
+        if let notes = notesGroupRow(fields) {
+            PVDetailSectionLabel(title: "Notes")
+            PVDetailGroup(rows: [notes])
         }
         if !item.tags.isEmpty {
-            tagsRow
+            PVDetailSectionLabel(title: "Tags")
+            PVDetailGroup(rows: [AnyView(tagsRow)])
         }
-        detailsFooter
+        if let footer = detailsFooterRows() {
+            PVDetailSectionLabel(title: "Details")
+            PVDetailGroup(rows: footer)
+        }
     }
 
     // MARK: - TOTP (composed layout, plan 38-10 -- design-conformance §"38-10")
+    //
+    // `.grp{padding-top:6px}` wraps the ring+code+Issuer+Algorithm block
+    // (screens-vault.html:718-725); `secret` -- the ONLY entry in
+    // `DetailFieldTables.fieldOrder["totp"]` -- gets its OWN "Secret"
+    // labelled group below (line 727), not a third row inside this one.
 
     @ViewBuilder
     private func totpSection(_ fields: ItemFields) -> some View {
         if case let .totp(f) = fields {
-            TotpCountdownView(
-                secretB32: f.secret,
-                algorithm: f.algorithm,
-                digits: f.digits,
-                period: f.period,
-                style: .detail,
-                // Byte-identical to the old internal formatting, just moved
-                // to the call site now that the view takes a pre-formatted
-                // label (quick task 260818-irw, Task 1 -- a mechanical
-                // signature update; Task 2 changes `.detail`'s rendered
-                // numbers, not this).
-                label: f.issuer.isEmpty ? "Authenticator" : f.issuer,
-                onCopy: { code in copySecret(key: "totpCode", value: code) }
-            )
-            .padding(.vertical, 4)
+            PVDetailGroup(rows: [
+                AnyView(
+                    TotpCountdownView(
+                        secretB32: f.secret,
+                        algorithm: f.algorithm,
+                        digits: f.digits,
+                        period: f.period,
+                        style: .detail,
+                        label: f.issuer.isEmpty ? "Authenticator" : f.issuer,
+                        onCopy: { code in copySecret(key: "totpCode", value: code) }
+                    )
+                    .padding(.top, 6)
+                    .padding(.bottom, PVMetrics.detailRowVPadding)
+                ),
+                // `.d act`"Issuer"/"Copy code" in the drawing duplicates
+                // the SAME copy affordance `TotpCountdownView`'s own code
+                // button already offers just above -- that view computes
+                // the live code internally (FFI + a running timer) and
+                // ItemDetailView has no independent access to it, so this
+                // row stays a PLAIN `.d` rather than growing a second,
+                // desynchronized "current code" of its own. No capability
+                // is lost: copying the code is still one tap away, on the
+                // code itself.
+                AnyView(
+                    PVDetailRow(label: "Issuer", value: f.issuer.isEmpty ? "\u{2014}" : f.issuer)
+                ),
+                AnyView(
+                    PVDetailRow(
+                        label: "Algorithm",
+                        value: "\(f.algorithm) · \(f.digits) digits · \(f.period)s", isMono: true
+                    )
+                ),
+            ])
+            if !f.secret.isEmpty {
+                PVDetailSectionLabel(title: "Secret")
+                PVDetailGroup(rows: genericFieldRows(fields, excluding: []))
+            }
         }
     }
 
-    // MARK: - Generic field-table loop (login, card, note, totp)
+    // MARK: - Generic field-table rows (login, card, note, totp's own secret)
 
-    @ViewBuilder
-    private func genericFields(_ fields: ItemFields) -> some View {
+    /// Builds the ROW VIEWS for every key in `DetailFieldTables
+    /// .fieldOrder[fields.typeName]`, minus `excluding` -- an array, not a
+    /// `@ViewBuilder`, because `PVDetailGroup`'s inset hairline needs to
+    /// know exactly which rows rendered AFTER emptiness filtering.
+    private func genericFieldRows(_ fields: ItemFields, excluding: Set<String>) -> [AnyView] {
         let order = DetailFieldTables.fieldOrder[fields.typeName] ?? []
-        ForEach(order, id: \.self) { key in
+        var rows: [AnyView] = []
+        for key in order where !excluding.contains(key) {
             let value = fieldValue(key, fields)
-            if !(DetailFieldTables.optionalIfEmptyFields.contains(key) && value.isEmpty) {
-                fieldRow(key: key, value: value, fields: fields)
-                // The login->urls splice: `urls` is `[String]`, not a
-                // scalar `FIELD_ORDER` entry can carry, so it is inserted
-                // as a special case immediately after `password` -- matching
-                // `DetailPanel.tsx`'s own `Fragment` shape.
-                if fields.typeName == "login", key == "password" {
-                    urlsRow(fields)
-                }
+            guard !(DetailFieldTables.optionalIfEmptyFields.contains(key) && value.isEmpty) else { continue }
+            rows.append(fieldRow(key: key, value: value, fields: fields))
+            // The login->urls splice: `urls` is `[String]`, not a scalar
+            // `FIELD_ORDER` entry can carry, so it is inserted as a
+            // special case immediately after `password` -- matching
+            // `DetailPanel.tsx`'s own `Fragment` shape.
+            if fields.typeName == "login", key == "password" {
+                rows.append(contentsOf: urlRows(fields))
             }
         }
+        return rows
+    }
+
+    /// login/card's `notes` field, spliced OUT of the main card into its
+    /// own "Notes"-labelled group (`fieldsBody`'s own call site) -- `nil`
+    /// for a type with no `notes` entry in `FIELD_ORDER` at all (identity/
+    /// passkey/note/totp). `label: nil`: the `.glab` above this row
+    /// already says "Notes" (screens-vault.html:648-649 draws no `.k`
+    /// inside the row itself).
+    private func notesGroupRow(_ fields: ItemFields) -> AnyView? {
+        let order = DetailFieldTables.fieldOrder[fields.typeName] ?? []
+        guard order.contains("notes") else { return nil }
+        let value = fieldValue("notes", fields)
+        let trailingView: AnyView = value.isEmpty ? AnyView(EmptyView()) : AnyView(copyAction(key: "notes", value: value, title: "Copy"))
+        return AnyView(
+            PVDetailRow(value: value.isEmpty ? "\u{2014}" : value, accessibilityId: "vault.detail.field.notes") {
+                trailingView
+            }
+        )
     }
 
     /// The generic loop's value accessor -- mirrors the TypeScript source's
@@ -347,94 +453,107 @@ struct ItemDetailView: View {
         )
     }
 
-    @ViewBuilder
-    private func fieldRow(key: String, value: String, fields: ItemFields) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(verbatim: fieldLabel(key))
-                .font(.caption)
-                .foregroundStyle(Color("PVTextMuted"))
-            HStack(spacing: 8) {
-                Text(verbatim: displayValue(for: key, value: value, fields: fields))
-                    .font(DetailFieldTables.monoFields.contains(key) ? .body.monospaced() : .body)
-                    .foregroundStyle(Color("PVTextPrimary"))
-                    .textSelection(.enabled)
-                    .accessibilityIdentifier("vault.detail.field.\(key)")
-                Spacer(minLength: 0)
-                // Reveal affordance SUPPRESSED (not merely defaulted to
-                // hidden) for a password held at the hidden-password level
-                // -- matches `DetailPanel.tsx`'s own suppression, not just a
-                // default-hidden toggle a curious tap could still flip.
-                if !value.isEmpty, DetailFieldTables.revealableFields.contains(key), !passwordFieldHidden(key: key) {
-                    Button {
-                        reveal(key)
-                    } label: {
-                        Image(systemName: revealState.isRevealed(key, forItem: item.id) ? "eye.slash" : "eye")
-                            .foregroundStyle(Color("PVTextMuted"))
-                    }
-                    .accessibilityIdentifier("vault.detail.reveal.\(key)")
-                    .accessibilityLabel(revealState.isRevealed(key, forItem: item.id) ? "Hide \(fieldLabel(key))" : "Show \(fieldLabel(key))")
-                }
-                if !value.isEmpty {
-                    copyButton(key: key, value: value)
-                }
-            }
-            if passwordFieldHidden(key: key) {
+    /// `.d`/`.d.act` -- design-conformance fix, Phase 40: was a bare
+    /// `VStack` with icon-button trailing actions (`eye`/`doc.on.doc`); the
+    /// approved screens draw the trailing action as TEXT in `PVAccent`
+    /// ("Copy", "Reveal") at the same size as the row's own value
+    /// (`.d.act .v`). Returns `AnyView`, not `some View`, because
+    /// `genericFieldRows` assembles a PLAIN ARRAY for `PVDetailGroup`'s
+    /// hairline placement -- see that function's own header.
+    private func fieldRow(key: String, value: String, fields: ItemFields) -> AnyView {
+        let isRevealable = !value.isEmpty && DetailFieldTables.revealableFields.contains(key)
+            && !passwordFieldHidden(key: key)
+        let isCopyable = !value.isEmpty
+        let revealed = revealState.isRevealed(key, forItem: item.id)
+
+        return AnyView(
+            PVDetailRow(
+                // A secure note's `body` is the only key on its OWN
+                // screen; the drawing shows no `.k` caption above it
+                // (screens-vault.html:745), unlike every other field.
+                label: key == "body" ? nil : fieldLabel(key),
+                value: displayValue(for: key, value: value, fields: fields),
+                isMono: DetailFieldTables.monoFields.contains(key),
+                accessibilityId: "vault.detail.field.\(key)",
                 // `share.hiddenPasswordRecipientNote`, byte-identical
-                // (Phase 40, plan 40-08, Task 2, `40-UI-SPEC.md` §5.10) --
-                // replaces the Phase 38 placeholder ("You can use this
-                // password, but it's masked on this account."). English:
-                // this screen's own established language (unlike
-                // `InviteCreateView.swift`'s Polish) -- see
-                // `HiddenPasswordDisclosure.swift`'s own header.
-                Text(verbatim: HiddenPasswordDisclosure.recipientNoteEn)
-                    .font(.caption2)
-                    .foregroundStyle(Color("PVTextMuted"))
-                    .accessibilityIdentifier("vault.detail.hiddenPasswordNote")
+                // (Phase 40, plan 40-08, Task 2, `40-UI-SPEC.md` §5.10).
+                footnote: passwordFieldHidden(key: key) ? HiddenPasswordDisclosure.recipientNoteEn : nil,
+                footnoteAccessibilityId: passwordFieldHidden(key: key) ? "vault.detail.hiddenPasswordNote" : nil
+            ) {
+                AnyView(
+                    HStack(spacing: 14) {
+                        // Reveal affordance SUPPRESSED (not merely
+                        // defaulted to hidden) for a password held at the
+                        // hidden-password level -- matches
+                        // `DetailPanel.tsx`'s own suppression, not just a
+                        // default-hidden toggle a curious tap could still
+                        // flip.
+                        if isRevealable {
+                            PVDetailAction(
+                                title: revealed ? "Hide" : "Reveal",
+                                action: { self.reveal(key) },
+                                accessibilityId: "vault.detail.reveal.\(key)",
+                                accessibilityLabel: revealed ? "Hide \(fieldLabel(key))" : "Show \(fieldLabel(key))"
+                            )
+                        }
+                        if isCopyable {
+                            copyAction(key: key, value: value, title: "Copy")
+                        }
+                    }
+                )
             }
+        )
+    }
+
+    /// The `urls[]` splice, restyled the same way (`.d.act` "Website" ->
+    /// "Open") -- see `fieldRow`'s own header for why this returns
+    /// `[AnyView]` rather than a `@ViewBuilder` loop.
+    private func urlRows(_ fields: ItemFields) -> [AnyView] {
+        guard case let .login(f) = fields else { return [] }
+        guard !f.urls.isEmpty else {
+            return [AnyView(PVDetailRow(label: fieldLabel("url"), value: "\u{2014}"))]
+        }
+        return f.urls.map { url in
+            AnyView(
+                PVDetailRow(
+                    label: fieldLabel("url"), value: url, accessibilityId: "vault.detail.field.url"
+                ) {
+                    AnyView(
+                        PVDetailAction(
+                            title: "Open", action: { openURL(url) },
+                            accessibilityId: "vault.detail.copy.url", accessibilityLabel: "Open \(url)"
+                        )
+                    )
+                }
+            )
         }
     }
 
-    @ViewBuilder
-    private func urlsRow(_ fields: ItemFields) -> some View {
-        // `if case` (never `guard ... else { return }`) -- same
-        // result-builder reason as `identitySection`/`passkeySection`
-        // above: an early `return` from a `guard` disables the `@ViewBuilder`
-        // transform for the whole function body.
-        if case let .login(f) = fields {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(verbatim: fieldLabel("url"))
-                    .font(.caption)
-                    .foregroundStyle(Color("PVTextMuted"))
-                if f.urls.isEmpty {
-                    Text(verbatim: "\u{2014}")
-                        .foregroundStyle(Color("PVTextPrimary"))
-                } else {
-                    ForEach(Array(f.urls.enumerated()), id: \.offset) { _, url in
-                        HStack(spacing: 8) {
-                            Text(verbatim: url)
-                                .foregroundStyle(Color("PVTextPrimary"))
-                                .textSelection(.enabled)
-                            Spacer(minLength: 0)
-                            copyButton(key: "url", value: url)
-                        }
-                    }
-                }
-            }
-        }
+    /// Opens a login's website in the system browser -- the design's own
+    /// "Open" action (`.d act`"Website"/"Open"`, screens-vault.html:646),
+    /// which the icon-button era never had (the old trailing control was
+    /// ALWAYS a copy button, even on the URL row). Best-effort: an
+    /// unparsable/schemeless string just does nothing rather than crash or
+    /// alert, matching this screen's existing "never offer an operation
+    /// known to fail louder than it has to" discipline.
+    private func openURL(_ raw: String) {
+        let candidate = raw.contains("://") ? raw : "https://\(raw)"
+        guard let url = URL(string: candidate) else { return }
+        UIApplication.shared.open(url)
     }
 
     // MARK: - Copy (Copy is the primary row action -- design-conformance §5)
 
-    @ViewBuilder
-    private func copyButton(key: String, value: String) -> some View {
-        Button {
-            copySecret(key: key, value: value)
-        } label: {
-            Image(systemName: "doc.on.doc")
-                .foregroundStyle(Color("PVAccent"))
-        }
-        .accessibilityIdentifier("vault.detail.copy.\(key)")
-        .accessibilityLabel("Copy \(fieldLabel(key))")
+    /// `.d.act .v` styled trailing text, routed through the SAME
+    /// `copySecret` choke point every copy affordance on this screen uses
+    /// -- replaces the old icon-only `copyButton`.
+    private func copyAction(key: String, value: String, title: String) -> PVDetailAction {
+        PVDetailAction(
+            title: title,
+            action: { copySecret(key: key, value: value) },
+            accessibilityId: "vault.detail.copy.\(key)",
+            accessibilityLabel: "Copy \(fieldLabel(key))"
+        )
     }
 
     /// TOUCH call site #2 of 2: fires on EVERY copy, unconditionally --
@@ -445,42 +564,6 @@ struct ItemDetailView: View {
         let deadline = ClipboardService.shared.copy(value, fieldLabel: fieldLabel(key))
         store.touch(itemId: item.id)
         confirmation = ClipboardConfirmation(fieldLabel: fieldLabel(key), deadline: deadline)
-    }
-
-    /// A live countdown DERIVED FROM THE DEADLINE on every render tick --
-    /// never decremented locally (Task 2's own behaviour requirement,
-    /// Pitfall 5's sibling discipline for the TOTP ring).
-    @ViewBuilder
-    private func copyConfirmationBanner(_ confirmation: ClipboardConfirmation) -> some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let remaining = ClipboardService.remainingSeconds(deadline: confirmation.deadline, now: context.date)
-            HStack {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(Color("PVSuccess"))
-                Text(verbatim: ClipboardWording.confirmation(
-                    fieldLabel: confirmation.fieldLabel, remainingSeconds: remaining
-                ))
-                    .font(.caption)
-                    .foregroundStyle(Color("PVTextMuted"))
-                Spacer(minLength: 0)
-                Button {
-                    // Dismissing the confirmation is COSMETIC ONLY -- it
-                    // must never cancel the real clear
-                    // (`copyToast.ts`'s own header; `ClipboardService
-                    // .dismissConfirmation()` is a deliberate no-op on the
-                    // real timer, unit-tested directly).
-                    ClipboardService.shared.dismissConfirmation()
-                    self.confirmation = nil
-                } label: {
-                    Image(systemName: "xmark")
-                        .foregroundStyle(Color("PVTextMuted"))
-                }
-                .accessibilityIdentifier("vault.detail.copyConfirmation.dismiss")
-            }
-            .padding(10)
-            .background(Color("PVSurfaceAlt"), in: RoundedRectangle(cornerRadius: 10))
-            .accessibilityIdentifier("vault.detail.copyConfirmation")
-        }
     }
 
     // MARK: - Reveal
@@ -505,25 +588,35 @@ struct ItemDetailView: View {
         // type-check under the result-builder transform; `if case` without
         // `else` does, producing nothing at all for the non-identity case.
         if case let .identity(f) = fields {
-            let fullName = [f.firstName, f.lastName]
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
-
-            VStack(alignment: .leading, spacing: 16) {
-                plainRow(label: "Full name", value: fullName)
-                if !f.email.isEmpty {
-                    plainRow(label: "Email", value: f.email, copyable: true, key: "email")
-                }
-                if !f.phone.isEmpty {
-                    plainRow(label: "Phone", value: f.phone, copyable: true, key: "phone")
-                }
-                addressRow(f)
-                if !f.notes.isEmpty {
-                    plainRow(label: "Notes", value: f.notes, copyable: true, key: "notes")
-                }
+            PVDetailGroup(rows: identityMainRows(f))
+            if let address = addressRow(f) {
+                PVDetailSectionLabel(title: "Address")
+                PVDetailGroup(rows: [address])
+            }
+            if !f.notes.isEmpty {
+                PVDetailSectionLabel(title: "Notes")
+                PVDetailGroup(rows: [AnyView(plainRow(label: nil, value: f.notes, copyable: true, key: "notes"))])
             }
         }
+    }
+
+    /// Plain array (not `@ViewBuilder`) for the same reason `fieldRow`'s
+    /// own header names: `PVDetailGroup`'s hairline placement needs the
+    /// EXACT rendered-row count, computed once here rather than re-derived
+    /// from conditional view content.
+    private func identityMainRows(_ f: IdentityFields) -> [AnyView] {
+        let fullName = [f.firstName, f.lastName]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        var rows: [AnyView] = [AnyView(plainRow(label: "Full name", value: fullName))]
+        if !f.email.isEmpty {
+            rows.append(AnyView(plainRow(label: "Email", value: f.email, copyable: true, key: "email")))
+        }
+        if !f.phone.isEmpty {
+            rows.append(AnyView(plainRow(label: "Phone", value: f.phone, copyable: true, key: "phone")))
+        }
+        return rows
     }
 
     /// Structured lines when populated, else the legacy flat `address`
@@ -531,38 +624,28 @@ struct ItemDetailView: View {
     /// (`IdentityAddress.swift`'s `addressLines` covers the structured
     /// half; the legacy split is inlined here since it is display-only and
     /// not part of the read/save round trip `IdentityAddress.swift` owns).
-    @ViewBuilder
-    private func addressRow(_ f: IdentityFields) -> some View {
+    /// `nil` when there is nothing to show at all -- the design's own
+    /// "Address" group is absent entirely rather than an empty card
+    /// (screens-vault.html:697-700 always has content; there is no drawn
+    /// empty state to match).
+    private func addressRow(_ f: IdentityFields) -> AnyView? {
         let structured = IdentityAddress.addressLines(f)
         let legacyLines = f.address
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         let lines = structured.isEmpty ? legacyLines : structured
+        guard !lines.isEmpty else { return nil }
         let copyValue = structured.isEmpty ? f.address : structured.joined(separator: ", ")
 
-        VStack(alignment: .leading, spacing: 4) {
-            Text(verbatim: "Address")
-                .font(.caption)
-                .foregroundStyle(Color("PVTextMuted"))
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
-                    if lines.isEmpty {
-                        Text(verbatim: "\u{2014}")
-                            .foregroundStyle(Color("PVTextPrimary"))
-                    } else {
-                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                            Text(verbatim: line)
-                                .foregroundStyle(Color("PVTextPrimary"))
-                        }
-                    }
-                }
-                Spacer(minLength: 0)
-                if !lines.isEmpty {
-                    copyButton(key: "address", value: copyValue)
-                }
+        // `.d .v` in the drawing carries no `.k` label at all
+        // (screens-vault.html:699) -- the `.glab`"Address" above already
+        // says what this is.
+        return AnyView(
+            PVDetailRow(value: lines.joined(separator: "\n"), accessibilityId: "vault.detail.field.address") {
+                AnyView(copyAction(key: "address", value: copyValue, title: "Copy"))
             }
-        }
+        )
     }
 
     // MARK: - Passkey (composed layout -- FIELD_ORDER.passkey is empty)
@@ -576,88 +659,103 @@ struct ItemDetailView: View {
         // Same `if case` (never `guard ... else { return EmptyView() }`)
         // discipline as `identitySection` above, for the same reason.
         if case let .passkey(f) = fields {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 8) {
-                    Image(systemName: "key.fill")
-                        .foregroundStyle(Color("PVPasskey"))
-                    Text(verbatim: "Signs you in without a password. The private key never leaves your devices.")
-                        .font(.footnote)
-                        .foregroundStyle(Color("PVTextMuted"))
-                }
-                plainRow(label: "Website", value: f.rpId, copyable: true, key: "rpId")
-                if let username = f.username, !username.isEmpty {
-                    plainRow(label: "Account", value: username, copyable: true, key: "username")
-                }
-                if let displayName = f.userDisplayName, !displayName.isEmpty {
-                    plainRow(label: "Display name", value: displayName, copyable: true, key: "userDisplayName")
-                }
-                if let updatedAt = item.updatedAt {
-                    plainRow(label: "Last updated", value: updatedAt, copyable: false, key: "updatedAt")
-                }
-            }
+            // `.slot key` (screens-vault.html:763) -- `StatusCallout`'s
+            // `.passkey` tone is the SAME chrome (11pt radius, 14%-tint
+            // background, leading dot) this row was hand-rolling as a bare
+            // `HStack`; design-conformance fix, Phase 40.
+            StatusCallout(
+                text: "Signs you in without a password. The private key never leaves your devices.",
+                tone: .passkey
+            )
+            .padding(.bottom, PVMetrics.detailGroupSpacing)
+            PVDetailGroup(rows: passkeyMainRows(f))
         }
+    }
+
+    private func passkeyMainRows(_ f: PasskeyFields) -> [AnyView] {
+        var rows: [AnyView] = [AnyView(plainRow(label: "Website", value: f.rpId, copyable: true, key: "rpId"))]
+        if let username = f.username, !username.isEmpty {
+            rows.append(AnyView(plainRow(label: "Account", value: username, copyable: true, key: "username")))
+        }
+        if let displayName = f.userDisplayName, !displayName.isEmpty {
+            rows.append(AnyView(
+                plainRow(label: "Display name", value: displayName, copyable: true, key: "userDisplayName")
+            ))
+        }
+        if let updatedAt = item.updatedAt {
+            rows.append(AnyView(plainRow(label: "Last updated", value: updatedAt, key: "updatedAt")))
+        }
+        return rows
     }
 
     // MARK: - Shared row helpers
 
-    @ViewBuilder
-    private func plainRow(label: String, value: String, copyable: Bool = false, key: String = "") -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(verbatim: label)
-                .font(.caption)
-                .foregroundStyle(Color("PVTextMuted"))
-            HStack(spacing: 8) {
-                Text(verbatim: value.isEmpty ? "\u{2014}" : value)
-                    .foregroundStyle(Color("PVTextPrimary"))
-                    .textSelection(.enabled)
-                Spacer(minLength: 0)
-                if copyable, !value.isEmpty {
-                    copyButton(key: key, value: value)
-                }
-            }
+    /// The plain (non-`FIELD_ORDER`) row shape identity/passkey compose by
+    /// hand -- same `.d`/`.d.act` visual treatment as `fieldRow` above,
+    /// just addressed by an explicit label/value pair instead of a
+    /// `DetailFieldTables` key. `label: nil` skips the `.k` line entirely
+    /// (the identity notes row inside its own "Notes" `.glab` group).
+    /// Not `@ViewBuilder` -- the body is a single unconditional `return`,
+    /// which disables the result-builder transform anyway (and warns);
+    /// a plain function returning `some View` is the same thing without
+    /// the warning.
+    private func plainRow(label: String?, value: String, copyable: Bool = false, key: String = "") -> some View {
+        // Resolved to a single `AnyView` value BEFORE the trailing closure
+        // literal -- `PVDetailRow.trailing`'s own header explains why an
+        // `if`/`else` INSIDE that closure would not typecheck.
+        let trailingView: AnyView = (copyable && !value.isEmpty)
+            ? AnyView(copyAction(key: key, value: value, title: "Copy"))
+            : AnyView(EmptyView())
+        return PVDetailRow(
+            label: label, value: value.isEmpty ? "\u{2014}" : value,
+            accessibilityId: key.isEmpty ? nil : "vault.detail.field.\(key)"
+        ) {
+            trailingView
         }
     }
 
+    /// The tag capsules as ONE `.d` row -- the "Tags" `.glab` label already
+    /// sits above this group (`fieldsBody`'s own call site), so this view
+    /// carries no caption of its own, matching every other labelled
+    /// group's single-row body (Notes, Secret).
     @ViewBuilder
     private var tagsRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(verbatim: "Tags")
-                .font(.caption)
-                .foregroundStyle(Color("PVTextMuted"))
-            HStack {
-                ForEach(item.tags, id: \.self) { tag in
-                    Text(verbatim: tag)
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color("PVSurfaceAlt"))
-                        .foregroundStyle(Color("PVTextMuted"))
-                        .clipShape(Capsule())
-                }
+        HStack {
+            ForEach(item.tags, id: \.self) { tag in
+                Text(verbatim: tag)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color("PVSurfaceAlt"))
+                    .foregroundStyle(Color("PVTextMuted"))
+                    .clipShape(Capsule())
             }
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, PVMetrics.detailRowHPadding)
+        .padding(.vertical, PVMetrics.detailRowVPadding)
     }
 
-    @ViewBuilder
-    private var detailsFooter: some View {
-        if item.updatedAt != nil || item.lastUsedAt != nil {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(verbatim: "Details")
-                    .font(.caption)
-                    .foregroundStyle(Color("PVTextMuted"))
-                if let updatedAt = item.updatedAt {
-                    Text(verbatim: "Modified: \(updatedAt)")
-                        .font(.footnote)
-                        .foregroundStyle(Color("PVTextMuted"))
-                }
-                if let lastUsedAt = item.lastUsedAt {
-                    Text(verbatim: "Last used: \(lastUsedAt)")
-                        .font(.footnote)
-                        .foregroundStyle(Color("PVTextMuted"))
-                        .accessibilityIdentifier("vault.detail.lastUsedAt")
-                }
-            }
+    /// `.d`/`.grp`"Details" (screens-vault.html:650-652) -- "Last used"
+    /// then "Modified", each its OWN plain row (was one `VStack` of
+    /// inline "Modified: <date>" text). `nil` when neither exists, so
+    /// `fieldsBody` can skip the whole labelled group rather than draw an
+    /// empty card.
+    private func detailsFooterRows() -> [AnyView]? {
+        var rows: [AnyView] = []
+        if let lastUsedAt = item.lastUsedAt {
+            // The RAW `"vault.detail.lastUsedAt"` id (no `field.` prefix)
+            // is the SAME identifier this row carried before the Phase 40
+            // restyle -- built directly rather than through `plainRow`,
+            // whose `key:` always composes `"vault.detail.field.\(key)"`.
+            rows.append(AnyView(
+                PVDetailRow(label: "Last used", value: lastUsedAt, accessibilityId: "vault.detail.lastUsedAt")
+            ))
         }
+        if let updatedAt = item.updatedAt {
+            rows.append(AnyView(plainRow(label: "Modified", value: updatedAt)))
+        }
+        return rows.isEmpty ? nil : rows
     }
 
     // MARK: - Non-decryptable / pending states (unchanged from 38-02)

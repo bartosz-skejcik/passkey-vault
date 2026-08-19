@@ -20,26 +20,31 @@ import SwiftUI
 
 enum ItemIconTileVariant {
     case row
+    /// The detail screen's centered `.hdr .big` tile -- design-conformance
+    /// fix, Phase 40 (`PVMetrics.detailHeaderIconSize` and siblings, cited
+    /// to `screens-vault.html`'s own `.hdr .big{58x58;radius:14px}` /
+    /// `.hdr .big svg{28x28}`). Sized here from those SAME constants rather
+    /// than a second copy, so the two files cannot drift apart.
     case header
 
     var frameSize: CGFloat {
         switch self {
         case .row: return 32
-        case .header: return 24
+        case .header: return PVMetrics.detailHeaderIconSize
         }
     }
 
     var cornerRadius: CGFloat {
         switch self {
         case .row: return 8
-        case .header: return 6
+        case .header: return PVMetrics.detailHeaderIconRadius
         }
     }
 
     var iconSize: CGFloat {
         switch self {
         case .row: return 18
-        case .header: return 14
+        case .header: return PVMetrics.detailHeaderGlyphSize
         }
     }
 }
@@ -57,6 +62,26 @@ struct ItemIconTile: View {
                 glyph("exclamationmark.triangle.fill", tint: Color("PVError"))
             } else if item.isPendingFamilyKey {
                 glyph("hourglass", tint: Color("PVTextMuted"))
+            } else if variant == .header {
+                // Design-conformance fix, Phase 40: the detail screen's
+                // `.hdr .big` ALWAYS draws the type's plain glyph -- unlike
+                // the list row below, it never substitutes a fetched
+                // favicon or a detected card-brand mark.
+                // `screens-vault.html`'s own login/card detail headers
+                // (lines 641, 666) draw the generic circle/card SVG, not
+                // GitHub's cat or a VISA tile, even though the SAME item's
+                // LIST row (line 398) shows exactly that. Passkey gets the
+                // teal wash (`.hdr .big.key`) here and nowhere else --
+                // list rows stay `PVSurfaceAlt` because a favicon usually
+                // covers them instead.
+                if isPasskeyType {
+                    glyph(
+                        fallbackSystemImage, tint: Color("PVPasskey"),
+                        background: Color("PVPasskey").opacity(PVMetrics.detailHeaderKeyTintOpacity)
+                    )
+                } else {
+                    glyph(fallbackSystemImage, tint: Color("PVTextMuted"))
+                }
             } else if let fields = item.fields, case let .card(card) = fields,
                 let brand = CardBrandDetector.detect(card.number)
             {
@@ -115,6 +140,11 @@ struct ItemIconTile: View {
         faviconData = await FaviconLoader.shared.favicon(forHostname: hostname)
     }
 
+    private var isPasskeyType: Bool {
+        guard let fields = item.fields, case .passkey = fields else { return false }
+        return true
+    }
+
     private var fallbackSystemImage: String {
         guard let fields = item.fields else { return "questionmark.circle" }
         switch fields {
@@ -130,9 +160,9 @@ struct ItemIconTile: View {
     // MARK: - Rendering helpers
 
     @ViewBuilder
-    private func glyph(_ systemImage: String, tint: Color) -> some View {
+    private func glyph(_ systemImage: String, tint: Color, background: Color = Color("PVSurfaceAlt")) -> some View {
         RoundedRectangle(cornerRadius: variant.cornerRadius, style: .continuous)
-            .fill(Color("PVSurfaceAlt"))
+            .fill(background)
             .frame(width: variant.frameSize, height: variant.frameSize)
             .overlay {
                 Image(systemName: systemImage)

@@ -246,6 +246,242 @@ enum PVMetrics {
     static let segItemRadius: CGFloat = 7
     static let segItemVPadding: CGFloat = 5
     static let segFontSize: CGFloat = 13
+
+    // MARK: - Detail screen header + rows (screens-vault.html, ".hdr"/".d"/
+    // ".grp") -- design-conformance fix, Phase 40. `ItemDetailView` had
+    // never been checked against this file's own detail-screen sections; it
+    // read only the COPY out of an earlier drawing and built a flat,
+    // uncarded `VStack` instead of the grouped `.grp` cards with `.d` rows
+    // every screen in the artifact actually uses.
+
+    // `.hdr{padding:10px 0 16px;gap:7px}`
+    static let detailHeaderTopSpace: CGFloat = 10
+    static let detailHeaderBottomSpace: CGFloat = 16
+    static let detailHeaderGap: CGFloat = 7
+    // `.hdr .big{width:58px;height:58px;border-radius:14px}` /
+    // `.hdr .big svg{28x28}`
+    static let detailHeaderIconSize: CGFloat = 58
+    static let detailHeaderIconRadius: CGFloat = 14
+    static let detailHeaderGlyphSize: CGFloat = 28
+    // `.hdr .big.key{background:color-mix(in srgb,var(--pv-key) 15%,
+    // transparent)}` -- the passkey teal wash.
+    static let detailHeaderKeyTintOpacity: CGFloat = 0.15
+    // `.hdr b{font-size:21px;font-weight:640}`
+    static let detailTitleSize: CGFloat = 21
+    // `.hdr span{font-size:13.5px}`
+    static let detailSubtitleSize: CGFloat = 13.5
+
+    // NOT from the CSS -- a PLATFORM workaround, not a design value. BUG
+    // FOUND LIVE (design-conformance fix, Phase 40): `ItemDetailView` is
+    // pushed with `.navigationBarTitleDisplayMode(.inline)` from a tab
+    // root whose OWN `NavigationStack` carries the default `.large` title
+    // (`ItemListView.swift:554`, no override) -- SwiftUI/iOS 26 does not
+    // reliably reserve the pushed screen's own safe-area top inset in that
+    // combination. Measured live (`ios/evidence/40/detail-conformance/`):
+    // with only `PVMetrics.detailHeaderTopSpace` (10pt) of clearance, the
+    // `.hdr` icon+title painted UNDER the status bar and the nav bar's own
+    // Edit/Lock/avatar toolbar pills, only faintly visible through their
+    // translucent material -- reproduced deterministically across
+    // brand-new accounts (not a one-off transition glitch), and NOT fixed
+    // by `.toolbarBackground(.visible, for: .navigationBar)` or a
+    // zero-height `.safeAreaInset(edge: .top)`, both tried and screenshotted
+    // first. This is the SMALLEST clearance that cleared the ghosting in
+    // that same measurement pass (bisected from a 200pt value that
+    // over-cleared it by a wide margin). Applied as its OWN spacer ABOVE
+    // `.hdr`, not folded into `detailHeaderTopSpace`, so the CSS's own
+    // number stays exactly what the drawing says if a future iOS build
+    // fixes the underlying safe-area bug and this constant can drop to 0.
+    static let detailToolbarClearance: CGFloat = 92
+
+    // `.grp{border-radius:11px}` / `.grp + .grp{margin-top:14px}`
+    static let detailGroupRadius: CGFloat = 11
+    static let detailGroupSpacing: CGFloat = 14
+
+    // `.d{padding:9px 12px;gap:2px}` / `.d .k{font-size:12px}` /
+    // `.d .v{font-size:15.5px}` / `.d .v.mono{font-size:14px}`
+    static let detailRowVPadding: CGFloat = 9
+    static let detailRowHPadding: CGFloat = 12
+    static let detailRowGap: CGFloat = 2
+    static let detailKeyFontSize: CGFloat = 12
+    static let detailValueFontSize: CGFloat = 15.5
+    static let detailValueMonoFontSize: CGFloat = 14
+    // `.d + .d{box-shadow:inset 0 .5px 0 var(--pv-sep)}` -- rendered as a
+    // 0.5pt hairline `Rectangle` between consecutive rows (never above the
+    // first or below the last), tinted `PVSeparator` at this opacity: the
+    // colorset generator writes alpha 1.000 for every token by
+    // construction (`PVScrim`'s own header explains why), so the CSS's
+    // `rgba(...,.20)` translucency lives here, in code, exactly like the
+    // dock scrim's `dockScrimOpacity` above.
+    static let detailSeparatorOpacity: CGFloat = 0.20
+    static let detailSeparatorWidth: CGFloat = 0.5
+
+    // `.glab{font-size:12px;text-transform:uppercase;letter-spacing:.04em;
+    // padding:14px 6px 5px}` -- the "Notes"/"Details"/"Secret"/"Advanced"
+    // section labels above a group that is not the first on the screen.
+    static let detailSectionLabelFontSize: CGFloat = 12
+    static let detailSectionLabelTracking: CGFloat = 0.04
+    static let detailSectionLabelTopSpace: CGFloat = 14
+    static let detailSectionLabelHPadding: CGFloat = 6
+    static let detailSectionLabelBottomSpace: CGFloat = 5
+}
+
+// MARK: - Detail screen grouped card
+
+/// `.grp` -- a rounded `PVSurface` card; a `.d + .d` inset hairline is drawn
+/// between each pair of consecutive rows, never above the first or below the
+/// last. Rows are supplied as a plain array rather than `@ViewBuilder`
+/// because the hairline placement needs to know exactly which rows
+/// RENDERED after each call site's own emptiness filtering, not how many
+/// `View`s appear in source -- design-conformance fix, Phase 40.
+struct PVDetailGroup: View {
+    let rows: [AnyView]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                if index > 0 {
+                    Rectangle()
+                        .fill(Color("PVSeparator").opacity(PVMetrics.detailSeparatorOpacity))
+                        .frame(height: PVMetrics.detailSeparatorWidth)
+                }
+                row
+            }
+        }
+        .background(Color("PVSurface"))
+        .clipShape(RoundedRectangle(cornerRadius: PVMetrics.detailGroupRadius, style: .continuous))
+    }
+}
+
+/// `.glab` -- the uppercase section label above every `.grp` that is not the
+/// screen's first (e.g. "Notes", "Details", "Secret", "Advanced").
+struct PVDetailSectionLabel: View {
+    let title: String
+
+    var body: some View {
+        Text(verbatim: title.uppercased())
+            .font(.system(size: PVMetrics.detailSectionLabelFontSize))
+            .tracking(PVMetrics.detailSectionLabelFontSize * PVMetrics.detailSectionLabelTracking)
+            .foregroundStyle(Color("PVTextMuted"))
+            .padding(.horizontal, PVMetrics.detailSectionLabelHPadding)
+            .padding(.top, PVMetrics.detailSectionLabelTopSpace)
+            .padding(.bottom, PVMetrics.detailSectionLabelBottomSpace)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// `.d` -- label (`.k`, 12pt muted) above value (`.v`, 15.5pt, or `.v.mono`
+/// 14pt monospace), with an optional trailing action rendered exactly like
+/// `.d.act .v` (same size as the value, `PVAccent` colour) -- design-
+/// conformance fix, Phase 40. `label` may be empty (the note body / address
+/// rows draw no `.k` at all in the approved screens); `key` stays `nil` to
+/// skip the `.k` line entirely rather than reserve blank space for it.
+struct PVDetailRow: View {
+    var label: String?
+    let value: String
+    var isMono: Bool = false
+    var accessibilityId: String?
+    /// A muted line below the value -- the hidden-password recipient note
+    /// is the one caller today; kept generic rather than named for that one
+    /// use so a second caller does not need a second parameter.
+    var footnote: String?
+    var footnoteAccessibilityId: String?
+    /// Deliberately NOT `@ViewBuilder` -- every call site already supplies
+    /// a single `AnyView(...)`-wrapped expression (branching, when needed,
+    /// is resolved to a plain `AnyView` value BEFORE the closure literal,
+    /// e.g. `plainRow`'s own `trailingView` below), so this stays a bare
+    /// closure rather than risk a result-builder `_ConditionalContent`
+    /// that does not itself coerce to the declared `AnyView` return type.
+    var trailing: () -> AnyView
+
+    init(
+        label: String? = nil, value: String, isMono: Bool = false, accessibilityId: String? = nil,
+        footnote: String? = nil, footnoteAccessibilityId: String? = nil,
+        trailing: @escaping () -> AnyView = { AnyView(EmptyView()) }
+    ) {
+        self.label = label
+        self.value = value
+        self.isMono = isMono
+        self.accessibilityId = accessibilityId
+        self.footnote = footnote
+        self.footnoteAccessibilityId = footnoteAccessibilityId
+        self.trailing = trailing
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: PVMetrics.detailRowGap) {
+                if let label, !label.isEmpty {
+                    Text(verbatim: label)
+                        .font(.system(size: PVMetrics.detailKeyFontSize))
+                        .foregroundStyle(Color("PVTextMuted"))
+                }
+                Text(verbatim: value)
+                    .font(
+                        isMono
+                            ? .system(size: PVMetrics.detailValueMonoFontSize).monospaced()
+                            : .system(size: PVMetrics.detailValueFontSize)
+                    )
+                    .foregroundStyle(Color("PVTextPrimary"))
+                    .textSelection(.enabled)
+                    .modifier(OptionalAccessibilityIdentifier(id: accessibilityId))
+                if let footnote {
+                    Text(verbatim: footnote)
+                        .font(.caption2)
+                        .foregroundStyle(Color("PVTextMuted"))
+                        .modifier(OptionalAccessibilityIdentifier(id: footnoteAccessibilityId))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            trailing()
+        }
+        .padding(.horizontal, PVMetrics.detailRowHPadding)
+        .padding(.vertical, PVMetrics.detailRowVPadding)
+    }
+}
+
+/// `.d.act .v` -- the trailing action text ("Copy", "Reveal", "Hide",
+/// "Open", "Copy code" …), styled identically to the row's own value
+/// (`.d .v`'s 15.5pt) but in `PVAccent`. A real `Button`, not a `Text` with
+/// a gesture, so VoiceOver/XCUITest activation keeps working exactly like
+/// the icon buttons it replaces.
+struct PVDetailAction: View {
+    let title: String
+    let action: () -> Void
+    var accessibilityId: String?
+    var accessibilityLabel: String?
+
+    var body: some View {
+        Button(action: action) {
+            Text(verbatim: title)
+                .font(.system(size: PVMetrics.detailValueFontSize))
+                .foregroundStyle(Color("PVAccent"))
+        }
+        .buttonStyle(.plain)
+        .modifier(OptionalAccessibilityIdentifier(id: accessibilityId))
+        .modifier(OptionalAccessibilityLabel(label: accessibilityLabel))
+    }
+}
+
+private struct OptionalAccessibilityIdentifier: ViewModifier {
+    let id: String?
+    func body(content: Content) -> some View {
+        if let id {
+            content.accessibilityIdentifier(id)
+        } else {
+            content
+        }
+    }
+}
+
+private struct OptionalAccessibilityLabel: ViewModifier {
+    let label: String?
+    func body(content: Content) -> some View {
+        if let label {
+            content.accessibilityLabel(label)
+        } else {
+            content
+        }
+    }
 }
 
 // MARK: - Dock glass
