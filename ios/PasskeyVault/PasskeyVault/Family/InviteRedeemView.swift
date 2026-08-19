@@ -52,6 +52,14 @@ struct InviteRedeemView: View {
     let baseURL: URL
     let tokenProvider: () -> String?
     let userKey: FfiUserKey
+    /// WR-07: injected by the presenting route -- the success state's CTA
+    /// ("Przejdź do swojego vaulta") previously relabeled itself and then
+    /// disabled itself in the SAME condition, so the only invite-redemption
+    /// screen's success state was a permanently dead end with no way off
+    /// the screen. Called once the user taps that CTA after a successful
+    /// join (or the alreadyMember branch, which makes the identical
+    /// "we're taking you to the vault" promise).
+    let onFinished: () -> Void
 
     @State private var urlText: String = ""
     @State private var isJoining = false
@@ -161,8 +169,17 @@ struct InviteRedeemView: View {
                 }
             },
             actions: {
+                // WR-07: once `result != nil` the CTA is a real action
+                // (`onFinished`), not the same `join()` handler relabeled --
+                // and it stays ENABLED for that state, since disabling it in
+                // the exact condition that relabels it to "go to your vault"
+                // made the success state a dead end with no way off screen.
                 Button {
-                    Task { await join() }
+                    if result != nil {
+                        onFinished()
+                    } else {
+                        Task { await join() }
+                    }
                 } label: {
                     if isJoining {
                         ProgressView().tint(Color("PVOnAccent"))
@@ -172,8 +189,16 @@ struct InviteRedeemView: View {
                         Text(result != nil ? "Przejdź do swojego vaulta" : "Dołącz")
                     }
                 }
-                .buttonStyle(PVPrimaryButtonStyle(isEnabled: !isJoining && !urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-                .disabled(isJoining || urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || result != nil)
+                .buttonStyle(
+                    PVPrimaryButtonStyle(
+                        isEnabled: !isJoining
+                            && (result != nil || !urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    )
+                )
+                .disabled(
+                    isJoining
+                        || (result == nil && urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                )
                 .accessibilityIdentifier("vault.inviteRedeem.joinCta")
             }
         )
