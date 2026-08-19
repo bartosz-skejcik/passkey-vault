@@ -76,6 +76,9 @@
 //! | `unseal_collection_key`        | `Result<Arc<FfiCollectionKey>,_>` | serde_json/small-order — złapane jako `Err` |
 //! | `encrypt_item_for_collection`  | `Result<String,_>`    | serde_json — złapane jako `Err` |
 //! | `decrypt_item_for_collection`  | `Result<String,_>`    | serde_json/utf8 — złapane jako `Err` |
+//! | `rewrap_item_key_for_collection` | `Result<String,_>`  | serde_json — złapane jako `Err` (40-03) |
+//! | `seal_item_key_for_recipient`  | `Result<String,_>`    | serde_json — złapane jako `Err` (40-03) |
+//! | `decrypt_item_with_shared_key` | `Result<String,_>`    | serde_json/utf8 — złapane jako `Err` (40-03) |
 //!
 //! `export_user_key_for_session` to JEDYNY eksport bez `Result`, świadomie:
 //! jego całe ciało to `expose().to_vec()`. Jedyna droga do paniki byłaby
@@ -146,9 +149,9 @@ pub use totp::{totp_now, FfiTotpCode};
 // already, ahead of plan 40-03's own scope.
 pub mod sharing;
 pub use sharing::{
-    decrypt_item_for_collection, encrypt_item_for_collection, seal_collection_key,
-    unseal_collection_key, unwrap_identity_secret_key, wrap_identity_secret_key, FfiCollectionKey,
-    FfiIdentityKey, FfiIdentityPublicKey,
+    decrypt_item_for_collection, encrypt_item_for_collection, rewrap_item_key_for_collection,
+    seal_collection_key, unseal_collection_key, unwrap_identity_secret_key,
+    wrap_identity_secret_key, FfiCollectionKey, FfiIdentityKey, FfiIdentityPublicKey,
 };
 
 // TEST-ONLY (`#[cfg(test)]`): observes what this crate actually hands back

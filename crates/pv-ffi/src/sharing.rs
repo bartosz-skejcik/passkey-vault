@@ -53,10 +53,11 @@ use pv_core::{
     },
     items::{
         decrypt_item_for_collection as core_decrypt_item_for_collection,
-        encrypt_item_for_collection as core_encrypt_item_for_collection, CollectionKey,
+        encrypt_item_for_collection as core_encrypt_item_for_collection,
+        rewrap_item_key_for_collection as core_rewrap_item_key_for_collection, CollectionKey,
         EncryptedItem,
     },
-    keys::KEY_LEN,
+    keys::{WrappedKey, KEY_LEN},
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -235,6 +236,34 @@ pub fn decrypt_item_for_collection(
     String::from_utf8(bytes).map_err(|e| FfiError::InvalidInput(e.to_string()))
 }
 
+/// Rewrap-only: przenosi Cipher Key itemu spod OLD `FfiCollectionKey`a pod
+/// NEW, nigdy nie dotykając `enc_data` (KEY-02/SC 6 — "removing a member
+/// rewraps keys only") — mirrors `pv-wasm`'s `rewrapItemKeyForCollection`
+/// 1:1. Sygnatura celowo nie przyjmuje żadnego argumentu w kształcie
+/// `enc_data` — to jest sama część dowodu SC 6: dotknięcie payloadu jest
+/// niemożliwe na poziomie typu, nie tylko dyscypliny runtime'owej.
+#[uniffi::export]
+pub fn rewrap_item_key_for_collection(
+    old_ck: &FfiCollectionKey,
+    new_ck: &FfiCollectionKey,
+    old_enc_key_json: String,
+    collection_id: String,
+    item_id: String,
+) -> Result<String, FfiError> {
+    let old_collection_key = CollectionKey::from_bytes(old_ck.0);
+    let new_collection_key = CollectionKey::from_bytes(new_ck.0);
+    let old_enc_key: WrappedKey = serde_json::from_str(&old_enc_key_json)
+        .map_err(|e| FfiError::InvalidInput(e.to_string()))?;
+    let new_enc_key = core_rewrap_item_key_for_collection(
+        &old_collection_key,
+        &new_collection_key,
+        &old_enc_key,
+        &collection_id,
+        &item_id,
+    )?;
+    serde_json::to_string(&new_enc_key).map_err(|e| FfiError::InvalidInput(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,7 +368,10 @@ mod tests {
     #[test]
     fn collection_item_encrypt_decrypt_roundtrip() {
         let ck = FfiCollectionKey::generate().expect("generate is infallible today");
-        let plaintext = "{\"type\":\"note\",\"body\":\"sharing fixture\"}".to_string();
+        // Multi-byte UTF-8 (🔑) + an embedded NUL, per this plan's own
+        // acceptance criteria (Task 1) — a truncation or re-encoding bug
+        // would be visible in either.
+        let plaintext = "{\"type\":\"note\",\"body\":\"sharing fixture 🔑\\u0000tail\"}".to_string();
 
         let item_json = encrypt_item_for_collection(
             &ck,
@@ -382,5 +414,113 @@ mod tests {
             1,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn collection_item_decrypt_rejects_wrong_item_id() {
+        let ck = FfiCollectionKey::generate().expect("generate is infallible today");
+        let item_json = encrypt_item_for_collection(
+            &ck,
+            "fixture".to_string(),
+            "collection-fixture".to_string(),
+            "item-a".to_string(),
+            1,
+        )
+        .expect("encrypt_item_for_collection should succeed");
+
+        let result = decrypt_item_for_collection(
+            &ck,
+            item_json,
+            "collection-fixture".to_string(),
+            "item-b".to_string(),
+            1,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn collection_item_decrypt_rejects_wrong_revision() {
+        let ck = FfiCollectionKey::generate().expect("generate is infallible today");
+        let item_json = encrypt_item_for_collection(
+            &ck,
+            "fixture".to_string(),
+            "collection-fixture".to_string(),
+            "item-fixture".to_string(),
+            1,
+        )
+        .expect("encrypt_item_for_collection should succeed");
+
+        let result = decrypt_item_for_collection(
+            &ck,
+            item_json,
+            "collection-fixture".to_string(),
+            "item-fixture".to_string(),
+            2,
+        );
+        assert!(result.is_err());
+    }
+
+    /// Proves the rewrap-only guarantee end to end through the FFI surface:
+    /// the SAME `enc_data` string (byte-identical) decrypts under `new_ck`
+    /// afterward and no longer decrypts under `old_ck`.
+    #[test]
+    fn rewrap_item_key_moves_item_to_new_collection_key() {
+        let old_ck = FfiCollectionKey::generate().expect("generate is infallible today");
+        let new_ck = FfiCollectionKey::generate().expect("generate is infallible today");
+        let plaintext = "{\"type\":\"note\",\"body\":\"rewrap fixture 🔑\\u0000tail\"}".to_string();
+
+        let item_json = encrypt_item_for_collection(
+            &old_ck,
+            plaintext.clone(),
+            "collection-fixture".to_string(),
+            "item-fixture".to_string(),
+            1,
+        )
+        .expect("encrypt_item_for_collection should succeed");
+        let item: EncryptedItem =
+            serde_json::from_str(&item_json).expect("encrypt_item_for_collection's own output must parse");
+        let old_enc_key_json =
+            serde_json::to_string(&item.enc_key).expect("WrappedKey always serializes");
+        let original_enc_data_json =
+            serde_json::to_string(&item.enc_data).expect("WrappedKey always serializes");
+
+        let new_enc_key_json = rewrap_item_key_for_collection(
+            &old_ck,
+            &new_ck,
+            old_enc_key_json,
+            "collection-fixture".to_string(),
+            "item-fixture".to_string(),
+        )
+        .expect("rewrap_item_key_for_collection should succeed");
+        let new_enc_key: WrappedKey =
+            serde_json::from_str(&new_enc_key_json).expect("rewrap_item_key_for_collection's own output must parse");
+
+        let rewrapped_item = EncryptedItem { enc_key: new_enc_key, enc_data: item.enc_data.clone() };
+        // enc_data moved, not re-derived — byte-identical to what
+        // encrypt_item_for_collection produced (acceptance criterion).
+        let rewrapped_enc_data_json =
+            serde_json::to_string(&rewrapped_item.enc_data).expect("WrappedKey always serializes");
+        assert_eq!(rewrapped_enc_data_json, original_enc_data_json);
+        let rewrapped_item_json =
+            serde_json::to_string(&rewrapped_item).expect("EncryptedItem always serializes");
+
+        let decrypted_under_new = decrypt_item_for_collection(
+            &new_ck,
+            rewrapped_item_json.clone(),
+            "collection-fixture".to_string(),
+            "item-fixture".to_string(),
+            1,
+        )
+        .expect("decrypt under new_ck should succeed");
+        assert_eq!(decrypted_under_new, plaintext);
+
+        let result_under_old = decrypt_item_for_collection(
+            &old_ck,
+            rewrapped_item_json,
+            "collection-fixture".to_string(),
+            "item-fixture".to_string(),
+            1,
+        );
+        assert!(result_under_old.is_err());
     }
 }
