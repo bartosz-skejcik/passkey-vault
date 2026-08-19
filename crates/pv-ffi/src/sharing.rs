@@ -53,13 +53,15 @@ use pv_core::{
     },
     items::{
         decrypt_item_for_collection as core_decrypt_item_for_collection,
+        decrypt_item_payload_with_shared_key as core_decrypt_item_payload_with_shared_key,
         encrypt_item_for_collection as core_encrypt_item_for_collection,
-        rewrap_item_key_for_collection as core_rewrap_item_key_for_collection, CollectionKey,
+        rewrap_item_key_for_collection as core_rewrap_item_key_for_collection,
+        unwrap_item_key_for_sharing as core_unwrap_item_key_for_sharing, CollectionKey,
         EncryptedItem,
     },
     keys::{WrappedKey, KEY_LEN},
 };
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::{FfiError, FfiUserKey};
 
@@ -262,6 +264,62 @@ pub fn rewrap_item_key_for_collection(
         &item_id,
     )?;
     serde_json::to_string(&new_enc_key).map_err(|e| FfiError::InvalidInput(e.to_string()))
+}
+
+/// SHARE-02's write-side primitive for iOS: odpakowuje `uk`iem Cipher Key
+/// POJEDYNCZEGO personalnego itemu z jego własnego `enc_key`, po czym
+/// zapieczętowuje ten Cipher Key pod `recipient_pk` — mirrors `pv-wasm`'s
+/// `sealItemKeyForRecipient` 1:1 w kolejności argumentów. `enc_key_json` to
+/// WYŁĄCZNIE `EncryptedItem.enc_key` (nigdy `enc_data`) — ta sama sygnaturowa
+/// dyscyplina co `rewrap_item_key_for_collection`, które strukturalnie nie
+/// przyjmuje payloadu jako argumentu.
+///
+/// T-40-11: odzyskane surowe bajty Cipher Key NIGDY nie opuszczają
+/// `Zeroizing` — nie są kopiowane do żadnego lokalnego `Vec<u8>`/`[u8; 32]`,
+/// który sam nie jest `Zeroizing`, i nigdy nie przekraczają granicy FFI w
+/// żadnym kierunku (tylko `identity::seal`'s wynik, ciphertext, przekracza).
+#[uniffi::export]
+pub fn seal_item_key_for_recipient(
+    uk: &FfiUserKey,
+    enc_key_json: String,
+    item_id: String,
+    recipient_pk: &FfiIdentityPublicKey,
+) -> Result<String, FfiError> {
+    let enc_key: WrappedKey = serde_json::from_str(&enc_key_json)
+        .map_err(|e| FfiError::InvalidInput(e.to_string()))?;
+    let item_key_bytes: Zeroizing<[u8; KEY_LEN]> =
+        core_unwrap_item_key_for_sharing(&uk.0, &enc_key, &item_id)?;
+    let sealed = core_seal(&recipient_pk.0, item_key_bytes.as_slice())?;
+    serde_json::to_string(&sealed).map_err(|e| FfiError::InvalidInput(e.to_string()))
+}
+
+/// SHARE-02's read-side counterpart of `seal_item_key_for_recipient`:
+/// odszyfrowuje `enc_data` bezpośrednio udostępnionego (`item_shares`)
+/// personalnego itemu przy użyciu Cipher Key już odzyskanego po stronie
+/// recipienta (typowo via `unseal_collection_key` na jego własnym
+/// `item_shares.sealed_key`) — mirrors `pv-wasm`'s `decryptItemWithSharedKey`
+/// 1:1. `ck` tutaj jest WYŁĄCZNIE nośnikiem 32 nieprzezroczystych bajtów;
+/// nazwa typu NIE implikuje przynależności do kolekcji.
+///
+/// Ta ścieżka CELOWO używa PERSONALNEGO AAD
+/// (`decrypt_item_payload_with_shared_key`), NIE scope'owanego kolekcyjnie —
+/// `enc_data` jest nietknięte przez sharing (SC 6), więc recipient musi
+/// przedstawić DOKŁADNIE TEN SAM AAD, pod którym właściciel je zaszyfrował.
+/// Przyszły reader, który "poprawi" to na AAD kolekcyjne, zepsuje KAŻDY
+/// bezpośredni share.
+#[uniffi::export]
+pub fn decrypt_item_with_shared_key(
+    ck: &FfiCollectionKey,
+    enc_data_json: String,
+    item_id: String,
+    revision: u32,
+) -> Result<String, FfiError> {
+    let enc_data: WrappedKey = serde_json::from_str(&enc_data_json)
+        .map_err(|e| FfiError::InvalidInput(e.to_string()))?;
+    let mut plaintext =
+        core_decrypt_item_payload_with_shared_key(&ck.0, &enc_data, &item_id, revision)?;
+    let bytes = std::mem::take(&mut *plaintext);
+    String::from_utf8(bytes).map_err(|e| FfiError::InvalidInput(e.to_string()))
 }
 
 #[cfg(test)]
@@ -522,5 +580,90 @@ mod tests {
             1,
         );
         assert!(result_under_old.is_err());
+    }
+
+    // --- Task 2 tests (direct-share item-key path) -------------------
+
+    /// End-to-end SHARE-02 direct-share path through the real FFI: owner
+    /// unwraps their personal item's Cipher Key and seals it to a SECOND,
+    /// independently generated recipient identity key; the recipient
+    /// unseals and decrypts `enc_data` (untouched by sharing, SC 6) and
+    /// recovers the ORIGINAL plaintext byte-for-byte.
+    #[test]
+    fn seal_item_key_for_recipient_then_recipient_decrypts_payload() {
+        use pv_core::items::encrypt_item as core_encrypt_item_personal;
+
+        let owner_uk = FfiUserKey::generate().expect("generate is infallible today");
+        let recipient = FfiIdentityKey::generate().expect("generate is infallible today");
+        let recipient_pk_bytes = recipient.public_key_bytes();
+        let recipient_pk = FfiIdentityPublicKey::from_bytes(recipient_pk_bytes)
+            .expect("a real generated public key must never be small-order");
+
+        let plaintext = "{\"type\":\"login\",\"password\":\"s3cret 🔑\\u0000tail\"}".to_string();
+        let item = core_encrypt_item_personal(&owner_uk.0, plaintext.as_bytes(), "item-fixture", 1)
+            .expect("encrypt_item should succeed");
+        let enc_key_json =
+            serde_json::to_string(&item.enc_key).expect("WrappedKey always serializes");
+        let enc_data_json =
+            serde_json::to_string(&item.enc_data).expect("WrappedKey always serializes");
+
+        let sealed_json = seal_item_key_for_recipient(
+            &owner_uk,
+            enc_key_json,
+            "item-fixture".to_string(),
+            &recipient_pk,
+        )
+        .expect("seal_item_key_for_recipient should succeed");
+        let recovered_ck = unseal_collection_key(&recipient, sealed_json)
+            .expect("unseal_collection_key should succeed");
+
+        let decrypted = decrypt_item_with_shared_key(
+            &recovered_ck,
+            enc_data_json,
+            "item-fixture".to_string(),
+            1,
+        )
+        .expect("decrypt_item_with_shared_key should succeed");
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn decrypt_item_with_shared_key_rejects_wrong_revision() {
+        use pv_core::items::encrypt_item as core_encrypt_item_personal;
+
+        let owner_uk = FfiUserKey::generate().expect("generate is infallible today");
+        let recipient = FfiIdentityKey::generate().expect("generate is infallible today");
+        let recipient_pk_bytes = recipient.public_key_bytes();
+        let recipient_pk = FfiIdentityPublicKey::from_bytes(recipient_pk_bytes)
+            .expect("a real generated public key must never be small-order");
+
+        // revision 0, deliberately: matches the constant the falsification
+        // transcript below hardcodes, so that mutation reproduces the exact
+        // false-positive pass this test exists to catch.
+        let item = core_encrypt_item_personal(&owner_uk.0, b"secret", "item-fixture", 0)
+            .expect("encrypt_item should succeed");
+        let enc_key_json =
+            serde_json::to_string(&item.enc_key).expect("WrappedKey always serializes");
+        let enc_data_json =
+            serde_json::to_string(&item.enc_data).expect("WrappedKey always serializes");
+
+        let sealed_json = seal_item_key_for_recipient(
+            &owner_uk,
+            enc_key_json,
+            "item-fixture".to_string(),
+            &recipient_pk,
+        )
+        .expect("seal_item_key_for_recipient should succeed");
+        let recovered_ck = unseal_collection_key(&recipient, sealed_json)
+            .expect("unseal_collection_key should succeed");
+
+        let result = decrypt_item_with_shared_key(
+            &recovered_ck,
+            enc_data_json,
+            "item-fixture".to_string(),
+            2,
+        );
+        assert!(result.is_err());
     }
 }

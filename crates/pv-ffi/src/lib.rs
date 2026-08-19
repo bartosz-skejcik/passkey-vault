@@ -149,9 +149,10 @@ pub use totp::{totp_now, FfiTotpCode};
 // already, ahead of plan 40-03's own scope.
 pub mod sharing;
 pub use sharing::{
-    decrypt_item_for_collection, encrypt_item_for_collection, rewrap_item_key_for_collection,
-    seal_collection_key, unseal_collection_key, unwrap_identity_secret_key,
-    wrap_identity_secret_key, FfiCollectionKey, FfiIdentityKey, FfiIdentityPublicKey,
+    decrypt_item_for_collection, decrypt_item_with_shared_key, encrypt_item_for_collection,
+    rewrap_item_key_for_collection, seal_collection_key, seal_item_key_for_recipient,
+    unseal_collection_key, unwrap_identity_secret_key, wrap_identity_secret_key, FfiCollectionKey,
+    FfiIdentityKey, FfiIdentityPublicKey,
 };
 
 // TEST-ONLY (`#[cfg(test)]`): observes what this crate actually hands back

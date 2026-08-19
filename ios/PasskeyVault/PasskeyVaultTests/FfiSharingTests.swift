@@ -158,6 +158,67 @@ struct FfiSharingTests {
         try Self.assertEphemeralPkIsThirtyTwoElementJsonArray(sealedJson: sealedJson)
     }
 
+    /// Plan 40-03, Task 2: builds a direct-share end to end IN SWIFT, with
+    /// no mock and no stub -- the composition plan 40-08 relies on to
+    /// demonstrate the hidden-password honesty claim. Encrypts an item
+    /// under a User Key, seals its item key to a SECOND, independently
+    /// generated `FfiIdentityKey`'s public key, unseals it as that
+    /// recipient, and decrypts the payload -- asserting the recovered
+    /// plaintext equals a literal declared in this file.
+    ///
+    /// `encKeyJson`/`encDataJson` are built here via `JSONSerialization`,
+    /// from `FfiWrappedKey.nonce`/`.ciphertext` (UniFFI-native `Data`)
+    /// mapped BYTE-BY-BYTE into a plain `[Int]` array BEFORE serialization
+    /// -- never handed to `JSONEncoder`/`JSONSerialization` as `Data`
+    /// directly. That is the DR-40-A discipline applied by hand: encoding a
+    /// `Data` field through `JSONEncoder` would produce base64, a shape
+    /// `serde_json`'s own `Vec<u8>` encoding (a JSON number array) never
+    /// produces -- exactly the divergence DR-38-C already paid for once.
+    /// `Data.map { Int($0) }` iterates raw bytes, sidestepping that path
+    /// entirely.
+    @Test func directShareItemKeySealsAndRecipientDecryptsPlaintext() throws {
+        let ownerUserKey = try FfiUserKey.generate()
+        let recipient = try FfiIdentityKey.generate()
+        let recipientPk = try FfiIdentityPublicKey.fromBytes(bytes: recipient.publicKeyBytes())
+
+        let literalPlaintext = "direct-share fixture 🔑 (40-03 FfiSharingTests)"
+        let item = try encryptItem(userKey: ownerUserKey, plaintext: literalPlaintext, itemId: "fixture-item", revision: 1)
+        let encKeyJson = try Self.wrappedKeyJson(item.encKey)
+        let encDataJson = try Self.wrappedKeyJson(item.encData)
+
+        let sealedJson = try sealItemKeyForRecipient(
+            uk: ownerUserKey,
+            encKeyJson: encKeyJson,
+            itemId: "fixture-item",
+            recipientPk: recipientPk
+        )
+        let recoveredCk = try unsealCollectionKey(myIdentityKey: recipient, sealedJson: sealedJson)
+
+        let decrypted = try decryptItemWithSharedKey(
+            ck: recoveredCk,
+            encDataJson: encDataJson,
+            itemId: "fixture-item",
+            revision: 1
+        )
+        #expect(decrypted == literalPlaintext)
+    }
+
+    /// Builds the `{"nonce":[...],"ciphertext":[...]}` JSON string a
+    /// `WrappedKey` deserializes from, out of `FfiWrappedKey`'s own
+    /// `[UInt8]` fields via `JSONSerialization` (never `JSONEncoder`/`Data`).
+    private static func wrappedKeyJson(_ key: FfiWrappedKey) throws -> String {
+        let obj: [String: [Int]] = [
+            "nonce": key.nonce.map { Int($0) },
+            "ciphertext": key.ciphertext.map { Int($0) },
+        ]
+        let data = try JSONSerialization.data(withJSONObject: obj)
+        guard let json = String(data: data, encoding: .utf8) else {
+            Issue.record("failed to encode WrappedKey JSON from FfiWrappedKey fields")
+            throw SharingLiveProofError.missingEnvironmentVariables("wrappedKeyJson encoding")
+        }
+        return json
+    }
+
     /// Shared wire-shape assertion, reused by `FfiSharingLiveProofTests`
     /// against a real server-returned `sealed_key` string.
     static func assertEphemeralPkIsThirtyTwoElementJsonArray(sealedJson: String) throws {
