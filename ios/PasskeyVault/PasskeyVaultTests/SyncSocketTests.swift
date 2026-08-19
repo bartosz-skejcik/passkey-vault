@@ -23,6 +23,17 @@
 //  call, not after) -- not the real-world timing -- and a synchronous fake
 //  is what makes that order observable and deterministic at all.
 //
+//  CR-01 (39-REVIEW.md): `SyncSocket.connect()`/`receiveLoop(task:)` now hop
+//  onto the main actor via `Task { @MainActor in ... }` for every callback,
+//  fixing the real cross-thread race this review found -- but that means
+//  EVERY test below observes an ASYNCHRONOUS effect now, even against the
+//  "synchronous" fake: the fake's own `onOpen`/`onClose`/receive-completion
+//  call is still synchronous (unchanged, still proves the STATEMENT ORDER
+//  claims this file's tests are about), but `SyncSocket`'s own reaction to
+//  it is deferred to a later turn of the main actor's queue. Every test
+//  below is therefore `async` and polls (`pollUntil`) for the expected
+//  state rather than asserting immediately after a `simulate*()` call.
+//
 
 import Foundation
 import Testing
@@ -234,12 +245,13 @@ struct SyncSocketTests {
 
     // Behaviour 3: opening triggers a catch-up pull before any frame arrives.
     @MainActor
-    @Test func openingTheSocketTriggersACatchUpPullBeforeAnyFrameArrives() {
+    @Test func openingTheSocketTriggersACatchUpPullBeforeAnyFrameArrives() async throws {
         let (socket, transport, _, pullCount) = makeSocket()
         socket.start()
         #expect(transport.madeTasks.count == 1)
         #expect(pullCount() == 0, "no pull before open fires")
         transport.madeTasks[0].simulateOpen()
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount() == 1 }
         #expect(pullCount() == 1, "open must trigger exactly one catch-up pull")
     }
 
@@ -249,13 +261,15 @@ struct SyncSocketTests {
     // this plan's acceptance criteria, not by this test, which can only
     // observe the pull COUNT).
     @MainActor
-    @Test func receivingAFrameTriggersExactlyOnePull() {
+    @Test func receivingAFrameTriggersExactlyOnePull() async throws {
         let (socket, transport, _, pullCount) = makeSocket()
         socket.start()
         let task = transport.madeTasks[0]
         task.simulateOpen()
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount() == 1 }
         #expect(pullCount() == 1)
         task.simulateMessage()
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount() == 2 }
         #expect(pullCount() == 2, "one frame must trigger exactly one additional pull")
     }
 
@@ -265,31 +279,42 @@ struct SyncSocketTests {
     // then looks correct forever) -- see this plan's SUMMARY for the
     // RED-before-green transcript with the re-arm line removed.
     @MainActor
-    @Test func receivingASecondFrameOnTheSameConnectionTriggersASecondPull() {
+    @Test func receivingASecondFrameOnTheSameConnectionTriggersASecondPull() async throws {
         let (socket, transport, _, pullCount) = makeSocket()
         socket.start()
         let task = transport.madeTasks[0]
         task.simulateOpen()
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount() == 1 }
         let firstDelivered = task.simulateMessage()
         #expect(firstDelivered, "the fake must have a pending receive after connect")
+        // Both the first pull AND the re-arm (`task.receiveCallCount == 2`)
+        // happen inside the SAME deferred `Task { @MainActor in ... }` --
+        // wait for both before reading `pullCount()`/issuing the second
+        // message, or the second `simulateMessage()` below can race the
+        // re-arm and find no pending receive yet.
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount() == 2 && task.receiveCallCount == 2 }
         let countAfterFirst = pullCount()
         let secondDelivered = task.simulateMessage()
         #expect(secondDelivered, "receive() must have been re-armed inside its own completion")
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount() == countAfterFirst + 1 }
         #expect(pullCount() == countAfterFirst + 1, "a second frame must trigger a second pull")
     }
 
     // Behaviour 4: stopping the transport prevents the resulting close event
     // from scheduling a reconnect. See this file's header for why the fake
     // closes synchronously -- this is what makes the intentional-stop
-    // latch's statement ORDER observable at all.
+    // latch's statement ORDER observable at all (`handleClose` itself now
+    // runs on a LATER main-actor turn, so this polls for `discardedTaskCount`
+    // -- the same signal `handleClose` produces -- as its completion marker).
     @MainActor
-    @Test func stoppingPreventsTheResultingCloseFromSchedulingAReconnect() {
+    @Test func stoppingPreventsTheResultingCloseFromSchedulingAReconnect() async throws {
         let (socket, transport, scheduler, _) = makeSocket()
         socket.start()
         let task = transport.madeTasks[0]
         task.simulateOpen()
         socket.stop() // synchronously triggers task.onClose via the fake's cancel()
         #expect(task.isCancelled)
+        try await Self.pollUntil(timeoutSeconds: 2) { transport.discardedTaskCount == 1 }
         #expect(scheduler.scheduled.isEmpty, "an intentional stop must never schedule a reconnect")
         #expect(transport.madeTasks.count == 1, "no reconnect means no second task was ever created")
     }
@@ -299,36 +324,42 @@ struct SyncSocketTests {
     // the `URLSessionWebSocketTask` it captures) leaks for the process's
     // life. `handleClose` is the single place this can be guaranteed from.
     @MainActor
-    @Test func everyCloseDiscardsTheTasksTransportHandlerEntry() {
+    @Test func everyCloseDiscardsTheTasksTransportHandlerEntry() async throws {
         let (socket, transport, _, _) = makeSocket()
         socket.start()
         let task = transport.madeTasks[0]
         task.simulateOpen()
         #expect(transport.discardedTaskCount == 0, "no close has fired yet")
         socket.stop()
+        try await Self.pollUntil(timeoutSeconds: 2) { transport.discardedTaskCount == 1 }
         #expect(transport.discardedTaskCount == 1, "stop()'s own close must discard the handler entry")
     }
 
     // Behaviour 5: a close on a superseded connection does not alter the
     // state of a newer connection.
     @MainActor
-    @Test func aCloseOnASupersededConnectionDoesNotAlterANewerConnection() {
+    @Test func aCloseOnASupersededConnectionDoesNotAlterANewerConnection() async throws {
         let (socket, transport, scheduler, pullCount) = makeSocket()
         socket.start()
         let task1 = transport.madeTasks[0]
         task1.simulateOpen()
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount() == 1 }
         socket.stop()
+        try await Self.pollUntil(timeoutSeconds: 2) { transport.discardedTaskCount == 1 }
         socket.start() // fresh connection while task1's close event is, hypothetically, still in flight
         #expect(transport.madeTasks.count == 2)
         let task2 = transport.madeTasks[1]
         task2.simulateOpen()
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount() == 2 }
         let pullsBeforeStaleClose = pullCount()
         // task1's own trailing close fires AFTER the newer connection is
         // already live -- must not schedule a reconnect or touch task2.
         task1.simulateNetworkClose()
+        try await Self.pollUntil(timeoutSeconds: 2) { transport.discardedTaskCount == 2 }
         #expect(scheduler.scheduled.isEmpty, "a stale task's close must never schedule a reconnect for a newer connection")
         #expect(pullCount() == pullsBeforeStaleClose, "a stale close must trigger no pull")
         task2.simulateMessage()
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount() == pullsBeforeStaleClose + 1 }
         #expect(pullCount() == pullsBeforeStaleClose + 1, "the NEWER connection's frame must still work")
     }
 
@@ -336,20 +367,25 @@ struct SyncSocketTests {
     // transport -- the OLD task stops mattering (its frames no longer
     // trigger a pull) while the NEW task's frames do.
     @MainActor
-    @Test func startingWhileAlreadyStartedLeavesExactlyOneLiveTransport() {
+    @Test func startingWhileAlreadyStartedLeavesExactlyOneLiveTransport() async throws {
         let (socket, transport, _, pullCount) = makeSocket()
         socket.start()
         let task1 = transport.madeTasks[0]
         task1.simulateOpen()
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount() == 1 }
         socket.start() // re-entry while already started
+        try await Self.pollUntil(timeoutSeconds: 2) { transport.madeTasks.count == 2 }
         #expect(transport.madeTasks.count == 2)
         #expect(task1.isCancelled, "the previous task must have been stopped")
         let task2 = transport.madeTasks[1]
         task2.simulateOpen()
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount() == 2 }
         let pullsAfterBothOpen = pullCount()
         task1.simulateMessage() // stale -- must have no effect
+        try await Self.settle() // an absence claim: give the deferred hop a chance to run before asserting nothing happened
         #expect(pullCount() == pullsAfterBothOpen, "a stale task's frame must never trigger a pull")
         task2.simulateMessage()
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount() == pullsAfterBothOpen + 1 }
         #expect(pullCount() == pullsAfterBothOpen + 1, "the live task's frame must trigger a pull")
     }
 
@@ -359,7 +395,7 @@ struct SyncSocketTests {
     // mirror BACKOFF_START_MS=1000 / BACKOFF_MAX_MS=30000 (SyncSocket's own
     // constants, ported from sync.ts/sync-client.ts unchanged).
     @MainActor
-    @Test func successiveReconnectDelaysDoubleUpToACeilingWithBoundedJitter() {
+    @Test func successiveReconnectDelaysDoubleUpToACeilingWithBoundedJitter() async throws {
         let (socket, transport, scheduler, _) = makeSocket()
         socket.start()
 
@@ -374,11 +410,12 @@ struct SyncSocketTests {
         for (index, base) in expectedBases.enumerated() {
             let task = transport.madeTasks[index]
             task.simulateNetworkClose() // schedules the next reconnect, without ever opening
+            try await Self.pollUntil(timeoutSeconds: 2) { scheduler.scheduled.count == index + 1 }
             #expect(scheduler.scheduled.count == index + 1)
             let jittered = scheduler.scheduled[index].delayMs
             #expect(jittered >= base * 0.75 && jittered <= base * 1.25,
                     "delay \(jittered) must be within +-25% of the expected doubling-sequence base \(base)")
-            scheduler.fireLast() // fires the reconnect -> creates the next task
+            scheduler.fireLast() // fires the reconnect -> creates the next task, synchronously (the fake scheduler and connect()'s own task creation do not go through the main-actor hop)
         }
         #expect(transport.madeTasks.count == expectedBases.count + 1)
     }
@@ -425,5 +462,48 @@ struct SyncSocketTests {
         while !condition(), Date() < deadline {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
+    }
+
+    /// A bounded settle margin for an ABSENCE claim ("nothing happened") --
+    /// `pollUntil` cannot prove a negative, so a claim like "a stale task's
+    /// frame must never trigger a pull" instead waits a fixed window long
+    /// enough for any deferred `Task { @MainActor in ... }` hop to have run,
+    /// then asserts the state is still what it was.
+    @MainActor
+    private static func settle() async throws {
+        try await Task.sleep(nanoseconds: 100_000_000)
+    }
+
+    // MARK: - WR-15 (39-REVIEW.md): the L-23 token-encoding fix had no test
+    //
+    // `wsURL(base:token:)` is referenced in exactly two places in the
+    // repository -- its definition and its one call site -- even though the
+    // bug it fixes was found LIVE (a `+` in a session token reached the
+    // server as a space and failed the socket upgrade with 401), and the
+    // fix is a hand-rolled `CharacterSet` subtraction feeding
+    // `percentEncodedQueryItems`, exactly the kind of thing a later
+    // "simplification" back to `.queryItems` would silently undo with no
+    // test to catch it.
+    @Test func aTokenContainingPlusIsPercentEncodedForFormUrlencodedDecoding() throws {
+        let url = try #require(SyncSocket.wsURL(base: URL(string: "https://h")!, token: "a+b/c=d&e"))
+        #expect(url.absoluteString == "wss://h/api/sync/ws?token=a%2Bb/c%3Dd%26e")
+        #expect(SyncSocket.wsURL(base: URL(string: "https://h")!, token: "") == nil, "an empty token must produce no URL, not one with an empty token= value")
+        #expect(SyncSocket.wsURL(base: URL(string: "https://h")!, token: nil) == nil, "a nil token must produce no URL")
+        #expect(SyncSocket.wsURL(base: URL(string: "http://h")!, token: "t")?.scheme == "ws", "http -> ws")
+        #expect(SyncSocket.wsURL(base: URL(string: "https://h")!, token: "t")?.scheme == "wss", "https -> wss")
+    }
+
+    // WR-12 (39-REVIEW.md): the socket path must resolve under a base URL's
+    // own subpath, the same way the REST path does (`VaultAPI.url(for:
+    // relativeTo:)`) -- before this fix, `wsURL` and `VaultAPI.send`
+    // disagreed for a base URL carrying a path component (a reverse-proxy
+    // subpath, a normal self-hoster layout for this product).
+    @Test func wsURLResolvesUnderABaseURLsOwnSubpathTheSameWayRESTDoes() throws {
+        let base = URL(string: "https://h/pv")!
+        let wsURL = try #require(SyncSocket.wsURL(base: base, token: "t"))
+        let restURL = try #require(VaultAPI.url(for: "/api/vault/items", relativeTo: base))
+        #expect(wsURL.host == restURL.host)
+        #expect(wsURL.path.hasPrefix("/pv/"), "the socket URL must preserve the base URL's own subpath, got \(wsURL.path)")
+        #expect(restURL.path.hasPrefix("/pv/"), "the REST URL must preserve the base URL's own subpath, got \(restURL.path)")
     }
 }
