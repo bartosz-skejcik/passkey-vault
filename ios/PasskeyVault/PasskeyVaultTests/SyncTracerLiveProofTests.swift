@@ -25,12 +25,24 @@
 //       persisted ciphertext strings are digest-identical to the ones
 //       `curl` fetched in the same session (D-13).
 //    3. a SECOND pull, answered with the up-to-date branch (nothing changed
-//       server-side), leaves the persisted cache file byte-for-byte
-//       unchanged (D-12/T-39-10) -- asserted HERE, by reading the App Group
-//       container's raw bytes before and after the second `refresh()`, so
-//       this exact assertion is what the RED demonstration (this plan's own
-//       `<acceptance_criteria>`) exercises when `SyncModels.swift`'s decoder
-//       is mutated to synthesize an empty snapshot instead of `.upToDate`.
+//       server-side), leaves the persisted CIPHERTEXT AND REVISION
+//       unchanged, and `syncedAtMs` NEVER DECREASES (D-12/T-39-10). CR-04
+//       (39-REVIEW.md): this assertion was originally "byte-for-byte
+//       unchanged" -- true when the up-to-date branch wrote nothing at all.
+//       Plan 39-06 (SYNC-04) changed that: `persistUpToDateToCache` now
+//       re-persists a blob with a FRESH `syncedAtMs` on every up-to-date
+//       pull (see `VaultStore.swift`'s own rule 5), so two pulls separated
+//       by a real network round trip cannot share a millisecond and a
+//       byte-identical digest comparison must fail by construction. The
+//       invariant that still holds, and is what this assertion checks now,
+//       is that the CIPHERTEXT PAYLOAD and REVISION are untouched -- only
+//       the watermark timestamp legitimately moves. This is still the exact
+//       check the RED mutation in `SyncDecodeTests`' own acceptance
+//       criteria demonstrates able to fail: if the up-to-date branch's
+//       decoder is ever mutated to synthesize an empty `.snapshot` instead
+//       of `.upToDate`, `VaultStore.refresh()`'s snapshot-branch write
+//       replaces `items` with an EMPTY array on this second pull, and the
+//       `after.items == before.items` comparison below fails.
 //
 //  FAILS on a missing environment variable, never skips -- 37-03's rule
 //  (`VaultWireInteropTests.swift`'s own header), re-stated here for the same
@@ -38,7 +50,6 @@
 //  it.
 //
 
-import CryptoKit
 import Foundation
 import Testing
 @testable import PasskeyVault
@@ -113,12 +124,16 @@ struct SyncTracerLiveProofTests {
         return container.appendingPathComponent(AppGroupCiphertextCacheStore.fileName)
     }
 
-    private static func persistedCacheDigest() -> String? {
+    /// CR-04 (39-REVIEW.md): assertion 3 now compares the DECODED snapshot
+    /// (ciphertext/revision/`syncedAtMs`), not a raw-bytes digest -- see
+    /// this file's own header for why a byte-identical comparison is no
+    /// longer the correct invariant after plan 39-06.
+    private static func persistedSnapshot() -> CachedSnapshot? {
         guard
             let url = try? Self.persistedCacheFileURL(),
             let data = try? Data(contentsOf: url)
         else { return nil }
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return try? JSONDecoder().decode(CachedSnapshot.self, from: data)
     }
 
     @Test func iOSPullsAWebAuthoredItemThroughThePersistedCacheAndASecondPullLeavesItUnchanged() async throws {
@@ -174,34 +189,33 @@ struct SyncTracerLiveProofTests {
             "rendered password \(loginFields.password.debugDescription) != the literal the web client was given \(expectedItemPassword.debugDescription)"
         )
 
-        // ---- Assertion 3 (D-12/T-39-10): a second, up-to-date pull must
-        // leave the persisted cache file byte-for-byte unchanged. This is
-        // the exact check the RED mutation in SyncDecodeTests' own
-        // acceptance criteria demonstrates able to fail: if the up-to-date
-        // branch's decoder is ever mutated to synthesize an empty
-        // .snapshot instead of .upToDate, VaultStore.refresh() calls
-        // persistSnapshotToCache with an EMPTY item array on this second
-        // pull, and the digest below changes.
-        // `#require`, not `#expect`: a `nil` digest here (App Group
+        // ---- Assertion 3 (D-12/T-39-10, CR-04 39-REVIEW.md): a second,
+        // up-to-date pull must leave the persisted CIPHERTEXT and REVISION
+        // unchanged, with `syncedAtMs` never decreasing -- see this file's
+        // own header for why a byte-for-byte digest comparison is no longer
+        // the right invariant since plan 39-06.
+        // `#require`, not `#expect`: a `nil` snapshot here (App Group
         // unresolved, or nothing written) must HALT immediately -- otherwise
         // a nil-vs-nil comparison below would be a VACUOUS pass ("both
         // sides absent" is not "both sides equal and present"), exactly the
         // evidence-that-measures-the-wrong-thing shape this codebase has
         // been burned by before.
-        let digestBeforeSecondPull = try #require(
-            Self.persistedCacheDigest(), "the first pull must have persisted a REAL cache file -- got nil"
+        let before = try #require(
+            Self.persistedSnapshot(), "the first pull must have persisted a REAL cache file -- got nil"
         )
 
         try await store.refresh()
         let itemsAfterSecondPull = await store.items
         #expect(itemsAfterSecondPull.count == 1, "an up-to-date pull must not have emptied the in-memory list")
 
-        let digestAfterSecondPull = try #require(
-            Self.persistedCacheDigest(), "the cache file vanished between the two pulls"
+        let after = try #require(
+            Self.persistedSnapshot(), "the cache file vanished, or became undecodable, between the two pulls"
         )
         #expect(
-            digestBeforeSecondPull == digestAfterSecondPull,
-            "the persisted cache changed after an up-to-date pull -- the up-to-date branch must carry no path to the cache writer (D-12)"
+            after.items == before.items,
+            "an up-to-date pull must not alter the persisted ciphertext -- if the up-to-date branch's decoder is ever mutated to synthesize an empty .snapshot instead of .upToDate, VaultStore.refresh() replaces items with an EMPTY array on this second pull"
         )
+        #expect(after.revision == before.revision, "an up-to-date pull must not move the revision -- the server said nothing changed")
+        #expect(after.syncedAtMs >= before.syncedAtMs, "the watermark timestamp must never move backwards across a pull")
     }
 }

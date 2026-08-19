@@ -23,8 +23,13 @@
 //  would silently erase a persisted cache on the server's most common
 //  answer (every poll after the first one, on an unchanged vault). Decoding
 //  therefore ATTEMPTS the snapshot shape first and falls back to the
-//  up-to-date shape -- there is structurally no path from `.upToDate` to a
-//  collection a caller could pass to a cache writer (D-12).
+//  up-to-date shape -- there is structurally no path from the DECODED
+//  `.upToDate` case to a collection a caller could pass to a cache writer
+//  (D-12). This governs the DECODER only (CR-04, 39-REVIEW.md):
+//  `VaultStore.persistUpToDateToCache` (39-06, hardened by CR-02) still
+//  re-persists the cache on that branch -- sourced from the EXISTING
+//  on-disk snapshot it just read the watermark from, never from anything
+//  this decoder produced.
 //
 
 import Foundation

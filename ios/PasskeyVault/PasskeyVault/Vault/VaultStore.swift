@@ -24,12 +24,17 @@
 //  4. **`refresh()`'s `since` comes from the persisted cache, never from
 //     `lastKnownRevision` alone.** `SyncClient.pull()` reads the watermark
 //     out of `CachedSnapshot` itself (D-11) -- `lastKnownRevision` is
-//     updated FROM that response, it is never the value SENT. On the
-//     up-to-date branch nothing is written to the cache store at all: that
-//     branch structurally carries no collection to write (D-12, L-22,
-//     `Sync/SyncModels.swift`'s header). On the snapshot branch the whole
-//     cache is REPLACED, never merged (D-15) -- the server sends no
-//     deletion markers.
+//     updated FROM that response, it is never the value SENT. The DECODED
+//     up-to-date response structurally carries no item collection at all
+//     (D-12, L-22, `Sync/SyncModels.swift`'s header) -- but as of plan
+//     39-06/rule 5 below (hardened by CR-02, 39-REVIEW.md),
+//     `persistUpToDateToCache` DOES still write a re-persisted blob on that
+//     branch, re-reading its items from the EXISTING on-disk snapshot, never
+//     from a decoded collection. This corrects an earlier version of this
+//     comment, which claimed "nothing is written to the cache store at all"
+//     on that branch -- true only before plan 39-06. On the snapshot branch
+//     the whole cache is REPLACED, never merged (D-15) -- the server sends
+//     no deletion markers.
 //
 //  Plan 39-06 (SYNC-04) adds a fifth rule, on top of #4 above:
 //

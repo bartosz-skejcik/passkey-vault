@@ -21,8 +21,14 @@
 #      are SHA-256-identical to the ones `curl` fetched from the SAME
 #      session's `GET /api/sync?since=0` (D-13).
 #   3. a second pull, answered by the up-to-date branch (nothing changed
-#      server-side), leaves the persisted cache file byte-for-byte
-#      unchanged (SyncTracerLiveProofTests, assertion 3, D-12/T-39-10).
+#      server-side), leaves the persisted CIPHERTEXT AND REVISION unchanged,
+#      with the watermark timestamp never moving backwards
+#      (SyncTracerLiveProofTests, assertion 3, D-12/T-39-10). CR-04
+#      (39-REVIEW.md): this used to be a byte-for-byte digest comparison --
+#      plan 39-06 changed the up-to-date branch to re-persist a blob with a
+#      FRESH `syncedAtMs` on every up-to-date pull, so a byte-identical
+#      digest is no longer the right invariant; see
+#      SyncTracerLiveProofTests.swift's own header for the full account.
 #
 # Two-stage self re-exec: the OUTER invocation (no PV_IOS_BASE set) brings
 # up the isolated server via scripts/ios-live-server.sh --exec and re-execs
@@ -376,4 +382,4 @@ if [ "$DIGESTS_OK" -ne 1 ]; then
   exit 1
 fi
 
-echo "==> PASS: rendered password matches, ciphertext digests match, the up-to-date pull left the persisted cache byte-identical."
+echo "==> PASS: rendered password matches, ciphertext digests match, the up-to-date pull left the persisted ciphertext/revision unchanged (syncedAtMs advanced, never regressed)."
