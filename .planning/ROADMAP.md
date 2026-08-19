@@ -216,7 +216,14 @@ follow-up gap-closure pass, recorded in `31-VERIFICATION.md`'s own Gap Closure s
   4. An item taken out of a shared folder is re-encrypted under the owner's personal key, and a member who could read it before demonstrably cannot after — anchored positively on both sides: that member's own client reads the content before the move, and the same read fails after the next completed sync.
   5. `cargo clippy --workspace --all-targets -- -D warnings` exits 0 (DEBT-04 — the 19 `explicit_auto_deref` in `vault.rs`, which this phase edits anyway).
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 32-01-PLAN.md — Tracer: moveVaultItem + the full item-folder-select destination control, wired create+edit, proven live (SC1 edit half + SC2 recipient read) and via real-WASM
+- [ ] 32-02-PLAN.md — Destination-control unit tests + retry-safe create-then-move dispatch test + live SC1 create-mode proof
+- [ ] 32-03-PLAN.md — item_shares DELETE scoped to item_bucket only (32-CONTEXT.md Area 2 correction) + DEBT-04 clippy (vault.rs + ceremony.rs)
+- [ ] 32-04-PLAN.md — Live SC3 TOCTOU-refusal proof + live SC4 move-out access-loss proof
+
 **UI hint**: yes
 
 ### Phase 33: The Family & Sharing Surface
