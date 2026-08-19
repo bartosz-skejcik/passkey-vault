@@ -5,16 +5,16 @@ milestone_name: Sharing That Makes Sense
 current_phase: 32
 current_phase_name: Putting Things Into Shared Folders
 status: in_progress
-stopped_at: "Completed 32-03-PLAN.md (Phase 32 wave 1 of 4: DEBT-04)"
-last_updated: "2026-08-19T11:11:08.114Z"
-last_activity: 2026-08-19
-last_activity_desc: 32-03 (DEBT-04) complete -- workspace-wide clippy -D warnings clean, zero behavior change (393/393 tests, before and after)
+stopped_at: Completed 32-01-PLAN.md
+last_updated: "2026-08-19T11:32:31.817Z"
+last_activity: 2026-08-11
+last_activity_desc: re-verify complete; four CI-width commands all exit 0; e2e 9/9 from a fresh
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 35
-  completed_plans: 30
-  percent: 86
+  completed_plans: 31
+  percent: 33
 ---
 
 # Project State
@@ -252,6 +252,7 @@ still carries `role="tablist"` (pre-existing Phase 28 code, Phase 33 scope).
 | Phase 31 P02 | ~3h | 1 tasks | 8 files |
 | Phase 31 P03 | ~30min | 3 tasks | 6 files |
 | Phase 31 P04 | 55min | 2 tasks | 5 files |
+| Phase 32 P01 | 75min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -405,6 +406,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 31-03: toggleFamilyWide resets destinationId to null on switch — avoids an unreachable-submit dead end when a per-person destination was chosen before enabling family-wide
 - [Phase ?]: 31-03: submitRowsForExistingDestination mirrors submitItemRows's dispatch shape — reconcileRow routes grant/update/revoke through reshareCollectionToNewMember/updateCollectionAccess/revokeCollectionAccess against a real existing destination
 - [Phase ?]: DEBT-04 closed: workspace-wide clippy -D warnings exits 0 (vault.rs deref cleanup + ceremony.rs/response_shape.rs doc reflow), zero behavior change confirmed via stashed before/after test run (393/393)
+- [Phase ?]: 32-01: moveVaultItem is encrypt-only (never decrypts current ciphertext); lost-response recovery requires revision === currentRevision+1, not destination-only
 
 ### Pending Todos
 
@@ -489,10 +491,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 32-03-PLAN.md (Phase 32 wave 1 of 4: DEBT-04)
+**Stopped at:** Completed 32-01-PLAN.md
 **Resume file:** None
 
-Last session: 2026-08-19T11:11:08.102Z
+Last session: 2026-08-19T11:32:31.804Z
 27-13-PLAN.md (gap closure) executed: vault-store.ts::ensureSharedItemsHydrated() (the
 shared-side counterpart to the existing ensureItemsHydrated()) is now awaited by
 handleCredentialsGet, alongside ensureItemsHydrated(), before its candidate snapshot -- closing
