@@ -7,18 +7,22 @@
 //  way `FfiSharingTests`/`FfiSharingLiveProofTests` are, because this
 //  plan's own `<verify>` commands target `PasskeyVaultTests/InviteTests`
 //  (Tasks 1-2, no server) and
-//  `PasskeyVaultTests/InviteTests/liveInviteRedeemedByWebAccount` (Task 3,
+//  `PasskeyVaultTests/InviteTests/liveInviteRedeemedBySecondSwiftAccount` (Task 3,
 //  live) as the SAME suite, by name.
 //
 //  Task 1: the two base64 alphabets (`Base64Alphabets.swift`).
 //  Task 2: `InviteService.generateInviteLink` -- pure, network-free via a
 //  fake `URLProtocol` transport (`InviteTestsStubURLProtocol`, same shape
 //  as `VaultMutationTests.swift`'s `VaultMutationStubURLProtocol`).
-//  Task 3: `liveInviteRedeemedByWebAccount` -- E-F2, live, against a real
-//  `pv-server` and the `scripts/invite-live-e2e.mjs` Node/pv-wasm harness
-//  (the SECOND real client, per this plan's own phase-context override:
-//  redemption happens through the established pv-wasm Node driver pattern,
-//  not an actual browser page load of `/invite/{id}`).
+//  Task 3: `liveInviteRedeemedBySecondSwiftAccount` -- E-F2, live, against a
+//  real `pv-server`. WR-08 (40-REVIEW.md): this name replaces the original
+//  `liveInviteRedeemedByWebAccount` -- the redeemer here is
+//  `redeemInviteSwiftSide`, a Swift function calling `pv-ffi` against a
+//  SECOND Swift-registered account, NOT `scripts/invite-live-e2e.mjs`'s
+//  Node/pv-wasm harness (that script is committed but has no caller
+//  anywhere in this repo -- see this method's own doc comment for the
+//  discovered-during-the-task reason, and for why the cryptographic claim
+//  still holds even though no web/wasm client is actually involved).
 //
 
 import Foundation
@@ -750,7 +754,7 @@ extension InviteTests {
     /// SC2's evidence is THIS live run, not any of Tasks 1-2's unit tests
     /// (which a rename-the-transcript-aside QA-04 gate below also proves).
     @MainActor
-    @Test func liveInviteRedeemedByWebAccount() async throws {
+    @Test func liveInviteRedeemedBySecondSwiftAccount() async throws {
         let baseURL = Self.liveServerBaseURL
         // A second-granularity timestamp alone (`ShareMarkerTests.swift`'s
         // own `liveTwoAccountMarkerRun` precedent) collided across two

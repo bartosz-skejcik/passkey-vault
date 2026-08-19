@@ -738,7 +738,7 @@ extension ResealTriggerTests {
     }
 
     /// `GET /api/vault/collections/{id}` -- returns the RAW status code
-    /// rather than throwing, since the web member's OWN claim (no
+    /// rather than throwing, since the second member's OWN claim (no
     /// `collection_keys` row yet) IS the status code (404), same technique
     /// `RemoveMemberTests.collectionFetchStatus` already established.
     fileprivate static func collectionFetchStatus(baseURL: URL, token: String, collectionId: String) async throws -> Int {
@@ -750,10 +750,10 @@ extension ResealTriggerTests {
         return (response as? HTTPURLResponse)?.statusCode ?? -1
     }
 
-    /// E-F6: mirror of E-F4b (40-09) with roles swapped. A web account joins
+    /// E-F6: mirror of E-F4b (40-09) with roles swapped. A second account joins
     /// the family FIRST, before any family-wide collection exists. The iOS
     /// account THEN creates the family-wide collection (with an item), so
-    /// iOS is the ONLY keyholder and the web member is missing. Unlocking
+    /// iOS is the ONLY keyholder and the second member is missing. Unlocking
     /// the iOS app -- represented here by invoking the PRODUCTION
     /// `ResealTrigger`/`ResealService` types directly, the exact call
     /// `SyncCoordinator.pull()`'s `fireResealTriggerIfPossible()` makes --
@@ -763,28 +763,28 @@ extension ResealTriggerTests {
         let baseURL = Self.liveServerBaseURL
         let runSuffix = "\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(8))".lowercased()
         let emailIos = "pv-ef6-ios-\(runSuffix)@example.invalid"
-        let emailWeb = "pv-ef6-web-\(runSuffix)@example.invalid"
+        let emailSecondMember = "pv-ef6-web-\(runSuffix)@example.invalid"
         let password = "PvEF6-40-10-EvidencePassword!"
         let collectionName = "EF6 collection \(runSuffix)"
 
         let sessionIos = try await AccountService(apiClient: PvApiClient(baseURL: baseURL)).register(email: emailIos, password: password)
-        let sessionWeb = try await AccountService(apiClient: PvApiClient(baseURL: baseURL)).register(email: emailWeb, password: password)
+        let sessionSecondMember = try await AccountService(apiClient: PvApiClient(baseURL: baseURL)).register(email: emailSecondMember, password: password)
         let apiClient = PvApiClient(baseURL: baseURL)
         let meIos = try await apiClient.me(token: sessionIos.token)
-        let meWeb = try await apiClient.me(token: sessionWeb.token)
+        let meSecondMember = try await apiClient.me(token: sessionSecondMember.token)
 
-        // ---- Order (what makes this E-F6): the web member joins the
+        // ---- Order (what makes this E-F6): the second member joins the
         // family FIRST, before any family-wide collection exists. ----
         try await Self.createFamily(baseURL: baseURL, token: sessionIos.token, name: "E-F6 family \(runSuffix)")
-        try await Self.addFamilyMember(baseURL: baseURL, ownerToken: sessionIos.token, memberUserId: meWeb.userId)
+        try await Self.addFamilyMember(baseURL: baseURL, ownerToken: sessionIos.token, memberUserId: meSecondMember.userId)
 
-        // The web member publishes its identity keypair -- a real client
+        // The second member publishes its identity keypair -- a real client
         // would do this on its own login/first-run; without it the reseal
         // throws before any network call and looks identical to a broken
         // trigger (Pitfall 5). Published BEFORE the collection exists,
         // exactly like E-F4b's own account B/C precedent.
-        _ = try await IdentityService(baseURL: baseURL, tokenProvider: { sessionWeb.token })
-            .ensureOwnIdentityKeypair(userKey: sessionWeb.userKey)
+        _ = try await IdentityService(baseURL: baseURL, tokenProvider: { sessionSecondMember.token })
+            .ensureOwnIdentityKeypair(userKey: sessionSecondMember.userKey)
 
         // ---- iOS THEN creates the family-wide collection, at "read" --
         // while iOS's OWN creator row is server-hard-coded "edit"
@@ -809,22 +809,22 @@ extension ResealTriggerTests {
         )
 
         // ---- Precondition: the run must be able to fail. BEFORE the iOS
-        // unlock, the web member holds NO key for this collection. ----
-        let pendingWebBefore = try await SharedItemsStore.fetchFamilyWidePending(baseURL: baseURL, tokenProvider: { sessionWeb.token })
-        guard pendingWebBefore.missing.contains(where: { $0.collection_id == collectionId }) else {
+        // unlock, the second member holds NO key for this collection. ----
+        let pendingSecondMemberBefore = try await SharedItemsStore.fetchFamilyWidePending(baseURL: baseURL, tokenProvider: { sessionSecondMember.token })
+        guard pendingSecondMemberBefore.missing.contains(where: { $0.collection_id == collectionId }) else {
             throw LiveResealError.preconditionViolated(
-                "web member's family-wide-pending missing array does not contain \(collectionId) BEFORE the iOS unlock -- this run proves nothing"
+                "second member's family-wide-pending missing array does not contain \(collectionId) BEFORE the iOS unlock -- this run proves nothing"
             )
         }
-        let collectionStatusBefore = try await Self.collectionFetchStatus(baseURL: baseURL, token: sessionWeb.token, collectionId: collectionId)
-        #expect(collectionStatusBefore == 404, "the web member must have NO collection_keys row yet -- GET must 404")
+        let collectionStatusBefore = try await Self.collectionFetchStatus(baseURL: baseURL, token: sessionSecondMember.token, collectionId: collectionId)
+        #expect(collectionStatusBefore == 404, "the second member must have NO collection_keys row yet -- GET must 404")
 
         // ---- Distinguish "the trigger never fired" from "the recipient
         // has no published key" (Pitfall 5) BEFORE concluding either. ----
         let membersAsIos = try await FamilyAPI(baseURL: baseURL, tokenProvider: { sessionIos.token }).fetchMembers()
-        guard let webMemberRecord = membersAsIos.first(where: { $0.userId == meWeb.userId }), webMemberRecord.publicKey != nil else {
+        guard let secondMemberRecord = membersAsIos.first(where: { $0.userId == meSecondMember.userId }), secondMemberRecord.publicKey != nil else {
             throw LiveResealError.preconditionViolated(
-                "web member has no published public key on GET /api/families/members -- cannot distinguish a missing key from a broken trigger"
+                "second member has no published public key on GET /api/families/members -- cannot distinguish a missing key from a broken trigger"
             )
         }
 
@@ -836,7 +836,7 @@ extension ResealTriggerTests {
         // transition, not a reimplementation. ----
         let pendingForIos = try await SharedItemsStore.fetchFamilyWidePending(baseURL: baseURL, tokenProvider: { sessionIos.token })
         #expect(
-            pendingForIos.resealable.contains { $0.collection_id == collectionId && $0.recipient_user_id == meWeb.userId },
+            pendingForIos.resealable.contains { $0.collection_id == collectionId && $0.recipient_user_id == meSecondMember.userId },
             "iOS's own family-wide-pending resealable array must name this exact pair before the trigger runs"
         )
         let productionTrigger = ResealTrigger(
@@ -844,57 +844,57 @@ extension ResealTriggerTests {
         )
         let triggerOutcome = await productionTrigger.run(resealable: pendingForIos.resealable, userKey: sessionIos.userKey)
         #expect(triggerOutcome.failed.isEmpty, "the reseal must succeed -- any failure here means the unlock did NOT heal the family")
-        #expect(triggerOutcome.succeeded.contains { $0.collectionId == collectionId && $0.recipientUserId == meWeb.userId })
+        #expect(triggerOutcome.succeeded.contains { $0.collectionId == collectionId && $0.recipientUserId == meSecondMember.userId })
 
-        // ---- Receiver-side proof: the web member now decrypts. ----
-        let collectionServiceWeb = CollectionService(baseURL: baseURL, tokenProvider: { sessionWeb.token })
-        let identityWeb = try await IdentityService(baseURL: baseURL, tokenProvider: { sessionWeb.token })
-            .ensureOwnIdentityKeypair(userKey: sessionWeb.userKey)
-        let collectionRecordWeb = try await collectionServiceWeb.fetchCollection(id: collectionId)
-        guard let sealedKeyWeb = collectionRecordWeb.sealedKey else {
-            throw LiveResealError.rowNotFound("web member's fresh sealed_key for collection \(collectionId), after the iOS unlock")
+        // ---- Receiver-side proof: the second member now decrypts. ----
+        let collectionServiceSecondMember = CollectionService(baseURL: baseURL, tokenProvider: { sessionSecondMember.token })
+        let identitySecondMember = try await IdentityService(baseURL: baseURL, tokenProvider: { sessionSecondMember.token })
+            .ensureOwnIdentityKeypair(userKey: sessionSecondMember.userKey)
+        let collectionRecordSecondMember = try await collectionServiceSecondMember.fetchCollection(id: collectionId)
+        guard let sealedKeySecondMember = collectionRecordSecondMember.sealedKey else {
+            throw LiveResealError.rowNotFound("second member's fresh sealed_key for collection \(collectionId), after the iOS unlock")
         }
-        let ckWeb = try unsealCollectionKey(myIdentityKey: identityWeb, sealedJson: sealedKeyWeb)
-        let decryptedNameWeb = try decryptItemForCollection(
-            ck: ckWeb, itemJson: collectionRecordWeb.encName, collectionId: collectionId, itemId: collectionId, revision: 1
+        let ckSecondMember = try unsealCollectionKey(myIdentityKey: identitySecondMember, sealedJson: sealedKeySecondMember)
+        let decryptedNameSecondMember = try decryptItemForCollection(
+            ck: ckSecondMember, itemJson: collectionRecordSecondMember.encName, collectionId: collectionId, itemId: collectionId, revision: 1
         )
-        #expect(decryptedNameWeb == collectionName, "the web member must decrypt the collection's REAL name, not a raw identifier")
+        #expect(decryptedNameSecondMember == collectionName, "the second member must decrypt the collection's REAL name, not a raw identifier")
 
-        let itemsAsWeb = try await Self.fetchSharedCollectionItems(baseURL: baseURL, token: sessionWeb.token, collectionId: collectionId)
-        guard let rowWeb = itemsAsWeb.first(where: { $0.id == itemId }) else {
-            throw LiveResealError.rowNotFound("item \(itemId) in the web member's own sync snapshot, after the iOS unlock")
+        let itemsAsSecondMember = try await Self.fetchSharedCollectionItems(baseURL: baseURL, token: sessionSecondMember.token, collectionId: collectionId)
+        guard let rowSecondMember = itemsAsSecondMember.first(where: { $0.id == itemId }) else {
+            throw LiveResealError.rowNotFound("item \(itemId) in the second member's own sync snapshot, after the iOS unlock")
         }
-        let combinedJsonWeb = try Self.combinedEncryptedItemJson(encKeyJson: rowWeb.enc_key, encDataJson: rowWeb.enc_data)
-        let decryptedItemWeb = try decryptItemForCollection(
-            ck: ckWeb, itemJson: combinedJsonWeb, collectionId: collectionId, itemId: itemId, revision: UInt32(rowWeb.revision)
+        let combinedJsonSecondMember = try Self.combinedEncryptedItemJson(encKeyJson: rowSecondMember.enc_key, encDataJson: rowSecondMember.enc_data)
+        let decryptedItemSecondMember = try decryptItemForCollection(
+            ck: ckSecondMember, itemJson: combinedJsonSecondMember, collectionId: collectionId, itemId: itemId, revision: UInt32(rowSecondMember.revision)
         )
-        #expect(decryptedItemWeb == itemPlaintext, "the web member must decrypt the item to the SAME plaintext iOS created")
+        #expect(decryptedItemSecondMember == itemPlaintext, "the second member must decrypt the item to the SAME plaintext iOS created")
 
-        let pendingWebAfter = try await SharedItemsStore.fetchFamilyWidePending(baseURL: baseURL, tokenProvider: { sessionWeb.token })
+        let pendingSecondMemberAfter = try await SharedItemsStore.fetchFamilyWidePending(baseURL: baseURL, tokenProvider: { sessionSecondMember.token })
         #expect(
-            !pendingWebAfter.missing.contains { $0.collection_id == collectionId },
+            !pendingSecondMemberAfter.missing.contains { $0.collection_id == collectionId },
             "missing must be EMPTY for this collection after the iOS unlock"
         )
-        let collectionStatusAfter = try await Self.collectionFetchStatus(baseURL: baseURL, token: sessionWeb.token, collectionId: collectionId)
-        #expect(collectionStatusAfter == 200, "the web member must now have a collection_keys row -- GET must succeed")
+        let collectionStatusAfter = try await Self.collectionFetchStatus(baseURL: baseURL, token: sessionSecondMember.token, collectionId: collectionId)
+        #expect(collectionStatusAfter == 200, "the second member must now have a collection_keys row -- GET must succeed")
 
         // ---- Same-key proof: a probe ciphertext sealed under iOS's
         // ORIGINAL `ck` (captured before the reseal) also opens under the
-        // web member's newly-recovered key. ----
+        // second member's newly-recovered key. ----
         let probeItemId = "probe-\(runSuffix)"
         let probePlaintext = "same-key-probe-\(UUID().uuidString)"
         let probeJson = try encryptItemForCollection(
             ck: ck, plaintext: probePlaintext, collectionId: collectionId, itemId: probeItemId, revision: 1
         )
-        let decryptedProbeByWeb = try decryptItemForCollection(
-            ck: ckWeb, itemJson: probeJson, collectionId: collectionId, itemId: probeItemId, revision: 1
+        let decryptedProbeBySecondMember = try decryptItemForCollection(
+            ck: ckSecondMember, itemJson: probeJson, collectionId: collectionId, itemId: probeItemId, revision: 1
         )
-        #expect(decryptedProbeByWeb == probePlaintext, "the web member's recovered key must open the SAME key iOS held -- reseal, never rotation")
+        #expect(decryptedProbeBySecondMember == probePlaintext, "the second member's recovered key must open the SAME key iOS held -- reseal, never rotation")
 
         // ---- Level proof: the delivered level equals the share's own
         // family_wide_access_level ("read"), never iOS's own "edit" row. ----
-        let membersAccessAsWeb = try await FamilyAPI(baseURL: baseURL, tokenProvider: { sessionIos.token }).fetchMemberAccess(userId: meWeb.userId)
-        let deliveredLevel = membersAccessAsWeb.collections.first { $0.id == collectionId }?.accessLevel
+        let membersAccessAsSecondMember = try await FamilyAPI(baseURL: baseURL, tokenProvider: { sessionIos.token }).fetchMemberAccess(userId: meSecondMember.userId)
+        let deliveredLevel = membersAccessAsSecondMember.collections.first { $0.id == collectionId }?.accessLevel
         #expect(deliveredLevel == "read", "the delivered level must be the SHARE's own 'read', never iOS's own 'edit'")
 
         // ---- Evidence ----
@@ -909,16 +909,16 @@ extension ResealTriggerTests {
         Server origin: \(baseURL.absoluteString)
 
         Account iOS (owner, holds the ONLY key, runs the production ResealTrigger): \(emailIos) (user_id \(meIos.userId))
-        Account web (joins the family FIRST, before any family-wide collection exists): \(emailWeb) (user_id \(meWeb.userId))
+        Account secondMember (joins the family FIRST, before any family-wide collection exists): \(emailSecondMember) (user_id \(meSecondMember.userId))
 
-        Order (what makes this E-F6, mirror of E-F4b with roles swapped): the web member joined the
+        Order (what makes this E-F6, mirror of E-F4b with roles swapped): the second member joined the
         family BEFORE the family-wide collection \(collectionId) ("\(collectionName)") existed. iOS
         THEN created it at family_wide_access_level="read", with 1 item -- iOS's own creator row is
         server-hard-coded "edit" (collections::create), confirmed: \(collectionRecordIos1.accessLevel ?? "nil").
 
         Precondition (this run's own falsifiable assertion), BEFORE the iOS unlock:
-          GET /api/families/family-wide-pending as web: missing contains \(collectionId) = \(pendingWebBefore.missing.contains { $0.collection_id == collectionId })
-          GET /api/vault/collections/\(collectionId) as web: status = \(collectionStatusBefore) (expected 404 -- no collection_keys row)
+          GET /api/families/family-wide-pending as second member: missing contains \(collectionId) = \(pendingSecondMemberBefore.missing.contains { $0.collection_id == collectionId })
+          GET /api/vault/collections/\(collectionId) as second member: status = \(collectionStatusBefore) (expected 404 -- no collection_keys row)
 
         THE iOS UNLOCK (nothing else happened between this line and the receiver-side assertions --
         no other client was opened). This invoked the PRODUCTION ResealTrigger.run(resealable:userKey:)
@@ -926,18 +926,18 @@ extension ResealTriggerTests {
         SyncCoordinator.pull()'s fireResealTriggerIfPossible() makes on every unlock/sync transition,
         not a reimplementation (unlike every prior Phase 40 live run, which had no production caller
         yet to invoke -- 40-09-SUMMARY.md's own "Next Phase Readiness" note):
-          iOS's own family-wide-pending resealable array named (\(collectionId), \(meWeb.userId)) before the run.
-          web member's published public key (GET /api/families/members): present.
+          iOS's own family-wide-pending resealable array named (\(collectionId), \(meSecondMember.userId)) before the run.
+          second member's published public key (GET /api/families/members): present.
           ResealTrigger.run outcome: attempted=\(triggerOutcome.attempted) succeeded=\(triggerOutcome.succeeded.count) failed=\(triggerOutcome.failed.count)
 
-        Receiver-side proof on the web member, AFTER the iOS unlock:
-          Collection name decrypted: "\(decryptedNameWeb)" (expected "\(collectionName)")
-          Item decrypted: "\(decryptedItemWeb)" (expected "\(itemPlaintext)")
-          GET /api/families/family-wide-pending as web, AFTER: missing contains \(collectionId) = \(pendingWebAfter.missing.contains { $0.collection_id == collectionId }) (expected false)
-          GET /api/vault/collections/\(collectionId) as web, AFTER: status = \(collectionStatusAfter) (expected 200)
+        Receiver-side proof on the second member, AFTER the iOS unlock:
+          Collection name decrypted: "\(decryptedNameSecondMember)" (expected "\(collectionName)")
+          Item decrypted: "\(decryptedItemSecondMember)" (expected "\(itemPlaintext)")
+          GET /api/families/family-wide-pending as second member, AFTER: missing contains \(collectionId) = \(pendingSecondMemberAfter.missing.contains { $0.collection_id == collectionId }) (expected false)
+          GET /api/vault/collections/\(collectionId) as second member, AFTER: status = \(collectionStatusAfter) (expected 200)
 
         Same-key proof: a probe ciphertext sealed under iOS's ORIGINAL Collection Key (captured
-        before the reseal) opens under the web member's newly-recovered key: \(decryptedProbeByWeb == probePlaintext)
+        before the reseal) opens under the second member's newly-recovered key: \(decryptedProbeBySecondMember == probePlaintext)
 
         Level proof: delivered access_level = \(deliveredLevel ?? "nil") (expected "read", the SHARE's own
         level -- NOT iOS's own "edit" creator row).
@@ -956,8 +956,8 @@ extension ResealTriggerTests {
         )
         let afterScreenshotView = ResealEvidenceScreen(
             heading: "E-F6 -- AFTER the iOS unlock",
-            primaryLine: decryptedNameWeb,
-            secondaryLines: [decryptedItemWeb]
+            primaryLine: decryptedNameSecondMember,
+            secondaryLines: [decryptedItemSecondMember]
         )
         let beforeRenderer = ImageRenderer(content: beforeScreenshotView)
         beforeRenderer.scale = 3
