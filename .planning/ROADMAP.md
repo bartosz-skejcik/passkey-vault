@@ -87,7 +87,7 @@ Audit: [milestones/v0.4-MILESTONE-AUDIT.md](milestones/v0.4-MILESTONE-AUDIT.md).
 - [x] **Phase 29: A Real Settings Page — Shell & Migration** (6/6 plans) — completed 2026-08-10 - Settings becomes a linkable `/settings` route with headed sections; every existing setting survives the move, and the family surface is carried across unchanged pending its Phase 33 redesign
 - [x] **Phase 30: The Living Group — Family-Wide Sharing** (17/17 plans + quick task 260812-01e) — completed 2026-08-12, verified 6/6 - Share with the whole family in one action, and someone who joins later gains access by a client-only key path decided and documented before any dependent code
 - [x] **Phase 31: The Share Dialog — Per-Person Access, Existing Destinations** (6/6 plans) — completed 2026-08-19, verified 6/6 - One row per person with their own access level, able to target a shared folder that already exists instead of minting another one
-- [ ] **Phase 32: Putting Things Into Shared Folders** - An item can be created in, moved into, and taken back out of an existing shared folder, always re-encrypted under the destination scope or refused
+- [x] **Phase 32: Putting Things Into Shared Folders** (4/4 plans) — completed 2026-08-19, verified 5/5 - An item can be created in, moved into, and taken back out of an existing shared folder, always re-encrypted under the destination scope or refused
 - [ ] **Phase 33: The Family & Sharing Surface** - Family & Sharing redesigned around the finished sharing model, with the last orphaned server capability finally given a proven client consumer
 - [ ] **Phase 34: Knowing What You Are Sharing** - The item list, the sharing overview and the extension popup answer "what am I exposing, to whom, in which direction" without ever misrepresenting it
 
@@ -216,7 +216,7 @@ follow-up gap-closure pass, recorded in `31-VERIFICATION.md`'s own Gap Closure s
   4. An item taken out of a shared folder is re-encrypted under the owner's personal key, and a member who could read it before demonstrably cannot after — anchored positively on both sides: that member's own client reads the content before the move, and the same read fails after the next completed sync.
   5. `cargo clippy --workspace --all-targets -- -D warnings` exits 0 (DEBT-04 — the 19 `explicit_auto_deref` in `vault.rs`, which this phase edits anyway).
 
-**Plans**: 4/4 plans executed
+**Plans**: 4/4 plans executed — verified 5/5 on 2026-08-19 (`32-VERIFICATION.md`). A code review returned BLOCK (2 Critical), and the verification then found a second undecryptable-row sibling the fix pass had dismissed on the wrong reasoning; both closed and independently falsified.
 
 Plans:
 

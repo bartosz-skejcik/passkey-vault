@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Sharing That Makes Sense
-current_phase: 32
-current_phase_name: Putting Things Into Shared Folders
+current_phase: 33
+current_phase_name: The Family & Sharing Surface
 status: in_progress
-stopped_at: Completed 32-04-PLAN.md
-last_updated: "2026-08-19T12:21:52.630Z"
-last_activity: 2026-08-11
-last_activity_desc: re-verify complete; four CI-width commands all exit 0; e2e 9/9 from a fresh
+stopped_at: Phase 32 CLOSED -- verified 5/5 at 2026-08-19; ready to start Phase 33
+last_updated: "2026-08-19T16:30:00.000Z"
+last_activity: 2026-08-19
+last_activity_desc: Phase 32 closed -- grouped destination select, moveVaultItem, DEBT-04; 2 Critical + 1 verification-found sibling all closed with falsification
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 4
   total_plans: 35
   completed_plans: 33
-  percent: 33
+  percent: 67
 ---
 
 # Project State

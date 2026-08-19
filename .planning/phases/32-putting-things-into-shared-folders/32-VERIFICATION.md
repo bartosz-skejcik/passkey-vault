@@ -1,26 +1,112 @@
 ---
 phase: 32-putting-things-into-shared-folders
-verified: 2026-08-19T13:59:06Z
-status: human_needed
+verified: 2026-08-19T15:58:28Z
+status: passed
 score: 5/5 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
+gaps: []
 re_verification:
-  previous_status: none
-  previous_score: n/a
-  gaps_closed: []
+  previous_status: human_needed
+  previous_score: 5/5
+  head_verified: 569feb5
+  gaps_closed:
+    - "F-2 — a non-owner `edit` member could re-scope another author's collection item into a DIFFERENT shared folder. Gate 1b widened to any collection-scoped source, destination-independent; client offer-guard and perform-guard widened to match. Re-driven by me: now 403, was 200."
+    - "F-1 — SC4's post-reload assertion (b) was vacuous. Replaced with an actively-waited list-membership check on the fresh full-state fetch. Re-driven by me: the new form FAILS on a build where the member retains access."
+    - "F-3 — the C-2 recovery gate's revision conjunct had no independent coverage. New decline-on-foreign-revision test isolates it from the content conjunct. Re-driven by me: deleting the conjunct alone turns exactly that one test red."
+    - "F-4 — REQUIREMENTS.md's ORG-02/ORG-04 rows read `Complete`, and the evidence behind them was re-verified live."
   gaps_remaining: []
   regressions: []
-human_verification:
-  - test: "Decide whether CR-01's 'second variant' — an `edit`-level member relocating ANOTHER author's item from shared folder F into shared folder G — is acceptable behaviour to ship, or needs a Gate 1c."
-    expected: "A disposition (accept / file as WINDOWS entry / fix in v0.6). Verified live at the server: the move returns 200, the row keeps `user_id = A` but `collection_id = G`; author A's `GET /api/vault/items` no longer contains the item and `GET /api/vault/collections/G/sync` returns 404 for A. G's members read it fine — so it is NOT an undecryptable row and SC3's literal bar holds. It IS newly reachable through the shipped editor: `personalScopeBlocked` disables only 'Bez folderu' and personal folders; every writable shared folder stays enabled for a foreign-owned item."
-    why_human: "Not a criterion failure — a scope/product decision. The Fix Disposition closed it as 're-opening a locked 32-CONTEXT.md decision', and that rationale is wrong (see Findings F-2), so the decision was never actually made by a human."
-  - test: "Decide whether ME-04's assertion (b) (`reloadAndUnlock` + password locator `toHaveCount(0)`) stays in `sharing.spec.ts` as decoration, is replaced with a discriminating post-reload read, or is deleted."
-    expected: "A disposition. Falsified in this verification: the assertion passes unchanged on a build where the member RETAINS full access, because a fresh render never puts a password in the DOM without a row click + `reveal-password` click."
-    why_human: "The test is green either way; only a human can decide whether to spend a plan on replacing it. The genuine ME-04 closure is assertion (a), which does discriminate."
-  - test: "Decide whether the C-2 recovery gate's `freshRow.revision === newRevision` conjunct needs its own regression test."
-    expected: "A disposition. Falsified: deleting that conjunct alone leaves the entire web suite green (626/626 across `src/lib/vault` + `src/components/vault`). Only the content-match conjunct is covered."
-    why_human: "Defence-in-depth coverage judgement; the load-bearing conjunct IS covered and was falsified successfully."
+  notes:
+    - "F-6 (INFO, new this pass, not a gap): F-2's widening made `move_item_rejected_when_caller_lacks_edit_on_destination_collection` stop discriminating Gate 2 — Gate 1b returns 403 first at every one of its assertions. Falsified: deleting `require_collection_edit` leaves the whole Rust workspace green (31 binaries, 395 tests). Gate 2 is NOT unproven — deleting it makes the live SC3 and HI-01 Playwright tests both fail, which I also drove. Coverage moved from the unit layer to the e2e layer; the Rust test's name now overstates what it proves."
+    - "F-5 (INFO, carried forward): ItemForm's create-mode B-3 backstop is still revision-only, with no content match. Below every success criterion's bar; unchanged by the gap-closure pass."
+---
+
+# Phase 32 — RE-VERIFICATION VERDICT (2026-08-19T15:58:28Z, HEAD `569feb5`)
+
+> This section supersedes the verdict recorded below it. The original verification report and the
+> fixer's Gap Closure section are preserved beneath, unedited, as the historical record.
+
+**Status: `passed` — 5/5 success criteria verified, 4/4 gaps closed, 0 remaining, 0 escalations.**
+
+All four gaps I raised were closed and **each was independently falsified by me at this HEAD** —
+not accepted from the commit messages or the Gap Closure section, which I treated as claims. The
+previous pass earned that suspicion: its ME-04 disposition asserted a check "would fail against a
+build where the member retained genuine access" when it could not fail, and it closed F-2 citing a
+locked decision that governed a different question. I re-drove both.
+
+## Per-gap verdict
+
+| Gap | Verdict | What I drove myself |
+|---|---|---|
+| **F-2** — non-owner collection→collection re-scope | ✓ **CLOSED** | Re-ran my own probe against the fixed server (member B holds `edit` on folder F, owns folder G, moves author A's item F→G): now **403**, previously 200. Row byte-identical afterwards (`collection_id` still F, `enc_data` still `dF`, `revision` still 2) and A still sees their own item. The original CR-01 shape (F→personal) is still **403**. Refused **at the server with no client in the loop** — raw HTTP with B's own token. Disabling both Gate 1b conditions (`if false &&`) turns 3 tests red, including the new F-2 regression (`left: 200, right: 403`). |
+| **F-1** — SC4's vacuous assertion (b) | ✓ **CLOSED** | Ran the same falsification that exposed the old one: SC4 driven up to the positive anchor, **move-out skipped**, the **new** (b) run verbatim. It **FAILED** (`Expected: false, Received: true`) on all three attempts. The old form passed in exactly this setup. It now discriminates. |
+| **F-3** — uncovered revision conjunct | ✓ **CLOSED** | Deleted `freshRow.revision === newRevision` alone and ran the **full** web suite: **exactly one** test red — the new `F-3 … decline-on-foreign-revision` case — and only that one. It is genuinely isolated from the content conjunct (identical content, revision 6 vs predicted 4). |
+| **F-4** — REQUIREMENTS.md rows | ✓ **CLOSED** | ORG-02 and ORG-04 both read `Complete`. The evidence behind them is real, not just the checkbox: I re-drove SC3's two refusal shapes live and proved Gate 2 is load-bearing by deleting it (below). |
+
+## Over-reach check on F-2's widening (asked for explicitly)
+
+Gate 1b went from `new_collection_id.is_none() && …` to `precheck_collection.is_some() && …` —
+strictly broader. My own probe, all six cases in one run against the fixed server:
+
+| # | Case | Result |
+|---|---|---|
+| 1 | B (edit on F, owner of G, **not** the owner) moves A's item F→G | **403** ✓ |
+| 2 | B moves A's item F→personal (original CR-01 shape) | **403** ✓ |
+| 3 | Row after both refusals | still in F, `dF`, rev 2; A's own item list unaffected ✓ |
+| 4 | **The item's real owner** moves their own item F→H (a folder they can write to) | **200** ✓ not over-reached |
+| 5 | A `read`-level holder attempts a move-out | **403** ✓ still refused, for the pre-existing reason (the `Membership<Item, RequireEdit>` extractor) |
+| 6 | **The owner** moves their own item H→personal | **200** ✓ |
+
+**The retargeted test was retargeted, not weakened.** `move_item_rejected_when_caller_lacks_edit_on_destination_collection`'s
+final case flipped from "non-owner with edit on both succeeds (200)" to "…is refused (403)", and a
+**new** positive case was added in the same hunk proving the item's *actual owner*, holding edit on
+both source and destination, still gets 200 with `collection_id = B` and `revision = 3`. So the
+"the gate isn't blanket-closing everything" property the original case existed to prove is still
+proven — by the owner instead of the non-owner.
+
+## One thing the gap-closure pass did not notice (F-6, INFO — not a gap)
+
+The commit claims that what the retargeted test "originally proved is still proven somewhere."
+For its *positive* half that is true. For its **primary** half it is not: every one of that test's
+403 assertions is now satisfied by **Gate 1b**, which runs before Gate 2 and fires because the
+mover is not the owner. So the test named for Gate 2 no longer discriminates Gate 2 at all.
+
+I falsified this rather than reasoning about it: **deleting `require_collection_edit` on the
+non-bucket destination branch entirely leaves the whole Rust workspace green** — 31 binaries, 395
+tests, 0 failures.
+
+**But Gate 2 is not unproven.** With it still deleted I ran the live suite: **both SC3 and HI-01
+failed** (`item-save-error-banner` never appears — the refused move succeeds instead). Gate 2's
+coverage moved from the Rust layer to the e2e layer, which is where SC3 lives anyway. Nothing was
+lost; the Rust test's name simply now overstates what it proves. Worth a comment or a rename some
+day, not a gap, and not a blocker.
+
+## CI-width at this HEAD (all run by me, after all four fixes)
+
+| Check | Command | Exit | Counts |
+|---|---|---|---|
+| Rust workspace tests | `cargo test --workspace --no-fail-fast` | **0** | 31 binaries, **395 passed, 0 failed** (+1 vs. the pre-closure run — the new F-2 regression) |
+| Clippy gate (SC5 / DEBT-04) | `cargo clippy --workspace --all-targets -- -D warnings` | **0** | zero warnings |
+| Web build | `cd web && npm run build` | **0** | Next.js static export |
+| Web typecheck | `cd web && npm run compile` | **0** | `tsc --noEmit`, run after build |
+| Web unit/component | `cd web && npm test` | **0** | 93 files, **1050 passed, 0 failed** (+3: F-2 client ×2, F-3 ×1) |
+| Playwright, **unfiltered** | `CI=1 npx playwright test e2e/sharing.spec.ts` | **0** | **17/17 passed** in 2.0 min, **zero retries, zero flaky** |
+
+Live-run hygiene: `CI=1` (`reuseExistingServer: false`); port 8620 confirmed free beforehand; I
+touched `vault.rs` to force a genuinely fresh `cargo build --release -p pv-server` and the log
+confirms `Compiling pv-server`; throwaway `PV_E2E_DB_DIR`. `data/pv.db` SHA-256
+`8e043c9d…b997c8` identical before and after, `-shm`/`-wal` likewise. SC4 now runs 22.8 s (was
+2.6 s) — the cost of the new (b) actively waiting out its 20 s window, and the reason it can fail
+at all.
+
+## Is Phase 32 closeable?
+
+**Yes.** All five ROADMAP success criteria hold, every load-bearing mechanism goes red when
+removed, all four gaps are closed and independently falsified, and nothing is left awaiting a human
+decision. Two INFO notes carry forward for the record (F-5 below; F-6 above) — neither touches a
+success criterion.
+
 ---
 
 # Phase 32: Putting Things Into Shared Folders — Verification Report
