@@ -280,7 +280,11 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 if [ "$DEAD" -ne 1 ]; then
-  echo "ERROR: pv-server (PID ${SERVER_PID}) did not die within 10s of SIGTERM." >&2
+  # WR-11 (39-REVIEW.md): ${SERVER_PID} (singular, unset in this script --
+  # SERVER_PIDS is what was actually computed above) would abort here under
+  # `set -u` with "unbound variable", swallowing the PID list the operator
+  # actually needs to see.
+  echo "ERROR: pv-server (PID(s) $(echo "$SERVER_PIDS" | tr '\n' ' ')) did not die within 10s of SIGTERM." >&2
   wait "$XCODEBUILD_PID" || true
   exit 1
 fi
