@@ -110,11 +110,23 @@ struct ResealService {
         // existing one, never publishes a second (IdentityService's own
         // discipline, plan 40-02).
         let identityKey = try await identityService.ensureOwnIdentityKeypair(userKey: userKey)
+        // WR-19 (40-REVIEW.md, iteration 2): a liveness re-check between
+        // EVERY network step of this fan-out, mirroring `VaultStore
+        // .mergeSharedAndFamilyWideItems`'s/`SyncCoordinator`'s own
+        // post-await discipline for the identical shape -- a lock landing
+        // mid-fan-out must stop this pair's OWN remaining network/crypto
+        // work, not just the pairs after it in `ResealTrigger.run`'s loop.
+        // `CancellationError` is caught by `ResealTrigger.run`'s own
+        // `catch` like any other reseal failure -- opportunistic by
+        // construction, retried on the next unlock's fresh
+        // `resetAttempts()`, never surfaced to the user.
+        try Task.checkCancellation()
 
         // Step 2: resolve the recipient's published public key from the
         // roster BEFORE any getCollection/addCollectionMember call for this
         // pair -- T-25-16, this file's header.
         let roster = try await familyAPI.fetchMembers()
+        try Task.checkCancellation()
         guard
             let member = roster.first(where: { $0.userId == recipientUserId }),
             let publicKeyBase64 = member.publicKey
@@ -129,6 +141,7 @@ struct ResealService {
         // Step 3: fetch the collection -- no own sealed_key means this
         // account is on the MISSING side, not the delivering side.
         let record = try await collectionService.fetchCollection(id: collectionId)
+        try Task.checkCancellation()
         guard let ownSealedKey = record.sealedKey else {
             throw ResealServiceError.collectionMissingOwnSealedKey(collectionId: collectionId)
         }
@@ -137,6 +150,7 @@ struct ResealService {
         // never `FfiCollectionKey.generate()`.
         let ck = try unsealCollectionKey(myIdentityKey: identityKey, sealedJson: ownSealedKey)
         let sealedKeyJson = try sealCollectionKey(recipientPk: recipientPk, ck: ck)
+        try Task.checkCancellation()
 
         // Step 5: the collection's OWN family-wide level, "read" the ONLY
         // fallback -- never this account's own `record.accessLevel`.

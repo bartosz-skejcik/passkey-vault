@@ -278,11 +278,43 @@ final class SyncCoordinator {
         // this request, and logged its 404/403 failure at `.error`,
         // forever, on every one of those cadences.
         guard !hasNoFamily else { return }
-        // CR-03: cancel any still-running cycle from a previous pull before
-        // starting a new one -- `stop()` already cancels on lock, this
-        // covers the (rarer) case of two pull cycles racing while unlocked.
-        resealTask?.cancel()
+        // WR-19 (40-REVIEW.md, iteration 2): do NOT cancel a still-running,
+        // HEALTHY cycle here -- `pull()` runs every 30 seconds, and
+        // `ResealTrigger.run` claims every fresh pair into `attemptedPairs`
+        // SYNCHRONOUSLY before its first `await` (that type's own header).
+        // The pre-fix behaviour cancelled the previous cycle unconditionally
+        // on every new pull: a fan-out that legitimately takes longer than
+        // the 30-second cadence got cancelled and re-fired, found every pair
+        // already claimed by the cancelled attempt, and returned
+        // `attempted: 0` forever -- the family-wide key never propagated
+        // until the user locked and unlocked. `resealTask?.isCancelled`
+        // reads `false` for BOTH "never started" and "still running and
+        // healthy"; a completed task's stored reference is nilled below in
+        // its own continuation, so a non-nil, non-cancelled `resealTask`
+        // here means a cycle is genuinely still in flight -- skip this
+        // pull's fire, the in-flight one will pick up fresh pairs on ITS
+        // own next natural completion (or the next pull after IT finishes).
+        // `cancel()` remains reserved for `stop()` (a genuine lock), which
+        // still cancels unconditionally.
+        if let resealTask, !resealTask.isCancelled {
+            return
+        }
         resealTask = Task { [weak self] in
+            // WR-19: the completion half of the "do not cancel a healthy
+            // cycle" fix above -- without this, `resealTask` would keep
+            // pointing at a FINISHED, non-cancelled `Task` forever, and the
+            // `if let resealTask, !resealTask.isCancelled { return }` guard
+            // at this method's own top would then skip firing on every
+            // subsequent pull permanently, not just while genuinely
+            // in-flight. Runs on every exit path (`defer`), matched against
+            // `self`'s own instance so a cycle that outlives a `stop()`
+            // (which already nils `resealTask` itself) does not clobber a
+            // NEWER task's reference.
+            defer {
+                if let self, self.resealTask?.isCancelled == false {
+                    self.resealTask = nil
+                }
+            }
             do {
                 let pending = try await SharedItemsStore.fetchFamilyWidePending(
                     baseURL: resealBaseURL, tokenProvider: resealTokenProvider

@@ -385,6 +385,37 @@ struct ResealTriggerTests {
         #expect(posted["access_level"] as? String == "read")
     }
 
+    /// WR-19 (40-REVIEW.md, iteration 2): a pre-cancelled task must never
+    /// reach the grant endpoint at all -- proves `reshareCollection`'s new
+    /// `Task.checkCancellation()` calls actually stop the fan-out rather
+    /// than being dead code, and that a lock landing mid-flight cannot let
+    /// this ONE pair's remaining network/crypto work run to completion
+    /// after the surrounding `Task` was cancelled.
+    @Test func reshareCollectionThrowsOnCancellationAndNeverPostsTheGrant() async throws {
+        ResealFakeServerURLProtocol.reset()
+        let fixture = try Self.makeFixture(pairCount: 1)
+        let grant = fixture.grants[0]
+
+        let task = Task {
+            try await fixture.resealService.reshareCollection(
+                collectionId: grant.collection_id, recipientUserId: grant.recipient_user_id, userKey: fixture.userKey
+            )
+        }
+        task.cancel()
+
+        var thrown: Error?
+        do {
+            try await task.value
+        } catch {
+            thrown = error
+        }
+        #expect(thrown is CancellationError, "expected a CancellationError, got \(String(describing: thrown))")
+        #expect(
+            (ResealFakeServerURLProtocol.capturedGrantBodies[grant.collection_id] ?? []).isEmpty,
+            "a cancelled reshare must never reach the grant endpoint"
+        )
+    }
+
     /// A structural 409 from the grant endpoint resolves as SUCCESS.
     @Test func conflictResponseResolvesAsSuccess() async throws {
         ResealFakeServerURLProtocol.reset()
