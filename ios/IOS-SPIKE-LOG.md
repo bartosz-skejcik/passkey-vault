@@ -3145,6 +3145,56 @@ this toolchain must check the `.debug.dylib` first, falling back to the plain ex
 configurations (e.g. Release) where this indirection does not apply** -- `scripts/ios-cold-read-proof.sh`
 does this now.
 
+### L-27 -- `Foundation.Process` does not exist on iOS; a Node/pv-wasm "second client" driver cannot be spawned from inside an `xcodebuild test` method
+
+**Found 2026-08-19, Phase 40, Plan 40-06, Task 3.** `scripts/invite-live-e2e.mjs` was written to be the
+E-F2 live test's "second real client" (a pv-wasm Node driver, mirroring `verify-ios-web-interop.mjs`'s
+established pattern), invoked via `Foundation.Process` from `InviteTests.swift`'s
+`liveInviteRedeemedByWebAccount`. This does not compile: `error: cannot find 'Process' in scope` --
+confirmed by grepping the iphonesimulator SDK's `Foundation.swiftinterface` directly, which contains no
+`class Process` declaration at all (present only in the macOS SDK's interface). `Process`/`NSTask` is a
+macOS-only Foundation type; an iOS (or iOS Simulator) process — including the `xcodebuild test` runner's
+own test bundle — cannot spawn an arbitrary host subprocess this way. This is why
+`CrossClientInteropTests.swift`'s own two-method split (`direction1`/`direction2`) exists: the Node-side
+work happens in the EXTERNAL `verify-ios-web-interop.mjs` orchestrator, BETWEEN two separate
+`xcodebuild test -only-testing:.../directionN_...()` invocations it drives itself — no Swift test method
+ever spawns anything.
+
+**Consequence:** a single self-contained Swift Testing method cannot itself run a Node/pv-wasm "second
+client" mid-test. Either (a) split the live test into two methods and write a new external `.mjs`/shell
+orchestrator (this milestone's established pattern, `verify-ios-web-interop.mjs`), or (b) perform BOTH
+sides of the round trip using REAL `pv-ffi` calls from Swift (what plan 40-06's `redeemInviteSwiftSide`
+does) — genuinely live, real crypto, real server round trips, just not a JS/wasm interop claim
+specifically (already covered elsewhere in this milestone for other wire shapes). `scripts/invite-live-e2e.mjs`
+is kept in the repo, unused by any automated gate, as a ready-made template for option (a) if a future
+plan needs the JS/wasm interop claim specifically.
+
+### L-28 -- `xcodebuild test -only-testing:<Target>/<Suite>` (no trailing method) silently runs the WHOLE suite twice in one invocation on this toolchain
+
+**Found 2026-08-19, Phase 40, Plan 40-06, Tasks 1-3, empirically, repeatedly.** Every
+`xcodebuild test -only-testing:PasskeyVaultTests/InviteTests` invocation (suite-level scope, no
+trailing `/methodName()`) in this task ran `Test suite 'InviteTests' started on 'Clone 1 of ...'` and
+every one of its test cases TWICE, back to back, inside the SAME `xcodebuild` process/clone -- confirmed
+across at least four separate invocations (the Task 1 RED/GREEN/falsify/restore cycle, and the Task 2/3
+suite-wide sweeps), never once during any `-only-testing:.../methodName()` (trailing-parens,
+single-method) invocation, which always ran exactly once. For an idempotent (pure, no side effect) test
+this is harmless -- both runs pass identically. For `liveInviteRedeemedByWebAccount` specifically it is
+NOT harmless: the second run's `POST /api/families` correctly 409s ("family already exists") against
+`pv-server`'s v0.4 SINGLETON family model (one family per server/DB, not per account -- confirmed via
+`crates/pv-server/src/routes/families.rs::create`'s own doc comment), so a bare suite-level sweep of
+`InviteTests` against a single live server session always reports the run as failed even when the live
+proof itself (the FIRST internal run) genuinely passed. Root cause not fully identified (no
+`.xcscheme`/`.xctestplan` exists on disk for this project -- Xcode auto-generates the scheme -- so
+whatever default is doubling execution is not visible as a config file to inspect).
+
+**Consequence, mirroring L-21's own guidance for external-infra-dependent suites:** treat `InviteTests`
+the same way `CrossClientInteropTests`/`FolderWireInteropTests`/`VaultWireInteropTests` are already
+treated -- a bare, unscoped suite-level `-only-testing:` sweep is not trustworthy evidence for the LIVE
+method on its own; run `liveInviteRedeemedByWebAccount()` scoped individually (trailing `()`, as this
+plan's own `<verify>` commands do after the L-3-family "trailing parens" correction) against a FRESH
+`scripts/ios-live-server.sh` session for a trustworthy result. The three pure (Tasks 1-2) tests remain
+safe under either scoping, since they carry no server-side state to collide on.
+
 ### L-27 -- two shell landmines found building this plan's own live-proof harness
 
 **Found 2026-08-19, Phase 39, Plan 39-07, Task 1.** (1) `grep -rc PATTERN DIR | grep -v ":0" | wc -l`,
