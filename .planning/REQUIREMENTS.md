@@ -78,7 +78,7 @@ Recorded in `milestones/v0.4-ROADMAP.md`. Listed here so they are scheduled rath
 - [ ] **DEBT-01**: `POST /api/identity/verify/{user_id}` is orphaned — implemented and registered, zero client callers. SEC-05's fingerprint *display* half is wired; its "mark verified out-of-band" half is not. **The last surviving instance of v0.4's signature failure mode** (a server capability no client reaches).
 - [ ] **DEBT-02**: Vault export ignores the hidden-password mask on **both** surfaces (`toCsv.ts:11,59`).
 - [ ] **DEBT-03**: `pendingSharedItems` is never pruned when a shared row disappears from a snapshot, leaving a phantom "Failed to decrypt" row until lock.
-- [ ] **DEBT-04**: 19 × `clippy::explicit_auto_deref` in `vault.rs` still block whole-crate `cargo clippy -- -D warnings`.
+- [x] **DEBT-04**: 19 × `clippy::explicit_auto_deref` in `vault.rs` still block whole-crate `cargo clippy -- -D warnings`.
 
 ### Unfinished v0.4 Scope
 
@@ -130,7 +130,7 @@ Phases 29–33 (`ROADMAP.md`). Every v0.5 requirement is mapped to exactly one p
 | ORG-01 | Phase 32 | Pending |
 | ORG-02 | Phase 32 | Pending |
 | ORG-04 | Phase 32 | Pending |
-| DEBT-04 | Phase 32 | Pending |
+| DEBT-04 | Phase 32 | Complete |
 | SET-01 | Phase 29 | Pending |
 | SET-02 | Phase 29 | Pending |
 | SET-03 | Phase 33 | Pending |

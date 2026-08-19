@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Sharing That Makes Sense
-current_phase: 31
-current_phase_name: The Share Dialog — Per-Person Access, Existing Destinations
-status: phase_complete
-stopped_at: Completed 31-04-PLAN.md
-last_updated: "2026-08-18T21:57:45.434Z"
-last_activity: 2026-08-11
-last_activity_desc: re-verify complete; four CI-width commands all exit 0; e2e 9/9 from a fresh
+current_phase: 32
+current_phase_name: Putting Things Into Shared Folders
+status: in_progress
+stopped_at: "Completed 32-03-PLAN.md (Phase 32 wave 1 of 4: DEBT-04)"
+last_updated: "2026-08-19T11:11:08.114Z"
+last_activity: 2026-08-19
+last_activity_desc: 32-03 (DEBT-04) complete -- workspace-wide clippy -D warnings clean, zero behavior change (393/393 tests, before and after)
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 30
-  completed_plans: 27
-  percent: 33
+  total_plans: 35
+  completed_plans: 30
+  percent: 86
 ---
 
 # Project State
@@ -24,13 +24,26 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-31)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** v0.5 — Phase 30's SC2 item-variant defect (below) is now CLOSED via quick task
-`260812-01e` (2026-08-12; see that task's SUMMARY.md); a re-verify pass should confirm SC2 moves from
-`failed` back to `pass` in a fresh `30-VERIFICATION.md`. Phase 31 is the active phase otherwise.
+**Current focus:** v0.5 — Phase 31 (The Share Dialog) is complete (6/6). Phase 32 (Putting Things Into
+Shared Folders) is now active: wave 1 (32-03, DEBT-04) is done — workspace-wide `cargo clippy
+--workspace --all-targets -- -D warnings` exits 0. Waves 2-4 (32-01 tracer, 32-02 tests, 32-04 remaining
+live tests) remain, serialized per 32-VALIDATION.md's wave plan.
 
 ## Current Position
 
-Phase: 31 (The Share Dialog — Per-Person Access, Existing Destinations)
+Phase: 32 (Putting Things Into Shared Folders) — wave 1 of 4 complete
+
+**32-03 (DEBT-04) done, `c57e9ff`:** `cargo clippy --workspace --all-targets -- -D warnings` now exits 0
+workspace-wide — 19 `explicit_auto_deref` sites in `vault.rs` (`&mut *tx` -> `&mut tx` at calls into
+this file's own tx-taking helpers) and two `doc_lazy_continuation` doc-comment reflows in
+`crates/pv-provider` (`ceremony.rs`'s EXT-10 record plus a third site in `response_shape.rs` that only
+became visible once `ceremony.rs`'s fix let the crate's lib target compile far enough for clippy to
+reach its test target — see `32-03-SUMMARY.md`'s deviation note). Zero behavior change, confirmed by a
+stashed before/after `cargo test --workspace --no-fail-fast` run: 393 passed, 0 failed, identical both
+times. Next: wave 2 (32-01, the tracer plan) per the wave-1-must-land-first ordering in
+32-VALIDATION.md/32-PLAN-CHECK.md B-5.
+
+Phase: 31 (The Share Dialog — Per-Person Access, Existing Destinations) — Complete (history below)
 
 **Quick task `260812-01e` (2026-08-12) closed the ⛔ OPEN DEFECT recorded below** — per-level
 `item_bucket` schema (up to 3 buckets/family, one per access level), a server-side contributor-edit-claim
@@ -391,6 +404,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 31-02: reconcileRowAction/reconcileRow is the single grant/update/revoke dispatch decision for both scopes; folder scope's update/revoke branches are wired but structurally unreachable until 31-03's destination selector seeds non-null currentLevel
 - [Phase ?]: 31-03: toggleFamilyWide resets destinationId to null on switch — avoids an unreachable-submit dead end when a per-person destination was chosen before enabling family-wide
 - [Phase ?]: 31-03: submitRowsForExistingDestination mirrors submitItemRows's dispatch shape — reconcileRow routes grant/update/revoke through reshareCollectionToNewMember/updateCollectionAccess/revokeCollectionAccess against a real existing destination
+- [Phase ?]: DEBT-04 closed: workspace-wide clippy -D warnings exits 0 (vault.rs deref cleanup + ceremony.rs/response_shape.rs doc reflow), zero behavior change confirmed via stashed before/after test run (393/393)
 
 ### Pending Todos
 
@@ -475,10 +489,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Completed 31-04-PLAN.md
+**Stopped at:** Completed 32-03-PLAN.md (Phase 32 wave 1 of 4: DEBT-04)
 **Resume file:** None
 
-Last session: 2026-08-18T21:57:45.422Z
+Last session: 2026-08-19T11:11:08.102Z
 27-13-PLAN.md (gap closure) executed: vault-store.ts::ensureSharedItemsHydrated() (the
 shared-side counterpart to the existing ensureItemsHydrated()) is now awaited by
 handleCredentialsGet, alongside ensureItemsHydrated(), before its candidate snapshot -- closing
