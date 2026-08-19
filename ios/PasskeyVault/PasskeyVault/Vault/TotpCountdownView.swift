@@ -72,16 +72,23 @@ struct TotpCountdownView: View {
     /// String` parameter, which formatted internally and could only ever
     /// serve one caller.
     let label: String
-    /// Reuses the detail screen's existing copy choke-point
-    /// (`ItemDetailView.copySecret`) -- routes through `ClipboardService`
-    /// and records the last-used touch, exactly like every other copy
-    /// affordance on that screen. Copies the LIVE CODE (not the raw
-    /// secret) -- a deliberate divergence from `web/.../DetailPanel.tsx`,
-    /// which copies `item.fields.secret` under a button labelled "copy
-    /// TOTP code" (an apparent bug there, not reproduced here: see
-    /// `ios/IOS-SPIKE-LOG.md` §1f for the recorded reasoning). `nil` for
-    /// `.listRow`, which shows no copy button (matching `.trow`'s own
-    /// two-element layout -- label+code, then the ring, nothing else).
+    /// Reuses the caller's existing copy choke-point (`ItemDetailView
+    /// .copySecret` for `.detail`, `ItemListView.copySecret` for
+    /// `.listRow`) -- routes through `ClipboardService` and records the
+    /// last-used touch, exactly like every other copy affordance on that
+    /// screen. Copies the LIVE CODE (not the raw secret) -- a deliberate
+    /// divergence from `web/.../DetailPanel.tsx`, which copies
+    /// `item.fields.secret` under a button labelled "copy TOTP code" (an
+    /// apparent bug there, not reproduced here: see `ios/IOS-SPIKE-LOG.md`
+    /// §1f for the recorded reasoning).
+    ///
+    /// Quick fix 40-UX-02: `.listRow` now WIRES this too (previously always
+    /// `nil` there) -- see `listRowContent`'s own note on how it is invoked
+    /// without adding a copy BUTTON, which `.trow`'s own two-element layout
+    /// (label+code, then the ring, nothing else) has no room for. `nil`
+    /// disables the tap-to-copy gesture entirely (e.g. a preview/test
+    /// caller that supplies none), matching `.detail`'s existing
+    /// no-button-when-nil behavior.
     var onCopy: ((String) -> Void)?
     /// Per-item accessibility identifiers for `.listRow`, since a List can
     /// render many rows and a single fixed identifier (as `.detail` uses)
@@ -166,6 +173,28 @@ struct TotpCountdownView: View {
     /// justify-content:space-between;gap:10}` -- label+code leading, the
     /// ring trailing, pushed to the row's edges. No icon tile, no chevron
     /// (design-conformance's own wording: "nothing to disclose").
+    ///
+    /// Quick fix 40-UX-02: the whole row navigates to item details on tap
+    /// (`ItemListView.rowButton`'s outer `.onTapGesture`) -- which meant
+    /// tapping the live CODE, the one thing on this row someone actually
+    /// wants to grab, opened a detail screen instead of copying it. Picked
+    /// among the options this fix's own task named ("tapping the label/left
+    /// column opens details, tapping the CODE copies" vs. a dedicated info
+    /// button): the code-taps-to-copy split, because it needs NO new glyph
+    /// drawn on a row design-conformance explicitly calls out as having
+    /// "nothing to disclose" -- an info button would be new chrome the
+    /// approved `.trow` artifact does not show. The mechanism is a REAL
+    /// `Button` wrapping just the code `Text` below, styled `.plain` to
+    /// stay visually identical to bare text (see that call site's own note
+    /// on the two failed intermediate attempts -- a plain `.onTapGesture`,
+    /// then a `.highPriorityGesture` -- and why a `Button` is what actually
+    /// works): a tap landing on the code's frame is consumed by the
+    /// button and never reaches the row-level gesture (no navigation
+    /// push); a tap anywhere else in the row (the label, the ring, the
+    /// padding) still falls through to that outer gesture and opens
+    /// details, unchanged.
+    /// `codeAccessibilityId` already gives VoiceOver/XCUITest a stable,
+    /// per-row target for this exact frame.
     @ViewBuilder
     private func listRowContent(code: String, remainingSeconds: UInt64, fraction: Double, isWarning: Bool) -> some View {
         HStack(spacing: PVMetrics.totpRowGap) {
@@ -178,13 +207,60 @@ struct TotpCountdownView: View {
                 // `.trow .code{font-size:31;font-weight:400;
                 // letter-spacing:1.5;font-variant-numeric:tabular-nums;
                 // color:var(--pv-acc)}`
-                Text(verbatim: Self.grouped(code))
-                    .font(.system(size: PVMetrics.totpRowCodeFontSize, weight: .regular))
-                    .monospacedDigit()
-                    .tracking(PVMetrics.totpRowCodeLetterSpacing)
-                    .foregroundStyle(Color("PVAccent"))
-                    .accessibilityIdentifier(codeAccessibilityId ?? "")
-                    .accessibilityValue(code)
+                //
+                // A real `Button`, NOT a bare `Text` plus `.onTapGesture`/
+                // `.highPriorityGesture`. BUG FOUND LIVE (40-UX-02's own
+                // UI test), in TWO stages:
+                //
+                // Stage 1: a plain `.onTapGesture` here was consistently
+                // out-prioritized by `ItemListView.rowButton`'s own
+                // `.onTapGesture { root.selection = item }`, which wraps
+                // this entire row -- every tap on the code opened the
+                // detail screen and `onCopy` never fired.
+                //
+                // Stage 2: switching to `.highPriorityGesture(TapGesture()
+                // ...)` did NOT fix it either, and the failure mode changed
+                // shape -- the confirmation banner still never appeared,
+                // reproducibly, across repeated live runs regardless of
+                // host load (ruling out a timing flake). Root cause: this
+                // view also carries `.accessibilityAddTraits(.isButton)` +
+                // a stable identifier, and XCUITest's `.tap()` on an
+                // element with the button trait dispatches through
+                // `accessibilityActivate()`, not a raw coordinate touch.
+                // A bare `TapGesture`/`.onTapGesture`/`.highPriorityGesture`
+                // has NO `accessibilityActivate()` wiring of its own (no
+                // `.accessibilityAction` was added either), so the
+                // synthesized activation had nothing to call and silently
+                // did nothing -- while a real finger tap, which drives raw
+                // touch-down/touch-up rather than accessibility activation,
+                // may have worked all along. `detailContent` below's own
+                // copy affordance was ALREADY a real `Button` and never hit
+                // this failure mode, which is the tell: `Button` is a
+                // genuine `UIControl`-backed SwiftUI primitive that wires
+                // `accessibilityActivate()` automatically, so it responds
+                // correctly to BOTH a physical tap and an accessibility-
+                // driven one. `.buttonStyle(.plain)` keeps it visually
+                // identical to the bare `Text` it replaces -- no new glyph,
+                // matching `.trow`'s "nothing to disclose" row design --
+                // and `Button` nested inside `rowButton`'s own
+                // `.onTapGesture`-driven row is the same "row navigates,
+                // one sub-control has its own action" pattern iOS already
+                // handles reliably (mirrors a `Button` inside a `List` row
+                // that also responds to selection).
+                Button {
+                    onCopy?(code)
+                } label: {
+                    Text(verbatim: Self.grouped(code))
+                        .font(.system(size: PVMetrics.totpRowCodeFontSize, weight: .regular))
+                        .monospacedDigit()
+                        .tracking(PVMetrics.totpRowCodeLetterSpacing)
+                        .foregroundStyle(Color("PVAccent"))
+                }
+                .buttonStyle(.plain)
+                .disabled(onCopy == nil)
+                .accessibilityIdentifier(codeAccessibilityId ?? "")
+                .accessibilityValue(code)
+                .accessibilityLabel(Text(verbatim: "Copy code"))
             }
             Spacer(minLength: 0)
             ring(fraction: fraction, isWarning: isWarning, remainingSeconds: remainingSeconds)

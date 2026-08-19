@@ -1405,7 +1405,15 @@ struct ItemListView: View {
                 // empty -- transcribes the artifact's own rendered text
                 // (e.g. "GitHub: bartek@paczesny.pl").
                 label: fields.issuer.isEmpty ? fields.name : "\(fields.issuer): \(fields.name)",
-                onCopy: nil,
+                // Quick fix 40-UX-02: was `nil` (list rows showed no copy
+                // affordance at all). Routes through the SAME `copySecret`
+                // choke point the context menu's "Copy password"/etc. already
+                // use just below in this file -- one `ClipboardService`
+                // writer, never a second direct-pasteboard write (kept green
+                // by `scripts/audit-clipboard-single-writer.sh`). `"Code"`
+                // matches `ItemDetailView.fieldLabel("totpCode")`'s own noun,
+                // so the two screens' "Copied Code …" banners agree.
+                onCopy: { code in copySecret(code, fieldLabel: "Code") },
                 codeAccessibilityId: "vault.row.\(item.id).totp.code",
                 ringAccessibilityId: "vault.row.\(item.id).totp.remainingSeconds"
             )

@@ -231,6 +231,59 @@ final class CodesRowDesignConformanceUITests: XCTestCase {
         add(detailAttachment)
     }
 
+    /// Quick fix 40-UX-02: before this, tapping ANYWHERE on a Codes-tab row
+    /// -- including directly on the live code -- pushed the item's detail
+    /// screen, with no way to copy the code from the list at all. Proves
+    /// BOTH halves of the fix live: tapping the code copies it through the
+    /// real `ClipboardService` choke point (the SAME confirmation banner
+    /// mechanism `ItemDetailView`'s own copy already uses, `ClipboardWording
+    /// .confirmation`'s "Copied Code ..." text), and that tap does NOT also
+    /// navigate -- the negative half a passing copy alone would not prove,
+    /// since a stale detail push racing the banner could look identical to
+    /// a clean tap-to-copy if only the banner were asserted.
+    @MainActor
+    func testTappingTheCodeCopiesAndDoesNotNavigate() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["PV_UITEST_SCREEN"] = "authRegister"
+        app.launch()
+
+        try registerFreshAccount(app, email: Self.freshEmail())
+        let itemId = try createTotpItem(app, issuer: "GitHub", name: "bartek@paczesny.pl")
+
+        let codesTab = app.buttons["Codes"]
+        XCTAssertTrue(codesTab.waitForExistence(timeout: 10), "Codes tab never appeared")
+        codesTab.tap()
+        let staleDetailBack = app.navigationBars.buttons["BackButton"]
+        if staleDetailBack.waitForExistence(timeout: 2) {
+            staleDetailBack.tap()
+        }
+
+        let codeElement = app.descendants(matching: .any)["vault.row.\(itemId).totp.code"]
+        XCTAssertTrue(codeElement.waitForExistence(timeout: 20), "live TOTP code never appeared in the Codes list row")
+        codeElement.tap()
+
+        // Positive half: the SAME list-screen copy-confirmation banner
+        // `ItemListView.copyConfirmationBanner` already renders for the
+        // context-menu copy actions.
+        let banner = app.otherElements["vault.list.copyConfirmation"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 5), "tapping the TOTP code never showed the copy confirmation banner")
+        XCTAssertTrue(banner.staticTexts["Copied Code"].waitForExistence(timeout: 2)
+            || app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Copied Code")).firstMatch.waitForExistence(timeout: 2),
+            "the banner must read \"Copied Code ...\", not a generic/wrong field label")
+
+        // Negative half: no navigation push happened. The Codes list root's
+        // own always-present element (the "+" dock) is still on screen, and
+        // the DETAIL screen's own fixed identifier (distinct from the list
+        // row's per-item `vault.row.<id>.totp.code`) never appeared.
+        XCTAssertTrue(app.buttons["vault.create.plusMenu"].exists, "a navigation push occurred -- the list root's own dock vanished after tapping the code")
+        XCTAssertFalse(app.descendants(matching: .any)["vault.detail.totp.code"].exists, "tapping the code must not push the item detail screen")
+
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "40-ux-02-totp-row-tap-copies-with-banner"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     // MARK: - Helpers (mirrors TotpCountdownUITests.swift's own shape)
 
     private func registerFreshAccount(_ app: XCUIApplication, email: String) throws {
