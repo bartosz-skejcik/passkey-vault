@@ -71,7 +71,9 @@ struct IdentityService {
         }
 
         if let existing = try await fetchExistingKeypair(token: token) {
-            return try unwrapIdentitySecretKey(uk: userKey, wrappedJson: existing.wrapped_secret_key)
+            let isk = try unwrapIdentitySecretKey(uk: userKey, wrappedJson: existing.wrapped_secret_key)
+            try Self.assertOwnPublicKeyMatches(isk: isk, serverPublicKeyB64: existing.public_key)
+            return isk
         }
 
         let isk = try FfiIdentityKey.generate()
@@ -90,10 +92,29 @@ struct IdentityService {
             // A concurrent caller won the race -- discard the
             // locally-generated `isk` and adopt the server's canonical
             // one instead (see this file's header).
-            return try unwrapIdentitySecretKey(uk: userKey, wrappedJson: response.wrapped_secret_key)
+            let adopted = try unwrapIdentitySecretKey(uk: userKey, wrappedJson: response.wrapped_secret_key)
+            try Self.assertOwnPublicKeyMatches(isk: adopted, serverPublicKeyB64: response.public_key)
+            return adopted
         }
 
         return isk
+    }
+
+    /// WR-01: in a zero-knowledge threat model the server is untrusted --
+    /// it could serve this account's genuine (AEAD-protected, unforgeable)
+    /// `wrapped_secret_key` while advertising an ATTACKER's `public_key` to
+    /// the rest of the family. Every other member would then seal
+    /// Collection Keys to the attacker, and this account would never
+    /// notice (it only ever unwrapped its own secret key -- it never
+    /// looked at the published public key at all). Fail closed rather than
+    /// silently continue using a keypair this account cannot vouch for.
+    private static func assertOwnPublicKeyMatches(isk: FfiIdentityKey, serverPublicKeyB64: String) throws {
+        let ownPublicKeyB64 = isk.publicKeyBytes().base64EncodedString()
+        guard ownPublicKeyB64 == serverPublicKeyB64 else {
+            throw PvApiError.unexpectedResponse(
+                "published identity public_key does not match this account's own identity key -- refusing to adopt it"
+            )
+        }
     }
 
     // MARK: - Transport
