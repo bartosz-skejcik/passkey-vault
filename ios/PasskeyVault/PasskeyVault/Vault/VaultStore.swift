@@ -551,12 +551,28 @@ final class VaultStore {
     /// Plan 39-06 (SYNC-04, T-39-23). The up-to-date branch structurally
     /// carries no item collection (D-12) -- 39-03 only needed the snapshot
     /// branch's write. This re-persists whatever items/folders are ALREADY
-    /// cached (never re-derived from `self.items`, which are already-
-    /// decrypted plaintext; the cache holds only ciphertext, D-11/SYNC-03)
-    /// under an updated `revision`/`syncedAtMs`, because an up-to-date
+    /// cached under an updated `revision`/`syncedAtMs`, because an up-to-date
     /// answer is JUST as much a confirmed pull as a snapshot answer is --
     /// both response branches confirm the revision with the server; a
     /// thrown request writes nothing (see `refresh()`'s own note above).
+    ///
+    /// CR-02 (39-REVIEW.md, iteration 1): the items re-persisted here are
+    /// read FRESH FROM DISK (`cacheStore.readCurrentSnapshot`) -- the exact
+    /// same call, on the exact same source, `SyncClient.pull()` used to read
+    /// the `since` watermark this response confirms (D-11: one watermark,
+    /// one copy). The pre-fix version re-derived this collection from
+    /// `self.items`/`currentSnapshot` -- this STORE INSTANCE's own
+    /// in-memory mirror -- which is a SECOND, independent source for the
+    /// same invariant: any divergence between it and the on-disk blob (a
+    /// second live `VaultStore` over the same App Group file, or a
+    /// `readCurrentSnapshot` that failed transiently at `init` but
+    /// succeeded inside `pull()`) turned "the server says you are up to
+    /// date" into "erase the cache and keep the advanced revision" --
+    /// permanently, because the next pull reads that same advanced revision
+    /// back off disk and the server answers up-to-date again. Reading the
+    /// disk snapshot here closes that gap: this function can now only ever
+    /// re-persist what is ALREADY on disk, never something a divergent
+    /// in-memory mirror invented.
     ///
     /// If nothing has ever been cached, this still records the pull -- with
     /// an EMPTY item set, which is exactly what the server confirmed exists
@@ -564,22 +580,60 @@ final class VaultStore {
     /// account that has, in fact, synced. This is reachable on a brand-new
     /// account's very first pull: `since=0` already equals a fresh
     /// account's `revision=0`, so the FIRST response a new account ever
-    /// sees can be up-to-date, never a snapshot.
+    /// sees can be up-to-date, never a snapshot. A non-zero revision with
+    /// nothing on disk is refused outright -- that combination means the
+    /// server thinks this account is already past revision 0 while this
+    /// device has never persisted anything for it, which is not a state
+    /// this function can honestly reconcile by fabricating an empty cache
+    /// at a non-zero watermark.
     private func persistUpToDateToCache(revision: Int) {
+        guard let existing = cacheStore.readCurrentSnapshot(accountId: accountId) else {
+            guard revision == 0 else {
+                Self.log.error(
+                    "refusing to persist up-to-date revision \(revision) with no existing on-disk snapshot for this account"
+                )
+                return
+            }
+            let snapshot = CachedSnapshot(
+                revision: revision,
+                Int64(Date().timeIntervalSince1970 * 1000), // syncedAtMs, positional (CachedSnapshot.init's own note)
+                accountId: accountId,
+                serverBaseURL: api.baseURL.absoluteString,
+                items: [],
+                folders: []
+            )
+            writeSnapshot(snapshot, context: "up-to-date, first pull")
+            return
+        }
+        // CR-03 (39-REVIEW.md): never regress the on-disk watermark -- a
+        // slower, superseded response landing after a faster/newer one must
+        // not overwrite it.
+        guard revision >= existing.revision else {
+            Self.log.error(
+                "discarding out-of-order up-to-date response (\(revision) < on-disk revision \(existing.revision))"
+            )
+            return
+        }
         let snapshot = CachedSnapshot(
             revision: revision,
             Int64(Date().timeIntervalSince1970 * 1000), // syncedAtMs, positional (CachedSnapshot.init's own note)
             accountId: accountId,
             serverBaseURL: api.baseURL.absoluteString,
-            items: currentSnapshot?.items ?? [],
-            folders: currentSnapshot?.folders ?? []
+            items: existing.items,
+            folders: existing.folders
         )
+        writeSnapshot(snapshot, context: "up-to-date")
+    }
+
+    /// Shared write helper for both persist paths above. `context` is only
+    /// ever used for the error log line -- never a behavioural switch.
+    private func writeSnapshot(_ snapshot: CachedSnapshot, context: String) {
         currentSnapshot = snapshot
         do {
             try cacheStore.write(snapshot)
         } catch {
             Self.log.error(
-                "failed to persist sync cache (up-to-date): \(String(describing: error), privacy: .public)"
+                "failed to persist sync cache (\(context, privacy: .public)): \(String(describing: error), privacy: .public)"
             )
         }
     }
