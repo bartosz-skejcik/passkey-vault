@@ -240,7 +240,20 @@ final class SyncSocket {
     /// closure parameters (`SyncSocketTask`/`SyncSocketTransport`) is what
     /// keeps the compiler checking these particular closures at all.
     private func connect() {
-        guard let url = urlProvider() else { return }
+        // WR-01 (39-REVIEW.md): a nil URL (no token available -- a
+        // token-refresh window, or a transiently empty session) used to
+        // return here silently, with no log line and no reconnect
+        // scheduled -- reached from `scheduleReconnect`'s own timer (where
+        // `reconnectHandle` has already been nil'd), this left the socket
+        // permanently dead with zero observability. Logging AND scheduling
+        // a reconnect here means a transient nil-token window still
+        // recovers on its own once a token becomes available again,
+        // instead of requiring a full app relaunch.
+        guard let url = urlProvider() else {
+            Self.logger.error("PVSYNC|event=nourl -- no token available; retrying with backoff")
+            scheduleReconnect()
+            return
+        }
         var task: SyncSocketTask!
         task = transport.makeTask(
             url: url,

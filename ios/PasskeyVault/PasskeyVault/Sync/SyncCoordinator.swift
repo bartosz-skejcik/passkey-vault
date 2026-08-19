@@ -34,9 +34,18 @@
 //
 
 import Foundation
+import os
 
 @MainActor
 final class SyncCoordinator {
+    /// WR-01 (39-REVIEW.md): every `Task { try? await self.pull() }` site
+    /// below used to discard a thrown pull error with no log line at all --
+    /// a persistent failure (an expired token producing 401 on every pull,
+    /// an unreachable host) was invisible. `try?` still keeps a failed pull
+    /// from propagating anywhere a caller would have to handle it (none of
+    /// these call sites are awaited), but the failure itself is now logged.
+    private static let log = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "sync")
+
     private let store: VaultStore
     private var socket: SyncSocket?
     private var foregroundPullTimer: Timer?
@@ -81,7 +90,11 @@ final class SyncCoordinator {
             urlProvider: { SyncSocket.wsURL(base: baseURL, token: tokenProvider()) },
             pull: { [weak self] in
                 guard let self else { return }
-                Task { try? await self.pull() }
+                Task {
+                    do { try await self.pull() } catch {
+                        Self.log.error("socket-triggered pull failed: \(String(describing: error), privacy: .public)")
+                    }
+                }
             }
         )
         self.socket = socket
@@ -106,7 +119,11 @@ final class SyncCoordinator {
     /// in-foreground repeating timer below is an optimisation on top of
     /// this, never a substitute for it.
     func handleScenePhaseBecameActive() {
-        Task { try? await foregroundPull() }
+        Task {
+            do { try await foregroundPull() } catch {
+                Self.log.error("foreground-transition pull failed: \(String(describing: error), privacy: .public)")
+            }
+        }
     }
 
     /// In-foreground OPTIMISATION only, NOT a guarantee: a backgrounded
@@ -121,7 +138,11 @@ final class SyncCoordinator {
         guard !repeatingPullDisabled else { return }
         let timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             guard let self else { return }
-            Task { try? await self.pull() }
+            Task {
+                do { try await self.pull() } catch {
+                    Self.log.error("repeating-timer pull failed: \(String(describing: error), privacy: .public)")
+                }
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         foregroundPullTimer = timer
