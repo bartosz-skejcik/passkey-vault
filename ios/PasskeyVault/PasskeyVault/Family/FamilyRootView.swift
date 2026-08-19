@@ -59,6 +59,12 @@ struct FamilyRootView: View {
     @State private var hasNoFamily = false
     @State private var isCreatingFamily = false
     @State private var createFamilyError: String?
+    /// 40-VERIFICATION.md human item (self-hosted-singleton-family dead
+    /// end): flipped on a 409 from `POST /api/families` -- see
+    /// `isFamilyAlreadyExistsConflict(_:)`'s own note for why this is a
+    /// DIFFERENT state from the generic `createFamilyError` above, never
+    /// folded into it.
+    @State private var showingFamilyAlreadyExistsAlert = false
     /// Forces `MemberListView` to remount (and so re-run its own `.task`
     /// load) after a family is created or an invite is redeemed --
     /// `MemberListView` has no public `reload()` of its own, and adding one
@@ -192,6 +198,25 @@ struct FamilyRootView: View {
         .padding(.horizontal, PVMetrics.screenHPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color("PVBackground"))
+        // 40-VERIFICATION.md human item: honest copy for the singleton-
+        // family dead end, as a native alert rather than folded into the
+        // generic inline `createFamilyError` callout above -- same
+        // "distinct copy for a distinct, actionable cause" discipline
+        // WR-18's `.alert` on `MemberListView` already established for
+        // `.rekeySetMismatch`. Points at the ACTUAL working path ("Mam link
+        // zaproszenia") rather than "Spróbuj ponownie", which retries the
+        // SAME 409 forever on a server that already has its one family.
+        .alert(
+            "Ten serwer obsługuje tylko jedną rodzinę, a już istnieje.",
+            isPresented: $showingFamilyAlreadyExistsAlert
+        ) {
+            Button("Mam link zaproszenia") { showingRedeemInvite = true }
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(
+                verbatim: "Jeśli ktoś Cię zaprosił, wklej link zaproszenia zamiast zakładać nową rodzinę."
+            )
+        }
     }
 
     /// CR-04(b): the missing create-family client call --
@@ -214,7 +239,28 @@ struct FamilyRootView: View {
             // invalidate both stale caches.
             onFamilyMembershipChanged()
         } catch {
-            createFamilyError = "Nie udało się założyć rodziny. Spróbuj ponownie."
+            if Self.isFamilyAlreadyExistsConflict(error) {
+                showingFamilyAlreadyExistsAlert = true
+            } else {
+                createFamilyError = "Nie udało się założyć rodziny. Spróbuj ponownie."
+            }
         }
+    }
+
+    /// 40-VERIFICATION.md human item: `families.rs::create`'s own doc
+    /// comment (`crates/pv-server/src/routes/families.rs:36-40`) -- the
+    /// server enforces a SINGLETON family (v0.4's locked CONTEXT.md
+    /// decision), so a second `POST /api/families` always 409s with
+    /// `"family already exists"`, reachable-not-hypothetical on any
+    /// self-hosted server a member-less caller opens this screen on.
+    /// Distinguished from every other `createFamily` failure (network,
+    /// 401, 5xx) the same way `MemberListView.isRekeySetMismatch`/
+    /// `ShareItemPresenter.isNoFamilyError` already distinguish THEIR one
+    /// actionable cause from a generic one -- `internal`, not `private`,
+    /// so a future test can falsify it directly without going through the
+    /// live network path.
+    static func isFamilyAlreadyExistsConflict(_ error: Error) -> Bool {
+        if case let PvApiError.httpError(status, _) = error, status == 409 { return true }
+        return false
     }
 }

@@ -112,4 +112,26 @@ struct CreateFamilyTests {
             try await api.createFamily(name: "Paczescy")
         }
     }
+
+    /// 40-VERIFICATION.md human item: `FamilyRootView.createFamily()`'s own
+    /// 409 branch must route to the honest "this server already has a
+    /// family" alert, never the generic "Spróbuj ponownie" retry-forever
+    /// copy -- falsified directly against the SAME error shape
+    /// `createFamilyPropagatesA409WhenTheFamilyAlreadyExists` above proves
+    /// `FamilyAPI.createFamily` actually throws on the live 409 path.
+    @Test func isFamilyAlreadyExistsConflictDistinguishesA409FromOtherFailures() async throws {
+        CreateFamilyFakeServerURLProtocol.reset()
+        CreateFamilyFakeServerURLProtocol.responseStatus = 409
+        let api = Self.makeAPI()
+
+        do {
+            _ = try await api.createFamily(name: "Paczescy")
+            Issue.record("expected createFamily to throw on 409")
+        } catch {
+            #expect(FamilyRootView.isFamilyAlreadyExistsConflict(error))
+        }
+
+        #expect(!FamilyRootView.isFamilyAlreadyExistsConflict(PvApiError.httpError(status: 500, message: "boom")))
+        #expect(!FamilyRootView.isFamilyAlreadyExistsConflict(PvApiError.invalidCredentials))
+    }
 }
