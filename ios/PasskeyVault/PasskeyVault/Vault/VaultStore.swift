@@ -310,7 +310,7 @@ final class VaultStore {
         let wire = try encryptItemWire(
             userKey: userKey, plaintext: plaintext, itemId: id, revision: 1
         )
-        _ = try await api.createItem(
+        let response = try await api.createItem(
             id: id, encKeyJson: wire.encKeyJson, encDataJson: wire.encDataJson
         )
 
@@ -349,10 +349,23 @@ final class VaultStore {
         // rows).
         items.append(item)
         recomputeTags()
-        // WR-04 (39-REVIEW.md): a local mutation never reaches the
+        // WR-04/WR-07 (39-REVIEW.md): a local mutation never reaches the
         // persisted cache through any other path -- see
-        // `invalidateCacheAfterLocalMutation()`'s own header.
-        invalidateCacheAfterLocalMutation()
+        // `patchCacheAfterLocalMutation(_:)`'s own header. The ciphertext
+        // patched in is the SAME `wire.encKeyJson`/`encDataJson` just sent
+        // to the server, moved verbatim (D-13), never re-derived from the
+        // decrypted `item` above.
+        patchCacheAfterLocalMutation(.upsert(CachedSnapshot.Item(
+            id: id,
+            encKey: wire.encKeyJson,
+            encData: wire.encDataJson,
+            revision: response.revision,
+            updatedAt: response.updated_at,
+            lastUsedAt: nil,
+            isShared: false,
+            collectionId: nil,
+            lastEditorEmail: nil
+        )))
         return item
     }
 
@@ -449,7 +462,21 @@ final class VaultStore {
             items.append(updated)
         }
         recomputeTags()
-        invalidateCacheAfterLocalMutation() // WR-04 (39-REVIEW.md)
+        // WR-04/WR-07 (39-REVIEW.md): patched in place, never purged -- see
+        // `patchCacheAfterLocalMutation(_:)`'s own header. `wire.encKeyJson`/
+        // `encDataJson` moved verbatim (D-13); every other field preserved
+        // from the item's own prior metadata, since none of it changed.
+        patchCacheAfterLocalMutation(.upsert(CachedSnapshot.Item(
+            id: item.id,
+            encKey: wire.encKeyJson,
+            encData: wire.encDataJson,
+            revision: response.revision,
+            updatedAt: response.updated_at,
+            lastUsedAt: item.lastUsedAt,
+            isShared: item.isShared ?? false,
+            collectionId: item.collectionId,
+            lastEditorEmail: item.lastEditorEmail
+        )))
         return updated
     }
 
@@ -471,7 +498,10 @@ final class VaultStore {
         try await api.deleteItem(id: item.id)
         items.removeAll { $0.id == item.id }
         recomputeTags()
-        invalidateCacheAfterLocalMutation() // WR-04 (39-REVIEW.md)
+        // WR-04/WR-07 (39-REVIEW.md): patched in place (removed by id),
+        // never purged -- see `patchCacheAfterLocalMutation(_:)`'s own
+        // header.
+        patchCacheAfterLocalMutation(.remove(id: item.id))
     }
 
     /// WR-04 (39-REVIEW.md): `create`/`update`/`delete` mutate the server
@@ -483,14 +513,63 @@ final class VaultStore {
     /// `CiphertextCacheStore.write`'s own doc comment (D-15) gives as the
     /// reason merges are forbidden -- an un-refreshed persisted cache is a
     /// merge-shaped staleness by omission, just deferred rather than
-    /// immediate. Purging (rather than attempting a partial patch) keeps
-    /// DR-39-A's "one blob, replaced whole" contract intact: the next
-    /// successful pull re-populates it correctly; until then, `"Not synced
-    /// yet"` tells the truth instead of quietly serving a stale credential
-    /// set to a cold reader (the AutoFill extension, Phase 41).
-    private func invalidateCacheAfterLocalMutation() {
-        cacheStore.purge()
-        currentSnapshot = nil
+    /// immediate.
+    ///
+    /// WR-07 (39-REVIEW.md, iteration 2): this used to `purge()` the WHOLE
+    /// cache (blob + watermark + current-account marker, since WR-05) on
+    /// EVERY successful local edit, with nothing scheduling a re-populate.
+    /// One create/update/delete therefore left the device with NO offline
+    /// copy at all until the next successful pull -- and if the network
+    /// dropped in that window, the next cold launch's `hydrateFromCache()`
+    /// (a REAL cold reader in the host app itself, not merely a probe)
+    /// rendered an EMPTY vault, and (Phase 41) AutoFill offered nothing.
+    /// The iteration-1 review's premise ("today the only cold reader is a
+    /// probe") overlooked that.
+    ///
+    /// This now PATCHES the existing on-disk snapshot's item list in place
+    /// instead of purging it -- `revision`/`syncedAtMs` are left UNCHANGED
+    /// (this is a local application of a mutation the server ALREADY
+    /// accepted, not a merge of two independent views of server state, so
+    /// D-15's prohibition does not apply). Leaving the watermark behind is
+    /// safe by construction: the next `refresh()` still sends the OLD
+    /// `since` value, and the server answers with a snapshot including this
+    /// same mutation (now confirmed server-side too), which reconciles
+    /// fully regardless of what this function did in between. A no-op if
+    /// nothing has EVER been cached for this account -- there is nothing to
+    /// patch, and fabricating a partial cache from nothing would itself be
+    /// exactly the kind of invention D-15 forbids.
+    private func patchCacheAfterLocalMutation(_ mutation: LocalCacheMutation) {
+        guard let existing = cacheStore.readCurrentSnapshot(accountId: accountId, serverBaseURL: api.baseURL.absoluteString) else {
+            return
+        }
+        var patchedItems = existing.items
+        switch mutation {
+        case let .upsert(item):
+            if let index = patchedItems.firstIndex(where: { $0.id == item.id }) {
+                patchedItems[index] = item
+            } else {
+                patchedItems.append(item)
+            }
+        case let .remove(id):
+            patchedItems.removeAll { $0.id == id }
+        }
+        let patched = CachedSnapshot(
+            revision: existing.revision,
+            existing.syncedAtMs,
+            accountId: existing.accountId,
+            serverBaseURL: existing.serverBaseURL,
+            items: patchedItems,
+            folders: existing.folders
+        )
+        writeSnapshot(patched, context: "local-mutation-patch")
+    }
+
+    /// WR-07 (39-REVIEW.md, iteration 2). Closed over `create`/`update`
+    /// (`.upsert`, the server-confirmed row's ciphertext VERBATIM, D-13) and
+    /// `delete` (`.remove`, by id only -- nothing to re-encrypt).
+    private enum LocalCacheMutation {
+        case upsert(CachedSnapshot.Item)
+        case remove(id: String)
     }
 
     // MARK: - Touch (last-used)

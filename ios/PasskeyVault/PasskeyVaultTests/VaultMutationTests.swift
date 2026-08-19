@@ -502,6 +502,90 @@ struct VaultMutationTests {
             "exactly two requests total -- the original pull plus the one re-run for the mid-flight arrival, never a third"
         )
     }
+
+    // MARK: - WR-07 (39-REVIEW.md, iteration 2): a successful local edit must
+    // not destroy the offline cache -- a cold launch afterward must still
+    // see it.
+
+    /// A trivial in-memory `CiphertextCacheStore`, same shape as
+    /// `LockTeardownTests.InMemoryCiphertextCacheStore` (that file's own
+    /// copy is `private` to its own type, so this is not a second
+    /// implementation reused incorrectly -- it is the smallest fake this
+    /// file needs for the same purpose: observing what `VaultStore` actually
+    /// persisted, not merely what it holds in memory).
+    private final class InMemoryCiphertextCacheStore: CiphertextCacheStore {
+        private(set) var stored: CachedSnapshot?
+        func readCurrentSnapshot(accountId: String, serverBaseURL: String) -> CachedSnapshot? {
+            guard let stored, stored.accountId == accountId, stored.serverBaseURL == serverBaseURL else { return nil }
+            return stored
+        }
+        func write(_ snapshot: CachedSnapshot) throws { stored = snapshot }
+        func purge() { stored = nil }
+    }
+
+    /// Before WR-07's fix, `create`/`update`/`delete` called
+    /// `invalidateCacheAfterLocalMutation()`, which `purge()`d the ENTIRE
+    /// cache (blob + watermark + current-account marker) with nothing
+    /// scheduling a re-populate -- so a single successful local edit,
+    /// followed by a network drop before the next pull, left a cold launch
+    /// (`VaultStore.init`'s own `hydrateFromCache()`) rendering an EMPTY
+    /// vault, even though the pre-existing item and the new one were both
+    /// genuinely known. This test creates one item against a cache that
+    /// ALREADY holds a different, pre-existing one, then constructs a BRAND
+    /// NEW `VaultStore` over the SAME cache store (simulating exactly that
+    /// cold launch, with no further network activity) and asserts both
+    /// items are still there.
+    @MainActor
+    @Test func aSuccessfulCreateDoesNotEmptyTheOfflineCacheOnTheNextColdLaunch() async throws {
+        let accountId = "wr07-offline-cache-preserved@example.invalid"
+        let cacheStore = InMemoryCiphertextCacheStore()
+        try cacheStore.write(
+            CachedSnapshot(
+                revision: 5, 1_755_555_555_000, accountId: accountId,
+                serverBaseURL: Self.fakeBaseURL.absoluteString,
+                items: [
+                    CachedSnapshot.Item(
+                        id: "pre-existing-item", encKey: "ek0", encData: "ed0", revision: 1,
+                        updatedAt: "2026-08-01T00:00:00Z", lastUsedAt: nil, isShared: false,
+                        collectionId: nil, lastEditorEmail: nil
+                    ),
+                ],
+                folders: []
+            )
+        )
+
+        VaultMutationStubURLProtocol.handler = { request in
+            guard request.httpMethod == "POST", request.url?.path == "/api/vault/items" else { return nil }
+            let body = try? JSONSerialization.jsonObject(with: request.httpBodyOrStream()) as? [String: Any]
+            let id = body?["id"] as? String ?? ""
+            let responseJSON = #"{"id":"\#(id)","revision":1,"updated_at":"2026-08-19T00:00:00Z"}"#
+            return (201, Data(responseJSON.utf8))
+        }
+        let userKey = try FfiUserKey.generate()
+        let api = VaultAPI(baseURL: Self.fakeBaseURL, tokenProvider: { "tok" }, session: Self.stubSession())
+        let store = VaultStore(userKey: userKey, api: api, accountId: accountId, cacheStore: cacheStore)
+
+        let created = try await store.create(fields: .note(NoteFields(name: "new note", folderId: nil, tags: [], body: "b")))
+
+        // The on-disk cache must still exist -- WR-07's own falsifiable
+        // core claim -- and must carry BOTH items, never merely the
+        // survivors of a purge-then-nothing.
+        let onDisk = try #require(cacheStore.readCurrentSnapshot(accountId: accountId, serverBaseURL: Self.fakeBaseURL.absoluteString))
+        #expect(
+            Set(onDisk.items.map(\.id)) == Set(["pre-existing-item", created.id]),
+            "the on-disk cache must carry BOTH the pre-existing item and the new one -- not purged, not merely the new one alone"
+        )
+        #expect(onDisk.revision == 5, "a local mutation must never advance the watermark -- only a confirmed pull may")
+
+        // Simulate a COLD LAUNCH with no further network activity: a brand
+        // new store instance over the SAME persisted cache.
+        let coldLaunchStore = VaultStore(userKey: try FfiUserKey.generate(), api: api, accountId: accountId, cacheStore: cacheStore)
+        let coldIds = Set(coldLaunchStore.items.map(\.id))
+        #expect(
+            coldIds == Set(["pre-existing-item", created.id]),
+            "a cold launch after one successful edit and no further pull must still show BOTH the pre-existing item and the new one -- this would have been EMPTY before WR-07's fix"
+        )
+    }
 }
 
 // MARK: - HTTPBodyStream helper
