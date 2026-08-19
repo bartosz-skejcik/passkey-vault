@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 7
+open_count: 5
 waived_count: 0
-fixed_count: 12
+fixed_count: 14
 total_count: 19
-last_updated: 2026-08-19T03:00:00.000Z
+last_updated: 2026-08-19T13:10:00.000Z
 ---
 
 # Broken Windows Ledger
@@ -15,9 +15,9 @@ last_updated: 2026-08-19T03:00:00.000Z
 
 | id | phase | kind | file | line | description | status | reason | recorded_at | resolved_at |
 |----|-------|------|------|------|-------------|--------|--------|-------------|-------------|
-| 1 | 24 | deviation | crates/pv-server/src/routes/vault.rs |  | Pre-existing clippy::explicit_auto_deref warnings (18 sites, &mut *tx -> &mut tx) block whole-crate cargo clippy -p pv-server -- -D warnings; unrelated to Plan 24-02's own files, logged in phase deferred-items.md | open |  | 2026-07-31T10:20:38.248Z |  |
+| 1 | 24 | deviation | crates/pv-server/src/routes/vault.rs |  | Pre-existing clippy::explicit_auto_deref warnings (18 sites, &mut *tx -> &mut tx) block whole-crate cargo clippy -p pv-server -- -D warnings; unrelated to Plan 24-02's own files, logged in phase deferred-items.md | fixed | DEBT-04 closed in Phase 32 plan 32-03: cargo clippy --workspace --all-targets -- -D warnings now exits 0 | 2026-07-31T10:20:38.248Z | 2026-08-19T13:10:00.000Z |
 | 2 | 24 | stub | web/src/components/settings/FamilyTab.tsx |  | Collection-scope invite ('Family + one folder') is UNCONDITIONALLY DISABLED in the UI (CR-02 fix): personal folders (vault_items.folder_id) and Phase 22 collections (vault_items.collection_id) are distinct tables with unrelated id spaces, and no client-side collections create/list/decrypt capability exists anywhere yet. The option renders disabled with truthful not-yet-available copy rather than failing on submit. The SERVER half is complete and tested (create validates the collection triple; accept inserts a real collection_keys row, re-validates inviter authority, rolls back on conflict, fans out a real WS event). Phase 26 owns the collections UI that unblocks this, and inherits UI-SPEC backstops #4/#5/#6 (folder-picker zero-one-many, long-option truncation, selected-value truncation), which were dissolved here when CR-02 deleted their subject. | fixed |  | 2026-07-31T11:46:48.811Z | 2026-08-07T09:53:30.064Z |
-| 3 | 25 | lint-warning | crates/pv-server/src/routes/vault.rs |  | Pre-existing clippy::explicit_auto_deref debt (18 findings) predating this plan's base commit, confirmed via git stash; not fixed here per scope-boundary rule. See 25-03 deferred-items.md. | open |  | 2026-08-05T08:26:19.655Z |  |
+| 3 | 25 | lint-warning | crates/pv-server/src/routes/vault.rs |  | Pre-existing clippy::explicit_auto_deref debt (18 findings) predating this plan's base commit, confirmed via git stash; not fixed here per scope-boundary rule. See 25-03 deferred-items.md. | fixed | DEBT-04 closed in Phase 32 plan 32-03: cargo clippy --workspace --all-targets -- -D warnings now exits 0 | 2026-08-05T08:26:19.655Z | 2026-08-19T13:10:00.000Z |
 | 4 | 26 | deviation | web/e2e/delete-account.spec.ts | 240 | Pre-existing (Plan 26-01 vintage) regression, found not fixed: POST /api/vault/collections body omits the now-required client-minted id field; both live tests in this file 422 on collection creation. | fixed |  | 2026-08-06T12:25:10.666Z | 2026-08-06T13:02:12.354Z |
 | 5 | 26 | deviation | web/e2e/remove-member.spec.ts | 287 | Same pre-existing regression as delete-account.spec.ts: POST /api/vault/collections body omits the client-minted id field; both live tests in this file 422 on collection creation. | fixed |  | 2026-08-06T12:25:16.732Z | 2026-08-06T13:02:20.512Z |
 | 6 | 26 | deviation | web/e2e/invite-flow.spec.ts | 277 | Stale regression guard: test asserts the 'folder' invite-scope option is disabled (Phase 24 CR-02), but Plan 26-12 already intentionally enabled it; test was never updated. Blocks the rest of that file's describe.serial block via skip cascade. | fixed |  | 2026-08-06T12:25:21.917Z | 2026-08-06T13:02:20.580Z |
@@ -44,10 +44,10 @@ last_updated: 2026-08-19T03:00:00.000Z
     "file": "crates/pv-server/src/routes/vault.rs",
     "line": null,
     "description": "Pre-existing clippy::explicit_auto_deref warnings (18 sites, &mut *tx -> &mut tx) block whole-crate cargo clippy -p pv-server -- -D warnings; unrelated to Plan 24-02's own files, logged in phase deferred-items.md",
-    "status": "open",
-    "reason": "",
+    "status": "fixed",
+    "reason": "DEBT-04 closed in Phase 32 plan 32-03",
     "recorded_at": "2026-07-31T10:20:38.248Z",
-    "resolved_at": null
+    "resolved_at": "2026-08-19T13:10:00.000Z"
   },
   {
     "id": 2,
@@ -68,10 +68,10 @@ last_updated: 2026-08-19T03:00:00.000Z
     "file": "crates/pv-server/src/routes/vault.rs",
     "line": null,
     "description": "Pre-existing clippy::explicit_auto_deref debt (18 findings) predating this plan's base commit, confirmed via git stash; not fixed here per scope-boundary rule. See 25-03 deferred-items.md.",
-    "status": "open",
-    "reason": "",
+    "status": "fixed",
+    "reason": "DEBT-04 closed in Phase 32 plan 32-03",
     "recorded_at": "2026-08-05T08:26:19.655Z",
-    "resolved_at": null
+    "resolved_at": "2026-08-19T13:10:00.000Z"
   },
   {
     "id": 4,
