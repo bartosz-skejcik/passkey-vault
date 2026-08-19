@@ -87,6 +87,14 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         #if PV_PROBE_COLDREAD
         runColdReadEvidenceSequence()
         #endif
+        // Phase 41, Plan 41-01, Task 2 (E41-1): can the extension read the
+        // REAL Phase-37 User Key envelope without UI? Three reads (silent,
+        // no-context, wrong-access-group negative control), all logged
+        // PVFILL|E41-1| -- see SessionKeyProbe.swift's own header. Driven
+        // exclusively by `scripts/ios-autofill-e41.sh e41-1`.
+        #if PV_PROBE_SESSIONKEY
+        SessionKeyProbe.run()
+        #endif
         // Plan 36-03, Task 1 (E5.a/E5.b): sampler thread proven inside a
         // real extension process, plus the one-shot, never-a-gate
         // os_proc_available_memory() finding (D-13).

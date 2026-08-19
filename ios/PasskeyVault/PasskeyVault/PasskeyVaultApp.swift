@@ -25,6 +25,18 @@ struct PasskeyVaultApp: App {
         ProbeSeeder.seed()
         #endif
 
+        // Phase 41, Plan 41-01, Task 2 (E41-1): seed the REAL Phase-37 User
+        // Key envelope, through UkEnvelopeStore.store(_:) itself, BEFORE the
+        // extension is ever invoked -- same ordered host-then-extension
+        // sequence PV_PROBE_KEYCHAIN's own seed above already established.
+        // Compiled in only under PV_PROBE_SESSIONKEY -- inert for every
+        // other probe. See SessionKeyProbeSeeder.swift's own header for why
+        // this deviates from files_modified (Rule 2, deviation documented in
+        // 41-01-SUMMARY.md).
+        #if PV_PROBE_SESSIONKEY
+        SessionKeyProbeSeeder.seed()
+        #endif
+
         // Phase 38, Plan 38-07, Task 3 (E-C1): writes a marker through the
         // REAL `ClipboardService.shared.copy` path -- the exact production
         // call `ItemDetailView`'s copy handlers make -- as the FIRST thing

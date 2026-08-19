@@ -181,3 +181,15 @@ mechanism this harness DOES demonstrate faithfully is keychain-access-group scop
 `errSecMissingEntitlement`/-34018) — which is why E41-1's mandatory negative control below is scoped
 to access-group, not to biometry: it is the one control on this harness capable of failing for a
 real reason.
+
+
+
+## E41-1 result
+
+**Verdict: PASS-silent** (silent status=0, nocontext status=0, negative-control status=-34018).
+
+Host-written digest (`00e988677eecf94c0bb9233371c7c0d6f4db8ebdcdecb7c5ebaa666f17249227`) and extension-read digest (`00e988677eecf94c0bb9233371c7c0d6f4db8ebdcdecb7c5ebaa666f17249227`) are byte-for-byte equal -- receiver-side, digest-based, never a non-nil/length-only check (QA-03).
+
+Per this file's own closing section ("What a PASS in this phase can and cannot mean"): this verdict is a statement about our code's intent (did it correctly ask the OS before reading?), not about the OS's behaviour on a real device -- Phase 37's own E2 result (`ios/IOS-SPIKE-LOG.md:1962-1979`) already established this simulator releases ACL-protected data unconditionally, independent of any `LAContext`.
+
+Raw evidence: `ios/evidence/41/e41-1-silent-read.log`.

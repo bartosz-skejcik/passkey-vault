@@ -1,0 +1,6 @@
+getpwuid_r did not find a match for uid 501
+Timestamp                       Thread     Type        Activity             PID    TTL  
+2026-08-20 01:10:26.216705+0200 0x62f2bb   Default     0x0                  27630  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-1|stage=seed status=ok len=32 digest=00e988677eecf94c0bb9233371c7c0d6f4db8ebdcdecb7c5ebaa666f17249227
+2026-08-20 01:10:46.586881+0200 0x62f72a   Default     0x0                  27920  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-1|stage=silent status=0 len=32 digest=00e988677eecf94c0bb9233371c7c0d6f4db8ebdcdecb7c5ebaa666f17249227
+2026-08-20 01:10:46.592864+0200 0x62f72a   Default     0x0                  27920  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-1|stage=nocontext status=0 len=32 digest=00e988677eecf94c0bb9233371c7c0d6f4db8ebdcdecb7c5ebaa666f17249227
+2026-08-20 01:10:46.593230+0200 0x62f72a   Default     0x0                  27920  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-1|stage=negative-control status=-34018
