@@ -1568,11 +1568,18 @@ async fn revoke_access_refuses_on_family_wide_folder() {
     assert_eq!(member_row.as_deref(), Some("read"), "the member's row must survive the refused revocation unchanged");
 }
 
-/// `enforce_item_bucket_declared_level_bound` coverage on `update_access`: a
-/// `Declared(level)` item_bucket refuses a requested_level that does not
-/// equal the declared level (403) and accepts a matching one (204).
+/// F-2 fix (31-VERIFICATION.md gap closure): `update_access` now refuses
+/// UNCONDITIONALLY on any `item_bucket` collection, superseding what this
+/// test used to exercise — before the fix, `enforce_item_bucket_declared_level_bound`
+/// let a request MATCHING the bucket's own declared level through (204),
+/// which is exactly the shape a self-escalated contributor's demotion of
+/// the bucket's creator takes (the attacker's held level and the bucket's
+/// declared level are the same "read"/"read" pair `may_grant_access_level`
+/// and the declared-level bound both wave through). Both requests below —
+/// mismatched AND matching the declared level — must now be refused
+/// identically, before either of those two checks is even reached.
 #[tokio::test]
-async fn update_access_enforces_item_bucket_declared_level_bound() {
+async fn update_access_refuses_unconditionally_on_item_bucket_collection() {
     let pool = test_pool().await;
     let app = test_app(pool.clone());
 
@@ -1616,9 +1623,10 @@ async fn update_access_enforces_item_bucket_declared_level_bound() {
     .await;
     assert_eq!(grant_res.status(), StatusCode::CREATED);
 
-    // Owner holds edit; may_grant_access_level(Edit, Edit) is true, so ONLY
-    // enforce_item_bucket_declared_level_bound can be refusing this —
-    // requested "edit" != declared "read" on an item_bucket collection.
+    // Owner holds edit; may_grant_access_level(Edit, Edit) is true. Before
+    // the F-2 fix, ONLY enforce_item_bucket_declared_level_bound refused a
+    // MISMATCHED level here — this now refuses at the new, earlier
+    // item_bucket check, before that bound is ever consulted.
     let update_mismatch_res = req(
         &app,
         "PUT",
@@ -1630,10 +1638,14 @@ async fn update_access_enforces_item_bucket_declared_level_bound() {
     assert_eq!(
         update_mismatch_res.status(),
         StatusCode::FORBIDDEN,
-        "an item_bucket declared at 'read' must refuse a level-edit to 'edit', even from an edit-holding caller"
+        "update_access must refuse unconditionally on any item_bucket collection — mismatched level"
     );
 
-    // The declared level itself is always accepted.
+    // F-2 fix: the declared level ITSELF is now ALSO refused — pre-fix this
+    // was the exact gap (`enforce_item_bucket_declared_level_bound` alone
+    // cannot distinguish a legitimate declared-level-matching update from a
+    // self-escalated contributor demoting the creator to that SAME declared
+    // level).
     let update_match_res = req(
         &app,
         "PUT",
@@ -1644,8 +1656,8 @@ async fn update_access_enforces_item_bucket_declared_level_bound() {
     .await;
     assert_eq!(
         update_match_res.status(),
-        StatusCode::NO_CONTENT,
-        "a level edit matching the item_bucket's own declared level must succeed"
+        StatusCode::FORBIDDEN,
+        "update_access must refuse unconditionally on any item_bucket collection — even a level matching the bucket's own declared level"
     );
 
     let level_after: String =
@@ -1664,7 +1676,15 @@ async fn update_access_enforces_item_bucket_declared_level_bound() {
 /// correctly refuses creating one this way, mirroring
 /// `family_wide_sharing.rs`'s own established `LegacyUnknown` fixture
 /// pattern) refuses UNCONDITIONALLY, regardless of what `may_grant_access_level`
-/// would otherwise allow.
+/// would otherwise allow. F-2 fix (31-VERIFICATION.md gap closure): this
+/// outcome is now reached one check earlier — the blanket item_bucket
+/// refusal at the top of `update_access` refuses EVERY item_bucket
+/// collection regardless of `Declared`/`LegacyUnknown` state, so this test
+/// stays green unchanged, but is no longer proof that
+/// `enforce_item_bucket_declared_level_bound`'s `LegacyUnknown` arm is what
+/// is doing the refusing here (it never runs for update_access any more —
+/// see `update_access_refuses_unconditionally_on_item_bucket_collection`
+/// above for that bound's replacement).
 #[tokio::test]
 async fn update_access_enforces_item_bucket_bound_on_legacy_null_level_row() {
     let pool = test_pool().await;

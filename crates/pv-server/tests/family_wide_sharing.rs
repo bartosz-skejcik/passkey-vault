@@ -2017,6 +2017,59 @@ async fn task2_self_escalated_contributor_cannot_revoke_the_creator() {
     );
 }
 
+/// F-2 fix (31-VERIFICATION.md gap closure, probe P3): the exact NEW attack
+/// path the verifier found -- `task2_self_escalated_contributor_cannot_revoke_the_creator`
+/// above closes the DELETE route; this closes the UPDATE route the same
+/// attacker can reach instead. Before this fix, NEITHER of `update_access`'s
+/// two pre-existing bounds stopped it:
+/// `enforce_item_bucket_declared_level_bound` only demanded
+/// `requested_level == declared_level`, and the attacker sends exactly the
+/// bucket's own declared level (`"read"`); the CR-01 demotion bound only
+/// demanded the caller hold genuine `edit`, and Task 1's escalation above
+/// made that genuinely true. So a self-escalated contributor could demote
+/// the bucket's CREATOR from `edit` to `read` via
+/// `PUT .../access/{creator}` instead of `DELETE .../access/{creator}` --
+/// the same takeover `revoke_access`'s own item_bucket refusal exists to
+/// prevent, arriving through the sibling route.
+#[tokio::test]
+async fn task2_self_escalated_contributor_cannot_demote_the_creator_via_update_access() {
+    let world = seed_read_declared_bucket_with_escalated_contributor(
+        "t2-updateaccess",
+        "30140000-0000-4000-8000-000000000051",
+        "30140000-0000-4000-8000-000000000052",
+    )
+    .await;
+    let EscalatedBucketWorld { pool, mut client, owner, contributor, bucket_id, .. } = world;
+
+    let (status, _) = client
+        .send(
+            "PUT",
+            &format!("/api/vault/collections/{bucket_id}/access/{}", owner.user_id),
+            Some(&contributor.token),
+            Some(json!({ "access_level": "read" })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a self-escalated contributor must never be able to demote the bucket's creator via update_access, exactly as revoke_access already refuses the same attacker via DELETE"
+    );
+
+    let creator_row: Option<String> = sqlx::query_scalar(
+        "SELECT access_level FROM collection_keys WHERE collection_id = ? AND recipient_user_id = ?",
+    )
+    .bind(&bucket_id)
+    .bind(&owner.user_id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        creator_row.as_deref(),
+        Some("edit"),
+        "the creator's own collection_keys row must survive the refused attack unchanged"
+    );
+}
+
 /// Plan-check B-3/T-30fix-05: the same self-escalated contributor, on a
 /// bucket declared `"read"`, attempts to hand a THIRD, previously-ungranted
 /// member `"edit"` via `add_member` -- must be refused; no row created.

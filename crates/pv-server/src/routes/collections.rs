@@ -759,6 +759,37 @@ pub struct UpdateAccessRequest {
 /// `sharedRevisionsChanged()` notice. `bump_collection_revision` (`vault.rs`)
 /// is the SAME helper every item mutation already uses — reused, not
 /// reinvented.
+///
+/// F-2 fix (31-VERIFICATION.md gap closure): refuses outright on an
+/// `item_bucket` collection, mirroring `revoke_access`'s own item_bucket
+/// refusal below and for the identical reason — a member self-escalated to
+/// `edit` via `claim_item_bucket_edit_in_tx` (create an owned item, move it
+/// into the bucket) genuinely holds `edit`, which satisfies BOTH of this
+/// handler's pre-existing bounds: `may_grant_access_level`/`RequireEdit`
+/// because the escalation is real, and (before this fix)
+/// `enforce_item_bucket_declared_level_bound` because that bound only
+/// demands `requested == declared` — exactly what the attacker sends when
+/// demoting someone ELSE (the bucket's creator) rather than themselves.
+/// Neither bound was designed to stop a self-escalated holder from using an
+/// UPDATE to do what `revoke_access`'s item_bucket refusal already stops a
+/// DELETE from doing. Unlike `revoke_access` (CR-02-widened to
+/// `is_family_wide_collection`, every family-wide collection including
+/// folders, because a folder's membership is governed by the same
+/// lazy-reseal machinery a bucket's is), this refusal stays scoped to
+/// `item_bucket` only: `update_access` legitimately operates on family-wide
+/// FOLDERS — CR-01's own Failure Scenario A is a demotion bound on exactly
+/// that path — so a blanket family-wide refusal here would break the
+/// feature this route exists for. The client-side destination filter
+/// (`ShareDialog.tsx`'s `familyWideKind === null`) already keeps every
+/// family-wide collection, item_bucket included, off the shipped UI's
+/// destination list; this is the server-side backstop for a crafted
+/// request, exactly `revoke_access`'s own defense-in-depth shape. Since
+/// this refusal now precedes it unconditionally, the previous
+/// `enforce_item_bucket_declared_level_bound` call below (whose every
+/// branch was a no-op unless the collection WAS an item_bucket) is dead for
+/// this handler and has been removed — the declared-level equality bound
+/// remains fully live for `add_member` and `invitations::create`, its other
+/// two call sites.
 pub async fn update_access(
     State(state): State<AppState>,
     membership: Membership<Collection, RequireRead>,
@@ -769,6 +800,13 @@ pub async fn update_access(
     // access_level string, never silently coerced to a working default
     // (mirrors add_member's own ordering above).
     let requested_level = parse_access_level_from_request(&req.access_level)?;
+
+    // F-2 fix: see this handler's own doc comment above for the full
+    // rationale. Must run before every other check — an item_bucket
+    // collection is never a valid target for this route, full stop.
+    if membership::is_item_bucket_collection(&state.db, &membership.resource_id).await? {
+        return Err(ApiError::Forbidden);
+    }
 
     // Byte-for-byte the same bound as add_member's own (collections.rs:579-599)
     // — see that handler's doc comment for the full rationale of each arm.
@@ -787,7 +825,6 @@ pub async fn update_access(
             }
         }
     }
-    membership::enforce_item_bucket_declared_level_bound(&state.db, &membership.resource_id, requested_level).await?;
 
     // Same WR-06/WR-01 transactional discipline as add_member/revoke_access
     // above: the guarded UPDATE, the recipient resolution, and the revision
