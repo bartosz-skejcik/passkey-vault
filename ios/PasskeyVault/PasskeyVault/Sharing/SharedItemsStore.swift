@@ -202,6 +202,16 @@ enum SharedItemsStore {
         let revision: Int
     }
 
+    /// WR-02: a shape-discrimination probe, decoded FIRST -- `items` is
+    /// `Optional` here (unlike `DirectSharedSnapshotBody.items`, which is
+    /// non-optional and therefore throws on a malformed row), so this
+    /// probe can succeed even on a partially-malformed snapshot payload and
+    /// still correctly report "this IS a snapshot, not an up-to-date
+    /// response" via `items != nil`.
+    private struct DirectSharedProbeBody: Decodable {
+        let items: [DirectSharedItemRow]?
+    }
+
     /// `GET /api/sync/shared/direct?since=N`. Decode ATTEMPTS the snapshot
     /// shape first, same discipline as `SyncPullResult`'s own decoder (L-22)
     /// -- the up-to-date branch carries no `items` key on the wire at all.
@@ -240,14 +250,37 @@ enum SharedItemsStore {
                 ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
             throw PvApiError.httpError(status: httpResponse.statusCode, message: message)
         }
-        if let snapshot = try? JSONDecoder().decode(DirectSharedSnapshotBody.self, from: data) {
-            return .snapshot(revision: snapshot.revision, items: snapshot.items)
-        }
+        // WR-02: discriminate on the PAYLOAD (does an `items` key exist at
+        // all?), never on decode luck. The previous "try the snapshot shape,
+        // fall back to up-to-date" ordering meant a snapshot whose `items`
+        // array failed to decode for ANY reason (one bad row, a future
+        // nullable field) fell through the `try?` and decoded cleanly as
+        // `.upToDate` instead -- every shared item would silently vanish
+        // with no error raised anywhere. `DirectSharedProbeBody.items` is
+        // `nil` ONLY when the wire genuinely omits the key (the up-to-date
+        // shape); once we know which shape we are looking at, a malformed
+        // row in the snapshot arm THROWS instead of being swallowed.
+        let probe: DirectSharedProbeBody
         do {
-            let upToDate = try JSONDecoder().decode(DirectSharedUpToDateBody.self, from: data)
-            return .upToDate(revision: upToDate.revision)
+            probe = try JSONDecoder().decode(DirectSharedProbeBody.self, from: data)
         } catch {
             throw PvApiError.unexpectedResponse("failed to decode /api/sync/shared/direct response: \(error)")
+        }
+        guard probe.items != nil else {
+            do {
+                let upToDate = try JSONDecoder().decode(DirectSharedUpToDateBody.self, from: data)
+                return .upToDate(revision: upToDate.revision)
+            } catch {
+                throw PvApiError.unexpectedResponse("failed to decode /api/sync/shared/direct up-to-date response: \(error)")
+            }
+        }
+        do {
+            let snapshot = try JSONDecoder().decode(DirectSharedSnapshotBody.self, from: data)
+            return .snapshot(revision: snapshot.revision, items: snapshot.items)
+        } catch {
+            // A row that fails to decode here throws, rather than being
+            // silently absorbed into an "up to date, nothing new" result.
+            throw PvApiError.unexpectedResponse("failed to decode /api/sync/shared/direct snapshot response: \(error)")
         }
     }
 
