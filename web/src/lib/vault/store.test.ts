@@ -24,6 +24,7 @@ const {
   mockDeleteItem,
   mockDeleteFolder,
   mockTouchItem,
+  mockMoveItemToCollection,
   // ME-07 (code review, Phase 32): createVaultItem's own lost-response
   // recovery reads listItems() -- not mocked in this file before now,
   // since nothing here previously exercised it.
@@ -60,6 +61,7 @@ const {
   mockDeleteItem: vi.fn(),
   mockDeleteFolder: vi.fn(),
   mockTouchItem: vi.fn(),
+  mockMoveItemToCollection: vi.fn(),
   mockListItems: vi.fn(),
   mockStartSync: vi.fn(),
   mockStopSync: vi.fn(),
@@ -120,6 +122,7 @@ vi.mock("./api", () => ({
   deleteFolder: mockDeleteFolder,
   touchItem: mockTouchItem,
   listItems: mockListItems,
+  moveItemToCollection: mockMoveItemToCollection,
 }));
 
 vi.mock("./sync", () => ({
@@ -1107,6 +1110,41 @@ describe("updateVaultItem", () => {
     expect(store.getItems()).toContainEqual(result);
   });
 
+  // WR-08 / WINDOWS #11: same discipline as createVaultItem's own throwing-
+  // listener test above -- the PUT has already landed by the time
+  // `replaceItemInSources` (and the `notifyListeners` it triggers) runs, so
+  // a throw from ANY subscriber must never turn a committed server write
+  // into a reported failure.
+  it("a throwing store listener never turns a committed server write into a reported failure", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockEncryptItem.mockReturnValue(
+      JSON.stringify({
+        enc_key: { nonce: [1], ciphertext: [2] },
+        enc_data: { nonce: [3], ciphertext: [4] },
+      }),
+    );
+    mockUpdateItem.mockResolvedValue({ revision: 2, updated_at: "2026-08-19T00:00:00Z" });
+
+    const { store } = await importStoreAndGetLockListener();
+    store.subscribeItems(() => {
+      throw new Error("listener blew up");
+    });
+
+    const fields = {
+      type: "note" as const,
+      name: "committed server-side",
+      body: "b",
+      folderId: null,
+      tags: [],
+    };
+
+    await expect(store.updateVaultItem("item-1", fields, 1)).resolves.toMatchObject({
+      id: "item-1",
+      revision: 2,
+    });
+    expect(mockUpdateItem).toHaveBeenCalledTimes(1);
+  });
+
   it("on a 409, does not optimistically apply the edit, re-fetches truth, and rejects with RevisionConflictError", async () => {
     mockGetUnlockedUserKey.mockReturnValue({});
     mockGetSyncSnapshot.mockResolvedValue({
@@ -1355,6 +1393,54 @@ describe("updateVaultItem", () => {
       const stored = store.getItems().find((i) => i.id === "item-collection-1");
       expect(stored?.revision).toBe(3);
     });
+  });
+});
+
+// WR-08 / WINDOWS #11: moveVaultItem (32-01-PLAN.md) is a fourth write
+// function added AFTER WR-08's original pattern-level fix (commit 64558a0)
+// closed create/update/delete/folder -- checked here for the identical
+// post-await-bookkeeping hazard rather than assumed safe by omission. The
+// implementation already wraps its post-commit `replaceItemInSources` calls
+// (both the ordinary-success tail and the lost-response recovery branch) in
+// their own swallowing try/catch, mirroring updateVaultItem's discipline --
+// this is regression coverage for that existing containment, not a new fix.
+describe("moveVaultItem", () => {
+  it("a throwing store listener never turns a committed server move into a reported failure", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockGetCollectionKey.mockReturnValue({});
+    mockEncryptItemForCollection.mockReturnValue(
+      JSON.stringify({
+        enc_key: { nonce: [1], ciphertext: [2] },
+        enc_data: { nonce: [3], ciphertext: [4] },
+      }),
+    );
+    mockMoveItemToCollection.mockResolvedValue({
+      revision: 2,
+      collection_id: "collection-1",
+      updated_at: "2026-08-19T00:00:00Z",
+    });
+
+    const { store } = await importStoreAndGetLockListener();
+    store.subscribeItems(() => {
+      throw new Error("listener blew up");
+    });
+
+    const fields = {
+      type: "note" as const,
+      name: "committed server-side",
+      body: "b",
+      folderId: null,
+      tags: [],
+    };
+
+    await expect(
+      store.moveVaultItem("item-1", fields, 1, "collection-1"),
+    ).resolves.toMatchObject({
+      id: "item-1",
+      revision: 2,
+      collectionId: "collection-1",
+    });
+    expect(mockMoveItemToCollection).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1748,6 +1834,39 @@ describe("deleteVaultItem", () => {
 
     expect(mockDeleteItem).toHaveBeenCalledWith("item-1");
     expect(store.getItems()).toHaveLength(0);
+  });
+
+  // WR-08 / WINDOWS #11: the DELETE has already landed server-side by the
+  // time `removeItemFromSources` (and the `notifyListeners` it triggers)
+  // runs, so a throw from ANY subscriber must never turn a committed server
+  // delete into a reported failure -- the offending row would otherwise
+  // stay stuck, un-removable, through the UI forever (it IS gone
+  // server-side, but the promise rejects and the caller never learns that).
+  it("a throwing store listener never turns a committed server delete into a reported failure", async () => {
+    mockGetUnlockedUserKey.mockReturnValue({});
+    mockGetSyncSnapshot.mockResolvedValue({
+      revision: 1,
+      items: [{ id: "item-1", enc_key: "{}", enc_data: "{}", revision: 1, collection_id: null }],
+      folders: [],
+    });
+    mockDecryptItem.mockReturnValue(NOTE_PLAINTEXT);
+
+    const { store, lockListener } = await importStoreAndGetLockListener();
+    mockIsUnlocked.mockReturnValue(true);
+    await act(async () => {
+      lockListener();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(store.getItems()).toHaveLength(1);
+
+    store.subscribeItems(() => {
+      throw new Error("listener blew up");
+    });
+    mockDeleteItem.mockResolvedValue(undefined);
+
+    await expect(store.deleteVaultItem("item-1")).resolves.toBeUndefined();
+    expect(mockDeleteItem).toHaveBeenCalledWith("item-1");
   });
 
   it("leaves the item in the store if the delete API call fails", async () => {
