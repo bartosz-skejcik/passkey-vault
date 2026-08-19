@@ -256,13 +256,45 @@ struct VaultAPI {
 
     // MARK: - Transport
 
+    /// WR-12 (39-REVIEW.md): the ONE URL-construction routine both the REST
+    /// path (this file, via `send(path:...)` below) and the WebSocket path
+    /// (`SyncSocket.wsURL(base:token:)`) use -- before this fix, `send`
+    /// built `URL(string: "/api/...", relativeTo: baseURL)` (a LEADING
+    /// slash resolves against the base URL's ROOT, discarding any path
+    /// component `baseURL` itself carries) while `wsURL` built
+    /// `base.appendingPathComponent("api/sync/ws")` (relative to the base's
+    /// WHOLE path). For a self-hoster serving this app under a reverse-proxy
+    /// subpath -- a normal layout for this product's audience -- the two
+    /// disagreed: REST reached `https://host/api/...` while the socket
+    /// reached `https://host/pv/api/sync/ws`, silently (a 404 that presents
+    /// as an infinite reconnect backoff, no surface). A leading `/` on
+    /// `path`, if present, is stripped before appending -- every existing
+    /// call site in this file still passes one (`"/api/vault/items"`), and
+    /// `SyncSocket.wsURL` passes a bare `"api/sync/ws"`; both now resolve
+    /// through the SAME `appendingPathComponent`-relative construction.
+    ///
+    /// `appendingPathComponent` alone cannot carry a query string (it would
+    /// percent-encode `?`/`=` as literal path characters) -- `path` may
+    /// carry one (`sync(since:)`'s `"api/sync?since=\(since)"`), so any
+    /// query component is split off and re-attached via `URLComponents`
+    /// AFTER the path append, never string-concatenated onto the result.
+    static func url(for path: String, relativeTo baseURL: URL) -> URL? {
+        let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        let parts = trimmed.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        let appended = baseURL.appendingPathComponent(String(parts[0]))
+        guard parts.count > 1 else { return appended }
+        guard var components = URLComponents(url: appended, resolvingAgainstBaseURL: false) else { return appended }
+        components.percentEncodedQuery = String(parts[1])
+        return components.url ?? appended
+    }
+
     private func send(
         path: String,
         method: String,
         body: Data?,
         authenticated: Bool
     ) async throws -> (Data, HTTPURLResponse) {
-        guard let url = URL(string: path, relativeTo: baseURL) else {
+        guard let url = Self.url(for: path, relativeTo: baseURL) else {
             throw PvApiError.unexpectedResponse("could not construct URL for \(path) against \(baseURL)")
         }
         var request = URLRequest(url: url)

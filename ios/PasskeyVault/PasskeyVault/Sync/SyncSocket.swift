@@ -374,12 +374,19 @@ extension SyncSocket {
     /// `URLComponents`, never string concatenation -- see the L-23 comment
     /// below for why the DEFAULT `.queryItems` percent-encoding is not
     /// enough by itself on this platform.
+    ///
+    /// WR-12 (39-REVIEW.md): the path is built through `VaultAPI.url(for:
+    /// relativeTo:)` -- the SAME construction `VaultAPI.send(path:...)`
+    /// uses for every REST call, so a self-hoster serving this app under a
+    /// reverse-proxy subpath gets the SAME resolved host+path for both the
+    /// socket and REST, instead of two silently different ones (`base
+    /// .appendingPathComponent(...)` here vs. a leading-slash
+    /// `URL(string:relativeTo:)` there, before this fix).
     static func wsURL(base: URL, token: String?) -> URL? {
         guard let token, !token.isEmpty else { return nil }
         guard
-            var components = URLComponents(
-                url: base.appendingPathComponent("api/sync/ws"), resolvingAgainstBaseURL: false
-            )
+            let pathURL = VaultAPI.url(for: "api/sync/ws", relativeTo: base),
+            var components = URLComponents(url: pathURL, resolvingAgainstBaseURL: false)
         else {
             return nil
         }
