@@ -11,6 +11,7 @@ const {
   mockGetItems,
   mockUseCollections,
   MockRevisionConflictError,
+  MockCollectionKeyUnavailableError,
 } = vi.hoisted(() => ({
   mockCreateVaultItem: vi.fn(),
   mockCreateVaultFolder: vi.fn(),
@@ -44,6 +45,17 @@ const {
       this.lastEditorEmail = lastEditorEmail;
     }
   },
+  // HI-01/ME-06 (code review, Phase 32): create-mode's own move-error
+  // routing now also `instanceof`-branches on this class (a destination
+  // access refusal must not get the retry-inviting itemCreatedButMoveFailed
+  // copy) -- same "must export or instanceof-undefined throws" reasoning
+  // as MockRevisionConflictError above.
+  MockCollectionKeyUnavailableError: class MockCollectionKeyUnavailableError extends Error {
+    constructor(collectionId: string) {
+      super(`cannot save -- collection ${collectionId} key unavailable`);
+      this.name = "CollectionKeyUnavailableError";
+    }
+  },
 }));
 
 vi.mock("@/lib/vault/store", () => ({
@@ -55,6 +67,7 @@ vi.mock("@/lib/vault/store", () => ({
   moveVaultItem: mockMoveVaultItem,
   getItems: mockGetItems,
   RevisionConflictError: MockRevisionConflictError,
+  CollectionKeyUnavailableError: MockCollectionKeyUnavailableError,
 }));
 
 vi.mock("@/lib/vault/collections", () => ({
@@ -106,16 +119,24 @@ describe("ItemForm", () => {
     fireEvent.click(screen.getByTestId("item-form-submit"));
 
     await waitFor(() => expect(mockCreateVaultItem).toHaveBeenCalledTimes(1));
-    expect(mockCreateVaultItem).toHaveBeenCalledWith({
-      type: "login",
-      name: "GitHub",
-      username: "bartek",
-      password: "s3cret",
-      urls: ["https://github.com"],
-      notes: "",
-      folderId: null,
-      tags: [],
-    });
+    expect(mockCreateVaultItem).toHaveBeenCalledWith(
+      {
+        type: "login",
+        name: "GitHub",
+        username: "bartek",
+        password: "s3cret",
+        urls: ["https://github.com"],
+        notes: "",
+        folderId: null,
+        tags: [],
+      },
+      // ME-07 (code review, Phase 32): createVaultItem's second arg is the
+      // id ItemForm mints ONCE (pendingCreateIdRef) so a retry reuses it --
+      // any string satisfies this assertion's purpose (proving the FIELDS
+      // shape), the id's own retry-reuse behavior is proven by the
+      // dedicated "mints the item id once" test below.
+      expect.any(String),
+    );
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
   });
 
@@ -152,13 +173,16 @@ describe("ItemForm", () => {
     fireEvent.click(screen.getByTestId("item-form-submit"));
 
     await waitFor(() => expect(mockCreateVaultItem).toHaveBeenCalledTimes(1));
-    expect(mockCreateVaultItem).toHaveBeenCalledWith({
-      type: "note",
-      name: "Wifi",
-      body: "hunter2",
-      folderId: null,
-      tags: [],
-    });
+    expect(mockCreateVaultItem).toHaveBeenCalledWith(
+      {
+        type: "note",
+        name: "Wifi",
+        body: "hunter2",
+        folderId: null,
+        tags: [],
+      },
+      expect.any(String),
+    );
   });
 
   it("renders the folder select and tag input identically across all four types, and both survive into the submitted ItemFields", async () => {
@@ -254,18 +278,21 @@ describe("ItemForm", () => {
     fireEvent.click(screen.getByTestId("item-form-submit"));
 
     await waitFor(() => expect(mockCreateVaultItem).toHaveBeenCalledTimes(1));
-    expect(mockCreateVaultItem).toHaveBeenCalledWith({
-      type: "totp",
-      name: "GitHub",
-      secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
-      issuer: "",
-      algorithm: "SHA1",
-      digits: 6,
-      period: 30,
-      notes: "",
-      folderId: null,
-      tags: [],
-    });
+    expect(mockCreateVaultItem).toHaveBeenCalledWith(
+      {
+        type: "totp",
+        name: "GitHub",
+        secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+        issuer: "",
+        algorithm: "SHA1",
+        digits: 6,
+        period: 30,
+        notes: "",
+        folderId: null,
+        tags: [],
+      },
+      expect.any(String),
+    );
   });
 
   it("the totp Advanced collapse starts closed even before any interaction", () => {
@@ -544,11 +571,29 @@ describe("ItemForm identity address (round 4)", () => {
 describe("ItemForm destination optgroup (32-02)", () => {
   it("renders no 'Udostępnione foldery' optgroup at all when there are zero shared collections (32-PLAN-CHECK.md W-3 -- absent, never empty)", () => {
     mockUseCollections.mockReturnValue([]);
+    // LO-01 (code review, Phase 32): "Moje foldery" now ALSO renders only
+    // when non-empty (mirrors the shared optgroup's own guard) -- give
+    // this test a real personal folder so its own purpose (proving the
+    // SHARED optgroup specifically stays absent, never empty) is isolated
+    // from LO-01's independent fix rather than accidentally exercising it
+    // too.
+    mockUseFolders.mockReturnValue([{ id: "folder-1", name: "Personal" }]);
     render(<ItemForm type="note" onCreated={vi.fn()} />);
 
     const select = screen.getByTestId("item-folder-select");
     expect(select.querySelectorAll("optgroup")).toHaveLength(1);
+    expect(select.querySelector('optgroup[label="item.myFoldersGroup"]')).not.toBeNull();
     expect(select.querySelector('optgroup[label="item.sharedFoldersGroup"]')).toBeNull();
+  });
+
+  it("LO-01 (code review, Phase 32): renders no 'Moje foldery' optgroup at all when there are zero personal folders (absent, never empty)", () => {
+    mockUseCollections.mockReturnValue([]);
+    mockUseFolders.mockReturnValue([]);
+    render(<ItemForm type="note" onCreated={vi.fn()} />);
+
+    const select = screen.getByTestId("item-folder-select");
+    expect(select.querySelectorAll("optgroup")).toHaveLength(0);
+    expect(select.querySelector('optgroup[label="item.myFoldersGroup"]')).toBeNull();
   });
 
   it("renders a writable shared collection as a plain enabled option and non-edit ones as DISABLED (DOM property, not a class) with the read-only reason visible in the text", () => {
@@ -675,6 +720,102 @@ describe("ItemForm destination optgroup (32-02)", () => {
     expect(mockMoveVaultItem).toHaveBeenCalledWith("new-id", expect.any(Object), 1, "col-edit");
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
   });
+
+  // CR-01 (code review, Phase 32): "do not OFFER a move-out of an item the
+  // caller does not own" -- the client-side half of CR-01's fix. The
+  // authoritative half is the server's Gate 1b; this proves the UI never
+  // even presents the dangerous option.
+  it("CR-01: an item in a shared folder the caller does NOT own disables every personal-scope option, with the ownership reason visible", () => {
+    mockUseCollections.mockReturnValue([
+      { id: "col-1", name: "Shared Folder", accessLevel: "edit", familyWideKind: null },
+    ]);
+    mockUseFolders.mockReturnValue([{ id: "folder-1", name: "Personal" }]);
+    render(
+      <ItemForm
+        type="note"
+        mode="edit"
+        itemId="item-1"
+        currentRevision={5}
+        currentCollectionId="col-1"
+        ownedByMe={false}
+        initialFields={{ type: "note", name: "Not Mine", body: "b", folderId: null, tags: [] }}
+        onCreated={vi.fn()}
+      />,
+    );
+
+    const select = screen.getByTestId("item-folder-select") as HTMLSelectElement;
+    const noFolderOption = select.querySelector('option[value=""]') as HTMLOptionElement;
+    expect(noFolderOption.disabled).toBe(true);
+    expect(noFolderOption.textContent).toBe("item.noFolderOwnerOnly");
+
+    const personalFolderOption = select.querySelector(
+      'option[value="folder-1"]',
+    ) as HTMLOptionElement;
+    expect(personalFolderOption.disabled).toBe(true);
+    expect(personalFolderOption.textContent).toContain("item.folderOwnerOnlyOption");
+    expect(personalFolderOption.textContent).toContain("Personal");
+
+    // A DIFFERENT shared destination stays selectable and ENABLED -- only
+    // PERSONAL scope is blocked; moving between two shared folders neither
+    // re-seals under the caller's own key nor changes who owns the item.
+    const sharedOption = select.querySelector(
+      'option[value="collection:col-1"]',
+    ) as HTMLOptionElement;
+    expect(sharedOption).not.toBeNull();
+    expect(sharedOption.disabled).toBe(false);
+  });
+
+  it("CR-01: an item the caller OWNS (ownedByMe true, the default) offers personal-scope options normally, even inside a shared folder", () => {
+    mockUseCollections.mockReturnValue([
+      { id: "col-1", name: "Shared Folder", accessLevel: "edit", familyWideKind: null },
+    ]);
+    mockUseFolders.mockReturnValue([{ id: "folder-1", name: "Personal" }]);
+    render(
+      <ItemForm
+        type="note"
+        mode="edit"
+        itemId="item-1"
+        currentRevision={5}
+        currentCollectionId="col-1"
+        ownedByMe={true}
+        initialFields={{ type: "note", name: "Mine", body: "b", folderId: null, tags: [] }}
+        onCreated={vi.fn()}
+      />,
+    );
+
+    const select = screen.getByTestId("item-folder-select") as HTMLSelectElement;
+    const noFolderOption = select.querySelector('option[value=""]') as HTMLOptionElement;
+    expect(noFolderOption.disabled).toBe(false);
+    expect(noFolderOption.textContent).toBe("item.noFolder");
+    const personalFolderOption = select.querySelector(
+      'option[value="folder-1"]',
+    ) as HTMLOptionElement;
+    expect(personalFolderOption.disabled).toBe(false);
+    expect(personalFolderOption.textContent).toBe("Personal");
+  });
+
+  // ME-01 (code review, Phase 32): every UNKNOWN scope must fail CLOSED.
+  it("ME-01: an item whose current collection is NOT (yet) in useCollections()'s list renders a disabled, honestly-labelled select -- never the enabled 'Bez folderu' fallback", () => {
+    // The collections store has not caught up yet -- currentCollectionId
+    // references a collection useCollections() doesn't know about at all.
+    mockUseCollections.mockReturnValue([]);
+    render(
+      <ItemForm
+        type="note"
+        mode="edit"
+        itemId="item-1"
+        currentRevision={5}
+        currentCollectionId="col-not-yet-cached"
+        initialFields={{ type: "note", name: "Mystery", body: "b", folderId: null, tags: [] }}
+        onCreated={vi.fn()}
+      />,
+    );
+
+    const select = screen.getByTestId("item-folder-select") as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    expect(select.options).toHaveLength(1);
+    expect(select.options[0].textContent).toBe("item.folderScopeUnknown");
+  });
 });
 
 // 32-02-PLAN.md Task 1: create-then-move retry safety, including B-3's
@@ -782,5 +923,59 @@ describe("ItemForm create-then-move retry safety and lost-response recovery (32-
     expect(mockMoveVaultItem).toHaveBeenNthCalledWith(2, "new-id", expect.any(Object), 5, "dest-1");
     expect(mockCreateVaultItem).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+  });
+
+  // HI-02 (code review, Phase 32): once createdItemState is set (a prior
+  // attempt's create already landed), picking a NON-collection destination
+  // used to fall straight through to `setCreatedItemState(null);
+  // onCreated();` with NO write of any kind -- silently discarding both
+  // the chosen personal folder and any content edits made since. This
+  // proves it is now a real `updateVaultItem` call.
+  it("HI-02: after a partial create-then-move failure, picking a personal destination on retry writes via updateVaultItem -- never a silent no-op", async () => {
+    mockCreateVaultItem.mockResolvedValue({ id: "new-id", revision: 1, fields: {} });
+    mockMoveVaultItem.mockRejectedValue(new Error("move failed"));
+    // The recovery/backstop lookup shows the item still NOT at the
+    // destination -- a genuine, unrecovered move failure.
+    mockGetItems.mockReturnValue([{ id: "new-id", revision: 1, collectionId: null }]);
+    mockUpdateVaultItem.mockResolvedValue({ id: "new-id", revision: 2, fields: {} });
+    const onCreated = vi.fn();
+    render(<ItemForm type="note" onCreated={onCreated} />);
+
+    selectSharedDestinationAndFillName();
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockMoveVaultItem).toHaveBeenCalledTimes(1));
+    expect(onCreated).not.toHaveBeenCalled();
+
+    // The user reacts: keeps it private ("Bez folderu") and corrects the
+    // content -- both must be genuinely saved, not discarded.
+    fireEvent.change(screen.getByTestId("item-folder-select"), { target: { value: "" } });
+    fireEvent.change(screen.getByTestId("item-body"), { target: { value: "corrected content" } });
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockUpdateVaultItem).toHaveBeenCalledTimes(1));
+    expect(mockUpdateVaultItem).toHaveBeenCalledWith(
+      "new-id",
+      expect.objectContaining({ body: "corrected content" }),
+      1,
+    );
+    // Never re-created -- createVaultItem's own once-per-attempt discipline
+    // (B-3) stays intact.
+    expect(mockCreateVaultItem).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+  });
+
+  it("a genuine create-then-move failure where the user does NOT change the destination (stays on the same shared folder) still only retries the move, never calls updateVaultItem", async () => {
+    mockCreateVaultItem.mockResolvedValue({ id: "new-id", revision: 1, fields: {} });
+    mockMoveVaultItem.mockRejectedValue(new Error("move failed"));
+    mockGetItems.mockReturnValue([{ id: "new-id", revision: 1, collectionId: null }]);
+    const onCreated = vi.fn();
+    render(<ItemForm type="note" onCreated={onCreated} />);
+
+    selectSharedDestinationAndFillName();
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockMoveVaultItem).toHaveBeenCalledTimes(1));
+    expect(mockUpdateVaultItem).not.toHaveBeenCalled();
   });
 });

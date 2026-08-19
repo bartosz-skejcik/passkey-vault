@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Eye, EyeOff, Plus, X } from "lucide-react";
 import type { Folder, ItemFields, ItemType } from "@/lib/vault/types";
+import { normalizeItemFields } from "@/lib/vault/types";
 import {
   CollectionKeyUnavailableError,
+  NotItemOwnerError,
   RevisionConflictError,
   createVaultFolder,
   createVaultItem,
@@ -245,6 +247,7 @@ export default function ItemForm({
   itemId,
   currentRevision,
   currentCollectionId = null,
+  ownedByMe = true,
   initialFields,
   onCreated,
   onError,
@@ -258,6 +261,14 @@ export default function ItemForm({
   // vs. a genuine move (dispatches to moveVaultItem). `null`/absent for
   // create mode and for a personal item.
   currentCollectionId?: string | null;
+  // CR-01 (code review, Phase 32): whether the CALLER owns the item
+  // currently being edited -- `true` (the default) for create mode and for
+  // every item the caller can own outright. `false` ONLY for a
+  // collection-scoped item authored by a fellow member (mirrors
+  // `VaultItem.ownedByMe`'s own doc comment). Gates whether the destination
+  // select offers a personal-scope option at all -- see renderFolderBlock's
+  // own comment for why "Bez folderu" specifically is where this matters.
+  ownedByMe?: boolean;
   initialFields?: ItemFields;
   onCreated: () => void;
   onError?: (err: Error) => void;
@@ -298,6 +309,19 @@ export default function ItemForm({
     id: string;
     revision: number;
   } | null>(null);
+  // ME-07 (code review, Phase 32): the item's id, minted ONCE per mounted
+  // form and held across every retry of the SAME submission attempt -- a
+  // `ref`, not `state`, because assigning it must never trigger a
+  // re-render and its value must survive being read/written from inside
+  // the SAME `handleSubmit` call that sets it (a `useState` setter's
+  // update would not be visible until the next render). Without this,
+  // `createVaultItem`'s own prior behavior of minting a FRESH
+  // `crypto.randomUUID()` on every call meant a lost/aborted create
+  // response (server committed, client never saw it) sent the retry
+  // through as an entirely new id -- a genuine SECOND item server-side,
+  // never observed by `createdItemState` (which is only set from a
+  // create call's own resolved response).
+  const pendingCreateIdRef = useRef<string | null>(null);
   // "Immediately selecting the newly-created folder" (UI-SPEC) must not
   // wait on useFolders()'s own subscription re-render — track it locally
   // as a fallback option so the <select> always has a matching <option>.
@@ -443,10 +467,23 @@ export default function ItemForm({
         // createdItemState is set, a retry reuses it.
         let created = createdItemState;
         if (created === null) {
-          const item = await createVaultItem(cleaned);
+          // ME-07 (code review, Phase 32): mint the id ONCE, on the FIRST
+          // attempt, and hold it in a ref that survives every retry of
+          // this same submission -- see pendingCreateIdRef's own doc
+          // comment for why this closes the lost-response duplicate-item
+          // hazard.
+          if (pendingCreateIdRef.current === null) {
+            pendingCreateIdRef.current = crypto.randomUUID();
+          }
+          const item = await createVaultItem(cleaned, pendingCreateIdRef.current);
           created = { id: item.id, revision: item.revision };
           setCreatedItemState(created);
         }
+        // LO-04 (code review, Phase 32): a `const`, taken once `created`
+        // is proven non-null above, so the closure below (`.find`'s
+        // callback -- narrowing does not cross a nested-function boundary)
+        // never needs a `created!` non-null assertion.
+        const createdId = created.id;
         if (destinationCollectionId !== null) {
           try {
             await moveVaultItem(created.id, cleaned, created.revision, destinationCollectionId);
@@ -459,7 +496,7 @@ export default function ItemForm({
             // moveVaultItem's own recovery, for the same reason: a
             // destination-only test recovers a PREVIOUS attempt's commit
             // and eats the user's latest edit.
-            const fresh = getItems().find((i) => i.id === created!.id);
+            const fresh = getItems().find((i) => i.id === createdId);
             if (
               fresh?.collectionId === destinationCollectionId &&
               fresh.revision === created.revision + 1
@@ -480,7 +517,12 @@ export default function ItemForm({
             // conflict copy naming that someone else changed the item,
             // never the retry-inviting itemCreatedButMoveFailed copy --
             // inviting a retry into a conflict is the same retry-lie
-            // shape B-3 exists to close (WINDOWS #11).
+            // shape B-3 exists to close (WINDOWS #11). Extends to
+            // CollectionKeyUnavailableError (ME-06/HI-01's classification,
+            // reached here through the same moveVaultItem the edit-mode
+            // dispatch uses) for the identical reason: access loss is not
+            // fixable by retrying, so it must never carry the
+            // itemCreatedButMoveFailed "Try again" copy either.
             if (moveErr instanceof RevisionConflictError) {
               setSubmitError(
                 moveErr.lastEditorEmail
@@ -489,6 +531,8 @@ export default function ItemForm({
                     })
                   : t("error.revisionConflict"),
               );
+            } else if (moveErr instanceof CollectionKeyUnavailableError) {
+              setSubmitError(t("error.itemMoveAccessLost"));
             } else {
               setSubmitError(t("error.itemCreatedButMoveFailed"));
             }
@@ -498,6 +542,21 @@ export default function ItemForm({
             // above), never a duplicate create.
             return;
           }
+        } else if (createdItemState !== null) {
+          // HI-02 (code review, Phase 32): `createdItemState !== null`
+          // means an EARLIER attempt already created this item server-side
+          // (this is a retry, not a first attempt) -- picking a
+          // non-collection destination here ("Bez folderu" or any personal
+          // folder) is still a PENDING write of whatever the user changed
+          // since (content, and/or the personal folder itself). The prior
+          // code fell straight through to `setCreatedItemState(null);
+          // onCreated();` with no write of ANY kind issued, silently
+          // discarding both. Route it through the ordinary update path --
+          // `updateVaultItem` is exactly what edit mode's own "destination
+          // unchanged" branch above already uses for a personal-scope
+          // save, so this is the create-mode mirror of that same
+          // dispatch, not a new mechanism.
+          await updateVaultItem(created.id, cleaned, created.revision);
         }
         setCreatedItemState(null);
         onCreated();
@@ -539,9 +598,24 @@ export default function ItemForm({
       currentCollectionId !== null && currentCollectionId !== undefined
         ? collections.find((c) => c.id === currentCollectionId)
         : undefined;
+    // ME-01 (code review, Phase 32): every UNKNOWN scope must fail CLOSED,
+    // not open. The ORIGINAL guard recognized only a KNOWN item_bucket --
+    // any other unknown (useCollections() returning `[]` before
+    // refreshCollections() lands, since collections.ts's own store is a
+    // module-level cache populated ASYNCHRONOUSLY after unlock; or the
+    // destination simply absent from the caller's list for any other
+    // reason) resolved `familyWideKind` lookups to `undefined`, which is
+    // falsy -- so this branch was skipped and the SHIPPED, ENABLED
+    // `value={fields.folderId ?? ""}` select below rendered with "Bez
+    // folderu" selected, for an item that may genuinely live in a
+    // family-wide bucket. That is precisely the mis-file B-2 exists to
+    // prevent, reached through the one case B-2's own fix left open.
+    // Mirrors `collections.ts::isFamilyWideCollection`'s own documented
+    // "fails CLOSED in every unknown case" discipline.
+    const scopeUnknown = currentCollectionId != null && currentCollection === undefined;
     const currentIsItemBucket = currentCollection?.familyWideKind === "item_bucket";
 
-    if (currentIsItemBucket) {
+    if (scopeUnknown || currentIsItemBucket) {
       return (
         <div className="flex flex-col gap-1">
           <label htmlFor="item-folder-select" className="text-sm">
@@ -554,7 +628,11 @@ export default function ItemForm({
             value="item-bucket-locked"
             disabled
           >
-            <option value="item-bucket-locked">{t("item.folderLockedByFamilyShare")}</option>
+            <option value="item-bucket-locked">
+              {currentIsItemBucket
+                ? t("item.folderLockedByFamilyShare")
+                : t("item.folderScopeUnknown")}
+            </option>
           </select>
         </div>
       );
@@ -571,6 +649,18 @@ export default function ItemForm({
     const sharedCollections = collections.filter((c) => c.familyWideKind !== "item_bucket");
     const writableShared = sharedCollections.filter((c) => c.accessLevel === "edit");
     const readOnlyShared = sharedCollections.filter((c) => c.accessLevel !== "edit");
+    // CR-01 (code review, Phase 32): an item CURRENTLY in a shared folder
+    // that the caller does not OWN must never offer a personal-scope
+    // destination -- moveVaultItem re-seals a move-out under the CALLER's
+    // OWN key (see its own doc comment), which only the item's actual
+    // owner can ever open. This is the "do not OFFER" half of CR-01's
+    // fix; the "do not PERFORM" half is moveVaultItem's own
+    // NotItemOwnerError guard, and the authoritative bound is
+    // vault.rs::move_item's Gate 1b. Shown but disabled, with the reason
+    // -- the same "shown but disabled" discipline 32-CONTEXT.md's Area 1
+    // already establishes for a read-only shared destination, never a
+    // silent omission.
+    const personalScopeBlocked = !ownedByMe && currentCollectionId != null;
 
     return (
       <div className="flex flex-col gap-1">
@@ -601,14 +691,24 @@ export default function ItemForm({
               }
             }}
           >
-            <option value="">{t("item.noFolder")}</option>
-            <optgroup label={t("item.myFoldersGroup")}>
-              {folderOptions.map((folder) => (
-                <option key={folder.id} value={folder.id}>
-                  {folder.name}
-                </option>
-              ))}
-            </optgroup>
+            <option value="" disabled={personalScopeBlocked}>
+              {personalScopeBlocked ? t("item.noFolderOwnerOnly") : t("item.noFolder")}
+            </option>
+            {/* LO-01 (code review, Phase 32): mirrors the shared-optgroup's
+                own `sharedCollections.length > 0` guard immediately below --
+                a user with zero personal folders must never see an empty
+                "Moje foldery" group header either. */}
+            {folderOptions.length > 0 ? (
+              <optgroup label={t("item.myFoldersGroup")}>
+                {folderOptions.map((folder) => (
+                  <option key={folder.id} value={folder.id} disabled={personalScopeBlocked}>
+                    {personalScopeBlocked
+                      ? interpolate(t("item.folderOwnerOnlyOption"), { name: folder.name })
+                      : folder.name}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
             {sharedCollections.length > 0 ? (
               <optgroup label={t("item.sharedFoldersGroup")}>
                 {writableShared.map((c) => (

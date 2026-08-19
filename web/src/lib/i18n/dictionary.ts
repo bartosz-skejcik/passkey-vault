@@ -271,6 +271,31 @@ export const DICTIONARY = {
     pl: "Udostępnione z rodziną — zmień w oknie udostępniania",
     en: "Shared with the family — change from the sharing window",
   },
+  // ME-01 (code review, Phase 32): the disabled select's single option
+  // when the item's current scope cannot be RESOLVED yet (collections.ts's
+  // store hasn't refreshed, or the destination is otherwise absent from
+  // the caller's list) -- distinct from folderLockedByFamilyShare above,
+  // which names a KNOWN, permanent state. This one names a transient
+  // unknown, so it never wrongly claims "shared with the family" for a
+  // plain shared folder mid-load.
+  "item.folderScopeUnknown": {
+    pl: "Sprawdzanie folderu…",
+    en: "Checking folder…",
+  },
+  // CR-01 (code review, Phase 32): the "Bez folderu"/personal-folder
+  // options' disabled label when the caller does not own the item
+  // currently living in a shared folder -- moving it OUT would re-seal it
+  // under the caller's own key, which only the item's actual owner can
+  // ever open. Mirrors folderReadOnlyOption's "shown but disabled, with
+  // the reason inline" shape.
+  "item.noFolderOwnerOnly": {
+    pl: "Bez folderu (tylko właściciel)",
+    en: "No folder (owner only)",
+  },
+  "item.folderOwnerOnlyOption": {
+    pl: "{name} (tylko właściciel)",
+    en: "{name} (owner only)",
+  },
 
   // Item-type labels (badges, type picker) — Claude's-discretion copy, not
   // explicitly enumerated in UI-SPEC's Copywriting Contract table.
@@ -576,6 +601,17 @@ export const DICTIONARY = {
   "error.itemMoveAccessLost": {
     pl: "Nie masz już dostępu do zapisu w tym folderze. Zmiana nie została zapisana.",
     en: "You no longer have write access to this folder. The change was not saved.",
+  },
+  // ME-06 (code review, Phase 32): the ownership-refusal shape's OWN copy,
+  // distinct from itemMoveAccessLost above -- a NotItemOwnerError names a
+  // completely different failure (the caller does not own this item, not
+  // "this folder revoked your write access") and reusing the folder copy
+  // would name a folder the caller never even chose (a null-destination
+  // move has none). Never retry-inviting, for the same reason
+  // itemMoveAccessLost isn't: this is not fixable by retrying.
+  "error.itemMoveNotOwner": {
+    pl: "Nie jesteś właścicielem tego itemu, więc nie można przenieść go do folderu osobistego. Zmiana nie została zapisana.",
+    en: "You don't own this item, so it can't be moved to a personal folder. The change was not saved.",
   },
 
   "validation.required": { pl: "To pole jest wymagane", en: "This field is required" },
