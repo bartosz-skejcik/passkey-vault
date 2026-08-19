@@ -51,11 +51,23 @@ happen), the Family & Sharing settings surface (Phase 33), the exposure inventor
   decisions are deliberate and disclosed. **If a later review argues for disclosure here, it is
   re-opening a decision, not finding a gap.**
 
-- **Pre-existing per-item shares (`item_shares`) survive a move into a shared folder.** They are an
-  independent grant and the server already takes the maximum of the two (`combine_access`), so someone
-  granted `edit` directly keeps `edit` even if the folder grants `read`. Deleting them would remove
-  someone's access as a side effect of a folder change — the very thing the previous decision declined
-  to even warn about, so silently doing it would be worse.
+- **Pre-existing per-item shares (`item_shares`) survive a move into a shared folder.**
+
+  **Correction (2026-08-19, from `32-RESEARCH.md` Q4).** I justified this decision to Bartek by saying
+  the server "already takes the maximum of the two via `combine_access`", so keeping the shares was the
+  status quo. That was **wrong about this path**: `vault::move_item` (`vault.rs:1193-1207`)
+  **unconditionally deletes** every `item_shares` row on any move into any collection. So honouring the
+  decision means **changing shipped behaviour**, not preserving it.
+
+  The decision itself stands — Bartek's stated reason ("zero utraty dostępu przy zmianie folderu") is
+  unaffected by my error, and it is the same principle he applied one question earlier when he declined
+  to even warn about scope moves: a folder change should not silently take someone's access away.
+
+  Implementation, per RESEARCH.md's recommendation: **scope the DELETE to `item_bucket` destinations
+  only** — the escalation-prevention rationale genuinely applies there (a contributor claims `edit` on
+  the bucket, so a lingering direct share would compound) — and drop it for ordinary shared folders,
+  where `combine_access` does do the right thing. This is a change to a shipped, tested code path:
+  it needs its own regression test and an explicit note in the SUMMARY, not a quiet edit.
 
 ### Claude's Discretion
 
@@ -112,7 +124,15 @@ shape every item starts from.
   the move, and the same read fails after the **next completed sync** — not after a reload or a
   lock/unlock. That is the bound v0.4 proved and Phase 31 re-proved.
 - DEBT-04 (`cargo clippy --workspace --all-targets -- -D warnings` exits 0) is a success criterion, not
-  a nicety — it has been open since Phase 24 as WINDOWS #1 and #3.
+  a nicety — it has been open since Phase 24 as WINDOWS #1 and #3. **Its real scope is larger than the
+  ROADMAP states:** RESEARCH.md ran the command and found, besides the 19 `explicit_auto_deref` in
+  `vault.rs`, **6 unrelated `doc list item without indentation` errors in
+  `crates/pv-provider/src/ceremony.rs:154-159`**. SC5 says the whole command exits 0, so both sets are
+  in scope. Budget for both.
+- **`npm run compile` is order-dependent on a sibling package.** It exits 2 with `TS2307 Cannot find
+  module 'react'` from `packages/pv-ui` until `npm run build`'s `prebuild` populates that package's
+  `node_modules`. Any verify field that runs `compile` before `build` in a clean tree will look broken
+  when it is not — order them accordingly and say so.
 
 </specifics>
 
