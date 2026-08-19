@@ -55,6 +55,30 @@ final class SyncCoordinator {
     /// these call sites are awaited), but the failure itself is now logged.
     private static let log = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "sync")
 
+    /// WR-13: every log site below used to interpolate `String(describing:
+    /// error)` at `privacy: .public`. For `PvApiError.httpError(status:
+    /// message:)`, `message` is the raw server response BODY
+    /// (`SharedItemsStore.swift`/`FamilyAPI.swift` and every sibling
+    /// transport all pass the response body straight through) -- a 409
+    /// from the removal path, for example, echoes set-mismatch detail.
+    /// Nothing guarantees a server error body is free of identifiers, and
+    /// `.public` writes it unredacted to a device log readable off-device
+    /// via sysdiagnose. This returns a safe, PUBLIC-loggable discriminant
+    /// (case name + HTTP status where applicable, never the message body)
+    /// -- the full error, including the body, is still logged, but at
+    /// `.private`.
+    private static func publicErrorDiscriminant(_ error: Error) -> String {
+        guard let apiError = error as? PvApiError else {
+            return String(describing: type(of: error))
+        }
+        switch apiError {
+        case .invalidCredentials: return "PvApiError.invalidCredentials"
+        case let .httpError(status, _): return "PvApiError.httpError(status: \(status))"
+        case .unexpectedResponse: return "PvApiError.unexpectedResponse"
+        case .network: return "PvApiError.network"
+        }
+    }
+
     private let store: VaultStore
     private var socket: SyncSocket?
     private var foregroundPullTimer: Timer?
@@ -161,7 +185,7 @@ final class SyncCoordinator {
                 guard let self else { return }
                 Task {
                     do { try await self.pull() } catch {
-                        Self.log.error("socket-triggered pull failed: \(String(describing: error), privacy: .public)")
+                        Self.log.error("socket-triggered pull failed: \(Self.publicErrorDiscriminant(error), privacy: .public) \(String(describing: error), privacy: .private)")
                     }
                 }
             }
@@ -272,7 +296,7 @@ final class SyncCoordinator {
                     Self.log.debug("reseal trigger: caller is not in a family -- skipping for this session")
                     return
                 }
-                Self.log.error("reseal-trigger pending fetch failed: \(String(describing: error), privacy: .public)")
+                Self.log.error("reseal-trigger pending fetch failed: \(Self.publicErrorDiscriminant(error), privacy: .public) \(String(describing: error), privacy: .private)")
             }
         }
     }
@@ -286,7 +310,7 @@ final class SyncCoordinator {
     func handleScenePhaseBecameActive() {
         Task {
             do { try await foregroundPull() } catch {
-                Self.log.error("foreground-transition pull failed: \(String(describing: error), privacy: .public)")
+                Self.log.error("foreground-transition pull failed: \(Self.publicErrorDiscriminant(error), privacy: .public) \(String(describing: error), privacy: .private)")
             }
         }
     }
@@ -305,7 +329,7 @@ final class SyncCoordinator {
             guard let self else { return }
             Task {
                 do { try await self.pull() } catch {
-                    Self.log.error("repeating-timer pull failed: \(String(describing: error), privacy: .public)")
+                    Self.log.error("repeating-timer pull failed: \(Self.publicErrorDiscriminant(error), privacy: .public) \(String(describing: error), privacy: .private)")
                 }
             }
         }
