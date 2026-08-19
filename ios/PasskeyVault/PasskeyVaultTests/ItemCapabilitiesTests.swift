@@ -143,4 +143,82 @@ struct ItemCapabilitiesTests {
         #expect(ItemCapabilities.isPasswordHidden(card) == true)
         #expect(ItemCapabilities.isPasswordHidden(totp) == true)
     }
+
+    // MARK: - canShowEditAffordance (quick fix 40-UX-03)
+
+    /// The gate `ItemDetailView`'s toolbar Edit button reads
+    /// (`ItemDetailView.canShowEditButton`), asserted directly rather than
+    /// via a hosted view -- `ios/IOS-SPIKE-LOG.md` L-29 records why
+    /// `PasskeyVaultTests` does not attempt `UIHostingController`
+    /// accessibility-tree introspection.
+    ///
+    /// An owned, editable login: the ordinary case, must show the button.
+    @Test func anOwnedEditableItemShowsTheEditAffordance() {
+        #expect(ItemCapabilities.canShowEditAffordance(item()) == true)
+    }
+
+    /// Capability-denied case (the task's own wording): a directly-shared
+    /// item is refused Edit at every level, including `edit` itself (see
+    /// `aDirectlySharedItemIsNotEditableAtAnyLevelIncludingEdit` above) --
+    /// `canShowEditAffordance` must hide the button for the exact same
+    /// reason, not merely disable it.
+    @Test func aSharedReadOnlyItemHidesTheEditAffordance() {
+        for level in ["read", "hidden_password", "edit"] {
+            #expect(
+                ItemCapabilities.canShowEditAffordance(item(sharedToMe: true, accessLevel: level)) == false,
+                "sharedToMe must hide the Edit affordance at level '\(level)'"
+            )
+        }
+    }
+
+    /// A member holding `read` on a collection item: `canEditItem` alone
+    /// already refuses this (`aReadMemberCannotEditAnItemTheyCreatedInsideASharedFolder`
+    /// above); `canShowEditAffordance` must inherit that refusal, not
+    /// silently show a button whose save the server would 403.
+    @Test func aReadOnlyCollectionItemHidesTheEditAffordance() {
+        let readOnlyInSharedFolder = VaultItemViewModel(
+            id: "i-3",
+            revision: 1,
+            content: .fields(.note(NoteFields(name: "n", folderId: nil, tags: [], body: ""))),
+            isShared: true,
+            collectionId: "col-1",
+            sharedToMe: nil,
+            accessLevel: "read"
+        )
+        #expect(ItemCapabilities.canShowEditAffordance(readOnlyInSharedFolder) == false)
+    }
+
+    /// `item.fields == nil` (undecryptable OR pending-family-key) hides the
+    /// button even for an otherwise-editable (owned, `accessLevel == nil`)
+    /// item -- there is nothing to prefill a form with. `canEditItem` alone
+    /// has no opinion on this (it never reads `fields`), which is exactly
+    /// why `canShowEditAffordance` exists as a SEPARATE, wider predicate.
+    @Test func anItemWithNoDecryptedFieldsHidesTheEditAffordanceEvenWhenOwned() {
+        let undecryptable = VaultItemViewModel(
+            id: "i-4", revision: 1, content: .undecryptable(reason: "test fixture"), sharedToMe: nil, accessLevel: nil
+        )
+        #expect(ItemCapabilities.canShowEditAffordance(undecryptable) == false)
+    }
+
+    /// A passkey is provider-created cryptographic material, never
+    /// user-typed content (this predicate's own doc comment, and
+    /// `ItemFormKind`'s five-case union in `ItemFormView.swift` has no
+    /// `.passkey` case to open) -- hidden even when `sharedToMe`/
+    /// `accessLevel` alone would grant edit.
+    @Test func aPasskeyHidesTheEditAffordanceEvenWhenOwned() {
+        let passkey = VaultItemViewModel(
+            id: "i-5", revision: 1,
+            content: .fields(
+                .passkey(
+                    PasskeyFields(
+                        name: "p", folderId: nil, tags: [], rpId: "example.com",
+                        credentialId: "c", username: nil, userDisplayName: nil,
+                        rawPasskeyJson: "{}"
+                    )
+                )
+            ),
+            sharedToMe: nil, accessLevel: nil
+        )
+        #expect(ItemCapabilities.canShowEditAffordance(passkey) == false)
+    }
 }

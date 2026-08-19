@@ -562,7 +562,14 @@ struct ItemListView: View {
                                 ItemDetailView(
                                     item: item, store: store, revealState: $root.revealState,
                                     onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested,
-                                    onSettingsRequested: { root.activeSheet = .settings }
+                                    onSettingsRequested: { root.activeSheet = .settings },
+                                    // Quick fix 40-UX-03: the SAME
+                                    // `.editing(item)` route the context
+                                    // menu's own "Edit" button already uses
+                                    // two screens over (`contextMenuContent`
+                                    // below) -- one sheet case, two entry
+                                    // points, never a second edit path.
+                                    onEditRequested: { root.activeSheet = .editing(item) }
                                 )
                             }
                             // BINDING SCOPE ADDITION (`40-UI-SPEC.md` §5.3):

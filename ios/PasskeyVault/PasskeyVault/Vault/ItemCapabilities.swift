@@ -108,4 +108,35 @@ enum ItemCapabilities {
         guard let raw = item.accessLevel else { return true }
         return AccessLevel(wireValue: raw).grantsEdit
     }
+
+    /// Quick fix 40-UX-03: the SPECIFIC gate `ItemDetailView`'s own toolbar
+    /// Edit button reads (`ItemDetailView.canShowEditButton`), pulled out to
+    /// a static, `@testable`-reachable predicate rather than left as a
+    /// private computed property on the view -- mirroring
+    /// `DetailFieldTables.passwordFieldIsHidden`'s own discipline (`ios/
+    /// IOS-SPIKE-LOG.md`'s L-29: assert the PRODUCTION GATE CONDITION
+    /// directly in `PasskeyVaultTests`, not a `UIHostingController`'s
+    /// rendered accessibility tree, which was found non-deterministic on
+    /// this toolchain).
+    ///
+    /// `canEditItem(_:)` alone is not enough here: it answers "would a SAVE
+    /// succeed", not "does this screen have anything editable to show". Two
+    /// extra guards `canEditItem` does not need:
+    ///  - `item.fields != nil` -- excludes BOTH `undecryptable` (a known-
+    ///    stale revision, T-38-03-05) and `pendingFamilyKey` (no decrypted
+    ///    fields to prefill a form with, `ItemFields.swift`'s own
+    ///    `Content.pendingFamilyKey` header). `canEditItem` has no opinion on
+    ///    either -- it reads `sharedToMe`/`accessLevel` only.
+    ///  - `typeName != "passkey"` -- a passkey is provider-created
+    ///    cryptographic material, not user-typed content (this file's own
+    ///    header note on `ItemFormKind`'s five-case union having no
+    ///    `.passkey` case), so `ItemFormView(mode: .edit(_))` has nothing to
+    ///    open for one even when `canEditItem` alone would say yes (a
+    ///    passkey's `accessLevel`/`sharedToMe` are irrelevant to this
+    ///    exclusion).
+    static func canShowEditAffordance(_ item: VaultItemViewModel) -> Bool {
+        item.fields != nil
+            && item.fields?.typeName != "passkey"
+            && canEditItem(item)
+    }
 }

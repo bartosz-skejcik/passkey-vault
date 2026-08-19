@@ -49,11 +49,22 @@ struct ItemDetailView: View {
     var onLockRequested: (() -> Void)?
     var onSignOutRequested: (() -> Void)?
     var onSettingsRequested: (() -> Void)?
+    /// Quick fix 40-UX-03: routes to the SAME `.editing(item)` sheet the
+    /// list's own context menu already presents (`ItemListView
+    /// .contextMenuContent`'s "Edit" button, `root.activeSheet = .editing
+    /// (item)`) -- `ItemDetailView` has no `root` of its own to write to
+    /// (plan 38-11 deliberately keeps `VaultRootController` out of this
+    /// view's parameter list), so the call site (`ItemListView.body`'s
+    /// `.navigationDestination(item:)` for `$root.selection`) supplies this
+    /// closure instead, exactly like `onSettingsRequested` already does for
+    /// `root.activeSheet = .settings`. `nil` only in tests/previews that
+    /// construct this view directly.
+    var onEditRequested: (() -> Void)?
 
     init(
         item: VaultItemViewModel, store: VaultStore, revealState: Binding<DetailRevealState>,
         onLockRequested: (() -> Void)? = nil, onSignOutRequested: (() -> Void)? = nil,
-        onSettingsRequested: (() -> Void)? = nil
+        onSettingsRequested: (() -> Void)? = nil, onEditRequested: (() -> Void)? = nil
     ) {
         self.item = item
         self.store = store
@@ -61,6 +72,31 @@ struct ItemDetailView: View {
         self.onLockRequested = onLockRequested
         self.onSignOutRequested = onSignOutRequested
         self.onSettingsRequested = onSettingsRequested
+        self.onEditRequested = onEditRequested
+    }
+
+    /// Quick fix 40-UX-03: before this, `ItemDetailView` had NO Edit
+    /// affordance at all -- the only route to `ItemFormView(mode: .edit)`
+    /// (built in plan 38-09) was the LIST screen's long-press context menu,
+    /// which is a real reachability gap, not a design choice this file's
+    /// header ever recorded. Mirrors `ItemListView.contextMenuContent`'s own
+    /// gate EXACTLY (passkey has no Edit -- this file's own header, "not
+    /// user content"; `ItemCapabilities.canEditItem` -- shared/read-only
+    /// access), plus one guard that gate does not need: `item.fields != nil`
+    /// excludes BOTH `undecryptable` (known-stale revision, T-38-03-05) AND
+    /// `pendingFamilyKey` (no decrypted fields to prefill a form with,
+    /// `ItemFields.swift`'s own `Content.pendingFamilyKey` header) in one
+    /// check -- a case the list's row-level gate does not structurally rule
+    /// out today, but presenting an edit form with nothing to edit would be
+    /// a broken screen, not merely an inconsistency.
+    ///
+    /// Routed through `ItemCapabilities.canShowEditAffordance(_:)` (not the
+    /// three checks inlined here as of the original 40-UX-03 patch) so
+    /// `PasskeyVaultTests` can assert the exact gate this button reads
+    /// without hosting this view at all -- see that function's own doc
+    /// comment for why (`ios/IOS-SPIKE-LOG.md` L-29).
+    private var canShowEditButton: Bool {
+        ItemCapabilities.canShowEditAffordance(item)
     }
 
     var body: some View {
@@ -86,6 +122,21 @@ struct ItemDetailView: View {
         .navigationTitle(Text(verbatim: item.displayName))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // Standard iOS placement (`.navigationBarTrailing`), ahead of
+            // the lock/avatar chrome below so it sits closest to the screen
+            // edge -- the primary per-item action, not a secondary one.
+            // Absent entirely (not merely disabled) when the caller cannot
+            // save an edit, matching `ItemCapabilities.swift`'s own
+            // discipline: "do not offer an operation known to fail" rather
+            // than offer it disabled.
+            if canShowEditButton {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Edit") {
+                        onEditRequested?()
+                    }
+                    .accessibilityIdentifier("vault.detail.edit")
+                }
+            }
             vaultLockToolbarContent(
                 onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested,
                 onSettingsRequested: onSettingsRequested
