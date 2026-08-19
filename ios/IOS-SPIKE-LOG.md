@@ -3437,3 +3437,31 @@ standing brief ("choose continuation, record what remains"). Items still owed to
 5. **`AutoLockPolicy` is orphaned** (verifier finding): tested storage whitelist, zero consumers, so
    no auto-lock ships. Named owner in-code is Phase 39; the truer home is Phase 41's ACC-06/ACC-07.
    MUST be claimed by one of them or it will be lost.
+
+## 8a. Phase 39, plan 39-06 — human-verify backlog (2026-08-19, orchestrator disposition)
+
+Plan 39-06's Task 4 (SYNC-04's copy-literalism check) is `checkpoint:human-verify` with
+`gate="blocking"`. Per the standing brief for this run, every automatable arm was completed and
+this residue is recorded rather than blocking:
+
+1. **The freshness copy's literal reading, by a skeptical user whose AutoFill just came up
+   short** — needs a human's judgement call, not a mechanical check. Everything a human needs to
+   make that call is already produced and referenced from `ios/evidence/39/06-freshness-host.md`:
+   - The exact strings, verbatim: `"Not synced yet"` (never-synced), `"Last synced <relative
+     phrase>"` (recent, same calendar day), `"Last synced <absolute date/time>"` (previous day) —
+     `ios/PasskeyVault/PvShared/SyncFreshness.swift`.
+   - Two live screenshots: `ios/evidence/39/39-06-freshness-recent.png` ("Last synced 4 seconds
+     ago") and `ios/evidence/39/39-06-freshness-stale.png` ("Last synced 33 seconds ago" plus a
+     visible red error banner disclosing the failed pull — "Couldn't refresh the vault... Could
+     not connect to the server").
+   - This app builds NO separate connection indicator (`SyncStatusView.swift`'s own header) —
+     there is nothing for a human to check "is the indicator subordinate to the timestamp"
+     against; the last-synced text is the only sync-related surface on screen.
+2. **What a human still needs to confirm, specifically**: that none of the three strings above,
+   read literally, could lead a user to believe AutoFill (a SEPARATE process, which never syncs
+   in this milestone and only ever reads what the host last wrote) is current. This is the SAME
+   standard as FSH-02's caveat ("automatycznie" ≠ "natychmiast"), applied to a different surface.
+   Nothing here is expected to fail that reading — the copy was written directly against
+   `39-RESEARCH.md`'s "Copy requirements" section — but the plan's own `must_haves.truths` entry
+   for this is explicitly `verification: backstop`, so SYNC-04 is not claimed fully closed by this
+   plan's automated evidence alone.
