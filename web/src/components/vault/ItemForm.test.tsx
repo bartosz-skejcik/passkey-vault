@@ -7,12 +7,38 @@ const {
   mockUseFolders,
   mockUseAllTags,
   mockUpdateVaultItem,
+  mockMoveVaultItem,
+  mockGetItems,
+  mockUseCollections,
+  MockRevisionConflictError,
 } = vi.hoisted(() => ({
   mockCreateVaultItem: vi.fn(),
   mockCreateVaultFolder: vi.fn(),
   mockUseFolders: vi.fn(),
   mockUseAllTags: vi.fn(),
   mockUpdateVaultItem: vi.fn(),
+  // 32-02-PLAN.md Task 1: extends this file's existing mocked-store shape --
+  // moveVaultItem/getItems (32-01's create-then-move dispatch + B-3 backstop
+  // lookup) must be mockable per-test, alongside the existing
+  // createVaultItem/updateVaultItem mocks.
+  mockMoveVaultItem: vi.fn(),
+  mockGetItems: vi.fn(() => []),
+  // useCollections (the grouped destination select) -- ItemForm imports it
+  // from a SEPARATE module ("@/lib/vault/collections"), mocked below.
+  mockUseCollections: vi.fn(() => []),
+  // vi.mock factories are hoisted above the rest of the file -- any value
+  // they reference must be created inside vi.hoisted() too. Mirrors
+  // DetailPanel.test.tsx's identical MockRevisionConflictError shape:
+  // ItemForm's create-mode dispatch instanceof-branches on this class, so
+  // the mock must export something instanceof-compatible or that check
+  // throws instead of routing to conflict copy.
+  MockRevisionConflictError: class MockRevisionConflictError extends Error {
+    lastEditorEmail?: string;
+    constructor(lastEditorEmail?: string) {
+      super("conflict");
+      this.lastEditorEmail = lastEditorEmail;
+    }
+  },
 }));
 
 vi.mock("@/lib/vault/store", () => ({
@@ -21,6 +47,13 @@ vi.mock("@/lib/vault/store", () => ({
   useFolders: mockUseFolders,
   useAllTags: mockUseAllTags,
   updateVaultItem: mockUpdateVaultItem,
+  moveVaultItem: mockMoveVaultItem,
+  getItems: mockGetItems,
+  RevisionConflictError: MockRevisionConflictError,
+}));
+
+vi.mock("@/lib/vault/collections", () => ({
+  useCollections: mockUseCollections,
 }));
 
 vi.mock("@/lib/i18n/LocaleContext", () => ({
@@ -37,6 +70,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockUseFolders.mockReturnValue([]);
   mockUseAllTags.mockReturnValue([]);
+  mockUseCollections.mockReturnValue([]);
+  mockGetItems.mockReturnValue([]);
   mockCreateVaultItem.mockResolvedValue({ id: "new-id", revision: 1, fields: {} });
 });
 
@@ -492,5 +527,255 @@ describe("ItemForm identity address (round 4)", () => {
 
     expect(screen.getByTestId("item-addressLine1")).toHaveValue("ul. Nowa 2");
     expect(screen.getByTestId("item-city")).toHaveValue("Gdańsk");
+  });
+});
+
+// 32-02-PLAN.md Task 1: dedicated unit-test coverage for the destination
+// optgroup 32-01 shipped (mocked useCollections()/moveVaultItem/getItems --
+// a legitimate control-flow/rendering-structure claim, NOT a crypto claim;
+// SC2's real-key claim is already proven with real WASM by
+// moveVaultItem.real-wasm.test.ts and live by sharing.spec.ts's own
+// two-session test, neither re-derived here).
+describe("ItemForm destination optgroup (32-02)", () => {
+  it("renders no 'Udostępnione foldery' optgroup at all when there are zero shared collections (32-PLAN-CHECK.md W-3 -- absent, never empty)", () => {
+    mockUseCollections.mockReturnValue([]);
+    render(<ItemForm type="note" onCreated={vi.fn()} />);
+
+    const select = screen.getByTestId("item-folder-select");
+    expect(select.querySelectorAll("optgroup")).toHaveLength(1);
+    expect(select.querySelector('optgroup[label="item.sharedFoldersGroup"]')).toBeNull();
+  });
+
+  it("renders a writable shared collection as a plain enabled option and non-edit ones as DISABLED (DOM property, not a class) with the read-only reason visible in the text", () => {
+    mockUseCollections.mockReturnValue([
+      { id: "col-edit", name: "Edit Folder", accessLevel: "edit", familyWideKind: null },
+      { id: "col-read", name: "Read Folder", accessLevel: "read", familyWideKind: null },
+      { id: "col-hidden", name: "Hidden Folder", accessLevel: "hidden_password", familyWideKind: null },
+    ]);
+    render(<ItemForm type="note" onCreated={vi.fn()} />);
+
+    const select = screen.getByTestId("item-folder-select");
+    expect(select.querySelector('optgroup[label="item.sharedFoldersGroup"]')).not.toBeNull();
+
+    const editOption = select.querySelector(
+      'option[value="collection:col-edit"]',
+    ) as HTMLOptionElement;
+    expect(editOption).not.toBeNull();
+    expect(editOption.disabled).toBe(false);
+    expect(editOption.textContent).toBe("Edit Folder");
+
+    const readOption = select.querySelector(
+      'option[value="collection:col-read"]',
+    ) as HTMLOptionElement;
+    expect(readOption).not.toBeNull();
+    expect(readOption.disabled).toBe(true);
+    expect(readOption.textContent).toContain("item.folderReadOnlyOption");
+    expect(readOption.textContent).toContain("Read Folder");
+
+    const hiddenOption = select.querySelector(
+      'option[value="collection:col-hidden"]',
+    ) as HTMLOptionElement;
+    expect(hiddenOption).not.toBeNull();
+    expect(hiddenOption.disabled).toBe(true);
+    expect(hiddenOption.textContent).toContain("item.folderReadOnlyOption");
+    expect(hiddenOption.textContent).toContain("Hidden Folder");
+  });
+
+  it("never renders an item_bucket collection as any destination option, writable or disabled", () => {
+    mockUseCollections.mockReturnValue([
+      { id: "bucket-1", name: "Family Bucket", accessLevel: "edit", familyWideKind: "item_bucket" },
+      { id: "col-edit", name: "Edit Folder", accessLevel: "edit", familyWideKind: null },
+    ]);
+    render(<ItemForm type="note" onCreated={vi.fn()} />);
+
+    const select = screen.getByTestId("item-folder-select");
+    expect(select.querySelector('option[value="collection:bucket-1"]')).toBeNull();
+    expect(select.querySelector('option[value="collection:col-edit"]')).not.toBeNull();
+  });
+
+  it("B-2: an item currently in a family-wide item_bucket renders a DISABLED select naming its real scope (never the enabled 'Bez folderu' fallback), and a save from that state never mis-files it under a personal folder", async () => {
+    mockUseCollections.mockReturnValue([
+      { id: "bucket-1", name: "Family Bucket", accessLevel: "edit", familyWideKind: "item_bucket" },
+    ]);
+    mockUpdateVaultItem.mockResolvedValue({ id: "item-1", revision: 2, fields: {} });
+    const onCreated = vi.fn();
+    render(
+      <ItemForm
+        type="note"
+        mode="edit"
+        itemId="item-1"
+        currentRevision={1}
+        currentCollectionId="bucket-1"
+        initialFields={{
+          type: "note",
+          name: "Wifi",
+          body: "hunter2",
+          folderId: null,
+          tags: [],
+        }}
+        onCreated={onCreated}
+      />,
+    );
+
+    const select = screen.getByTestId("item-folder-select") as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    expect(select.options).toHaveLength(1);
+    expect(select.options[0].textContent).toBe("item.folderLockedByFamilyShare");
+    expect(select.options[0].textContent).not.toContain("item.noFolder");
+
+    // Firing a change event is a no-op on a genuinely disabled control --
+    // assert no destination-state side effect regardless of what the DOM
+    // does with it.
+    fireEvent.change(select, { target: { value: "some-personal-folder" } });
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockUpdateVaultItem).toHaveBeenCalledTimes(1));
+    expect(mockMoveVaultItem).not.toHaveBeenCalled();
+    const [, submittedFields] = mockUpdateVaultItem.mock.calls[0];
+    expect(submittedFields.folderId).toBeNull();
+  });
+
+  it("selecting a shared-folder option then submitting calls createVaultItem, then (only once createVaultItem's own promise has resolved) moveVaultItem with that collection id -- never reversed, never simultaneous via Promise.all", async () => {
+    mockUseCollections.mockReturnValue([
+      { id: "col-edit", name: "Edit Folder", accessLevel: "edit", familyWideKind: null },
+    ]);
+    let resolveCreate!: (v: { id: string; revision: number; fields: unknown }) => void;
+    mockCreateVaultItem.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    mockMoveVaultItem.mockResolvedValue({ id: "new-id", revision: 2, fields: {} });
+    const onCreated = vi.fn();
+    render(<ItemForm type="note" onCreated={onCreated} />);
+
+    fireEvent.change(screen.getByTestId("item-name"), { target: { value: "Wifi" } });
+    fireEvent.change(screen.getByTestId("item-folder-select"), {
+      target: { value: "collection:col-edit" },
+    });
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    // createVaultItem is pending (never resolved yet) -- moveVaultItem must
+    // not have been invoked at all, proving the dispatch awaits create's own
+    // result rather than firing both concurrently.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockCreateVaultItem).toHaveBeenCalledTimes(1);
+    expect(mockMoveVaultItem).not.toHaveBeenCalled();
+
+    resolveCreate({ id: "new-id", revision: 1, fields: {} });
+
+    await waitFor(() => expect(mockMoveVaultItem).toHaveBeenCalledTimes(1));
+    expect(mockMoveVaultItem).toHaveBeenCalledWith("new-id", expect.any(Object), 1, "col-edit");
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+  });
+});
+
+// 32-02-PLAN.md Task 1: create-then-move retry safety, including B-3's
+// lost-response recovery and the C-2 revision conjunct (32-PLAN-CHECK.md
+// iteration 2) -- a destination-only recovery check is UNSOUND on a retry
+// (it recovers a PRIOR attempt's commit and reports success over content
+// that attempt never wrote); every test below that reaches the recovery
+// branch is built so a destination-only implementation would get it wrong.
+describe("ItemForm create-then-move retry safety and lost-response recovery (32-02)", () => {
+  function selectSharedDestinationAndFillName(name = "Wifi") {
+    fireEvent.change(screen.getByTestId("item-name"), { target: { value: name } });
+    fireEvent.change(screen.getByTestId("item-folder-select"), {
+      target: { value: "collection:dest-1" },
+    });
+  }
+
+  beforeEach(() => {
+    mockUseCollections.mockReturnValue([
+      { id: "dest-1", name: "Dest", accessLevel: "edit", familyWideKind: null },
+    ]);
+  });
+
+  it("a genuine move failure that never lands (item still not at the destination) never calls onCreated, shows the honest error, and never double-creates", async () => {
+    mockCreateVaultItem.mockResolvedValue({ id: "new-id", revision: 1, fields: {} });
+    mockMoveVaultItem.mockRejectedValue(new Error("network fail"));
+    // getItems()'s recovery lookup shows the item still not at the
+    // destination -- a genuine, unrecovered failure.
+    mockGetItems.mockReturnValue([{ id: "new-id", revision: 1, collectionId: null }]);
+    const onCreated = vi.fn();
+    render(<ItemForm type="note" onCreated={onCreated} />);
+
+    selectSharedDestinationAndFillName();
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    expect(await screen.findByTestId("item-form-submit-error")).toHaveTextContent(
+      "error.itemCreatedButMoveFailed",
+    );
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(mockCreateVaultItem).toHaveBeenCalledTimes(1);
+    expect(mockMoveVaultItem).toHaveBeenCalledTimes(1);
+  });
+
+  it("B-3: a lost move response whose item is ALREADY at the destination at THIS attempt's own revision (created.revision + 1) is recognized as recovered success, with no redundant second move call", async () => {
+    mockCreateVaultItem.mockResolvedValue({ id: "new-id", revision: 1, fields: {} });
+    mockMoveVaultItem.mockRejectedValue(new Error("aborted"));
+    // The server actually committed the move (revision bumped to
+    // created.revision + 1 = 2, collection_id already the destination) but
+    // the client observed a failed/dropped request.
+    mockGetItems.mockReturnValue([{ id: "new-id", revision: 2, collectionId: "dest-1" }]);
+    const onCreated = vi.fn();
+    render(<ItemForm type="note" onCreated={onCreated} />);
+
+    selectSharedDestinationAndFillName();
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    expect(mockCreateVaultItem).toHaveBeenCalledTimes(1);
+    expect(mockMoveVaultItem).toHaveBeenCalledTimes(1);
+  });
+
+  it("C-2: an item AT the destination but at an EARLIER attempt's revision (not this attempt's own commit) must NOT be recognized as recovered -- a destination-only check would wrongly report success here and silently eat this attempt's own content", async () => {
+    mockCreateVaultItem.mockResolvedValue({ id: "new-id", revision: 1, fields: {} });
+    mockMoveVaultItem.mockRejectedValue(new Error("some failure"));
+    // collection_id already equals the destination (left there by an
+    // EARLIER attempt/save), but the revision (5) is NOT created.revision +
+    // 1 (2) -- this is NOT this attempt's own commit. A destination-only
+    // recovery check sees collection_id === destination and would wrongly
+    // call onCreated here, reporting success over content this save never
+    // actually wrote.
+    mockGetItems.mockReturnValue([{ id: "new-id", revision: 5, collectionId: "dest-1" }]);
+    const onCreated = vi.fn();
+    render(<ItemForm type="note" onCreated={onCreated} />);
+
+    selectSharedDestinationAndFillName();
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    expect(await screen.findByTestId("item-form-submit-error")).toBeInTheDocument();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(mockMoveVaultItem).toHaveBeenCalledTimes(1);
+    expect(mockCreateVaultItem).toHaveBeenCalledTimes(1);
+  });
+
+  it("a genuine retry (item still not at the destination after the first failure) resends the SECOND moveVaultItem call with the refreshed revision, never the original stale one, and never double-creates", async () => {
+    mockCreateVaultItem.mockResolvedValue({ id: "new-id", revision: 1, fields: {} });
+    mockMoveVaultItem
+      .mockRejectedValueOnce(new Error("first attempt lost"))
+      .mockResolvedValueOnce({ id: "new-id", revision: 6, fields: {} });
+    // First getItems() call (the first failure's recovery check): the item
+    // is NOT at the destination, but an unrelated concurrent write bumped
+    // its revision to 5 (newer than created.revision = 1) -- the refreshed
+    // revision the retry must send.
+    mockGetItems.mockReturnValue([{ id: "new-id", revision: 5, collectionId: null }]);
+    const onCreated = vi.fn();
+    render(<ItemForm type="note" onCreated={onCreated} />);
+
+    selectSharedDestinationAndFillName();
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockMoveVaultItem).toHaveBeenCalledTimes(1));
+    expect(onCreated).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("item-form-submit"));
+
+    await waitFor(() => expect(mockMoveVaultItem).toHaveBeenCalledTimes(2));
+    expect(mockMoveVaultItem).toHaveBeenNthCalledWith(2, "new-id", expect.any(Object), 5, "dest-1");
+    expect(mockCreateVaultItem).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
   });
 });
