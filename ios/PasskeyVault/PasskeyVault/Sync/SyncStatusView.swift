@@ -6,7 +6,8 @@
 //
 //  A CONNECTION INDICATOR ALONE IS PRECISELY THE IMPLICATION SYNC-04
 //  FORBIDS. This product has no push notification and a backgrounded
-//  process holds no live socket (SyncCoordinator's own SYNC-05 record) --
+//  process holds no live socket (the reasoning lives in
+//  `SyncCoordinator.swift`'s own decision record, not repeated here) --
 //  "connected" describes THIS process's transport at this instant, and says
 //  nothing about whether the AutoFill extension (a separate process that
 //  never syncs in this milestone) holds current data. A green dot with no
