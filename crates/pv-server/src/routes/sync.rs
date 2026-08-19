@@ -306,8 +306,15 @@ pub async fn pull_shared_collection(
     // already authorized this request before this handler body ever runs.
     // Mirrors `fetch_items_for`'s arm-1 SELECT column list verbatim, minus
     // its `user_id = ?` personal-ownership filter.
+    // CR-01 (code review, Phase 32): `vault_items.user_id` is now selected
+    // too, so each row's `owned_by_caller` can be computed below — this
+    // handler still applies no AUTHORIZATION filter on it (Pitfall A's
+    // point stands: `Membership<Collection, RequireRead>` alone gates the
+    // whole collection), it is read purely to answer "is this row the
+    // caller's own" for the client's ownership-refusal check.
     let rows = sqlx::query(
         "SELECT vault_items.id, enc_key, enc_data, revision, updated_at, last_used_at, \
+                vault_items.user_id AS owner_user_id, \
                 users.email AS last_editor_email \
            FROM vault_items \
            LEFT JOIN users ON users.id = vault_items.last_editor_user_id \
@@ -320,6 +327,7 @@ pub async fn pull_shared_collection(
     let items = rows
         .into_iter()
         .map(|row| {
+            let owner_user_id: String = row.try_get("owner_user_id").map_err(|_| ApiError::Internal)?;
             Ok(super::vault::VaultItem {
                 id: row.try_get("id").map_err(|_| ApiError::Internal)?,
                 enc_key: row.try_get("enc_key").map_err(|_| ApiError::Internal)?,
@@ -337,6 +345,11 @@ pub async fn pull_shared_collection(
                 // a second query.
                 collection_id: Some(membership.resource_id.clone()),
                 last_editor_email: row.try_get("last_editor_email").map_err(|_| ApiError::Internal)?,
+                // CR-01: this row's real author vs. the CALLER's own id —
+                // the ownership discriminant `store.ts::moveVaultItem`
+                // reads before offering/performing a move-out re-sealed
+                // under the caller's own key.
+                owned_by_caller: owner_user_id == membership.caller_user_id,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;

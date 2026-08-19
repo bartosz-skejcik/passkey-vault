@@ -3819,3 +3819,185 @@ async fn second_item_bucket_at_the_same_level_for_same_family_is_409_but_a_diffe
         "the two item_bucket rows must be exactly the 'edit' and 'read' buckets created above, got {bucket_levels:?}"
     );
 }
+
+// --- CR-01 (code review, Phase 32): a move-OUT to personal scope re-seals
+// the item under the CALLER's own key material -- only the item's actual
+// owner can ever open a key sealed to them. `edit` on an ORDINARY shared
+// folder (not an item_bucket -- Gate 1's own laundering fix already covers
+// that source) lets a member modify content in place, but must never let
+// them re-scope another author's item to a destination only THEY can
+// decrypt. This is the exact attacker path 32-REVIEW.md's CR-01 describes:
+// owner A shares folder F with member B at `edit`; B selects "Bez folderu"
+// on A's item; without Gate 1b the server accepts it, the row keeps
+// `user_id = A` with ciphertext sealed to B's own key, and A can never
+// decrypt it again.
+
+/// **CR-01 regression (Gate 1b).** Must FAIL against code that lacks Gate
+/// 1b (the move would succeed with `200`, permanently orphaning the item
+/// under A's `user_id` with ciphertext only B can open) and pass once
+/// `move_item` refuses a null-destination move by a non-owner.
+#[tokio::test]
+async fn edit_folder_member_cannot_move_owners_item_out_to_personal_scope_cr01_regression() {
+    let pool = test_pool().await;
+    let app = test_app(pool.clone());
+
+    let owner_token = register_and_login(&app, "cr01-owner@example.com").await;
+    create_family(&app, &owner_token).await;
+    let member_token =
+        common::register_second_family_member(&app, &owner_token, "cr01-member@example.com").await;
+    let member_id = user_id_of(&app, &member_token).await;
+    let member_sk = IdentitySecretKey::generate();
+    publish_keypair(&app, &member_token, member_sk.public_key().to_bytes()).await;
+
+    let owner_sk = IdentitySecretKey::generate();
+
+    // An ORDINARY shared folder (never `family_wide_kind`) -- Gate 1b's own
+    // subject, distinct from Gate 1's item_bucket-source case.
+    let ck = CollectionKey::generate();
+    let owner_sealed = seal(&owner_sk.public_key(), ck.expose()).unwrap();
+    let create_folder_res = req(
+        &app,
+        "POST",
+        "/api/vault/collections",
+        &owner_token,
+        Some(json!({
+            "id": "c1a0b1e1-0001-4a2b-8c3d-0000000000f1","enc_name": "enc-cr01-folder",
+            "sealed_key": serde_json::to_string(&owner_sealed).unwrap(),
+        })),
+    )
+    .await;
+    assert_eq!(create_folder_res.status(), StatusCode::CREATED);
+    let folder_id = body_json(create_folder_res).await["id"].as_str().unwrap().to_string();
+
+    // Owner shares the folder with `member` at `edit` -- a genuine,
+    // deliberate grant to modify content in the folder.
+    let member_sealed = seal(&member_sk.public_key(), ck.expose()).unwrap();
+    let add_member_res = req(
+        &app,
+        "POST",
+        &format!("/api/vault/collections/{folder_id}/members"),
+        &owner_token,
+        Some(json!({
+            "recipient_user_id": member_id,
+            "sealed_key": serde_json::to_string(&member_sealed).unwrap(),
+            "access_level": "edit",
+        })),
+    )
+    .await;
+    assert_eq!(add_member_res.status(), StatusCode::CREATED);
+
+    // Owner creates a personal item, then moves it into the shared folder
+    // (their own item, their own move -- always allowed).
+    let item_id = uuid::Uuid::new_v4().to_string();
+    let create_item_res = req(
+        &app,
+        "POST",
+        "/api/vault/items",
+        &owner_token,
+        Some(json!({
+            "id": item_id,
+            "enc_key": "{\"nonce\":\"AAAA\",\"ciphertext\":\"key-blob\"}",
+            "enc_data": "{\"nonce\":\"BBBB\",\"ciphertext\":\"data-blob\"}",
+        })),
+    )
+    .await;
+    assert_eq!(create_item_res.status(), StatusCode::CREATED);
+
+    let move_in_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &owner_token,
+        Some(json!({
+            "new_collection_id": folder_id,
+            "enc_key": "{\"nonce\":\"CCCC\",\"ciphertext\":\"key-blob-scoped\"}",
+            "enc_data": "{\"nonce\":\"DDDD\",\"ciphertext\":\"data-blob-scoped\"}",
+            "expected_revision": 1,
+        })),
+    )
+    .await;
+    assert_eq!(move_in_res.status(), StatusCode::OK);
+
+    // Baseline: the exact row an unguarded server would corrupt.
+    let baseline = sqlx::query("SELECT user_id, collection_id, enc_key, enc_data, revision FROM vault_items WHERE id = ?")
+        .bind(&item_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let baseline_user_id: String = baseline.try_get("user_id").unwrap();
+    let baseline_collection_id: Option<String> = baseline.try_get("collection_id").unwrap();
+    let baseline_enc_key: String = baseline.try_get("enc_key").unwrap();
+    let baseline_enc_data: String = baseline.try_get("enc_data").unwrap();
+    let baseline_revision: i64 = baseline.try_get("revision").unwrap();
+    assert_eq!(baseline_collection_id.as_deref(), Some(folder_id.as_str()));
+    assert_eq!(baseline_revision, 2);
+
+    // THE ATTACK: member (edit on the folder, NOT the item's owner) drives
+    // the exact client-visible dispatch `moveVaultItem(id, fields, rev,
+    // null)` produces -- `new_collection_id: null`, re-encrypted under
+    // member's OWN key material (simulated here by an arbitrary distinct
+    // ciphertext blob, matching every other regression test in this file --
+    // the point is the server must never even reach a point where it WOULD
+    // accept this ciphertext).
+    let attack_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &member_token,
+        Some(json!({
+            "new_collection_id": Value::Null,
+            "enc_key": "{\"nonce\":\"EEEE\",\"ciphertext\":\"attacker-sealed-key\"}",
+            "enc_data": "{\"nonce\":\"FFFF\",\"ciphertext\":\"attacker-sealed-data\"}",
+            "expected_revision": 2,
+        })),
+    )
+    .await;
+    assert_eq!(
+        attack_res.status(),
+        StatusCode::FORBIDDEN,
+        "Gate 1b: an edit-level folder member must never be able to move another author's item \
+         out to personal scope -- that re-seals it under the member's OWN key, which the item's \
+         actual owner can never open"
+    );
+
+    // Byte-identical rollback: the row is completely untouched by the
+    // refused attempt -- same owner, same collection, same ciphertext, same
+    // revision.
+    let after = sqlx::query("SELECT user_id, collection_id, enc_key, enc_data, revision FROM vault_items WHERE id = ?")
+        .bind(&item_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let after_user_id: String = after.try_get("user_id").unwrap();
+    let after_collection_id: Option<String> = after.try_get("collection_id").unwrap();
+    let after_enc_key: String = after.try_get("enc_key").unwrap();
+    let after_enc_data: String = after.try_get("enc_data").unwrap();
+    let after_revision: i64 = after.try_get("revision").unwrap();
+    assert_eq!(after_user_id, baseline_user_id, "the item's owner must never change on a refused move");
+    assert_eq!(after_collection_id, baseline_collection_id, "the item must stay in the shared folder");
+    assert_eq!(after_enc_key, baseline_enc_key, "ciphertext must be byte-identical after the refusal");
+    assert_eq!(after_enc_data, baseline_enc_data, "ciphertext must be byte-identical after the refusal");
+    assert_eq!(after_revision, baseline_revision, "revision must be unchanged after the refusal");
+
+    // Sanity: the OWNER (not the attacker) can still move their own item
+    // out to personal scope after the refused attempt -- nothing was
+    // stranded, only the non-owner's attempt was refused.
+    let owner_move_out_res = req(
+        &app,
+        "PUT",
+        &format!("/api/vault/items/{item_id}/collection"),
+        &owner_token,
+        Some(json!({
+            "new_collection_id": Value::Null,
+            "enc_key": "{\"nonce\":\"GGGG\",\"ciphertext\":\"owner-sealed-key\"}",
+            "enc_data": "{\"nonce\":\"HHHH\",\"ciphertext\":\"owner-sealed-data\"}",
+            "expected_revision": 2,
+        })),
+    )
+    .await;
+    assert_eq!(
+        owner_move_out_res.status(),
+        StatusCode::OK,
+        "the item's real owner must still be able to move their own item out to personal scope"
+    );
+}

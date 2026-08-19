@@ -39,6 +39,22 @@ export interface ItemRow {
   // with (User Key vs. the collection's own Collection Key), instead of
   // `store.ts::decryptItemRow` unconditionally guessing User Key.
   collection_id: string | null;
+  // CR-01 (code review, Phase 32; `VaultItem::owned_by_caller` in
+  // crates/pv-server/src/routes/vault.rs): `true` when this row's
+  // `vault_items.user_id` is the caller's own id. Always `true` for a
+  // personal item (both `fetch_items_for` arms already filter on it) --
+  // only a collection-scoped row reached via `GET
+  // /api/vault/collections/{id}/sync` (`pull_shared_collection`, which
+  // deliberately returns every author's items) can carry `false`. The
+  // ownership discriminant `store.ts::moveVaultItem` reads before
+  // offering/performing a move-out that would re-seal someone else's item
+  // under the caller's own key. Optional for the same reason several other
+  // fields on this interface are: existing hand-built `ItemRow` test
+  // fixtures across this codebase construct it without every field, and
+  // `decryptItemRow` reads `undefined` here as "not proven owned" (never
+  // as "assume owned") for a collection-scoped row -- personal rows are
+  // always `true` by construction regardless of what the wire sends.
+  owned_by_caller?: boolean;
 }
 
 /** Wire shape of a single folder row as returned by GET /api/vault/folders. */

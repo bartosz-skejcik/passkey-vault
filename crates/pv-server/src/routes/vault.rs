@@ -355,6 +355,24 @@ pub struct VaultItem {
     /// Plan 23-03's 409/live-conflict attribution reads this field, never a
     /// raw user id.
     pub last_editor_email: Option<String>,
+    /// CR-01 (code review, Phase 32): `true` when `session`/`membership`'s
+    /// caller is this row's OWN `vault_items.user_id` — the ownership
+    /// discriminant a collection-scoped item never carried before (mirrors
+    /// `sharedToMe`'s discriminant for a direct share, Phase 26 CR-02, but
+    /// for the opposite direction: "do I own this" rather than "is this
+    /// someone else's shared TO me"). Metadata-only, never derived from
+    /// ciphertext. For a PERSONAL item (`collection_id: None`) this is
+    /// always `true` by construction — both `fetch_items_for` arms already
+    /// filter `WHERE user_id = ?` against the caller. For a
+    /// collection-scoped item reached via `pull_shared_collection` (no such
+    /// filter — that handler deliberately returns EVERY author's rows) this
+    /// is the only wire signal telling the client apart from a fellow
+    /// edit-capable member who merely has write access to the FOLDER, not
+    /// to this particular item. `store.ts::moveVaultItem` reads this to
+    /// refuse re-sealing someone else's item under the caller's own key —
+    /// see that function's own doc comment and `vault.rs::move_item`'s Gate
+    /// 1b, the server-side bound this field's client check backstops.
+    pub owned_by_caller: bool,
 }
 
 /// Shared row-fetch body reused by `list()` and `sync::pull`'s snapshot arm
@@ -438,6 +456,10 @@ pub(crate) async fn fetch_items_for(pool: &sqlx::SqlitePool, user_id: &str) -> R
                 is_shared: row.try_get("is_shared").map_err(|_| ApiError::Internal)?,
                 collection_id: row.try_get("collection_id").map_err(|_| ApiError::Internal)?,
                 last_editor_email: row.try_get("last_editor_email").map_err(|_| ApiError::Internal)?,
+                // Both arms above are `WHERE user_id = ?`/`WHERE i.user_id = ?`
+                // against the caller — every row this function can ever
+                // return already belongs to them.
+                owned_by_caller: true,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()
@@ -988,6 +1010,35 @@ pub async fn move_item(
         }
     }
 
+    // Gate 1b (CR-01, code review Phase 32): a move OUT to PERSONAL scope
+    // (`new_collection_id: None`) re-seals the item's ciphertext under the
+    // CALLER's own key material (`store.ts::moveVaultItem`'s encrypt-only
+    // shape — see that function's own doc comment) — only the item's actual
+    // owner can ever open a key sealed to them. Gate 0 above already closes
+    // this for a source that is ALREADY personal (an owner-only re-scope);
+    // Gate 1 above already closes it for an item_bucket source specifically
+    // (the "laundering" fix). Neither covers the case this closes: an
+    // ORDINARY shared folder, where an `edit`-level member (a genuine,
+    // deliberate grant — `Membership<Item, RequireEdit>` resolves `Edit`
+    // for any folder member holding that level, not just the item's
+    // creator) selects "Bez folderu" or any personal folder on an item
+    // authored by someone else. Without this gate the `UPDATE` below writes
+    // `collection_id = NULL` while leaving `vault_items.user_id` at the
+    // ORIGINAL owner — who then resolves `fetch_items_for`'s arm 1
+    // (`user_id = ? AND collection_id IS NULL`) against ciphertext sealed
+    // to a key they never held, permanently undecryptable, with no client
+    // anywhere surfacing an error (32-REVIEW.md CR-01's PoC). "edit" on a
+    // folder membership grant means "may modify the CONTENT of items in
+    // this folder", never "may re-scope, or destroy through a scope
+    // change, an item belonging to someone else" — the identical reading
+    // Gate 0's own doc comment already gives that phrase for a personal
+    // item's `item_shares` grant. Runs on the SAME pre-tx `precheck_*`
+    // values Gate 0/Gate 1 already read, before Gate 2's destination check
+    // and before the transaction opens.
+    if req.new_collection_id.is_none() && precheck_owner_user_id != source.caller_user_id {
+        return Err(ApiError::Forbidden);
+    }
+
     // Gate 2 (destination) — runs BEFORE any DB mutation, and before the
     // blob-length validation below, so a caller who fails this check never
     // learns whether their oversized blob would otherwise have been
@@ -1063,6 +1114,15 @@ pub async fn move_item(
         fresh_owner_row.try_get("collection_id").map_err(|_| ApiError::Internal)?;
     let owner_user_id: String = fresh_owner_row.try_get("user_id").map_err(|_| ApiError::Internal)?;
     if current_collection.is_none() && owner_user_id != source.caller_user_id {
+        return Err(ApiError::Forbidden);
+    }
+    // Gate 1b's re-check, same fresh tx-scoped read, same reason the
+    // Gate-0 re-check above exists: the pre-tx `precheck_*` read (Gate 1b,
+    // above Gate 2) cannot itself close the TOCTOU window between that read
+    // and this transaction's own — a concurrent ownership-affecting change
+    // between the two reads must still be caught here, on the row actually
+    // about to be mutated.
+    if req.new_collection_id.is_none() && owner_user_id != source.caller_user_id {
         return Err(ApiError::Forbidden);
     }
 

@@ -180,6 +180,23 @@ export interface VaultItem {
   // Metadata only, never derived from ciphertext. Set exclusively by
   // `lib/vault/store.ts`'s `decryptDirectSharedRow`.
   sharedToMe?: boolean;
+  // CR-01 (code review, Phase 32): the ownership discriminant for a
+  // COLLECTION-scoped item -- the counterpart `sharedToMe` above never
+  // provided (that field only ever covers a DIRECT share). `true` for a
+  // personal item (owned by construction) and for a collection-scoped item
+  // the caller themself authored; `false` for a collection-scoped item
+  // authored by a fellow member. Optional/`undefined` for the same reason
+  // every other metadata field here is -- hand-built test fixtures across
+  // web/ and extension/ construct this type without it, and `undefined`
+  // is read as "not proven owned" (fail closed) by `moveVaultItem`'s
+  // ownership guard, never as "assume owned".
+  //
+  // Set by `lib/vault/store.ts`'s `decryptItemRow` from the wire's
+  // `owned_by_caller` (`ItemRow` in lib/vault/api.ts; `VaultItem::
+  // owned_by_caller` server-side, crates/pv-server/src/routes/vault.rs).
+  // Metadata only, never derived from ciphertext -- the server-side bound
+  // is `vault.rs::move_item`'s Gate 1b, not this field.
+  ownedByMe?: boolean;
   // 26-VERIFICATION.md gap 1 (SHARE-03): the CALLER'S OWN effective access
   // level for this item -- `read` | `edit` | `hidden_password`, or an
   // unrecognized value straight off the wire (never normalized, so
