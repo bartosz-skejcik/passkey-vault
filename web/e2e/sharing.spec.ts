@@ -2154,3 +2154,162 @@ test("SC3: a concurrent demotion of the owner's OWN access to an existing destin
   expect(memberA.dialogFired(), "zero OS-level dialogs across memberA's session").toBe(false);
   await owner.context.close();
 });
+
+/** 32-04-PLAN.md Task 2's own local, NON-CLOSING copy of `assertRecipientDecrypts`
+ * (32-PLAN-CHECK.md iteration 2's blocker C-1): the existing helper's last
+ * line is `detail-panel-close`, which the positive anchor here must NOT do
+ * -- the panel must stay open and mounted so the negative anchor (below)
+ * can prove the SAME read genuinely fails, not merely that the panel was
+ * closed. Reusing the closing helper here would make the negative
+ * assertion count zero against a build where the member kept full access. */
+async function assertRecipientDecryptsLeavingPanelOpen(
+  page: Page,
+  itemId: string,
+  itemName: string,
+  password: string,
+  because: string,
+): Promise<void> {
+  const row = page.getByTestId(`item-row-${itemId}`);
+  await expect(row, because).toBeVisible({ timeout: 90000 });
+  await expect(
+    row,
+    `${because} -- and the row must carry the REAL decrypted name, not a raw id or placeholder`,
+  ).toContainText(itemName);
+
+  await row.click();
+  await page.getByTestId("detail-panel").waitFor({ state: "visible" });
+  await page.getByTestId("reveal-password").click();
+  await expect(
+    page.getByTestId("detail-panel").getByText(password, { exact: true }),
+    `${because} -- and the REAL decrypted password must be readable, which only a genuine key unwrap can produce`,
+  ).toBeVisible();
+  // Deliberately NO detail-panel-close click here (C-1 fix) -- the panel
+  // stays open, mounted, with the plaintext already rendered.
+}
+
+/** Move-OUT counterpart to `moveItemToDestinationViaEditor` above -- selects
+ * "" ("Bez folderu") instead of a `collection:{id}` value, driving
+ * ItemForm's edit-mode dispatch to `moveVaultItem(id, fields, revision,
+ * null)` (re-encrypt under the owner's own personal UserKey). Deliberately
+ * does NOT re-click `item-row-${itemId}` the way `moveItemToDestinationViaEditor`
+ * does: this helper's one call site (below) always runs immediately after a
+ * prior move-in save left `detail-panel` open in view mode for the SAME
+ * item, whose own `side-panel-scrim` covers the item list and blocks a
+ * click on the row underneath it (observed live: `locator.click` retried
+ * 300+ times against "element intercepts pointer events" before timing
+ * out). Opens edit mode directly from the already-open panel instead. */
+async function moveItemOutOfFolderViaEditor(page: Page): Promise<void> {
+  await page.getByTestId("detail-panel").waitFor({ state: "visible" });
+  await page.getByTestId("detail-panel-edit").click();
+  await page.getByTestId("item-folder-select").waitFor({ state: "visible" });
+  await page.getByTestId("item-folder-select").selectOption("");
+  await page.getByTestId("item-form-submit").click();
+  await page.getByTestId("item-form-login").waitFor({ state: "detached" });
+}
+
+// 32-04-PLAN.md Task 2: SC4 -- a member with ONLY folder-derived access (no
+// direct item_shares grant) genuinely loses the ability to read an item
+// after the owner moves it OUT of the shared folder via the item editor, on
+// the member's own next completed sync (ORG-04, T-32-10/T-32-11/T-32-13).
+// The negative anchor is the SAME read as the positive anchor (the password
+// text itself, on the still-open panel), not merely an item-row
+// list-membership count (32-PLAN-CHECK.md B-4/C-1).
+test("SC4: a member with only folder-derived access loses it after the owner moves the item OUT of the shared folder, on the member's own next completed sync (ORG-04, T-32-10/T-32-11/T-32-13)", async ({
+  twoSessions,
+  browser,
+}) => {
+  test.setTimeout(180_000);
+
+  const [, member] = twoSessions;
+  const memberToken = await tokenFor(member.page);
+  const memberUserId = await userIdFor(member.context, memberToken);
+
+  await ensureFamilyMembership(browser, [memberUserId]);
+  await waitForIdentityKeyPublished(member.context, memberToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+
+  const suffix = uniqueSuffix();
+  const itemName = `PV E2E SC4 Move Out Item ${suffix}`;
+  const itemPassword = `pw-SC4-MoveOut-${suffix}`;
+  const personalFolderName = `PV E2E SC4 Move Out Seed Folder ${suffix}`;
+  const destinationName = `PV E2E SC4 Move Out Destination ${suffix}`;
+
+  // 1. Owner creates a personal item; owner creates a personal folder,
+  //    shares it with the member at "read" -- this member's ONLY
+  //    relationship to the eventual item is folder membership, NEVER a
+  //    direct item_shares row (T-32-11: the access-loss claim is true by
+  //    construction, not by an unproven absence assertion).
+  const itemsBefore = await listItemIds(owner.context, ownerToken);
+  await createLoginItemViaUI(owner.page, itemName, itemPassword);
+  const itemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+  const foldersBefore = await listFolderIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-folders").click();
+  await createFolderViaUI(owner.page, personalFolderName);
+  const folderId = await newIdAfter(foldersBefore, () => listFolderIds(owner.context, ownerToken));
+
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+  await shareExistingFolderWithMember(owner.page, folderId, memberUserId, "read", destinationName);
+  const destinationId = await newIdAfter(collectionsBefore, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 2. Owner opens the item in edit mode and moves it INTO the shared
+  //    destination via the item editor.
+  await moveItemToDestinationViaEditor(owner.page, itemId, destinationId);
+
+  // 3. Member's session: reloadAndUnlock (brand-new membership pickup, this
+  //    file's own established convention), then the positive anchor --
+  //    reads the real decrypted password, panel left OPEN.
+  await reloadAndUnlock(member.page, SESSION_PASSWORD);
+  await assertRecipientDecryptsLeavingPanelOpen(
+    member.page,
+    itemId,
+    itemName,
+    itemPassword,
+    "positive anchor: the member's folder-derived access must genuinely read the item's real decrypted password BEFORE the move-out",
+  );
+
+  // Drive the absence assertion (32-PLAN-CHECK.md C-1): immediately before
+  // the move-out, assert toHaveCount(1) on the SAME page-scoped locator the
+  // negative read below will assert toHaveCount(0) on. Without this
+  // pre-check, the later absence assertion could pass for the wrong reason
+  // -- the panel closed, the password never rendered, or the locator
+  // matching nothing at all.
+  await expect(
+    member.page.getByText(itemPassword, { exact: true }),
+    "pre-check: the real decrypted password must be present on the page BEFORE the move-out, so the later absence assertion is proven capable of failing",
+  ).toHaveCount(1);
+
+  // 4. Owner reopens the SAME item in edit mode and moves it back OUT.
+  await moveItemOutOfFolderViaEditor(owner.page);
+
+  // 5. On the member's SAME still-open session (no reload, no lock/unlock,
+  //    no re-navigation): first, the next-completed-sync SIGNAL --
+  //    `mergeCollectionSnapshot`'s wholesale-replace-per-collection contract
+  //    already dropping an item absent from the collection's fresh item
+  //    list. This step establishes WHEN the sync landed; it is not itself
+  //    the access-loss proof.
+  await expect(
+    member.page.getByTestId(`item-row-${itemId}`),
+    "sync-completion signal: the member's own still-open session must lose the item from its list on its own NEXT COMPLETED SYNC, no reload",
+  ).toHaveCount(0, { timeout: 60000 });
+
+  // ...second, the actual negative READ -- the exact inverse of step 3's
+  // positive anchor locator (B-4/C-1: the SAME read must fail, not merely
+  // "absent from the list"). Whether the still-open DetailPanel unmounted,
+  // re-rendered into an empty/fallback state, or anything else -- this
+  // assertion is agnostic to WHY and asserts the one thing that actually
+  // matters: the plaintext password is no longer anywhere in the document.
+  await expect(
+    member.page.getByText(itemPassword, { exact: true }),
+    "the same read must fail after the move-out -- not merely absent from the list",
+  ).toHaveCount(0);
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(member.dialogFired(), "zero OS-level dialogs across the member session").toBe(false);
+  await owner.context.close();
+});
