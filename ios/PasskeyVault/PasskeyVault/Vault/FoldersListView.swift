@@ -79,7 +79,13 @@ struct FoldersListView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: folder.name)
                     .foregroundStyle(Color("PVTextPrimary"))
-                Text(verbatim: "\(itemCount(for: folder)) items")
+                // WR-15: "\(count) items" reads "1 items" -- ungrammatical
+                // at one, the one place this count is user-facing. No
+                // plural machinery (recorded project decision) means a
+                // count-prefixed phrasing, not an interpolated English
+                // plural -- grammatical at every count, same discipline
+                // `ShareItemView`'s "Udostępnij \(count) os." already uses.
+                Text(verbatim: "Items: \(itemCount(for: folder))")
                     .font(.caption)
                     .foregroundStyle(Color("PVTextMuted"))
             }
