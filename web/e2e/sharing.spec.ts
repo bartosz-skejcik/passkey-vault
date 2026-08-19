@@ -102,6 +102,30 @@ async function apiDelete(request: BrowserContext["request"], path: string, token
   return request.delete(`${BASE_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
 }
 
+/** 32-04-PLAN.md Task 1's own raw PUT -- SC3's TOCTOU-driven refusal needs to
+ * DEMOTE the owner's access on the destination (edit -> read), not DELETE
+ * it outright. `Collection::resolve_access` resolves a fully-deleted row to
+ * `None`, which `gate::<M>()` (membership.rs:399) turns into 404 NotFound --
+ * confirmed independently by `membership_route_sweep.rs`'s own "an unrelated
+ * caller gets 404, not 403" sweep for this exact route. `moveVaultItem`'s
+ * client code (store.ts's `isForbiddenError`) recognizes ONLY `status ===
+ * 403` as the TOCTOU signal that produces `CollectionKeyUnavailableError` --
+ * a 404 falls through to the raw, retry-inviting `error.itemSaveFailed`
+ * banner instead. A DEMOTION resolves to `Some(Read)`, which
+ * `gate::<RequireEdit>` correctly turns into 403 Forbidden -- the genuinely
+ * reachable, client-recognized shape of this refusal. */
+async function apiPut(
+  request: BrowserContext["request"],
+  path: string,
+  token: string,
+  data: unknown,
+) {
+  return request.put(`${BASE_URL}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data,
+  });
+}
+
 async function tokenFor(page: Page): Promise<string> {
   const token = await page.evaluate(() => window.localStorage.getItem("pv-session-token"));
   if (!token) {
@@ -1960,4 +1984,173 @@ test("SC1: an item created directly in an existing shared folder never lands str
   expect(member.dialogFired(), "zero OS-level dialogs across the member session").toBe(false);
   await owner.context.close();
   await member.context.close();
+});
+
+// 32-04-PLAN.md Task 1: SC3 -- a move whose DESTINATION access is revoked
+// mid-session (deliberately driven, TOCTOU) is refused with an honest,
+// non-retry-inviting message, and the item's stored ciphertext and revision
+// are byte-identical to before the attempt (ORG-02, T-32-09). Mirrors this
+// file's own SC5 test (~line 1495) structurally, adapted from ShareDialog to
+// the item editor -- see this file's own `apiPut` doc comment above for why
+// the driving mechanism is a DEMOTION, not the literal DELETE SC5 uses: a
+// full DELETE of the OWNER's own row resolves server-side to 404 (`None ->
+// NotFound`), which `moveVaultItem`'s client code does not recognize as the
+// TOCTOU signal (it checks ONLY `status === 403`). A demotion from "edit" to
+// "read" is the genuinely reachable, 403-producing shape of this refusal.
+test("SC3: a concurrent demotion of the owner's OWN access to an existing destination, driven mid-session between destination-select and submit, refuses the move honestly with byte-identical rollback (ORG-02, T-32-09)", async ({
+  twoSessions,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+
+  const [memberA] = twoSessions;
+  const memberAToken = await tokenFor(memberA.page);
+  const memberAUserId = await userIdFor(memberA.context, memberAToken);
+
+  await ensureFamilyMembership(browser, [memberAUserId]);
+  await waitForIdentityKeyPublished(memberA.context, memberAToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+  const ownerUserId = await userIdFor(owner.context, ownerToken);
+
+  const suffix = uniqueSuffix();
+  const itemName = `PV E2E SC3 TOCTOU Item ${suffix}`;
+  const itemPassword = `pw-SC3-TOCTOU-${suffix}`;
+  const personalFolderName = `PV E2E SC3 TOCTOU Seed Folder ${suffix}`;
+  const destinationName = `PV E2E SC3 TOCTOU Destination ${suffix}`;
+
+  // 1. Owner creates a personal login item with a known password -- the
+  //    item whose refused move this test proves byte-identical.
+  const itemsBefore = await listItemIds(owner.context, ownerToken);
+  await createLoginItemViaUI(owner.page, itemName, itemPassword);
+  const itemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+  // 2. Owner creates a personal folder and shares it with memberA at
+  //    "edit" -- a SECOND real edit-holder, so the later demotion is
+  //    observable: the collection is never left with zero edit-holders
+  //    (update_access's own last-edit-holder guard), and memberA remains
+  //    the one performing the demotion (RequireEdit-gated).
+  const foldersBefore = await listFolderIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-folders").click();
+  await createFolderViaUI(owner.page, personalFolderName);
+  const folderId = await newIdAfter(foldersBefore, () => listFolderIds(owner.context, ownerToken));
+
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+  await shareExistingFolderWithMember(owner.page, folderId, memberAUserId, "edit", destinationName);
+  const destinationId = await newIdAfter(collectionsBefore, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 3. Owner opens the item in edit mode and selects the shared
+  //    destination -- do NOT click Save yet.
+  await owner.page.getByTestId(`item-row-${itemId}`).click();
+  await owner.page.getByTestId("detail-panel").waitFor({ state: "visible" });
+  await owner.page.getByTestId("detail-panel-edit").click();
+  await owner.page.getByTestId("item-folder-select").waitFor({ state: "visible" });
+  await owner.page.getByTestId("item-folder-select").selectOption(`collection:${destinationId}`);
+
+  // 4. Baseline, captured via the OWNER'S OWN token -- Gate 0 (ownership of
+  //    a personal item) is never revoked by this test; only Gate 2 (the
+  //    destination's edit check) is driven to fail, so the owner's own
+  //    personal-item read stays valid throughout.
+  const baselineRes = await apiGet(owner.context.request, "/api/vault/items", ownerToken);
+  expect(baselineRes.status()).toBe(200);
+  const baselineItems = (await baselineRes.json()) as {
+    id: string;
+    enc_key: string;
+    enc_data: string;
+    revision: number;
+    collection_id: string | null;
+  }[];
+  const baseline = baselineItems.find((i) => i.id === itemId);
+  expect(baseline, "the item must exist server-side before the driven refusal").toBeDefined();
+  expect(baseline?.collection_id, "the item must still be personal before the refused attempt").toBeNull();
+
+  // 5. The deliberately-driven TOCTOU window: STILL using memberA's own
+  //    session, demote the OWNER's own access on the destination from
+  //    "edit" to "read" -- between the owner's destination-selection (step
+  //    3, already done) and their submit click (step 6, below).
+  const demoteRes = await apiPut(
+    memberA.context.request,
+    `/api/vault/collections/${destinationId}/access/${ownerUserId}`,
+    memberAToken,
+    { access_level: "read" },
+  );
+  expect(
+    demoteRes.status(),
+    "memberA (edit-capable, and the remaining key-holder) must be able to demote the owner's own access",
+  ).toBe(204);
+
+  // 6. The owner -- unaware their own access to the destination is now
+  //    read-only -- submits the move. Still on the same, un-reloaded page:
+  //    their own useCollections() snapshot still shows the folder as
+  //    selectable, and ItemForm still holds the CollectionKey it cached
+  //    while the owner held edit.
+  await owner.page.getByTestId("item-form-submit").click();
+
+  // 7. Assert the honest refusal renders while the item editor is still
+  //    mounted -- queried BEFORE any waitFor({ state: "detached" }), per
+  //    Phase 31's ME-05 standing hazard (an assertion evaluated post-detach
+  //    is trivially true).
+  const errorLocator = owner.page.getByTestId("item-save-error-banner");
+  await expect(
+    errorLocator,
+    "the destination-access-lost refusal must render while the item editor is still mounted",
+  ).toBeVisible({ timeout: 20000 });
+  await expect(owner.page.getByTestId("item-form-login")).toBeVisible();
+  await expect(errorLocator).toHaveText(
+    "You no longer have write access to this folder. The change was not saved.",
+  );
+  const errorText = await errorLocator.textContent();
+  expect(
+    errorText,
+    "must never be a retry-inviting message -- access loss cannot be fixed by retrying",
+  ).not.toContain("Try again");
+  expect(errorText, "must never invite a retry in Polish copy either").not.toContain("Spróbuj ponownie");
+
+  // 8. Byte-identical check: re-read the item via the OWNER'S OWN token and
+  //    assert enc_key/enc_data/revision are IDENTICAL to the step-4
+  //    baseline.
+  const afterRes = await apiGet(owner.context.request, "/api/vault/items", ownerToken);
+  expect(afterRes.status()).toBe(200);
+  const afterItems = (await afterRes.json()) as {
+    id: string;
+    enc_key: string;
+    enc_data: string;
+    revision: number;
+    collection_id: string | null;
+  }[];
+  const after = afterItems.find((i) => i.id === itemId);
+  expect(after, "the item must still exist server-side after the refused attempt").toBeDefined();
+  expect(after?.enc_key, "the item's stored enc_key must be byte-identical after the refusal").toBe(
+    baseline?.enc_key,
+  );
+  expect(after?.enc_data, "the item's stored enc_data must be byte-identical after the refusal").toBe(
+    baseline?.enc_data,
+  );
+  expect(after?.revision, "the item's stored revision must be identical after the refusal").toBe(
+    baseline?.revision,
+  );
+  expect(after?.collection_id, "the item must still be personal -- the move never landed").toBeNull();
+
+  // 9. Cross-check via memberA's own token that the destination collection
+  //    never receives the item either -- the move never landed on the
+  //    destination side.
+  const destItemsRes = await apiGet(
+    memberA.context.request,
+    `/api/vault/collections/${destinationId}/items`,
+    memberAToken,
+  );
+  expect(destItemsRes.status()).toBe(200);
+  const destItems = (await destItemsRes.json()) as { id: string }[];
+  expect(
+    destItems.find((i) => i.id === itemId),
+    "the destination collection must never receive the item -- the refused move must not land on either side",
+  ).toBeUndefined();
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(memberA.dialogFired(), "zero OS-level dialogs across memberA's session").toBe(false);
+  await owner.context.close();
 });
