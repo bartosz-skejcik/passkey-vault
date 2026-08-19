@@ -109,8 +109,15 @@ struct RemoveMemberService {
     /// own `sealed_key`) happens strictly BEFORE this method's one network
     /// write, never after a partial submit.
     @discardableResult
-    func removeMember(userId: String, userKey: FfiUserKey) async throws -> [FamilyAPI.CollectionRekeyBatch] {
-        let batch = try await buildRemovalBatch(targetUserId: userId, userKey: userKey, isSelf: false)
+    func removeMember(
+        userId: String, userKey: FfiUserKey,
+        // WR-05: test seam replacing the removed `testOnlyDropLastRecipient`
+        // global -- production callers never pass this.
+        recipientTransform: ([RemainingRecipient]) -> [RemainingRecipient] = { $0 }
+    ) async throws -> [FamilyAPI.CollectionRekeyBatch] {
+        let batch = try await buildRemovalBatch(
+            targetUserId: userId, userKey: userKey, isSelf: false, recipientTransform: recipientTransform
+        )
         do {
             try await familyAPI.removeMember(userId: userId, collections: batch)
         } catch {
@@ -123,12 +130,17 @@ struct RemoveMemberService {
     /// why this submits to `DELETE /api/auth/account`, not the family removal
     /// endpoint (a full account deletion, not merely a membership removal).
     @discardableResult
-    func leaveFamily(userKey: FfiUserKey) async throws -> [FamilyAPI.CollectionRekeyBatch] {
+    func leaveFamily(
+        userKey: FfiUserKey,
+        recipientTransform: ([RemainingRecipient]) -> [RemainingRecipient] = { $0 }
+    ) async throws -> [FamilyAPI.CollectionRekeyBatch] {
         guard let token = tokenProvider() else {
             throw RemoveMemberError.noSessionToken("/api/auth/account")
         }
         let me = try await PvApiClient(baseURL: baseURL).me(token: token)
-        let batch = try await buildRemovalBatch(targetUserId: me.userId, userKey: userKey, isSelf: true)
+        let batch = try await buildRemovalBatch(
+            targetUserId: me.userId, userKey: userKey, isSelf: true, recipientTransform: recipientTransform
+        )
         do {
             try await deleteAccount(token: token, collections: batch)
         } catch {
@@ -196,19 +208,6 @@ struct RemoveMemberService {
         }
     }
 
-    #if DEBUG
-    /// TEST-ONLY fault injection (Task 3, E-F5's falsification run) --
-    /// mirrors `crates/pv-server/src/routes/families.rs`'s own
-    /// `FAULT_INJECT_AFTER_COLLECTION_INDEX` thread-local precedent for the
-    /// identical "prove a completeness gate can fail" need. When `true`,
-    /// drops the LAST remaining recipient from the seal loop below, exactly
-    /// as a real "silently shrunk recipient set" bug would. `#if DEBUG`-gated
-    /// (this whole project ships/tests Debug-only, L-14) and read ONLY here
-    /// -- no production call site ever sets it; `false` by default, so every
-    /// ordinary call is completely unaffected.
-    static var testOnlyDropLastRecipient = false
-    #endif
-
     /// Builds ONE collection's re-key batch entirely client-side -- no
     /// network calls anywhere in this function, which is why "a missing
     /// public key throws before any request is issued" is not merely
@@ -221,20 +220,27 @@ struct RemoveMemberService {
     /// pre-removal key" / "every sealed entry recovers to the SAME key"
     /// claims without this type ever exposing raw bytes (`FfiCollectionKey`
     /// has no byte accessor by design).
+    ///
+    /// WR-05: `recipientTransform` REPLACES the removed `#if
+    /// DEBUG`-gated, unsynchronised `static var testOnlyDropLastRecipient`
+    /// fault-injection switch. That switch shipped in EVERY distributable
+    /// build (`ios/IOS-SPIKE-LOG.md` L-14: this project cannot build in
+    /// Release, so `DEBUG` is what ships) and was a `static var` mutated
+    /// from a test while other, non-serialized suites could call this
+    /// function -- Swift 6 strict concurrency rejects that outright. A
+    /// parameter with a production default means no global exists at all:
+    /// production call sites never pass this, and it costs nothing when
+    /// unused.
     static func buildCollectionBatch(
         collectionId: String,
         oldCk: FfiCollectionKey,
         remainingRecipients: [RemainingRecipient],
-        items: [ItemToRewrap]
+        items: [ItemToRewrap],
+        // Test seam: production callers never pass this.
+        recipientTransform: ([RemainingRecipient]) -> [RemainingRecipient] = { $0 }
     ) throws -> (newCk: FfiCollectionKey, batch: FamilyAPI.CollectionRekeyBatch) {
         let newCk = try FfiCollectionKey.generate()
-
-        var recipientsToSeal = remainingRecipients
-        #if DEBUG
-        if testOnlyDropLastRecipient {
-            recipientsToSeal = Array(recipientsToSeal.dropLast())
-        }
-        #endif
+        let recipientsToSeal = recipientTransform(remainingRecipients)
 
         var newSealedKeys: [FamilyAPI.NewSealedKeyEntry] = []
         newSealedKeys.reserveCapacity(recipientsToSeal.count)
@@ -283,7 +289,8 @@ struct RemoveMemberService {
     /// composition to `buildCollectionBatch` -- this function's own job is
     /// resolving real server data, not crypto.
     private func buildRemovalBatch(
-        targetUserId: String, userKey: FfiUserKey, isSelf: Bool
+        targetUserId: String, userKey: FfiUserKey, isSelf: Bool,
+        recipientTransform: ([RemainingRecipient]) -> [RemainingRecipient] = { $0 }
     ) async throws -> [FamilyAPI.CollectionRekeyBatch] {
         let identityKey = try await identityService.ensureOwnIdentityKeypair(userKey: userKey)
         let roster = try await familyAPI.fetchMembers()
@@ -315,7 +322,8 @@ struct RemoveMemberService {
             let items: [ItemToRewrap] = itemRows.map { ItemToRewrap(itemId: $0.id, encKeyJson: $0.enc_key) }
 
             let (_, batch) = try Self.buildCollectionBatch(
-                collectionId: collectionId, oldCk: oldCk, remainingRecipients: remaining, items: items
+                collectionId: collectionId, oldCk: oldCk, remainingRecipients: remaining, items: items,
+                recipientTransform: recipientTransform
             )
             batches.append(batch)
         }

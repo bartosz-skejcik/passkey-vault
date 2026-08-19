@@ -461,10 +461,10 @@ extension RemoveMemberTests {
     /// phase. This run follows that established precedent rather than
     /// building a new Node harness.
     ///
-    /// Falsification: `RemoveMemberService.testOnlyDropLastRecipient` (a
-    /// DEBUG-only fault-injection flag, mirroring `families.rs`'s own
-    /// `FAULT_INJECT_AFTER_COLLECTION_INDEX`) drops the last remaining
-    /// recipient from the batch. The REAL server's own KEY-07 completeness
+    /// Falsification: `removeMember`'s own `recipientTransform` test seam
+    /// (WR-05 -- replaces the removed `testOnlyDropLastRecipient` global,
+    /// mirroring `families.rs`'s own `FAULT_INJECT_AFTER_COLLECTION_INDEX`)
+    /// drops the last remaining recipient from the batch. The REAL server's own KEY-07 completeness
     /// guard (`apply_member_removal_rekey`'s step 2: the submitted remaining-
     /// recipient set must match the collection's ACTUAL remaining recipients
     /// EXACTLY) rejects the shrunk batch with 409 and rolls back -- so the
@@ -576,11 +576,15 @@ extension RemoveMemberTests {
 
         let removeService = RemoveMemberService(baseURL: baseURL, tokenProvider: { sessionOwner.token })
 
-        RemoveMemberService.testOnlyDropLastRecipient = true
         var falsificationStatus: Int?
         do {
-            _ = try await removeService.removeMember(userId: meTarget.userId, userKey: sessionOwner.userKey)
-            RemoveMemberService.testOnlyDropLastRecipient = false
+            // WR-05: the fault injection is now a per-call parameter, not a
+            // mutated global -- drops the last remaining recipient, exactly
+            // as the removed `testOnlyDropLastRecipient` switch did.
+            _ = try await removeService.removeMember(
+                userId: meTarget.userId, userKey: sessionOwner.userKey,
+                recipientTransform: { Array($0.dropLast()) }
+            )
             throw LiveRemovalRekeyRunError.expectedThrowDidNotOccur("the falsified (recipient-dropped) removal")
         } catch RemoveMemberError.rekeySetMismatch(let status, _) {
             // WR-03: the service now maps a 409 from the submit call site
@@ -588,7 +592,6 @@ extension RemoveMemberTests {
             // `PvApiError.httpError` -- same status, more specific type.
             falsificationStatus = status
         }
-        RemoveMemberService.testOnlyDropLastRecipient = false
         #expect(
             falsificationStatus == 409,
             "the server's own completeness guard must REFUSE a batch missing a remaining recipient, got \(String(describing: falsificationStatus))"
@@ -686,8 +689,8 @@ extension RemoveMemberTests {
           Collection 0: \(collections[0].id) -- items \(collections[0].itemIds)
           Collection 1: \(collections[1].id) -- items \(collections[1].itemIds)
 
-        Falsification FIRST (RemoveMemberService.testOnlyDropLastRecipient = true, a DEBUG-only
-        fault-injection flag dropping the last remaining recipient from the seal loop):
+        Falsification FIRST (removeMember's recipientTransform test seam dropping the last
+        remaining recipient from the seal loop):
           DELETE /api/families/members/\(meTarget.userId) with a batch missing one remaining
           recipient's new_sealed_keys entry -> HTTP \(falsificationStatus.map(String.init) ?? "?")
           (expected 409 -- the server's own apply_member_removal_rekey Step 2 completeness guard
