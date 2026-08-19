@@ -3195,6 +3195,38 @@ plan's own `<verify>` commands do after the L-3-family "trailing parens" correct
 `scripts/ios-live-server.sh` session for a trustworthy result. The three pure (Tasks 1-2) tests remain
 safe under either scoping, since they carry no server-side state to collide on.
 
+### L-29 -- `UIHostingController`/`UIWindow` accessibility-tree introspection is non-deterministic in a `PasskeyVaultTests` (Swift Testing) run on this simulator/toolchain
+
+**Found 2026-08-19, Phase 40, Plan 40-08, Task 2.** An attempt to assert a SwiftUI view's real
+`.accessibilityIdentifier` presence/absence from inside `PasskeyVaultTests` (not `PasskeyVaultUITests`) --
+without `ViewInspector` -- by hosting the view in a real `UIHostingController`/`UIWindow` and walking the
+resulting accessibility tree (`accessibilityElements` array, and separately the older
+`accessibilityElementCount()`/`accessibilityElement(at:)` pair) was tried in SIX distinct variations in
+this session: (1) a fresh scene-less `UIWindow(frame:)` per call -- found nothing, ever; (2) a fresh
+`UIWindow(windowScene:)` attached to the host app's own active `UIWindowScene` per call -- found real
+content on the FIRST call in a process, reliably found NOTHING on every subsequent call, regardless of
+teardown discipline in between; (3) a single REUSED window with a fresh `UIHostingController` swapped in
+per call -- same "first call only" pattern; (4) a single reused window AND a single reused hosting
+controller, mutating an `@ObservedObject` fixture between samples instead of re-hosting -- non-
+deterministic in either direction (sometimes the FIRST sample found nothing); (5) the same, with a 0.2s
+`RunLoop` settle after layout -- same non-determinism; (6) the same, polling layout+walk in a loop up to
+a ~3s budget instead of a single fixed sleep -- STILL found nothing on some runs, ruling out timing/settle
+delay as the root cause. `@Suite(.serialized)` (Swift Testing's own execution-serialization trait) was
+also applied and did not fix it. No reproducible trigger was identified (not window/controller reuse
+alone, not timing, not test ordering within the file).
+
+**Consequence:** do not re-attempt this exact technique in `PasskeyVaultTests` without first identifying
+the actual root cause (candidates, untested in this session: `UIHostingController`'s accessibility tree
+construction may be genuinely best-effort/asynchronous outside a real `XCUIApplication` process; the iOS
+26.5 simulator's accessibility daemon may need a signal this harness never sent). For an assertion that
+NEEDS the real rendered accessibility tree (not just the underlying gate boolean a production view reads),
+use `PasskeyVaultUITests` (`XCUIApplication`, which reliably queries accessibility identifiers elsewhere in
+this codebase -- `VaultDockUITests`, `VaultDockEvidenceUITests`) against a real running app instead of
+`UIHostingController` introspection inside the unit-test bundle. `40-08-SUMMARY.md`'s Deviations section
+records the fallback this plan took instead: asserting the underlying, already-public,
+already-tested production gate condition (`DetailFieldTables.passwordFieldIsHidden`) rather than the
+rendered tree.
+
 ### L-27 -- two shell landmines found building this plan's own live-proof harness
 
 **Found 2026-08-19, Phase 39, Plan 39-07, Task 1.** (1) `grep -rc PATTERN DIR | grep -v ":0" | wc -l`,
