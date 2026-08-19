@@ -22,10 +22,15 @@ const {
   // lookup) must be mockable per-test, alongside the existing
   // createVaultItem/updateVaultItem mocks.
   mockMoveVaultItem: vi.fn(),
-  mockGetItems: vi.fn(() => []),
+  // No initial `() => []` factory here (unlike a naive first draft) --
+  // that would lock vi.fn()'s inferred generic to `never[]`, and this
+  // file's own tests below call mockReturnValue with genuinely different
+  // shapes (getItems() rows, Collection objects with a real accessLevel).
+  // The default `[]` is set explicitly in beforeEach below instead.
+  mockGetItems: vi.fn(),
   // useCollections (the grouped destination select) -- ItemForm imports it
   // from a SEPARATE module ("@/lib/vault/collections"), mocked below.
-  mockUseCollections: vi.fn(() => []),
+  mockUseCollections: vi.fn(),
   // vi.mock factories are hoisted above the rest of the file -- any value
   // they reference must be created inside vi.hoisted() too. Mirrors
   // DetailPanel.test.tsx's identical MockRevisionConflictError shape:

@@ -1848,3 +1848,116 @@ test("SC1/SC2: an item moved via the item editor into an existing shared folder 
   expect(member.dialogFired(), "zero OS-level dialogs across the member session").toBe(false);
   await owner.context.close();
 });
+
+/** 32-02-PLAN.md Task 2's own create-mode helper -- like `createLoginItemViaUI`
+ * above, but selects the shared folder in `item-folder-select` BEFORE the
+ * first Save click, proving the destination choice is honored on CREATE
+ * itself, not merely provable via a later edit (`moveItemToDestinationViaEditor`
+ * above already proves the edit-mode half). */
+async function createLoginItemInDestinationViaUI(
+  page: Page,
+  name: string,
+  password: string,
+  destinationCollectionId: string,
+): Promise<void> {
+  await page.getByTestId("new-item-button").click();
+  await page.getByTestId("type-tile-login").click();
+  await page.getByTestId("item-name").fill(name);
+  await page.getByTestId("item-password").fill(password);
+  await page.getByTestId("item-folder-select").waitFor({ state: "visible" });
+  await page
+    .getByTestId("item-folder-select")
+    .selectOption(`collection:${destinationCollectionId}`);
+  await page.getByTestId("item-form-submit").click();
+  await page.getByTestId("item-form-login").waitFor({ state: "detached" });
+}
+
+// 32-02-PLAN.md Task 2's own live proof: SC1's CREATE-mode half -- an item
+// whose destination was picked BEFORE its first Save must land genuinely
+// collection-scoped, never stranded in personal scope, both immediately
+// after save and after a real reload. Single-session (owner only) -- the
+// recipient-read half of ORG-02/SC2 is already proven live by 32-01's own
+// test against the SAME moveVaultItem mechanism; this test only needs to
+// prove the CREATE-mode two-call sequence itself lands correctly, not
+// re-prove the crypto. The member's own session is registered once (to mint
+// a real userId/identity key for the share) and never opened again --
+// no reloadAndUnlock, no recipient-side read.
+test("SC1: an item created directly in an existing shared folder never lands stranded in personal scope, before AND after a real reload", async ({
+  browser,
+}) => {
+  const member = await registerFreshSession(browser);
+  const memberToken = await tokenFor(member.page);
+  const memberUserId = await userIdFor(member.context, memberToken);
+
+  await ensureFamilyMembership(browser, [memberUserId]);
+  await waitForIdentityKeyPublished(member.context, memberToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+
+  const suffix = uniqueSuffix();
+  const itemName = `PV E2E Create In Shared Item ${suffix}`;
+  const itemPassword = `pw-CreateInShared-${suffix}`;
+  const personalFolderName = `PV E2E Create In Shared Seed Folder ${suffix}`;
+  const destinationName = `PV E2E Create In Shared Destination ${suffix}`;
+
+  // 1. Owner creates a personal folder and shares it with the member at
+  //    "edit" -- a real destination collection id, exactly what
+  //    require_collection_edit (Gate 2) will check against on the move.
+  const foldersBefore = await listFolderIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-folders").click();
+  await createFolderViaUI(owner.page, personalFolderName);
+  const folderId = await newIdAfter(foldersBefore, () => listFolderIds(owner.context, ownerToken));
+
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+  await shareExistingFolderWithMember(owner.page, folderId, memberUserId, "edit", destinationName);
+  const destinationId = await newIdAfter(collectionsBefore, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 2. Owner creates a BRAND-NEW item, selecting the shared folder as its
+  //    destination BEFORE the first Save -- driving the create-mode
+  //    two-call sequence (createVaultItem then moveVaultItem) under real
+  //    network conditions.
+  const itemsBefore = await listItemIds(owner.context, ownerToken);
+  await createLoginItemInDestinationViaUI(owner.page, itemName, itemPassword, destinationId);
+  const itemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+  const itemsAfterCreateRes = await apiGet(owner.context.request, "/api/vault/items", ownerToken);
+  expect(itemsAfterCreateRes.status()).toBe(200);
+  const itemsAfterCreate = (await itemsAfterCreateRes.json()) as {
+    id: string;
+    collection_id: string | null;
+  }[];
+  const createdItem = itemsAfterCreate.find((i) => i.id === itemId);
+  expect(createdItem, "the newly-created item must exist server-side").toBeDefined();
+  expect(
+    createdItem?.collection_id,
+    "SC1 create-mode: the destination chosen BEFORE the first Save must be honored immediately -- never null/personal",
+  ).toBe(destinationId);
+
+  // 3. Reload and re-assert -- SC1's own "survives save AND reload" bound,
+  //    applied to create mode.
+  await reloadAndUnlock(owner.page, SESSION_PASSWORD);
+  const itemsAfterReloadRes = await apiGet(owner.context.request, "/api/vault/items", ownerToken);
+  expect(itemsAfterReloadRes.status()).toBe(200);
+  const itemsAfterReload = (await itemsAfterReloadRes.json()) as {
+    id: string;
+    collection_id: string | null;
+  }[];
+  const reloadedItem = itemsAfterReload.find((i) => i.id === itemId);
+  expect(
+    reloadedItem,
+    "the item must still exist server-side after the owner's reload",
+  ).toBeDefined();
+  expect(
+    reloadedItem?.collection_id,
+    "SC1 create-mode: the destination survives a real reload too -- never stranded personal",
+  ).toBe(destinationId);
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(member.dialogFired(), "zero OS-level dialogs across the member session").toBe(false);
+  await owner.context.close();
+  await member.context.close();
+});
