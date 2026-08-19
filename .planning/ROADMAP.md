@@ -221,7 +221,7 @@ follow-up gap-closure pass, recorded in `31-VERIFICATION.md`'s own Gap Closure s
 Plans:
 - [ ] 32-01-PLAN.md — Tracer: moveVaultItem + the full item-folder-select destination control, wired create+edit, proven live (SC1 edit half + SC2 recipient read) and via real-WASM
 - [ ] 32-02-PLAN.md — Destination-control unit tests + retry-safe create-then-move dispatch test + live SC1 create-mode proof
-- [ ] 32-03-PLAN.md — item_shares DELETE scoped to item_bucket only (32-CONTEXT.md Area 2 correction) + DEBT-04 clippy (vault.rs + ceremony.rs)
+- [ ] 32-03-PLAN.md — DEBT-04 clippy (vault.rs + ceremony.rs); runs first (wave 1), serialized ahead of 32-01 to avoid racing playwright's live pv-server build against a concurrent vault.rs edit
 - [ ] 32-04-PLAN.md — Live SC3 TOCTOU-refusal proof + live SC4 move-out access-loss proof
 
 **UI hint**: yes
