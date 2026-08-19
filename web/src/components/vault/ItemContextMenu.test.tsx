@@ -318,7 +318,16 @@ describe("ItemContextMenu", () => {
     mockUseCollections.mockReturnValue([{ id: "col-1", name: "Rodzina" }]);
     render(
       <ItemContextMenu
-        item={{ ...loginItem(), isShared: true, collectionId: "col-1" }}
+        // LO-03 (code review, Phase 32): `accessLevel` is now REQUIRED to
+        // read as editable for a collection-scoped item -- `undefined`
+        // means "the collections store hasn't cached this level yet" (fail
+        // closed), never "owns outright", for any item whose
+        // `collectionId` is set. Set the caller's real, cached "edit"
+        // level explicitly, matching what `decryptItemRow` populates once
+        // collections.ts has actually refreshed -- this is what "reached
+        // through a shared folder... that save genuinely works" means in
+        // production.
+        item={{ ...loginItem(), isShared: true, collectionId: "col-1", accessLevel: "edit" }}
         onClose={vi.fn()}
         onEdit={vi.fn()}
         onDeleteRequest={vi.fn()}

@@ -58,6 +58,19 @@ export function isPasswordHidden(item: VaultItem): boolean {
  * the save surfaced as "Failed to save item. Please try again." */
 export function canEditItem(item: VaultItem): boolean {
   if (item.sharedToMe === true) return false;
-  if (item.accessLevel === undefined) return true;
+  if (item.accessLevel === undefined) {
+    // LO-03 (code review, Phase 32): `undefined` means "owns outright"
+    // ONLY for a genuinely PERSONAL item -- `Item::resolve_access`'s
+    // personal branch is what grants that unconditional Edit. For a
+    // collection-scoped item, `accessLevel` is ALWAYS supposed to carry
+    // the caller's real `collection_keys.access_level`
+    // (`decryptItemRow`'s own doc comment); `undefined` there means the
+    // collections store has not cached this collection's level YET, not
+    // "no level needed here" -- treating it as ownership let a
+    // collection-scoped item render as freely editable in the narrow
+    // window before its own gate is known. Fails closed, matching this
+    // function's own stated discipline for an unrecognized level.
+    return item.collectionId == null;
+  }
   return item.accessLevel === "edit";
 }
