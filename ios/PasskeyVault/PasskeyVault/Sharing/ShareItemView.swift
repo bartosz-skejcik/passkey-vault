@@ -206,9 +206,18 @@ struct ShareItemView: View {
                         .padding(.top, PVMetrics.fieldStackGap)
                 }
 
+                // CR-02: this sheet's only write path is a DIRECT item
+                // share (`familyAPI.createItemShare`, this file's own
+                // header records it does not move the item into a
+                // family-wide Collection). Member removal severs the
+                // share ROW for that mechanism but does not rotate the
+                // item's Cipher Key -- only collection-scoped items get a
+                // fresh key. The copy must say that, not promise a
+                // re-wrap this path never performs.
                 StatusCallout(
-                    text: "Udostępnienie ponownie zawija klucz tego itemu dla każdej wybranej osoby. "
-                        + "Usunięcie kogoś zawija go ponownie, bez niej.",
+                    text: "Udostępnienie zawija klucz tego itemu dla każdej wybranej osoby. Cofnięcie dostępu "
+                        + "usuwa jej wpis, ale NIE zmienia klucza — osoba, która już go odebrała, technicznie "
+                        + "zachowuje kopię. Jeśli hasło ma przestać być dla niej ważne, zmień je.",
                     tone: .muted
                 )
                 .accessibilityIdentifier("vault.share.revocationNote")
