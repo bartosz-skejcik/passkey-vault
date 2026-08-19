@@ -747,7 +747,19 @@ extension InviteTests {
     @MainActor
     @Test func liveInviteRedeemedByWebAccount() async throws {
         let baseURL = Self.liveServerBaseURL
-        let runSuffix = String(Int(Date().timeIntervalSince1970))
+        // A second-granularity timestamp alone (`ShareMarkerTests.swift`'s
+        // own `liveTwoAccountMarkerRun` precedent) collided across two
+        // near-simultaneous invocations observed live in this task (a bare
+        // `xcodebuild test` scoped to the whole suite re-ran this method
+        // twice within the same wall-clock second) -- an 8-character UUID
+        // fragment makes that collision astronomically unlikely regardless
+        // of how many times this method runs within one second.
+        // Lowercased: `pv-server` normalizes stored emails to lowercase
+        // (discovered live, this task -- `UUID().uuidString` is uppercase
+        // hex, and an un-lowercased suffix here made every later exact-
+        // string `== emailB` comparison against a roster row's OWN,
+        // server-normalized email silently fail).
+        let runSuffix = "\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(8))".lowercased()
         let emailA = "pv-ef2-a-\(runSuffix)@example.invalid"
         let password = "PvEF2-40-06-EvidencePassword!"
 
