@@ -113,9 +113,36 @@ struct ContentView: View {
         // `InviteRedemptionService` already own fragment parsing and the
         // self-consistency check; this handler's only job is routing the
         // raw URL to that existing, tested surface.
+        //
+        // WR-21 (40-REVIEW.md, iteration 2): validated BEFORE capture --
+        // the pre-fix handler stored ANY URL the OS handed the app
+        // unconditionally, and the sheet below presented `InviteRedeemView`
+        // pre-filled with it regardless of scheme/host/path. Requires the
+        // configured server's own host and an `/invite/` path segment
+        // before treating a URL as an invitation; a URL failing this check
+        // is silently ignored, matching `InviteRedemptionService.redeem`'s
+        // own fragment-parsing failure mode (this handler never throws or
+        // surfaces an error for a URL that was never meant for this
+        // feature in the first place).
         .onOpenURL { url in
+            guard Self.isValidInviteURL(url, serverHost: ServerSettings.resolved.host) else { return }
             pendingInviteURL = url
         }
+    }
+
+    /// WR-21 (40-REVIEW.md, iteration 2): pulled out as a `static`, pure,
+    /// directly unit-testable predicate (`ContentViewInviteURLTests.swift`)
+    /// -- `onOpenURL` previously stored ANY URL the OS handed the app
+    /// unconditionally, and the sheet below presented `InviteRedeemView`
+    /// pre-filled with it regardless of scheme/host/path. Requires the
+    /// configured server's own host AND an `/invite/` path segment AND a
+    /// non-empty fragment (the sealed invite secret
+    /// `InviteRemptionService.redeem` reads via `url.fragment`) before
+    /// treating a URL as an invitation.
+    static func isValidInviteURL(_ url: URL, serverHost: String?) -> Bool {
+        url.host == serverHost
+            && url.pathComponents.dropLast().last == "invite"
+            && url.fragment?.isEmpty == false
     }
 
     private func determineRoute() async {
@@ -332,6 +359,13 @@ struct ContentView: View {
         // re-`LockView` unlock) -- re-derived fresh every session, never
         // carried over.
         ownUserId = nil
+        // WR-21 (40-REVIEW.md, iteration 2): this property's own doc
+        // comment already claimed a pending invite is "never carried
+        // across a lock/sign-out into a different account's session" --
+        // `performSignOut()` below already cleared it, but `performLock()`
+        // did not, so the redemption sheet re-presented itself unprompted
+        // as soon as `ownUserId` re-resolved on the NEXT unlock.
+        pendingInviteURL = nil
         route = .loading
         Task { await reroute() }
     }
