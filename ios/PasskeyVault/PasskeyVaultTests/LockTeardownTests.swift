@@ -108,6 +108,23 @@ struct LockTeardownTests {
         VaultItemViewModel(id: "fixture-item", revision: 1, content: .fields(noteFields()))
     }
 
+    // MARK: - WR-08 (39-REVIEW.md): lock() must clear currentSnapshot too
+
+    /// A trivial in-memory `CiphertextCacheStore` so this suite can put
+    /// something non-nil into `currentSnapshot` before asserting `lock()`
+    /// clears it -- the default `NullCiphertextCacheStore` every other test
+    /// in this file uses never persists anything, so it could never observe
+    /// this member becoming non-nil in the first place.
+    private final class InMemoryCiphertextCacheStore: CiphertextCacheStore {
+        private var stored: CachedSnapshot?
+        func readCurrentSnapshot(accountId: String, serverBaseURL: String) -> CachedSnapshot? {
+            guard let stored, stored.accountId == accountId, stored.serverBaseURL == serverBaseURL else { return nil }
+            return stored
+        }
+        func write(_ snapshot: CachedSnapshot) throws { stored = snapshot }
+        func purge() { stored = nil }
+    }
+
     // MARK: - VaultStore.lock()
 
     /// Component 1/2 of the store's own teardown: arrays/maps and the
@@ -133,6 +150,30 @@ struct LockTeardownTests {
         #expect(store.allTags.isEmpty)
         #expect(store.lastKnownRevision == 0)
         #expect(!store.isHydrated)
+    }
+
+    /// WR-08 (39-REVIEW.md): `currentSnapshot` (added in plan 39-06) was the
+    /// one member `lock()`'s own "empties every array/map" header did NOT
+    /// actually reach -- it is ciphertext, not key material, so this was
+    /// never a secrecy leak, but the invariant the header states was false.
+    @Test
+    func lockClearsTheCachedSnapshotMirrorToo() throws {
+        let cacheStore = InMemoryCiphertextCacheStore()
+        let accountId = "wr08-lock-teardown@example.invalid"
+        try cacheStore.write(
+            CachedSnapshot(
+                revision: 3, 1_755_555_555_000, accountId: accountId,
+                serverBaseURL: "https://lock-teardown-tests.invalid", items: [], folders: []
+            )
+        )
+        let userKey = try FfiUserKey.generate()
+        let store = VaultStore(userKey: userKey, api: Self.makeApi(), accountId: accountId, cacheStore: cacheStore)
+
+        #expect(store.currentSnapshot != nil, "hydrateFromCache() at init must have picked up the persisted snapshot")
+
+        store.lock()
+
+        #expect(store.currentSnapshot == nil, "lock() must clear the cached-snapshot mirror, not only items/allTags/lastKnownRevision/isHydrated/userKey")
     }
 
     /// Component: the weak reference. The ONLY strong reference to `userKey`

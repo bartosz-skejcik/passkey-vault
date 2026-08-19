@@ -211,7 +211,7 @@ final class VaultStore {
     /// caller must not mistake a stale cached row for a just-confirmed
     /// sync.
     private func hydrateFromCache() {
-        guard let snapshot = cacheStore.readCurrentSnapshot(accountId: accountId) else { return }
+        guard let snapshot = cacheStore.readCurrentSnapshot(accountId: accountId, serverBaseURL: api.baseURL.absoluteString) else { return }
         currentSnapshot = snapshot
         items = snapshot.items.map { VaultItemRow(cached: $0) }.map(decrypt(row:))
         lastKnownRevision = snapshot.revision
@@ -238,6 +238,14 @@ final class VaultStore {
         allTags = []
         lastKnownRevision = 0
         isHydrated = false
+        // WR-08 (39-REVIEW.md): added in plan 39-06, `currentSnapshot` holds
+        // every item's ciphertext, the account id and the server URL for the
+        // lifetime of this store -- this type's own header says "empties
+        // EVERY array/map", and until this fix, this member was the one
+        // exception. It is ciphertext, so this was never a key leak, but the
+        // invariant itself was false, and a later reader inheriting `lock()`
+        // would reasonably assume it was complete.
+        currentSnapshot = nil
         userKey = nil
         // WR-03 fix: replace the token supply with a dead one -- any call
         // still holding this `VaultStore` instance (e.g. `touch(itemId:)`,
@@ -329,6 +337,10 @@ final class VaultStore {
         // rows).
         items.append(item)
         recomputeTags()
+        // WR-04 (39-REVIEW.md): a local mutation never reaches the
+        // persisted cache through any other path -- see
+        // `invalidateCacheAfterLocalMutation()`'s own header.
+        invalidateCacheAfterLocalMutation()
         return item
     }
 
@@ -425,6 +437,7 @@ final class VaultStore {
             items.append(updated)
         }
         recomputeTags()
+        invalidateCacheAfterLocalMutation() // WR-04 (39-REVIEW.md)
         return updated
     }
 
@@ -446,6 +459,26 @@ final class VaultStore {
         try await api.deleteItem(id: item.id)
         items.removeAll { $0.id == item.id }
         recomputeTags()
+        invalidateCacheAfterLocalMutation() // WR-04 (39-REVIEW.md)
+    }
+
+    /// WR-04 (39-REVIEW.md): `create`/`update`/`delete` mutate the server
+    /// and the in-memory `items` array, but until this fix never touched
+    /// `cacheStore`/`currentSnapshot` -- so until the next successful
+    /// `refresh()`, the persisted blob still held a deleted item's
+    /// ciphertext (and missed newly created ones). That is the exact
+    /// "keeps offering a credential the user deleted" hazard
+    /// `CiphertextCacheStore.write`'s own doc comment (D-15) gives as the
+    /// reason merges are forbidden -- an un-refreshed persisted cache is a
+    /// merge-shaped staleness by omission, just deferred rather than
+    /// immediate. Purging (rather than attempting a partial patch) keeps
+    /// DR-39-A's "one blob, replaced whole" contract intact: the next
+    /// successful pull re-populates it correctly; until then, `"Not synced
+    /// yet"` tells the truth instead of quietly serving a stale credential
+    /// set to a cold reader (the AutoFill extension, Phase 41).
+    private func invalidateCacheAfterLocalMutation() {
+        cacheStore.purge()
+        currentSnapshot = nil
     }
 
     // MARK: - Touch (last-used)
@@ -634,7 +667,7 @@ final class VaultStore {
     /// this function can honestly reconcile by fabricating an empty cache
     /// at a non-zero watermark.
     private func persistUpToDateToCache(revision: Int) {
-        guard let existing = cacheStore.readCurrentSnapshot(accountId: accountId) else {
+        guard let existing = cacheStore.readCurrentSnapshot(accountId: accountId, serverBaseURL: api.baseURL.absoluteString) else {
             guard revision == 0 else {
                 Self.log.error(
                     "refusing to persist up-to-date revision \(revision) with no existing on-disk snapshot for this account"
@@ -674,14 +707,26 @@ final class VaultStore {
 
     /// Shared write helper for both persist paths above. `context` is only
     /// ever used for the error log line -- never a behavioural switch.
+    ///
+    /// WR-03 (39-REVIEW.md): `currentSnapshot` is assigned ONLY after a
+    /// successful write, never before attempting it. The pre-fix version set
+    /// `currentSnapshot = snapshot` unconditionally, then only logged on
+    /// failure -- so after a `containerUnavailable`/`writeFailed` error,
+    /// `SyncStatusView` (which renders from `store.currentSnapshot`, the
+    /// in-memory mirror) kept showing "Last synced n seconds ago" while
+    /// NOTHING was actually persisted, and the AutoFill extension (which
+    /// reads the file) would show a stale or absent time -- the in-memory
+    /// mirror silently described memory instead of disk. `lastError` now
+    /// records the failure so a future caller can surface it.
     private func writeSnapshot(_ snapshot: CachedSnapshot, context: String) {
-        currentSnapshot = snapshot
         do {
             try cacheStore.write(snapshot)
+            currentSnapshot = snapshot
         } catch {
             Self.log.error(
                 "failed to persist sync cache (\(context, privacy: .public)): \(String(describing: error), privacy: .public)"
             )
+            lastError = "Synced, but this device could not save its offline copy."
         }
     }
 
