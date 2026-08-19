@@ -352,6 +352,13 @@ struct ItemListView: View {
     var onLockRequested: (() -> Void)?
     var onSignOutRequested: (() -> Void)?
 
+    /// CR-04 (40-REVIEW.md): `nil` only in tests/previews that construct
+    /// `ItemListView` directly, matching `onLockRequested`'s own
+    /// established discipline above. Non-nil in every production
+    /// construction (`VaultRootView`) -- gates the avatar-menu "Family"
+    /// entry and the item detail "Share" entry point.
+    var familySharingContext: FamilySharingContext?
+
     @State private var selectedTab: VaultTypeTab = .all
     /// Folders tab navigation (BINDING SCOPE ADDITION, `40-UI-SPEC.md`
     /// §5.3) -- set by `FoldersListView`'s `onOpenFolder`, consumed by the
@@ -579,7 +586,13 @@ struct ItemListView: View {
                                     // two screens over (`contextMenuContent`
                                     // below) -- one sheet case, two entry
                                     // points, never a second edit path.
-                                    onEditRequested: { root.activeSheet = .editing(item) }
+                                    onEditRequested: { root.activeSheet = .editing(item) },
+                                    // CR-04 item 4: the SAME `.sharingItem`
+                                    // route the list's own context menu
+                                    // uses (`contextMenuContent` below) --
+                                    // one sheet case, two entry points.
+                                    onShareRequested: { root.activeSheet = .sharingItem(item) },
+                                    onFamilyRequested: familySharingContext != nil ? { root.activeSheet = .family } : nil
                                 )
                             }
                             // BINDING SCOPE ADDITION (`40-UI-SPEC.md` §5.3):
@@ -1305,6 +1318,27 @@ struct ItemListView: View {
             if let folderStore {
                 FolderPicker(store: folderStore, selection: Binding(get: { nil }, set: { _ in }))
             }
+        // CR-04: the avatar-menu "Family" entry's real destination.
+        case .family:
+            if let ctx = familySharingContext {
+                NavigationStack {
+                    FamilyRootView(
+                        baseURL: ctx.baseURL, tokenProvider: ctx.tokenProvider,
+                        userKey: ctx.userKey, ownUserId: ctx.ownUserId
+                    )
+                }
+            }
+        // CR-04 item 4: the item detail/context-menu "Share" entry point.
+        case let .sharingItem(item):
+            if let ctx = familySharingContext {
+                NavigationStack {
+                    ShareItemPresenter(
+                        itemId: item.id, displayName: item.displayName, store: store,
+                        baseURL: ctx.baseURL, tokenProvider: ctx.tokenProvider,
+                        userKey: ctx.userKey, ownUserId: ctx.ownUserId
+                    )
+                }
+            }
         }
     }
 
@@ -1526,8 +1560,21 @@ struct ItemListView: View {
         if case .passkey = item.fields {
             result.append(RowPill(id: "passkey", label: "Passkey", colorName: "PVPasskey"))
         }
-        if item.isShared == true {
+        // CR-04 item 3 (40-REVIEW.md): the three-way `ShareMarker`
+        // discrimination, not the raw `isShared` flag alone --
+        // `ShareMarker.of` had no production call site before this, so a
+        // received-from-other item and a family-wide item were both
+        // indistinguishable from "shared by me" (or, once the merge this
+        // fix adds ships, simply never appeared in the list at all).
+        switch ShareMarker.of(item: item) {
+        case .receivedFromOther:
+            result.append(RowPill(id: "shared", label: "Shared with you", colorName: "PVTextMuted"))
+        case .familyWide:
+            result.append(RowPill(id: "shared", label: "Family", colorName: "PVTextMuted"))
+        case .sharedByMe:
             result.append(RowPill(id: "shared", label: "Shared", colorName: "PVTextMuted"))
+        case .none:
+            break
         }
         if item.isUndecryptable {
             result.append(RowPill(id: "damaged", label: "Damaged", colorName: "PVError"))
@@ -1569,6 +1616,17 @@ struct ItemListView: View {
                 }
             }
         }
+        // CR-04 item 4 (40-REVIEW.md): "Share" is real now --
+        // `ShareItemView` exists and is wired (`.sharingItem`, above).
+        // Gated identically to `ItemDetailView.canShowShareButton`
+        // (`ItemCapabilities.canShowShareAffordance`) -- absent entirely
+        // for an item the caller does not own outright, never offered
+        // disabled.
+        if ItemCapabilities.canShowShareAffordance(item), familySharingContext != nil {
+            Button("Share") {
+                root.activeSheet = .sharingItem(item)
+            }
+        }
         Button("Delete", role: .destructive) {
             deleteCandidate = item
         }
@@ -1576,12 +1634,10 @@ struct ItemListView: View {
 
     /// Mirrors `ItemContextMenu.tsx`'s `copyActionsFor` (login: username +
     /// password; card: number; identity: email). `Move to folder` and
-    /// `Share` are deliberately NOT offered -- see this file's header and
-    /// `VaultFilterToken`'s own note: there is no working move/share
-    /// mutation path yet (`VaultStore` has no update-item call at all, and
-    /// `ShareDialog` does not exist on iOS), so omitting them is the same
-    /// "do not offer an operation known to fail" discipline
-    /// `ItemCapabilities.swift` names, not an oversight.
+    /// `Share` are now both offered above (`contextMenuContent`) -- this
+    /// comment previously said neither existed yet; CR-04 (40-REVIEW.md)
+    /// wired `Share` in, `Move to folder` shipped earlier (see the
+    /// surrounding code, not this stale note).
     /// WR-03 (38-REVIEW.md, iteration 2): returns the menu command AND the
     /// bare field noun separately -- `command` ("Copy password") is the
     /// `Button` label; `field` ("Password") is what
@@ -1700,7 +1756,8 @@ struct ItemListView: View {
     private var toolbarContent: some ToolbarContent {
         vaultLockToolbarContent(
             onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested,
-            onSettingsRequested: { root.activeSheet = .settings }
+            onSettingsRequested: { root.activeSheet = .settings },
+            onFamilyRequested: familySharingContext != nil ? { root.activeSheet = .family } : nil
         )
     }
 

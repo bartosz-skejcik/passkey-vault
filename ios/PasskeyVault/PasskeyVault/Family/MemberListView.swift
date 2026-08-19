@@ -73,12 +73,22 @@ enum MemberFingerprintDisplayState: Equatable {
 struct MemberListView: View {
     let familyAPI: FamilyAPI
     let ownUserId: String
+    /// CR-04 (40-REVIEW.md): wired in by this fix -- see `removalConfirmationDialog`
+    /// below for the confirmation this file's own header previously
+    /// recorded as deliberately out of Task 1's scope.
+    let removeMemberService: RemoveMemberService
+    let userKey: FfiUserKey
 
     @State private var members: [FamilyAPI.FamilyMemberRecord] = []
     @State private var isLoading = true
     @State private var loadError: String?
     @State private var verifyingMemberId: String?
     @State private var verifyErrorMemberId: String?
+    /// CR-04: the member a tap on a non-self row is confirming removal
+    /// for -- drives `removalConfirmationDialog` below.
+    @State private var removalCandidate: FamilyAPI.FamilyMemberRecord?
+    @State private var isRemoving = false
+    @State private var removeErrorMemberId: String?
 
     var body: some View {
         Group {
@@ -121,9 +131,56 @@ struct MemberListView: View {
             }
         }
         .task { await load() }
+        .confirmationDialog(
+            removalCandidate.map { "Usunąć \($0.email) z rodziny?" } ?? "",
+            isPresented: Binding(
+                get: { removalCandidate != nil },
+                set: { if !$0 { removalCandidate = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            // CR-04: the native `.confirmationDialog` carrying the honest
+            // re-key copy the review's fix asks for -- direct shares are
+            // NOT re-wrapped on removal (CR-02's same mechanism
+            // distinction), only collection-scoped items get a fresh key.
+            Button("Usuń", role: .destructive) {
+                if let removalCandidate {
+                    Task { await performRemoval(removalCandidate) }
+                }
+            }
+            Button("Anuluj", role: .cancel) { removalCandidate = nil }
+        } message: {
+            if let removalCandidate {
+                Text(
+                    "Utraci dostęp do wspólnych kolekcji (klucz zostanie wymieniony dla pozostałych osób) "
+                        + "oraz do itemów bezpośrednio jej udostępnionych (wpis zostanie usunięty, ale klucz "
+                        + "NIE zostanie zmieniony — jeśli hasło ma przestać być dla niej ważne, zmień je). "
+                        + "\(removalCandidate.email) zniknie z listy członków."
+                )
+            }
+        }
+        .alert(
+            "Nie udało się usunąć członka rodziny. Spróbuj ponownie.",
+            isPresented: Binding(
+                get: { removeErrorMemberId != nil },
+                set: { if !$0 { removeErrorMemberId = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        }
     }
 
     // MARK: - Row
+
+    /// CR-04: only the caller's OWN row (as the owner) may initiate a
+    /// removal -- `RemoveMemberService.removeMember`'s own header: "Owner
+    /// removes a DIFFERENT member". A plain member tapping another row
+    /// would only reach a server-side 403; gating here keeps the UI from
+    /// offering an operation known to fail (same discipline
+    /// `ItemCapabilities.swift`'s header states for item actions).
+    private var callerIsOwner: Bool {
+        members.first(where: { $0.userId == ownUserId })?.role == "owner"
+    }
 
     @ViewBuilder
     private func row(_ member: FamilyAPI.FamilyMemberRecord) -> some View {
@@ -163,7 +220,35 @@ struct MemberListView: View {
             }
         }
         .frame(minHeight: PVMetrics.rowMinHeight)
+        .contentShape(Rectangle())
         .accessibilityIdentifier("vault.family.row.\(member.userId)")
+        // CR-04: tap-to-remove, owner-only, never the caller's own row --
+        // `RemoveMemberService.leaveFamily` (self-removal via account
+        // deletion) is a deliberately DIFFERENT flow this row does not
+        // trigger.
+        .onTapGesture {
+            guard !isSelf, callerIsOwner, !isRemoving else { return }
+            removalCandidate = member
+        }
+        .accessibilityAddTraits(!isSelf && callerIsOwner ? [.isButton] : [])
+    }
+
+    /// Submits the removal batch (`RemoveMemberService.removeMember`, this
+    /// file's own header). Re-fetches the roster on success -- the SAME
+    /// "never optimistically flip local state" discipline `verify(_:)`
+    /// already established, for the identical reason: the server's
+    /// response is what actually proves the member is gone.
+    private func performRemoval(_ member: FamilyAPI.FamilyMemberRecord) async {
+        isRemoving = true
+        removalCandidate = nil
+        removeErrorMemberId = nil
+        defer { isRemoving = false }
+        do {
+            try await removeMemberService.removeMember(userId: member.userId, userKey: userKey)
+            await load()
+        } catch {
+            removeErrorMemberId = member.userId
+        }
     }
 
     /// THE distinction the plan's own acceptance criteria requires kept

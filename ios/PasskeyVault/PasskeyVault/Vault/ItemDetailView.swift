@@ -50,6 +50,10 @@ struct ItemDetailView: View {
     var onLockRequested: (() -> Void)?
     var onSignOutRequested: (() -> Void)?
     var onSettingsRequested: (() -> Void)?
+    /// CR-04 (40-REVIEW.md): same "supplied by the call site, never a
+    /// `root` this view holds directly" discipline as `onSettingsRequested`
+    /// above -- routes to `.family`.
+    var onFamilyRequested: (() -> Void)?
     /// Quick fix 40-UX-03: routes to the SAME `.editing(item)` sheet the
     /// list's own context menu already presents (`ItemListView
     /// .contextMenuContent`'s "Edit" button, `root.activeSheet = .editing
@@ -61,11 +65,19 @@ struct ItemDetailView: View {
     /// `root.activeSheet = .settings`. `nil` only in tests/previews that
     /// construct this view directly.
     var onEditRequested: (() -> Void)?
+    /// CR-04 item 4 (40-REVIEW.md): same pattern as `onEditRequested` --
+    /// routes to the SAME `.sharingItem(item)` sheet
+    /// `ItemListView.contextMenuContent` presents, via the call site
+    /// (`ItemListView.body`'s `.navigationDestination(item:)`) rather than
+    /// this view reaching into a `root` it deliberately has no parameter
+    /// for (plan 38-11's own discipline, unchanged by this fix).
+    var onShareRequested: (() -> Void)?
 
     init(
         item: VaultItemViewModel, store: VaultStore, revealState: Binding<DetailRevealState>,
         onLockRequested: (() -> Void)? = nil, onSignOutRequested: (() -> Void)? = nil,
-        onSettingsRequested: (() -> Void)? = nil, onEditRequested: (() -> Void)? = nil
+        onSettingsRequested: (() -> Void)? = nil, onEditRequested: (() -> Void)? = nil,
+        onShareRequested: (() -> Void)? = nil, onFamilyRequested: (() -> Void)? = nil
     ) {
         self.item = item
         self.store = store
@@ -73,7 +85,9 @@ struct ItemDetailView: View {
         self.onLockRequested = onLockRequested
         self.onSignOutRequested = onSignOutRequested
         self.onSettingsRequested = onSettingsRequested
+        self.onFamilyRequested = onFamilyRequested
         self.onEditRequested = onEditRequested
+        self.onShareRequested = onShareRequested
     }
 
     /// Quick fix 40-UX-03: before this, `ItemDetailView` had NO Edit
@@ -98,6 +112,13 @@ struct ItemDetailView: View {
     /// comment for why (`ios/IOS-SPIKE-LOG.md` L-29).
     private var canShowEditButton: Bool {
         ItemCapabilities.canShowEditAffordance(item)
+    }
+
+    /// CR-04 item 4: mirrors `canShowEditButton`'s own discipline -- absent
+    /// entirely (not merely disabled) when the caller does not own this
+    /// item outright, rather than offering an operation known to fail.
+    private var canShowShareButton: Bool {
+        ItemCapabilities.canShowShareAffordance(item) && onShareRequested != nil
     }
 
     var body: some View {
@@ -170,9 +191,21 @@ struct ItemDetailView: View {
                     .accessibilityIdentifier("vault.detail.edit")
                 }
             }
+            // CR-04 item 4: the item detail/context menu -> ShareItemView
+            // entry point named in the review's own fix list.
+            if canShowShareButton {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        onShareRequested?()
+                    } label: {
+                        Label("Share", systemImage: "person.crop.circle.badge.plus")
+                    }
+                    .accessibilityIdentifier("vault.detail.share")
+                }
+            }
             vaultLockToolbarContent(
                 onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested,
-                onSettingsRequested: onSettingsRequested
+                onSettingsRequested: onSettingsRequested, onFamilyRequested: onFamilyRequested
             )
         }
         // CR-01: `.onAppear` scopes the reveal set to THIS item the moment

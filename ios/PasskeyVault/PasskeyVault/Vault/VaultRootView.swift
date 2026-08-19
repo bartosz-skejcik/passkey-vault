@@ -36,7 +36,13 @@ import SwiftUI
 @ToolbarContentBuilder
 func vaultLockToolbarContent(
     onLockRequested: (() -> Void)?, onSignOutRequested: (() -> Void)?,
-    onSettingsRequested: (() -> Void)? = nil
+    onSettingsRequested: (() -> Void)? = nil,
+    // CR-04 (40-REVIEW.md): was `Button("Family") {}.disabled(true)` --
+    // the disabled, permanently-unreachable entry point the review named
+    // by file and line. Same "absent/disabled only when there is
+    // genuinely nothing to route to" discipline every sibling action here
+    // already follows.
+    onFamilyRequested: (() -> Void)? = nil
 ) -> some ToolbarContent {
     ToolbarItem(placement: .topBarTrailing) {
         Button {
@@ -48,16 +54,9 @@ func vaultLockToolbarContent(
         .accessibilityIdentifier("vault.lockNow")
     }
     ToolbarItem(placement: .topBarTrailing) {
-        // Family has no screen to open yet (Phase 40's job) -- it renders,
-        // disabled, rather than either vanishing (which would misrepresent
-        // the approved navigation architecture as simpler than it is) or
-        // silently doing nothing when tapped (a fake affordance). Settings
-        // (quick task 260818-fnt) now follows the SAME disabled-until-wired
-        // pattern Lock/Sign-out already use below, rather than being a
-        // permanent special case.
         Menu {
-            Button("Family") {}
-                .disabled(true)
+            Button("Family") { onFamilyRequested?() }
+                .disabled(onFamilyRequested == nil)
             Button("Settings") { onSettingsRequested?() }
                 .disabled(onSettingsRequested == nil)
             Divider()
@@ -70,6 +69,19 @@ func vaultLockToolbarContent(
         }
         .accessibilityIdentifier("vault.avatarMenu")
     }
+}
+
+/// CR-04 (40-REVIEW.md): the plain values `FamilyRootView`/
+/// `ShareItemPresenter` need, threaded down from `ContentView`'s own
+/// `UnlockedSession` -- NEVER routed through `VaultStore`'s encapsulated
+/// `userKey` (that type deliberately never exposes it as an observed
+/// property, T-38-02-03). Mirrors `SyncCoordinator.start(...)`'s own
+/// plain-parameter precedent for the identical key handle.
+struct FamilySharingContext {
+    let baseURL: URL
+    let tokenProvider: () -> String?
+    let userKey: FfiUserKey
+    let ownUserId: String
 }
 
 /// The "+" create / edit / move-to-folder / generator sheet router. Moved to
@@ -101,6 +113,12 @@ enum VaultActiveSheet: Identifiable {
     /// `FolderPicker` already offers create-inline with no separate form to
     /// duplicate.
     case creatingFolder
+    /// CR-04 (40-REVIEW.md): the avatar-menu "Family" entry's real
+    /// destination -- `FamilyRootView`, hosting `MemberListView` (+
+    /// `InviteCreateView`, reachable from its own toolbar).
+    case family
+    /// CR-04 item 4: the item detail/context-menu "Share" entry point.
+    case sharingItem(VaultItemViewModel)
 
     var id: String {
         switch self {
@@ -112,6 +130,8 @@ enum VaultActiveSheet: Identifiable {
         case .scanningQr: return "scanningQr"
         case let .creatingFromScan(parsed): return "creatingFromScan-\(parsed.label)"
         case .creatingFolder: return "creatingFolder"
+        case .family: return "family"
+        case let .sharingItem(item): return "sharingItem-\(item.id)"
         }
     }
 }
@@ -203,6 +223,11 @@ struct VaultRootView: View {
     var onLockRequested: () -> Void
     var onSignOutRequested: () -> Void
 
+    /// CR-04 (40-REVIEW.md): `nil` only in tests/previews -- `ContentView`
+    /// always supplies this in production, from the SAME `UnlockedSession`
+    /// that already constructs `store`/`folderStore`.
+    var familySharingContext: FamilySharingContext?
+
     @State private var root = VaultRootController()
 
     var body: some View {
@@ -211,7 +236,8 @@ struct VaultRootView: View {
             folderStore: folderStore,
             root: root,
             onLockRequested: performLock,
-            onSignOutRequested: performSignOut
+            onSignOutRequested: performSignOut,
+            familySharingContext: familySharingContext
         )
     }
 

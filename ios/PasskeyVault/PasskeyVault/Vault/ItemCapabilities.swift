@@ -139,4 +139,20 @@ enum ItemCapabilities {
             && item.fields?.typeName != "passkey"
             && canEditItem(item)
     }
+
+    /// CR-04 item 4 (40-REVIEW.md): the gate `ItemDetailView`'s "Share"
+    /// toolbar action reads. `ShareItemView`'s own header: it seals the
+    /// item's Cipher Key to each recipient's published identity key,
+    /// which requires the CALLER's own copy of that Cipher Key, wrapped
+    /// under the caller's own `FfiUserKey` -- structurally only true for
+    /// an item the caller owns outright (`accessLevel == nil`, same
+    /// "personal branch" `canEditItem`'s own doc comment names). An item
+    /// already shared TO this caller has no such key to re-share from;
+    /// `fields != nil` excludes `undecryptable`/`pendingFamilyKey`, same
+    /// discipline as `canShowEditAffordance` above.
+    static func canShowShareAffordance(_ item: VaultItemViewModel) -> Bool {
+        item.fields != nil
+            && item.sharedToMe != true
+            && item.accessLevel == nil
+    }
 }
