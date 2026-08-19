@@ -178,6 +178,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				0B428FE9E49C0BB22AF61E01 /* PasskeyVaultAutoFill */,
+				B3D215715977AE7886AF8663 /* PvShared */,
 			);
 			name = PasskeyVaultAutoFill;
 			packageProductDependencies = (
