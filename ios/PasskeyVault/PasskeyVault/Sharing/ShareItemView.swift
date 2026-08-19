@@ -151,9 +151,6 @@ struct ShareItemView: View {
     @State private var selectedMemberIds: Set<String> = []
     @State private var isSharing = false
     @State private var errorMessage: String?
-    /// CR-05: read on full success to dismiss the sheet -- previously
-    /// assigned and never read, so there was no success state at all.
-    @State private var didShare = false
 
     /// WR-06: the ONE filtered set both the person picker AND
     /// `ShareItemComposer.recipients` read, so a share can never target the
@@ -373,7 +370,15 @@ struct ShareItemView: View {
         }
 
         if failed.isEmpty {
-            didShare = true
+            // WR-24 (40-REVIEW.md, iteration 2): `dismiss()` alone IS the
+            // success behaviour -- a separate `didShare` flag with no
+            // reader anywhere in the app target was dead state whose own
+            // doc comment claimed it "drives a real dismiss-on-success",
+            // which was false (`dismiss()` ran unconditionally in this
+            // branch regardless of the flag). Removed rather than wired to
+            // a callback: no caller of this sheet currently needs a
+            // post-share hook, and adding one unused would just move the
+            // same dead-state shape one layer up.
             dismiss()
         } else {
             // Name who DID get access -- never a bare "it failed", which
