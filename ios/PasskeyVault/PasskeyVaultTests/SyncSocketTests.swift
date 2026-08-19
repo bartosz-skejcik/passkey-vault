@@ -479,6 +479,52 @@ struct SyncSocketTests {
         #expect(transport.madeTasks.count == expectedBases.count + 1)
     }
 
+    // WR-04 (39-REVIEW.md, iteration 2): the nil-URL reconnect (WR-01,
+    // iteration 1) can double-schedule when the connection it superseded's
+    // OWN close arrives late, after a `start()` has already reset
+    // `intentionalStop` to false. Reproduces the exact sequence the finding
+    // names: `start()` (live task1) -> `stop()` (cancels task1, whose
+    // `onClose` is deferred via `Task { @MainActor in ... }`, not
+    // synchronous at the `SyncSocket` level) -> `start()` again with a
+    // MOMENTARILY nil URL (the nil-URL branch schedules H1, WITHOUT ever
+    // creating a new task, so `currentTask` still points at task1) -> THEN
+    // task1's deferred close finally lands, finds `currentTask === task1`
+    // still true and `intentionalStop` already false, and calls
+    // `scheduleReconnect()` a second time.
+    @MainActor
+    @Test func aNilUrlReconnectDoesNotDoubleScheduleWhenASupersededTasksCloseArrivesLate() async throws {
+        let transport = FakeSyncSocketTransport()
+        let scheduler = FakeSyncSocketScheduler()
+        var currentURL: URL? = URL(string: "wss://example.invalid/api/sync/ws?token=t")!
+        let socket = SyncSocket(urlProvider: { currentURL }, transport: transport, scheduler: scheduler, pull: {})
+
+        socket.start()
+        #expect(transport.madeTasks.count == 1, "the first start() must create a live task against the non-nil URL")
+
+        // The transient nil-token window WR-01's fix targets.
+        currentURL = nil
+        socket.stop() // cancels task1 -- its onClose fires the deferred Task{@MainActor} close path, NOT synchronously observable here
+        socket.start() // re-entrant: stop() again (no-op), then connect() hits the nil-URL branch and schedules H1 -- task1 is NEVER replaced, since the nil branch returns before creating a task
+
+        // H1 must already be scheduled synchronously (the nil-URL branch of
+        // `connect()` runs inline inside `start()`, with no `await` between
+        // it and this line) -- no deferred close has had a chance to run
+        // yet, because nothing above has suspended.
+        #expect(scheduler.scheduled.count == 1, "the nil-URL branch alone must have scheduled exactly H1 so far")
+
+        // task1's deferred close now lands -- this is where the bug lived:
+        // `handleClose` sees `currentTask === task1` still true (nothing
+        // replaced it) and `intentionalStop` already false (reset by the
+        // second `start()`), so it calls `scheduleReconnect()` again.
+        try await Self.pollUntil(timeoutSeconds: 2) { scheduler.scheduled.count == 2 }
+
+        let live = scheduler.scheduled.filter { !$0.cancelled }
+        #expect(
+            live.count == 1,
+            "exactly one LIVE (non-cancelled) reconnect must remain after the late close -- the unfixed shape leaves H1 uncancelled alongside H2, so both eventually fire and orphan one of the two resulting connect() calls"
+        )
+    }
+
     // CR-01 (39-REVIEW.md): open/frame callbacks arriving from a REAL
     // background queue (never the fake's own synchronous call, and never
     // the test's own main-actor thread) must still land exactly one pull

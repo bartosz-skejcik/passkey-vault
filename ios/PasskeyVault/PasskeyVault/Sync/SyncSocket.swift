@@ -386,6 +386,24 @@ final class SyncSocket {
     }
 
     private func scheduleReconnect() {
+        // WR-04 (39-REVIEW.md, iteration 2): idempotent -- cancel whatever
+        // was previously scheduled before overwriting `reconnectHandle`.
+        // WR-01's nil-URL branch in `connect()` calls this a SECOND time
+        // for the same close, reachable through a real sequence: `stop()`
+        // deliberately does not nil `currentTask` (`handleClose` is the
+        // single owner of that transition), so `start()` -> `stop()` ->
+        // `connect()` with a momentarily nil token can schedule H1 here,
+        // and then the OLD task's deferred `handleClose` -- which now finds
+        // `currentTask === task` true and `intentionalStop` already false
+        // (reset by the new `start()`) -- calls this function again,
+        // scheduling H2. Without cancelling H1 first, both fire: two live
+        // `connect()` calls, the second silently orphaning whatever task
+        // the first one created (never cancelled, its transport handler
+        // entry never discarded). Cancelling here is correct for EVERY
+        // caller, not only this one -- a reconnect timer that already fired
+        // (`reconnectHandle` already nil at that point) is a no-op cancel.
+        reconnectHandle?.cancel()
+        reconnectHandle = nil
         // +-25% jitter on the ACTUAL scheduled delay, without perturbing the
         // underlying doubling sequence (05-RESEARCH.md Pitfall 4, ported).
         // Derived from the monotonic clock, deliberately NEVER a Swift RNG
