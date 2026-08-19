@@ -1,0 +1,28 @@
+E-F4a live Path A (invite-time wrap) run -- Phase 40, plan 40-09, Task 2
+Recorded: 2026-08-19 4:26:41 PM +0000
+Server origin: http://127.0.0.1:8621
+
+Account A (owner, creates the collection THEN the invite): pv-ef4a-a-1787156800-72e1eec9@example.invalid
+Account C (redeems the invite): pv-ef4a-c-1787156800-72e1eec9@example.invalid
+
+Order (what makes this Path A): the family-wide collection ec30bff3-5833-410f-a762-ff4d48c334e2 ("EF4a collection 1787156800-72e1eec9"),
+with 2 items, was created BEFORE the invite was generated.
+
+Invite URL: http://127.0.0.1:8621/invite/w7G3x5IosumupBL-gp6cHNoydJ6nksAbe0l4BOAUKpU#oanuXEBvGVytLwnPYJ9DHbKXCeNFvBso0-ePnM56yY4
+C's redemption result: familyWideSucceeded=["ec30bff3-5833-410f-a762-ff4d48c334e2"] familyWideFailed=[]
+
+Receiver-side proof (C, real pv-ffi decrypt, real server round trips):
+  Collection name decrypted by C: "EF4a collection 1787156800-72e1eec9" (expected "EF4a collection 1787156800-72e1eec9")
+  Items decrypted by C: ["a326187e-4782-42b2-8b63-b91efa15ca6e": "{\"type\":\"note\",\"name\":\"EF4a item 1\",\"folderId\":null,\"tags\":[],\"body\":\"ef4a-1787156800-72e1eec9-1\"}", "aac14513-bd90-449a-90f7-95671d3859c8": "{\"type\":\"note\",\"name\":\"EF4a item 0\",\"folderId\":null,\"tags\":[],\"body\":\"ef4a-1787156800-72e1eec9-0\"}"]
+
+Server-side: GET /api/vault/collections/ec30bff3-5833-410f-a762-ff4d48c334e2 as C returned sealed_key=present -- a collection_keys row exists for C.
+
+The Path A discriminator (this is what distinguishes Path A from Path B):
+  GET /api/families/family-wide-pending as C, immediately after redemption:
+  missing=[] resealable=0 entries
+  missing.isEmpty = true (expected true)
+
+Falsifiability of this discriminator: cross-referenced against Task 3's (livePathBLazyReseal)
+own transcript, where the SAME command against the SAME endpoint returns a NON-empty missing
+BEFORE that run's reseal step -- proving the emptiness here is informative, not the endpoint's
+default answer (40-RESEARCH.md's own Pitfall 6).

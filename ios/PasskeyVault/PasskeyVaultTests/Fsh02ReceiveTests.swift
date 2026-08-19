@@ -474,3 +474,376 @@ struct Fsh02ReceiveTests {
         #expect(familyWideSealedKeys.count == 2, "the accept body must carry exactly the two entries that DID unwrap")
     }
 }
+
+// MARK: - Tasks 2/3: live, real pv-server, two independent runs
+
+enum LiveFsh02Error: Error, CustomStringConvertible {
+    case requestFailed(String, status: Int, body: String)
+    case unexpectedShape(String)
+    case rowNotFound(String)
+    case preconditionViolated(String)
+
+    var description: String {
+        switch self {
+        case let .requestFailed(what, status, body): return "\(what) failed (\(status)): \(body)"
+        case let .unexpectedShape(detail): return "unexpected response shape: \(detail)"
+        case let .rowNotFound(detail): return "row not found: \(detail)"
+        case let .preconditionViolated(detail): return "precondition violated: \(detail)"
+        }
+    }
+}
+
+extension Fsh02ReceiveTests {
+
+    /// Same hardcoded-default-over-skip discipline as `InviteTests`/
+    /// `RemoveMemberTests` -- this task's own precondition requires
+    /// `scripts/ios-live-server.sh` already running on that exact default
+    /// port before either live method runs.
+    fileprivate static var liveServerBaseURL: URL {
+        let raw = ProcessInfo.processInfo.environment["PV_TEST_SERVER"] ?? "http://127.0.0.1:8621"
+        guard let url = URL(string: raw) else {
+            fatalError("PV_TEST_SERVER is not a valid URL: \(raw)")
+        }
+        return url
+    }
+
+    fileprivate static var repoRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // PasskeyVaultTests/
+            .deletingLastPathComponent() // PasskeyVault/
+            .deletingLastPathComponent() // ios/
+            .deletingLastPathComponent() // repo root
+    }
+
+    fileprivate static var planningEvidenceDirectory: URL {
+        repoRoot
+            .appendingPathComponent(".planning")
+            .appendingPathComponent("phases")
+            .appendingPathComponent("40-rodzina-i-wsp-dzielenie-na-telefonie")
+            .appendingPathComponent("evidence")
+    }
+
+    fileprivate static var durableEvidenceDirectory: URL {
+        repoRoot.appendingPathComponent("ios").appendingPathComponent("evidence").appendingPathComponent("40")
+    }
+
+    // MARK: Test-only write-path helpers (setup plumbing only -- mirrors
+    // `InviteTests`/`RemoveMemberTests`'s own established "add what THIS
+    // live run needs, nothing wired into production" discipline)
+
+    fileprivate static func createFamily(baseURL: URL, token: String, name: String) async throws {
+        struct Body: Encodable { let name: String }
+        let url = URL(string: "/api/families", relativeTo: baseURL)!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(Body(name: name))
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard status == 201 else {
+            let body = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            throw LiveFsh02Error.requestFailed("createFamily", status: status, body: body)
+        }
+    }
+
+    fileprivate static func addFamilyMember(baseURL: URL, ownerToken: String, memberUserId: String) async throws {
+        struct Body: Encodable { let user_id: String }
+        let url = URL(string: "/api/families/members", relativeTo: baseURL)!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(ownerToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(Body(user_id: memberUserId))
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard status == 201 else {
+            let body = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            throw LiveFsh02Error.requestFailed("addFamilyMember", status: status, body: body)
+        }
+    }
+
+    /// `PUT /api/vault/items/{id}/collection` -- moves a personal item into
+    /// `newCollectionId`. Same shape `RemoveMemberTests.moveItem` uses.
+    @discardableResult
+    fileprivate static func moveItem(
+        baseURL: URL, token: String, itemId: String, newCollectionId: String,
+        encKeyJson: String, encDataJson: String, expectedRevision: Int
+    ) async throws -> Int {
+        struct Body: Encodable {
+            let new_collection_id: String
+            let enc_key: String
+            let enc_data: String
+            let expected_revision: Int
+        }
+        struct ResponseBody: Decodable { let revision: Int }
+        let url = URL(string: "/api/vault/items/\(itemId)/collection", relativeTo: baseURL)!
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(
+            Body(new_collection_id: newCollectionId, enc_key: encKeyJson, enc_data: encDataJson, expected_revision: expectedRevision)
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard status == 200 else {
+            let body = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            throw LiveFsh02Error.requestFailed("moveItem", status: status, body: body)
+        }
+        return try JSONDecoder().decode(ResponseBody.self, from: data).revision
+    }
+
+    /// `GET /api/vault/collections/{id}/sync` (no `since` -- always a full
+    /// snapshot) -- every item in the collection, any author. See
+    /// `RemoveMemberTests.fetchSharedCollectionItems`'s own header for why
+    /// this, not `GET /api/sync`, is the correct enumeration endpoint for a
+    /// non-authoring collection member.
+    fileprivate static func fetchSharedCollectionItems(
+        baseURL: URL, token: String, collectionId: String
+    ) async throws -> [VaultItemRow] {
+        struct SnapshotBody: Decodable { let revision: Int; let items: [VaultItemRow] }
+        let url = URL(string: "/api/vault/collections/\(collectionId)/sync", relativeTo: baseURL)!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard status == 200 else {
+            let body = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            throw LiveFsh02Error.requestFailed("fetchSharedCollectionItems", status: status, body: body)
+        }
+        guard let snapshot = try? JSONDecoder().decode(SnapshotBody.self, from: data) else {
+            throw LiveFsh02Error.unexpectedShape("expected a snapshot from GET /api/vault/collections/\(collectionId)/sync")
+        }
+        return snapshot.items
+    }
+
+    fileprivate static func splitEncryptedItemJson(_ json: String) throws -> (encKeyJson: String, encDataJson: String) {
+        let data = Data(json.utf8)
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let encKeyObj = obj["enc_key"], let encDataObj = obj["enc_data"]
+        else {
+            throw LiveFsh02Error.unexpectedShape("malformed EncryptedItem JSON: \(json)")
+        }
+        let encKeyData = try JSONSerialization.data(withJSONObject: encKeyObj)
+        let encDataData = try JSONSerialization.data(withJSONObject: encDataObj)
+        return (String(decoding: encKeyData, as: UTF8.self), String(decoding: encDataData, as: UTF8.self))
+    }
+
+    fileprivate static func combinedEncryptedItemJson(encKeyJson: String, encDataJson: String) throws -> String {
+        guard
+            let encKeyData = encKeyJson.data(using: .utf8),
+            let encDataData = encDataJson.data(using: .utf8),
+            let encKeyObj = try? JSONSerialization.jsonObject(with: encKeyData),
+            let encDataObj = try? JSONSerialization.jsonObject(with: encDataData)
+        else {
+            throw LiveFsh02Error.unexpectedShape("malformed EncryptedItem JSON: \(encKeyJson) / \(encDataJson)")
+        }
+        let combined = try JSONSerialization.data(withJSONObject: ["enc_key": encKeyObj, "enc_data": encDataObj])
+        return String(decoding: combined, as: UTF8.self)
+    }
+
+    /// Creates a personal item then moves it into `collectionId` under
+    /// `ck` -- a collection-scoped item cannot be created directly; it is
+    /// always authored personally first, then moved (same two-step pattern
+    /// `RemoveMemberTests`'s own E-F5 fixture uses).
+    fileprivate static func createAndMoveItem(
+        baseURL: URL, token: String, userKey: FfiUserKey, ck: FfiCollectionKey,
+        collectionId: String, name: String, secretBody: String
+    ) async throws -> (itemId: String, plaintext: String) {
+        let itemId = VaultStore.mintItemId()
+        let personalPlaintext = "{\"type\":\"note\",\"name\":\"\(name)\",\"folderId\":null,\"tags\":[],\"body\":\"\"}"
+        let personalWire = try encryptItemWire(userKey: userKey, plaintext: personalPlaintext, itemId: itemId, revision: 1)
+        _ = try await VaultAPI(baseURL: baseURL, tokenProvider: { token }).createItem(
+            id: itemId, encKeyJson: personalWire.encKeyJson, encDataJson: personalWire.encDataJson
+        )
+        let collectionScopedPlaintext = "{\"type\":\"note\",\"name\":\"\(name)\",\"folderId\":null,\"tags\":[],\"body\":\"\(secretBody)\"}"
+        let collectionItemJson = try encryptItemForCollection(
+            ck: ck, plaintext: collectionScopedPlaintext, collectionId: collectionId, itemId: itemId, revision: 2
+        )
+        let (encKeyJson, encDataJson) = try Self.splitEncryptedItemJson(collectionItemJson)
+        _ = try await Self.moveItem(
+            baseURL: baseURL, token: token, itemId: itemId, newCollectionId: collectionId,
+            encKeyJson: encKeyJson, encDataJson: encDataJson, expectedRevision: 1
+        )
+        return (itemId, collectionScopedPlaintext)
+    }
+
+    // MARK: - Task 2: E-F4a, Path A (invite-time wrap)
+
+    /// Path A: the family-wide share existed BEFORE the invite was
+    /// created. Proven receiver-side on C, and discriminated from Path B
+    /// by `GET /api/families/family-wide-pending`'s `missing` array being
+    /// EMPTY immediately after redemption (no reseal was ever involved).
+    @MainActor
+    @Test func livePathAInviteTimeWrap() async throws {
+        let baseURL = Self.liveServerBaseURL
+        let runSuffix = "\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(8))".lowercased()
+        let emailA = "pv-ef4a-a-\(runSuffix)@example.invalid"
+        let emailC = "pv-ef4a-c-\(runSuffix)@example.invalid"
+        let password = "PvEF4a-40-09-EvidencePassword!"
+        let collectionName = "EF4a collection \(runSuffix)"
+
+        let sessionA = try await AccountService(apiClient: PvApiClient(baseURL: baseURL)).register(email: emailA, password: password)
+        let sessionC = try await AccountService(apiClient: PvApiClient(baseURL: baseURL)).register(email: emailC, password: password)
+
+        try await Self.createFamily(baseURL: baseURL, token: sessionA.token, name: "E-F4a family \(runSuffix)")
+
+        // ---- Path A order: the family-wide collection (with items) FIRST,
+        // the invite generated only AFTER. ----
+        let collectionServiceA = CollectionService(baseURL: baseURL, tokenProvider: { sessionA.token })
+        let collectionId = try await collectionServiceA.createFamilyWideCollection(
+            name: collectionName, accessLevel: "read", userKey: sessionA.userKey
+        )
+        let identityA = try await IdentityService(baseURL: baseURL, tokenProvider: { sessionA.token })
+            .ensureOwnIdentityKeypair(userKey: sessionA.userKey)
+        let collectionRecordA = try await collectionServiceA.fetchCollection(id: collectionId)
+        guard let sealedKeyA = collectionRecordA.sealedKey else {
+            throw LiveFsh02Error.rowNotFound("A's own sealed_key for collection \(collectionId)")
+        }
+        let ck = try unsealCollectionKey(myIdentityKey: identityA, sealedJson: sealedKeyA)
+
+        var itemIds: [String] = []
+        var plaintexts: [String: String] = [:]
+        for i in 0..<2 {
+            let (itemId, plaintext) = try await Self.createAndMoveItem(
+                baseURL: baseURL, token: sessionA.token, userKey: sessionA.userKey, ck: ck,
+                collectionId: collectionId, name: "EF4a item \(i)", secretBody: "ef4a-\(runSuffix)-\(i)"
+            )
+            itemIds.append(itemId)
+            plaintexts[itemId] = plaintext
+        }
+
+        let inviteService = InviteService(baseURL: baseURL, tokenProvider: { sessionA.token })
+        let inviteURL = try await inviteService.generateInviteLink(userKey: sessionA.userKey, expiresIn: "1h")
+
+        // ---- C redeems ----
+        let redemptionService = InviteRedemptionService(baseURL: baseURL, tokenProvider: { sessionC.token })
+        let result = try await redemptionService.redeem(url: inviteURL, userKey: sessionC.userKey)
+        #expect(result.familyWideSucceeded.contains(collectionId), "the invite-time fold-in must carry this collection")
+        #expect(result.familyWideFailed.isEmpty)
+
+        // ---- Receiver-side proof: C decrypts the collection's name and
+        // both items' plaintext, asserted equal to the literals A created. ----
+        let collectionServiceC = CollectionService(baseURL: baseURL, tokenProvider: { sessionC.token })
+        let identityC = try await IdentityService(baseURL: baseURL, tokenProvider: { sessionC.token })
+            .ensureOwnIdentityKeypair(userKey: sessionC.userKey)
+        let collectionRecordC = try await collectionServiceC.fetchCollection(id: collectionId)
+        guard let sealedKeyC = collectionRecordC.sealedKey else {
+            throw LiveFsh02Error.rowNotFound("C's fresh sealed_key for collection \(collectionId)")
+        }
+        let ckC = try unsealCollectionKey(myIdentityKey: identityC, sealedJson: sealedKeyC)
+        let decryptedName = try decryptItemForCollection(
+            ck: ckC, itemJson: collectionRecordC.encName, collectionId: collectionId, itemId: collectionId, revision: 1
+        )
+        #expect(decryptedName == collectionName, "C must decrypt the collection's name to A's own literal")
+
+        let itemsAsC = try await Self.fetchSharedCollectionItems(baseURL: baseURL, token: sessionC.token, collectionId: collectionId)
+        var decryptedItemResults: [String: String] = [:]
+        for itemId in itemIds {
+            guard let row = itemsAsC.first(where: { $0.id == itemId }) else {
+                throw LiveFsh02Error.rowNotFound("item \(itemId) in C's own sync snapshot")
+            }
+            let combinedJson = try Self.combinedEncryptedItemJson(encKeyJson: row.enc_key, encDataJson: row.enc_data)
+            let decrypted = try decryptItemForCollection(
+                ck: ckC, itemJson: combinedJson, collectionId: collectionId, itemId: itemId, revision: UInt32(row.revision)
+            )
+            decryptedItemResults[itemId] = decrypted
+            #expect(decrypted == plaintexts[itemId], "C must decrypt item \(itemId) to the SAME plaintext A created")
+        }
+        #expect(decryptedItemResults.count == 2)
+
+        // ---- Server-side: collection_keys has a row for C ----
+        #expect(collectionRecordC.sealedKey != nil, "collection_keys must carry a row for C -- a direct API read confirms non-nil sealed_key")
+
+        // ---- The Path A discriminator ----
+        let pendingC = try await SharedItemsStore.fetchFamilyWidePending(baseURL: baseURL, tokenProvider: { sessionC.token })
+        #expect(pendingC.missing.isEmpty, "Path A: family-wide-pending's missing array must be EMPTY immediately after redemption")
+
+        // ---- Evidence ----
+        let planningDir = Self.planningEvidenceDirectory
+        try FileManager.default.createDirectory(at: planningDir, withIntermediateDirectories: true)
+        let durableDir = Self.durableEvidenceDirectory
+        try FileManager.default.createDirectory(at: durableDir, withIntermediateDirectories: true)
+
+        let transcript = """
+        E-F4a live Path A (invite-time wrap) run -- Phase 40, plan 40-09, Task 2
+        Recorded: \(Date())
+        Server origin: \(baseURL.absoluteString)
+
+        Account A (owner, creates the collection THEN the invite): \(emailA)
+        Account C (redeems the invite): \(emailC)
+
+        Order (what makes this Path A): the family-wide collection \(collectionId) ("\(collectionName)"),
+        with 2 items, was created BEFORE the invite was generated.
+
+        Invite URL: \(inviteURL.absoluteString)
+        C's redemption result: familyWideSucceeded=\(result.familyWideSucceeded) familyWideFailed=\(result.familyWideFailed)
+
+        Receiver-side proof (C, real pv-ffi decrypt, real server round trips):
+          Collection name decrypted by C: "\(decryptedName)" (expected "\(collectionName)")
+          Items decrypted by C: \(decryptedItemResults)
+
+        Server-side: GET /api/vault/collections/\(collectionId) as C returned sealed_key=\(collectionRecordC.sealedKey != nil ? "present" : "MISSING") -- a collection_keys row exists for C.
+
+        The Path A discriminator (this is what distinguishes Path A from Path B):
+          GET /api/families/family-wide-pending as C, immediately after redemption:
+          missing=\(pendingC.missing.map { "\($0.collection_id):\($0.kind)" }) resealable=\(pendingC.resealable.count) entries
+          missing.isEmpty = \(pendingC.missing.isEmpty) (expected true)
+
+        Falsifiability of this discriminator: cross-referenced against Task 3's (livePathBLazyReseal)
+        own transcript, where the SAME command against the SAME endpoint returns a NON-empty missing
+        BEFORE that run's reseal step -- proving the emptiness here is informative, not the endpoint's
+        default answer (40-RESEARCH.md's own Pitfall 6).
+        """
+        try transcript.write(
+            to: planningDir.appendingPathComponent("40-09-ef4a-transcript.txt"), atomically: true, encoding: .utf8
+        )
+        try transcript.write(
+            to: durableDir.appendingPathComponent("40-09-ef4a-transcript.txt"), atomically: true, encoding: .utf8
+        )
+
+        let screenshotView = Fsh02EvidenceScreen(
+            heading: "E-F4a — Path A (invite-time wrap)",
+            primaryLine: decryptedName,
+            secondaryLines: itemIds.compactMap { decryptedItemResults[$0] }
+        )
+        let renderer = ImageRenderer(content: screenshotView)
+        renderer.scale = 3
+        guard let uiImage = renderer.uiImage, let pngData = uiImage.pngData() else {
+            throw LiveFsh02Error.unexpectedShape("failed to render the E-F4a evidence screenshot")
+        }
+        try pngData.write(to: planningDir.appendingPathComponent("40-09-ef4a-collection.png"))
+        try pngData.write(to: durableDir.appendingPathComponent("40-09-ef4a-collection.png"))
+    }
+}
+
+/// The captured-for-the-record evidence screen shared by both live runs --
+/// renders a heading, a primary decrypted (or state) line, and secondary
+/// lines, with REAL values from the run, never a fixture. Same
+/// "not the live app view itself, but the same tokens/copy, real values"
+/// precedent `InviteTests.InviteCreateEvidenceScreen`/`RemoveMemberTests`'s
+/// own evidence screens already establish.
+private struct Fsh02EvidenceScreen: View {
+    let heading: String
+    let primaryLine: String
+    let secondaryLines: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PVMetrics.fieldStackGap) {
+            Text(heading).font(.system(size: PVMetrics.titleSize, weight: .bold))
+            Text(primaryLine)
+                .font(.system(size: PVMetrics.subtitleSize, weight: .semibold))
+                .foregroundStyle(Color("PVTextPrimary"))
+            ForEach(secondaryLines, id: \.self) { line in
+                Text(line)
+                    .font(.system(size: PVMetrics.footnoteSize))
+                    .foregroundStyle(Color("PVTextMuted"))
+            }
+        }
+        .padding(PVMetrics.screenHPadding)
+        .frame(width: 393)
+        .background(Color("PVBackground"))
+    }
+}
