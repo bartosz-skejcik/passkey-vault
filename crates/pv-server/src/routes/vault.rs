@@ -1010,32 +1010,45 @@ pub async fn move_item(
         }
     }
 
-    // Gate 1b (CR-01, code review Phase 32): a move OUT to PERSONAL scope
-    // (`new_collection_id: None`) re-seals the item's ciphertext under the
-    // CALLER's own key material (`store.ts::moveVaultItem`'s encrypt-only
-    // shape — see that function's own doc comment) — only the item's actual
-    // owner can ever open a key sealed to them. Gate 0 above already closes
-    // this for a source that is ALREADY personal (an owner-only re-scope);
-    // Gate 1 above already closes it for an item_bucket source specifically
-    // (the "laundering" fix). Neither covers the case this closes: an
-    // ORDINARY shared folder, where an `edit`-level member (a genuine,
-    // deliberate grant — `Membership<Item, RequireEdit>` resolves `Edit`
-    // for any folder member holding that level, not just the item's
-    // creator) selects "Bez folderu" or any personal folder on an item
-    // authored by someone else. Without this gate the `UPDATE` below writes
-    // `collection_id = NULL` while leaving `vault_items.user_id` at the
-    // ORIGINAL owner — who then resolves `fetch_items_for`'s arm 1
-    // (`user_id = ? AND collection_id IS NULL`) against ciphertext sealed
-    // to a key they never held, permanently undecryptable, with no client
-    // anywhere surfacing an error (32-REVIEW.md CR-01's PoC). "edit" on a
+    // Gate 1b (CR-01, code review Phase 32; extended by F-2,
+    // 32-VERIFICATION.md gap closure): a move of a COLLECTION-scoped item
+    // (source is an ORDINARY shared folder — Gate 1 above already closes an
+    // item_bucket source unconditionally, regardless of destination)
+    // re-seals the item's ciphertext under the CALLER's own key material
+    // (`store.ts::moveVaultItem`'s encrypt-only shape — see that function's
+    // own doc comment) — only the item's actual owner can ever open a key
+    // sealed to them, and only the item's actual owner can ever be the
+    // right party to decide who is entitled to hold that key next. Gate 0
+    // above already closes this for a source that is ALREADY personal (an
+    // owner-only re-scope); Gate 1 closes it for an item_bucket source.
+    // This gate closes it for the remaining case: an `edit`-level member (a
+    // genuine, deliberate grant — `Membership<Item, RequireEdit>` resolves
+    // `Edit` for any folder member holding that level, not just the item's
+    // creator) re-scoping an item authored by someone else — to PERSONAL
+    // scope ("Bez folderu" or any personal folder, `new_collection_id:
+    // None`, the original CR-01 shape) OR to a DIFFERENT shared folder
+    // (`new_collection_id: Some(other)`, F-2's extension). The destination
+    // is deliberately NOT consulted below — unlike the null-destination
+    // case, a collection→collection non-owner move never produces an
+    // undecryptable row (the destination's own members can still read it
+    // fine, so SC3's literal "never a row nobody can decrypt" bar and
+    // ORG-02's wording both hold either way), but it still strips the
+    // item's actual owner of their own item with no notification anywhere
+    // — reachable through the shipped `ItemForm`'s `writableShared`
+    // optgroup, which (before this fix) stayed fully enabled for a
+    // foreign-owned item (32-VERIFICATION.md F-2's falsified probe: B,
+    // holding `edit` on folder F and owning folder G, moves author A's item
+    // F → G; server returned 200, A's `/api/vault/items` no longer
+    // contained it, A's `/collections/G/sync` gave A a 404). "edit" on a
     // folder membership grant means "may modify the CONTENT of items in
-    // this folder", never "may re-scope, or destroy through a scope
-    // change, an item belonging to someone else" — the identical reading
-    // Gate 0's own doc comment already gives that phrase for a personal
-    // item's `item_shares` grant. Runs on the SAME pre-tx `precheck_*`
-    // values Gate 0/Gate 1 already read, before Gate 2's destination check
-    // and before the transaction opens.
-    if req.new_collection_id.is_none() && precheck_owner_user_id != source.caller_user_id {
+    // this folder", never "may re-scope, delegate, or destroy — REGARDLESS
+    // OF DESTINATION — an item belonging to someone else" — the identical
+    // reading Gate 0's own doc comment already gives that phrase for a
+    // personal item's `item_shares` grant, now applied uniformly rather
+    // than only for the null-destination half. Runs on the SAME pre-tx
+    // `precheck_*` values Gate 0/Gate 1 already read, before Gate 2's
+    // destination check and before the transaction opens.
+    if precheck_collection.is_some() && precheck_owner_user_id != source.caller_user_id {
         return Err(ApiError::Forbidden);
     }
 
@@ -1121,8 +1134,10 @@ pub async fn move_item(
     // above Gate 2) cannot itself close the TOCTOU window between that read
     // and this transaction's own — a concurrent ownership-affecting change
     // between the two reads must still be caught here, on the row actually
-    // about to be mutated.
-    if req.new_collection_id.is_none() && owner_user_id != source.caller_user_id {
+    // about to be mutated. Mirrors Gate 1b's own destination-independent
+    // condition above (F-2, 32-VERIFICATION.md gap closure) — any
+    // collection-scoped source, any destination.
+    if current_collection.is_some() && owner_user_id != source.caller_user_id {
         return Err(ApiError::Forbidden);
     }
 

@@ -261,13 +261,15 @@ export default function ItemForm({
   // vs. a genuine move (dispatches to moveVaultItem). `null`/absent for
   // create mode and for a personal item.
   currentCollectionId?: string | null;
-  // CR-01 (code review, Phase 32): whether the CALLER owns the item
-  // currently being edited -- `true` (the default) for create mode and for
-  // every item the caller can own outright. `false` ONLY for a
-  // collection-scoped item authored by a fellow member (mirrors
-  // `VaultItem.ownedByMe`'s own doc comment). Gates whether the destination
-  // select offers a personal-scope option at all -- see renderFolderBlock's
-  // own comment for why "Bez folderu" specifically is where this matters.
+  // CR-01 (code review, Phase 32), extended by F-2 (32-VERIFICATION.md gap
+  // closure): whether the CALLER owns the item currently being edited --
+  // `true` (the default) for create mode and for every item the caller can
+  // own outright. `false` ONLY for a collection-scoped item authored by a
+  // fellow member (mirrors `VaultItem.ownedByMe`'s own doc comment). Gates
+  // whether the destination select offers ANY re-scoping destination at
+  // all -- not just "Bez folderu"/personal folders (CR-01's original
+  // scope) but also every OTHER shared folder (F-2's extension) -- see
+  // renderFolderBlock's own comment for the full reasoning.
   ownedByMe?: boolean;
   initialFields?: ItemFields;
   onCreated: () => void;
@@ -649,18 +651,30 @@ export default function ItemForm({
     const sharedCollections = collections.filter((c) => c.familyWideKind !== "item_bucket");
     const writableShared = sharedCollections.filter((c) => c.accessLevel === "edit");
     const readOnlyShared = sharedCollections.filter((c) => c.accessLevel !== "edit");
-    // CR-01 (code review, Phase 32): an item CURRENTLY in a shared folder
-    // that the caller does not OWN must never offer a personal-scope
-    // destination -- moveVaultItem re-seals a move-out under the CALLER's
-    // OWN key (see its own doc comment), which only the item's actual
-    // owner can ever open. This is the "do not OFFER" half of CR-01's
-    // fix; the "do not PERFORM" half is moveVaultItem's own
-    // NotItemOwnerError guard, and the authoritative bound is
-    // vault.rs::move_item's Gate 1b. Shown but disabled, with the reason
-    // -- the same "shown but disabled" discipline 32-CONTEXT.md's Area 1
-    // already establishes for a read-only shared destination, never a
-    // silent omission.
-    const personalScopeBlocked = !ownedByMe && currentCollectionId != null;
+    // CR-01 (code review, Phase 32); extended by F-2 (32-VERIFICATION.md
+    // gap closure): an item CURRENTLY in a shared folder that the caller
+    // does not OWN must never offer ANY destination that re-scopes it --
+    // not merely personal scope. moveVaultItem re-seals a move-out under
+    // the CALLER's OWN key (see its own doc comment), which only the
+    // item's actual owner can ever open; a move into a DIFFERENT shared
+    // folder never re-seals under a key the destination's members can't
+    // open, but it still strips the item's actual owner of their own item
+    // with no notification anywhere (32-VERIFICATION.md F-2's falsified
+    // probe: an edit-level member of F who also owns G could move author
+    // A's item F -> G through this exact select, before this fix, since
+    // the old guard only disabled "Bez folderu" and personal folders --
+    // the ENTIRE `writableShared` optgroup stayed enabled for a
+    // foreign-owned item). This is the "do not OFFER" half of the fix;
+    // the "do not PERFORM" half is moveVaultItem's own NotItemOwnerError
+    // guard, and the authoritative bound is vault.rs::move_item's Gate
+    // 1b, now destination-independent. Shown but disabled, with the
+    // reason -- the same "shown but disabled" discipline 32-CONTEXT.md's
+    // Area 1 already establishes for a read-only shared destination,
+    // never a silent omission. The item's OWN current folder stays
+    // enabled regardless -- reselecting it is not a re-scope at all
+    // (handleSubmit dispatches an unchanged destination through
+    // updateVaultItem, never moveVaultItem).
+    const nonOwnerScopeBlocked = !ownedByMe && currentCollectionId != null;
 
     return (
       <div className="flex flex-col gap-1">
@@ -691,8 +705,8 @@ export default function ItemForm({
               }
             }}
           >
-            <option value="" disabled={personalScopeBlocked}>
-              {personalScopeBlocked ? t("item.noFolderOwnerOnly") : t("item.noFolder")}
+            <option value="" disabled={nonOwnerScopeBlocked}>
+              {nonOwnerScopeBlocked ? t("item.noFolderOwnerOnly") : t("item.noFolder")}
             </option>
             {/* LO-01 (code review, Phase 32): mirrors the shared-optgroup's
                 own `sharedCollections.length > 0` guard immediately below --
@@ -701,8 +715,8 @@ export default function ItemForm({
             {folderOptions.length > 0 ? (
               <optgroup label={t("item.myFoldersGroup")}>
                 {folderOptions.map((folder) => (
-                  <option key={folder.id} value={folder.id} disabled={personalScopeBlocked}>
-                    {personalScopeBlocked
+                  <option key={folder.id} value={folder.id} disabled={nonOwnerScopeBlocked}>
+                    {nonOwnerScopeBlocked
                       ? interpolate(t("item.folderOwnerOnlyOption"), { name: folder.name })
                       : folder.name}
                   </option>
@@ -711,11 +725,24 @@ export default function ItemForm({
             ) : null}
             {sharedCollections.length > 0 ? (
               <optgroup label={t("item.sharedFoldersGroup")}>
-                {writableShared.map((c) => (
-                  <option key={c.id} value={`collection:${c.id}`}>
-                    {c.name}
-                  </option>
-                ))}
+                {writableShared.map((c) => {
+                  // F-2 (32-VERIFICATION.md gap closure): a DIFFERENT
+                  // shared folder is blocked by the SAME nonOwnerScopeBlocked
+                  // reason as the personal-scope options above -- moving
+                  // between two shared folders is still a re-scope of an
+                  // item the caller does not own, which Gate 1b now
+                  // refuses server-side regardless of destination. The
+                  // item's OWN current folder (c.id === currentCollectionId)
+                  // is exempt: reselecting it is not a move at all.
+                  const blocked = nonOwnerScopeBlocked && c.id !== currentCollectionId;
+                  return (
+                    <option key={c.id} value={`collection:${c.id}`} disabled={blocked}>
+                      {blocked
+                        ? interpolate(t("item.folderOwnerOnlyOption"), { name: c.name })
+                        : c.name}
+                    </option>
+                  );
+                })}
                 {readOnlyShared.map((c) => (
                   <option key={c.id} value={`collection:${c.id}`} disabled>
                     {interpolate(t("item.folderReadOnlyOption"), { name: c.name })}

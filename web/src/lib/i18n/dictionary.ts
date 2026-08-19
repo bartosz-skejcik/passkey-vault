@@ -602,16 +602,20 @@ export const DICTIONARY = {
     pl: "Nie masz już dostępu do zapisu w tym folderze. Zmiana nie została zapisana.",
     en: "You no longer have write access to this folder. The change was not saved.",
   },
-  // ME-06 (code review, Phase 32): the ownership-refusal shape's OWN copy,
-  // distinct from itemMoveAccessLost above -- a NotItemOwnerError names a
-  // completely different failure (the caller does not own this item, not
-  // "this folder revoked your write access") and reusing the folder copy
-  // would name a folder the caller never even chose (a null-destination
-  // move has none). Never retry-inviting, for the same reason
+  // ME-06 (code review, Phase 32), extended by F-2 (32-VERIFICATION.md gap
+  // closure): the ownership-refusal shape's OWN copy, distinct from
+  // itemMoveAccessLost above -- a NotItemOwnerError names a completely
+  // different failure (the caller does not own this item, not "this
+  // folder revoked your write access") and reusing the folder copy would
+  // name a folder the caller never even chose (a null-destination move
+  // has none). Deliberately generic about the DESTINATION ("another
+  // folder", not "a personal folder") -- F-2 extended the refusal to
+  // cover a move into a DIFFERENT shared folder too, not merely to
+  // personal scope. Never retry-inviting, for the same reason
   // itemMoveAccessLost isn't: this is not fixable by retrying.
   "error.itemMoveNotOwner": {
-    pl: "Nie jesteś właścicielem tego itemu, więc nie można przenieść go do folderu osobistego. Zmiana nie została zapisana.",
-    en: "You don't own this item, so it can't be moved to a personal folder. The change was not saved.",
+    pl: "Nie jesteś właścicielem tego itemu, więc nie można przenieść go do innego folderu. Zmiana nie została zapisana.",
+    en: "You don't own this item, so it can't be moved to another folder. The change was not saved.",
   },
 
   "validation.required": { pl: "To pole jest wymagane", en: "This field is required" },

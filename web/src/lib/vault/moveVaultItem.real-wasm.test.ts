@@ -580,6 +580,43 @@ describe("store.ts moveVaultItem: ownership guard, recovery, and error classific
     }
   });
 
+  it("F-2 (32-VERIFICATION.md gap closure): refuses (NotItemOwnerError) a move BETWEEN two shared folders of a collection item the caller does not own, BEFORE any network call", async () => {
+    const { itemId, fields, itemRevision } = await setupForeignCollectionItem();
+    try {
+      // A DIFFERENT collection id than the item's current one -- the
+      // verifier's exact probe shape (an edit-level member of the source
+      // folder who also holds edit/ownership on a genuinely different
+      // destination folder). CR-01's original guard only fired on
+      // `newCollectionId === null`; this proves the destination-independent
+      // extension.
+      await expect(
+        moveVaultItem(itemId, fields, itemRevision, "collection-a-different-shared-folder"),
+      ).rejects.toBeInstanceOf(NotItemOwnerError);
+      expect(mockMoveItemToCollection).not.toHaveBeenCalled();
+    } finally {
+      lockVault();
+    }
+  });
+
+  it("F-2: does NOT refuse reselecting the item's OWN current collection (no actual re-scope) even when the caller does not own the item", async () => {
+    const { collectionId, itemId, fields, itemRevision } = await setupForeignCollectionItem();
+    try {
+      mockMoveItemToCollection.mockResolvedValue({
+        revision: itemRevision + 1,
+        collection_id: collectionId,
+        updated_at: "2026-08-19T00:15:00Z",
+      });
+      // Same destination as the item's current collection -- not a
+      // re-scope at all, so the ownership guard must not fire even though
+      // ownedByMe is false.
+      const updated = await moveVaultItem(itemId, fields, itemRevision, collectionId);
+      expect(updated.collectionId).toBe(collectionId);
+      expect(mockMoveItemToCollection).toHaveBeenCalledTimes(1);
+    } finally {
+      lockVault();
+    }
+  });
+
   it("CR-02: recovery DECLINES when the fresh row is at the right destination/revision but its DECRYPTED content does not match this attempt's own -- the exact false-success shape C-2 exists to prevent", async () => {
     const { collectionId, ck, itemId } = await setupForeignCollectionItem();
     try {

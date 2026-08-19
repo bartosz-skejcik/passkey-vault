@@ -721,13 +721,21 @@ describe("ItemForm destination optgroup (32-02)", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
   });
 
-  // CR-01 (code review, Phase 32): "do not OFFER a move-out of an item the
-  // caller does not own" -- the client-side half of CR-01's fix. The
-  // authoritative half is the server's Gate 1b; this proves the UI never
-  // even presents the dangerous option.
-  it("CR-01: an item in a shared folder the caller does NOT own disables every personal-scope option, with the ownership reason visible", () => {
+  // CR-01 (code review, Phase 32), extended by F-2 (32-VERIFICATION.md gap
+  // closure): "do not OFFER a re-scope of an item the caller does not
+  // own" -- the client-side half of the fix. The authoritative half is the
+  // server's Gate 1b (destination-independent); this proves the UI never
+  // even presents the dangerous option, for EITHER a personal destination
+  // or a DIFFERENT shared folder.
+  it("CR-01/F-2: an item in a shared folder the caller does NOT own disables every personal-scope option AND every OTHER shared folder, with the ownership reason visible -- the item's OWN current folder stays enabled", () => {
     mockUseCollections.mockReturnValue([
       { id: "col-1", name: "Shared Folder", accessLevel: "edit", familyWideKind: null },
+      // A SECOND, genuinely different shared folder the caller also holds
+      // edit on -- this is F-2's own falsified probe shape (an edit-level
+      // member of the item's current folder who ALSO owns/edits a
+      // different folder must not be offered it as a destination for an
+      // item they don't own).
+      { id: "col-2", name: "A Different Shared Folder", accessLevel: "edit", familyWideKind: null },
     ]);
     mockUseFolders.mockReturnValue([{ id: "folder-1", name: "Personal" }]);
     render(
@@ -755,14 +763,27 @@ describe("ItemForm destination optgroup (32-02)", () => {
     expect(personalFolderOption.textContent).toContain("item.folderOwnerOnlyOption");
     expect(personalFolderOption.textContent).toContain("Personal");
 
-    // A DIFFERENT shared destination stays selectable and ENABLED -- only
-    // PERSONAL scope is blocked; moving between two shared folders neither
-    // re-seals under the caller's own key nor changes who owns the item.
-    const sharedOption = select.querySelector(
+    // The item's OWN current folder stays selectable and ENABLED --
+    // reselecting it is not a move at all (handleSubmit dispatches an
+    // unchanged destination through updateVaultItem, never moveVaultItem).
+    const ownCurrentFolderOption = select.querySelector(
       'option[value="collection:col-1"]',
     ) as HTMLOptionElement;
-    expect(sharedOption).not.toBeNull();
-    expect(sharedOption.disabled).toBe(false);
+    expect(ownCurrentFolderOption).not.toBeNull();
+    expect(ownCurrentFolderOption.disabled).toBe(false);
+
+    // F-2: a GENUINELY DIFFERENT shared folder is now blocked too, with the
+    // SAME ownership reason -- moving between two shared folders is still
+    // a re-scope of an item the caller does not own, which strips the
+    // item's real owner of it with no notification (the verifier's
+    // falsified probe). Before this fix, this option stayed enabled.
+    const otherSharedOption = select.querySelector(
+      'option[value="collection:col-2"]',
+    ) as HTMLOptionElement;
+    expect(otherSharedOption).not.toBeNull();
+    expect(otherSharedOption.disabled).toBe(true);
+    expect(otherSharedOption.textContent).toContain("item.folderOwnerOnlyOption");
+    expect(otherSharedOption.textContent).toContain("A Different Shared Folder");
   });
 
   it("CR-01: an item the caller OWNS (ownedByMe true, the default) offers personal-scope options normally, even inside a shared folder", () => {

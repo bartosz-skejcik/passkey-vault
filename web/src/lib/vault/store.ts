@@ -194,27 +194,38 @@ export class DirectShareNotEditableError extends Error {
   }
 }
 
-/** CR-01 (code review, Phase 32): thrown by `moveVaultItem` -- client-side,
- * BEFORE any encryption/network call -- when the caller attempts to move a
- * collection-scoped item they do NOT own out to personal scope
- * (`newCollectionId === null`). A move-out re-seals the item's ciphertext
- * under the CALLER's own UserKey (`moveVaultItem`'s own doc comment); only
- * the item's actual owner can ever open a key sealed to them. This is
- * presentation, not authorization -- the authoritative bound is
- * `vault.rs::move_item`'s Gate 1b, which refuses the identical case
- * server-side regardless of what this client check does or does not catch
- * (`ownedByMe` is metadata the client trusts but the server never does).
+/** CR-01 (code review, Phase 32), extended by F-2 (32-VERIFICATION.md gap
+ * closure): thrown by `moveVaultItem` -- client-side, BEFORE any
+ * encryption/network call -- when the caller attempts to RE-SCOPE a
+ * collection-scoped item they do NOT own to a DIFFERENT destination,
+ * whether that destination is personal scope (`newCollectionId === null`,
+ * CR-01's original shape) or a different shared folder entirely (F-2's
+ * extension). A move-out re-seals the item's ciphertext under the CALLER's
+ * own UserKey (`moveVaultItem`'s own doc comment); only the item's actual
+ * owner can ever open a key sealed to them. A move between two shared
+ * folders never re-seals under a key the destination can't open, but it
+ * still strips the item's real owner of their own item, unannounced --
+ * the same "edit means content, never re-scope" bound `vault.rs::move_item`
+ * Gate 0's own doc comment states for personal items, now applied
+ * uniformly. This is presentation, not authorization -- the authoritative
+ * bound is `vault.rs::move_item`'s Gate 1b, destination-independent, which
+ * refuses the identical case server-side regardless of what this client
+ * check does or does not catch (`ownedByMe` is metadata the client trusts
+ * but the server never does).
  *
  * ALSO thrown (ME-06, code review) when the server itself refuses with a
- * 403 on a null-destination move -- `move_item`'s Gate 0/1/1b, none of
- * which consult the destination at all. The prior code mapped every 403
- * here to `CollectionKeyUnavailableError`'s "you no longer have write
- * access to this folder" copy, which is actively wrong for an ownership
- * refusal: there is no folder in this picture, and the real problem is
- * that the caller never owned the item to begin with. */
+ * 403 for an item the caller's own local metadata already knows it does
+ * not own -- `move_item`'s Gate 0/1/1b, none of which consult the
+ * destination at all. The prior code mapped every 403 on a null
+ * destination here to `CollectionKeyUnavailableError`'s "you no longer
+ * have write access to this folder" copy, which is actively wrong for an
+ * ownership refusal: there may be no folder in this picture at all (a
+ * move-out), or the folder named is not the actual problem (a
+ * collection->collection ownership refusal) -- the real problem is that
+ * the caller never owned the item to begin with. */
 export class NotItemOwnerError extends Error {
   constructor(itemId: string) {
-    super(`cannot move item ${itemId} to personal scope -- you are not its owner`);
+    super(`cannot move item ${itemId} -- you are not its owner`);
     this.name = "NotItemOwnerError";
   }
 }
@@ -1290,16 +1301,26 @@ export async function moveVaultItem(
   if (directSharedItems.some((item) => item.id === id)) {
     throw new DirectShareNotEditableError(id);
   }
-  // CR-01 (code review, Phase 32): refuse client-side, BEFORE any
-  // encryption, a move OUT to personal scope of an item this caller does
-  // NOT own -- see NotItemOwnerError's own doc comment for the full
-  // rationale. This is presentation, not authorization: the authoritative
-  // bound is vault.rs::move_item's Gate 1b, which refuses the identical
-  // case server-side regardless of what `items`/`ownedByMe` (client-
-  // trusted metadata) says here.
+  // CR-01 (code review, Phase 32), extended by F-2 (32-VERIFICATION.md gap
+  // closure): refuse client-side, BEFORE any encryption, any RE-SCOPE of a
+  // collection-scoped item this caller does NOT own -- not merely a move
+  // OUT to personal scope (CR-01's original shape) but also a move into a
+  // DIFFERENT shared folder (F-2's extension; the verifier's falsified
+  // probe: an edit-level member of F who also owns G moved author A's item
+  // F -> G, stripping A of their own item with no notification). See
+  // NotItemOwnerError's own doc comment for the full rationale. This is
+  // presentation, not authorization: the authoritative bound is
+  // vault.rs::move_item's Gate 1b, now destination-independent, which
+  // refuses the identical case server-side regardless of what
+  // `items`/`ownedByMe` (client-trusted metadata) says here. Reselecting
+  // the item's OWN current collection (`newCollectionId ===
+  // existingBeforeSave.collectionId`) is exempt -- that is not a re-scope
+  // at all, and this function should not even be called for it (the
+  // dispatch above routes an unchanged destination through
+  // updateVaultItem), but the guard stays correct if it ever is.
   if (
-    newCollectionId === null &&
     existingBeforeSave?.collectionId != null &&
+    newCollectionId !== existingBeforeSave.collectionId &&
     existingBeforeSave.ownedByMe !== true
   ) {
     throw new NotItemOwnerError(id);
@@ -1475,20 +1496,35 @@ export async function moveVaultItem(
       throw new RevisionConflictError(lastEditorEmail);
     }
     if (isForbiddenError(err)) {
-      // ME-06 (code review, Phase 32): a 403 here is NOT reachable only
-      // when newCollectionId !== null -- move_item's Gate 0/1/1b all
-      // return Forbidden without ever consulting the destination, and
-      // every one of them can fire on a null-destination move (an
-      // ownership refusal, CR-01). Distinguish that shape from Gate 2's
-      // genuine destination-access refusal below, so the copy names the
-      // real problem instead of blaming a folder the caller never chose.
-      if (newCollectionId === null) {
+      // ME-06 (code review, Phase 32), extended by F-2 (32-VERIFICATION.md
+      // gap closure): a 403 here is NOT reachable only when
+      // newCollectionId !== null -- move_item's Gate 0/1/1b all return
+      // Forbidden without ever consulting the destination. Gate 2
+      // (destination-access) NEVER runs for a null destination (vault.rs's
+      // own `match &req.new_collection_id` for that check), so a
+      // null-destination 403 is UNCONDITIONALLY an ownership refusal
+      // (Gate 0/1/1b), exactly as the original ME-06 fix established.
+      // F-2 adds a SECOND, narrower case for a NON-null destination: the
+      // client-side guard above already throws NotItemOwnerError before
+      // any network call whenever local `ownedByMe` metadata says this is
+      // an ownership case, so a 403 reaching here on a non-null
+      // destination with that same metadata means the local cache was
+      // STALE (a TOCTOU) but the server's Gate 1b still correctly refused
+      // -- name it the same way, rather than blaming destination access
+      // Gate 2 never actually checked.
+      if (
+        newCollectionId === null ||
+        (existingBeforeSave?.collectionId != null &&
+          newCollectionId !== existingBeforeSave.collectionId &&
+          existingBeforeSave.ownedByMe !== true)
+      ) {
         throw new NotItemOwnerError(id);
       }
       // The client-visible half of ORG-02's TOCTOU refusal (destination
       // access revoked between the client's stale useCollections() view
       // and submit; vault.rs::move_item Gate 2 refuses server-side before
-      // any write -- no server change needed).
+      // any write -- no server change needed). newCollectionId is
+      // guaranteed non-null here (the branch above always fires on null).
       throw new CollectionKeyUnavailableError(newCollectionId);
     }
     if (isNotFoundError(err)) {
