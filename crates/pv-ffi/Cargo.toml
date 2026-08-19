@@ -47,6 +47,27 @@ crate-type = ["staticlib", "lib"]
 # build split) is the named owner of closing this for real** -- a genuine
 # per-target build product/output path, not a shared one whichever
 # invocation ran last wins.
+#
+# CONFIRMED (Phase 40, Plan 40-04, Task 3) -- this plan's own trigger
+# condition ("the moment a second build path exists") had ALREADY arrived
+# by Phase 36 (`PasskeyVaultAutoFill.appex`) and the `default = []` flip
+# above already happened then, not in this plan. What 40-04 adds is not a
+# new flip but a re-verification that the guard still holds against the
+# surface Phase 40 just built: `cargo build -p pv-ffi` (no features) is
+# zero-warning, `xcodebuild test -only-testing:FfiPanicSafetyTests` still
+# passes, and the flag's placement was proven load-bearing by temporarily
+# no-op'ing `--with-panic-probe` in `scripts/build-ios.sh` (the test then
+# fails to build: "Value of type 'FfiUserKey' has no member
+# 'ffi06SyntheticPanicProbe'"), then restoring it (green again;
+# 40-04-SUMMARY.md has the transcript). Separately, `project.pbxproj`'s own
+# Run Script phase (Phase 39, Plan 39-07, out of this plan's file scope) has
+# ALSO since moved off the unconditional `--with-panic-probe` default the
+# paragraph above still describes: it now scopes the probe to `Debug`
+# config only (`PV_FFI_TEST_VARIANT` still wins when set; Release gets a
+# plain artifact). The HONEST RESIDUAL narrows accordingly -- the probe now
+# ships in every Debug `PasskeyVault.app`, not every configuration -- but
+# does not close: Phase 41's per-target split is still the named owner of
+# closing it for real.
 
 # kdf-probe (36-03, E5.c): gates crates/pv-ffi/src/kdf_probe.rs, a single
 # diagnostic-only constructor that skips validate_kdf_params's upper bound
