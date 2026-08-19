@@ -1,0 +1,41 @@
+E-F4b live Path B (lazy reseal) run -- Phase 40, plan 40-09, Task 3
+Recorded: 2026-08-19 4:27:39 PM +0000
+Server origin: http://127.0.0.1:8621
+
+Account A (owner, holds the collection, performs the reseal): pv-ef4b-a-1787156858-93516d42@example.invalid
+Account B (unrelated existing member, direct grant at collection-creation time): pv-ef4b-b-1787156858-93516d42@example.invalid
+Account C (redeemed the invite BEFORE any family-wide collection existed): pv-ef4b-c-1787156858-93516d42@example.invalid
+
+Order (what makes this Path B): the invite was generated while A held NO family-wide
+collection at all. C redeemed it -- familyWideSucceeded was empty (nothing to fold in).
+A THEN created the family-wide collection 1fc804e3-3e39-4948-81b9-6b882f81c9d1 ("EF4b collection 1787156858-93516d42") with 1 item.
+
+Precondition (this run's own falsifiable assertion), BEFORE the reseal:
+  GET /api/families/family-wide-pending as C: missing contains 1fc804e3-3e39-4948-81b9-6b882f81c9d1 = true
+  iOS PendingKeyState.state(for: 1fc804e3-3e39-4948-81b9-6b882f81c9d1) = .awaitingKey (confirmed)
+
+Reseal step (simulated via REAL pv-ffi + the REAL POST /api/vault/collections/{id}/members
+call reshareCollectionToNewMember itself makes, driven from A's own account --
+Foundation.Process does not exist on iOS, L-27, so this test cannot spawn a literal web
+browser to let the real client-side trigger fire):
+  C's published public key (GET /api/families/members): present
+  A's own sealed_key re-fetched immediately before resealing (never a fresh key)
+  POST /api/vault/collections/1fc804e3-3e39-4948-81b9-6b882f81c9d1/members recipient=fb3c4470-bc40-4352-9fe7-ef5c9c7d86b3 access_level=read
+
+Receiver-side proof on C, AFTER the reseal:
+  Collection name decrypted by C: "EF4b collection 1787156858-93516d42" (expected "EF4b collection 1787156858-93516d42")
+  Item decrypted by C: "{"type":"note","name":"EF4b item","folderId":null,"tags":[],"body":"ef4b-1787156858-93516d42"}" (expected "{"type":"note","name":"EF4b item","folderId":null,"tags":[],"body":"ef4b-1787156858-93516d42"}")
+  GET /api/families/family-wide-pending as C, AFTER: missing contains 1fc804e3-3e39-4948-81b9-6b882f81c9d1 = false (expected false)
+  iOS PendingKeyState.state(for: 1fc804e3-3e39-4948-81b9-6b882f81c9d1) after = nil (confirmed -- no longer awaiting)
+
+Reseal-not-rotation proof:
+  A's own re-fetched grant still opens the probe ciphertext: true
+  C's own recovered key ALSO opens the SAME probe ciphertext: true
+  B (unrelated existing member, untouched by this reseal) still decrypts the real item after it: true
+
+Cross-reference (the falsification of the Path A discriminator, per Task 2's own transcript):
+  Task 2's (livePathAInviteTimeWrap) missing was EMPTY immediately after redemption on a
+  collection that existed BEFORE the invite. THIS run's missing was NON-EMPTY immediately
+  after redemption on a collection that did NOT exist yet -- the SAME endpoint, the SAME
+  command, opposite answers, proving the discriminator moves rather than defaulting to one
+  value (40-RESEARCH.md's own Pitfall 6).

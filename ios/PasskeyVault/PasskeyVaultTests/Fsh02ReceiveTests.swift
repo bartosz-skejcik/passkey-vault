@@ -817,6 +817,293 @@ extension Fsh02ReceiveTests {
         try pngData.write(to: planningDir.appendingPathComponent("40-09-ef4a-collection.png"))
         try pngData.write(to: durableDir.appendingPathComponent("40-09-ef4a-collection.png"))
     }
+
+    // MARK: - Task 3: E-F4b, Path B (lazy reseal)
+
+    /// Path B: the invite was created BEFORE any family-wide collection
+    /// existed. Proven receiver-side on C (before AND after the reseal),
+    /// and proven to be a RESEAL, never a rotation (A's own grant unchanged,
+    /// an unrelated existing member B still decrypts afterward).
+    @MainActor
+    @Test func livePathBLazyReseal() async throws {
+        let baseURL = Self.liveServerBaseURL
+        let runSuffix = "\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(8))".lowercased()
+        let emailA = "pv-ef4b-a-\(runSuffix)@example.invalid"
+        let emailB = "pv-ef4b-b-\(runSuffix)@example.invalid"
+        let emailC = "pv-ef4b-c-\(runSuffix)@example.invalid"
+        let password = "PvEF4b-40-09-EvidencePassword!"
+        let collectionName = "EF4b collection \(runSuffix)"
+
+        let sessionA = try await AccountService(apiClient: PvApiClient(baseURL: baseURL)).register(email: emailA, password: password)
+        let sessionB = try await AccountService(apiClient: PvApiClient(baseURL: baseURL)).register(email: emailB, password: password)
+        let sessionC = try await AccountService(apiClient: PvApiClient(baseURL: baseURL)).register(email: emailC, password: password)
+
+        let apiClient = PvApiClient(baseURL: baseURL)
+        let meB = try await apiClient.me(token: sessionB.token)
+        let meC = try await apiClient.me(token: sessionC.token)
+
+        try await Self.createFamily(baseURL: baseURL, token: sessionA.token, name: "E-F4b family \(runSuffix)")
+        try await Self.addFamilyMember(baseURL: baseURL, ownerToken: sessionA.token, memberUserId: meB.userId)
+
+        // ---- Path B order: the invite FIRST, while A holds NO family-wide
+        // collection at all. ----
+        let inviteService = InviteService(baseURL: baseURL, tokenProvider: { sessionA.token })
+        let inviteURL = try await inviteService.generateInviteLink(userKey: sessionA.userKey, expiresIn: "1h")
+
+        let redemptionServiceC = InviteRedemptionService(baseURL: baseURL, tokenProvider: { sessionC.token })
+        let redeemResult = try await redemptionServiceC.redeem(url: inviteURL, userKey: sessionC.userKey)
+        #expect(redeemResult.familyWideSucceeded.isEmpty, "no family-wide collection existed yet -- nothing to fold in")
+        #expect(redeemResult.familyWideFailed.isEmpty)
+
+        // B publishes its identity keypair BEFORE A grants it direct
+        // access below (needed to seal a key TO b).
+        let identityB = try await IdentityService(baseURL: baseURL, tokenProvider: { sessionB.token })
+            .ensureOwnIdentityKeypair(userKey: sessionB.userKey)
+
+        // ---- A THEN creates the family-wide collection, with an item. ----
+        let collectionServiceA = CollectionService(baseURL: baseURL, tokenProvider: { sessionA.token })
+        let collectionId = try await collectionServiceA.createFamilyWideCollection(
+            name: collectionName, accessLevel: "read", userKey: sessionA.userKey
+        )
+        let identityA = try await IdentityService(baseURL: baseURL, tokenProvider: { sessionA.token })
+            .ensureOwnIdentityKeypair(userKey: sessionA.userKey)
+        let collectionRecordA1 = try await collectionServiceA.fetchCollection(id: collectionId)
+        guard let sealedKeyA1 = collectionRecordA1.sealedKey else {
+            throw LiveFsh02Error.rowNotFound("A's own sealed_key for collection \(collectionId)")
+        }
+        let ck = try unsealCollectionKey(myIdentityKey: identityA, sealedJson: sealedKeyA1)
+
+        let (itemId, itemPlaintext) = try await Self.createAndMoveItem(
+            baseURL: baseURL, token: sessionA.token, userKey: sessionA.userKey, ck: ck,
+            collectionId: collectionId, name: "EF4b item", secretBody: "ef4b-\(runSuffix)"
+        )
+
+        // B, an UNRELATED EXISTING MEMBER, is granted DIRECT access at
+        // creation time -- entirely apart from the lazy-reseal mechanism
+        // this run targets at C below. This is what makes B a meaningful
+        // "still decrypts afterward" witness.
+        let identityPublicKeyB = try FfiIdentityPublicKey.fromBytes(bytes: identityB.publicKeyBytes())
+        let sealedForB = try sealCollectionKey(recipientPk: identityPublicKeyB, ck: ck)
+        try await FamilyAPI(baseURL: baseURL, tokenProvider: { sessionA.token }).addCollectionMember(
+            collectionId: collectionId, recipientUserId: meB.userId, sealedKeyJson: sealedForB, accessLevel: "read"
+        )
+
+        // ---- Precondition: the run must be able to fail (40-RESEARCH.md
+        // Pitfall 6/8) -- `missing` must be NON-EMPTY for C before the
+        // reseal, and iOS must render the not-yet-delivered state, never
+        // hide or fake-show it. ----
+        let pendingBefore = try await SharedItemsStore.fetchFamilyWidePending(baseURL: baseURL, tokenProvider: { sessionC.token })
+        guard pendingBefore.missing.contains(where: { $0.collection_id == collectionId }) else {
+            throw LiveFsh02Error.preconditionViolated(
+                "C's family-wide-pending missing array does not contain \(collectionId) BEFORE the reseal -- this run proves nothing"
+            )
+        }
+        let pendingStateBefore = PendingKeyState()
+        pendingStateBefore.applyFamilyWidePending(missing: pendingBefore.missing)
+        #expect(
+            pendingStateBefore.state(for: collectionId) == .awaitingKey,
+            "iOS must render the not-yet-delivered state -- neither hiding it nor showing it as readable"
+        )
+
+        // ---- The reseal trigger, simulated: the SAME real crypto + the
+        // SAME real `POST /api/vault/collections/{id}/members` call
+        // `web/src/lib/families/reseal.ts::reshareCollectionToNewMember`
+        // itself makes, driven from A's own account. Foundation.Process
+        // does not exist on iOS (L-27), so this test cannot spawn a
+        // literal web browser to "unlock" and let the real trigger fire --
+        // this performs the SAME real operation the trigger performs. ----
+        let familyAPIAsOwner = FamilyAPI(baseURL: baseURL, tokenProvider: { sessionA.token })
+        let membersAsA = try await familyAPIAsOwner.fetchMembers()
+        guard let cMemberRecord = membersAsA.first(where: { $0.userId == meC.userId }),
+              let cPublicKeyB64 = cMemberRecord.publicKey
+        else {
+            // Distinguishes the two causes (this task's own action text):
+            // a recipient with no published key would make a real reseal
+            // throw before any network call, which on iOS looks identical
+            // to a trigger that never ran.
+            throw LiveFsh02Error.preconditionViolated(
+                "C has no published public key on GET /api/families/members -- cannot distinguish a missing key from a broken trigger"
+            )
+        }
+        let cPublicKeyBytes = try #require(Data(base64Encoded: cPublicKeyB64))
+        let cPublicKey = try FfiIdentityPublicKey.fromBytes(bytes: cPublicKeyBytes)
+
+        // Refetch A's OWN sealed_key fresh, right before resealing -- the
+        // SAME key, never a freshly generated one (reseal, never rotation).
+        let collectionRecordA2 = try await collectionServiceA.fetchCollection(id: collectionId)
+        guard let sealedKeyA2 = collectionRecordA2.sealedKey else {
+            throw LiveFsh02Error.rowNotFound("A's own sealed_key for collection \(collectionId), re-fetched before the reseal")
+        }
+        let ckForReseal = try unsealCollectionKey(myIdentityKey: identityA, sealedJson: sealedKeyA2)
+        let sealedForC = try sealCollectionKey(recipientPk: cPublicKey, ck: ckForReseal)
+        let declaredLevel = collectionRecordA2.familyWideAccessLevel ?? "read"
+        try await familyAPIAsOwner.addCollectionMember(
+            collectionId: collectionId, recipientUserId: meC.userId, sealedKeyJson: sealedForC, accessLevel: declaredLevel
+        )
+
+        // ---- Receiver-side proof on C, AFTER the reseal ----
+        let collectionServiceC = CollectionService(baseURL: baseURL, tokenProvider: { sessionC.token })
+        let identityC = try await IdentityService(baseURL: baseURL, tokenProvider: { sessionC.token })
+            .ensureOwnIdentityKeypair(userKey: sessionC.userKey)
+        let collectionRecordC = try await collectionServiceC.fetchCollection(id: collectionId)
+        guard let sealedKeyC = collectionRecordC.sealedKey else {
+            throw LiveFsh02Error.rowNotFound("C's fresh sealed_key for collection \(collectionId), after the reseal")
+        }
+        let ckC = try unsealCollectionKey(myIdentityKey: identityC, sealedJson: sealedKeyC)
+        let decryptedNameC = try decryptItemForCollection(
+            ck: ckC, itemJson: collectionRecordC.encName, collectionId: collectionId, itemId: collectionId, revision: 1
+        )
+        #expect(decryptedNameC == collectionName)
+
+        let itemsAsC = try await Self.fetchSharedCollectionItems(baseURL: baseURL, token: sessionC.token, collectionId: collectionId)
+        guard let rowC = itemsAsC.first(where: { $0.id == itemId }) else {
+            throw LiveFsh02Error.rowNotFound("item \(itemId) in C's own sync snapshot, after the reseal")
+        }
+        let combinedJsonC = try Self.combinedEncryptedItemJson(encKeyJson: rowC.enc_key, encDataJson: rowC.enc_data)
+        let decryptedItemC = try decryptItemForCollection(
+            ck: ckC, itemJson: combinedJsonC, collectionId: collectionId, itemId: itemId, revision: UInt32(rowC.revision)
+        )
+        #expect(decryptedItemC == itemPlaintext, "C must decrypt the item to the SAME plaintext A created")
+
+        let pendingAfter = try await SharedItemsStore.fetchFamilyWidePending(baseURL: baseURL, tokenProvider: { sessionC.token })
+        #expect(
+            !pendingAfter.missing.contains { $0.collection_id == collectionId },
+            "missing must be EMPTY for this collection after the reseal"
+        )
+        let pendingStateAfter = PendingKeyState()
+        pendingStateAfter.applyFamilyWidePending(missing: pendingAfter.missing)
+        #expect(
+            pendingStateAfter.state(for: collectionId) == nil,
+            "the collection must no longer render the not-yet-delivered state"
+        )
+
+        // ---- Same-key proof: A's own grant, re-fetched again, still
+        // opens to the SAME Collection Key -- proven via a probe
+        // ciphertext, since `FfiCollectionKey` exposes no byte accessor by
+        // design. ----
+        let probeItemId = "probe-\(runSuffix)"
+        let probePlaintext = "same-key-probe-\(UUID().uuidString)"
+        let probeJson = try encryptItemForCollection(
+            ck: ckForReseal, plaintext: probePlaintext, collectionId: collectionId, itemId: probeItemId, revision: 1
+        )
+        let collectionRecordA3 = try await collectionServiceA.fetchCollection(id: collectionId)
+        guard let sealedKeyA3 = collectionRecordA3.sealedKey else {
+            throw LiveFsh02Error.rowNotFound("A's own sealed_key for collection \(collectionId), after the reseal")
+        }
+        let ckA3 = try unsealCollectionKey(myIdentityKey: identityA, sealedJson: sealedKeyA3)
+        let decryptedByA3 = try decryptItemForCollection(
+            ck: ckA3, itemJson: probeJson, collectionId: collectionId, itemId: probeItemId, revision: 1
+        )
+        #expect(
+            decryptedByA3 == probePlaintext,
+            "A's own grant must still open to the SAME Collection Key after the reseal (reseal, never rotation)"
+        )
+        let decryptedByCProbe = try decryptItemForCollection(
+            ck: ckC, itemJson: probeJson, collectionId: collectionId, itemId: probeItemId, revision: 1
+        )
+        #expect(
+            decryptedByCProbe == probePlaintext,
+            "C's recovered key must ALSO open the SAME probe ciphertext A's key produced -- the strongest form of 'same key'"
+        )
+
+        // ---- Third-party proof: B, untouched by the C-targeted reseal,
+        // still decrypts afterward. ----
+        let collectionServiceB = CollectionService(baseURL: baseURL, tokenProvider: { sessionB.token })
+        let collectionRecordB = try await collectionServiceB.fetchCollection(id: collectionId)
+        guard let sealedKeyB = collectionRecordB.sealedKey else {
+            throw LiveFsh02Error.rowNotFound("B's sealed_key for collection \(collectionId)")
+        }
+        let ckB = try unsealCollectionKey(myIdentityKey: identityB, sealedJson: sealedKeyB)
+        let itemsAsB = try await Self.fetchSharedCollectionItems(baseURL: baseURL, token: sessionB.token, collectionId: collectionId)
+        guard let rowB = itemsAsB.first(where: { $0.id == itemId }) else {
+            throw LiveFsh02Error.rowNotFound("item \(itemId) in B's own sync snapshot")
+        }
+        let combinedJsonB = try Self.combinedEncryptedItemJson(encKeyJson: rowB.enc_key, encDataJson: rowB.enc_data)
+        let decryptedItemB = try decryptItemForCollection(
+            ck: ckB, itemJson: combinedJsonB, collectionId: collectionId, itemId: itemId, revision: UInt32(rowB.revision)
+        )
+        #expect(decryptedItemB == itemPlaintext, "B (unrelated existing member) must still decrypt the item after the C-targeted reseal")
+
+        // ---- Evidence ----
+        let planningDir = Self.planningEvidenceDirectory
+        try FileManager.default.createDirectory(at: planningDir, withIntermediateDirectories: true)
+        let durableDir = Self.durableEvidenceDirectory
+        try FileManager.default.createDirectory(at: durableDir, withIntermediateDirectories: true)
+
+        let transcript = """
+        E-F4b live Path B (lazy reseal) run -- Phase 40, plan 40-09, Task 3
+        Recorded: \(Date())
+        Server origin: \(baseURL.absoluteString)
+
+        Account A (owner, holds the collection, performs the reseal): \(emailA)
+        Account B (unrelated existing member, direct grant at collection-creation time): \(emailB)
+        Account C (redeemed the invite BEFORE any family-wide collection existed): \(emailC)
+
+        Order (what makes this Path B): the invite was generated while A held NO family-wide
+        collection at all. C redeemed it -- familyWideSucceeded was empty (nothing to fold in).
+        A THEN created the family-wide collection \(collectionId) ("\(collectionName)") with 1 item.
+
+        Precondition (this run's own falsifiable assertion), BEFORE the reseal:
+          GET /api/families/family-wide-pending as C: missing contains \(collectionId) = \(pendingBefore.missing.contains { $0.collection_id == collectionId })
+          iOS PendingKeyState.state(for: \(collectionId)) = .awaitingKey (confirmed)
+
+        Reseal step (simulated via REAL pv-ffi + the REAL POST /api/vault/collections/{id}/members
+        call reshareCollectionToNewMember itself makes, driven from A's own account --
+        Foundation.Process does not exist on iOS, L-27, so this test cannot spawn a literal web
+        browser to let the real client-side trigger fire):
+          C's published public key (GET /api/families/members): present
+          A's own sealed_key re-fetched immediately before resealing (never a fresh key)
+          POST /api/vault/collections/\(collectionId)/members recipient=\(meC.userId) access_level=\(declaredLevel)
+
+        Receiver-side proof on C, AFTER the reseal:
+          Collection name decrypted by C: "\(decryptedNameC)" (expected "\(collectionName)")
+          Item decrypted by C: "\(decryptedItemC)" (expected "\(itemPlaintext)")
+          GET /api/families/family-wide-pending as C, AFTER: missing contains \(collectionId) = \(pendingAfter.missing.contains { $0.collection_id == collectionId }) (expected false)
+          iOS PendingKeyState.state(for: \(collectionId)) after = nil (confirmed -- no longer awaiting)
+
+        Reseal-not-rotation proof:
+          A's own re-fetched grant still opens the probe ciphertext: \(decryptedByA3 == probePlaintext)
+          C's own recovered key ALSO opens the SAME probe ciphertext: \(decryptedByCProbe == probePlaintext)
+          B (unrelated existing member, untouched by this reseal) still decrypts the real item after it: \(decryptedItemB == itemPlaintext)
+
+        Cross-reference (the falsification of the Path A discriminator, per Task 2's own transcript):
+          Task 2's (livePathAInviteTimeWrap) missing was EMPTY immediately after redemption on a
+          collection that existed BEFORE the invite. THIS run's missing was NON-EMPTY immediately
+          after redemption on a collection that did NOT exist yet -- the SAME endpoint, the SAME
+          command, opposite answers, proving the discriminator moves rather than defaulting to one
+          value (40-RESEARCH.md's own Pitfall 6).
+        """
+        try transcript.write(
+            to: planningDir.appendingPathComponent("40-09-ef4b-transcript.txt"), atomically: true, encoding: .utf8
+        )
+        try transcript.write(
+            to: durableDir.appendingPathComponent("40-09-ef4b-transcript.txt"), atomically: true, encoding: .utf8
+        )
+
+        let beforeScreenshotView = Fsh02EvidenceScreen(
+            heading: "E-F4b — Path B, BEFORE the reseal",
+            primaryLine: PendingKeyCopy.awaitingKeyDetailTitle,
+            secondaryLines: [PendingKeyCopy.awaitingKeyDetailBody]
+        )
+        let afterScreenshotView = Fsh02EvidenceScreen(
+            heading: "E-F4b — Path B, AFTER the reseal",
+            primaryLine: decryptedNameC,
+            secondaryLines: [decryptedItemC]
+        )
+        let beforeRenderer = ImageRenderer(content: beforeScreenshotView)
+        beforeRenderer.scale = 3
+        let afterRenderer = ImageRenderer(content: afterScreenshotView)
+        afterRenderer.scale = 3
+        guard let beforeImage = beforeRenderer.uiImage, let beforePng = beforeImage.pngData(),
+              let afterImage = afterRenderer.uiImage, let afterPng = afterImage.pngData()
+        else {
+            throw LiveFsh02Error.unexpectedShape("failed to render the E-F4b evidence screenshots")
+        }
+        try beforePng.write(to: planningDir.appendingPathComponent("40-09-ef4b-before.png"))
+        try beforePng.write(to: durableDir.appendingPathComponent("40-09-ef4b-before.png"))
+        try afterPng.write(to: planningDir.appendingPathComponent("40-09-ef4b-after.png"))
+        try afterPng.write(to: durableDir.appendingPathComponent("40-09-ef4b-after.png"))
+    }
 }
 
 /// The captured-for-the-record evidence screen shared by both live runs --
