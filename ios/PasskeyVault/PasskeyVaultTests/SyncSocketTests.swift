@@ -30,15 +30,18 @@ import Testing
 
 // MARK: - Fakes
 
-final class FakeSyncSocketTask: SyncSocketTask {
-    let onOpen: () -> Void
-    let onClose: (URLSessionWebSocketTask.CloseCode, Data?) -> Void
+final class FakeSyncSocketTask: SyncSocketTask, @unchecked Sendable {
+    let onOpen: @Sendable () -> Void
+    let onClose: @Sendable (URLSessionWebSocketTask.CloseCode, Data?) -> Void
     private(set) var resumeCallCount = 0
     private(set) var receiveCallCount = 0
     private(set) var isCancelled = false
-    private var pendingReceive: ((Result<URLSessionWebSocketTask.Message, Error>) -> Void)?
+    private var pendingReceive: (@Sendable (Result<URLSessionWebSocketTask.Message, Error>) -> Void)?
 
-    init(onOpen: @escaping () -> Void, onClose: @escaping (URLSessionWebSocketTask.CloseCode, Data?) -> Void) {
+    init(
+        onOpen: @escaping @Sendable () -> Void,
+        onClose: @escaping @Sendable (URLSessionWebSocketTask.CloseCode, Data?) -> Void
+    ) {
         self.onOpen = onOpen
         self.onClose = onClose
     }
@@ -52,7 +55,7 @@ final class FakeSyncSocketTask: SyncSocketTask {
         onClose(closeCode, reason) // synchronous by design -- see this file's header
     }
 
-    func receive(completionHandler: @escaping (Result<URLSessionWebSocketTask.Message, Error>) -> Void) {
+    func receive(completionHandler: @escaping @Sendable (Result<URLSessionWebSocketTask.Message, Error>) -> Void) {
         receiveCallCount += 1
         pendingReceive = completionHandler
     }
@@ -85,11 +88,85 @@ final class FakeSyncSocketTransport: SyncSocketTransport {
 
     func makeTask(
         url: URL,
-        onOpen: @escaping () -> Void,
-        onClose: @escaping (URLSessionWebSocketTask.CloseCode, Data?) -> Void
+        onOpen: @escaping @Sendable () -> Void,
+        onClose: @escaping @Sendable (URLSessionWebSocketTask.CloseCode, Data?) -> Void
     ) -> SyncSocketTask {
         let task = FakeSyncSocketTask(onOpen: onOpen, onClose: onClose)
         madeTasks.append(task)
+        return task
+    }
+}
+
+// MARK: - CR-01 (39-REVIEW.md): a background-dispatching fake
+
+/// Unlike `FakeSyncSocketTask` above (deliberately synchronous, main-actor,
+/// see that type's own header), this fake fires its callbacks from a REAL
+/// background `DispatchQueue` -- the shape `URLSessionSyncSocketTransport`'s
+/// delegate methods actually run under (`delegateQueue: nil` in that type's
+/// `init`, `URLSessionWebSocketDelegate`'s callbacks). Before CR-01's fix,
+/// `SyncSocketTests` could not fail on the class of defect CR-01 describes
+/// because every fake call arrived pre-hopped onto the test's own main-actor
+/// thread; this fake is what makes a genuinely cross-thread callback
+/// reachable from a unit test at all, without a live `URLSession`.
+final class BackgroundDispatchingSyncSocketTask: SyncSocketTask, @unchecked Sendable {
+    private let onOpen: @Sendable () -> Void
+    private let onClose: @Sendable (URLSessionWebSocketTask.CloseCode, Data?) -> Void
+    private let queue = DispatchQueue(label: "pv-test.background-sync-socket-task")
+    private let box = NSLock()
+    private var pendingReceive: (@Sendable (Result<URLSessionWebSocketTask.Message, Error>) -> Void)?
+
+    init(
+        onOpen: @escaping @Sendable () -> Void,
+        onClose: @escaping @Sendable (URLSessionWebSocketTask.CloseCode, Data?) -> Void
+    ) {
+        self.onOpen = onOpen
+        self.onClose = onClose
+    }
+
+    func resume() {}
+
+    func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        queue.async { [onClose] in onClose(closeCode, reason) }
+    }
+
+    func receive(completionHandler: @escaping @Sendable (Result<URLSessionWebSocketTask.Message, Error>) -> Void) {
+        box.lock()
+        pendingReceive = completionHandler
+        box.unlock()
+    }
+
+    /// Fires `onOpen` from a background queue -- never the calling thread.
+    func simulateOpenFromBackgroundQueue() {
+        queue.async { [onOpen] in onOpen() }
+    }
+
+    /// Fires the pending `receive()` completion from a background queue.
+    @discardableResult
+    func simulateMessageFromBackgroundQueue() -> Bool {
+        box.lock()
+        guard let handler = pendingReceive else { box.unlock(); return false }
+        pendingReceive = nil
+        box.unlock()
+        queue.async { handler(.success(.string(""))) }
+        return true
+    }
+}
+
+final class BackgroundDispatchingSyncSocketTransport: SyncSocketTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _madeTasks: [BackgroundDispatchingSyncSocketTask] = []
+    var madeTasks: [BackgroundDispatchingSyncSocketTask] {
+        lock.lock(); defer { lock.unlock() }
+        return _madeTasks
+    }
+
+    func makeTask(
+        url: URL,
+        onOpen: @escaping @Sendable () -> Void,
+        onClose: @escaping @Sendable (URLSessionWebSocketTask.CloseCode, Data?) -> Void
+    ) -> SyncSocketTask {
+        let task = BackgroundDispatchingSyncSocketTask(onOpen: onOpen, onClose: onClose)
+        lock.lock(); _madeTasks.append(task); lock.unlock()
         return task
     }
 }
@@ -278,5 +355,49 @@ struct SyncSocketTests {
             scheduler.fireLast() // fires the reconnect -> creates the next task
         }
         #expect(transport.madeTasks.count == expectedBases.count + 1)
+    }
+
+    // CR-01 (39-REVIEW.md): open/frame callbacks arriving from a REAL
+    // background queue (never the fake's own synchronous call, and never
+    // the test's own main-actor thread) must still land exactly one pull
+    // each -- this is only reachable at all if `connect()`/`receiveLoop`
+    // hop onto the main actor themselves, rather than relying on inherited
+    // isolation the compiler does not check for a plain `@escaping`
+    // closure. Polls with a bounded timeout because delivery is now
+    // asynchronous (`Task { @MainActor in ... }`), never synchronous.
+    @MainActor
+    @Test func aCallbackDeliveredFromARealBackgroundQueueStillHopsOntoTheMainActorExactlyOnce() async throws {
+        let transport = BackgroundDispatchingSyncSocketTransport()
+        let scheduler = FakeSyncSocketScheduler()
+        var pullCount = 0
+        let socket = SyncSocket(
+            urlProvider: { URL(string: "wss://example.invalid/api/sync/ws?token=t")! },
+            transport: transport,
+            scheduler: scheduler,
+            pull: { pullCount += 1 }
+        )
+        socket.start()
+        let task = try #require(transport.madeTasks.first)
+
+        task.simulateOpenFromBackgroundQueue()
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount == 1 }
+        #expect(pullCount == 1, "a background-queue open must still trigger exactly one pull, via the main-actor hop")
+
+        task.simulateMessageFromBackgroundQueue()
+        try await Self.pollUntil(timeoutSeconds: 2) { pullCount == 2 }
+        #expect(pullCount == 2, "a background-queue frame must still trigger exactly one additional pull")
+    }
+
+    /// Bounded polling helper: `Task { @MainActor in ... }` delivery has no
+    /// synchronous completion signal to await directly, so this polls the
+    /// main actor (this suite's own isolation) at a short interval until
+    /// `condition` holds or `timeoutSeconds` elapses -- never a blind
+    /// `Task.sleep` guess.
+    @MainActor
+    private static func pollUntil(timeoutSeconds: Double, condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while !condition(), Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
     }
 }

@@ -59,10 +59,16 @@ import os
 /// deterministic task rather than a real network connection. D-09: a green
 /// run of those tests is explicitly NOT evidence for SYNC-01, which is a
 /// live claim (see `SyncSocketTests.swift`'s own header).
+/// CR-01 (39-REVIEW.md): `@Sendable` on every callback below, deliberately
+/// -- see `SyncSocket.connect()`/`receiveLoop(task:)`'s own notes for why.
+/// Marking these `@Sendable` keeps the compiler checking the closures that
+/// actually cross from the delegate queue to the main actor, instead of
+/// silently inheriting the enclosing (main-actor) isolation the way a plain
+/// `@escaping () -> Void` would have.
 protocol SyncSocketTask: AnyObject {
     func resume()
     func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
-    func receive(completionHandler: @escaping (Result<URLSessionWebSocketTask.Message, Error>) -> Void)
+    func receive(completionHandler: @escaping @Sendable (Result<URLSessionWebSocketTask.Message, Error>) -> Void)
 }
 
 extension URLSessionWebSocketTask: SyncSocketTask {}
@@ -75,8 +81,8 @@ extension URLSessionWebSocketTask: SyncSocketTask {}
 protocol SyncSocketTransport: AnyObject {
     func makeTask(
         url: URL,
-        onOpen: @escaping () -> Void,
-        onClose: @escaping (URLSessionWebSocketTask.CloseCode, Data?) -> Void
+        onOpen: @escaping @Sendable () -> Void,
+        onClose: @escaping @Sendable (URLSessionWebSocketTask.CloseCode, Data?) -> Void
     ) -> SyncSocketTask
 }
 
@@ -91,7 +97,7 @@ protocol SyncSocketTransport: AnyObject {
 final class URLSessionSyncSocketTransport: NSObject, SyncSocketTransport, URLSessionWebSocketDelegate, @unchecked Sendable {
     private var session: URLSession!
     private let lock = NSLock()
-    private var handlers: [ObjectIdentifier: (open: () -> Void, close: (URLSessionWebSocketTask.CloseCode, Data?) -> Void)] = [:]
+    private var handlers: [ObjectIdentifier: (open: @Sendable () -> Void, close: @Sendable (URLSessionWebSocketTask.CloseCode, Data?) -> Void)] = [:]
 
     override init() {
         super.init()
@@ -100,8 +106,8 @@ final class URLSessionSyncSocketTransport: NSObject, SyncSocketTransport, URLSes
 
     func makeTask(
         url: URL,
-        onOpen: @escaping () -> Void,
-        onClose: @escaping (URLSessionWebSocketTask.CloseCode, Data?) -> Void
+        onOpen: @escaping @Sendable () -> Void,
+        onClose: @escaping @Sendable (URLSessionWebSocketTask.CloseCode, Data?) -> Void
     ) -> SyncSocketTask {
         let task = session.webSocketTask(with: url)
         lock.lock()
@@ -221,19 +227,35 @@ final class SyncSocket {
         // path stays the single owner of that transition.
     }
 
+    /// CR-01 (39-REVIEW.md): every callback the transport hands back is
+    /// invoked from a background delegate queue for a REAL
+    /// `URLSessionWebSocketTask` (`URLSessionSyncSocketTransport`'s own
+    /// header) -- `currentTask`/`backoffMs`/`intentionalStop`/
+    /// `reconnectHandle` are all main-actor-isolated state, so every one of
+    /// these closures now explicitly hops onto the main actor via
+    /// `Task { @MainActor in ... }` rather than relying on the closure
+    /// parameter type's inherited isolation, which Swift 5 mode
+    /// (`SWIFT_VERSION = 5.0`, `project.pbxproj`) does not enforce or check
+    /// for a plain `@escaping` closure. `@Sendable` on the protocol's own
+    /// closure parameters (`SyncSocketTask`/`SyncSocketTransport`) is what
+    /// keeps the compiler checking these particular closures at all.
     private func connect() {
         guard let url = urlProvider() else { return }
         var task: SyncSocketTask!
         task = transport.makeTask(
             url: url,
             onOpen: { [weak self] in
-                guard let self, self.currentTask === task else { return }
-                Self.logger.log("PVSYNC|event=open") // Task 2/3's device-log signal -- see this type's header
-                self.backoffMs = Self.backoffStartMs // reset on success
-                self.pull() // catch-up pull -- WS is notification-only, pull is truth
+                Task { @MainActor in
+                    guard let self, self.currentTask === task else { return }
+                    Self.logger.log("PVSYNC|event=open") // Task 2/3's device-log signal -- see this type's header
+                    self.backoffMs = Self.backoffStartMs // reset on success
+                    self.pull() // catch-up pull -- WS is notification-only, pull is truth
+                }
             },
             onClose: { [weak self] code, _ in
-                self?.handleClose(task: task, code: code)
+                Task { @MainActor in
+                    self?.handleClose(task: task, code: code)
+                }
             }
         )
         currentTask = task
@@ -243,19 +265,21 @@ final class SyncSocket {
 
     private func receiveLoop(task: SyncSocketTask) {
         task.receive { [weak self] result in
-            guard let self, self.currentTask === task else { return }
-            switch result {
-            case .success:
-                // DELIBERATELY UNPARSED (D-14/T-39-15): any frame means "go
-                // pull" and nothing more -- see this file's header.
-                Self.logger.log("PVSYNC|event=frame")
-                self.pull()
-                self.receiveLoop(task: task) // re-arm: receive() delivers ONE message (Pitfall 5)
-            case .failure:
-                // Funnel into the SAME reconnect path the close callback
-                // uses -- one backoff policy, not two.
-                task.cancel(with: .abnormalClosure, reason: nil)
-                self.handleClose(task: task, code: .abnormalClosure) // idempotent if cancel() above already triggered it
+            Task { @MainActor in
+                guard let self, self.currentTask === task else { return }
+                switch result {
+                case .success:
+                    // DELIBERATELY UNPARSED (D-14/T-39-15): any frame means "go
+                    // pull" and nothing more -- see this file's header.
+                    Self.logger.log("PVSYNC|event=frame")
+                    self.pull()
+                    self.receiveLoop(task: task) // re-arm: receive() delivers ONE message (Pitfall 5)
+                case .failure:
+                    // Funnel into the SAME reconnect path the close callback
+                    // uses -- one backoff policy, not two.
+                    task.cancel(with: .abnormalClosure, reason: nil)
+                    self.handleClose(task: task, code: .abnormalClosure) // idempotent if cancel() above already triggered it
+                }
             }
         }
     }
