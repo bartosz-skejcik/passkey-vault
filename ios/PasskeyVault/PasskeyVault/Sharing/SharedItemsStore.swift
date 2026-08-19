@@ -183,6 +183,74 @@ enum SharedItemsStore {
         }
     }
 
+    // MARK: - `GET /api/sync/shared/direct`
+
+    /// The two-shape response `pull_shared_direct` returns -- same
+    /// untagged `UpToDate`/`Snapshot` convention `Sync/SyncModels.swift`'s
+    /// `SyncPullResult` already established for `GET /api/sync`.
+    enum DirectSharedFetchResult {
+        case upToDate(revision: Int)
+        case snapshot(revision: Int, items: [DirectSharedItemRow])
+    }
+
+    private struct DirectSharedSnapshotBody: Decodable {
+        let revision: Int
+        let items: [DirectSharedItemRow]
+    }
+
+    private struct DirectSharedUpToDateBody: Decodable {
+        let revision: Int
+    }
+
+    /// `GET /api/sync/shared/direct?since=N`. Decode ATTEMPTS the snapshot
+    /// shape first, same discipline as `SyncPullResult`'s own decoder (L-22)
+    /// -- the up-to-date branch carries no `items` key on the wire at all.
+    static func fetchDirectShared(
+        baseURL: URL,
+        tokenProvider: () -> String?,
+        since: Int,
+        session: URLSession = .shared
+    ) async throws -> DirectSharedFetchResult {
+        guard let token = tokenProvider() else {
+            throw PvApiError.unexpectedResponse("no session token available for /api/sync/shared/direct")
+        }
+        guard let url = URL(string: "/api/sync/shared/direct?since=\(since)", relativeTo: baseURL) else {
+            throw PvApiError.unexpectedResponse(
+                "could not construct URL for /api/sync/shared/direct against \(baseURL)"
+            )
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw PvApiError.network(error)
+        }
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw PvApiError.unexpectedResponse("response was not an HTTP response")
+        }
+        guard httpResponse.statusCode == 200 else {
+            if httpResponse.statusCode == 401 { throw PvApiError.invalidCredentials }
+            let message = String(data: data, encoding: .utf8)
+                ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+            throw PvApiError.httpError(status: httpResponse.statusCode, message: message)
+        }
+        if let snapshot = try? JSONDecoder().decode(DirectSharedSnapshotBody.self, from: data) {
+            return .snapshot(revision: snapshot.revision, items: snapshot.items)
+        }
+        do {
+            let upToDate = try JSONDecoder().decode(DirectSharedUpToDateBody.self, from: data)
+            return .upToDate(revision: upToDate.revision)
+        } catch {
+            throw PvApiError.unexpectedResponse("failed to decode /api/sync/shared/direct response: \(error)")
+        }
+    }
+
     // MARK: - `GET /api/families/family-wide-pending` -> `PendingKeyState`
 
     /// Fetches `family_wide_pending`'s response and applies its `missing`

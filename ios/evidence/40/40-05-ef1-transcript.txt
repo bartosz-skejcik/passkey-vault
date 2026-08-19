@@ -1,0 +1,20 @@
+E-F1 live two-account marker run -- Phase 40, plan 40-05, Task 3
+Recorded: 2026-08-19 6:48:54 AM +0000
+Server origin: http://127.0.0.1:8621
+
+Account A: pv-ef1-a-1787122134@example.invalid (user_id a579ad7e-2652-431b-bd3f-66158537bd81)
+Account B: pv-ef1-b-1787122134@example.invalid (user_id 0742d582-8450-477b-8050-2c714c368297)
+
+Item X (f15be058-d379-4ad6-aba4-771900061fcb): created by A, shared DIRECTLY to B.
+  Resolved on B via SharedItemsStore.ingestDirectShared: receivedFromOther
+  Accessibility label: "Shared with you"
+
+Item Y (0a9ae365-81c5-4b03-89fe-e8bd7494f565): created by B, shared DIRECTLY to A (the reverse direction).
+  Resolved on B via SharedItemsStore.ingestPersonalSync: sharedByMe
+  Accessibility label: "Shared with 1"
+
+Item Z (cca80e73-1ed4-49eb-b586-928898b406f4): created by B, purely personal, never shared.
+  Resolved on B via SharedItemsStore.ingestPersonalSync: none
+  Accessibility label: ""
+
+The evidence for SC1 is THIS live two-account run, not the unit tests in Tasks 1-2.
