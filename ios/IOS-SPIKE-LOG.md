@@ -3517,3 +3517,15 @@ this residue is recorded rather than blocking:
    `39-RESEARCH.md`'s "Copy requirements" section — but the plan's own `must_haves.truths` entry
    for this is explicitly `verification: backstop`, so SYNC-04 is not claimed fully closed by this
    plan's automated evidence alone.
+
+**Phase 39 closure additions (2026-08-19, orchestrator):**
+
+- **SC2 on real hardware after a reboot** — the simulator enforces no data protection, so the cache
+  file's protection class is a declaration, not a proof. First device session should force-quit the
+  host, reboot, and drive the extension cold (same choreography as `scripts/ios-cold-read-proof.sh`).
+- **Optional**: an independent live re-run of `audit-ios-cache-ciphertext.sh`'s content checks (its
+  falsification transcripts in `ios/evidence/39/05-gates.md` hold on inspection; both fix passes
+  declined a live re-run on the same reasoning).
+- **`AutoLockPolicy` ROUTED TO PHASE 41 (ACC-06/07).** Still zero production consumers after 39
+  (only its own tests reference it). Phase 41's lazy-lock/idle work is its real home — the 41
+  executor MUST wire it or explicitly record why not. Do not let a tested-but-unenforced policy ship.
