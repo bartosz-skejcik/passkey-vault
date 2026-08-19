@@ -60,6 +60,14 @@
 //  mechanism rejects a tampered fragment, directly, without a network
 //  round trip.
 //
+//  WR-14 (40-REVIEW.md): this check runs BEFORE `familyAPI.createInvite`,
+//  not after. It depends on nothing the server returns, so nothing forces
+//  the ordering -- and running it after the POST meant a mismatch
+//  discarded the URL while the invitation row (and every wrapped
+//  family-wide Collection Key already sent) stayed on the server,
+//  pending until expiry, with no revocation path (`FamilyAPI` has no
+//  `DELETE`/revoke call for an invitation).
+//
 //  `GET /api/vault/collections` (list): deliberately NOT added to
 //  `Sharing/CollectionService.swift` (out of this plan's own
 //  `files_modified` scope) -- a private helper here instead, decoding into
@@ -114,6 +122,22 @@ struct InviteService {
         let inviteId = channel.inviteId()
         let proofHashB64 = StandardBase64.encode(channel.proofHashForCreation())
 
+        // WR-14: iOS-side self-consistency assertion (this file's header)
+        // -- moved BEFORE the `createInvite` POST below. This check
+        // depends on nothing the server returns (it only re-derives
+        // `inviteId` from `secretForUrl` alone), so nothing forces it to
+        // run after the POST -- and running it after meant a mismatch
+        // discarded the URL while the invitation row, its `proof_hash`,
+        // and every wrapped family-wide Collection Key remained on the
+        // server, pending until expiry, with no revocation path. A
+        // mismatch must now be caught BEFORE anything reaches the server
+        // at all.
+        let reDerivedSecret = try UrlSafeNoPadBase64.decode(secretForUrl)
+        let reDerivedChannel = try FfiInviteChannel.fromSecret(secret: reDerivedSecret)
+        guard reDerivedChannel.inviteId() == inviteId else {
+            throw InviteServiceError.selfConsistencyMismatch(pathId: inviteId, fragmentId: reDerivedChannel.inviteId())
+        }
+
         let familyWideKeys = try await buildFamilyWideKeyEntries(channel: channel, identityKey: identityKey)
 
         _ = try await familyAPI.createInvite(
@@ -125,14 +149,6 @@ struct InviteService {
             proofHash: proofHashB64,
             expiresIn: expiresIn
         )
-
-        // iOS-side self-consistency assertion (this file's header) -- BEFORE
-        // returning the URL, never after.
-        let reDerivedSecret = try UrlSafeNoPadBase64.decode(secretForUrl)
-        let reDerivedChannel = try FfiInviteChannel.fromSecret(secret: reDerivedSecret)
-        guard reDerivedChannel.inviteId() == inviteId else {
-            throw InviteServiceError.selfConsistencyMismatch(pathId: inviteId, fragmentId: reDerivedChannel.inviteId())
-        }
 
         var origin = baseURL.absoluteString
         if origin.hasSuffix("/") { origin.removeLast() }
