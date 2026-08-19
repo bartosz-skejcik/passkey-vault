@@ -265,7 +265,18 @@ struct ContentView: View {
                     baseURL: ServerSettings.resolved,
                     tokenProvider: { [token = session.token] in token },
                     userKey: session.userKey,
-                    ownUserId: uid
+                    ownUserId: uid,
+                    // WR-20: reads `vaultStore`/`syncCoordinator` (this
+                    // view's own `@State`) at CALL time, same implicit-
+                    // `self`-capture shape `onLockRequested`/
+                    // `onSignOutRequested` above already use -- `@State`'s
+                    // storage is stable across this struct's re-renders, so
+                    // this always reaches whichever instance is current
+                    // when a user actually creates/joins a family.
+                    onFamilyMembershipChanged: {
+                        vaultStore?.familyMembershipMayHaveChanged()
+                        syncCoordinator?.familyMembershipMayHaveChanged()
+                    }
                 )
             }
         )

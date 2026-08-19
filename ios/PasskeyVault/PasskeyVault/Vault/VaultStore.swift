@@ -200,6 +200,20 @@ final class VaultStore {
     /// subsequent refresh.
     @ObservationIgnored private var sharedItemIds: Set<String> = []
 
+    /// WR-17 (40-REVIEW.md, iteration 2): mirrors `SyncCoordinator`'s own
+    /// identically-named/-purposed cache -- `mergeSharedAndFamilyWideItems`
+    /// gates its ENTIRE four-endpoint fan-out (including
+    /// `ensureOwnIdentityKeypair`, whose first call durably PUBLISHES an
+    /// identity keypair server-side) on this flag once a family-gated
+    /// endpoint has confirmed "not a member of any family" for the current
+    /// session. WR-20: cleared by `familyMembershipMayHaveChanged()` when
+    /// this account creates or joins a family IN-SESSION (`FamilyRootView
+    /// .createFamily`/`InviteRedeemView.onFinished`) -- see that method's
+    /// own doc comment for why latching this for the rest of the session
+    /// would otherwise strand a brand-new member with no merge ever running
+    /// again until a lock/unlock.
+    @ObservationIgnored private var hasNoFamily = false
+
     /// WR-10 (40-REVIEW.md): real production state now. Was built,
     /// tested, and had zero callers before this fix -- `applyFamilyWidePending`
     /// is now driven by a real pull cycle (`mergeSharedAndFamilyWideItems`,
@@ -764,6 +778,21 @@ final class VaultStore {
         return rows.first(where: { $0.id == itemId })?.enc_key
     }
 
+    /// WR-20 (40-REVIEW.md, iteration 2): `hasNoFamily`'s own `guard` at the
+    /// top of `mergeSharedAndFamilyWideItems` latches for the rest of the
+    /// session once set -- correct for "this account will never be in a
+    /// family without a fresh unlock", WRONG once CR-04(b)'s new in-session
+    /// join paths exist (`FamilyRootView.createFamily`, `InviteRedeemView`
+    /// presented from `ContentView`, neither of which re-derives a session
+    /// or calls `SyncCoordinator.start(...)`). Without this, a member who
+    /// creates or joins a family mid-session would see the merge disabled
+    /// for the remainder of it -- their own new shares/collections would
+    /// never appear until the app is locked and unlocked. Called by both of
+    /// those success paths; a no-op if the flag was never set.
+    func familyMembershipMayHaveChanged() {
+        hasNoFamily = false
+    }
+
     /// Computed, not stored -- nothing to `@ObservationIgnored` (that
     /// attribute only applies to stored properties); a fresh, stateless
     /// service value per call, same pattern every other Phase 40 service
@@ -789,6 +818,10 @@ final class VaultStore {
     /// invalidated by this step failing.
     private func mergeSharedAndFamilyWideItems() async {
         guard let uk = userKey else { return }
+        // WR-17: skip the ENTIRE fan-out once this session has confirmed
+        // "not a member of any family" -- see `hasNoFamily`'s own doc
+        // comment for what this replaces.
+        guard !hasNoFamily else { return }
 
         // WR-16 (40-REVIEW.md, iteration 2): `merged` is built ENTIRELY
         // before `items`/`sharedItemIds` are touched -- compute-then-swap.
@@ -837,13 +870,28 @@ final class VaultStore {
         }
 
         do {
-            // WR-10: best-effort -- a solo self-hoster 404s/403s on this
-            // exact endpoint (WR-04's own note on the sibling SyncCoordinator
-            // call), which must never abort the direct-share/family-wide
-            // merge above or below.
-            if let pending = try? await SharedItemsStore.fetchFamilyWidePending(
-                baseURL: api.baseURL, tokenProvider: api.tokenProvider, session: api.session
-            ) {
+            // WR-17 (40-REVIEW.md, iteration 2): `GET /api/families/
+            // family-wide-pending` is `ActiveFamilyMembership<RequireRead>`-
+            // gated (same fact `SyncCoordinator`'s own `hasNoFamily` cache
+            // already relies on) -- a 404/403 here is the authoritative "not
+            // a member of any family" signal, never a genuine failure. WR-10
+            // originally swallowed this via `try?` so a real failure could
+            // never abort the rest of the merge; that discipline is
+            // preserved below (a NON-404/403 error still falls through
+            // without setting `hasNoFamily` or skipping anything), but the
+            // 404/403 case now ALSO latches `hasNoFamily` for the rest of
+            // this session -- before this, EVERY 30-second pull re-issued
+            // this call, `GET /api/vault/collections` (also family-gated,
+            // see below), `GET /api/sync/shared/direct`, and
+            // `ensureOwnIdentityKeypair` (which durably PUBLISHES an
+            // identity keypair on first call, a server-visible side effect
+            // for an account that has never touched a family feature) --
+            // forever, for this product's primary solo-self-hoster persona.
+            var skipCollectionsThisCycle = false
+            do {
+                let pending = try await SharedItemsStore.fetchFamilyWidePending(
+                    baseURL: api.baseURL, tokenProvider: api.tokenProvider, session: api.session
+                )
                 pendingKeyState.applyFamilyWidePending(missing: pending.missing)
                 // A collection in `missing` has NO `collection_keys` row
                 // for this caller yet, so `GET /api/vault/collections`
@@ -866,6 +914,14 @@ final class VaultStore {
                         )
                     )
                 }
+            } catch {
+                if case let PvApiError.httpError(status, _) = error, status == 404 || status == 403 {
+                    hasNoFamily = true
+                    skipCollectionsThisCycle = true
+                }
+                // Any other error: WR-10's original best-effort discipline
+                // -- never abort the direct-share/family-wide merge above
+                // or below over a transient failure on this one endpoint.
             }
             guard userKey != nil else { return }
 
@@ -875,8 +931,11 @@ final class VaultStore {
             // (any author) -- NOT `/api/sync`, whose collection arm is
             // author-scoped (`ingestPersonalSync`'s own header; the exact
             // bug `RemoveMemberService.fetchCollectionItemRows` already
-            // documents for the re-key batch).
-            let collections = try await collectionService.listCollections()
+            // documents for the re-key batch). Also `FamilyMembership
+            // <RequireRead>`-gated server-side (`collections.rs::list`) --
+            // skipped this cycle if `hasNoFamily` was JUST latched above,
+            // since it would 404 identically.
+            let collections = skipCollectionsThisCycle ? [] : try await collectionService.listCollections()
             guard userKey != nil else { return }
             for record in collections {
                 guard record.familyWideKind != nil, let sealedKey = record.sealedKey else { continue }

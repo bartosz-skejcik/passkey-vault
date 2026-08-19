@@ -120,6 +120,23 @@ final class SyncCoordinator {
         self.store = store
     }
 
+    /// WR-20 (40-REVIEW.md, iteration 2): `hasNoFamily` above latches for
+    /// the rest of the session once a family-gated endpoint 404s/403s --
+    /// correct for "this account will never be in a family without a fresh
+    /// `start(...)`", WRONG once CR-04(b)'s new in-session join paths exist
+    /// (`FamilyRootView.createFamily`, `InviteRedeemView` presented from
+    /// `ContentView`, neither of which calls `start(...)` again). Without
+    /// this, a member who creates or joins a family mid-session would find
+    /// the reseal trigger permanently disabled for the remainder of it --
+    /// nothing they invite propagates a key until the app is locked and
+    /// unlocked. A no-op if the flag was never set. `VaultStore` carries the
+    /// identically-named/-purposed method for its OWN separate cache
+    /// (`mergeSharedAndFamilyWideItems`'s fan-out gate, WR-17) -- both are
+    /// called from the same redemption/creation success paths.
+    func familyMembershipMayHaveChanged() {
+        hasNoFamily = false
+    }
+
     /// One full pull through `VaultStore.refresh()` -- the SAME production
     /// path `ItemListView`'s pull-to-refresh and `FolderPicker` already use
     /// (this plan does not duplicate that logic). This is the call site the

@@ -46,6 +46,10 @@ struct FamilyRootView: View {
     let tokenProvider: () -> String?
     let userKey: FfiUserKey
     let ownUserId: String
+    /// WR-20 (40-REVIEW.md, iteration 2): called after this account
+    /// creates or joins a family in THIS session -- see
+    /// `FamilySharingContext`'s own doc comment for what this invalidates.
+    let onFamilyMembershipChanged: () -> Void
 
     @State private var showingInvite = false
     @State private var showingRedeemInvite = false
@@ -126,6 +130,9 @@ struct FamilyRootView: View {
                         showingRedeemInvite = false
                         hasNoFamily = false
                         memberListReloadToken = UUID()
+                        // WR-20: this account just joined a family
+                        // in-session -- invalidate both stale caches.
+                        onFamilyMembershipChanged()
                     },
                     initialURLText: ""
                 )
@@ -203,6 +210,9 @@ struct FamilyRootView: View {
             _ = try await familyAPI.createFamily(name: "Rodzina")
             hasNoFamily = false
             memberListReloadToken = UUID()
+            // WR-20: this account just created a family in-session --
+            // invalidate both stale caches.
+            onFamilyMembershipChanged()
         } catch {
             createFamilyError = "Nie udało się założyć rodziny. Spróbuj ponownie."
         }

@@ -82,6 +82,14 @@ struct FamilySharingContext {
     let tokenProvider: () -> String?
     let userKey: FfiUserKey
     let ownUserId: String
+    /// WR-20 (40-REVIEW.md, iteration 2): called by `FamilyRootView` after
+    /// this account creates or joins a family IN-SESSION -- clears BOTH
+    /// `VaultStore.hasNoFamily` (WR-17's fan-out gate) and
+    /// `SyncCoordinator.hasNoFamily` (WR-04's original cache), neither of
+    /// which is otherwise invalidated by a path that never calls
+    /// `SyncCoordinator.start(...)` again. See either type's own
+    /// `familyMembershipMayHaveChanged()` doc comment.
+    let onFamilyMembershipChanged: () -> Void
 }
 
 /// The "+" create / edit / move-to-folder / generator sheet router. Moved to

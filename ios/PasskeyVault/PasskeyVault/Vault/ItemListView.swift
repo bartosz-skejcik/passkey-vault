@@ -1324,7 +1324,8 @@ struct ItemListView: View {
                 NavigationStack {
                     FamilyRootView(
                         baseURL: ctx.baseURL, tokenProvider: ctx.tokenProvider,
-                        userKey: ctx.userKey, ownUserId: ctx.ownUserId
+                        userKey: ctx.userKey, ownUserId: ctx.ownUserId,
+                        onFamilyMembershipChanged: ctx.onFamilyMembershipChanged
                     )
                 }
             }
