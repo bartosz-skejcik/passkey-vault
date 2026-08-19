@@ -164,6 +164,14 @@ final class VaultStore {
     @ObservationIgnored private static let log = Logger(
         subsystem: "cloud.blonie.PasskeyVault", category: "vault"
     )
+    /// CR-03 (39-REVIEW.md): the in-flight latch `refresh()` uses to
+    /// serialise pulls. Six independent triggers can call `refresh()` with
+    /// no de-duplication otherwise (the WS open/frame catch-up pull, the
+    /// 30s foreground timer, every scenePhase-active transition,
+    /// `ItemListView`'s `.task`, and pull-to-refresh) -- a caller that
+    /// arrives while a pull is already running awaits THIS task's result
+    /// rather than starting a second, overlapping network round trip.
+    @ObservationIgnored private var pullInFlight: Task<Void, Error>?
 
     #if DEBUG
     /// WR-06 (38-REVIEW.md, iteration 2): test-visible confirmation that a
@@ -472,10 +480,21 @@ final class VaultStore {
     ///
     /// Plan 39-03: the `since` sent is no longer `lastKnownRevision` read
     /// directly -- `SyncClient.pull()` reads it out of the persisted
-    /// `CachedSnapshot` itself (D-11, the watermark's single copy). On the
-    /// up-to-date branch NOTHING is written to the cache store: that branch
-    /// structurally carries no collection to write (D-12). On the snapshot
-    /// branch the cache is REPLACED whole, never merged (D-15).
+    /// `CachedSnapshot` itself (D-11, the watermark's single copy). The
+    /// up-to-date branch DOES write to the cache store (39-06/CR-02, see
+    /// `persistUpToDateToCache`'s own header) -- re-persisting whatever is
+    /// ALREADY on disk under an advanced watermark, never a collection this
+    /// decode step produced (it structurally carries none, D-12). On the
+    /// snapshot branch the cache is REPLACED whole, never merged (D-15).
+    ///
+    /// CR-03 (39-REVIEW.md): serialised via `pullInFlight` -- a caller
+    /// arriving while a pull is already running awaits that SAME task's
+    /// result instead of starting a second, overlapping request. This alone
+    /// stops two network round trips from ever being in flight at once, but
+    /// a response can still legitimately describe an OLDER server state
+    /// than one this store already merged (a retried request racing a
+    /// fresher one at the HTTP layer, for instance) -- `performRefresh()`'s
+    /// own monotonicity guard on both branches is the backstop for that.
     func refresh() async throws {
         #if DEBUG
         if ProcessInfo.processInfo.environment[Self.uitestCapabilityFixtureEnvKey] != nil {
@@ -484,6 +503,17 @@ final class VaultStore {
             return
         }
         #endif
+        if let pullInFlight {
+            try await pullInFlight.value
+            return
+        }
+        let task = Task { try await self.performRefresh() }
+        pullInFlight = task
+        defer { pullInFlight = nil }
+        try await task.value
+    }
+
+    private func performRefresh() async throws {
         guard userKey != nil else { throw VaultStoreError.locked }
         let syncClient = SyncClient(
             baseURL: api.baseURL,
@@ -513,9 +543,21 @@ final class VaultStore {
 
         switch response {
         case let .upToDate(revision):
+            // CR-03: discard a response that has already been superseded --
+            // defense in depth on top of `pullInFlight`'s serialisation
+            // above, for a response that itself describes older server
+            // state than this store already knows about.
+            guard revision >= lastKnownRevision else {
+                Self.log.error("discarding out-of-order up-to-date sync response (\(revision) < \(self.lastKnownRevision))")
+                return
+            }
             lastKnownRevision = revision
             persistUpToDateToCache(revision: revision)
         case let .snapshot(revision, rows, folderRows):
+            guard revision >= lastKnownRevision else {
+                Self.log.error("discarding out-of-order snapshot sync response (\(revision) < \(self.lastKnownRevision))")
+                return
+            }
             items = rows.map(decrypt(row:))
             lastKnownRevision = revision
             persistSnapshotToCache(revision: revision, items: rows, folders: folderRows)
