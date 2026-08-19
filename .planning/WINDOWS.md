@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 6
+open_count: 7
 waived_count: 0
 fixed_count: 12
-total_count: 18
-last_updated: 2026-08-12T03:30:00.000Z
+total_count: 19
+last_updated: 2026-08-19T03:00:00.000Z
 ---
 
 # Broken Windows Ledger
@@ -33,6 +33,7 @@ last_updated: 2026-08-12T03:30:00.000Z
 | 16 | 30 | deviation | crates/pv-server/migrations/0001_init.sql |  | CRITICAL, found live (30-17): vault_items.user_id REFERENCES users(id) ON DELETE CASCADE is unconditional -- applies to a collection-scoped item exactly like a personal one. delete_account_as_member (account.rs) correctly re-keys every collection the departing member could reach, but never detaches/reassigns user_id on items inside a SURVIVING collection before DELETE FROM users cascades -- so a family-wide-shared item the departing member originally created is destroyed the instant their account is deleted, even though the collection itself survives with a freshly re-keyed sealed_key for every remaining member (proven live: GET /api/vault/collections/{id} -> 200 valid sealed_key, GET .../items -> 200 empty array). This is the exact inverse of 30-CONTEXT.md's locked decision ("leaving is not deletion... you keep your own originals"). delete_account_as_owner already has a deliberate, different precedent for the whole-family-dissolves case (its own Step 1 pre-deletes every collection-scoped item on purpose); delete_account_as_member needs an analogous, deliberate decision -- e.g. detaching a collection-scoped item's user_id before the cascade, mirroring last_editor_user_id's own CR-01 precedent -- which is a schema/ownership call outside 30-17's file scope. See family-wide-sharing.spec.ts's skipped 'a member LEAVES the family' test for the full live reproduction. | fixed |  | 2026-08-10T23:03:57.952Z |  2026-08-11T09:40:00.000Z |
 | 17 | 30 | deviation | crates/pv-server/src/routes/families.rs |  | Flagged during the WINDOWS #16/#15 investigation, deliberately NOT fixed to avoid scope creep under time pressure: `family_wide_pending`'s `resealable` query has no access-level filter, while the client's reseal flow calls `collections::add_member`, which is RequireEdit-gated. This is the same conceptual bug as the invite-propagation 403 fixed in d07c2a7 (a read-level holder being asked to propagate a grant it cannot legally make), on the lazy-reseal half of FSH-02 instead of the invite-carried half. No currently-failing test exercises it, so it is latent rather than observed. Likely fix: apply the same `require_collection_access_for_propagation` bound, or filter `resealable` by the caller's own access_level. | fixed |  | 2026-08-11T09:40:00.000Z |  2026-08-11T10:30:00.000Z |
 | 18 | 30 | deviation | crates/pv-server/src/routes/membership.rs |  | Residual deliberately re-admitted by quick task 260812-01e's HI-02 fix, surfaced by its verification and recorded here because the fix disposition omitted it. `resolve_family_wide_declared_level` now FAILS CLOSED on a family-wide collection whose `family_wide_kind` is set but whose `family_wide_access_level` is NULL (a pre-migration-0020 row). That closes a real escalation on legacy NULL-level item_buckets, at the price of re-admitting WINDOWS #17's exact failure shape for that one row type: `generateInviteLink` folds in EVERY family-wide collection the caller holds a key for, unconditionally, so a key-holder on such a row has their WHOLE invite request refused and can never generate an invite again. Unreachable in any released build -- `validate_family_wide_access_level` refuses to create such a row through the API, v0.4 has no such column, and migrations 0019/0020/0021 all ship inside unreleased v0.5 -- so the only state that can hold one is a local dev database that ran an intermediate build carrying 30-12's item-bucket client but not yet 0020. Detection: `SELECT id, family_id, family_wide_kind FROM collections WHERE family_wide_kind IS NOT NULL AND family_wide_access_level IS NULL;` -- non-empty means that DB is affected. Fix if it ever becomes reachable: backfill those rows to their intended declared level (a data migration), rather than reopening the bound. | open |  | 2026-08-12T03:30:00.000Z |  |
+| 19 | 31 | deviation | web/src/components/vault/SharingOverviewPanel.tsx | 315 | F-5 (31-VERIFICATION.md gap closure, deliberately NOT fixed there per its own explicit instruction): the Sharing overview's per-person revoke button filters only `family_wide_kind !== "item_bucket"`, so a family-wide FOLDER still renders a live revoke affordance for each of its members. CR-02's own fix (this same phase) added a server-side backstop -- `collections::revoke_access` now refuses on EVERY family-wide collection (`is_family_wide_collection`, folder included), not only `item_bucket` -- so clicking that button on a family-wide folder now 403s and surfaces the generic `share.revokeFailed`, rather than silently self-reverting on the next keyholder unlock as it did pre-CR-02. Probe-confirmed (31-VERIFICATION.md P4): `DELETE .../access/{user}` on a family-wide folder -> 403, row survives -- the BEHAVIOUR is fenced, only the OFFER is stale. `SharingOverviewPanel.tsx` is explicitly out of scope for Phase 31 (`31-CONTEXT.md`: "Out of scope: the Family & Sharing settings surface (Phase 33)"). Fix: extend the same-file filter from `family_wide_kind !== "item_bucket"` to `family_wide_kind === null`, mirroring `ShareDialog.tsx`'s own `editableExistingFolders` filter (CR-02's client-side fix) exactly. | open |  | 2026-08-19T03:00:00.000Z |  |
 
 ````json
 [
@@ -250,6 +251,18 @@ last_updated: 2026-08-12T03:30:00.000Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-12T03:30:00.000Z",
+    "resolved_at": null
+  },
+  {
+    "id": 19,
+    "kind": "deviation",
+    "phase": "31",
+    "file": "web/src/components/vault/SharingOverviewPanel.tsx",
+    "line": 315,
+    "description": "F-5 (31-VERIFICATION.md gap closure, deliberately NOT fixed there per its own explicit instruction): the Sharing overview's per-person revoke button filters only `family_wide_kind !== \"item_bucket\"`, so a family-wide FOLDER still renders a live revoke affordance for each of its members. CR-02's own fix (this same phase) added a server-side backstop -- `collections::revoke_access` now refuses on EVERY family-wide collection (`is_family_wide_collection`, folder included), not only `item_bucket` -- so clicking that button on a family-wide folder now 403s and surfaces the generic `share.revokeFailed`, rather than silently self-reverting on the next keyholder unlock as it did pre-CR-02. Probe-confirmed (31-VERIFICATION.md P4): `DELETE .../access/{user}` on a family-wide folder -> 403, row survives -- the BEHAVIOUR is fenced, only the OFFER is stale. `SharingOverviewPanel.tsx` is explicitly out of scope for Phase 31 (`31-CONTEXT.md`: \"Out of scope: the Family & Sharing settings surface (Phase 33)\"). Fix: extend the same-file filter from `family_wide_kind !== \"item_bucket\"` to `family_wide_kind === null`, mirroring `ShareDialog.tsx`'s own `editableExistingFolders` filter (CR-02's client-side fix) exactly.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-19T03:00:00.000Z",
     "resolved_at": null
   }
 ]
