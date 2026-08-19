@@ -183,6 +183,163 @@ enum SharedItemsStore {
         }
     }
 
+    // MARK: - `GET /api/vault/collections/{id}/sync` -- ANY author, CR-04
+
+    /// Ingests every row of ONE family-wide collection's full item set --
+    /// `GET /api/vault/collections/{id}/sync` (`pull_shared_collection`),
+    /// which is scoped by `collection_id` ALONE, unlike `/api/sync`'s
+    /// collection arm (`ingestPersonalSync`, above), which additionally
+    /// binds `i.user_id = caller` and therefore never surfaces an item
+    /// another member authored inside a collection the caller shares with
+    /// them -- the exact bug `RemoveMemberService.fetchCollectionItemRows`'s
+    /// own header documents (there, for the re-key batch; here, for the
+    /// vault list itself). `sharedToMe` is `false` on every resulting item
+    /// (a family-wide share is not a direct share -- `ShareMarker`'s own
+    /// ordering depends on the two staying distinct); `isFamilyWide` is
+    /// `true` unconditionally, since every row here came from a collection
+    /// this function's caller has already confirmed carries a non-nil
+    /// `family_wide_kind`.
+    ///
+    /// Decrypts via `decryptItemForCollection` (the Collection Key), NEVER
+    /// `decryptItemWire` (the caller's own User Key) -- an item authored by
+    /// someone else in this collection was never wrapped under this
+    /// caller's User Key at all; only the Collection Key recovers it.
+    static func ingestFamilyWideCollectionItems(
+        rows: [VaultItemRow],
+        collectionId: String,
+        collectionKey: FfiCollectionKey,
+        accessLevel: String?
+    ) -> [VaultItemViewModel] {
+        rows.map {
+            decryptFamilyWideCollectionRow(
+                $0, collectionId: collectionId, collectionKey: collectionKey, accessLevel: accessLevel
+            )
+        }
+    }
+
+    private static func decryptFamilyWideCollectionRow(
+        _ row: VaultItemRow, collectionId: String, collectionKey: FfiCollectionKey, accessLevel: String?
+    ) -> VaultItemViewModel {
+        guard let revision32 = UInt32(exactly: row.revision) else {
+            return VaultItemViewModel(
+                id: row.id, revision: row.revision,
+                content: .undecryptable(reason: "server returned an out-of-range revision"),
+                updatedAt: row.updated_at, lastUsedAt: row.last_used_at,
+                isShared: row.is_shared, lastEditorEmail: row.last_editor_email,
+                collectionId: collectionId, sharedToMe: false, accessLevel: accessLevel,
+                isFamilyWide: true
+            )
+        }
+        do {
+            let combinedJson = try combineEncryptedItemJson(encKeyJson: row.enc_key, encDataJson: row.enc_data)
+            let plaintext = try decryptItemForCollection(
+                ck: collectionKey, itemJson: combinedJson, collectionId: collectionId,
+                itemId: row.id, revision: revision32
+            )
+            let fields = try ItemNormalize.normalizeItemFields(fromPlaintext: plaintext)
+            return VaultItemViewModel(
+                id: row.id, revision: row.revision, content: .fields(fields),
+                updatedAt: row.updated_at, lastUsedAt: row.last_used_at,
+                isShared: row.is_shared, lastEditorEmail: row.last_editor_email,
+                collectionId: collectionId, sharedToMe: false, accessLevel: accessLevel,
+                isFamilyWide: true
+            )
+        } catch {
+            return VaultItemViewModel(
+                id: row.id, revision: row.revision,
+                content: .undecryptable(reason: String(describing: error)),
+                updatedAt: row.updated_at, lastUsedAt: row.last_used_at,
+                isShared: row.is_shared, lastEditorEmail: row.last_editor_email,
+                collectionId: collectionId, sharedToMe: false, accessLevel: accessLevel,
+                isFamilyWide: true
+            )
+        }
+    }
+
+    /// `enc_key`/`enc_data`, as returned split by every `VaultItemRow`-shaped
+    /// endpoint, recombined into the single JSON object
+    /// `decryptItemForCollection`/`encryptItemForCollection` expect
+    /// (`{"enc_key": ..., "enc_data": ...}`) -- the same technique
+    /// `ResealTriggerTests.combinedEncryptedItemJson` already proves live,
+    /// ported into production for this call site.
+    private static func combineEncryptedItemJson(encKeyJson: String, encDataJson: String) throws -> String {
+        guard
+            let encKeyData = encKeyJson.data(using: .utf8),
+            let encDataData = encDataJson.data(using: .utf8),
+            let encKeyObj = try? JSONSerialization.jsonObject(with: encKeyData),
+            let encDataObj = try? JSONSerialization.jsonObject(with: encDataData)
+        else {
+            throw PvApiError.unexpectedResponse("malformed EncryptedItem JSON for enc_key/enc_data")
+        }
+        let combined = try JSONSerialization.data(withJSONObject: ["enc_key": encKeyObj, "enc_data": encDataObj])
+        return String(decoding: combined, as: UTF8.self)
+    }
+
+    /// `GET /api/vault/collections/{id}/sync` -- no `since` query param
+    /// (`OptionalSyncQuery`'s contract: an absent `since` is ALWAYS a
+    /// full-snapshot request), same discipline
+    /// `RemoveMemberService.fetchCollectionItemRows` already established
+    /// for this identical endpoint. Snapshot-shape-first decode (L-22): the
+    /// up-to-date shape has no `items` key on the wire at all, so this
+    /// probes for it rather than risking an optional-with-default silently
+    /// producing an empty list on any decode.
+    static func fetchCollectionSyncRows(
+        collectionId: String,
+        baseURL: URL,
+        tokenProvider: () -> String?,
+        session: URLSession = .shared
+    ) async throws -> [VaultItemRow] {
+        guard let token = tokenProvider() else {
+            throw PvApiError.unexpectedResponse("no session token available for /api/vault/collections/\(collectionId)/sync")
+        }
+        guard let url = URL(string: "/api/vault/collections/\(collectionId)/sync", relativeTo: baseURL) else {
+            throw PvApiError.unexpectedResponse(
+                "could not construct URL for /api/vault/collections/\(collectionId)/sync against \(baseURL)"
+            )
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw PvApiError.network(error)
+        }
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw PvApiError.unexpectedResponse("response was not an HTTP response")
+        }
+        guard httpResponse.statusCode == 200 else {
+            if httpResponse.statusCode == 401 { throw PvApiError.invalidCredentials }
+            let message = String(data: data, encoding: .utf8)
+                ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+            throw PvApiError.httpError(status: httpResponse.statusCode, message: message)
+        }
+        struct SnapshotBody: Decodable { let revision: Int; let items: [VaultItemRow] }
+        struct UpToDateBody: Decodable { let revision: Int }
+        struct ProbeBody: Decodable { let items: [VaultItemRow]? }
+
+        let probe: ProbeBody
+        do {
+            probe = try JSONDecoder().decode(ProbeBody.self, from: data)
+        } catch {
+            throw PvApiError.unexpectedResponse("failed to decode /api/vault/collections/\(collectionId)/sync response: \(error)")
+        }
+        guard probe.items != nil else {
+            _ = try? JSONDecoder().decode(UpToDateBody.self, from: data)
+            return []
+        }
+        do {
+            let snapshot = try JSONDecoder().decode(SnapshotBody.self, from: data)
+            return snapshot.items
+        } catch {
+            throw PvApiError.unexpectedResponse("failed to decode /api/vault/collections/\(collectionId)/sync snapshot: \(error)")
+        }
+    }
+
     // MARK: - `GET /api/sync/shared/direct`
 
     /// The two-shape response `pull_shared_direct` returns -- same

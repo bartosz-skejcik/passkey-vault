@@ -131,6 +131,34 @@ struct CollectionService {
         return decoded.id
     }
 
+    /// `GET /api/vault/collections` (list) -- every collection the caller
+    /// currently holds a `collection_keys` row for. CR-04 (40-REVIEW.md):
+    /// production wiring for `VaultStore`'s family-wide-collection merge,
+    /// which needs to enumerate the caller's own family-wide collections
+    /// to pull each one's real item set. This duplicates the identical
+    /// private helper `InviteService.fetchOwnCollections`/
+    /// `RemoveMemberService.fetchOwnCollectionIds` each already carry --
+    /// kept as a THIRD copy here (not refactored into a shared call)
+    /// because those two files predate this fix and are out of its scope
+    /// to touch; a future cleanup can consolidate all three onto this one.
+    func listCollections() async throws -> [CollectionRecord] {
+        guard let token = tokenProvider() else {
+            throw PvApiError.unexpectedResponse("no session token available for /api/vault/collections")
+        }
+        let (data, response) = try await send(
+            path: "/api/vault/collections", method: "GET", body: nil, token: token
+        )
+        try Self.requireStatus(200, response: response, data: data)
+        let rows = try Self.decode([CollectionResponseBody].self, from: data)
+        return rows.map {
+            CollectionRecord(
+                id: $0.id, encName: $0.enc_name, createdAt: $0.created_at,
+                accessLevel: $0.access_level, sealedKey: $0.sealed_key,
+                familyWideKind: $0.family_wide_kind, familyWideAccessLevel: $0.family_wide_access_level
+            )
+        }
+    }
+
     /// `GET /api/vault/collections/{id}`.
     func fetchCollection(id: String) async throws -> CollectionRecord {
         guard let token = tokenProvider() else {

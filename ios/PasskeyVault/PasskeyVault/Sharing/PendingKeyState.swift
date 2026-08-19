@@ -154,6 +154,16 @@ final class PendingKeyState {
         awaitingKey.remove(collectionId)
     }
 
+    /// CR-04/WR-10 (40-REVIEW.md): clears BOTH axes -- called on lock
+    /// (`VaultStore.lock()`), mirroring that type's own "empties EVERY
+    /// array/map" discipline (WR-08, 39-REVIEW.md). A stale `.decryptFailed`
+    /// or `.awaitingKey` entry surviving a lock would otherwise describe a
+    /// collection this store no longer holds any row for at all.
+    func reset() {
+        awaitingKey = []
+        decryptFailed = [:]
+    }
+
     /// The resolved state for one collection id, or `nil` when neither axis
     /// carries it (a normal, readable row). `.decryptFailed` takes priority
     /// over `.awaitingKey` if a caller somehow queries during the single

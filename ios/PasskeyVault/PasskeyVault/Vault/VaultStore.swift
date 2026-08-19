@@ -190,6 +190,25 @@ final class VaultStore {
     /// sibling already closed.
     @ObservationIgnored private var pullRequestedDuringFlight = false
 
+    /// CR-04 (40-REVIEW.md): the ids of every row currently in `items` that
+    /// came from a SHARED source (direct share or family-wide collection),
+    /// not the personal `/api/sync` snapshot -- tracked so
+    /// `mergeSharedAndFamilyWideItems()` can strip exactly last refresh's
+    /// shared rows before re-adding fresh ones, on every call, regardless
+    /// of which branch the personal pull above took. Without this, a
+    /// direct share or family-wide item would duplicate on every
+    /// subsequent refresh.
+    @ObservationIgnored private var sharedItemIds: Set<String> = []
+
+    /// WR-10 (40-REVIEW.md): real production state now. Was built,
+    /// tested, and had zero callers before this fix -- `applyFamilyWidePending`
+    /// is now driven by a real pull cycle (`mergeSharedAndFamilyWideItems`,
+    /// best-effort), and `markDecryptFailed` is now called from the
+    /// family-wide row decrypt path this same fix adds. `@Observable`
+    /// itself, so a view holding this store can read `pendingKeyState`
+    /// directly without this store re-exporting each field.
+    let pendingKeyState = PendingKeyState()
+
     #if DEBUG
     /// WR-06 (38-REVIEW.md, iteration 2): test-visible confirmation that a
     /// post-`await` lock re-check actually fired -- distinguishes "the
@@ -250,6 +269,11 @@ final class VaultStore {
         allTags = []
         lastKnownRevision = 0
         isHydrated = false
+        // CR-04/WR-10: the shared-row tracking and pending-key state this
+        // fix adds are just as much "everything this store owns" as
+        // `items`/`allTags` above -- see this type's own header discipline.
+        sharedItemIds = []
+        pendingKeyState.reset()
         // WR-08 (39-REVIEW.md): added in plan 39-06, `currentSnapshot` holds
         // every item's ciphertext, the account id and the server URL for the
         // lifetime of this store -- this type's own header says "empties
@@ -714,6 +738,162 @@ final class VaultStore {
         }
         recomputeTags()
         isHydrated = true
+
+        // CR-04: direct-shared items and family-wide-collection items (any
+        // author) -- see `mergeSharedAndFamilyWideItems()`'s own header.
+        // Runs on every refresh, not just the `.snapshot` branch above:
+        // these are separate endpoints with their own state, not covered
+        // by the personal pull's up-to-date/snapshot split.
+        await mergeSharedAndFamilyWideItems()
+    }
+
+    /// CR-04 item 4 (40-REVIEW.md): the raw `enc_key` a `ShareItemView`
+    /// caller needs to build a `ShareableItem` -- fetched fresh, on
+    /// demand, never stored as a property on this `@Observable` type.
+    /// `ShareableItem`'s own header explains why: `VaultItemViewModel`
+    /// deliberately carries no raw `enc_key`/`enc_data` (DR-38-C, this
+    /// file's own header rule 1 -- "the wire JSON is never built here").
+    /// A full `sync(since: 0)` round trip is the only client already
+    /// wrapping this read; only the ONE matching row's `enc_key` is ever
+    /// returned, and it is never assigned to any stored/observed property
+    /// of this store.
+    func fetchRawEncKeyJson(forOwnedItemId itemId: String) async throws -> String? {
+        guard userKey != nil else { throw VaultStoreError.locked }
+        let result = try await api.sync(since: 0)
+        guard case let .snapshot(_, rows, _) = result else { return nil }
+        return rows.first(where: { $0.id == itemId })?.enc_key
+    }
+
+    /// Computed, not stored -- nothing to `@ObservationIgnored` (that
+    /// attribute only applies to stored properties); a fresh, stateless
+    /// service value per call, same pattern every other Phase 40 service
+    /// consumer in this codebase already uses (`RemoveMemberService`'s own
+    /// `familyAPI`/`identityService`/`collectionService` computed
+    /// properties).
+    private var identityService: IdentityService {
+        IdentityService(baseURL: api.baseURL, tokenProvider: api.tokenProvider, session: api.session)
+    }
+
+    private var collectionService: CollectionService {
+        CollectionService(baseURL: api.baseURL, tokenProvider: api.tokenProvider, session: api.session)
+    }
+
+    /// CR-04 (40-REVIEW.md): closes the "a received share, or a family-wide
+    /// collection's items authored by anyone else, never appears in the
+    /// vault list" gap -- `/api/sync`'s collection arm is author-scoped
+    /// (`ingestPersonalSync`'s own header), and nothing called
+    /// `/api/sync/shared/direct` at all before this. Best-effort: any
+    /// failure here is logged and this store's items simply carry no
+    /// shared rows for this cycle, never surfaced as a failed refresh --
+    /// the personal pull above already completed and is not retroactively
+    /// invalidated by this step failing.
+    private func mergeSharedAndFamilyWideItems() async {
+        guard let uk = userKey else { return }
+        items.removeAll { sharedItemIds.contains($0.id) }
+        sharedItemIds = []
+
+        var merged: [VaultItemViewModel] = []
+        do {
+            let identityKey = try await identityService.ensureOwnIdentityKeypair(userKey: uk)
+
+            // Post-await lock re-check (CR-02/CR-03 discipline, this
+            // file's own established shape) -- a lock landing during any
+            // of the round trips below must never resurrect decrypted
+            // content after the vault explicitly locked.
+            guard userKey != nil else { return }
+
+            let directResult = try await SharedItemsStore.fetchDirectShared(
+                baseURL: api.baseURL, tokenProvider: api.tokenProvider, since: 0, session: api.session
+            )
+            guard userKey != nil else { return }
+            if case let .snapshot(_, directRows) = directResult {
+                merged.append(contentsOf: SharedItemsStore.ingestDirectShared(rows: directRows, identityKey: identityKey))
+            }
+
+            // WR-10: best-effort -- a solo self-hoster 404s/403s on this
+            // exact endpoint (WR-04's own note on the sibling SyncCoordinator
+            // call), which must never abort the direct-share/family-wide
+            // merge above or below.
+            if let pending = try? await SharedItemsStore.fetchFamilyWidePending(
+                baseURL: api.baseURL, tokenProvider: api.tokenProvider, session: api.session
+            ) {
+                pendingKeyState.applyFamilyWidePending(missing: pending.missing)
+                // A collection in `missing` has NO `collection_keys` row
+                // for this caller yet, so `GET /api/vault/collections`
+                // below never returns it -- there is no real item set to
+                // enumerate. `Content.pendingFamilyKey` (`ItemFields.swift`)
+                // already exists, is already rendered by `ItemDetailView
+                // .pendingFamilyKeyPanel()`, and had no producer anywhere
+                // in production before this: one synthetic row per pending
+                // collection is what makes it reachable.
+                for grant in pending.missing {
+                    merged.append(
+                        VaultItemViewModel(
+                            id: "pending-collection-\(grant.collection_id)",
+                            revision: 0,
+                            content: .pendingFamilyKey,
+                            collectionId: grant.collection_id,
+                            sharedToMe: false,
+                            accessLevel: grant.access_level,
+                            isFamilyWide: true
+                        )
+                    )
+                }
+            }
+            guard userKey != nil else { return }
+
+            // Family-wide collections: enumerate what this account already
+            // holds a key for, unseal each Collection Key once, and pull
+            // every item in it via the collection-scoped sync endpoint
+            // (any author) -- NOT `/api/sync`, whose collection arm is
+            // author-scoped (`ingestPersonalSync`'s own header; the exact
+            // bug `RemoveMemberService.fetchCollectionItemRows` already
+            // documents for the re-key batch).
+            let collections = try await collectionService.listCollections()
+            guard userKey != nil else { return }
+            for record in collections {
+                guard record.familyWideKind != nil, let sealedKey = record.sealedKey else { continue }
+                do {
+                    let ck = try unsealCollectionKey(myIdentityKey: identityKey, sealedJson: sealedKey)
+                    let rows = try await SharedItemsStore.fetchCollectionSyncRows(
+                        collectionId: record.id, baseURL: api.baseURL, tokenProvider: api.tokenProvider, session: api.session
+                    )
+                    guard userKey != nil else { return }
+                    // `familyWideAccessLevel ?? "read"` -- NEVER
+                    // `record.accessLevel` (this caller's OWN held level,
+                    // hard-coded `edit` for the creator's row by
+                    // `collections::create` regardless of the level the
+                    // share itself declares). Mirrors `ResealService`'s own
+                    // documented fallback discipline exactly.
+                    let collectionItems = SharedItemsStore.ingestFamilyWideCollectionItems(
+                        rows: rows, collectionId: record.id, collectionKey: ck,
+                        accessLevel: record.familyWideAccessLevel ?? "read"
+                    )
+                    // WR-10: a row that failed to decrypt with a key we DO
+                    // hold is the genuine integrity signal `PendingKeyState
+                    // .decryptFailed` exists for -- distinct from
+                    // `.awaitingKey`, which `applyFamilyWidePending` above
+                    // already owns.
+                    if let firstFailure = collectionItems.first(where: \.isUndecryptable),
+                       case let .undecryptable(reason) = firstFailure.content {
+                        pendingKeyState.markDecryptFailed(collectionId: record.id, reason: reason)
+                    }
+                    merged.append(contentsOf: collectionItems)
+                } catch {
+                    Self.log.error(
+                        "family-wide collection \(record.id, privacy: .public) merge failed: \(String(describing: error), privacy: .private)"
+                    )
+                }
+            }
+        } catch {
+            Self.log.error("shared-item merge failed: \(String(describing: error), privacy: .private)")
+            return
+        }
+
+        guard userKey != nil else { return }
+        sharedItemIds = Set(merged.map(\.id))
+        items.append(contentsOf: merged)
+        recomputeTags()
     }
 
     /// DR-39-A: one JSON blob, written whole and replaced whole. Failure is
