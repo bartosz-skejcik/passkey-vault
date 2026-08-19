@@ -1,0 +1,34 @@
+E-F2 live run -- Phase 40, plan 40-06, Task 3
+Recorded: 2026-08-19 7:27:39 AM +0000
+Server origin: http://127.0.0.1:8621
+
+Judgment call (40-06-SUMMARY.md Deviations): redemption below runs through
+redeemInviteSwiftSide (real pv-ffi crypto + real HTTP calls to pv-server), not the
+scripts/invite-live-e2e.mjs pv-wasm Node driver this plan's phase-context named --
+Foundation.Process does not exist on iOS, discovered live via a direct compile error,
+so a single xcodebuild test method cannot spawn it as a subprocess. The Node script is
+kept in the repo as reusable infrastructure for a future external multi-process
+orchestrator (mirroring scripts/verify-ios-web-interop.mjs's own pattern).
+
+Owner account A: pv-ef2-a-1787124459@example.invalid
+Family created, membersBefore.count = 1
+
+Invite #1 URL: http://127.0.0.1:8621/invite/ewfIpZw2OuDVN9GgFUhwvBsPjBhQfF1HVBfJPpaDyo8#RPAmvFddF5cnC0HuLk3pEUdJhkUIhc64KoB19aBuJ0Q
+Redeemed by account B (pv-ef2-b-1787124459@example.invalid): ok=true alreadyMember=Optional(false)
+
+GET /api/families/members after redemption (raw HTTP, account A's token, curl-equivalent):
+  [["user_id": 98815564-c198-4265-a48c-0fc842e1b5b9, "public_key": UljuzmQsm5uMk9RQxosQ4tzpMqYRR3w6m62A+5u4ayw=, "role": member, "verified_at": <null>, "joined_at": 2026-08-19 07:27:39, "status": active, "email": pv-ef2-b-1787124459@example.invalid, "fingerprint": ee7a45be7a58ce7e44450544528e813e9732265be3876b93860b4830089cabd1], ["user_id": fd442052-5552-4469-93e5-7664f2de2a90, "fingerprint": 5a89ea49be9105f586293cd935da710f91102306e3c4615ccbb2581519a151c3, "verified_at": <null>, "joined_at": 2026-08-19 07:27:39, "public_key": M5JZShlGCLZeu3E5y9j9Rm0xia09bKyrjuzZgsO1amY=, "role": owner, "status": active, "email": pv-ef2-a-1787124459@example.invalid]]
+
+GET /api/families/members after redemption (via the REAL iOS FamilyAPI.fetchMembers(), a fresh call):
+  pv-ef2-b-1787124459@example.invalid (active), pv-ef2-a-1787124459@example.invalid (active)
+
+Invite #2 URL (untampered): http://127.0.0.1:8621/invite/dzTk7tedGPdn5Ne0zE57XIjC2Xysmca7-dH5CPXhWQQ#jhd-rzE4jF7jKi8YFXYS4FNUdH8O5JvS14gNMgIYhtk
+Invite #2 URL (tampered, one fragment character flipped): http://127.0.0.1:8621/invite/dzTk7tedGPdn5Ne0zE57XIjC2Xysmca7-dH5CPXhWQQ#Ahd-rzE4jF7jKi8YFXYS4FNUdH8O5JvS14gNMgIYhtk
+
+Tamper attempt (account D, pv-ef2-d-1787124459@example.invalid): ok=false stage=self-consistency reason=fragment-derived id xYQZ2GLEVW8miojr_czpM4Z4Hd3bGnluzCUZNX0IYQ8 does not match path id dzTk7tedGPdn5Ne0zE57XIjC2Xysmca7-dH5CPXhWQQ
+GET /api/families/members after the tamper attempt (via iOS FamilyAPI, must be unchanged): 2 members
+
+Falsifiability control -- SAME invite #2, UNTAMPERED, redeemed by account E (pv-ef2-e-1787124459@example.invalid): ok=true
+GET /api/families/members after the control redemption (via iOS FamilyAPI): 3 members
+
+SC2's evidence is THIS live cross-client run, not any Swift unit test in Tasks 1-2.

@@ -229,6 +229,23 @@ enum PVMetrics {
     // var(--s))}` override (the base `.pie` rule above is 21px, the LIST
     // size).
     static let totpRingDiameterDetail: CGFloat = 30
+
+    // MARK: - Phase 40 additions (screens-vault.html, "Family, sharing and
+    // settings" section) -- `40-UI-SPEC.md` §2. Added by plan 40-06, the
+    // first plan to need a segmented control (invite expiry); 40-07/40-08
+    // reuse `segTrackRadius`/`PVSegmentedControl` rather than redefining
+    // them.
+
+    // Invite link sheet + share sheet's segmented control -- `.seg{
+    // border-radius:9;padding:2} .seg i{padding:5;border-radius:7} .seg
+    // i.on{font-weight:600}`. ONE component (`PVSegmentedControl`,
+    // `InviteCreateView.swift`), reused for: invite expiry (1h/24h/7d),
+    // share scope (Person/Whole family), and share access level (3-way).
+    static let segTrackRadius: CGFloat = 9
+    static let segTrackPadding: CGFloat = 2
+    static let segItemRadius: CGFloat = 7
+    static let segItemVPadding: CGFloat = 5
+    static let segFontSize: CGFloat = 13
 }
 
 // MARK: - Dock glass
