@@ -7,17 +7,21 @@
 # source-level self-check only proves intent; UniFFI's code generation is
 # the real boundary (crates/pv-ffi/src/lib.rs's own module header, "SC3").
 #
-# Rule: no function reachable on FfiUserKey/FfiWrappingKey may return raw
-# key bytes (Data/[UInt8]) to Swift, except the two FFI-03 sanctioned
-# exception names (`exportUserKeyForSession`/`importUserKeyFromSession` --
-# see crates/pv-ffi/src/lib.rs's module header, "SANKCJONOWANY WYJATEK").
+# Rule: no function reachable on any handle class (originally
+# FfiUserKey/FfiWrappingKey; Phase 40 added FfiIdentityKey/FfiCollectionKey/
+# FfiInviteChannel to $HANDLE_TYPES and $EXPECTED_CLASSES, plan 40-04) may
+# return raw key bytes (Data/[UInt8]) to Swift, except the two FFI-03
+# sanctioned exception names (`exportUserKeyForSession`/
+# `importUserKeyFromSession` -- see crates/pv-ffi/src/lib.rs's module
+# header, "SANKCJONOWANY WYJATEK") and the reviewed, exact-named entries in
+# $CLASS_METHOD_BYTE_ALLOWLIST/$FREE_FUNC_NO_HANDLE_BYTE_ALLOWLIST below.
 # `importUserKeyFromSession` accepts bytes and returns an opaque handle --
 # it never returns raw bytes, so it is not caught by the returns-Data scan
 # below; it is named here only because it is the documented other half of
 # the CP-4 exception pair, not because this script needs to allow-list it
 # separately.
 #
-# Three shapes of "byte accessor" this project's UniFFI codegen can produce,
+# Four shapes of "byte accessor" this project's UniFFI codegen can produce,
 # all scanned:
 #   (A) a free top-level function whose signature mentions FfiUserKey/
 #       FfiWrappingKey and returns Data/[UInt8] (the shape
@@ -40,9 +44,20 @@
 #       not ship one release behind the shape it needs to catch. Allowlisted
 #       by exact `<StructName>.<propertyName>` pair (empty today) --
 #       `generateRegistrationSalt`'s own return (a free function returning
-#       `Data` with NO handle-typed argument at all) is reviewed separately,
-#       below, and is not a shape-C match by construction (shape C is about
-#       a struct BODY, not a free function's return type).
+#       `Data` with NO handle-typed argument at all) is not a shape-C match
+#       by construction (shape C is about a struct BODY, not a free
+#       function's return type); see shape D below for what actually covers
+#       it.
+#   (D) a free top-level function returning Data/[UInt8] whose signature
+#       names NO handle type at all (Phase 40, plan 40-04) -- shape A
+#       REQUIRES the signature to mention one of $HANDLE_TYPES, so a free
+#       function naming none (no handle-typed argument OR return) was
+#       previously invisible to every shape this script had, even though
+#       its return may still be key material. `generateRegistrationSalt`
+#       and `generateInviteSecret` are the two REVIEWED, NAMED
+#       non-key-material exceptions today ($FREE_FUNC_NO_HANDLE_BYTE_ALLOWLIST),
+#       kept in an exact-name allowlist with the same discipline as shapes
+#       B/C's own allowlists.
 #
 # Never rely on bash's post-pipe exit-code array (this project's shell is
 # zsh, where that array is silently empty -- landmine L-3,
@@ -52,7 +67,11 @@
 #
 # Demonstrated falsifiable (QA-02/QA-04) on FOUR distinct inputs, not one --
 # a gate whose falsification proof only covers the shape it already handles
-# is not proven falsifiable:
+# is not proven falsifiable. (Phases 35/37 history; Phase 40, plan 40-04's
+# OWN four falsification inputs -- one per new handle class plus one
+# unlisted free function -- are recorded further down, near
+# EXPECTED_CLASSES/FREE_FUNC_NO_HANDLE_BYTE_ALLOWLIST, and in
+# 40-04-SUMMARY.md.):
 #   1. Plain injected accessor: add a raw-byte-returning method to
 #      `impl FfiUserKey` in crates/pv-ffi/src/lib.rs, re-run
 #      scripts/build-ios.sh, re-run this script, observe FAIL naming the new
@@ -76,15 +95,30 @@
 # The missing-bindings precheck is falsified the same way (a temporary
 # `rm -rf` of the bindings directory).
 #
-# `generateRegistrationSalt() -> Data` (37-02) is a REVIEWED, NAMED
-# non-key-material byte export, not a leak this gate needs to catch: it is a
-# free function with NO handle-typed argument or return at all (shape A
-# requires the signature to MENTION a handle type; this one does not), and
-# its return is 16 bytes of explicit randomness -- a registration salt, not
-# key material -- the same sanctioned shape as `pv-wasm`'s `randomSalt`
-# (`crates/pv-wasm/src/lib.rs:690-695`) and `export_user_key_for_session`'s
-# own FFI-03 exception above. Recorded here so a future reader does not have
-# to re-derive from scratch whether it is a leak.
+# `generateRegistrationSalt() -> Data` (37-02) and `generateInviteSecret()
+# -> Data` (40-04) are REVIEWED, NAMED non-key-material byte exports, not
+# leaks this gate needs to catch: both are free functions with NO
+# handle-typed argument or return at all (shape A requires the signature to
+# MENTION a handle type; neither does), and each returns explicit
+# randomness, not key material -- the same sanctioned shape as `pv-wasm`'s
+# `randomSalt`/`generateInviteSecret` (`crates/pv-wasm/src/lib.rs:690-706`)
+# and `export_user_key_for_session`'s own FFI-03 exception above. Both are
+# kept in `$FREE_FUNC_NO_HANDLE_BYTE_ALLOWLIST` (shape D) rather than only
+# recorded here in prose, so a future unlisted free function of the same
+# shape is caught rather than silently joining an ad-hoc "reviewed" list.
+#
+# Phase 40, plan 40-04's OWN four falsification inputs (distinct from the
+# Phases 35/37 history above -- each covers surface THIS plan added):
+#   1. A method returning `Vec<u8>` of the secret added to `FfiIdentityKey`
+#      in Rust (`crates/pv-ffi/src/sharing.rs`), rebuilt, re-audited: FAILs,
+#      naming the injected symbol. Reverted: PASSes again.
+#   2. The same, on `FfiCollectionKey`.
+#   3. The same, on `FfiInviteChannel`.
+#   4. A top-level `#[uniffi::export] pub fn` returning `Vec<u8>` whose
+#      signature names no handle type at all, added to
+#      `crates/pv-ffi/src/sharing.rs`, rebuilt, re-audited: FAILs (shape D).
+#      Reverted: PASSes again.
+# All four transcripts are recorded in 40-04-SUMMARY.md.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -106,7 +140,11 @@ fi
 
 ALLOWED='^(exportUserKeyForSession|importUserKeyFromSession)$'
 BYTE_RETURN_RE='-> *(Data|\[UInt8\])'
-HANDLE_TYPES='FfiUserKey|FfiWrappingKey'
+# Phase 40, plan 40-04: extended from the original two Phase-35 types to all
+# five handle types this project now generates -- widening this list only
+# STRENGTHENS shapes A/C (more free-function/struct-field surface becomes
+# reachable to the scanner), never relaxes BYTE_RETURN_RE itself.
+HANDLE_TYPES='FfiUserKey|FfiWrappingKey|FfiIdentityKey|FfiCollectionKey|FfiInviteChannel'
 NAME_RE='^[[:space:]]*(public|open)[[:space:]]+(static[[:space:]]+)?func[[:space:]]+([A-Za-z0-9_]+).*'
 
 # --- Lexical preprocessing (CR-02) ----------------------------------------
@@ -222,8 +260,17 @@ extract_class_body() {
 # automatically instead of being silently unaudited), but discovery alone
 # would be fail-open: if the codegen stopped emitting a class under a name
 # this script recognises, "found nothing" would read as "nothing to audit".
-# These two must be found, or the run is an ERROR.
-EXPECTED_CLASSES="FfiUserKey FfiWrappingKey"
+# These must be found, or the run is an ERROR.
+#
+# Phase 40, plan 40-04: extended from the original two Phase-35 types with
+# the three handle classes Phase 40 introduced (FfiIdentityKey,
+# FfiCollectionKey, FfiInviteChannel). Discovery (shape B, below) already
+# scanned these dynamically before this change -- this list is the "MUST be
+# found or ERROR" floor, not a switch that turns scanning on: without it, a
+# future codegen rename/drop of one of these three classes would silently
+# stop being audited instead of failing loud, which is the exact CR-03
+# failure class this file's own header describes.
+EXPECTED_CLASSES="FfiUserKey FfiWrappingKey FfiIdentityKey FfiCollectionKey FfiInviteChannel"
 
 # Shape C's allowlist, keyed by exact `<StructName>.<propertyName>` pairs
 # (space-separated, empty today). Every entry here is a REVIEWED, DELIBERATE
@@ -245,7 +292,33 @@ STRUCT_HANDLE_BYTE_ALLOWLIST=""
 # this entry removed, the gate FAILs naming
 # `FfiIdentityKey.publicKeyBytes`; restored, it PASSes again (see
 # 40-02-SUMMARY.md for the transcript).
-CLASS_METHOD_BYTE_ALLOWLIST="FfiIdentityKey.publicKeyBytes"
+#
+# Phase 40, plan 40-04: two more exact names, both on `FfiInviteChannel` and
+# both justified in `crates/pv-ffi/src/sharing.rs`'s own module header
+# ("SANCTIONED RAW-BYTES EXITS"/task-1 doc comments):
+#   - `FfiInviteChannel.proofHashForCreation` -- a SHA-256 DIGEST of the
+#     proof-of-possession value (`proof_hash_for_creation` in Rust), sent at
+#     invite-creation time. A hash, not the secret itself.
+#   - `FfiInviteChannel.proofForRedemption` -- the raw bearer credential
+#     (WR-08) presented in a POST body at redemption time; the server
+#     verifies it directly against its own stored hash, so no other form
+#     would let it do its job.
+CLASS_METHOD_BYTE_ALLOWLIST="FfiIdentityKey.publicKeyBytes FfiInviteChannel.proofHashForCreation FfiInviteChannel.proofForRedemption"
+
+# Shape D's allowlist (Phase 40, plan 40-04) -- top-level free functions
+# returning Data/[UInt8] whose signature names NO handle type at all (shape
+# A's own scan requires one of $HANDLE_TYPES to appear in the signature, so
+# a free function naming none was previously invisible to every shape this
+# script had). Keyed by exact function name only (no class prefix -- these
+# are free functions, not methods). Both entries here are REVIEWED,
+# non-key-material byte exports:
+#   - `generateRegistrationSalt` -- an explicit 16-byte registration salt
+#     (this file's own header, above, already reviewed this one before
+#     shape D existed to formally catch it).
+#   - `generateInviteSecret` -- sanctioned raw-bytes exit #1
+#     (`crates/pv-ffi/src/sharing.rs`'s own module header): the invite
+#     secret must literally appear in the URL fragment a human forwards.
+FREE_FUNC_NO_HANDLE_BYTE_ALLOWLIST="generateRegistrationSalt generateInviteSecret"
 
 VIOLATIONS=""
 DISCOVERED_ALL=""
@@ -274,6 +347,25 @@ for f in "$BINDINGS_DIR"/*.swift; do
         VIOLATIONS="${VIOLATIONS}${f} (free func): ${line}"$'\n'
       fi
     done <<< "$MATCHES_A"
+  fi
+
+  # (D) top-level free functions returning Data/[UInt8] whose signature
+  # names NO handle type at all (Phase 40, plan 40-04). Shape A above
+  # REQUIRES the signature to mention one of $HANDLE_TYPES -- a free
+  # function naming none (e.g. a hypothetical future free function that
+  # reimplements a key accessor without taking the handle as an argument at
+  # all) is invisible to shape A even though its return value may still be
+  # key material. Same BYTE_RETURN_RE, unmodified; the only difference from
+  # shape A is the ABSENCE, not presence, of a handle-type match.
+  MATCHES_D=$(grep -E "^public func .*$BYTE_RETURN_RE" "$STRIPPED" | grep -Ev "($HANDLE_TYPES)" || true)
+  if [ -n "$MATCHES_D" ]; then
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      name=$(echo "$line" | sed -E "s/$NAME_RE/\\3/")
+      if ! echo " $FREE_FUNC_NO_HANDLE_BYTE_ALLOWLIST " | grep -qF " $name "; then
+        VIOLATIONS="${VIOLATIONS}${f} (free func, no handle type in signature): ${line}"$'\n'
+      fi
+    done <<< "$MATCHES_D"
   fi
 
   # (B) methods declared inside each handle class's own body.
@@ -374,6 +466,6 @@ if [ -n "$VIOLATIONS" ]; then
   exit 1
 fi
 
-echo "PASS: generated Swift exposes zero raw-byte accessors beyond exportUserKeyForSession/importUserKeyFromSession, and zero handle-carrying structs smuggle a raw-byte field alongside the handle (FFI-02, shapes A/B/C)"
+echo "PASS: generated Swift exposes zero raw-byte accessors beyond exportUserKeyForSession/importUserKeyFromSession, and zero handle-carrying structs smuggle a raw-byte field alongside the handle (FFI-02, shapes A/B/C/D)"
 echo "      audited handle classes:$(echo "$AUDITED_ALL" | tr -s ' ')"
 echo "      audited handle-carrying structs:$(echo "$STRUCTS_AUDITED_ALL" | tr -s ' ')"
