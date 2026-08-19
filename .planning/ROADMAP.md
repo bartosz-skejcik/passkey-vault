@@ -86,7 +86,7 @@ Audit: [milestones/v0.4-MILESTONE-AUDIT.md](milestones/v0.4-MILESTONE-AUDIT.md).
 
 - [x] **Phase 29: A Real Settings Page — Shell & Migration** (6/6 plans) — completed 2026-08-10 - Settings becomes a linkable `/settings` route with headed sections; every existing setting survives the move, and the family surface is carried across unchanged pending its Phase 33 redesign
 - [x] **Phase 30: The Living Group — Family-Wide Sharing** (17/17 plans + quick task 260812-01e) — completed 2026-08-12, verified 6/6 - Share with the whole family in one action, and someone who joins later gains access by a client-only key path decided and documented before any dependent code
-- [ ] **Phase 31: The Share Dialog — Per-Person Access, Existing Destinations** - One row per person with their own access level, able to target a shared folder that already exists instead of minting another one
+- [x] **Phase 31: The Share Dialog — Per-Person Access, Existing Destinations** (6/6 plans) — completed 2026-08-19, verified 6/6 - One row per person with their own access level, able to target a shared folder that already exists instead of minting another one
 - [ ] **Phase 32: Putting Things Into Shared Folders** - An item can be created in, moved into, and taken back out of an existing shared folder, always re-encrypted under the destination scope or refused
 - [ ] **Phase 33: The Family & Sharing Surface** - Family & Sharing redesigned around the finished sharing model, with the last orphaned server capability finally given a proven client consumer
 - [ ] **Phase 34: Knowing What You Are Sharing** - The item list, the sharing overview and the extension popup answer "what am I exposing, to whom, in which direction" without ever misrepresenting it
@@ -189,14 +189,17 @@ require a **proven** client consumer, not a wired one.
   4. Each access level is described in the dialog using the shipped `access.readOnly` / `access.fullEdit` / `access.hiddenPassword` vocabulary, and the hidden-password description states in that same view that it is an interface protection and never a cryptographic one — visible without a hover, a tooltip, or a second click.
   5. A share that cannot complete — destination key unavailable, or a recipient with no published identity key — is refused with an honest message and leaves no partial membership behind; the failure branch is driven deliberately and the resulting server state is asserted unchanged, so the refusal is proven to fire rather than assumed.
 
-**Plans**: 4/6 plans executed
+**Plans**: 6/6 plans executed — verified 6/6 on 2026-08-19 (`31-VERIFICATION.md`). Four Fix-Disposition
+mis-closures the same report found (F-1..F-4: HI-01's wrong-lane fix, a new `update_access` item_bucket
+hole, CR-01's Failure Scenario B, CR-03's collection-path contributor ceiling) were closed by a
+follow-up gap-closure pass, recorded in `31-VERIFICATION.md`'s own Gap Closure section.
 
 - [x] 31-01-PLAN.md — Server: PUT /access/{user_id} and PUT /shares/{user_id} in-place level-edit routes (Q2) + client wrappers
 - [x] 31-02-PLAN.md — ShareDialog: migrate the shared per-person control to the per-row model for BOTH scopes (folder mint-new + item), family-wide isolated to its own control, hidden-password re-wired to rows, single-scroll-region shell
 - [x] 31-03-PLAN.md — ShareDialog: destination selector targeting an existing shared folder (MOD-02) + dispatch-count proof + ORG-03/SC3 real-WASM proof + SC1/SC2 live e2e
 - [x] 31-04-PLAN.md — ShareDialog: pending-revocations honesty summary + the sixth proof obligation's two-session live revocation proof
-- [ ] 31-05-PLAN.md — ShareDialog: submit CTA distinction + hidden-password honesty wording revision (MOD-03/SC4)
-- [ ] 31-06-PLAN.md — ShareDialog: SC5 deliberately-driven destination-unavailable refusal + Q2 dispatch-level atomicity proof + phase-wide CI-width sweep
+- [x] 31-05-PLAN.md — ShareDialog: submit CTA distinction + hidden-password honesty wording revision (MOD-03/SC4)
+- [x] 31-06-PLAN.md — ShareDialog: SC5 deliberately-driven destination-unavailable refusal + Q2 dispatch-level atomicity proof + phase-wide CI-width sweep
 
 **UI hint**: yes
 
@@ -284,7 +287,7 @@ Phases execute in numeric order: 1 → … → 20 (v0.1–v0.3, archived) → 21
 | 28. Close v0.4 audit gaps — client-side consumption of sharing state | v0.4 | 3/3 | Complete | 2026-08-09 |
 | 29. A Real Settings Page — Shell & Migration | v0.5 | 0/5 | Planned    |  |
 | 30. The Living Group — Family-Wide Sharing | v0.5 | 0/17 | Planned | - |
-| 31. The Share Dialog — Per-Person Access, Existing Destinations | v0.5 | 4/6 | In Progress|  |
+| 31. The Share Dialog — Per-Person Access, Existing Destinations | v0.5 | 6/6 | Complete    | 2026-08-19 |
 | 32. Putting Things Into Shared Folders | v0.5 | TBD | Not started | - |
 | 33. The Family & Sharing Surface | v0.5 | TBD | Not started | - |
 | 34. Knowing What You Are Sharing | v0.5 | TBD | Not started | - |

@@ -2,10 +2,15 @@
 phase: 31
 slug: the-share-dialog-per-person-access-existing-destinations
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-08-12
+# F-6 fix (31-VERIFICATION.md gap closure, 2026-08-19): every task row below
+# was already ✅ done and every Wave 0 item already ticked -- this frontmatter
+# had simply never been advanced to match. Set from the completed table, not
+# re-derived: no task row, Wave 0 item, or falsification claim below was
+# changed to produce this status.
 ---
 
 # Phase 31 — Validation Strategy
@@ -114,12 +119,20 @@ Note: Q2's "no intermediate under/over-access window" claim is proven jointly by
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 90 s
-- [ ] Every new test **falsification-proven** — reverted, observed red with its exact output recorded, restored
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies — every row in the Per-Task
+      Verification Map above is ✅ done
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify — every task row carries
+      its own `<automated>` verify command
+- [x] Wave 0 covers all MISSING references — all four Wave 0 items above are ticked
+- [x] No watch-mode flags — every verify command in the table runs once (`test`/`test:e2e`, never `--watch`)
+- [x] Feedback latency < 90 s — quick-lane command unchanged from this file's own Test Infrastructure section
+- [x] Every new test **falsification-proven** — reverted, observed red with its exact output recorded, restored
+      — confirmed both in `31-REVIEW.md`'s Fix Disposition and independently re-falsified by
+      `31-VERIFICATION.md` (CR-01/HI-01/CR-02/SC3/6th-obligation, each with its own recorded red output)
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** Approved 2026-08-19 — `31-VERIFICATION.md` independently re-ran all five CI-width
+commands plus the full live Playwright suite against a fresh build of HEAD and scored 6/6 must-have
+truths verified (score line, frontmatter). The four Fix-Disposition mis-closures the same report
+found (F-1..F-4) are tracked and closed separately in `31-VERIFICATION.md`'s own Gap Closure
+section — none of them bears on any task row's own `<automated>` verify claim above.
