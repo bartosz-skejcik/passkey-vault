@@ -101,6 +101,11 @@ final class FakeSyncSocketTransport: SyncSocketTransport {
     /// clear (unlike `URLSessionSyncSocketTransport`), so there is nothing
     /// else for this method to do.
     private(set) var discardedTaskCount = 0
+    /// WR-01 (39-REVIEW.md, iteration 2): tracks calls to `invalidate()` --
+    /// this fake owns no real `URLSession`, so there is nothing else for the
+    /// call to do; the count is what `SyncSocket.teardown()`'s own test
+    /// asserts on.
+    private(set) var invalidateCount = 0
 
     func makeTask(
         url: URL,
@@ -114,6 +119,10 @@ final class FakeSyncSocketTransport: SyncSocketTransport {
 
     func discardHandlers(for task: SyncSocketTask) {
         discardedTaskCount += 1
+    }
+
+    func invalidate() {
+        invalidateCount += 1
     }
 }
 
@@ -191,6 +200,7 @@ final class BackgroundDispatchingSyncSocketTransport: SyncSocketTransport, @unch
     }
 
     func discardHandlers(for task: SyncSocketTask) {}
+    func invalidate() {}
 }
 
 private struct FakeCancellable: SyncSocketCancellable {
@@ -333,6 +343,55 @@ struct SyncSocketTests {
         socket.stop()
         try await Self.pollUntil(timeoutSeconds: 2) { transport.discardedTaskCount == 1 }
         #expect(transport.discardedTaskCount == 1, "stop()'s own close must discard the handler entry")
+    }
+
+    // WR-01 (39-REVIEW.md, iteration 2): `teardown()` (not merely `stop()`)
+    // must invalidate the transport -- `stop()` alone leaves
+    // `URLSessionSyncSocketTransport`'s session-retains-delegate cycle
+    // intact, so a `SyncCoordinator` that dropped its socket via `stop()`
+    // alone leaked one transport+session+delegate triple per lock/unlock
+    // cycle. `invalidateCount` is what this test would have stayed at 0 on,
+    // before the fix.
+    @MainActor
+    @Test func teardownInvalidatesTheTransportExactlyOnce() async throws {
+        let (socket, transport, _, _) = makeSocket()
+        socket.start()
+        transport.madeTasks[0].simulateOpen()
+        #expect(transport.invalidateCount == 0, "invalidate() must not fire merely from starting")
+
+        socket.teardown()
+
+        #expect(transport.invalidateCount == 1, "teardown() must invalidate the transport exactly once")
+    }
+
+    /// WR-01's stronger claim, over the REAL transport rather than the fake:
+    /// `URLSessionSyncSocketTransport` is its own `URLSessionWebSocketDelegate`,
+    /// so `URLSession` retains it until `invalidate()`/`finishTasksAndInvalidate()`
+    /// runs. A `weak` reference dropping to `nil` after `teardown()` plus
+    /// releasing every other strong reference is direct evidence the retain
+    /// cycle is actually broken -- not merely that a counter incremented,
+    /// the same "true in the artifact, false in reality" distinction
+    /// `LockTeardownTests.lockReleasesTheKeyHandleSoAWeakReferenceIsNilAfterward`
+    /// already established for the key handle.
+    @MainActor
+    @Test func teardownBreaksTheRealTransportsRetainCycleSoAWeakReferenceIsNilAfterward() async throws {
+        weak var weakTransport: URLSessionSyncSocketTransport?
+        var socket: SyncSocket? = {
+            let transport = URLSessionSyncSocketTransport()
+            weakTransport = transport
+            return SyncSocket(urlProvider: { nil }, transport: transport, pull: {})
+        }()
+        #expect(weakTransport != nil, "the transport must still be alive before teardown")
+
+        socket?.teardown()
+        socket = nil
+
+        // `URLSession.finishTasksAndInvalidate()` releases its delegate
+        // reference on an internal queue, not synchronously on this call --
+        // so this polls rather than asserting immediately after `teardown()`
+        // returns.
+        try await Self.pollUntil(timeoutSeconds: 5) { weakTransport == nil }
+        #expect(weakTransport == nil, "the retain cycle must be broken by teardown(), not merely by dropping every OTHER strong reference")
     }
 
     // Behaviour 5: a close on a superseded connection does not alter the

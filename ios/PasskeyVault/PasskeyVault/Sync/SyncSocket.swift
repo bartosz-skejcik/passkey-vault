@@ -92,6 +92,16 @@ protocol SyncSocketTransport: AnyObject {
     /// corresponding `didCloseWith`) still has its stored handler entry
     /// removed. A no-op for a fake transport that keeps no such table.
     func discardHandlers(for task: SyncSocketTask)
+
+    /// WR-01 (39-REVIEW.md, iteration 2): explicit, OWNER-driven session
+    /// invalidation -- `URLSession(configuration:delegate:delegateQueue:)`
+    /// retains its delegate until invalidated, so a transport that is its
+    /// own delegate (`URLSessionSyncSocketTransport`) is in a retain cycle
+    /// with its own session and can never reach `deinit` on its own. Called
+    /// from `SyncSocket.teardown()`, which `SyncCoordinator.stop()` calls
+    /// instead of `SyncSocket.stop()`. A no-op for a fake transport that
+    /// owns no real `URLSession`.
+    func invalidate()
 }
 
 /// Real transport: one `URLSession` configured with itself as the
@@ -112,14 +122,32 @@ final class URLSessionSyncSocketTransport: NSObject, SyncSocketTransport, URLSes
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
 
-    /// WR-02 (39-REVIEW.md): `URLSession(configuration:delegate:delegateQueue:)`
-    /// retains its delegate until INVALIDATED -- without this, every
-    /// `SyncSocket` (one per lock/unlock cycle, since `ContentView
-    /// .performLock` drops the coordinator) leaked its transport's session
-    /// forever. `invalidateAndCancel()` cancels any outstanding task too, so
-    /// this is safe even if `stop()` was never called first.
+    /// WR-01 (39-REVIEW.md, iteration 2): belt-and-braces ONLY -- this
+    /// `deinit` can never actually run while the retain cycle below is
+    /// intact, because `URLSession` retains its delegate (`self`) until
+    /// invalidated, and nothing but `invalidate()` (called explicitly from
+    /// `SyncSocket.teardown()`) breaks that cycle. WR-02's original fix
+    /// placed the invalidation call HERE, which is exactly the unreachable
+    /// shape this note now corrects: `deinit` cannot invalidate a session
+    /// that is the one thing keeping this object alive. Left in place only
+    /// as a second line of defence for any future call site that drops the
+    /// LAST reference to this transport without ever calling `invalidate()`
+    /// first -- session `deinit` still cancels any outstanding task even in
+    /// that case, but by then the cycle has already leaked one full
+    /// transport+session+delegate triple.
     deinit {
         session.invalidateAndCancel()
+    }
+
+    /// WR-01 (39-REVIEW.md, iteration 2): the ACTUAL fix -- called from
+    /// `SyncSocket.teardown()`, driven by the owner's explicit stop, not by
+    /// `deinit`. `finishTasksAndInvalidate()` lets any outstanding task
+    /// finish (WS tasks are already cancelled by `SyncSocket.stop()` before
+    /// this runs) and then releases the session's strong reference to
+    /// `self`, breaking the cycle and allowing this transport to actually
+    /// deallocate.
+    func invalidate() {
+        session.finishTasksAndInvalidate()
     }
 
     func makeTask(
@@ -254,6 +282,21 @@ final class SyncSocket {
         // URLSessionWebSocketTask) is the ONLY place `currentTask` is ever
         // nilled -- not this function -- so a superseded task's own close
         // path stays the single owner of that transition.
+    }
+
+    /// WR-01 (39-REVIEW.md, iteration 2): the OWNER-driven teardown that
+    /// actually breaks `URLSessionSyncSocketTransport`'s retain cycle with
+    /// its own session -- `stop()` alone cancels the live task and disarms
+    /// reconnection, but leaves the session (and therefore the transport)
+    /// alive forever, because `URLSession` retains its delegate until
+    /// explicitly invalidated. Called from `SyncCoordinator.stop()` instead
+    /// of `stop()` directly; never called from `deinit` (this object may
+    /// legitimately be stopped and restarted many times before it is ever
+    /// deallocated, and `invalidate()` on a still-in-use session/transport
+    /// would be wrong).
+    func teardown() {
+        stop()
+        transport.invalidate()
     }
 
     /// CR-01 (39-REVIEW.md): every callback the transport hands back is

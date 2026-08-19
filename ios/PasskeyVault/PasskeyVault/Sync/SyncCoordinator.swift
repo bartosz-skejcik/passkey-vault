@@ -106,8 +106,19 @@ final class SyncCoordinator {
     /// persisted cache or the store's session state -- that is
     /// `ContentView.performLock()`/`performSignOut()`'s job, not this
     /// type's.
+    ///
+    /// WR-01 (39-REVIEW.md, iteration 2): `socket.teardown()`, not
+    /// `socket.stop()` -- this is the LAST strong reference this type holds
+    /// to the socket (`socket = nil` immediately after), and every
+    /// `SyncSocket` in production wraps a REAL `URLSessionSyncSocketTransport`
+    /// whose session retains it until explicitly invalidated. `stop()` alone
+    /// cancels the live task and disarms reconnection but never breaks that
+    /// retain cycle, so dropping this reference without tearing down first
+    /// leaked one full transport+session+delegate triple per lock/unlock
+    /// cycle (`ContentView.performLock` drops the coordinator on every
+    /// lock).
     func stop() {
-        socket?.stop()
+        socket?.teardown()
         socket = nil
         stopRepeatingPull()
     }
