@@ -128,8 +128,8 @@ Phases 29–33 (`ROADMAP.md`). Every v0.5 requirement is mapped to exactly one p
 | MOD-03 | Phase 31 | Complete |
 | ORG-03 | Phase 31 | Complete |
 | ORG-01 | Phase 32 | Complete |
-| ORG-02 | Phase 32 | In progress (refusal path built in 32-01; SC3's deliberately-driven proof is 32-04) |
-| ORG-04 | Phase 32 | In progress (move-out built in 32-01; SC4's positive-then-negative live proof is 32-04) |
+| ORG-02 | Phase 32 | Complete (refusal path built in 32-01; SC3's deliberately-driven proof landed in 32-04, verified live in 32-VERIFICATION.md) |
+| ORG-04 | Phase 32 | Complete (move-out built in 32-01; SC4's positive-then-negative live proof landed in 32-04, verified live in 32-VERIFICATION.md) |
 | DEBT-04 | Phase 32 | Complete |
 | SET-01 | Phase 29 | Pending |
 | SET-02 | Phase 29 | Pending |
