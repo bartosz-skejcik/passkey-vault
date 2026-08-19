@@ -76,6 +76,16 @@ final class SyncCoordinator {
     /// long as the round trip took, after the vault had explicitly locked.
     private var resealTask: Task<Void, Never>?
 
+    /// WR-04: `GET /api/families/family-wide-pending` is `ActiveFamilyMembership
+    /// <RequireRead>`-gated (`families.rs:398-401`), so it 404s/403s on
+    /// EVERY call for a solo self-hoster -- this product's primary persona.
+    /// `pull()` runs on a 30-second timer, every socket push, and every
+    /// foreground transition, so without this cache that was an `.error`
+    /// log line every 30 seconds forever for a user with no family. Reset
+    /// on every fresh `start(...)` (a re-login could join a family
+    /// mid-session).
+    private var hasNoFamily = false
+
     /// Task 2's live two-push proof cannot fail while this optimisation
     /// runs -- a working poll disguises a one-shot receive as a working
     /// socket (D-06). Set BEFORE calling `start(baseURL:tokenProvider:userKey:)`;
@@ -128,6 +138,10 @@ final class SyncCoordinator {
         resealBaseURL = baseURL
         resealTokenProvider = tokenProvider
         resealUserKey = userKey
+        // WR-04: a fresh session gets a fresh chance to discover family
+        // membership -- a re-login could join a family mid-session, so
+        // this is not carried over from a previous `start(...)`.
+        hasNoFamily = false
         let trigger = ResealTrigger(resealService: ResealService(baseURL: baseURL, tokenProvider: tokenProvider))
         resealTrigger = trigger
         // Unlock transition -- a fresh session gets a fresh attempted-pair
@@ -217,6 +231,12 @@ final class SyncCoordinator {
     /// session to reseal on behalf of", never a crash.
     private func fireResealTriggerIfPossible() {
         guard let resealTrigger, let resealBaseURL, let resealTokenProvider, let resealUserKey else { return }
+        // WR-04: `pull()` runs on a 30-second timer, every socket push, and
+        // every foreground transition -- without this cache, a caller with
+        // no family (this product's primary self-hoster persona) issued
+        // this request, and logged its 404/403 failure at `.error`,
+        // forever, on every one of those cadences.
+        guard !hasNoFamily else { return }
         // CR-03: cancel any still-running cycle from a previous pull before
         // starting a new one -- `stop()` already cancels on lock, this
         // covers the (rarer) case of two pull cycles racing while unlocked.
@@ -241,6 +261,17 @@ final class SyncCoordinator {
                 else { return }
                 _ = await liveTrigger.run(resealable: pending.resealable, userKey: liveUserKey)
             } catch {
+                // WR-04: a 404/403 here means "this caller is not an
+                // active member of any family" -- not a genuine sync
+                // failure, so it must never compete with WR-01 (39-REVIEW
+                // .md)'s own `.error` logging for a real failure's
+                // visibility. Cached for the rest of this session so the
+                // request itself stops being reissued at all.
+                if case let PvApiError.httpError(status, _) = error, status == 404 || status == 403 {
+                    self?.hasNoFamily = true
+                    Self.log.debug("reseal trigger: caller is not in a family -- skipping for this session")
+                    return
+                }
                 Self.log.error("reseal-trigger pending fetch failed: \(String(describing: error), privacy: .public)")
             }
         }
