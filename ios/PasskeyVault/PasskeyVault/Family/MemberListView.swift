@@ -11,26 +11,26 @@
 //  nobody, so comparing the fingerprint over a channel the server does not
 //  control is the only thing that closes this at this layer).
 //
-//  Built complete, real, and independently instantiable -- the SAME "built,
-//  functional, not yet threaded into the live nav stack" shape
-//  `InviteCreateView.swift` (40-06) and `Sharing/ShareItemView.swift`
-//  (40-08) already shipped in this codebase, rather than reaching into
-//  `VaultRootView.swift:59`'s still-`disabled(true)` avatar-menu "Family"
-//  entry to force a wiring no Phase 40 plan through this one has scheduled
-//  (`ShareItemView.swift`'s own header records the identical judgment call).
+//  CR-04 (40-REVIEW.md, REVIEW-FIX): now threaded into the live nav stack
+//  -- reachable from `VaultRootView.swift:59`'s avatar-menu "Family" entry
+//  via `FamilyRootView`. The paragraphs below describing what was
+//  deliberately deferred are historical (Task 1's own scope record); see
+//  `FamilyRootView.swift` and this file's own removal wiring (tap a
+//  non-self row as the owner) for what closed each gap.
 //
 //  Renders MEMBERS only -- no pending-invites section (`40-UI-SPEC.md`
 //  §5.5's "Invited" `.glab` group): `FamilyAPI` has no invites-LIST endpoint
 //  for this plan's own acceptance criteria to exercise (`InviteService`
 //  only ever CREATES one), and inventing that read surface is out of this
-//  task's scope. Recorded, not silently dropped.
+//  task's scope. Recorded, not silently dropped -- still true post-CR-04.
 //
-//  Does NOT wire a removal action -- `RemoveMemberService.swift` (Task 2)
-//  is a standalone, independently-testable service, exactly like
-//  `ShareItemComposer`'s own "pure logic, testable without constructing the
-//  view" precedent; this plan's own `files_modified` lists no removal-
-//  confirmation view, and none of Tasks 1-3's acceptance criteria ask for
-//  one.
+//  Removal IS now wired (CR-04): tapping a non-self row, when the caller's
+//  own role is `"owner"`, presents a native `.confirmationDialog` that
+//  submits through `RemoveMemberService.removeMember`, unchanged. A plain
+//  member cannot trigger it from this screen -- `RemoveMemberService
+//  .removeMember`'s own header: "Owner removes a DIFFERENT member";
+//  self-removal is `RemoveMemberService.leaveFamily`, a deliberately
+//  separate flow this screen does not offer.
 //
 //  Display name: `FamilyMemberRecord` carries no separate display-name
 //  field on the wire (only `email`) -- unlike `ios/brand/screens-vault
