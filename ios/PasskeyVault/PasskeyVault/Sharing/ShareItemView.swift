@@ -1,0 +1,319 @@
+//
+//  ShareItemView.swift
+//  PasskeyVault
+//
+//  Phase 40 (rodzina-i-współdzielenie-na-telefonie), plan 40-08 --
+//  `40-UI-SPEC.md` §0.3/§5.7 (BINDING SCOPE ADDITION, orchestrator
+//  resolution 2026-08-19): "this plan's executor ALSO owns the Share-an-item
+//  authoring sheet ... as an explicit scope addition -- the sheet is the
+//  level-picker's only real surface; without it SC3's copy check has
+//  nothing to screenshot."
+//
+//  Controls, per the drawing (`ios/brand/screens-vault.html`, "Share an
+//  item" sheet) and §5.7's own table: a Person/Whole-family
+//  `PVSegmentedControl`, a person picker (checkmark rows), a 3-way access
+//  `PVSegmentedControl` (Read-only / Full edit / Hidden password), the
+//  hidden-password disclosure (`StatusCallout(tone: .warning)`, ported
+//  VERBATIM from `HiddenPasswordDisclosure.swift` -- SC3's copy check),
+//  a muted revocation note, and a primary CTA.
+//
+//  §0.3's own resolution marks this screen SPECIFIED-BUT-NOT-SCHEDULED for
+//  the 10 plans written before the drawing existed; this plan's
+//  orchestrator-level scope addition schedules it explicitly, but does NOT
+//  additionally schedule the navigation wiring 40-07's own Family roster
+//  screen would need to present it from (`VaultRootView.swift:59`'s avatar-
+//  menu "Family" entry is still `disabled(true)` as of this plan -- 40-07
+//  has not shipped). This view is built complete, real, and independently
+//  testable/instantiable -- the SAME "built, functional, not yet threaded
+//  into the live nav stack" shape `InviteCreateView.swift` (plan 40-06)
+//  already shipped in this exact codebase -- rather than reaching into
+//  `VaultStore`'s private `userKey`/`VaultRootController`'s sheet router to
+//  force a wiring this plan's own task list never asked for.
+//
+//  WHOLE-FAMILY SCOPE, documented judgment call: this view shares to every
+//  CURRENTLY active family member individually via the SAME
+//  `POST /api/vault/items/{id}/shares` person-share endpoint
+//  (`ShareItemComposer.recipients(for:.wholeFamily,...)`), rather than
+//  moving the item into a family-wide `Collection` (`CollectionService
+//  .createFamilyWideCollection`'s propagate-to-future-members semantics).
+//  Building the latter would require re-encrypting the item under a fresh
+//  Collection Key and wiring `PUT /api/vault/items/{id}/collection`
+//  (`move_item`) -- real crypto work with no test coverage anywhere in this
+//  plan's own `must_haves`/`threat_model`, and genuinely out of scope for
+//  "make the three access levels real and prove the hidden-password
+//  honesty claim". A future member added after this share will NOT
+//  automatically gain access under this simplification -- recorded here,
+//  not silently dropped, per this project's own "true in the artifact,
+//  false in reality" discipline.
+//
+
+import SwiftUI
+
+/// `.seg` scope toggle -- "Person" / "Whole family" (§5.7's own table).
+enum ShareScope: String, CaseIterable, Identifiable {
+    case person
+    case wholeFamily
+
+    var id: String { rawValue }
+
+    /// Polish, matching this app's established Phase 40 screen language
+    /// (`InviteCreateView.swift`'s own precedent) -- no exact
+    /// `dictionary.ts` key exists for this iOS-native toggle (the web app's
+    /// own share dialog does not draw this as a segmented control), so this
+    /// is composed minimally rather than left silent.
+    var label: String {
+        switch self {
+        case .person: return "Osoba"
+        case .wholeFamily: return "Cała rodzina"
+        }
+    }
+}
+
+/// The 3-way access-level `.seg` -- `AccessLevel`'s three KNOWN cases only
+/// (the sheet never offers ".unknown" as a selectable choice; that case
+/// exists solely to render an already-unrecognised server value honestly).
+enum ShareAccessLevelOption: String, CaseIterable, Identifiable {
+    case read
+    case fullEdit = "edit"
+    case hiddenPassword = "hidden_password"
+
+    var id: String { rawValue }
+
+    /// `AccessLevel.label` -- the SAME Polish strings `access.readOnly`/
+    /// `access.fullEdit`/`access.hiddenPassword` render everywhere else,
+    /// never a second hand-typed copy of them.
+    var label: String {
+        AccessLevel(wireValue: rawValue).label
+    }
+}
+
+/// The item this sheet shares -- the caller's OWN item, so `encKeyJson` is
+/// the item's Cipher Key wrapped under the CALLER's own `FfiUserKey`
+/// (`sealItemKeyForRecipient`'s own precondition). A minimal, literal
+/// struct rather than `VaultItemViewModel` -- that view model deliberately
+/// carries no raw `enc_key`/`enc_data` (`ItemFields.swift`'s own DR-38-C
+/// discipline keeps those server-wire-only), and this sheet's caller is
+/// expected to supply this straight from the same `VaultAPI`/`VaultStore`
+/// layer that already holds it.
+struct ShareableItem {
+    let itemId: String
+    let encKeyJson: String
+    let displayName: String
+}
+
+enum ShareItemError: Error, CustomStringConvertible {
+    case memberMissingIdentity(userId: String)
+    case noRecipientsSelected
+
+    var description: String {
+        switch self {
+        case let .memberMissingIdentity(userId):
+            return "member \(userId) has no published identity keypair"
+        case .noRecipientsSelected:
+            return "no recipients selected"
+        }
+    }
+}
+
+/// Pure recipient-selection logic, split out of the view body so it is
+/// independently testable without constructing a `ShareItemView` at all
+/// (mirrors `ShareMarker.of`'s own "pure function, tested directly"
+/// discipline).
+enum ShareItemComposer {
+    /// Person scope: exactly the checked rows. Whole-family scope: every
+    /// CURRENTLY active member except the caller -- see this file's own
+    /// header for why this is a documented simplification, not a true
+    /// family-wide collection propagation.
+    static func recipients(
+        for scope: ShareScope,
+        selectedIds: Set<String>,
+        members: [FamilyAPI.FamilyMemberRecord],
+        excluding selfUserId: String
+    ) -> [FamilyAPI.FamilyMemberRecord] {
+        switch scope {
+        case .person:
+            return members.filter { selectedIds.contains($0.userId) }
+        case .wholeFamily:
+            return members.filter { $0.userId != selfUserId && $0.status == "active" }
+        }
+    }
+}
+
+struct ShareItemView: View {
+    let item: ShareableItem
+    let ownerUserKey: FfiUserKey
+    let ownUserId: String
+    let members: [FamilyAPI.FamilyMemberRecord]
+    let familyAPI: FamilyAPI
+
+    @State private var scope: ShareScope = .person
+    @State private var accessLevel: ShareAccessLevelOption = .read
+    @State private var selectedMemberIds: Set<String> = []
+    @State private var isSharing = false
+    @State private var errorMessage: String?
+    @State private var didShare = false
+
+    var body: some View {
+        PVScreenScaffold(
+            content: {
+                // No exact existing dictionary key for this sheet's own
+                // title (same "compose minimally" note as `InviteCreateView
+                // .swift`'s sheet title).
+                PVScreenTitle(title: "Udostępnij \(item.displayName)")
+
+                VStack(alignment: .leading, spacing: PVMetrics.fieldStackGap) {
+                    Text("Komu")
+                        .font(.system(size: PVMetrics.footnoteSize))
+                        .foregroundStyle(Color("PVTextMuted"))
+                    PVSegmentedControl(
+                        options: ShareScope.allCases.map { ($0, $0.label) },
+                        selection: $scope
+                    )
+                    .accessibilityIdentifier("vault.share.scopeSegment")
+                }
+                .padding(.top, PVMetrics.fieldStackGap)
+
+                if scope == .person {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(members, id: \.userId) { member in
+                            personRow(member)
+                            if member.userId != members.last?.userId {
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(.top, PVMetrics.fieldStackGap)
+                    .accessibilityIdentifier("vault.share.personPicker")
+                }
+
+                VStack(alignment: .leading, spacing: PVMetrics.fieldStackGap) {
+                    Text("Poziom dostępu")
+                        .font(.system(size: PVMetrics.footnoteSize))
+                        .foregroundStyle(Color("PVTextMuted"))
+                    PVSegmentedControl(
+                        options: ShareAccessLevelOption.allCases.map { ($0, $0.label) },
+                        selection: $accessLevel
+                    )
+                    .accessibilityIdentifier("vault.share.accessLevelSegment")
+                }
+                .padding(.top, PVMetrics.fieldStackGap)
+
+                if accessLevel == .hiddenPassword {
+                    // `share.hiddenPasswordDisclosureBody` -- SC3's own
+                    // checked string, VERBATIM, never paraphrased.
+                    StatusCallout(text: HiddenPasswordDisclosure.disclosureBodyPl, tone: .warning)
+                        .accessibilityIdentifier("vault.share.hiddenPasswordDisclosure")
+                        .padding(.top, PVMetrics.fieldStackGap)
+                }
+
+                StatusCallout(
+                    text: "Udostępnienie ponownie zawija klucz tego itemu dla każdej wybranej osoby. "
+                        + "Usunięcie kogoś zawija go ponownie, bez niej.",
+                    tone: .muted
+                )
+                .accessibilityIdentifier("vault.share.revocationNote")
+                .padding(.top, PVMetrics.fieldStackGap)
+
+                if let errorMessage {
+                    StatusCallout(text: errorMessage, tone: .error)
+                        .accessibilityIdentifier("vault.share.errorText")
+                        .padding(.top, PVMetrics.fieldStackGap)
+                }
+            },
+            actions: {
+                Button {
+                    Task { await share() }
+                } label: {
+                    if isSharing {
+                        ProgressView().tint(Color("PVOnAccent"))
+                    } else {
+                        Text(ctaLabel)
+                    }
+                }
+                .buttonStyle(PVPrimaryButtonStyle(isEnabled: !isSharing))
+                .disabled(isSharing)
+                .accessibilityIdentifier("vault.share.cta")
+            }
+        )
+    }
+
+    private var ctaLabel: String {
+        switch scope {
+        case .person:
+            return "Udostępnij \(selectedMemberIds.count) os."
+        case .wholeFamily:
+            return "Udostępnij całej rodzinie"
+        }
+    }
+
+    @ViewBuilder
+    private func personRow(_ member: FamilyAPI.FamilyMemberRecord) -> some View {
+        let isSelected = selectedMemberIds.contains(member.userId)
+        Button {
+            if isSelected {
+                selectedMemberIds.remove(member.userId)
+            } else {
+                selectedMemberIds.insert(member.userId)
+            }
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: member.email)
+                        .font(.system(size: PVMetrics.subtitleSize))
+                        .foregroundStyle(Color("PVTextPrimary"))
+                }
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(Color("PVAccent"))
+                }
+            }
+            .frame(minHeight: PVMetrics.rowMinHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("vault.share.person.\(member.userId)")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+
+    /// Real composition, no mock: unwraps `item`'s Cipher Key with
+    /// `ownerUserKey` and re-seals it to each recipient's own published
+    /// `IdentityPublicKey` via `sealItemKeyForRecipient`
+    /// (`crates/pv-ffi/src/sharing.rs`), then `POST`s the resulting sealed
+    /// blob through `familyAPI.createItemShare` -- SHARE-02's own write-side
+    /// primitive, unchanged.
+    private func share() async {
+        errorMessage = nil
+        let recipients = ShareItemComposer.recipients(
+            for: scope, selectedIds: selectedMemberIds, members: members, excluding: ownUserId
+        )
+        guard !recipients.isEmpty else {
+            errorMessage = "Wybierz co najmniej jedną osobę."
+            return
+        }
+
+        isSharing = true
+        defer { isSharing = false }
+        do {
+            for member in recipients {
+                guard
+                    let publicKeyB64 = member.publicKey,
+                    let publicKeyData = Data(base64Encoded: publicKeyB64)
+                else {
+                    throw ShareItemError.memberMissingIdentity(userId: member.userId)
+                }
+                let recipientPk = try FfiIdentityPublicKey.fromBytes(bytes: publicKeyData)
+                let sealedJson = try sealItemKeyForRecipient(
+                    uk: ownerUserKey, encKeyJson: item.encKeyJson, itemId: item.itemId, recipientPk: recipientPk
+                )
+                try await familyAPI.createItemShare(
+                    itemId: item.itemId, recipientUserId: member.userId,
+                    sealedKeyJson: sealedJson, accessLevel: accessLevel.rawValue
+                )
+            }
+            didShare = true
+        } catch {
+            errorMessage = "Nie udało się udostępnić itemu. Spróbuj ponownie."
+        }
+    }
+}

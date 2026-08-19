@@ -21,6 +21,19 @@
 //  `Sharing/CollectionService.swift` already established (`fetchCollection`/
 //  `createFamilyWideCollection` only, no `access_list`/`update_access`).
 //
+//  EXTENDED by Phase 40, plan 40-08 -- `40-UI-SPEC.md` §0.3 (binding,
+//  orchestrator resolution): plan 40-08's executor also owns the
+//  Share-an-item authoring sheet (`Sharing/ShareItemView.swift`), which
+//  needs the two write paths `40-UI-SPEC.md` §0.3 names --
+//  `createItemShare` (`POST /api/vault/items/{id}/shares`, person scope) and
+//  `addCollectionMember` (`POST /api/vault/collections/{id}/members`, whole-
+//  family scope) -- neither of which any Phase 40 plan through 40-07 had a
+//  caller for. Added here rather than a third client, per this file's own
+//  established "one HTTP surface for `/api/families*`/`/api/invitations*`"
+//  discipline extended to the two sharing-authoring routes `ShareItemView`
+//  needs (`crates/pv-server/src/routes/vault.rs::create_share`,
+//  `crates/pv-server/src/routes/collections.rs::add_member`).
+//
 
 import Foundation
 
@@ -126,6 +139,71 @@ struct FamilyAPI {
         let (data, response) = try await send(path: "/api/families/members", method: "GET", body: nil, token: token)
         try Self.requireStatus(200, response: response, data: data)
         return try Self.decode([FamilyMemberRecord].self, from: data)
+    }
+
+    // MARK: - Public API (Phase 40, plan 40-08 -- Share-an-item sheet)
+
+    private struct CreateItemShareRequestBody: Encodable {
+        let recipient_user_id: String
+        let sealed_key: String
+        let access_level: String
+    }
+
+    /// `POST /api/vault/items/{id}/shares` -- `crates/pv-server/src/routes/
+    /// vault.rs::create_share`, `Membership<Item, RequireEdit>`-gated.
+    /// `sealedKeyJson` is the item's OWN Cipher Key, `seal()`ed client-side
+    /// to `recipientUserId`'s published `IdentityPublicKey`
+    /// (`sealItemKeyForRecipient`, `crates/pv-ffi/src/sharing.rs`) -- opaque
+    /// to this server, never inspected here. Expects **201**.
+    func createItemShare(
+        itemId: String,
+        recipientUserId: String,
+        sealedKeyJson: String,
+        accessLevel: String
+    ) async throws {
+        guard let token = tokenProvider() else {
+            throw PvApiError.unexpectedResponse("no session token available for /api/vault/items/\(itemId)/shares")
+        }
+        let requestBody = CreateItemShareRequestBody(
+            recipient_user_id: recipientUserId, sealed_key: sealedKeyJson, access_level: accessLevel
+        )
+        let body = try JSONEncoder().encode(requestBody)
+        let (data, response) = try await send(
+            path: "/api/vault/items/\(itemId)/shares", method: "POST", body: body, token: token
+        )
+        try Self.requireStatus(201, response: response, data: data)
+    }
+
+    private struct AddCollectionMemberRequestBody: Encodable {
+        let recipient_user_id: String
+        let sealed_key: String
+        let access_level: String
+    }
+
+    /// `POST /api/vault/collections/{id}/members` --
+    /// `crates/pv-server/src/routes/collections.rs::add_member`. `sealedKeyJson`
+    /// is the SAME `CollectionKey` the collection was created with,
+    /// independently `seal()`ed to `recipientUserId`'s own identity public
+    /// key -- never unwrapped/validated server-side. Expects **201**.
+    func addCollectionMember(
+        collectionId: String,
+        recipientUserId: String,
+        sealedKeyJson: String,
+        accessLevel: String
+    ) async throws {
+        guard let token = tokenProvider() else {
+            throw PvApiError.unexpectedResponse(
+                "no session token available for /api/vault/collections/\(collectionId)/members"
+            )
+        }
+        let requestBody = AddCollectionMemberRequestBody(
+            recipient_user_id: recipientUserId, sealed_key: sealedKeyJson, access_level: accessLevel
+        )
+        let body = try JSONEncoder().encode(requestBody)
+        let (data, response) = try await send(
+            path: "/api/vault/collections/\(collectionId)/members", method: "POST", body: body, token: token
+        )
+        try Self.requireStatus(201, response: response, data: data)
     }
 
     // MARK: - Transport (mirrors IdentityService.swift/CollectionService.swift)
