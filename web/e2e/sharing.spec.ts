@@ -1361,6 +1361,124 @@ test("the sixth proof obligation: setting a member with existing access to 'Brak
   await owner.context.close();
 });
 
+// F-1 gap closure (31-VERIFICATION.md): HI-01's original "fixed" regression
+// bumped `users.vault_revision`, which drives ONLY the personal `/api/sync`
+// lane -- structurally incapable of carrying a collection access level
+// (`SyncSnapshot = {revision, items?, folders?}`). The lane the client's
+// cached collection `accessLevel` actually depends on is `/api/sync/shared`,
+// keyed off `collections.revision`, which `update_access` now ALSO bumps
+// (`collections.rs::update_access`). This test proves CONVERGENCE, not
+// increment: the demoted recipient's OWN still-open session (no reload, no
+// re-navigation away from the item) genuinely loses the ability to reveal
+// the password on its NEXT COMPLETED SYNC -- mirroring the sixth proof
+// obligation's shape immediately above, for a DEMOTION rather than a
+// revocation, exactly as 31-VERIFICATION.md's F-1 finding asked for.
+test("F-1 gap closure: an in-place demotion from 'edit' to 'hidden_password' against an EXISTING destination reaches the target's own live session -- a real positive anchor (reveals the password while at edit) BEFORE, and genuinely loses the ability to reveal it, on its own still-open panel, on the NEXT COMPLETED SYNC AFTER (no reload, no re-navigation) -- proving convergence via the SHARED sync lane the fix actually bumps", async ({
+  twoSessions,
+  browser,
+}) => {
+  test.setTimeout(180_000);
+
+  const [, member] = twoSessions;
+  const memberToken = await tokenFor(member.page);
+  const memberUserId = await userIdFor(member.context, memberToken);
+
+  await ensureFamilyMembership(browser, [memberUserId]);
+  await waitForIdentityKeyPublished(member.context, memberToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+
+  const suffix = uniqueSuffix();
+  const itemName = `PV E2E Demote Edit Item ${suffix}`;
+  const itemPassword = `pw-demote-edit-${suffix}`;
+  const personalFolderName = `PV E2E Demote Seed Folder ${suffix}`;
+  const sharedFolderName = `PV E2E Demote Shared Folder ${suffix}`;
+
+  // 1. Owner creates a real shared folder and shares it with the member at
+  //    "edit" (not "read" -- the failure this fix closes is specifically a
+  //    demotion AWAY from a more-permissive level, matching HI-01's own
+  //    failure scenario: a `hidden_password` demotion leaving the OLD
+  //    edit-derived reveal affordance cached client-side).
+  const itemsBefore = await listItemIds(owner.context, ownerToken);
+  await createLoginItemViaUI(owner.page, itemName, itemPassword);
+  const itemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+  const foldersBefore = await listFolderIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-folders").click();
+  await createFolderViaUI(owner.page, personalFolderName);
+  const folderId = await newIdAfter(foldersBefore, () => listFolderIds(owner.context, ownerToken));
+  await moveItemToFolder(owner.page, itemId, folderId);
+
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+  await shareExistingFolderWithMember(owner.page, folderId, memberUserId, "edit", sharedFolderName);
+  const destinationId = await newIdAfter(collectionsBefore, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 2. The member picks the collection up via a real unlock transition (this
+  //    file's header comment: `collections.ts` has no live-update
+  //    subscription for a BRAND-NEW membership -- unrelated to the fix under
+  //    test here, which is about an EXISTING membership's level changing).
+  await reloadAndUnlock(member.page, SESSION_PASSWORD);
+
+  // 3. Positive anchor: the member's own session, holding a REAL edit grant,
+  //    opens the item and reveals the real plaintext password. The panel is
+  //    deliberately left OPEN (no detail-panel-close) so step 5 below
+  //    observes the SAME already-mounted component converge live, not a
+  //    freshly re-fetched one.
+  const row = member.page.getByTestId(`item-row-${itemId}`);
+  await expect(row, "positive anchor setup: the member's own session must see the shared item").toBeVisible({
+    timeout: 90000,
+  });
+  await row.click();
+  await member.page.getByTestId("detail-panel").waitFor({ state: "visible" });
+  await member.page.getByTestId("reveal-password").click();
+  await expect(
+    member.page.getByTestId("detail-panel").getByText(itemPassword, { exact: true }),
+    "positive anchor: the member's own session, holding a real EDIT grant, must genuinely reveal the password BEFORE any demotion",
+  ).toBeVisible();
+
+  // 4. Owner reopens ShareDialog against the SAME existing folder, demotes
+  //    the member's row to "hidden_password" (first-ever selection on this
+  //    account, so the blocking disclosure ack fires once), and saves.
+  await owner.page.getByTestId("sidebar-nav-shared-folders").click();
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-destination-select").selectOption(destinationId);
+  await owner.page
+    .getByTestId(`share-recipient-row-currently-${memberUserId}`)
+    .waitFor({ state: "visible", timeout: 20000 });
+  await owner.page.getByTestId(`share-recipient-row-select-${memberUserId}`).selectOption("hidden_password");
+  await expect(owner.page.getByTestId("share-hidden-password-ack-title")).toBeVisible();
+  await owner.page.getByTestId("share-hidden-password-ack-confirm").click();
+
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  // 5. F-1's own negative anchor: on the member's OWN still-open panel (no
+  //    reload, no re-navigation away from and back to the item -- the SAME
+  //    mounted DetailPanel this positive anchor just used), the reveal
+  //    affordance must disappear and the honest recipient note must appear,
+  //    on the NEXT COMPLETED SYNC. Before this fix, `sharedRevisionsChanged()`
+  //    never fired for this mutation (collections.revision was never
+  //    bumped), so this would time out with the reveal affordance still
+  //    present and the plaintext still visible.
+  await expect(
+    member.page.getByTestId("reveal-password"),
+    "negative anchor: the demoted member's own still-open session must lose the reveal affordance on its own NEXT COMPLETED SYNC, no reload",
+  ).toHaveCount(0, { timeout: 60000 });
+  await expect(
+    member.page.getByTestId("hidden-password-recipient-note"),
+    "the honest hidden-password recipient note must now render in the SAME still-open panel",
+  ).toBeVisible();
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(member.dialogFired(), "zero OS-level dialogs across the member session").toBe(false);
+  await owner.context.close();
+});
+
 // 31-06-PLAN.md Task 1 -- SC5's SECOND, genuinely new refusal case: the
 // destination's own key becomes unavailable to the caller mid-session.
 // Per 31-RESEARCH.md's own finding, `getCollection(id).sealed_key` is

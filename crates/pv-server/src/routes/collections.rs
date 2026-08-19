@@ -27,7 +27,7 @@ use super::membership::{
     ActiveFamilyMembership, Collection, FamilyMembership, MinAccess, Membership, RequireEdit, RequireRead,
 };
 use super::sync::{ChangeType, EntityType, SyncEvent};
-use super::vault::{resolve_collection_members, validate_blob_len};
+use super::vault::{bump_collection_revision, resolve_collection_members, validate_blob_len};
 use crate::{error::ApiError, AppState};
 
 // WR-06 (code review iteration 2): this module used to keep its own copy of
@@ -741,6 +741,24 @@ pub struct UpdateAccessRequest {
 /// `accessLevel` for this collection — a `hidden_password` demotion in
 /// particular would leave the OLD, more-permissive level (e.g. `edit`)
 /// cached client-side indefinitely, keeping the password revealable.
+///
+/// F-1 fix (31-VERIFICATION.md gap closure): `users.vault_revision` above
+/// drives ONLY the personal `/api/sync` lane. The client's cached
+/// per-collection `accessLevel` — the thing that actually gates the
+/// hidden-password reveal affordance — is read exclusively off
+/// `/api/sync/shared`, whose payload is `(collection.id, collections.revision)`.
+/// This handler now ALSO bumps `collections.revision` inside the same
+/// transaction (below, immediately before commit) so `sharedRevisionsChanged()`
+/// fires for the WHOLE recipient set on a level edit — a level change is a
+/// membership-shape change, and every recipient's cached picture of it is
+/// now stale, not only the demoted target's. Unlike `add_member`/`revoke_access`
+/// (which each rely on the collection's id itself appearing/disappearing
+/// from a recipient's own `/api/sync/shared` payload to signal a change),
+/// an in-place level edit leaves the SAME collection id present for every
+/// existing recipient, so ONLY a genuine revision bump can make
+/// `sharedRevisionsChanged()` notice. `bump_collection_revision` (`vault.rs`)
+/// is the SAME helper every item mutation already uses — reused, not
+/// reinvented.
 pub async fn update_access(
     State(state): State<AppState>,
     membership: Membership<Collection, RequireRead>,
@@ -864,10 +882,12 @@ pub async fn update_access(
     // event to the FULL current recipient set, queried FRESH after the
     // UPDATE, mirroring add_member's identical fan-out shape above.
     let recipients = resolve_collection_members(&mut tx, &membership.resource_id).await?;
-    let current_revision: i64 = sqlx::query_scalar("SELECT revision FROM collections WHERE id = ?")
-        .bind(&membership.resource_id)
-        .fetch_one(&mut *tx)
-        .await?;
+
+    // F-1 fix (31-VERIFICATION.md gap closure): see this handler's own doc
+    // comment above. `bump_collection_revision`'s `RETURNING` shape folds
+    // the bump and the fresh-value read the `SyncEvent` below needs into
+    // one statement.
+    let current_revision = bump_collection_revision(&mut tx, &membership.resource_id).await?;
 
     tx.commit().await?;
 

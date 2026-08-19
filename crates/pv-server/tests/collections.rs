@@ -1363,16 +1363,24 @@ async fn update_access_cannot_demote_the_last_edit_holder() {
     assert_eq!(b_level_after, "edit", "B's own row must survive the refused self-demotion unchanged");
 }
 
-/// HI-01 fix (31-REVIEW.md): `update_access` must bump the TARGET
-/// recipient's own `vault_revision` in the SAME transaction as the UPDATE —
-/// mirrors `revoke_access_bumps_revoked_recipients_own_vault_revision_and_they_see_a_fresh_sync`
-/// above exactly. Without it, the target's next `GET /api/sync?since=...`
-/// still matches their stale counter and returns the cheap up-to-date
-/// shape, so their local cache never learns their level changed (and a
-/// demotion away from `hidden_password`-hiding-worthy levels would leave the
-/// OLD, more-permissive level cached client-side indefinitely).
+/// F-1 fix (31-VERIFICATION.md gap closure): REPLACES the original HI-01
+/// regression test, which asserted `GET /api/sync` (the PERSONAL lane) —
+/// real, but the wrong lane. `SyncSnapshot = {revision, items?, folders?}`
+/// is structurally incapable of carrying a collection access level, and the
+/// client's cached per-collection `accessLevel` is read exclusively off
+/// `GET /api/sync/shared` (`sharedRevisionsChanged()`, `store.ts`), which
+/// compares `(collection.id, collections.revision)` — a counter
+/// `update_access` never touched before this fix. This test asserts THAT
+/// lane: the target's own `/api/sync/shared` payload for this collection
+/// must show a genuinely advanced `revision` after a level edit, matching
+/// `collections.revision` in the DB, and the personal `vault_revision` bump
+/// (HI-01's original, correct half) is retained as a secondary assertion —
+/// both counters are real, but only the shared one is what the client's
+/// hidden-password gate actually depends on. See `sync_shared.rs` for the
+/// sibling `/api/sync/shared`-only coverage this mirrors
+/// (`shared_revisions_pull_lists_members_own_collection_with_current_revision`).
 #[tokio::test]
-async fn update_access_bumps_targets_own_vault_revision_and_they_see_a_fresh_sync() {
+async fn update_access_bumps_collection_revision_and_it_is_visible_on_the_shared_sync_lane() {
     let pool = test_pool().await;
     let app = test_app(pool.clone());
 
@@ -1415,17 +1423,20 @@ async fn update_access_bumps_targets_own_vault_revision_and_they_see_a_fresh_syn
     .await;
     assert_eq!(add_member_res.status(), StatusCode::CREATED);
 
-    let baseline_res = req(&app, "GET", "/api/sync?since=0", &member_token, None).await;
+    // Baseline: the member's own SHARED lane, before any level edit.
+    let baseline_res = req(&app, "GET", "/api/sync/shared", &member_token, None).await;
     assert_eq!(baseline_res.status(), StatusCode::OK);
-    let baseline_revision = body_json(baseline_res).await["revision"].as_i64().unwrap();
-
-    let still_up_to_date_res =
-        req(&app, "GET", &format!("/api/sync?since={baseline_revision}"), &member_token, None).await;
-    let still_up_to_date_body = body_json(still_up_to_date_res).await;
-    assert!(
-        still_up_to_date_body.get("items").is_none(),
-        "a repeated poll before the update, at the same baseline, must stay cheap up-to-date"
+    let baseline_body = body_json(baseline_res).await;
+    let baseline_collections = baseline_body["collections"].as_array().unwrap();
+    let baseline_entry = baseline_collections.iter().find(|c| c["id"] == collection_id).expect(
+        "the member's own /api/sync/shared payload must list this collection before the level edit",
     );
+    let baseline_revision = baseline_entry["revision"].as_i64().unwrap();
+
+    // Also record the PERSONAL lane's baseline — HI-01's own original half,
+    // retained (not dropped) as a secondary assertion below.
+    let personal_baseline_res = req(&app, "GET", "/api/sync?since=0", &member_token, None).await;
+    let personal_baseline_revision = body_json(personal_baseline_res).await["revision"].as_i64().unwrap();
 
     let update_res = req(
         &app,
@@ -1437,28 +1448,46 @@ async fn update_access_bumps_targets_own_vault_revision_and_they_see_a_fresh_syn
     .await;
     assert_eq!(update_res.status(), StatusCode::NO_CONTENT);
 
-    let after_update_res =
-        req(&app, "GET", &format!("/api/sync?since={baseline_revision}"), &member_token, None).await;
+    // F-1's own claim: the SHARED lane must show a genuinely advanced
+    // revision for THIS collection — the lane `sharedRevisionsChanged()`
+    // actually reads, and the ONLY structural signal available to it for an
+    // in-place level edit (the collection's id neither appears NOR
+    // disappears from the payload, unlike a grant/revoke).
+    let after_update_res = req(&app, "GET", "/api/sync/shared", &member_token, None).await;
+    assert_eq!(after_update_res.status(), StatusCode::OK);
     let after_update_body = body_json(after_update_res).await;
+    let after_update_collections = after_update_body["collections"].as_array().unwrap();
+    let after_update_entry = after_update_collections
+        .iter()
+        .find(|c| c["id"] == collection_id)
+        .expect("the collection must still be present -- this is a LEVEL edit, not a revocation");
+    let after_update_revision = after_update_entry["revision"].as_i64().unwrap();
     assert!(
-        after_update_body.get("items").is_some(),
-        "the demoted member's next sync at their own last-known revision must be a FRESH snapshot, not up-to-date"
-    );
-    let after_update_revision = after_update_body["revision"].as_i64().unwrap();
-    assert_eq!(
-        after_update_revision - baseline_revision,
-        1,
-        "the target's own vault_revision must have advanced by exactly 1"
+        after_update_revision > baseline_revision,
+        "the SHARED lane's own revision for this collection must have advanced after the level edit \
+         (baseline {baseline_revision}, after {after_update_revision}) -- this is the exact counter \
+         `sharedRevisionsChanged()` compares; a demoted recipient whose client never sees this move \
+         keeps their stale, more-permissive cached accessLevel indefinitely"
     );
 
-    let member_vault_revision_row: i64 = sqlx::query_scalar("SELECT vault_revision FROM users WHERE id = ?")
-        .bind(&member_id)
+    let collections_revision_row: i64 = sqlx::query_scalar("SELECT revision FROM collections WHERE id = ?")
+        .bind(collection_id)
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(
-        member_vault_revision_row, after_update_revision,
-        "the DB-stored vault_revision must match the value the sync response itself reported"
+        collections_revision_row, after_update_revision,
+        "the DB-stored collections.revision must match the value the SHARED sync response itself reported"
+    );
+
+    // Secondary assertion: HI-01's original, correct half survives —
+    // `vault_revision` (the PERSONAL lane) still advances too.
+    let personal_after_res =
+        req(&app, "GET", &format!("/api/sync?since={personal_baseline_revision}"), &member_token, None).await;
+    let personal_after_body = body_json(personal_after_res).await;
+    assert!(
+        personal_after_body.get("items").is_some(),
+        "the personal lane must ALSO see a fresh snapshot (HI-01's original, still-correct half)"
     );
 }
 
