@@ -3810,3 +3810,16 @@ because no production caller existed yet. Result: `collection_keys` row created 
 delivered level was `"read"` (never iOS's own `"edit"`), and the same probe ciphertext opened under
 both iOS's original key and the web member's newly-recovered one. Evidence:
 `ios/evidence/40/40-10-ef6-transcript.txt`, `40-10-ef6-web-before.png`, `40-10-ef6-web-after.png`.
+
+## 8b. Phase 40 — human-verify backlog (2026-08-20, orchestrator disposition)
+
+`40-VERIFICATION.md` closed 6/6 after one gap-closure cycle (recipient-delivery render bug
+root-caused to body-time store construction; web-side invite redemption proven through real
+pv-wasm). Items still owed to a human:
+
+1. **ShareLink control labelled "Skopiuj"** while it opens the system share sheet — copy-vs-share
+   wording call (InviteCreateView).
+2. **WR-19's reseal-cancellation race half** — the fixer's own flag: cancel-on-lock behavior under a
+   mid-flight reseal is timing-dependent and was not driven both ways in a live run.
+3. **Family-surface visual conformance sweep** vs ios/brand/screens-vault.html — incl. the
+   singleton-family 409 alert (never rendered on a screenshot) and roster/invite screens.
