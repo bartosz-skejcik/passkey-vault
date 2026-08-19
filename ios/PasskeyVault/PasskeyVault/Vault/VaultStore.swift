@@ -789,19 +789,41 @@ final class VaultStore {
     /// invalidated by this step failing.
     private func mergeSharedAndFamilyWideItems() async {
         guard let uk = userKey else { return }
-        items.removeAll { sharedItemIds.contains($0.id) }
-        sharedItemIds = []
 
+        // WR-16 (40-REVIEW.md, iteration 2): `merged` is built ENTIRELY
+        // before `items`/`sharedItemIds` are touched -- compute-then-swap.
+        // The previous shape removed last cycle's shared rows FIRST, then
+        // returned empty-handed from the `catch` (or any of the
+        // `guard userKey != nil` early exits) below, so a transient failure
+        // AFTER the direct-share fetch already succeeded (e.g.
+        // `listCollections()`) dropped every direct share too -- nothing
+        // appended, nothing retained, and no error surfaced anywhere
+        // (`Self.log.error` is `privacy: .private`-only). `items` now keeps
+        // last cycle's shared rows on any failure, and `lastError` is set so
+        // `SyncStatusView` shows the user something actually failed.
         var merged: [VaultItemViewModel] = []
+        var armFailed = false
+        let identityKey: FfiIdentityKey
         do {
-            let identityKey = try await identityService.ensureOwnIdentityKeypair(userKey: uk)
+            identityKey = try await identityService.ensureOwnIdentityKeypair(userKey: uk)
+        } catch {
+            Self.log.error("identity keypair fetch failed: \(String(describing: error), privacy: .private)")
+            lastError = "Couldn't refresh items shared with you."
+            return
+        }
 
-            // Post-await lock re-check (CR-02/CR-03 discipline, this
-            // file's own established shape) -- a lock landing during any
-            // of the round trips below must never resurrect decrypted
-            // content after the vault explicitly locked.
-            guard userKey != nil else { return }
+        // Post-await lock re-check (CR-02/CR-03 discipline, this file's own
+        // established shape) -- a lock landing during any of the round
+        // trips below must never resurrect decrypted content after the
+        // vault explicitly locked.
+        guard userKey != nil else { return }
 
+        // WR-16: the direct-share arm settles INDEPENDENTLY of the
+        // family-wide-collection arm below -- a failure in `listCollections()`
+        // or one collection's own fetch must not discard direct shares that
+        // already succeeded (and vice versa is not possible: the collection
+        // arm runs after and does not depend on this one's outcome).
+        do {
             let directResult = try await SharedItemsStore.fetchDirectShared(
                 baseURL: api.baseURL, tokenProvider: api.tokenProvider, since: 0, session: api.session
             )
@@ -809,7 +831,12 @@ final class VaultStore {
             if case let .snapshot(_, directRows) = directResult {
                 merged.append(contentsOf: SharedItemsStore.ingestDirectShared(rows: directRows, identityKey: identityKey))
             }
+        } catch {
+            Self.log.error("direct-shared fetch failed: \(String(describing: error), privacy: .private)")
+            armFailed = true
+        }
 
+        do {
             // WR-10: best-effort -- a solo self-hoster 404s/403s on this
             // exact endpoint (WR-04's own note on the sibling SyncCoordinator
             // call), which must never abort the direct-share/family-wide
@@ -859,15 +886,9 @@ final class VaultStore {
                         collectionId: record.id, baseURL: api.baseURL, tokenProvider: api.tokenProvider, session: api.session
                     )
                     guard userKey != nil else { return }
-                    // `familyWideAccessLevel ?? "read"` -- NEVER
-                    // `record.accessLevel` (this caller's OWN held level,
-                    // hard-coded `edit` for the creator's row by
-                    // `collections::create` regardless of the level the
-                    // share itself declares). Mirrors `ResealService`'s own
-                    // documented fallback discipline exactly.
                     let collectionItems = SharedItemsStore.ingestFamilyWideCollectionItems(
                         rows: rows, collectionId: record.id, collectionKey: ck,
-                        accessLevel: record.familyWideAccessLevel ?? "read"
+                        accessLevel: Self.resolveOwnCollectionAccessLevel(record: record)
                     )
                     // WR-10: a row that failed to decrypt with a key we DO
                     // hold is the genuine integrity signal `PendingKeyState
@@ -887,13 +908,100 @@ final class VaultStore {
             }
         } catch {
             Self.log.error("shared-item merge failed: \(String(describing: error), privacy: .private)")
-            return
+            // WR-16: does NOT `return` here -- `merged` may already carry a
+            // successful direct-share arm (above), and that must still be
+            // applied. `armFailed` drives the `lastError` surface below.
+            armFailed = true
         }
 
         guard userKey != nil else { return }
-        sharedItemIds = Set(merged.map(\.id))
-        items.append(contentsOf: merged)
+        let result = Self.applyMergedSharedItems(
+            existingItems: items, merged: merged, previousSharedItemIds: sharedItemIds, armFailed: armFailed
+        )
+        items = result.items
+        sharedItemIds = result.sharedItemIds
+        if let mergeError = result.lastError {
+            lastError = mergeError
+        }
         recomputeTags()
+    }
+
+    /// CR-07 (40-REVIEW.md, iteration 2): pulled out for direct
+    /// unit-testability (`VaultStoreMergeTests.swift`) -- the caller's OWN
+    /// held access level for a family-wide collection is
+    /// `record.accessLevel` (`ck.access_level` for THIS caller, returned by
+    /// `GET /api/vault/collections`; hard-coded `edit` for the creator's
+    /// row by `collections::create` regardless of the collection's
+    /// propagation level), NEVER `record.familyWideAccessLevel` (what a NEW
+    /// recipient is granted when the collection is shared onward --
+    /// `ResealService`'s own documented fallback discipline, which is about
+    /// an OUTBOUND grant, not a statement about what level the caller
+    /// already holds). Stamping the propagation level here made the
+    /// creator of a `read`-propagation collection lose Edit (and, at
+    /// `hidden_password`, lose sight of their own password) on their own
+    /// items. The `?? familyWideAccessLevel ?? "read"` fallback chain is
+    /// defense in depth for a decode shape the server does not currently
+    /// produce for a collection this account already holds a key for --
+    /// never the intended path.
+    static func resolveOwnCollectionAccessLevel(record: CollectionRecord) -> String {
+        record.accessLevel ?? record.familyWideAccessLevel ?? "read"
+    }
+
+    /// CR-06/WR-16 (40-REVIEW.md, iteration 2): the compute-then-swap
+    /// application step, extracted as a pure, `static` function so it is
+    /// directly unit-testable without a live server (`VaultStoreMergeTests
+    /// .swift`) -- `mergeSharedAndFamilyWideItems` above is the only
+    /// caller.
+    ///
+    /// `GET /api/vault/collections/{id}/sync` is scoped by `collection_id`
+    /// ALONE, with no author filter (`crates/pv-server/src/routes/
+    /// sync.rs`) -- it returns the caller's OWN rows inside a family-wide
+    /// collection too, which the personal `/api/sync` pull already put in
+    /// `existingItems`. `previousSharedItemIds` only tracks LAST cycle's
+    /// merged ids, so the very first refresh after every unlock (and any
+    /// refresh where a newly-authored own item has not yet been through
+    /// one merge cycle) appended a second, duplicate-id copy -- undefined
+    /// behaviour for the `ForEach(sectionRows)` this feeds
+    /// (`ItemListView.swift`). Dedupe by id at this boundary: the
+    /// merged/provenance-bearing row wins (it carries the correct
+    /// `sharedToMe`/`isFamilyWide`/`accessLevel`, see CR-07), and the
+    /// removal covers BOTH this cycle's incoming ids and last cycle's, so a
+    /// personal row that is no longer part of `merged` (e.g. the
+    /// collection lost its family-wide kind) is not resurrected either --
+    /// this is the `!armFailed` branch.
+    ///
+    /// When `armFailed` is `true`, one arm of the merge (direct-share
+    /// fetch, identity keypair, family-wide-pending, `listCollections()`,
+    /// or one collection's own fetch/decrypt) failed this cycle, so
+    /// `merged` reflects only whichever arm(s) DID succeed. Do not replace
+    /// `previousSharedItemIds` wholesale in that case: that would prune
+    /// last cycle's rows from the arm that failed THIS cycle, even though
+    /// nothing this cycle confirmed they should disappear. Only the ids
+    /// this cycle actually produced are deduped/refreshed; everything else
+    /// from last cycle is left exactly as it was, and `lastError` is set so
+    /// the failure is surfaced instead of silently dropping items.
+    static func applyMergedSharedItems(
+        existingItems: [VaultItemViewModel],
+        merged: [VaultItemViewModel],
+        previousSharedItemIds: Set<String>,
+        armFailed: Bool
+    ) -> (items: [VaultItemViewModel], sharedItemIds: Set<String>, lastError: String?) {
+        let mergedIds = Set(merged.map(\.id))
+        var items = existingItems
+        let sharedItemIds: Set<String>
+        let lastError: String?
+        if armFailed {
+            items.removeAll { mergedIds.contains($0.id) }
+            sharedItemIds = previousSharedItemIds.union(mergedIds)
+            items.append(contentsOf: merged)
+            lastError = "Couldn't refresh items shared with you."
+        } else {
+            items.removeAll { mergedIds.contains($0.id) || previousSharedItemIds.contains($0.id) }
+            sharedItemIds = mergedIds
+            items.append(contentsOf: merged)
+            lastError = nil
+        }
+        return (items, sharedItemIds, lastError)
     }
 
     /// DR-39-A: one JSON blob, written whole and replaced whole. Failure is
