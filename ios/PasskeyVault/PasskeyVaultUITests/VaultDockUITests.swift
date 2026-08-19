@@ -191,6 +191,16 @@ final class VaultDockUITests: XCTestCase {
         XCTAssertTrue(allTab.isHittable, "tab bar was not hittable even at rest")
         attach("38-06-dock-at-rest")
 
+        // Phase 40, plan 40-05 (dock swap, `40-UI-SPEC.md` §5.1). NEGATIVE
+        // assertion: the old "Cards" tab must be GONE, not merely renamed
+        // alongside a leftover -- so a future regression back to the
+        // four-tab-with-Cards set is caught here, not silently passed.
+        XCTAssertFalse(
+            app.buttons["Cards"].exists,
+            "the Cards dock tab must not exist -- it was replaced by Folders (40-05, 40-UI-SPEC.md §5.1)"
+        )
+        XCTAssertTrue(app.buttons["Folders"].exists, "the Folders dock tab must exist in Cards' place")
+
         // A real, momentum-carrying scroll of the list itself.
         //
         // The capture happens IMMEDIATELY after each swipe, with no settle
@@ -253,16 +263,21 @@ final class VaultDockUITests: XCTestCase {
         // and assert that doing so brings the full bar back. That is a STRONGER
         // claim than the original one -- it proves the collapsed control is live,
         // not merely present.
+        //
+        // Phase 40, plan 40-05 (dock swap): "Cards" -> "Folders", 1:1 --
+        // `VaultTypeTab`'s Cards tab was replaced by Folders (see that
+        // type's own header). This probe only needs A tab button to exist
+        // and restore navigation; Folders serves that role identically.
         XCTAssertTrue(allTab.isHittable, "the collapsed tab bar circle is not pressable")
         allTab.tap()
-        let cards = app.buttons["Cards"]
+        let folders = app.buttons["Folders"]
         XCTAssertTrue(
-            cards.waitForExistence(timeout: 8),
+            folders.waitForExistence(timeout: 8),
             "pressing the collapsed tab bar circle did not restore the full bar"
         )
-        cards.tap()
+        folders.tap()
         XCTAssertTrue(
-            app.navigationBars["Cards"].waitForExistence(timeout: 8),
+            app.navigationBars["Folders"].waitForExistence(timeout: 8),
             "the tab bar survived the scroll visually but no longer functions"
         )
         attach("38-06-dock-after-scroll-tab-still-works")

@@ -5,6 +5,13 @@
 // the comparison rig is gone and this is the evidence rig for the ONE layout:
 // four tabs (All · Logins · Codes · Cards) plus the detached ＋.
 //
+// Phase 40, plan 40-05 (BINDING SCOPE ADDITION -- the dock swap,
+// `40-UI-SPEC.md` §5.1, §0.1's orchestrator resolution): "Cards" is REPLACED
+// by "Folders", 1:1 -- same four-tab-plus-＋ silhouette. Every "Cards" string
+// below is updated to "Folders"; this file's own historical comments above
+// are left as a record of the ORIGINAL Phase 38 choice, not edited to
+// pretend Folders was always the fourth tab.
+//
 // WHAT THIS SUITE IS FOR, and it is two different jobs deliberately kept in one
 // method:
 //
@@ -98,7 +105,11 @@ final class VaultDockEvidenceUITests: XCTestCase {
         // FOUR tabs and no "More": the whole reason Passkeys lost its tab is
         // that five filters plus the search-role ＋ overflowed into a system
         // "More" (•••) tab. If this assertion ever fails, the overflow is back.
-        for title in ["All", "Logins", "Codes", "Cards"] {
+        //
+        // Phase 40, plan 40-05 (dock swap, `40-UI-SPEC.md` §5.1): "Cards" ->
+        // "Folders", 1:1 -- same four-item-plus-＋ silhouette, so the overflow
+        // risk this assertion guards against is unchanged.
+        for title in ["All", "Logins", "Codes", "Folders"] {
             XCTAssertTrue(app.buttons[title].exists, "tab '\(title)' is missing from the dock")
         }
         XCTAssertFalse(
@@ -108,6 +119,13 @@ final class VaultDockEvidenceUITests: XCTestCase {
         XCTAssertFalse(
             app.buttons["Passkeys"].exists,
             "a Passkeys tab is present; four filters plus ＋ is the chosen layout"
+        )
+        // NEGATIVE assertion (40-05): the old Cards tab must be GONE, not
+        // merely renamed alongside a leftover -- catches a regression back
+        // to the old four-tab-with-Cards set.
+        XCTAssertFalse(
+            app.buttons["Cards"].exists,
+            "the Cards dock tab must not exist -- it was replaced by Folders (40-05, 40-UI-SPEC.md §5.1)"
         )
         attach(app, "dock-at-rest")
 
@@ -353,9 +371,11 @@ final class VaultDockEvidenceUITests: XCTestCase {
         // The tab bar is live: switching tabs with the panel open works, and
         // closes the panel (changing the filter while a launcher covers the
         // result would hide the outcome of the action).
-        app.buttons["Cards"].tap()
+        //
+        // Phase 40, plan 40-05 (dock swap): "Cards" -> "Folders", 1:1.
+        app.buttons["Folders"].tap()
         XCTAssertTrue(
-            app.navigationBars["Cards"].waitForExistence(timeout: 8),
+            app.navigationBars["Folders"].waitForExistence(timeout: 8),
             "the dock is visible behind the panel but no longer functions"
         )
         XCTAssertFalse(

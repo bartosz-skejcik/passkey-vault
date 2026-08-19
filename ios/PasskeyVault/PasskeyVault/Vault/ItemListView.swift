@@ -39,25 +39,31 @@ import os
 
 // MARK: - Dock tab bar (item-type filter)
 
-/// The FOUR dock tabs, in Bartek's own chosen order: **All · Logins · Codes ·
-/// Cards**.
+/// The FOUR dock tabs, in the order `40-UI-SPEC.md`'s ORCHESTRATOR
+/// RESOLUTION (§0.1) fixed: **All · Logins · Folders · Codes**, plus the
+/// detached ＋.
 ///
-/// WHY FOUR AND NOT FIVE, decided from pictures and not re-litigated here.
-/// The design wants a detached ＋ beside the bar, and `Tab(role: .search)` is
-/// the only stock API that produces that slot (`ios/DOCK-RESEARCH.md` §5).
-/// A search-role tab is still a tab item, so five type filters plus ＋ is six
-/// items, which overflows into a system "More" (•••) tab and swallows both
-/// Passkeys AND the ＋ -- photographed in
-/// `ios/evidence/38/38-06-dock-role-search-overflows-to-more.png`. Four
-/// filters plus ＋ fits.
+/// Phase 40, plan 40-05 (BINDING SCOPE ADDITION -- the dock swap): `Cards`
+/// is REPLACED by `Folders`, 1:1, per Bartek's literal instruction ("w
+/// pasku zamiast cards daj folders"). This is the same four-tab-plus-＋
+/// silhouette Phase 38 shipped -- `40-UI-SPEC.md`'s own §0.1 five-filter
+/// drawing (All/Logins/Folders/Codes/Passkeys) was explicitly overruled by
+/// the orchestrator resolution BEFORE this plan started, precisely to avoid
+/// re-measuring the six-item `Tab(role: .search)` overflow
+/// (`ios/evidence/38/38-06-dock-role-search-overflows-to-more.png`) this
+/// file's Phase 38 header already photographed once. `Cards` therefore
+/// drops out of the tab bar the same way `passkey`/`identity`/`note`
+/// already had -- reachable exclusively through the All tab's own type
+/// sections (`VaultSectionKind`, unaffected, still all six types) and its
+/// section index.
 ///
-/// `passkey`, `identity` and `note` therefore have NO tab. Their route in is
-/// the All screen's own type sections (`VaultSectionKind`, which still carries
-/// all six types) plus the section index that makes them findable there.
-/// Passkeys losing its tab is the price of the detached ＋; that trade was
-/// Bartek's call.
+/// **Folders is NOT a `wireType` filter** -- selecting it routes to a
+/// DIFFERENT root (`FoldersListView`, this file's `tabContent(for:)`),
+/// never a type-filtered item list. See that function's own note on why
+/// `wireType: nil` for `.folder` is deliberately never treated the way
+/// `.all`'s `nil` is.
 enum VaultTypeTab: String, CaseIterable, Identifiable, Hashable {
-    case all, login, totp, card
+    case all, login, folder, totp
 
     var id: String { rawValue }
 
@@ -65,8 +71,8 @@ enum VaultTypeTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .all: return "All"
         case .login: return "Logins"
+        case .folder: return "Folders"
         case .totp: return "Codes"
-        case .card: return "Cards"
         }
     }
 
@@ -74,20 +80,23 @@ enum VaultTypeTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .all: return "square.grid.2x2"
         case .login: return "globe"
+        case .folder: return "folder"
         case .totp: return "timer"
-        case .card: return "creditcard"
         }
     }
 
     /// The wire discriminant this tab narrows to, matching
-    /// `ItemFields.typeName` -- `nil` for `.all`, which applies no type
-    /// filter at all.
+    /// `ItemFields.typeName` -- `nil` for `.all` (no type filter at all) AND
+    /// for `.folder` (not a type filter in the first place -- `tabContent
+    /// (for:)` branches on `tab == .folder` BEFORE this property is ever
+    /// consulted for filtering, so `.folder`'s `nil` here is never
+    /// mistaken for "no filter" the way `.all`'s is).
     var wireType: String? {
         switch self {
         case .all: return nil
         case .login: return "login"
+        case .folder: return nil
         case .totp: return "totp"
-        case .card: return "card"
         }
     }
 }
@@ -306,6 +315,12 @@ struct ItemListView: View {
     var onSignOutRequested: (() -> Void)?
 
     @State private var selectedTab: VaultTypeTab = .all
+    /// Folders tab navigation (BINDING SCOPE ADDITION, `40-UI-SPEC.md`
+    /// §5.3) -- set by `FoldersListView`'s `onOpenFolder`, consumed by the
+    /// `.navigationDestination(item:)` in `body` below. Deliberately a
+    /// SEPARATE optional from `root.selection` (items) -- a folder is not a
+    /// `VaultItemViewModel`.
+    @State private var selectedFolder: Folder?
     @State private var sortOption: SortOption = SortPreference.read()
     @State private var deleteCandidate: VaultItemViewModel?
     /// DEBUG-only, and off unless a UI test asks for it. See the
@@ -511,6 +526,20 @@ struct ItemListView: View {
                                     onLockRequested: onLockRequested, onSignOutRequested: onSignOutRequested,
                                     onSettingsRequested: { root.activeSheet = .settings }
                                 )
+                            }
+                            // BINDING SCOPE ADDITION (`40-UI-SPEC.md` §5.3):
+                            // the Folders tab's own push destination -- a
+                            // SEPARATE `.navigationDestination(item:)` from
+                            // the item one above (SwiftUI supports multiple,
+                            // keyed by the bound type). Attached uniformly to
+                            // every tab's own `NavigationStack`, same as
+                            // `$root.selection` above -- only the `.folder`
+                            // tab ever sets `selectedFolder`, so this is a
+                            // no-op push target on the other three.
+                            .navigationDestination(item: $selectedFolder) { folder in
+                                FolderOpenView(folder: folder, items: store.items) { item in
+                                    AnyView(rowButton(item))
+                                }
                             }
                             .sheet(item: $root.activeSheet) { sheet in
                                 sheetContent(sheet)
@@ -1058,6 +1087,33 @@ struct ItemListView: View {
 
     @ViewBuilder
     private func tabContent(for tab: VaultTypeTab) -> some View {
+        // Folders is NOT a `VaultTypeTab.wireType` item-type filter -- it
+        // routes to a DISTINCT root (`FoldersListView`, `40-UI-SPEC.md`
+        // §5.2), before `itemListTabContent(for:)` (the ITEM list) is ever
+        // consulted. See `VaultTypeTab.wireType`'s own doc comment for why
+        // this branch must come first, and be a genuine `if`/`else` (not an
+        // early `return`) -- `@ViewBuilder` requires every path through this
+        // function's body to be a builder-composed expression.
+        if tab == .folder {
+            if let folderStore {
+                FoldersListView(folderStore: folderStore, items: store.items) { folder in
+                    selectedFolder = folder
+                }
+            } else {
+                // Defensive fallback for a caller that constructs
+                // `ItemListView` without a `FolderStore` (tests/previews) --
+                // never a crash, matching `ItemFormView`'s own
+                // `if let folderStore` guard elsewhere in this file.
+                ContentUnavailableView("Folders unavailable", systemImage: "folder")
+                    .background(Color("PVBackground"))
+            }
+        } else {
+            itemListTabContent(for: tab)
+        }
+    }
+
+    @ViewBuilder
+    private func itemListTabContent(for tab: VaultTypeTab) -> some View {
         let rows = filteredSortedItems(from: store.items, tab: tab)
         let searchOrFilterActive = !root.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !root.searchTokens.isEmpty
