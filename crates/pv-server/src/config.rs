@@ -33,8 +33,15 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(168),
             rp_id: std::env::var("PV_RP_ID").unwrap_or_else(|_| "localhost".into()),
+            // Must match PV_ADDR's default port (8620) -- a bare `cargo run`
+            // with neither env var set otherwise boots fine but silently
+            // rejects every WebAuthn ceremony with InvalidRPOrigin, since the
+            // browser's actual origin (http://localhost:8620) never matches
+            // this stale pre-Phase-7 Next-dev-port default. Cost 90 minutes
+            // live on 2026-07-20 before diagnosis (see
+            // .planning/todos/pending/2026-07-20-stale-default-pv-origin-3000.md).
             rp_origin: std::env::var("PV_ORIGIN")
-                .unwrap_or_else(|_| "http://localhost:3000".into()),
+                .unwrap_or_else(|_| "http://localhost:8620".into()),
             extension_origins: std::env::var("PV_EXTENSION_ORIGINS").unwrap_or_default(),
         })
     }
@@ -145,6 +152,41 @@ mod tests {
     #[test]
     fn zero_config_localhost_default_is_ok() {
         assert!(cfg("localhost", "http://localhost:3000").validate().is_ok());
+    }
+
+    // --- 2026-07-20-stale-default-pv-origin-3000: default rp_origin must
+    // match PV_ADDR's default port (8620), not the stale pre-Phase-7 Next
+    // dev port (3000) -- a bare `cargo run` with PV_ORIGIN unset otherwise
+    // boots fine but silently rejects every WebAuthn ceremony. ---
+
+    #[test]
+    fn from_env_default_rp_origin_matches_pv_addrs_default_port() {
+        // SAFETY-EQUIVALENT: mutates process-global env state, but this is
+        // the only test in the workspace that reads PV_ORIGIN/PV_RP_ID via
+        // from_env(), so there is no other test to race with. Cleared
+        // immediately after reading, both on success and (via the guard's
+        // Drop) on panic, so a failing assertion cannot leak env state into
+        // whichever test happens to run next in this process.
+        struct EnvGuard;
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                std::env::remove_var("PV_ORIGIN");
+                std::env::remove_var("PV_RP_ID");
+            }
+        }
+        std::env::remove_var("PV_ORIGIN");
+        std::env::remove_var("PV_RP_ID");
+        let _guard = EnvGuard;
+
+        let cfg = Config::from_env().expect("from_env must not fail with no env vars set");
+        assert_eq!(
+            cfg.rp_origin, "http://localhost:8620",
+            "default rp_origin must match PV_ADDR's default port (8620), not the stale :3000"
+        );
+        // The zero-config pair must also still pass validate() -- the
+        // default is not just a value, it must be a *working* localhost
+        // pair (WR-07's `is_localhost_deployment` exemption).
+        assert!(cfg.validate().is_ok(), "the zero-config default pair must validate as a localhost deployment");
     }
 
     // --- WR-07: PV_EXTENSION_ORIGINS must fail loudly at startup ---------
