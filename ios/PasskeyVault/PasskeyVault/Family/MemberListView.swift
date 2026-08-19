@@ -89,6 +89,13 @@ struct MemberListView: View {
     @State private var removalCandidate: FamilyAPI.FamilyMemberRecord?
     @State private var isRemoving = false
     @State private var removeErrorMemberId: String?
+    /// WR-18 (40-REVIEW.md, iteration 2): distinguishes WR-03's actionable
+    /// `.rekeySetMismatch` (retrying re-submits the SAME mismatched set and
+    /// 409s again, forever -- "Spróbuj ponownie" is the wrong advice) from
+    /// every other removal failure. `false` renders the pre-existing
+    /// generic retry copy; `true` renders copy that tells the user to
+    /// reload the roster instead.
+    @State private var removeErrorIsRekeySetMismatch = false
 
     var body: some View {
         Group {
@@ -160,7 +167,12 @@ struct MemberListView: View {
             }
         }
         .alert(
-            "Nie udało się usunąć członka rodziny. Spróbuj ponownie.",
+            // WR-18 (40-REVIEW.md, iteration 2): `.rekeySetMismatch` gets
+            // ITS OWN copy -- retrying re-submits the same client-computed
+            // batch and 409s again, forever. Reloading the roster (which
+            // re-derives the batch from fresh server state) is the only
+            // advice that can actually resolve it.
+            Self.removalErrorMessage(isRekeySetMismatch: removeErrorIsRekeySetMismatch),
             isPresented: Binding(
                 get: { removeErrorMemberId != nil },
                 set: { if !$0 { removeErrorMemberId = nil } }
@@ -242,13 +254,35 @@ struct MemberListView: View {
         isRemoving = true
         removalCandidate = nil
         removeErrorMemberId = nil
+        removeErrorIsRekeySetMismatch = false
         defer { isRemoving = false }
         do {
             try await removeMemberService.removeMember(userId: member.userId, userKey: userKey)
             await load()
         } catch {
+            // WR-18: WR-03's `.rekeySetMismatch` mapping was already
+            // correct at the service layer -- this was the only production
+            // consumer, and it discarded the discriminant by catching into
+            // one untyped `error` and rendering one generic string
+            // regardless of cause.
+            removeErrorIsRekeySetMismatch = Self.isRekeySetMismatch(error)
             removeErrorMemberId = member.userId
         }
+    }
+
+    /// WR-18 (40-REVIEW.md, iteration 2): pulled out as a `static`, pure,
+    /// directly unit-testable predicate/formatter pair
+    /// (`MemberListRemovalCopyTests.swift`) -- see `performRemoval`'s own
+    /// note for what this replaces.
+    static func isRekeySetMismatch(_ error: Error) -> Bool {
+        if case RemoveMemberError.rekeySetMismatch = error { return true }
+        return false
+    }
+
+    static func removalErrorMessage(isRekeySetMismatch: Bool) -> String {
+        isRekeySetMismatch
+            ? "Lista członków rodziny zmieniła się w międzyczasie. Odśwież listę i spróbuj ponownie."
+            : "Nie udało się usunąć członka rodziny. Spróbuj ponownie."
     }
 
     /// THE distinction the plan's own acceptance criteria requires kept
