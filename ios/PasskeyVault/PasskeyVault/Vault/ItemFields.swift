@@ -244,6 +244,14 @@ struct VaultItemViewModel: Identifiable, Equatable, Hashable {
     /// is not an enum and never an ordering.
     var accessLevel: String?
 
+    /// Phase 40, plan 40-05 (FAM-01/`ShareMarker.swift`): `true` if and only
+    /// if `collectionId` was resolved, AT INGESTION TIME, against a
+    /// collection whose `family_wide_kind` is non-nil. Defaulted `false` so
+    /// every existing call site in this file (`create`/`update`/`decrypt`)
+    /// keeps compiling unchanged -- see `ShareMarker.swift`'s own header for
+    /// why this is never recomputed from `isShared` alone at read time.
+    var isFamilyWide: Bool = false
+
     enum Content: Equatable, Hashable {
         case fields(ItemFields)
 
@@ -306,7 +314,8 @@ struct VaultItemViewModel: Identifiable, Equatable, Hashable {
         lastEditorEmail: String? = nil,
         collectionId: String? = nil,
         sharedToMe: Bool? = nil,
-        accessLevel: String? = nil
+        accessLevel: String? = nil,
+        isFamilyWide: Bool = false
     ) {
         self.id = id
         self.revision = revision
@@ -318,5 +327,6 @@ struct VaultItemViewModel: Identifiable, Equatable, Hashable {
         self.collectionId = collectionId
         self.sharedToMe = sharedToMe
         self.accessLevel = accessLevel
+        self.isFamilyWide = isFamilyWide
     }
 }
