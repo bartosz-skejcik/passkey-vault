@@ -155,25 +155,37 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     /// .neverSyncedText`/the "Last synced …" phrase never imply the
     /// extension refreshed anything -- it renders whatever the HOST last
     /// wrote, which is the honest, and only, thing it can say (SYNC-05).
-    private func renderFreshnessSurface() {
-        let syncedAtMs = CacheColdReadProbe.currentSyncedAtMs()
-        let rendered = SyncFreshness.describe(syncedAtMs: syncedAtMs, reference: Date())
-
+    /// WR-06 (39-REVIEW.md): a stored reference, installed AT MOST once --
+    /// `prepareInterfaceForExtensionConfiguration()` can be called more than
+    /// once on a reused view controller instance, and the pre-fix version
+    /// created, added and constrained a brand-new `UILabel` on every call,
+    /// leaving every previous one in place (overlapping text, an
+    /// ever-growing constraint set).
+    private lazy var lastSyncedLabel: UILabel = {
         let label = UILabel()
-        label.text = rendered
         label.font = .preferredFont(forTextStyle: .body)
         label.textAlignment = .center
         label.numberOfLines = 0
         label.accessibilityIdentifier = "autofill.lastSynced"
         label.translatesAutoresizingMaskIntoConstraints = false
-        view.backgroundColor = .systemBackground
-        view.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            label.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
-        ])
+        return label
+    }()
+
+    private func renderFreshnessSurface() {
+        let syncedAtMs = CacheColdReadProbe.currentSyncedAtMs()
+        let rendered = SyncFreshness.describe(syncedAtMs: syncedAtMs, reference: Date())
+
+        if lastSyncedLabel.superview == nil {
+            view.backgroundColor = .systemBackground
+            view.addSubview(lastSyncedLabel)
+            NSLayoutConstraint.activate([
+                lastSyncedLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                lastSyncedLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                lastSyncedLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+                lastSyncedLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+            ])
+        }
+        lastSyncedLabel.text = rendered
 
         Self.probeLogger.log("PVPROBE|stage=freshness rendered=\(rendered, privacy: .public)")
     }
