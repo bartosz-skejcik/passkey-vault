@@ -690,6 +690,69 @@ describe("store.ts moveVaultItem: ownership guard, recovery, and error classific
     }
   });
 
+  it("F-3 (32-VERIFICATION.md gap closure): recovery DECLINES when the fresh row's decrypted content matches this attempt's own but its REVISION is not exactly this attempt's predicted newRevision -- isolates the revision conjunct from the content conjunct so removing ONLY the revision check is caught here even though content-match alone would wrongly pass", async () => {
+    const { collectionId, ck, itemId } = await setupForeignCollectionItem();
+    try {
+      // Content this attempt submits is IDENTICAL to what the fresh row
+      // below actually holds -- e.g. a no-op resubmission of unchanged
+      // fields, or two independent attempts that happen to land the same
+      // normalized content. Content match ALONE can never discriminate
+      // this case (32-VERIFICATION.md F-3: deleting the revision conjunct
+      // alone left the whole suite green, because every OTHER test that
+      // reaches this branch also varies the content, so a content-only
+      // implementation still passed them). Only the revision conjunct can
+      // tell "this attempt's own commit" apart from "a foreign write that
+      // coincidentally matches".
+      const thisAttemptFields = {
+        type: "note" as const,
+        name: "Not Mine",
+        body: "identical content -- content-match ALONE cannot tell this apart from a genuine recovery",
+        folderId: null,
+        tags: [],
+      };
+      // itemRevision (3) -> this attempt predicts newRevision = 4. The
+      // fresh row below is at revision 6 -- NOT 4 -- simulating a foreign
+      // write (this attempt's own commit never actually reached the
+      // server at all) that happens to hold byte-identical content.
+      const freshEncrypted = encryptItemForCollection(
+        ck,
+        JSON.stringify(thisAttemptFields),
+        collectionId,
+        itemId,
+        6,
+      );
+      const freshParsed = JSON.parse(freshEncrypted) as { enc_key: unknown; enc_data: unknown };
+      mockGetCollectionSync.mockResolvedValueOnce({
+        revision: 2,
+        items: [
+          {
+            id: itemId,
+            enc_key: JSON.stringify(freshParsed.enc_key),
+            enc_data: JSON.stringify(freshParsed.enc_data),
+            revision: 6,
+            updated_at: "2026-08-19T00:14:00Z",
+            last_used_at: null,
+            is_shared: true,
+            last_editor_email: null,
+            collection_id: collectionId,
+            owned_by_caller: true,
+          },
+        ],
+      });
+      mockMoveItemToCollection.mockRejectedValue(new Error("aborted (revision-conjunct isolation)"));
+
+      // Recovery must DECLINE despite the content match (revision 6 !==
+      // predicted newRevision 4) -- the ORIGINAL error must propagate,
+      // never a false "recovered" that would mis-file the store at
+      // revision 4 while the server is actually at 6.
+      await expect(moveVaultItem(itemId, thisAttemptFields, 3, collectionId)).rejects.toThrow(
+        "aborted (revision-conjunct isolation)",
+      );
+    } finally {
+      lockVault();
+    }
+  });
+
   it("ME-03: the recovery probe for a NON-NULL destination calls getCollectionSync (every author's rows), never listItems (caller-authored only)", async () => {
     const { collectionId, itemId, fields, itemRevision } = await setupForeignCollectionItem();
     try {
