@@ -68,6 +68,14 @@ final class SyncCoordinator {
     private var resealTokenProvider: (() -> String?)?
     private var resealUserKey: FfiUserKey?
 
+    /// CR-03: held so `stop()` can cancel it. Before this, the detached
+    /// `Task` inside `fireResealTriggerIfPossible()` was never held nor
+    /// cancelled -- `stop()` only nilled the captured-by-value properties,
+    /// so an in-flight reseal cycle kept using the ALREADY-CAPTURED
+    /// `FfiUserKey` and session token (network calls, key unwraps) for as
+    /// long as the round trip took, after the vault had explicitly locked.
+    private var resealTask: Task<Void, Never>?
+
     /// Task 2's live two-push proof cannot fail while this optimisation
     /// runs -- a working poll disguises a one-shot receive as a working
     /// socket (D-06). Set BEFORE calling `start(baseURL:tokenProvider:userKey:)`;
@@ -168,6 +176,14 @@ final class SyncCoordinator {
         socket?.teardown()
         socket = nil
         stopRepeatingPull()
+        // CR-03: cancel any in-flight reseal fan-out FIRST -- before nilling
+        // `resealUserKey` below, so the cancellation itself races nothing.
+        // `fireResealTriggerIfPossible()`'s own post-await guard is the
+        // second half of this fix: even if a suspension point is crossed
+        // between this cancel and the task noticing, the guard stops it
+        // from doing any further key/network work.
+        resealTask?.cancel()
+        resealTask = nil
         // Lock transition -- clears the attempted-pair set (same contract
         // `start(...)`'s own comment documents for the unlock side) BEFORE
         // dropping the reference, so a pair that failed transiently this
@@ -201,12 +217,29 @@ final class SyncCoordinator {
     /// session to reseal on behalf of", never a crash.
     private func fireResealTriggerIfPossible() {
         guard let resealTrigger, let resealBaseURL, let resealTokenProvider, let resealUserKey else { return }
-        Task {
+        // CR-03: cancel any still-running cycle from a previous pull before
+        // starting a new one -- `stop()` already cancels on lock, this
+        // covers the (rarer) case of two pull cycles racing while unlocked.
+        resealTask?.cancel()
+        resealTask = Task { [weak self] in
             do {
                 let pending = try await SharedItemsStore.fetchFamilyWidePending(
                     baseURL: resealBaseURL, tokenProvider: resealTokenProvider
                 )
-                _ = await resealTrigger.run(resealable: pending.resealable, userKey: resealUserKey)
+                // CR-03: the vault may have been locked (or locked and
+                // re-unlocked with a NEW key) while that round trip was in
+                // flight -- `stop()` nils `resealUserKey` on lock. Re-read
+                // `self.resealUserKey` here rather than reusing the value
+                // captured in the outer `guard let` above: using the STALE
+                // captured key is exactly the CR-03 bug (a key handle the
+                // user has locked away kept alive inside a running task).
+                // Mirrors `VaultStore.performRefresh`'s own post-await lock
+                // re-check for exactly this shape.
+                guard
+                    !Task.isCancelled, let self,
+                    let liveUserKey = self.resealUserKey, let liveTrigger = self.resealTrigger
+                else { return }
+                _ = await liveTrigger.run(resealable: pending.resealable, userKey: liveUserKey)
             } catch {
                 Self.log.error("reseal-trigger pending fetch failed: \(String(describing: error), privacy: .public)")
             }

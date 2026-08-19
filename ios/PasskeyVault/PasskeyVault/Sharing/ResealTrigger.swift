@@ -139,6 +139,14 @@ actor ResealTrigger {
         var succeeded: [Attempt] = []
         var failed: [FailedAttempt] = []
         for grant in fresh {
+            // CR-03: a lock landing mid-fan-out (the caller cancels the
+            // task that owns this call) stops the REMAINING pairs instead
+            // of draining the whole list -- pairs already claimed in
+            // `attemptedPairs` above stay claimed, so they are retried
+            // cleanly on the next unlock's `resetAttempts()` + fresh
+            // snapshot rather than either double-attempted or silently
+            // dropped forever.
+            guard !Task.isCancelled else { break }
             let attempt = Attempt(collectionId: grant.collection_id, recipientUserId: grant.recipient_user_id)
             do {
                 try await resealService.reshareCollection(
