@@ -94,6 +94,14 @@ async function apiPost(
   });
 }
 
+/** 31-06-PLAN.md (SC5, T-31-16): the raw DELETE this file's own TOCTOU-driven
+ * refusal test needs -- the SECOND edit-holder's own session revokes the
+ * OWNER's own access mid-session, which no existing helper in this file
+ * performs (every prior revoke test drives the UI, never a raw DELETE). */
+async function apiDelete(request: BrowserContext["request"], path: string, token: string) {
+  return request.delete(`${BASE_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+}
+
 async function tokenFor(page: Page): Promise<string> {
   const token = await page.evaluate(() => window.localStorage.getItem("pv-session-token"));
   if (!token) {
@@ -256,11 +264,15 @@ async function moveItemToFolder(page: Page, itemId: string, folderId: string): P
 
 /** Opens the seeded folder-create ShareDialog variant from an EXISTING
  * personal folder's own kebab ("Udostępnij ten folder" / "Share this
- * folder", 26-UI-SPEC.md E2), selects `recipientUserId`, sets `accessLevel`,
- * types `newCollectionName` into the (deliberately blank-by-default,
+ * folder", 26-UI-SPEC.md E2), sets `recipientUserId`'s own row to
+ * `accessLevel` (31-02-PLAN.md's row model -- a row's own `<select>` IS the
+ * selection, there is no separate checkbox step anymore), types
+ * `newCollectionName` into the (deliberately blank-by-default,
  * ShareDialog.tsx's own `folderName` state) name field, submits, and waits
  * for the dialog to close successfully. Ends with `page`'s Sidebar in its
- * normal (folders-expanded) state, dialog gone. */
+ * normal (folders-expanded) state, dialog gone. Never called with
+ * `accessLevel: "hidden_password"` in this file -- the ack modal is
+ * exercised explicitly at its own call sites, not inside this helper. */
 async function shareExistingFolderWithMember(
   page: Page,
   folderId: string,
@@ -272,20 +284,18 @@ async function shareExistingFolderWithMember(
   await page.getByTestId(`sidebar-folder-share-${folderId}`).click();
   await page.getByTestId("share-dialog").waitFor({ state: "visible" });
   await page.getByTestId("share-folder-name-input").fill(newCollectionName);
-  await page.getByTestId(`share-recipient-${recipientUserId}`).click();
-  await page.getByTestId(`share-access-level-${accessLevel}`).click();
+  await page.getByTestId(`share-recipient-row-select-${recipientUserId}`).selectOption(accessLevel);
   await page.getByTestId("share-submit").click();
   await page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
 }
 
 /** SHARE-06 revoke live proof (Phase 28, Plan 02): same flow as
- * `shareExistingFolderWithMember` above, but selects EVERY id in
- * `recipientUserIds` in ONE ShareDialog submission (`selectedRecipientIds`
- * is a real multi-select `Set<string>`, ShareDialog.tsx:251) -- this is how
- * a real second recipient gets added to the SAME brand-new collection
- * without needing WINDOWS #13's out-of-scope "add a member to an EXISTING
- * collection" primitive: both grants are created together, at collection
- * CREATION time, which already works. */
+ * `shareExistingFolderWithMember` above, but sets EVERY id in
+ * `recipientUserIds`'s OWN row to `accessLevel` in ONE ShareDialog
+ * submission -- this is how a real second recipient gets added to the SAME
+ * brand-new collection without needing WINDOWS #13's out-of-scope "add a
+ * member to an EXISTING collection" primitive: both grants are created
+ * together, at collection CREATION time, which already works. */
 async function shareExistingFolderWithMembers(
   page: Page,
   folderId: string,
@@ -298,9 +308,8 @@ async function shareExistingFolderWithMembers(
   await page.getByTestId("share-dialog").waitFor({ state: "visible" });
   await page.getByTestId("share-folder-name-input").fill(newCollectionName);
   for (const recipientUserId of recipientUserIds) {
-    await page.getByTestId(`share-recipient-${recipientUserId}`).click();
+    await page.getByTestId(`share-recipient-row-select-${recipientUserId}`).selectOption(accessLevel);
   }
-  await page.getByTestId(`share-access-level-${accessLevel}`).click();
   await page.getByTestId("share-submit").click();
   await page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
 }
@@ -575,8 +584,7 @@ test("owner-of-item shares a personal item directly at all three access levels, 
     await sharer.page.getByTestId(`item-menu-trigger-${itemId}`).click();
     await sharer.page.getByTestId("context-menu-share").click();
     await sharer.page.getByTestId("share-dialog").waitFor({ state: "visible" });
-    await sharer.page.getByTestId(`share-recipient-${recipientUserId}`).click();
-    await sharer.page.getByTestId(`share-access-level-${accessLevel}`).click();
+    await sharer.page.getByTestId(`share-recipient-row-select-${recipientUserId}`).selectOption(accessLevel);
 
     if (accessLevel === "hidden_password") {
       if (expectAckModal) {
@@ -593,7 +601,61 @@ test("owner-of-item shares a personal item directly at all three access levels, 
           sharer.page.getByTestId("share-hidden-password-ack-title"),
           "a LATER hidden-password selection in the same session must NOT re-trigger the blocking modal",
         ).toHaveCount(0);
-        await expect(sharer.page.getByTestId("share-hidden-password-inline-note")).toBeVisible();
+        const inlineNote = sharer.page.getByTestId("share-hidden-password-inline-note");
+        await expect(inlineNote).toBeVisible();
+
+        // 31-05-PLAN.md (MOD-03/SC4, checker blocker 2): THIS is the
+        // previously-unproven case -- an already-acked account's REPEAT
+        // share, where the always-visible inline note is the ONLY honesty
+        // copy this account ever sees again. Pinned against a hardcoded
+        // literal, never sourced from `t()` at the assertion site, per
+        // this codebase's established discipline for load-bearing
+        // conditional notes (share-family-wide-timing-caveat's
+        // gapWindowHonestyPhrase / share-pending-revocations-summary
+        // precedent) -- a softened dictionary edit that dropped these
+        // clauses must fail HERE, independent of the dictionary itself.
+        const notCryptographicPhrase = "not cryptographically";
+        const canRecoverPhrase = "can technically recover the password";
+        await expect(
+          inlineNote,
+          "the always-visible inline note must state DIRECTLY, on a repeat share, that hidden-password is an interface protection and never a cryptographic one -- against a hardcoded literal so a softened dictionary edit fails here",
+        ).toContainText(notCryptographicPhrase);
+        await expect(inlineNote).toContainText(canRecoverPhrase);
+        // Self-consistency confirmation against the real (revised)
+        // dictionary string too -- both must hold.
+        await expect(inlineNote).toHaveText(
+          interpolate(t("en", "share.hiddenPasswordInlineNote"), { recipient: recipient.email }),
+        );
+
+        // Automated PL-width backstop (31-VALIDATION.md's Manual-Only row):
+        // the revised PL string is materially longer than its predecessor
+        // and than its own EN counterpart -- assert it never overflows the
+        // real rendered card at real font metrics, at BOTH the 375px
+        // viewport and the current (desktop) one. This catches gross
+        // overflow; it does NOT replace the held-out "technically fits,
+        // reads badly" visual judgment call, which is reported separately.
+        const desktopViewport = sharer.page.viewportSize();
+        const desktopFits = await inlineNote.evaluate((el) => el.scrollWidth <= el.clientWidth);
+        expect(desktopFits, "the inline note must wrap, never overflow, the real rendered card at desktop width").toBe(
+          true,
+        );
+
+        await sharer.page.setViewportSize({ width: 375, height: 800 });
+        await expect(inlineNote).toBeVisible();
+        const mobileFits = await inlineNote.evaluate((el) => el.scrollWidth <= el.clientWidth);
+        // LO-03 fix (31-REVIEW.md): was a hardcoded, session-specific
+        // absolute scratchpad path -- machine/user/session-UUID-specific,
+        // and committed into CI code that will never resolve on any other
+        // machine (the `.catch(() => {})` masked that it never produced the
+        // artifact anywhere but the one machine it was written on).
+        // `test.info().outputPath()` is Playwright's own portable
+        // per-test-run artifact location.
+        const mobileScreenshotPath = test.info().outputPath(`31-05-hidden-password-note-375px-${suffix}.png`);
+        await sharer.page.getByTestId("share-dialog").screenshot({ path: mobileScreenshotPath }).catch(() => {});
+        expect(mobileFits, "the inline note must wrap, never overflow, the real rendered card at 375px").toBe(true);
+        if (desktopViewport) {
+          await sharer.page.setViewportSize(desktopViewport);
+        }
       }
     }
 
@@ -946,8 +1008,7 @@ test("owner revokes a directly-shared ITEM's access via the Sharing overview's B
   await owner.page.getByTestId(`item-menu-trigger-${itemId}`).click();
   await owner.page.getByTestId("context-menu-share").click();
   await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
-  await owner.page.getByTestId(`share-recipient-${recipientUserId}`).click();
-  await owner.page.getByTestId("share-access-level-edit").click();
+  await owner.page.getByTestId(`share-recipient-row-select-${recipientUserId}`).selectOption("edit");
   await owner.page.getByTestId("share-submit").click();
   await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
 
@@ -1006,4 +1067,673 @@ test("owner revokes a directly-shared ITEM's access via the Sharing overview's B
 
   expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
   expect(recipient.dialogFired(), "zero OS-level dialogs across the recipient session").toBe(false);
+});
+
+// 31-03-PLAN.md Task 3 -- SC1 (MOD-01) and SC2 (MOD-02), live against a real
+// pv-server, real second/third accounts, and the real destination selector
+// (31-UI-SPEC.md) this plan's Task 1 built. Both tests open the dialog via
+// `sidebar-new-shared-folder-button` -- the SAME generic "+ Nowy
+// udostępniony folder" entry point Sidebar.tsx wires to `{ kind: "folder",
+// existingFolderId: null }`, the scope the destination selector actually
+// renders for.
+test("SC1: two real recipients, each set to a DIFFERENT level in ONE dialog submission, land on the server at THEIR OWN chosen level (MOD-01)", async ({
+  twoSessions,
+  browser,
+}) => {
+  const [memberA, memberB] = twoSessions;
+  const memberAToken = await tokenFor(memberA.page);
+  const memberBToken = await tokenFor(memberB.page);
+  const memberAUserId = await userIdFor(memberA.context, memberAToken);
+  const memberBUserId = await userIdFor(memberB.context, memberBToken);
+
+  await ensureFamilyMembership(browser, [memberAUserId, memberBUserId]);
+  await waitForIdentityKeyPublished(memberA.context, memberAToken);
+  await waitForIdentityKeyPublished(memberB.context, memberBToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+
+  const suffix = uniqueSuffix();
+  const sharedFolderName = `PV E2E SC1 Folder ${suffix}`;
+
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-shared-folders").click();
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-folder-name-input").fill(sharedFolderName);
+  // Each row's OWN select, set to a DIFFERENT level -- the exact shape SC1
+  // requires and the old shared-radio dialog structurally could not offer.
+  await owner.page.getByTestId(`share-recipient-row-select-${memberAUserId}`).selectOption("edit");
+  await owner.page.getByTestId(`share-recipient-row-select-${memberBUserId}`).selectOption("read");
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  const collectionId = await newIdAfter(collectionsBefore, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // The server-state read SC1 requires -- never inferred from the UI.
+  const accessRes = await apiGet(
+    owner.context.request,
+    `/api/vault/collections/${collectionId}/access`,
+    ownerToken,
+  );
+  expect(accessRes.status(), "GET .../access must succeed for the owner's own token").toBe(200);
+  const accessList = (await accessRes.json()) as { user_id: string; access_level: string }[];
+  const entryA = accessList.find((a) => a.user_id === memberAUserId);
+  const entryB = accessList.find((a) => a.user_id === memberBUserId);
+  expect(
+    entryA?.access_level,
+    "member A's own row chose edit -- must land at edit, never member B's level",
+  ).toBe("edit");
+  expect(
+    entryB?.access_level,
+    "member B's own row chose read -- must land at read, never member A's level",
+  ).toBe("read");
+
+  await owner.context.close();
+});
+
+test("SC2: submitting a share against an ALREADY-EXISTING destination adds a member without creating a new collection (MOD-02)", async ({
+  twoSessions,
+  browser,
+}) => {
+  const [memberA, memberB] = twoSessions;
+  const memberAToken = await tokenFor(memberA.page);
+  const memberBToken = await tokenFor(memberB.page);
+  const memberAUserId = await userIdFor(memberA.context, memberAToken);
+  const memberBUserId = await userIdFor(memberB.context, memberBToken);
+
+  await ensureFamilyMembership(browser, [memberAUserId, memberBUserId]);
+  await waitForIdentityKeyPublished(memberA.context, memberAToken);
+  await waitForIdentityKeyPublished(memberB.context, memberBToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+
+  const suffix = uniqueSuffix();
+  const destinationName = `PV E2E SC2 Destination ${suffix}`;
+
+  // 1. Establish the EXISTING destination -- member A at edit -- through the
+  //    SAME "mint new" path SC1 above exercises.
+  const collectionsBaseline = await listCollectionIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-shared-folders").click();
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-folder-name-input").fill(destinationName);
+  await owner.page.getByTestId(`share-recipient-row-select-${memberAUserId}`).selectOption("edit");
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  const destinationId = await newIdAfter(collectionsBaseline, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 2. SC2's own BEFORE snapshot -- captured immediately before opening the
+  //    dialog against the ALREADY-EXISTING destination, per the plan's own
+  //    falsifiable-by-construction assertion shape ("the collection count is
+  //    equal before and after").
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  // The destination selector's "Istniejące foldery" group -- selecting the
+  // PRE-CHOSEN destination re-seeds the rows from its real access list
+  // (31-03-PLAN.md's own re-seed contract); waiting for member A's OWN
+  // "Currently: …" text is the honest signal that fetch has resolved,
+  // rather than an arbitrary timeout.
+  await owner.page.getByTestId("share-destination-select").selectOption(destinationId);
+  await owner.page
+    .getByTestId(`share-recipient-row-currently-${memberAUserId}`)
+    .waitFor({ state: "visible", timeout: 20000 });
+  await owner.page.getByTestId(`share-recipient-row-select-${memberBUserId}`).selectOption("read");
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  const collectionsAfter = await listCollectionIds(owner.context, ownerToken);
+  expect(
+    collectionsAfter.length,
+    "SC2: targeting an EXISTING destination must never mint a new collection",
+  ).toBe(collectionsBefore.length);
+  expect(
+    new Set(collectionsAfter),
+    "SC2: the exact SAME collection id set, never a freshly minted id added to it",
+  ).toEqual(new Set(collectionsBefore));
+
+  // The newly-created collection_keys row's collection_id equals the
+  // PRE-CHOSEN destination id -- proven by its presence in THAT
+  // destination's own access list (a row minted under any OTHER collection
+  // id would neither appear here NOR grow `collectionsAfter`'s count, which
+  // the assertion above already forecloses).
+  const accessRes = await apiGet(
+    owner.context.request,
+    `/api/vault/collections/${destinationId}/access`,
+    ownerToken,
+  );
+  expect(accessRes.status()).toBe(200);
+  const accessList = (await accessRes.json()) as { user_id: string; access_level: string }[];
+  const entryB = accessList.find((a) => a.user_id === memberBUserId);
+  expect(
+    entryB?.access_level,
+    "member B's grant must land on the PRE-CHOSEN destination, at their own row's chosen level",
+  ).toBe("read");
+
+  await owner.context.close();
+});
+
+// 31-04-PLAN.md Task 2 -- the phase's sixth, deliberately-unrecorded proof
+// obligation (31-CONTEXT.md's scope note): "brak dostępu" really revokes.
+// Live, two real sessions, positive-then-negative -- the member's OWN
+// client must genuinely read the shared content BEFORE the revoke, and
+// genuinely lose the ability to decrypt it on its own NEXT COMPLETED SYNC
+// (never a lock/unlock, never a reload) AFTER. Mirrors
+// family-wide-sharing.spec.ts's own established positive-anchor/negative-
+// anchor shape (that file's "revocation: a member REMOVED by the owner..."
+// test, lines ~1216-1314, is the direct precedent to follow, not
+// re-derive independently) -- but this file does not import that spec's
+// helpers: a small, local `assertRecipientDecrypts`-equivalent lives here,
+// per this codebase's own established per-file-owns-its-own-tiny-helper
+// convention (already used throughout this file).
+async function assertRecipientDecrypts(
+  page: Page,
+  itemId: string,
+  itemName: string,
+  password: string,
+  because: string,
+): Promise<void> {
+  const row = page.getByTestId(`item-row-${itemId}`);
+  await expect(row, because).toBeVisible({ timeout: 90000 });
+  await expect(
+    row,
+    `${because} -- and the row must carry the REAL decrypted name, not a raw id or placeholder`,
+  ).toContainText(itemName);
+
+  await row.click();
+  await page.getByTestId("detail-panel").waitFor({ state: "visible" });
+  await page.getByTestId("reveal-password").click();
+  await expect(
+    page.getByTestId("detail-panel").getByText(password, { exact: true }),
+    `${because} -- and the REAL decrypted password must be readable, which only a genuine key unwrap can produce`,
+  ).toBeVisible();
+  await page.getByTestId("detail-panel-close").click();
+}
+
+test("the sixth proof obligation: setting a member with existing access to 'Brak dostępu' and saving revokes it live -- a real second session reads it for real BEFORE, and genuinely loses the ability to decrypt it on its own NEXT COMPLETED SYNC AFTER (no reload)", async ({
+  twoSessions,
+  browser,
+}) => {
+  test.setTimeout(180_000);
+
+  const [, member] = twoSessions;
+  const memberToken = await tokenFor(member.page);
+  const memberUserId = await userIdFor(member.context, memberToken);
+
+  await ensureFamilyMembership(browser, [memberUserId]);
+  await waitForIdentityKeyPublished(member.context, memberToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+
+  const suffix = uniqueSuffix();
+  const itemName = `PV E2E Revoke Sixth Item ${suffix}`;
+  const itemPassword = `pw-revoke-sixth-${suffix}`;
+  const personalFolderName = `PV E2E Revoke Sixth Seed Folder ${suffix}`;
+  const sharedFolderName = `PV E2E Revoke Sixth Shared Folder ${suffix}`;
+
+  // 1. Owner creates a real shared folder, shares it with the member at
+  //    "read" via the redesigned dialog (destination selector defaults to
+  //    "Nowy folder…", the member's row set to access.readOnly).
+  const itemsBefore = await listItemIds(owner.context, ownerToken);
+  await createLoginItemViaUI(owner.page, itemName, itemPassword);
+  const itemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+  const foldersBefore = await listFolderIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-folders").click();
+  await createFolderViaUI(owner.page, personalFolderName);
+  const folderId = await newIdAfter(foldersBefore, () => listFolderIds(owner.context, ownerToken));
+  await moveItemToFolder(owner.page, itemId, folderId);
+
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+  await shareExistingFolderWithMember(owner.page, folderId, memberUserId, "read", sharedFolderName);
+  const destinationId = await newIdAfter(collectionsBefore, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 2. BEFORE the positive anchor, relockAndUnlock the member's session --
+  //    this file's own `reloadAndUnlock` is the reload-and-unlock
+  //    equivalent already established here, and is itself an "unlock
+  //    transition" (this file's header comment / SHARE-01 test above).
+  //    family-wide-sharing.spec.ts:1264-1274 documents directly that
+  //    `refreshCollectionsNow()` fires only on the sharer's own submit, an
+  //    unlock transition, or the pending/reseal path, never a passive
+  //    session's ambient poll -- without this step the member's session may
+  //    never discover the brand-new collection at all, and the positive
+  //    anchor below would be untestable rather than merely slow.
+  await reloadAndUnlock(member.page, SESSION_PASSWORD);
+
+  await assertRecipientDecrypts(
+    member.page,
+    itemId,
+    itemName,
+    itemPassword,
+    "positive anchor: the member's own session must genuinely read the shared item BEFORE any revoke",
+  );
+
+  // 3. Owner reopens ShareDialog against the SAME existing folder (via the
+  //    destination selector's "Istniejące foldery" group), sets the
+  //    member's row to access.none ("Brak dostępu"), and saves -- assert
+  //    share-pending-revocations-summary is visible and names this member
+  //    BEFORE Save is clicked, queried while share-dialog is still mounted
+  //    (never after waitFor({ state: "detached" })).
+  await owner.page.getByTestId("sidebar-nav-shared-folders").click();
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-destination-select").selectOption(destinationId);
+  await owner.page
+    .getByTestId(`share-recipient-row-currently-${memberUserId}`)
+    .waitFor({ state: "visible", timeout: 20000 });
+  await owner.page.getByTestId(`share-recipient-row-select-${memberUserId}`).selectOption("none");
+
+  const summary = owner.page.getByTestId("share-pending-revocations-summary");
+  await expect(
+    summary,
+    "the pending-revocations summary must be visible, naming this member, BEFORE Save is clicked, while share-dialog is still mounted",
+  ).toBeVisible();
+  await expect(summary).toContainText(member.email);
+
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  // 4. On the member's OWN still-open session (no reload this time -- the
+  //    next completed sync), assert the item disappears -- negative
+  //    anchor. Mirrors family-wide-sharing.spec.ts's proven
+  //    `item-row-${id}` `toHaveCount(0, { timeout: 60000 })` pattern.
+  await expect(
+    member.page.getByTestId(`item-row-${itemId}`),
+    "negative anchor: the revoked member's own still-open session must lose the ability to see the shared item on its own NEXT COMPLETED SYNC, no reload",
+  ).toHaveCount(0, { timeout: 60000 });
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(member.dialogFired(), "zero OS-level dialogs across the member session").toBe(false);
+  await owner.context.close();
+});
+
+// F-1 gap closure (31-VERIFICATION.md): HI-01's original "fixed" regression
+// bumped `users.vault_revision`, which drives ONLY the personal `/api/sync`
+// lane -- structurally incapable of carrying a collection access level
+// (`SyncSnapshot = {revision, items?, folders?}`). The lane the client's
+// cached collection `accessLevel` actually depends on is `/api/sync/shared`,
+// keyed off `collections.revision`, which `update_access` now ALSO bumps
+// (`collections.rs::update_access`). This test proves CONVERGENCE, not
+// increment: the demoted recipient's OWN still-open session (no reload, no
+// re-navigation away from the item) genuinely loses the ability to reveal
+// the password on its NEXT COMPLETED SYNC -- mirroring the sixth proof
+// obligation's shape immediately above, for a DEMOTION rather than a
+// revocation, exactly as 31-VERIFICATION.md's F-1 finding asked for.
+test("F-1 gap closure: an in-place demotion from 'edit' to 'hidden_password' against an EXISTING destination reaches the target's own live session -- a real positive anchor (reveals the password while at edit) BEFORE, and genuinely loses the ability to reveal it, on its own still-open panel, on the NEXT COMPLETED SYNC AFTER (no reload, no re-navigation) -- proving convergence via the SHARED sync lane the fix actually bumps", async ({
+  twoSessions,
+  browser,
+}) => {
+  test.setTimeout(180_000);
+
+  const [, member] = twoSessions;
+  const memberToken = await tokenFor(member.page);
+  const memberUserId = await userIdFor(member.context, memberToken);
+
+  await ensureFamilyMembership(browser, [memberUserId]);
+  await waitForIdentityKeyPublished(member.context, memberToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+
+  const suffix = uniqueSuffix();
+  const itemName = `PV E2E Demote Edit Item ${suffix}`;
+  const itemPassword = `pw-demote-edit-${suffix}`;
+  const personalFolderName = `PV E2E Demote Seed Folder ${suffix}`;
+  const sharedFolderName = `PV E2E Demote Shared Folder ${suffix}`;
+
+  // 1. Owner creates a real shared folder and shares it with the member at
+  //    "edit" (not "read" -- the failure this fix closes is specifically a
+  //    demotion AWAY from a more-permissive level, matching HI-01's own
+  //    failure scenario: a `hidden_password` demotion leaving the OLD
+  //    edit-derived reveal affordance cached client-side).
+  const itemsBefore = await listItemIds(owner.context, ownerToken);
+  await createLoginItemViaUI(owner.page, itemName, itemPassword);
+  const itemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+  const foldersBefore = await listFolderIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-folders").click();
+  await createFolderViaUI(owner.page, personalFolderName);
+  const folderId = await newIdAfter(foldersBefore, () => listFolderIds(owner.context, ownerToken));
+  await moveItemToFolder(owner.page, itemId, folderId);
+
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+  await shareExistingFolderWithMember(owner.page, folderId, memberUserId, "edit", sharedFolderName);
+  const destinationId = await newIdAfter(collectionsBefore, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 2. The member picks the collection up via a real unlock transition (this
+  //    file's header comment: `collections.ts` has no live-update
+  //    subscription for a BRAND-NEW membership -- unrelated to the fix under
+  //    test here, which is about an EXISTING membership's level changing).
+  await reloadAndUnlock(member.page, SESSION_PASSWORD);
+
+  // 3. Positive anchor: the member's own session, holding a REAL edit grant,
+  //    opens the item and reveals the real plaintext password. The panel is
+  //    deliberately left OPEN (no detail-panel-close) so step 5 below
+  //    observes the SAME already-mounted component converge live, not a
+  //    freshly re-fetched one.
+  const row = member.page.getByTestId(`item-row-${itemId}`);
+  await expect(row, "positive anchor setup: the member's own session must see the shared item").toBeVisible({
+    timeout: 90000,
+  });
+  await row.click();
+  await member.page.getByTestId("detail-panel").waitFor({ state: "visible" });
+  await member.page.getByTestId("reveal-password").click();
+  await expect(
+    member.page.getByTestId("detail-panel").getByText(itemPassword, { exact: true }),
+    "positive anchor: the member's own session, holding a real EDIT grant, must genuinely reveal the password BEFORE any demotion",
+  ).toBeVisible();
+
+  // 4. Owner reopens ShareDialog against the SAME existing folder, demotes
+  //    the member's row to "hidden_password" (first-ever selection on this
+  //    account, so the blocking disclosure ack fires once), and saves.
+  await owner.page.getByTestId("sidebar-nav-shared-folders").click();
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-destination-select").selectOption(destinationId);
+  await owner.page
+    .getByTestId(`share-recipient-row-currently-${memberUserId}`)
+    .waitFor({ state: "visible", timeout: 20000 });
+  await owner.page.getByTestId(`share-recipient-row-select-${memberUserId}`).selectOption("hidden_password");
+  await expect(owner.page.getByTestId("share-hidden-password-ack-title")).toBeVisible();
+  await owner.page.getByTestId("share-hidden-password-ack-confirm").click();
+
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  // 5. F-1's own negative anchor: on the member's OWN still-open panel (no
+  //    reload, no re-navigation away from and back to the item -- the SAME
+  //    mounted DetailPanel this positive anchor just used), the reveal
+  //    affordance must disappear and the honest recipient note must appear,
+  //    on the NEXT COMPLETED SYNC. Before this fix, `sharedRevisionsChanged()`
+  //    never fired for this mutation (collections.revision was never
+  //    bumped), so this would time out with the reveal affordance still
+  //    present and the plaintext still visible.
+  await expect(
+    member.page.getByTestId("reveal-password"),
+    "negative anchor: the demoted member's own still-open session must lose the reveal affordance on its own NEXT COMPLETED SYNC, no reload",
+  ).toHaveCount(0, { timeout: 60000 });
+  await expect(
+    member.page.getByTestId("hidden-password-recipient-note"),
+    "the honest hidden-password recipient note must now render in the SAME still-open panel",
+  ).toBeVisible();
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(member.dialogFired(), "zero OS-level dialogs across the member session").toBe(false);
+  await owner.context.close();
+});
+
+// 31-06-PLAN.md Task 1 -- SC5's SECOND, genuinely new refusal case: the
+// destination's own key becomes unavailable to the caller mid-session.
+// Per 31-RESEARCH.md's own finding, `getCollection(id).sealed_key` is
+// documented as "should be unreachable" through a `Membership<Collection,
+// RequireRead>`-gated handler -- the ONLY real route to it is a narrow
+// TOCTOU window: the caller's own access is revoked in a CONCURRENT
+// session between the destination list loading and submit. This test
+// DRIVES that window deliberately (a second, independent edit-holder
+// revokes the owner's own access mid-dialog-session) rather than waiting
+// for it, and asserts BOTH halves: the owner sees the honest refusal while
+// the dialog is STILL MOUNTED, and the server state is genuinely unchanged
+// (asserted from the SECOND edit-holder's own token, since the owner's own
+// `GET .../access` call would itself now 404 -- they lost access too).
+test("SC5: a concurrent revoke of the caller's OWN access to an existing destination, driven mid-session between destination-select and submit, refuses honestly with NO partial membership behind (T-31-16)", async ({
+  twoSessions,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+
+  const [memberA, memberB] = twoSessions;
+  const memberAToken = await tokenFor(memberA.page);
+  const memberBToken = await tokenFor(memberB.page);
+  const memberAUserId = await userIdFor(memberA.context, memberAToken);
+  const memberBUserId = await userIdFor(memberB.context, memberBToken);
+
+  await ensureFamilyMembership(browser, [memberAUserId, memberBUserId]);
+  await waitForIdentityKeyPublished(memberA.context, memberAToken);
+  await waitForIdentityKeyPublished(memberB.context, memberBToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+  const ownerUserId = await userIdFor(owner.context, ownerToken);
+
+  const suffix = uniqueSuffix();
+  const destinationName = `PV E2E SC5 Destination ${suffix}`;
+
+  // 1. Establish the destination the owner CO-MANAGES with a SECOND real
+  //    edit-holder (memberA) -- this is what makes the later revoke
+  //    observable: WR-06's last-key-holder guard requires at least one
+  //    OTHER key-holder to remain, and memberA (still `edit`-capable after
+  //    the owner's own row is gone) is that remaining holder AND the one
+  //    performing the revoke (`RequireEdit`-gated).
+  const collectionsBaseline = await listCollectionIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-shared-folders").click();
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-folder-name-input").fill(destinationName);
+  await owner.page.getByTestId(`share-recipient-row-select-${memberAUserId}`).selectOption("edit");
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  const destinationId = await newIdAfter(collectionsBaseline, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 2. Owner reopens ShareDialog, selects the EXISTING destination via the
+  //    selector, and waits for the real re-seed (memberA's own "Currently:
+  //    edit" row) -- exactly SC2's own destination-selection shape.
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-destination-select").selectOption(destinationId);
+  await owner.page
+    .getByTestId(`share-recipient-row-currently-${memberAUserId}`)
+    .waitFor({ state: "visible", timeout: 20000 });
+
+  // 3. The BEFORE snapshot -- captured on the SECOND edit-holder's OWN
+  //    session/token, BEFORE the owner's submit. This is the honest
+  //    baseline the AFTER snapshot (step 6) is compared against: the
+  //    owner's own token cannot be used for this, since the very next step
+  //    revokes the owner's own access (their own future GET would 404).
+  const accessBeforeRes = await apiGet(
+    memberA.context.request,
+    `/api/vault/collections/${destinationId}/access`,
+    memberAToken,
+  );
+  expect(accessBeforeRes.status(), "memberA's own token must still read the access list before the revoke").toBe(
+    200,
+  );
+  const accessBefore = (await accessBeforeRes.json()) as {
+    user_id: string;
+    access_level: string;
+    created_at: string;
+  }[];
+
+  // 4. The deliberately-driven TOCTOU window: STILL using memberA's own
+  //    session, revoke the OWNER's own access to the destination -- between
+  //    the owner's destination-selection (step 2, already done) and their
+  //    submit click (step 5, below).
+  const revokeRes = await apiDelete(
+    memberA.context.request,
+    `/api/vault/collections/${destinationId}/access/${ownerUserId}`,
+    memberAToken,
+  );
+  expect(
+    revokeRes.status(),
+    "memberA (edit-capable, and the remaining key-holder) must be able to revoke the owner's own access",
+  ).toBe(204);
+
+  // 5. The owner -- unaware their own access to the destination is now
+  //    gone -- submits a change: granting memberB a brand-new row. Neither
+  //    memberB's grant nor any other dispatch may reach the network; the
+  //    fresh pre-dispatch `getCollection` re-fetch must refuse BEFORE any
+  //    of the three ops fire.
+  await owner.page.getByTestId(`share-recipient-row-select-${memberBUserId}`).selectOption("read");
+  await owner.page.getByTestId("share-submit").click();
+
+  // 6. Assert the refusal while share-dialog is STILL MOUNTED -- queried
+  //    BEFORE any waitFor({ state: "detached" }), per 260812-01e ME-05's
+  //    own standing hazard (an assertion evaluated post-detach is
+  //    trivially true). Hardcoded EN literal, never sourced from `t()` --
+  //    mirrors this codebase's established honesty-string pinning
+  //    convention (share.hiddenPasswordInlineNote et al.) so a silent
+  //    reword back toward retry-inviting copy would be caught here.
+  const errorLocator = owner.page.getByTestId("share-error");
+  await expect(
+    errorLocator,
+    "the destination-unavailable refusal must render while share-dialog is still mounted",
+  ).toBeVisible({ timeout: 20000 });
+  await expect(owner.page.getByTestId("share-dialog")).toBeVisible();
+  await expect(errorLocator).toHaveText("Can't share — no access to this destination's key.");
+  expect(
+    await errorLocator.textContent(),
+    "must never be share.createFailed's retry-inviting copy -- retrying cannot succeed until access is restored",
+  ).not.toContain("Try again");
+
+  // 7. The AFTER snapshot -- again on memberA's OWN session/token (never
+  //    the owner's, which would itself now 404). The BEFORE snapshot (step
+  //    3) was captured BEFORE step 4's deliberate revoke, so the owner's
+  //    OWN row disappearing between BEFORE and AFTER is the setup action's
+  //    own effect, not evidence of anything the failed submit did -- the
+  //    property this step actually owns is that the ONLY difference
+  //    between BEFORE and AFTER is that deliberate removal: no new memberB
+  //    row, no changed row, from the failed attempt -- "no partial
+  //    membership behind" (T-31-16).
+  const accessAfterRes = await apiGet(
+    memberA.context.request,
+    `/api/vault/collections/${destinationId}/access`,
+    memberAToken,
+  );
+  expect(accessAfterRes.status()).toBe(200);
+  const accessAfter = (await accessAfterRes.json()) as {
+    user_id: string;
+    access_level: string;
+    created_at: string;
+  }[];
+  const expectedAfterDeliberateRevokeOnly = accessBefore.filter((a) => a.user_id !== ownerUserId);
+  expect(
+    accessAfter,
+    "the failed submit must add/change NOTHING beyond step 4's own deliberate revoke of the owner's row -- no partial membership from the doomed attempt itself",
+  ).toEqual(expectedAfterDeliberateRevokeOnly);
+  expect(
+    accessAfter.find((a) => a.user_id === memberBUserId),
+    "memberB's doomed grant must never have landed",
+  ).toBeUndefined();
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(memberA.dialogFired(), "zero OS-level dialogs across memberA's session").toBe(false);
+  expect(memberB.dialogFired(), "zero OS-level dialogs across memberB's session").toBe(false);
+  await owner.context.close();
+});
+
+// 31-06-PLAN.md Task 2 -- Q2's END-STATE half: an in-place level EDIT on an
+// existing recipient and a brand-new GRANT to a second recipient, in ONE
+// dialog submission, both land correctly on the server. This is deliberately
+// only the end-state half of Q2's atomicity claim -- the DISPATCH-level half
+// (exactly one updateCollectionAccess call, zero revoke/grant calls, for the
+// edited recipient) is separately proven by two existing unit tests, cited
+// here rather than re-derived: `ShareDialog.test.tsx`'s "dispatch-count
+// against an EXISTING destination (Blocker 7, T-31-06)" describe block
+// (31-03-PLAN.md Task 1, folder branch) and its item-scope sibling
+// "item-scope reconcileRow dispatch-count (31-02-PLAN.md, T-31-06)"
+// (31-02-PLAN.md Task 1). A final-state-only read genuinely CANNOT
+// distinguish an atomic PUT from a client-side revoke-then-re-add that
+// happens to converge on the same end state -- this test proves the
+// end-state is correct, not the call shape that produced it.
+test("Q2: an in-place level EDIT and a brand-new GRANT in ONE submission both land correctly (end-state proof; dispatch-shape proven by 31-03-T1/31-02-T1's unit tests, cited not re-derived)", async ({
+  twoSessions,
+  browser,
+}) => {
+  const [memberA, memberB] = twoSessions;
+  const memberAToken = await tokenFor(memberA.page);
+  const memberBToken = await tokenFor(memberB.page);
+  const memberAUserId = await userIdFor(memberA.context, memberAToken);
+  const memberBUserId = await userIdFor(memberB.context, memberBToken);
+
+  await ensureFamilyMembership(browser, [memberAUserId, memberBUserId]);
+  await waitForIdentityKeyPublished(memberA.context, memberAToken);
+  await waitForIdentityKeyPublished(memberB.context, memberBToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+  const ownerUserId = await userIdFor(owner.context, ownerToken);
+
+  const suffix = uniqueSuffix();
+  const destinationName = `PV E2E Q2 Destination ${suffix}`;
+
+  // 1. Establish the existing destination -- memberA already at "read".
+  const collectionsBaseline = await listCollectionIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-shared-folders").click();
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-folder-name-input").fill(destinationName);
+  await owner.page.getByTestId(`share-recipient-row-select-${memberAUserId}`).selectOption("read");
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  const destinationId = await newIdAfter(collectionsBaseline, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 2. ONE submission: EDIT memberA's row (read -> edit) AND GRANT memberB
+  //    a brand-new row at hidden_password -- the first-ever hidden_password
+  //    selection on the owner's fresh account, so the blocking one-time
+  //    disclosure modal fires and must be acked.
+  await owner.page.getByTestId("sidebar-new-shared-folder-button").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+  await owner.page.getByTestId("share-destination-select").selectOption(destinationId);
+  await owner.page
+    .getByTestId(`share-recipient-row-currently-${memberAUserId}`)
+    .waitFor({ state: "visible", timeout: 20000 });
+
+  await owner.page.getByTestId(`share-recipient-row-select-${memberAUserId}`).selectOption("edit");
+  await owner.page.getByTestId(`share-recipient-row-select-${memberBUserId}`).selectOption("hidden_password");
+  await expect(owner.page.getByTestId("share-hidden-password-ack-title")).toBeVisible();
+  await owner.page.getByTestId("share-hidden-password-ack-confirm").click();
+
+  await owner.page.getByTestId("share-submit").click();
+  await owner.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
+
+  // 3. End-state: both changes landed, and nothing else was touched.
+  const accessRes = await apiGet(
+    owner.context.request,
+    `/api/vault/collections/${destinationId}/access`,
+    ownerToken,
+  );
+  expect(accessRes.status()).toBe(200);
+  const accessList = (await accessRes.json()) as { user_id: string; access_level: string }[];
+
+  const entryA = accessList.find((a) => a.user_id === memberAUserId);
+  const entryB = accessList.find((a) => a.user_id === memberBUserId);
+  const entryOwner = accessList.find((a) => a.user_id === ownerUserId);
+  expect(entryA?.access_level, "memberA's in-place edit must land at edit, not read").toBe("edit");
+  expect(entryB?.access_level, "memberB's brand-new grant must land at hidden_password").toBe(
+    "hidden_password",
+  );
+  expect(entryOwner?.access_level, "the owner's own row must be untouched by this submission").toBe("edit");
+  expect(
+    accessList.length,
+    "exactly three rows: owner (creator), memberA (edited), memberB (newly granted) -- nothing else touched",
+  ).toBe(3);
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(memberA.dialogFired(), "zero OS-level dialogs across memberA's session").toBe(false);
+  expect(memberB.dialogFired(), "zero OS-level dialogs across memberB's session").toBe(false);
+  await owner.context.close();
 });

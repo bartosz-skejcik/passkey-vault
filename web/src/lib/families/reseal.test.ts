@@ -117,7 +117,17 @@ describe("reshareCollectionToNewMember", () => {
     expect(mockAddCollectionMember).not.toHaveBeenCalled();
   });
 
-  it("resolves normally (does not throw) when addCollectionMember rejects with a structural 409", async () => {
+  // CR-03 fix (31-REVIEW.md): this used to assert the OPPOSITE -- that a
+  // 409 from `addCollectionMember` resolved normally. That policy was
+  // correct for the ONE caller whose own snapshot-driven pairs can only
+  // ever 409 on a genuine same-pair race (`resealTrigger.ts`, which now
+  // restores it in its OWN catch -- see `resealTrigger.test.ts`'s new
+  // test), but wrong here: this function has no way to know whether a
+  // caller's 409 means "a race landed first at the SAME level" or "this
+  // recipient already holds a grant at a DIFFERENT level", so it must not
+  // decide that for every caller. `submitRowsForExistingDestination`
+  // (`ShareDialog.tsx`) now owns that verification itself, per-caller.
+  it("propagates a structural 409 from addCollectionMember to the caller, rather than deciding it means success", async () => {
     const originalCk = fakeCk([1, 1, 1, 1]);
     mockGetCollection.mockResolvedValue({ sealed_key: "sealed-blob" });
     mockUnsealCollectionKey.mockReturnValue(originalCk);
@@ -129,7 +139,7 @@ describe("reshareCollectionToNewMember", () => {
 
     await expect(
       reshareCollectionToNewMember(COLLECTION_ID, RECIPIENT_ID, ACCESS_LEVEL, FAKE_UK),
-    ).resolves.toBeUndefined();
+    ).rejects.toEqual({ status: 409 });
   });
 
   it("throws before any sealCollectionKey/network call when the caller has sealed_key: null", async () => {

@@ -487,6 +487,352 @@ pub(crate) async fn require_collection_edit(
     Ok(())
 }
 
+/// Whether `caller_level` (what the caller ACTUALLY, server-resolved, holds
+/// on a collection) authorizes them to hand `requested_level` to a THIRD
+/// PARTY via an automatic propagation path (invite-time-wrap, 30-DECISION-
+/// FSH-02.md) — as opposed to `require_collection_edit`'s deliberate-share
+/// use case above. Deliberately explicit per (caller, requested) pair, never
+/// a transitive `Ord`-derived comparison — `AccessLevel`'s own doc comment:
+/// a derived `Ord` would make `HiddenPassword` compare as strictly "between"
+/// `Read` and `Edit`, which is wrong for this decision too, so every
+/// combination is spelled out rather than computed from a rank.
+///
+/// Rules: a caller may always propagate EXACTLY the level they themselves
+/// hold (never MORE — the caller's own resolved level is always the ceiling
+/// for what they can hand someone else); a full `Edit` holder may
+/// additionally choose to narrow a propagated grant down to `Read` —
+/// deliberate, test-proven behavior
+/// (`invitation_accept_grants_single_collection_and_two_family_wide_collections_atomically`,
+/// `crates/pv-server/tests/invitations.rs`): an edit-holding caller submits
+/// `"read"` for one family-wide entry and `"edit"` for another in the SAME
+/// request, and both are honored exactly as submitted. Every other
+/// combination would hand the invitee MORE than the caller actually holds,
+/// and is denied.
+///
+/// `pub(crate)`, not private (CR-03, 30-REVIEW.md): also called directly by
+/// `collections::add_member`'s reseal-bound path, the family-wide analogue
+/// of `require_collection_access_for_propagation` below for the lazy-reseal
+/// mechanism — a `read`-holding current member must be able to reseal a
+/// `read`-declared family-wide share to a newcomer even though `add_member`
+/// was historically `RequireEdit`-only (WINDOWS #17).
+///
+/// B1 (30-VERIFICATION.md): `ee928a3` (the very commit that added this
+/// gate's `RequireEdit`-only-on-ordinary-collections carve-out, CR-01/CR-03)
+/// reintroduced `d07c2a7`'s exact bug shape one access level over — the
+/// original hole was a missing `(Edit, Read)` case for a family-wide share
+/// declared at `read`; this one was a missing `(Edit, HiddenPassword)` case
+/// for a share declared at `hidden_password`. Because `collections::create`
+/// hard-codes the CREATOR's own `collection_keys` row to `'edit'` regardless
+/// of the level the share itself declares (see that fn's own comment — the
+/// creator is always a full editor of their own creation, matching this
+/// module's established `read` precedent), the creator is EVERY family-wide
+/// share's first propagator: the initial fan-out to current members, every
+/// later invite (`generateInviteLink` folds in every family-wide collection
+/// the caller holds a key for, at ITS OWN declared level), and the creator's
+/// own lazy reseal all route through this exact `(Edit, requested_level)`
+/// pair. Every combination is spelled out below — per this fn's own
+/// discipline, never derived from a rank — so a future reader sees coverage
+/// of all nine `(caller, requested)` pairs rather than having to infer it:
+///
+/// | caller \ requested | Read | HiddenPassword | Edit |
+/// |---------------------|------|-----------------|------|
+/// | Read                | ✓ exact match | ✗ escalation (different axis, not "more") | ✗ escalation |
+/// | HiddenPassword       | ✗ different axis, not "less" | ✓ exact match | ✗ escalation |
+/// | Edit                 | ✓ narrow (existing, test-proven) | ✓ narrow (B1 fix) | ✓ exact match |
+///
+/// `Read` and `HiddenPassword` are deliberately NOT mutually propagable in
+/// either direction — `AccessLevel`'s own doc comment: a `hidden_password`
+/// holder is a restricted grant along a different axis (can use, cannot
+/// reveal) than `read`, not "more" or "less" than it, so a `Read` holder
+/// gains nothing by being allowed to hand out `HiddenPassword`, and a
+/// `HiddenPassword` holder gains nothing by being allowed to hand out
+/// `Read` — both would only ever be reached by a hand-built request, never
+/// by any real client path (every real propagator resends the share's own
+/// declared level, and the ceiling stays exactly what `AccessLevel`'s
+/// non-`Ord` design already refuses to compare).
+pub(crate) fn may_grant_access_level(caller_level: AccessLevel, requested_level: AccessLevel) -> bool {
+    match (caller_level, requested_level) {
+        (AccessLevel::Read, AccessLevel::Read) => true,
+        (AccessLevel::Read, AccessLevel::HiddenPassword) => false,
+        (AccessLevel::Read, AccessLevel::Edit) => false,
+
+        (AccessLevel::HiddenPassword, AccessLevel::Read) => false,
+        (AccessLevel::HiddenPassword, AccessLevel::HiddenPassword) => true,
+        (AccessLevel::HiddenPassword, AccessLevel::Edit) => false,
+
+        (AccessLevel::Edit, AccessLevel::Read) => true,
+        // B1 fix: the missing arm. An edit-holding caller (always true of a
+        // family-wide share's own creator) may propagate the
+        // `hidden_password` level their own share declared — never more
+        // than they hold (they hold Edit, the ceiling), and this is the
+        // SAME "narrow a propagated grant down" shape the pre-existing
+        // (Edit, Read) arm above already established as deliberate,
+        // test-proven behavior.
+        (AccessLevel::Edit, AccessLevel::HiddenPassword) => true,
+        (AccessLevel::Edit, AccessLevel::Edit) => true,
+    }
+}
+
+/// The additive invite-time-wrap counterpart to `require_collection_edit`
+/// above (root-caused live, `.planning/debug/family-wide-c-relock-fail.md`):
+/// unlike the single EXPLICIT collection-scope on an invite (a deliberate
+/// "share this collection" action, correctly gated at `RequireEdit`,
+/// mirroring `collections::add_member`'s own `RequireEdit`-only gate), the
+/// invite-time-wrap fast path (30-DECISION-FSH-02.md) is an AUTOMATIC,
+/// additive fold-in of every family-wide collection the caller currently
+/// holds ANY key for — propagating the caller's OWN existing access forward
+/// to a new invitee, never granting anything beyond it. Requiring `Edit`
+/// here (the pre-fix behavior) was wrong: it meant a caller who merely holds
+/// `read` on even ONE family-wide collection could never generate ANY
+/// invite again — not just one scoped to that collection — since the
+/// client folds in every family-wide grant the caller holds into every
+/// single invite it creates, unconditionally
+/// (`web/src/lib/invite/crypto.ts::generateInviteLink`).
+///
+/// Gates on `RequireRead` (the caller must genuinely hold SOME grant —
+/// proof of real membership on that collection, not an outsider forging a
+/// collection id — same `None -> NotFound` semantics `require_collection_edit`
+/// already has) and then bounds the REQUESTED level via `may_grant_access_level`
+/// above, so an invitee can never receive more access than the inviter
+/// propagating it actually holds — `Some(caller_level)` that fails the bound
+/// is `ApiError::Forbidden`, mirroring `gate::<M>()`'s own "provably has SOME
+/// access, just not enough" rule.
+pub(crate) async fn require_collection_access_for_propagation(
+    db: &sqlx::SqlitePool,
+    caller_user_id: &str,
+    collection_id: &str,
+    requested_level: AccessLevel,
+) -> Result<(), ApiError> {
+    let resolved = Collection::resolve_access(db, caller_user_id, collection_id).await?;
+    match resolved {
+        None => Err(ApiError::NotFound),
+        Some(caller_level) if may_grant_access_level(caller_level, requested_level) => Ok(()),
+        Some(_) => Err(ApiError::Forbidden),
+    }
+}
+
+/// Whether `collection_id` is specifically an `item_bucket`-kind family-wide
+/// collection (260812-01e Task 1) — scoped narrower than a plain
+/// `family_wide_kind IS NOT NULL` check: a family-wide FOLDER must keep using
+/// `require_collection_edit` unchanged, since this claim mechanism (see
+/// `require_item_bucket_edit_access`/`claim_item_bucket_edit_in_tx` below)
+/// is item_bucket-only, per LOCKED decision 1's own scope. Also consumed by
+/// Task 2's
+/// `collections::revoke_access` refusal.
+pub(crate) async fn is_item_bucket_collection(db: &sqlx::SqlitePool, collection_id: &str) -> Result<bool, ApiError> {
+    Ok(
+        sqlx::query("SELECT 1 FROM collections WHERE id = ? AND family_wide_kind = 'item_bucket'")
+            .bind(collection_id)
+            .fetch_optional(db)
+            .await?
+            .is_some(),
+    )
+}
+
+/// CR-02 fix (31-REVIEW.md): whether `collection_id` is ANY family-wide
+/// collection — folder OR item_bucket. Server-side backstop for
+/// `collections::revoke_access`, widened from `is_item_bucket_collection`
+/// above: a family-wide FOLDER's membership is governed by
+/// `family_wide_pending`'s lazy-reseal machinery exactly like a bucket's is
+/// (both are driven off `family_wide_kind IS NOT NULL` there, see
+/// `families.rs`'s `resealable` query) — a per-person revocation against
+/// either one 204s, then silently self-reverts on the next keyholder unlock,
+/// the exact dishonesty this project's revocation-honesty proof obligation
+/// exists to prevent. `is_item_bucket_collection` stays scoped narrower on
+/// purpose for its OWN callers (the contributor-escalation guard is
+/// item_bucket-only, per LOCKED decision 1) — this is a deliberately
+/// separate, wider predicate, not a generalization of that one.
+pub(crate) async fn is_family_wide_collection(db: &sqlx::SqlitePool, collection_id: &str) -> Result<bool, ApiError> {
+    Ok(
+        sqlx::query("SELECT 1 FROM collections WHERE id = ? AND family_wide_kind IS NOT NULL")
+            .bind(collection_id)
+            .fetch_optional(db)
+            .await?
+            .is_some(),
+    )
+}
+
+/// LOCKED decision 1 (260812-01e): the READ-ONLY half of "generalizes
+/// `collections::create`'s 'the creator always holds edit on their own
+/// creation' from 'the creator' to 'any contributor'" — proof that the
+/// caller genuinely holds SOME existing grant on this item_bucket (same
+/// `None -> NotFound` semantics `require_collection_edit` uses), via the
+/// SAME `Collection::resolve_access`/`gate::<M>()` machinery every other
+/// extractor/helper in this module shares.
+///
+/// 260812-01e REVIEW.md HI-01: this function used to ALSO perform the claim
+/// UPDATE, on `db: &sqlx::SqlitePool` (a bare pool connection, autocommit) —
+/// which meant the escalation committed the instant this gate ran, BEFORE
+/// blob-length validation and BEFORE the transaction that performs the
+/// actual move. Every later failure (oversized blob, stale
+/// `expected_revision`, item deleted concurrently) left the escalation
+/// permanently persisted with no item ever landing in the bucket — contrary
+/// to this mechanism's own three doc comments (here, `vault.rs`'s Gate 2,
+/// and `T-30fix-01`) describing it as atomic with the move. The claim itself
+/// now lives in `claim_item_bucket_edit_in_tx` below, called from
+/// `move_item` only AFTER the move's own `UPDATE vault_items` has
+/// unambiguously succeeded (`Some(row)`, inside the SAME transaction) — so a
+/// later rollback of that transaction rolls the claim back with it. This
+/// function stays pool-bound and read-only, and MUST keep running BEFORE
+/// `move_item`'s `tx` opens — this codebase's integration test harness runs
+/// its pool at `max_connections(1)`, so opening `tx` first would
+/// self-deadlock against this call's own connection acquire.
+pub(crate) async fn require_item_bucket_edit_access(
+    db: &sqlx::SqlitePool,
+    caller_user_id: &str,
+    collection_id: &str,
+) -> Result<(), ApiError> {
+    let resolved = Collection::resolve_access(db, caller_user_id, collection_id).await?;
+    gate::<RequireRead>(resolved)?;
+    Ok(())
+}
+
+/// The claim itself (260812-01e REVIEW.md HI-01/ME-04) — the WRITE half
+/// `require_item_bucket_edit_access` above used to also perform, now split
+/// out so the caller (`move_item`) can run it INSIDE the same transaction as
+/// the move, strictly AFTER that transaction's own `UPDATE vault_items` has
+/// already returned a matched row (i.e. the move is certain to commit,
+/// modulo the rest of the same transaction). Idempotent by construction (the
+/// `access_level <> 'edit'` predicate makes an already-`edit` caller's call
+/// a no-op, never an error, matching the prior function's documented
+/// behavior).
+///
+/// ME-04 (260812-01e REVIEW.md): the `item_bucket` predicate is folded
+/// directly into this UPDATE's own `WHERE` clause via an `EXISTS`
+/// sub-select, rather than living only at the call site — the guarantee
+/// "this can only ever promote a row on an item_bucket collection" is now
+/// structural (the statement itself enforces it), not merely "true today
+/// because the one caller happens to check it first."
+///
+/// Runs on `tx: &mut sqlx::SqliteConnection` — this function must NEVER be
+/// called against `db: &sqlx::SqlitePool` directly; it exists specifically
+/// to run inside the caller's own open transaction.
+pub(crate) async fn claim_item_bucket_edit_in_tx(
+    tx: &mut sqlx::SqliteConnection,
+    caller_user_id: &str,
+    collection_id: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE collection_keys SET access_level = 'edit' \
+          WHERE collection_id = ? AND recipient_user_id = ? AND access_level <> 'edit' \
+            AND EXISTS (SELECT 1 FROM collections WHERE id = collection_keys.collection_id \
+                          AND family_wide_kind = 'item_bucket')",
+    )
+    .bind(collection_id)
+    .bind(caller_user_id)
+    .execute(tx)
+    .await?;
+    Ok(())
+}
+
+/// A family-wide collection's OWN declared `family_wide_access_level`, in
+/// THREE states rather than a two-state `Option<AccessLevel>` (plan-check
+/// iteration 2, C-1). Load-bearing, not defensive padding — read this
+/// variant's own doc comment before "simplifying" it to two states.
+pub(crate) enum FamilyWideDeclaredLevel {
+    /// `family_wide_kind IS NULL` — not a family-wide collection at all.
+    /// Callers keep their existing non-family-wide branch byte-for-byte.
+    NotFamilyWide,
+    /// `family_wide_kind IS NOT NULL` AND `family_wide_access_level IS NOT
+    /// NULL` — this is the ONLY state an equality bound (Task 2) may be
+    /// applied to.
+    Declared(AccessLevel),
+    /// `family_wide_kind IS NOT NULL` but `family_wide_access_level IS
+    /// NULL` — a pre-migration-0020 row. NO equality bound is applied here;
+    /// the pre-existing `may_grant_access_level` check remains the sole
+    /// bound, exactly as it is today.
+    ///
+    /// Why this third state must never collapse onto `Declared(Read)`:
+    /// `web/src/lib/invite/crypto.ts:125` falls back to `entry.access_level`
+    /// — the CALLER'S OWN held level — when `family_wide_access_level` is
+    /// null, while `resealTrigger.ts:43` falls back to `"read"`. Those two
+    /// already disagree, and nothing notices today because nothing compares
+    /// either to the collection row. If this helper defaulted a legacy row
+    /// to `Read`, an `edit`-holder's invite would send `"edit"`, a
+    /// `Declared`-only equality bound would demand `"read"`, and
+    /// `invitations::create` would reject the ENTIRE request — that member
+    /// could never generate an invite again. That is WINDOWS #17's failure
+    /// shape, re-created by the very fix (Task 2) this type exists to
+    /// support. Never read the declared level from anything client-supplied;
+    /// it comes from the `collections` row only.
+    LegacyUnknown,
+}
+
+/// Resolves `collection_id`'s own `FamilyWideDeclaredLevel` (260812-01e Task
+/// 1, consumed by Task 2's call sites: `collections::add_member` and
+/// `invitations::create`'s `family_wide_keys` fold-in loop). Takes only an
+/// id and reads `collections.family_wide_kind`/`family_wide_access_level` —
+/// nothing client-supplied enters this resolution.
+pub(crate) async fn resolve_family_wide_declared_level(
+    db: &sqlx::SqlitePool,
+    collection_id: &str,
+) -> Result<FamilyWideDeclaredLevel, ApiError> {
+    let row = sqlx::query("SELECT family_wide_kind, family_wide_access_level FROM collections WHERE id = ?")
+        .bind(collection_id)
+        .fetch_optional(db)
+        .await?;
+    let Some(row) = row else {
+        // No such collection row at all -- treated identically to
+        // "not family-wide", mirroring `is_item_bucket_collection`'s own
+        // `fetch_optional`-then-`is_some()` idiom. Every call site resolves
+        // its own membership access separately (and earlier), so a caller
+        // reaching this helper has already proven the collection exists.
+        return Ok(FamilyWideDeclaredLevel::NotFamilyWide);
+    };
+    let kind: Option<String> = row.try_get("family_wide_kind").map_err(|_| ApiError::Internal)?;
+    if kind.is_none() {
+        return Ok(FamilyWideDeclaredLevel::NotFamilyWide);
+    }
+    let level: Option<String> = row.try_get("family_wide_access_level").map_err(|_| ApiError::Internal)?;
+    match level {
+        None => Ok(FamilyWideDeclaredLevel::LegacyUnknown),
+        Some(level_str) => Ok(FamilyWideDeclaredLevel::Declared(parse_access_level(&level_str)?)),
+    }
+}
+
+/// The declared-level equality bound (260812-01e Task 2 / HI-02), extracted
+/// to a single definition (REVIEW.md LO-05) so its THREE call sites
+/// (`collections::add_member`, `invitations::create`'s explicit
+/// collection-scope check, and its `family_wide_keys` fold-in loop) can
+/// never drift apart the way CR-01 found the third of them had — each site
+/// previously carried its own copy of this exact match. Layered ADDITIONALLY
+/// on top of whatever caller-level check that call site already performs
+/// (`may_grant_access_level`/`require_collection_access_for_propagation`/
+/// `require_collection_edit`) — this function is deliberately narrow and
+/// does not replace any of those; call it alongside them, never instead.
+///
+/// - `Declared(declared)`: refuses (`Forbidden`) when `requested_level !=
+///   declared` AND the collection is specifically an `item_bucket` — a
+///   family-wide FOLDER has no contributor-escalation path (Task 1's
+///   mechanism is item_bucket-only), so this bound must not apply there.
+/// - `LegacyUnknown`: refuses unconditionally when the collection is an
+///   `item_bucket` (HI-02: there is no declared level to bound the grant
+///   against, and this is exactly the row type Task 1's escalation
+///   mechanism can otherwise silently over-empower). A legacy FOLDER is
+///   untouched — WINDOWS #17's shape, `FamilyWideDeclaredLevel::LegacyUnknown`'s
+///   own doc comment has the full rationale.
+/// - `NotFamilyWide`: no-op.
+pub(crate) async fn enforce_item_bucket_declared_level_bound(
+    db: &sqlx::SqlitePool,
+    collection_id: &str,
+    requested_level: AccessLevel,
+) -> Result<(), ApiError> {
+    match resolve_family_wide_declared_level(db, collection_id).await? {
+        FamilyWideDeclaredLevel::Declared(declared) => {
+            if requested_level != declared && is_item_bucket_collection(db, collection_id).await? {
+                return Err(ApiError::Forbidden);
+            }
+        }
+        FamilyWideDeclaredLevel::LegacyUnknown => {
+            if is_item_bucket_collection(db, collection_id).await? {
+                return Err(ApiError::Forbidden);
+            }
+        }
+        FamilyWideDeclaredLevel::NotFamilyWide => {}
+    }
+    Ok(())
+}
+
 /// Pathless sibling of `Membership<R, M>` for the singleton `families`
 /// resource (v0.4 has exactly one family — CONTEXT.md's locked FAM-01
 /// decision — so there is no `{id}` segment to read at all).

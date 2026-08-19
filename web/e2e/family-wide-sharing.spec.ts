@@ -73,6 +73,7 @@ import {
   ensureFamilyOwnerSession,
   ensureFamilyMemberCSession,
   ensureFamilyMemberDSession,
+  ensureNamedFamilySession,
   FAMILY_MEMBER_C_PASSWORD,
   FAMILY_MEMBER_D_PASSWORD,
   FAMILY_OWNER_PASSWORD,
@@ -364,15 +365,35 @@ async function shareFolderFamilyWide(
 
   const familyWideRow = page.getByTestId("share-recipient-family-wide");
   await familyWideRow.waitFor({ state: "visible" });
+  // ME-05 fix (31-REVIEW.md): a POSITIVE anchor, taken BEFORE `.check()` --
+  // without this, the `toHaveCount(0)` assertion below proves absence only
+  // (it would pass identically if `share-recipient-list`'s testid were
+  // renamed, the list never rendered due to a crashed subtree, or a roster
+  // fetch failure left it empty), which is a strictly weaker claim than the
+  // "mutually exclusive" one its own message makes. Asserting the list is
+  // genuinely PRESENT first is what turns the later absence into evidence
+  // of exclusivity rather than a vacuously-true negative.
+  await expect(
+    page.getByTestId("share-recipient-list"),
+    "sanity: the per-person row list must genuinely be on screen BEFORE family-wide is checked, or its later absence proves nothing",
+  ).toBeVisible();
   await familyWideRow.locator("input[type=checkbox]").check();
   await expect(
     page.getByTestId("share-family-wide-timing-caveat"),
     "the honest 'access arrives once a family member opens the app' caveat must be on screen at the moment of choosing family-wide",
   ).toBeVisible();
+  // 31-02-PLAN.md (plan-check iteration 2's named trap): the row model
+  // holds `<select>`s, not checkboxes -- the OLD
+  // `input[type=checkbox]` locator would resolve to ZERO elements here and
+  // this assertion would pass VACUOUSLY rather than proving mutual
+  // exclusivity. Rewritten against the row model: the per-person row list
+  // is not merely disabled, it is absent entirely once family-wide is
+  // checked (an even stronger guarantee than "disabled") -- and now
+  // meaningful, thanks to the positive anchor above.
   await expect(
-    page.getByTestId("share-recipient-list").locator("input[type=checkbox]").first(),
-    "family-wide is a MODE, not a recipient list -- individual recipients must be mutually exclusive with it",
-  ).toBeDisabled();
+    page.getByTestId("share-recipient-list"),
+    "family-wide is a MODE, not a recipient list -- the per-person row list must be mutually exclusive with it",
+  ).toHaveCount(0);
 
   await page.getByTestId(`share-access-level-${accessLevel}`).click();
   await page.getByTestId("share-submit").click();
@@ -1024,67 +1045,48 @@ test.describe("family-wide sharing — the living group, proven live (Plan 30-16
 
   // --- 30-17-PLAN.md Task 2: SC6 -- positive-then-negative revocation ----
 
-  // SKIPPED -- a genuine, SEVERE, previously-undiscovered data-loss bug in
-  // shipped code, found live by driving this EXACT scenario for the first
-  // time in this codebase's history (found 2026-08-11, this session).
-  //
+  // FIXED (Plan 30-18, WINDOWS.md #16). Was a genuine, SEVERE data-loss bug:
   // `vault_items.user_id REFERENCES users(id) ON DELETE CASCADE`
   // (migrations/0001_init.sql / 0003_vault_items_rebuild.sql) is UNCONDITIONAL
   // -- it applies to a personal item AND a collection-scoped one alike, and
-  // is never detached or reassigned before `delete_account_as_member`'s own
-  // `DELETE FROM users WHERE id = ?` (account.rs) runs. Concretely: member E
-  // creates an item, moves it into a folder, shares that folder FAMILY-WIDE
-  // (a real `collections` row, family-scoped, with real `collection_keys`
-  // rows for every other current member -- confirmed live: the OWNER
-  // genuinely read the real decrypted item BEFORE E's departure). E then
-  // self-deletes ("leaves", the only member-initiated departure this
-  // codebase implements -- see the removed test body's own comment, still
-  // below, for why). `buildMemberRemovalBatch` correctly re-keys the
-  // collection and rewraps the item's `enc_key` for every remaining
-  // recipient -- proven live via a raw diagnostic request: AFTER E's
-  // deletion, `GET /api/vault/collections/{id}` returns 200 with a fresh,
-  // valid `sealed_key` for the OWNER. But `GET
-  // /api/vault/collections/{id}/items` returns 200 with an EMPTY array --
-  // the re-keyed collection has ZERO items, because `DELETE FROM users`'s
-  // cascade already destroyed the `vault_items` row itself (its `user_id`
-  // still points at E, the original creator, regardless of it living inside
-  // a shared collection). The re-key work is real but wasted: the content
-  // it just re-sealed for everyone else is gone the instant the cascade
-  // runs, a few statements later, in the SAME request.
+  // used to be neither detached nor reassigned before
+  // `delete_account_as_member`'s own `DELETE FROM users WHERE id = ?`
+  // (account.rs) ran. Concretely: member E creates an item, moves it into a
+  // folder, shares that folder FAMILY-WIDE (a real `collections` row,
+  // family-scoped, with real `collection_keys` rows for every other current
+  // member -- confirmed live: the OWNER genuinely read the real decrypted
+  // item BEFORE E's departure). E then self-deletes ("leaves", the only
+  // member-initiated departure this codebase implements -- see this test
+  // body's own comment further below for why).
   //
-  // This is the EXACT INVERSE of 30-CONTEXT.md's own locked decision:
-  // "Leaving the family revokes everyone else's access to what you shared
-  // family-wide... You keep your own originals -- leaving is not deletion."
-  // As shipped, leaving a family-wide collection you created is MORE
-  // destructive than the decision describes -- not "revokes others' access
-  // while you keep your own copy", but "destroys the content for everyone,
-  // including the remaining members who still hold a valid key to nothing".
+  // Bartek's product decision (30-CONTEXT.md's locked "leaving is not
+  // deletion… you keep your own originals", applied to the collection-scoped
+  // case): the item stays in the collection and remains readable by every
+  // remaining member, under the collection's post-re-key state. The fix
+  // (`reassign_departing_member_collection_items`, account.rs) reassigns
+  // `vault_items.user_id` to the family owner for every item the departing
+  // member created inside a collection `apply_member_removal_rekey` just
+  // re-keyed, BEFORE the cascading delete runs -- reusing the existing
+  // re-key path rather than reimplementing it, and never touching
+  // ciphertext or key material (zero-knowledge holds:
+  // `Collection::resolve_access`'s collection-scoped branch already grants
+  // access purely via `collection_keys`, never via `vault_items.user_id`).
   //
-  // No prior test ever caught this: `delete-account.spec.ts`'s own
-  // "member_self_deletion..." test uses DUMMY, unreferenced collection
+  // `delete_account_as_owner`'s own, DIFFERENT, deliberate Step 1 (pre-
+  // deletes every collection-scoped item because the whole family dissolves)
+  // is untouched -- this fix only changes the plain-member departure path.
+  //
+  // No prior test ever caught the original bug: `delete-account.spec.ts`'s
+  // own "member_self_deletion..." test uses DUMMY, unreferenced collection
   // fixtures (`DUMMY_ENC_KEY`/`DUMMY_ENC_DATA`, never a real login item a
   // human would create), and every OTHER removal/deletion test in this
   // codebase either targets a RECIPIENT (never the original creator) or
-  // drives the OWNER's OWN dissolution path (`delete_account_as_owner`,
-  // which explicitly DOES pre-delete every collection-scoped item as its own
-  // documented Step 1 -- a DIFFERENT, deliberate design for a DIFFERENT
-  // case). This is the first live test to make a NON-owner member the
-  // original creator of a family-wide collection and then have THAT member
-  // self-delete.
-  //
-  // Fixing this needs a real architectural decision this plan is not
-  // positioned to make unilaterally (Rule 4: touches the `vault_items`
-  // ownership/schema model -- e.g. detaching a collection-scoped item's
-  // `user_id` before the cascade, mirroring `last_editor_user_id`'s own
-  // CR-01 precedent, or reassigning it to a remaining recipient) -- recorded
-  // in `.planning/WINDOWS.md` as an open, high-severity defect for a future
-  // phase to resolve. The test body below is left INTACT (not weakened to a
-  // scenario that would merely avoid the bug) so it can be un-skipped the
-  // moment the underlying fix lands -- this is the CORRECT proof FSH-04's
-  // "what YOU shared" wording requires; a version where the leaving member
-  // is a mere recipient (not the creator) would silently retreat from that
-  // exact claim rather than prove it.
-  test.skip("revocation: a member LEAVES the family (self-deletion, the only leave mechanism this codebase implements) -- the leaver's own access is revoked; another remaining member's access to what the leaver shared is unaffected", async ({
+  // drives the OWNER's OWN dissolution path. This is the first live test to
+  // make a NON-owner member the original creator of a family-wide collection
+  // and then have THAT member self-delete -- left INTACT (never weakened to
+  // a scenario that would merely avoid the bug) precisely so it could prove
+  // the fix once it landed.
+  test("revocation: a member LEAVES the family (self-deletion, the only leave mechanism this codebase implements) -- the leaver's own access is revoked; another remaining member's access to what the leaver shared is unaffected", async ({
     browser,
   }) => {
     test.setTimeout(300_000);
@@ -1571,5 +1573,354 @@ test.describe("family-wide sharing — the living group, proven live (Plan 30-16
     ).toHaveCount(0);
     await expect(memberB.page.getByTestId("pending-family-key-detail")).toHaveCount(0);
     await memberB.page.getByTestId("detail-panel-close").click();
+  });
+});
+
+// --- 260812-01e Task 8: the ITEM variant, live, recipient-side, real crypto,
+// Face 2 genuinely falsified -------------------------------------------------
+//
+// A NEW, INDEPENDENT describe block, deliberately NOT sharing the suite
+// above's stateful owner/memberB/memberC/memberD SESSION OBJECTS -- each
+// session here is its own fresh browser context/page, so this block cannot
+// be confounded by the suite above's carefully-sequenced late-joiner/
+// gap-window LOCK STATE (this file's header comment).
+//
+// DEVIATION FROM THE PLAN, found while executing this task (recorded in the
+// SUMMARY's own Deviations section): the plan's literal instruction was "its
+// own beforeAll/afterAll with fresh owner + member accounts and a fresh
+// family". A genuinely SECOND family is structurally impossible in this
+// codebase -- `idx_families_singleton` (migration 0014, FAM-01's LOCKED
+// decision from an earlier phase) is a UNIQUE index on the constant
+// expression `(1)` over the WHOLE `families` table: "exactly one family per
+// INSTANCE" (that migration's own header comment), not one per owner. Tried
+// literally first (a brand-new owner account calling the real
+// family-bootstrap UI) and observed it fail live: `POST /api/families` 409s
+// ("family already exists" -- `families.rs::create`'s own doc comment), the
+// UI renders `Couldn't create the family. Try again.`, and the beforeAll
+// hook then times out waiting for a state that can never arrive. The suite
+// ABOVE, in this SAME spec file, already created the one family this
+// database will ever hold (via `FAMILY_OWNER_EMAIL`) before this block ever
+// runs.
+//
+// The fix reuses that SAME singleton family via `ensureFamilyOwnerSession`
+// -- a FRESH browser context authenticating as the SAME reconstructible
+// `FAMILY_OWNER_EMAIL` identity `fixtures.ts` itself documents as
+// "RECONSTRUCTIBLE (register-or-login) by any file in this run" -- rather
+// than the outer describe's own long-lived `owner` session object, so this
+// block's lock state is still fully independent. A genuinely NEW member
+// account still joins fresh via the real invite UI. This preserves the
+// part of the plan's isolation concern that IS achievable (no shared
+// session objects, no shared lock state) while dropping the part that
+// cannot exist in this codebase (a second family). Confirmed no collision
+// risk: the suite above never creates an `item_bucket`-kind collection (only
+// `folder`-kind family-wide shares), so this block's `item_bucket` creations
+// are the family's first ever, at both declared levels this test uses.
+test.describe("family-wide sharing — the ITEM variant, live (260812-01e Task 8)", () => {
+  let ownerCtx: Awaited<ReturnType<typeof newBareContext>>;
+  let memberCtx: Awaited<ReturnType<typeof newBareContext>>;
+
+  test.beforeAll(async ({ browser }) => {
+    test.setTimeout(300_000);
+
+    ownerCtx = await newBareContext(browser);
+    memberCtx = await newBareContext(browser);
+
+    const suffix = uniqueSuffix();
+    const memberEmail = `pv-e2e-item-bucket-member-${suffix}@example.test`;
+
+    // The owner side re-authenticates as the SAME reconstructible
+    // FAMILY_OWNER_EMAIL identity the suite above already established a
+    // family for (see this block's own header comment for why a second
+    // family is impossible) -- on a FRESH context/page, never the outer
+    // describe's own session object. The member side is a genuinely NEW
+    // account, never a member of anything yet.
+    await Promise.all([
+      ensureFamilyOwnerSession(ownerCtx.page),
+      ensureNamedFamilySession(memberCtx.page, memberEmail, SESSION_PASSWORD),
+    ]);
+
+    // `openFamilyTab` race-handles both "needs bootstrap" and "family
+    // already exists" -- the family already exists here, so this reaches
+    // `invite-scope-select` directly.
+    await openFamilyTab(ownerCtx.page);
+    const invite = await generateInviteViaUI(ownerCtx.page);
+    await joinViaInviteUI(memberCtx.page, invite, SESSION_PASSWORD);
+    await returnToVault(ownerCtx.page);
+
+    // The member's own session pulled shared revisions once while NOT yet a
+    // family member (the invite landing unlocks before the join lands) --
+    // the same relock-and-unlock fix SC2 (the suite above) uses, so this
+    // member is a genuine CURRENT member for everything that follows, not a
+    // gap-window case.
+    await relockAndUnlock(memberCtx.page, SESSION_PASSWORD);
+  });
+
+  test.afterAll(async () => {
+    for (const session of [ownerCtx, memberCtx]) {
+      if (session === undefined) continue;
+      expect(
+        session.dialogFired(),
+        "every session in this file must trigger zero OS-level dialogs (Phase 20's standing rule)",
+      ).toBe(false);
+      await session.context.close();
+    }
+  });
+
+  /** Mirrors `shareFolderFamilyWide`'s shape but entered via the ITEM
+   * detail panel's own Share entry point (`detail-panel-share`), matching
+   * `DetailPanel.tsx`'s real UI -- never the folder-level trigger. */
+  async function shareItemFamilyWide(
+    page: Page,
+    itemId: string,
+    accessLevel: "read" | "edit" | "hidden_password",
+  ): Promise<void> {
+    await page.getByTestId(`item-row-${itemId}`).click();
+    await page.getByTestId("detail-panel").waitFor({ state: "visible" });
+    await page.getByTestId("detail-panel-share").click();
+    await page.getByTestId("share-dialog").waitFor({ state: "visible" });
+
+    const familyWideRow = page.getByTestId("share-recipient-family-wide");
+    await familyWideRow.waitFor({ state: "visible" });
+    await familyWideRow.locator("input[type=checkbox]").check();
+    await page.getByTestId(`share-access-level-${accessLevel}`).click();
+    await page.getByTestId("share-submit").click();
+    await page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 30000 });
+    await page.getByTestId("detail-panel-close").click();
+  }
+
+  test("a non-creator, read-level member's item share reaches another real account, and Face 2 genuinely resolves two separate buckets", async () => {
+    test.setTimeout(300_000);
+
+    const ownerToken = await tokenFor(ownerCtx.page);
+    const memberToken = await tokenFor(memberCtx.page);
+
+    const suffix = uniqueSuffix();
+    const itemXName = `PV E2E Item Bucket X ${suffix}`;
+    const itemXPassword = `pw-item-x-${suffix}`;
+    const itemYName = `PV E2E Item Bucket Y ${suffix}`;
+    const itemYPassword = `pw-item-y-${suffix}`;
+    const itemZName = `PV E2E Item Bucket Z ${suffix}`;
+    const itemZPassword = `pw-item-z-${suffix}`;
+
+    // --- Step 1: baseline -- owner creates item X and shares it family-wide
+    // at "read" (owner becomes the first bucket's creator -- unremarkable).
+    const ownerItemsBefore1 = await listItemIds(ownerCtx.context, ownerToken);
+    await createLoginItemViaUI(ownerCtx.page, itemXName, itemXPassword);
+    const itemXId = await newIdAfter(ownerItemsBefore1, () => listItemIds(ownerCtx.context, ownerToken));
+    await shareItemFamilyWide(ownerCtx.page, itemXId, "read");
+
+    await assertRecipientDecrypts(
+      memberCtx.page,
+      itemXId,
+      itemXName,
+      itemXPassword,
+      "baseline: the owner's own family-wide item share must still work",
+    );
+
+    // --- Step 2: VERIFICATION.md's exact control probe -- the member
+    // (non-creator, holding only "read" on this bucket) creates item Y and
+    // shares it family-wide, ALSO at "read". Pre-fix this 403s and the
+    // dialog shows share.createFailed.
+    const memberItemsBefore = await listItemIds(memberCtx.context, memberToken);
+    await createLoginItemViaUI(memberCtx.page, itemYName, itemYPassword);
+    const itemYId = await newIdAfter(memberItemsBefore, () => listItemIds(memberCtx.context, memberToken));
+
+    await memberCtx.page.getByTestId(`item-row-${itemYId}`).click();
+    await memberCtx.page.getByTestId("detail-panel").waitFor({ state: "visible" });
+    await memberCtx.page.getByTestId("detail-panel-share").click();
+    await memberCtx.page.getByTestId("share-dialog").waitFor({ state: "visible" });
+    const familyWideRow = memberCtx.page.getByTestId("share-recipient-family-wide");
+    await familyWideRow.waitFor({ state: "visible" });
+    await familyWideRow.locator("input[type=checkbox]").check();
+    await memberCtx.page.getByTestId("share-access-level-read").click();
+
+    // Task 7's contributor-edit disclosure note must be visible at this
+    // EXACT moment -- family-wide checked, "read" chosen, item scope.
+    // Pinned to a hardcoded literal (not sourced from t()), matching this
+    // file's own test-4 discipline for share.familyWideTimingCaveat.
+    // Per plan-check iteration 2 (C-2), the literal targets the
+    // STRENGTHENED clause -- "any member, at will" + "gains full edit" --
+    // not a generic prefix, so a later softening of the copy fails this
+    // live test rather than sliding through.
+    await expect(
+      memberCtx.page.getByTestId("share-family-wide-item-contributor-note"),
+      "the contributor-edit disclosure note must be visible for a family-wide item share at a non-edit level",
+    ).toContainText(
+      "dowolnej chwili dodać własny item do tego zbioru i przez to zyskać pełną edycję",
+    );
+
+    // 260812-01e verification, W3: the note must also name DELETION. HI-03's
+    // destruction half was assessed and deliberately left open (a
+    // self-escalated contributor may DELETE any other member's item in the
+    // bucket) on the reasoning that this is `edit`'s pre-existing meaning for
+    // shared collections -- which is defensible for the CODE, but LOCKED
+    // decision 1 requires that no UI copy be left false, and "pełna edycja" /
+    // "full editor" alone leaves a reader to infer deletion rather than being
+    // told. Pinned separately from the clause above so a later edit that drops
+    // the deletion wording fails here specifically, naming the omission.
+    await expect(
+      memberCtx.page.getByTestId("share-family-wide-item-contributor-note"),
+      "the disclosure note must name DELETION explicitly, not only editing (W3)",
+    ).toContainText("zmienić lub usunąć");
+
+    // 260812-01e REVIEW.md ME-05: the ORIGINAL shape here clicked submit,
+    // waited for the dialog to fully DETACH, and only THEN asserted
+    // share-error/share-partial-error had `toHaveCount(0)` -- but once the
+    // dialog has detached, every descendant testid (including both error
+    // ones) is gone from the DOM regardless of whether either had ever
+    // appeared, so both assertions were trivially true and could never fail.
+    // Restructured as a race between the three mutually-exclusive outcomes
+    // this submit can produce, evaluated WHILE the dialog is still mounted
+    // (an error renders INSIDE the still-open dialog, never as a reason for
+    // it to detach) -- pre-fix, this call 403s, `share-error` becomes
+    // visible, and the race genuinely resolves to `"share-error"`, failing
+    // the assertion below for real.
+    await memberCtx.page.getByTestId("share-submit").click();
+    const submitOutcome = await Promise.race([
+      memberCtx.page
+        .getByTestId("share-dialog")
+        .waitFor({ state: "detached", timeout: 30000 })
+        .then(() => "detached" as const),
+      memberCtx.page
+        .getByTestId("share-error")
+        .waitFor({ state: "visible", timeout: 30000 })
+        .then(() => "share-error" as const),
+      memberCtx.page
+        .getByTestId("share-partial-error")
+        .waitFor({ state: "visible", timeout: 30000 })
+        .then(() => "share-partial-error" as const),
+    ]);
+    expect(
+      submitOutcome,
+      "pre-fix, this call 403s and the dialog shows share.createFailed (share-error) or ends up a " +
+        "partial failure (share-partial-error) -- post-fix the dialog must cleanly detach with neither " +
+        "ever appearing",
+    ).toBe("detached");
+    await memberCtx.page.getByTestId("detail-panel-close").click();
+
+    // --- Step 3 (the strongest evidence in this plan, per plan-check --
+    // do not weaken): the OWNER'S OWN page opens item Y and decrypts its
+    // real name + password. This is the exact recipient-side proof
+    // VERIFICATION.md's control probe was missing: a non-creator, read-level
+    // member's family-wide item share reaching another real account.
+    await assertRecipientDecrypts(
+      ownerCtx.page,
+      itemYId,
+      itemYName,
+      itemYPassword,
+      "a non-creator, read-level member's family-wide item share must reach another real account and decrypt",
+    );
+
+    // --- Step 4: Face 2, made genuinely falsifiable (plan-check B-5) -- the
+    // owner shares a THIRD item, Z, family-wide at "edit".
+    //
+    // Falsification note (260812-01e REVIEW.md ME-01): the plan's original
+    // single-revert falsification (`familyItemBucketRow`'s level filter
+    // alone) was observed to fail ONE step earlier than intended -- Task 2's
+    // OWN declared-level bound (`collections::add_member`) refuses the
+    // resulting mismatched grant with a 403 before `shareItemFamilyWide`'s
+    // own `waitFor({state: "detached"})` ever completes, so this test's real
+    // distinct-collection-id assertion below was never actually reached or
+    // observed to fail. ME-01 correctly flagged that as insufficient
+    // evidence. Investigated live and reproduced for real: a SECOND revert
+    // (Task 2's bound alone) still does not reach the assertion either --
+    // Task 5's OWN `recipientAlreadyHoldsIntendedLevel` conflict-verification
+    // correctly detects that the family's other members do not actually hold
+    // `edit` on the reused bucket and reports a genuine partial failure,
+    // which is Task 5 working exactly as designed, not evidence of Face 2.
+    // Reaching the true pre-fix behavior requires ALL THREE reverts at once
+    // (this is the honest reproduction of Face 2's original two-part defect,
+    // CONTEXT.md's own description: "(1) `findOrCreateFamilyItemBucket`
+    // ignores its `level` argument... and (2) `grantCollectionToRecipients`
+    // swallows `add_member`'s 409 as success"; Task 2's declared-level bound
+    // is a THIRD, later-added defense that also has to be disabled to let
+    // the flow through): `familyItemBucketRow`'s level filter (client),
+    // `grantCollectionToRecipients`'s 409-handling unconditionally treating
+    // conflict as success (client), AND `collections::add_member`'s
+    // declared-level bound (server). With all three reverted, rebuilt, and
+    // re-run against the FULL spec file (never `-g`-filtered -- an isolated
+    // `-g` run reproduces a documented, unrelated timing artifact against a
+    // freshly-bootstrapped family, per this file's own beforeAll comment),
+    // the dialog cleanly detaches (the false-success is no longer refused by
+    // anything) and the test reaches its own real assertion, which fails
+    // genuinely:
+    //
+    //   Error: Face 2: a family-wide item share at a DIFFERENT declared level must land in a SEPARATE collection
+    //   expect(received).not.toBe(expected) // Object.is equality
+    //   Expected: not "cd9e8066-635e-4685-81e3-58cec7fc2761"
+    //
+    // (item Z's own collection_id equalled item X/Y's -- the exact wrong-
+    // bucket-reuse Face 2 describes.) All three reverts were restored
+    // immediately after this observation; a full clean re-run of this file
+    // reconfirmed 10/10 passing.
+    const ownerItemsBefore2 = await listItemIds(ownerCtx.context, ownerToken);
+    await createLoginItemViaUI(ownerCtx.page, itemZName, itemZPassword);
+    const itemZId = await newIdAfter(ownerItemsBefore2, () => listItemIds(ownerCtx.context, ownerToken));
+    await shareItemFamilyWide(ownerCtx.page, itemZId, "edit");
+
+    // The member's own client genuinely decrypts item Z too, mirroring
+    // step 3's discipline.
+    await assertRecipientDecrypts(
+      memberCtx.page,
+      itemZId,
+      itemZName,
+      itemZPassword,
+      "the member's own client must genuinely decrypt item Z (the edit-declared bucket) too",
+    );
+
+    // Read each item's own collection_id via GET /api/vault/items, AGAINST
+    // EACH ACCOUNT'S OWN TOKEN (X and Z are owner-authored; Y is
+    // member-authored -- vault.rs::fetch_items_for's own item list is scoped
+    // to items the CALLER authored, so Y is only visible in the member's own
+    // list, never the owner's).
+    const ownerItemsRes = await apiGet(ownerCtx.context.request, "/api/vault/items", ownerToken);
+    expect(ownerItemsRes.status()).toBe(200);
+    const ownerItemsBody = (await ownerItemsRes.json()) as { id: string; collection_id: string | null }[];
+    const memberItemsRes = await apiGet(memberCtx.context.request, "/api/vault/items", memberToken);
+    expect(memberItemsRes.status()).toBe(200);
+    const memberItemsBody = (await memberItemsRes.json()) as { id: string; collection_id: string | null }[];
+
+    function collectionIdOf(rows: { id: string; collection_id: string | null }[], itemId: string): string {
+      const row = rows.find((i) => i.id === itemId);
+      if (row === undefined || row.collection_id === null) {
+        throw new Error(`pv-e2e: item ${itemId} not found or has no collection_id`);
+      }
+      return row.collection_id;
+    }
+
+    const xCollectionId = collectionIdOf(ownerItemsBody, itemXId);
+    const yCollectionId = collectionIdOf(memberItemsBody, itemYId);
+    const zCollectionId = collectionIdOf(ownerItemsBody, itemZId);
+
+    expect(yCollectionId, "sanity: X and Y both landed in the SAME read-declared bucket").toBe(
+      xCollectionId,
+    );
+    expect(
+      zCollectionId,
+      "Face 2: a family-wide item share at a DIFFERENT declared level must land in a SEPARATE collection",
+    ).not.toBe(xCollectionId);
+
+    // The collection's OWN declared level is the correct discriminator here
+    // -- not any individual member's resolved access. By this point the
+    // member already holds a self-escalated 'edit' row on the FIRST bucket
+    // too (from contributing item Y in step 2), so their own resolved level
+    // is confounded and would not distinguish two buckets from one.
+    const readBucketRes = await apiGet(
+      ownerCtx.context.request,
+      `/api/vault/collections/${xCollectionId}`,
+      ownerToken,
+    );
+    expect(readBucketRes.status()).toBe(200);
+    const readBucketBody = (await readBucketRes.json()) as { family_wide_access_level: string | null };
+    expect(readBucketBody.family_wide_access_level).toBe("read");
+
+    const editBucketRes = await apiGet(
+      ownerCtx.context.request,
+      `/api/vault/collections/${zCollectionId}`,
+      ownerToken,
+    );
+    expect(editBucketRes.status()).toBe(200);
+    const editBucketBody = (await editBucketRes.json()) as { family_wide_access_level: string | null };
+    expect(editBucketBody.family_wide_access_level).toBe("edit");
   });
 });

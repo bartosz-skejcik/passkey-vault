@@ -18,7 +18,16 @@ const { mockReshare, mockGetCollection, mockGetSnapshot } = vi.hoisted(() => ({
   mockGetSnapshot: vi.fn(),
 }));
 
-vi.mock("./reseal", () => ({ reshareCollectionToNewMember: mockReshare }));
+// CR-03 fix (31-REVIEW.md): `resealTrigger.ts` now imports `isConflictError`
+// from `./reseal` alongside `reshareCollectionToNewMember` -- the real
+// (structural, duck-typed) implementation is reproduced here rather than
+// mocked to a stub, since this file's OWN new 409-handling test below
+// depends on it behaving exactly like the real one.
+vi.mock("./reseal", () => ({
+  reshareCollectionToNewMember: mockReshare,
+  isConflictError: (err: unknown) =>
+    typeof err === "object" && err !== null && "status" in err && (err as { status: unknown }).status === 409,
+}));
 vi.mock("@/lib/vault/api", () => ({ getCollection: mockGetCollection }));
 vi.mock("./familyWidePending", () => ({
   getFamilyWidePendingSnapshot: mockGetSnapshot,
@@ -35,9 +44,20 @@ function snapshot(resealable: { collection_id: string; recipient_user_id: string
 beforeEach(async () => {
   vi.clearAllMocks();
   mockReshare.mockResolvedValue(undefined);
-  // Default: every collection is one the caller genuinely holds a key for,
-  // granted at "edit".
-  mockGetCollection.mockResolvedValue({ sealed_key: "own-sealed-blob", access_level: "edit" });
+  // CR-01 fix (30-REVIEW.md): `access_level` here is the RESEALER's own
+  // held level -- deliberately a TRAP value, different from
+  // `family_wide_access_level` (the level the share was actually created
+  // at) below. Every existing assertion in this file expecting "edit" to
+  // have been propagated is a live proof that the fix reads
+  // `family_wide_access_level`, never `access_level` (the exact bug CR-01
+  // describes: a resealer who happens to hold a DIFFERENT level than the
+  // share's own declared one must never leak their own level into the
+  // grant).
+  mockGetCollection.mockResolvedValue({
+    sealed_key: "own-sealed-blob",
+    access_level: "hidden_password",
+    family_wide_access_level: "edit",
+  });
   mockGetSnapshot.mockReturnValue(snapshot([]));
   // The attempted-set is module-private and deliberately survives across
   // calls within one session -- clear it between tests through its OWN
@@ -49,7 +69,7 @@ beforeEach(async () => {
 });
 
 describe("runFamilyWideResealTrigger", () => {
-  it("calls reshareCollectionToNewMember exactly once per resealable entry, with that entry's own ids and the caller's OWN access level", async () => {
+  it("calls reshareCollectionToNewMember exactly once per resealable entry, with that entry's own ids and the SHARE's own family_wide_access_level (never the resealer's own held access_level)", async () => {
     mockGetSnapshot.mockReturnValue(
       snapshot([
         { collection_id: "col-1", recipient_user_id: "user-a" },
@@ -65,8 +85,12 @@ describe("runFamilyWideResealTrigger", () => {
     expect(mockReshare).toHaveBeenCalledWith("col-2", "user-b", "edit", FAKE_UK);
   });
 
-  it("falls back to 'read' when the caller's own collection row carries a null access_level", async () => {
-    mockGetCollection.mockResolvedValue({ sealed_key: "own-sealed-blob", access_level: null });
+  it("falls back to FALLBACK_ACCESS_LEVEL ('read') when the collection carries no family_wide_access_level (a legacy/pre-migration row) -- never falls back to the resealer's OWN access_level", async () => {
+    mockGetCollection.mockResolvedValue({
+      sealed_key: "own-sealed-blob",
+      access_level: "edit", // trap: must NOT be used as the fallback
+      family_wide_access_level: null,
+    });
     mockGetSnapshot.mockReturnValue(snapshot([{ collection_id: "col-1", recipient_user_id: "user-a" }]));
 
     const { runFamilyWideResealTrigger } = await import("./resealTrigger");
@@ -160,8 +184,8 @@ describe("runFamilyWideResealTrigger", () => {
     mockGetCollection.mockImplementation((id: string) =>
       Promise.resolve(
         id === "col-missing"
-          ? { sealed_key: null, access_level: null }
-          : { sealed_key: "own-sealed-blob", access_level: "read" },
+          ? { sealed_key: null, access_level: null, family_wide_access_level: null }
+          : { sealed_key: "own-sealed-blob", access_level: "edit", family_wide_access_level: "read" },
       ),
     );
 
@@ -180,6 +204,31 @@ describe("runFamilyWideResealTrigger", () => {
 
     expect(mockGetCollection).not.toHaveBeenCalled();
     expect(mockReshare).not.toHaveBeenCalled();
+  });
+
+  it("CR-03 fix (31-REVIEW.md): swallows a 409 from reshareCollectionToNewMember silently, without logging a warning -- this trigger's own resealable pairs can only ever 409 on a genuine race with another resealer, which is exactly the state it wants", async () => {
+    mockGetSnapshot.mockReturnValue(
+      snapshot([
+        { collection_id: "col-1", recipient_user_id: "user-a" },
+        { collection_id: "col-2", recipient_user_id: "user-b" },
+      ]),
+    );
+    mockReshare.mockImplementation((collectionId: string) =>
+      collectionId === "col-1" ? Promise.reject({ status: 409 }) : Promise.resolve(undefined),
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const { runFamilyWideResealTrigger } = await import("./resealTrigger");
+    await expect(runFamilyWideResealTrigger(FAKE_UK)).resolves.toBeUndefined();
+
+    expect(mockReshare).toHaveBeenCalledTimes(2);
+    // The 409'd pair must NOT be reported as a retry-worthy failure -- no
+    // console.warn for it, unlike a genuine transient failure (covered by
+    // the "one entry's rejection never blocks..." test above, which DOES
+    // expect a plain Error to still reach this trigger's own catch).
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    warnSpy.mockRestore();
   });
 
   it("reads the synchronous snapshot only -- it never calls the discovery endpoint itself (one query, two consumers)", async () => {

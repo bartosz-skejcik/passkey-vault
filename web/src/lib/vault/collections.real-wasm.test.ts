@@ -142,12 +142,16 @@ describe("collections.ts: list, decrypt names, cache unwrapped Collection Keys (
       // carries no `family_wide_kind` at all, and the store's contract is that
       // an ABSENT wire field normalizes to `null`, not `undefined`. A
       // whole-object `toEqual` is what makes that normalization observable.
+      // CR-01 fix (30-REVIEW.md): `familyWideAccessLevel` normalizes the
+      // same way, for the same reason -- this fixture row carries no
+      // `family_wide_access_level` either.
       expect(getCollections()).toEqual([
         {
           id: "collection-fixture-1",
           name: "Real Shared Family Folder",
           accessLevel: "edit",
           familyWideKind: null,
+          familyWideAccessLevel: null,
         },
       ]);
       expect(getCollectionKey("collection-fixture-1")).toBeDefined();

@@ -261,8 +261,14 @@ function recomputeItems(): void {
 /** 30-15 (FSH-02): id prefix every synthetic pending row carries. A real
  * `vault_items.id` is a UUID, so this can never collide with one -- and any
  * consumer that needs to tell the two apart has both this prefix and the
- * `pendingFamilyKey` discriminant to check. */
-export const PENDING_FAMILY_KEY_ID_PREFIX = "pending-family-key:";
+ * `pendingFamilyKey` discriminant to check.
+ *
+ * IN-02 fix (30-REVIEW.md): module-private, not exported -- no consumer
+ * anywhere in `web/src`/`web/e2e`/`packages/` ever imported this (every
+ * existing guard checks `pendingFamilyKey` alone, which is sufficient on its
+ * own). Re-export it if a future consumer genuinely needs to distinguish a
+ * placeholder id from a real one without going through `pendingFamilyKey`. */
+const PENDING_FAMILY_KEY_ID_PREFIX = "pending-family-key:";
 
 /** Builds one synthetic placeholder row per family-wide grant this caller is
  * still missing its `collection_keys` row for (30-DECISION-FSH-02.md).
@@ -1547,10 +1553,6 @@ subscribeLockState(() => {
     directRevisionWatermark = 0;
     collectionFailedMergeAttempts = new Map();
     directFailedMergeAttempts = 0;
-    // 30-13 (FSH-02): a new unlock is a new session for the reseal trigger
-    // too -- clear the attempted-pair set alongside the latches above, so a
-    // pair whose attempt failed transiently last session is re-attempted
-    // against this session's fresh snapshot rather than staying stranded.
     // 30-13 (FSH-02): a new unlock is a new session for the reseal trigger
     // too -- clear the attempted-pair set alongside the latches above, so a
     // pair whose attempt failed transiently last session is re-attempted

@@ -200,16 +200,29 @@ export interface CollectionRow {
   /** Wire mirror of `collections.rs`'s `CollectionResponse.family_wide_kind`
    * (30-02, FSH-01/FSH-02): `null` for an ordinary, non-family-wide
    * collection (today's exact behavior, unchanged); `'folder'` for a named
-   * family-wide folder; `'item_bucket'` for the one per-family
-   * auto-created collection holding bare items shared family-wide. Every
-   * later client plan in Phase 30 (invite folding, ShareDialog,
-   * SharingOverviewPanel, ItemRow badge) reads this field from here rather
-   * than re-deriving it -- 30-DECISION-FSH-02.md names this contract once.
+   * family-wide folder; `'item_bucket'` for an auto-created collection
+   * holding bare items shared family-wide (260812-01e: up to three per
+   * family, one per declared `family_wide_access_level` -- no longer a
+   * per-family singleton). Every later client plan in Phase 30 (invite
+   * folding, ShareDialog, SharingOverviewPanel, ItemRow badge) reads this
+   * field from here rather than re-deriving it -- 30-DECISION-FSH-02.md
+   * names this contract once.
    * Optional (not just nullable): a response predating this phase's
    * deploy, mid-rolling-restart, or a test fixture built before this field
    * existed, can omit the key entirely and still type-check -- treat a
    * missing key exactly like `null`, never a required-field throw. */
   family_wide_kind?: string | null;
+  /** CR-01 fix (30-REVIEW.md), wire mirror of `collections.rs`'s
+   * `CollectionResponse.family_wide_access_level`: the access level THIS
+   * family-wide share was created at ("read"/"edit"/"hidden_password"),
+   * `null`/absent for an ordinary collection AND for a family-wide
+   * collection created before this field existed (a legacy NULL row --
+   * every reader treats that the same as "server omitted it", never as
+   * license to fall back to the caller's OWN `access_level` above, which is
+   * exactly the propagator's-own-level bug this field exists to fix).
+   * Optional for the identical reason `family_wide_kind` is: a pre-this-fix
+   * response, or one served mid-rolling-restart, still type-checks. */
+  family_wide_access_level?: string | null;
 }
 
 export function getCollection(id: string): Promise<CollectionRow> {
@@ -304,6 +317,33 @@ export function revokeItemShare(itemId: string, userId: string): Promise<void> {
   );
 }
 
+/** `PUT /api/vault/collections/{id}/access/{user_id}` (`collections.rs::
+ * update_access`, Phase 31 Plan 01 — MOD-01/Q2's in-place level edit): mirrors
+ * `revokeCollectionAccess`'s exact thin-wrapper shape above, PUT instead of
+ * DELETE, with a JSON body carrying only `{ access_level }` — never a crypto
+ * orchestrator, purely a wire pass-through. `204` on success; `404` means no
+ * existing grant for this recipient (the server never upserts on this route).
+ * No `sealed_key` field exists on this request — a level edit never touches
+ * key material, since it is the SAME Collection Key the recipient already
+ * holds. */
+export function updateCollectionAccess(collectionId: string, userId: string, accessLevel: string): Promise<void> {
+  return apiJson(
+    `/api/vault/collections/${encodeURIComponent(collectionId)}/access/${encodeURIComponent(userId)}`,
+    { method: "PUT", body: JSON.stringify({ access_level: accessLevel }) },
+  );
+}
+
+/** `PUT /api/vault/items/{id}/shares/{user_id}` (`vault.rs::update_share`,
+ * Phase 31 Plan 01 — MOD-01/Q2's in-place level edit): same shape as
+ * `updateCollectionAccess` above, item-share sibling of `revokeItemShare`.
+ * `204` on success; `404` means no existing share for this recipient. */
+export function updateItemShare(itemId: string, userId: string, accessLevel: string): Promise<void> {
+  return apiJson(
+    `/api/vault/items/${encodeURIComponent(itemId)}/shares/${encodeURIComponent(userId)}`,
+    { method: "PUT", body: JSON.stringify({ access_level: accessLevel }) },
+  );
+}
+
 /** `POST /api/vault/collections` — Phase 26, Plan 01 (A-1/WR-09 fix): the
  * CALLER mints `id` (a fresh `crypto.randomUUID()`) and binds it into
  * `encName`'s AAD BEFORE calling this — this wrapper does not mint or
@@ -318,12 +358,22 @@ export function revokeItemShare(itemId: string, userId: string): Promise<void> {
  * genuinely absent from the call), the key is left OUT of the POSTed JSON
  * body entirely, matching the server's `#[serde(default)]`-shaped optional
  * field exactly and keeping every existing 3-argument call site
- * byte-for-byte unchanged. */
+ * byte-for-byte unchanged.
+ *
+ * `familyWideAccessLevel` (CR-01 fix, 30-REVIEW.md, mirrors `collections.rs`'s
+ * `CreateCollectionRequest.family_wide_access_level`): the access level THIS
+ * family-wide share is being created at -- REQUIRED (server-validated)
+ * exactly when `familyWideKind` is passed, and left OUT of the body
+ * whenever it is not, same omit-not-null discipline as `familyWideKind`
+ * itself. This is the ONE place the share's own chosen level is persisted,
+ * so every later propagation path has something other than the creator's
+ * own hard-coded `'edit'` `collection_keys` row to read. */
 export function createCollection(
   id: string,
   encName: string,
   sealedKey: string,
   familyWideKind?: "folder" | "item_bucket",
+  familyWideAccessLevel?: string,
 ): Promise<CollectionRow> {
   return apiJson("/api/vault/collections", {
     method: "POST",
@@ -332,6 +382,7 @@ export function createCollection(
       enc_name: encName,
       sealed_key: sealedKey,
       ...(familyWideKind !== undefined ? { family_wide_kind: familyWideKind } : {}),
+      ...(familyWideAccessLevel !== undefined ? { family_wide_access_level: familyWideAccessLevel } : {}),
     }),
   });
 }

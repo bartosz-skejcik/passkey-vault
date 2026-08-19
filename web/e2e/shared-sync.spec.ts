@@ -607,8 +607,7 @@ async function setupSharedEditableItem(
   await a.page.getByTestId(`sidebar-folder-share-${folderId}`).click();
   await a.page.getByTestId("share-dialog").waitFor({ state: "visible" });
   await a.page.getByTestId("share-folder-name-input").fill(`PV E2E ${label} Shared Folder`);
-  await a.page.getByTestId(`share-recipient-${bUserId}`).click();
-  await a.page.getByTestId("share-access-level-edit").click();
+  await a.page.getByTestId(`share-recipient-row-select-${bUserId}`).selectOption("edit");
   await a.page.getByTestId("share-submit").click();
   await a.page.getByTestId("share-dialog").waitFor({ state: "detached", timeout: 20000 });
 

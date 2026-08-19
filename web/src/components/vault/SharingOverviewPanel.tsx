@@ -101,9 +101,11 @@ interface PersonRow {
 /** 30-10 (FSH-05, "the family-wide row"): one flat entry in the pinned
  * family-wide block's `<ul>` -- a family-wide FOLDER (name from the
  * existing `collections.ts` decrypt path), or one individual item pulled
- * out of the single per-family `item_bucket` collection (30-UI-SPEC.md's
- * explicit "never one entry for the whole bucket" rule -- an item_bucket
- * is a container, not a thing to list itself). */
+ * out of one of the family's `item_bucket` collections (260812-01e: up to
+ * three, one per declared access level -- see the loop below, which is
+ * already generic over any number of them) (30-UI-SPEC.md's explicit
+ * "never one entry for the whole bucket" rule -- an item_bucket is a
+ * container, not a thing to list itself). */
 interface FamilyWideEntry {
   id: string;
   kind: "folder" | "item";
@@ -297,8 +299,21 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
         // captures owners and full-edit co-managers alike, and correctly
         // excludes a folder the caller merely has read/hidden-password
         // access to (someone ELSE is the one sharing that folder).
+        //
+        // 260812-01e Task 6: also excludes `family_wide_kind === "item_bucket"`
+        // -- an item_bucket must NEVER render as a folder row here (30-UI-
+        // SPEC.md), but `access_level === "edit"` alone no longer implies
+        // "this caller is the folder's real owner/manager": 260812-01e Task 1
+        // lets ANY past contributor to a bucket hold `edit` on it, so this
+        // leak (previously reachable only by a bucket's sole creator) widens
+        // to every contributor unless excluded here. The bucket's own items
+        // still appear correctly below, in the PINNED family-wide block
+        // (`familyWideBucketRows`) -- this exclusion is scoped to the
+        // ordinary folder tab only.
         const editableIds = new Set(
-          rawCollections.filter((c) => c.access_level === "edit").map((c) => c.id),
+          rawCollections
+            .filter((c) => c.access_level === "edit" && c.family_wide_kind !== "item_bucket")
+            .map((c) => c.id),
         );
         const editableCollections = collections.filter((c) => editableIds.has(c.id));
 
@@ -378,9 +393,11 @@ export default function SharingOverviewPanel({ onClose }: { onClose: () => void 
         // that store refreshes, so no second decrypt is needed here, only
         // a lookup by id (same rawCollections<->collections cross-reference
         // idiom `editableCollections` above already uses). A family-wide
-        // ITEM lives inside the single per-family `item_bucket` collection
-        // and is NOT a folder at all (30-UI-SPEC.md's key link) -- it needs
-        // its own item-level decrypt, matching `RemoveMemberDialog.tsx`'s
+        // ITEM lives inside one of the family's `item_bucket` collections
+        // (260812-01e: up to three, one per declared level -- the loop
+        // below is already generic over any number of them) and is NOT a
+        // folder at all (30-UI-SPEC.md's key link) -- it needs its own
+        // item-level decrypt, matching `RemoveMemberDialog.tsx`'s
         // `resolveFolder` item loop.
         const familyWideFolderRows = rawCollections.filter((c) => c.family_wide_kind === "folder");
         const familyWideBucketRows = rawCollections.filter(

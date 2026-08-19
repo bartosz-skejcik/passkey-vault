@@ -17,7 +17,8 @@ use uuid::Uuid;
 
 use super::collections::CoRecipientRecord;
 use super::membership::{
-    active_collection_member_join, parse_access_level_from_request, require_collection_edit, Item, Membership,
+    active_collection_member_join, claim_item_bucket_edit_in_tx, is_item_bucket_collection,
+    parse_access_level_from_request, require_collection_edit, require_item_bucket_edit_access, Item, Membership,
     RequireEdit, RequireRead,
 };
 use super::session::SessionUser;
@@ -959,6 +960,34 @@ pub async fn move_item(
         return Err(ApiError::Forbidden);
     }
 
+    // Gate 1 (260812-01e REVIEW.md HI-03, "laundering"): a self-escalated
+    // item_bucket contributor holds `Edit` on EVERY item in that bucket
+    // (`Item::resolve_access`'s collection branch has no owner check once an
+    // item is collection-scoped — this is deliberate, LOCKED decision 1's
+    // "edit the other items in that same bucket" accepted consequence). But
+    // RELOCATING someone else's item OUT of an item_bucket is a different
+    // action than editing its content in place: it lets the same contributor
+    // create a SECOND item_bucket declared at a DIFFERENT level (legal,
+    // they'd hold `edit` there as its creator) and move every item out of
+    // the first bucket into it — silently upgrading (or downgrading) who can
+    // read content the item's actual owner declared at a specific level,
+    // defeating the entire per-level design this fix exists to build. Gate 0
+    // above already draws an identical ownership line for PERSONAL items;
+    // this extends the SAME line to an item_bucket SOURCE — only the item's
+    // own `user_id` may move it OUT of an item_bucket, regardless of
+    // destination. Deliberately does NOT restrict a family-wide FOLDER
+    // source (no contributor-escalation path exists there, so a folder's
+    // deliberate edit-holders relocating shared content is pre-existing,
+    // unrelated behavior this fix never asked to change) and does NOT
+    // restrict editing an item IN PLACE (`update()`, a different handler —
+    // LOCKED decision 1's accepted consequence is untouched).
+    if let Some(source_cid) = &precheck_collection {
+        if is_item_bucket_collection(&state.db, source_cid).await? && precheck_owner_user_id != source.caller_user_id
+        {
+            return Err(ApiError::Forbidden);
+        }
+    }
+
     // Gate 2 (destination) — runs BEFORE any DB mutation, and before the
     // blob-length validation below, so a caller who fails this check never
     // learns whether their oversized blob would otherwise have been
@@ -972,9 +1001,37 @@ pub async fn move_item(
     // request while this call tried to acquire a SECOND one — a genuine
     // self-deadlock (observed directly: it manifested as a 500 from a pool
     // acquire timeout when tried during this fix).
-    if let Some(dest_id) = &req.new_collection_id {
-        require_collection_edit(&state.db, &source.caller_user_id, dest_id).await?;
-    }
+    // 260812-01e REVIEW.md HI-01: this gate now proves READ access only
+    // (via `require_item_bucket_edit_access`) for an item_bucket
+    // destination — the actual `edit` CLAIM is deferred until inside the
+    // transaction below, strictly after the move's own `UPDATE vault_items`
+    // has unambiguously succeeded (see that call site's own comment). This
+    // is what makes the claim genuinely atomic with the move: an oversized
+    // blob (rejected further down, still pre-tx), a stale
+    // `expected_revision` (409, inside tx), or a concurrently-deleted item
+    // (404, inside tx) can no longer leave a permanent escalation with no
+    // item ever landing in the bucket, contrary to what this mechanism's
+    // three doc comments (this one, `T-30fix-01`, membership.rs) describe.
+    // `is_item_bucket_collection` is computed once here and threaded through
+    // to the post-move claim below, so both call sites agree on the same
+    // pre-tx read of `family_wide_kind` (a bucket's kind is immutable after
+    // creation — no endpoint mutates it — so a second, later read inside the
+    // tx would be redundant, not a genuine second source of truth).
+    let dest_is_item_bucket = match &req.new_collection_id {
+        Some(dest_id) => {
+            // A family-wide FOLDER destination is unaffected: it keeps the
+            // byte-identical `require_collection_edit` call this branch
+            // always used.
+            if is_item_bucket_collection(&state.db, dest_id).await? {
+                require_item_bucket_edit_access(&state.db, &source.caller_user_id, dest_id).await?;
+                true
+            } else {
+                require_collection_edit(&state.db, &source.caller_user_id, dest_id).await?;
+                false
+            }
+        }
+        None => false,
+    };
 
     validate_blob_len("enc_key", &req.enc_key)?;
     validate_blob_len("enc_data", &req.enc_data)?;
@@ -1048,6 +1105,19 @@ pub async fn move_item(
     };
     let new_revision: i64 = row.try_get("revision").map_err(|_| ApiError::Internal)?;
     let updated_at: String = row.try_get("updated_at").map_err(|_| ApiError::Internal)?;
+
+    // 260812-01e REVIEW.md HI-01: the contributor-edit claim, moved here
+    // from Gate 2 above so it is genuinely atomic with the move — this line
+    // only ever runs AFTER `UPDATE vault_items` has unambiguously matched a
+    // row (the `None` arm above already returned), and it runs on `&mut *tx`,
+    // the SAME transaction as that move. Any later failure in this same
+    // transaction (a DB error further down, before `tx.commit()`) now rolls
+    // this claim back together with the move, instead of leaving a permanent
+    // escalation behind a move that never actually happened.
+    if dest_is_item_bucket {
+        let dest_id = req.new_collection_id.as_deref().expect("dest_is_item_bucket implies new_collection_id is Some");
+        claim_item_bucket_edit_in_tx(&mut *tx, &source.caller_user_id, dest_id).await?;
+    }
 
     // SYNC-04/SYNC-05 (closes this handler's WR-09 fan-out handoff):
     // resolve_recipients is called ONCE per non-null side of
@@ -1316,7 +1386,7 @@ pub async fn create_share(
     // Validate BEFORE any DB work — fails closed on a malformed/unrecognized
     // access_level string, never silently coerced to a working default
     // (mirrors collections::add_member's own ordering).
-    parse_access_level_from_request(&req.access_level)?;
+    let requested_level = parse_access_level_from_request(&req.access_level)?;
 
     // WR-10 (code review iteration 1): forbid a direct item_shares grant on a
     // collection-scoped item. Collection membership is meant to be the SOLE
@@ -1392,7 +1462,9 @@ pub async fn create_share(
     .bind(&membership.resource_id)
     .bind(&req.recipient_user_id)
     .bind(&req.sealed_key)
-    .bind(&req.access_level)
+    // LO-01 fix (31-REVIEW.md): binds the PARSED level's canonical string,
+    // never the raw request string.
+    .bind(requested_level.as_str())
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -1428,6 +1500,95 @@ pub async fn create_share(
     );
 
     Ok(StatusCode::CREATED)
+}
+
+/// Request body for `update_share` below. Deliberately the ONLY field —
+/// mirrors `collections::UpdateAccessRequest`'s own doc comment: the absence
+/// of a `sealed_key` field is itself documentation that this route cannot
+/// touch key material (31-RESEARCH.md Open Question 1). An `item_shares`
+/// row's `sealed_key` never needs to change for a level edit — it is the
+/// SAME Item Key the recipient already holds.
+#[derive(Deserialize)]
+pub struct UpdateItemShareRequest {
+    pub access_level: String,
+}
+
+/// `PUT /api/vault/items/{id}/shares/{user_id}` — 31-01-PLAN.md's Q2 fix,
+/// item-share sibling of `collections::update_access`. Gated
+/// `Membership<Item, RequireEdit>`, matching `create_share`'s own gate
+/// exactly — items have no family-wide/propagation concept, so
+/// `enforce_item_bucket_declared_level_bound` does NOT apply here;
+/// `RequireEdit::satisfied_by`'s exact-match, enforced entirely by the
+/// extractor itself before this handler body ever runs, is the whole bound.
+///
+/// A `PUT` against an `(item_id, user_id)` pair with no existing
+/// `item_shares` row is a `404`, never a silent upsert — same
+/// `rows_affected() == 0` discipline as `update_access`.
+///
+/// ME-08 (31-REVIEW.md) — NAMED ACCEPTED RISK, not a proven non-issue: this
+/// handler inherits `create_share`'s pre-existing `item_bucket` bypass.
+/// `enforce_item_bucket_declared_level_bound` guards `collection_keys`
+/// only, never `item_shares` — `membership::claim_item_bucket_edit_in_tx`
+/// can put `edit` in a self-escalated contributor's hands on a bucket
+/// declared BELOW `edit`, and `Membership<Item, RequireEdit>` is then
+/// satisfied for every item in that bucket, so `create_share`/`update_share`
+/// will write ANY level to `item_shares` for ANY recipient — a
+/// contributor-escalation path this handler does not close. `create_share`
+/// already carried this gap before this plan; `update_share` widens it from
+/// "create a new direct share" to "also change existing ones". Closing it
+/// properly needs an item-scoped variant of
+/// `enforce_item_bucket_declared_level_bound` that resolves the item's
+/// owning collection and applies the same equality bound — out of scope for
+/// this fix pass; recorded here so a future reader does not mistake the
+/// omission for a proven non-issue.
+pub async fn update_share(
+    State(state): State<AppState>,
+    membership: Membership<Item, RequireEdit>,
+    Path((_item_id, target_user_id)): Path<(String, String)>,
+    Json(req): Json<UpdateItemShareRequest>,
+) -> Result<StatusCode, ApiError> {
+    // Validate BEFORE any DB work — fails closed on a malformed/unrecognized
+    // access_level string, never silently coerced to a working default
+    // (mirrors create_share's own ordering above).
+    let requested_level = parse_access_level_from_request(&req.access_level)?;
+
+    // CR-02-style transactional discipline: the UPDATE and the target
+    // recipient's own `shared_direct_revision` bump run in ONE transaction.
+    let mut tx = state.db.begin().await?;
+
+    // LO-01 fix (31-REVIEW.md): binds the PARSED level's canonical string,
+    // never the raw request string — see collections::update_access's
+    // identical fix for the full rationale.
+    let result = sqlx::query("UPDATE item_shares SET access_level = ? WHERE item_id = ? AND recipient_user_id = ?")
+        .bind(requested_level.as_str())
+        .bind(&membership.resource_id)
+        .bind(&target_user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        // This is an EDIT of an existing row, never create-on-write — no
+        // share exists for this recipient, so there is nothing to edit.
+        return Err(ApiError::NotFound);
+    }
+
+    // Bumps the target recipient's own `shared_direct_revision` counter — so
+    // their own next `/api/sync/shared` cheap-check stops matching their
+    // stale `since` and their next `pull_shared_direct` re-fetch naturally
+    // picks up the changed access_level. Mirrors create_share's/
+    // revoke_share's identical bump. Deliberately NO WS event is published to
+    // `target_user_id` here — mirrors revoke_share's "never notify a member
+    // of a change to their own grant through the very channel being changed"
+    // discipline; they discover the change via their own polled
+    // `GET /api/sync/shared`, never a push.
+    sqlx::query("UPDATE users SET shared_direct_revision = shared_direct_revision + 1 WHERE id = ?")
+        .bind(&target_user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `DELETE /api/vault/items/{id}/shares/{user_id}` — removes a direct

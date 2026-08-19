@@ -44,7 +44,7 @@ describe("CollectionPicker", () => {
 
   // Backstop #4 -- exactly one collection: same <select>, no special-casing.
   it("exactly one collection: renders the same native select, no special-casing", () => {
-    mockUseCollections.mockReturnValue([{ id: "col-1", name: "Family", accessLevel: "edit", familyWideKind: null }]);
+    mockUseCollections.mockReturnValue([{ id: "col-1", name: "Family", accessLevel: "edit", familyWideKind: null, familyWideAccessLevel: null }]);
     renderWithLocale(<CollectionPicker value={null} onSelect={vi.fn()} onCreateNew={vi.fn()} />);
 
     const select = screen.getByTestId("collection-picker-select");
@@ -61,9 +61,9 @@ describe("CollectionPicker", () => {
   // Backstop #4 -- many collections: every one renders as an <option>.
   it("many collections: every collection renders as its own option", () => {
     const collections: Collection[] = [
-      { id: "col-1", name: "Family", accessLevel: "edit", familyWideKind: null },
-      { id: "col-2", name: "Work", accessLevel: "edit", familyWideKind: null },
-      { id: "col-3", name: "Travel", accessLevel: "edit", familyWideKind: null },
+      { id: "col-1", name: "Family", accessLevel: "edit", familyWideKind: null, familyWideAccessLevel: null },
+      { id: "col-2", name: "Work", accessLevel: "edit", familyWideKind: null, familyWideAccessLevel: null },
+      { id: "col-3", name: "Travel", accessLevel: "edit", familyWideKind: null, familyWideAccessLevel: null },
     ];
     mockUseCollections.mockReturnValue(collections);
     renderWithLocale(<CollectionPicker value={null} onSelect={vi.fn()} onCreateNew={vi.fn()} />);
@@ -78,7 +78,7 @@ describe("CollectionPicker", () => {
   it("#5: an option for a >=40-char collection name carries a title attribute equal to its full visible text", () => {
     const longName = "A".repeat(40) + " very long shared folder name";
     expect(longName.length).toBeGreaterThanOrEqual(40);
-    mockUseCollections.mockReturnValue([{ id: "col-long", name: longName, accessLevel: "edit", familyWideKind: null }]);
+    mockUseCollections.mockReturnValue([{ id: "col-long", name: longName, accessLevel: "edit", familyWideKind: null, familyWideAccessLevel: null }]);
     renderWithLocale(<CollectionPicker value={null} onSelect={vi.fn()} onCreateNew={vi.fn()} />);
 
     const option = screen.getByRole("option", { name: longName });
@@ -95,7 +95,7 @@ describe("CollectionPicker", () => {
   // genuinely out of this component's control (see file header + SUMMARY).
   it("#6 (class-level only): container and select carry w-full, no fixed/max-width class shorter than a realistic long name", () => {
     const longName = "A very long shared folder name that could overflow a narrow container";
-    mockUseCollections.mockReturnValue([{ id: "col-long", name: longName, accessLevel: "edit", familyWideKind: null }]);
+    mockUseCollections.mockReturnValue([{ id: "col-long", name: longName, accessLevel: "edit", familyWideKind: null, familyWideAccessLevel: null }]);
     renderWithLocale(<CollectionPicker value="col-long" onSelect={vi.fn()} onCreateNew={vi.fn()} />);
 
     const container = screen.getByTestId("collection-picker");
@@ -109,10 +109,39 @@ describe("CollectionPicker", () => {
     expect(select.className).not.toMatch(fixedOrMaxWidth);
   });
 
+  // 260812-01e REVIEW.md HI-04: an item_bucket must never render as a
+  // pickable "folder" here -- picking it would silently perform a
+  // family-wide share plus a permanent self-escalation, with ShareDialog's
+  // honest disclosure copy never rendered.
+  it("HI-04: an item_bucket collection is excluded from the picker entirely", () => {
+    const collections: Collection[] = [
+      { id: "col-1", name: "Family", accessLevel: "edit", familyWideKind: null, familyWideAccessLevel: null },
+      { id: "bucket-1", name: "family-wide-items", accessLevel: "edit", familyWideKind: "item_bucket", familyWideAccessLevel: "read" },
+    ];
+    mockUseCollections.mockReturnValue(collections);
+    renderWithLocale(<CollectionPicker value={null} onSelect={vi.fn()} onCreateNew={vi.fn()} />);
+
+    expect(screen.queryByRole("option", { name: "family-wide-items" })).toBeNull();
+    expect(screen.getByRole("option", { name: "Family" })).toBeInTheDocument();
+  });
+
+  // Sibling of the above: if the item_bucket is the ONLY collection, the
+  // picker must render its zero-collections empty state, not a populated
+  // select carrying the excluded bucket alone.
+  it("HI-04: a single item_bucket collection renders the zero-collections empty state", () => {
+    mockUseCollections.mockReturnValue([
+      { id: "bucket-1", name: "family-wide-items", accessLevel: "edit", familyWideKind: "item_bucket", familyWideAccessLevel: "edit" },
+    ]);
+    renderWithLocale(<CollectionPicker value={null} onSelect={vi.fn()} onCreateNew={vi.fn()} />);
+
+    expect(screen.getByTestId("collection-picker-empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("collection-picker-select")).toBeNull();
+  });
+
   it("selecting an option calls onSelect(collectionId)", () => {
     const collections: Collection[] = [
-      { id: "col-1", name: "Family", accessLevel: "edit", familyWideKind: null },
-      { id: "col-2", name: "Work", accessLevel: "edit", familyWideKind: null },
+      { id: "col-1", name: "Family", accessLevel: "edit", familyWideKind: null, familyWideAccessLevel: null },
+      { id: "col-2", name: "Work", accessLevel: "edit", familyWideKind: null, familyWideAccessLevel: null },
     ];
     mockUseCollections.mockReturnValue(collections);
     const onSelect = vi.fn();

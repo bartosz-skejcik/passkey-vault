@@ -323,6 +323,22 @@ describe("Sidebar Shared folders section (E2, Plan 26-10)", () => {
     expect(screen.getByTestId("sidebar-shared-folder-col-2")).toHaveTextContent("Praca wspólna");
   });
 
+  // 260812-01e REVIEW.md HI-04: an item_bucket must never render in this
+  // "Shared folders" list -- it is not a real, named folder, and rendering
+  // it here is the same leak CollectionPicker.tsx's identical exclusion
+  // closes.
+  it("HI-04: excludes an item_bucket collection from the Shared folders list", () => {
+    mockUseCollections.mockReturnValue([
+      { id: "col-1", name: "Rodzina", familyWideKind: null },
+      { id: "bucket-1", name: "family-wide-items", familyWideKind: "item_bucket" },
+    ]);
+    render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("sidebar-nav-shared-folders"));
+
+    expect(screen.getByTestId("sidebar-shared-folder-col-1")).toHaveTextContent("Rodzina");
+    expect(screen.queryByTestId("sidebar-shared-folder-bucket-1")).not.toBeInTheDocument();
+  });
+
   it("the '+ Nowy udostępniony folder' trigger opens ShareDialog in folder-create variant with no seed", () => {
     mockUseCollections.mockReturnValue([]);
     render(<Sidebar activeFilter={{ kind: "all" }} onFilterChange={vi.fn()} />);

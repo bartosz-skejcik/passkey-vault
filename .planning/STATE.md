@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Sharing That Makes Sense
-current_phase: 30
-current_phase_name: The Living Group — Family-Wide Sharing
+current_phase: 31
+current_phase_name: The Share Dialog — Per-Person Access, Existing Destinations
 status: phase_complete
-stopped_at: Phase 29 verified passed (5/5) — next is Phase 30
-last_updated: "2026-08-10T00:00:00.000Z"
-last_activity: 2026-08-10
-last_activity_desc: Phase 29 complete — /settings route, IA, DEBT-02 disclosure; verified 5/5 after one gap-closure cycle
+stopped_at: Completed 31-04-PLAN.md
+last_updated: "2026-08-18T21:57:45.434Z"
+last_activity: 2026-08-11
+last_activity_desc: re-verify complete; four CI-width commands all exit 0; e2e 9/9 from a fresh
 progress:
   total_phases: 6
-  completed_phases: 1
-  total_plans: 6
-  completed_plans: 6
-  percent: 17
+  completed_phases: 2
+  total_plans: 30
+  completed_plans: 27
+  percent: 33
 ---
 
 # Project State
@@ -24,14 +24,100 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-31)
 
 **Core value:** Lekki self-hostable vault (1 kontener + wtyczka), w którym passkeys działają w pełni: jako provider dla cudzych stron i jako PRF unlock własnego vaulta.
-**Current focus:** v0.5 Sharing That Makes Sense — Phase 30 (The Living Group — Family-Wide Sharing). Next: `/gsd-discuss-phase 30`.
+**Current focus:** v0.5 — Phase 30's SC2 item-variant defect (below) is now CLOSED via quick task
+`260812-01e` (2026-08-12; see that task's SUMMARY.md); a re-verify pass should confirm SC2 moves from
+`failed` back to `pass` in a fresh `30-VERIFICATION.md`. Phase 31 is the active phase otherwise.
 
 ## Current Position
 
-Phase: 30 (The Living Group — Family-Wide Sharing) — NOT STARTED
-Plan: none yet
-Status: Phase 29 complete and verified 5/5; 28/28 requirements mapped across phases 29–34, no orphans
-Last activity: 2026-08-10 — Phase 29 verified passed after one gap-closure cycle
+Phase: 31 (The Share Dialog — Per-Person Access, Existing Destinations)
+
+**Quick task `260812-01e` (2026-08-12) closed the ⛔ OPEN DEFECT recorded below** — per-level
+`item_bucket` schema (up to 3 buckets/family, one per access level), a server-side contributor-edit-claim
+mechanism on `move_item`'s destination gate, two closed privilege-escalation side doors
+(`revoke_access` refusal + a declared-level propagation bound, both scoped to `item_bucket` only),
+client-side level-keyed bucket resolution, a defended 409-swallow, an excluded item_bucket from the
+ordinary folder tab, honest ShareDialog copy, and a live, recipient-side, real-crypto Playwright proof
+(10/10, fresh build) that falsifies both Face 1 and Face 2. All 8 tasks falsification-proven; see
+`.planning/quick/260812-01e-phase-30-fix-family-wide-item-variant-pe/260812-01e-SUMMARY.md` for full
+detail, including the deviations found while executing (a genuinely second family is impossible in this
+codebase — FAM-01's singleton constraint — worked around by reusing the existing family via a fresh
+session on the same reconstructible owner identity).
+
+The section below (Phase 30's own re-verification record, 2026-08-11) is preserved as history — it is
+what discovered and scoped the defect this quick task closes. Read it for context on WHY the fix looks
+the way it does; the "⛔ OPEN DEFECT" it describes is no longer open.
+
+Phase: 30 (The Living Group — Family-Wide Sharing) — RE-VERIFIED at `3219b16`, `gaps_found` 5/6
+Status: 17/17 plans executed. The re-verification (2026-08-11T21:50Z) confirmed all three original
+blockers closed and **falsification-proven**, with **zero regressions** — but escalated SC2's item half
+from `partial` to `failed` on a newly found, probe-proven defect. See `30-VERIFICATION.md`.
+Last activity: 2026-08-11 — re-verify complete; four CI-width commands all exit 0; e2e 9/9 from a fresh
+build of this HEAD.
+
+### What the re-verify established (do not re-derive)
+
+- **B1 CLOSED and proven.** `may_grant_access_level`'s full 9-pair matrix was re-checked pair by pair:
+  every verdict correct, no escalation path. The new `b1_hidden_password_...` test was falsified by
+  reverting the `(Edit, HiddenPassword) => true` arm — RED at PROBE 0 (`left: 403, right: 201`), and it
+  is the **sole** guard (6 passed / 1 failed under the revert; even the neighbouring `cr01` test misses
+  it). `HiddenPassword -> Read = false` is load-bearing, not an oversight.
+
+- **B2 CLOSED** — `cargo test --workspace --no-fail-fast` exit 0, 365 passed / 0 failed.
+- **B3 CLOSED** — `npm run compile` exit 0, 0 errors (was 9). `npm test` 964/964, `npm run build` exit 0.
+- **Live** — `playwright test e2e/family-wide-sharing.spec.ts --retries=0` 9/9 from a genuine fresh
+  rebuild of server + web at this HEAD; `data/pv.db` SHA-256 identical before and after.
+
+- SC1 spot-checked (`f2fb3c0` topological ancestor of `74657d2`); SC3/SC4/SC5/SC6 **re-proved**, not
+  assumed.
+
+### Two things any future pass must NOT undo
+
+- **`collections::create`'s hard-coded `'edit'` for the creator's own row is deliberate and correct.**
+  Investigated twice now; it matches `d07c2a7`'s established `read`-case precedent. Do not "fix" it back.
+  (Note it is also what exempts the bucket's *creator* from the open defect below — which is why the
+  defect stayed invisible.)
+
+- **B1's fix enumerates the full 9-pair matrix explicitly, with no wildcard arm.** Deliberate: this bug
+  has appeared twice, each time as a missing pair in a matrix that looked complete. The compiler
+  enforcing coverage IS the fix. Keep it exhaustive; do not collapse it.
+
+### ✅ RESOLVED (2026-08-12, quick task `260812-01e`) — family-wide ITEM variant (SC2, FSH-01's "or an item")
+
+**Closed.** See the "Current Position" section above for the fix summary. The section below is preserved
+as the original discovery record — read it for the root cause this fix addresses.
+
+Not merely unproven — **broken**, with a control probe to prove it. One root cause, two faces:
+
+Every family's items route through one singleton `item_bucket` collection carrying **one**
+`family_wide_access_level`, while `ShareDialog` offers a level control **per share**. The bucket's level
+is fixed forever by whoever makes the family's first family-wide item share.
+
+- **Face 1 — write-locked.** `submitItemFamilyWide` calls `moveItemToCollection`; `vault::move_item`
+  gates the destination with `require_collection_edit` (exact `Edit` match, Phase 22 / SHARE-04). So a
+  member fanned out at the bucket's `read` or `hidden_password` level can never put an item in it.
+  Probed at HEAD: bucket at `'read'` → **403**; same fixture with bucket at `'edit'` → **200** (control).
+  User sees `share.createFailed` — a retry that can never succeed. The bucket's creator is exempt.
+
+- **Face 2 — silent wrong level.** `findOrCreateFamilyItemBucket` ignores its `level` argument on the
+  existing-bucket branch, and `grantCollectionToRecipients` swallows `add_member`'s 409 as success — so
+  every item share after the family's first **reports success while delivering the old level**, to
+  current members and future joiners alike.
+
+Invisible until now because the only coverage was mocked-crypto unit tests — precisely the evidence
+class this project's standing rule rejects for crypto claims.
+
+**Not deferrable to a later phase** (checked 31–34 individually; Phase 32 owns a different surface and
+presumes a writable destination). **Needs a product decision before code:** one bucket cannot honour a
+per-share level.
+
+### Parallel work in progress — do not disturb
+
+A second Claude Code session is working in a separate git worktree on branch `ios/spike` (sibling
+directory to this repo). It has local `.planning/` edits that are **deliberately never committed**. Do
+not touch that worktree and do not merge `ios/spike`. Its brief is `docs/IOS-HANDOFF.md`. Coordinate
+before editing root `Cargo.toml` (workspace `members`) or `crates/pv-core/` — the only two real
+conflict points. iOS is currently **v2 scope** per PROJECT.md.
 
 Previous milestone: Phase 28 closed v0.4's three audit blockers; v0.4 shipped/archived/tagged 2026-08-09.
 
@@ -51,12 +137,14 @@ weakened. Family & Sharing carried across verbatim, marked for Phase 33 in a cod
    `ServeDir` expected `settings/index.html`. `/settings` would have been broken in the real container.
    Fixed with `rewrite_nested_static_route` (+ `/api/` guard, decode-then-validate traversal guard,
    HEAD handling); `router_static_fallback.rs` grew 4 → 11 tests.
+
 2. **The phase's headline fix was initially false, and both test lanes were blind to it.** `hydrated`
    only tracked `personalItems`, but every hidden-password item lives in the separately-loaded shared
    sets, and `ExportDialog` read items non-reactively — so the export dialog could still show *no*
    disclosure over a file containing hidden-password plaintext. Units mocked `getItems`; the e2e waited
    for both rows first. Caught by code review, fixed in `7978605`, and the verifier confirmed by
    reverting to pre-fix and watching the new tests go red.
+
 3. **`Referrer-Policy` was inert on every static-file response.** axum's `fallback_service` discards
    earlier `.layer()` calls; the code comment asserted the opposite. This sat on the invite landing page
    whose `invite_id` leak that header exists to prevent. Fixed in `fb1a9a2`.
@@ -147,6 +235,10 @@ still carries `role="tablist"` (pre-existing Phase 28 code, Phase 33 scope).
 | Phase 28 P02 | 24min | 2 tasks | 6 files |
 | Phase 28 P03 | ~110min | 5 tasks | 13 files |
 | Phase 28 P04 | 18min | 5 tasks | 7 files |
+| Phase 31 P01 | 30min | 2 tasks | 6 files |
+| Phase 31 P02 | ~3h | 1 tasks | 8 files |
+| Phase 31 P03 | ~30min | 3 tasks | 6 files |
+| Phase 31 P04 | 55min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -293,6 +385,12 @@ Recent decisions affecting current work:
 - [Phase ?]: 28-03: families.rs::suspend_member/reinstate_member bump the target's own shared_direct_revision (B-8) -- suspension's direct-share bucket now has a genuine, bidirectional signal, no re-key writes
 - [Phase ?]: 28-03: sync-client.ts's/sync.ts's hasEverConfirmedFamilyMembership discriminant is armed by BOTH pullOnce()'s own success AND vault-store.ts's/store.ts's earlier refreshSharedItemsNow() via an exported markFamilyMembershipConfirmed() setter -- closes the plan-review two-call-site race blocker
 - [Phase ?]: 28-03: extension's family-removal e2e fixture uses a FRESH single-purpose target identity per call (never the shared MEMBER_B fixture sibling specs reuse), with the OWNER (not member A) creating the fixture's own collection, since the account submitting a real removal/suspend/reinstate batch must hold its own collection_keys row for every collection it acts on
+- [Phase ?]: Quick task 260812-01e closed Phase 30 SC2's item-variant gap: per-level item_bucket schema, contributor-edit-claim mechanism with two closed side doors, client level-keying, honest copy, and a live e2e proof (8 tasks, all falsification-proven).
+- [Phase ?]: 31-01: Two new PUT routes (collections::update_access, vault::update_share) close MOD-01's in-place level-edit gap via a single UPDATE, bounded identically to add_member/create_share.
+- [Phase ?]: 31-02: family-wide's radio group isolated to an isFamilyWideSelected render condition, with a new hiddenPasswordRowTarget state disambiguating the shared hidden-password-ack modal's completion handler between family-wide (byte-for-byte unchanged) and the new per-row model
+- [Phase ?]: 31-02: reconcileRowAction/reconcileRow is the single grant/update/revoke dispatch decision for both scopes; folder scope's update/revoke branches are wired but structurally unreachable until 31-03's destination selector seeds non-null currentLevel
+- [Phase ?]: 31-03: toggleFamilyWide resets destinationId to null on switch — avoids an unreachable-submit dead end when a per-person destination was chosen before enabling family-wide
+- [Phase ?]: 31-03: submitRowsForExistingDestination mirrors submitItemRows's dispatch shape — reconcileRow routes grant/update/revoke through reshareCollectionToNewMember/updateCollectionAccess/revokeCollectionAccess against a real existing destination
 
 ### Pending Todos
 
@@ -347,6 +445,7 @@ None yet.
 | 260720-16k | Firefox aux windows feel like popups: centering, consent-window resize/self-close, candidate-list scroll cap, autofill-flash race fix | 2026-07-20 | 40d1965 | [260720-16k-firefox-aux-windows-feel-like-popups-cen](./quick/260720-16k-firefox-aux-windows-feel-like-popups-cen/) |
 | 260803-cnd | Fix passkey unlock 401 handling and AbortError misclassification | 2026-08-03 | 231321d | [260803-cnd-passkey-unlock-401-and-aborterror](./quick/260803-cnd-passkey-unlock-401-and-aborterror/) |
 | 280809-blf | Fix buildLoginFields() clobbering ItemFields on capture-update (v0.4 audit debt #1) | 2026-08-09 | bd40d96 | [280809-blf-capture-update-field-clobber](./quick/280809-blf-capture-update-field-clobber/) |
+| 7 | 260812-01e: fix family-wide ITEM variant (Phase 30 SC2 gap) -- per-level item_bucket schema, contributor-edit-claim mechanism, two closed side doors, client level-keying, honest copy, live e2e proof. 8/8 tasks complete, all falsification-proven. | 2026-08-12 | fde4b1b | — |
 
 ## Deferred Items
 
@@ -376,10 +475,10 @@ Items acknowledged and deferred at v0.1 milestone close on 2026-07-14 (override_
 
 ## Session Continuity
 
-**Stopped at:** Phase 29 UI-SPEC approved
-**Resume file:** .planning/phases/29-a-real-settings-page-shell-migration/29-UI-SPEC.md
+**Stopped at:** Completed 31-04-PLAN.md
+**Resume file:** None
 
-Last session: 2026-08-09T21:33:31.331Z
+Last session: 2026-08-18T21:57:45.422Z
 27-13-PLAN.md (gap closure) executed: vault-store.ts::ensureSharedItemsHydrated() (the
 shared-side counterpart to the existing ensureItemsHydrated()) is now awaited by
 handleCredentialsGet, alongside ensureItemsHydrated(), before its candidate snapshot -- closing

@@ -33,9 +33,11 @@ export interface Collection {
   accessLevel: string | null;
   /** 30-11 (FSH-01): the server's own `collections.family_wide_kind`, threaded
    * through untransformed — `null` for an ordinary collection, `'folder'` for a
-   * named family-wide folder, `'item_bucket'` for the one per-family collection
-   * holding bare items shared family-wide (30-DECISION-FSH-02.md names the
-   * contract; `api.ts`'s `CollectionRow.family_wide_kind` is the wire mirror).
+   * named family-wide folder, `'item_bucket'` for a collection holding bare
+   * items shared family-wide (260812-01e: a family may hold up to THREE such
+   * collections, one per declared `family_wide_access_level` — no longer a
+   * per-family singleton; 30-DECISION-FSH-02.md names the original contract,
+   * `api.ts`'s `CollectionRow.family_wide_kind` is the wire mirror).
    *
    * Normalized to `null` here, never left `undefined`: the wire field is
    * OPTIONAL (a pre-Phase-30 response, or one served mid-rolling-restart, can
@@ -43,6 +45,15 @@ export interface Collection {
    * the "absent" and "explicitly null" cases must be indistinguishable by the
    * time they get here. */
   familyWideKind: string | null;
+  /** CR-01 fix (30-REVIEW.md): the server's own
+   * `collections.family_wide_access_level` -- the access level THIS
+   * family-wide share was created at, `null` for an ordinary collection and
+   * for a family-wide collection created before this column existed.
+   * Normalized to `null` the same way `familyWideKind` is above. NOT the
+   * same value as `accessLevel` above (that is the CALLER's own held
+   * level) -- every propagation path reads THIS field, never `accessLevel`,
+   * to decide what level to hand a late joiner. */
+  familyWideAccessLevel: string | null;
 }
 
 // Collections carry no revision column of their own — a collection's own
@@ -171,10 +182,24 @@ export function freeAllCollectionKeys(): void {
  * this instead of inlining the sequence a second time. Never touches
  * `personalItems`/`folders` (this module owns none of those) — KEY-06
  * adjacency by construction, since this module's own state IS the shared
- * scope. */
+ * scope.
+ *
+ * WR-05 fix (30-REVIEW.md): `lastSealedKeys` — the module-level snapshot
+ * `notifyRekeyListeners` diffs against — used to be cleared by NOTHING, so a
+ * same-tab account switch (this function's own caller, `store.ts`'s removal
+ * purge) left the PREVIOUS account's sealed_key values sitting in the map.
+ * Two members of the same family hold the SAME collection id with
+ * DIFFERENT `sealed_key` blobs, so the next refresh under the NEW account
+ * diffed its own fresh sealed_key against the OLD account's stale one and
+ * fired a false "your share was re-encrypted" notice for every collection
+ * they both hold. Resetting it here — alongside `collections`, which this
+ * function already clears — closes that gap the same way the lock branch's
+ * own full reload implicitly always did (a fresh module instance has no
+ * stale entries to diff against). */
 export function clearCollectionsOnRemoval(): void {
   freeAllCollectionKeys();
   collections = [];
+  lastSealedKeys = new Map();
   notifyListeners();
 }
 
@@ -258,6 +283,7 @@ async function refreshCollections(): Promise<void> {
         // this store's declared `string | null`, so consumers never have to
         // distinguish "server omitted it" from "server said null".
         familyWideKind: row.family_wide_kind ?? null,
+        familyWideAccessLevel: row.family_wide_access_level ?? null,
       });
     }
     // WR-02 (code review, Phase 26): evict every cached key whose collection

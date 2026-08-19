@@ -136,7 +136,7 @@ const ANNA_ID = "anna-1";
 const TOMASZ_ID = "tomasz-1";
 
 function makeCollection(overrides: Partial<Collection> = {}): Collection {
-  return { id: "col-1", name: "Family Docs", accessLevel: "edit", familyWideKind: null, ...overrides };
+  return { id: "col-1", name: "Family Docs", accessLevel: "edit", familyWideKind: null, familyWideAccessLevel: null, ...overrides };
 }
 
 function makeCollectionRow(overrides: Partial<CollectionRow> = {}): CollectionRow {
@@ -845,6 +845,100 @@ describe("SharingOverviewPanel (D-1/E6)", () => {
       // No revoke action anywhere inside this block (30-UI-SPEC.md's
       // deliberate omission).
       expect(block.querySelector('[data-testid*="revoke" i]')).toBeNull();
+    });
+
+    it("260812-01e Task 6: an item_bucket the caller holds edit on is EXCLUDED from the ordinary folder tab, even when useCollections() has already decrypted it too", async () => {
+      // Extends the "renders exactly 3 li entries" fixture above with the
+      // ONE thing its own tests omitted (per this task's own finding): a
+      // decrypted `useCollections()` entry for the BUCKET itself, matching
+      // what production's real useCollections() actually returns (it
+      // decrypts every collection, including item_bucket ones) -- the gap
+      // that let this leak go uncaught.
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([
+        makeCollection({ id: "fam-folder-1", name: "Family Recipes" }),
+        makeCollection({ id: "fam-bucket-1", name: "family-wide-items", familyWideKind: "item_bucket" }),
+      ]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([
+        makeCollectionRow({ id: "fam-folder-1", access_level: "edit", family_wide_kind: "folder" }),
+        makeCollectionRow({
+          id: "fam-bucket-1",
+          access_level: "edit",
+          sealed_key: "sealed-bucket-key",
+          family_wide_kind: "item_bucket",
+        }),
+      ]);
+      mockGetCollectionAccessList.mockResolvedValue([]);
+      mockListItemShares.mockResolvedValue([]);
+      mockGetFamilyMembers.mockResolvedValue([makeFamilyMember({ user_id: SELF_ID })]);
+      mockGetUnlockedUserKey.mockReturnValue({ free: vi.fn() });
+      mockEnsureOwnIdentityKeypair.mockResolvedValue({ free: vi.fn() });
+      mockUnsealCollectionKey.mockReturnValue({ free: vi.fn() });
+      mockGetCollectionItems.mockResolvedValue([makeCollectionItemRow({ id: "bucket-item-1" })]);
+      mockDecryptItemForCollection.mockReturnValue(JSON.stringify({ name: "Grandma's Recipe" }));
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      // Excluded from the ordinary folder tab, no matter how many other
+      // members have ever contributed to it (260812-01e Task 1 widens who
+      // can hold `edit` here, so this exclusion must hold regardless).
+      await waitFor(() =>
+        expect(screen.getByTestId("sharing-overview-folder-fam-folder-1")).toBeInTheDocument(),
+      );
+      expect(screen.queryByTestId("sharing-overview-folder-fam-bucket-1")).not.toBeInTheDocument();
+
+      // The SAME bucket's items still appear correctly in the PINNED
+      // family-wide block -- the exclusion is scoped to the folder tab only.
+      const block = await screen.findByTestId("sharing-overview-family-wide");
+      const list = within(block).getByTestId("sharing-overview-family-wide-list");
+      expect(list).toHaveTextContent("Grandma's Recipe");
+    });
+
+    it("260812-01e Task 6: two item_buckets at DISTINCT declared levels both resolve their items into the pinned block (multi-bucket regression insurance)", async () => {
+      mockMe.mockResolvedValue({ user_id: SELF_ID, email: "me@example.test", pw_wrapped_uk: "x" });
+      mockUseCollections.mockReturnValue([]);
+      mockUseVaultItems.mockReturnValue([]);
+      mockListCollections.mockResolvedValue([
+        makeCollectionRow({
+          id: "fam-bucket-read",
+          access_level: "read",
+          sealed_key: "sealed-bucket-key-read",
+          family_wide_kind: "item_bucket",
+          family_wide_access_level: "read",
+        }),
+        makeCollectionRow({
+          id: "fam-bucket-edit",
+          access_level: "edit",
+          sealed_key: "sealed-bucket-key-edit",
+          family_wide_kind: "item_bucket",
+          family_wide_access_level: "edit",
+        }),
+      ]);
+      mockGetCollectionAccessList.mockResolvedValue([]);
+      mockListItemShares.mockResolvedValue([]);
+      mockGetFamilyMembers.mockResolvedValue([makeFamilyMember({ user_id: SELF_ID })]);
+      mockGetUnlockedUserKey.mockReturnValue({ free: vi.fn() });
+      mockEnsureOwnIdentityKeypair.mockResolvedValue({ free: vi.fn() });
+      mockUnsealCollectionKey.mockReturnValue({ free: vi.fn() });
+      mockGetCollectionItems.mockImplementation(async (collectionId: string) =>
+        collectionId === "fam-bucket-read"
+          ? [makeCollectionItemRow({ id: "read-item-1" })]
+          : [makeCollectionItemRow({ id: "edit-item-1" })],
+      );
+      mockDecryptItemForCollection.mockImplementation(
+        (_ck: unknown, _combined: unknown, _collectionId: unknown, itemId: unknown) =>
+          JSON.stringify({ name: itemId === "read-item-1" ? "Read-level Item" : "Edit-level Item" }),
+      );
+
+      render(<SharingOverviewPanel onClose={vi.fn()} />);
+
+      const block = await screen.findByTestId("sharing-overview-family-wide");
+      const list = within(block).getByTestId("sharing-overview-family-wide-list");
+      await waitFor(() => expect(list).toHaveTextContent("Read-level Item"));
+      expect(list).toHaveTextContent("Edit-level Item");
+      expect(mockGetCollectionItems).toHaveBeenCalledWith("fam-bucket-read");
+      expect(mockGetCollectionItems).toHaveBeenCalledWith("fam-bucket-edit");
     });
 
     it("a getCollectionItems rejection for the bucket renders the block with the folder entry present and the bucket's entries simply absent -- not a crash", async () => {

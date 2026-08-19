@@ -214,7 +214,7 @@ pub async fn create(
 
     if let Some(collection_id) = &req.collection_id {
         let access_level_str = req.access_level.as_deref().expect("checked all-or-nothing above");
-        membership::parse_access_level_from_request(access_level_str)?;
+        let requested_level = membership::parse_access_level_from_request(access_level_str)?;
         validate_blob_len(
             "wrapped_collection_key",
             req.wrapped_collection_key.as_deref().expect("checked all-or-nothing above"),
@@ -224,15 +224,86 @@ pub async fn create(
         // access to a collection they were never granted a key for (mirrors
         // `collections::add_member`'s own RequireEdit-only gate).
         membership::require_collection_edit(&state.db, &family.caller_user_id, collection_id).await?;
+
+        // 260812-01e REVIEW.md CR-01: this EXPLICIT collection-scoped grant
+        // is a THIRD propagation surface the original Task 2 fix never
+        // bounded -- `require_collection_edit` above only proves the caller
+        // (who may be a self-escalated item_bucket contributor, Task 1's
+        // mechanism) CURRENTLY holds `edit`; it never reads the collection's
+        // own declared `family_wide_access_level`. Without this check, a
+        // self-escalated owner could hand a brand-new invitee `edit` on a
+        // bucket declared `read` via THIS field, bypassing both the
+        // `add_member` bound (`collections.rs`) and the `family_wide_keys`
+        // fold-in bound (the loop below). LO-05: the same shared
+        // `membership::enforce_item_bucket_declared_level_bound` all three
+        // call sites now use, so this one can never drift from the other
+        // two the way it originally did (CR-01's own finding).
+        membership::enforce_item_bucket_declared_level_bound(&state.db, collection_id, requested_level).await?;
     }
 
     // Validate every family_wide_keys entry BEFORE any DB work, same order as
     // the single-collection-scope validation above — reject on the first
     // failing entry, writing nothing anywhere (30-03-PLAN.md Task 1).
+    //
+    // Root-caused live (.planning/debug/family-wide-c-relock-fail.md): this
+    // loop used to call `require_collection_edit`, same as the deliberate
+    // single-collection-scope check above — but this loop is the AUTOMATIC,
+    // ADDITIVE invite-time-wrap fast path (30-DECISION-FSH-02.md), which
+    // folds in EVERY family-wide collection the caller currently holds ANY
+    // key for, unconditionally, on every single invite the caller creates.
+    // Requiring `Edit` here meant a caller who merely holds `read` on even
+    // ONE family-wide collection could never generate ANY invite again — not
+    // just one scoped to that collection. `require_collection_access_for_
+    // propagation` requires only that the caller hold SOME access (same
+    // `None -> NotFound` semantics) and bounds the requested level by what
+    // they actually hold, never trusting the client's claim beyond that —
+    // see that function's own doc comment for the full rationale and the
+    // existing test it must keep passing
+    // (`invitation_accept_grants_single_collection_and_two_family_wide_collections_atomically`).
     for entry in &req.family_wide_keys {
-        membership::parse_access_level_from_request(&entry.access_level)?;
+        let requested_level = membership::parse_access_level_from_request(&entry.access_level)?;
         validate_blob_len("wrapped_collection_key", &entry.wrapped_collection_key)?;
-        membership::require_collection_edit(&state.db, &family.caller_user_id, &entry.collection_id).await?;
+
+        // CR-02 fix (30-REVIEW.md): the relaxed `require_collection_access_
+        // for_propagation` bound above was never scoped to family-wide
+        // collections — nothing in this loop, `invitation_family_wide_keys`'
+        // schema, or the helper itself checked `family_wide_kind IS NOT
+        // NULL`, so a caller holding only `read` on an ORDINARY (deliberately
+        // shared) collection could put that collection's id into this array
+        // and hand a brand-new invitee a real `collection_keys` grant on it —
+        // bypassing the SAME `require_collection_edit` gate the deliberate
+        // single-collection-scope branch above enforces twenty lines up, and
+        // that `collections::add_member` enforces for the identical
+        // deliberate-share action. The relaxation exists ONLY for the
+        // automatic family-wide fold-in (30-DECISION-FSH-02.md) — scope it to
+        // exactly that.
+        // 260812-01e Task 2 (plan-check B-3/T-30fix-05): the same
+        // additional declared-level bound as `collections::add_member` --
+        // see that call site's own comment for the full B-3/C-1 rationale
+        // AND for the item_bucket-only scoping finding made while executing
+        // this task (documented in the SUMMARY's "Deviations" section).
+        // `require_collection_access_for_propagation` alone bounds by what
+        // the CALLER holds, which Task 1's mechanism can put at `Edit` on a
+        // bucket declared below `edit`; the shared `membership::
+        // enforce_item_bucket_declared_level_bound` (LO-05) closes that,
+        // called identically from all three sites this bound applies to.
+        let declared_level = membership::resolve_family_wide_declared_level(&state.db, &entry.collection_id).await?;
+        match declared_level {
+            membership::FamilyWideDeclaredLevel::Declared(_) | membership::FamilyWideDeclaredLevel::LegacyUnknown => {
+                membership::require_collection_access_for_propagation(
+                    &state.db,
+                    &family.caller_user_id,
+                    &entry.collection_id,
+                    requested_level,
+                )
+                .await?;
+            }
+            membership::FamilyWideDeclaredLevel::NotFamilyWide => {
+                membership::require_collection_edit(&state.db, &family.caller_user_id, &entry.collection_id).await?;
+            }
+        }
+        membership::enforce_item_bucket_declared_level_bound(&state.db, &entry.collection_id, requested_level)
+            .await?;
     }
 
     // A transaction is required as soon as `family_wide_keys` is non-empty —
@@ -593,6 +664,34 @@ pub async fn accept(
         let Some(access_level_str) = family_wide_access_by_collection.get(&entry.collection_id) else {
             continue;
         };
+
+        // WR-01 fix (30-REVIEW.md): Pitfall 9's re-validation ("the
+        // inviter's CURRENT authority against the LIVE transaction
+        // snapshot, never assumed from creation time") was applied to the
+        // single EXPLICIT collection scope above (`inviter_still_has_edit`)
+        // but not to this family-wide loop — every entry here inserted a
+        // `collection_keys` row with NO corresponding check that the
+        // inviter still holds ANY grant on it. Zero-knowledge still held (a
+        // post-revocation re-key rotates the key, so the stale wrapped blob
+        // decrypts to nothing useful), but the AUTHORIZATION row landed
+        // regardless, and the newcomer then resolved real access to that
+        // collection's listing and ciphertext. Silently dropped, same
+        // policy as an unknown/mismatched collection_id above — never an
+        // error, since a stale invite entry is not the invitee's fault.
+        let inviter_still_has_access = sqlx::query(concat!(
+            "SELECT 1 FROM collection_keys ck \
+               JOIN collections c ON c.id = ck.collection_id ",
+            active_collection_member_join!(),
+            "WHERE ck.collection_id = ? AND ck.recipient_user_id = ?",
+        ))
+        .bind(&entry.collection_id)
+        .bind(&inviter_user_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_some();
+        if !inviter_still_has_access {
+            continue;
+        }
 
         validate_blob_len("sealed_for_self", &entry.sealed_for_self)?;
 

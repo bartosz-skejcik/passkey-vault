@@ -1174,6 +1174,12 @@ export const DICTIONARY = {
   "access.readOnly": { pl: "Tylko odczyt", en: "Read-only" },
   "access.fullEdit": { pl: "Pełna edycja", en: "Full edit" },
   "access.hiddenPassword": { pl: "Ukryte hasło", en: "Hidden password" },
+  // Phase 31 Plan 02 (31-UI-SPEC.md Copywriting Contract) — the row model's
+  // 4th access-level option. A genuinely NEW state, not a reword of the
+  // three protected strings above (those describe what a grant DOES; this
+  // describes the absence of one — the old UI expressed "no access" via an
+  // unchecked checkbox, never a label).
+  "access.none": { pl: "Brak dostępu", en: "No access" },
   // WR-13 (code review, Phase 25) — new key. An `access_level` outside
   // `read|edit|hidden_password` used to fall back to `access.readOnly`, i.e.
   // an unknown grant displayed as the LEAST privileged, most reassuring label,
@@ -1206,9 +1212,24 @@ export const DICTIONARY = {
     pl: "Rozumiem, przyznaj dostęp",
     en: "I understand, grant access",
   },
+  // REVISED 31-05-PLAN.md (checker blocker 2 -- MOD-03/SC4 was not
+  // actually satisfied on a REPEAT share). The full honest statement lives
+  // only in share.hiddenPasswordDisclosureBody's one-time blocking modal,
+  // gated behind a per-account localStorage ack that never renders again
+  // once acknowledged. For every account that has already acked once, this
+  // inline note is the ONLY always-visible copy -- and the old wording
+  // ("nadal ma dostęp do klucza" / "still has key access") only IMPLIED
+  // "not cryptographic" without stating it, which does not clear SC4's
+  // literal bar. This is a STRENGTHENING of the same key, not the
+  // "softened/reworded" change the Phase 26 honesty-string comment
+  // forbids: "nie kryptograficznie"/"not cryptographically" and
+  // "technicznie może odzyskać hasło"/"can technically recover the
+  // password" echo hiddenPasswordDisclosureBody's own established phrasing
+  // verbatim ("To nie jest zabezpieczenie kryptograficzne" / "technicznie
+  // może je odzyskać"), never inventing new vocabulary for the same fact.
   "share.hiddenPasswordInlineNote": {
-    pl: "Ukryte tylko w interfejsie — {recipient} nadal ma dostęp do klucza.",
-    en: "Hidden in the interface only — {recipient} still has key access.",
+    pl: "Ukryte tylko w interfejsie, nie kryptograficznie — {recipient} nadal ma dostęp do klucza i technicznie może odzyskać hasło.",
+    en: "Hidden in the interface only, not cryptographically — {recipient} still has key access and can technically recover the password.",
   },
   // WR-04 (code review, Phase 26): 26-UI-SPEC.md:169 requires
   // `share.hiddenPasswordInlineNote`'s `{recipient}` to interpolate "the
@@ -1234,18 +1255,74 @@ export const DICTIONARY = {
     en: `Share folder "{name}"`,
   },
   "share.folderDialogTitleNew": { pl: "Nowy udostępniony folder", en: "New shared folder" },
+  // Phase 31 Plan 03 (31-UI-SPEC.md's Destination Selector Contract,
+  // MOD-02/ORG-03) — the folder-scope-only selector rendered above the row
+  // list, choosing between minting a brand-new shared folder and targeting
+  // one the caller already holds edit access to. Verbatim per the plan's
+  // own key names.
+  "share.destinationLabel": { pl: "Cel udostępnienia", en: "Destination" },
+  "share.destinationNewFolderOption": { pl: "Nowy folder…", en: "New folder…" },
+  "share.destinationNewGroupLabel": { pl: "Utwórz nowy", en: "Create new" },
+  "share.destinationExistingGroupLabel": { pl: "Istniejące foldery", en: "Existing folders" },
   "share.recipientsLabel": { pl: "Komu udostępnić", en: "Share with" },
   "share.noOtherMembers": {
     pl: "W Twojej rodzinie nie ma jeszcze innych członków. Zaproś kogoś, żeby móc udostępniać.",
     en: "There are no other members in your family yet. Invite someone before you can share.",
   },
   "share.accessLevelLabel": { pl: "Poziom dostępu", en: "Access level" },
+  // Phase 31 Plan 02 (31-UI-SPEC.md Row Anatomy) — the per-row subtitle
+  // shown only when a row currently holds a grant. `{level}` interpolates
+  // the SAME reused `access.*` vocabulary via `accessLevelKey`, never a
+  // second copy of those words.
+  "share.rowCurrentlyLabel": { pl: "Obecnie: {level}", en: "Currently: {level}" },
+  // Row-level, proactive half of SC5's refusal requirement — renders under
+  // a row whose person has no published identity key. ME-03 fix
+  // (31-REVIEW.md): that row's select is disabled and locked to
+  // `access.none` ONLY when the person also has no existing grant — a
+  // keyless person who already holds a grant keeps a fully interactive
+  // select, since updating or revoking an EXISTING grant touches no key
+  // material at all (only a fresh GRANT genuinely needs their public key).
+  "share.rowNoPublishedKey": {
+    pl: "Brak opublikowanego klucza — nie można udostępnić.",
+    en: "No published key — can't share with them.",
+  },
+  // Phase 31 Plan 04 (31-UI-SPEC.md Copywriting Contract, MOD-01's sixth
+  // proof obligation) — the pending-revocations honesty summary. Renders
+  // ONLY when >=1 row's pendingLevel is "none" while its currentLevel is
+  // not (a real queued revocation), below the row list, above the footer.
+  // `{names}` is a comma-joined email list, mirroring
+  // `share.partialShareFailed`'s existing `.join(", ")` convention. `{count}
+  // os.` sidesteps Polish plural-form agreement exactly as
+  // `share.seedFolderSummary`'s "{count} elem." already does. Verbatim per
+  // the UI-SPEC — never softened, since this sentence is what carries the
+  // "brak dostępu really revokes" honesty weight in place of a second
+  // confirm dialog.
+  //
+  // LO-02 fix (31-REVIEW.md): the EN copy used to read "for {count} people"
+  // — ungrammatical at the single-revocation case ("for 1 people"), which is
+  // by far the most common one, in this dialog's single most load-bearing
+  // honesty sentence. "member(s)" sidesteps the plural-form agreement the
+  // same way the PL string's "os." already does, rather than adding a
+  // second count-1 variant key.
+  "share.pendingRevocationsSummary": {
+    pl: "Zapisanie cofnie dostęp {count} os.: {names}. Cofnięcie dostępu nie cofa tego, co już zobaczyli.",
+    en: "Saving will revoke access for {count} member(s): {names}. Revoking access doesn't undo what they've already seen.",
+  },
   // Deliberately not a bare "Udostępnij"/"Share" — the same submit button
   // backs two structurally different grants across the item/folder
   // variants, and honesty constraint 4 requires that distinction stay
   // legible through to the CTA itself.
   "share.ctaFolder": { pl: "Udostępnij folder", en: "Share folder" },
   "share.ctaItem": { pl: "Udostępnij item", en: "Share item" },
+  // 31-05-PLAN.md (MOD-01): the third CTA state -- selected when the
+  // destination/item is ALREADY shared with someone (an existing folder
+  // destination, or an item that already has >=1 recipient among the
+  // standing rows), per 31-UI-SPEC.md's Copywriting Contract. The action
+  // here is reconciling WHO can see it, not "sharing" it for the first
+  // time -- the dialog is the access picture for the chosen destination
+  // (MOD-01's own framing), so the CTA states that honestly rather than
+  // reusing ctaFolder/ctaItem's fresh-share wording.
+  "share.ctaSaveAccess": { pl: "Zapisz dostęp", en: "Save access" },
   // 26-12a gap fix: dedicated ENTRY-POINT copy, deliberately distinct from
   // the two submit CTAs directly above. ItemContextMenu.tsx (menu text) and
   // DetailPanel.tsx (Share2 icon aria-label) both used to reuse
@@ -1274,6 +1351,48 @@ export const DICTIONARY = {
   "share.partialShareFailed": {
     pl: "Nie udało się udostępnić: {recipients}. Pozostałe dostępy zostały już przyznane — ponowna próba ich nie zduplikuje.",
     en: "Couldn't share with: {recipients}. The other grants already went through — retrying won't duplicate them.",
+  },
+  // HI-02 fix (31-REVIEW.md): the REVOCATION-shaped sibling of
+  // `share.partialShareFailed` above. Before this fix, a failed revocation
+  // (a `DELETE` that 403/network-failed) rendered `share.partialShareFailed`
+  // over it -- "Couldn't share with: {recipients}. The other grants already
+  // went through" -- which states the OPPOSITE of the truth for a
+  // revocation set: the named person was supposed to LOSE access and still
+  // has it, and "the other grants already went through" is a meaningless,
+  // actively misleading sentence for a revocation. `handleSubmit` now
+  // renders this key specifically for `failedRevocations`, and BOTH this
+  // and `share.partialShareFailed` render together when a single submit
+  // produced both kinds of failure (mirrors this dialog's own established
+  // "render every true statement, never just one" discipline for
+  // `submitError`/`familyKeyPending`/`seedMoveFailureCount` etc.).
+  "share.partialRevokeFailed": {
+    pl: "Nie udało się cofnąć dostępu: {recipients}. Nadal mają dostęp.",
+    en: "Couldn't revoke access for: {recipients}. They still have access.",
+  },
+  // 31-06-PLAN.md (SC5, T-31-16): the destination-unavailable refusal --
+  // fires when a fresh `getCollection(destinationId)` re-fetch immediately
+  // before dispatch finds the caller's own `sealed_key` gone (a `null` in a
+  // 200, or the request itself now 404s), which per 31-RESEARCH.md is only
+  // reachable through a narrow TOCTOU window: the caller's own access to
+  // that destination was revoked in a concurrent session between
+  // dialog-open/destination-select and submit. Deliberately NOT
+  // `share.createFailed`'s retry-inviting copy -- clicking Save again cannot
+  // possibly succeed until the caller's own access is restored, mirroring
+  // the precedent `share.pendingFamilyKeyNote` set for a different
+  // known-cause, non-retryable refusal.
+  "share.destinationUnavailable": {
+    pl: "Nie można udostępnić — brak dostępu do klucza tego miejsca docelowego.",
+    en: "Can't share — no access to this destination's key.",
+  },
+  // HI-03 fix (31-REVIEW.md): renders in place of the row list when
+  // `getCollectionAccessList` fails for the chosen existing destination --
+  // deliberately distinct from `share.destinationUnavailable` above (that
+  // one means "your own access is gone"; this one means "we don't know
+  // anyone's access, including yours might still be fine — we just
+  // couldn't check"). Submit stays disabled while this is shown.
+  "share.destinationAccessUnavailable": {
+    pl: "Nie udało się wczytać obecnych dostępów dla tego folderu. Spróbuj ponownie.",
+    en: "Couldn't load the current access list for this folder. Try again.",
   },
   "share.newFolderNameLabel": { pl: "Nazwa folderu", en: "Folder name" },
   // WR-05 (code review, Phase 26): a seed-move partial failure used to
@@ -1422,12 +1541,21 @@ export const DICTIONARY = {
     en: `Revoke {email}'s access to "{item}"`,
   },
   // 30-05-PLAN.md Task 2 (FSH-04/FAM-10 "the sharer is told, quietly") --
-  // 30-UI-SPEC.md's Re-Key Notice Contract, verbatim. Deliberately generic
-  // (names no specific item/folder): a re-key batch may touch several items
-  // at once, and naming one out of the batch would misrepresent its scope.
+  // 30-UI-SPEC.md's Re-Key Notice Contract. Deliberately generic (names no
+  // specific item/folder): a re-key batch may touch several items at once,
+  // and naming one out of the batch would misrepresent its scope.
+  //
+  // WR-05 fix (30-REVIEW.md): the original copy said "one of YOUR shared
+  // items" -- but `notifyRekeyListeners` fires for ANY collection whose
+  // sealed_key changed, for EVERY remaining recipient, not only the member
+  // who originally shared it. 30-CONTEXT.md's requirement was "the sharer
+  // is told"; this string told EVERYONE they personally shared it, which is
+  // false for a member who only ever received the folder. Reworded to be
+  // audience-neutral -- true regardless of whether this reader created the
+  // share or merely holds it.
   "share.familyRekeyNotice": {
-    pl: "Jedna z Twoich udostępnionych pozycji została ponownie zaszyfrowana, bo skład rodziny się zmienił.",
-    en: "One of your shared items was re-encrypted because your family's membership changed.",
+    pl: "Udostępniony folder został ponownie zaszyfrowany, bo skład rodziny się zmienił.",
+    en: "A shared folder was re-encrypted because your family's membership changed.",
   },
   // 30-08-PLAN.md Task 1 (FSH-01) -- the "Cała rodzina" row's own copy,
   // 30-UI-SPEC.md's Copywriting Contract verbatim.
@@ -1472,6 +1600,28 @@ export const DICTIONARY = {
   "share.familyWideMemberCountError": {
     pl: "Nie udało się wczytać liczby osób w rodzinie.",
     en: "Couldn't load the family member count.",
+  },
+  // 260812-01e Task 7 (LOCKED decision 1: "It must not be hidden — if any
+  // UI copy would now be false, fix the copy."). Rendered ONLY for a
+  // family-wide ITEM share at a non-edit level (`scope.kind === "item" &&
+  // isFamilyWideSelected && accessLevel !== "edit"`) -- exactly the case
+  // where the generic `access.readOnly`/`access.hiddenPassword` label next
+  // to the radio is no longer the whole truth: 260812-01e Task 1 lets ANY
+  // family member self-escalate to a full editor of this same bucket by
+  // contributing their own item to it (two API calls, no real content,
+  // permanent — see T-30fix-01). Plan-check iteration 2, C-2: this sentence
+  // must carry all three of (1) any member, at will, not gated on anything;
+  // (2) "read-only" here does NOT prevent editing; (3) permanent once
+  // acquired — a softer, conditional phrasing ("if someone adds an item...")
+  // understates the operative fact. Do NOT reword the shared
+  // `access.readOnly`/`access.fullEdit`/`access.hiddenPassword` strings
+  // themselves — they stay accurate on every OTHER share surface (direct
+  // item share, ordinary folder, family-wide folder, family-wide item at
+  // edit) and this is a separate, conditionally-rendered note, mirroring
+  // `share.hiddenPasswordInlineNote`'s established pattern.
+  "share.familyWideItemContributorEditNote": {
+    pl: `„Tylko odczyt" nie jest tu gwarancją: każdy członek rodziny może w dowolnej chwili dodać własny item do tego zbioru i przez to zyskać pełną edycję wszystkich itemów w nim — także tego. Może je wtedy zmienić lub usunąć. Nic tego nie cofa. Jeśli zależy Ci na kontroli, wybierz „Pełna edycja" albo udostępnij ten item bezpośrednio wybranej osobie.`,
+    en: `Read-only isn't a guarantee here: any family member can add their own item to this collection at any time, which makes them a full editor of every item in it — including this one. They can then change it or delete it. Nothing reverses it. If you need real control, choose "Full edit", or share this item directly with one person instead.`,
   },
   "identity.yourFingerprintHeading": { pl: "Twój odcisk tożsamości", en: "Your identity fingerprint" },
   "identity.fingerprintRevealAria": {
